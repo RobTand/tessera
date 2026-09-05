@@ -5,10 +5,9 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
-**Provenance:** current as of the `v0.1.0` candidate (2026-09-04): code tip
-`b83fd17`, CI at `2147909` plus the publish-environment key of #150,
-packaging metadata at `54cd1df` plus the
-version-derivation gate of #149 and the distribution-contents gate of #151, release documentation after that; contract v17, lane-eligibility schema v6. Re-stamp this
+**Provenance:** current as of the `v0.1.0` candidate (2026-09-05): code tip
+`5acc2a6`, CI at `df1bc20`, packaging metadata at `cd3190a`; contract v17,
+lane-eligibility schema v6. Re-stamp this
 line with any change to the wire, the recipe table, the serving lane, the
 plugin contract or a gate (AGENTS.md principle 10).
 
@@ -28,7 +27,14 @@ allocator sees is `docs/tessera-one-format.md` §5.
 PrismaBuild. Live GPU submissions require an explicit `--gpu-tag` and pass
 `--exclusive`: the deployed scheduler derives the complete GPU reservation
 from that worker's advertised capacity, rather than treating one logical slot
-as physical exclusion. The GPU arm remains serial under `--strict-cuda`;
+as physical exclusion. The GPU arm remains serial under `--strict-cuda`,
+which has three legs since tessera#152: it refuses a device-less session
+before anything runs, refuses at the end a run in which no test allocated on
+the device (torch's own allocator counter, published as
+`cuda_surface.executed`), and refuses a run that skipped because this box
+holds no checkpoint or serve log a gate needs -- `tests/box_artifacts.py`
+resolves those roots and names each one's environment variable, so a GPU box
+without them cannot claim the surface;
 the x86 arm spends its declared `--cpus N` as pytest `-n N` (serial at one).
 Each pytest process explicitly receives `OMP_NUM_THREADS=1`,
 `MKL_NUM_THREADS=1`, `OPENBLAS_NUM_THREADS=1` and `MAX_JOBS=1`, overriding pool
@@ -129,12 +135,6 @@ Construction and route censuses share one runtime-mapper adapter: the current
 `get_rename_mapper` name-only view takes precedence over the earlier
 `get_unstacked_mapper`; a directly exposed mapper is replayed as-is. An
 existing wrapper method that fails is not silently ignored.
-
-The shared producer fusion rule names LFM dense `feed_forward.w1/w3` as the
-constructed `feed_forward.w13`, for both quantized targets and explicit BF16
-passthroughs. Routed `feed_forward.experts.N.w1/w3` remain projection leaves
-owned by the MoE stack; no dense alias applies to them. This naming comes from
-the pinned LFM construction receipt, not a fallback in the serving plugin.
 
 The shared producer fusion rule names LFM dense `feed_forward.w1/w3` as the
 constructed `feed_forward.w13`, for both quantized targets and explicit BF16
@@ -277,6 +277,27 @@ directory and records each accepted blob's SHA in the export manifest.
 These are producer evidence and tests only. They do not promote a recipe,
 open an eligibility cell, or replace the source-matched served measurements
 required for the PrismaQuant campaign bridge.
+
+### 3.3 The native decode is held to the reference at load
+
+The NVFP4 route was the one route whose decoder reached generation
+unchallenged: the FP8 and BF16 routes have always decoded once at load and
+refused on inequality with `tessera.decode.materialize_*`, while the span-2
+route prepared the module and returned (tessera#130).
+`ops.prepare_tessera_module` now decodes the module once through the same
+native op the forward runs, and holds both uint8 planes to what
+`tessera.stock.materialize_stock` writes for the same roles on the moved LUT
+tables and the shared global (`_torch_fallback_tile`, the same reference the
+resident fallback substitutes) -- `torch.equal`, no tolerance, because the
+reference is bit-exact. A difference refuses the module at load naming the
+vLLM prefix, the role, how many bytes of how many differ, and the first
+differing tile (row, role row, group-16 column block), so a refusal says
+where the decoder went wrong rather than only that it did
+(`_require_reference_agreement`, `src/tessera/serving/ops.py`). It runs in
+both residencies and takes no operator knob, because the other two routes
+take none. It is vacuous on the resident fallback, where the substitute IS
+the reference and there is nothing independent to hold it to. What it costs
+per module at load is not measured.
 
 ## 4. Allocation and the uniform gate
 
@@ -446,9 +467,10 @@ else -- R = 3 would need 6-byte lanes. A rung is a *root* rate that
 by mixing the two rates bracketing it -- so q256 1006 (root 3.93) is columns
 at rate 3 and columns at rate 4, and **every** unit of such a checkpoint
 refuses the lane at load, module by module, through a substitution the route
-reports as a served module. All six allocated checkpoints under
-`/mnt/shared/tessera-runs/allocated` carried a rate outside the set, so no
-artifact we held could exercise the lane at all.
+reports as a served module. All six allocated checkpoints held on the
+build box at the time carried a rate outside the set, so no artifact we held
+could exercise the lane at all; those checkpoints are box-local and are not
+in this repository.
 
 **The set has one home, and it is the kernel** (issue #145).
 `csrc/window_gemv.cu` declares `TESSERA_GEMV_RATES(X) X(1) X(2) X(4)` and
@@ -941,8 +963,8 @@ The following are rules rather than measured values:
   because its trace combines launches as `a+b`; a compiled routed single-launch
   observation may be compared with its explicitly scoped cell.
   `experiments/ts111_replay_cell_agreement.py` replays a receipt offline under
-  its recorded runtime context. The historical R1024 replay at
-  `/home/rob/tessera-runs/ts111/replay-R1024.txt` recorded 112 of 112 in both
+  its recorded runtime context. The historical R1024 replay (a box-local run log, not
+  a tracked receipt) recorded 112 of 112 in both
   phases and 112 refusals under the pre-#111 negative control; a source receipt
   missing explicit runtime context now remains unattested under v5.
 
@@ -1426,6 +1448,9 @@ boolean:
 - `refused` -- no serve exists. The streamed NVFP4 route decodes inside a
   traced forward whose data-dependent shapes the substitute cannot run, so it
   refuses instead of serving something else (`ops.prepare_tessera_module`).
+  A module also refuses at load, in either residency, when the native decode
+  disagrees with the reference (§3.3): a build that exists and is wrong is
+  not a serve.
 
 The decoder that actually ran is the `decoder` field on every route record
 (`telemetry.py`), which is how a fingerprint tells a native serve from a

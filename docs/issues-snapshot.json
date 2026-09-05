@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-04T23:18:14Z",
+ "generated": "2026-09-05T01:25:10Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -414,6 +414,10 @@
    "191": {
     "state": "OPEN",
     "title": "Bind Tessera campaign resume to current inputs and exact priced wire"
+   },
+   "192": {
+    "state": "OPEN",
+    "title": "Tessera serving-runtime pin: ready the v0.1.0 flip, guarded until the tag exists"
    },
    "2": {
     "state": "CLOSED",
@@ -890,11 +894,11 @@
     "title": "Reap teacher serves before releasing ownership on exit"
    },
    "126": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Scope MoE eligibility to the measured runtime image and execution mode"
    },
    "127": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Integrate full-model MoE serving, partitioning, and coverage gates"
    },
    "128": {
@@ -902,7 +906,7 @@
     "title": "Close compiled KL measurement with fresh r6 controls and receipts"
    },
    "129": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "P1: impacted-test narrowing misses dynamically loaded Python script consumers"
    },
    "13": {
@@ -910,15 +914,15 @@
     "title": "H-aware encode costs 19.2x (matched-pair control); mechanism is ~28% device work, ~72% launch/host"
    },
    "130": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "serving: NVFP4 route does not cross-check its decode against the reference"
    },
    "131": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "serving: versions.attested_on does double duty and is wrong for two cells"
    },
    "132": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "serving: census --runtime-image is operator-asserted, verified out of band"
    },
    "133": {
@@ -926,27 +930,27 @@
     "title": "serving: routed_moe cells carry dense status with screen-grade evidence"
    },
    "134": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "serving: contract hygiene - unread predicates, duplicated kernel source"
    },
    "135": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "export: a routed-MoE rung is gated against the dense route's range"
    },
    "136": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "export: the packed 3-D expert write path is checked at name level only"
    },
    "137": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "export: the legacy merge guard requires three fields no exporter writes"
    },
    "138": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "export: the streaming index prices total_size on wire regions, not disk"
    },
    "139": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "export: the ignore roster's embedding name is wrong for nested layouts"
    },
    "14": {
@@ -954,19 +958,19 @@
     "title": "PrismaQuant: ANCHOR_BUDGET_BITS must become body-aware or BF16 is unallocatable"
    },
    "140": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "core: slice_unit writes a shard record mixing two coordinate frames"
    },
    "141": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "core: enum decoding escapes the Tessera error taxonomy"
    },
    "142": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "core: release placement ranks by a hardcoded E2M1 table whatever the grid"
    },
    "143": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "core: encoder identity and the byte-proof matrix miss the same surfaces"
    },
    "144": {
@@ -974,23 +978,23 @@
     "title": "core: the truncation-terminal ladder is unreachable on encoded artifacts"
    },
    "145": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "core: the kernel lane's supported set is a roster tied to the .cu by nothing"
    },
    "146": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "core: the bit-exactness gates are gated on CUDA and on one box's paths"
    },
    "147": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "core: assorted P3s in wire, decode, container and fused"
    },
    "148": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "tools: impacted_tests always returns full, and drops package __init__ edges"
    },
    "149": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "tools: the version string and entry point are hand-copied into four places"
    },
    "15": {
@@ -1002,28 +1006,124 @@
     "title": "tools: the publish trigger is a bare tag match, no ancestry or environment"
    },
    "151": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "tools: the sdist ships tests without conftest, and dev code ships in wheel"
    },
    "152": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "tools: --strict-cuda asserts a device, not that the CUDA surface ran"
    },
    "153": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "tools: test_kl_tool_decode_regime pins a file outside every checkout"
    },
    "154": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "tools: test-infra P3s - conftest exec probe, own names, unbounded wait"
+   },
+   "155": {
+    "state": "CLOSED",
+    "title": "Name the original in every field of a re-sliced shard's record"
+   },
+   "156": {
+    "state": "CLOSED",
+    "title": "Gate the PyPI publish on master ancestry, and pin every action to a SHA"
+   },
+   "157": {
+    "state": "CLOSED",
+    "title": "Gate a routed-MoE stack's rung against the cells that attest its structure"
+   },
+   "158": {
+    "state": "CLOSED",
+    "title": "Read the merge guard's field set off the exporter, not a roster beside it"
+   },
+   "159": {
+    "state": "CLOSED",
+    "title": "Attest the route census's runtime image from inside the container"
    },
    "16": {
     "state": "CLOSED",
     "title": "Eager vs compiled KL divergence is unexplained, and compiled builds are not reproducible"
    },
+   "160": {
+    "state": "CLOSED",
+    "title": "Validate cell predicates and build the window GEMV from its published source"
+   },
+   "161": {
+    "state": "CLOSED",
+    "title": "Give the version and the distributions one declaration each"
+   },
+   "162": {
+    "state": "CLOSED",
+    "title": "Hold the NVFP4 decoder to materialize_stock at load, and refuse by tile"
+   },
+   "163": {
+    "state": "CLOSED",
+    "title": "Rank release placement by the unit's own grid, and say what the terminal ladder is"
+   },
+   "164": {
+    "state": "CLOSED",
+    "title": "Read the window-GEMV lane's supported set off the kernel that builds"
+   },
+   "165": {
+    "state": "CLOSED",
+    "title": "Route enum decoding through the Tessera taxonomy, and five of the wire/decode/container/fused P3s"
+   },
+   "166": {
+    "state": "CLOSED",
+    "title": "Name the out-of-tree test roots in one module, and give --strict-cuda a coverage leg"
+   },
+   "167": {
+    "state": "CLOSED",
+    "title": "Make the impacted-test selector able to narrow, and exact when it does"
+   },
+   "168": {
+    "state": "CLOSED",
+    "title": "Write every plane a reader reads in the byte-proof matrix"
+   },
+   "169": {
+    "state": "CLOSED",
+    "title": "Make the KL instrument opt-in, and fix the torch-free probe and the deadline's unbounded wait"
+   },
    "17": {
     "state": "OPEN",
     "title": "Release mechanics: push, tag v0.1.0, and resolve PrismaQuant's pin"
+   },
+   "170": {
+    "state": "CLOSED",
+    "title": "Gate the publish job behind a protected environment"
+   },
+   "171": {
+    "state": "CLOSED",
+    "title": "Price the streaming index on disk, and name the ignored embedding from the tensor"
+   },
+   "172": {
+    "state": "CLOSED",
+    "title": "Keep the repository's own tooling out of the distribution, and prove it on the artifact"
+   },
+   "173": {
+    "state": "CLOSED",
+    "title": "Check the routed-MoE packed 3-D write path at value level"
+   },
+   "174": {
+    "state": "CLOSED",
+    "title": "Guard the fused decode chain by the bytes it carries, not by a rate"
+   },
+   "175": {
+    "state": "CLOSED",
+    "title": "Count why the terminal ladder is unreachable on an encode, and price the wire decision"
+   },
+   "176": {
+    "state": "CLOSED",
+    "title": "Give every lane cell its own runtime toolchain and an evidence grade (schema v6, contract v17)"
+   },
+   "177": {
+    "state": "CLOSED",
+    "title": "Encode the five surfaces the wire never selects into the encoder identity"
+   },
+   "178": {
+    "state": "OPEN",
+    "title": "Correct the encoder-identity docstring sentence written when the list had three surfaces"
    },
    "18": {
     "state": "CLOSED",
@@ -1166,7 +1266,7 @@
     "title": "check_wire_against_plan reports an unpriced unit as a mispriced one, and the totals are asymmetric about it"
    },
    "5": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "MoE: the plugin has no expert route, and the exporter mis-plans this model silently"
    },
    "50": {
