@@ -67,7 +67,8 @@ def main(argv: list[str]) -> int:
                        "temperature": 0.0, "add_special_tokens": False})
     print(f"warm-up (the one prefill the decode regime performs): {_usage(warm)}")
 
-    for length in PREFIX_LENGTHS:
+    lengths = tuple(length for length in PREFIX_LENGTHS if length <= len(full))
+    for length in lengths:
         payload = _post(url, {"model": "kl-target", "prompt": full[:length],
                               "max_tokens": 1, "temperature": 0.0, "logprobs": 8,
                               "return_tokens_as_token_ids": True,
@@ -77,14 +78,16 @@ def main(argv: list[str]) -> int:
               f"cached_tokens={cached:4d}  rows_forwarded={prompt_tokens - cached}")
 
     # The discriminator: a repeat of a prefix the serve has already ANSWERED,
-    # rather than one it merely holds attention blocks for.
+    # rather than one it merely holds attention blocks for.  Derived from the
+    # lengths actually probed, so a shorter chunk does not silently skip it.
+    repeat_at = max(length for length in lengths if length <= len(full))
     for attempt in (1, 2):
-        payload = _post(url, {"model": "kl-target", "prompt": full[:129],
+        payload = _post(url, {"model": "kl-target", "prompt": full[:repeat_at],
                               "max_tokens": 1, "temperature": 0.0, "logprobs": 8,
                               "return_tokens_as_token_ids": True,
                               "add_special_tokens": False})
         prompt_tokens, cached = _usage(payload)
-        print(f"  repeat {attempt} at L=129: prompt_tokens={prompt_tokens} "
+        print(f"  repeat {attempt} at L={repeat_at}: prompt_tokens={prompt_tokens} "
               f"cached_tokens={cached}  rows_forwarded={prompt_tokens - cached}")
     return 0
 

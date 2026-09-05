@@ -121,7 +121,11 @@ load and cleanup.
   batch cell gains a second `kl` entry. Note that the route trace cannot attest
   shapes under compile, so the census evidence is weaker in that mode.
 - **Rank rationale:** cheapest leg per required field changed, but it widens a
-  claim rather than deepening one.
+  claim rather than deepening one. Rank it as the cheapest *unattempted* leg, not
+  the cheapest unblocked one: its own gate -- that a routed-MoE model loads and
+  censuses at all under `TESSERA_LANE_EAGER=0` in this image -- is unchecked, and
+  leg A is a reminder that an unchecked feasibility gate is where the GPU minutes
+  go.
 
 ### Leg C: a second routed-MoE population
 
@@ -247,11 +251,15 @@ warm-up's 513-token prefill leaves attention blocks behind but no resumable SSM
 state at an interior position, which is why the first scored position sees zero.
 
 **The fix, and it is small.** The last three rows show M=1 is reachable: a request
-whose prefix the serve has *answered before* resumes at `L-1`. So the decode
-sweep needs to issue each scored request twice and score the second, or issue a
-priming request for `full[:L-1]` first. Either makes M = 1 for every L in the
-existing stride-16 position set, at twice the requests -- the dump is HTTP-bound
-and cheap, so the wall-clock cost is minutes.
+whose prefix the serve has *answered before* resumes at `L-1`. Two variants
+reach that, and they are not equivalent. Priming with **`full[:L-1]`** leaves an
+end state at `L-1`, a multiple of 16 for every L in the stride-16 set, so the
+scored request that follows forwards exactly one row. Issuing the scored request
+twice and keeping the second reaches the same M=1, but its first call is a
+second *scored-shape* forward at M=17, which a served-request histogram records
+and which the dense decode receipts would then have to explain. Prefer the
+`full[:L-1]` prime. Either way the cost is twice the requests, and the dump is
+HTTP-bound, so the wall-clock cost is minutes.
 
 This is not changed here. `kl_tool.py` lives outside this repository, at
 `/home/rob/dq-runs/kl_tool.py`, and several agents were running against it; a
