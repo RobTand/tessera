@@ -143,6 +143,59 @@ def test_the_census_carries_the_mechanism_that_attested_its_scope():
     assert args.runtime_image_attestation["image"] == IMAGE
 
 
+#: The census tool, named once.  A launcher calls it by PATH or as a MODULE,
+#: through whatever interpreter the image ships, from whatever mount the
+#: container gave it -- and the rule below is about the CALL, not about one
+#: box's spelling of it.  Matching an interpreter in front of the name is what
+#: keeps a docstring or an ``import`` of the same module from reading as a
+#: launch; an example invocation in a comment does match, and it should, since
+#: an example that omits ``--runtime-image`` teaches the defect this gate
+#: exists to refuse.
+CENSUS_TOOL = ROOT / "tools" / "tessera_route_census.py"
+_INTERPRETER = r"(?:[\w./+-]*python[\w.]*|uvx|uv run|poetry run|pipx run)"
+_CENSUS_CALL = re.compile(
+    rf"{_INTERPRETER}\s+(?:\S+\s+){{0,3}}?"
+    rf"(?:[\w./-]*{re.escape(CENSUS_TOOL.name)}|-m\s+[\w.]*{re.escape(CENSUS_TOOL.stem)})")
+
+
+def census_invocations(text: str) -> list:
+    """Every call of the census tool in ``text``, one command's worth each.
+
+    One invocation's worth of text: the shell form ends at a line
+    continuation, the python form is an adjacent-string block, and neither
+    spans a blank line.
+    """
+    return [text[m.start():m.start() + 500].split("\n\n", 1)[0]
+            for m in _CENSUS_CALL.finditer(text)]
+
+
+def test_a_census_call_is_recognised_however_the_launcher_spells_it():
+    """The pre-fix failure this test was written for::
+
+        AssertionError: python -m tools.tessera_route_census ckpt out.json
+        assert [] == ['python -m t...kpt out.json']
+
+    Detection was a regex over ONE spelling, ``python3 (/work/)?tools/
+    tessera_route_census.py``.  A launcher using ``python -m``, another mount,
+    another interpreter or ``uv run`` was not seen as a census caller at all,
+    so the assertion below silently narrowed to nothing on the day somebody
+    changed how the campaign starts it -- a gate that stops looking is worse
+    than one that refuses.
+    """
+    for command in (
+            "python3 tools/tessera_route_census.py ckpt out.json",
+            "python3 /work/tools/tessera_route_census.py ckpt out.json",
+            "python -m tools.tessera_route_census ckpt out.json",
+            "/usr/bin/python3.12 /opt/ts/tools/tessera_route_census.py ckpt out.json",
+            "uv run tools/tessera_route_census.py ckpt out.json",
+            "python3 -X faulthandler tools/tessera_route_census.py ckpt out.json"):
+        assert census_invocations(command) == [command], command
+    # Naming the module is not calling it: the replay tool's docstring and the
+    # check tool's import both mention it and neither starts a census.
+    assert census_invocations("``tools/tessera_route_census.py`` writes the receipt") == []
+    assert census_invocations("from tools.tessera_route_census import parse_args") == []
+
+
 def test_every_census_invocation_passes_the_verified_wrapper_image():
     """A driver that spells the digest itself reads its own mind, not the run.
 
@@ -155,12 +208,7 @@ def test_every_census_invocation_passes_the_verified_wrapper_image():
     invocations = []
     for path in sorted(p for p in (ROOT / "experiments").rglob("*")
                        if p.suffix in {".sh", ".py"}):
-        text = path.read_text()
-        for match in re.finditer(r"python3 (?:/work/)?tools/tessera_route_census\.py", text):
-            # One invocation's worth of text: the shell form ends at a line
-            # continuation, the python form is an adjacent-string block, and
-            # neither spans a blank line.
-            command = text[match.start():match.start() + 500].split("\n\n", 1)[0]
+        for command in census_invocations(path.read_text()):
             invocations.append((path.relative_to(ROOT), command))
     assert invocations
     for path, command in invocations:
