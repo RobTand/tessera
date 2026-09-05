@@ -268,3 +268,151 @@ def test_the_value_slice_refuses_rather_than_skipping(monkeypatch, tmp_path):
     monkeypatch.setattr(module, "VALUE_SLICE", tmp_path / "absent.pt")
     with pytest.raises(FileNotFoundError, match="make_audit_value_slice"):
         module.load_value_slice()
+
+
+
+# ------------------------------------------------------------ plane coverage
+#
+# The third hole, and it is the first one again in another coordinate: the
+# matrix covered every *grid*, but only the planes ``wire_recipe`` selects and
+# only on whole units.  Three of the ten planes a reader will read were written
+# by no row at all -- SCALE_BASE, DIAG_SU and INITIAL_STATE -- so a change to
+# the S6b base packing, to ``diagonals.fit_diagonals``, or to anything schema
+# minor 4 added for shards moved real bytes while the harness reported
+# "0 changed" (issue #143).  Both guards derive their expected set from the
+# module that owns it, so the next plane is noisy rather than silent.
+
+
+def _effective_scale_plane(grid, q256, overrides):
+    """The plane a case actually encodes on: its override, else its recipe."""
+    from tessera.export import tcq_cap_q256
+
+    if q256 is None:                      # the release rows spell the cap this way
+        q256 = tcq_cap_q256(grid)
+    override = overrides.get("scale_plane")
+    # ``is None``, never ``or``: ``ScalePlaneKind.S6B`` is 0, and an ``or``
+    # here would silently fall through to the recipe for the one plane this
+    # guard exists to catch.
+    return wire_recipe(grid, q256).scale_plane if override is None else override
+
+
+def test_the_matrix_encodes_every_scale_plane_a_reader_accepts():
+    """The grid guard's sibling on the other axis of the same blind spot.
+
+    ``unit_artifact._read_scale_planes`` dispatches on ``ScalePlaneKind``, so
+    every member of that enum is a plane some artifact can carry and some
+    reader will decode -- whether or not ``wire_recipe`` ever selects it.  S6b
+    is exactly that case: ``encode_linear_planes(scale_plane=...)`` is a
+    caller-facing override, ``_read_scale_planes`` accepts what it writes, and
+    no row encoded one.
+    """
+    module = _load()
+    covered = {
+        _effective_scale_plane(grid, q256, {})
+        for _label, grid, q256, _r, _c in module._cases()
+    }
+    covered |= {
+        _effective_scale_plane(case.grid, case.q256, {})
+        for case in module._value_cases()
+    }
+    covered |= {
+        _effective_scale_plane(grid, q256, {})
+        for _label, grid, q256, _r, _c, _rel, _cut in module._release_cases()
+    }
+    covered |= {
+        _effective_scale_plane(case.grid, case.q256, case.encode)
+        for case in module._layout_cases()
+    }
+    missing = set(ScalePlaneKind) - covered
+    assert not missing, (
+        f"{sorted(p.name for p in missing)} is a scale plane a reader decodes "
+        f"-- _read_scale_planes dispatches on ScalePlaneKind -- and no case in "
+        f"the byte-proof matrix encodes it, so a change to its packing or its "
+        f"refit moves real bytes while the harness reports '0 changed'."
+    )
+
+
+@pytest.fixture(scope="module")
+def layout_blobs():
+    """Every layout case, encoded once for the two tests that read them."""
+    module = _load()
+    return module, {
+        case.label: module.encode_layout_case(case)
+        for case in module._layout_cases()
+    }
+
+
+def test_the_layout_matrix_writes_every_plane_the_others_cannot(layout_blobs):
+    """Every ``PlaneKind`` on the wire is non-empty in some row's real bytes.
+
+    The expected set is ``planes.SHARD_PLANE_ORDER`` -- the full wire order,
+    the one with INITIAL_STATE in it -- read off the module that owns the order
+    rather than restated here, so a plane a future schema minor adds fails this
+    until a row writes it.
+
+    Two planes are subtracted, and neither is a free pass: RELEASE belongs to
+    the release matrix and COMPLETION to the value matrix's completion arm, and
+    the subtraction is *conditional on those rows still existing*, asserted
+    first.  Everything else the layout rows must write themselves.
+
+    Occupancy is measured, not declared: ``written_planes`` reads each
+    artifact's own ``plane_order`` against its terminal's ``plane_elements``,
+    which is the pair every reader indexes.
+    """
+    module, blobs = layout_blobs
+    from tessera.planes import PlaneKind, SHARD_PLANE_ORDER
+
+    assert any(rel for *_head, rel, _cut in module._release_cases()), (
+        "no release row releases a position, so the RELEASE plane is written "
+        "by nothing and this test may not subtract it"
+    )
+    assert any(case.encode.get("completion") for case in module._value_cases()), (
+        "no value case spends the completion axis, so the COMPLETION plane is "
+        "written by nothing and this test may not subtract it"
+    )
+    elsewhere = {PlaneKind.RELEASE, PlaneKind.COMPLETION}
+
+    written = {}                                   # plane -> the row that wrote it
+    for label, parts in blobs.items():
+        for key, payload in parts.items():
+            if key == "state":                     # a raw tensor, not an artifact
+                continue
+            for kind in module.written_planes(payload):
+                written.setdefault(kind, f"{label}/{key}")
+
+    missing = [k for k in SHARD_PLANE_ORDER if k not in written and k not in elsewhere]
+    assert not missing, (
+        f"{[k.name for k in missing]} is written by no row of the byte-proof "
+        f"matrix, so a change to how it is built or packed moves real bytes "
+        f"and the harness reports '0 changed'. Written here: "
+        f"{ {k.name: v for k, v in sorted(written.items())} }"
+    )
+
+
+def test_a_shard_row_decodes_to_its_parent_sliced(layout_blobs):
+    """The served half of the shard rows: the bytes mean the parent's window.
+
+    A digest proves a shard's bytes are stable, not that they are *right*.
+    This is the claim schema minor 4 exists to make -- a rank's shard decodes
+    bit for bit to its window of the artifact the exporter wrote -- and here it
+    runs on CPU.  ``tests/test_slice_unit.py`` makes the same claim under
+    ``skipif(not torch.cuda.is_available(), reason="the encoder is a CUDA
+    path")`` (``:161-163``), and the encoder is not a CUDA path: this harness
+    and ``encoder_identity``'s CPU-by-construction fixtures both encode with no
+    device at all.
+    """
+    import torch
+    from tessera.unit_artifact import read_unit_artifact
+
+    module, blobs = layout_blobs
+    cuts = {case.label: case.cut for case in module._layout_cases() if case.cut}
+    assert cuts, "no layout case cuts a shard, so INITIAL_STATE is unwritten"
+    for label, (rows, cols) in cuts.items():
+        parts = blobs[label]
+        whole = read_unit_artifact(parts["parent"])
+        shard = read_unit_artifact(parts["bytes"])
+        assert torch.equal(shard, whole[rows[0]:rows[1], cols[0]:cols[1]]), (
+            f"layout row {label!r} decodes to something other than its parent's "
+            f"rows {rows} x columns {cols}: its bytes are stable and wrong, "
+            f"which is what a digest alone cannot tell you"
+        )
