@@ -2000,7 +2000,27 @@ The native extensions are built by torch at first use from the packaged
 `native` extra, which `serve` and `kernels` both reference. The `nvcc` is
 not installable from PyPI and is therefore a documented requirement, stated
 in the README beside the install commands and here; `ext.py` records where
-each is looked for. When a build is unavailable the outcome is per extension
+each is looked for.
+
+**Which toolkit compiles is one answer, adopted, not two reports.**
+`cpp_extension.load` builds `<cpp_extension.CUDA_HOME>/bin/nvcc`, and torch
+freezes that module global at *import*, so a resolver that only returns a root
+describes a compiler nothing will run. `ext._resolve_cuda_home` therefore
+adopts what it selects into both mechanisms -- the environment and that frozen
+global -- and `ext._nvcc_for_build()` reads the global back, so the toolkit
+reported by `toolchain_report`, the one hashed into the build identity (§ the
+`nvcc` field, issue #242) and the one the compile runs are the same root by
+construction. An explicit `CUDA_HOME`/`CUDA_PATH` still wins over the search,
+and it wins by adoption too: before issue #298 an explicit root chosen *after*
+torch's import was reported as selected while the previously frozen toolkit
+did the compiling. It is adopted whether or not it holds an `nvcc` -- only
+the resolver's *return* is gated on completeness, so an incomplete explicit
+root reports "no toolkit" (fail-closed, `complete: false`) and any build that
+proceeds anyway fails under the root the operator named, rather than
+succeeding under the toolkit that choice displaced; displacing a usable
+toolkit that way is said on stderr, by name.
+
+When a build is unavailable the outcome is per extension
 and per residency, and it is a value the route record stamps, never a
 boolean:
 
