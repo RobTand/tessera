@@ -80,7 +80,11 @@ rather than attesting a tree nothing tested. Under `-n`, each worker reports
 its own entry-bound identity through xdist's `workeroutput` and the
 controller's population is `unknown` unless every executing process agrees with
 it -- the controller runs no tests, so its own hash describes its filesystem
-until they do. The `tessera.suite_source.v1` receipt string is unchanged: the
+until they do. The controller-side hook that collects those reports
+(`pytest_testnodedown`) is xdist's, so the conftest declares it optional: a
+run without xdist -- the `pure` CI job -- loads the conftest and sees an empty
+worker set, as a serial run always did, instead of pluggy refusing the file at
+collection (#290). The `tessera.suite_source.v1` receipt string is unchanged: the
 span and worker fields are additive, and `verified` became harder to earn, never
 easier.
 The merge receipt keeps raw commit agreement and effective-source agreement
