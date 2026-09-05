@@ -1,0 +1,48 @@
+{
+  "scope": "Historical receipts recovered during branch audit; no new serves or current-encoder qualification.",
+  "files": [
+    {
+      "file": "refit_trailing_bytes.json",
+      "source": "/mnt/shared/tessera-runs/refit-trailing/refit_trailing_bytes.json",
+      "commit": "4b1bbe67ff08b5ad6eb80bfc9e335af81950d475",
+      "sha256": "d7c16f326f5bfdf52c92918d2a10bfc4a82fb64891dffa165d02687c0bc0539a"
+    },
+    {
+      "file": "refit_trailing_encoder_drift.json",
+      "source": "/mnt/shared/tessera-runs/refit-trailing/refit_trailing_encoder_drift.json",
+      "commit": "4b1bbe67ff08b5ad6eb80bfc9e335af81950d475",
+      "sha256": "c084f4223d9aa412df653f6fe19af8618d03c69bd973037500bf33a4ffe6e578"
+    },
+    {
+      "file": "refit_trailing_pair_gate_served.json",
+      "source": "/mnt/shared/tessera-runs/refit-trailing/refit_trailing_pair_gate_served.json",
+      "commit": "4b1bbe67ff08b5ad6eb80bfc9e335af81950d475",
+      "sha256": "f6b767c155fe20235ae3f8c8bdba1dccb2cfba48202c8d5b3fcbb870c1f1783a"
+    },
+    {
+      "file": "ts75-a4h1.json",
+      "source": "/mnt/shared/tessera-runs/refit-trailing/kl_a4h1.json",
+      "sha256": "c3cf595befa3ae93f46346c8fca251f2de7710d92f829160c083a87c6c46b82d"
+    },
+    {
+      "file": "ts75-bjac.json",
+      "source": "/mnt/shared/tessera-runs/refit-trailing/kl_bjac.json",
+      "sha256": "9a1b605f8758b54052316a0b10205d6f7833c88e114d732b8a809a87dbf9414a"
+    },
+    {
+      "file": "ts87-A.json",
+      "source": "/home/rob/tessera-runs/ts87/kl_A.json",
+      "sha256": "020a8ef20cddb26084eb18268b0902a3d888b784bfbc2c4a55e1da9afd9bc501"
+    },
+    {
+      "file": "ts87-B.json",
+      "source": "/home/rob/tessera-runs/ts87/kl_B.json",
+      "sha256": "85fdd9eedcbc154fb1e61f22fe5939c47dcf1e509e9e6c2a6b502e6a01e7e810"
+    },
+    {
+      "file": "ts87-A2.json",
+      "source": "/home/rob/tessera-runs/ts87/kl_A2.json",
+      "sha256": "4d0c1580444f1532b090a5c6c3f9963d61f2b7dc2536293c9da97af4e73d2b27"
+    }
+  ]
+}

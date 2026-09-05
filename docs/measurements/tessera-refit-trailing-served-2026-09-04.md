@@ -160,3 +160,14 @@ below is built by today's encoder. So the gate is fed a screen and a serve
 taken at different encoders; that is weaker than the drift the incumbent
 carried (the arms *within* each leg are matched), but it is the same kind of
 gap, and re-running the screen at this checkout is what would close it.
+
+
+## Closure recovered on 2026-09-05
+
+The campaign above completed. Its three original result files are byte-identical
+to the surviving receipts and are now retained with the two served KL JSONs in
+[the recovery receipt](branch-recovery-2026-09-05.md). This supersedes the
+`PENDING` status and the requirement to keep the old worktree for an in-flight
+job. The historical mean improves but the tail worsens; the method remains
+opt-in and this is not a current-encoder qualification. The completed
+fixed-namespace `refit_trailing_run_all.sh` launcher is retired.
