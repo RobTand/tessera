@@ -47,6 +47,7 @@ __all__ = [
     "validate_rate_schedule",
     "superblock_quota_ok",
     "require_column_groups",
+    "require_scale_groups",
     "superblock_count",
     "superblock_widths",
     "release_quota",
@@ -379,10 +380,15 @@ def require_column_groups(cols: int, half: int) -> None:
 
     This lives here, not beside the kernel that first needed it, because it is
     a fact about the **wire** and every stage that touches the wire owes it:
-    the writer (``unit_artifact.build_unit_artifact``), the materialiser
+    the writer (``unit_artifact.build_unit_artifact``), the reader
+    (``unit_artifact.parse_unit_artifact``), the materialiser
     (``decode.materialize_nvfp4``) and the kernel lane all refuse the same
     widths with the same words, because there is one rule and one place it is
-    written (RobTand/tessera#56).
+    written (RobTand/tessera#56).  The reader was added last
+    (RobTand/tessera#260, auditing the sibling S6b rule): bytes already on disk
+    are byte-self-consistent, so the writer's gate cannot be the only one, and
+    without it a nonconforming producer's artifact reconstructed to weights
+    whose halves straddle two output rows.
 
     A ``CHANNEL`` plane is exempt by construction, not by tolerance: its scale
     is one word per output row and there is no column group to be whole, so
@@ -394,6 +400,51 @@ def require_column_groups(cols: int, half: int) -> None:
             "plane has no group for the remainder, so the last "
             f"{cols % half if half > 0 else cols} columns would leave the dot "
             "product (GEMV) or index one group past the plane (GEMM)"
+        )
+
+
+def require_scale_groups(cols: int, group: int) -> None:
+    """``cols`` must be a whole number of ``group``-weight S6b scale groups.
+
+    Strictly stronger than ``require_column_groups`` and about a different
+    fact.  That rule is arithmetic on the plane: a remainder has no group, so
+    a walk misses columns or indexes past the plane.  This one is about what
+    an S6b group *means*.  A group's two halves share one E8M0 base with
+    ``d <= 1`` -- one octave -- so a group that begins in one output row and
+    ends in the next asks two unrelated magnitudes to lie within an octave of
+    each other, which nothing makes true (RobTand/tessera#57).  Nor is there a
+    weaker reading available: at ``cols % group == half`` a row holds an odd
+    number of halves and the leftover half has no within-row partner, so the
+    width cannot be tiled per row at all, and ``slicing._block_straddles_rows``
+    refuses every cut of such a unit including the identity slice.
+
+    Only an ``S6B`` plane owes this.  A ``LUT`` plane's group *is* the
+    16-column half, with no shared exponent to couple anything, and a
+    ``CHANNEL`` plane has no column structure at all -- so the caller checks
+    the plane kind before calling this, exactly as it does for the sibling.
+
+    It lives here for the same reason the sibling does: every stage that
+    touches the wire owes it, and a sentence stated in four places is four
+    rules that will drift.  The encoder (``encode._pack_scales`` and
+    ``encode._refit_scales``), the writer (``unit_artifact.
+    build_unit_artifact``) and the reader (``unit_artifact.
+    parse_unit_artifact``, once for both bodies) all raise from here.
+
+    The encoder's two copies -- character for character the same sentence --
+    were the whole of the rule until RobTand/tessera#260.  An ``EncodedUnit``
+    need not come from ``encode_unit``: a parse, a slice or a hand restriction
+    produces one too.  So an off-group S6b unit reached the writer, which
+    enforced only the weaker rule, and was written, parsed and decoded.  The
+    reader's refusal is a tightening and not a schema change -- it can only
+    refuse an artifact no Tessera encoder produced, because the encoder has
+    always refused the width.
+    """
+    if group <= 0 or cols % group:
+        raise GrammarError(
+            f"{cols} columns is not a whole number of {group}-weight scale "
+            "groups; a group's two halves share one base exponent within one "
+            "octave, so a group spanning two output rows would couple "
+            "unrelated magnitudes"
         )
 
 

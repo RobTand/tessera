@@ -50,7 +50,7 @@ from .diagonals import (
 )
 from .manifest import WINDOW_BITS_MAX, BodyKind, RotationState, ScalePlaneKind
 from .errors import GrammarError
-from .grammar import release_quota, require_release_defined
+from .grammar import release_quota, require_release_defined, require_scale_groups
 from .trellis import SUBSET_COUNT, ConvCode, TCQ
 
 __all__ = [
@@ -1096,19 +1096,16 @@ def _pack_scales(
     Groups are cut per output row, and a width that is not a whole number of
     groups is refused: the two halves of a group share one base exponent, so
     a group spanning two rows would couple unrelated magnitudes (issue #57).
+    Through ``grammar.require_scale_groups``, which is where that rule is
+    written -- the writer and the reader raise the same words from the same
+    function (issue #260).
     """
     if weights.ndim != 2:
         raise GrammarError(
             f"expected a 2-D weight, got shape {tuple(weights.shape)}"
         )
     rows, cols = weights.shape
-    if cols % group:
-        raise GrammarError(
-            f"{cols} columns is not a whole number of {group}-weight scale "
-            "groups; a group's two halves share one base exponent within one "
-            "octave, so a group spanning two output rows would couple "
-            "unrelated magnitudes"
-        )
+    require_scale_groups(cols, group)
     groups = weights.reshape(rows, -1, group).reshape(-1, group)
     halves = weights.reshape(rows, -1, half).reshape(-1, half)
     amax_group = groups.abs().amax(dim=1).clamp_min(1e-30)
@@ -1201,7 +1198,8 @@ def _refit_scales(
     and not a wire change.
 
     Halves are cut per output row, like the pack's: the refit groups the same
-    halves the pack grouped, so it refuses the same widths (issue #57).
+    halves the pack grouped, so it refuses the same widths (issue #57), from
+    the same ``grammar.require_scale_groups`` the pack calls.
     """
     if work.ndim != 2 or units.ndim != 2:
         raise GrammarError(
@@ -1209,13 +1207,7 @@ def _refit_scales(
             f"{tuple(units.shape)}"
         )
     rows, cols = work.shape
-    if cols % group:
-        raise GrammarError(
-            f"{cols} columns is not a whole number of {group}-weight scale "
-            "groups; a group's two halves share one base exponent within one "
-            "octave, so a group spanning two output rows would couple "
-            "unrelated magnitudes"
-        )
+    require_scale_groups(cols, group)
     per_group = group // half
     W = work.float().reshape(rows, -1, half).reshape(-1, half)
     U = units.float().reshape(rows, -1, half).reshape(-1, half)

@@ -108,14 +108,16 @@ def _block_straddles_rows(block: "int | None", columns: int) -> bool:
     two answering separately is what let a loader be told "yes" and then
     handed a ``GrammarError`` (tessera#235).
 
-    No Tessera *encoder* produces such a unit: ``encode._pack_scales`` refuses
-    a width that is not a whole number of S6b groups -- a group's two halves
-    share one base exponent within one octave, so a group spanning two rows
-    would couple unrelated magnitudes (tessera#57).  The *writer* refuses only
-    the weaker ``half``-group rule (``build_unit_artifact``, tessera#56), so a
-    unit assembled without going through ``encode_unit`` can still be written
-    and parsed at an off-group width (tessera#260) -- which is precisely why
-    the cutter is asked about one and has to answer.
+    No Tessera *encoder* produces such a unit, and since tessera#260 no Tessera
+    *writer* accepts one either: ``encode._pack_scales`` and
+    ``unit_artifact.build_unit_artifact`` refuse an S6b width that is not a
+    whole number of 32-weight groups from one ``grammar.require_scale_groups``
+    -- a group's two halves share one base exponent within one octave, so a
+    group spanning two rows would couple unrelated magnitudes (tessera#57) --
+    and the writer refuses the weaker ``half``-group rule on the other block
+    plane (tessera#56).  A cutter is nonetheless handed an ``EncodedUnit`` and
+    not an artifact, and a unit restricted by hand passes no writer at all, so
+    the question is still asked here and still has to be answered.
     """
     return block is not None and bool(columns % block)
 

@@ -32,6 +32,7 @@ from .grammar import (
     RELEASE_BITS,
     require_column_groups,
     require_release_defined,
+    require_scale_groups,
     completion_capacity,
     completion_limit_from_elements,
     completion_widths as completion_widths_for,
@@ -460,6 +461,18 @@ def build_unit_artifact(
     # artifacts.
     if plane_kind is not ScalePlaneKind.CHANNEL:
         require_column_groups(cols, int(unit.half))
+    # An S6b plane owes the stronger rule too, and owes it HERE for the same
+    # reason: a group's two halves share one base exponent within one octave,
+    # so a group that begins in one output row and ends in the next couples
+    # magnitudes nothing relates (tessera#57).  ``encode._pack_scales`` refuses
+    # it, but an ``EncodedUnit`` does not have to come from ``encode_unit`` --
+    # ``parse_unit_artifact`` rebuilds one from planes, ``slice_unit`` returns
+    # one, a caller can restrict one by hand -- so the encoder's refusal is not
+    # the wire's, and a 48-column S6b unit wrote, parsed and decoded while
+    # ``slicing._slice_block_plane`` refused every cut of it including the
+    # identity slice (tessera#260).  Same function, same words, one rule.
+    if plane_kind is ScalePlaneKind.S6B:
+        require_scale_groups(cols, int(unit.group))
     if plane_kind is ScalePlaneKind.LUT:
         if unit.scale_lut is None:
             raise GrammarError("a LUT scale plane needs the unit's table")
@@ -761,6 +774,31 @@ def parse_unit_artifact(blob: bytes, device="cpu") -> ParsedUnit:
     manifest, terminal = art.manifest, art.terminal
     geometry, rates = manifest.geometry, manifest.rates
     rows, cols = geometry.rows, geometry.columns
+    # #57's rule, read back.  An S6b artifact at a width that is not a whole
+    # number of groups is byte-self-consistent -- every hash agrees with it --
+    # so the writer's gate cannot be the only one: an artifact from a
+    # nonconforming encoder is refused here, at acceptance, rather than handed
+    # back as a unit no consumer can cut (``slicing._slice_block_plane``
+    # refuses every cut of it, the identity slice included) and whose
+    # base-scale groups pair two unrelated output rows under one exponent
+    # (tessera#260, the shape of tessera#208's reserved SCALE_BASE word).  It
+    # orphans nothing: every S6b artifact this encoder has written went
+    # through ``encode._pack_scales``, which refuses the same widths, and each
+    # committed legacy fixture is a whole number of groups.  Before the body
+    # branch, because a WINDOW body carries the same block plane.  Through the
+    # same ``grammar.require_scale_groups`` the encoder and the writer call.
+    #
+    # #56's weaker rule owes the reader the same, and for the same reason --
+    # its three homes were the writer, the materialiser and the kernel lane,
+    # and none of them is asked before ``reconstruct_unit`` returns weights
+    # whose halves straddle two output rows.  Both calls, in the writer's own
+    # order, so an artifact is refused with the words the writer would have
+    # refused it with.  A CHANNEL plane carries one word per output row and no
+    # per-half plane, so the rule is vacuous there exactly as at write.
+    if manifest.scale_plane.kind is not ScalePlaneKind.CHANNEL:
+        require_column_groups(cols, geometry.half_weights)
+    if manifest.scale_plane.kind is ScalePlaneKind.S6B:
+        require_scale_groups(cols, geometry.group_weights)
 
     chunks = {}
     for descriptor, offset, content, _total in plane_ranges(manifest, terminal):
