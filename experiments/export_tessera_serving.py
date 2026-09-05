@@ -1579,8 +1579,11 @@ def main():
     module_records: dict[str, dict] = {}
     twin_modules: dict[str, list[str]] = {NVFP4: [], FP8: [], BF16: []}
     twin_records: dict[str, dict] = {}
-    ignore = (["lm_head", "model.embed_tokens"]
-              if args.partition is None or args.partition[0] == 0 else [])
+    # No seed: every ignored module is named from the tensor that was passed
+    # through (the loop below), under whatever layout the checkpoint has; a
+    # hard-coded ``model.embed_tokens`` named a module a nested checkpoint does
+    # not have and said nothing about the one it does (#139).
+    ignore: list[str] = []
     passthrough_bytes = 0
     weights_cache: dict[str, torch.Tensor] = {}
     done = 0
