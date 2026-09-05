@@ -10,6 +10,7 @@ from tessera.fused import (
     FusedMember,
     pack_fused,
     parse_fused,
+    shared_input_global_scale,
     shared_lut_global,
 )
 
@@ -169,3 +170,27 @@ def test_the_reader_refuses_a_member_its_writer_could_not_have_written():
     bad_utf8[_HEADER.size + _MEMBER.size] = 0xFF
     with pytest.raises(GrammarError, match="UTF-8"):
         parse_fused(bytes(bad_utf8))
+
+
+def test_the_fused_a_side_scale_is_the_min_member_scale():
+    """``input_global_scale`` is capacity/amax -- inverse in the activation
+    range -- and the fused GEMM's one input tensor spans every member's range,
+    so the join is the MIN member scale (the largest calibrated amax).  A max
+    would pick the smallest range and clip the rest."""
+    assert shared_input_global_scale([4.0], ["q"]) == 4.0
+    ulp = 2.0 ** -7
+    assert shared_input_global_scale(
+        [4.0, 4.0 * (1.0 + ulp), 4.0], ["q", "k", "v"]) == 4.0
+
+
+def test_a_member_scale_the_route_would_refuse_is_refused_here_by_name():
+    """The same predicate the NVFP4 route's load gate applies (finite and
+    positive -- ``not (nan > 0)`` catches the unloaded sentinel), applied
+    where the bytes are decided, naming the member."""
+    for bad in (0.0, -1.0, float("nan"), float("inf")):
+        with pytest.raises(GrammarError, match="k_proj"):
+            shared_input_global_scale([4.0, bad], ["q_proj", "k_proj"])
+    with pytest.raises(GrammarError, match="at least one"):
+        shared_input_global_scale([], [])
+    with pytest.raises(GrammarError, match="one name per scale"):
+        shared_input_global_scale([4.0, 4.0], ["q_proj"])

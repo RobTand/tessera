@@ -30,7 +30,8 @@ import torch
 
 from .errors import GrammarError
 
-__all__ = ["FUSED_MAGIC", "FusedMember", "pack_fused", "parse_fused", "shared_lut_global"]
+__all__ = ["FUSED_MAGIC", "FusedMember", "pack_fused", "parse_fused",
+           "shared_input_global_scale", "shared_lut_global"]
 
 FUSED_MAGIC = b"TSRFUSE1"
 _VERSION = 1
@@ -220,3 +221,37 @@ def shared_lut_global(
         "E4M3 normals: "
         + ", ".join(f"{g:g} fails on {n}" for g, n in failures.items())
     )
+
+
+def shared_input_global_scale(scales: "list[float]", names: "list[str] | None" = None) -> float:
+    """One A-side static scale for a fused module: the MIN member scale.
+
+    ``input_global_scale`` is capacity over amax.  The NVFP4 route hands the
+    value unmodified to vLLM's native quantiser, which stores each group-16
+    block scale as ``e4m3(block_amax / 6 * scale)`` clamped at 448 -- so a
+    value too LARGE for the tensor's true amax saturates the stored block
+    scale and every activation above ``448 * 6 / scale`` clips silently,
+    while a value too small only spends block-scale precision.  A fused
+    module's one GEMM quantises ONE input tensor for every member, so the
+    module carries the scale of the largest calibrated amax: the minimum
+    member scale.  (vLLM's stock compressed-tensors scheme reduces member
+    scales with ``.max()`` -- the clipping direction -- but only over
+    checkpoints whose calibrators already unified the members, warning when
+    they differ: a degenerate no-op over equal values, not a join rule.
+    PrismaQuant's ``unify_fused_sibling_input_global_scales`` states the same
+    min-scale / max-amax rule at calibration time.)
+    """
+    if not scales:
+        raise GrammarError("shared_input_global_scale needs at least one member scale")
+    names = names or [f"member{i}" for i in range(len(scales))]
+    if len(names) != len(scales):
+        raise GrammarError("shared_input_global_scale needs one name per scale")
+    values = []
+    for name, value in zip(names, scales):
+        value = float(value)
+        if not (value > 0.0 and math.isfinite(value)):
+            raise GrammarError(
+                f"{name}: input_global_scale must be a finite positive scalar "
+                f"(the route's load gate refuses anything else), got {value!r}")
+        values.append(value)
+    return min(values)

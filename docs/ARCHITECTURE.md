@@ -182,6 +182,23 @@ and the converter's `fused_key` delegates to it rather than restating two of
 its rows (tessera#211), so the plan-time fused check and the export-time one
 read one rule.
 
+One A-side value binds the same roster. A W4A4 module's
+`trellis_input_global_scale` is the **minimum** of its members' donated
+`input_global_scale`s (`tessera.fused.shared_input_global_scale`, the join's
+one home): the route hands the value unmodified to vLLM's native quantiser,
+which stores each group-16 block scale as `e4m3(block_amax/6 x scale)` clamped
+at 448, so the value is capacity/amax -- inverse in the activation range --
+and the min member scale is the largest calibrated amax, the range the fused
+GEMM's one input tensor actually spans. A max-join picks the smallest
+calibrated range and silently clips every wider member's peak activations;
+the exporter took the max until RobTand/prismaquant#196 flagged the
+divergence against PrismaQuant's `unify_fused_sibling_input_global_scales`
+(min-scale = max-amax, the same rule at calibration time). The stock twin
+carries the joined value on every member for the same reason: vLLM reduces
+whatever the members carry into one scale per fused module -- warning, not
+refusing, when they differ -- and the twin exists to execute the A side this
+export serves.
+
 ### 2.1 Whole-layer export parts have one checked assembly
 
 `export_tessera_serving.py --partition INDEX/COUNT` gives a complete decoder

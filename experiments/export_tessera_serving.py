@@ -151,7 +151,7 @@ from tessera.bf16_route import BF16_FAMILY  # noqa: E402
 from tessera.export import (  # noqa: E402
     DEFAULT_CODE, DEFAULT_LDLQ_BLOCK, DEFAULT_LDLQ_SIGMA,
     ActivationSource, encode_linear_planes, wire_recipe)
-from tessera.fused import pack_fused, shared_lut_global  # noqa: E402
+from tessera.fused import pack_fused, shared_input_global_scale, shared_lut_global  # noqa: E402
 from tessera.serving.contract import (  # noqa: E402
     PAYLOAD_FAMILY_BY_ROUTE, classify_construction, construction_entry,
     load_serving_contract)
@@ -1847,12 +1847,23 @@ def main():
                 shared, _moved = shared_lut_global(
                     [u.scale_lut for _, _, _, u, _ in roles], [float(u.scale_global) for _, _, _, u, _ in roles],
                     [r for r, *_ in roles])
-                # the A-side static scale: vLLM's NVFP4 scheme takes the MAX over fused shards
+                # The A-side static scale is ONE value per fused module and it
+                # is the MIN over members (``fused.shared_input_global_scale``,
+                # the join's one home): the route hands the value unmodified to
+                # vLLM's quantiser, which stores ``e4m3(block_amax/6 * scale)``
+                # clamped at 448 -- capacity/amax, INVERSE in the activation
+                # range -- so the min member scale is the largest calibrated
+                # amax, the range the fused GEMM's one input tensor actually
+                # spans.  The MAX this used to take (copied from vLLM's stock
+                # scheme, where it only reduces an already-unified checkpoint)
+                # picks the SMALLEST calibrated range and silently clips the
+                # rest (RobTand/prismaquant#196).
                 scale_keys = [f"{module_of(m)}.input_global_scale" for m in members]
                 missing = [k for k in scale_keys if k not in input_scales]
                 if missing:
                     raise SystemExit(f"no {missing} in {args.input_scales}; W4A4 cannot serve {module}")
-                a_scale = max(input_scales[k] for k in scale_keys)
+                a_scale = shared_input_global_scale(
+                    [input_scales[k] for k in scale_keys], scale_keys)
                 shard_payload[f"{module}.trellis_input_global_scale"] = torch.tensor([a_scale], dtype=torch.float32)
                 record.update({"shared_global": shared, "input_global_scale": a_scale,
                                "resident_bytes_resident_mode": rows_total * cols // 2 + rows_total * cols // 16})
@@ -1861,8 +1872,13 @@ def main():
                     for m in members:
                         for key, value in moved[module_of(m)].items():
                             twin_payload[f"{module_of(m)}.{key}"] = value.cpu()
+                        # The joined value on EVERY member, not each member's
+                        # own: vLLM reduces whatever the members carry into
+                        # one scale per fused module (warning, not refusing,
+                        # when they differ), and the twin exists to execute
+                        # the same A side this export serves.
                         twin_payload[f"{module_of(m)}.input_global_scale"] = torch.tensor(
-                            [input_scales[f"{module_of(m)}.input_global_scale"]], dtype=torch.float32)
+                            [a_scale], dtype=torch.float32)
                     record["twin_shared_divisor"] = divisor
             elif family == BF16:
                 # Resident here is the DECODED tile -- 16 bits a weight, the
