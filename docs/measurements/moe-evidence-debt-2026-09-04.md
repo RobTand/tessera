@@ -68,10 +68,12 @@ full-vocabulary KL with the instruments this repository holds.
    but the MoE cells are the ones whose architecture class the population is
    meant to represent.
 
-**The unexplained observation.** The greedy smoke returned repetitive `France is`
-text. The campaign refused to attribute that to quantization without a matched
-BF16 prompt, and no matched prompt has been run. Until one is, the word
-`repetitive` in the contract names an observation with no control.
+**The observation that was unexplained.** The greedy smoke returned repetitive
+`France is` text, and the campaign refused to attribute that to quantization
+without a matched BF16 prompt. Section 7 runs that prompt: the BF16 source
+returns the identical completion, so the repetition is the model and the prompt,
+not the quantization. The word `repetitive` in the contract is still a true
+description of what came back; it is no longer a concern about the artifact.
 
 ---
 
@@ -83,14 +85,14 @@ against the BF16 teacher and 63.8 s against the student, and the whole
 census and student PrismaBuild actions ran 201.9 s and 285.5 s including model
 load and cleanup.
 
-### Leg 0: a matched BF16 greedy smoke
+### Leg 0: a matched BF16 greedy smoke -- RUN, see section 7
 
-- **Cost:** none beyond a serve that is already up for another leg. One request.
-- **Proves:** whether the repetitive output is the quantization or the model.
-- **Changes:** `evidence.smoke.status` on both MoE cells, from `repetitive` to
-  `recorded`, if BF16 repeats the same way.
-- **Rank rationale:** the only leg that can *remove* a flagged concern rather than
-  add a number, and it is free when piggybacked.
+- **Cost, as run:** one serve, 110 s to load plus one request.
+- **Proved:** the repetition is the model and the prompt. BF16 returns the
+  identical completion.
+- **Changed:** nothing in the contract. `repetitive` still describes the
+  completion accurately, so the status word stands; the control reaches a reader
+  through the campaign receipt the cells already name, which now points here.
 
 ### Leg A: a decode-regime top-1024 bound on the MoE artifact
 
@@ -102,12 +104,11 @@ load and cleanup.
 - **Changes:** `tessera_e4m3_k1_routed_moe_sm121_decode_resident.evidence.grade`
   from `route_only` to `kl_lower_bound` -- the same grade as the best-evidenced
   decode cell in the table.
-- **Feasibility gate, checked:** the decode regime proves M=1 from
-  `usage.prompt_tokens_details.cached_tokens` and refuses otherwise, so it needs
-  vLLM's prefix cache. Both LFM serves in the EUGR image report
-  `enable_prefix_caching=True` with `Mamba cache mode is set to 'align' for
-  Lfm2MoeForCausalLM`, so the mechanism is available on this architecture.
 - **Rank rationale:** the cheapest leg that moves a `grade`.
+- **BLOCKED, measured.** The attempt and its cause are in section 6. The decode
+  regime cannot reach M=1 on this hybrid conv/SSM architecture with the
+  instrument as written; the fix is a small, opt-in change to `kl_tool`'s decode
+  sweep, and the cost above holds once it exists.
 
 ### Leg B: a compiled-mode census and prefill KL
 
@@ -191,9 +192,106 @@ state of affairs today.
 
 ---
 
-## 5. What this receipt does not do
+## 5. Where these serves ran, and why there
 
-It records no new measurement. Every number above is read from
-`tessera-lfm-campaign-2026-09-04.md`, from `src/tessera/serving/runtime_contract.json`,
-or from the two LFM serve logs under `/mnt/shared/tessera-runs/ts5/lfm25/`. It
-does not change any cell's `qualification`, `grade`, or `route_status`.
+On **sparky**, deliberately. The two cells name
+`eugr/spark-vllm@sha256:0afec8d4f79f44685a1ddf758659d33aef3b0f3ec9068e5a7cd1108d30e5581c`
+as their `runtime.image`, and sparky is the only box holding that manifest
+digest -- sparklina holds `sha256:58862b38...`, three weeks older. A measurement
+taken on another digest attests a different runtime and cannot enter these
+cells' evidence blocks, so "run it on the idle box" is not available here.
+Sparky's GPU was idle for the duration (`nvidia-smi`: 0% utilisation, 4 W, no
+compute processes); its load average was CPU. One serve at a time, under
+`experiments/serve_lock.sh`.
+
+## 6. Leg A is blocked: the decode regime cannot reach M=1 on this architecture
+
+The first attempt refused at the second scored position:
+
+```
+position 1: the serve forwarded 17 rows, not 1 (17 prompt tokens, 0 from the prefix cache).
+Refusing: a dump taken at M>1 is a prefill-regime dump wearing a decode-regime label.
+```
+
+That refusal is correct and the tool is right to make it. Two explanations fit --
+the stride does not match the serve's KV block size, or the hybrid model does not
+reuse blocks -- and `experiments/hybrid_prefix_cache_probe.py` separates them in
+one serve. Against the BF16 source on the pinned image, issuing the decode
+regime's own request shapes strictly sequentially:
+
+| request | prompt tokens | cached tokens | rows forwarded |
+|---|---:|---:|---:|
+| warm-up, whole chunk | 513 | 0 | 513 |
+| L=17 | 17 | 0 | 17 |
+| L=33 | 33 | 16 | 17 |
+| L=65 | 65 | 32 | 33 |
+| L=129 | 129 | 64 | 65 |
+| L=257 | 257 | 128 | 129 |
+| L=385 | 385 | 256 | 129 |
+| L=512 | 512 | 384 | 128 |
+| **L=129, repeated** | 129 | **128** | **1** |
+| **L=129, repeated again** | 129 | **128** | **1** |
+| whole chunk, repeated | 513 | 512 | 1 |
+
+Neither explanation is right, and the third one the table shows is the answer.
+The serve reports `block_size="16"`, `mamba_block_size="16"`,
+`enable_prefix_caching="True"`, `mamba_cache_mode="align"`, and 1,648 prefix-cache
+hits over 2,682 queries, so caching is on and the stride is correct. What a
+request can resume from is **the end state of a request the serve has already
+answered**, aligned down to a 16-token block -- not any interior block boundary of
+a longer prefill. Read the middle rows in order and each one resumes from its
+predecessor's end: L=33 from 17 aligned to 16, L=65 from 33 aligned to 32, and so
+on. The decode sweep visits L = 1, 17, 33, ... exactly once each, so every scored
+request resumes from a state 17 tokens behind it and forwards 17 rows. The
+warm-up's 513-token prefill leaves attention blocks behind but no resumable SSM
+state at an interior position, which is why the first scored position sees zero.
+
+**The fix, and it is small.** The last three rows show M=1 is reachable: a request
+whose prefix the serve has *answered before* resumes at `L-1`. So the decode
+sweep needs to issue each scored request twice and score the second, or issue a
+priming request for `full[:L-1]` first. Either makes M = 1 for every L in the
+existing stride-16 position set, at twice the requests -- the dump is HTTP-bound
+and cheap, so the wall-clock cost is minutes.
+
+This is not changed here. `kl_tool.py` lives outside this repository, at
+`/home/rob/dq-runs/kl_tool.py`, and several agents were running against it; a
+change to a shared instrument belongs in its own reviewed step, behind an opt-in
+flag so the #102 receipt still reproduces byte for byte. Filed as its own issue.
+
+**Scope.** The failure is a property of hybrid conv/SSM models, so it does not
+touch the dense decode-regime receipts (`tessera-decode-regime-kl-2026-09-03.md`,
+`tessera-compiled-decode-kl-r6-2026-09-04.md`), which are attention-only Qwen
+artifacts where a single request already resumes at `L-1`.
+
+## 7. Leg 0 is run: the repetitive smoke is the model
+
+The campaign recorded the Tessera student answering `The capital of France is`
+with repetitive text and refused to attribute it to quantization without a
+matched BF16 prompt. That prompt, byte for byte from
+`experiments/tessera_plugin_served.sh:108`
+(`{"prompt": "The capital of France is", "max_tokens": 16, "temperature": 0}`),
+against `/mnt/shared/models/LFM2.5-8B-A1B-BF16` on the same pinned image, eager,
+`--enforce-eager`, no speculative decoding:
+
+| arm | completion |
+|---|---|
+| Tessera E4M3/q1024 student (campaign, 2026-09-04) | `' France is France is France is France is France is France is France is France is'` |
+| **BF16 source (this receipt)** | `' France is France is France is France is France is France is France is France is'` |
+
+The two completions are identical, character for character. **The repetition is
+the model and the prompt, not the quantization.** A greedy 16-token continuation
+of a five-word prompt on an 8B A1B base model is not a quality signal in either
+direction, and this pair says so rather than leaving the word `repetitive` in the
+contract to be read as a defect.
+
+Serve log: `/home/rob/tessera-runs/ts133/serve_smoke.log`. Probe output:
+`/home/rob/tessera-runs/ts133/smoke.log`.
+
+## 8. What this receipt does not do
+
+It changes no cell's `qualification`, `grade`, `route_status`, or `evidence`
+block. The two measurements it adds are a control (section 7) and a blocker
+diagnosis (section 6); neither is a KL number, and neither promotes anything.
+Every other number is read from `tessera-lfm-campaign-2026-09-04.md`, from
+`src/tessera/serving/runtime_contract.json`, or from the LFM serve logs under
+`/mnt/shared/tessera-runs/ts5/lfm25/`.
