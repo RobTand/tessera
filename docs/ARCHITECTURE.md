@@ -541,6 +541,59 @@ the contract `tessera.serving_parts` already holds a serving part to:
   byte is copied or a config written; the merged config's `source` is the
   whole-source identity the parts were proved against.
 
+**A completed output is immutable, and its bytes are sealed** (tessera#337).
+Everything above proves what went *in*, or is name-, header- and
+manifest-shaped. None of it bound the bytes on disk to the export that sealed
+them, and `export_checkpoint_streaming` reused a completed output directory:
+it wrote each shard over its old file and replaced the index and config only
+after the last one succeeded. A retry that failed part way therefore left NEW
+shards beside the OLD index, config and `source` seal — which still verified,
+because it describes the input — and valid replacement blobs for the same
+named unit at the same rung and shape passed every check the merge had. The
+merge accepted that mixture and republished it under the original checkpoint's
+identity: measured on CPU with real E2M1x2 q896 encodes, a two-shard export
+whose retry failed on its second unit exited 0 and decoded to
+`[9.0, 1.03125]` against the `[1.03125, 1.03125]` its own published config
+prices. Two things close it, and the second is why the first is not enough:
+
+* **Immutability, at the exporter.** An `out_dir` that already holds a
+  `tessera_config.json` is refused by name (`FileExistsError`) before the
+  source is read, a unit encoded or a byte replaced, so the previous complete
+  artifact survives a retry untouched and a retry names a fresh destination.
+  A directory holding no config was never a complete artifact — an earlier run
+  died before sealing it — and is still written into: that run either
+  completes it or leaves it unsealed, which the merge and reader already
+  refuse. The in-memory `export_checkpoint` has no such window (it replaces
+  its one file whole or not at all) and is unchanged.
+* **The output seal, at the merge.** Every part's `tessera_config.json`
+  carries `output`: `serving_parts.output_part_identity` — one sha256 per
+  shard *this run wrote*, under `schema: tessera.output-part.v1`, taken as
+  each shard is finished rather than in a second pass, so it seals what the
+  run wrote and not what is on disk when the config lands.
+  `check_assembly` hashes the part's shards and holds them to that stamp,
+  after the source proof and **before** it opens a blob — the bytes are proved
+  to be the sealed bytes before anything interprets them. A part with no
+  `output` block is refused like an unsealed one, because `source` cannot
+  vouch for the output and a receipt that does not exist proves nothing. This
+  is the mechanism `merge_serving_parts` already had
+  (`export_partition.output_sha256`, verified before a byte is copied), which
+  is why the modern serving-part path was never exposed: it also refuses a
+  destination that exists at all. `output` is a `tessera_config.json` receipt
+  field and not on the artifact wire, and it is `CONFIG_PER_PART_FIELDS`, so
+  `check_configs` neither compares it across parts (two honest parts stamp
+  different digests) nor mistakes it for a driver's key. The merged
+  checkpoint's `output` is the union of the parts' verified seals, over files
+  copied unchanged.
+
+**What an operator does differently:** re-exporting into a checkpoint directory
+that already exists now refuses. Export to a fresh directory and swap, or
+delete the old one first. And parts exported before this stamp — including any
+cut between tessera#300 and tessera#337 — are refused by the legacy merge until
+re-exported; nothing about them is known to be wrong, but nothing can say which
+bytes survived in their output directories, which is the whole finding. The
+151 GiB GLM export predates tessera#300 and was already refused as unsealed, so
+this adds no cost there.
+
 ## 3. Bytes: priced == served
 
 Every artifact the exporter writes has exactly one legal length: the encoder
