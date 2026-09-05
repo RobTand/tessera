@@ -367,6 +367,67 @@ def test_grid_digest_is_stable_across_equal_grids():
     assert grid_digest(again) == grid_digest(E2M1_GRID)
 
 
+def test_key_boundaries_cannot_be_shuffled_into_a_registered_digest():
+    """tessera#221: ``grid_digest`` hashes the keys map *flat*, recovering the
+    per-key boundaries from ``arity`` and ``partition``, which it also hashes.
+    That recovery is only sound if every key's length is fixed by those two
+    fields -- so a keys map that redistributes entries across key boundaries
+    (same flattened sequence, different rank vectors) must be refused at
+    construction.  Before the refusal, the shuffled copy of E2M1 below shared
+    E2M1's exact digest, passed the serialisation registry gate, and
+    ``read_unit_artifact`` resolved its artifact back to the *registered*
+    E2M1 grid: 248 of 256 weights decoded differently, silently.
+    """
+    keys = list(E2M1_GRID.keys)
+    keys[0] += keys[1]
+    keys[1] = ()
+    with pytest.raises(GrammarError, match=r"keys\[0\]"):
+        dataclasses.replace(E2M1_GRID, keys=tuple(keys))
+
+    # The same rule holds at arity 2: a pair grid's rank vectors are one rank
+    # per tuple lane, so a one-rank key is a hole in the digest's boundary
+    # recovery and is refused by name.
+    pair = tuple_grid(E2M1_GRID, 2)
+    ragged = list(pair.keys)
+    ragged[0] = ragged[0][:1]
+    ragged[1] = ragged[1] + (0,)
+    with pytest.raises(GrammarError, match=r"keys\[0\]"):
+        dataclasses.replace(pair, keys=tuple(ragged))
+
+
+def test_tree_partition_keys_stay_one_dimensional():
+    """The tree partition's key IS the tree order -- one rank per code
+    whatever the arity (``learn_tree_codebook``).  The key grammar must keep
+    admitting that shape while refusing it everywhere else."""
+    tree = PayloadGrid(
+        "tree4",
+        values=(-1.0, -0.5, -0.25, 0.0, 0.25, 0.5, 0.75, 1.0),
+        arity=2,
+        keys=((0,), (1,), (2,), (3,)),
+        partition="tree",
+    )
+    assert grid_digest(tree)
+    with pytest.raises(GrammarError, match=r"keys\[0\]"):
+        dataclasses.replace(tree, keys=((0, 1), (1,), (2,), (3,)))
+
+
+def test_registered_grid_digests_are_pinned_wire_identity():
+    """The registry docstring calls every entry "a permanent wire commitment":
+    ``encoder_profile_id`` absorbs these digests, so a digest that moves
+    re-keys every artifact already on disk.  Measured history, computed at
+    d52e1ac and never edited -- the roster is pinned because the roster *is*
+    the decision (tessera#221 fixed the key-boundary collision without moving
+    any of these)."""
+    from tessera.alphabet import SERIALISABLE_GRIDS
+
+    assert {grid.name: digest for digest, grid in SERIALISABLE_GRIDS.items()} == {
+        "E2M1": "af03109e6fdc1fda01c2fcb96451562e4de723d2905475969c4d8e771dccbc86",
+        "E2M1x2": "514a7213611e0c7a9e4d8971f9c9182a265fa4705cd68667829748f4f8123a15",
+        "E4M3": "c089dac6522dbe0687f835eb48e593e37a34ffeea2a8aa62cfdaa9ed08442652",
+        "BF16": "04bbd1a1b59d9fa5d761bc660c5d3133e989e02fdc99bb48668b1f5e703b6815",
+    }
+
+
 def test_lloyd_max_grid_is_deterministic_and_sorted():
     first, second = lloyd_max_grid(16), lloyd_max_grid(16)
     assert first.values == second.values
