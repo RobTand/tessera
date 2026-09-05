@@ -58,11 +58,20 @@ _STALE = (
     "what makes the drift dangerous rather than merely inconvenient."
 )
 
-if '"--regime"' not in (KL_TOOL_DIR / "kl_tool.py").read_text():
-    raise RuntimeError(_STALE.format(
-        dir=KL_TOOL_DIR,
-        why="kl_tool.py has no --regime flag, so every test below would fail "
-            "in argparse rather than in the behaviour it is checking (#102)"))
+_SOURCE = (KL_TOOL_DIR / "kl_tool.py").read_text()
+for _flag, _why in (
+    ('"--regime"',
+     "kl_tool.py has no --regime flag, so every test below would fail in "
+     "argparse rather than in the behaviour it is checking (#102)"),
+    ('"--decode-prime"',
+     "kl_tool.py has --regime but not --decode-prime, so it cannot reach M=1 "
+     "on a hybrid conv/SSM serve at all -- it refuses there rather than "
+     "producing a wrong number, which is the right failure and an unusable "
+     "instrument for #192's five tests below, every one of which is about "
+     "that prime"),
+):
+    if _flag not in _SOURCE:
+        raise RuntimeError(_STALE.format(dir=KL_TOOL_DIR, why=_why))
 
 
 def _load(name):
@@ -409,3 +418,180 @@ def test_fingerprint_ignores_the_wall_clock_and_pins_the_regime(tmp_path):
     kl_tool.write_payload(tmp_path / "four", second, ids, lps2)
     assert (kl_tool.payload_fingerprint(tmp_path / "four.npz")["fingerprint"]
             != fp2["fingerprint"])
+
+
+# --------------------------------------------------------------------------
+# the hybrid conv/SSM serve, and the prime that reaches M=1 on it (#192)
+# --------------------------------------------------------------------------
+class HybridServe(FakeServe):
+    """A serve whose recurrent state resumes only from an ANSWERED request.
+
+    ``FakeServe`` models an attention-only serve: any prefix of anything the
+    serve has ever forwarded is cached, so a scored request always resumes at
+    ``L-1``.  A hybrid conv/SSM model under vLLM's ``mamba_cache_mode=align``
+    does not work that way, and the difference is the whole of tessera#192.
+
+    This is a rule FITTED TO MEASUREMENT, not vLLM's algorithm, which this
+    repository may not assert (AGENTS.md: a claim about another runtime is
+    attested or refused).  Answering a request over ``P`` leaves one resumable
+    state, at ``len(P)-1`` tokens and keyed by them, and only when ``len(P)-1``
+    is a whole number of blocks; a later request resumes from the longest such
+    state that is a prefix of it.  Two consequences are the ones under test:
+    a long warm-up prefill leaves nothing an interior prefix can resume from,
+    and a prefix the serve has already answered resumes at ``L-1``.
+
+    It reproduces every row measured on LFM2.5-8B-A1B BF16 against
+    ``eugr/spark-vllm@sha256:0afec8d4...`` in
+    ``docs/measurements/hybrid-decode-prime-2026-09-05.md`` except one, named
+    there: repeating a prefix whose length is an exact multiple of the block.
+    The sweep issues no such request -- every scored prefix is ``1 mod
+    stride`` -- so the residue is outside what this fake is used for.
+    """
+
+    def __init__(self, *, block=STRIDE, **kw):
+        super().__init__(**kw)
+        self.block = block
+        self.states: dict[tuple, int] = {}
+
+    def _cached(self, prompt):
+        best = 0
+        for key, length in self.states.items():
+            if length <= len(prompt) - 1 and tuple(prompt[:length]) == key:
+                best = max(best, length)
+        return best
+
+    def _remember(self, prompt):
+        length = len(prompt) - 1
+        if length and length % self.block == 0:
+            self.states[tuple(prompt[:length])] = length
+
+    def post(self, url, json=None, timeout=None):  # noqa: A002
+        prompt = json["prompt"]
+        self.cached = self._cached(prompt)
+        try:
+            return super().post(url, json=json, timeout=timeout)
+        finally:
+            self._remember(prompt)
+
+
+def _hybrid(monkeypatch):
+    fake = HybridServe()
+    monkeypatch.setitem(sys.modules, "requests", fake)
+    return fake
+
+
+def test_decode_regime_refuses_on_a_hybrid_serve_and_names_the_prime(
+        tmp_path, monkeypatch):
+    """The blocker, reproduced: caching is on, the stride is right, M is not 1.
+
+    The refusal itself is correct and must stay.  What it may not do is name
+    only the two causes that were false here -- a wrong stride and prefix
+    caching being off -- because that is what sent the first attempt to spend
+    a serve on the two hypotheses the probe then ruled out.
+    """
+    fake = _hybrid(monkeypatch)
+    contract = _contract(tmp_path)
+    with pytest.raises(SystemExit) as exc:
+        kl_tool.main(_dump_argv(tmp_path, contract, tmp_path / "d",
+                                "--regime", "decode",
+                                "--decode-stride", str(STRIDE)))
+    message = str(exc.value)
+    assert f"forwarded {STRIDE + 1} rows, not 1" in message
+    assert "mamba_cache_mode" in message
+    assert "--decode-prime" in message
+    # and it refused at the SECOND position: L=1 is a one-row forward anyway
+    scored = [r for r in fake.requests if "logprobs" in r]
+    assert [len(r["prompt"]) for r in scored] == [1, 1 + STRIDE]
+
+
+def test_decode_prime_reaches_m1_on_a_hybrid_serve(tmp_path, monkeypatch):
+    fake = _hybrid(monkeypatch)
+    contract = _contract(tmp_path)
+    out = tmp_path / "primed"
+    assert kl_tool.main(_dump_argv(tmp_path, contract, out,
+                                   "--regime", "decode",
+                                   "--decode-stride", str(STRIDE),
+                                   "--decode-prime")) == 0
+
+    positions = list(range(1, SEQLEN, STRIDE))
+    meta = json.loads((tmp_path / "primed.meta.json").read_text())
+    regime = meta["regime"]
+    # the scored position set is exactly the unprimed one: priming changes the
+    # cache the scored forward runs against, not the metric.
+    assert regime["name"] == "decode"
+    assert regime["rows_per_scored_forward"] == 1
+    assert regime["prefix_lengths"] == [positions] * N_CHUNKS
+    assert regime["scored_positions"] == N_CHUNKS * len(positions)
+    assert regime["cached_tokens_min"] == 0        # L=1 has nothing to resume
+    assert regime["cached_tokens_max"] == positions[-1] - 1
+
+    prime = regime["prime"]
+    assert prime["enabled"] is True
+    # one prime per scored position except L=1, which is an M=1 forward already
+    assert prime["requests"] == N_CHUNKS * (len(positions) - 1)
+
+    primes = [r for r in fake.requests
+              if "logprobs" not in r and len(r["prompt"]) != SEQLEN]
+    # the prime is the scored prefix ITSELF, issued unscored.  Priming
+    # full[:L-1] is the variant that looks right and was measured not to work.
+    assert [len(r["prompt"]) for r in primes] == [
+        L for _ in range(N_CHUNKS) for L in positions[1:]]
+    # a prime cannot contribute a scored position even by accident
+    assert all("logprobs" not in r and r["max_tokens"] == 1 for r in primes)
+
+    _m, ids, lps = kl_tool.read_payload(str(out) + ".npz")
+    assert ids.shape[0] == N_CHUNKS * len(positions)
+    assert float(lps.max()) <= 0.0
+
+
+def test_the_prime_that_looks_right_is_the_one_that_does_not_work():
+    """Why the prime is ``full[:L]`` and not ``full[:L-1]``, in the fake.
+
+    ``full[:L-1]`` ends exactly on a block boundary, which is the reason to
+    reach for it, and on the pinned serve it leaves 0 cached tokens (3/3
+    lengths).  ``full[:L]`` leaves L-1 (3/3).  Both lines are measured in
+    ``docs/measurements/hybrid-decode-prime-2026-09-05.md``; this pins them
+    against the fake, so a later "simplification" of the prime fails here
+    rather than on a serve.
+    """
+    L = 1 + 2 * STRIDE
+    chunk = list(range(L + 4))
+    for prime_len, expect_cached in ((L - 1, 0), (L, L - 1)):
+        fake = HybridServe()
+        fake.post("u", json={"prompt": chunk[:prime_len], "max_tokens": 1})
+        payload = fake.post("u", json={"prompt": chunk[:L], "max_tokens": 1,
+                                       "logprobs": 8}).json()
+        cached = payload["usage"]["prompt_tokens_details"]["cached_tokens"]
+        assert cached == expect_cached, (prime_len, cached)
+
+
+def test_decode_prime_is_off_by_default_and_moves_no_request(tmp_path, serve):
+    """The dense decode receipts state their served request counts exactly."""
+    contract = _contract(tmp_path)
+    assert kl_tool.main(_dump_argv(tmp_path, contract, tmp_path / "d",
+                                   "--regime", "decode",
+                                   "--decode-stride", str(STRIDE))) == 0
+    expected = []
+    for c in range(N_CHUNKS):
+        chunk = [(c * SEQLEN + i) % VOCAB for i in range(SEQLEN)]
+        expected.append({"model": "kl-target", "prompt": chunk,
+                         "max_tokens": 1, "temperature": 0.0,
+                         "add_special_tokens": False})
+        for L in range(1, SEQLEN, STRIDE):
+            expected.append({"model": "kl-target", "prompt": chunk[:L],
+                             "max_tokens": 1, "temperature": 0.0,
+                             "logprobs": 8, "return_tokens_as_token_ids": True,
+                             "add_special_tokens": False})
+    assert serve.requests == expected
+
+    meta = json.loads((tmp_path / "d.meta.json").read_text())
+    assert meta["regime"]["prime"]["enabled"] is False
+
+
+def test_decode_prime_refuses_outside_the_decode_regime(tmp_path, serve):
+    contract = _contract(tmp_path)
+    with pytest.raises(SystemExit) as exc:
+        kl_tool.main(_dump_argv(tmp_path, contract, tmp_path / "d",
+                                "--decode-prime"))
+    assert "--decode-prime" in str(exc.value)
+    assert "--regime decode" in str(exc.value)

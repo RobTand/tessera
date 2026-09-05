@@ -807,7 +807,15 @@ with no field to say so. The measurements that would thicken it, ranked with
 their costs and with the field each one changes, are in
 `docs/measurements/moe-evidence-debt-2026-09-04.md`; the cheapest that moves a
 `grade` is a decode-regime top-1024 bound on the artifact that already
-exists. Receipt existence is
+exists. That one was blocked and is not any more (tessera#192): on a hybrid
+conv/SSM serve the decode sweep could not reach M = 1 at all, because vLLM
+runs its prefix cache in `mamba_cache_mode=align` there and only a prefix the
+serve has already *answered* is resumable, so a sweep that visits each length
+once resumed one stride behind and forwarded `stride+1` rows. `kl_tool
+--decode-prime` lifts it by issuing each scored prefix once unscored first;
+the teacher half is dumped and fingerprinted on the cells' own digest
+(`docs/measurements/hybrid-decode-prime-2026-09-05.md`). The student dump and
+the compare are still owed, so no `grade` moves yet. Receipt existence is
 `tests/test_cell_evidence.py`'s (the wheel ships no docs); the LAWS tables
 are that file and `tests/test_serving_contract.py`.
 
@@ -1061,6 +1069,17 @@ strong positive result (tessera#83's served leg, tessera#102).
 prefix cache on, so every scored position is an M = 1 forward; the claim is
 checked against the serve's own `usage.prompt_tokens_details.cached_tokens`
 (hence `--enable-prompt-tokens-details`) and refused when it does not hold.
+On an attention-only model that is enough. On a hybrid conv/SSM model it is
+not, and the refusal fires on every position: the recurrent state is resumable
+only from where a request *ended*, so a sweep that visits each prefix length
+once resumes one stride behind itself. `--decode-prime` (off by default, so
+the receipts below reproduce request for request) issues each scored prefix
+once unscored -- warm-up shaped, no `logprobs`, so it cannot be mistaken for a
+scored forward -- before scoring it, and the scored request then forwards one
+row. Priming the *shorter* prefix instead does not work, and a serve started
+with `--mamba-cache-mode all` is not an alternative: vLLM 0.28.1 accepts the
+flag and logs `falling back to 'align' mode`. Both measured in
+`docs/measurements/hybrid-decode-prime-2026-09-05.md`.
 The teacher must be re-dumped in the same regime, and `compare` refuses a
 cross-regime pair outright -- there is no override, because the two regimes
 run different kernels over different position sets.

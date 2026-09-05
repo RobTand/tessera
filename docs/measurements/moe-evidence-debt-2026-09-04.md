@@ -271,6 +271,22 @@ touch the dense decode-regime receipts (`tessera-decode-regime-kl-2026-09-03.md`
 `tessera-compiled-decode-kl-r6-2026-09-04.md`), which are attention-only Qwen
 artifacts where a single request already resumes at `L-1`.
 
+> **Correction, 2026-09-05 (tessera#192).** The recommendation above -- "Prefer
+> the `full[:L-1]` prime" -- was reasoned, not measured, and it is wrong.
+> Measured on the same digest, three fresh chunks at L ∈ {17, 129, 257}:
+> priming `full[:L-1]` leaves the scored request `cached_tokens = 0` and
+> `rows = L`, 3/3; priming `full[:L]` leaves `cached_tokens = L-1` and
+> `rows = 1`, 3/3. A request that ends exactly on a block boundary leaves
+> nothing resumable at that boundary. The histogram objection to re-issuing
+> the scored prefix is answered by shape instead: `kl_tool --decode-prime`
+> sends the prime **warm-up shaped**, with no `logprobs`, so it is not a
+> scored-shape forward and the three request populations stay separable.
+> Two rows of the table above are also from a probe form that repeated at a
+> block multiple; see the receipt for what each repeat length does.
+> `docs/measurements/hybrid-decode-prime-2026-09-05.md` supersedes this
+> section's fix recommendation. The blocker itself, and everything above the
+> "**The fix, and it is small**" paragraph, reproduced exactly.
+
 ## 7. Leg 0 is run: the repetitive smoke is the model
 
 The campaign recorded the Tessera student answering `The capital of France is`
