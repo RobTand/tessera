@@ -94,6 +94,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import NamedTuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from tessera._dev.suite_deadline import positive_seconds as _positive_seconds  # noqa: E402
@@ -367,7 +368,59 @@ def _submit(name: str, arm: dict, args, receipt_dir: Path) -> dict:
 _SHARD_ROLE = "worker-share"
 
 
-def _attach_surface(record: dict, surface_json: Path) -> None:
+class _Publication(NamedTuple):
+    """ONE read of a surface file: its bytes, their digest, and their parse.
+
+    A pathname is not a publication.  A pathname is a name that a pool retry
+    can point at different bytes at two different instants, and this tool read
+    it twice: ``_attach_surface`` parsed the population that the verdict then
+    consumed, and the digest leg of ``_binding_refusal`` re-opened the same
+    name to authenticate it.  Nothing established that the two reads saw one
+    file.  The reachable sequence is a requeue (#340): attempt A publishes a
+    verified population and crashes after its terminal summary; a resume loads
+    A; retry B replaces the file with a population of *equal counts* whose
+    source came out ``unknown`` (a dirty checkout) and exits 0; the resume
+    then hashes B's bytes, accepts B's announced digest, keeps **A's** verified
+    source and producer stamp on the record, adopts B's exit 0, and returns
+    green.  A source-verification bypass assembled out of two honest reads.
+
+    So the bytes are read once and everything downstream comes off that one
+    buffer: ``digest`` is of ``raw`` and ``payload`` is the parse of ``raw``,
+    both computed in ``_read_publication`` and never separately.  There is no
+    constructor that takes a payload someone else parsed, which is the point --
+    the invariant is structural rather than remembered, and a caller cannot
+    hand the reader metadata from one read and a digest from another even by
+    mistake.  ``path`` travels with them because "which publication" is part of
+    the same fact.
+
+    The file is free to change afterwards; that is the pool's business, not a
+    reason to look again.  What this tool then says is a true statement about
+    the publication it read, and ``record["surface_sha256"]`` names which one
+    so a later reader can check for itself.
+    """
+
+    path: Path
+    raw: bytes
+    digest: str
+    payload: dict
+
+
+def _read_publication(surface_json: Path) -> "_Publication | None":
+    """The publication at this path as one snapshot, or ``None`` if absent.
+
+    The only place a surface file is read.  A malformed one still raises, as
+    it always has: a receipt assembled around an unreadable population would
+    be a worse answer than a traceback.
+    """
+
+    if not surface_json.exists():
+        return None
+    raw = surface_json.read_bytes()
+    return _Publication(Path(surface_json), raw, digest_bytes(raw),
+                        json.loads(raw))
+
+
+def _attach_surface(record: dict, surface_json: Path) -> "_Publication | None":
     """Put this arm's published population on the record, or say it has none.
 
     A worker's share is refused rather than read.  It is a real measurement of
@@ -375,24 +428,36 @@ def _attach_surface(record: dict, surface_json: Path) -> None:
     population is how ``docs/status/suite-populations.md`` would come to carry
     206 passed / 108 skipped as an x86 suite result.  An absent measurement is
     honest; a partial one wearing the whole one's name is not.
+
+    Returns the ``_Publication`` whose payload it put on the record, so the
+    caller can hand the *same read* to whatever else needs it rather than
+    re-opening the name (#340).  ``None`` where there is no population to put
+    on the record at all -- absent, or a share -- and a share is ``None`` on
+    purpose: nothing downstream may bind a status to a slice.
     """
 
-    if surface_json.exists():
-        published = json.loads(surface_json.read_text())
-        role = published.get("role")
+    published = _read_publication(surface_json)
+    if published is not None:
+        role = published.payload.get("role")
         if role == _SHARD_ROLE:
             record["surface"] = None
             record["shard_at_population_path"] = str(surface_json)
             record["no_surface_means"] = (
                 f"the file at {surface_json.name} says it is one xdist "
-                f"worker's share ({published.get('worker_id')}), not this "
-                "arm's population. A share is a slice of the run; reporting "
-                "it as the population would put a fraction of a suite in the "
-                "ledger as the whole of it. This is an absent measurement."
+                f"worker's share ({published.payload.get('worker_id')}), not "
+                "this arm's population. A share is a slice of the run; "
+                "reporting it as the population would put a fraction of a "
+                "suite in the ledger as the whole of it. This is an absent "
+                "measurement."
             )
-            return
-        record["surface"] = published
+            return None
+        record["surface"] = published.payload
         record["surface_path"] = str(surface_json)
+        # WHICH bytes the fields above were parsed from.  A resumed receipt is
+        # assembled while the pool may still be writing, so naming the
+        # publication is what lets a later reader check that the record and
+        # whatever is at the path now are the same measurement (#340).
+        record["surface_sha256"] = published.digest
         # Pre-v2 files cannot answer, and the honest reading of one is that the
         # question is open -- not that the answer is "population".
         record["surface_role"] = role or (
@@ -404,7 +469,7 @@ def _attach_surface(record: dict, surface_json: Path) -> None:
         # not the bookkeeping.
         record["measured_utc"] = time.strftime(
             "%Y-%m-%dT%H:%M:%SZ", time.gmtime(surface_json.stat().st_mtime))
-        return
+        return published
     # The distinction that matters: a suite that ran and failed published a
     # surface; one that was never placed, or was refused before collection,
     # did not.  Saying which is the whole value of a receipt.
@@ -414,6 +479,7 @@ def _attach_surface(record: dict, surface_json: Path) -> None:
         "or died before the terminal summary. This is not a pass and not a "
         "fail; it is an absent measurement."
     )
+    return None
 
 
 #: Interpreter basenames the sealed commands run pytest under.  The arms name
@@ -544,9 +610,18 @@ _FINAL_ATTEMPT_STATUSES = ("executed", "failed")
 
 
 def _binding_refusal(key: str, payload: dict, request_bytes: bytes,
-                     outcome: dict, surface_json: Path,
-                     population: dict | None) -> str | None:
+                     outcome: dict,
+                     published: "_Publication | None") -> str | None:
     """Why this finished action's status is not this population's, or ``None``.
+
+    ``published`` is one read of the surface file -- its bytes, their digest
+    and their parse together -- and every leg below reads that one snapshot.
+    This function does not open the path, and it used to: it took the parsed
+    population its caller had read earlier and re-opened the same pathname to
+    hash it, so a retry landing between the two reads had its bytes
+    authenticated while the earlier attempt's source verification and producer
+    stamp stayed on the record (#340).  Two honest reads of one name are not
+    one publication, and the type is what says so.
 
     A status is adopted only from the action the population itself names, for
     the attempt that itself says it published this file.  Each leg is a
@@ -567,8 +642,9 @@ def _binding_refusal(key: str, payload: dict, request_bytes: bytes,
     * the **attempt**: the outcome's top-level status is one the worker
       writes with the final attempt's own ``detail``, and that attempt's
       captured stdout says it published a population at this path -- with the
-      **digest** of the bytes it wrote, which must be the digest of the file
-      that is there now -- and printed the counts this population holds.
+      **digest** of the bytes it wrote, which must be the digest of the
+      publication read above -- and printed the counts that publication
+      holds.
       The pool requeues on any non-zero exit and a retry may die before
       publishing; what tells the attempts apart is what each said it wrote.
       #218 told them apart by a 600 s clock allowance between the file's
@@ -591,9 +667,12 @@ def _binding_refusal(key: str, payload: dict, request_bytes: bytes,
       attempt ever said.
     """
 
+    if published is None:
+        return ("this path holds no population this tool read as one, so "
+                "there is nothing for an action's status to be the status of")
     snapshot = (payload.get("params") or {}).get("checkout_snapshot")
     stamped = snapshot.get("commit") if isinstance(snapshot, dict) else None
-    measured = (population or {}).get("commit")
+    measured = published.payload.get("commit")
     if not stamped:
         return ("the request has no checkout_snapshot.commit, so the tree it "
                 "ran is not established")
@@ -604,7 +683,7 @@ def _binding_refusal(key: str, payload: dict, request_bytes: bytes,
         return (f"the action ran snapshot commit {stamped[:12]} while the "
                 f"population says it measured {measured[:12]}")
 
-    identity = (population or {}).get("source_identity") or {}
+    identity = published.payload.get("source_identity") or {}
     stamps = [entry for entry in (identity.get("excluded_metadata") or [])
               if isinstance(entry, dict) and entry.get("action_key")]
     if not stamps:
@@ -637,29 +716,26 @@ def _binding_refusal(key: str, payload: dict, request_bytes: bytes,
     # The sentence is not restated here: `tessera._dev.surface_publication` is
     # the one home the conftest writes it from, so a reword moves both sides
     # or neither (#331).
-    announced = published_digests(stdout, surface_json, POPULATION)
+    announced = published_digests(stdout, published.path, POPULATION)
     if not announced:
         return (f"the attempt whose status is recorded (attempt {attempt}) "
                 "never said it published a population at this path")
     digests = [value for value in announced if value]
-    if digests:
-        try:
-            held = digest_bytes(Path(surface_json).read_bytes())
-        except OSError as error:
-            return (f"the population at this path cannot be read ({error}), "
-                    f"so the digest attempt {attempt} published is not "
-                    "checkable")
-        if held not in digests:
-            return (f"the attempt whose status is recorded (attempt {attempt}) "
-                    f"published sha256 {digests[0][:12]} at this path and the "
-                    f"file here is {held[:12]}, so the population at this path "
-                    "is not the one that attempt wrote")
+    # Against the publication that was READ, never against the path again: the
+    # bytes the digest authenticates and the metadata the verdict consumes are
+    # the same snapshot or this leg proves nothing about the other legs (#340).
+    if digests and published.digest not in digests:
+        return (f"the attempt whose status is recorded (attempt {attempt}) "
+                f"published sha256 {digests[0][:12]} at this path and the "
+                f"population read here is {published.digest[:12]}, so the "
+                "population this receipt holds is not the one that attempt "
+                "wrote")
     counts, line = _summary_counts(stdout)
     if counts is None:
         return (f"the attempt whose status is recorded (attempt {attempt}) "
                 "printed no terminal summary, so what it published is not "
                 "established")
-    held = (population or {}).get("counts") or {}
+    held = published.payload.get("counts") or {}
     differing = [bucket for bucket in _COMPARED_COUNTS
                  if counts[bucket] != int(held.get(bucket) or 0)]
     if differing:
@@ -672,8 +748,14 @@ def _binding_refusal(key: str, payload: dict, request_bytes: bytes,
 
 
 def _pool_actions_that_wrote(surface_json: Path,
-                             population: dict | None = None) -> tuple[list, list]:
+                             published: "_Publication | None" = None,
+                             ) -> tuple[list, list]:
     """The finished pool actions whose command wrote this population.
+
+    ``published`` is the one read of ``surface_json`` this receipt is about --
+    not the path to read again.  The caller opened it; this hands that same
+    snapshot to every candidate's binding, so no action's status can be
+    authenticated against bytes other than the ones the record carries (#340).
 
     A resumed receipt used to have no exit status at all: the submitting
     process died, so nobody in this program watched the run.  But somebody
@@ -740,7 +822,7 @@ def _pool_actions_that_wrote(surface_json: Path,
             if not isinstance(outcome, dict):
                 continue
             refusal = _binding_refusal(key, request_payload, request_bytes,
-                                       outcome, surface_json, population)
+                                       outcome, published)
             if refusal:
                 refused.append(f"{key[:12]}: {refusal}")
                 continue
@@ -784,7 +866,8 @@ def _cpus_of_command(command: list) -> int | None:
         return None
 
 
-def _attach_pool_exit_status(record: dict, surface_json: Path) -> None:
+def _attach_pool_exit_status(record: dict, surface_json: Path,
+                             published: "_Publication | None") -> None:
     """Let the pool answer the question this process cannot.
 
     Three outcomes, and the two that are not "one action" both leave the row
@@ -802,8 +885,10 @@ def _attach_pool_exit_status(record: dict, surface_json: Path) -> None:
       status to report, so none is reported and the row says how many.
     """
 
-    matches, refused = _pool_actions_that_wrote(surface_json,
-                                                record.get("surface"))
+    # The publication the caller read, not ``record["surface"]`` re-derived
+    # from the path: the record's fields and the bytes a status is
+    # authenticated against must be one snapshot (#340).
+    matches, refused = _pool_actions_that_wrote(surface_json, published)
     if refused:
         record["pool_actions_refused"] = refused
         record["exit_status_note"] += (
@@ -877,8 +962,11 @@ def _resume(name: str, arm: dict, receipt_dir: Path) -> dict:
         ),
     }
     surface_json = receipt_dir / f"surface.{name}.json"
-    _attach_surface(record, surface_json)
-    _attach_pool_exit_status(record, surface_json)
+    # One read, carried forward.  The pool may still be writing this path
+    # while the receipt is assembled, so reading it twice is reading two
+    # possibly different publications and calling them one (#340).
+    published = _attach_surface(record, surface_json)
+    _attach_pool_exit_status(record, surface_json, published)
     return record
 
 
