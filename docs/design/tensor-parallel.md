@@ -114,7 +114,9 @@ supposed to imply it: `slice_unit` refuses a cut whose rates do not sum to
 `root × width` exactly.
 
 **Rotation is refused.** An `R_in`-only unit's rotation blocks are a
-128-column structure a cut would break silently. Nothing ships rotation — it
+blockwise-Hadamard structure a cut would break silently — the block is the
+largest power of two dividing the unit's width, capped at 128
+(`diagonals.rotation_block_for`), and is derived, not stored. Nothing ships rotation — it
 measured dead at 1.003x on the GLM experts, whose inputs are already Gaussian —
 so this costs nothing, but a silent slice of a rotated unit would be garbage.
 
