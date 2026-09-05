@@ -244,6 +244,19 @@ HESSIAN_IDENTITY = ("text_sha256", "fit_tokens", "fit_ids_sha256")
 CAPTURE_CONTEXT = ("model", "seqlen", "source")
 
 
+class _CaptureSeal(NamedTuple):
+    """What ``ActivationSource`` sealed, kept so a later read can be proved
+    against it: the published digest, the identity fields it covered, and one
+    content digest per unit.  ``ActivationSource`` owns neither its mapping
+    nor its tensors (both are the caller's, and the frozen dataclass freezes
+    only the field binding), so the seal is the snapshot and every read is
+    checked against it rather than trusted (tessera#302)."""
+
+    sha256: str
+    identity: "Mapping[str, object]"
+    units: "Mapping[str, str]"
+
+
 def _check_refit_objective(obj: str) -> None:
     """One refit objective spelling, checked where every path can reach it."""
     if not isinstance(obj, str):
@@ -644,6 +657,11 @@ class ActivationSource:
         receives from this call is therefore in ITS working basis, which is
         the one basis convention that also holds trivially for the
         untransformed default.
+
+        The H handed out is proved against the capture seal
+        (``capture_sha256``): the seal is taken on the first read, whichever
+        path reads first, and every unit consumed afterwards must digest to
+        what the seal covered, or this refuses by name (tessera#302).
         """
         key = self.unit_name(tensor_name)
         if key not in self.hessians:
@@ -653,7 +671,9 @@ class ActivationSource:
                 f"weights-only would raise nothing and quietly price a different "
                 f"artifact, so the export refuses instead"
             )
+        seal = self._seal()
         H = self.hessians[key]
+        self._require_sealed_unit(seal, key, H)
         H = H.to(device=device, dtype=torch.float32)
         if H.ndim != 2 or H.shape[0] != H.shape[1] or H.shape[0] != in_features:
             raise GrammarError(
@@ -775,6 +795,101 @@ class ActivationSource:
             ldlq_sigma=sigma, **settings,
         )
 
+    def _sealed_identity(self) -> dict:
+        """The provenance fields the seal covers, read live."""
+        identity = {field: self.provenance.get(field) for field in HESSIAN_IDENTITY}
+        identity.update({field: self.provenance.get(field) for field in CAPTURE_CONTEXT})
+        return identity
+
+    def _seal(self) -> _CaptureSeal:
+        """Digest the capture once, on first read, and keep what was digested.
+
+        The digest's construction is the one the #214 exporter stamped on every
+        activation-aware part already on disk -- identity JSON, then per unit
+        the name and its ``tensor_identity`` -- and must not move, or a
+        re-export from the same capture would refuse to merge with them.
+        """
+        sealed = getattr(self, "_capture_seal", None)
+        if sealed is not None:
+            return sealed
+        import copy
+
+        from .cached_unit import tensor_identity
+
+        identity = self._sealed_identity()
+        units = {name: tensor_identity(self.hessians[name])["sha256"]
+                 for name in sorted(self.hessians)}
+        digest = hashlib.sha256()
+        digest.update(json.dumps({"schema": "tessera.hessian_capture.v1",
+                                  "identity": identity},
+                                 sort_keys=True, default=str).encode())
+        for name, unit_sha256 in units.items():
+            digest.update(b"\0" + name.encode() + b"\0")
+            digest.update(unit_sha256.encode())
+        sealed = _CaptureSeal(digest.hexdigest(),
+                              MappingProxyType(copy.deepcopy(identity)),
+                              MappingProxyType(units))
+        object.__setattr__(self, "_capture_seal", sealed)
+        return sealed
+
+    def _require_sealed_roster(self, seal: _CaptureSeal) -> None:
+        """Refuse to publish a seal whose identity fields or unit roster moved.
+
+        Cheap by construction -- a handful of scalars and a key set -- so the
+        publication path can afford it per unit.  Content is NOT re-digested
+        here: that is paid once per unit, where the unit is consumed.
+        """
+        identity = self._sealed_identity()
+        if identity != dict(seal.identity):
+            moved = sorted(f for f in identity if identity[f] != seal.identity[f])
+            raise GrammarError(
+                f"the capture's provenance moved after it was sealed: {moved} "
+                f"differ from what capture_sha256 {seal.sha256[:16]}... covers. "
+                f"A config carrying the edited fields beside the old seal would "
+                f"misdescribe the bytes; build a fresh ActivationSource over the "
+                f"capture as it now is")
+        names = set(self.hessians)
+        if names != set(seal.units):
+            gained = sorted(names - set(seal.units))
+            lost = sorted(set(seal.units) - names)
+            raise GrammarError(
+                f"the Hessian mapping's roster moved after it was sealed: "
+                f"gained {gained}, lost {lost}. capture_sha256 "
+                f"{seal.sha256[:16]}... names the capture as first read, and a "
+                f"config stamped with it would not describe this mapping; build "
+                f"a fresh ActivationSource over the mapping as it now is")
+
+    def _require_sealed_unit(self, seal: _CaptureSeal, key: str, H) -> None:
+        """Refuse to hand the encoder an H the published seal does not cover.
+
+        One unit's content digest per unit consumed -- the same
+        ``tensor_identity`` the cache intake already pays for that unit --
+        never the whole capture again.  This is where the bytes are decided,
+        so this is where a stale seal is refused (rule 5): an H edited in
+        place or swapped in the mapping after the seal would otherwise shape
+        bytes under a config that names the capture it was not.
+        """
+        from .cached_unit import tensor_identity
+
+        expected = seal.units.get(key)
+        if expected is None:
+            raise GrammarError(
+                f"{key!r} is not in the sealed capture: the Hessian mapping "
+                f"gained it after capture_sha256 {seal.sha256[:16]}... was "
+                f"taken, so bytes shaped by it would ship under a seal that "
+                f"never covered it. Build a fresh ActivationSource over the "
+                f"mapping as it now is")
+        actual = tensor_identity(H)["sha256"]
+        if actual != expected:
+            raise GrammarError(
+                f"{key!r}: the Hessian about to shape this unit digests to "
+                f"{actual[:16]}... but the sealed capture "
+                f"(capture_sha256 {seal.sha256[:16]}...) covered "
+                f"{expected[:16]}... -- it was edited in place or replaced in "
+                f"the mapping after the seal was taken. The seal names what "
+                f"shaped the bytes, so this source refuses; build a fresh "
+                f"ActivationSource over the capture as it now is")
+
     def capture_sha256(self) -> str:
         """Seal the capture this source holds: content plus effective identity.
 
@@ -788,24 +903,19 @@ class ActivationSource:
         with.  Stamped into ``config_block()['hessian']['capture_sha256']``
         and compared by the legacy part-merge guard; computed once per source
         (an export calls ``config_block`` per unit through the cache intake).
-        """
-        sealed = getattr(self, "_capture_sha256", None)
-        if sealed is not None:
-            return sealed
-        from .cached_unit import tensor_identity
 
-        digest = hashlib.sha256()
-        identity = {field: self.provenance.get(field) for field in HESSIAN_IDENTITY}
-        identity.update({field: self.provenance.get(field) for field in CAPTURE_CONTEXT})
-        digest.update(json.dumps({"schema": "tessera.hessian_capture.v1",
-                                  "identity": identity},
-                                 sort_keys=True, default=str).encode())
-        for name in sorted(self.hessians):
-            digest.update(b"\0" + name.encode() + b"\0")
-            digest.update(tensor_identity(self.hessians[name])["sha256"].encode())
-        sealed = digest.hexdigest()
-        object.__setattr__(self, "_capture_sha256", sealed)
-        return sealed
+        Once is the point, and it is also the hazard (tessera#302): the
+        mapping and its tensors are the caller's, and ``for_unit`` reads them
+        live.  So the seal is taken on the FIRST read -- by this method or by
+        ``for_unit``, whichever comes first -- and from then on every unit
+        ``for_unit`` hands the encoder is digested and proved against it, and
+        this method proves the identity fields and the unit roster before
+        returning the memo.  The capture is never re-digested whole; what
+        the seal certifies is exactly the H each unit was encoded against.
+        """
+        seal = self._seal()
+        self._require_sealed_roster(seal)
+        return seal.sha256
 
     def config_block(self) -> dict:
         """The ``activation_aware`` block the exported config records.
