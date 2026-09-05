@@ -572,18 +572,27 @@ def _gemv_concrete(x: torch.Tensor, words: torch.Tensor, items_1: torch.Tensor, 
     """
     M, K = x.shape
     mt = _m_tile(M)
-    if mt >= 4 and rate_one:
-        raise GrammarError(
-            f"M={M} runs 8 rows per lane, and a rate-1 column has no 8-row lane "
-            "(a byte of history is too short for L=14); the materialised path serves this batch"
-        )
-    if mt != M:
-        x = torch.cat([x, torch.zeros(mt - M, K, dtype=x.dtype, device=x.device)], 0)
-    x = x.contiguous()
     if mt <= 2:
         items, max_cols = items_1, max_cols_1
     else:
         items, max_cols, rpl = items_4, max_cols_4, 8
+    if rate_one and rpl != 16:
+        # One gate for BOTH ways an 8-row launch reaches a rate-1 column:
+        # M > 2 forces rpl=8, and at M <= 2 the plan's own rpl survives --
+        # where ``run_item_if_lane<RPL=8, R=1>`` is compiled out and would
+        # accumulate NOTHING, silently (issue #240).  The gate reads the
+        # resolved rpl, so a supplied Plan(rpl=8) -- or default_plan(M=4)'s --
+        # is refused by name at M=1/2 instead of dropping the columns.
+        why = (f"M={M} runs 8 rows per lane" if mt >= 4
+               else f"the plan's rpl={rpl} runs {rpl} rows per lane at M={M}")
+        raise GrammarError(
+            f"{why}, and a rate-1 column has no {rpl}-row lane (a byte of "
+            "history is too short for L=14); serve rate-1 columns on a 16-row "
+            "plan (rpl=16) or through the materialised path"
+        )
+    if mt != M:
+        x = torch.cat([x, torch.zeros(mt - M, K, dtype=x.dtype, device=x.device)], 0)
+    x = x.contiguous()
     if out is None:
         out = torch.zeros(mt, rows, dtype=torch.float32, device=x.device)
     _ext().window_gemv(

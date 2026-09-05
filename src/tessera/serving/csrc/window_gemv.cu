@@ -259,8 +259,10 @@ __device__ __forceinline__ void run_item(
 // Rate R at RPL rows per lane, where that chunk exists.  The one declared pair
 // that does not -- RPL = 8 at R = 1, an 8-bit chunk -- is DISCARDED rather than
 // instantiated, so the switch below expands the roster unconditionally while
-// the M > 2 launch shape simply has no rate-1 lane (the host restricts it:
-// ``WindowGemvUnit.serveable_keys``).  A declared rate with no 16-row lane is a
+// an 8-row launch simply has no rate-1 lane.  The host refuses that pair by
+// the RESOLVED rpl before launching (``_gemv_concrete`` in
+// ``kernel_window_gemv.py``; issue #240 -- ``serveable_keys`` alone left the
+// M<=2 path open to a Plan(rpl=8)).  A declared rate with no 16-row lane is a
 // compile error here, not a kernel that quietly accumulates nothing.
 template <int L, int RPL, int R, int MT, typename TBL, bool ABL_GATHER, bool ABL_LOAD, bool ABL_FMA>
 __device__ __forceinline__ void run_item_if_lane(

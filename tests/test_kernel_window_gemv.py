@@ -722,6 +722,39 @@ def test_the_out_instrument_accumulates_into_the_callers_buffer():
     assert torch.equal(scratch[3], torch.zeros(unit.rows, device="cuda"))   # the pad row stays zero
 
 
+@cuda
+def test_an_eight_row_plan_refuses_rate_one_at_small_m():
+    """Plan(rpl=8) at M=1/2 reaches ``run_item_if_lane<RPL=8, R=1>``, which is
+    compiled out: pre-#240 the launch silently accumulated nothing from every
+    rate-1 column (a uniform rate-1 unit returned all zeros).  The resolved
+    rpl must refuse the pair by name instead -- on the explicit ``with_plan``
+    route and on ``default_plan(M=4)``'s rpl=8 alike -- while the same unit
+    still serves M<=2 on its 16-row plan."""
+    kg = _kg()
+    rows, cols = 512, 48
+    rates = tuple((1, 4)[c % 2] for c in range(cols))
+    body, codes = _synthetic(rows, cols, rates, seed=91)
+    scale_rows = torch.ones(rows, dtype=torch.float16)
+    unit = kg.prepare_from_parsed(_Parsed(body, rates, codes, scale_rows))
+    eight = unit.with_plan(kg.Plan(rpl=8, warps=8, blocks=13, cols_per_item=32,
+                                   balanced=False))
+    for M in (1, 2):
+        x = torch.randn(M, cols, device="cuda").bfloat16()
+        with pytest.raises(GrammarError, match="rate-1 column"):
+            kg.window_gemv(eight, x)
+    prepared_for_m4 = kg.prepare_from_parsed(_Parsed(body, rates, codes, scale_rows), M=4)
+    assert prepared_for_m4.plan.rpl == 8
+    with pytest.raises(GrammarError, match="rate-1 column"):
+        kg.window_gemv(prepared_for_m4, torch.randn(1, cols, device="cuda").bfloat16())
+    # the 16-row default plan still serves the unit at M<=2, exactly
+    tile, scale = kg.decode_fp8(unit)
+    w = tile.view(torch.float8_e4m3fn).float()
+    x = torch.randn(1, cols, device="cuda").bfloat16()
+    y = kg.window_gemv(unit, x)
+    ref = (w * scale[:, None]).double() @ x.double().t()
+    assert bool(((y.double() - ref.t()).abs() <= _bound(w, scale, x)).all())
+
+
 # ---------------------- device ownership (issue #241) ------------------------
 #
 # The native entry points take the unit's device from the tensors, guard it,
