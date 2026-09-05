@@ -215,6 +215,35 @@ def main():
     for name, shape in skipped:
         print(f"    passthrough (rows % arity) {name} {shape}")
 
+    # FUSED NVFP4 GROUPS, expected roster derived from the PLAN before the
+    # first encode (#212).  vLLM serves q/k/v and gate/up as ONE Linear with
+    # one weight_global_scale, so the group is complete when every PLANNED
+    # sibling has been encoded -- however many source shards they arrived
+    # from.  The per-shard completion loop below therefore WAITS for members
+    # a later shard holds instead of comparing a partial group against the
+    # roster at an arbitrary shard boundary; a population that can never
+    # complete (a sibling absent from the source, planned BF16, or planned
+    # onto the FP8 kind) is refused here, before anything is encoded or
+    # written.
+    fused_expected: dict[str, set[str]] = {}
+    if not args.fp8_rtn:
+        for name, (unit_grid, _q) in sorted(plan.items()):
+            fused = fused_key(name)
+            if fused is None or unit_grid.name == "E4M3":
+                continue
+            key, roster = fused
+            nvfp4 = {m for m in roster if m in plan and plan[m][0].name != "E4M3"}
+            if nvfp4 != set(roster):
+                absent = sorted(set(roster) - nvfp4)
+                raise SystemExit(
+                    f"fused group {key} cannot share one weight_global_scale: "
+                    f"{sorted(nvfp4)} are planned NVFP4 but {absent} are not (BF16, FP8, "
+                    "or not a quantizable Linear in this source). vLLM serves the group as "
+                    "ONE Linear with one scale, so every member must be planned NVFP4 "
+                    "together. Refusing before the first encode rather than at a shard "
+                    "boundary.")
+            fused_expected[key] = set(roster)
+
     args.out.mkdir(parents=True, exist_ok=True)
     index_path = args.src / "model.safetensors.index.json"
     if index_path.exists():
@@ -240,7 +269,6 @@ def main():
 
     units: dict[str, dict] = {}
     groups: dict[str, dict[str, dict[str, torch.Tensor]]] = {}
-    group_of: dict[str, str] = {}
     nvfp4_modules, fp8_modules, ignored = [], [], []
     passthrough_bytes = 0
     new_weight_map: dict[str, str] = {}
@@ -288,7 +316,6 @@ def main():
                 if record["kind"] == "nvfp4" and fused is not None:
                     key, _members = fused
                     groups.setdefault(key, {})[name] = tensors
-                    group_of[name] = key
                 else:
                     record["resident_bytes"] = stock_bytes(tensors)
                     for suffix, value in tensors.items():
@@ -306,13 +333,13 @@ def main():
                 done += 1
                 if done % 20 == 0 or done == total_units:
                     print(f"  [{done}/{total_units}] {name}  {time.time() - started:.0f}s", flush=True)
-        # Fused groups: one global per vLLM Linear, exactly.
+        # Fused groups: one global per vLLM Linear, exactly.  A group whose
+        # planned siblings sit in a later source shard is left pending here
+        # and completed -- one exact global share, one write, into whichever
+        # output shard was open when the last member arrived (#212).
         for key, members in list(groups.items()):
-            if not all(group_of.get(n) == key for n in members) or any(n not in units for n in members):
+            if set(members) != fused_expected[key]:
                 continue
-            expected = sorted(fused_key(next(iter(members)))[1])
-            if sorted(members) != expected:
-                raise SystemExit(f"fused group {key} is incomplete on this shard: {sorted(members)} vs {expected}")
             before = {n: stock_dequant({k: v.to(args.device) for k, v in t.items()}) for n, t in members.items()}
             shared, divisor = share_global(members)
             for n, tensors in shared.items():
@@ -332,7 +359,14 @@ def main():
         print(f"wrote {out_shard}: {len(payload)} tensors", flush=True)
 
     if groups:
-        raise SystemExit(f"fused groups never completed: {sorted(groups)}")
+        # Unreachable when the source holds every planned tensor (the roster
+        # check above refused anything that cannot complete), so this names an
+        # index that promised tensors no shard delivered.
+        missing = {key: sorted(fused_expected[key] - set(members))
+                   for key, members in sorted(groups.items())}
+        raise SystemExit(
+            f"fused groups never completed at end of input, missing members {missing}: "
+            "the source shards never delivered tensors the plan and the source index name.")
 
     # --- config.json ---------------------------------------------------------
     config = json.loads((args.src / "config.json").read_text())
