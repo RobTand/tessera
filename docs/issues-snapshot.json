@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-05T17:26:40Z",
+ "generated": "2026-09-05T17:29:00Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -1780,6 +1780,14 @@
    "310": {
     "state": "OPEN",
     "title": "Skip, not fail, the six torch-reaching bodies the torch-free collector admits"
+   },
+   "311": {
+    "state": "CLOSED",
+    "title": "Decide the two parked policy items: keep tessera_gemm's strided-x copy (documented), no sidecar rotation field"
+   },
+   "312": {
+    "state": "OPEN",
+    "title": "ts-285: BF16 R=11 is the 73 GB build_forest cell; refuse a forest no wire can carry"
    },
    "32": {
     "state": "CLOSED",

@@ -52,7 +52,15 @@ __all__ = [
 
 @dataclass(frozen=True)
 class Diagonals:
-    """``sv`` per output channel (rows), ``su`` per input channel (columns)."""
+    """``sv`` per output channel (rows), ``su`` per input channel (columns).
+
+    Both are **FP16 words** -- the DIAG_SV/DIAG_SU planes' element width --
+    from the moment the pair exists, whether ``fit_diagonals`` landed them
+    or a caller supplied them.  The factor the encoder balances with, the
+    metric transport rescales with and ``undo_diagonals`` multiplies back is
+    the word the wire carries; nothing casts on the way to the bytes.
+    ``require_invertible_diagonals`` is the one rule that says so.
+    """
 
     sv: torch.Tensor
     su: torch.Tensor
@@ -171,16 +179,41 @@ def _invertible(factor: torch.Tensor) -> bool:
 
 
 def require_invertible_diagonals(diagonals: Diagonals) -> Diagonals:
-    """Refuse a segment-2a pair that is not invertible at its stored words.
+    """Refuse a segment-2a pair that is not FP16 words, or not invertible
+    at those words.
 
     ``undo_diagonals`` multiplies the stored FP16 factors back, so a zero,
     negative or non-finite factor decodes every weight it touches to zero,
     a flipped sign, or NaN -- silently, because the artifact stays well-formed
     (tessera#229).  One rule, one home: the fit, both transform directions,
-    the writer and the reader all call this instead of each clamping or
-    trusting their own side.
+    the metric transport, the writer and the reader all call this instead of
+    each clamping or trusting their own side.
+
+    The words are checked **as FP16**, never as ``factor.float()`` of a
+    wider tensor: a supplied FP32/FP64 pair used to pass here on its own
+    values while ``wire.pack_fp16`` cast it on the way to the bytes, so
+    sv=1e5 encoded and wrote an artifact whose stored word was infinity,
+    sv=1e-8 one whose word was zero -- both refused by this rule at read --
+    and sv=1.0004 wrote 1.0 and served weights other than the ones priced
+    (tessera#286).  The pair is therefore required to *be* FP16 words, not
+    landed here: then the validated object is the canonical stored form and
+    every consumer reads the same tensor the wire will carry, with no return
+    value a consumer could forget to use.  A caller holding wider factors
+    casts them first and gets exactly the words it asked for, refused by
+    name if they do not invert; the one place a wider value is ever rounded
+    for the wire is ``fit_diagonals``, which spends the rank-1 gauge doing
+    it.
     """
     for name, factor in (("DIAG_SV", diagonals.sv), ("DIAG_SU", diagonals.su)):
+        if factor.dtype is not torch.float16:
+            raise GrammarError(
+                f"{name} is supplied as {factor.dtype}, not the float16 the "
+                "plane stores: the factor the encoder balances with must be "
+                "the word the wire carries, and a wider value overflows, "
+                "underflows or rounds on the way to the bytes (tessera#286). "
+                "Cast the pair to float16 first -- the words are then "
+                "checked as stored -- or let fit_diagonals land its own"
+            )
         f = factor.float()
         bad = ~torch.isfinite(f) | (f <= 0)
         if bool(bad.any()):
