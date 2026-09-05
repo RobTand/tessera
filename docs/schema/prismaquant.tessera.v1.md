@@ -505,9 +505,15 @@ bytes and moves the identity. The baseline is historical evidence, like
 `UNTAGGED_ENCODER_ID`, and is never advanced to bless a new result. Identity is
 content-addressed rather than monotonic: an exact rollback makes the witness
 neutral again, and recovers an earlier full identity only if every ordinary
-fixture output also recovered. This exception repairs a blind spot within an
-already-covered `(grid, body, scale plane)`; it does not waive the ordinary
-re-base when the set of shipping structures grows.
+fixture output also recovered. This exception repairs a blind spot in a surface the
+encoder **already produced** — inside an already-covered `(grid, body, scale
+plane)`, or outside every shipping structure, on a plane only a caller-facing
+override writes or a second byte-producing path reaches (issue #143). What
+separates it from the ordinary re-base is whether the *encoder* is new, not
+whether the fixture is: a shipping structure that did not exist before is a
+different encoder and must say so, while a surface nobody had looked at is the
+same encoder looked at harder. It does not waive the ordinary re-base when the
+set of shipping structures grows.
 
 **Not bound into `encoder_profile_id`.** The profile id stays input-only, which
 is the one thing it is for; this is a **sibling** field, never a digest input.

@@ -154,21 +154,101 @@ def test_unraised_boundary_fixture_reaches_the_exact_residual_branch():
     assert float(stored[0]) == 1.0
 
 
-def test_new_boundary_witness_is_neutral_for_current_arm_a(identity):
-    """Coverage added after #101 must not relabel unchanged arm-A bytes."""
-    boundary = next(
+def test_every_compatibility_witness_is_neutral_for_the_current_encoder(identity):
+    """Coverage added after #101 must not relabel bytes it did not change.
+
+    Every witness, not the first one: a set membership test would pass with a
+    wrong constant on any case it did not reach, and a wrong constant is the
+    one failure this mechanism has -- it silently turns a neutral witness into
+    an Option-A re-base, relabelling every artifact on disk.
+    """
+    witnesses = [
         case for case in ei.fixtures()
         if case.compatibility_baseline is not None
-    )
-    encoded = ei._encode_fixture(boundary)
-    assert hashlib.sha256(encoded).hexdigest() == boundary.compatibility_baseline
-    assert ei._identity_contribution(boundary) == b""
+    ]
+    assert witnesses
+    for case in witnesses:
+        encoded = ei._encode_fixture(case)
+        computed = hashlib.sha256(encoded).hexdigest()
+        assert computed == case.compatibility_baseline, (
+            f"{case.label} encodes to {computed}, not its recorded "
+            f"compatibility baseline {case.compatibility_baseline}: it "
+            f"therefore contributes its bytes and re-bases the identity, "
+            f"relabelling every artifact on disk"
+        )
+        assert ei._identity_contribution(case) == b""
 
     old_payload = b"".join(
         ei._encode_fixture(case) for case in ei.fixtures()
         if case.compatibility_baseline is None
     )
     assert identity == hashlib.sha256(ei._DOMAIN + old_payload).digest()
+
+
+def test_the_identity_sees_the_s6b_scale_plane(identity, monkeypatch):
+    """tessera#143: the plane no recipe selects and every reader still decodes.
+
+    ``encode._refit_scales`` is the ``else`` arm of the refit -- the CHANNEL and
+    LUT planes have their own -- so it runs on the S6b case and on no other.
+    Disabling it is a real byte move that stays internally consistent (the
+    plane it returns is the one ``_pack_scales`` built), and before
+    ``e2m1-768/s6b`` existed it moved no fixture's bytes and the digest did not
+    follow.  The counter is asserted because a monkeypatch nothing calls is a
+    test that proves nothing.
+    """
+    import tessera.encode as enc
+
+    calls = []
+
+    def refit_nothing(work, units, group, half, base_byte, refine, effective):
+        calls.append(1)
+        return base_byte, refine, effective
+
+    monkeypatch.setattr(enc, "_refit_scales", refit_nothing)
+    monkeypatch.setattr(ei, "_MEMO", [])
+    moved = ei.encoder_fixture_id()
+    assert calls, "the S6b refit was never called, so nothing was perturbed"
+    assert moved != identity
+
+
+def _written_planes(case):
+    """The plane kinds one fixture's artifact actually carries.
+
+    Read off the artifact's own ``plane_order`` zipped against its terminal's
+    ``plane_elements`` -- the pair every reader indexes -- so what a case
+    covers is measured on its bytes and never declared beside it.
+    """
+    with ei._fixture_build():
+        art = parse(ei._fixture_blob(case))
+    return frozenset(
+        kind
+        for kind, count in zip(art.manifest.plane_order, art.terminal.plane_elements)
+        if count
+    )
+
+
+def test_every_override_fixture_writes_a_plane_the_wire_cases_do_not():
+    """Non-vacuity, derived: a case off the wire has to earn its place.
+
+    A fixture that overrides the encode is in the set for one reason -- it
+    reaches a plane ``wire_recipe`` never writes -- so if every plane it
+    carries is already carried by a wire case, it costs an encode and watches
+    nothing. Measured off each artifact's own manifest rather than declared,
+    and stated over whatever ``fixtures()`` holds, so it covers the next such
+    case without being edited.
+    """
+    off_wire = [case for case in ei.fixtures() if not case.covers_wire]
+    assert off_wire
+    on_wire = frozenset().union(
+        *(_written_planes(case) for case in ei.fixtures() if case.covers_wire)
+    )
+    for case in off_wire:
+        earned = _written_planes(case) - on_wire
+        assert earned, (
+            f"{case.label} writes only planes the wire cases already write "
+            f"({sorted(k.name for k in _written_planes(case))}), so it is an "
+            f"encode that watches nothing"
+        )
 
 
 # --------------------------------------------------------------------------
@@ -183,7 +263,9 @@ def test_every_shipping_structure_has_a_fixture():
     restated.  Adding a grid, a body or a plane fails here until a fixture
     covers it.
     """
-    covered = frozenset(case.structure for case in ei.fixtures())
+    covered = frozenset(
+        case.structure for case in ei.fixtures() if case.covers_wire
+    )
     missing = ei.shipping_structures() - covered
     assert not missing, (
         f"these shipping structures have no fixture, so a change that moved "
@@ -194,8 +276,214 @@ def test_every_shipping_structure_has_a_fixture():
 
 def test_no_fixture_covers_a_structure_nothing_ships():
     """The converse, so the set cannot quietly grow past what it must cover."""
-    covered = frozenset(case.structure for case in ei.fixtures())
+    covered = frozenset(
+        case.structure for case in ei.fixtures() if case.covers_wire
+    )
     assert not (covered - ei.shipping_structures())
+
+
+def test_the_identity_sees_the_segment_2a_diagonals(identity, monkeypatch):
+    """tessera#143: the DIAG planes' *other* producer.
+
+    The CHANNEL cases fill DIAG_SV with a row scale; ``fit_diagonals`` fits the
+    rank-1 magnitude field and is reached only through ``with_diagonals=``.
+    The perturbation is one fp16 ulp on every stored input-channel word -- the
+    smallest byte-moving change the plane admits, the same class as the CHANNEL
+    one above -- and it stays self-consistent, because the encoder codes the
+    residual of exactly the fit it is handed. Before ``e2m1-768/diagonals``
+    existed, ``fit_diagonals`` was never called at all.
+
+    Dropping a Sinkhorn sweep was tried first and is *not* a byte move here:
+    eight sweeps and seven agree to fp16 on this fixture, so the digest did not
+    follow and the test read as a failure of the fixture rather than of the
+    perturbation. A perturbation has to be shown to move bytes, not assumed to.
+    """
+    import tessera.encode as enc
+
+    plain = enc.fit_diagonals
+    calls = []
+
+    def one_ulp_on_su(weights, **kwargs):
+        calls.append(1)
+        fit = plain(weights, **kwargs)
+        su = (fit.su.contiguous().view(torch.int16) + 1).view(torch.float16)
+        return dataclasses.replace(fit, su=su)
+
+    monkeypatch.setattr(enc, "fit_diagonals", one_ulp_on_su)
+    monkeypatch.setattr(ei, "_MEMO", [])
+    moved = ei.encoder_fixture_id()
+    assert calls, "fit_diagonals was never called, so nothing was perturbed"
+    assert moved != identity
+
+
+def test_the_identity_sees_the_completion_axis(identity, monkeypatch):
+    """tessera#143: the second rate axis's only decision.
+
+    ``_completion_choice`` runs on every TCQ column group, but at
+    ``completion=0`` -- the exporter's default, and every rung at its body cap
+    -- the reachable set has one member and the argmin returns zeros whatever
+    the metric says. So "it was called" proves nothing here; the guard is that
+    some fixture offered it more than one descendant, and before
+    ``e2m1-256/completion`` existed none did.
+
+    Rotating the pick by one is a byte move that stays legal: the completion
+    bits index the same reachable table the decoder rebuilds from the
+    descendant plane, so the artifact still round-trips.
+    """
+    import tessera.encode as enc
+
+    plain = enc._completion_choice
+    widths = []
+
+    def next_descendant(want, per_pos, weights, steps, arity):
+        widths.append(per_pos.shape[2])
+        chosen = plain(want, per_pos, weights, steps, arity)
+        return (chosen + 1) % per_pos.shape[2]
+
+    monkeypatch.setattr(enc, "_completion_choice", next_descendant)
+    monkeypatch.setattr(ei, "_MEMO", [])
+    moved = ei.encoder_fixture_id()
+    assert max(widths, default=0) > 1, (
+        f"no fixture offered the completion argmin more than one descendant "
+        f"(widths seen: {sorted(set(widths))}), so rotating its pick was a "
+        f"no-op and this asserts nothing"
+    )
+    assert moved != identity
+
+
+def test_the_identity_sees_the_release_placement(identity, monkeypatch):
+    """tessera#143: the plane the exporter has no keyword for.
+
+    ``encode._canonical_release_order`` runs only when ``released_positions``
+    is set, and before ``e2m1-768/release`` existed no fixture could set it --
+    ``encode_linear`` takes no such argument. Reversing the order is a real
+    placement change: the reader regenerates this order from the placed count,
+    so a different order is a different set of protected positions.
+    """
+    import tessera.encode as enc
+
+    plain = enc._canonical_release_order
+    calls = []
+
+    def reversed_order(decoded, cols, superblock, total):
+        calls.append(1)
+        return plain(decoded, cols, superblock, total).flip(0)
+
+    monkeypatch.setattr(enc, "_canonical_release_order", reversed_order)
+    monkeypatch.setattr(ei, "_MEMO", [])
+    moved = ei.encoder_fixture_id()
+    assert calls, (
+        "no fixture released a position, so the placement rule was never asked "
+        "for an order"
+    )
+    assert moved != identity
+
+
+def test_the_release_fixture_is_the_exporters_own_call():
+    """The one hand-assembled encode, pinned against the exporter's.
+
+    ``encode_linear`` cannot express a release, so the release fixture builds
+    the ``encode_unit`` call itself -- which is a re-implementation, and a
+    re-implementation drifts. At zero releases the two paths must agree byte
+    for byte, so a keyword the exporter starts passing and this call does not
+    fails here instead of silently pricing a different encoder.
+    """
+    case = next(c for c in ei.fixtures() if c.released_positions is not None)
+    with ei._fixture_build():
+        hand_assembled = ei._fixture_blob(
+            dataclasses.replace(case, released_positions=0)
+        )
+        exporter = ei._fixture_blob(
+            dataclasses.replace(case, released_positions=None)
+        )
+    assert hand_assembled == exporter
+
+
+def test_the_release_fixture_actually_places_releases():
+    """Non-vacuity: zero releases would make the perturbation above a no-op."""
+    from tessera.planes import PlaneKind
+
+    case = next(c for c in ei.fixtures() if c.released_positions is not None)
+    assert PlaneKind.RELEASE in _written_planes(case)
+
+
+def test_the_identity_sees_the_shard_state_replay(identity, monkeypatch):
+    """tessera#143: the second byte-producing path.
+
+    ``slicing._initial_state`` replays the trellis register a shard's first row
+    is entered from -- the one thing a cut is not a restriction of -- and
+    ``slice_unit`` is reached by no encode. Permuting the per-column start
+    states is a real byte move on the INITIAL_STATE plane; the guard is that
+    the replay produced states that a permutation actually changes, because a
+    uniform state would make the perturbation a no-op.
+    """
+    import tessera.slicing as sl
+
+    plain = sl._initial_state
+    perturbed = []
+
+    def permuted(unit, steps0, arity, code, parent_state):
+        state = plain(unit, steps0, arity, code, parent_state)
+        if state is None or state.numel() == 0:
+            return state
+        flipped = state.flip(0)
+        perturbed.append(not torch.equal(state, flipped))
+        return flipped
+
+    monkeypatch.setattr(sl, "_initial_state", permuted)
+    monkeypatch.setattr(ei, "_MEMO", [])
+    moved = ei.encoder_fixture_id()
+    assert any(perturbed), (
+        f"no fixture replayed a start state a permutation changes "
+        f"(seen: {perturbed}), so nothing was perturbed"
+    )
+    assert moved != identity
+
+
+def test_the_fixture_set_writes_every_plane_a_reader_reads():
+    """Coverage over planes, derived the way the structure rule is derived.
+
+    ``planes.SHARD_PLANE_ORDER`` is the wire order every reader indexes
+    ``plane_elements`` by, so it is the set of planes an artifact can carry. A
+    plane no fixture writes is a plane whose packing can move at an unmoved
+    identity -- which is what SCALE_BASE, DIAG_SU, COMPLETION, RELEASE and
+    INITIAL_STATE each were (tessera#143). Occupancy is measured off each
+    artifact's own manifest, never declared beside the case, and the expected
+    set comes from the module that owns it, so a plane added to the wire fails
+    here until a fixture writes it.
+    """
+    from tessera.planes import SHARD_PLANE_ORDER
+
+    written = frozenset().union(
+        *(_written_planes(case) for case in ei.fixtures())
+    )
+    missing = frozenset(SHARD_PLANE_ORDER) - written
+    assert not missing, (
+        f"no fixture writes {sorted(k.name for k in missing)}, so a change to "
+        f"how those planes are packed moves real bytes and leaves "
+        f"encoder_fixture_id where it was"
+    )
+
+
+def test_an_override_fixture_is_not_counted_as_wire_coverage():
+    """A case that overrides the encode writes different planes than the wire.
+
+    ``e2m1-768/s6b`` resolves to a *shipping* structure -- it would be counted
+    -- and writes SCALE_BASE where the wire writes SCALE_REFINE, so counting
+    it would let the coverage rule above be satisfied by a fixture that never
+    encodes the plane the rule is about.
+    """
+    s6b = next(c for c in ei.fixtures() if c.label == "e2m1-768/s6b")
+    assert s6b.structure in ei.shipping_structures()
+    assert not s6b.covers_wire
+    # And it is a different encode, measured: the wire case at the same
+    # structure writes a different set of planes, which is the whole reason
+    # one cannot stand in for the other.
+    wire_case = next(
+        c for c in ei.fixtures()
+        if c.covers_wire and c.structure == s6b.structure
+    )
+    assert _written_planes(s6b) != _written_planes(wire_case)
 
 
 def test_the_structure_set_is_read_off_the_owning_modules():
