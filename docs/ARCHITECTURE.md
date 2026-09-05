@@ -1521,6 +1521,22 @@ representable as the unserved block, an explicitly unqualified diagnostic,
 and cannot become a victory. Both KLs are validated as finite and
 non-negative for the same reason the totals are: the verdict divides them.
 
+**The division has one home, and a value JSON can carry** (tessera#288).
+`tessera.control.kl_verdict` divides the two KLs for `control_block` and for
+`verify` alike — the CLI no longer spells its own — and the verdict reports
+`candidate_over_control` beside `candidate_over_control_status`. The status is
+`finite` and the value is a number whenever the quotient exists in `float`;
+otherwise the value is `null` and the status names which case produced it:
+`undefined` for 0/0, `unbounded` for a positive candidate over a zero control,
+and `overflow` for a quotient that is real and finite but larger than `float`
+holds. Zero is a KL `require_kl` accepts on purpose — it means the two
+distributions agree — so the gate owes it an answer rather than a refusal, and
+0/0 is undefined rather than positively infinite. Both sites used to write
+`float("inf")` for any zero control, which made the CLI emit the token
+`Infinity` — not JSON — and exit 0; every receipt this gate writes now passes
+`json.dumps(..., allow_nan=False)`. `beat_control` is untouched by all of
+this: it is a strict comparison of the two KLs and never divided.
+
 ### 4.8 Dominated rungs are screened by bytes, proved by decode
 
 The rate axis is not monotone in bits on small units

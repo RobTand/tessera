@@ -46,7 +46,7 @@ from tessera.control import (  # noqa: E402
     assert_byte_matched,
     bits_from_manifest,
     control_block,
-    require_kl,
+    kl_verdict,
     uniform_control,
     units_from_plan,
 )
@@ -101,12 +101,13 @@ def cmd_plan(args) -> int:
 
     if args.out is not None:
         args.out.parent.mkdir(parents=True, exist_ok=True)
-        args.out.write_text(json.dumps(control.plan, indent=2, sort_keys=True))
+        args.out.write_text(
+            json.dumps(control.plan, indent=2, sort_keys=True, allow_nan=False))
         print(f"  -> {args.out}  (the control's --plan-json)")
     block = control_block(control, candidate_label=args.candidate_label)
     if args.report is not None:
         args.report.parent.mkdir(parents=True, exist_ok=True)
-        args.report.write_text(json.dumps(block, indent=2))
+        args.report.write_text(json.dumps(block, indent=2, allow_nan=False))
         print(f"  -> {args.report}  (the control block, unserved)")
     return 0
 
@@ -149,21 +150,18 @@ def cmd_verify(args) -> int:
         return 0
     # ``type=float`` accepts "-1", "nan" and "inf" by name, and a negative
     # "KL" sorts below every control's: this printed BEAT and wrote
-    # beat_control=true.  The domain is the one ``control_block`` holds its
-    # own two KLs to (tessera#225).
+    # beat_control=true.  The domain, the division and the three cases the
+    # division has no number for are all ``control_block``'s own, reached
+    # through the helper both of them call (tessera#225, tessera#288).
     try:
-        candidate_kl = require_kl(args.candidate_kl, field="candidate_kl",
-                                  where="--candidate-kl")
-        control_kl = require_kl(args.control_kl, field="control_kl",
-                                where="--control-kl")
+        verdict = kl_verdict(args.candidate_kl, args.control_kl,
+                             where="--candidate-kl / --control-kl")
     except TesseraError as exc:
         print(f"REFUSED: {exc}")
         return 2
-    ratio = candidate_kl / control_kl if control_kl else float("inf")
-    beat = candidate_kl < control_kl
-    print(f"VERDICT: {args.candidate_label} {candidate_kl:.6g} against the uniform "
-          f"control {control_kl:.6g} ({ratio:.4g}x) -- "
-          f"{'BEAT' if beat else 'DID NOT BEAT'} its byte-matched control")
+    print(f"VERDICT: {args.candidate_label} {verdict.candidate:.6g} against the uniform "
+          f"control {verdict.control:.6g} ({verdict.text}) -- "
+          f"{'BEAT' if verdict.beat_control else 'DID NOT BEAT'} its byte-matched control")
     if args.report is not None:
         match_json = match.to_json()
         if args.params is None:
@@ -182,14 +180,15 @@ def cmd_verify(args) -> int:
             "verdict": {
                 "metric": args.metric,
                 "measured": True,
-                "candidate": candidate_kl,
-                "control": control_kl,
-                "candidate_over_control": ratio,
-                "beat_control": beat,
+                **verdict.to_json(),
             },
         }
         args.report.parent.mkdir(parents=True, exist_ok=True)
-        args.report.write_text(json.dumps(report, indent=2))
+        # ``allow_nan=False`` on every write: a receipt another process reads
+        # back is an interchange document, and ``Infinity``/``NaN`` are tokens
+        # no strict JSON reader accepts.  This one wrote ``Infinity`` and
+        # returned 0 whenever the control's KL was zero (tessera#288).
+        args.report.write_text(json.dumps(report, indent=2, allow_nan=False))
         print(f"  -> {args.report}")
     return 0
 

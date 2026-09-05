@@ -556,7 +556,8 @@ def test_the_block_states_the_verdict_the_gate_exists_to_record():
     assert verdict["measured"] is True
     assert verdict["beat_control"] is False
     assert verdict["candidate_over_control"] == pytest.approx(1.996, abs=1e-3)
-    json.dumps(block)                                    # a shipcard has to hold it
+    assert verdict["candidate_over_control_status"] == "finite"
+    json.dumps(block, allow_nan=False)                   # a shipcard has to hold it
 
 
 def test_an_unserved_control_says_so_instead_of_reading_like_a_pass():
@@ -564,6 +565,57 @@ def test_an_unserved_control_says_so_instead_of_reading_like_a_pass():
     assert block["verdict"]["measured"] is False
     assert "beat_control" not in block["verdict"]
     assert "was served" in block["verdict"]["detail"]
+
+
+# ------------------------------------------------ a ratio the floats cannot state
+
+
+def _strict(text: str):
+    """Parse an interchange document: ``Infinity`` and ``NaN`` are not JSON.
+
+    ``json.loads`` accepts both by default, so a receipt that another process
+    must read back is checked against the grammar that process is entitled to
+    assume rather than against Python's dialect of it.
+    """
+    def reject(token):
+        raise AssertionError(f"non-JSON token {token!r} in the receipt")
+
+    return json.loads(text, parse_constant=reject)
+
+
+def _own_control():
+    """The issue's own pair: one unit, its own rung, byte matched exactly."""
+    return uniform_control([PlannedUnit("a", "E2M1x2", 896, 32, 32)], rungs=[896])
+
+
+@pytest.mark.parametrize(
+    "candidate_kl, control_kl, status, phrase",
+    [
+        (0.0, 0.0, "undefined", "0/0"),
+        (0.5, 0.0, "unbounded", "control's KL is 0"),
+        (1e308, 1e-10, "overflow", "float"),
+    ],
+)
+def test_a_ratio_the_floats_cannot_state_is_named_rather_than_infinity(
+    candidate_kl, control_kl, status, phrase
+):
+    """0/0 is undefined, x/0 is unbounded, and neither is ``inf`` (tessera#288).
+
+    Zero is a KL ``require_kl`` accepts on purpose, so the verdict has to have
+    an answer for it that is not a false finite ratio and not a token outside
+    JSON.  The value is ``null`` and the status says which of the three cases
+    produced it; the beat comparison is untouched, because it never divided.
+    """
+    block = control_block(_own_control(), candidate_kl=candidate_kl, control_kl=control_kl)
+    verdict = block["verdict"]
+    assert verdict["measured"] is True
+    assert verdict["candidate_over_control"] is None
+    assert verdict["candidate_over_control_status"] == status
+    assert verdict["beat_control"] is (candidate_kl < control_kl)
+    assert status in verdict["detail"] and phrase in verdict["detail"]
+    assert "inf" not in verdict["detail"]
+    json.dumps(block, allow_nan=False)                   # a shipcard has to hold it
+    assert _strict(json.dumps(block))["verdict"]["candidate_over_control"] is None
 
 
 # ------------------------------------------------------- the callable gate
@@ -693,6 +745,48 @@ def test_the_cli_verify_receipt_carries_no_bpp_it_had_no_denominator_for(tmp_pat
     assert match["varying_params"] is None
     assert match["candidate_bits"] == BUDGET_BITS["4.0"]
     assert match["byte_matched"] is True
+
+
+@pytest.mark.parametrize(
+    "candidate_kl, control_kl, status",
+    [
+        ("0", "0", "undefined"),
+        ("0.5", "0", "unbounded"),
+        ("1e308", "1e-10", "overflow"),
+        ("0.3485", "0.1746", "finite"),
+    ],
+)
+def test_the_cli_verify_writes_a_receipt_that_is_json(
+    tmp_path, capsys, candidate_kl, control_kl, status
+):
+    """``verify`` wrote the token ``Infinity`` and returned 0 (tessera#288).
+
+    A zero control KL is a valid input -- ``require_kl`` says so -- and it made
+    the CLI write a document no strict JSON reader accepts, exit clean, and
+    print ``(infx)``.  The CLI now shares :func:`tessera.control.kl_verdict`
+    with :func:`control_block`, so the file and the API agree on the value and
+    on the status beside it.
+    """
+    cli = _cli()
+    candidate = body(ALLOCATED_4_0)
+    control = uniform_control(candidate)
+    candidate_dir = _manifest(tmp_path, candidate, "allocated")
+    control_dir = _manifest(tmp_path, control.units, "uniform")
+    report = tmp_path / "verdict.json"
+    assert cli.main(["verify", str(candidate_dir), str(control_dir),
+                     "--params", str(QWEN_PARAMS),
+                     "--candidate-kl", candidate_kl, "--control-kl", control_kl,
+                     "--report", str(report)]) == 0
+    out = capsys.readouterr().out
+    assert "inf" not in out
+    verdict = _strict(report.read_text())["verdict"]
+    assert verdict["candidate_over_control_status"] == status
+    if status == "finite":
+        assert verdict["candidate_over_control"] == pytest.approx(1.996, abs=1e-3)
+    else:
+        assert verdict["candidate_over_control"] is None
+    assert verdict["beat_control"] is (float(candidate_kl) < float(control_kl))
+    json.dumps(verdict, allow_nan=False)
 
 
 def test_the_cli_verify_refuses_two_arms_that_do_not_weigh_the_same(tmp_path, capsys):
