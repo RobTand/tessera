@@ -716,21 +716,28 @@ def build_forest(
     # source, and it is what every E2M1 artifact was built with.  The
     # mass-balanced rule is right when they are not -- on E4M3 the contiguous
     # split wastes ten of sixteen anchors.  Neither dominates, so neither is
-    # asserted: both are built, both are scored on the same Gaussian at the
-    # ``c = 0`` the pipeline actually decodes at, and the cheaper one is used.
-    # The choice is by measurement against the objective, which is what
-    # principle 2 asks for -- not a rule about which grids are "log-spaced".
+    # asserted: both are built, both are *completed* -- routed by
+    # ``_partition_cost``'s Lloyd descent, then arranged by ``_order_block`` --
+    # and the finished forests are scored on the same Gaussian at the ``c = 0``
+    # the pipeline actually decodes at.  Scoring the finished forest rather
+    # than ``_partition_cost``'s member-min screen matters (tessera#223):
+    # that screen prices the best member of each block, but ``_order_block``
+    # promotes each node's representative from its two children's, so the
+    # member the screen priced can be eliminated on the way up.  The cheaper
+    # emitted forest is used; the choice is by measurement against the
+    # objective the reader pays, which is what principle 2 asks for -- not a
+    # rule about which grids are "log-spaced".
     balanced, balanced_reps = _mass_balanced_blocks(grid, samples, anchors, width)
-    scored = [
-        (_partition_cost(grid, samples, raw_blocks), raw_blocks),
-        (_partition_cost(grid, samples, balanced, seed=balanced_reps), balanced),
-    ]
-    (_, routed), raw_blocks = min(scored, key=lambda entry: entry[0][0])
-
-    blocks: list[tuple[int, ...]] = []
-    for index, block in enumerate(raw_blocks):
-        blocks.append(_order_block(block, routed[index], depth, grid))
-    return AnchorForest(rate=rate, blocks=tuple(blocks), grid=grid)
+    candidates = []
+    for raw, seed in ((raw_blocks, None), (balanced, balanced_reps)):
+        _, routed = _partition_cost(grid, samples, raw, seed=seed)
+        ordered = tuple(
+            _order_block(block, routed[index], depth, grid)
+            for index, block in enumerate(raw)
+        )
+        candidates.append((_emitted_cost(grid, samples, ordered), ordered))
+    blocks = min(candidates, key=lambda entry: entry[0])[1]
+    return AnchorForest(rate=rate, blocks=blocks, grid=grid)
 
 
 def _lloyd_levels(
@@ -888,6 +895,26 @@ def _partition_cost(
             count * values[c] ** 2 - 2.0 * values[c] * first + second for c in block
         )
     return total, routed
+
+
+def _emitted_cost(
+    grid: PayloadGrid, samples: "tuple[float, ...]",
+    blocks: "tuple[tuple[int, ...], ...]",
+) -> float:
+    """SSE of a *completed* forest at ``c = 0``: exactly what a reader pays.
+
+    A ``c = 0`` reconstruction is each ordered block's index 0 and nothing
+    else, so the number that chooses between candidate partitions is measured
+    on those roots -- routed nearest-root by the same midpoint rule
+    ``_partition_cost`` routes by.  ``_partition_cost``'s own total is a
+    *screen* over block members and may price a member ``_order_block`` goes
+    on to eliminate; this prices the object ``build_forest`` returns.
+    """
+    from bisect import bisect
+
+    roots = sorted(grid.values[block[0]] for block in blocks)
+    cuts = [(roots[i] + roots[i + 1]) / 2.0 for i in range(len(roots) - 1)]
+    return sum((sample - roots[bisect(cuts, sample)]) ** 2 for sample in samples)
 
 
 def _mass_balanced_blocks(
