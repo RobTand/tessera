@@ -26,7 +26,7 @@ from .alphabet import AnchorForest, PayloadGrid
 from .encode import EncodedUnit, e2m1_value_table, grid_value_table, require_memory
 from .errors import GrammarError
 from .grammar import require_column_groups, superblock_count
-from .manifest import BodyKind, ScalePlaneKind
+from .manifest import BodyKind, RotationState, ScalePlaneKind
 from .trellis import SUBSET_COUNT, ConvCode, TCQ, _ODS_GENERATORS  # noqa: F401
 from .trellis import ConvCode as _ConvCode
 
@@ -40,6 +40,7 @@ __all__ = [
     "materialize_bf16",
     "materialize_bf16_folded",
     "reconstruct_unit",
+    "require_untransformed",
     "unit_half_scales",
     "fusion_fallbacks",
 ]
@@ -724,6 +725,45 @@ def unit_scale_field(unit: "EncodedUnit", rows: int, cols: int) -> torch.Tensor:
     return torch.repeat_interleave(unit_half_scales(unit), unit.half).reshape(rows, cols)
 
 
+def require_untransformed(unit: "EncodedUnit", consumer: str) -> None:
+    """Refuse a unit whose declared weight transforms ``consumer`` would drop.
+
+    Segment-2a diagonals and the branch rotation are the two post-dequantize
+    transforms the encoder priced into the wire: :func:`reconstruct_unit`
+    undoes them AFTER the codes-times-scale product, so a tile that stops at
+    that product is a *different Linear* -- wrong by a rank-1 factor or an
+    orthogonal basis change, both of which look plausible and neither of which
+    raises anything downstream.  A materialisation that does not apply the
+    inverse transforms therefore refuses the unit by name here, where the
+    served bytes are decided, rather than serving the transformed basis in
+    silence (#233).  This is the one home for the torch materialisers every
+    serving route's reference decode runs through
+    (``materialize_fp8`` / ``materialize_bf16`` / ``stock.materialize_stock``);
+    the kernel lanes' packers state their own refusals for the same fields
+    (``lane_planes._pack_window_unit``, ``kernel_window._pack_window_unit``,
+    ``kernel_window_gemv.prepare_from_parsed``).
+    """
+    if getattr(unit, "diagonals", None) is not None:
+        raise GrammarError(
+            f"{consumer} does not undo segment-2a diagonals: this unit carries "
+            "fitted diagonals (unit.diagonals, the DIAG_SU/DIAG_SV planes), "
+            "which reconstruct_unit applies as a rank-1 factor after "
+            "dequantize; a tile materialised without them is a different "
+            "Linear, not a lossier one. Decode through "
+            "tessera.decode.reconstruct_unit, or encode without diagonals."
+        )
+    rotation = RotationState(getattr(unit, "rotation", RotationState.NONE))
+    if rotation is not RotationState.NONE:
+        raise GrammarError(
+            f"{consumer} does not undo the unit's rotation: this unit is "
+            f"rotated (unit.rotation = {rotation.name}, "
+            "manifest.branch.rotation), which reconstruct_unit undoes as a "
+            "basis change after dequantize; a tile served in the rotated "
+            "basis computes a different Linear. Decode through "
+            "tessera.decode.reconstruct_unit, or encode unrotated."
+        )
+
+
 def materialize_fp8(
     unit: "EncodedUnit",
     forest: "AnchorForest | dict[int, AnchorForest] | PayloadGrid",
@@ -748,6 +788,7 @@ def materialize_fp8(
             "an FP8 per-channel tensor takes one scale per output row: the unit "
             f"carries a {unit.scale_plane.name} plane, which is a block layout"
         )
+    require_untransformed(unit, "materialize_fp8")
     codes = decode_codes_mixed(unit, forest, code)
     native = torch.tensor(grid.native, dtype=torch.long, device=codes.device)
     rows, cols = codes.shape
@@ -813,6 +854,7 @@ def materialize_bf16(
             f"output, and this unit carries a "
             f"{ScalePlaneKind(unit.scale_plane).name} plane"
         )
+    require_untransformed(unit, "materialize_bf16")
     codes = decode_codes_mixed(unit, forest, code)
     values = grid_value_table(grid, codes.device)[codes.int()]
     scale = unit.scale_rows.to(codes.device).float() * float(unit.scale_global)

@@ -555,6 +555,71 @@ def test_rate1_columns_fall_back_inside_the_decode_regime(monkeypatch):
 
 
 @requires_cuda
+def test_the_retained_run_descriptor_lives_on_the_host(monkeypatch):
+    """#203: ``runs`` is host-read metadata -- ``ext.window_decode`` moves it
+    to the CPU and reads its scalars through ``.item()`` to build the kernel
+    launches -- so the holder keeps it on CPU from preparation, the way
+    ``fp8_gemv.prepare_fp8_gemv`` already does.  Retaining the repack-device
+    tensor made every materialised forward a synchronous device-to-host copy.
+    Every other retained tensor stays on the device."""
+    _g, layer, _m, _x, _r = _drive(monkeypatch, MODE_STREAMED, q256=1024)
+    holder = layer.tessera_gemv
+    assert holder is not None
+    tensors, _meta, _rows, _cols = holder.op_args()
+    n = len(route._ROLE_TENSORS)
+    for i in range(len(tensors) // n):
+        for key, t in zip(route._ROLE_TENSORS, tensors[n * i:n * (i + 1)]):
+            if key == "runs":
+                assert t.device.type == "cpu", \
+                    "the run descriptor is read on the host; keeping it on CUDA is an " \
+                    "in-forward device-to-host copy (#203)"
+            else:
+                assert t.is_cuda, key
+
+
+@requires_cuda
+@pytest.mark.parametrize("q256,m", [(1024, 16), (256, 4)],
+                         ids=["prefill-m16", "rate1-fallback-m4"])
+def test_the_materialised_branch_survives_cuda_graph_capture(monkeypatch, q256, m):
+    """#203's consequence, measured: the two materialised branches -- M past
+    the lane's max, and M >= 4 over a rate-1 column -- capture into a
+    ``torch.cuda.CUDAGraph`` and replay to the right numbers.  With the run
+    descriptor retained on CUDA, ``ext.window_decode``'s
+    ``runs.to(torch::kCPU)`` is a synchronous copy the capture refuses, so
+    the serving graph fails to initialise at exactly the batch shapes vLLM
+    captures."""
+    _got, layer, _method, _x, (values, scale) = _drive(monkeypatch, MODE_STREAMED,
+                                                       q256=q256, m=2, seed=30 + m)
+    holder = layer.tessera_gemv
+    assert holder is not None
+    tensors, meta, rows, cols = holder.op_args()
+    if q256 == 256:
+        assert holder.rate_one
+    assert not route.decode_is_gemv(holder, m), "these shapes are the materialised branch"
+    x = torch.randn(m, cols, device="cuda",
+                    generator=torch.Generator(device="cuda").manual_seed(40 + m)).bfloat16()
+    # Warm up on a side stream (allocator and cuBLAS workspace state), the
+    # standard capture prologue.
+    side = torch.cuda.Stream()
+    side.wait_stream(torch.cuda.current_stream())
+    with torch.cuda.stream(side):
+        for _ in range(3):
+            y_eager = route.streamed_apply(x, tensors, meta, rows, cols)
+    torch.cuda.current_stream().wait_stream(side)
+    graph = torch.cuda.CUDAGraph()
+    with torch.cuda.graph(graph):
+        y_cap = route.streamed_apply(x, tensors, meta, rows, cols)
+    y_cap.zero_()          # replay must be what rewrites it
+    graph.replay()
+    torch.cuda.synchronize()
+    tile, scl = values.float().cuda(), scale.float().cuda()
+    exact = (x.float() @ (tile * scl[:, None]).t())
+    bound = _fp32_bound(tile, scl, x) + 2.0 ** -8 * exact.abs()
+    assert bool(((y_eager.float() - exact).abs() <= bound).all())
+    assert bool(((y_cap.float() - exact).abs() <= bound).all())
+
+
+@requires_cuda
 def test_without_the_extension_streamed_falls_back_to_the_torch_path(monkeypatch):
     """No toolchain, no GEMV: the streamed route serves exactly as before, by name."""
     from tessera import kernel_window_gemv

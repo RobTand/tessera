@@ -31,6 +31,7 @@ executes the same tile under the same ``e2m1_group16_ue4m3_static`` contract.
 """
 from __future__ import annotations
 
+import math
 from typing import Optional
 
 import torch
@@ -153,6 +154,22 @@ def build_tessera_nvfp4_method(scheme, prefix: str, mode: str):
 
         def process_weights_after_loading(self, layer) -> None:
             """Parse the container, prepare every role, decode or reserve."""
+            # The A-side global first, before the container parse and the
+            # per-role preparation: it is a one-float read, and every failure
+            # mode is a refusal, so nothing expensive should run ahead of it.
+            # ``gs > 0.0`` alone let positive infinity through (#202): the
+            # loader then built a ZERO epilogue factor (global / inf) around
+            # an otherwise valid weight global and handed the infinite tensor
+            # to the native quantiser every forward -- an accepted layer whose
+            # outputs are zeros or NaNs, instead of a refusal naming the
+            # tensor.  NaN still fails the same predicate (``not (nan > 0)``),
+            # which is what makes the unloaded sentinel a refusal too.
+            gs = float(layer.trellis_input_global_scale.data.reshape(-1)[0])
+            if not (gs > 0.0 and math.isfinite(gs)):
+                raise ValueError(
+                    f"{prefix}: trellis_input_global_scale must be a finite positive scalar "
+                    f"(it divides the activations, and the epilogue multiplies by the weight "
+                    f"global over it, so a nonfinite value poisons both sides), got {gs!r}")
             blob = layer.wire_bytes.data
             if blob.device.type != "cpu":
                 blob = blob.cpu()
@@ -181,11 +198,6 @@ def build_tessera_nvfp4_method(scheme, prefix: str, mode: str):
             layer.tessera_prepared = prepared
             layer.tessera_decoder = prepared.decoder
             layer.tessera_roles = prepared.role_names
-            gs = float(layer.trellis_input_global_scale.data.reshape(-1)[0])
-            if not gs > 0.0:
-                raise ValueError(
-                    f"{prefix}: trellis_input_global_scale must be a positive scalar (it divides "
-                    f"the activations), got {gs!r}")
             # Derived, never accepted: the module's shared global over the A-side scale.
             layer.tessera_global_scale_real = prepared.global_scale
             layer.tessera_epilogue_scale = float(prepared.global_scale) / gs

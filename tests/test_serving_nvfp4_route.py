@@ -432,6 +432,82 @@ def test_an_unloaded_input_global_scale_is_refused_by_the_gates_own_predicate(mo
     assert not float(gs.reshape(-1)[0]) > 0.0
 
 
+def _create_layer(monkeypatch, mode):
+    """The real method and the real ``create_weights``, no forward: what the
+    load hook is driven through for the A-side scale gate below."""
+    serving_lane.reset_for_tests()
+    monkeypatch.setenv(TESSERA_MODE_ENV, mode)
+    _install_vllm_stubs(monkeypatch)
+    method = build_tessera_method(_scheme(), "test.layer")
+    layer = _Layer()
+    method.create_weights(layer, input_size_per_partition=1024, output_partition_sizes=[256],
+                          input_size=1024, output_size=256, params_dtype=torch.bfloat16)
+    return method, layer
+
+
+@pytest.mark.parametrize("mode", [MODE_RESIDENT, MODE_STREAMED])
+@pytest.mark.parametrize("bad", [float("inf"), float("-inf"), float("nan"), 0.0, -1.0],
+                         ids=["inf", "-inf", "nan", "zero", "negative"])
+def test_a_nonfinite_or_nonpositive_activation_scale_is_refused_at_load(monkeypatch, mode, bad):
+    """#202: ``gs > 0.0`` alone let positive infinity through the ACTUAL load
+    hook -- the layer was accepted with a zero epilogue factor
+    (``global / inf``) and the infinite tensor fed the native quantiser every
+    forward.  The gate now requires a finite positive scalar, refuses by the
+    tensor's name, and runs BEFORE the container parse and the per-role
+    preparation, so nothing expensive is spent on a checkpoint that will be
+    refused.  Both residency modes, through ``process_weights_after_loading``
+    itself; the parse is poisoned so an out-of-order gate fails loudly."""
+    method, layer = _create_layer(monkeypatch, mode)
+
+    def _no_parse(*_a, **_k):
+        raise AssertionError("the scale gate must refuse before the container parse")
+
+    monkeypatch.setattr(route, "parse_tessera_blob_for_scheme", _no_parse)
+    layer.trellis_input_global_scale.data = torch.tensor([bad], dtype=torch.float32)
+    with pytest.raises(ValueError, match="trellis_input_global_scale must be a finite "
+                                         "positive scalar"):
+        method.process_weights_after_loading(layer)
+
+
+def test_an_infinite_scale_cannot_buy_a_zero_epilogue(monkeypatch):
+    """The P0 half of #202 in isolation: with the whole preparation half
+    behind stubs -- the audit's reproduction shape -- an infinite scale must
+    still be a refusal, never an accepted layer whose epilogue factor is
+    ``global / inf == 0.0`` (every forward then multiplies the GEMM output by
+    zero and hands the infinite tensor to the native quantiser)."""
+    method, layer = _create_layer(monkeypatch, MODE_STREAMED)
+    monkeypatch.setattr(route, "parse_tessera_blob_for_scheme", lambda *a, **k: [])
+    monkeypatch.setattr(route, "shard_parsed_roles", lambda roles, plan: roles)
+    monkeypatch.setattr(route, "prepare_tessera_module",
+                        lambda roles, device=None, **kw: types.SimpleNamespace(
+                            decoder="stub", role_names=("weight",), global_scale=2.0))
+    monkeypatch.setattr(native_ops, "require_native_fp4_quant", lambda context: None)
+    layer.trellis_input_global_scale.data = torch.tensor([float("inf")], dtype=torch.float32)
+    with pytest.raises(ValueError, match="trellis_input_global_scale must be a finite "
+                                         "positive scalar"):
+        method.process_weights_after_loading(layer)
+    assert getattr(layer, "tessera_epilogue_scale", None) != 0.0
+
+
+def test_a_valid_finite_scale_still_loads_and_sets_the_epilogue(monkeypatch):
+    """The control, through the same hook: a finite positive scale is accepted
+    and the epilogue factor is the module's shared weight global over it.
+    Streamed, with only the weight-preparation half stubbed (it is the
+    expensive half the gate runs ahead of); the resident control with a real
+    wire is the CUDA ``_drive`` suite above."""
+    method, layer = _create_layer(monkeypatch, MODE_STREAMED)
+    monkeypatch.setattr(route, "parse_tessera_blob_for_scheme", lambda *a, **k: [])
+    monkeypatch.setattr(route, "shard_parsed_roles", lambda roles, plan: roles)
+    monkeypatch.setattr(route, "prepare_tessera_module",
+                        lambda roles, device=None, **kw: types.SimpleNamespace(
+                            decoder="stub", role_names=("weight",), global_scale=2.0))
+    monkeypatch.setattr(native_ops, "require_native_fp4_quant", lambda context: None)
+    layer.trellis_input_global_scale.data = torch.tensor([4.0], dtype=torch.float32)
+    method.process_weights_after_loading(layer)
+    assert layer.tessera_epilogue_scale == 2.0 / 4.0
+    assert layer.tessera_global_scale_real == 2.0
+
+
 # --- the load-time reference gate --------------------------------------------
 
 def _corrupting_decode(monkeypatch, plane, pos):

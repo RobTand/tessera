@@ -332,6 +332,26 @@ take none. It is vacuous on the resident fallback, where the substitute IS
 the reference and there is nothing independent to hold it to. What it costs
 per module at load is not measured.
 
+### 3.4 Declared weight transforms are refused at the materialisation boundary
+
+Segment-2a diagonals and the branch rotation are transforms the encoder
+prices and the wire carries; `reconstruct_unit` undoes them *after* the
+codes-times-scale product. Every materialiser that stops at that product used
+to drop them silently -- a rotated E4M3 window wire passed the whole FP8
+preparation gate (both decoders dropped the same transform and agreed), and
+the fitted-diagonal NVFP4 fixture's stock dequant was 3.29 max abs off the
+reconstruction (tessera#233). `decode.require_untransformed` is now the one
+home for the refusal, called by `materialize_fp8`, `materialize_bf16` and
+`stock.materialize_stock`, so every consumer that decodes through them --
+the dense FP8/BF16 routes' load-time reference decodes, the routed-MoE
+expert decode, the NVFP4 route's stock reference and torch fallback, the
+stock twin exporter -- refuses a transformed unit at load, naming the field
+(`unit.diagonals` / `unit.rotation`). The kernel lanes' packers keep their
+own refusals of the same fields (`lane_planes`, `kernel_window`,
+`kernel_window_gemv`). Untransformed wires -- every shipping export default
+-- are byte-for-byte unaffected; `tests/test_transform_refusals.py` drives
+the refusal through each consumer on real wire bytes.
+
 ## 4. Allocation and the uniform gate
 
 A candidate on Tessera's rate axis claims that *choosing* rungs beats
