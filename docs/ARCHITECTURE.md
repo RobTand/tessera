@@ -171,10 +171,11 @@ lose them. `tests/test_merge_suite.py` drives one real
 exercised by output no test wrote.
 `tools/impacted_tests.py` fails open to the full run and never under-selects:
 that is its whole contract, and deciding it never stats outside the
-repository root either -- an absolute or `..`-escaping literal path is
-refused by lexical normalization alone, before any `resolve()` or `stat()`,
-so a stalled mount under an out-of-tree literal cannot block the selector
-(#325). **Refusing to resolve a path is not a finding that the file it names
+repository root either -- a path is refused on its spelling before any
+`resolve()` or `stat()`, and every step of the resolution that a surviving
+path does get is bounded to the tree, not merely its destination, so a
+stalled mount under an out-of-tree literal cannot block the selector
+(#325, #339). **Refusing to resolve a path is not a finding that the file it names
 is independent of this repository, and the two must not be spelled the same
 way.** An outside spelling can be a local alias directory pointing straight
 back into the checkout -- environment state nothing here records -- so the
@@ -229,17 +230,28 @@ Explicit Python file loaders also contribute dependency edges: the non-executing
 lexical bindings, loader aliases and repository globs, using the file path rather
 than the loader's arbitrary module label. A resolved target inside the tree is
 an exact edge whatever its suffix -- a non-Python file is a node under its own
-repository-relative path. Whether a literal is even eligible for that resolve
-is decided lexically first: `os.path.normpath` on the literal (joined to root
-when it is relative) must place it under root before `resolve()`/`stat()` ever
-runs, so an absolute literal outside the tree, or one that escapes via `..`,
-is refused there and reads as the same unknown a crawling glob already
-refuses at its boundary -- never stat'ed to find out (#325). Only a target
-the lexical check already places under root is resolved; if that resolve
-then reveals a symlink carrying it back outside the tree, the target is
-still neither an edge nor an unknown, because that case cannot be told apart
-from a legitimate in-tree read without paying the same stat the lexical
-check exists to avoid. An unresolved recognized loader conservatively seeds its
+repository-relative path. **What is bounded is the resolution, not only its
+destination**, because a normalized final membership says nothing about the
+steps taken to reach it: `Path.resolve` walks a spelling as written, so
+`outside/../repo/driver.py` -- which normalizes into the tree -- still
+`lstat`s `outside` before `..` collapses, and an in-root symlink is followed
+to its outside target before any membership check runs. Both were the #325
+syscall, reachable again through a path a lexical check accepts (#339).
+So a single walk decides the whole question, in `_resolve_within_root`: a
+spelling whose leading components are not root's is refused before any
+filesystem call; after that each component is examined only once the prefix
+it extends is known to be inside root; `..` is applied to a prefix already
+free of symlinks, so it means what the filesystem means by it rather than
+what the string does; a symlink is *read* -- it is in the tree -- but a
+target that leaves the tree ends the walk; and a link chain longer than 40
+ends it too, where `Path.resolve` raised through the caller instead. A
+refusal is the same unknown a crawling glob already gets at its boundary,
+decided without a syscall out there. An absolute literal outside the tree,
+one that escapes via `..`, and an in-root link pointing out of it are one
+rule with one home, and the three entry points -- a bare loader argument, an
+explicit `.resolve()`, and a glob base -- all call it. A target that
+resolved outside the tree used to be dropped in silence; it is now that same
+refusal, which is the conservative direction. An unresolved recognized loader conservatively seeds its
 importing module and downstream tests for every non-inert change; an unresolved
 loader reaching a conftest forces the full population. An unresolved *read* is
 an unknown module only for a module that can parse or execute Python source

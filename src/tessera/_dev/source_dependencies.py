@@ -256,38 +256,102 @@ def _executes_python_source(tree):
     return False
 
 
-def _lexically_under_root(path, root):
-    """Whether *path* denotes a location under *root* -- string work only.
+#: A symlink chain longer than this is a loop for our purposes, and the walk
+#: below ends it the way the kernel's own ``ELOOP`` does rather than
+#: recursing forever.
+_MAX_LINK_DEPTH = 40
 
-    ``os.path.normpath`` collapses ``.``/``..`` segments the same way
-    ``resolve()`` would, without a filesystem call, so this decides the
-    question ``resolve()`` decides -- modulo a symlink -- for free.  An
-    absolute literal outside the repository, or a relative literal that
-    escapes via ``..``, reads false here and is never resolved or stat'ed
-    to confirm it: the same rule that keeps a glob from crawling outside
-    this root at :314-316 keeps a bare literal from being resolved outside
-    it. A path that reads true here may still be resolved, but that
-    resolve() only ever walks locations already established as in-root.
+
+def _resolve_within_root(path, root):
+    """Resolve *path* without ever naming a location outside *root*.
+
+    Returns the resolved absolute path, or ``None`` when the spelling or the
+    walk would leave the tree.  ``None`` is the same refusal a literal
+    outside root already gets: unknown, decided without a syscall out there.
+
+    **Membership of the destination is not a bound on the resolution.**
+    ``Path.resolve`` walks the spelling as written, so a sibling-relative
+    spelling like ``.../outside/../repo/driver.py`` -- which normalizes to
+    a path inside the tree -- still ``lstat``s ``outside`` on the way, and that is
+    the uninterruptible RPC #325 was about.  Collapsing ``..`` lexically
+    first is no answer either: ``link/..`` is the parent of the *link's
+    target*, so the string answer and the filesystem answer differ exactly
+    where a symlink is involved, and an in-root link to an outside directory
+    is followed before anyone can ask whether its target is in the tree.
+    Both are one defect -- a normalized final membership says nothing about
+    the steps taken to reach it (#339).
+
+    So this walks instead.  *root* is the approved tree and is taken as
+    canonical.  A spelling whose leading components are not *root*'s is
+    refused before any filesystem call at all.  After that every component is
+    examined only once the prefix it extends is known to be inside root;
+    ``..`` is applied to a prefix already free of symlinks, so it means what
+    the filesystem means by it; and a symlink whose target leaves the tree
+    ends the walk -- the link itself is in-root and readable, its target is
+    never approached.
     """
-    absolute = path if path.is_absolute() else root / path
-    normalized = Path(os.path.normpath(str(absolute)))
-    root_normalized = Path(os.path.normpath(str(root)))
-    return normalized == root_normalized or root_normalized in normalized.parents
+    base = Path(os.path.normpath(str(root)))
+    absolute = path if path.is_absolute() else base / path
+    parts = absolute.parts
+    prefix = base.parts
+    if parts[:len(prefix)] != prefix:
+        # Not even spelled from inside the tree.  Whatever ``..`` would do to
+        # it later, walking it means stat'ing outside root first.
+        return None
+    return _walk_within_root(base, parts[len(prefix):], base, 0)
 
 
-def _refuse(paths, root, refused):
-    """The subset of *paths* the boundary guard will not let us place.
+def _walk_within_root(current, parts, base, depth):
+    """One component at a time from *current*, which is already inside *base*."""
+    if depth > _MAX_LINK_DEPTH:
+        return None
+    for part in parts:
+        if not part or part == ".":
+            continue
+        if part == "..":
+            if current == base:
+                return None                 # one step above the approved tree
+            current = current.parent
+            continue
+        candidate = current / part
+        try:
+            # ``readlink`` on an in-root path: the only filesystem question
+            # this walk ever asks, and never about a location outside root.
+            link = os.readlink(candidate)
+        except OSError:
+            # Not a link, or nothing there to be one.  The name stands, which
+            # is what ``resolve(strict=False)`` does with it too.
+            current = candidate
+            continue
+        target = Path(link)
+        if target.is_absolute():
+            current = _resolve_within_root(target, base)
+        else:
+            current = _walk_within_root(current, target.parts, base, depth + 1)
+        if current is None:
+            return None
+    return current
 
-    Recorded rather than merely returned as ``None`` because the caller's two
-    unknowns are not the same fact: an expression this resolver cannot
-    evaluate names no file, while a path it evaluated exactly and then
-    refused to touch names one file it declines to identify (#338).  Only the
-    second keeps a data dependency alive.
+
+def _place(paths, root, refused):
+    """The paths the boundary guard will not let us place, resolved if it will.
+
+    Returns ``None`` when any of *paths* is refused -- recorded in *refused*
+    rather than merely returned, because the caller's two unknowns are not the
+    same fact: an expression this resolver cannot evaluate names no file,
+    while a path it evaluated exactly and then refused to touch names one file
+    it declines to identify (#338).  Only the second keeps a data dependency
+    alive.
     """
-    outside = [path for path in paths if not _lexically_under_root(path, root)]
-    if outside and refused is not None:
-        refused.extend(outside)
-    return bool(outside)
+    resolved = set()
+    for path in paths:
+        within = _resolve_within_root(path, root)
+        if within is None:
+            if refused is not None:
+                refused.append(path)
+            return None
+        resolved.add(within)
+    return resolved
 
 
 def _values(node, scope, root, visiting=frozenset(), refused=None):
@@ -367,10 +431,10 @@ def _values(node, scope, root, visiting=frozenset(), refused=None):
             if node.func.attr == "resolve" and not node.args and not node.keywords:
                 # A literal ``.resolve()`` on a path outside root is the
                 # same escape a crawling glob would be: unknown, and never
-                # stat'ed to find out (rule 4; was :308).
-                if _refuse(paths, root, refused):
-                    return None
-                return {(path if path.is_absolute() else root / path).resolve() for path in paths}
+                # stat'ed to find out (rule 4; was :308).  ``_place`` is the
+                # resolve, so this expression never reaches ``Path.resolve``
+                # and never walks a step outside the tree (#339).
+                return _place(paths, root, refused)
             if len(node.args) == 1 and not node.keywords:
                 args = _values(node.args[0], scope, root, visiting, refused)
                 if args is None or not all(isinstance(arg, str) for arg in args):
@@ -382,12 +446,16 @@ def _values(node, scope, root, visiting=frozenset(), refused=None):
                 # they must not trigger a filesystem crawl outside this root.
                 # Nor may the base itself be resolved from outside root --
                 # an absolute literal base is the identical escape (rule 4;
-                # was :318), refused lexically before any stat.
-                if _refuse(paths, root, refused):
+                # was :318), refused before any stat out there.  A base that
+                # ``_place`` returns is inside root by construction, so the
+                # membership re-check this used to make is gone with the
+                # ``Path.resolve`` that needed it (#339); a relative base is
+                # now joined to root rather than to the process's cwd, which
+                # is what the guard above already assumed of it.
+                bases = _place(paths, root, refused)
+                if bases is None:
                     return None
-                bases = {path.resolve() for path in paths}
                 if (node.func.attr == "glob"
-                        and all(base.is_relative_to(root) for base in bases)
                         and all(len(Path(arg).parts) == 1 and arg not in {".", ".."}
                                 and "**" not in arg for arg in args)):
                     return {item for base in bases for arg in args
@@ -530,26 +598,27 @@ def file_imports(tree, path, root):
             except (OSError, ValueError):
                 unknown = unknown or wildcard(reading)
                 continue
-            if not _lexically_under_root(target, root):
-                # An absolute (or ``..``-escaping) literal outside root is
-                # the same escape the glob and resolve() guards above
-                # refuse: unknown rather than resolved, so a stalled mount
-                # under the literal's real location never blocks the
-                # selector (rule 4; was :426). The refusal is not the same
-                # as independence -- an outside spelling can be a local
-                # alias for a tracked file, and the alias is environment
-                # state this repository never sees -- so the dependency
-                # survives it as an unplaced read (#338).
-                refuse(reading)
-                continue
+            # An absolute (or ``..``-escaping) literal outside root is the
+            # same escape the glob and resolve() guards above refuse:
+            # unknown rather than resolved, so a stalled mount under the
+            # literal's real location never blocks the selector (rule 4; was
+            # :426).  ``_place`` decides the whole question -- spelling,
+            # every resolution step and the destination -- and it is the only
+            # thing here that touches the filesystem (#339).  The refusal is
+            # not the same as independence: an outside spelling can be a
+            # local alias for a tracked file, and the alias is environment
+            # state this repository never sees, so the dependency survives it
+            # as an unplaced read (#338).
             try:
-                target = (target if target.is_absolute() else root / target).resolve()
+                placed = _place({target}, root, None)
             except (OSError, ValueError):
+                placed = None
+            if placed is None:
                 refuse(reading)
                 continue
-            # Named and inside the tree: an exact edge, ``.py`` or not. Named
-            # and outside it: nothing this repository's diff can move, so it
-            # is neither an edge nor an unknown.
-            if target.is_relative_to(root):
-                found.add(target)
+            # Named and inside the tree: an exact edge, ``.py`` or not.  There
+            # is no third outcome left here -- a target that resolved outside
+            # the tree used to be dropped in silence, and it is now the same
+            # refusal as any other step that leaves root.
+            found.update(placed)
     return found, unknown, unplaced

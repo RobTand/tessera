@@ -46,35 +46,69 @@ def _scan_full(source, root, *, consumer="consumer.py"):
     return file_imports(ast.parse(source), root / consumer, root)
 
 
-def _guard_resolve_to_root(monkeypatch, root):
-    """Fail immediately if ``Path.resolve()`` is asked about anything
-    outside *root* -- the exact call that blocks in D state under a
-    stalled NFS mount (tessera#325). Patches only ``Path.resolve``, the
-    module's own accessor for this; the module never calls
-    ``Path.stat``/``os.stat`` directly, so patching those would just add
-    unrelated flakiness from other machinery running in the same process.
+def _guard_resolve_to_root(monkeypatch, root, scratch=None):
+    """Fail if anything reaches a location under *scratch* but outside *root*.
+
+    The #325 version of this guarded ``Path.resolve``'s *argument*, and
+    normalized it first.  Both concessions were holes (#339).  Normalizing
+    accepts ``<scratch>/outside/../repo/driver.py``, whose destination is
+    inside the tree and whose *walk* is not: ``resolve()`` stats ``outside``
+    before ``..`` collapses.  And guarding the argument sees only the
+    spelling, never the steps -- an in-root symlink is followed to its
+    outside target with no outside argument passed to anything.
+
+    The syscall is the observable, because the syscall is what blocks in D
+    state on a stalled mount, so this guards the syscalls the walk can make
+    and normalizes nothing: each call is judged on the string it is handed.
+    It is scoped to *scratch* (the fixture's own temporary directory,
+    defaulting to root's parent) so that unrelated machinery running in the
+    same process -- the interpreter's own imports above all -- is not
+    caught by a guard it was never about.
     """
-    # Normalized once here the same way the fix normalizes in production
-    # (os.path.normpath, no filesystem access) so this guard catches an
-    # un-resolved ``..``-bearing argument too, not just an already-bare
-    # absolute one -- a literal target need not be pre-normalized before
-    # it reaches ``resolve()``.
     root_str = os.path.normpath(str(root))
-    original_resolve = Path.resolve
+    scratch_str = os.path.normpath(str(root.parent if scratch is None else scratch))
 
-    def guarded_resolve(self, *args, **kwargs):
-        normalized = os.path.normpath(str(self))
-        if normalized != root_str and not normalized.startswith(root_str + os.sep):
-            raise AssertionError(
-                f"Path.resolve() touched {self!s}, outside root {root_str} "
-                "(tessera#325: literals outside root must never be resolved)"
-            )
-        return original_resolve(self, *args, **kwargs)
+    def offending(argument):
+        try:
+            raw = os.fspath(argument)
+        except TypeError:
+            return None
+        if isinstance(raw, bytes):
+            raw = raw.decode("utf-8", "surrogateescape")
+        if raw != scratch_str and not raw.startswith(scratch_str + os.sep):
+            return None                     # not part of this fixture at all
+        if raw == root_str or raw.startswith(root_str + os.sep):
+            return None                     # inside the approved tree
+        if root_str.startswith(raw + os.sep):
+            # An ancestor of root.  ``Path.resolve`` walks down from ``/`` and
+            # touches every one of them; that is not the escape, and flagging
+            # it would make the in-root controls fail for the wrong reason.
+            return None
+        return raw
 
-    monkeypatch.setattr(Path, "resolve", guarded_resolve)
+    def guarded(name, original, take=lambda args, kwargs: args[0] if args else None):
+        def call(*args, **kwargs):
+            reached = offending(take(args, kwargs))
+            if reached is not None:
+                raise AssertionError(
+                    f"{name} reached {reached}, outside root {root_str} "
+                    "(tessera#325/#339: no filesystem step may leave the tree)"
+                )
+            return original(*args, **kwargs)
+        return call
+
+    for name in ("lstat", "stat", "readlink", "scandir", "listdir"):
+        monkeypatch.setattr(os, name, guarded(f"os.{name}", getattr(os, name)))
+    monkeypatch.setattr(
+        Path, "resolve",
+        guarded("Path.resolve", Path.resolve, lambda args, kwargs: args[0]))
 
 
-@pytest.mark.parametrize(("shape", "template"), [
+#: The three places a path reaches the filesystem: a bare loader argument, an
+#: explicit ``.resolve()``, and a glob base.  One home for the three, because
+#: every rule about the boundary has to hold at all of them (#325, #339) and a
+#: shape that exists in only one test is the one that stops being covered.
+_ENTRY_POINTS = [
     pytest.param(
         "bare-literal (:426)",
         '''\
@@ -106,7 +140,10 @@ for candidate in BASE.glob("*.py"):
 ''',
         id="glob-base",
     ),
-])
+]
+
+
+@pytest.mark.parametrize(("shape", "template"), _ENTRY_POINTS)
 def test_absolute_literal_outside_root_is_unknown_and_never_touches_fs(
     tmp_path, monkeypatch, shape, template,
 ):
@@ -311,3 +348,167 @@ def load():
     assert found == {root / "data/runtime-settings.json"}
     assert not unknown
     assert not unplaced
+
+
+@pytest.mark.parametrize(("shape", "template"), _ENTRY_POINTS)
+def test_reentering_spelling_never_walks_outside_root(
+    tmp_path, monkeypatch, shape, template,
+):
+    """tessera#339 -- the destination is inside; the walk to it was not.
+
+    ``<scratch>/outside/../repo/target.py`` normalizes to an in-root path, so
+    the lexical guard admitted it -- and then ``resolve()`` was handed the
+    original spelling, which it walks as written: ``lstat`` on ``outside``
+    before ``..`` collapses.  That is precisely the syscall #325 was about,
+    reachable again with no symlink involved.  Bounding the destination is not
+    bounding the resolution, so the spelling is refused whole, before any
+    filesystem call at all.
+    """
+    root = (tmp_path / "repo").resolve()
+    root.mkdir()
+    (root / "target.py").write_text("VALUE = 1\n", encoding="utf-8")
+    reentering = tmp_path / "outside" / ".." / "repo" / "target.py"
+    assert ".." in reentering.parts, "the fixture must keep the escaping segment"
+
+    source = template.format(outside=str(reentering))
+    _guard_resolve_to_root(monkeypatch, root)
+
+    found, unknown = _scan(source, root)
+
+    assert unknown, f"{shape}: a spelling that leaves the tree is an unknown dependency"
+    assert found == set(), f"{shape}: it is not an edge either"
+
+
+@pytest.mark.parametrize(("shape", "template"), _ENTRY_POINTS)
+def test_in_root_symlink_to_outside_is_never_followed(
+    tmp_path, monkeypatch, shape, template,
+):
+    """tessera#339 -- the other escape: every component of the spelling is
+    in-root, and the *link* is what leaves.
+
+    ``<root>/bridge`` passes any string check there is, and ``resolve()``
+    follows it to its outside target before the ``is_relative_to(root)`` check
+    ever runs.  The link is read -- it is in the tree, and reading it is how
+    we learn where it points -- but its target is never approached.  The
+    target here is deliberately never created: nothing about this case
+    requires the outside location to exist, only to be named.
+    """
+    root = (tmp_path / "repo").resolve()
+    root.mkdir()
+    denied = tmp_path / "never-accessed-target"
+    (root / "bridge").symlink_to(denied, target_is_directory=True)
+    assert not denied.exists(), "the fixture never creates the outside target"
+
+    source = template.format(outside=str(root / "bridge" / "target.py"))
+    _guard_resolve_to_root(monkeypatch, root)
+
+    found, unknown = _scan(source, root)
+
+    assert unknown, f"{shape}: a link out of the tree is an unknown dependency"
+    assert found == set(), f"{shape}: and never an edge to a file outside it"
+
+
+def test_reentering_spelling_in_a_data_read_keeps_its_unplaced_dependency(
+    tmp_path, monkeypatch,
+):
+    """The #339 guard must not undo #338: refusing is still not independence.
+
+    A plain reader whose spelling leaves the tree keeps the same unplaced-read
+    uncertainty an outside literal gets, rather than falling back to the
+    silence that #338 removed.
+    """
+    root = (tmp_path / "repo").resolve()
+    root.mkdir()
+    reentering = tmp_path / "outside" / ".." / "repo" / "data.json"
+    source = '''\
+from pathlib import Path
+TARGET = Path({outside!r})
+def load():
+    return TARGET.read_text()
+'''.format(outside=str(reentering))
+    _guard_resolve_to_root(monkeypatch, root)
+
+    found, unknown, unplaced = _scan_full(source, root)
+
+    assert found == set()
+    assert not unknown, "a plain reader still executes nothing (#148)"
+    assert unplaced, "a refused spelling is still a dependency this cannot place"
+
+
+def test_in_root_dotdot_still_resolves_to_an_exact_edge(tmp_path, monkeypatch):
+    """The control for over-refusal: ``..`` inside the tree is ordinary.
+
+    ``<root>/pkg/../target.py`` never leaves root at any step, so it must keep
+    the exact edge it always had.  The walk applies ``..`` to a prefix it has
+    already established is not a symlink, which is why it can mean what the
+    filesystem means by it.
+    """
+    root = (tmp_path / "repo").resolve()
+    root.mkdir()
+    (root / "pkg").mkdir()
+    (root / "target.py").write_text("VALUE = 1\n", encoding="utf-8")
+
+    source = '''\
+import importlib.util
+from pathlib import Path
+TARGET = Path("pkg") / ".." / "target.py"
+importlib.util.spec_from_file_location("mod", TARGET)
+'''
+    _guard_resolve_to_root(monkeypatch, root)
+
+    found, unknown = _scan(source, root)
+
+    assert found == {root / "target.py"}
+    assert not unknown
+
+
+def test_in_root_symlink_to_an_in_root_file_still_resolves(tmp_path, monkeypatch):
+    """The other control: a link the tree owns is followed, as it always was.
+
+    Refusing to leave root is not refusing to resolve.  ``<root>/link.py``
+    pointing at ``<root>/target.py`` still produces the edge to the target,
+    which is what makes the exact-edge narrowing worth having.
+    """
+    root = (tmp_path / "repo").resolve()
+    root.mkdir()
+    (root / "target.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (root / "link.py").symlink_to("target.py")
+
+    source = '''\
+import importlib.util
+from pathlib import Path
+TARGET = Path("link.py")
+importlib.util.spec_from_file_location("mod", TARGET)
+'''
+    _guard_resolve_to_root(monkeypatch, root)
+
+    found, unknown = _scan(source, root)
+
+    assert found == {root / "target.py"}
+    assert not unknown
+
+
+def test_a_symlink_loop_inside_root_terminates_as_unknown(tmp_path, monkeypatch):
+    """A cycle the tree owns is bounded, not walked forever.
+
+    ``resolve()`` answers ``ELOOP``; the walk answers with the same refusal it
+    gives any other step it cannot complete, so a pathological tree cannot
+    hang the selector either.
+    """
+    root = (tmp_path / "repo").resolve()
+    root.mkdir()
+    (root / "a").symlink_to("b")
+    (root / "b").symlink_to("a")
+
+    source = '''\
+import importlib.util
+from pathlib import Path
+TARGET = Path("a") / "target.py"
+importlib.util.spec_from_file_location("mod", TARGET)
+'''
+    _guard_resolve_to_root(monkeypatch, root)
+
+    found, unknown = _scan(source, root)
+
+    assert found == set()
+    assert unknown
