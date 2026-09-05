@@ -571,7 +571,9 @@ def test_the_toolchain_repair_runs_even_when_an_nvcc_is_already_on_path(tmp_path
     assert os.environ.get("CUDA_HOME") == str(complete)
 
     # an explicit operator choice is preserved, never second-guessed: with
-    # CUDA_HOME set the resolver returns it or refuses, and repairs nothing
+    # CUDA_HOME set the resolver adopts THAT root into torch's global (whether
+    # or not it holds a compiler; issue #298) and returns it or refuses it --
+    # it never swaps in a toolkit the operator did not name
     monkeypatch.setenv("CUDA_HOME", str(incomplete))
     monkeypatch.setattr(cpp_extension, "CUDA_HOME", str(incomplete))
     kg._ensure_toolchain_on_path()
@@ -810,6 +812,132 @@ def test_an_eight_row_plan_refuses_rate_one_at_small_m():
     y = kg.window_gemv(unit, x)
     ref = (w * scale[:, None]).double() @ x.double().t()
     assert bool(((y.double() - ref.t()).abs() <= _bound(w, scale, x)).all())
+
+
+# ---------------------- item tables shared between replicas (issue #297) ------
+#
+# ``with_plan(share_from=)`` hands a replica the donor's ``items_by_mt`` so a
+# fleet of identical units plans once.  An item is (tile, rate, col0, ncols,
+# word0, ...): word offsets into THIS unit's repacked words, derived from the
+# repack's run table, its tile count and its device -- none of which ``Plan``
+# says anything about.  The check used to be ``share_from.plan == plan`` alone,
+# so a same-shape donor at another rate (rate 4 where the recipient is rate 2:
+# ``word0`` strides 64 words per column against 32) installed descriptors
+# addressing words the recipient does not own, and the kernel read past its
+# body.  The donor's tables are now reused only under an equal
+# ``Repacked.layout`` -- the tuple of exactly what ``plan_items`` reads -- and
+# a mismatch is refused by name before any launch.  A different PLAN still
+# replans silently, as before: the tables the unit then plans are its own and
+# correct, so nothing wrong is served; that arm is a convenience, not a rule.
+
+
+def _bare_unit(kg, rate, rows=512, cols=16, plan=None, seed=0):
+    """A CPU ``WindowGemvUnit`` straight from ``repack_window_body`` -- the
+    shape tessera#297's proof used, needing no build and no device."""
+    g = torch.Generator(device="cpu").manual_seed(seed)
+    body = torch.randint(0, 1 << rate, (rows, cols), generator=g).to(torch.int32)
+    rep = kg.repack_window_body(body, (rate,) * cols)
+    table = torch.randn(1 << L, generator=g).to(torch.bfloat16)
+    plan = plan or kg.Plan(blocks=1, cols_per_item=16, balanced=False)
+    return kg.WindowGemvUnit(rep, table, torch.ones(rows), L, plan)
+
+
+def test_item_tables_are_shared_only_between_replicas():
+    """CPU: the refusal precedes every device touch.  The proof's pair -- rate
+    2 and rate 4 at 512x16 under one plan -- is refused naming the run table;
+    a donor with another tile count is refused naming the tiles; a genuine
+    replica (the same body repacked again, its own words) shares by identity;
+    a donor under another plan is not shared from and the unit plans itself."""
+    kg = _kg_no_build()
+    plan = kg.Plan(blocks=1, cols_per_item=16, balanced=False)
+    u2, u4 = _bare_unit(kg, 2, plan=plan), _bare_unit(kg, 4, plan=plan)
+    assert (u2.rows, u2.cols) == (u4.rows, u4.cols) and u2.plan == u4.plan
+    assert u2.rep.words.numel() == 512 and u4.rep.words.numel() == 1024
+    # the donor's one descriptor spans 1024 words; the recipient owns 512
+    assert u4.items.tolist() == [[0, 4, 0, 16, 0, 0, 0, 0]]
+    assert u2.items.tolist() == [[0, 2, 0, 16, 0, 0, 0, 0]]
+    with pytest.raises(GrammarError, match="share_from") as excinfo:
+        u2.with_plan(plan, share_from=u4)
+    message = str(excinfo.value)
+    assert "runs" in message and "(4, 0, 16, 0)" in message and "(2, 0, 16, 0)" in message, message
+
+    taller = _bare_unit(kg, 2, rows=1024, plan=plan)
+    assert taller.rep.n_tiles == 2 and u2.rep.n_tiles == 1
+    with pytest.raises(GrammarError, match="tiles: donor 2, this unit 1"):
+        u2.with_plan(plan, share_from=taller)
+
+    # a genuine replica: the same body repacked again, its own words
+    replica = _bare_unit(kg, 2, plan=plan)
+    assert replica.rep.words.data_ptr() != u2.rep.words.data_ptr()
+    assert replica.rep.layout == u2.rep.layout
+    shared = replica.with_plan(plan, share_from=u2)
+    assert shared.items_by_mt is u2.items_by_mt
+    assert torch.equal(shared.items, replica.items)
+
+    # another plan: not shared from, planned afresh for this unit
+    other = kg.Plan(blocks=2, cols_per_item=8, balanced=False)
+    replanned = u2.with_plan(other, share_from=u4)
+    assert replanned.items_by_mt is not u4.items_by_mt
+    assert torch.equal(replanned.items, u2.with_plan(other).items)
+    assert replanned.items.shape[0] == 2 * u2.items.shape[0]
+
+
+def test_the_layout_is_exactly_what_the_planner_reads():
+    """``Repacked.layout`` names the tile count, the column count, the run
+    table and the device -- and nothing the item tables do not depend on.  Two
+    repacks of one rate multiset in another column order have equal layouts
+    (items address permuted columns; the permutation is applied to ``x``), so
+    do bodies differing only in their codes; a body one tile taller does not."""
+    kg = _kg_no_build()
+    rows, cols = 512, 32
+    rates_a = tuple((2, 4)[c % 2] for c in range(cols))
+    rates_b = (2,) * (cols // 2) + (4,) * (cols // 2)
+    g = torch.Generator(device="cpu").manual_seed(5)
+    body = torch.randint(0, 4, (rows, cols), generator=g).to(torch.int32)
+    a = kg.repack_window_body(body, rates_a)
+    b = kg.repack_window_body(body, rates_b)
+    c = kg.repack_window_body(body ^ 1, rates_a)
+    assert not torch.equal(a.perm, b.perm)
+    assert a.layout == b.layout == c.layout
+    assert tuple(name for name, _ in a.layout) == ("tiles", "columns", "runs", "device")
+    assert dict(a.layout)["runs"] == tuple(tuple(r) for r in a.runs.tolist())
+    for u in (a, b, c):
+        assert torch.equal(kg.items_for(u, kg.Plan(blocks=3, cols_per_item=8), 1),
+                           kg.items_for(a, kg.Plan(blocks=3, cols_per_item=8), 1))
+    assert kg.repack_window_body(torch.cat([body, body]), rates_a).layout != a.layout
+    assert kg.repack_window_body(body[:, :16], rates_a[:16]).layout != a.layout
+
+
+@cuda
+def test_shared_tables_serve_a_replica_as_its_own_plan_would():
+    """On the device: a replica sharing a donor's tables answers the GEMV
+    within the fp32 bound of the reference, as its independently planned twin
+    does, and the proof's mismatched donor is refused before any launch.  The
+    table holds nonconstant values, so a descriptor into words this unit does
+    not own would be a wrong number here and not a lucky equal one."""
+    kg = _kg()
+    rows, cols = 600, 48
+    plan = kg.Plan(blocks=3, cols_per_item=8, balanced=False)
+    values = (torch.randn(1 << L) * 0.05).bfloat16().cuda()
+    body4, _ = _synthetic(rows, cols, (4,) * cols, seed=41)
+    donor = kg.prepare_value_unit(body4, (4,) * cols, L, values, plan=plan)
+    own = kg.prepare_value_unit(body4.clone(), (4,) * cols, L, values, plan=plan)
+    shared = own.with_plan(plan, share_from=donor)
+    assert shared.items_by_mt is donor.items_by_mt and shared.rep.words is own.rep.words
+    w = values.float()[kg.reference_states(body4, (4,) * cols, L)]
+    ones = torch.ones(rows, device="cuda")
+    for M in (1, 4):
+        x = torch.randn(M, cols, device="cuda").bfloat16()
+        ref = (w.double() @ x.double().t()).t()
+        for u in (own, shared):
+            y = kg.window_gemv(u, x)
+            assert bool(((y.double() - ref).abs() <= _bound(w, ones, x)).all())
+    # the proof's donor: same shape, same plan, another rate -- refused, no launch
+    body2, _ = _synthetic(rows, cols, (2,) * cols, seed=41)
+    two = kg.prepare_value_unit(body2, (2,) * cols, L, values, plan=plan)
+    assert (two.rows, two.cols, two.plan) == (donor.rows, donor.cols, donor.plan)
+    with pytest.raises(GrammarError, match="share_from"):
+        two.with_plan(plan, share_from=donor)
 
 
 # ---------------------- device ownership (issue #241) ------------------------

@@ -617,6 +617,28 @@ one answer. Unrotated capability and shard reconstruction are unchanged. If
 rotated slicing is ever implemented, both paths move together and its complete
 reconstruction semantics are proved with them.
 
+The span-2 kernel lane has one more plane it does not read: COMPLETION. A
+TCQ column at body rate `R` under the grid's cap may spend up to `cap - R`
+further bits per position choosing among its anchor's descendants, and
+`reconstruct_unit` applies them; the planes `lane_planes.pack_unit_for_kernel`
+emits stop at the anchor (`build_subset_values` reads `blocks[*][0]`,
+`gemv_from_packed` forwards no completion field), so a unit written one level
+deep packed to exactly the bytes of the same unit with its plane zeroed while
+the two reconstruct 319 weights apart on a 32x32 fixture (tessera#296). The
+packer now refuses the plane by name (`_require_no_completion_plane`), and
+the rule is the *written* depth from the one home that sizes the plane --
+`grammar.completion_widths` over `completion_limit` -- not the limit field
+and not the words: the plane is on the wire whatever it holds, and a parsed
+full-depth unit reads its limit back as `None`
+(`completion_limit_from_elements`), which a limit check alone would pass.
+Full-rate units (`R == cap`, the shipping span-2 wire) have no completion
+axis and pack unchanged at any limit; the window branch is untouched because
+a window body has no completion axis by grammar. `prepare_span2_planes`, the
+native decoder's entry (`serving/ops.py`), packs through the same function
+and inherits the refusal. Decoding the plane in the kernel is a
+`measurement-needed` follow-up, not part of this refusal.
+`tests/test_lane_planes_refusals.py` holds the reproduction (CPU).
+
 ### 3.5 Channel diagonals are FP16 words from the moment they exist
 
 The segment-2a pair (`diagonals.Diagonals`, the DIAG_SU/DIAG_SV planes at
@@ -1071,6 +1093,33 @@ branches its `apply` on the same `layer.tessera_gemv`, so
 `TESSERA_BF16`. It listed one until then, which said a BF16 serve is
 unaffected by whether the `.so` mapped -- the exact claim a consumer keys a
 serve fingerprint on.
+
+**Item tables are shared between replicas, and a replica is a repack layout**
+(tessera#297). A `WindowGemvUnit` plans its item tables at preparation --
+`plan_items` reads the run table back to Python, which the compiled forward
+cannot -- and `with_plan(share_from=)` lets a fleet of identical units plan
+once by handing a replica the donor's `items_by_mt`. An item is `(tile, rate,
+col0, ncols, word0, ...)`: word offsets into *this unit's* repacked words,
+derived from the repack's run table `(rate, col0, ncols, word0)`, its tile
+count and its device -- none of which `Plan` (the launch shape) says
+anything about. The licence to borrow used to be `share_from.plan == plan`
+alone, so a same-shape donor at another rate (rate 4 where the recipient is
+rate 2: `word0` strides 64 words per column against 32) installed
+descriptors addressing words the recipient does not own, and the kernel read
+past its body. `Repacked.layout` now names exactly what `plan_items` reads --
+`tiles`, `columns`, `runs`, `device` -- and `with_plan` reuses a donor's
+tables only under an equal layout, refusing a mismatch by the component that
+differs (`GrammarError`, before any launch). The codes, the column
+permutation (items address permuted columns; `perm` is applied to `x`) and
+the row count within the last tile are deliberately not in the layout: they
+change no descriptor. A donor under a *different* plan is, as before, simply
+not shared from -- the unit plans itself, correctly, and the caller saved
+nothing -- so that arm stays a convenience and not a refusal.
+`experiments/bench_kernel_window_gemv.py`'s cold-unit replicas (one repack,
+cloned words) have equal layouts and keep sharing.
+`tests/test_kernel_window_gemv.py` holds the proof's rate-2/rate-4 pair on
+CPU and a device check that a shared replica answers within the bound of its
+independently planned twin over a nonconstant table.
 
 ### 4.4d The expert stack is a STRUCTURE, not a module
 
