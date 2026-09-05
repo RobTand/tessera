@@ -1579,20 +1579,26 @@ assert len(PAYLOAD_FAMILY_BY_ROUTE) == len(_FAMILY_TO_ROUTE), (
 #: sources, so a rename on either side fails there rather than drifting here.
 _ATTESTED_WIRE_BODY = {"tcq": "TCQ", "window": "WINDOW"}
 _ATTESTED_WIRE_PLANE = {"s6b": "S6B", "lut16": "LUT", "channel": "CHANNEL"}
+#: ``manifest.RotationState`` names, in the checkpoint dialect a lane
+#: predicate speaks (``lane.requires.rotation``, #264).
+_ATTESTED_WIRE_ROTATION = {"none": "NONE", "r_in_only": "R_IN_ONLY"}
 
 
 def route_wire_spelling(field: str, value: str) -> str:
-    """``scheme.ROUTES``' spelling of a checkpoint-dialect body or plane name.
+    """``scheme.ROUTES``' spelling of a checkpoint-dialect wire fact name.
 
     The contract states a wire in the vocabulary a checkpoint's own config
-    records (``window``, ``channel``); the table a loader gates on spells the
-    same facts ``WINDOW`` and ``CHANNEL``.  One map, the one
-    ``attested_wire`` already uses, so a caller comparing a recipe against a
-    published predicate does not carry a second copy of it.
+    records (``window``, ``channel``, ``none``); the tables a loader gates on
+    spell the same facts ``WINDOW``, ``CHANNEL`` and ``RotationState.NONE``.
+    One map, the one ``attested_wire`` already uses for body and plane, so a
+    caller comparing a recipe against a published predicate does not carry a
+    second copy of it.
     """
-    dialect = {"body": _ATTESTED_WIRE_BODY, "plane": _ATTESTED_WIRE_PLANE}.get(field)
+    dialect = {"body": _ATTESTED_WIRE_BODY, "plane": _ATTESTED_WIRE_PLANE,
+               "rotation": _ATTESTED_WIRE_ROTATION}.get(field)
     if dialect is None:
-        raise ValueError(f"no wire dialect for field {field!r}; known: ['body', 'plane']")
+        raise ValueError(
+            f"no wire dialect for field {field!r}; known: ['body', 'plane', 'rotation']")
     if value not in dialect:
         raise ValueError(f"{value!r} is not a {field} this package names ({sorted(dialect)})")
     return dialect[value]
