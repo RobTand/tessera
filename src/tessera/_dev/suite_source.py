@@ -182,6 +182,20 @@ def _bound_to_entry(record, entry):
             "reason": reason}
 
 
+def is_entry_bound(record):
+    """Is this identity a *span*, or a bare sample of one instant?
+
+    ``measured_source(root, entry=...)`` is the only thing that produces a
+    ``measurement_span``; ``measured_source(root)`` alone answers "these are
+    HEAD's bytes now", which says nothing about the tree a run imported.  The
+    distinction is therefore structural rather than a flag someone has to
+    remember to set, and this is the one place that reads it.
+    """
+
+    return (isinstance(record, dict)
+            and isinstance(record.get("measurement_span"), dict))
+
+
 def agreed_source(record, workers):
     """One identity for a population several processes measured, or unknown.
 
@@ -191,6 +205,13 @@ def agreed_source(record, workers):
     when every process that did the executing agrees.  A worker that reported
     nothing establishes no agreement either, so it is named rather than
     ignored.
+
+    Nor does an *entry* identity establish it (#291).  A worker publishes one
+    before it has run anything, so that a process which never finishes is still
+    distinguishable from one that never spoke; it is a seed, and accepting it as
+    the worker's answer is exactly the failure that let a worker whose own share
+    said ``unknown`` be published as agreeing.  Only an entry-BOUND record --
+    one that measured the span across the tests the worker ran -- counts.
     """
 
     if not workers:
@@ -198,7 +219,14 @@ def agreed_source(record, workers):
     verdicts, disputed = {}, []
     for name in sorted(workers):
         other = workers[name] if isinstance(workers[name], dict) else {}
-        if other.get("verification") != "verified" or not other.get("sha256"):
+        if not other:
+            verdicts[name] = "reported no source identity"
+            disputed.append(name)
+        elif not is_entry_bound(other):
+            verdicts[name] = ("reported only an unbound entry identity, never "
+                              "measured across the tests it ran")
+            disputed.append(name)
+        elif other.get("verification") != "verified" or not other.get("sha256"):
             verdicts[name] = "did not establish a verified source identity"
             disputed.append(name)
         elif other.get("sha256") != record.get("sha256"):
