@@ -652,6 +652,21 @@ def main():
     base["merged_from"] = [p.name for p, _, _ in loaded]
 
     out.mkdir(parents=True, exist_ok=True)
+    # The publication has the shape tessera#337 found in the exporter, one
+    # step later: shards land one at a time, and the index and config that
+    # describe them are written only after the last one.  ``--out`` may
+    # already hold a complete checkpoint -- a re-run of the merge, or one of
+    # the parts, which the self-copy skip below exists for -- and a transfer
+    # that dies part way would leave new shards under that checkpoint's index
+    # and config -- the same mixture, published rather than merged, and
+    # nothing downstream re-reads a merged checkpoint's seal.  The seal is
+    # dropped first, so a merge that does not finish leaves an UNSEALED
+    # directory: no config, no index, refused by the reader and by this
+    # merge's own ``load``.  It cannot preserve the previous artifact -- the
+    # shards are already being replaced in place -- so it takes the issue's
+    # other acceptable outcome, a state the reader rejects by name.
+    for seal in ("tessera_config.json", "model.safetensors.index.json"):
+        (out / seal).unlink(missing_ok=True)
     # --- move the files ---------------------------------------------------
     move = shutil.move if args.move else shutil.copy2
     for shard, part in sorted(seen.items()):
