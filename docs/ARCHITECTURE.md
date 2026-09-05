@@ -7,8 +7,9 @@ the code that owns it.
 
 **Provenance:** current as of the unreleased `v0.1.0` candidate (2026-09-05):
 base `3317036` (wire minor 7), encoder-evidence scope correction #198; CI at `df1bc20`,
-packaging metadata at `cd3190a`; contract v21 (routed-MoE smoke recorded,
-prismaquant#198), lane-eligibility schema v8. Re-stamp this
+packaging metadata at `cd3190a`; contract v22 (the smoke status word is derived
+from a `smoke.record` and checked, #327; routed-MoE smoke recorded,
+prismaquant#198), lane-eligibility schema v9. Re-stamp this
 line with any change to the wire, the recipe table, the serving lane, the
 plugin contract or a gate (AGENTS.md principle 10).
 
@@ -137,9 +138,9 @@ that action and its `request_sha256` is the digest of the request bytes read;
 and the record's top-level status is `executed` or `failed` -- the two the
 worker writes together with the attempt's own `detail` (a
 `lease_lost_max_attempts` record keeps an earlier attempt's, as `dbd91b92` did)
--- with that attempt's captured stdout containing the conftest's `tessera
-surface: population written to <path>` line and a pytest summary line whose
-counts are the population's, both drawn from `terminalreporter.stats`. The
+-- with that attempt's captured stdout containing the run's own publication
+line for this path and a pytest summary line whose counts are the population's,
+both drawn from `terminalreporter.stats`. The
 clock is not evidence: #218's 600 s allowance between the file's mtime and the
 claim asserted how quickly a retry may follow, which nothing here measures, and
 it admitted a retry five minutes behind; it is gone with the inference. A
@@ -147,11 +148,27 @@ population without the stamp (pre-stamp, or `unknown` source) names no producer,
 so its counts are read and no status is adopted; two bound records of the one
 producer are no single status and adopt none. Across the 281 historical
 populations under `/mnt/shared/tessera-suite-receipts` exactly the three
-stamped ones bind. The remaining limit is stated rather than hidden: the
-attempt is bound by path and counts, not by a digest of the population's bytes,
-because the conftest does not yet print one; printing the file's SHA-256 beside
-the publication line would let a resume bind on bytes, and that is a change to
-`tests/conftest.py`, not to this reader.
+stamped ones bind.
+
+That publication line has **one home**, `tessera._dev.surface_publication`:
+`tests/conftest.py` writes it from there and `tools/merge_suite.py` reads it
+with the same module. Until tessera#331 each spelled the sentence itself, so
+the producer and the consumer were in a contract neither knew about --
+measured on `f86b811`, one word changed in `tests/conftest.py` left
+`_binding_refusal` refusing every action, every arm of every resumed receipt
+`not observed`, and `tests/test_merge_suite.py` green at 85 passed, because the
+only tests of the join wrote both sides. What #294 left open is closed with it:
+the line now carries the **SHA-256 of the bytes the run published**, and an
+attempt binds to the file at the path only when that file still hashes to what
+the attempt announced. A second attempt that overwrote the population with one
+of *identical counts* -- a different device, different skip reasons, the same
+buckets -- is refused on bytes, which the counts leg cannot see. A line with no
+digest is still bound on path and counts alone: that is every run captured
+before #331, including the three historical populations above, and a reader
+that demanded the stronger evidence from stdout that never carried it would
+lose them. `tests/test_merge_suite.py` drives one real
+`pytest --surface-json` run's stdout through the reader, so the join is
+exercised by output no test wrote.
 `tools/impacted_tests.py` fails open to the full run and never under-selects:
 that is its whole contract, and deciding it never stats outside the
 repository root either -- an absolute or `..`-escaping literal path is
@@ -934,9 +951,52 @@ so nothing that has served stops serving. On the merge side the two keys are
 parts still merge with each other (their `tp_size` is compared as a driver
 field, no exporter writing it any more), fresh parts are compared on the new
 names, and a legacy part mixed with a fresh one is refused as two exporters.
-**No artifact on disk becomes unmergeable.** What `runtime_contract.json`
-should publish about tensor parallelism beyond `max_world_size` and
-`loader_axes` is #330's question and is not settled here.
+**No artifact on disk becomes unmergeable.**
+
+Two declarations, and they are about different things. What the **artifact**
+says about being cuttable is a fact about its own bytes, it is derived from
+them, and the loader is now held to it (above). What the **contract** says
+about the replication rule is a claim about another runtime, and the answer
+there was to say nothing (below, #330). The two do not overlap and neither
+weakens the other: an artifact may declare itself cuttable at any world size
+while `max_world_size` stays 1, because "these bytes admit a cut" and "a
+served receipt covers this world" are the attempted/attested distinction this
+whole section is built on.
+
+**What the contract publishes about that replication: nothing, and the
+silence is the decision (#330).** `runtime_contract.json`'s `tensor_parallel`
+block publishes `max_world_size` -- an attestation, the largest world a
+served receipt covers -- beside `loader_axes`, what this build's loader does
+with each shard axis, and it names no replication rule at all. The rule the
+loader enforces is vLLM's own: `QKVParallelLinear` sets
+`num_kv_head_replicas = tp_size // total_num_kv_heads` and its
+`weight_loader` reads `shard_rank = tp_rank // num_kv_head_replicas`, and
+Tessera READS that off the layer (`sharding.KV_REPLICAS_ATTRIBUTE`,
+`layer_replicas`) rather than letting the artifact declare it -- the same
+TP-agnostic stance as the rest of this section, and the reason the wire never
+learns the topology. Publishing the rule in the contract would turn it into a
+claim a consumer PINS (PrismaQuant pins this contract) and Tessera must then
+keep, so that a vLLM change becomes a contract break rather than a loader
+bug. `max_world_size` is 1 on every family, so that claim would describe a
+path no receipt covers, and a rule asserted above its evidence is the same
+defect as a number asserted above its evidence -- only in the direction
+nobody checks for. So the contract stays silent, and the silence is gated
+rather than commented: `tests/test_serving_contract.py`
+(`test_the_contract_does_not_owe_a_replication_rule_it_has_not_attested`)
+fails the day `max_world_size` rises above 1 while the `tensor_parallel`
+block still nowhere names `sharding.KV_REPLICAS_ATTRIBUTE`, deriving the
+attested world from the packaged contract and the name from the loader's own
+constant rather than typing either, and naming the two exits -- publish the
+rule, or put the attestation back. What would have to be true to publish it
+is therefore a served TP>1 measurement: a two-rank serve with a per-rank
+census and a KL against the single-rank arm, which is what raises
+`max_world_size` in the first place and what `contract.py`'s outright refusal
+of `max_world_size != 1` is waiting for. (The adjacent question of what the
+ARTIFACT's own `tessera_config.json` says about TP is #328, answered above in
+this section: it declares `schema_minor` and a derived `tp_agnostic`, and the
+loader gates on them. That declaration is about the bytes and is
+derived from them, so it is exactly the kind of statement this paragraph
+declines to make about vLLM's replication rule, which is neither.)
 
 ## 4. Allocation and the uniform gate
 
@@ -1498,10 +1558,12 @@ plugin_entry_point, default_serve_image}` and every field is checked;
 `default_serve_image` is the pin of §4.4a and must be an image some cell
 attests. Every cell also carries a required, closed `evidence` object --
 `{grade, artifact, kl: [{kind, top_k, regime, execution_modes, receipt}], smoke:
-{status, receipt, attribution, control}}` (`contract.EVIDENCE_KL_KINDS`,
+{status, receipt, attribution, control, record}}` (`contract.EVIDENCE_KL_KINDS`,
 `EVIDENCE_SMOKE_STATUSES`, `EVIDENCE_GRADES`, `EVIDENCE_RECEIPT_ROOT`,
-and schema v7's `EVIDENCE_SMOKE_ATTRIBUTIONS`, `EVIDENCE_CONTROL_REFERENCES`,
-`EVIDENCE_CONTROL_OUTCOMES`) -- so a gate can read what
+schema v7's `EVIDENCE_SMOKE_ATTRIBUTIONS`, `EVIDENCE_CONTROL_REFERENCES`,
+`EVIDENCE_CONTROL_OUTCOMES`, and schema v9's `EVIDENCE_SMOKE_INTERFACES`,
+`EVIDENCE_SMOKE_FORMS`, `EVIDENCE_SMOKE_RECORD_KEYS`,
+`EVIDENCE_SMOKE_ROW_KEYS`) -- so a gate can read what
 grade of evidence a cell rests on, never prose. The premise this corrects:
 every served KL in this repository, dense and MoE alike, is a `kl_tool`
 top-1024 teacher/student-intersection lower bound, so no cell grades
@@ -1529,11 +1591,14 @@ given, wrong about the runtime. So `smoke.control` is `null` or the closed
 `{reference, outcome, receipt}` of a reference run
 (`reference: bf16_source`; `outcome: identical_completion |
 different_completion`, which says the completions match or differ and never
-that the reference was healthy), and `smoke.attribution` is **derived** from it
-and checked the way `grade` is derived from `kl`: no control `unattributed`,
-`identical_completion` `shared_with_reference`, `different_completion`
-`not_shared_with_reference`. A consumer refuses on `status == "repetitive"`
-**and** `attribution != "shared_with_reference"`, never on `status` alone.
+that the reference was healthy), and `smoke.attribution` is **derived** and
+checked the way `grade` is derived from `kl`. Since schema v9 it is derived
+from `smoke.record` where a smoke has one and from `control` where it does not
+(the two may not both be present); the v7 control branch reads: no control
+`unattributed`, `identical_completion` `shared_with_reference`,
+`different_completion` `not_shared_with_reference`. A consumer refuses on
+`status == "repetitive"` **and** `attribution != "shared_with_reference"`,
+never on `status` alone.
 
 The control turned out to be half the fix (prismaquant#198): a reference
 that degenerates too removes the evidence *against* the route without adding
@@ -1544,23 +1609,127 @@ MoE. Contract **v21** supplies the record
 its source, one arm at a time on the same pinned image, eager, resident,
 seven prompts in two request forms, every completion kept on both arms. Raw
 continuation -- the v17 prompt and three passages ending mid-sentence -- ends
-in a cycle on the **source** on every (prompt, form) pair: the checkpoint is
-the instruct model and a raw continuation is not its trained interface.
+in a cycle on the **source** on all eight (prompt, form) pairs and on the
+**student** on seven of the eight (the exception, campaign P2, does not cycle
+but wanders): the checkpoint is the instruct model and a raw continuation is
+not its trained interface. Both halves of that: a sentence stating the shared
+degeneration while leaving out the student's residual is the prose form of the
+defect #327 is about. Every count here is the cells' own `smoke.record` rows,
+and `tests/test_cell_evidence.py` asserts them off the record.
 Through the checkpoint's own `chat_template.jinja` (byte-identical on both
 arms) three questions carrying the same content read `recorded` on **both**
 arms in **both** forms -- no cycle, an on-topic answer, the model's own EOS --
 under a rule the receipt states and `tests/test_moe_greedy_smoke_rule.py`
 pins (repetitive iff the completion *ends* in a cycle of at least two full
-periods; the v17 observation is its positive control). The two `routed_moe`
-cells now record `{status: recorded, receipt: that file, attribution:
-unattributed, control: null}`, the shape the two BF16 cells use. The v18
-control is retired from the cells, not from the record: the outcome vocabulary
-attributes a *symptom*, a recorded smoke has none, the arms' recorded
-completions are not identical (greedy coherence is claimed, closeness is not
--- that is the batch cell's KL entry), and `null` is what is true; the v17
-prompt is re-measured identical on both arms in the same receipt. So today no
-cell carries a control and all ten are `unattributed`. No grade, rung, route
-or byte moved; the decode cell still grades `route_only`.
+periods; `not_recorded` iff the completion is empty, because nothing is not a
+completion for a verdict to be true of, and two empty arms would otherwise
+manufacture a positive record out of two non-answers, #327; the v17
+observation is its positive control). Every completion the receipt scored is
+non-empty (L is 16, 64 or 292-512 on all fourteen rows), so no verdict in it
+moves; a pair joined after the rule changed says under which rule each arm ran
+(`rule_at_run`). v21 retired the v18 control from the cells: its outcome
+vocabulary attributes a *symptom*, and a recorded smoke has none for it to
+attribute (the arms' recorded completions are not identical -- greedy coherence
+is claimed, closeness is not, and that is the batch cell's KL entry). No grade,
+rung, route or byte moved; the decode cell still grades `route_only`.
+
+Lane eligibility schema **v9** (contract v22, #327) makes the status word
+**derived**, because v21 left the word itself unowned. The per-completion rule
+was stated and pinned, but the **aggregation** -- which set of completions
+makes a cell read `recorded` -- was stated exactly once, in a dated
+measurement file, in the existential form *at least one prompt reads
+`recorded` on both arms in the campaign form*. Nothing said why "some" rather
+than "all"; nothing derived it; no test computed it
+(`tests/test_cell_evidence.py` verified the word by substring-matching two
+markdown lines, so re-running the smoke with a different
+result changed no test); and the condition was satisfiable by an **empty**
+completion. A rule that decides a field a serving gate reads does not live in
+append-only history (AGENTS.md rules 2, 4 and 10). Its own justification did
+not fit the rows that satisfied it either: `campaign` labels a *sampling
+shape*, and the three prompts carrying the positive record are chat turns
+through an *interface* the v17 campaign never sent. And because v21 retired the
+control in the same release, a consumer could not tell the two `routed_moe`
+cells -- whose smoke cycles on seven of fourteen completions -- from the two
+dense BF16 cells whose smoke never cycled at all: after v21 both carried the
+identical `{recorded, unattributed, null}`.
+
+**`smoke.record`** is what a word is now read off: `null`, or the closed
+`{instrument, rule, reference, rows}`. `instrument` is the repository path to
+the code that owns the per-completion rule; `rule` is that code's own statement
+of it, quoted verbatim, so the rule is readable at the pin (the wheel does not
+ship `experiments/`, and a tree test pins the two equal); `reference` is `null`
+or a name from `EVIDENCE_CONTROL_REFERENCES`; `rows` is a non-empty set of
+distinct `(prompt, form)` pairs, each `{prompt, form, interface, status,
+reference_status}` with verdicts from `EVIDENCE_SMOKE_STATUSES`, `interface`
+from `EVIDENCE_SMOKE_INTERFACES` (`raw_completion` | `chat_template`) and
+`form` from `EVIDENCE_SMOKE_FORMS` (`campaign` | `pure_greedy`). No number
+lives in a cell here either: `L`, the period and the periodic suffix stay in
+the receipt and the record carries the verdicts read off them.
+
+**The aggregation**, in one home (`contract.derive_smoke_status`, restated here
+and nowhere else), beside the `grade`-from-`kl` and `attribution`-from-`control`
+derivations:
+
+* `repetitive` when some row cycles on this cell's arm and the reference does
+  not. A degeneration the reference does not share is this route's, and that is
+  the whole content of the word.
+* else `recorded` when some row reads `recorded` on this arm **and** on the
+  reference (on this arm alone when no reference was run) -- the positive
+  record principle 5's "generates correctly" leg asks for.
+* else `repetitive` when any row cycles at all: every cycle is shared, but
+  nothing positive was recorded, so there is no record to publish.
+* else `not_recorded`: nothing came back.
+
+The threshold is neither "some prompt" nor "all prompts"; it is derived from
+what the word is a claim **about**. `status` is a claim about this *route*, so
+an observation the unquantised reference reproduces is not this route's --
+the same principle schema v7's `control` was added for, applied per
+`(prompt, form)` instead of once per cell. `attribution` carries what that
+leaves behind, still derived and still checked, now off the record: no
+reference arm or no cycling row `unattributed`, every cycling row matched by a
+cycling reference row `shared_with_reference`, otherwise
+`not_shared_with_reference`. `status` is stored, derived and checked exactly as
+`grade` is, so a re-run of the smoke that came back differently fails a test
+rather than leaving a stale word standing.
+
+On the shipped table **no status word moved**: both `routed_moe` cells still
+publish `recorded`, and it is now the word their own record derives -- 14 rows,
+6 reading `recorded` on both arms, 7 cycling on the student, all 7 of those
+cycling on the BF16 source too, 0 cycling on the student while the source
+answered. What moved is `attribution` on those two cells, `unattributed` ->
+**`shared_with_reference`**, derived and checked. That is the field that makes
+the residual `repetitive` observation machine-readable, it is what now separates
+these cells from the two dense BF16 cells (`recorded`, `unattributed`, no
+reference arm), and it gives the consumer rule above a real cell to read again.
+Every row names the **interface** it was taken on, so a consumer reads what the
+measurement actually found: through the checkpoint's own `chat_template.jinja`
+both arms answer with their own EOS; under raw continuation both arms --
+student *and* BF16 source -- end in a cycle. That could not be carried at v8:
+v8's `smoke` has one slot for a word that is interface-dependent, and v8's
+`control.outcome` vocabulary was written for a one-prompt smoke, so on a
+fourteen-completion record a bare `identical_completion` cannot say *which*
+prompt -- true about the observation and misleading about its meaning, the
+exact defect v18 existed to stop.
+
+**An asserted status.** `record` is nullable, and a cell whose record is `null`
+publishes an **asserted status**: a word a person read off a receipt, which no
+validator can check and which `contract.smoke_status_is_derived` reports
+`False` for. Two cells are in that state -- `tessera_bf16_k1_dense_sm121_decode`
+and `..._batch`. Their receipt (`tessera-bf16-route-served-2026-09-02.md` :83)
+predates the instrument and records one greedy continuation from four census
+arms of the same route: one prompt, no per-completion scoring, no reference
+arm, so there is no per-`(prompt, form)` table to transcribe and nothing here
+invents one. What would give them a derived status is a **measurement**, not an
+edit: `experiments/moe_greedy_smoke.py` run against a serve of that artifact
+with its own tokenizer, and a BF16 reference arm beside it. The six
+`not_recorded` cells never ran a smoke and have nothing to record.
+
+v9 is **not additive**: a v8 reader must not read a v9 document, because
+`record` is a key its closed `smoke` object does not know and -- the reason the
+version exists -- because a v8 reader goes on treating a status word as
+asserted prose when it is now the checked output of a stated rule. No rung,
+route, activation contract, launch, grade, KL entry, qualification, TP/EP bound
+or byte moved.
 
 Rob decided #133 on 2026-09-04: both `routed_moe` cells keep
 `device_qualified`, with the evidence debt recorded rather than closed. Read

@@ -53,8 +53,14 @@ pytest``, or those under ``tools/suite_deadline.py ... --``; any other program
 is refused by name), and bound to the population by evidence the population
 and the record each carry: the sealed snapshot's commit is the population's,
 the population's verified source stamp names that action and digests its
-request, and the recorded attempt's own stdout says it published this path
-with these counts.  A command that merely mentions the path, one that
+request, and the recorded attempt's own stdout says it published this path,
+with the digest of the bytes it wrote and with these counts.  That
+publication line has one home -- ``tessera._dev.surface_publication``, which
+``tests/conftest.py`` writes it from and this file reads it with -- because a
+sentence spelled once in the producer and once in the consumer is a contract
+neither knows it is in, and it was one until #331.
+
+A command that merely mentions the path, one that
 overrides the option later, ``echo pytest``, a request with no snapshot, a
 population with no stamp, a lease-lost record, and a retry that never
 published are none of them this file's producer, and absent evidence is
@@ -91,6 +97,11 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from tessera._dev.suite_deadline import positive_seconds as _positive_seconds  # noqa: E402
+from tessera._dev.surface_publication import (  # noqa: E402
+    POPULATION,
+    digest_bytes,
+    published_digests,
+)
 
 PBRUN = Path("/mnt/shared/prismabuild-fleet/repo/tools/pbrun.py")
 SHARED_ROOT = Path("/mnt/shared")
@@ -555,14 +566,29 @@ def _binding_refusal(key: str, payload: dict, request_bytes: bytes,
       are still read;
     * the **attempt**: the outcome's top-level status is one the worker
       writes with the final attempt's own ``detail``, and that attempt's
-      captured stdout says it published a population at this path and printed
-      the counts this population holds -- ``tests/conftest.py`` writes both
-      from ``terminalreporter.stats``.  The pool requeues on any non-zero
-      exit and a retry may die before publishing; what tells the attempts
-      apart is what each said it wrote.  #218 told them apart by a 600 s
-      clock allowance between the file's mtime and the claim, which bounded
-      how quickly a retry may follow -- a thing this tool does not know -- and
-      admitted a retry five minutes behind.
+      captured stdout says it published a population at this path -- with the
+      **digest** of the bytes it wrote, which must be the digest of the file
+      that is there now -- and printed the counts this population holds.
+      The pool requeues on any non-zero exit and a retry may die before
+      publishing; what tells the attempts apart is what each said it wrote.
+      #218 told them apart by a 600 s clock allowance between the file's
+      mtime and the claim, which bounded how quickly a retry may follow -- a
+      thing this tool does not know -- and admitted a retry five minutes
+      behind.
+
+      The publication line is not spelled here.  It is
+      ``tessera._dev.surface_publication``'s, which ``tests/conftest.py``
+      writes it from: a contract two modules each state is two rules that
+      drift, and this one drifted silently by construction -- the only test
+      of the join wrote the parser's own string back to it, so a reworded
+      producer left every arm of every resumed receipt ``not observed`` with
+      nothing red anywhere (#331).  The digest is why the join is now
+      evidence and not a matched sentence: an attempt that overwrote this
+      path with a population of *identical counts* is refused on bytes, which
+      the counts leg below cannot see.  A line with no digest -- every run
+      captured before #331, whose stdout is what a resume of an old receipt
+      reads -- is bound on path and counts alone, because that is all such an
+      attempt ever said.
     """
 
     snapshot = (payload.get("params") or {}).get("checkout_snapshot")
@@ -606,11 +632,28 @@ def _binding_refusal(key: str, payload: dict, request_bytes: bytes,
                 "attempt's own -- only executed/failed records carry the "
                 "attempt they describe")
     stdout = (outcome.get("detail") or {}).get("stdout")
-    published = f"tessera surface: population written to {Path(surface_json)}"
-    lines = stdout.splitlines() if isinstance(stdout, str) else []
-    if published not in (line.strip() for line in lines):
+    if not isinstance(stdout, str):
+        stdout = ""
+    # The sentence is not restated here: `tessera._dev.surface_publication` is
+    # the one home the conftest writes it from, so a reword moves both sides
+    # or neither (#331).
+    announced = published_digests(stdout, surface_json, POPULATION)
+    if not announced:
         return (f"the attempt whose status is recorded (attempt {attempt}) "
                 "never said it published a population at this path")
+    digests = [value for value in announced if value]
+    if digests:
+        try:
+            held = digest_bytes(Path(surface_json).read_bytes())
+        except OSError as error:
+            return (f"the population at this path cannot be read ({error}), "
+                    f"so the digest attempt {attempt} published is not "
+                    "checkable")
+        if held not in digests:
+            return (f"the attempt whose status is recorded (attempt {attempt}) "
+                    f"published sha256 {digests[0][:12]} at this path and the "
+                    f"file here is {held[:12]}, so the population at this path "
+                    "is not the one that attempt wrote")
     counts, line = _summary_counts(stdout)
     if counts is None:
         return (f"the attempt whose status is recorded (attempt {attempt}) "

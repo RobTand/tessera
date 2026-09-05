@@ -2101,9 +2101,11 @@ def main():
         # ``tessera.layout.tp_agnostic_at_minor``, the one home of the rule;
         # ``tessera.serving.config.TesseraConfig._require_a_cutter`` reads them
         # back and refuses a world size above one against an artifact that
-        # declares neither (tessera#328).  Whether the packaged
-        # ``runtime_contract.json`` should publish anything further about
-        # tensor parallelism is tessera#330 and is not settled here.
+        # declares neither (tessera#328).  What the packaged
+        # ``runtime_contract.json`` publishes about tensor parallelism is a
+        # separate question with a separate answer (tessera#330: nothing about
+        # the replication rule, deliberately); this is the artifact's own
+        # statement about its own bytes.
         "schema_minor": SCHEMA_MINOR,
         "tp_agnostic": tp_agnostic_at_minor(SCHEMA_MINOR),
         "config_groups": config_groups, "ignore": ignore,

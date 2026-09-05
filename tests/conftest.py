@@ -13,6 +13,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 CHECKOUT = Path(__file__).resolve().parents[1]
 
 from tessera._dev.suite_source import agreed_source, measured_source  # noqa: E402
+from tessera._dev.surface_publication import (  # noqa: E402
+    POPULATION,
+    WORKER_SHARE,
+    digest_bytes,
+    publication_line,
+)
 
 #: The source identity of the tree this session is about to import, captured
 #: HERE -- above the first import of the code under test, and therefore before
@@ -861,9 +867,18 @@ def _write_surface_json(path, config, terminalreporter, present, detail,
     }
     path.parent.mkdir(parents=True, exist_ok=True)
     superseded = _keep_any_previous(path)
-    path.write_text(json.dumps(payload, indent=2, sort_keys=False) + "\n")
-    what = "worker share" if worker else "population"
-    terminalreporter.write_line(f"tessera surface: {what} written to {path}")
+    # The bytes are hashed as they are written, not read back afterwards: the
+    # digest on the line must be of what THIS run published, and a re-read
+    # would hash whatever is at the path by then.
+    written = (json.dumps(payload, indent=2, sort_keys=False) + "\n").encode()
+    path.write_bytes(written)
+    what = WORKER_SHARE if worker else POPULATION
+    # One home for this sentence, because `tools/merge_suite.py` reads it back
+    # out of a pool attempt's captured stdout to decide which attempt wrote
+    # the population at a path (#331).  It carries the digest so that join is
+    # bytes and not prose.
+    terminalreporter.write_line(
+        publication_line(what, path, digest_bytes(written)))
     if superseded:
         terminalreporter.write_line(
             f"tessera surface: a previous {what} was here; kept at {superseded}")

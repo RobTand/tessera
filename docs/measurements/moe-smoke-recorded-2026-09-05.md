@@ -531,3 +531,35 @@ On sparky: `/home/rob/tessera-runs/ts198/{pair-r1,pair-r2,pair-r3}/`, driver std
 `tree_commit.txt`; caches under `/home/rob/ts-audit-caches/ts-moe-smoke/`. In the tree:
 `experiments/moe_greedy_smoke.py`, `experiments/moe_greedy_smoke_pair.sh`,
 `experiments/moe_greedy_smoke_prompts.json`, `tests/test_moe_greedy_smoke_rule.py`.
+
+## 11. Appended 2026-09-05: the aggregation rule moved out of this file (contract v22, schema v9, #327)
+
+Append-only, and nothing measured above moves. §4's last paragraph states the rule that turns the
+table of §6 into the cell's one `status` word -- "the contract flips to `recorded` on the machine
+condition *at least one prompt reads `recorded` on both arms in the campaign form*". **That sentence
+no longer decides anything and is kept only as the record of what was believed on the day.**
+
+Two reasons it could not stay. A rule that decides a field a serving gate reads may not live in a
+dated receipt: dated files here are append-only history and never a substitute (AGENTS.md rules 4
+and 10). And the existential form was never derived -- it is justified as "the campaign form,
+because it is what the campaign measured" (§3, §4), but `campaign` labels a *sampling shape*, and
+the three prompts that satisfy it (P4, P5, P6) are chat turns through an *interface* the v17
+campaign never sent, while every prompt the campaign did send reads `repetitive` on the student.
+
+Where it lives now: `tessera.serving.contract.derive_smoke_status`, restated in
+`docs/ARCHITECTURE.md`'s lane-eligibility section and nowhere else, computed from a `smoke.record`
+block the two `routed_moe` cells carry -- the fourteen rows of §6, verdict by verdict, each naming
+the interface it was taken on. The rule reads: `repetitive` when some row cycles on the student and
+the source does not; else `recorded` when some row reads `recorded` on both arms; else `repetitive`
+when any row cycles; else `not_recorded`.
+
+What it derives from this receipt: **`recorded`** for both cells, unchanged -- 6 rows read
+`recorded` on both arms, 7 cycle on the student, all 7 of those cycle on the BF16 source too, and 0
+cycle on the student where the source answered. `attribution` moves `unattributed` ->
+`shared_with_reference`, which is what makes the residual `repetitive` rows of §6 readable by a
+consumer and what tells these two cells from the dense BF16 cells whose smoke never cycled.
+
+One change to the per-completion rule of §4, which §6 is unaffected by: an **empty** completion is
+`not_recorded` and never `recorded`, because two arms that both return `""` for one prompt would
+otherwise manufacture a positive record out of two non-answers. Every completion scored above is
+non-empty (L is 16, 64 or 292-512 on all fourteen rows), so no verdict in §6 moves.

@@ -17,6 +17,8 @@ from pathlib import Path
 
 import pytest
 
+from tessera._dev import surface_publication
+
 ROOT = Path(__file__).resolve().parents[1]
 TOOL = ROOT / "tools" / "merge_suite.py"
 
@@ -1236,23 +1238,38 @@ def test_an_arm_the_run_did_not_submit_is_named_in_the_ledger(tmp_path):
     assert appended.count("no population published") == 2, appended
 
 
-def _attempt_stdout(surface_json, counts=None, published=True):
+def _attempt_stdout(surface_json, counts=None, published=True, digest=None):
     """What the attempt's pytest printed, as PrismaBuild's worker captured it.
 
     ``detail.stdout`` on a real outcome record is the attempt's whole stdout
     (the worker ``communicate()``s, nothing is truncated), and two lines of it
     are the attempt's own account of what it published: the conftest's
-    ``tessera surface: population written to <path>`` and pytest's summary
-    line with the counts the population also carries. A test that wants an
-    attempt which died before publishing says ``published=False`` and gets
-    neither line, which is what such an attempt leaves behind.
+    publication line and pytest's summary line with the counts the population
+    also carries. A test that wants an attempt which died before publishing
+    says ``published=False`` and gets neither line, which is what such an
+    attempt leaves behind.
+
+    The publication line is **not spelled here**. It is built by the module
+    the conftest writes it from, so this fixture can no longer agree with the
+    reader by restating the reader's own string -- which is the shape #331
+    was: four tests of the join, each feeding the parser a sentence the test
+    wrote to match it, all green with the binding dead. What still cannot be
+    built here is a real run's stdout, so one test does not build it:
+    ``test_a_real_runs_stdout_binds_to_the_population_it_wrote`` runs pytest.
+
+    ``digest=None`` is the pre-#331 line, which is what the captured stdout of
+    every population under ``/mnt/shared/tessera-suite-receipts`` holds; the
+    negative cases below are all of that vintage and stay there deliberately,
+    since a reader that stopped binding them would lose the three historical
+    populations that bind today.
     """
 
     counts = {"passed": 1827, "skipped": 10, **(counts or {})}
     summary = ", ".join(f"{n} {word}" for word, n in counts.items() if n)
     lines = ["....s...."]
     if published:
-        lines += [f"tessera surface: population written to {surface_json}",
+        lines += [surface_publication.publication_line(
+                      surface_publication.POPULATION, surface_json, digest),
                   f"{summary}, 14 warnings in 511.40s (0:08:31)"]
     else:
         lines.append("Fatal Python error: Aborted")
@@ -2102,3 +2119,179 @@ def test_a_later_attempt_that_could_not_publish_cannot_inherit(tmp_path):
     assert merge_suite._verdict([record]).startswith("green on")
     refused = record["pool_actions_refused"]
     assert len(refused) == 1 and refused[0].startswith(later[:12]), refused
+
+
+#: A small, self-contained file for the child run below. It is named for the
+#: property that makes it usable -- it collects and runs in a few seconds
+#: without a device or an out-of-tree artifact -- and nothing here reads its
+#: pass count, which is free to drift.
+CHILD_SUITE = "tests/test_collection_probe.py"
+
+
+@pytest.fixture(scope="module")
+def real_publication(tmp_path_factory):
+    """One real ``pytest --surface-json`` run: its stdout and its population.
+
+    Everything else in this file builds the attempt's stdout, which is how
+    #331 happened: ``_attempt_stdout`` wrote the parser the string the parser
+    was looking for, so all four tests of the join were green with the join
+    dead. This fixture is the one place a real run's terminal output reaches
+    the reader, and it is deliberately a subprocess -- an interpreter, an
+    argv, a conftest and an exit code -- rather than an in-process call of
+    ``_write_surface_json``, because the thing under test is what pytest
+    actually prints.
+
+    Serial on purpose (``PYTEST_ADDOPTS`` cleared): under ``-n`` the workers
+    write shares and only the controller writes the population, and this
+    fixture wants the population's own line.
+    """
+
+    root = tmp_path_factory.mktemp("real-publication")
+    surface = root / "surface.gpu.json"
+    env = dict(os.environ)
+    env["PYTHONPATH"] = os.pathsep.join(
+        [str(ROOT / "src"), str(ROOT / "tests"), env.get("PYTHONPATH", "")]
+    ).rstrip(os.pathsep)
+    env["PYTEST_ADDOPTS"] = ""
+    env["TMPDIR"] = str(root)
+    result = subprocess.run(
+        [sys.executable, "-m", "pytest", "-p", "no:cacheprovider", "-q",
+         CHILD_SUITE, "--surface-json", str(surface)],
+        cwd=str(ROOT), env=env, capture_output=True, text=True, timeout=600,
+    )
+    assert surface.is_file(), (result.returncode, result.stdout[-4000:],
+                               result.stderr[-2000:])
+    population = json.loads(surface.read_text())
+    assert population.get("counts"), (population, result.stdout[-4000:])
+    return {"surface": surface, "stdout": result.stdout,
+            "returncode": result.returncode, "population": population}
+
+
+def _pool_records_for(real, key="beef" + "0" * 60, population=None):
+    """The pool's half of the join, around a real run's stdout and file.
+
+    The request and the outcome record are PrismaBuild's shapes and are built
+    here, because there is no pool on this box; the population's **producer
+    stamp** is the same -- ``suite_source._verified_stamp`` writes it only for
+    a checkout it verified against a sealed action, which a local run has
+    none of -- so it is injected into the population dict the reader is
+    handed while the file at the path stays byte-for-byte what the run wrote.
+
+    That division is the point rather than a compromise: everything the
+    attempt leg reads is the run's own -- the captured stdout, the file, the
+    counts in it -- and only the legs that are about the pool are synthetic.
+    """
+
+    population = json.loads(json.dumps(population or real["population"]))
+    # A tree with no git history -- an rsync'd checkout on the box that runs
+    # the suite -- publishes ``commit: null``, and the tree leg is not what
+    # this test is about. Give both sides the same placeholder rather than
+    # make the test's verdict depend on how its box got its source.
+    commit = population.get("commit") or "0" * 40
+    population["commit"] = commit
+    snapshot = {"schema": "prismaquant.prismabuild.pbrun_checkout_snapshot.v1",
+                "commit": commit, "subdirectory": "."}
+    payload = {"params": {"command": [sys.executable, "-m", "pytest",
+                                      CHILD_SUITE, "--surface-json",
+                                      str(real["surface"])],
+                          "checkout_snapshot": snapshot}}
+    request_bytes = json.dumps(payload).encode()
+    population.setdefault("source_identity", {})["excluded_metadata"] = [{
+        "path": f".pbrun-closure.{key[:16]}.json", "bytes": 153,
+        "sha256": "d" * 64, "action_key": key,
+        "request_sha256": hashlib.sha256(request_bytes).hexdigest()}]
+    outcome = {"attempts": 1, "claimed_host": "sparklina",
+               "claimed_unix": time.time(), "status": "executed",
+               "detail": {"returncode": real["returncode"],
+                          "status": "executed", "elapsed_s": 1.0,
+                          "stdout": real["stdout"]}}
+    return key, payload, request_bytes, outcome, population
+
+
+def test_a_real_runs_stdout_binds_to_the_population_it_wrote(real_publication):
+    """The join, driven by a run this test did not write the output of.
+
+    #331: the publication line was spelled once in ``tests/conftest.py`` and
+    once in ``tools/merge_suite.py``, neither knowing it was in a contract
+    with the other, and the only test of the join synthesized both sides. One
+    word changed in the producer left ``_binding_refusal`` refusing every
+    action ever, every arm of every resumed receipt ``not observed``, and
+    ``tests/test_merge_suite.py`` green at 85 passed. This test is the one
+    that goes red for that, because nothing in it writes the string.
+
+    It also pins the digest, which is what makes the join evidence rather
+    than a matched sentence: the line names the SHA-256 of the bytes the run
+    published, and that is the digest of the file sitting at the path.
+
+    Before the fix, on ``f86b811`` with this file and
+    ``tessera._dev.surface_publication`` added and nothing else (sparklina, in
+    a real checkout -- the digest is of that run's own population)::
+
+        >       assert announced == [surface_publication.digest_bytes(
+                    surface.read_bytes())], announced
+        E       AssertionError: [None]
+        E       assert [None] == ['f974bb945e2...4a9633807fb2']
+
+    -- the conftest published no digest, so the reader had only the sentence.
+    The first assertion below **passes** on ``f86b811``: the two spellings
+    agree *today*, which is exactly why nothing was red when the binding was
+    provably breakable. It is a pin against the drift, not a demonstration of
+    it; the demonstration is that the sentence is now spelled in one place.
+    """
+
+    merge_suite = _module()
+    surface = real_publication["surface"]
+    key, payload, request_bytes, outcome, population = _pool_records_for(
+        real_publication)
+
+    assert merge_suite._binding_refusal(key, payload, request_bytes, outcome,
+                                        surface, population) is None
+
+    announced = surface_publication.published_digests(
+        real_publication["stdout"], surface, surface_publication.POPULATION)
+    assert announced == [surface_publication.digest_bytes(
+        surface.read_bytes())], announced
+
+
+def test_a_population_edited_after_publication_is_not_what_the_attempt_wrote(
+        real_publication, tmp_path):
+    """Same counts, different bytes: the counts leg cannot see this.
+
+    An attempt is bound to the file it published, and the two legs that ask
+    are the path and the counts -- both of which a *second* population of the
+    same run's shape satisfies. Its device string, its skip reasons, its
+    ``cuda_surface`` block may all differ and the row still adopts the first
+    attempt's exit status for the second attempt's file. The digest closes
+    that: the file must still hash to what the attempt announced.
+
+    Before the fix, on ``f86b811`` with this file and
+    ``tessera._dev.surface_publication`` added and nothing else (sparklina, in
+    a real checkout)::
+
+        >       assert refusal is not None, refusal
+        E       AssertionError: None
+        E       assert None is not None
+
+    -- the edited population bound, because nothing read the bytes.
+    """
+
+    merge_suite = _module()
+    surface = tmp_path / "surface.gpu.json"
+    edited = json.loads(json.dumps(real_publication["population"]))
+    edited["device"] = str(edited.get("device")) + " -- a second attempt's box"
+    assert edited["counts"] == real_publication["population"]["counts"]
+    surface.write_bytes(
+        (json.dumps(edited, indent=2, sort_keys=False) + "\n").encode())
+
+    # The attempt's own stdout, unchanged, still naming this path: the run
+    # published here and something published over it.
+    real = {**real_publication, "surface": surface,
+            "stdout": real_publication["stdout"].replace(
+                str(real_publication["surface"]), str(surface))}
+    key, payload, request_bytes, outcome, population = _pool_records_for(
+        real, population=edited)
+
+    refusal = merge_suite._binding_refusal(key, payload, request_bytes,
+                                           outcome, surface, population)
+    assert refusal is not None, refusal
+    assert "is not the one that attempt wrote" in refusal, refusal

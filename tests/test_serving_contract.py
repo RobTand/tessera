@@ -16,6 +16,7 @@ Tessera bytes, so the table travels inside it and a producer reads it through
 from __future__ import annotations
 
 import copy
+import json
 from pathlib import Path
 import re
 
@@ -712,6 +713,121 @@ def test_no_unit_attests_a_world_size_above_one(contract):
     assert {u["unit"] for u in units} == set(_FAMILY_RUNGS)
     for unit in units:
         assert unit["max_world_size"] == 1
+
+
+# --- the silence about KV-head replication, and what ends it (#330) -----------
+#
+# ``tensor_parallel`` publishes ``max_world_size`` and ``loader_axes`` and says
+# NOTHING about KV-head replication, although the loader enforces vLLM's rule
+# (``sharding.layer_replicas`` reads ``KV_REPLICAS_ATTRIBUTE`` off the layer and
+# the plan hands rank ``tp_rank`` the shard at ``tp_rank // replicas``).  That
+# is deliberate: at ``max_world_size == 1`` a published replication rule would
+# be a claim a consumer PINS -- and Tessera must then keep, so that a vLLM
+# change becomes a contract break rather than a loader bug -- on the strength of
+# no served evidence, which is a claim beyond its evidence in the direction
+# nobody checks for.  The silence is only honest while the world is one, so it
+# is GATED rather than commented.
+
+def _packaged_tensor_parallel() -> dict:
+    """The shipped ``tensor_parallel`` block, read WITHOUT the validator.
+
+    ``load_serving_contract`` refuses ``max_world_size != 1`` outright, so on
+    the one tree this gate exists for -- the one where somebody has attested a
+    bigger world -- the ``contract`` fixture raises before the gate can speak.
+    Reading the packaged bytes through the contract module's own
+    ``contract_path`` keeps the gate alive across that lift.
+    """
+    return json.loads(contract_path().read_text(encoding="utf-8"))["tensor_parallel"]
+
+
+def _unpublished_replication_above_one(tensor_parallel: dict) -> str | None:
+    """What #330 decided, as a gate.  Both sides derived, neither typed.
+
+    The attested world is the contract's own ``max_world_size``; "says nothing
+    about replication" is the absence of ``sharding.KV_REPLICAS_ATTRIBUTE`` --
+    the loader's own constant, the one name vLLM publishes the rule under --
+    anywhere in the published block.  Returns the reader's instructions, or
+    ``None`` when there is nothing to answer for.
+    """
+    from tessera.serving.sharding import KV_REPLICAS_ATTRIBUTE
+
+    attested = max(int(unit["max_world_size"]) for unit in tensor_parallel["units"])
+    if attested <= 1:
+        return None
+    if KV_REPLICAS_ATTRIBUTE in json.dumps(tensor_parallel, sort_keys=True):
+        return None
+    return (
+        f"runtime_contract.json attests tensor_parallel max_world_size {attested}, and its "
+        f"tensor_parallel block still says nothing about KV-head replication: the name "
+        f"{KV_REPLICAS_ATTRIBUTE!r} (tessera.serving.sharding.KV_REPLICAS_ATTRIBUTE) appears "
+        f"nowhere in it. Above one rank that rule DECIDES which rows of a GQA/MQA layer each "
+        f"rank loads -- sharding.layer_replicas reads it off the layer and the plan gives rank "
+        f"tp_rank the shard at index tp_rank // {KV_REPLICAS_ATTRIBUTE} -- so a consumer that "
+        f"pins this contract can no longer be left to infer it. The silence was a DECISION "
+        f"(tessera#330, docs/ARCHITECTURE.md 3.8) and it was conditioned on this number being "
+        f"1: while no multi-rank serve is attested, publishing the rule would assert a contract "
+        f"on the strength of no served evidence. Do one of two things, and not this third: "
+        f"PUBLISH the rule in tensor_parallel, derived from "
+        f"tessera.serving.sharding.KV_REPLICAS_ATTRIBUTE rather than typed, with the loader's "
+        f"index arithmetic beside it; or PUT THE ATTESTATION BACK to 1, because a world size "
+        f"above 1 needs a two-rank serve with a per-rank census and a KL against the "
+        f"single-rank arm anyway.")
+
+
+def test_the_contract_does_not_owe_a_replication_rule_it_has_not_attested():
+    """The #330 gate on the SHIPPED bytes: silent, and honestly so.
+
+    This passes today two ways -- the world is 1 -- and it is the assertion
+    that fails the day somebody raises ``max_world_size`` (and lifts the
+    validator's refusal of it) while the block is still silent.  It does not
+    restate that the world is 1: ``test_no_unit_attests_a_world_size_above_one``
+    owns that claim, and this one owns the obligation that outlives it.
+    """
+    problem = _unpublished_replication_above_one(_packaged_tensor_parallel())
+    assert problem is None, problem
+
+
+@pytest.mark.parametrize("raised", [2, 8])
+def test_a_world_above_one_may_not_leave_the_replication_rule_unpublished(raised):
+    """The gate has teeth: raise the world in the fixture, not in the file.
+
+    The shipped contract is never edited to prove this -- the mutation is a
+    copy, exactly as the validator's refusals are exercised -- and the message
+    is checked for the two exits, because a gate that fires without saying what
+    to do is a gate that gets deleted.
+    """
+    from tessera.serving.sharding import KV_REPLICAS_ATTRIBUTE
+
+    tensor_parallel = _packaged_tensor_parallel()
+    tensor_parallel["units"][0]["max_world_size"] = raised
+
+    problem = _unpublished_replication_above_one(tensor_parallel)
+    assert problem is not None, "a world above one with no replication rule must be refused"
+    assert str(raised) in problem
+    assert KV_REPLICAS_ATTRIBUTE in problem
+    assert "#330" in problem
+    assert "PUBLISH" in problem and "PUT THE ATTESTATION BACK" in problem
+
+
+def test_publishing_the_rule_is_a_real_exit_from_the_gate():
+    """Not a tripwire that only ever says "go back".
+
+    Option (a) of #330 -- publish the rule -- must satisfy this gate, or the
+    gate would be quietly pinning ``max_world_size == 1`` forever under
+    another name.  Any published field naming the loader's constant clears it;
+    what that field must SAY is the decision the gate hands back to a person.
+    """
+    from tessera.serving.sharding import KV_REPLICAS_ATTRIBUTE
+
+    tensor_parallel = _packaged_tensor_parallel()
+    for unit in tensor_parallel["units"]:
+        unit["max_world_size"] = 2
+    assert _unpublished_replication_above_one(tensor_parallel) is not None
+    tensor_parallel["kv_head_replication"] = {
+        "attribute": KV_REPLICAS_ATTRIBUTE,
+        "shard_index": f"tp_rank // {KV_REPLICAS_ATTRIBUTE}",
+    }
+    assert _unpublished_replication_above_one(tensor_parallel) is None
 
 
 def test_loader_axes_is_the_table_the_routes_gate_on(contract):

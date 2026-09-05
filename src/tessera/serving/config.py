@@ -339,8 +339,11 @@ class TesseraConfig(QuantizationConfig):
         says ``max_world_size: 1`` for every family and will until a multi-rank
         serve has been run and measured.  That is the same status a rung with no
         ``lane_eligibility`` cell has -- unattested, which is honest, and not a
-        refusal.  What the contract publishes about tensor parallelism is
-        tessera#330's question and not this gate's.
+        refusal.  What the CONTRACT publishes about tensor parallelism is a
+        different question, answered in tessera#330: nothing about the
+        replication rule, deliberately, and the silence is gated.  This gate
+        reads the ARTIFACT, which is a statement about bytes and is derived
+        from them.
         """
         try:
             from vllm.distributed import get_tensor_model_parallel_world_size
