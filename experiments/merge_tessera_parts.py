@@ -54,6 +54,7 @@ import argparse
 import json
 import shutil
 import sys
+import tempfile
 from fractions import Fraction
 from pathlib import Path
 
@@ -586,6 +587,43 @@ def check_assembly(parts, source, blob_suffix, arity):
     return plan, identity, owner
 
 
+def _install_verified_file(source, target, digest, *, move=False):
+    """Install one verified payload without opening a preexisting target inode.
+
+    A private sibling directory keeps copy2/move away from destination aliases.
+    Replacing its entry also handles hardlinks: no protected inode is written.
+    Check the transferred bytes before installing them, rather than assuming a
+    successful transfer preserved the digest check_assembly proved (#352).
+    """
+    from tessera.serving_parts import sha256_file
+
+    staging = Path(tempfile.mkdtemp(prefix=".tessera-merge-", dir=target.parent))
+    staged = staging / target.name
+    retain = False
+    try:
+        transfer = shutil.move if move else shutil.copy2
+        transfer(str(source), str(staged))
+        if sha256_file(staged) != digest:
+            raise SystemExit(f"{target.name}: transferred bytes differ from verified sha256")
+        staged.replace(target)
+    except BaseException:
+        # A failed move installation must not let staging cleanup delete the
+        # input. Restore its original path, or retain it with a recovery path
+        # if the filesystem also refuses that restoration.
+        if (move and (staged.exists() or staged.is_symlink())
+                and not (source.exists() or source.is_symlink())):
+            retain = True
+            try:
+                staged.replace(source)
+            except OSError as exc:
+                raise OSError(f"move failed; input retained at {staged}") from exc
+            retain = False
+        raise
+    finally:
+        if not retain:
+            shutil.rmtree(staging)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("parts", nargs="+", help="the part directories, in any order")
@@ -605,11 +643,13 @@ def main():
               f"{manifest['totals']['modules']} modules, {manifest['totals']['wire_bytes']} wire bytes")
         return
 
-    from tessera.serving_parts import output_part_stamp
+    from tessera.serving_parts import output_part_stamp, sha256_file
 
     loaded = [load(p) for p in args.parts]
     out = Path(args.out)
     source = Path(args.source)
+    if out.exists() and out.samefile(source):
+        raise SystemExit("merge output cannot be the verified source checkpoint")
 
     # --- config: identical where it must be ------------------------------
     base = check_configs([(part.name, config) for part, _, config in loaded])
@@ -642,10 +682,9 @@ def main():
     base["source"] = identity
     # And to its own bytes.  ``base`` started life as the FIRST part's config,
     # so without this the merged checkpoint would publish that part's output
-    # seal as a receipt for the whole directory (tessera#337).  The union of
-    # the parts' seals is the right one and costs nothing: check_assembly has
-    # just held every shard to its digest, and the merge copies the files
-    # unchanged, so re-hashing the copies would only re-read the artifact.
+    # seal as a receipt for the whole directory (tessera#337). The union of
+    # the parts' seals describes the expected bytes; transfer and final output
+    # checks below prove these are also the bytes actually installed (#352).
     base["output"] = output_part_stamp(
         {shard: config["output"]["files"][shard]
          for _, _, config in loaded for shard in config["output"]["files"]})
@@ -668,26 +707,38 @@ def main():
     for seal in ("tessera_config.json", "model.safetensors.index.json"):
         (out / seal).unlink(missing_ok=True)
     # --- move the files ---------------------------------------------------
-    move = shutil.move if args.move else shutil.copy2
     for shard, part in sorted(seen.items()):
         target = out / shard
-        if target.exists() and target.resolve() == (part / shard).resolve():
+        # Self-assembly leaves the shard already owned by this directory in
+        # place. An alias in a different destination must become its own file.
+        if out.samefile(part):
             continue
-        move(str(part / shard), str(target))
-    for shard in sorted(seen):
-        if not (out / shard).exists():
-            raise SystemExit(f"{shard} is named by the index but absent from {out}")
+        _install_verified_file(part / shard, target, base["output"]["files"][shard],
+                               move=args.move)
+
+    # Reuse must install this source's auxiliary population, including absence.
+    # The inventory is the one check_assembly verified, not a new source glob.
+    # Completion metadata belongs to this merge and is published last (#351).
+    seals = {"tessera_config.json", "model.safetensors.index.json"}
+    auxiliary = {name: digest for name, digest in identity["auxiliary_sha256"].items()
+                 if name not in seals}
+    for pattern in ("*.json", "*.txt", "*.jinja", "*.model"):
+        for stale in out.glob(pattern):
+            if stale.name not in auxiliary and stale.name not in seals:
+                stale.unlink()
+    for name, digest in sorted(auxiliary.items()):
+        _install_verified_file(source / name, out / name, digest)
+
+    # Check the installed population, including shards retained by self-assembly,
+    # before publishing either completion file. Receipts describe these bytes.
+    for name, digest in {**base["output"]["files"], **auxiliary}.items():
+        if sha256_file(out / name) != digest:
+            raise SystemExit(f"{name}: installed bytes differ from verified sha256")
 
     total = sum((out / s).stat().st_size for s in sorted(seen))
     (out / "model.safetensors.index.json").write_text(json.dumps(
         {"metadata": {"total_size": total}, "weight_map": weight_map}, indent=2))
     (out / "tessera_config.json").write_text(json.dumps(base, indent=2))
-    for pattern in ("*.json", "*.txt", "*.jinja", "*.model"):
-        for aux in Path(args.source).glob(pattern):
-            if aux.name == "model.safetensors.index.json":
-                continue
-            if not (out / aux.name).exists():
-                shutil.copy2(aux, out / aux.name)
 
     gib = lambda b: b / 2 ** 30
     print(f"merged {len(loaded)} parts -> {out}")

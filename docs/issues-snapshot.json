@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-05T22:05:58Z",
+ "generated": "2026-09-05T22:51:48Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -586,6 +586,26 @@
    "23": {
     "state": "CLOSED",
     "title": "Footprint: production selector bypasses the tested manifest functions; latent double-subtraction"
+   },
+   "230": {
+    "state": "OPEN",
+    "title": "Bind cached activation-aware costs to the resolved activation-scale policy (#227)"
+   },
+   "231": {
+    "state": "OPEN",
+    "title": "[P1] Keep priced Hessian and scale inputs bound across the exporter handoff"
+   },
+   "232": {
+    "state": "OPEN",
+    "title": "[P1] Scoped census replay accepts missing or contradictory runtime-image declarations"
+   },
+   "233": {
+    "state": "OPEN",
+    "title": "[P1] Validate the producer\u2019s v9 smoke-record grammar before deriving admission"
+   },
+   "234": {
+    "state": "OPEN",
+    "title": "[P2] Preserve serving conditions in production Tessera route admission"
    },
    "24": {
     "state": "CLOSED",
@@ -1974,7 +1994,7 @@
     "title": "Derive what an artifact says about slicing and gate on it (#328); report why a unit cannot be cut (#329)"
    },
    "336": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P0] Parsing a released shard drops its counts and rewriting moves the overrides"
    },
    "337": {
@@ -2022,16 +2042,44 @@
     "title": "[P2] A tracked symlink a module reads has no node of its own, so repointing it selects nothing"
    },
    "347": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "merge: drop the old seal before the first transfer, not after the last"
    },
    "348": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Restore a parsed shard's RELEASE counts, and refuse a rewrite that cannot carry them (#336)"
+   },
+   "349": {
+    "state": "OPEN",
+    "title": "[P0] Rewriting a whole-unit RELEASE terminal redistributes its overrides"
    },
    "35": {
     "state": "CLOSED",
     "title": "LUT-plane block-scale refit: try a Gauss-Seidel sweep, the one untried optimiser on the 4-bit weight leg"
+   },
+   "350": {
+    "state": "OPEN",
+    "title": "[P2] can_shard admits row cuts of released partial-superblock units that slice_unit rejects"
+   },
+   "351": {
+    "state": "OPEN",
+    "title": "[P0] Reusing a legacy merge destination publishes old model configuration and tokenizer with new weights"
+   },
+   "352": {
+    "state": "OPEN",
+    "title": "[P0] A legacy merge destination symlink can overwrite a verified input and publish a false output seal"
+   },
+   "353": {
+    "state": "OPEN",
+    "title": "[P2] Keep the symlink depth budget when resolving absolute in-root targets"
+   },
+   "354": {
+    "state": "OPEN",
+    "title": "[P2] Bound directory-only glob filtering before it follows an out-of-tree symlink"
+   },
+   "355": {
+    "state": "OPEN",
+    "title": "[P2] Preserve refused data-read dependencies when the changed file has an inert suffix"
    },
    "36": {
     "state": "CLOSED",

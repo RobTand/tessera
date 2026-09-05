@@ -262,7 +262,7 @@ def _executes_python_source(tree):
 _MAX_LINK_DEPTH = 40
 
 
-def _resolve_within_root(path, root):
+def _resolve_within_root(path, root, budget=None):
     """Resolve *path* without ever naming a location outside *root*.
 
     Returns the resolved absolute path, or ``None`` when the spelling or the
@@ -298,13 +298,12 @@ def _resolve_within_root(path, root):
         # Not even spelled from inside the tree.  Whatever ``..`` would do to
         # it later, walking it means stat'ing outside root first.
         return None
-    return _walk_within_root(base, parts[len(prefix):], base, 0)
+    return _walk_within_root(
+        base, parts[len(prefix):], base, [_MAX_LINK_DEPTH] if budget is None else budget)
 
 
-def _walk_within_root(current, parts, base, depth):
+def _walk_within_root(current, parts, base, budget):
     """One component at a time from *current*, which is already inside *base*."""
-    if depth > _MAX_LINK_DEPTH:
-        return None
     for part in parts:
         if not part or part == ".":
             continue
@@ -323,11 +322,16 @@ def _walk_within_root(current, parts, base, depth):
             # is what ``resolve(strict=False)`` does with it too.
             current = candidate
             continue
+        # One budget covers every link, including absolute targets and later
+        # components after a recursive target walk returns (#353).
+        if budget[0] == 0:
+            return None
+        budget[0] -= 1
         target = Path(link)
         if target.is_absolute():
-            current = _resolve_within_root(target, base)
+            current = _resolve_within_root(target, base, budget)
         else:
-            current = _walk_within_root(current, target.parts, base, depth + 1)
+            current = _walk_within_root(current, target.parts, base, budget)
         if current is None:
             return None
     return current
@@ -454,6 +458,14 @@ def _values(node, scope, root, visiting=frozenset(), refused=None):
                 # is what the guard above already assumed of it.
                 bases = _place(paths, root, refused)
                 if bases is None:
+                    return None
+                # pathlib's trailing-separator filter follows DirEntry links
+                # before we can place its matches. Refuse the named pattern
+                # without enumerating it, retaining data-read uncertainty.
+                if any(arg.endswith(tuple(sep for sep in (os.sep, os.altsep) if sep))
+                       for arg in args):
+                    if refused is not None:
+                        refused.extend(bases)
                     return None
                 if (node.func.attr == "glob"
                         and all(len(Path(arg).parts) == 1 and arg not in {".", ".."}

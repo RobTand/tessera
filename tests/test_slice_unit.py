@@ -943,6 +943,130 @@ def _release_spec(manifest, released, unit, grid):
     )
 
 
+@pytest.mark.parametrize("parent_fixture", [
+    "s6b_released_parent", "window_released_unit",
+])
+@pytest.mark.parametrize("selected", [24, 48, 72])
+def test_whole_release_prefix_refuses_a_rewrite_that_would_move_positions(
+    request, parent_fixture, selected,
+):
+    """#349: a whole-unit terminal keeps the full descriptor's ranked prefix.
+
+    The three cuts end inside the first block, at its boundary, and inside
+    the second. The first decode must retain those positions; the writer must
+    refuse a placement its total-only descriptor would redistribute.
+    """
+    from tessera.container import parse as parse_container
+
+    parent = request.getfixturevalue(parent_fixture)
+    root = parent.manifest.branch.root_q256
+    manifest, _r, full_blob = _rewrite(parent, root)
+    geometry = manifest.geometry
+    cols, superblock = geometry.columns, geometry.superblock_columns
+    assert manifest.shard is None
+    assert release_quota(parent.unit.released_positions, cols, superblock) == (48, 48)
+    spec = _release_spec(manifest, selected, parent.unit, parent.grid)
+    cap = (parent.grid.payload_bits if manifest.body is BodyKind.WINDOW
+           else parent.grid.rate_cap)
+    short_blob, _rung = _laddered(
+        parse_container(full_blob), manifest, spec, cap, parent.grid.arity)
+    first = _cpu_parse(short_blob)
+    assert first.unit.released_positions == selected
+    assert torch.equal(first.unit.release_index, parent.unit.release_index[:selected])
+    assert torch.equal(first.unit.release_code, parent.unit.release_code[:selected])
+    expected = replace(
+        parent.unit, release_index=parent.unit.release_index[:selected],
+        release_code=parent.unit.release_code[:selected],
+    )
+    before = reconstruct_unit(first.unit, first.forests, first.code)
+    assert torch.equal(before, reconstruct_unit(expected, parent.forests, parent.code))
+    held = tuple(int((((first.unit.release_index % cols) // superblock) == b).sum())
+                 for b in range(superblock_count(cols, superblock)))
+    assert held != release_quota(selected, cols, superblock)
+
+    with pytest.raises(GrammarError, match="whole unit.*RELEASE.*quota"):
+        _rewrite(first, root)
+    # Refusal must leave the valid parsed terminal usable.
+    assert torch.equal(before, reconstruct_unit(first.unit, first.forests, first.code))
+
+
+@pytest.mark.parametrize("parent_fixture", [
+    "s6b_released_parent", "window_released_unit",
+])
+@pytest.mark.parametrize("selected", [0, 24, 48, 72, 96])
+def test_whole_release_rewrite_keeps_canonical_counts_and_zero_terminal(
+    request, parent_fixture, selected,
+):
+    """A refusal is about placement, not the count or the body family.
+
+    Whole units canonically encoded at the same shorter totals still write
+    byte-identically on rewrite. A zero terminal from the full descriptor
+    remains writable, and drops no information that affects reconstruction.
+    """
+    from tessera.container import parse as parse_container
+
+    parent = request.getfixturevalue(parent_fixture)
+    root = parent.manifest.branch.root_q256
+    geometry = parent.manifest.geometry
+    empty = parent.unit.release_index[:0]
+    base = replace(parent.unit, release_index=empty, release_code=empty)
+    decoded = reconstruct_unit(base, parent.forests, parent.code)
+    index = _canonical_release_order(
+        decoded, geometry.columns, geometry.superblock_columns, selected)
+    canonical = replace(parent.unit, release_index=index,
+                        release_code=parent.unit.release_code[:selected])
+    manifest, _r, blob = _shard_blob(canonical, parent.forests, root)
+    assert manifest.shard is None
+    assert manifest.plane(PlaneKind.RELEASE).count_granularity is CountGranularity.WHOLE_PLANE
+    parsed = _cpu_parse(blob)
+    _m, _r, rewritten = _rewrite(parsed, root)
+    assert rewritten == blob
+    assert torch.equal(parsed.unit.release_index, canonical.release_index)
+    assert torch.equal(parsed.unit.release_code, canonical.release_code)
+    assert torch.equal(reconstruct_unit(parsed.unit, parsed.forests, parsed.code),
+                       reconstruct_unit(canonical, parent.forests, parent.code))
+    if selected == 0:
+        full_manifest, _r, full_blob = _rewrite(parent, root)
+        cap = (parent.grid.payload_bits if full_manifest.body is BodyKind.WINDOW
+               else parent.grid.rate_cap)
+        short_blob, _rung = _laddered(
+            parse_container(full_blob), full_manifest,
+            _release_spec(full_manifest, 0, parent.unit, parent.grid),
+            cap, parent.grid.arity,
+        )
+        _m, _r, zero_rewrite = _rewrite(_cpu_parse(short_blob), root)
+        assert zero_rewrite == blob
+
+
+def test_a_representable_whole_release_prefix_still_rewrites():
+    """A shorter terminal over one superblock already has its own quota."""
+    from tessera.container import parse as parse_container
+
+    legacy = pathlib.Path(__file__).parent / "data" / "legacy"
+    parent = _cpu_parse((legacy / "e2m1-768-release256-256c.tessera").read_bytes())
+    root = parent.manifest.branch.root_q256
+    manifest, _r, full_blob = _rewrite(parent, root)
+    assert superblock_count(manifest.geometry.columns,
+                            manifest.geometry.superblock_columns) == 1
+    selected = parent.unit.released_positions // 2
+    assert 0 < selected < parent.unit.released_positions
+    short_blob, _rung = _laddered(
+        parse_container(full_blob), manifest,
+        _release_spec(manifest, selected, parent.unit, parent.grid),
+        parent.grid.rate_cap, parent.grid.arity,
+    )
+    first = _cpu_parse(short_blob)
+    assert torch.equal(first.unit.release_index, parent.unit.release_index[:selected])
+    assert torch.equal(first.unit.release_code, parent.unit.release_code[:selected])
+    _m, _r, rewritten = _rewrite(first, root)
+    second = _cpu_parse(rewritten)
+    assert torch.equal(second.unit.release_index, first.unit.release_index)
+    assert torch.equal(second.unit.release_code, first.unit.release_code)
+    assert torch.equal(reconstruct_unit(first.unit, first.forests, first.code),
+                       reconstruct_unit(second.unit, second.forests, second.code))
+    assert _rewrite(second, root)[2] == rewritten
+
+
 def test_a_shorter_release_terminal_rewrites_to_its_own_prefix(
     s6b_released_parent
 ):

@@ -6,12 +6,21 @@ Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
 **Provenance:** current as of the unreleased `v0.1.0` candidate (2026-09-05):
-base `3317036` (wire minor 7), encoder-evidence scope correction #198; CI at `df1bc20`,
+selector traversal budget #353, directory-glob boundary #354, and refused
+data-read suffix coverage #355 verified against base `8dc165b`;
+base `8dc165b` (wire minor 7), encoder-evidence scope correction #198,
+RELEASE cut capability correction #350; legacy merge publication #351/#352;
+CI at `df1bc20`,
 packaging metadata at `cd3190a`; contract v22 (the smoke status word is derived
 from a `smoke.record` and checked, #327; routed-MoE smoke recorded,
-prismaquant#198), lane-eligibility schema v9. Re-stamp this
+prismaquant#198), lane-eligibility schema v9; whole-unit RELEASE rewrite
+placement guard #349 and cut-specific refusal diagnostics (2026-09-05). Re-stamp this
 line with any change to the wire, the recipe table, the serving lane, the
 plugin contract or a gate (AGENTS.md principle 10).
+
+Re-stamped 2026-09-05 on `codex/audit4-input-handoff` for the producer's
+priced-input snapshot intake (PrismaQuant #231; §2.3). Wire, encoder recipes
+and runtime contract remain at the versions above.
 
 ## 1. Scope
 
@@ -201,7 +210,8 @@ is independent of this repository, and the two must not be spelled the same
 way.** An outside spelling can be a local alias directory pointing straight
 back into the checkout -- environment state nothing here records -- so the
 refusal keeps a dependency it cannot attribute to a file: the reading module
-is seeded for every non-inert change and its consumers are selected. Reading
+is seeded for every change, including `.md`, `.txt`, and `.rst`, and its
+consumers are selected (#355). Reading
 the refusal as independence produced `verdict='none'`, no tests and no
 diagnostic for a change that moved the reader's own bytes, which is the one
 outcome this contract forbids (#338). Every gap in what the graph can prove resolves
@@ -264,9 +274,14 @@ filesystem call; after that each component is examined only once the prefix
 it extends is known to be inside root; `..` is applied to a prefix already
 free of symlinks, so it means what the filesystem means by it rather than
 what the string does; a symlink is *read* -- it is in the tree -- but a
-target that leaves the tree ends the walk; and a link chain longer than 40
-ends it too, where `Path.resolve` raised through the caller instead. A
-refusal is the same unknown a crawling glob already gets at its boundary,
+target that leaves the tree ends the walk; and exceeding 40 link traversals
+ends it too, sharing one budget across absolute and relative targets (#353).
+`Path.resolve` raised through the caller instead. A
+directory-only glob (a trailing separator) is refused before enumeration,
+because pathlib would otherwise follow symlinks while filtering directory
+entries before this walk sees a match (#354). Refused named patterns keep
+module or data uncertainty according to their consumer. A path refusal
+is the same unknown a crawling glob already gets at its boundary,
 decided without a syscall out there. An absolute literal outside the tree,
 one that escapes via `..`, and an in-root link pointing out of it are one
 rule with one home, and the three entry points -- a bare loader argument, an
@@ -283,7 +298,7 @@ as "any module in the tree" is what held the verdict at `full` for every change
 (#148). A read the resolver *named* and then refused to place is a third state,
 not a case of either: it is no module edge -- the reader executes nothing, so
 it imports nothing and never forces the full run -- but it is not independence
-either, so the reader is seeded for every non-inert change and the receipt
+either, so the reader is seeded for every changed-file suffix and the receipt
 lists it under `unplaced_data_reads` (#338). What separates the two is whether
 a file was named: a filename assembled from runtime state names nothing the
 diff can hold, while an out-of-tree spelling names exactly one file and only
@@ -593,7 +608,19 @@ prices. Two things close it, and the second is why the first is not enough:
   (the shards are being replaced in place), so `tessera_config.json` and the
   index are removed *before* the first transfer and an unfinished merge leaves
   an **unsealed** directory, which the reader and this merge's own `load`
-  refuse by name.
+  refuse by name. Reusing a merge destination installs the current verified
+  source's auxiliary files and removes obsolete JSON, text, Jinja and model
+  auxiliaries. Each installed auxiliary is hashed against the source receipt;
+  the index and completion config are published only after all auxiliary
+  transfers succeed, so a failed tokenizer/config copy cannot seal partial
+  replacement (#351). Weight and auxiliary transfers use private sibling
+  staging and replace destination entries, so an existing symlink or hardlink
+  cannot redirect a write into a verified input. Staged and installed bytes
+  must match the verified digests before publication (#352). Copy and move
+  modes retain self-assembly into a part directory; an output directory that
+  aliases the BF16 source is refused before any mutation. A failed move
+  installation restores its staged shard to the input path; if restoration
+  also fails, the error names the retained staging file for recovery.
 
 **What an operator does differently:** re-exporting into a checkpoint directory
 that already exists now refuses. Export to a fresh directory and swap, or
@@ -603,6 +630,29 @@ re-exported; nothing about them is known to be wrong, but nothing can say which
 bytes survived in their output directories, which is the whole finding. The
 151 GiB GLM export predates tessera#300 and was already refused as unsealed, so
 this adds no cost there.
+
+### 2.3 Priced inputs remain bound across the process handoff
+
+`export_tessera_serving.py --priced-inputs BUILD --priced-inputs-sha256 SHA`
+accepts the preflight's build anchor and the SHA-256 returned directly with
+its publication. Both flags are required together. `PricedInputsSnapshot`
+reads the bytes once, checks their digest against the argument, and reads the
+closed `priced_inputs` block: schema `tessera.priced_export_inputs.v1`,
+`hessian_capture_sha256` (a capture seal or explicit null), and
+`input_global_scales` (the exact selected F32 scalar values, keyed by
+`<module>.input_global_scale`). Other build-envelope fields remain the
+caller's provenance. A missing/malformed block refuses.
+
+The gate compares that expected seal to the actual loaded `ActivationSource`
+and the expected values to the scalar map copied from the actual safetensors
+read, before output directories or shards are created. Each scalar must have
+one element. It reuses the existing capture seal, so every dense or cached
+expert H consumption remains checked by its owner. The capture file and scale
+file can be republished at the same paths: replacement before intake refuses
+if it changes a priced input; replacement after intake cannot change the
+owned tensors and float values used by the encode. The build expectation is
+also protected against replacement by its argument digest. Standalone exports
+without an external allocation binding retain their existing behavior.
 
 ## 3. Bytes: priced == served
 
@@ -827,9 +877,27 @@ a rotated artifact cuttable on both axes while `slice_unit` had always refused
 it -- a capability answer a producer or operator could not act on. The
 predicate takes the three facts every view carries (rotation state, block
 width, column count), so an `EncodedUnit`, a `ParsedUnit` and a `Manifest` get
-one answer. Unrotated capability and shard reconstruction are unchanged. If
-rotated slicing is ever implemented, both paths move together and its complete
-reconstruction semantics are proved with them.
+one answer. This shared refusal preserves otherwise admissible unrotated cuts
+and their reconstruction. If rotated slicing is ever implemented, both paths
+move together and its complete reconstruction semantics are proved with them.
+
+RELEASE also constrains the **requested column window** (#350), through one
+`slicing._release_cut_reason` shared by `can_shard` and `_slice_release`.
+A released parent with a partial trailing superblock, such as 384 or 640
+columns at a 256-column superblock, is refused for full-width row cuts and
+the identity cut: its retained width is neither a union of complete
+superblocks nor inside one. It remains possible to cut complete superblocks
+or the final partial block on its own, so `unsliceable_reason` stays `None`.
+The capability check applies this restriction after granularity, on the
+column width each rank would retain; encoded, parsed and manifest views
+read the same rule. An unreleased parent keeps its row-cut capability.
+`slicing.shard_cut_reason`, also exposed through `layout`, carries that
+cut-specific obstruction to both serving refusal sites. A retained partial
+tail is named in the cutter's own words, without offering a TP divisor that
+cannot change the row cut's retained width. The ordinary granularity message
+still names another divisor where one can work; whole-unit obstructions keep
+their existing `unsliceable_reason` message. A cut reason alone does not
+replace the complete `can_shard` admission check.
 
 **And the refusal carries the reason, not a remedy that cannot exist** (#329).
 Aligning the predicate moved the rotated population from `slice_unit`'s raise
@@ -848,7 +916,7 @@ each re-deriving a story at its own raise site.
 
 A shard's **RELEASE count vector** is the one thing about it no reader
 derives, and since tessera#336 it survives the round trip. A whole unit's
-per-superblock counts are `grammar.release_quota` of its total -- that total
+per-superblock counts are `grammar.release_quota` of its plane extent -- that total
 at a uniform release density -- which the reader regenerates and the wire
 therefore does not carry. A shard's are the *restriction* of its parent's,
 which no quota reproduces, so they travel as the RELEASE descriptor's
@@ -874,6 +942,17 @@ has to be re-exported from its parent. Nothing valid moves: a shard of a
 parent that released nothing keeps the whole-unit spelling -- an empty plane
 at `WHOLE_PLANE` granularity -- and a shard `slicing.slice_unit` cut already
 declared its counts, so its bytes are what they were.
+
+A shorter **whole-unit** RELEASE terminal keeps the original plane's ranked
+prefix, which need not have the quota of the smaller selected total (#349).
+The first decode continues to rank against that original extent. Rewriting
+the returned unit would describe only the selected total, so the writer now
+compares the held position counts with `grammar.release_quota` and refuses by
+name when they differ. Keep the original terminal bytes or re-encode releases
+at the intended total in that case. A prefix whose bins still match remains
+writable: within each superblock, ranking is a stable total order and its
+top-n prefix is independent of the other blocks. Canonical whole-unit and valid
+shard writes keep their existing bytes; zero-release terminals remain writable.
 The span-2 kernel lane has one more plane it does not read: COMPLETION. A
 TCQ column at body rate `R` under the grid's cap may spend up to `cap - R`
 further bits per position choosing among its anchor's descendants, and

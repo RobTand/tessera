@@ -612,3 +612,204 @@ def test_a_merge_that_dies_part_way_leaves_no_seal_over_the_shards_it_moved(tmp_
     assert len(transfers) == 2                          # it did replace bytes
     assert not (out / "tessera_config.json").exists()
     assert not (out / "model.safetensors.index.json").exists()
+
+
+@pytest.fixture
+def tiny_publication_source(tmp_path, monkeypatch):
+    """Real 32x32 encodes; fixture identity stamping is unrelated to I/O."""
+    from tessera import export as export_module, encoder_identity
+
+    for module, name in ((export_module, "encoder_fixture_id"),
+                         (export_module, "stamped_fixture_id"),
+                         (encoder_identity, "stamped_fixture_id")):
+        monkeypatch.setattr(module, name, lambda: b"0" * 32)
+
+    def make(label, value, theta, token, obsolete=False):
+        source, part = tmp_path / f"source-{label}", tmp_path / f"part-{label}"
+        _write_source(source, {name: torch.full((32, 32), value, dtype=torch.bfloat16)
+                               for name in PLANNED})
+        (source / "config.json").write_text(json.dumps({"rope_theta": theta}))
+        (source / "tokenizer.json").write_text(json.dumps({"vocab": {token: 0}}))
+        if obsolete:
+            (source / "chat_template.jinja").write_text("old template")
+        export_checkpoint_streaming(source, part, PLANNED, grid=K2, device="cpu",
+                                    copy_aux=False, scale_refit=0)
+        return source, part
+
+    return make
+
+
+def test_merge_reuse_installs_current_auxiliary_population(tmp_path, tiny_publication_source):
+    source_a, part_a = tiny_publication_source("a", 1.0, 10000, "old", obsolete=True)
+    source_b, part_b = tiny_publication_source("b", 9.0, 500000, "new")
+    out = tmp_path / "merged"
+    _merge([part_a], source_a, out)
+    assert (out / "chat_template.jinja").exists()
+    assert (out / "tokenizer.json").read_bytes() == (source_a / "tokenizer.json").read_bytes()
+
+    _merge([part_b], source_b, out)
+
+    config = _config(out)
+    for name in ("config.json", "tokenizer.json"):
+        assert sha256_file(out / name) == config["source"]["auxiliary_sha256"][name]
+        assert (out / name).read_bytes() == (source_b / name).read_bytes()
+    assert not (out / "chat_template.jinja").exists()
+    assert config["output"] == output_part_identity(out, config["output"]["files"])
+    assert [float(load_tessera_weight(out, name).float().mean()) for name in PLANNED] == [9.0, 9.0]
+
+
+@pytest.mark.parametrize("reuse", [False, True])
+def test_auxiliary_transfer_failure_cannot_publish_completion(
+        tmp_path, tiny_publication_source, monkeypatch, reuse):
+    source, part = tiny_publication_source("a", 1.0, 10000, "old")
+    out = tmp_path / "merged"
+    if reuse:
+        _merge([part], source, out)
+    real = merge.shutil.copy2
+
+    def fail_tokenizer(src, dst):
+        if Path(src).name == "tokenizer.json":
+            raise OSError("injected auxiliary transfer failure")
+        return real(src, dst)
+
+    monkeypatch.setattr(merge.shutil, "copy2", fail_tokenizer)
+    with pytest.raises(OSError, match="injected auxiliary"):
+        _merge([part], source, out)
+    assert not (out / "tessera_config.json").exists()
+    assert not (out / "model.safetensors.index.json").exists()
+
+
+@pytest.mark.parametrize("link_kind", ["symlink", "hardlink"])
+@pytest.mark.parametrize("protected", ["part-shard", "source-shard", "source-config",
+                                       "part-config", "part-index"])
+def test_destination_alias_preserves_all_verified_inputs(
+        tmp_path, tiny_publication_source, link_kind, protected):
+    source, part = tiny_publication_source("a", 1.0, 10000, "old")
+    targets = {"part-shard": part / "part-2.safetensors",
+               "source-shard": source / "part-2.safetensors",
+               "source-config": source / "config.json",
+               "part-config": part / "tessera_config.json",
+               "part-index": part / "model.safetensors.index.json"}
+    out = tmp_path / "merged"
+    out.mkdir()
+    target = out / "part-1.safetensors"
+    getattr(target, "symlink_to" if link_kind == "symlink" else "hardlink_to")(targets[protected])
+    before = (_bytes_on_disk(source), _bytes_on_disk(part))
+
+    _merge([part], source, out)
+
+    assert (_bytes_on_disk(source), _bytes_on_disk(part)) == before
+    assert not target.is_symlink()
+    config = _config(out)
+    assert config["output"] == output_part_identity(out, config["output"]["files"])
+    for name in PLANNED:
+        assert load_tessera_weight(out, name).shape == (32, 32)
+
+
+@pytest.mark.parametrize("alias_name", ["config.json", "tokenizer.json"])
+def test_auxiliary_alias_cannot_overwrite_a_verified_shard(
+        tmp_path, tiny_publication_source, alias_name):
+    source, part = tiny_publication_source("a", 1.0, 10000, "old")
+    out = tmp_path / "merged"
+    out.mkdir()
+    (out / alias_name).symlink_to(part / "part-2.safetensors")
+    before = (_bytes_on_disk(source), _bytes_on_disk(part))
+
+    _merge([part], source, out)
+
+    assert (_bytes_on_disk(source), _bytes_on_disk(part)) == before
+    assert (out / alias_name).read_bytes() == (source / alias_name).read_bytes()
+    assert not (out / alias_name).is_symlink()
+
+
+@pytest.mark.parametrize("symlink", [False, True])
+def test_merge_output_cannot_be_the_verified_source(
+        tmp_path, tiny_publication_source, symlink):
+    source, part = tiny_publication_source("a", 1.0, 10000, "old")
+    out = source
+    if symlink:
+        out = tmp_path / "source-alias"
+        out.symlink_to(source, target_is_directory=True)
+    before = (_bytes_on_disk(source), _bytes_on_disk(part))
+
+    with pytest.raises(SystemExit, match="source"):
+        _merge([part], source, out)
+
+    assert (_bytes_on_disk(source), _bytes_on_disk(part)) == before
+
+
+@pytest.mark.parametrize("move", [False, True])
+@pytest.mark.parametrize("self_assembly", [False, True])
+def test_copy_move_and_self_assembly_publish_verified_bytes(
+        tmp_path, tiny_publication_source, move, self_assembly):
+    source, whole = tiny_publication_source("a", 1.0, 10000, "old")
+    pa, pb = tmp_path / "part-left", tmp_path / "part-right"
+    for out_part, shard in ((pa, "part-1.safetensors"), (pb, "part-2.safetensors")):
+        export_checkpoint_streaming(source, out_part, PLANNED, grid=K2, device="cpu",
+                                    copy_aux=False, scale_refit=0, shard_filter={shard})
+    out = pa if self_assembly else tmp_path / "merged"
+    before = _bytes_on_disk(source)
+    shard_digests = {shard: sha256_file(p / shard)
+                     for p, shard in ((pa, "part-1.safetensors"), (pb, "part-2.safetensors"))}
+    argv = ["merge", str(pa), str(pb), "--source", str(source), "--out", str(out)]
+    with patch.object(sys, "argv", argv + (["--move"] if move else [])):
+        merge.main()
+
+    assert _bytes_on_disk(source) == before
+    assert _config(out)["output"] == output_part_identity(out, shard_digests)
+    assert _config(out)["output"]["files"] == shard_digests
+    assert (pb / "part-2.safetensors").exists() is not move
+    assert (pa / "part-1.safetensors").exists() is (self_assembly or not move)
+    for name in PLANNED:
+        assert load_tessera_weight(out, name).shape == (32, 32)
+
+
+def test_changed_transfer_bytes_cannot_publish_old_digests(
+        tmp_path, tiny_publication_source, monkeypatch):
+    source, part = tiny_publication_source("a", 1.0, 10000, "old")
+    out = tmp_path / "merged"
+    real = merge.shutil.copy2
+
+    def substitute(src, dst):
+        # A transfer that returns success with different bytes is not a seal.
+        return real(part / "part-1.safetensors" if Path(src).name == "part-2.safetensors" else src, dst)
+
+    monkeypatch.setattr(merge.shutil, "copy2", substitute)
+    with pytest.raises(SystemExit, match="digest|sha256|verified"):
+        _merge([part], source, out)
+    assert not (out / "tessera_config.json").exists()
+
+
+@pytest.mark.parametrize("restore_fails", [False, True])
+def test_failed_move_install_restores_or_retains_the_staged_input(
+        tmp_path, tiny_publication_source, monkeypatch, restore_fails):
+    source, part = tiny_publication_source("a", 1.0, 10000, "old")
+    out = tmp_path / "merged"
+    before = (_bytes_on_disk(source), _bytes_on_disk(part))
+    real = Path.replace
+
+    def fail_install(staged, target):
+        if target.parent == out:
+            raise OSError("injected destination install failure")
+        if restore_fails and target.parent == part:
+            raise OSError("injected restore failure")
+        return real(staged, target)
+
+    monkeypatch.setattr(Path, "replace", fail_install)
+    argv = ["merge", str(part), "--source", str(source), "--out", str(out), "--move"]
+    message = "retained at" if restore_fails else "injected destination"
+    with patch.object(sys, "argv", argv), pytest.raises(OSError, match=message) as failure:
+        merge.main()
+
+    assert _bytes_on_disk(source) == before[0]
+    assert not (out / "tessera_config.json").exists()
+    if restore_fails:
+        retained = list(out.glob(".tessera-merge-*/part-1.safetensors"))
+        assert len(retained) == 1
+        assert str(retained[0]) in str(failure.value)
+        assert sha256_file(retained[0]) == before[1]["part-1.safetensors"]
+        assert _bytes_on_disk(part) == {name: digest for name, digest in before[1].items()
+                                        if name != "part-1.safetensors"}
+    else:
+        assert _bytes_on_disk(part) == before[1]
+        assert not list(out.glob(".tessera-merge-*"))

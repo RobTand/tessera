@@ -129,6 +129,7 @@ import argparse
 import copy
 import hashlib
 import json
+import math
 import re
 import shutil
 import subprocess
@@ -291,6 +292,57 @@ MERGED_ALIASES = ((re.compile(r"^(.*\.)qkv\.weight$"), "qkv_proj"),)
 NVFP4 = "TESSERA_NVFP4"
 FP8 = "TESSERA_FP8"
 BF16 = BF16_FAMILY
+
+
+class PricedInputsSnapshot:
+    """Allocation input expectations from one digest-bound build snapshot.
+
+    A campaign may republish its capture and scalar files at any time. The
+    caller passes the digest produced with its validated build anchor, and
+    this gate compares expectations to the objects the encoder will consume,
+    never to a second read of those filenames (PrismaQuant #231).
+    """
+
+    def __init__(self, path: Path, expected_sha256: str):
+        raw = Path(path).read_bytes()
+        self.sha256 = hashlib.sha256(raw).hexdigest()
+        if self.sha256 != expected_sha256:
+            raise SystemExit("--priced-inputs build SHA-256 does not match the preflight snapshot")
+        try:
+            build = json.loads(raw)
+        except (ValueError, UnicodeError) as exc:
+            raise SystemExit(f"--priced-inputs is not valid JSON: {exc}") from exc
+        block = build.get("priced_inputs") if isinstance(build, dict) else None
+        if not isinstance(block, dict) or set(block) != {
+                "schema", "hessian_capture_sha256", "input_global_scales"}:
+            raise SystemExit("--priced-inputs needs a closed priced_inputs block")
+        if block["schema"] != "tessera.priced_export_inputs.v1":
+            raise SystemExit("--priced-inputs has an unsupported priced_inputs schema")
+        digest = block["hessian_capture_sha256"]
+        if digest is not None and (not isinstance(digest, str) or
+                                   re.fullmatch(r"[0-9a-f]{64}", digest) is None):
+            raise SystemExit("--priced-inputs hessian_capture_sha256 must be a SHA-256 or null")
+        scales = block["input_global_scales"]
+        if not isinstance(scales, dict) or any(
+                not isinstance(key, str) or not key.endswith(".input_global_scale")
+                or isinstance(value, bool) or not isinstance(value, (int, float))
+                or not math.isfinite(value) or value <= 0
+                for key, value in scales.items()):
+            raise SystemExit("--priced-inputs input_global_scales must map scale keys to positive finite scalars")
+        self.capture_sha256 = digest
+        self.scales = scales
+
+    def require(self, activation, input_scales):
+        # capture_sha256 seals this loaded owner; for_unit subsequently checks
+        # every H against that same seal, including cached expert intake.
+        actual = activation.capture_sha256() if activation is not None else None
+        if actual != self.capture_sha256:
+            raise SystemExit("--priced-inputs Hessian capture differs from the allocation: "
+                             f"loaded={actual}, priced={self.capture_sha256}")
+        for key, expected in self.scales.items():
+            if input_scales.get(key) != expected:
+                raise SystemExit(f"--priced-inputs {key} differs from the allocation: "
+                                 f"loaded={input_scales.get(key)!r}, priced={expected!r}")
 
 
 class PlanSnapshot:
@@ -1203,6 +1255,10 @@ def main():
     ap.add_argument("--input-scales", type=Path, default=None,
                     help="safetensors carrying <module>.input_global_scale per NVFP4 Linear (a stock NVFP4 "
                          "export); required when any module takes the NVFP4 route")
+    ap.add_argument("--priced-inputs", type=Path, default=None,
+                    help="preflight build JSON with the expected priced_inputs block")
+    ap.add_argument("--priced-inputs-sha256", default=None,
+                    help="SHA-256 returned with the preflight build; required with --priced-inputs")
     ap.add_argument("--stock-twin", type=Path, default=None,
                     help="also write the compressed-tensors materialisation of the same wires here")
     ap.add_argument("--device", default="cuda")
@@ -1279,6 +1335,10 @@ def main():
                          "serving_gate block. Admission depends on the selected recipe's "
                          "published runtime contract, including BF16 recipes.")
     args = ap.parse_args()
+    if (args.priced_inputs is None) != (args.priced_inputs_sha256 is None):
+        ap.error("--priced-inputs and --priced-inputs-sha256 must be supplied together")
+    priced_inputs = (PricedInputsSnapshot(args.priced_inputs, args.priced_inputs_sha256)
+                     if args.priced_inputs is not None else None)
     if args.partition:
         if args.stock_twin is not None:
             ap.error("--partition does not support --stock-twin; assemble the wire checkpoint first")
@@ -1669,7 +1729,9 @@ def main():
         options = {key: value for key, value in vars(args).items()
                    if key not in {"src", "out", "partition", "partition_runtime_image",
                                   "device", "stock_twin", "plan_json", "hessian", "input_scales",
-                                  "cached_expert_units"}}
+                                  "cached_expert_units", "priced_inputs", "priced_inputs_sha256"}}
+        if priced_inputs is not None:
+            options["priced_inputs_sha256"] = priced_inputs.sha256
         options["plan"] = plan_snapshot.published() if plan_snapshot is not None else None
         for key in ("hessian", "input_scales"):
             path = getattr(args, key)
@@ -1714,7 +1776,12 @@ def main():
         with safe_open(str(args.input_scales), framework="pt") as handle:
             for key in handle.keys():
                 if key.endswith(".input_global_scale"):
-                    input_scales[key] = float(handle.get_tensor(key).float().reshape(-1)[0])
+                    tensor = handle.get_tensor(key)
+                    if tensor.numel() != 1:
+                        raise SystemExit(f"--input-scales {key} must contain one scalar")
+                    input_scales[key] = float(tensor.float().reshape(-1)[0])
+    if priced_inputs is not None:
+        priced_inputs.require(activation, input_scales)
     needs_scales = [m for m, members in modules.items() if family_for(plan[members[0]][0]) == NVFP4]
     if needs_scales and not input_scales:
         raise SystemExit(f"{len(needs_scales)} modules take the NVFP4 route (W4A4 needs a static input scale) "
