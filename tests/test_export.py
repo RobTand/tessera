@@ -1,4 +1,5 @@
 """The model-level walk: a plan in, a checkpoint out, the same weights back."""
+import json
 from fractions import Fraction
 
 import pytest
@@ -48,6 +49,42 @@ def test_checkpoint_round_trip_is_exact(tmp_path):
         direct = encode_linear(tensors[name], grid=K2, q256=896, name=name)
         from tessera.unit_artifact import read_unit_artifact
         assert torch.equal(got, read_unit_artifact(direct.blob))
+
+
+def test_the_index_total_size_is_the_bytes_on_disk(tmp_path):
+    """``metadata.total_size`` is what a loader sizes a download by: the shard
+    files as written, headers included.  ``report.total_bytes`` is the payload
+    accountant's sum of wire regions, short by every safetensors header, and a
+    checkpoint that prices itself under its own bytes is wrong in the one
+    direction a loader cannot absorb (#138).
+    """
+    from safetensors.torch import save_file
+
+    from tessera.export import export_checkpoint_streaming
+
+    src = tmp_path / "src"
+    src.mkdir()
+    tensors = {
+        "layers.0.mlp.gate_proj.weight": _w(seed=1),
+        "layers.1.mlp.gate_proj.weight": _w(seed=2),
+    }
+    weight_map = {}
+    for i, (name, tensor) in enumerate(tensors.items(), start=1):
+        shard = f"model-0000{i}-of-00002.safetensors"
+        save_file({name: tensor}, str(src / shard), metadata={"format": "pt"})
+        weight_map[name] = shard
+    (src / "model.safetensors.index.json").write_text(
+        json.dumps({"metadata": {"total_size": 0}, "weight_map": weight_map}))
+
+    out = tmp_path / "out"
+    report = export_checkpoint_streaming(
+        src, out, {n: 896 for n in tensors}, grid=K2, device="cpu", copy_aux=False)
+
+    index = json.loads((out / "model.safetensors.index.json").read_text())
+    on_disk = sum((out / shard).stat().st_size
+                  for shard in set(index["weight_map"].values()))
+    assert index["metadata"]["total_size"] == on_disk
+    assert report.total_bytes < on_disk   # the accountant counts payload only
 
 
 def test_passthrough_tensors_survive_verbatim(tmp_path):
