@@ -61,6 +61,17 @@ spelled out, recorded beside the primary form and never in its place.
 usage: moe_greedy_smoke.py run --url URL --tokenizer DIR --prompts FILE
                                --arm NAME --out receipt.json [--pure-greedy]
        moe_greedy_smoke.py compare A.json B.json --out pair.json [--markdown pair.md]
+                               [--subject ARM --reference bf16_source]
+
+WHAT THE PAIR DECIDES, AND WHAT IT DOES NOT.  This file owns the
+PER-COMPLETION rule above.  It does NOT own the AGGREGATION from a set of
+completions to the one ``evidence.smoke.status`` word a serving cell
+publishes: that lives in ``tessera.serving.contract.derive_smoke_status``,
+because the contract is the thing a consumer reads and the wheel does not ship
+``experiments/``.  With ``--subject`` the pair carries the
+``evidence.smoke.record`` block a cell transcribes, and the word that function
+reads off it, so the receipt and the contract cannot disagree about the word
+without a test noticing (#327).
 """
 from __future__ import annotations
 
@@ -70,6 +81,28 @@ import hashlib
 import json
 import sys
 from pathlib import Path
+
+#: The two request FORMS and the two model INTERFACES this instrument exercises.
+#: They are vocabularies a contract cell's ``evidence.smoke.record`` quotes, so
+#: they are declared here -- in the code that owns them -- and pinned against
+#: ``tessera.serving.contract`` by ``tests/test_cell_evidence.py`` rather than
+#: restated there.  A FORM is a sampling shape (``campaign`` is the v17 smoke's
+#: request, byte for byte in what it sets; ``pure_greedy`` spells out
+#: ``repetition_penalty 1.0, top_k -1`` on top of it).  An INTERFACE is which
+#: model interface the prompt goes through, which is a different axis entirely:
+#: a raw ``prompt`` to ``/v1/completions`` is a continuation the instruct
+#: checkpoint was not trained on, and a ``messages`` list to
+#: ``/v1/chat/completions`` is the serve applying the checkpoint's own
+#: ``chat_template.jinja``.  Conflating the two is how "the status word is read
+#: from the campaign form, because it is what the campaign measured" came to be
+#: satisfied only by prompts sent through an interface the campaign never used.
+FORMS = ("campaign", "pure_greedy")
+INTERFACES = ("raw_completion", "chat_template")
+
+#: This file's own repository path, which a contract cell's
+#: ``evidence.smoke.record.instrument`` names: the rule and the scoring live
+#: here, and a cell quotes them rather than restating them.
+INSTRUMENT = "experiments/moe_greedy_smoke.py"
 
 RULE = ("repetitive iff the completion ends in a cycle: some period p with 2p <= L "
         "has a p-periodic suffix holding >= 2 full periods (s >= 2p), whatever its "
@@ -126,6 +159,16 @@ def classify(tokens):
             "whole_completion_periodic": bool(n) and suffix == n}
 
 
+def interface_of(entry):
+    """Which model interface a prompt entry exercises.
+
+    One home for the mapping ``cmd_run`` acts on: a ``messages`` entry goes to
+    ``/v1/chat/completions`` and the serve applies the checkpoint's own chat
+    template; anything else is a raw ``prompt`` continuation.
+    """
+    return "chat_template" if "messages" in entry else "raw_completion"
+
+
 def _load_tokenizer(path):
     from tokenizers import Tokenizer
 
@@ -144,9 +187,8 @@ def _post(url, body, timeout=600):
 def cmd_run(args):
     tokenizer, tok_sha = _load_tokenizer(args.tokenizer)
     prompts = json.loads(Path(args.prompts).read_text())
-    forms = [("campaign", {})]
-    if args.pure_greedy:
-        forms.append(("pure_greedy", {"repetition_penalty": 1.0, "top_k": -1}))
+    extras = {"campaign": {}, "pure_greedy": {"repetition_penalty": 1.0, "top_k": -1}}
+    forms = [(f, extras[f]) for f in FORMS if f == "campaign" or args.pure_greedy]
     results = []
     for entry in prompts["prompts"]:
         for form, extra in forms:
@@ -167,7 +209,8 @@ def cmd_run(args):
             ids = tokenizer.encode(text, add_special_tokens=False).ids
             verdict = classify(ids)
             cycle = tokenizer.decode(ids[len(ids) - verdict["period"]:]) if verdict["period"] else None
-            record = {"id": entry["id"], "form": form, "request": body,
+            record = {"id": entry["id"], "form": form, "interface": interface_of(entry),
+                      "request": body,
                       "completion": text, "finish_reason": choice.get("finish_reason"),
                       "usage": reply.get("usage"), "token_ids": ids,
                       "cycle": cycle, **verdict}
@@ -193,6 +236,65 @@ def _by_key(receipt):
     return {(r["id"], r["form"]): {**r, **classify(r["token_ids"])} for r in receipt["results"]}
 
 
+def _reference_arms():
+    """The reference names the contract can read, from the contract itself.
+
+    A roster restated here would pass on the day the contract's own list is
+    wrong, so the choices come from the module that owns them; without tessera
+    importable the flag simply offers the one reference that has been run.
+    """
+    try:
+        from tessera.serving.contract import EVIDENCE_CONTROL_REFERENCES
+
+        return EVIDENCE_CONTROL_REFERENCES
+    except ImportError:  # pragma: no cover - a box without the package installed
+        return ("bf16_source",)
+
+
+def _interface_of_result(result):
+    """The interface a scored result was taken on.
+
+    Read from the result when the run recorded it, and otherwise from the
+    request the run kept -- a ``messages`` body IS the chat endpoint -- so a
+    pair joined from receipts written before the field existed still says which
+    interface each row is, rather than leaving the axis unreadable.
+    """
+    return result.get("interface") or interface_of(result.get("request", {}))
+
+
+def _contract_record(pair, args):
+    """The ``evidence.smoke.record`` block a contract cell carries, or ``None``.
+
+    Written only when the caller says WHICH arm the cell is about (``--subject``)
+    and what the other arm is (``--reference``, a name from
+    ``contract.EVIDENCE_CONTROL_REFERENCES``); the instrument does not guess
+    which of two arms is the reference.  The block is the thing a cell
+    transcribes verbatim, and ``derived`` beside it is what
+    ``contract.derive_smoke_status`` / ``derive_smoke_attribution`` -- the one
+    home of the aggregation -- read off it, so the receipt and the contract
+    cannot disagree about the word without a test noticing.
+    """
+    if not args.subject:
+        return None
+    from tessera.serving.contract import derive_smoke_attribution, derive_smoke_status
+
+    arms = pair["arms"]
+    if args.subject not in arms:
+        sys.exit(f"REFUSED: --subject {args.subject!r} is not one of the arms {arms}")
+    other = [arm for arm in arms if arm != args.subject]
+    if len(other) != 1:
+        sys.exit(f"REFUSED: the two receipts name one arm {arms}; a pair is two arms")
+    record = {"instrument": INSTRUMENT, "rule": RULE, "reference": args.reference,
+              "rows": [{"prompt": r["id"], "form": r["form"], "interface": r["interface"],
+                        "status": r[args.subject]["status"],
+                        "reference_status": (r[other[0]]["status"] if args.reference else None)}
+                       for r in pair["rows"]]}
+    smoke = {"record": record}
+    return {"record": record,
+            "derived": {"status": derive_smoke_status(smoke),
+                        "attribution": derive_smoke_attribution(smoke)}}
+
+
 def cmd_compare(args):
     a = json.loads(Path(args.a).read_text())
     b = json.loads(Path(args.b).read_text())
@@ -206,7 +308,7 @@ def cmd_compare(args):
     rows = []
     for key in sorted(ra, key=lambda k: (k[1] != "campaign", k[0])):
         x, y = ra[key], rb[key]
-        rows.append({"id": key[0], "form": key[1],
+        rows.append({"id": key[0], "form": key[1], "interface": _interface_of_result(x),
                      "max_tokens": x["request"]["max_tokens"],
                      a["arm"]: {k: x[k] for k in ("status", "tokens", "period", "periodic_suffix",
                                                   "coverage", "finish_reason", "completion")},
@@ -214,12 +316,20 @@ def cmd_compare(args):
                                                   "coverage", "finish_reason", "completion")},
                      "identical_completion": x["completion"] == y["completion"],
                      "both_recorded": x["status"] == y["status"] == "recorded"})
-    pair = {"schema": "tessera.moe-greedy-smoke-pair/1", "arms": [a["arm"], b["arm"]],
+    pair = {"schema": "tessera.moe-greedy-smoke-pair/2", "arms": [a["arm"], b["arm"]],
             "rule": RULE, "rule_at_run": sorted({a["rule"], b["rule"]}),
             "prompts_sha256": a["prompts_sha256"],
             "tokenizer_json_sha256": a["tokenizer"]["tokenizer_json_sha256"],
             "rows": rows,
-            "positive_record": [r["id"] for r in rows if r["form"] == "campaign" and r["both_recorded"]]}
+            # Every (prompt, form) pair both arms answered without a cycle, in
+            # EVERY form and on every interface.  It used to be filtered to the
+            # campaign form "because that is what the campaign measured", which
+            # was true of the sampling shape and false of the interface: the
+            # prompts that satisfied it are chat turns the campaign never sent
+            # (#327).  It is a REPORTED list either way; the word a cell
+            # publishes is contract.derive_smoke_status over contract_record.
+            "positive_record": [r["id"] for r in rows if r["both_recorded"]]}
+    pair["contract_record"] = _contract_record(pair, args)
     Path(args.out).write_text(json.dumps(pair, indent=2) + "\n")
     if args.markdown:
         lines = [f"| prompt | form | max_tokens | {a['arm']} | {b['arm']} | identical |", "|---|---|---:|---|---|---|"]
@@ -229,9 +339,11 @@ def cmd_compare(args):
             lines.append(f"| {r['id']} | {r['form']} | {r['max_tokens']} | {cell(r[a['arm']])} | "
                          f"{cell(r[b['arm']])} | {'yes' if r['identical_completion'] else 'no'} |")
         Path(args.markdown).write_text("\n".join(lines) + "\n")
-    print(json.dumps({"positive_record": pair["positive_record"],
-                      "rows": [(r["id"], r["form"], r[a["arm"]]["status"], r[b["arm"]]["status"],
-                                r["identical_completion"]) for r in rows]}, indent=1))
+    derived = (pair["contract_record"] or {}).get("derived")
+    print(json.dumps({"positive_record": pair["positive_record"], "derived": derived,
+                      "rows": [(r["id"], r["form"], r["interface"], r[a["arm"]]["status"],
+                                r[b["arm"]]["status"], r["identical_completion"])
+                               for r in rows]}, indent=1))
 
 
 def main(argv=None):
@@ -252,6 +364,11 @@ def main(argv=None):
     cmp_.add_argument("b")
     cmp_.add_argument("--out", required=True)
     cmp_.add_argument("--markdown")
+    cmp_.add_argument("--subject", help="the arm a contract cell is about; with it the pair "
+                                        "carries the evidence.smoke.record block and the word "
+                                        "contract.derive_smoke_status reads off it")
+    cmp_.add_argument("--reference", choices=list(_reference_arms()), default=None,
+                      help="what the OTHER arm is, in the contract's own vocabulary")
     cmp_.set_defaults(func=cmd_compare)
     args = parser.parse_args(argv)
     args.func(args)

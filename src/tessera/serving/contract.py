@@ -106,6 +106,10 @@ __all__ = [
     "EVIDENCE_KL_KINDS",
     "EVIDENCE_RECEIPT_ROOT",
     "EVIDENCE_SMOKE_ATTRIBUTIONS",
+    "EVIDENCE_SMOKE_FORMS",
+    "EVIDENCE_SMOKE_INTERFACES",
+    "EVIDENCE_SMOKE_RECORD_KEYS",
+    "EVIDENCE_SMOKE_ROW_KEYS",
     "EVIDENCE_SMOKE_STATUSES",
     "EXECUTION_MODES",
     "PLUGIN_ENTRY_POINT",
@@ -116,6 +120,8 @@ __all__ = [
     "cell_runtime_versions",
     "derive_evidence_grade",
     "derive_smoke_attribution",
+    "derive_smoke_status",
+    "smoke_status_is_derived",
     "CONSTRUCTION_SCHEMA",
     "CONSTRUCTION_CENSUS_SCHEMA",
     "classify_construction",
@@ -149,7 +155,7 @@ __all__ = [
 
 CONTRACT_FILENAME = "runtime_contract.json"
 CONTRACT_SCHEMA = "tessera.runtime-contract.v1"
-LANE_ELIGIBILITY_SCHEMA = "tessera.lane-eligibility.v8"
+LANE_ELIGIBILITY_SCHEMA = "tessera.lane-eligibility.v9"
 #: Execution is a separate axis from token-count regime and residency. These
 #: are the two modes selected by a serving invocation's enforce_eager flag.
 EXECUTION_MODES = ("eager", "compiled")
@@ -269,6 +275,69 @@ EVIDENCE_CONTROL_OUTCOMES = ("identical_completion", "different_completion")
 EVIDENCE_SMOKE_ATTRIBUTIONS = ("unattributed", "shared_with_reference",
                                "not_shared_with_reference")
 EVIDENCE_CONTROL_KEYS = frozenset({"reference", "outcome", "receipt"})
+
+#: A smoke's RECORD (schema v9, #327): the machine-readable scoring that
+#: ``status`` and ``attribution`` are DERIVED from, the way ``grade`` is derived
+#: from ``kl``.  Until v9 the step from a set of completions to the cell's one
+#: published word was undeclared, underived and untested: the per-completion
+#: rule was stated and pinned, but the AGGREGATION -- which set of completions
+#: makes a cell read ``recorded`` -- was stated once, in a dated measurement
+#: file, in the existential form "at least one prompt reads ``recorded`` on both
+#: arms", with nothing in the repository saying why "some" rather than "all",
+#: nothing deriving it, and nothing that would notice if the smoke were re-run
+#: with a different result.  A rule that decides a field a serving gate reads
+#: does not live in append-only history (AGENTS.md rules 2, 4 and 10).
+#:
+#: THE AGGREGATION, in one place, and it is :func:`derive_smoke_status`:
+#:
+#: * ``repetitive`` when some row cycles on this cell's arm and the reference
+#:   does not.  A degeneration the reference does not share is the route's, and
+#:   that is the whole content of the word.
+#: * else ``recorded`` when some row reads ``recorded`` on this arm AND on the
+#:   reference (or on this arm alone when no reference was run): a positive
+#:   record, which is what principle 5's "generates correctly" leg asks for.
+#: * else ``repetitive`` when any row cycles at all -- every cycle is shared
+#:   with the reference, but nothing positive was recorded, so there is no
+#:   record to publish.
+#: * else ``not_recorded``: nothing came back.
+#:
+#: The threshold is not "some prompt" and not "all prompts"; it is derived from
+#: what the word is a claim ABOUT.  ``status`` is a claim about this route, so
+#: an observation the unquantised reference reproduces is not this route's --
+#: which is the same principle schema v7's ``control`` was added for, applied
+#: per (prompt, form) instead of once per cell.  What that leaves behind is
+#: carried by ``attribution``, still derived and still checked, now off the
+#: record: a residual cycle every reference row shares reads
+#: ``shared_with_reference``, so a consumer at the pin can tell a cell whose
+#: smoke cycled on an interface from one whose smoke never cycled at all.
+#:
+#: A row is one (prompt, form) pair: ``{prompt, form, interface, status,
+#: reference_status}``, each verdict from :data:`EVIDENCE_SMOKE_STATUSES` under
+#: the instrument's per-completion rule, which the record quotes verbatim.
+#: ``interface`` is the model interface the prompt exercised, and it is the axis
+#: the 2026-09-05 routed-MoE measurement actually turns on: through the
+#: checkpoint's own chat template both arms answer, under raw continuation both
+#: arms -- student and BF16 source alike -- end in a cycle.  No number lives in
+#: a cell here either: the token count, the period and the periodic suffix are
+#: the receipt's, and the record carries the verdicts read off them.
+#:
+#: AN ASSERTED STATUS.  ``record`` is nullable, and a cell whose record is
+#: ``null`` publishes an **asserted status** -- a word a person read off a
+#: receipt, which no validator can check and which :func:`smoke_status_is_derived`
+#: reports ``False`` for.  Two dense BF16 cells are in that state today: their
+#: receipt (``tessera-bf16-route-served-2026-09-02.md`` :83) predates this
+#: instrument and records one greedy continuation from four census arms of the
+#: same route -- one prompt, no per-completion scoring and no reference arm --
+#: so there is no per-(prompt, form) table to transcribe and nothing here
+#: invents one.  What would give them a derived status is a measurement, not an
+#: edit: ``experiments/moe_greedy_smoke.py`` run against a serve of that
+#: artifact with its own tokenizer, and a BF16 reference arm beside it.  The six
+#: ``not_recorded`` cells never ran a smoke and have nothing to record.
+EVIDENCE_SMOKE_INTERFACES = ("raw_completion", "chat_template")
+EVIDENCE_SMOKE_FORMS = ("campaign", "pure_greedy")
+EVIDENCE_SMOKE_RECORD_KEYS = frozenset({"instrument", "rule", "reference", "rows"})
+EVIDENCE_SMOKE_ROW_KEYS = frozenset(
+    {"prompt", "form", "interface", "status", "reference_status"})
 
 
 def contract_path():
@@ -1293,23 +1362,200 @@ def derive_evidence_grade(cell: Mapping[str, Any]) -> str:
     return "route_only"
 
 
-def derive_smoke_attribution(smoke: Mapping[str, Any]) -> str:
-    """What a smoke's ``control`` DERIVES about where the symptom lives.
+def smoke_status_is_derived(smoke: Mapping[str, Any]) -> bool:
+    """Whether this smoke's ``status`` is derived or ASSERTED (schema v9, #327).
 
-    No control, ``unattributed`` -- nobody ran the reference, so the status is
-    an observation and not an attribution.  A reference that returned the same
-    completion, ``shared_with_reference``: the model and the prompt produce it,
-    not this route.  One that returned a different completion,
-    ``not_shared_with_reference``: the reference does not explain it, which is
-    weaker than "the route is at fault" and is deliberately not spelled that
-    way.
+    ``True`` when the smoke carries a ``record``, in which case
+    :func:`derive_smoke_status` computes the word and the validator refuses any
+    other.  ``False`` when ``record`` is ``null``: the word is one a person read
+    off a receipt, nothing here can check it, and the header comment on
+    :data:`EVIDENCE_SMOKE_RECORD_KEYS` says which cells are in that state and
+    what would have to be measured to leave it.
     """
+    return smoke.get("record") is not None
+
+
+def derive_smoke_status(smoke: Mapping[str, Any]) -> str:
+    """The status word a smoke's ``record`` DERIVES (schema v9, #327).
+
+    The aggregation from a set of scored completions to the cell's one
+    published word, in its only home.  Each row is one (prompt, form) pair
+    already scored under the instrument's per-completion rule, on this cell's
+    arm and -- when a reference arm was run -- on the reference:
+
+    * some row cycles on this arm and the reference does not: ``repetitive``.
+      A degeneration the reference does not share is this route's, and that is
+      what the word claims.
+    * else some row reads ``recorded`` on this arm and on the reference (on
+      this arm alone when there is no reference): ``recorded``.  That is the
+      positive record principle 5's "generates correctly" leg asks for.
+    * else some row cycles: ``repetitive``.  Every cycle is shared, but nothing
+      positive was recorded, so there is no record to publish.
+    * else ``not_recorded``: nothing came back.
+
+    A row whose arm reads ``recorded`` while the reference cycles is neither: the
+    route is not degenerating and the pair is not a two-arm positive record.
+    An empty completion scores ``not_recorded`` at the instrument
+    (``experiments/moe_greedy_smoke.py``), so it can never be or create one.
+
+    With no record there is no derivation: the smoke's own asserted ``status``
+    is returned unchanged, and :func:`smoke_status_is_derived` is how a caller
+    tells that case apart rather than reading a word back from itself.
+    """
+    record = smoke.get("record")
+    if record is None:
+        return smoke.get("status")
+    reference = record.get("reference")
+    positive = unshared = cycled = False
+    for row in record.get("rows") or []:
+        status, against = row.get("status"), row.get("reference_status")
+        if status == "recorded" and (reference is None or against == "recorded"):
+            positive = True
+        elif status == "repetitive":
+            cycled = True
+            if reference is None or against != "repetitive":
+                unshared = True
+    if unshared:
+        return "repetitive"
+    if positive:
+        return "recorded"
+    return "repetitive" if cycled else "not_recorded"
+
+
+def derive_smoke_attribution(smoke: Mapping[str, Any]) -> str:
+    """What a smoke's ``record`` -- or, without one, its ``control`` -- DERIVES
+    about where the symptom lives.
+
+    No reference arm, ``unattributed`` -- nobody ran one, so the status is an
+    observation and not an attribution.  A reference that shares every cycle,
+    ``shared_with_reference``: the model and the prompt produce it, not this
+    route.  One that does not share some cycle, ``not_shared_with_reference``:
+    the reference does not explain it, which is weaker than "the route is at
+    fault" and is deliberately not spelled that way.  A record with a reference
+    arm and no cycle anywhere is ``unattributed`` too: there is no symptom to
+    attribute.
+
+    Schema v9 moves the source from ``control`` to ``record`` for a smoke that
+    carries one, and the two may not both be present (:func:`cell_evidence`
+    refuses that by name): one derivation, one home.  The v7 ``control`` branch
+    below is unchanged and is what a smoke with no record still reads.
+    """
+    if smoke.get("record") is not None:
+        record = smoke["record"]
+        if record.get("reference") is None:
+            return "unattributed"
+        cycles = [row for row in (record.get("rows") or [])
+                  if row.get("status") == "repetitive"]
+        if not cycles:
+            return "unattributed"
+        if all(row.get("reference_status") == "repetitive" for row in cycles):
+            return "shared_with_reference"
+        return "not_shared_with_reference"
     control = smoke.get("control")
     if control is None:
         return "unattributed"
     if control.get("outcome") == "identical_completion":
         return "shared_with_reference"
     return "not_shared_with_reference"
+
+
+def _require_repository_path(value: Any, where: str, field: str) -> str:
+    """A path inside this repository, or raise.
+
+    Not under ``docs/measurements/`` -- an instrument is code, not a receipt --
+    but under the same rule ``test_contract_is_portable.py`` reads the document
+    by: relative, no traversal, and it must resolve in the checkout.
+    """
+    if (not isinstance(value, str) or not value or value.startswith("/")
+            or "\\" in value or any(c.isspace() for c in value)
+            or any(part in ("", ".", "..") for part in value.split("/"))):
+        raise ValueError(
+            f"{where}.{field} must be a repository path to the code that owns the rule "
+            f"(relative, no traversal), got {value!r}")
+    return value
+
+
+def _evidence_smoke_record(payload: Any, where: str, control: Any,
+                           smoke_at: str) -> dict[str, Any] | None:
+    """The per-(prompt, form) scoring a smoke's word is DERIVED from (v9, #327).
+
+    ``null`` when the smoke has no machine-readable record and its ``status`` is
+    therefore ASSERTED (see :data:`EVIDENCE_SMOKE_RECORD_KEYS`).  Otherwise the
+    closed ``{instrument, rule, reference, rows}``: ``instrument`` the
+    repository path to the code that owns the per-completion rule, ``rule`` that
+    code's own statement of it quoted verbatim so the rule is readable at the
+    pin (the wheel does not ship ``experiments/``; a tree test pins the two
+    equal), ``reference`` the arm the completions were compared against or
+    ``null``, and ``rows`` a non-empty set of distinct (prompt, form) pairs.
+    """
+    if payload is None:
+        return None
+    if control is not None:
+        raise ValueError(
+            f"{smoke_at} carries BOTH a control and a record; the attribution is derived from "
+            "one of them, and two homes for one derivation is exactly how they drift. A record "
+            "names its reference arm and every row's verdict on it, so it says everything the "
+            "v7 control says and says it per (prompt, form): drop the control")
+    _require_keys(payload, where, required=set(EVIDENCE_SMOKE_RECORD_KEYS))
+    _require_repository_path(payload["instrument"], where, "instrument")
+    rule = payload["rule"]
+    if not isinstance(rule, str) or not rule.strip():
+        raise ValueError(
+            f"{where}.rule must state the per-completion rule the rows were scored under, "
+            f"verbatim from the instrument, got {rule!r}")
+    reference = payload["reference"]
+    if reference is not None and reference not in EVIDENCE_CONTROL_REFERENCES:
+        raise ValueError(
+            f"{where}.reference {reference!r} is not one of {list(EVIDENCE_CONTROL_REFERENCES)}; "
+            "a reference this package cannot name is prose, and the whole point of the record "
+            "is that a gate reads it")
+    rows = payload["rows"]
+    if not isinstance(rows, list) or not rows or any(not isinstance(r, Mapping) for r in rows):
+        raise ValueError(
+            f"{where}.rows must be a non-empty JSON array of {{prompt, form, interface, status, "
+            f"reference_status}} objects; a record with no row scores nothing, got {rows!r}")
+    seen: set[tuple[str, str]] = set()
+    parsed_rows = []
+    for i, row in enumerate(rows):
+        spot = f"{where}.rows[{i}]"
+        _require_keys(row, spot, required=set(EVIDENCE_SMOKE_ROW_KEYS))
+        prompt = row["prompt"]
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise ValueError(f"{spot}.prompt must name the prompt the receipt names, "
+                             f"got {prompt!r}")
+        form, interface = row["form"], row["interface"]
+        if form not in EVIDENCE_SMOKE_FORMS:
+            raise ValueError(f"{spot}.form {form!r} is not one of {list(EVIDENCE_SMOKE_FORMS)}")
+        if interface not in EVIDENCE_SMOKE_INTERFACES:
+            raise ValueError(
+                f"{spot}.interface {interface!r} is not one of {list(EVIDENCE_SMOKE_INTERFACES)}; "
+                "the interface a prompt exercised is what separates a raw continuation from the "
+                "checkpoint's own chat template, and a reader cannot infer it from the prompt id")
+        status = row["status"]
+        if status not in EVIDENCE_SMOKE_STATUSES:
+            raise ValueError(
+                f"{spot}.status {status!r} is not one of {list(EVIDENCE_SMOKE_STATUSES)}")
+        against = row["reference_status"]
+        if reference is None:
+            if against is not None:
+                raise ValueError(
+                    f"{spot}.reference_status is {against!r} but the record names no reference "
+                    "arm; a verdict on an arm nobody ran is a claim without a measurement")
+        elif against not in EVIDENCE_SMOKE_STATUSES:
+            raise ValueError(
+                f"{spot}.reference_status {against!r} is not one of "
+                f"{list(EVIDENCE_SMOKE_STATUSES)}; the record names reference {reference!r}, so "
+                "every row states what that arm returned for the same (prompt, form)")
+        key = (prompt, form)
+        if key in seen:
+            raise ValueError(
+                f"{spot} repeats (prompt, form) {key}; the rows are a set of pairs, and a "
+                "duplicate would weight one completion twice in the aggregation")
+        seen.add(key)
+        parsed_rows.append({"prompt": prompt, "form": form, "interface": interface,
+                            "status": status, "reference_status": against})
+    return {"instrument": payload["instrument"], "rule": rule,
+            "reference": reference, "rows": parsed_rows}
 
 
 def _evidence_artifact(payload: Any, where: str) -> dict[str, Any] | None:
@@ -1436,7 +1682,8 @@ def cell_evidence(cell: Mapping[str, Any], where: str = "lane_eligibility cell",
         parsed_kl.append({"kind": kind, "top_k": top_k, "regime": regime,
                           "execution_modes": list(modes), "receipt": receipt})
     smoke = payload["smoke"]
-    _require_keys(smoke, f"{at}.smoke", required={"status", "receipt", "attribution", "control"})
+    _require_keys(smoke, f"{at}.smoke",
+                  required={"status", "receipt", "attribution", "control", "record"})
     status = smoke["status"]
     if status not in EVIDENCE_SMOKE_STATUSES:
         raise ValueError(
@@ -1473,17 +1720,29 @@ def cell_evidence(cell: Mapping[str, Any], where: str = "lane_eligibility cell",
                 f"{spot}.outcome {outcome!r} is not one of {list(EVIDENCE_CONTROL_OUTCOMES)}")
         parsed_control = {"reference": reference, "outcome": outcome,
                           "receipt": _require_receipt_path(control["receipt"], spot)}
+    parsed_record = _evidence_smoke_record(
+        smoke["record"], f"{at}.smoke.record", parsed_control, f"{at}.smoke")
     attribution = smoke["attribution"]
     if attribution not in EVIDENCE_SMOKE_ATTRIBUTIONS:
         raise ValueError(
             f"{at}.smoke.attribution {attribution!r} is not one of "
             f"{list(EVIDENCE_SMOKE_ATTRIBUTIONS)}")
-    derived_attribution = derive_smoke_attribution({"control": parsed_control})
+    read_from = {"control": parsed_control, "record": parsed_record}
+    derived_attribution = derive_smoke_attribution(read_from)
     if attribution != derived_attribution:
+        source = "record" if parsed_record is not None else "control"
         raise ValueError(
-            f"{at}.smoke.attribution is {attribution!r} but its control derives "
-            f"{derived_attribution!r}; the attribution is read off the control, never asserted "
+            f"{at}.smoke.attribution is {attribution!r} but its {source} derives "
+            f"{derived_attribution!r}; the attribution is read off the {source}, never asserted "
             "beside it")
+    if parsed_record is not None:
+        derived_status = derive_smoke_status({"status": status, "record": parsed_record})
+        if status != derived_status:
+            raise ValueError(
+                f"{at}.smoke.status is {status!r} but its record derives {derived_status!r}; "
+                "the status is the aggregation of the rows, read off them exactly as grade is "
+                "read off the kl entries and never asserted beside them "
+                "(contract.derive_smoke_status is where the aggregation lives)")
     derived = derive_evidence_grade({"evidence": {"kl": parsed_kl}})
     if grade != derived:
         raise ValueError(
@@ -1491,7 +1750,8 @@ def cell_evidence(cell: Mapping[str, Any], where: str = "lane_eligibility cell",
             "off the entries, never asserted beside them")
     return {"grade": grade, "kl": parsed_kl, "artifact": artifact,
             "smoke": {"status": status, "receipt": smoke_receipt,
-                      "attribution": attribution, "control": parsed_control}}
+                      "attribution": attribution, "control": parsed_control,
+                      "record": parsed_record}}
 
 
 def _lanes_a_rung_reaches(route: str, contract: Mapping[str, Any], wire: Mapping[str, Any],
