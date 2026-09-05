@@ -197,9 +197,9 @@ def test_a_member_scale_the_route_would_refuse_is_refused_here_by_name():
 
 
 def test_a_spread_beyond_one_bf16_ulp_is_two_calibrations_and_refused():
-    """The bound is derived, not chosen: the route casts the A tensor to bf16
-    before the quantiser sees it, so scales from ONE calibration agree to
-    within one step of that lattice (2^-7, the dtype's eps).  Exactly one ULP
+    """The bound is declared policy (#283), pinned here so it cannot drift
+    by hand: one bf16 ULP (2^-7, the dtype's eps), the lattice the route
+    casts the A tensor to before the quantiser sees it.  Exactly one ULP
     passes; anything wider is two calibrations and refuses by name."""
     from tessera.fused import FUSED_INPUT_SCALE_ULP
     assert FUSED_INPUT_SCALE_ULP == 2.0 ** -7 == torch.finfo(torch.bfloat16).eps

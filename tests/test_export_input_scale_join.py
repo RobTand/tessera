@@ -11,10 +11,12 @@ direction), copying the reduction vLLM's stock scheme applies to checkpoints
 its calibrators already unified (flagged by RobTand/prismaquant#196; the
 contract helpers there join min-scale / max-amax).
 
-Members of a vLLM-fused module read the same input tensor, so scales from one
-calibration agree to within one bf16 ULP of the lattice the served A side is
-cast to; a wider spread is two calibrations and is refused by
-``tessera.fused.shared_input_global_scale`` rather than joined silently.
+Members of a vLLM-fused module read the same input tensor, so two spellings
+of one calibrated amax agree to within one bf16 ULP of the lattice the served
+A side is cast to; a wider spread is two calibrations and is refused by
+``tessera.fused.shared_input_global_scale`` rather than joined silently.  The
+one-ULP line is declared policy, stricter than PrismaQuant's own join, which
+unifies any spread (RobTand/tessera#283).
 """
 from __future__ import annotations
 
@@ -112,7 +114,7 @@ def test_the_twin_members_all_carry_the_joined_scale(tmp_path, monkeypatch):
 def test_member_scales_beyond_one_bf16_ulp_are_refused_by_name(tmp_path, monkeypatch):
     """A 2x spread is not calibration noise: it is two calibrations, and a
     joined value would serve a distribution nobody measured.  Refused where
-    the bytes are decided, naming the members and the derived bound; the
+    the bytes are decided, naming the members and the declared bound; the
     pre-fix exporter joined it silently (to the max -- the clipping side)."""
     with pytest.raises(GrammarError) as caught:
         _run(tmp_path, monkeypatch, (4.0, 2.0, 4.0))
