@@ -334,3 +334,22 @@ this receipt said it should; what changed is that a consumer no longer has to
 read this file to know the reference does the same thing. PrismaQuant's pin
 (RobTand/prismaquant#192) refused the lane on `status` alone while that fact was
 prose; it moves to `attribution`.
+
+**Note, 2026-09-05, after that note (prismaquant#198).** The control of §7
+turned out to be half the fix: it removes the evidence against the route
+without adding any for it, and a consumer refusing on `status` alone kept
+refusing -- rightly, since principle 5's "generates correctly" leg had no
+positive record for routed MoE. Contract **v21** supplies the record,
+`moe-smoke-recorded-2026-09-05.md`: the same two arms, one at a time on the
+same pinned image, eager, resident. Raw continuation -- §7's prompt and three
+passages ending mid-sentence -- ends in a cycle on the source on every
+(prompt, form) pair, which is §7's finding again, wider; through the
+checkpoint's own chat template both arms answer without a cycle. The status
+word this receipt said should stand no longer does: both `routed_moe` cells
+read `recorded` with that receipt, `control` null, `attribution`
+`unattributed` (the control's outcome words attribute a symptom, and a
+recorded smoke has none; §7's identical completion is re-measured there and
+stands). Leg 0 is one leg shorter, not closed: the decode cell still grades
+`route_only` and the only KL is the batch cell's top-1024 lower bound. The
+contract's raw SHA256 is now
+`34f1da7977f1aa155cd2ff18b584e5c35a6089b648bb4a51d449fc25082a2c3e`.

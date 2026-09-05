@@ -481,6 +481,52 @@ def pytest_report_header(config):
     return lines
 
 
+#: This process's own final, entry-bound identity: measured ONCE, at session
+#: finish, and read by everything that publishes afterwards.  ``None`` until
+#: then, and never measured twice -- two measurements at two instants are two
+#: answers, and the worker's share and the controller's population would then
+#: be free to disagree about the same run.
+_FINAL_SOURCE = None
+
+
+def _final_source_identity(config):
+    """Measure this process's entry-bound identity and report it upstream.
+
+    **Ordering is the whole content of this function (#291).**  The worker's
+    final identity used to be written into ``workeroutput`` from
+    ``_write_surface_json``, which pytest reaches through
+    ``pytest_terminal_summary`` -- and pytest calls that from the terminal
+    reporter's ``pytest_sessionfinish`` *wrapper*, after that wrapper resumes.
+    xdist's ``WorkerInteractor.pytest_sessionfinish`` is an inner wrapper which
+    sends ``workerfinished`` when IT resumes, and an inner wrapper resumes
+    first.  So the controller's ``pytest_testnodedown`` read whatever
+    ``workeroutput`` held at that earlier moment, which was the entry seed
+    ``pytest_sessionstart`` put there: a worker whose source moved under it was
+    published as *agreeing* with the controller while its own share said
+    ``unknown``.
+
+    The cure is not an earlier wrapper but a plain hook.  Pluggy runs every
+    non-wrapper implementation of a hook INSIDE all of that hook's wrappers, so
+    the ordinary ``pytest_sessionfinish`` below completes before any wrapper
+    resumes -- xdist's included -- without this file having to reason about
+    which plugin registered first.  ``tests/test_cuda_surface.py`` proves that
+    against a real ``-n 1`` run rather than asserting it.
+
+    Independent of ``--surface-json``, too: what the controller is told about
+    the tree a worker ran must not depend on whether anyone asked for a JSON
+    file.
+    """
+
+    global _FINAL_SOURCE
+    if _FINAL_SOURCE is None:
+        _FINAL_SOURCE = measured_source(CHECKOUT, entry=SOURCE_AT_ENTRY)
+    workeroutput = getattr(config, "workeroutput", None)
+    if workeroutput is not None:
+        # Replaces the entry seed, in time for xdist to send it.
+        workeroutput["tessera_source_identity"] = _FINAL_SOURCE
+    return _FINAL_SOURCE
+
+
 def published_source_identity(root=None):
     """The identity this run may attest, bound to the run and to its workers.
 
@@ -488,11 +534,15 @@ def published_source_identity(root=None):
     the end and hoping: did the source move while this session was running
     (bound to ``SOURCE_AT_ENTRY``), and did the processes that actually
     executed the tests measure the same one (``agreed_source``).
+
+    The first answer is the one ``_final_source_identity`` already took, so
+    this reads it rather than measuring again; an explicit ``root`` is a
+    different question and still measures.
     """
 
-    return agreed_source(
-        measured_source(root or CHECKOUT, entry=SOURCE_AT_ENTRY),
-        _WORKER_SOURCES)
+    record = (_FINAL_SOURCE if root is None and _FINAL_SOURCE is not None
+              else measured_source(root or CHECKOUT, entry=SOURCE_AT_ENTRY))
+    return agreed_source(record, _WORKER_SOURCES)
 
 
 @pytest.hookimpl(optionalhook=True)
@@ -501,7 +551,11 @@ def pytest_testnodedown(node, error):
 
     ``workeroutput`` is xdist's own channel back from the process that ran the
     tests, which is the only process whose source identity is a fact about the
-    execution rather than about a filesystem.
+    execution rather than about a filesystem.  What arrives here is the
+    worker's FINAL identity, because ``pytest_sessionfinish`` below wrote it
+    before xdist sent ``workerfinished`` (#291); a record that is still the
+    entry seed means that never happened, and ``agreed_source`` refuses it by
+    name rather than reading it as agreement.
 
     The hook is xdist's, not pytest's: ``optionalhook`` is what lets this
     conftest load where xdist is absent -- the ``pure`` CI job -- instead of
@@ -516,9 +570,12 @@ def pytest_testnodedown(node, error):
 
 
 def pytest_sessionstart(session):
-    # A worker ships this back to the controller with its report; set it as
-    # early as possible, because xdist sends `workeroutput` on its own hook
-    # and this must already be in the dict by then.
+    # A seed, not an answer.  It says "this worker started here", which keeps a
+    # worker that died mid-run distinguishable from one that never spoke, and
+    # it is deliberately NOT enough to establish agreement: it was taken before
+    # this process ran a single test.  `pytest_sessionfinish` replaces it with
+    # the entry-bound measurement, and the controller refuses whatever is still
+    # this seed (#291).
     workeroutput = getattr(session.config, "workeroutput", None)
     if workeroutput is not None:
         workeroutput["tessera_source_identity"] = SOURCE_AT_ENTRY
@@ -617,14 +674,22 @@ def _coverage_refusals(executed: int, gated: dict) -> list:
 
 @pytest.hookimpl(trylast=True)
 def pytest_sessionfinish(session, exitstatus):
-    """Legs 2 and 3 of the gate, read off the population above.
+    """This run's final source identity, then legs 2 and 3 of the gate.
 
-    They can only be evaluated once the run is over, so this is a refusal
-    after the fact rather than before it -- the same verdict, one summary
-    later.  Only the controller speaks, and only when nothing else already
-    made the run red: a coverage refusal must not overwrite a test failure.
+    The identity comes first and is unconditional, in every process: this is a
+    plain hook implementation, so it completes before any ``pytest_sessionfinish``
+    WRAPPER resumes, and xdist's -- the one that sends ``workerfinished`` --
+    is a wrapper (#291).  ``trylast`` orders this against other plain
+    implementations only; it does not weaken that.
+
+    The gate's legs can only be evaluated once the run is over, so they are a
+    refusal after the fact rather than before it -- the same verdict, one
+    summary later.  Only the controller speaks there, and only when nothing
+    else already made the run red: a coverage refusal must not overwrite a
+    test failure.
     """
 
+    _final_source_identity(session.config)
     if hasattr(session.config, "workerinput"):
         return
     if not _strict_cuda(session.config):
@@ -752,13 +817,12 @@ def _write_surface_json(path, config, terminalreporter, present, detail,
     worker = _worker_id(config)
     if worker:
         path = path.with_name(f"{path.stem}.{worker}{path.suffix}")
+    # Read, not measured, and nothing is published to the controller here:
+    # ``pytest_sessionfinish`` did both, early enough for xdist to carry the
+    # answer (#291).  A second measurement at this instant would be a second
+    # answer, free to differ from the one the controller was given for the
+    # same run.
     identity = published_source_identity()
-    workeroutput = getattr(config, "workeroutput", None)
-    if workeroutput is not None:
-        # The worker's own entry-bound identity, replacing the entry identity
-        # it published at session start: a worker whose source moved under it
-        # says so to the controller too, not only in its own share.
-        workeroutput["tessera_source_identity"] = identity
 
     stats = terminalreporter.stats
     payload = {
