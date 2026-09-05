@@ -7,7 +7,8 @@ the code that owns it.
 
 **Provenance:** current as of the unreleased `v0.1.0` candidate (2026-09-05):
 base `3317036` (wire minor 7), encoder-evidence scope correction #198; CI at `df1bc20`,
-packaging metadata at `cd3190a`; contract v19, lane-eligibility schema v8. Re-stamp this
+packaging metadata at `cd3190a`; contract v21 (routed-MoE smoke recorded,
+prismaquant#198), lane-eligibility schema v8. Re-stamp this
 line with any change to the wire, the recipe table, the serving lane, the
 plugin contract or a gate (AGENTS.md principle 10).
 
@@ -80,7 +81,22 @@ rather than attesting a tree nothing tested. Under `-n`, each worker reports
 its own entry-bound identity through xdist's `workeroutput` and the
 controller's population is `unknown` unless every executing process agrees with
 it -- the controller runs no tests, so its own hash describes its filesystem
-until they do. The controller-side hook that collects those reports
+until they do. Each process measures that identity **once, in
+`pytest_sessionfinish`**, and it is a plain hook implementation rather than a
+wrapper: pluggy runs every non-wrapper implementation inside all of a hook's
+wrappers, so it completes before xdist's `WorkerInteractor.pytest_sessionfinish`
+wrapper resumes and sends `workerfinished`. Publishing it from
+`pytest_terminal_summary` instead -- which pytest reaches from the terminal
+reporter's own, outer, session-finish wrapper -- was too late by exactly one
+wrapper resume, so the controller read the seed `pytest_sessionstart` had left
+in `workeroutput` and published a worker as agreeing while that worker's own
+share said `unknown` (#291). The measurement no longer depends on
+`--surface-json` either, and the share and the population now carry the same
+record rather than two hashes taken at two instants. An entry identity remains
+a seed and never establishes agreement: only an entry-BOUND record -- one
+carrying a `measurement_span`, which `suite_source.is_entry_bound` is the one
+home for -- counts, and a worker that supplies only the seed, or no identity at
+all, is named and refused. The controller-side hook that collects those reports
 (`pytest_testnodedown`) is xdist's, so the conftest declares it optional: a
 run without xdist -- the `pure` CI job -- loads the conftest and sees an empty
 worker set, as a serial run always did, instead of pluggy refusing the file at
@@ -298,6 +314,23 @@ scheme, and `--passthrough-unrouted` reaching a module the plan names.
 Implicit `--grid`/`--q256` defaults keep their deliberate passthrough
 fallbacks, and an explicit `PASSTHROUGH`/`BF16` entry is still a passthrough
 (tessera#211).
+
+`--plan-json` names a mutable file and an export is long, so the exporter
+reads it exactly once, into one `PlanSnapshot`, and never consults the path
+again: planning, a partition's sealed `identity.options.plan`, the
+pre-publication validator and the manifest's `plan` block all read that one
+snapshot, and its sha256 over the exact bytes read is printed with the plan.
+A planner that regenerates or atomically replaces its output part-way through
+an export is therefore neither adopted nor able to fail the run half-written
+-- the plan that drove the encode is the plan that is published. Reading the
+path four times let a tensor written as an E4M3 q1024 wire be published as
+`PASSTHROUGH`, and the validator accepted that because it reread the
+replacement too (tessera#301). The snapshot is also shape-checked at argument
+time, before the first encode, to the same entry grammar the validator
+applies. An explicit `PASSTHROUGH`/`BF16` entry is now a NEGATIVE obligation
+that gate enforces in both callers: a quantized emitted role, or a `routed_moe`
+module, under such an entry is refused by tensor name. That closes the last
+direction in which a published plan and the roles beside it could disagree.
 
 ## 3. Bytes: priced == served
 
@@ -1102,16 +1135,16 @@ derived from the entries and checked, like `executes`: `route_only` when
 nothing attests quality in the cell's regime, else `kl_lower_bound`, else
 `kl_full_vocab`. On the shipped table every batch cell is `kl_lower_bound`,
 every decode cell is `route_only` except `tessera_e4m3_k1_dense_sm121_decode_streamed` (the only route a decode-regime KL was scored against:
-`tessera-decode-regime-kl-2026-09-03.md` eager, `tessera-compiled-decode-kl-r6-2026-09-04.md` compiled), the BF16 cells record a greedy smoke, the
-`routed_moe` cells record a repetitive one. `qualification` is not
+`tessera-decode-regime-kl-2026-09-03.md` eager, `tessera-compiled-decode-kl-r6-2026-09-04.md` compiled), the BF16 cells record a greedy smoke, and
+so -- since contract v21 -- do the `routed_moe` cells. `qualification` is not
 overloaded with the grade.
 
-A smoke also names the **control** it was compared against (schema v7,
+A smoke can also name the **control** it was compared against (schema v7,
 contract v18, #195), because `status` alone was deciding admission and could
-not carry the decision. Both `routed_moe` cells record `repetitive`; the BF16
-**source**, given the same prompt on the same pinned image, eager, returns the
-identical completion character for character
-(`docs/measurements/moe-evidence-debt-2026-09-04.md` §7), so the repetition is
+not carry the decision. Under v18 both `routed_moe` cells recorded
+`repetitive`, and the BF16 **source**, given the same prompt on the same pinned
+image, eager, returned the identical completion character for character
+(`docs/measurements/moe-evidence-debt-2026-09-04.md` §7), so the repetition was
 the model and the prompt. That fact lived in prose while PrismaQuant's pin
 refused the whole routed-MoE lane on `status` -- right under the rule it was
 given, wrong about the runtime. So `smoke.control` is `null` or the closed
@@ -1122,10 +1155,34 @@ that the reference was healthy), and `smoke.attribution` is **derived** from it
 and checked the way `grade` is derived from `kl`: no control `unattributed`,
 `identical_completion` `shared_with_reference`, `different_completion`
 `not_shared_with_reference`. A consumer refuses on `status == "repetitive"`
-**and** `attribution != "shared_with_reference"`, never on `status` alone. The
-two MoE cells carry the control; the eight dense cells are `unattributed`, six
-having run no smoke and the two BF16 cells no reference arm. No status word,
-grade, rung, route or byte moved.
+**and** `attribution != "shared_with_reference"`, never on `status` alone.
+
+The control turned out to be half the fix (prismaquant#198): a reference
+that degenerates too removes the evidence *against* the route without adding
+any *for* it, and a status-only consumer went on refusing -- rightly, since
+principle 5's "generates correctly" leg had no positive record for routed
+MoE. Contract **v21** supplies the record
+(`docs/measurements/moe-smoke-recorded-2026-09-05.md`): the same student and
+its source, one arm at a time on the same pinned image, eager, resident,
+seven prompts in two request forms, every completion kept on both arms. Raw
+continuation -- the v17 prompt and three passages ending mid-sentence -- ends
+in a cycle on the **source** on every (prompt, form) pair: the checkpoint is
+the instruct model and a raw continuation is not its trained interface.
+Through the checkpoint's own `chat_template.jinja` (byte-identical on both
+arms) three questions carrying the same content read `recorded` on **both**
+arms in **both** forms -- no cycle, an on-topic answer, the model's own EOS --
+under a rule the receipt states and `tests/test_moe_greedy_smoke_rule.py`
+pins (repetitive iff the completion *ends* in a cycle of at least two full
+periods; the v17 observation is its positive control). The two `routed_moe`
+cells now record `{status: recorded, receipt: that file, attribution:
+unattributed, control: null}`, the shape the two BF16 cells use. The v18
+control is retired from the cells, not from the record: the outcome vocabulary
+attributes a *symptom*, a recorded smoke has none, the arms' recorded
+completions are not identical (greedy coherence is claimed, closeness is not
+-- that is the batch cell's KL entry), and `null` is what is true; the v17
+prompt is re-measured identical on both arms in the same receipt. So today no
+cell carries a control and all ten are `unattributed`. No grade, rung, route
+or byte moved; the decode cell still grades `route_only`.
 
 Rob decided #133 on 2026-09-04: both `routed_moe` cells keep
 `device_qualified`, with the evidence debt recorded rather than closed. Read
@@ -1989,7 +2046,27 @@ The native extensions are built by torch at first use from the packaged
 `native` extra, which `serve` and `kernels` both reference. The `nvcc` is
 not installable from PyPI and is therefore a documented requirement, stated
 in the README beside the install commands and here; `ext.py` records where
-each is looked for. When a build is unavailable the outcome is per extension
+each is looked for.
+
+**Which toolkit compiles is one answer, adopted, not two reports.**
+`cpp_extension.load` builds `<cpp_extension.CUDA_HOME>/bin/nvcc`, and torch
+freezes that module global at *import*, so a resolver that only returns a root
+describes a compiler nothing will run. `ext._resolve_cuda_home` therefore
+adopts what it selects into both mechanisms -- the environment and that frozen
+global -- and `ext._nvcc_for_build()` reads the global back, so the toolkit
+reported by `toolchain_report`, the one hashed into the build identity (§ the
+`nvcc` field, issue #242) and the one the compile runs are the same root by
+construction. An explicit `CUDA_HOME`/`CUDA_PATH` still wins over the search,
+and it wins by adoption too: before issue #298 an explicit root chosen *after*
+torch's import was reported as selected while the previously frozen toolkit
+did the compiling. It is adopted whether or not it holds an `nvcc` -- only
+the resolver's *return* is gated on completeness, so an incomplete explicit
+root reports "no toolkit" (fail-closed, `complete: false`) and any build that
+proceeds anyway fails under the root the operator named, rather than
+succeeding under the toolkit that choice displaced; displacing a usable
+toolkit that way is said on stderr, by name.
+
+When a build is unavailable the outcome is per extension
 and per residency, and it is a value the route record stamps, never a
 boolean:
 
@@ -2016,7 +2093,10 @@ fallback one. A census (`tools/tessera_route_census.py`) that reads
 **`pure`** runs on every push to master and every pull request, in an
 interpreter with pytest and nothing else: the bytes-only tests (whatever
 `tests/conftest.py` can collect without torch, reported with the modules it
-could not), an import of the byte layer that asserts torch never entered the
+could not -- the collector reads a module's *import*, so a test body that
+reaches torch inside a torch-free module says `pytest.importorskip("torch")`,
+and `tests/test_collection_probe.py` runs the two modules that once did not
+with torch hidden, #309), an import of the byte layer that asserts torch never entered the
 process, the empty-denylist refusal (build item 11), and the wheel and sdist check
 above. It proves the parser's dependency boundary and what both
 distributions contain.

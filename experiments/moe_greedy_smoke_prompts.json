@@ -1,0 +1,55 @@
+{
+  "purpose": "Prompts for experiments/moe_greedy_smoke.py (#198). P0 is the v17 campaign smoke and the positive control of the degeneration rule: it MUST read repetitive on both arms. P1-P3 are content-bearing passages that end mid-sentence, sent as raw completions the way P0 was. P4-P6 ask for the same content through the checkpoint's own chat template (the serve applies chat_template.jinja): the checkpoint is the instruct model, and a raw continuation is not the interface it was trained on. Through that template the model opens every reply with a <think> trace before its answer and the template has no switch to turn that off, so P4-P6 carry a budget the answer is reached within; P0-P3 keep the campaign's short budget, because a cycle shows inside it. Every prompt is run on both arms and every completion is kept, whichever way it reads.",
+  "prompts": [
+    {
+      "id": "P0",
+      "max_tokens": 16,
+      "prompt": "The capital of France is"
+    },
+    {
+      "id": "P1",
+      "max_tokens": 64,
+      "prompt": "The Rhine rises in the Swiss Alps and flows north through Germany and the Netherlands before reaching the North Sea. For centuries it has carried grain, timber and coal between the interior and the coast, and the cities along its banks grew rich on that trade, including"
+    },
+    {
+      "id": "P2",
+      "max_tokens": 64,
+      "prompt": "Photosynthesis takes place in the chloroplasts of plant cells, where chlorophyll absorbs light and uses its energy to split water molecules. The oxygen released is a by-product; the hydrogen and the captured energy are used to reduce carbon dioxide into sugars, and that chemical energy is stored in"
+    },
+    {
+      "id": "P3",
+      "max_tokens": 64,
+      "prompt": "The first transatlantic telegraph cable was completed in 1858 between Ireland and Newfoundland. It carried only a few messages before its insulation failed, and the line went silent within weeks. Engineers spent the next several years studying the failure, and a more durable cable laid in 1866"
+    },
+    {
+      "id": "P4",
+      "max_tokens": 512,
+      "messages": [
+        {
+          "role": "user",
+          "content": "In two or three sentences, explain why the Rhine mattered to the trade of the cities along its banks, and name two of those cities."
+        }
+      ]
+    },
+    {
+      "id": "P5",
+      "max_tokens": 512,
+      "messages": [
+        {
+          "role": "user",
+          "content": "In a short paragraph, explain where the energy that photosynthesis captures from light ends up, and what the oxygen it releases comes from."
+        }
+      ]
+    },
+    {
+      "id": "P6",
+      "max_tokens": 512,
+      "messages": [
+        {
+          "role": "user",
+          "content": "Briefly describe what happened to the first transatlantic telegraph cable of 1858, and how the 1866 cable differed from it."
+        }
+      ]
+    }
+  ]
+}
