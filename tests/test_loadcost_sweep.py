@@ -30,7 +30,7 @@ import torch
 from tessera.decode import materialize_nvfp4
 from tessera.errors import GrammarError
 from tessera.grammar import (
-    require_column_groups,
+    require_scale_groups,
     superblock_count,
     superblock_widths,
 )
@@ -103,24 +103,28 @@ def test_every_derived_probe_is_a_width_the_encoder_can_actually_take():
     The sweep asked for ``base + 1`` and ``base - 1`` columns -- residues 1 and
     255 mod 256 -- and neither is a wire: a width must be a whole number of
     32-weight scale groups, because a group's two halves share one base
-    exponent (`grammar.require_column_groups`, #57). So the run printed a
+    exponent (`grammar.require_scale_groups`, #57). So the run printed a
     shape line for 4865 columns and then died inside ``_pack_scales``, and the
     measurement this harness was fixed for (#40) had still never been taken.
 
     Checked against the grammar's own guard rather than against ``% 32``, so
-    the harness cannot drift from the rule it has to satisfy.
+    the harness cannot drift from the rule it has to satisfy -- and against
+    the guard for the rule it *cites*: this called
+    ``require_column_groups``, #56's ``half`` predicate, with the 32-weight
+    group, which is the right arithmetic under the wrong name and drifts the
+    moment either rule moves (tessera#260 gave #57 its own home).
     """
     module = _load()
     for cols in (5120, 5119, 4096, 2048, 256):
         widths = module.sweep_widths(cols)
         for width in widths[1:]:          # widths[0] is the tensor as given
-            require_column_groups(width, module.SCALE_GROUP)
+            require_scale_groups(width, module.SCALE_GROUP)
     # And the old probes really are refused, so this is a fixed bug and not a
     # style preference.
     with pytest.raises(GrammarError):
-        require_column_groups(4865, module.SCALE_GROUP)
+        require_scale_groups(4865, module.SCALE_GROUP)
     with pytest.raises(GrammarError):
-        require_column_groups(5119, module.SCALE_GROUP)
+        require_scale_groups(5119, module.SCALE_GROUP)
 
 
 def test_sweep_refuses_a_non_positive_width():
