@@ -153,7 +153,10 @@ def _imports(path: Path, own: str, root: Path) -> tuple[set[str], set[str], set[
     try:
         tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
     except (SyntaxError, OSError):
-        return set()
+        # Three sets, like every other return here: answering with one made
+        # the caller's unpack raise, and a selector that raises selects
+        # nothing.  A file that does not parse states no dependencies.
+        return set(), set(), set()
     # An ``__init__.py`` IS its package: ``from .child import VALUE`` there
     # names ``pkg.child``, not a top-level ``child``.  Climbing from the
     # parent instead lost every relative re-export a package initializer

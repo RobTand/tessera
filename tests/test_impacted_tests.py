@@ -1036,6 +1036,29 @@ def test_a_box_artifacts_edit_selects_the_tests_that_read_its_roots():
         assert shipped in result["tests"], "the audit's named example"
 
 
+def test_an_unparseable_file_is_a_module_with_no_edges_not_a_crash(tmp_path):
+    """A file the branch is mid-edit on must not take the selector down.
+
+    ``_imports`` answers with three sets and answered a syntax error with one,
+    so every caller unpacked it into a ``ValueError`` -- and a selector that
+    raises selects nothing at all, which is the failure mode this tool exists
+    to refuse.
+    """
+
+    repo, base = _dynamic_repo(tmp_path, '''
+        from tools.driver import VALUE
+        def test_example(): assert VALUE
+    ''', {"support/broken.py": "def (\n"})
+    (repo / "tools/driver.py").write_text("VALUE = 3\n", encoding="utf-8")
+    _git(repo, "add", "tools/driver.py")
+    _git(repo, "commit", "-qm", "source change beside an unparseable file")
+
+    _, importers = impacted.build_graph(repo)
+    assert importers.get("support.broken", set()) == set()
+    result = _selector(repo, f"{base}...HEAD")
+    assert result["tests"] == ["tests/test_dynamic.py"], result
+
+
 def test_a_named_data_file_is_an_edge_to_the_code_that_reads_it(tmp_path):
     """A resolved non-Python read was an unknown; it is the exact edge it is."""
 
