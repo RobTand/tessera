@@ -54,17 +54,12 @@ the set spans the grids, bodies and scale planes that actually ship --
 ``tests/test_encoder_identity.py`` fails when a structure has no fixture.  That
 makes the coverage claim enforced instead of asserted.
 
-Nine narrower blind spots, named because a reader would otherwise assume them
-covered.  The first five are *surfaces no fixture reaches* (tessera#143), and
+Eight narrower blind spots, named because a reader would otherwise assume them
+covered.  The first four are *surfaces no fixture reaches* (tessera#143), and
 they are stated first because they are the ones a reader is likeliest to assume
 away: :func:`fixtures` is one case per shipping ``(grid, body, scale plane)``
 structure, and "shipping" is doing load-bearing work in that sentence.
 
-* **The S6b scale plane.**  ``wire_recipe`` never selects it, so no fixture
-  encodes one -- but ``export.encode_linear_planes(scale_plane=...)`` is a
-  caller-facing override and ``unit_artifact._read_scale_planes`` accepts what
-  it writes, so an S6b artifact is a thing that exists and this identity cannot
-  see a change to how it is packed or refitted.
 * **Segment-2a diagonals.**  ``with_diagonals=`` is the same kind of override,
   and it is a different producer of the DIAG planes than the CHANNEL row scale
   the fixtures do cover.
@@ -77,12 +72,20 @@ structure, and "shipping" is doing load-bearing work in that sentence.
   INITIAL_STATE plane, ``planes.SHARD_PLANE_ORDER``, the PER_SUPERBLOCK RELEASE
   descriptor -- and nothing an encode alone produces, so no fixture reaches it.
 
-``experiments/audit_byte_baseline.py`` covers all five: its ``layout`` matrix
+``experiments/audit_byte_baseline.py`` covers all four: its ``layout`` matrix
 and its release rows write every plane a reader reads, and
 ``tests/test_audit_byte_baseline.py`` derives that claim from
-``planes.SHARD_PLANE_ORDER`` rather than restating it.  Closing them *here*
-instead would re-base the identity, which is the third blind spot below and a
-cost only Rob prices.
+``planes.SHARD_PLANE_ORDER`` rather than restating it.  It is the *offline*
+instrument, run either side of a change on purpose; closing a surface here
+instead makes it always-on, and is what the S6b case below does.
+
+The fifth is closed rather than named.  ``e2m1-768/s6b`` encodes the plane no
+recipe selects, through the same caller-facing ``scale_plane=`` override an
+S6b artifact is written by, so ``encode._pack_scales`` and
+``encode._refit_scales`` now move this digest.  It costs nothing anyone can
+measure -- one encode on a plan the E2M1 case already built -- and it re-bases
+nothing, because it carries a ``compatibility_baseline`` (the third remaining
+blind spot below, and the rule the same paragraph states).
 
 The remaining four:
 
@@ -100,11 +103,16 @@ The remaining four:
 * **The fixture set itself.**  The digest binds what the encoder does *on
   these fixtures*, so an ordinary extension re-bases the identity even though
   no encoder changed -- and the coverage rule above requires that cost when a
-  new grid, body or plane ships.  A witness added later for a blind spot in an
-  existing structure follows the narrower issue-#116 compatibility rule: its
-  encoded arm-A contribution is recorded once, contributes zero bytes while
-  it matches, and contributes its self-delimiting encoded bytes when it does
-  not.  That preserves the identity of unchanged artifacts without hiding the
+  new grid, body or plane ships.  A witness added later for a surface the
+  encoder *already produced* -- a blind spot inside an existing structure, or
+  one outside every shipping structure that only an override or a second
+  byte-producing path reaches -- follows the narrower issue-#116 compatibility
+  rule instead: its encoded arm-A contribution is recorded once, contributes
+  zero bytes while it matches, and contributes its self-delimiting encoded
+  bytes when it does not.  What separates the two cases is whether the encoder
+  is new, not whether the fixture is: a shipping structure that did not exist
+  before is a different encoder and says so, while a surface nobody had looked
+  at is the same encoder, looked at harder.  That preserves the identity of unchanged artifacts without hiding the
   newly-covered byte move.  The baseline is measured history and is never
   bumped; a true rollback removes the contribution again, so the identity
   rolls back if and only if every other fixture output does too.
@@ -158,6 +166,7 @@ import math
 import random
 import threading
 from dataclasses import dataclass
+from types import MappingProxyType
 
 __all__ = [
     "FIXTURE_ROWS",
@@ -238,6 +247,17 @@ OUTLIER_SPREAD = 6.0
 #: Like ``UNTAGGED_ENCODER_ID``, this is measured history and is never bumped.
 _UNRAISED_BOUNDARY_BASELINE = (
     "a4d6cc3a19556393eb7dacdf3567ad241789900e06f9e42aeabe38982dd8b7f2"
+)
+
+#: The same one-time compatibility witness, for the surfaces the *wire* never
+#: selects (tessera#143).  ``encoder_fixture_id`` is a digest of the fixture
+#: set, so covering a surface that was always there would otherwise re-label
+#: every artifact already on disk as cut by a different encoder -- which is
+#: false, and is the one thing this identity must never say.  Each digest is
+#: the SHA-256 of its fixture's encoded contribution under the encoder that
+#: introduced it: measured history, never bumped.
+_S6B_BASELINE = (
+    "4a35f3e428f409c1ca0c38892f1fc9ee245df33f0b0eede222275561fd499497"
 )
 
 _DOMAIN = b"prismaquant.tessera.v1/encoder_fixture_id"
@@ -383,6 +403,14 @@ class Fixture:
     #: ``None`` tracks the exporter default.  The boundary witness holds the
     #: initial plane fixed at zero refits so the exact branch reaches bytes.
     scale_refit: "int | None" = None
+    #: Extra ``encode_linear`` keywords, for a surface the encoder produces but
+    #: no recipe selects -- ``scale_plane=S6B``, ``with_diagonals=True``, a
+    #: completion depth.  A fixture that names one is deliberately *not* the
+    #: wire for its ``(grid, body, scale plane)``, so it does not count towards
+    #: the coverage rule (:attr:`covers_wire`); it exists to reach a plane the
+    #: wire never writes.  Spelled unwritable, so the shared class default
+    #: cannot be mutated by a caller that thinks it holds its own dict.
+    encode: "MappingProxyType" = MappingProxyType({})
 
     @property
     def grid(self):
@@ -395,6 +423,19 @@ class Fixture:
             f"fixture {self.label!r} names grid {self.grid_name!r}, which is "
             f"not in SERIALISABLE_GRIDS"
         )
+
+    @property
+    def covers_wire(self) -> bool:
+        """Whether this fixture encodes its structure *as the recipe writes it*.
+
+        Derived from the fields, never declared beside the case: a fixture that
+        overrides the encode departs from the wire ``wire_recipe`` resolves, so
+        counting it as coverage of that structure would let the coverage rule
+        pass on a fixture that writes a different set of planes.  An S6b case
+        on the E2M1 wire covers SCALE_BASE and covers ``(E2M1, TCQ, LUT16)``
+        not at all.
+        """
+        return not self.encode
 
     @property
     def structure(self) -> tuple:
@@ -415,11 +456,19 @@ def fixtures() -> "tuple[Fixture, ...]":
     baseline-neutral witness for the unraised half-ulp reach boundary inside an
     already-covered structure.
 
+    The cases after those reach a surface the *wire* never selects: a plane
+    only a caller-facing override writes, or a second byte-producing path.
+    Each carries a ``compatibility_baseline`` for the reason the #116 witness
+    does -- the surface is not new, only newly watched, so covering it must not
+    re-label bytes already written by unchanged behaviour.
+
     The rungs are declared inputs.  E4M3 at 1024 and E2M1x2 at 768 are the
     rates those wires ship at; E2M1x2 at 896 is its coset-trellis cap (the
     boundary ``wire_recipe`` switches bodies at); E2M1 and BF16 sit at 768 and
     1024, inside the single range each grid's structure covers.
     """
+    from .manifest import ScalePlaneKind
+
     return (
         Fixture("e4m3-1024/window-channel", "E4M3", 1024),
         Fixture("bf16-1024/window-channel", "BF16", 1024),
@@ -435,6 +484,19 @@ def fixtures() -> "tuple[Fixture, ...]":
             compatibility_baseline=_UNRAISED_BOUNDARY_BASELINE,
             unraised_boundary=True,
             scale_refit=0,
+        ),
+        # The S6b scale plane (tessera#143).  ``wire_recipe`` selects it
+        # nowhere, so no case above writes SCALE_BASE at all -- and yet
+        # ``encode_linear_planes(scale_plane=...)`` is a caller-facing override
+        # and ``unit_artifact._read_scale_planes`` decodes what it writes, so a
+        # change to ``encode._pack_scales`` or ``encode._refit_scales`` moved
+        # real bytes at an unmoved identity.  It rides the rung the E2M1 case
+        # above already builds a plan for, so it costs one encode and no
+        # forest.
+        Fixture(
+            "e2m1-768/s6b", "E2M1", 768,
+            encode=MappingProxyType({"scale_plane": ScalePlaneKind.S6B}),
+            compatibility_baseline=_S6B_BASELINE,
         ),
     )
 
@@ -476,16 +538,15 @@ def stamped_fixture_id() -> "bytes | None":
     return encoder_fixture_id()
 
 
-def _encode_fixture(case: Fixture) -> bytes:
-    """One fixture's contribution: its payload digest and terminal records.
+def _fixture_blob(case: Fixture) -> bytes:
+    """The artifact bytes one fixture encodes to.
 
-    Goes through ``encode_linear``, so what is hashed is the encoder an export
-    calls and not a re-implementation of it, and the bytes are read back off
-    the parsed manifest rather than off the blob -- the blob carries the
-    container framing, which is not this identity's to bind.
+    Goes through ``encode_linear``, so what is hashed downstream is the encoder
+    an export calls and not a re-implementation of it.  Separated from
+    :func:`_encode_fixture` so a test can read the planes the case actually
+    wrote off its own manifest, instead of a case declaring which plane it
+    covers beside itself.
     """
-    from .canonical import Writer
-    from .container import parse
     from .export import ActivationSource, encode_linear, wire_recipe
     from .manifest import ScalePlaneKind
 
@@ -518,8 +579,22 @@ def _encode_fixture(case: Fixture) -> bytes:
         # this identity is about the encoder an export runs.
         trellis_weighting="scale",
         **kwargs,
+        **case.encode,
     )
-    manifest = parse(exported.blob).manifest
+    return exported.blob
+
+
+def _encode_fixture(case: Fixture) -> bytes:
+    """One fixture's contribution: its payload digest and terminal records.
+
+    The bytes are read back off the parsed manifest rather than off the blob --
+    the blob carries the container framing, which is not this identity's to
+    bind.
+    """
+    from .canonical import Writer
+    from .container import parse
+
+    manifest = parse(_fixture_blob(case)).manifest
     writer = Writer()
     writer.text(case.label).digest32(manifest.payload_digest)
     writer.uint(len(manifest.terminals))

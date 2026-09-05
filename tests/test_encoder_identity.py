@@ -154,21 +154,81 @@ def test_unraised_boundary_fixture_reaches_the_exact_residual_branch():
     assert float(stored[0]) == 1.0
 
 
-def test_new_boundary_witness_is_neutral_for_current_arm_a(identity):
-    """Coverage added after #101 must not relabel unchanged arm-A bytes."""
-    boundary = next(
+def test_every_compatibility_witness_is_neutral_for_the_current_encoder(identity):
+    """Coverage added after #101 must not relabel bytes it did not change.
+
+    Every witness, not the first one: a set membership test would pass with a
+    wrong constant on any case it did not reach, and a wrong constant is the
+    one failure this mechanism has -- it silently turns a neutral witness into
+    an Option-A re-base, relabelling every artifact on disk.
+    """
+    witnesses = [
         case for case in ei.fixtures()
         if case.compatibility_baseline is not None
-    )
-    encoded = ei._encode_fixture(boundary)
-    assert hashlib.sha256(encoded).hexdigest() == boundary.compatibility_baseline
-    assert ei._identity_contribution(boundary) == b""
+    ]
+    assert witnesses
+    for case in witnesses:
+        encoded = ei._encode_fixture(case)
+        computed = hashlib.sha256(encoded).hexdigest()
+        assert computed == case.compatibility_baseline, (
+            f"{case.label} encodes to {computed}, not its recorded "
+            f"compatibility baseline {case.compatibility_baseline}: it "
+            f"therefore contributes its bytes and re-bases the identity, "
+            f"relabelling every artifact on disk"
+        )
+        assert ei._identity_contribution(case) == b""
 
     old_payload = b"".join(
         ei._encode_fixture(case) for case in ei.fixtures()
         if case.compatibility_baseline is None
     )
     assert identity == hashlib.sha256(ei._DOMAIN + old_payload).digest()
+
+
+def test_the_identity_sees_the_s6b_scale_plane(identity, monkeypatch):
+    """tessera#143: the plane no recipe selects and every reader still decodes.
+
+    ``encode._refit_scales`` is the ``else`` arm of the refit -- the CHANNEL and
+    LUT planes have their own -- so it runs on the S6b case and on no other.
+    Disabling it is a real byte move that stays internally consistent (the
+    plane it returns is the one ``_pack_scales`` built), and before
+    ``e2m1-768/s6b`` existed it moved no fixture's bytes and the digest did not
+    follow.  The counter is asserted because a monkeypatch nothing calls is a
+    test that proves nothing.
+    """
+    import tessera.encode as enc
+
+    calls = []
+
+    def refit_nothing(work, units, group, half, base_byte, refine, effective):
+        calls.append(1)
+        return base_byte, refine, effective
+
+    monkeypatch.setattr(enc, "_refit_scales", refit_nothing)
+    monkeypatch.setattr(ei, "_MEMO", [])
+    moved = ei.encoder_fixture_id()
+    assert calls, "the S6b refit was never called, so nothing was perturbed"
+    assert moved != identity
+
+
+def test_the_s6b_fixture_writes_the_plane_nothing_else_writes():
+    """Non-vacuity: the case actually puts bytes on SCALE_BASE.
+
+    Measured off the artifact's own ``plane_order`` zipped against its
+    terminal's ``plane_elements`` -- the pair every reader indexes -- so this
+    is the bytes saying so, not the case declaring it.
+    """
+    from tessera.planes import PlaneKind
+
+    case = next(c for c in ei.fixtures() if c.label == "e2m1-768/s6b")
+    with ei._fixture_build():
+        blob = ei._fixture_blob(case)
+    art = parse(blob)
+    written = {
+        kind: count
+        for kind, count in zip(art.manifest.plane_order, art.terminal.plane_elements)
+    }
+    assert written[PlaneKind.SCALE_BASE] > 0
 
 
 # --------------------------------------------------------------------------
@@ -183,7 +243,9 @@ def test_every_shipping_structure_has_a_fixture():
     restated.  Adding a grid, a body or a plane fails here until a fixture
     covers it.
     """
-    covered = frozenset(case.structure for case in ei.fixtures())
+    covered = frozenset(
+        case.structure for case in ei.fixtures() if case.covers_wire
+    )
     missing = ei.shipping_structures() - covered
     assert not missing, (
         f"these shipping structures have no fixture, so a change that moved "
@@ -194,8 +256,24 @@ def test_every_shipping_structure_has_a_fixture():
 
 def test_no_fixture_covers_a_structure_nothing_ships():
     """The converse, so the set cannot quietly grow past what it must cover."""
-    covered = frozenset(case.structure for case in ei.fixtures())
+    covered = frozenset(
+        case.structure for case in ei.fixtures() if case.covers_wire
+    )
     assert not (covered - ei.shipping_structures())
+
+
+def test_an_override_fixture_is_not_counted_as_wire_coverage():
+    """A case that overrides the encode writes different planes than the wire.
+
+    ``e2m1-768/s6b`` resolves to a *shipping* structure -- it would be counted
+    -- and writes SCALE_BASE where the wire writes SCALE_REFINE, so counting
+    it would let the coverage rule above be satisfied by a fixture that never
+    encodes the plane the rule is about.
+    """
+    s6b = next(c for c in ei.fixtures() if c.label == "e2m1-768/s6b")
+    assert s6b.structure in ei.shipping_structures()
+    assert not s6b.covers_wire
+    assert all(c.covers_wire for c in ei.fixtures() if not c.encode)
 
 
 def test_the_structure_set_is_read_off_the_owning_modules():
