@@ -503,6 +503,73 @@ def test_a_fifteen_binade_span_is_legal_unless_the_top_word_is_nan():
         nvfp4_scale_bytes(*_scale_plane(base, [0, 0, 0, 7]))
 
 
+# ------------------------------------------------ the reserved E8M0 base word
+
+
+def test_a_reserved_scale_base_word_is_refused_at_write_by_name():
+    """tessera#208: SCALE_BASE is packed by ``pack_uniform``, which checks
+    width and nothing else, so the reserved E8M0 word 0xFF -- refused by the
+    scalar codec (``fp8.e8m0_decode``) -- sailed onto the wire, where
+    ``scales_from_planes`` reads it as 2**128 and the unit reconstructs
+    nonfinite.  The refusal belongs where the bytes are decided: at write,
+    by field name."""
+    from tessera.errors import ScaleCodecError
+
+    _, unit = _unit(diagonals=False)
+    unit.scale_base[0] = 255
+    with pytest.raises(ScaleCodecError, match="SCALE_BASE.*0xFF"):
+        build_unit_artifact(unit, "reserved-base", FORESTS, 640, CODE,
+                            fixture_id=None)
+
+
+def test_a_reserved_scale_base_word_on_disk_is_refused_at_read():
+    """The same word already on disk must not decode silently either: an
+    artifact written by a nonconforming encoder is byte-self-consistent --
+    every hash agrees with the reserved word -- so only the reader's own
+    scale-domain gate can catch it (tessera#208's audit built exactly this
+    artifact and readback held 32 nonfinite weights)."""
+    import tessera.unit_artifact as unit_artifact
+    from tessera.errors import ScaleCodecError
+
+    _, unit = _unit(diagonals=False)
+    unit.scale_base[0] = 255
+    with pytest.MonkeyPatch.context() as patch:
+        # Simulate the nonconforming writer: disarm the write-side gate, so
+        # the artifact carries the reserved word with consistent hashes.
+        patch.setattr(unit_artifact, "require_legal_scale_base",
+                      lambda *args, **kwargs: None, raising=False)
+        _, _, blob = build_unit_artifact(unit, "reserved-base", FORESTS, 640,
+                                         CODE, fixture_id=None)
+    with pytest.raises(ScaleCodecError, match="SCALE_BASE.*0xFF"):
+        read_unit_artifact(blob)
+
+
+def test_the_scale_base_domain_is_exactly_the_scalar_codecs():
+    """The tensor gate derives its legal set from the normative scalar codec
+    rather than restating it: every byte ``fp8.e8m0_decode`` decodes passes,
+    every byte it refuses is refused by the tensor path too, and the empty
+    plane a CHANNEL or LUT unit carries passes trivially."""
+    from tessera.errors import ScaleCodecError
+    from tessera.fp8 import e8m0_decode
+    from tessera.wire import require_legal_scale_base
+
+    legal, reserved = [], []
+    for byte in range(256):
+        try:
+            e8m0_decode(byte)
+            legal.append(byte)
+        except ScaleCodecError:
+            reserved.append(byte)
+    require_legal_scale_base(torch.tensor(legal, dtype=torch.uint8), "test")
+    require_legal_scale_base(torch.zeros(0, dtype=torch.uint8), "test")
+    assert reserved  # the codec does reserve a word; the gate must see it
+    for byte in reserved:
+        with pytest.raises(ScaleCodecError, match="SCALE_BASE"):
+            require_legal_scale_base(
+                torch.tensor([byte], dtype=torch.uint8), "test"
+            )
+
+
 def test_the_diagonal_planes_are_little_endian_by_the_format_not_by_the_host():
     """``pack_fp16``/``unpack_fp16`` document "little-endian" and wrote the
     host's order.  Every box this has run on is little-endian, so the pin is

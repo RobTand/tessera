@@ -63,6 +63,7 @@ from .wire import (
     pack_fp16,
     pack_levels,
     pack_uniform,
+    require_legal_scale_base,
     unpack_body,
     unpack_fp16,
     unpack_levels,
@@ -539,6 +540,11 @@ def build_unit_artifact(
     )
     has_diagonals = unit.diagonals is not None
     layout = PlaneLayout(layout)
+    # Refused at write, by field name: pack_uniform below checks width and
+    # nothing else, and a reserved word that reaches the wire decodes to
+    # nonfinite weights, not to an error (tessera#208).  A CHANNEL or LUT
+    # unit's empty plane passes trivially.
+    require_legal_scale_base(unit.scale_base, f"unit {unit_id!r}")
     payloads = {
         PlaneKind.ALPHABET: alphabet,
         PlaneKind.DESCENDANT: descendant,
@@ -956,6 +962,11 @@ def _read_scale_planes(plane, chunks, terminal, geometry, device, order) -> dict
             chunks[PlaneKind.SCALE_BASE], n_base,
             NORMATIVE_ELEMENT_BITS[PlaneKind.SCALE_BASE], device,
         )
+        # A reserved word already on disk is byte-self-consistent -- every
+        # hash agrees with it -- so the writer's gate cannot be the only one:
+        # an artifact from a nonconforming encoder must be refused here, at
+        # acceptance, not decoded to nonfinite weights (tessera#208).
+        require_legal_scale_base(scale_base, "artifact SCALE_BASE plane")
         scale_lut = None
     halves = geometry.positions // geometry.half_weights
     width = NORMATIVE_ELEMENT_BITS[PlaneKind.SCALE_REFINE]

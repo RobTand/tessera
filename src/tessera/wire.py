@@ -24,11 +24,13 @@ from __future__ import annotations
 import numpy as np
 import torch
 
-from .errors import GrammarError
+from .errors import GrammarError, ScaleCodecError
+from .fp8 import E8M0_NAN_BYTE
 from .trellis import body_bits as _body_bits
 
 __all__ = [
     "refuse_dirty_slack",
+    "require_legal_scale_base",
     "pack_uniform",
     "unpack_uniform",
     "pack_body",
@@ -320,6 +322,32 @@ def unpack_fp16(data: bytes, count: int, device=None) -> torch.Tensor:
     # The ``astype`` is also the copy the read-only buffer needs.
     array = np.frombuffer(data, dtype="<f2", count=count).astype(np.float16)
     return torch.from_numpy(array).to(device or "cpu")
+
+
+def require_legal_scale_base(scale_base: torch.Tensor, where: str) -> None:
+    """§6b's reserved base word, refused on the tensor path by name.
+
+    The scalar codec has always refused it -- ``fp8.e8m0_decode`` names 0xFF
+    as E8M0's NaN, with no exponent and therefore no composed scale -- but
+    SCALE_BASE travels as a tensor through ``pack_uniform``/``unpack_uniform``,
+    which check width and nothing else, so the reserved word could reach the
+    wire and come back off it while every hash agreed.  ``scales_from_planes``
+    then reads 255 as ``2**128`` and the unit reconstructs nonfinite weights
+    rather than an error (tessera#208).  The writer and the reader both call
+    this, so the word is refused where the bytes are decided *and* where bytes
+    already on disk are accepted; the legal domain is the scalar codec's, not
+    a restatement of it.
+    """
+    reserved = scale_base == E8M0_NAN_BYTE
+    if bool(reserved.any()):
+        raise ScaleCodecError(
+            f"{where}: SCALE_BASE carries the reserved E8M0 NaN word "
+            f"{E8M0_NAN_BYTE:#04x} at {int(reserved.sum())} group(s), first "
+            f"at group {int(reserved.nonzero()[0])}. E8M0's 0xFF has no "
+            "exponent and no composed scale (fp8.e8m0_decode); "
+            "scales_from_planes would read it as 2**128 and reconstruct "
+            "nonfinite weights"
+        )
 
 
 def scales_from_planes(
