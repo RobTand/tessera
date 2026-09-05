@@ -211,24 +211,44 @@ def test_the_identity_sees_the_s6b_scale_plane(identity, monkeypatch):
     assert moved != identity
 
 
-def test_the_s6b_fixture_writes_the_plane_nothing_else_writes():
-    """Non-vacuity: the case actually puts bytes on SCALE_BASE.
+def _written_planes(case):
+    """The plane kinds one fixture's artifact actually carries.
 
-    Measured off the artifact's own ``plane_order`` zipped against its
-    terminal's ``plane_elements`` -- the pair every reader indexes -- so this
-    is the bytes saying so, not the case declaring it.
+    Read off the artifact's own ``plane_order`` zipped against its terminal's
+    ``plane_elements`` -- the pair every reader indexes -- so what a case
+    covers is measured on its bytes and never declared beside it.
     """
-    from tessera.planes import PlaneKind
-
-    case = next(c for c in ei.fixtures() if c.label == "e2m1-768/s6b")
     with ei._fixture_build():
-        blob = ei._fixture_blob(case)
-    art = parse(blob)
-    written = {
-        kind: count
+        art = parse(ei._fixture_blob(case))
+    return frozenset(
+        kind
         for kind, count in zip(art.manifest.plane_order, art.terminal.plane_elements)
-    }
-    assert written[PlaneKind.SCALE_BASE] > 0
+        if count
+    )
+
+
+def test_every_override_fixture_writes_a_plane_the_wire_cases_do_not():
+    """Non-vacuity, derived: a case off the wire has to earn its place.
+
+    A fixture that overrides the encode is in the set for one reason -- it
+    reaches a plane ``wire_recipe`` never writes -- so if every plane it
+    carries is already carried by a wire case, it costs an encode and watches
+    nothing. Measured off each artifact's own manifest rather than declared,
+    and stated over whatever ``fixtures()`` holds, so it covers the next such
+    case without being edited.
+    """
+    off_wire = [case for case in ei.fixtures() if not case.covers_wire]
+    assert off_wire
+    on_wire = frozenset().union(
+        *(_written_planes(case) for case in ei.fixtures() if case.covers_wire)
+    )
+    for case in off_wire:
+        earned = _written_planes(case) - on_wire
+        assert earned, (
+            f"{case.label} writes only planes the wire cases already write "
+            f"({sorted(k.name for k in _written_planes(case))}), so it is an "
+            f"encode that watches nothing"
+        )
 
 
 # --------------------------------------------------------------------------
@@ -260,6 +280,40 @@ def test_no_fixture_covers_a_structure_nothing_ships():
         case.structure for case in ei.fixtures() if case.covers_wire
     )
     assert not (covered - ei.shipping_structures())
+
+
+def test_the_identity_sees_the_segment_2a_diagonals(identity, monkeypatch):
+    """tessera#143: the DIAG planes' *other* producer.
+
+    The CHANNEL cases fill DIAG_SV with a row scale; ``fit_diagonals`` fits the
+    rank-1 magnitude field and is reached only through ``with_diagonals=``.
+    The perturbation is one fp16 ulp on every stored input-channel word -- the
+    smallest byte-moving change the plane admits, the same class as the CHANNEL
+    one above -- and it stays self-consistent, because the encoder codes the
+    residual of exactly the fit it is handed. Before ``e2m1-768/diagonals``
+    existed, ``fit_diagonals`` was never called at all.
+
+    Dropping a Sinkhorn sweep was tried first and is *not* a byte move here:
+    eight sweeps and seven agree to fp16 on this fixture, so the digest did not
+    follow and the test read as a failure of the fixture rather than of the
+    perturbation. A perturbation has to be shown to move bytes, not assumed to.
+    """
+    import tessera.encode as enc
+
+    plain = enc.fit_diagonals
+    calls = []
+
+    def one_ulp_on_su(weights, **kwargs):
+        calls.append(1)
+        fit = plain(weights, **kwargs)
+        su = (fit.su.contiguous().view(torch.int16) + 1).view(torch.float16)
+        return dataclasses.replace(fit, su=su)
+
+    monkeypatch.setattr(enc, "fit_diagonals", one_ulp_on_su)
+    monkeypatch.setattr(ei, "_MEMO", [])
+    moved = ei.encoder_fixture_id()
+    assert calls, "fit_diagonals was never called, so nothing was perturbed"
+    assert moved != identity
 
 
 def test_an_override_fixture_is_not_counted_as_wire_coverage():

@@ -54,15 +54,12 @@ the set spans the grids, bodies and scale planes that actually ship --
 ``tests/test_encoder_identity.py`` fails when a structure has no fixture.  That
 makes the coverage claim enforced instead of asserted.
 
-Eight narrower blind spots, named because a reader would otherwise assume them
-covered.  The first four are *surfaces no fixture reaches* (tessera#143), and
+Seven narrower blind spots, named because a reader would otherwise assume them
+covered.  The first three are *surfaces no fixture reaches* (tessera#143), and
 they are stated first because they are the ones a reader is likeliest to assume
 away: :func:`fixtures` is one case per shipping ``(grid, body, scale plane)``
 structure, and "shipping" is doing load-bearing work in that sentence.
 
-* **Segment-2a diagonals.**  ``with_diagonals=`` is the same kind of override,
-  and it is a different producer of the DIAG planes than the CHANNEL row scale
-  the fixtures do cover.
 * **The RELEASE plane.**  ``encode_linear`` has no ``released_positions``
   keyword, so no fixture can carry a release at all; the placement rule lives
   in ``encode._canonical_release_order`` and moves nothing here.
@@ -72,20 +69,21 @@ structure, and "shipping" is doing load-bearing work in that sentence.
   INITIAL_STATE plane, ``planes.SHARD_PLANE_ORDER``, the PER_SUPERBLOCK RELEASE
   descriptor -- and nothing an encode alone produces, so no fixture reaches it.
 
-``experiments/audit_byte_baseline.py`` covers all four: its ``layout`` matrix
+``experiments/audit_byte_baseline.py`` covers all three: its ``layout`` matrix
 and its release rows write every plane a reader reads, and
 ``tests/test_audit_byte_baseline.py`` derives that claim from
 ``planes.SHARD_PLANE_ORDER`` rather than restating it.  It is the *offline*
 instrument, run either side of a change on purpose; closing a surface here
 instead makes it always-on, and is what the S6b case below does.
 
-The fifth is closed rather than named.  ``e2m1-768/s6b`` encodes the plane no
-recipe selects, through the same caller-facing ``scale_plane=`` override an
-S6b artifact is written by, so ``encode._pack_scales`` and
-``encode._refit_scales`` now move this digest.  It costs nothing anyone can
-measure -- one encode on a plan the E2M1 case already built -- and it re-bases
-nothing, because it carries a ``compatibility_baseline`` (the third remaining
-blind spot below, and the rule the same paragraph states).
+Two are closed rather than named.  ``e2m1-768/s6b`` encodes the plane no recipe
+selects, through the same caller-facing ``scale_plane=`` override an S6b
+artifact is written by, so ``encode._pack_scales`` and ``encode._refit_scales``
+now move this digest; ``e2m1-768/diagonals`` does the same for segment 2a, so
+``diagonals.fit_diagonals`` does too.  Each costs nothing anyone can measure --
+one encode on a plan the E2M1 case already built -- and each re-bases nothing,
+because it carries a ``compatibility_baseline`` (the third remaining blind spot
+below, and the rule the same paragraph states).
 
 The remaining four:
 
@@ -258,6 +256,11 @@ _UNRAISED_BOUNDARY_BASELINE = (
 #: introduced it: measured history, never bumped.
 _S6B_BASELINE = (
     "4a35f3e428f409c1ca0c38892f1fc9ee245df33f0b0eede222275561fd499497"
+)
+
+#: Segment-2a diagonals, the same way (tessera#143).
+_DIAGONALS_BASELINE = (
+    "585a857c3c97b618c8d8921325d65c333a5274fc3f016cef119f884f878c5189"
 )
 
 _DOMAIN = b"prismaquant.tessera.v1/encoder_fixture_id"
@@ -497,6 +500,18 @@ def fixtures() -> "tuple[Fixture, ...]":
             "e2m1-768/s6b", "E2M1", 768,
             encode=MappingProxyType({"scale_plane": ScalePlaneKind.S6B}),
             compatibility_baseline=_S6B_BASELINE,
+        ),
+        # Segment-2a diagonals (tessera#143).  ``with_diagonals=`` is the same
+        # kind of caller-facing override, and ``diagonals.fit_diagonals`` is a
+        # different producer of the DIAG planes than the CHANNEL row scale the
+        # E4M3 and BF16 cases fill DIAG_SV with -- so the fit itself, and the
+        # fp16 words it stores, moved bytes nothing here could see.  Spelled on
+        # a block-plane grid because a CHANNEL plane refuses segment 2a: its
+        # row scale *is* the DIAG_SV field.
+        Fixture(
+            "e2m1-768/diagonals", "E2M1", 768,
+            encode=MappingProxyType({"with_diagonals": True}),
+            compatibility_baseline=_DIAGONALS_BASELINE,
         ),
     )
 
