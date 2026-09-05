@@ -571,7 +571,9 @@ def test_the_toolchain_repair_runs_even_when_an_nvcc_is_already_on_path(tmp_path
     assert os.environ.get("CUDA_HOME") == str(complete)
 
     # an explicit operator choice is preserved, never second-guessed: with
-    # CUDA_HOME set the resolver returns it or refuses, and repairs nothing
+    # CUDA_HOME set the resolver adopts THAT root into torch's global (whether
+    # or not it holds a compiler; issue #298) and returns it or refuses it --
+    # it never swaps in a toolkit the operator did not name
     monkeypatch.setenv("CUDA_HOME", str(incomplete))
     monkeypatch.setattr(cpp_extension, "CUDA_HOME", str(incomplete))
     kg._ensure_toolchain_on_path()

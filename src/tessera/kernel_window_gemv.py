@@ -158,7 +158,9 @@ def _ensure_toolchain_on_path() -> None:
     compiler fails the build while a complete one answers ``which nvcc``
     (issue #243).  PATH presence decides only whether PATH itself needs the
     root's ``bin`` prepended.  An explicit ``CUDA_HOME``/``CUDA_PATH`` in the
-    environment still wins: the resolver returns it untouched or refuses.
+    environment still wins: the resolver adopts it into that same global --
+    whether or not it holds a compiler -- and returns it, or refuses it
+    (issue #298); it never falls back to the toolkit the operator displaced.
     """
     import shutil
     extra = []
