@@ -556,6 +556,40 @@ would only move the same `contiguous()` into the benchmark. The docstring
 says so. The day a route or the encoder imports `tessera.kernel`, that test
 fails naming the importer, and the copy becomes a refusal.
 
+### 3.7 A registered grid whose forest has no wire has no forest
+
+The ALPHABET and DESCENDANT planes carry a TCQ forest one *plane element* per
+code, and that element is a byte (`PayloadGrid.code_bytes`). So a registered
+grid wider than 256 codes has no TCQ wire at all — which is why the recipe
+table gives BF16 a window recipe at every rung, and why `wire_recipe`'s
+`body=BodyKind.TCQ` override (`_resolve_recipe`, honoured on any grid) was the
+one path that could ask for a forest nothing could write. It asked
+expensively: the scalar builder's `_mass_balanced_blocks` materialises
+`anchors x grid.size` candidate pairs and holds two such containers at once,
+so BF16 costs **65.7 GiB at R=11 and ~130 GiB at R=12** — measured per cell in
+`docs/measurements/build-forest-memory-2026-09-05.md`, which is what
+tessera#285's unattributed 73 GB kill was. `E2M1x2`, the only *shipping* grid
+the same filter selects, peaks at 34 MB at every rate: arity > 1 routes to
+`_build_forest_kd`, which builds no cross product, so there is nothing to
+stream on the path anything actually uses.
+
+`alphabet.require_forest_grid` now refuses at the top of `build_forest`,
+naming the grid, its code count and the plane that cannot carry it, before the
+first allocation. It is **derived, not listed**: membership of
+`SERIALISABLE_GRIDS` (the closed set of wire commitments, and what
+`wire_recipe` dispatches on) intersected with `_forest_plane_failure` (the one
+spelling of the plane-width rule, which `AnchorForest._refuse_unserialisable`
+also reads, so the refusal at the build and the refusal at the plane cannot
+disagree). Today that intersection is exactly BF16;
+`tests/test_forest_grid_roster.py` derives the same set from
+`export.recipe_table` so the two homes are pinned together. E4M3 is outside it
+— its shipping recipe is the window body too, but 256 codes fit the planes, so
+its TCQ body stays reachable by override. Unregistered grids are outside it
+whatever their width: `_refuse_unserialisable`'s promise that "encoding,
+decoding and measuring on any grid stay open" is what keeps a free 1024-code
+tuple grid buildable, and narrowing that would close a research surface rather
+than close #285.
+
 ## 4. Allocation and the uniform gate
 
 A candidate on Tessera's rate axis claims that *choosing* rungs beats
