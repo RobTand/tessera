@@ -107,6 +107,7 @@ __all__ = [
     "plan_wire_bits",
     "promotion_block",
     "rate_menu",
+    "require_kl",
     "selection_requirement",
     "uniform_control",
     "unit_wire_bits",
@@ -246,8 +247,12 @@ def _error_ratio(value, *, field: str, where: str, error=TesseraError) -> float:
     return number
 
 
-def _kl(value, *, field: str, where: str, error=TesseraError) -> float:
+def require_kl(value, *, field: str, where: str, error=TesseraError) -> float:
     """A KL divergence: finite and non-negative, by its own definition.
+
+    Public, because ``experiments/uniform_control.py verify`` builds its
+    verdict from two KLs off the command line rather than through
+    :func:`control_block`, and one rule has one home (AGENTS.md rule 4).
 
     Zero is admissible and means the two distributions agree; it is not a
     number any served arm has produced, and it is not this gate's business to
@@ -986,8 +991,8 @@ def control_block(
                 "difference in bytes as quality; the unserved block is what an "
                 "unmatched plan may carry."
             )
-        candidate_kl = _kl(candidate_kl, field="candidate_kl", where=where)
-        control_kl = _kl(control_kl, field="control_kl", where=where)
+        candidate_kl = require_kl(candidate_kl, field="candidate_kl", where=where)
+        control_kl = require_kl(control_kl, field="control_kl", where=where)
         ratio = candidate_kl / control_kl if control_kl else float("inf")
         block["verdict"] = {
             "metric": metric,
@@ -1316,6 +1321,7 @@ def _require_pinned_glm_bar(glm_bar: float, *, where: str) -> None:
             "would promote (tessera#65, #224)"
         )
 
+
 _PROMOTION_REASON = (
     "a per-plane default is set by a screen and a cross-check, and the screen "
     "that sets it must be won by the arm that ships: the 2026-09-02 receipt "
@@ -1372,10 +1378,10 @@ class PlanePromotion:
         for field in ("glm_ratio", "glm_bar"):
             object.__setattr__(self, field, _error_ratio(
                 getattr(self, field), field=field, where=self.where))
-        object.__setattr__(self, "served_bar", _kl(
+        object.__setattr__(self, "served_bar", require_kl(
             self.served_bar, field="served_bar", where=self.where))
         if self.served_kl is not None:
-            object.__setattr__(self, "served_kl", _kl(
+            object.__setattr__(self, "served_kl", require_kl(
                 self.served_kl, field="served_kl", where=self.where))
         _require_pinned_glm_bar(self.glm_bar, where=self.where)
         geomean = _unit_geomean(self.unit_ratios)
@@ -1525,9 +1531,9 @@ def assert_plane_promotion(
     # spelled apart rather than sharing a "positive" that fits neither.
     glm_ratio = _error_ratio(glm_ratio, field="glm_ratio", where=where)
     glm_bar = _error_ratio(glm_bar, field="glm_bar", where=where)
-    served_bar = _kl(served_bar, field="served_bar", where=where)
+    served_bar = require_kl(served_bar, field="served_bar", where=where)
     if served_kl is not None:
-        served_kl = _kl(served_kl, field="served_kl", where=where)
+        served_kl = require_kl(served_kl, field="served_kl", where=where)
     _require_pinned_glm_bar(glm_bar, where=where)
     geomean = _unit_geomean(ratios)
     wins = sum(1 for r in ratios if r < 1)

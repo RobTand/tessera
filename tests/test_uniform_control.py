@@ -646,6 +646,55 @@ def test_the_cli_verifies_the_bytes_that_shipped_and_states_the_verdict(tmp_path
     assert verdict["match"]["control_bits"] == 1761837056
 
 
+def test_the_cli_verify_refuses_a_number_that_is_not_a_kl(tmp_path, capsys):
+    """``--candidate-kl -1`` beat every control there is.
+
+    ``verify`` builds its verdict itself rather than through
+    :func:`control_block`, so the domain that function now holds its two KLs
+    to has to be the same domain here: a negative "KL" sorts below any
+    control's and published ``beat_control: true``, and NaN or an infinity
+    published a ratio that is not a number.  ``argparse``'s ``type=float``
+    accepts all three by name.
+    """
+    cli = _cli()
+    candidate = body(ALLOCATED_4_0)
+    control = uniform_control(candidate)
+    candidate_dir = _manifest(tmp_path, candidate, "allocated")
+    control_dir = _manifest(tmp_path, control.units, "uniform")
+    for bad in ("-1.0", "nan", "inf"):
+        assert cli.main(["verify", str(candidate_dir), str(control_dir),
+                         "--params", str(QWEN_PARAMS),
+                         "--candidate-kl", bad, "--control-kl", "0.1746"]) == 2
+        assert "REFUSED" in capsys.readouterr().out
+        assert cli.main(["verify", str(candidate_dir), str(control_dir),
+                         "--params", str(QWEN_PARAMS),
+                         "--candidate-kl", "0.3485", "--control-kl", bad]) == 2
+        assert "REFUSED" in capsys.readouterr().out
+
+
+def test_the_cli_verify_receipt_carries_no_bpp_it_had_no_denominator_for(tmp_path):
+    """Without ``--params`` the terminal says bpp is omitted; so must the file.
+
+    The placeholder denominator was 1, so the receipt recorded the candidate's
+    whole bit total as its bpp -- 4.4e8 times the truth on the receipt's own
+    plan -- while the operator was told the figures were omitted.
+    """
+    cli = _cli()
+    candidate = body(ALLOCATED_4_0)
+    control = uniform_control(candidate)
+    candidate_dir = _manifest(tmp_path, candidate, "allocated")
+    control_dir = _manifest(tmp_path, control.units, "uniform")
+    report = tmp_path / "verdict.json"
+    assert cli.main(["verify", str(candidate_dir), str(control_dir),
+                     "--candidate-kl", "0.3485", "--control-kl", "0.1746",
+                     "--report", str(report)]) == 0
+    match = json.loads(report.read_text())["match"]
+    assert match["candidate_bpp"] is None and match["control_bpp"] is None
+    assert match["varying_params"] is None
+    assert match["candidate_bits"] == BUDGET_BITS["4.0"]
+    assert match["byte_matched"] is True
+
+
 def test_the_cli_verify_refuses_two_arms_that_do_not_weigh_the_same(tmp_path, capsys):
     cli = _cli()
     candidate = body(ALLOCATED_4_0)
