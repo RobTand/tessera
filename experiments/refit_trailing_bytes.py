@@ -22,18 +22,29 @@ that is a statement about the Tessera wire the twin is a materialisation of,
 not about the twin.  Both are recorded, and a length that moved fails the same
 way a moved code does.
 
-**Everything else this loads is held identical, and that is now decided rather
-than merely recorded** (tessera#248).  ``CHANGE_POLICY`` below states, for
-every suffix the loader reads, whether this intervention may move it: the
-weight plane's block and global scales may (that is the treatment), the packed
-codes and the BF16 source/passthrough ``.weight`` tensors and the A4
-``.input_global_scale`` activation quantizer may not.  Before #248 the verdict
-consulted the codes, the plane, the tensor-name sets and the wire totals only,
-so a B side whose BF16 weight or whose input scale had also moved -- same name,
-same shape, same dtype, same byte count -- still returned 0 and
-``verdict: "the matched pair"``, with the extra difference sitting under
-``by_suffix`` for a human to notice.  A served KL over that pair isolates
-nothing.
+**Everything else the pair carries is held identical, and that is now decided
+rather than merely recorded** (tessera#248).  ``CHANGE_POLICY`` below states,
+for every tensor, whether this intervention may move it: the weight plane's
+block and global scales may (that is the treatment), the packed codes and the
+BF16 source/passthrough ``.weight`` tensors and the A4 ``.input_global_scale``
+activation quantizer may not.  Before #248 the verdict consulted the codes, the
+plane, the tensor-name sets and the wire totals only, so a B side whose BF16
+weight or whose input scale had also moved -- same name, same shape, same
+dtype, same byte count -- still returned 0 and ``verdict: "the matched pair"``,
+with the extra difference sitting under ``by_suffix`` for a human to notice.  A
+served KL over that pair isolates nothing.
+
+**And the policy is total over the checkpoint, not over a roster**
+(tessera#278).  #248's totality check compared ``CHANGE_POLICY`` against the
+five suffixes ``load`` chose to read, so it could not fire: a ``.bias``, a
+``.k_scale`` or anything else the exporter writes was never loaded, appeared in
+no count, in no ``tensors_only_in_*`` set and in no verdict, and a pair whose B
+side had also moved a bias still exited 0 as "the matched pair".  ``load`` now
+reads every tensor, and one whose suffix no ``CHANGE_POLICY`` entry governs
+refuses the pair by name -- a tensor without a policy is a tensor the verdict
+cannot see, and identical-today is not a policy.  Qwen3-0.6B's W4A4 twins carry
+nothing outside the five, so no receipt taken before this moves; a Qwen2-family
+model with q/k/v biases, or a W8A8 twin, is the input that broke it.
 
     PYTHONPATH=src python experiments/refit_trailing_bytes.py A_DIR B_DIR \
         --wire-a A_TESSERA --wire-b B_TESSERA \
@@ -66,9 +77,6 @@ from pathlib import Path
 import torch
 from safetensors import safe_open
 
-SUFFIXES = (".weight", ".weight_scale", ".weight_packed",
-            ".weight_global_scale", ".input_global_scale")
-
 # The exit-code contract, named once here because a second process reads it:
 # ``refit_trailing_serve.sh compare-drift`` accepts EXIT_MATCHED and
 # EXIT_NOT_MATCHED as readings of its stage and refuses anything else.  A shell
@@ -91,10 +99,22 @@ EXIT_TOOL_FAILED = 1   # what Python already returns for an uncaught exception
 # to notice.  A served KL over that pair cannot isolate the trailing
 # weight-scale objective, because it is not the only thing that changed.
 #
-# So every suffix the loader reads carries a policy, and the policy is checked.
-# ``MUST_MOVE`` is the leg ``the_plane_moved`` already held and ``MAY_MOVE`` is
-# the one thing that needs no check; what was missing is ``IDENTICAL``, and
-# stating all three is what makes the set total rather than a pair of habits:
+# So every tensor carries a policy, and the policy is checked.  ``MUST_MOVE``
+# is the leg ``the_plane_moved`` already held and ``MAY_MOVE`` is the one thing
+# that needs no check; what was missing is ``IDENTICAL``, and stating all three
+# is what makes the set total rather than a pair of habits.
+#
+# **Total over the checkpoint, not over a roster** (tessera#278).  #248's fix
+# was total over the five suffixes the loader chose to read, which left the
+# same door one over: a ``.bias``, a ``.k_scale`` or any other tensor the
+# exporter writes was not loaded at all, so it was in no count, in no
+# ``tensors_only_in_*`` set and in no verdict -- and a pair whose B side had
+# also moved a bias still certified as "the matched pair" and exited 0.  There
+# is no second roster now: ``load`` reads every tensor, this dict decides, and
+# a tensor no entry governs REFUSES the pair by name (``EXIT_TOOL_FAILED``:
+# nothing was decided) rather than defaulting to identical.  Identical today is
+# not a policy -- the check cannot say whether this intervention may move a
+# tensor nobody wrote a rule for, and guessing is what #248 and #278 both are.
 IDENTICAL = "identical"    # the trellis output: identical on every unit or it
                            # is not this pair, whatever the flags said
 MUST_MOVE = "must move"    # the intervention itself: a flag that reached
@@ -112,21 +132,43 @@ CHANGE_POLICY = {
     # arms serve under the same static A4 input scales.
     ".input_global_scale": IDENTICAL,
 }
-_UNPOLICED = set(SUFFIXES) - set(CHANGE_POLICY)
-if _UNPOLICED:                                    # a loaded tensor with no rule
-    raise SystemExit(
-        f"refit_trailing_bytes: {sorted(_UNPOLICED)} are loaded and compared "
-        "but no CHANGE_POLICY says whether this intervention may move them; "
-        "a tensor without a policy is a tensor the verdict cannot see")
+
+
+def policy_suffix(name: str) -> "str | None":
+    """The ``CHANGE_POLICY`` entry that governs ``name``, or None.
+
+    Longest match wins, so a rule for a narrower suffix cannot be shadowed by
+    a broader one.  None is a refusal and never a default: see
+    ``refuse_unpoliced``.
+    """
+    governing = [s for s in CHANGE_POLICY if name.endswith(s)]
+    return max(governing, key=len) if governing else None
+
+
+def refuse_unpoliced(names) -> None:
+    """The one home of "a tensor without a policy is a tensor the verdict
+    cannot see".  It used to guard the source (``SUFFIXES`` against
+    ``CHANGE_POLICY``, where it could not fire) and now guards the artifact,
+    which is where the tensors actually are (tessera#278)."""
+    unpoliced = sorted({n for n in names if policy_suffix(n) is None})
+    if unpoliced:
+        shown = unpoliced[:4] + (["..."] if len(unpoliced) > 4 else [])
+        raise SystemExit(
+            f"refit_trailing_bytes: this pair carries {len(unpoliced)} "
+            f"tensor(s) no CHANGE_POLICY entry governs -- {shown}; a tensor "
+            "without a policy is a tensor the verdict cannot see, so this "
+            "pair is not decided.  Say whether this intervention may move "
+            "that suffix (IDENTICAL, MUST_MOVE or MAY_MOVE) and run again")
 
 
 def load(path: Path) -> "dict[str, torch.Tensor]":
+    """Every tensor in the export, not a chosen roster of them: a tensor that
+    is never read is one no policy can refuse (tessera#278)."""
     out: dict = {}
     for shard in sorted(path.glob("*.safetensors")):
         with safe_open(str(shard), framework="pt") as handle:
             for name in handle.keys():
-                if name.endswith(SUFFIXES):
-                    out[name] = handle.get_tensor(name)
+                out[name] = handle.get_tensor(name)
     return out
 
 
@@ -159,14 +201,17 @@ def main() -> int:
         if not loaded:
             raise SystemExit(
                 f"refit_trailing_bytes: {side} ({given}) holds no *.safetensors "
-                f"tensor ending in one of {list(SUFFIXES)}; an absent or "
-                "unreadable export compares nothing, which is this tool "
-                "failing and not a verdict about a pair")
+                "tensor at all; an absent or unreadable export compares "
+                "nothing, which is this tool failing and not a verdict about "
+                "a pair")
+    # Every tensor either side carries is governed or the pair is refused, so
+    # the verdict below is a claim about the whole pair (tessera#278).
+    refuse_unpoliced((*ta, *tb))
     shared = sorted(set(ta) & set(tb))
     by_suffix: dict = collections.defaultdict(
         lambda: {"same": 0, "different": 0, "names_different": []})
     for name in shared:
-        suffix = next(s for s in SUFFIXES if name.endswith(s))
+        suffix = policy_suffix(name)
         x, y = raw(ta[name]), raw(tb[name])
         same = x.dtype == y.dtype and x.shape == y.shape and torch.equal(x, y)
         by_suffix[suffix]["same" if same else "different"] += 1
@@ -186,9 +231,10 @@ def main() -> int:
             wire["a"]["wire_bytes"] is not None
             and wire["a"]["wire_bytes"] == wire["b"]["wire_bytes"])
 
-    # Every suffix the loader reads is decided, not just the two the verdict
-    # used to read (tessera#248).  `by_suffix` is a defaultdict, so a suffix
-    # absent from both exports reads zero/zero -- absence is not a difference.
+    # Every tensor the pair carries is decided, not just the two suffixes the
+    # verdict used to read (tessera#248, #278).  `by_suffix` is a defaultdict,
+    # so a suffix absent from both exports reads zero/zero -- absence is not a
+    # difference.
     immutable_changed = {
         suffix: by_suffix[suffix]["names_different"]
         for suffix, policy in sorted(CHANGE_POLICY.items())
