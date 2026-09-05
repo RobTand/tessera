@@ -128,6 +128,16 @@ required per-cell `evidence` grade). The raw SHA256 quoted at the top of this
 report is the audited v16 file; the v17 file's raw SHA256 is
 `ba3a3c69027a11f7bf9ef570867c58d608d0865c3e6a17dfeea53ba43ce055e6`.
 
+**Note, 2026-09-04, after that note (#181).** A prose-only correction
+replaced the three build-box absolute paths in the contract's changelog with
+the tracked receipt that carries the same evidence
+(`docs/measurements/tessera-gemv-lane-reachable-2026-09-03.md`). No field,
+schema, cell, rung, route or bound moved, so `contract_version` stays **17**
+-- one denotation, now under two digests, as `af9d23b` already did at v16.
+The v17 raw SHA256 recorded above is the file this audit was run against;
+the corrected file's raw SHA256 is
+`2f2dee1a23b14101f0312cfbf4fcaf1542eb575841621000cfa05164e2275903`.
+
 ## 5. Filed, not fixed
 
 Filed as issues so the tag can be cut against a list rather than a memory.
