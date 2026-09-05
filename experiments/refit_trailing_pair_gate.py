@@ -26,6 +26,19 @@ The gate's five legs, and what this run can and cannot hand it:
   the gate (tessera#85).  Passing an off-wire ratio here is refused, and this
   script would rather not be able to than be able to.
 
+**Before any of that: the screen's own recorded proofs** (tessera#250).  The
+producer writes, per unit, the evidence that can invalidate its experiment --
+the drift control's first/last reconstruction identity, the sink-versus-wire
+agreement, and the trailing arms' matched-pair legs -- and this gate read none
+of it, so a document whose control DIFFERS or whose trailing arm changed its
+packed codes could still print PROMOTED on favourable ratios.
+``experiments/refit_trailing_screen.py`` owns that reading for the producer
+and for this gate both.  A failed control or a mislabelled landing refuses the
+whole document, in **both** populations, before a ratio is computed; a failed
+matched-pair leg refuses the arm that claims the pair.  ``plane_moved=false``
+is not in that set: an arm whose lever reached nothing is an ineffective arm,
+not a broken comparison.
+
 ``--served-bar`` defaults to the LUT plane's incumbent served KL, 0.5310 --
 ``h^1.0``, the arm every candidate here is a ratio against.  It is quoted from
 ``assert_plane_promotion``'s own docstring, which records that the 2026-09-02
@@ -47,10 +60,17 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from refit_trailing_screen import assert_arm_proofs, assert_screen_receipt     # noqa: E402
 from tessera.control import GLM_GATE, assert_plane_promotion, promotion_block  # noqa: E402
 from tessera.encode import LUT_LANDING_WIRE                                    # noqa: E402
 from tessera.errors import PromotionRefusedError, TesseraError                 # noqa: E402
+
+
+#: The one place this run names itself, so the promotion refusals and the
+#: screen-proof refusals below read as one gate rather than two.
+WHERE = "tessera#75 the trailing-refit objective"
 
 
 def geo(xs) -> float:
@@ -84,6 +104,23 @@ def main() -> None:
 
     qwen = json.load(open(a.qwen))
     glm = json.load(open(a.glm))
+
+    # The screen's own proofs, BEFORE a single ratio is computed (tessera#250).
+    # The producer records what can invalidate its experiment -- the drift
+    # control, the sink-versus-wire identity, the matched-pair legs -- and
+    # until now nothing read them, so a screen whose control DIFFERS could
+    # still print PROMOTED on favourable numbers.  A failed control or a
+    # mislabelled landing refuses the whole document here; a failed
+    # matched-pair leg refuses the arm that claims the pair, below.
+    try:
+        proof_failures = {}
+        for name, doc in ((a.qwen, qwen), (a.glm, glm)):
+            for arm, reasons in assert_screen_receipt(
+                    doc, name=name, where=WHERE).items():
+                proof_failures.setdefault(arm, ())
+                proof_failures[arm] += tuple(reasons)
+    except PromotionRefusedError as exc:
+        raise SystemExit(f"REFUSED: {exc}")
 
     def kl_of(path: str) -> float:
         """The ALL-positions lower bound out of a kl_compare receipt.
@@ -160,8 +197,10 @@ def main() -> None:
         rec = {"unit_ratios": ratios, "geomean": geo(ratios), "wins": wins,
                "glm_ratio": glm_ratio,
                "served_kl": a.served_kl if arm == served_key else None,
-               "served_kl_receipt": a.served_kl_json if arm == served_key else None}
+               "served_kl_receipt": a.served_kl_json if arm == served_key else None,
+               "screen_proof_failures": list(proof_failures.get(arm, ()))}
         try:
+            assert_arm_proofs(arm, proof_failures.get(arm, ()), where=WHERE)
             served = arm if arm == served_key else None
             promotion = assert_plane_promotion(
                 candidate=arm, served_arm=served, unit_ratios=ratios,
@@ -169,7 +208,7 @@ def main() -> None:
                 served_kl=a.served_kl if served else None,
                 served_bar=a.served_bar,
                 landing=LUT_LANDING_WIRE,
-                where="tessera#75 the trailing-refit objective")
+                where=WHERE)
             rec["verdict"] = promotion_block(promotion)["verdict"]
             log(f"   assert_plane_promotion: PROMOTED -- "
                 f"{rec['verdict']['detail']}")

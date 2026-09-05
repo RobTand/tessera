@@ -502,6 +502,19 @@ unexpected shell failure. Successful removal is remembered so normal exit
 preserves the collected log. The wrapper releases its serve lock only after
 removal succeeds; failed cleanup retains ownership and refuses certification.
 
+`experiments/serve_metrics.sh` owns the speculative-decoding refusal for every
+wrapper that dumps logprobs (`serve_and_dump_kl.sh`, `decode_regime_kl.sh`,
+`tessera_plugin_served.sh`): spec-decode makes `/v1/completions` return the
+draft model's numbers, so a serve publishing `vllm:spec_decode` may not be
+measured. The check fetches the **complete** `/metrics` response to a file and
+greps the file — never `curl | grep -q`, which cannot detect the condition it
+owns, because `grep -q` exits at the first match, curl then fails its write,
+and under `set -o pipefail` the `if` reads false and the wrapper dumps anyway
+(tessera#247, the same early-consumer-exit already fixed in the startup-log
+gate). A transport failure, a non-200 and an empty body each refuse: a serve
+that cannot be asked is not a serve without spec-decode. The response the gate
+read is kept beside the serve log as the evidence for that verdict.
+
 ### 4.4b The export writes only where the runtime routes it
 
 A wire is only worth writing on a Linear the runtime hands to this plugin, and
@@ -1237,6 +1250,20 @@ count must equal the contract's `scored_positions` and the dump's position
 count. It is never inferred from the dump shape: a malformed pair cannot pick
 the interpretation that lets itself through.
 
+The same contract owns the decode-to-prefill row mapping.
+`experiments/decode_regime_subset.py` publishes the prefill regime restricted
+to the decode regime's positions, which is the only reading in which the two
+regimes differ by the executed forward alone; a chunk's prefill row stride is
+therefore read as the contract's `scored_positions / n_chunks` -- `seqlen`
+with a prepended BOS, `seqlen - 1` without -- and never spelled `seqlen - 1`
+(tessera#249). It was spelled: on a BOS corpus every chunk after the first
+folded its positions into the preceding chunk, in bounds, under the
+matched-position claim. `--seqlen` is now a cross-check on the contract rather
+than the mapping's source, and the three payloads must agree on contract
+digest, tokenizer bytes and chunk geometry -- with both prefill arrays sized
+as the contract says and the prefill student the same artifact as the decode
+student -- before any of them is indexed.
+
 `TESSERA_ROUTE_TRACE=<absolute path>` (off by default, eager only -- under
 compile it declines and counts nothing, which is enforced since #113 rather
 than described) makes the
@@ -1490,6 +1517,38 @@ record through the gate, watches `hessian` refuse at 2 of 6, and pins
 `DEFAULT_REFIT_OBJECTIVE["lut16"]` to the `h^1.0` that refusal leaves
 standing. Flipping that default without a promotion this gate accepts turns
 the suite red.
+
+#### Before the legs: the screen's own recorded proofs are read, not printed
+
+A promotion gate reads a screen document, and that document records the
+evidence that can invalidate the experiment that produced it:
+`drift_control_identical` (the same arm run first and last in one process
+reconstructed the same weights), `landing`/`serialisable`/
+`sink_vs_wire_bit_identical` (the sink the arms were scored off IS the wire
+that ships), and, on a trailing arm, `matched_pair`'s `codes_identical`,
+`bytes_equal`, `inner_objectives_equal` and `inner_refits_identical` (the two
+arms differ in the last scale plane and in nothing else).
+`experiments/refit_trailing_pair.py` wrote and printed all of it;
+`experiments/refit_trailing_pair_gate.py` read none of it, so a screen whose
+control DIFFERS, or whose trailing arm changed its packed codes, still reached
+`assert_plane_promotion` on its ratios alone and could print PROMOTED
+(tessera#250). `experiments/refit_trailing_screen.py` is now the one home for
+that reading, and both the producer and the gate call it: a failed control or
+a mislabelled landing refuses the whole document, in **both** populations,
+before a ratio is computed; a failed matched-pair leg refuses the arm that
+claims the pair. A proof that is absent refuses exactly as a proof that is
+false does.
+
+**Which arms owe the matched-pair proof is derived from the receipt, not
+listed.** A trailing pair is an arm whose recorded refit schedule carries the
+control's inner objectives with the trailing one swapped -- `1,1,1,2` against
+`1,1,1,1` -- and whose `refit_diagnostics` records no coupled landing, because
+#50's coupled landing re-assigns blocks and is *expected* to move the codes
+the next trellis pass sees. Naming `B-Jac`/`B-GS` would pass on the day the
+roster is wrong and would let a receipt exempt an arm by deleting its proof.
+`plane_moved=false` is recorded and deliberately not required: an arm whose
+lever reached nothing is an ineffective arm, which is a result and not a
+broken comparison.
 
 #### The fifth leg: a screen taken off the wire does not promote
 

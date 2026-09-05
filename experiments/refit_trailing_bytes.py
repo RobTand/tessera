@@ -22,6 +22,19 @@ that is a statement about the Tessera wire the twin is a materialisation of,
 not about the twin.  Both are recorded, and a length that moved fails the same
 way a moved code does.
 
+**Everything else this loads is held identical, and that is now decided rather
+than merely recorded** (tessera#248).  ``CHANGE_POLICY`` below states, for
+every suffix the loader reads, whether this intervention may move it: the
+weight plane's block and global scales may (that is the treatment), the packed
+codes and the BF16 source/passthrough ``.weight`` tensors and the A4
+``.input_global_scale`` activation quantizer may not.  Before #248 the verdict
+consulted the codes, the plane, the tensor-name sets and the wire totals only,
+so a B side whose BF16 weight or whose input scale had also moved -- same name,
+same shape, same dtype, same byte count -- still returned 0 and
+``verdict: "the matched pair"``, with the extra difference sitting under
+``by_suffix`` for a human to notice.  A served KL over that pair isolates
+nothing.
+
     PYTHONPATH=src python experiments/refit_trailing_bytes.py A_DIR B_DIR \
         --wire-a A_TESSERA --wire-b B_TESSERA \
         --out experiments/results/refit_trailing_bytes.json
@@ -38,6 +51,44 @@ from safetensors import safe_open
 
 SUFFIXES = (".weight", ".weight_scale", ".weight_packed",
             ".weight_global_scale", ".input_global_scale")
+
+# What this intervention is allowed to move, stated once and totally.
+#
+# Loading a tensor and recording its difference is not a check: before
+# tessera#248 the verdict consulted the packed codes, the scale plane, the
+# tensor-name sets and the wire totals, so a B side whose BF16 passthrough
+# weight or whose A4 activation scale had ALSO moved was still certified "the
+# matched pair" -- with the extra difference sitting in `by_suffix` for a human
+# to notice.  A served KL over that pair cannot isolate the trailing
+# weight-scale objective, because it is not the only thing that changed.
+#
+# So every suffix the loader reads carries a policy, and the policy is checked.
+# ``MUST_MOVE`` is the leg ``the_plane_moved`` already held and ``MAY_MOVE`` is
+# the one thing that needs no check; what was missing is ``IDENTICAL``, and
+# stating all three is what makes the set total rather than a pair of habits:
+IDENTICAL = "identical"    # the trellis output: identical on every unit or it
+                           # is not this pair, whatever the flags said
+MUST_MOVE = "must move"    # the intervention itself: a flag that reached
+                           # nothing is not a treatment
+MAY_MOVE = "may move"      # part of the weight plane the refit rewrites
+CHANGE_POLICY = {
+    # The BF16 source and passthrough weights: the trailing refit rewrites a
+    # scale plane, never a weight.  One of these moving is a second treatment.
+    ".weight": IDENTICAL,
+    ".weight_packed": IDENTICAL,
+    # The weight plane the trailing refit exists to move, block and global.
+    ".weight_scale": MUST_MOVE,
+    ".weight_global_scale": MAY_MOVE,
+    # The activation quantizer, held fixed by the experiment's design: the two
+    # arms serve under the same static A4 input scales.
+    ".input_global_scale": IDENTICAL,
+}
+_UNPOLICED = set(SUFFIXES) - set(CHANGE_POLICY)
+if _UNPOLICED:                                    # a loaded tensor with no rule
+    raise SystemExit(
+        f"refit_trailing_bytes: {sorted(_UNPOLICED)} are loaded and compared "
+        "but no CHANGE_POLICY says whether this intervention may move them; "
+        "a tensor without a policy is a tensor the verdict cannot see")
 
 
 def load(path: Path) -> "dict[str, torch.Tensor]":
@@ -90,11 +141,20 @@ def main() -> int:
             wire["a"]["wire_bytes"] is not None
             and wire["a"]["wire_bytes"] == wire["b"]["wire_bytes"])
 
+    # Every suffix the loader reads is decided, not just the two the verdict
+    # used to read (tessera#248).  `by_suffix` is a defaultdict, so a suffix
+    # absent from both exports reads zero/zero -- absence is not a difference.
+    immutable_changed = {
+        suffix: by_suffix[suffix]["names_different"]
+        for suffix, policy in sorted(CHANGE_POLICY.items())
+        if policy is IDENTICAL and by_suffix[suffix]["different"] > 0
+    }
     record = {
         "a": args.a, "b": args.b,
         "tensors_only_in_a": sorted(set(ta) - set(tb)),
         "tensors_only_in_b": sorted(set(tb) - set(ta)),
         "by_suffix": {k: dict(v) for k, v in sorted(by_suffix.items())},
+        "change_policy": dict(sorted(CHANGE_POLICY.items())),
         "wire": wire,
     }
     packed = by_suffix[".weight_packed"]
@@ -102,12 +162,24 @@ def main() -> int:
     record["codes_identical_on_every_unit"] = (
         packed["different"] == 0 and packed["same"] > 0)
     record["the_plane_moved"] = scale["different"] > 0
+    # The names, so a refusal says WHICH tensor moved rather than only that one
+    # did.  `names_different` caps at four per suffix; the counts beside it in
+    # `by_suffix` are the whole population.
+    record["immutable_changed"] = immutable_changed
+    record["immutable_tensors_identical"] = not immutable_changed
     record["verdict"] = (
         "the matched pair" if record["codes_identical_on_every_unit"]
-        and record["the_plane_moved"] and not record["tensors_only_in_a"]
+        and record["the_plane_moved"] and record["immutable_tensors_identical"]
+        and not record["tensors_only_in_a"]
         and not record["tensors_only_in_b"]
         and (wire is None or wire["wire_bytes_equal"])
         else "NOT the matched pair")
+    if immutable_changed:
+        print("NOT the matched pair: these tensors are held identical by this "
+              "intervention and moved --")
+        for suffix, names in immutable_changed.items():
+            print(f"  {suffix}: {by_suffix[suffix]['different']} changed, "
+                  f"e.g. {names}")
 
     print(json.dumps(record, indent=1))
     if args.out:

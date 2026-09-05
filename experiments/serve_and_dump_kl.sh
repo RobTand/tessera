@@ -141,9 +141,14 @@ done
 
 # Spec-decode poisons a logprob readout: /v1/completions returns the DRAFT
 # model's numbers when vLLM serves with a speculative config.  Refuse rather
-# than record a number that silently belongs to another model.
-if curl -s "http://127.0.0.1:${PORT}/metrics" | grep -q 'vllm:spec_decode'; then
-  echo "REFUSED: serve has spec-decode active; the logprobs would be the draft model's"
+# than record a number that silently belongs to another model.  The check is
+# `serve_metrics.sh`'s, shared with the two other wrappers that own the same
+# refusal, and it fetches the COMPLETE response to a file before grepping it:
+# the piped form it replaces could not detect the condition it owns (#247), for
+# the same reason the startup-log gate below already greps a file.  A fetch
+# that fails, or an HTTP error, refuses here rather than reading as absence.
+source "$(dirname "$0")/serve_metrics.sh"
+if ! serve_require_no_spec_decode "$PORT" "${LOG%.log}.metrics.txt"; then
   reap || true; exit 2
 fi
 

@@ -46,6 +46,9 @@ SCALES="${TESSERA_SCALES:-/mnt/shared/tessera-runs/rotation/scales_pqcal.safeten
 INCUMBENT="${TESSERA_INCUMBENT:-/mnt/shared/tessera-runs/ldlq-lut/ldlqH1-stock-twin}"
 INCUMBENT_WIRE="${TESSERA_INCUMBENT_WIRE:-/mnt/shared/tessera-runs/ldlq-lut/ldlqH1-tessera}"
 TEACHER="${TESSERA_TEACHER:-/mnt/shared/tessera-kl/qwen_rot_teacher_lina.json.npz}"
+# Where this pair's dumps live.  A variable and not a literal so the stage's
+# exit paths can be exercised without a serve (tests/test_refit_trailing_serve.py).
+KLDIR="${TESSERA_KL_DIR:-/mnt/shared/tessera-kl}"
 export PYTHONPATH=$REPO/src
 export TMPDIR=/home/rob/tmp
 export TRITON_CACHE_DIR=/home/rob/.triton-cache
@@ -122,15 +125,50 @@ serve)
   export TESSERA_KL_NAME="${TESSERA_KL_NAME:-tessera-kl-ts75}"
   source "$(dirname "$0")/runtime_image.sh"
   export TESSERA_KL_IMAGE=$(runtime_image_pin)
-  export TESSERA_KL_CORPUS=/mnt/shared/tessera-kl/corpus_qwen_n8_s512.json
+  # Pinned, not defaulted: "the same corpus" is one of the things this pair
+  # holds fixed, so the caller does not get to move it.  Only the directory
+  # follows KLDIR.
+  export TESSERA_KL_CORPUS=$KLDIR/corpus_qwen_n8_s512.json
   export TESSERA_KL_LOGDIR=$RUNS
-  npz=/mnt/shared/tessera-kl/qwen_ts75_$ARM.json.npz
+  dump=$KLDIR/qwen_ts75_$ARM.json
+  npz=$dump.npz
   if [ ! -f "$npz" ]; then
-    experiments/serve_and_dump_kl.sh "$twin" \
-        "/mnt/shared/tessera-kl/qwen_ts75_$ARM.json" student || exit 1
+    experiments/serve_and_dump_kl.sh "$twin" "$dump" student || exit 1
   fi
+  # The comparison is a STAGE of this step, not a postscript to it.  This
+  # script runs under `set -uo pipefail` and not errexit, so a failed
+  # `kl_tool compare` was recorded by pipefail for the pipeline -- and then
+  # discarded, because the pipeline is the branch's last command and the
+  # unconditional `echo STEP_DONE; date` below became the exit status.  A
+  # missing or refused teacher therefore reported a completed stage
+  # (tessera#251).  Capture PIPESTATUS[0], the way the `compare` branch above
+  # already does, and refuse.
+  receipt=$RUNS/kl_$ARM.json
+  attempt=$receipt.attempt.$$
+  rm -f "$attempt"
   $PY /home/rob/dq-runs/kl_tool.py compare "$TEACHER" "$npz" \
-      --out "$RUNS/kl_$ARM.json" 2>&1 | tee "$RUNS/kl_$ARM.log" | tail -12
+      --out "$attempt" 2>&1 | tee "$RUNS/kl_$ARM.log" | tail -12
+  rc=${PIPESTATUS[0]}
+  if [ "$rc" -ne 0 ]; then
+    rm -f "$attempt"
+    # An earlier attempt's receipt sits at the path a reader looks in, and
+    # nothing in it says which attempt wrote it.  Move it aside by name
+    # rather than leave it to certify this failure.
+    if [ -f "$receipt" ]; then
+      mv "$receipt" "$receipt.stale"
+      echo "REFUSED: $receipt was written by an earlier attempt and does not" \
+           "describe this one; moved to $receipt.stale" >&2
+    fi
+    echo "REFUSED: KL compare for $ARM exited $rc; log at $RUNS/kl_$ARM.log" >&2
+    exit "$rc"
+  fi
+  # Published only by a compare that succeeded, and in one move, so the
+  # canonical path never holds a partial or an older attempt's receipt.
+  if [ ! -f "$attempt" ]; then
+    echo "REFUSED: KL compare for $ARM exited 0 and wrote no receipt" >&2
+    exit 1
+  fi
+  mv "$attempt" "$receipt"
   ;;
 *) echo "usage: $0 export ARM|compare|compare-drift|serve ARM"; exit 2;;
 esac

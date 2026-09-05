@@ -100,10 +100,13 @@ import torch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from refit_trailing_screen import (                           # noqa: E402
+    assert_arm_proofs, assert_screen_receipt)
 from tessera.alphabet import SERIALISABLE_GRIDS               # noqa: E402
 from tessera.compensate import block_ldl, regularize_hessian  # noqa: E402
 from tessera.encode import lut_landing, refit_diagnostics     # noqa: E402
 from tessera.encode import LUT_LANDING_WIRE                   # noqa: E402
+from tessera.errors import PromotionRefusedError              # noqa: E402
 from tessera.export import (                                  # noqa: E402
     DEFAULT_CODE, encode_linear_planes, wire_recipe)
 from tessera.manifest import ScalePlaneKind                   # noqa: E402
@@ -397,6 +400,20 @@ def main() -> None:
     out["log"] = lines
     Path(a.out).write_text(json.dumps(out, indent=1))
     print(f"\nwrote {a.out}")
+
+    # The proofs above are recorded and printed; this is where they are
+    # BELIEVED (tessera#250).  The same module the promotion gate reads them
+    # with reads them here, so a screen whose drift control DIFFERS or whose
+    # trailing arm moved a code leaves this process with a nonzero status
+    # instead of a JSON that looks like every other one.  The receipt is
+    # written first on purpose: a refusal must not take the evidence with it.
+    try:
+        for arm, reasons in assert_screen_receipt(
+                out, name=a.out, where="tessera#75 the trailing-refit pair").items():
+            assert_arm_proofs(arm, reasons,
+                              where="tessera#75 the trailing-refit pair")
+    except PromotionRefusedError as exc:
+        raise SystemExit(f"REFUSED: {exc}")
 
 
 if __name__ == "__main__":
