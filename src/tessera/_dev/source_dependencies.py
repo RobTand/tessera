@@ -459,6 +459,14 @@ def _values(node, scope, root, visiting=frozenset(), refused=None):
                 bases = _place(paths, root, refused)
                 if bases is None:
                     return None
+                # pathlib's trailing-separator filter follows DirEntry links
+                # before we can place its matches. Refuse the named pattern
+                # without enumerating it, retaining data-read uncertainty.
+                if any(arg.endswith(tuple(sep for sep in (os.sep, os.altsep) if sep))
+                       for arg in args):
+                    if refused is not None:
+                        refused.extend(bases)
+                    return None
                 if (node.func.attr == "glob"
                         and all(len(Path(arg).parts) == 1 and arg not in {".", ".."}
                                 and "**" not in arg for arg in args)):

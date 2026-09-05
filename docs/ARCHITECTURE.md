@@ -6,7 +6,7 @@ Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
 **Provenance:** current as of the unreleased `v0.1.0` candidate (2026-09-05):
-selector traversal budget #353 verified at base `8dc165b`;
+selector traversal budget #353 and directory-glob boundary #354 verified at base `8dc165b`;
 base `3317036` (wire minor 7), encoder-evidence scope correction #198; CI at `df1bc20`,
 packaging metadata at `cd3190a`; contract v22 (the smoke status word is derived
 from a `smoke.record` and checked, #327; routed-MoE smoke recorded,
@@ -267,7 +267,11 @@ free of symlinks, so it means what the filesystem means by it rather than
 what the string does; a symlink is *read* -- it is in the tree -- but a
 target that leaves the tree ends the walk; and more than 40 link traversals
 ends it too, sharing one budget across absolute and relative targets (#353), where `Path.resolve` raised through the caller instead. A
-refusal is the same unknown a crawling glob already gets at its boundary,
+directory-only glob (a trailing separator) is refused before enumeration,
+because pathlib would otherwise follow symlinks while filtering directory
+entries before this walk sees a match (#354). Refused named patterns keep
+module or data uncertainty according to their consumer. A path refusal
+is the same unknown a crawling glob already gets at its boundary,
 decided without a syscall out there. An absolute literal outside the tree,
 one that escapes via `..`, and an in-root link pointing out of it are one
 rule with one home, and the three entry points -- a bare loader argument, an
