@@ -844,6 +844,14 @@ def encoder_fixture_id() -> bytes:
     Equal ids mean the encoder produced identical bytes for every fixture, at
     fixed arguments.  Unequal ids mean it did not, and the parts, the resumed
     cache entries or the A/B arms carrying them are two artifacts, not one.
+
+    The build reads the exporter's live defaults -- ``export.wire_recipe`` and
+    the encode defaults, at build time, by design, so a moved default moves
+    the identity -- and the memo is process-wide.  The corollary binds a test
+    that patches one of those defaults: resolve this identity BEFORE patching,
+    or the first encode under the patch builds the fixtures at the foreign
+    recipe and memoises that encoder for every later encode in the process
+    (``tests/test_recipe_table.py`` is the shape of it).
     """
     with _LOCK:
         if _MEMO:
