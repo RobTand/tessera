@@ -428,6 +428,15 @@ class PreparedBf16Gemv:
         self.__device = device
         if sum(r.scalar("rows") for r in self.__roles) != self.__rows:
             raise ValueError("prepared GEMV roles do not stack to the module's rows")
+        for r in self.__roles:
+            if r.field("runs").device.type != "cpu":
+                raise ValueError(
+                    f"role {r.name!r}: the retained run descriptor must live on the host. "
+                    "ext.window_decode reads its scalars on the CPU to build kernel "
+                    "launches, so a CUDA-resident descriptor turns every materialised "
+                    "forward into a synchronous device-to-host copy that CUDA graph "
+                    "capture cannot record (#203); prepare_bf16_gemv places it on CPU "
+                    "once, at load.")
 
     @property
     def rows(self): return self.__rows
@@ -511,7 +520,16 @@ def prepare_bf16_gemv(parsed_roles, device=None, *, expected) -> PreparedBf16Gem
         (words, items_1, items_4, perm, ktable, kscale,
          tile_words, urows, wb, rpl, warps, blocks,
          mc1, mc4, rate_one, uniform) = kg._op_args(gemv_unit)
-        tensors = (words, items_1, items_4, perm, ktable, kscale, gemv_unit.rep.runs)
+        # ``runs`` is read on the host only (``decode_typed`` takes its fields
+        # through ``.item()`` and never passes the tensor to the device), so it
+        # is kept on CPU -- the same rule ``fp8_gemv.prepare_fp8_gemv`` states
+        # for its holder.  Retaining the repack-device (CUDA) tensor instead
+        # made every materialised forward (M > GEMV_MAX_M, or M >= 4 over a
+        # rate-1 column) a synchronous device-to-host copy inside
+        # ``ext.window_decode`` (``runs.to(torch::kCPU)``), which CUDA graph
+        # capture cannot record (#203).  The descriptor is static at load;
+        # load is where it is placed.
+        tensors = (words, items_1, items_4, perm, ktable, kscale, gemv_unit.rep.runs.cpu())
         meta = (tile_words, urows, wb, rpl, warps, blocks,
                 mc1, mc4, rate_one, uniform, gemv_unit.rep.n_tiles)
         roles.append(_Bf16GemvRole(name, offset, tensors, meta))
