@@ -235,9 +235,10 @@ def import_graph(
             by_name.setdefault(name, path)
     # The other spellings the same files have on the import roots that are
     # actually on ``sys.path``.  An alias can be ambiguous -- two import roots
-    # can each hold a ``helper.py`` -- and every candidate gets the edge,
-    # because the graph cannot tell which one ran and a dropped edge is the
-    # failure mode this tool refuses.
+    # can each hold a ``helper.py``, and one of those roots can be the
+    # repository root, which owns the canonical name -- and every candidate
+    # gets the edge, because the graph cannot tell which one ran and a dropped
+    # edge is the failure mode this tool refuses.
     aliases: dict[str, set[str]] = defaultdict(set)
     for name, path in by_name.items():
         alias = _package_name(path, root)
@@ -245,9 +246,29 @@ def import_graph(
             aliases[alias].add(name)
 
     def _targets(candidate: str) -> tuple[str, ...]:
+        """Every file this spelling can name, deduplicated by path.
+
+        Owning the canonical name is not precedence.  A root ``helper.py``
+        answers to ``helper`` and so does ``tests/helper.py`` on the import
+        root ``tests/conftest.py`` inserts -- and pytest executes the second
+        one for ``from helper import VALUE``.  Returning the canonical module
+        alone dropped exactly the candidate that runs (#292).  Nothing here
+        models import-root precedence, so nothing here may pick a winner:
+        the union is the only answer this graph can prove, and over-selecting
+        is the direction the tool fails in.
+        """
+        names = set(aliases.get(candidate, ()))
         if candidate in by_name:
-            return (candidate,)
-        return tuple(sorted(aliases.get(candidate, ())))
+            names.add(candidate)
+        seen_paths: set[Path] = set()
+        resolved: list[str] = []
+        for name in sorted(names):
+            path = by_name[name]
+            if path in seen_paths:
+                continue
+            seen_paths.add(path)
+            resolved.append(name)
+        return tuple(resolved)
 
     importers: dict[str, set[str]] = defaultdict(set)
     probes: set[tuple[str, str]] = set()

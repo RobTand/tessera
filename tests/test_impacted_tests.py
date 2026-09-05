@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -1116,3 +1117,80 @@ def test_a_named_data_file_is_an_edge_to_the_code_that_reads_it(tmp_path):
     assert result["reason"] == (
         "non-Python changed paths reached their readers through the import graph"
     )
+
+
+_IMPORT_ROOT_PROBE = '''
+import os
+
+import helper
+from helper import VALUE
+
+
+def test_which_helper_pytest_executed():
+    with open(os.environ["TESSERA_PROBE_OUT"], "w", encoding="utf-8") as out:
+        out.write(helper.__file__)
+    assert VALUE
+'''
+
+
+def _helper_pytest_executes(repo: Path, out: Path) -> str:
+    """Import-root probe: run pytest for real and record which file it imported.
+
+    The graph cannot model import-root precedence, so the test may not assume
+    an answer either.  This asks pytest.
+    """
+
+    env = {k: v for k, v in os.environ.items() if k != "PYTEST_ADDOPTS"}
+    env["TESSERA_PROBE_OUT"] = str(out)
+    completed = subprocess.run(
+        [sys.executable, "-m", "pytest", "tests/test_consumer.py",
+         "-q", "--no-header", "-p", "no:cacheprovider"],
+        cwd=str(repo), capture_output=True, text=True, env=env, check=False,
+    )
+    assert completed.returncode == 0, completed.stdout + completed.stderr
+    executed = Path(out.read_text(encoding="utf-8")).resolve()
+    return str(executed.relative_to(repo.resolve()))
+
+
+def test_a_canonical_short_name_does_not_outrank_its_alias_candidates(tmp_path):
+    """#292: a root ``helper.py`` must not hide ``tests/helper.py``.
+
+    ``_targets`` returned the canonical module alone whenever the spelling was
+    a canonical name, so the alias candidate on the import root that
+    ``tests/conftest.py`` inserts -- the one pytest actually executes for
+    ``from helper import VALUE`` -- got no edge, and editing it selected
+    nothing.  Nothing here models import-root precedence, so the honest answer
+    is the union: both candidates get the edge.
+    """
+
+    repo, _ = _repo(tmp_path)
+    files = {
+        "helper.py": "VALUE = 'root'\n",
+        "tests/helper.py": "VALUE = 'tests'\n",
+        "tests/conftest.py": '''
+            import sys
+            from pathlib import Path
+            sys.path.insert(0, str(Path(__file__).resolve().parent))
+        ''',
+        "tests/test_consumer.py": _IMPORT_ROOT_PROBE,
+    }
+    for relative, body in files.items():
+        path = repo / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(textwrap.dedent(body), encoding="utf-8")
+
+    candidates = ["helper.py", "tests/helper.py"]
+    executed = _helper_pytest_executes(repo, tmp_path / "probe.out")
+    assert executed in candidates, executed
+
+    _, importers = impacted.build_graph(repo)
+    executed_name = impacted._module_name(repo / executed, repo)
+    assert "tests.test_consumer" in importers.get(executed_name, set()), (
+        f"pytest imports {executed} for `from helper import VALUE`, and the "
+        "graph holds no edge from it")
+    for candidate in candidates:
+        name = impacted._module_name(repo / candidate, repo)
+        assert "tests.test_consumer" in importers.get(name, set()), candidate
+        result = impacted.select(repo, [candidate])
+        assert result["verdict"] == "narrowed", (candidate, result)
+        assert "tests/test_consumer.py" in result["tests"], (candidate, result)

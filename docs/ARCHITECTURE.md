@@ -118,7 +118,13 @@ import SCHEMA_ID` is the `tessera.manifest -> tessera` edge it looks like. Each
 file is also a node under every name an import root on `sys.path` gives it:
 `tests/` holds no `__init__.py`, so `tests/box_artifacts.py` answers to
 `box_artifacts`, which is how every test in the tree spells it. An ambiguous
-alias edges to every candidate.
+alias edges to every candidate, and owning the canonical name is not
+precedence: a root `helper.py` and a `tests/helper.py` are both `helper`, the
+import root `tests/conftest.py` inserts is the one pytest actually executes for
+`from helper import VALUE`, and the graph models no precedence between them. It
+therefore resolves the union of canonical and alias candidates, deduplicated by
+file, rather than letting the canonical name hide the candidate that runs
+(#292).
 Explicit Python file loaders also contribute dependency edges: the non-executing
 `tessera._dev.source_dependencies` resolver follows finite `Path` expressions,
 lexical bindings, loader aliases and repository globs, using the file path rather
