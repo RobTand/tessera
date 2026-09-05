@@ -571,3 +571,44 @@ def test_the_merged_checkpoint_seals_its_own_bytes(tmp_path):
     assert stamp == output_part_identity(out, ["part-1.safetensors", "part-2.safetensors"])
     assert stamp != _config(pa)["output"]
     assert stamp["files"]["part-1.safetensors"] == _config(pa)["output"]["files"]["part-1.safetensors"]
+
+
+def test_a_merge_that_dies_part_way_leaves_no_seal_over_the_shards_it_moved(tmp_path):
+    """The exporter's window, one step later, in the merge's own publication.
+
+    ``--out`` may already hold a complete checkpoint -- a re-run of the merge,
+    or one of the parts, which the self-copy skip in ``main`` exists for.
+    Shards land there one at a time and the index and config that describe
+    them are written only after the last one, so a transfer that dies part way
+    would leave new bytes under the old checkpoint's seal: exactly the mixture
+    this file is about, published rather than merged.
+
+    The seal cannot be preserved here -- the shards are being replaced in
+    place -- so it is removed BEFORE the first transfer, and an unfinished
+    merge leaves an unsealed directory the reader and this merge both refuse.
+    """
+    source = tmp_path / "source"
+    _two_shard_source(source)
+    pa, pb, out = tmp_path / "part-a", tmp_path / "part-b", tmp_path / "merged"
+    plan = {FIRST: Q256, SECOND: Q256}
+    _export(source, pa, plan, "part-1.safetensors")
+    _export(source, pb, plan, "part-2.safetensors")
+    _merge([pa, pb], source, out)
+    assert (out / "tessera_config.json").exists()      # a complete checkpoint
+
+    transfers = []
+    real = merge.shutil.copy2
+
+    def fail_on_the_second_transfer(src, dst):
+        transfers.append(dst)
+        if len(transfers) == 2:
+            raise OSError("injected transfer failure part way through the merge")
+        return real(src, dst)
+
+    with patch.object(merge.shutil, "copy2", fail_on_the_second_transfer):
+        with pytest.raises(OSError, match="injected"):
+            _merge([pa, pb], source, out)
+
+    assert len(transfers) == 2                          # it did replace bytes
+    assert not (out / "tessera_config.json").exists()
+    assert not (out / "model.safetensors.index.json").exists()

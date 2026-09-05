@@ -556,6 +556,16 @@ prices. Two things close it, and the second is why the first is not enough:
   different digests) nor mistakes it for a driver's key. The merged
   checkpoint's `output` is the union of the parts' verified seals, over files
   copied unchanged.
+* **The merge's own publication, same rule.** `--out` may already hold a
+  complete checkpoint — a re-run of the merge, or one of the parts, which the
+  self-copy skip in `main` exists for — and shards land there one at a time
+  with the index and config written only after the last one. A transfer that
+  died part way would leave new bytes under the old checkpoint's seal: the
+  same mixture, published rather than merged. The seal cannot be preserved
+  (the shards are being replaced in place), so `tessera_config.json` and the
+  index are removed *before* the first transfer and an unfinished merge leaves
+  an **unsealed** directory, which the reader and this merge's own `load`
+  refuse by name.
 
 **What an operator does differently:** re-exporting into a checkpoint directory
 that already exists now refuses. Export to a fresh directory and swap, or
