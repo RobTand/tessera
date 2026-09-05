@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-05T03:22:29Z",
+ "generated": "2026-09-05T04:05:56Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -974,7 +974,7 @@
     "title": "core: encoder identity and the byte-proof matrix miss the same surfaces"
    },
    "144": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "core: the truncation-terminal ladder is unreachable on encoded artifacts"
    },
    "145": {
@@ -1002,7 +1002,7 @@
     "title": "mink (per-member) rates have no converter path: refuse or round"
    },
    "150": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "tools: the publish trigger is a bare tag match, no ancestry or environment"
    },
    "151": {
@@ -1086,7 +1086,7 @@
     "title": "Make the KL instrument opt-in, and fix the torch-free probe and the deadline's unbounded wait"
    },
    "17": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Release mechanics: push, tag v0.1.0, and resolve PrismaQuant's pin"
    },
    "170": {
@@ -1186,7 +1186,7 @@
     "title": "Fix three RELEASE-plane defects: refusal order, hardcoded width, re-slice coverage"
    },
    "192": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "kl_tool: the decode regime cannot reach M=1 on hybrid conv/SSM models"
    },
    "193": {
@@ -1198,12 +1198,24 @@
     "title": "Point the packaged contract's evidence at paths a reader can open"
    },
    "195": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "serving: the smoke evidence records a symptom the reference model shares, and a gate refuses on it"
    },
    "196": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Let a smoke record name the control it was compared against (schema v7)"
+   },
+   "197": {
+    "state": "CLOSED",
+    "title": "Reach M=1 on a hybrid conv/SSM serve so the decode regime works there"
+   },
+   "198": {
+    "state": "OPEN",
+    "title": "encoder: the shipping encoder does not reproduce the checkpoint the contract's evidence was measured on"
+   },
+   "199": {
+    "state": "CLOSED",
+    "title": "Put the truncation ladder on the wire (schema minor 7)"
    },
    "2": {
     "state": "CLOSED",
@@ -1212,6 +1224,10 @@
    "20": {
     "state": "CLOSED",
     "title": "PrismaQuant cannot ship a Tessera artifact: fingerprint, EXPORT_LANES, and a gate that fails open"
+   },
+   "200": {
+    "state": "OPEN",
+    "title": "Scope historical encoder evidence and record its weight-error comparison"
    },
    "21": {
     "state": "CLOSED",

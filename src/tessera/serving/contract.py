@@ -1344,7 +1344,7 @@ def cell_evidence(cell: Mapping[str, Any], where: str = "lane_eligibility cell",
     full-vocabulary KL, ``regime`` the CELL'S OWN regime (a prefill bound
     written into a decode cell is the confusion this field exists to refuse),
     ``execution_modes`` a non-empty distinct subset of the cell's, ``receipt``
-    a repository path.  ``smoke`` is ``{status, receipt}`` with ``status``
+    a repository path. ``smoke`` is ``{status, receipt, attribution, control}`` with ``status``
     from :data:`EVIDENCE_SMOKE_STATUSES` and a receipt exactly when a smoke
     was recorded. ``artifact`` is null when no encoder comparison was
     recorded, otherwise the historical artifact and its single-unit screen.
