@@ -1,0 +1,51 @@
+{
+  "schema": "tessera.test_surface.v3",
+  "role": "population",
+  "worker_id": null,
+  "xdist_workers": 8,
+  "commit": "8c21637ae168697b587dcf7db94ed194ce8abd62",
+  "source_identity": {
+    "schema": "tessera.suite_source.v1",
+    "snapshot_commit": "8c21637ae168697b587dcf7db94ed194ce8abd62",
+    "sha256": "d45278d3b27b17b1da812193ac9e91623c7a8ebfd3e9b9fe8fe4e5012d05667d",
+    "verification": "verified",
+    "excluded_metadata": [],
+    "files_verified": 988
+  },
+  "cuda": false,
+  "device": "torch 2.10.0+cpu reports no CUDA device",
+  "strict_cuda": false,
+  "counts": {
+    "passed": 1945,
+    "failed": 0,
+    "error": 0,
+    "skipped": 505,
+    "xfailed": 0,
+    "xpassed": 0
+  },
+  "skip_reasons": {
+    "the lane is a CUDA kernel": 86,
+    "needs a CUDA device": 84,
+    "the encoder is a CUDA path": 84,
+    "the fused window Viterbi is a CUDA path": 52,
+    "encoder is a GPU job": 37,
+    "the Viterbi is CUDA": 29,
+    "the captured TCQ trellis is a CUDA path": 29,
+    "the encoder is a GPU job": 26,
+    "the kernel lane is a CUDA path": 24,
+    "the fused window Viterbi is a CUDA path and needs triton": 19,
+    "the Tessera encoder is a CUDA path": 14,
+    "the fused window Viterbi is CUDA": 8,
+    "needs CUDA": 6,
+    "the kernel lane runs on CUDA": 5,
+    "E2M1 publishes no reader range": 1,
+    "could not import 'vllm': No module named 'vllm'": 1
+  },
+  "cuda_surface": {
+    "executed": 0,
+    "measured_by": "tests during whose call torch's CUDA allocator recorded a new allocation",
+    "is_a_floor": true,
+    "box_artifact_skips": {}
+  },
+  "not_collected": []
+}
