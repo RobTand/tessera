@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-05T06:31:09Z",
+ "generated": "2026-09-05T14:56:54Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -420,16 +420,20 @@
     "title": "Pin Tessera by exact commit and contract digest, and read lane-eligibility v6"
    },
    "193": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Tessera pipeline omits the Hessian and static activation scales required by the priced allocation"
    },
    "194": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Tessera E2M1 costs use an FP32-scale activation quantizer instead of the served static UE4M3 contract"
    },
    "195": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Tessera cost-table identity guard ignores the required Hessian identity triple"
+   },
+   "196": {
+    "state": "CLOSED",
+    "title": "Tessera lane: carry the priced inputs from allocator to executor to cost-table identity (#193, #194, #195)"
    },
    "2": {
     "state": "CLOSED",
@@ -1254,19 +1258,19 @@
     "title": "[P1] Keep BF16 streamed run descriptors on CPU before CUDA graph capture"
    },
    "204": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P0] Construction contract discards observed per-layer quantization disagreements"
    },
    "205": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Missing serve logs become complete eager build identities"
    },
    "206": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Lane preflight declares unreadable wire readable after checking only rates"
    },
    "207": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Eager census can attest decode using an observed multi-row forward"
    },
    "208": {
@@ -1286,39 +1290,39 @@
     "title": "[P0] Preserve the encoder\u2019s actual rotation block during wire readback"
    },
    "211": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Enforce explicit allocation plans across conversion and direct serving export"
    },
    "212": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Wait for later source shards before completing an NVFP4 fused group"
    },
    "213": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Validate unpacked expert populations against the source model configuration"
    },
    "214": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Bind legacy export-part merges to the actual Hessian capture, including sequence layout"
    },
    "215": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "P1: Impacted-test selection drops fixture dependencies, initializer re-exports, and pytest helper imports"
    },
    "216": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "P1: Generic inert-extension filtering disables the wire-schema full-suite selection rule"
    },
    "217": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "P1: Merge-suite success ignores source disagreement and required population coverage fields"
    },
    "218": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "P1: Receipt resume can borrow a successful reader action as the suite exit status"
    },
    "219": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "P2: Suite source identity is sampled after execution and is not bound to the measured run"
    },
    "22": {
@@ -1326,7 +1330,7 @@
     "title": "Release can never reach a trailing partial superblock"
    },
    "220": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "P2: Issue snapshot --check accepts removed issue IDs as current"
    },
    "221": {
@@ -1442,15 +1446,15 @@
     "title": "TCQ packing accepts transforms and release overrides that its GEMV never applies"
    },
    "247": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Make the speculative-decoding metrics refusal fail closed under pipefail"
    },
    "248": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Reject immutable tensor changes in the trailing-refit matched-pair gate"
    },
    "249": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Derive decode-to-prefill subset alignment from the corpus contract"
    },
    "25": {
@@ -1458,11 +1462,11 @@
     "title": "Documentation drift found by the math audit (Tier C)"
    },
    "250": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Validate recorded refit-pair proofs before issuing a promotion verdict"
    },
    "251": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Propagate KL comparison failures from refit_trailing_serve.sh"
    },
    "252": {
@@ -1482,7 +1486,7 @@
     "title": "Fix writer-reader wire agreement: written completion depth, aligned terminal cuts, exact reach ratios"
    },
    "256": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "sparky: /home/rob/.triton/cache is root-owned, breaking any Triton JIT as rob under the default cache dir"
    },
    "257": {
@@ -1502,7 +1506,7 @@
     "title": "Encoder semantics (audit \u00a74/\u00a75): CHANNEL refit has no B>0 hold, and five smaller holes"
    },
    "260": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] The S6b 32-weight group rule is enforced at encode but not at build_unit_artifact, so a wire nothing can cut is writable"
    },
    "261": {
@@ -1518,7 +1522,7 @@
     "title": "Fix trellis/codebook numerics: memory-3 generators, forest selection objective, codebook distance stability, two-means fixed point"
    },
    "264": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] The window-GEMV lane predicate publishes four requirements while its loader refuses nine"
    },
    "265": {
@@ -1533,9 +1537,41 @@
     "state": "CLOSED",
     "title": "Make channel diagonals invertible on the wire, derive the rotation block at readback, and price the encoded basis"
    },
+   "268": {
+    "state": "CLOSED",
+    "title": "Fail closed on absent evidence in the construction, census, lane-preflight and build-identity gates"
+   },
+   "269": {
+    "state": "OPEN",
+    "title": "[P3] compare-drift cannot tell its expected verdict from its tool failing"
+   },
    "27": {
     "state": "CLOSED",
     "title": "Release quota over a partial superblock is equal-count, not width-proportional"
+   },
+   "270": {
+    "state": "CLOSED",
+    "title": "Enforce explicit plans, cross-shard fused groups, config-bound expert populations, and sealed capture identity in export/merge gates"
+   },
+   "271": {
+    "state": "CLOSED",
+    "title": "Fix the impacted-test selector's dropped edges and the merge suite's unbacked green"
+   },
+   "272": {
+    "state": "CLOSED",
+    "title": "Fail closed in the trailing-refit gates and the KL serving scripts"
+   },
+   "273": {
+    "state": "CLOSED",
+    "title": "Give the S6b 32-weight group rule one home, and enforce it at the writer and the reader"
+   },
+   "274": {
+    "state": "CLOSED",
+    "title": "Publish the window-GEMV lane's whole predicate; one home for the readability rule (#264)"
+   },
+   "275": {
+    "state": "CLOSED",
+    "title": "Fused A-side static scale: join to the MIN member scale; refuse divergence beyond one bf16 ULP"
    },
    "28": {
     "state": "CLOSED",
