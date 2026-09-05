@@ -554,3 +554,96 @@ def test_an_nvcc_only_environment_change_does_not_rename_the_build(tmp_path, mon
     monkeypatch.setenv("NVCC", str(b / "bin" / "nvcc"))
     two, _ = ext._build_identity(torch, source=source, capability=(12, 1))
     assert one == two
+
+
+# -------- an explicit toolkit chosen after torch's import (issue #298) -------
+#
+# ``CUDA_HOME``/``CUDA_PATH`` in the environment is an operator NAMING a
+# toolkit, and ``ext.py``'s TOOLCHAIN note says that choice always wins.  It
+# can only win if it reaches the mechanism the build reads: ``load()`` takes
+# its nvcc from ``cpp_extension.CUDA_HOME``, a module global torch freezes at
+# IMPORT, so a choice made after that import is adopted into that global as
+# well as the environment or it is a report about a compiler nothing runs.
+# The prior cached root is what decides the two shapes of that mismatch -- a
+# complete one silently builds with the previous toolkit, an incomplete one
+# fails the build while the resolver reports a complete selected toolkit -- so
+# both are cases here.  CPU-only and fully mocked: fake toolkits with
+# executable ``bin/nvcc`` scripts, nothing is compiled.
+
+
+def _incomplete_toolkit(tmp_path, name: str):
+    """A toolkit root that EXISTS and holds no compiler (the partial install)."""
+    root = tmp_path / name
+    (root / "include").mkdir(parents=True)
+    return root
+
+
+def _clear_toolkit_environment(monkeypatch):
+    """Unset the toolkit variables, registered so the test restores them.
+
+    ``monkeypatch.delenv`` of an already-absent name records nothing to undo,
+    and the resolver SETS ``CUDA_HOME`` -- so a bare ``delenv`` would leak this
+    test's adoption into the rest of the session.
+    """
+    import os
+
+    monkeypatch.setenv("PATH", os.environ.get("PATH", ""))   # _resolve_ninja may prepend
+    monkeypatch.delenv("PYTORCH_NVCC", raising=False)
+    for var in ("CUDA_HOME", "CUDA_PATH"):
+        monkeypatch.setenv(var, "registered-for-restore")
+        monkeypatch.delenv(var)
+
+
+@pytest.mark.parametrize("prior", ["complete", "incomplete", "unset"])
+@pytest.mark.parametrize("variable", ["CUDA_HOME", "CUDA_PATH"])
+def test_an_explicit_toolkit_chosen_after_torch_import_is_the_one_the_build_runs(
+        tmp_path, monkeypatch, prior, variable):
+    import os
+
+    torch = pytest.importorskip("torch")   # collectable without it (tessera#309)
+    from torch.utils import cpp_extension
+
+    tag = f"{prior}-{variable}"
+    selected = _fake_toolkit(tmp_path, f"cuda-selected-{tag}", "SELECTED")
+    cached = {
+        "complete": lambda: str(_fake_toolkit(tmp_path, f"cuda-old-{tag}", "OLD")),
+        "incomplete": lambda: str(_incomplete_toolkit(tmp_path, f"cuda-partial-{tag}")),
+        "unset": lambda: None,
+    }[prior]()
+
+    _clear_toolkit_environment(monkeypatch)
+    monkeypatch.setattr(cpp_extension, "CUDA_HOME", cached)   # frozen at torch's import
+    monkeypatch.setenv(variable, str(selected))               # the operator's choice, after
+
+    assert ext._resolve_cuda_home(torch) == str(selected)
+    assert ext._nvcc_for_build() == os.path.join(str(selected), "bin", "nvcc"), (
+        "the resolver's answer must BE the build's compiler: cpp_extension.load "
+        "builds <cpp_extension.CUDA_HOME>/bin/nvcc and never reads the environment")
+    assert cpp_extension.CUDA_HOME == str(selected)
+    assert os.environ["CUDA_HOME"] == str(selected)
+    report = ext.toolchain_report(torch)
+    assert report["cuda_home"] == str(selected)
+    assert report["nvcc"] == ext._nvcc_for_build()
+
+
+def test_a_refused_explicit_toolkit_does_not_leave_another_one_compiling(tmp_path, monkeypatch):
+    """An explicit root with no ``nvcc`` stays fail-closed -- and the toolkit
+    the operator did NOT name does not quietly take its place."""
+    import os
+
+    torch = pytest.importorskip("torch")   # collectable without it (tessera#309)
+    from torch.utils import cpp_extension
+
+    chosen = _incomplete_toolkit(tmp_path, "cuda-chosen-empty")
+    other = _fake_toolkit(tmp_path, "cuda-other", "OTHER")
+
+    _clear_toolkit_environment(monkeypatch)
+    monkeypatch.setattr(cpp_extension, "CUDA_HOME", str(other))
+    monkeypatch.setenv("CUDA_HOME", str(chosen))
+
+    assert ext._resolve_cuda_home(torch) is None
+    assert ext.toolchain_report(torch)["complete"] is False
+    assert ext._nvcc_for_build() == os.path.join(str(chosen), "bin", "nvcc"), (
+        "a refused explicit selection must not leave the displaced toolkit as the "
+        "build's compiler: the operator named a root and the build looks there")
+    assert os.environ["CUDA_HOME"] == str(chosen)
