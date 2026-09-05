@@ -82,6 +82,19 @@ import json
 import sys
 from pathlib import Path
 
+# This checkout's ``src`` ahead of whatever Tessera the host carries (#341).
+# The aggregation this file calls (``tessera.serving.contract``) must come from
+# the SAME tree as this file, for the same reason
+# ``experiments/runtime_image.sh`` resolves its root from ``BASH_SOURCE``
+# instead of a caller's ``$TS``: selecting a checkout has to select the code
+# that checkout's instrument runs, or the receipt records a tree commit that
+# did not compute the word in it.  A wrapper cannot supply this by discipline
+# -- it launches a fresh interpreter, and the one call site that forgot was
+# reached only AFTER both expensive serves.  Resolved from ``__file__``, so a
+# worktree binds to itself; ambient installs stay reachable behind it, which is
+# what keeps ``tokenizers`` and ``requests`` resolving as before.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+
 #: The two request FORMS and the two model INTERFACES this instrument exercises.
 #: They are vocabularies a contract cell's ``evidence.smoke.record`` quotes, so
 #: they are declared here -- in the code that owns them -- and pinned against
@@ -262,6 +275,50 @@ def _interface_of_result(result):
     return result.get("interface") or interface_of(result.get("request", {}))
 
 
+def aggregation():
+    """The contract's own status/attribution derivations, or a refusal (#341).
+
+    ONE home for what the join needs, so the preflight below cannot drift from
+    the import the join actually makes: a preflight that restates a list of
+    symbols is a second rule, and the day they disagree the preflight passes a
+    run that then fails after two serves.  Both callers take the same names
+    from this one import.
+
+    The refusal names the fix rather than the traceback, because the reader is
+    a wrapper's log: the aggregation is `src/` code in the same checkout as
+    this file and must be reachable from it.
+    """
+    try:
+        from tessera.serving.contract import derive_smoke_attribution, derive_smoke_status
+    except ImportError as exc:
+        raise SystemExit(
+            f"REFUSED: this instrument cannot import the contract's aggregation ({exc}). "
+            f"tessera.serving.contract must come from the checkout holding {INSTRUMENT} "
+            f"({Path(__file__).resolve().parents[1]}); it carries derive_smoke_status only "
+            "since contract v22 (#327). A host install of an older Tessera does not supply "
+            "it, and neither does the plugin inside the serve container.") from exc
+    return derive_smoke_status, derive_smoke_attribution
+
+
+def cmd_preflight(args):
+    """Prove the join at the end of a run can be made, before the run starts.
+
+    The wrapper serves both arms and only then joins them, so an unimportable
+    aggregation used to cost two serves before it was noticed (#341).  This
+    subcommand makes exactly the import the join makes and says where it
+    resolved from, so a wrapper can refuse before it takes the box's serve
+    lock -- the rule `experiments/runtime_image.sh` already states for the
+    image pin.
+    """
+    aggregation()  # first, so an absent package refuses by name and not by traceback
+    import tessera.serving.contract as module
+
+    print(json.dumps({"ok": True, "instrument": INSTRUMENT,
+                      "checkout": str(Path(__file__).resolve().parents[1]),
+                      "contract_module": module.__file__,
+                      "lane_eligibility_schema": module.LANE_ELIGIBILITY_SCHEMA}, indent=2))
+
+
 def _contract_record(pair, args):
     """The ``evidence.smoke.record`` block a contract cell carries, or ``None``.
 
@@ -276,8 +333,7 @@ def _contract_record(pair, args):
     """
     if not args.subject:
         return None
-    from tessera.serving.contract import derive_smoke_attribution, derive_smoke_status
-
+    derive_smoke_status, derive_smoke_attribution = aggregation()
     arms = pair["arms"]
     if args.subject not in arms:
         sys.exit(f"REFUSED: --subject {args.subject!r} is not one of the arms {arms}")
@@ -370,6 +426,9 @@ def main(argv=None):
     cmp_.add_argument("--reference", choices=list(_reference_arms()), default=None,
                       help="what the OTHER arm is, in the contract's own vocabulary")
     cmp_.set_defaults(func=cmd_compare)
+    pre = sub.add_parser("preflight", help="refuse now if the join at the end of a run could "
+                                           "not import the contract's aggregation")
+    pre.set_defaults(func=cmd_preflight)
     args = parser.parse_args(argv)
     args.func(args)
 
