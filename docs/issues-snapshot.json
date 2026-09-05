@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-05T04:46:51Z",
+ "generated": "2026-09-05T06:31:09Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -418,6 +418,18 @@
    "192": {
     "state": "OPEN",
     "title": "Pin Tessera by exact commit and contract digest, and read lane-eligibility v6"
+   },
+   "193": {
+    "state": "OPEN",
+    "title": "Tessera pipeline omits the Hessian and static activation scales required by the priced allocation"
+   },
+   "194": {
+    "state": "OPEN",
+    "title": "Tessera E2M1 costs use an FP32-scale activation quantizer instead of the served static UE4M3 contract"
+   },
+   "195": {
+    "state": "OPEN",
+    "title": "Tessera cost-table identity guard ignores the required Hessian identity triple"
    },
    "2": {
     "state": "CLOSED",
@@ -1230,32 +1242,296 @@
     "title": "Scope historical encoder evidence and record its weight-error comparison"
    },
    "201": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Dispose of leftover work and fix validation findings"
+   },
+   "202": {
+    "state": "CLOSED",
+    "title": "[P0] Refuse infinite NVFP4 activation scales before loading the serving route"
+   },
+   "203": {
+    "state": "CLOSED",
+    "title": "[P1] Keep BF16 streamed run descriptors on CPU before CUDA graph capture"
+   },
+   "204": {
+    "state": "OPEN",
+    "title": "[P0] Construction contract discards observed per-layer quantization disagreements"
+   },
+   "205": {
+    "state": "OPEN",
+    "title": "[P1] Missing serve logs become complete eager build identities"
+   },
+   "206": {
+    "state": "OPEN",
+    "title": "[P1] Lane preflight declares unreadable wire readable after checking only rates"
+   },
+   "207": {
+    "state": "OPEN",
+    "title": "[P1] Eager census can attest decode using an observed multi-row forward"
+   },
+   "208": {
+    "state": "CLOSED",
+    "title": "[P1] Reject reserved E8M0 scale-base words in real unit artifacts"
+   },
+   "209": {
+    "state": "CLOSED",
+    "title": "[P1] Validate TCQ ALPHABET contents against the serialized descendant forest"
    },
    "21": {
     "state": "CLOSED",
     "title": "Gridbook retirement: four capability losses and the CB plumbing debt (D34)"
    },
+   "210": {
+    "state": "CLOSED",
+    "title": "[P0] Preserve the encoder\u2019s actual rotation block during wire readback"
+   },
+   "211": {
+    "state": "OPEN",
+    "title": "Enforce explicit allocation plans across conversion and direct serving export"
+   },
+   "212": {
+    "state": "OPEN",
+    "title": "Wait for later source shards before completing an NVFP4 fused group"
+   },
+   "213": {
+    "state": "OPEN",
+    "title": "Validate unpacked expert populations against the source model configuration"
+   },
+   "214": {
+    "state": "OPEN",
+    "title": "Bind legacy export-part merges to the actual Hessian capture, including sequence layout"
+   },
+   "215": {
+    "state": "OPEN",
+    "title": "P1: Impacted-test selection drops fixture dependencies, initializer re-exports, and pytest helper imports"
+   },
+   "216": {
+    "state": "OPEN",
+    "title": "P1: Generic inert-extension filtering disables the wire-schema full-suite selection rule"
+   },
+   "217": {
+    "state": "OPEN",
+    "title": "P1: Merge-suite success ignores source disagreement and required population coverage fields"
+   },
+   "218": {
+    "state": "OPEN",
+    "title": "P1: Receipt resume can borrow a successful reader action as the suite exit status"
+   },
+   "219": {
+    "state": "OPEN",
+    "title": "P2: Suite source identity is sampled after execution and is not bound to the measured run"
+   },
    "22": {
     "state": "CLOSED",
     "title": "Release can never reach a trailing partial superblock"
+   },
+   "220": {
+    "state": "OPEN",
+    "title": "P2: Issue snapshot --check accepts removed issue IDs as current"
+   },
+   "221": {
+    "state": "CLOSED",
+    "title": "[P0] Grid key boundaries are absent from the digest, allowing a registered grid to decode different weights"
+   },
+   "222": {
+    "state": "CLOSED",
+    "title": "[P1] The memory-3 default generators never read the current select bit and waste the terminal decision"
+   },
+   "223": {
+    "state": "CLOSED",
+    "title": "[P1] Forest partition selection compares representatives that the emitted trees cannot use"
+   },
+   "224": {
+    "state": "CLOSED",
+    "title": "[P1] Plane promotion accepts invalid KL/GLM evidence and allows weakening the pinned GLM bar"
+   },
+   "225": {
+    "state": "CLOSED",
+    "title": "[P1] The uniform-control gate accepts invalid byte totals and publishes victories for unmatched arms"
+   },
+   "226": {
+    "state": "CLOSED",
+    "title": "[P2] A nonhex denylist digest passes the populated provenance gate while matching no valid input"
+   },
+   "227": {
+    "state": "CLOSED",
+    "title": "[P1] Learned-codebook distance cancellation collapses a translated finite point cloud into duplicate codes"
+   },
+   "228": {
+    "state": "CLOSED",
+    "title": "[P2] Tree-codebook splits stop at a fixed 12 passes while the declared descent is still moving"
+   },
+   "229": {
+    "state": "CLOSED",
+    "title": "[P0] Fitted channel diagonals can silently encode finite weights as zero or NaN"
    },
    "23": {
     "state": "CLOSED",
     "title": "Padding canonicality has two authorities and the normative one has no callers"
    },
+   "230": {
+    "state": "CLOSED",
+    "title": "[P1] EncodedUnit.sse reports balanced-coordinate error when diagonals are present"
+   },
+   "231": {
+    "state": "CLOSED",
+    "title": "[P1] Activation-aware export uses source Hessians after rotating or balancing weights"
+   },
+   "232": {
+    "state": "CLOSED",
+    "title": "[P1] Coupled scale landing returns a sweep after its own full-cost check detects an increase"
+   },
+   "233": {
+    "state": "CLOSED",
+    "title": "[P0] Stock materialization and window serving silently discard declared weight transforms"
+   },
+   "234": {
+    "state": "CLOSED",
+    "title": "[P0] Whole-module shard planning accepts incompatible fused-role output boundaries"
+   },
+   "235": {
+    "state": "CLOSED",
+    "title": "[P1] can_shard accepts S6B row cuts that the block-plane slicer always refuses"
+   },
+   "236": {
+    "state": "CLOSED",
+    "title": "[P2] Tensor-parallel shard reparse replaces the parent's encoder fixture identity"
+   },
+   "237": {
+    "state": "CLOSED",
+    "title": "Legacy GEMVs double-count columns when split widths are not tile-aligned"
+   },
+   "238": {
+    "state": "CLOSED",
+    "title": "Packed GEMV and prefill GEMM wrappers silently ignore activation strides"
+   },
+   "239": {
+    "state": "CLOSED",
+    "title": "TCQ kernel wrappers accept memory and rate parameters beyond their bit-extraction implementations"
+   },
    "24": {
     "state": "CLOSED",
     "title": "Branches the audit fixes made provably unreachable"
+   },
+   "240": {
+    "state": "CLOSED",
+    "title": "An eight-row launch plan silently drops rate-one columns at M=1 or M=2"
+   },
+   "241": {
+    "state": "CLOSED",
+    "title": "Native window kernels launch without device ownership and cache shared-memory opt-in across devices"
+   },
+   "242": {
+    "state": "CLOSED",
+    "title": "NVFP4 JIT identity hashes a different nvcc selection than the compiler used for the build"
+   },
+   "243": {
+    "state": "CLOSED",
+    "title": "Window extension skips CUDA_HOME repair when an unrelated nvcc is already on PATH"
+   },
+   "244": {
+    "state": "CLOSED",
+    "title": "Persistent window Viterbi plans can reuse traceback storage across unordered CUDA streams"
+   },
+   "245": {
+    "state": "CLOSED",
+    "title": "Generic packed window GEMV truncates BF16 and other wide ALPHABET codes to uint8"
+   },
+   "246": {
+    "state": "CLOSED",
+    "title": "TCQ packing accepts transforms and release overrides that its GEMV never applies"
+   },
+   "247": {
+    "state": "OPEN",
+    "title": "[P1] Make the speculative-decoding metrics refusal fail closed under pipefail"
+   },
+   "248": {
+    "state": "OPEN",
+    "title": "[P1] Reject immutable tensor changes in the trailing-refit matched-pair gate"
+   },
+   "249": {
+    "state": "OPEN",
+    "title": "[P1] Derive decode-to-prefill subset alignment from the corpus contract"
    },
    "25": {
     "state": "CLOSED",
     "title": "Documentation drift found by the math audit (Tier C)"
    },
+   "250": {
+    "state": "OPEN",
+    "title": "[P1] Validate recorded refit-pair proofs before issuing a promotion verdict"
+   },
+   "251": {
+    "state": "OPEN",
+    "title": "[P1] Propagate KL comparison failures from refit_trailing_serve.sh"
+   },
+   "252": {
+    "state": "CLOSED",
+    "title": "[P0] Single-forest decode reads shallow completion words at full depth"
+   },
+   "253": {
+    "state": "CLOSED",
+    "title": "[P1] Writer declares unreadable terminal prefixes when plane alignment exceeds one byte"
+   },
+   "254": {
+    "state": "CLOSED",
+    "title": "[P1] Reach parser rounds canonical ratios before checking exact representability"
+   },
+   "255": {
+    "state": "CLOSED",
+    "title": "Fix writer-reader wire agreement: written completion depth, aligned terminal cuts, exact reach ratios"
+   },
+   "256": {
+    "state": "OPEN",
+    "title": "sparky: /home/rob/.triton/cache is root-owned, breaking any Triton JIT as rob under the default cache dir"
+   },
+   "257": {
+    "state": "CLOSED",
+    "title": "Fix CUDA window-kernel audit issues: stream fencing, device ownership, rate-one launch gate, toolchain identity and repair"
+   },
+   "258": {
+    "state": "CLOSED",
+    "title": "Close three wire-layer digest and registry gates (#221, #209, #208)"
+   },
+   "259": {
+    "state": "CLOSED",
+    "title": "Refuse dropped weight transforms, nonfinite NVFP4 scales, and CUDA-resident BF16 run descriptors on the serving routes"
+   },
    "26": {
     "state": "CLOSED",
     "title": "Encoder semantics (audit \u00a74/\u00a75): CHANNEL refit has no B>0 hold, and five smaller holes"
+   },
+   "260": {
+    "state": "OPEN",
+    "title": "[P1] The S6b 32-weight group rule is enforced at encode but not at build_unit_artifact, so a wire nothing can cut is writable"
+   },
+   "261": {
+    "state": "CLOSED",
+    "title": "Refuse invalid evidence in the promotion, control and provenance gates"
+   },
+   "262": {
+    "state": "CLOSED",
+    "title": "Refuse mis-stacked fused roles, align can_shard with the slicer, and keep a shard's encoder identity"
+   },
+   "263": {
+    "state": "CLOSED",
+    "title": "Fix trellis/codebook numerics: memory-3 generators, forest selection objective, codebook distance stability, two-means fixed point"
+   },
+   "264": {
+    "state": "OPEN",
+    "title": "[P2] The window-GEMV lane predicate publishes four requirements while its loader refuses nine"
+   },
+   "265": {
+    "state": "CLOSED",
+    "title": "[P3] A BF16 window unit over an S6b scale plane decodes ~2 ULP apart in the kernel lane and the reference"
+   },
+   "266": {
+    "state": "CLOSED",
+    "title": "Make the kernel lane's GEMV/GEMM wrappers refuse or serve exactly what they accept"
+   },
+   "267": {
+    "state": "CLOSED",
+    "title": "Make channel diagonals invertible on the wire, derive the rotation block at readback, and price the encoded basis"
    },
    "27": {
     "state": "CLOSED",
