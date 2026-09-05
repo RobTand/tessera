@@ -56,7 +56,9 @@ def main():
                        cwd=directory, check=True)
         inputs[f'{stage}/STAGE_SHA256'] = sha(directory / 'STAGE_SHA256')
         build = read(str(base(stage)) + '.build.json')
-        assert build['complete'] is True
+        # Derived, not the sidecar's stored verdict: that field is a cached
+        # answer from whichever rule stamped it (#279).
+        assert build_identity.is_complete(build), build_identity.incomplete_reason(build)
         assert build['identity']['compiled_forward'] is True
         assert build['identity']['eager'] is False
         assert build['provenance']['fresh_compiles'] > 0
