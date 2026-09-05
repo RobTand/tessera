@@ -1,6 +1,6 @@
 {
   "schema": "tessera.runtime-contract.v1",
- "contract_version": 17,
+ "contract_version": 18,
  "quant_method": {
   "canonical": "tessera",
   "accepted": [
@@ -185,7 +185,7 @@
   }
  ],
  "lane_eligibility": {
-  "schema": "tessera.lane-eligibility.v6",
+  "schema": "tessera.lane-eligibility.v7",
   "platforms": {
    "sm_121": {
     "compute_capability": [
@@ -237,7 +237,9 @@
      "kl": [],
      "smoke": {
       "status": "not_recorded",
-      "receipt": null
+      "receipt": null,
+      "attribution": "unattributed",
+      "control": null
      }
     }
    },
@@ -283,7 +285,9 @@
     ],
      "smoke": {
       "status": "not_recorded",
-      "receipt": null
+      "receipt": null,
+      "attribution": "unattributed",
+      "control": null
      }
     }
    },
@@ -321,7 +325,9 @@
      "kl": [],
      "smoke": {
       "status": "not_recorded",
-      "receipt": null
+      "receipt": null,
+      "attribution": "unattributed",
+      "control": null
      }
     }
    },
@@ -374,7 +380,9 @@
     ],
      "smoke": {
       "status": "not_recorded",
-      "receipt": null
+      "receipt": null,
+      "attribution": "unattributed",
+      "control": null
      }
     }
    },
@@ -420,7 +428,9 @@
     ],
      "smoke": {
       "status": "not_recorded",
-      "receipt": null
+      "receipt": null,
+      "attribution": "unattributed",
+      "control": null
      }
     }
    },
@@ -470,7 +480,9 @@
     ],
      "smoke": {
       "status": "not_recorded",
-      "receipt": null
+      "receipt": null,
+      "attribution": "unattributed",
+      "control": null
      }
     }
    },
@@ -508,7 +520,9 @@
      "kl": [],
      "smoke": {
       "status": "recorded",
-      "receipt": "docs/measurements/tessera-bf16-route-served-2026-09-02.md"
+      "receipt": "docs/measurements/tessera-bf16-route-served-2026-09-02.md",
+      "attribution": "unattributed",
+      "control": null
      }
     }
    },
@@ -554,7 +568,9 @@
     ],
      "smoke": {
       "status": "recorded",
-      "receipt": "docs/measurements/tessera-bf16-route-served-2026-09-02.md"
+      "receipt": "docs/measurements/tessera-bf16-route-served-2026-09-02.md",
+      "attribution": "unattributed",
+      "control": null
      }
     }
    },
@@ -583,7 +599,13 @@
      "kl": [],
      "smoke": {
       "status": "repetitive",
-      "receipt": "docs/measurements/tessera-lfm-campaign-2026-09-04.md"
+      "receipt": "docs/measurements/tessera-lfm-campaign-2026-09-04.md",
+      "attribution": "shared_with_reference",
+      "control": {
+       "reference": "bf16_source",
+       "outcome": "identical_completion",
+       "receipt": "docs/measurements/moe-evidence-debt-2026-09-04.md"
+      }
      }
     }
    },
@@ -620,7 +642,13 @@
     ],
      "smoke": {
       "status": "repetitive",
-      "receipt": "docs/measurements/tessera-lfm-campaign-2026-09-04.md"
+      "receipt": "docs/measurements/tessera-lfm-campaign-2026-09-04.md",
+      "attribution": "shared_with_reference",
+      "control": {
+       "reference": "bf16_source",
+       "outcome": "identical_completion",
+       "receipt": "docs/measurements/moe-evidence-debt-2026-09-04.md"
+      }
      }
     }
    }
@@ -999,6 +1027,11 @@
       ]
    },
  "changelog": [
+  {
+   "contract_version": 18,
+   "date": "2026-09-04",
+   "change": "Lane-eligibility schema v7 (#195): a greedy smoke names the CONTROL it was compared against, so a consumer can tell \"this route degenerates\" from \"this prompt degenerates on this model\". WHAT WAS WRONG: both routed_moe cells published smoke.status 'repetitive', an accurate record of what came back, and a producer-side gate refused the whole routed-MoE lane on it -- correctly under the rule it was given, because principle 9 requires a route to generate correctly. Then the control was run: the same prompt, byte for byte from experiments/tessera_plugin_served.sh, against the BF16 SOURCE on the same pinned image, eager, returns ' France is France is ...' character for character identical to the Tessera student's (docs/measurements/moe-evidence-debt-2026-09-04.md section 7). The repetition is the model and the prompt, not the quantisation -- and that fact lived in prose while the field a gate reads said 'repetitive'. A machine-readable value true about the observation and misleading about its meaning, with the disambiguating measurement unreadable by any consumer, is principle 14 one level up, which is why the fix is in the schema and not in either consumer. WHAT THE FIELD IS: smoke gains control, either null or the closed {reference, outcome, receipt} -- reference from contract.EVIDENCE_CONTROL_REFERENCES ('bf16_source', the unquantised source the route is a quantisation of), outcome from EVIDENCE_CONTROL_OUTCOMES, receipt a repository path under docs/measurements/ like every other receipt here (grammar in the validator, existence in a tree test). WHAT OUTCOME ESTABLISHES, EXACTLY: 'identical_completion' means the reference returned the SAME completion for the same prompt under the smoke's own runtime and execution mode; 'different_completion' means the completions differ -- NOT that the reference was healthy, which no string comparison can decide. WHAT A CONSUMER READS: attribution, DERIVED from control and checked, exactly as grade is derived from kl -- no control 'unattributed' (nobody ran the reference, so the status is an observation and not an attribution), 'identical_completion' 'shared_with_reference', 'different_completion' 'not_shared_with_reference' (weaker than 'the route is at fault', and deliberately not spelled that way). A gate that refused on status alone now refuses on status 'repetitive' AND attribution other than 'shared_with_reference', which is the pair that carries the decision. NO scope FIELD: a smoke record carries no scope of its own, a control cannot be better scoped than the thing it controls, and that the arms match is what the receipt attests -- as for every other receipt-backed field here. ONE control and not a list, deliberately: one is what has been run, and a second reference is a bump rather than a surprise. WHAT MOVED ON THE TABLE: the two routed_moe cells carry the control above and read shared_with_reference; the eight dense cells carry control null and attribution 'unattributed' -- six of them never ran a smoke and the two BF16 cells ran one with no reference arm. No status word changed: 'repetitive' is still what came back. No rung, route, activation contract, launch, grade, KL entry, qualification, TP/EP bound or byte moved. NOT ADDITIVE, and the schema string says so: a v6 reader must not read a v7 document, both because attribution and control are keys its closed smoke object does not know and because -- the reason the version exists -- a v6 reader goes on making a decision off status that status no longer carries alone. The same release also corrected the three build-box absolute paths in this changelog's own prose (#181, contract v17, prose-only and unversioned); this entry is the schema half."
+  },
   {
    "contract_version": 17,
    "date": "2026-09-04",

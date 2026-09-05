@@ -28,12 +28,16 @@ from pathlib import Path
 import pytest
 
 from tessera.serving.contract import (
+    EVIDENCE_CONTROL_OUTCOMES,
+    EVIDENCE_CONTROL_REFERENCES,
     EVIDENCE_GRADES,
     EVIDENCE_KL_KINDS,
     EVIDENCE_RECEIPT_ROOT,
+    EVIDENCE_SMOKE_ATTRIBUTIONS,
     EVIDENCE_SMOKE_STATUSES,
     cell_evidence,
     derive_evidence_grade,
+    derive_smoke_attribution,
     load_serving_contract,
     validate_serving_contract,
 )
@@ -46,6 +50,7 @@ DECODE_EAGER = "docs/measurements/tessera-decode-regime-kl-2026-09-03.md"
 DECODE_COMPILED = "docs/measurements/tessera-compiled-decode-kl-r6-2026-09-04.md"
 BF16 = "docs/measurements/tessera-bf16-route-served-2026-09-02.md"
 LFM = "docs/measurements/tessera-lfm-campaign-2026-09-04.md"
+MOE_DEBT = "docs/measurements/moe-evidence-debt-2026-09-04.md"
 
 
 def _bound(regime, modes, receipt):
@@ -53,7 +58,21 @@ def _bound(regime, modes, receipt):
             "execution_modes": modes, "receipt": receipt}
 
 
-_NO_SMOKE = {"status": "not_recorded", "receipt": None}
+_NO_SMOKE = {"status": "not_recorded", "receipt": None,
+             "attribution": "unattributed", "control": None}
+
+
+def _uncontrolled(status, receipt):
+    """A smoke nobody ran a reference against: the shape every dense cell has."""
+    return {"status": status, "receipt": receipt,
+            "attribution": "unattributed", "control": None}
+
+
+#: The control section 7 of the MoE evidence-debt receipt ran: the same prompt,
+#: byte for byte, against the BF16 SOURCE on the same pinned image, eager --
+#: and the completion came back identical character for character.
+_BF16_CONTROL = {"reference": "bf16_source", "outcome": "identical_completion",
+                 "receipt": MOE_DEBT}
 _ROUTE_ONLY = {"grade": "route_only", "kl": [], "smoke": _NO_SMOKE}
 
 #: What each published cell rests on, receipt by receipt.  A KL entry attests
@@ -94,18 +113,23 @@ _EVIDENCE = {
     # residencies; the receipt records an identical greedy continuation from
     # all four census arms and does not grade it.
     "tessera_bf16_k1_dense_sm121_decode": {
-        "grade": "route_only", "kl": [], "smoke": {"status": "recorded", "receipt": BF16}},
+        "grade": "route_only", "kl": [], "smoke": _uncontrolled("recorded", BF16)},
     "tessera_bf16_k1_dense_sm121_batch": {
         "grade": "kl_lower_bound", "kl": [_bound("batch", ["eager"], BF16)],
-        "smoke": {"status": "recorded", "receipt": BF16}},
+        "smoke": _uncontrolled("recorded", BF16)},
     # Routed MoE (LFM2.5-8B-A1B, q1024): prefill top-1024 bound, eager,
-    # resident; the greedy smoke was repetitive; the decode regime has the
-    # census alone.
+    # resident; the decode regime has the census alone.  The greedy smoke was
+    # repetitive AND the BF16 source repeats identically on the same prompt
+    # (MOE_DEBT section 7), so the symptom is shared with the reference and the
+    # cells say so where a gate reads rather than in prose (#195).
     "tessera_e4m3_k1_routed_moe_sm121_decode_resident": {
-        "grade": "route_only", "kl": [], "smoke": {"status": "repetitive", "receipt": LFM}},
+        "grade": "route_only", "kl": [],
+        "smoke": {"status": "repetitive", "receipt": LFM,
+                  "attribution": "shared_with_reference", "control": _BF16_CONTROL}},
     "tessera_e4m3_k1_routed_moe_sm121_batch_resident": {
         "grade": "kl_lower_bound", "kl": [_bound("batch", ["eager"], LFM)],
-        "smoke": {"status": "repetitive", "receipt": LFM}},
+        "smoke": {"status": "repetitive", "receipt": LFM,
+                  "attribution": "shared_with_reference", "control": _BF16_CONTROL}},
 }
 
 
@@ -177,8 +201,11 @@ def test_every_named_receipt_is_in_the_tree(contract):
     receipt path and this tree test checks the file exists."""
     for cell in contract["lane_eligibility"]["cells"]:
         paths = [entry["receipt"] for entry in cell["evidence"]["kl"]]
-        if cell["evidence"]["smoke"]["receipt"] is not None:
-            paths.append(cell["evidence"]["smoke"]["receipt"])
+        smoke = cell["evidence"]["smoke"]
+        if smoke["receipt"] is not None:
+            paths.append(smoke["receipt"])
+        if smoke["control"] is not None:
+            paths.append(smoke["control"]["receipt"])
         for path in paths:
             assert path.startswith(EVIDENCE_RECEIPT_ROOT)
             assert (ROOT / path).is_file(), f"{cell['id']} names a missing receipt {path}"
@@ -189,6 +216,10 @@ def test_the_grammar_is_exported_for_a_consumer(contract):
     assert EVIDENCE_SMOKE_STATUSES == ("recorded", "repetitive", "not_recorded")
     assert EVIDENCE_GRADES == ("route_only", "kl_lower_bound", "kl_full_vocab")
     assert EVIDENCE_RECEIPT_ROOT == "docs/measurements/"
+    assert EVIDENCE_SMOKE_ATTRIBUTIONS == (
+        "unattributed", "shared_with_reference", "not_shared_with_reference")
+    assert EVIDENCE_CONTROL_REFERENCES == ("bf16_source",)
+    assert EVIDENCE_CONTROL_OUTCOMES == ("identical_completion", "different_completion")
 
 
 # --- the validator refuses what a gate could not read ------------------------
@@ -287,19 +318,135 @@ def test_the_same_receipt_and_mode_cannot_be_counted_twice(contract):
 
 
 @pytest.mark.parametrize("smoke, match", [
-    ({"status": "coherent", "receipt": BF16}, "smoke.status 'coherent' is not one of"),
-    ({"status": "recorded", "receipt": None}, "names no receipt"),
-    ({"status": "repetitive", "receipt": None}, "names no receipt"),
-    ({"status": "not_recorded", "receipt": BF16}, "not_recorded names a receipt"),
-    ({"status": "recorded", "receipt": "/an/absolute/path/x.md"},
+    (_uncontrolled("coherent", BF16), "smoke.status 'coherent' is not one of"),
+    (_uncontrolled("recorded", None), "names no receipt"),
+    (_uncontrolled("repetitive", None), "names no receipt"),
+    (_uncontrolled("not_recorded", BF16), "not_recorded names a receipt"),
+    (_uncontrolled("recorded", "/an/absolute/path/x.md"),
      "receipt must be a repository path under 'docs/measurements/'"),
-    ({"status": "recorded", "receipt": BF16, "text": "France is"},
+    ({**_uncontrolled("recorded", BF16), "text": "France is"},
      r"smoke carries unknown field\(s\) \['text'\]"),
-    ({"receipt": BF16}, r"smoke is missing \['status'\]"),
+    ({"receipt": BF16, "attribution": "unattributed", "control": None},
+     r"smoke is missing \['status'\]"),
+    ({"status": "recorded", "receipt": BF16},
+     r"smoke is missing \['attribution', 'control'\]"),
 ], ids=lambda x: x if isinstance(x, str) else "smoke")
 def test_a_smoke_outside_the_grammar_is_refused(contract, smoke, match):
     evidence = {**_EVIDENCE[BATCH], "smoke": smoke}
     with pytest.raises(ValueError, match=match):
+        validate_serving_contract(_with_evidence(contract, BATCH, evidence))
+
+
+# --- the control a smoke was compared against (#195, schema v7) --------------
+
+MOE_DECODE = "tessera_e4m3_k1_routed_moe_sm121_decode_resident"
+
+
+def _smoke(status=None, control=None, **over):
+    """A smoke record whose attribution is the DERIVED one, so a test that is
+    not about the derivation cannot fail on it."""
+    status = status or "repetitive"
+    record = {"status": status, "receipt": LFM, "control": control}
+    record["attribution"] = derive_smoke_attribution(record)
+    return {**record, **over}
+
+
+def test_a_control_tells_a_shared_symptom_from_a_route_specific_one(contract):
+    """The defect #195 names, closed where a gate reads it.
+
+    Both routed-MoE cells record `repetitive`, and the BF16 SOURCE returns the
+    identical completion on the identical prompt, so the repetition is the
+    model and the prompt.  A consumer refusing the lane on `status` alone was
+    right under its rule and wrong about the runtime; `attribution` is the
+    field that carries the decision.
+    """
+    for cell in contract["lane_eligibility"]["cells"]:
+        smoke = cell["evidence"]["smoke"]
+        if cell["structure"] != "routed_moe":
+            assert smoke["control"] is None and smoke["attribution"] == "unattributed", cell["id"]
+            continue
+        assert smoke["status"] == "repetitive"
+        assert smoke["attribution"] == "shared_with_reference", cell["id"]
+        assert smoke["control"] == {"reference": "bf16_source",
+                                    "outcome": "identical_completion",
+                                    "receipt": MOE_DEBT}, cell["id"]
+
+
+def test_the_stored_attribution_is_the_derived_one(contract):
+    for cell in contract["lane_eligibility"]["cells"]:
+        smoke = cell["evidence"]["smoke"]
+        assert smoke["attribution"] == derive_smoke_attribution(smoke), cell["id"]
+
+
+def test_no_cell_claims_a_control_that_differed(contract):
+    """Read off the table, not asserted: the one control this repository has
+    run came back identical.  A cell claiming `different_completion` would be
+    claiming a measurement nobody took."""
+    for cell in contract["lane_eligibility"]["cells"]:
+        control = cell["evidence"]["smoke"]["control"]
+        assert control is None or control["outcome"] == "identical_completion", cell["id"]
+
+
+def test_a_control_that_differs_attributes_the_symptom_to_this_route(contract):
+    """The other branch of the derivation, so the field is not a constant: a
+    reference that answers differently leaves the symptom unexplained by the
+    model and the prompt."""
+    control = {"reference": "bf16_source", "outcome": "different_completion",
+               "receipt": MOE_DEBT}
+    evidence = {**_EVIDENCE[MOE_DECODE], "smoke": _smoke(control=control)}
+    doc = _with_evidence(contract, MOE_DECODE, evidence)
+    validate_serving_contract(doc)
+    smoke = _cells(doc)[MOE_DECODE]["evidence"]["smoke"]
+    assert smoke["attribution"] == "not_shared_with_reference"
+    assert cell_evidence(_cells(doc)[MOE_DECODE], MOE_DECODE)["smoke"]["control"] == control
+
+
+def test_an_attribution_cannot_be_asserted_beside_its_control(contract):
+    """`attribution` is derived from `control` the way `grade` is derived from
+    `kl`: stored so a reader needs no derivation, checked so it cannot drift."""
+    over = {**_EVIDENCE[MOE_DECODE],
+            "smoke": _smoke(control=_BF16_CONTROL, attribution="unattributed")}
+    with pytest.raises(ValueError,
+                       match="attribution is 'unattributed' but its control derives "
+                             "'shared_with_reference'"):
+        validate_serving_contract(_with_evidence(contract, MOE_DECODE, over))
+    under = {**_EVIDENCE[BATCH],
+             "smoke": {**_NO_SMOKE, "attribution": "shared_with_reference"}}
+    with pytest.raises(ValueError,
+                       match="attribution is 'shared_with_reference' but its control derives "
+                             "'unattributed'"):
+        validate_serving_contract(_with_evidence(contract, BATCH, under))
+
+
+@pytest.mark.parametrize("control, match", [
+    ({"reference": "the bf16 model", "outcome": "identical_completion", "receipt": MOE_DEBT},
+     "control.reference 'the bf16 model' is not one of"),
+    ({"reference": "bf16_source", "outcome": "looked fine", "receipt": MOE_DEBT},
+     "control.outcome 'looked fine' is not one of"),
+    ({"reference": "bf16_source", "outcome": "identical_completion",
+      "receipt": "/home/somebody/smoke.log"},
+     "receipt must be a repository path under 'docs/measurements/'"),
+    ({"reference": "bf16_source", "outcome": "identical_completion", "receipt": MOE_DEBT,
+      "note": "same prompt"},
+     r"control carries unknown field\(s\) \['note'\]"),
+    ({"reference": "bf16_source", "receipt": MOE_DEBT},
+     r"control is missing \['outcome'\]"),
+], ids=["reference", "outcome", "receipt", "closed", "required"])
+def test_a_control_outside_the_grammar_is_refused(contract, control, match):
+    evidence = {**_EVIDENCE[MOE_DECODE],
+                "smoke": {"status": "repetitive", "receipt": LFM,
+                          "attribution": "shared_with_reference", "control": control}}
+    with pytest.raises(ValueError, match=match):
+        validate_serving_contract(_with_evidence(contract, MOE_DECODE, evidence))
+
+
+def test_a_smoke_nobody_ran_cannot_carry_a_control(contract):
+    """`not_recorded` means no completion came back, so there is nothing for a
+    reference to have matched."""
+    evidence = {**_EVIDENCE[BATCH],
+                "smoke": {"status": "not_recorded", "receipt": None,
+                          "attribution": "shared_with_reference", "control": _BF16_CONTROL}}
+    with pytest.raises(ValueError, match="status not_recorded names a control"):
         validate_serving_contract(_with_evidence(contract, BATCH, evidence))
 
 

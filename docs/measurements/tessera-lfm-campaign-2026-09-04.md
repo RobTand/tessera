@@ -557,3 +557,13 @@ schema, cell, rung, route or bound moved, so `contract_version` stays **17**
 The v17 raw SHA256 recorded above is the file this campaign was run against;
 the corrected file's raw SHA256 is
 `2f2dee1a23b14101f0312cfbf4fcaf1542eb575841621000cfa05164e2275903`.
+
+**Note, 2026-09-04, after that note (#195).** Lane-eligibility schema **v7**
+gives every `evidence.smoke` a `control` and a derived `attribution`, so the
+two `routed_moe` cells carry the matched BF16 arm that §7 of
+`moe-evidence-debt-2026-09-04.md` measured instead of leaving it in prose a
+gate cannot read. That IS a change a validating reader acts on, so
+`contract_version` goes **17 -> 18** -- the opposite call from the #181 note
+above, for the opposite reason. No status word, grade, rung, route, bound or
+byte moved. The raw SHA256 is now
+`370641141ec99ec9035c27c825e1533999906e0290bf0be87257e48a9743e7d5`.

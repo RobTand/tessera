@@ -303,3 +303,18 @@ diagnosis (section 6); neither is a KL number, and neither promotes anything.
 Every other number is read from `tessera-lfm-campaign-2026-09-04.md`, from
 `src/tessera/serving/runtime_contract.json`, or from the LFM serve logs under
 `/mnt/shared/tessera-runs/ts5/lfm25/`.
+
+---
+
+**Note, 2026-09-04, after this receipt (#195).** Leg 0's "Changed: nothing in
+the contract" and section 8's "changes no cell's `evidence` block" were true of
+this receipt and are no longer true of the tree. The control section 7 ran now
+travels **in** the contract: lane-eligibility schema **v7** (contract v18)
+gives every `evidence.smoke` a `control` -- `{reference: "bf16_source", outcome:
+"identical_completion", receipt: "docs/measurements/moe-evidence-debt-2026-09-04.md"}`
+on both `routed_moe` cells -- and a derived `smoke.attribution`, which reads
+`shared_with_reference` there. The status word `repetitive` still stands, as
+this receipt said it should; what changed is that a consumer no longer has to
+read this file to know the reference does the same thing. PrismaQuant's pin
+(RobTand/prismaquant#192) refused the lane on `status` alone while that fact was
+prose; it moves to `attribution`.

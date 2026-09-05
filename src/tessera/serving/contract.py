@@ -100,9 +100,12 @@ __all__ = [
     "CENSUS_PHASE_REGIMES",
     "CELL_PREDICATE_FACTS",
     "CELL_PREDICATE_OPS",
+    "EVIDENCE_CONTROL_OUTCOMES",
+    "EVIDENCE_CONTROL_REFERENCES",
     "EVIDENCE_GRADES",
     "EVIDENCE_KL_KINDS",
     "EVIDENCE_RECEIPT_ROOT",
+    "EVIDENCE_SMOKE_ATTRIBUTIONS",
     "EVIDENCE_SMOKE_STATUSES",
     "EXECUTION_MODES",
     "PLUGIN_ENTRY_POINT",
@@ -112,6 +115,7 @@ __all__ = [
     "cell_evidence",
     "cell_runtime_versions",
     "derive_evidence_grade",
+    "derive_smoke_attribution",
     "CONSTRUCTION_SCHEMA",
     "CONSTRUCTION_CENSUS_SCHEMA",
     "classify_construction",
@@ -143,7 +147,7 @@ __all__ = [
 
 CONTRACT_FILENAME = "runtime_contract.json"
 CONTRACT_SCHEMA = "tessera.runtime-contract.v1"
-LANE_ELIGIBILITY_SCHEMA = "tessera.lane-eligibility.v6"
+LANE_ELIGIBILITY_SCHEMA = "tessera.lane-eligibility.v7"
 #: Execution is a separate axis from token-count regime and residency. These
 #: are the two modes selected by a serving invocation's enforce_eager flag.
 EXECUTION_MODES = ("eager", "compiled")
@@ -219,7 +223,8 @@ PLUGIN_ENTRY_POINT = "tessera = tessera.serving:register"
 #: scored in, under which execution modes, and whether a greedy smoke is on
 #: record.  So a ``kl`` entry is ``{kind, top_k, regime, execution_modes,
 #: receipt}`` (no number: the receipt holds it with its bounds), ``smoke`` is
-#: ``{status, receipt}`` in the receipt's own words, and ``grade`` is DERIVED
+#: ``{status, receipt, attribution, control}`` in the receipt's own words
+#: (``attribution`` and ``control`` are schema v7's, below), and ``grade`` is DERIVED
 #: from the entries in the cell's own regime the way ``executes`` is derived
 #: from the route table -- stored so a reader needs no derivation, checked so
 #: it cannot drift.  ``receipt`` is a repository path under
@@ -229,6 +234,34 @@ EVIDENCE_KL_KINDS = ("topk_intersection_lower_bound", "full_vocab")
 EVIDENCE_SMOKE_STATUSES = ("recorded", "repetitive", "not_recorded")
 EVIDENCE_GRADES = ("route_only", "kl_lower_bound", "kl_full_vocab")
 EVIDENCE_RECEIPT_ROOT = "docs/measurements/"
+
+#: A smoke's CONTROL (schema v7, #195): the reference the same prompt was run
+#: against, so a consumer can tell "this route degenerates" from "this prompt
+#: degenerates on this model".  ``status`` says what came back and is accurate;
+#: it is not the field that decides admission, because a degenerate completion
+#: the unquantised source produces character for character is a property of the
+#: model and the prompt.  That distinction was measured
+#: (``docs/measurements/moe-evidence-debt-2026-09-04.md`` section 7) and lived
+#: in prose while a producer-side gate refused the whole routed-MoE lane on
+#: ``status``: the machine-readable field was true about the observation and
+#: misleading about its meaning, which is principle 14 one level up.
+#:
+#: ``control`` is ``{reference, outcome, receipt}`` or ``null``, and
+#: ``attribution`` is DERIVED from it and checked, the way ``grade`` is derived
+#: from ``kl``.  What ``outcome`` establishes, exactly: ``identical_completion``
+#: means the reference returned the SAME completion for the same prompt under
+#: the smoke's own runtime and execution mode; ``different_completion`` means
+#: the completions differ -- NOT that the reference was healthy, which no string
+#: comparison can decide.  There is no ``scope`` field: a smoke record carries no
+#: scope of its own, a control cannot be better scoped than the thing it
+#: controls, and that the arms match is what the receipt attests, exactly as for
+#: every other receipt-backed field here.  One control, not a list: one is what
+#: has been run, and a second reference is a bump rather than a surprise.
+EVIDENCE_CONTROL_REFERENCES = ("bf16_source",)
+EVIDENCE_CONTROL_OUTCOMES = ("identical_completion", "different_completion")
+EVIDENCE_SMOKE_ATTRIBUTIONS = ("unattributed", "shared_with_reference",
+                               "not_shared_with_reference")
+EVIDENCE_CONTROL_KEYS = frozenset({"reference", "outcome", "receipt"})
 
 
 def contract_path():
@@ -1234,6 +1267,25 @@ def derive_evidence_grade(cell: Mapping[str, Any]) -> str:
     return "route_only"
 
 
+def derive_smoke_attribution(smoke: Mapping[str, Any]) -> str:
+    """What a smoke's ``control`` DERIVES about where the symptom lives.
+
+    No control, ``unattributed`` -- nobody ran the reference, so the status is
+    an observation and not an attribution.  A reference that returned the same
+    completion, ``shared_with_reference``: the model and the prompt produce it,
+    not this route.  One that returned a different completion,
+    ``not_shared_with_reference``: the reference does not explain it, which is
+    weaker than "the route is at fault" and is deliberately not spelled that
+    way.
+    """
+    control = smoke.get("control")
+    if control is None:
+        return "unattributed"
+    if control.get("outcome") == "identical_completion":
+        return "shared_with_reference"
+    return "not_shared_with_reference"
+
+
 def cell_evidence(cell: Mapping[str, Any], where: str = "lane_eligibility cell",
                   regimes: Any = None) -> dict[str, Any]:
     """The parsed ``evidence`` a cell states, or raise (#133).
@@ -1314,16 +1366,21 @@ def cell_evidence(cell: Mapping[str, Any], where: str = "lane_eligibility cell",
         parsed_kl.append({"kind": kind, "top_k": top_k, "regime": regime,
                           "execution_modes": list(modes), "receipt": receipt})
     smoke = payload["smoke"]
-    _require_keys(smoke, f"{at}.smoke", required={"status", "receipt"})
+    _require_keys(smoke, f"{at}.smoke", required={"status", "receipt", "attribution", "control"})
     status = smoke["status"]
     if status not in EVIDENCE_SMOKE_STATUSES:
         raise ValueError(
             f"{at}.smoke.status {status!r} is not one of {list(EVIDENCE_SMOKE_STATUSES)}")
+    control = smoke["control"]
     if status == "not_recorded":
         if smoke["receipt"] is not None:
             raise ValueError(
                 f"{at}.smoke: status not_recorded names a receipt {smoke['receipt']!r}; a "
                 "receipt is where a recorded smoke lives, so one here says the status is wrong")
+        if control is not None:
+            raise ValueError(
+                f"{at}.smoke: status not_recorded names a control {control!r}; no completion "
+                "came back, so there is nothing for a reference to have matched")
         smoke_receipt = None
     else:
         if smoke["receipt"] is None:
@@ -1331,12 +1388,40 @@ def cell_evidence(cell: Mapping[str, Any], where: str = "lane_eligibility cell",
                 f"{at}.smoke: status {status!r} names no receipt; a smoke nobody recorded "
                 "is not_recorded")
         smoke_receipt = _require_receipt_path(smoke["receipt"], f"{at}.smoke")
+    parsed_control = None
+    if control is not None:
+        spot = f"{at}.smoke.control"
+        _require_keys(control, spot, required=set(EVIDENCE_CONTROL_KEYS))
+        reference, outcome = control["reference"], control["outcome"]
+        if reference not in EVIDENCE_CONTROL_REFERENCES:
+            raise ValueError(
+                f"{spot}.reference {reference!r} is not one of "
+                f"{list(EVIDENCE_CONTROL_REFERENCES)}; a reference this package cannot name is "
+                "prose, and the whole point of the control is that a gate reads it")
+        if outcome not in EVIDENCE_CONTROL_OUTCOMES:
+            raise ValueError(
+                f"{spot}.outcome {outcome!r} is not one of {list(EVIDENCE_CONTROL_OUTCOMES)}")
+        parsed_control = {"reference": reference, "outcome": outcome,
+                          "receipt": _require_receipt_path(control["receipt"], spot)}
+    attribution = smoke["attribution"]
+    if attribution not in EVIDENCE_SMOKE_ATTRIBUTIONS:
+        raise ValueError(
+            f"{at}.smoke.attribution {attribution!r} is not one of "
+            f"{list(EVIDENCE_SMOKE_ATTRIBUTIONS)}")
+    derived_attribution = derive_smoke_attribution({"control": parsed_control})
+    if attribution != derived_attribution:
+        raise ValueError(
+            f"{at}.smoke.attribution is {attribution!r} but its control derives "
+            f"{derived_attribution!r}; the attribution is read off the control, never asserted "
+            "beside it")
     derived = derive_evidence_grade({"evidence": {"kl": parsed_kl}})
     if grade != derived:
         raise ValueError(
             f"{at}.grade is {grade!r} but its kl entries derive {derived!r}; the grade is read "
             "off the entries, never asserted beside them")
-    return {"grade": grade, "kl": parsed_kl, "smoke": {"status": status, "receipt": smoke_receipt}}
+    return {"grade": grade, "kl": parsed_kl,
+            "smoke": {"status": status, "receipt": smoke_receipt,
+                      "attribution": attribution, "control": parsed_control}}
 
 
 def _lanes_a_rung_reaches(route: str, contract: Mapping[str, Any], wire: Mapping[str, Any],
