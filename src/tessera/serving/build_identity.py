@@ -67,6 +67,18 @@ that resolved ``enforce_eager=False`` with no compile line anywhere is
 ``complete: false`` -- because ``compiled_forward`` is false for an eager arm
 and for a serve nobody observed alike, and reading the second as the first let
 two unobserved arms certify as one build (issue #205).
+
+AND ``complete`` IS DERIVED WHERE IT IS READ, NEVER TRUSTED (issue #279).  The
+stamped field is a cached verdict, issued by whichever rule was in force that
+day; #205 tightened the eager rule without bumping the schema, so a ``/2``
+sidecar written before it carries ``complete: true`` for an eager arm whose
+``enforce_eager`` was never read.  ``incomplete_reason`` is the single home of
+the rule -- the stamper fills the field from it and every gate re-derives from
+the record's own fields -- so an old record reads honestly as incomplete and
+says which repair it needs, rather than certifying on a verdict nobody would
+issue today.  The schema stays ``/2``: bumping it would refuse 22 sidecars to
+correct 12, and re-stamping needs serve logs that mostly no longer exist.
+
 And a build identity says two arms
 ran the same compiled code; it does not say the compiled code is correct, and
 it is not a substitute for serving both arms.
@@ -89,6 +101,7 @@ __all__ = [
     "compare",
     "deterministic_effective",
     "incomplete_reason",
+    "is_complete",
     "load",
     "read_cache_root",
     "read_serve_log",
@@ -380,11 +393,12 @@ def build_identity(*, serve_log: str | Path, cache_root: str | Path | None = Non
     # and refused the very "replayed by a second serve" row this stamp exists
     # to certify.  The autotune digest already separates the two real caches
     # (04525ea7... vs dbeb2b8b...), so nothing is lost by moving it out.
-    complete = _is_complete(identity, parsed, slots["backbone"], cache_root is not None)
-    return {
+    record = {
         "schema": SCHEMA,
         "build_fingerprint": _fingerprint(identity),
-        "complete": complete,
+        # Filled in below by the SAME function the reader decides with, so a
+        # stamp cannot be issued under a rule the gate no longer holds (#279).
+        "complete": False,
         "identity": identity,
         "provenance": {
             "produced_at_utc": _dt.datetime.now(_dt.timezone.utc).isoformat(
@@ -414,38 +428,8 @@ def build_identity(*, serve_log: str | Path, cache_root: str | Path | None = Non
             "aot_keys_saved": parsed["aot_keys_saved"],
         },
     }
-
-
-def _is_complete(identity: dict, parsed: dict, backbone: dict,
-                 had_cache_root: bool) -> bool:
-    """True when the record answers "which compiled build served this arm".
-
-    An eager serve answers it with "none" -- but only a serve that was
-    OBSERVED does.  ``compiled_forward`` is false both for an eager arm and
-    for a log nobody wrote, and reading the second as the first is how two
-    unobserved serves certified as one build (#205).  So the eager answer
-    rests on vLLM's own startup line: the engine version proves a serve was
-    seen, and the ``enforce_eager`` it resolved proves the arm was the eager
-    one.  A log that says it was NOT eager and carries no compile line is a
-    contradiction, not an eager arm, and neither is a request to compile that
-    left no compile evidence.
-
-    A compiled serve is complete only when every cache slot its log named was
-    found and digested: the key alone does not distinguish two builds, so a
-    key-only record must not be allowed to certify.
-    """
-    if parsed["vllm_version"] is None:
-        return False
-    if not identity["compiled_forward"]:
-        return parsed["enforce_eager"] is True and identity["eager"] is not False
-    if not had_cache_root or not identity["aot"]:
-        return False
-    if not all(s["present"] and s["autotune_digest"] for s in identity["aot"].values()):
-        return False
-    # A replay names no backbone key, so this is vacuously true there; on a
-    # build it asserts the mounted cache root is the one the log named.
-    return all(s["present"] and s["computation_graph_sha256"]
-               for s in backbone.values())
+    record["complete"] = is_complete(record)
+    return record
 
 
 def _fingerprint(identity: dict) -> str:
@@ -454,6 +438,12 @@ def _fingerprint(identity: dict) -> str:
 
 
 def load(path: str | Path) -> dict:
+    """Read a sidecar, schema-checked.  ``complete`` is NOT read from it.
+
+    The stored field is left exactly as the stamp wrote it -- this module never
+    edits a sidecar, in memory or on disk -- and every verdict goes through
+    ``is_complete``/``incomplete_reason`` instead.  See those for why (#279).
+    """
     record = json.loads(Path(path).read_text())
     if record.get("schema") != SCHEMA:
         # /1 records predate the dispatch fields, so they cannot answer "did
@@ -469,8 +459,16 @@ def load(path: str | Path) -> dict:
 # --------------------------------------------------------------- compare ---
 
 def compare(a: dict, b: dict) -> dict:
-    """What differs between two build identities, and whether either can certify."""
-    incomplete = [name for name, rec in (("a", a), ("b", b)) if not rec["complete"]]
+    """What differs between two build identities, and whether either can certify.
+
+    ``incomplete`` is DERIVED from each record's own fields, never read from its
+    stored ``complete`` (#279).  ``stored_complete_disagrees`` names the records
+    whose stamped verdict the rule no longer issues, in either direction, so the
+    override is never silent.
+    """
+    incomplete = [name for name, rec in (("a", a), ("b", b)) if not is_complete(rec)]
+    disagrees = [name for name, rec in (("a", a), ("b", b))
+                 if "complete" in rec and bool(rec["complete"]) is not is_complete(rec)]
     ia, ib = a["identity"], b["identity"]
     differs = sorted(k for k in set(ia) | set(ib) if ia.get(k) != ib.get(k))
     da, db = ia.get("dispatch"), ib.get("dispatch")
@@ -480,19 +478,68 @@ def compare(a: dict, b: dict) -> dict:
         "dispatch_known": da is not None and db is not None,
         "differs": differs,
         "incomplete": incomplete,
+        "stored_complete_disagrees": disagrees,
     }
+
+
+def is_complete(record: dict) -> bool:
+    """Does this record answer "which compiled build served this arm"?
+
+    ``incomplete_reason`` is the rule; this is its yes/no face.
+    """
+    return incomplete_reason(record) is None
 
 
 def incomplete_reason(record: dict) -> "str | None":
     """Why this record cannot certify, in its own fields -- or ``None``.
 
-    Derived at the refusal rather than stored, so a record written by an older
-    stamp answers too.  The reason matters because the states are different
-    repairs: a missing cache root is re-stamped with the root mounted, and a
-    log that recorded no serve is not a stamping problem at all.
+    THIS FUNCTION IS THE COMPLETENESS RULE, and it is the only home of it: the
+    stamper calls it to fill in ``complete`` and every reader calls it to decide
+    whether a record may certify.  It was two functions -- ``_is_complete`` over
+    the parse, this one over the record -- and the pair drifted the moment #205
+    tightened one of them (#279).
+
+    WHY THE STORED ``complete`` IS NOT READ.  It is a cached verdict, issued by
+    whichever rule was in force on the day of the stamp.  #205 tightened the
+    eager rule without bumping the schema, so twelve real ``/2`` sidecars carry
+    ``complete: true`` for eager arms whose serve log's ``enforce_eager`` was
+    never read -- a verdict the current rule would not issue on the same
+    evidence.  Bumping to ``/3`` would refuse the 22 ``/2`` sidecars to correct
+    12, and re-stamping needs serve logs that mostly no longer exist.  So the
+    verdict is decided where it is read, from the record's own fields; the
+    stored field stays for humans, and certifies nothing.  When the two
+    disagree, the reason says so.
+
+    An eager serve answers the question with "none" -- but only a serve that was
+    OBSERVED does.  ``compiled_forward`` is false both for an eager arm and for
+    a log nobody wrote, and reading the second as the first is how two
+    unobserved serves certified as one build (#205).  So the eager answer rests
+    on vLLM's own startup line: the engine version proves a serve was seen, and
+    the ``enforce_eager`` it resolved proves the arm was the eager one.  A log
+    that says it was NOT eager and carries no compile line is a contradiction,
+    not an eager arm, and neither is a request to compile that left no compile
+    evidence.
+
+    A compiled serve is complete only when every cache slot its log named was
+    found and digested: the key alone does not distinguish two builds, so a
+    key-only record must not be allowed to certify.
+
+    The reason matters because the states are different repairs: a missing cache
+    root is re-stamped with the root mounted, a pre-#205 eager record is
+    re-stamped from its serve log where that survives, and a log that recorded
+    no serve is not a stamping problem at all.
     """
-    if record.get("complete"):
+    reason = _incomplete_reason(record)
+    if reason is None:
         return None
+    if record.get("complete"):
+        reason += (" -- and it is stamped complete: true, a verdict issued under an "
+                   "older rule; the rule lives here, not in the sidecar, so the stored "
+                   "field does not certify")
+    return reason
+
+
+def _incomplete_reason(record: dict) -> "str | None":
     identity, provenance = record["identity"], record["provenance"]
     if identity.get("vllm_version") is None:
         return ("its serve log carries no vLLM startup line"
@@ -501,15 +548,42 @@ def incomplete_reason(record: dict) -> "str | None":
                 + ", so no serve was observed; an absent compile record is not an eager "
                   "serve, it is a log that says nothing")
     if not identity["compiled_forward"]:
-        if provenance.get("enforce_eager") is not True:
+        if "enforce_eager" not in provenance:
+            # A record from before #205 gave the field a home.  It cannot be
+            # told from a post-#205 one by its schema -- that is the whole of
+            # #279 -- so it is told apart by the field it does not have.
+            return ("its serve log's enforce_eager was never read (the record predates "
+                    "the field, so nothing here shows the arm was the eager one rather "
+                    f"than a serve nobody observed); re-stamp from "
+                    f"{provenance.get('serve_log')!r}")
+        if provenance["enforce_eager"] is not True:
             return ("its serve log records no compiled forward while vLLM's own startup "
-                    f"line resolved enforce_eager={provenance.get('enforce_eager')!r}, so "
+                    f"line resolved enforce_eager={provenance['enforce_eager']!r}, so "
                     "what this arm ran is not established")
-        return ("it was stamped eager=False -- the arm was asked to compile -- and its "
-                "serve log carries no compile evidence at all")
-    return ("its serve log names an AOT key but no compile-cache root was read, and the "
-            "key does not identify the build (one key held both of the two builds that "
-            "differ by 0.017117); mount the cache root the serve used and stamp again")
+        if identity.get("eager") is False:
+            return ("it was stamped eager=False -- the arm was asked to compile -- and "
+                    "its serve log carries no compile evidence at all")
+        return None
+    if provenance.get("cache_root") is None or not identity["aot"]:
+        return ("its serve log names an AOT key but no compile-cache root was read, and "
+                "the key does not identify the build (one key held both of the two "
+                "builds that differ by 0.017117); mount the cache root the serve used "
+                "and stamp again")
+    missing = sorted(k for k, s in identity["aot"].items()
+                     if not (s["present"] and s["autotune_digest"]))
+    if missing:
+        return ("the compile-cache root it read holds no digestible autotune record for "
+                f"AOT slot {', '.join(missing)}, which its serve log named; the key "
+                "alone does not identify the build, so this record cannot certify one")
+    # A replay names no backbone key, so this is vacuously satisfied there; on a
+    # build it asserts the mounted cache root is the one the log named.
+    absent = sorted(k for k, s in provenance.get("backbone", {}).items()
+                    if not (s["present"] and s["computation_graph_sha256"]))
+    if absent:
+        return (f"its serve log named backbone slot {', '.join(absent)} -- so this serve "
+                "COMPILED -- but the cache root it read does not hold that slot's "
+                "computation graph, so the root read is not the root the serve wrote")
+    return None
 
 
 def _refuse_incomplete(verdict: dict, why: str, records: dict) -> None:
