@@ -177,12 +177,31 @@ def _moe_scheme(experts=4, hidden=128, inter=64, family=TESSERA_FP8, grid="E4M3"
             **over}
 
 
-def _config(scheme=None, targets=(TARGET,), ignore=(), extra_groups=None, quant_method="tessera"):
+#: What a current exporter stamps beside the groups: the container schema minor
+#: these bytes were written at, and -- derived from it, never typed -- whether a
+#: rank may cut its own shard out of them (``export._write_config``,
+#: ``layout.tp_agnostic_at_minor``, tessera#328).  Taken from the code that
+#: writes it rather than restated, so a checkpoint whose declaration moves is a
+#: failing test here and not a silently different fixture.
+def _slicing_declaration():
+    from tessera.container import SCHEMA_MINOR
+    from tessera.layout import tp_agnostic_at_minor
+
+    return {"schema_minor": SCHEMA_MINOR,
+            "tp_agnostic": tp_agnostic_at_minor(SCHEMA_MINOR)}
+
+
+_UNSET = object()
+
+
+def _config(scheme=None, targets=(TARGET,), ignore=(), extra_groups=None, quant_method="tessera",
+            slicing=_UNSET):
     groups = {"tessera": {"format": "TESSERA", "targets": list(targets),
                           "scheme": _scheme() if scheme is None else scheme}}
     if extra_groups:
         groups.update(extra_groups)
     return {"quant_method": quant_method, "format": "tessera",
+            **(_slicing_declaration() if slicing is _UNSET else slicing),
             "config_groups": groups, "ignore": list(ignore)}
 
 
@@ -352,7 +371,7 @@ def test_a_routed_moe_refusal_points_at_the_measured_oracle_receipt(monkeypatch,
 
 
 def test_a_world_size_above_one_reaches_its_route(monkeypatch):
-    """The config gate is about the CUTTER, not about the degree.
+    """The config gate is about the CUTTER and the BYTES, not about the degree.
 
     It used to refuse every ``tensor_parallel_size > 1`` with a message saying
     ``tessera.layout.slice_unit`` was not in the build.  The slicer landed, the
@@ -360,6 +379,9 @@ def test_a_world_size_above_one_reaches_its_route(monkeypatch):
     being shipped -- narrower than the code and, by then, false.  What decides
     now is the axis, and the axis is not known here: it arrives at
     ``create_weights`` with the sizes vLLM asks for.
+
+    An artifact that DOES declare its bytes cuttable therefore loads exactly as
+    it did before tessera#328's gate existed.
     """
     import vllm.distributed as distributed
 
@@ -368,6 +390,85 @@ def test_a_world_size_above_one_reaches_its_route(monkeypatch):
     monkeypatch.setattr(distributed, "get_tensor_model_parallel_world_size", lambda: 2)
     method = config.get_quant_method(_layer(), TARGET)
     assert type(method).__name__ == "TesseraNvfp4LinearMethod"
+
+
+def test_an_artifact_that_declares_nothing_about_slicing_is_refused_above_one_rank(monkeypatch):
+    """Fail closed: a checkpoint that does not say it can be cut does not get to.
+
+    Every artifact written before 2026-09-05 carries ``tp_size: 1`` in its
+    ``tessera_config.json`` and NOTHING in its ``quantization_config`` -- the
+    constant was never on the path a loader reads, which is half of what made
+    "declared so a loader cannot quietly use it at the wrong degree" untrue
+    (tessera#328).  So the absence is answered as an absence, by name, and the
+    remedy is a re-export: the wire does not move, only what the config says
+    about it.
+    """
+    import vllm.distributed as distributed
+
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    config = _resolved(_config(slicing={}))
+    monkeypatch.setattr(distributed, "get_tensor_model_parallel_world_size", lambda: 2)
+    with pytest.raises(ValueError) as excinfo:
+        config.get_quant_method(_layer(), TARGET)
+    message = str(excinfo.value)
+    assert "tp_agnostic" in message and "schema_minor" in message
+    assert "tensor_parallel_size=2" in message and "re-export" in message
+    # ... and the same checkpoint at one rank is not refused at all.
+    monkeypatch.setattr(distributed, "get_tensor_model_parallel_world_size", lambda: 1)
+    assert config.get_quant_method(_layer(), TARGET) is not None
+
+
+def test_an_artifact_whose_bytes_cannot_be_cut_is_refused_by_name(monkeypatch):
+    """A declaration of ``false`` is an answer, and it names the obstruction."""
+    import vllm.distributed as distributed
+
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    config = _resolved(_config(slicing={"schema_minor": 3, "tp_agnostic": False}))
+    monkeypatch.setattr(distributed, "get_tensor_model_parallel_world_size", lambda: 4)
+    with pytest.raises(ValueError) as excinfo:
+        config.get_quant_method(_layer(), TARGET)
+    message = str(excinfo.value)
+    assert "tp_agnostic=false" in message and "tensor_parallel_size=4" in message
+    assert "INITIAL_STATE" in message
+
+
+def test_an_artifact_that_records_only_its_minor_is_answered_from_the_minor(monkeypatch):
+    """The declaration is derived, so the fact it derives from also answers.
+
+    ``schema_minor`` is what ``tp_agnostic`` is a function of, so a config that
+    carries the fact without the derived name resolves through the same one
+    home (``layout.tp_agnostic_at_minor``) rather than being refused for a
+    spelling -- and a minor below the one that made a shard expressible is
+    refused on the strength of its own bytes.
+    """
+    import vllm.distributed as distributed
+
+    from tessera.layout import SLICEABLE_SCHEMA_MINOR
+
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    monkeypatch.setattr(distributed, "get_tensor_model_parallel_world_size", lambda: 2)
+    ok = _resolved(_config(slicing={"schema_minor": SLICEABLE_SCHEMA_MINOR}))
+    assert ok.get_quant_method(_layer(), TARGET) is not None
+    old = _resolved(_config(slicing={"schema_minor": SLICEABLE_SCHEMA_MINOR - 1}))
+    with pytest.raises(ValueError, match="tp_agnostic=false"):
+        old.get_quant_method(_layer(), TARGET)
+
+
+def test_the_stale_tp_size_stamp_is_not_read_as_permission(monkeypatch):
+    """``tp_size: 1`` is not an answer to "can these bytes be cut".
+
+    It was written under a comment claiming the artifact was TP-*specific* and
+    was inverted the next day; reading the constant as a declaration would turn
+    a stale stamp into a permission.  A config carrying it and nothing else is
+    an undeclared artifact.
+    """
+    import vllm.distributed as distributed
+
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    config = _resolved(_config(slicing={"tp_size": 1}))
+    monkeypatch.setattr(distributed, "get_tensor_model_parallel_world_size", lambda: 2)
+    with pytest.raises(ValueError, match="declares neither"):
+        config.get_quant_method(_layer(), TARGET)
 
 
 def test_a_build_with_no_unit_slicer_still_refuses_a_tp_group(monkeypatch):

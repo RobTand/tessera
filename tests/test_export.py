@@ -153,16 +153,39 @@ def test_r896_k2_declares_four_bits_per_parameter(tmp_path):
     assert 3.95 < float(report.body_bpp) < 4.10, float(report.body_bpp)
 
 
-def test_config_declares_the_tp_degree_it_was_encoded_for(tmp_path):
-    """A unit is a blob, not a sliceable tensor, so TP degree is baked in.
+def test_config_declares_what_its_bytes_admit_at_load_and_derives_it(tmp_path):
+    """The artifact says whether a rank can cut it, and the answer is derived.
 
-    The trellis runs down rows inside each column; a row-parallel split -- what
-    a column-parallel Linear needs -- cuts it along its own state path. EXL3
-    narrows tensor dims and stays TP-agnostic; Tessera cannot, so the artifact
-    has to say which degree it was built for rather than fail obscurely at load.
+    This field used to be ``tp_size: 1``, under a comment saying Tessera "must
+    be *re-encoded* per rank, which makes an artifact TP-specific" and that the
+    stamp existed "so a loader cannot quietly use it at the wrong degree".
+    Both sentences were false: schema minor 4 (the shard record and the
+    INITIAL_STATE plane) inverted the first the day after it was written, and
+    no loader has ever read the field (tessera#328).
+
+    What the exporter actually knows is whether the bytes it just wrote are
+    sliceable at load, which is a property of the WIRE and not of any degree an
+    operator passes -- so the config records the schema minor it wrote at and
+    derives ``tp_agnostic`` from it through ``layout.tp_agnostic_at_minor``,
+    the one home of that rule.  The minor is read back off a blob this export
+    wrote rather than compared to the constant, so a config that stopped
+    describing its own bytes fails here.
     """
+    from safetensors import safe_open
+
+    from tessera.layout import SLICEABLE_SCHEMA_MINOR, tp_agnostic_at_minor
+    from tessera.unit_artifact import parse_unit_artifact
+
     export_checkpoint({"w": _w()}, {"w": 896}, tmp_path, grid=K2)
-    assert read_checkpoint_config(tmp_path)["tp_size"] == 1
+    config = read_checkpoint_config(tmp_path)
+    with safe_open(str(tmp_path / "model.safetensors"), framework="pt") as h:
+        blob = h.get_tensor("w" + config["blob_suffix"]).numpy().tobytes()
+    written = parse_unit_artifact(blob).manifest.schema_minor
+    assert config["schema_minor"] == written >= SLICEABLE_SCHEMA_MINOR
+    assert config["tp_agnostic"] is tp_agnostic_at_minor(written) is True
+    # The superseded stamp is gone, not renamed beside its replacement: a
+    # second home for "which degree is this artifact for" is what drifted.
+    assert "tp_size" not in config
 
 
 def test_a_sharded_export_reads_back_through_its_index(tmp_path):

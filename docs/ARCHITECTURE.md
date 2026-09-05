@@ -203,6 +203,7 @@ import root `tests/conftest.py` inserts is the one pytest actually executes for
 therefore resolves the union of canonical and alias candidates, deduplicated by
 file, rather than letting the canonical name hide the candidate that runs
 (#292).
+
 A node's identity is its **file**, never its name, because a dotted name is a
 spelling and a spelling can name two files: `_module_name` strips a leading
 `src/`, so `helper.py` and `src/helper.py` are both `helper`, and both are
@@ -718,6 +719,21 @@ one answer. Unrotated capability and shard reconstruction are unchanged. If
 rotated slicing is ever implemented, both paths move together and its complete
 reconstruction semantics are proved with them.
 
+**And the refusal carries the reason, not a remedy that cannot exist** (#329).
+Aligning the predicate moved the rotated population from `slice_unit`'s raise
+to the serving seam's, and the seam could only talk about granularity: a
+rotated unit at TP=2 was refused with "16 rows, granularity 1 … serve with a
+`tensor_parallel_size` that divides it", where 2 divides 16, the granularity
+is 1, and no degree above 1 will ever serve that unit.
+`slicing.unsliceable_reason` now exposes the sentence beside the boolean —
+same argument shapes, same `_slicing_facts` reading, so "`can_shard` said no" and
+"here is why" are one reading of one unit — and `sharding._cannot_cut` is the
+single home of both refusal texts: the cutter's sentence with **no divisor
+offered** where the unit refuses every cut, the granularity message with one
+where the split is what does not fit. `_shard_unit_for_rank` and
+`check_shard_granularity` raise the same string for the same unit rather than
+each re-deriving a story at its own raise site.
+
 The span-2 kernel lane has one more plane it does not read: COMPLETION. A
 TCQ column at body rate `R` under the grid's cap may spend up to `cap - R`
 further bits per position choosing among its anchor's descendants, and
@@ -898,6 +914,55 @@ GQA/MQA replication read off the layer, and a coordinate-less layer through
 the FP8, NVFP4 and BF16 routes' `create_weights` on vLLM base-class
 stand-ins.
 
+**The artifact says so itself, and the loader reads it** (#328). TP-agnosticism
+is a property of the *wire a unit was written at*, not a standing promise about
+every Tessera artifact: the shard record and the `INITIAL_STATE` plane arrived
+at container schema minor 4, and below that minor the wire cannot carry a
+window of a unit at all. So the exporter stamps what its bytes admit rather
+than what degree they were built for — `schema_minor`, and `tp_agnostic`
+**derived** from it by `slicing.tp_agnostic_at_minor`
+(`SLICEABLE_SCHEMA_MINOR`), which is the one home of that rule and lives with
+the cutter, not in the exporter's comment. Both keys go into
+`tessera_config.json` (`export._write_config`) and into the loader-visible
+`quantization_config` (`export_tessera_serving.py`,
+`serving_parts.merge_serving_parts`), because those are two different configs
+and only the second is what vLLM hands the plugin.
+
+`TesseraConfig._require_a_cutter` now asks two questions, not one:
+`sharding.require_a_cutter` (does this **build** carry `layout.slice_unit`?) and
+`sharding.require_a_cuttable_artifact` (do these **bytes** admit a cut?). The
+resolution rule, in `sharding.artifact_tp_agnostic`, is **fail closed**: a
+declared `tp_agnostic` is taken verbatim; a config that records only
+`schema_minor` is answered from it through the same one home; a config that
+records neither gets `None` and is **refused above one rank, by name**, with a
+re-export as the remedy. `tp_size` is deliberately not read — the constant
+`1` every artifact written before 2026-09-05 carries was stamped under a
+comment asserting the artifact was TP-*specific*, was inverted the next day by
+schema minor 4, and was read by no loader, so treating it as an answer would
+turn a stale stamp into a permission. At `tensor_parallel_size=1` nothing is
+cut and nothing is refused, which is every serve this plugin has run.
+
+What that costs: an artifact already on disk declares neither key, so it is
+refused above one rank until it is re-exported. Its **bytes do not change** —
+only what its config says about them — and no multi-rank serve has ever been
+run (`runtime_contract.json` publishes `max_world_size: 1` for every family),
+so nothing that has served stops serving. On the merge side the two keys are
+`SHARED_WHEN_WRITTEN` in `merge_tessera_parts.py`, not required fields: legacy
+parts still merge with each other (their `tp_size` is compared as a driver
+field, no exporter writing it any more), fresh parts are compared on the new
+names, and a legacy part mixed with a fresh one is refused as two exporters.
+**No artifact on disk becomes unmergeable.**
+
+Two declarations, and they are about different things. What the **artifact**
+says about being cuttable is a fact about its own bytes, it is derived from
+them, and the loader is now held to it (above). What the **contract** says
+about the replication rule is a claim about another runtime, and the answer
+there was to say nothing (below, #330). The two do not overlap and neither
+weakens the other: an artifact may declare itself cuttable at any world size
+while `max_world_size` stays 1, because "these bytes admit a cut" and "a
+served receipt covers this world" are the attempted/attested distinction this
+whole section is built on.
+
 **What the contract publishes about that replication: nothing, and the
 silence is the decision (#330).** `runtime_contract.json`'s `tensor_parallel`
 block publishes `max_world_size` -- an attestation, the largest world a
@@ -927,8 +992,11 @@ is therefore a served TP>1 measurement: a two-rank serve with a per-rank
 census and a KL against the single-rank arm, which is what raises
 `max_world_size` in the first place and what `contract.py`'s outright refusal
 of `max_world_size != 1` is waiting for. (The adjacent question of what the
-ARTIFACT's own `tessera_config.json` says about TP is #328, and is not
-settled here.)
+ARTIFACT's own `tessera_config.json` says about TP is #328, answered above in
+this section: it declares `schema_minor` and a derived `tp_agnostic`, and the
+loader gates on them. That declaration is about the bytes and is
+derived from them, so it is exactly the kind of statement this paragraph
+declines to make about vLLM's replication rule, which is neither.)
 
 ## 4. Allocation and the uniform gate
 

@@ -137,7 +137,7 @@ expert reaches this module through the same two functions.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Tuple
+from typing import Mapping, Optional, Tuple
 
 from .scheme import TESSERA_BF16, TESSERA_FP8, TESSERA_NVFP4
 
@@ -152,6 +152,8 @@ __all__ = [
     "axis_status",
     "have_unit_slicer",
     "require_a_cutter",
+    "artifact_tp_agnostic",
+    "require_a_cuttable_artifact",
     "require_axis_supported",
     "RoleShard",
     "ShardPlan",
@@ -161,6 +163,7 @@ __all__ = [
     "layer_replicas",
     "can_shard",
     "shard_granularity",
+    "unsliceable_reason",
 ]
 
 #: The output axis: ColumnParallel and its merged/QKV forms give a rank its own
@@ -270,6 +273,93 @@ def require_a_cutter(prefix: str, world: int) -> None:
         "tessera.layout.slice_unit, which is not in this build. The checkpoint is not the problem "
         "and does not need re-exporting -- one artifact serves any world size, because the cut "
         "happens at load. Serve with -tp 1, or install a Tessera carrying the unit slicer.")
+
+
+def artifact_tp_agnostic(config: "Optional[dict]") -> Optional[bool]:
+    """Does this artifact's own config say its bytes can be cut at load?
+
+    ``True``/``False`` is the artifact's statement; ``None`` means it makes
+    none, which is not the same answer and is never read as ``True``.
+
+    TWO SPELLINGS, ONE RULE.  ``tp_agnostic`` is the declaration the exporter
+    stamps (``export._write_config``) and is taken verbatim when present --
+    the artifact's own word about its own bytes.  ``schema_minor`` is the fact
+    it was derived from, and a config that records the minor without the
+    declaration is answered from it through ``layout.tp_agnostic_at_minor``,
+    the one home of the rule -- so an artifact written by a producer that
+    stamps only the wire minor still resolves correctly instead of being
+    refused for a spelling.  A config carrying neither gets ``None``: it
+    predates the declaration, and an artifact that does not declare a property
+    does not get to claim it (tessera#328).
+
+    ``tp_size`` is deliberately NOT read.  Parts on disk carry ``tp_size: 1``
+    from an exporter whose comment asserted the artifact was TP-*specific*;
+    that constant said nothing about whether the bytes could be cut, and
+    reading it as though it did would turn a stale stamp into a permission.
+    """
+    if not isinstance(config, Mapping):
+        return None
+    declared = config.get("tp_agnostic")
+    if isinstance(declared, bool):
+        return declared
+    minor = config.get("schema_minor")
+    if isinstance(minor, int) and not isinstance(minor, bool):
+        try:
+            from tessera.layout import tp_agnostic_at_minor
+        except Exception:  # noqa: BLE001 -- an older Tessera, or a partial install
+            return None
+        return bool(tp_agnostic_at_minor(minor))
+    return None
+
+
+def require_a_cuttable_artifact(prefix: str, world: int, config: "Optional[dict]") -> None:
+    """Refuse a TP group against BYTES that cannot be cut.  ``world<=1`` passes.
+
+    The twin of :func:`require_a_cutter`, and the other half of the same
+    question: that one asks whether this BUILD carries ``layout.slice_unit``,
+    this one asks whether the ARTIFACT admits a cut at all.  Both are
+    whole-file questions asked once at method construction; the per-axis one
+    (``require_axis_supported``) waits for ``create_weights``, where the axis
+    exists.
+
+    FAIL CLOSED, AND SAY SO BY NAME.  A checkpoint written before the
+    declaration existed carries neither ``tp_agnostic`` nor ``schema_minor``
+    (it carries ``tp_size: 1``, which is not an answer -- see
+    :func:`artifact_tp_agnostic`), so it is refused above one rank rather than
+    served on the strength of a field nothing ever read.  That is the "a
+    loader cannot quietly use it at the wrong degree" the old exporter comment
+    promised and never delivered (tessera#328); the remedy is a re-export with
+    a current exporter, which stamps the declaration, and the bytes themselves
+    do not change.
+
+    A world size above one remains ATTEMPTED and not ATTESTED whatever this
+    gate says: ``runtime_contract.json`` publishes ``max_world_size: 1`` for
+    every family until a multi-rank serve has been run.
+    """
+    if int(world) <= 1:
+        return
+    agnostic = artifact_tp_agnostic(config)
+    if agnostic is True:
+        return
+    if agnostic is False:
+        raise ValueError(
+            f"tessera target {prefix!r}: this artifact declares tp_agnostic=false, so its own "
+            f"bytes say no rank can cut a shard out of them, and this is "
+            f"tensor_parallel_size={int(world)}. A cut needs the shard record and the "
+            "INITIAL_STATE plane the container gained when slicing became expressible "
+            "(tessera.layout.SLICEABLE_SCHEMA_MINOR); wire written below that minor cannot "
+            "carry a window of a unit at all. Serve with tensor_parallel_size=1, or re-export "
+            "the checkpoint with a current exporter -- the TP degree is not an encoding choice "
+            "and never was.")
+    raise ValueError(
+        f"tessera target {prefix!r}: this checkpoint's quantization_config declares neither "
+        f"'tp_agnostic' nor 'schema_minor', so it does not say whether its bytes can be cut, "
+        f"and this is tensor_parallel_size={int(world)}. It was written before the exporter "
+        "stamped that declaration (such a config carries 'tp_size: 1', which is a constant no "
+        "loader ever read and not a statement about slicing), and an artifact that does not "
+        "declare a property does not get to claim it. Serve with tensor_parallel_size=1, or "
+        "re-export with a current exporter; the wire does not change, only what the config "
+        "says about it.")
 
 
 def require_axis_supported(family: str, plan: "ShardPlan") -> None:
@@ -510,6 +600,65 @@ def can_shard(unit, shards: int, axis: str) -> Optional[bool]:
     except Exception:
         return None
     return bool(_can_shard(unit, int(shards), axis))
+
+
+def unsliceable_reason(unit) -> Optional[str]:
+    """``layout.unsliceable_reason``, or None when the cutter is absent.
+
+    WHY the wire refuses this unit outright, in the words of the module that
+    decided it.  ``can_shard`` answers a boolean for two populations that need
+    two different refusals -- a unit no cut of which is expressible (rotation,
+    a straddling scale block) and a unit whose granularity merely does not
+    divide the split -- and this is how the seam tells them apart without
+    re-deriving either.  ``None`` means "no whole-unit obstruction, or this
+    build has no cutter"; both are only ever read after ``can_shard`` has
+    already said no, and the no-cutter case is refused above the callers.
+    """
+    try:
+        from tessera.layout import unsliceable_reason as _reason
+    except Exception:
+        return None
+    return _reason(unit)
+
+
+def _cannot_cut(unit, plan: "ShardPlan", role: "RoleShard", extent: int) -> str:
+    """The refusal for a role ``can_shard`` said no to.  ONE HOME for the text.
+
+    TWO REFUSALS, BECAUSE THERE ARE TWO REASONS, and only one of them has a
+    remedy.  A granularity that does not divide the split is a property of the
+    CUT: another ``tensor_parallel_size`` fixes it, and naming the granularity
+    is naming the number the operator acts on (tessera#235).  Rotation and a
+    straddling scale block are properties of the UNIT: they refuse every cut,
+    the identity slice included, so no divisor exists and offering one is an
+    instruction that cannot be followed.
+
+    Until tessera#304 made ``can_shard`` correctly answer ``False`` for a
+    rotated unit, this branch never saw one -- the seam fell through to
+    ``slice_unit``, which raised the true reason.  Afterwards it fired for the
+    rotated population too and told the operator to "serve with a
+    tensor_parallel_size that divides it" a unit whose granularity was 1 and
+    whose extent 2 divided perfectly (tessera#329).  The reason is now asked of
+    the code that owns the question rather than re-derived at the raise site,
+    which is the same move #304 made for the predicate.
+    """
+    reason = unsliceable_reason(unit)
+    if reason is not None:
+        return (
+            f"{plan.prefix}: role {role.name!r} cannot be cut on the {plan.axis} axis at all "
+            f"({extent} {plan.axis}s) -- {reason}. That is a property of this unit and not of "
+            f"the split, so it refuses every cut including the identity one, and NO "
+            f"tensor_parallel_size above 1 can serve it: there is no divisor to offer. Serve "
+            f"this model with tensor_parallel_size=1, or export this Linear without the "
+            f"structure named above.")
+    granularity = shard_granularity(unit)
+    row_gran, col_gran = granularity if granularity is not None else (None, None)
+    gran = row_gran if plan.axis == AXIS_ROWS else col_gran
+    return (
+        f"{plan.prefix}: role {role.name!r} cannot be cut {role.shards} ways on the "
+        f"{plan.axis} axis ({extent} {plan.axis}s, granularity {gran}).  A row cut lands on a "
+        "trellis super-symbol and a column cut of a unit carrying a RELEASE plane or a mixed "
+        "rate schedule is confined to whole 256-column superblocks; serve with a "
+        "tensor_parallel_size that divides it, or with 1.")
 
 
 def _require_whole_output_boundaries(shape: str, roles, out_partitions) -> None:
@@ -811,9 +960,12 @@ def _shard_unit_for_rank(unit, plan: ShardPlan, role: RoleShard):
     ``can_shard`` is asked with ``role.shards`` and not with ``plan.tp_size``:
     it answers "into how many EQUAL shards", and a replicated role is cut into
     fewer of them than there are ranks.  It is asked rather than inferred, and
-    BEFORE the cut so the refusal can name the granularity: ``slice_unit``
-    would refuse too, but with an offset the operator cannot map back to a
-    ``tensor_parallel_size``.
+    BEFORE the cut so a granularity-bound refusal can name a
+    ``tensor_parallel_size``: ``slice_unit`` would refuse too, but with an
+    offset the operator cannot map back to one.  Where the unit refuses EVERY
+    cut instead, the cutter's sentence is the useful one and ``_cannot_cut``
+    raises that -- asking ``unsliceable_reason`` rather than inventing a
+    granularity story the unit's problem has nothing to do with (tessera#329).
 
     Only this rank's shard is cut, so the cost is O(1) in the TP degree.
     """
@@ -840,15 +992,7 @@ def _shard_unit_for_rank(unit, plan: ShardPlan, role: RoleShard):
             f"{plan.prefix}: role {role.name!r} is {extent} {plan.axis}s on the wire but the plan "
             f"was made for {role.extent}; the parsed container and the declared scheme disagree")
     if can_shard(unit, role.shards, plan.axis) is not True:
-        granularity = shard_granularity(unit)
-        row_gran, col_gran = granularity if granularity is not None else (None, None)
-        gran = row_gran if plan.axis == AXIS_ROWS else col_gran
-        raise ValueError(
-            f"this unit cannot be cut {role.shards} ways on the {plan.axis} axis ({extent} "
-            f"{plan.axis}s, granularity {gran}).  A row cut lands on a trellis super-symbol and a "
-            "column cut of a unit carrying a RELEASE plane or a mixed rate schedule is confined "
-            "to whole 256-column superblocks; serve with a tensor_parallel_size that divides it, "
-            "or with 1.")
+        raise ValueError(_cannot_cut(unit, plan, role, extent))
     if plan.axis == AXIS_ROWS:
         return slice_unit(unit, rows=(role.lo, role.hi), cols=(0, columns))
     return slice_unit(unit, rows=(0, rows), cols=(role.lo, role.hi))
@@ -872,8 +1016,11 @@ def check_shard_granularity(plan: ShardPlan, role: RoleShard, unit) -> None:
     ``layout.can_shard`` is asked FIRST, with the role's shard count, and is the
     binding answer: granularity is necessary, not sufficient.  A column cut of a
     unit carrying a RELEASE plane is confined to whole 256-column superblocks,
-    and only ``can_shard`` knows that.  The granularity is then used to say the
-    useful thing in the refusal -- a number the operator can act on.
+    and only ``can_shard`` knows that.  Its refusal is ``_cannot_cut``'s, the
+    same one the seam raises, so the two cannot say different things about one
+    unit -- and so this one cannot offer a divisor for a unit no divisor cuts
+    either (tessera#329).  The granularity is still what the OFFSET check below
+    reports, which is the number an operator can act on there.
     """
     if plan.axis is None or role.is_whole:
         return
@@ -883,12 +1030,7 @@ def check_shard_granularity(plan: ShardPlan, role: RoleShard, unit) -> None:
     row_gran, col_gran = granularity
     gran = row_gran if plan.axis == AXIS_ROWS else col_gran
     if can_shard(unit, role.shards, plan.axis) is False:
-        raise ValueError(
-            f"{plan.prefix}: role {role.name!r} cannot be cut {role.shards} ways on the "
-            f"{plan.axis} axis ({role.extent} {plan.axis}s, granularity {gran}).  A column cut of "
-            "a unit with a RELEASE plane or a mixed rate schedule is confined to whole "
-            "256-column superblocks; serve with a tensor_parallel_size that divides it, or "
-            "with 1.")
+        raise ValueError(_cannot_cut(unit, plan, role, role.extent))
     width = role.hi - role.lo
     if width % gran or role.lo % gran:
         raise ValueError(
