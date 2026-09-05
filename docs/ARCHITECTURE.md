@@ -1128,6 +1128,20 @@ count must equal the contract's `scored_positions` and the dump's position
 count. It is never inferred from the dump shape: a malformed pair cannot pick
 the interpretation that lets itself through.
 
+The same contract owns the decode-to-prefill row mapping.
+`experiments/decode_regime_subset.py` publishes the prefill regime restricted
+to the decode regime's positions, which is the only reading in which the two
+regimes differ by the executed forward alone; a chunk's prefill row stride is
+therefore read as the contract's `scored_positions / n_chunks` -- `seqlen`
+with a prepended BOS, `seqlen - 1` without -- and never spelled `seqlen - 1`
+(tessera#249). It was spelled: on a BOS corpus every chunk after the first
+folded its positions into the preceding chunk, in bounds, under the
+matched-position claim. `--seqlen` is now a cross-check on the contract rather
+than the mapping's source, and the three payloads must agree on contract
+digest, tokenizer bytes and chunk geometry -- with both prefill arrays sized
+as the contract says and the prefill student the same artifact as the decode
+student -- before any of them is indexed.
+
 `TESSERA_ROUTE_TRACE=<absolute path>` (off by default, eager only -- under
 compile it declines and counts nothing, which is enforced since #113 rather
 than described) makes the
