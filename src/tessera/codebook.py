@@ -57,7 +57,7 @@ __all__ = ["learn_tree_codebook", "TREE_PARTITION"]
 TREE_PARTITION = "tree"
 
 
-def _two_means(points: torch.Tensor, iterations: int = 12) -> torch.Tensor:
+def _two_means(points: torch.Tensor, iterations: int = 1000) -> torch.Tensor:
     """Split one cell in two.  Seeded on the principal axis, so no RNG.
 
     Distances are direct squared differences -- subtract first, then square.
@@ -68,18 +68,37 @@ def _two_means(points: torch.Tensor, iterations: int = 12) -> torch.Tensor:
     zero distance for half its points and erased that half (tessera#227).
     The direct form's error scales with the *separation*, not the magnitude,
     which is what an assignment rule needs.
+
+    The descent ends at its own fixed point: assignment is a deterministic
+    function of the centroids and the update a deterministic function of the
+    assignment, so an assignment that repeats has reproduced the centroids
+    and would reproduce itself forever.  The equality test is exact -- ties
+    resolve to side 0 every pass, so no tolerance exists to guess.
+    ``iterations`` is only the safety backstop bounding the pass count
+    (``_lloyd_levels`` uses the same figure); a budget that binds is an
+    unfinished descent and is refused by name, never returned as a fit
+    (tessera#228).
     """
     mean = points.mean(0)
     centred = points - mean
     axis = torch.linalg.eigh((centred.T @ centred).double())[1][:, -1].float()
     spread = (centred @ axis).std().clamp(min=1e-12)
     centroids = torch.stack([mean - axis * spread, mean + axis * spread])
+    previous = None
     for _ in range(iterations):
         assign = (points.unsqueeze(1) - centroids.unsqueeze(0)).square().sum(2).argmin(1)
+        if previous is not None and torch.equal(assign, previous):
+            return centroids
         for side in (0, 1):
             if int((assign == side).sum()):
                 centroids[side] = points[assign == side].mean(0)
-    return centroids
+        previous = assign
+    raise GrammarError(
+        f"_two_means did not reach its fixed point within the "
+        f"{iterations}-pass backstop over {len(points)} points: the "
+        "assignment was still moving, so the returned centroids would be an "
+        "unfinished descent presented as a fit"
+    )
 
 
 def _hoist(

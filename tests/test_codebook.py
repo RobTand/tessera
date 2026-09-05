@@ -8,9 +8,11 @@ at its own fixed point rather than at a pass count (tessera#228).
 
 from __future__ import annotations
 
+import pytest
 import torch
 
 from tessera.codebook import _two_means, learn_tree_codebook
+from tessera.errors import GrammarError
 
 #: The tessera#227 witness: 64 distinct finite values, then the same cloud
 #: translated far from the origin.  Every shifted input is exactly
@@ -71,3 +73,27 @@ def test_fitting_is_deterministic():
     assert (learn_tree_codebook(samples, depth=3).values
             == learn_tree_codebook(samples, depth=3).values)
 
+def test_two_means_ends_at_its_own_fixed_point():
+    """tessera#228: a 12-pass cap stopped a descent that was still moving
+    (the witness's centroids change on the thirteenth pass).  The split must
+    return only at its fixed point: one more Lloyd pass -- the same
+    assignment rule, the same update -- reproduces the returned centroids
+    exactly.  Exact equality, because a fixed point of a deterministic map
+    needs no tolerance."""
+    points = torch.randn(256, 2, generator=torch.Generator().manual_seed(19))
+    centroids = _two_means(points)
+    assign = (points.unsqueeze(1) - centroids.unsqueeze(0)).square().sum(2).argmin(1)
+    again = centroids.clone()
+    for side in (0, 1):
+        if int((assign == side).sum()):
+            again[side] = points[assign == side].mean(0)
+    assert torch.equal(again, centroids)
+
+
+def test_two_means_backstop_refuses_rather_than_truncates():
+    """The pass budget is a backstop, not an answer: a budget that binds is
+    an unfinished descent, and it is refused by name rather than returned as
+    if it had converged."""
+    points = torch.randn(256, 2, generator=torch.Generator().manual_seed(19))
+    with pytest.raises(GrammarError, match="fixed point"):
+        _two_means(points, iterations=3)
