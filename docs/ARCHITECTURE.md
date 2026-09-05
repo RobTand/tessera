@@ -875,6 +875,33 @@ branches its `apply` on the same `layer.tessera_gemv`, so
 unaffected by whether the `.so` mapped -- the exact claim a consumer keys a
 serve fingerprint on.
 
+**Item tables are shared between replicas, and a replica is a repack layout**
+(tessera#297). A `WindowGemvUnit` plans its item tables at preparation --
+`plan_items` reads the run table back to Python, which the compiled forward
+cannot -- and `with_plan(share_from=)` lets a fleet of identical units plan
+once by handing a replica the donor's `items_by_mt`. An item is `(tile, rate,
+col0, ncols, word0, ...)`: word offsets into *this unit's* repacked words,
+derived from the repack's run table `(rate, col0, ncols, word0)`, its tile
+count and its device -- none of which `Plan` (the launch shape) says
+anything about. The licence to borrow used to be `share_from.plan == plan`
+alone, so a same-shape donor at another rate (rate 4 where the recipient is
+rate 2: `word0` strides 64 words per column against 32) installed
+descriptors addressing words the recipient does not own, and the kernel read
+past its body. `Repacked.layout` now names exactly what `plan_items` reads --
+`tiles`, `columns`, `runs`, `device` -- and `with_plan` reuses a donor's
+tables only under an equal layout, refusing a mismatch by the component that
+differs (`GrammarError`, before any launch). The codes, the column
+permutation (items address permuted columns; `perm` is applied to `x`) and
+the row count within the last tile are deliberately not in the layout: they
+change no descriptor. A donor under a *different* plan is, as before, simply
+not shared from -- the unit plans itself, correctly, and the caller saved
+nothing -- so that arm stays a convenience and not a refusal.
+`experiments/bench_kernel_window_gemv.py`'s cold-unit replicas (one repack,
+cloned words) have equal layouts and keep sharing.
+`tests/test_kernel_window_gemv.py` holds the proof's rate-2/rate-4 pair on
+CPU and a device check that a shared replica answers within the bound of its
+independently planned twin over a nonconstant table.
+
 ### 4.4d The expert stack is a STRUCTURE, not a module
 
 A Tessera scheme carries `structure`, and it selects the vLLM method rather

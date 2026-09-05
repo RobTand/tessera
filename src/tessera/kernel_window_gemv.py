@@ -236,6 +236,30 @@ class Repacked:
     def nbytes(self) -> int:
         return self.words.numel() * 4
 
+    @property
+    def layout(self) -> "tuple[tuple[str, object], ...]":
+        """What an item table is a function of, and nothing else.
+
+        ``plan_items`` reads the run table (rate, first permuted column, column
+        count, first word -- every descriptor's word offsets come from here),
+        the tile count (one descriptor per tile per segment) and the words'
+        device (the table is allocated there); ``serveable_keys`` reads which
+        rates are present, which the runs state.  Two repacks with equal
+        layouts plan identical tables that address identical word ranges, so a
+        table planned for one is correct for the other -- that is the whole
+        licence ``WindowGemvUnit.with_plan(share_from=)`` has to reuse one.
+        The codes, the column permutation (items address permuted columns;
+        ``perm`` is applied to ``x``) and the row count within the last tile are
+        deliberately absent: they change no descriptor.  Named components, so
+        a mismatch can be refused by name.
+        """
+        return (
+            ("tiles", int(self.n_tiles)),
+            ("columns", int(self.cols)),
+            ("runs", tuple(tuple(int(v) for v in run) for run in self.runs.tolist())),
+            ("device", str(self.words.device)),
+        )
+
 
 def repack_window_body(body_bits: torch.Tensor, rates: "tuple[int, ...]") -> Repacked:
     """Wire BODY (``[rows, cols]`` codes of ``rates[c]`` bits) -> tile order.
@@ -434,12 +458,35 @@ class WindowGemvUnit:
         return self.items_by_mt[self.items_key(mt)]
 
     def with_plan(self, plan: Plan, *, share_from: "WindowGemvUnit | None" = None) -> "WindowGemvUnit":
-        """The same unit under another launch shape.  ``share_from``: a unit of
-        the same shape and plan whose item tables this one reuses (replicas)."""
+        """The same unit under another launch shape.
+
+        ``share_from``: a replica -- a unit of the same repack layout -- under
+        ``plan`` whose item tables this one reuses instead of planning its own.
+        An item table is word offsets into the unit's own repacked words, so
+        the licence to borrow one is ``Repacked.layout`` equality (the run
+        table, the tile count, the device: exactly what ``plan_items`` reads),
+        not the rows-by-columns shape and not the plan.  A same-shape donor at
+        another rate used to pass on plan equality alone and installed
+        descriptors past this unit's body (issue #297); it is refused here by
+        the component that differs, before any launch.  A donor under a
+        different plan is simply not shared from, as before: the unit then
+        plans itself, correctly, and the caller merely saved nothing.
+        """
         table = self.table
         if plan.table_dtype != table.dtype:
             table = self.table.float().to(plan.table_dtype)
-        shared = share_from.items_by_mt if share_from is not None and share_from.plan == plan else {}
+        shared: dict = {}
+        if share_from is not None and share_from.plan == plan:
+            for (name, theirs), (_n, ours) in zip(share_from.rep.layout, self.rep.layout):
+                if theirs != ours:
+                    raise GrammarError(
+                        "share_from: the donor's item tables describe a different repack -- "
+                        f"{name}: donor {theirs}, this unit {ours}. An item table is word "
+                        "offsets into the unit's own body, so tables are shared only between "
+                        "repacks of one layout (replicas: equal run table, tile count and "
+                        "device); plan this unit itself"
+                    )
+            shared = share_from.items_by_mt
         return dataclasses.replace(self, plan=plan, table=table.contiguous(), items_by_mt=shared)
 
 
