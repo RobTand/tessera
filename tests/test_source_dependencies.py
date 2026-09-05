@@ -15,6 +15,13 @@ the tree it was measuring.  The module already refused this for globs
 this is the same escape by another spelling, and one rule -- a literal that
 does not resolve *lexically* under root is an unknown dependency, decided
 before any ``resolve()``/``stat()`` -- now owns all three call sites.
+
+tessera#338 is the other half of that rule: refusing to *resolve* a path is
+not the same claim as the file it names being independent of this
+repository.  An outside spelling can be a local alias for a tracked file --
+environment state the repository never records -- so the refusal keeps a
+data dependency of its own, reported apart from the module wildcard that a
+plain reader must never become (#148).
 """
 
 from __future__ import annotations
@@ -30,7 +37,13 @@ from tessera._dev.source_dependencies import file_imports
 
 def _scan(source, root, *, consumer="consumer.py"):
     tree = ast.parse(source)
-    return file_imports(tree, root / consumer, root)
+    found, unknown, _ = file_imports(tree, root / consumer, root)
+    return found, unknown
+
+
+def _scan_full(source, root, *, consumer="consumer.py"):
+    """``(found, unknown, unplaced)`` -- the unplaced-read channel included."""
+    return file_imports(ast.parse(source), root / consumer, root)
 
 
 def _guard_resolve_to_root(monkeypatch, root):
@@ -154,3 +167,147 @@ importlib.util.spec_from_file_location("mod", TARGET)
 
     assert unknown
     assert found == set()
+
+
+_READ_SHAPES = [
+    pytest.param(
+        '''\
+from pathlib import Path
+TARGET = Path({outside!r})
+def load():
+    return TARGET.read_text()
+''',
+        id="bare-literal-read",
+    ),
+    pytest.param(
+        '''\
+from pathlib import Path
+TARGET = Path({outside!r}).resolve()
+def load():
+    return TARGET.read_bytes()
+''',
+        id="explicit-resolve-read",
+    ),
+    pytest.param(
+        '''\
+from pathlib import Path
+BASE = Path({outside!r})
+def load():
+    text = ""
+    for candidate in BASE.glob("*.json"):
+        text += candidate.read_text()
+    return text
+''',
+        id="glob-base-read",
+    ),
+]
+
+
+@pytest.mark.parametrize("template", _READ_SHAPES)
+def test_outside_spelled_read_keeps_its_own_uncertainty(
+    tmp_path, monkeypatch, template,
+):
+    """tessera#338 -- the guard refuses to resolve, not to depend.
+
+    ``found=set(), unknown=False`` was the whole receipt for a plain reader
+    whose target the guard refused, so the caller created neither a data edge
+    nor an uncertainty edge and the selector answered ``none`` for a change
+    that moved the reader's bytes.  The refusal is now its own third value:
+    a data read with no placeable target.
+    """
+    root = (tmp_path / "repo").resolve()
+    root.mkdir()
+    outside = tmp_path / "alias" / "data" / "runtime-settings.json"
+    _guard_resolve_to_root(monkeypatch, root)
+
+    found, unknown, unplaced = _scan_full(
+        template.format(outside=str(outside)), root)
+
+    assert found == set(), "an outside spelling is still never an edge"
+    assert not unknown, "a plain reader executes nothing and imports nothing (#148)"
+    assert unplaced, (
+        "an outside-spelled read is a dependency this resolver declined to "
+        "place, not an absence of one"
+    )
+
+
+@pytest.mark.parametrize("template", _READ_SHAPES)
+def test_outside_spelled_read_that_can_execute_stays_a_module_wildcard(
+    tmp_path, monkeypatch, template,
+):
+    """A reader that runs what it read keeps the stronger claim.
+
+    The split is between kinds of consumer, not kinds of path: a module that
+    can ``exec`` the bytes may import anything, so it stays a ``WILDCARD``
+    and never degrades to the weaker data-only uncertainty.
+    """
+    root = (tmp_path / "repo").resolve()
+    root.mkdir()
+    outside = tmp_path / "alias" / "data" / "runtime-settings.json"
+    source = template.format(outside=str(outside)) + "exec(load())\n"
+    _guard_resolve_to_root(monkeypatch, root)
+
+    found, unknown, unplaced = _scan_full(source, root)
+
+    assert found == set()
+    assert unknown, "a source-executing reader may import anything it read"
+    assert not unplaced, "the module wildcard already subsumes the data claim"
+
+
+def test_outside_spelled_loader_stays_a_module_wildcard(tmp_path, monkeypatch):
+    """A recognized loader is unchanged by #338: it always executes."""
+    root = (tmp_path / "repo").resolve()
+    root.mkdir()
+    outside = tmp_path / "alias" / "driver.py"
+    source = '''\
+import importlib.util
+from pathlib import Path
+TARGET = Path({outside!r})
+importlib.util.spec_from_file_location("mod", TARGET)
+'''.format(outside=str(outside))
+    _guard_resolve_to_root(monkeypatch, root)
+
+    found, unknown, unplaced = _scan_full(source, root)
+
+    assert found == set()
+    assert unknown
+    assert not unplaced
+
+
+def test_a_read_that_names_no_file_states_no_dependency(tmp_path):
+    """#148 is untouched: never-named is not named-and-refused.
+
+    A filename assembled from runtime state names nothing the diff can hold,
+    so it must produce no edge, no wildcard and no unplaced read.  Reading it
+    as uncertainty is what made every verdict ``full``.
+    """
+    root = (tmp_path / "repo").resolve()
+    root.mkdir()
+    source = '''\
+import os
+from pathlib import Path
+def load(name):
+    return (Path(os.environ["DIR"]) / name).read_text()
+'''
+    found, unknown, unplaced = _scan_full(source, root)
+
+    assert found == set()
+    assert not unknown
+    assert not unplaced
+
+
+def test_in_root_read_is_still_an_exact_edge(tmp_path):
+    """The control: nothing about ordinary narrowing moved."""
+    root = (tmp_path / "repo").resolve()
+    root.mkdir()
+    source = '''\
+from pathlib import Path
+TARGET = Path("data/runtime-settings.json")
+def load():
+    return TARGET.read_text()
+'''
+    found, unknown, unplaced = _scan_full(source, root)
+
+    assert found == {root / "data/runtime-settings.json"}
+    assert not unknown
+    assert not unplaced

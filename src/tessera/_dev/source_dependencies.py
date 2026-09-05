@@ -18,6 +18,18 @@ attribute name (``re.compile`` and ``model.eval()`` are not source
 execution).  What it misses is a source read this module never sees at all,
 ``subprocess.run([sys.executable, path])`` above all; that was never an edge
 here and this does not change it.
+
+**A target this resolver could not NAME and one it named and then declined to
+PLACE are different facts, and only the first is silence.**  A read whose
+filename is runtime state states no dependency, and reading that as "any
+module in the tree" is what held every verdict at ``full`` (#148).  But the
+boundary guard refuses a path this module named exactly -- an absolute
+spelling outside the tree, which a local alias directory can carry straight
+back into it -- and refusing to resolve it does not make the file it names
+stop changing.  That refusal is reported as its own kind of uncertainty, a
+data read with no placeable target, so a caller can keep the reader coupled
+to the diff without promoting a plain reader into an unknown Python importer
+(#338).
 """
 from __future__ import annotations
 
@@ -26,7 +38,15 @@ import os.path
 from collections import defaultdict
 from pathlib import Path
 
+#: The node an unknown *module* dependency edges to: this reader can run
+#: Python it cannot name, so it may import anything in the tree.
 WILDCARD = "*"
+#: The node an unplaceable *data* read edges to.  Not the same claim: the
+#: reader executes nothing, so it imports nothing, but it does read a file
+#: this resolver named and refused to place, and that file may be in the
+#: diff.  Kept apart from ``WILDCARD`` so preserving the dependency does not
+#: re-import #148's "every reader depends on every module".
+DATA_WILDCARD = "*data"
 _LOADERS = {"spec_from_file_location": (1, "location"),
             "SourceFileLoader": (1, "path"), "run_path": (0, "path_name")}
 _SYMBOLS = {"spec_from_file_location": "importlib.util.spec_from_file_location",
@@ -255,8 +275,28 @@ def _lexically_under_root(path, root):
     return normalized == root_normalized or root_normalized in normalized.parents
 
 
-def _values(node, scope, root, visiting=frozenset()):
-    """All statically established values; None means some alternative is unknown."""
+def _refuse(paths, root, refused):
+    """The subset of *paths* the boundary guard will not let us place.
+
+    Recorded rather than merely returned as ``None`` because the caller's two
+    unknowns are not the same fact: an expression this resolver cannot
+    evaluate names no file, while a path it evaluated exactly and then
+    refused to touch names one file it declines to identify (#338).  Only the
+    second keeps a data dependency alive.
+    """
+    outside = [path for path in paths if not _lexically_under_root(path, root)]
+    if outside and refused is not None:
+        refused.extend(outside)
+    return bool(outside)
+
+
+def _values(node, scope, root, visiting=frozenset(), refused=None):
+    """All statically established values; None means some alternative is unknown.
+
+    ``refused``, when given, collects the paths a boundary guard declined to
+    place, so a ``None`` return caused by the guard can be told from a
+    ``None`` return caused by an unnameable expression.
+    """
     if isinstance(node, tuple):
         return {node}
     if isinstance(node, ast.Constant) and isinstance(node.value, (str, int)):
@@ -273,13 +313,13 @@ def _values(node, scope, root, visiting=frozenset()):
             return None
         result = set()
         for expression in here.bindings[node.id]:
-            value = _values(expression, here, root, visiting | {key})
+            value = _values(expression, here, root, visiting | {key}, refused)
             if value is None:
                 return None
             result.update(value)
         return result
     if isinstance(node, ast.Attribute):
-        values = _values(node.value, scope, root, visiting)
+        values = _values(node.value, scope, root, visiting, refused)
         if values is None:
             return None
         result = set()
@@ -294,8 +334,8 @@ def _values(node, scope, root, visiting=frozenset()):
                 return None
         return result
     if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Attribute) and node.value.attr == "parents":
-        paths = _values(node.value.value, scope, root, visiting)
-        indices = _values(node.slice, scope, root, visiting)
+        paths = _values(node.value.value, scope, root, visiting, refused)
+        indices = _values(node.slice, scope, root, visiting, refused)
         if paths is not None and indices is not None:
             if not all(isinstance(path, Path) for path in paths) or not all(
                     isinstance(index, int) for index in indices):
@@ -305,8 +345,8 @@ def _values(node, scope, root, visiting=frozenset()):
             except IndexError:
                 return None
     if isinstance(node, ast.BinOp):
-        left = _values(node.left, scope, root, visiting)
-        right = _values(node.right, scope, root, visiting)
+        left = _values(node.left, scope, root, visiting, refused)
+        right = _values(node.right, scope, root, visiting, refused)
         if left is None or right is None:
             return None
         result = set()
@@ -321,18 +361,18 @@ def _values(node, scope, root, visiting=frozenset()):
         return result
     if isinstance(node, ast.Call):
         if isinstance(node.func, ast.Attribute) and node.func.attr in {"resolve", "glob", "rglob", "joinpath"}:
-            paths = _values(node.func.value, scope, root, visiting)
+            paths = _values(node.func.value, scope, root, visiting, refused)
             if paths is None or not all(isinstance(path, Path) for path in paths):
                 return None
             if node.func.attr == "resolve" and not node.args and not node.keywords:
                 # A literal ``.resolve()`` on a path outside root is the
                 # same escape a crawling glob would be: unknown, and never
                 # stat'ed to find out (rule 4; was :308).
-                if not all(_lexically_under_root(path, root) for path in paths):
+                if _refuse(paths, root, refused):
                     return None
                 return {(path if path.is_absolute() else root / path).resolve() for path in paths}
             if len(node.args) == 1 and not node.keywords:
-                args = _values(node.args[0], scope, root, visiting)
+                args = _values(node.args[0], scope, root, visiting, refused)
                 if args is None or not all(isinstance(arg, str) for arg in args):
                     return None
                 if node.func.attr == "joinpath":
@@ -343,7 +383,7 @@ def _values(node, scope, root, visiting=frozenset()):
                 # Nor may the base itself be resolved from outside root --
                 # an absolute literal base is the identical escape (rule 4;
                 # was :318), refused lexically before any stat.
-                if not all(_lexically_under_root(path, root) for path in paths):
+                if _refuse(paths, root, refused):
                     return None
                 bases = {path.resolve() for path in paths}
                 if (node.func.attr == "glob"
@@ -353,10 +393,10 @@ def _values(node, scope, root, visiting=frozenset()):
                     return {item for base in bases for arg in args
                             for item in base.glob(arg)}
             return None
-        functions = _values(node.func, scope, root, visiting)
+        functions = _values(node.func, scope, root, visiting, refused)
         if functions is None or len(node.args) != 1 or node.keywords:
             return None
-        args = _values(node.args[0], scope, root, visiting)
+        args = _values(node.args[0], scope, root, visiting, refused)
         if args is None:
             return None
         result = set()
@@ -374,7 +414,16 @@ def _values(node, scope, root, visiting=frozenset()):
 
 
 def file_imports(tree, path, root):
-    """Return repository-relative .py dependencies and an unknown-loader flag."""
+    """Return in-tree dependencies, an unknown-loader flag, and an unplaced-read flag.
+
+    The third value is the one #338 exists for.  ``unknown`` says this module
+    may import Python it cannot name; ``unplaced`` says it reads a file it
+    named exactly and this resolver refused to place -- an outside spelling
+    that an alias directory can carry back into the tree.  A caller that
+    collapsed the two either lost the dependency (a plain reader is not an
+    unknown importer, so it recorded nothing at all) or lost #148 (an
+    unnameable read is not "every module in the tree").
+    """
     scanner = _Scanner(path)
     scanner.visit(tree)
     aliases = {name: {name} for name in _KINDS}
@@ -411,7 +460,24 @@ def file_imports(tree, path, root):
         """An unnameable target is an unknown *module* only if it can run."""
         return executes or not reading
 
-    found, unknown = set(), False
+    found, unknown, unplaced = set(), False, False
+
+    def refuse(reading):
+        """Record a target this resolver named and then declined to place.
+
+        A loader, or any module that can execute source, still edges to the
+        whole tree: it may run what it read.  A plain reader does not -- that
+        reading is #148 -- but the file it named can still be in the diff, so
+        the dependency is kept as its own uncertainty rather than dropped
+        (#338).  ``wildcard`` decides which of the two this is, exactly as it
+        does for a target that was never nameable.
+        """
+        nonlocal unknown, unplaced
+        if wildcard(reading):
+            unknown = True
+        else:
+            unplaced = True
+
     for call, scope in scanner.calls:
         loaders = kind(call.func)
         if not loaders:
@@ -421,8 +487,12 @@ def file_imports(tree, path, root):
             unknown = unknown or wildcard(reading)
             continue
         loader = next(iter(loaders))
+        # Refusals by the boundary guard anywhere inside this call's
+        # expressions, so the ``values is None`` below can tell "no target
+        # was nameable" from "a named target was not placeable".
+        refused = []
         try:
-            functions = _values(call.func, scope, root)
+            functions = _values(call.func, scope, root, refused=refused)
             if loader in _READ_METHODS:
                 # Reading source bytes is already a dependency, whether the
                 # consumer later ast.parse/execs them or asserts on the text.
@@ -435,7 +505,7 @@ def file_imports(tree, path, root):
                         ("symbol", "builtins.open"), ("symbol", "io.open")}:
                     expression = call.args[0] if call.args else next(
                         (arg.value for arg in call.keywords if arg.arg == "file"), None)
-                    values = _values(expression, scope, root)
+                    values = _values(expression, scope, root, refused=refused)
                 else:
                     values = None
             else:
@@ -444,11 +514,15 @@ def file_imports(tree, path, root):
                     (arg.value for arg in call.keywords if arg.arg == keyword), None)
                 if functions != {("symbol", _SYMBOLS[loader])}:
                     unknown = True
-                values = _values(expression, scope, root)
+                values = _values(expression, scope, root, refused=refused)
         except (OSError, ValueError, TypeError, RecursionError):
             values = None
         if values is None or not all(isinstance(value, (str, Path)) for value in values):
-            unknown = unknown or wildcard(reading)
+            # A guard refusal is a named file; anything else named none.
+            if refused:
+                refuse(reading)
+            else:
+                unknown = unknown or wildcard(reading)
             continue
         for value in values:
             try:
@@ -461,20 +535,21 @@ def file_imports(tree, path, root):
                 # the same escape the glob and resolve() guards above
                 # refuse: unknown rather than resolved, so a stalled mount
                 # under the literal's real location never blocks the
-                # selector (rule 4; was :426). This is the one case where
-                # "outside the tree" now reads unknown instead of the
-                # silent drop below, because we no longer pay a resolve()
-                # to tell "genuinely outside" from "a symlink away".
-                unknown = unknown or wildcard(reading)
+                # selector (rule 4; was :426). The refusal is not the same
+                # as independence -- an outside spelling can be a local
+                # alias for a tracked file, and the alias is environment
+                # state this repository never sees -- so the dependency
+                # survives it as an unplaced read (#338).
+                refuse(reading)
                 continue
             try:
                 target = (target if target.is_absolute() else root / target).resolve()
             except (OSError, ValueError):
-                unknown = unknown or wildcard(reading)
+                refuse(reading)
                 continue
             # Named and inside the tree: an exact edge, ``.py`` or not. Named
             # and outside it: nothing this repository's diff can move, so it
             # is neither an edge nor an unknown.
             if target.is_relative_to(root):
                 found.add(target)
-    return found, unknown
+    return found, unknown, unplaced

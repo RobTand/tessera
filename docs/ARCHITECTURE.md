@@ -174,7 +174,15 @@ that is its whole contract, and deciding it never stats outside the
 repository root either -- an absolute or `..`-escaping literal path is
 refused by lexical normalization alone, before any `resolve()` or `stat()`,
 so a stalled mount under an out-of-tree literal cannot block the selector
-(#325). Every gap in what the graph can prove resolves
+(#325). **Refusing to resolve a path is not a finding that the file it names
+is independent of this repository, and the two must not be spelled the same
+way.** An outside spelling can be a local alias directory pointing straight
+back into the checkout -- environment state nothing here records -- so the
+refusal keeps a dependency it cannot attribute to a file: the reading module
+is seeded for every non-inert change and its consumers are selected. Reading
+the refusal as independence produced `verdict='none'`, no tests and no
+diagnostic for a change that moved the reader's own bytes, which is the one
+outcome this contract forbids (#338). Every gap in what the graph can prove resolves
 towards running more tests -- an ambiguous spelling edges to every file it can
 name, a module whose dependencies cannot be established selects its consumers,
 and an unresolvable scope forces the whole suite. A narrowed list is a claim
@@ -239,7 +247,15 @@ an unknown module only for a module that can parse or execute Python source
 resolved symbol so `re.compile` and `model.eval()` are not it): bytes are a
 Python dependency once something runs them, and treating every unnameable read
 as "any module in the tree" is what held the verdict at `full` for every change
-(#148). A file that will not parse or read states no dependency, which is not
+(#148). A read the resolver *named* and then refused to place is a third state,
+not a case of either: it is no module edge -- the reader executes nothing, so
+it imports nothing and never forces the full run -- but it is not independence
+either, so the reader is seeded for every non-inert change and the receipt
+lists it under `unplaced_data_reads` (#338). What separates the two is whether
+a file was named: a filename assembled from runtime state names nothing the
+diff can hold, while an out-of-tree spelling names exactly one file and only
+the boundary guard stands between it and the tree.
+A file that will not parse or read states no dependency, which is not
 the same as having none: it is the same unknown from the other end, so it too
 may import anything, its consumers are selected, and an unreadable conftest
 forces the population it gates. Reading a failed parse as an empty dependency
