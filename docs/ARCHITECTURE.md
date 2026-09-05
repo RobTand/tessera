@@ -1707,6 +1707,25 @@ roster is wrong and would let a receipt exempt an arm by deleting its proof.
 lever reached nothing is an ineffective arm, which is a result and not a
 broken comparison.
 
+**The evidence that derives it is established before the obligations are.**
+`schedule` and the refit's coupled-landing diagnostics decide what an arm is,
+so they are evidence exactly as the proofs are, and a receipt that does not
+record them has not shown an arm to be exempt -- it has failed to say what the
+arm is. Reading them with a `.get()` and answering "not a trailing pair" made
+*deleting one field* a way past every matched-pair check, over an explicitly
+recorded `codes_identical: false` -- the very failure the validator exists to
+catch (tessera#299). Unknown is now refused by name and never exempts:
+`classify_trailing_pair` returns the reason a receipt could not be classified
+beside its answer, an arm whose `schedule` is absent, empty or unparseable and
+an arm whose `refit` records no per-call diagnostics are both refused as
+unclassified, and any matched-pair leg such an arm *did* record is still read,
+so a recorded failure cannot be cleared by removing the field that classifies
+the comparison. The control's schedule is the one exception in scope: it is
+the baseline every other arm in the unit is classified against, so losing it
+exempts all of them at once and refuses the whole document, exactly as a
+failed drift control does. A complete receipt is unaffected -- the committed
+coupled-landing screens still exempt `B-GS+CL` on the diagnostics they record.
+
 #### The fifth leg: a screen taken off the wire does not promote
 
 On the LUT plane a per-block scale lands on one of sixteen E4M3 entries, and

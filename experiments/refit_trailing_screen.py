@@ -32,6 +32,18 @@ blocks and is *expected* to move the codes the next trellis pass sees.  Naming
 (AGENTS.md rule 3), and would let a receipt exempt an arm by deleting its
 proof.
 
+**The evidence that derives it is established before the obligations are.**
+``schedule`` and the refit's coupled-landing diagnostics decide which arm owes
+what, so they are evidence exactly as the proofs are, and a receipt that does
+not record them has not shown an arm to be exempt -- it has failed to say what
+the arm is.  Reading them with a ``.get()`` and answering "not a trailing
+pair" made *deleting one field* a way past every matched-pair check, over an
+explicitly recorded ``codes_identical: false`` (tessera#299).  Unknown is
+refused by name: the candidate's, on the arm that cannot be classified; the
+control's, on the whole document, because the control's schedule is the
+baseline every other arm in the unit is classified against and losing it
+exempts all of them at once, exactly as a failed drift control does.
+
 ``plane_moved`` is recorded and deliberately **not** required: an arm whose
 lever reached nothing is an ineffective arm, which is a result, not a broken
 comparison.
@@ -68,6 +80,13 @@ MATCHED_PAIR_LEGS = ("codes_identical", "bytes_equal",
 
 MATCHED_PAIR_FIELD = "matched_pair"
 
+#: The two recordings that classify an arm -- its refit schedule, and the
+#: per-call diagnostics that say whether a coupled landing ran.  Neither is a
+#: proof the arm owes; both are the evidence that decides which proofs it owes,
+#: and an arm missing either is UNCLASSIFIED rather than exempt (tessera#299).
+SCHEDULE_FIELD = "schedule"
+REFIT_FIELD = "refit"
+
 
 def wire_arms(unit_record: dict) -> "list[str]":
     """The arms of one unit that were scored at the wire landing."""
@@ -87,42 +106,77 @@ def control_arm(unit_record: dict, *, where: str, unit: str) -> str:
     return hits[0]
 
 
-def _schedule_objectives(record: dict) -> "list[int] | None":
-    """The metric dimension of each refit call, in order, or None if unrecorded.
+def schedule_objectives(record: dict) -> "list[int] | str":
+    """The metric dimension of each refit call, in order, or why it is unknown.
 
     ``schedule`` is ``[(metric_ndim, gauss_seidel), ...]``.  Only the objective
     is read here: the sweep flag is handed to the inner 1-D passes as well,
     where it is provably the parallel step, so the flag differs between two
     arms that ran identical inner refits.
+
+    Returns the objectives, or a **string** naming what the receipt does not
+    record.  Never ``None``-as-"nothing to check": an unreadable schedule used
+    to answer "not a trailing pair", which exempted the arm from every
+    matched-pair proof it had recorded -- including a FAILED one (tessera#299).
     """
-    schedule = record.get("schedule")
+    if SCHEDULE_FIELD not in record:
+        return (f"{SCHEDULE_FIELD} is absent, so which comparison this arm is "
+                "cannot be established")
+    schedule = record[SCHEDULE_FIELD]
     if not isinstance(schedule, list) or not schedule:
-        return None
+        return (f"{SCHEDULE_FIELD}={schedule!r} records no refit call, so "
+                "which comparison this arm is cannot be established")
     try:
         return [int(step[0]) for step in schedule]
-    except (TypeError, ValueError, IndexError):
-        return None
+    except (TypeError, ValueError, IndexError, KeyError):
+        return (f"{SCHEDULE_FIELD}={schedule!r} does not read as "
+                "[(metric_ndim, gauss_seidel), ...], so which comparison this "
+                "arm is cannot be established")
 
 
-def _ran_coupled_landing(record: dict) -> bool:
-    """True when any refit call re-assigned blocks under #50's coupled landing.
+def ran_coupled_landing(record: dict) -> "bool | str":
+    """Did any refit call re-assign blocks under #50's coupled landing?
 
     A coupled landing is expected to move the codes the NEXT trellis pass sees,
     so a coupled arm is not a codes-identical trailing pair and owes no
     matched-pair proof.  Read off the diagnostics the refit itself wrote, not
-    off the arm's name.
+    off the arm's name -- and when there are none, the answer is the reason
+    string and not ``False``: an arm that recorded no diagnostics has not shown
+    that no coupled landing ran (tessera#299).
     """
-    return any(isinstance(step, dict) and "coupled" in step
-               for step in record.get("refit", []) or [])
+    steps = record.get(REFIT_FIELD)
+    if not isinstance(steps, list) or not steps:
+        return (f"{REFIT_FIELD}={steps!r} records no per-call diagnostics, so "
+                "whether a coupled landing re-assigned blocks is unknown")
+    if not all(isinstance(step, dict) for step in steps):
+        return (f"{REFIT_FIELD}={steps!r} does not read as one diagnostics "
+                "record per refit call, so whether a coupled landing "
+                "re-assigned blocks is unknown")
+    return any("coupled" in step for step in steps)
 
 
-def is_trailing_pair(record: dict, control: dict) -> bool:
-    """Is this arm the control's schedule with only the trailing objective swapped?"""
-    mine, base = _schedule_objectives(record), _schedule_objectives(control)
-    if mine is None or base is None or len(mine) != len(base):
-        return False
-    return (mine[:-1] == base[:-1] and mine[-1] != base[-1]
-            and not _ran_coupled_landing(record))
+def classify_trailing_pair(record: dict, control: dict) -> "tuple[bool, str | None]":
+    """``(owes the matched-pair proof, why it could not be classified)``.
+
+    A trailing pair is an arm whose recorded schedule carries the control's
+    inner objectives with the trailing one swapped and which ran no coupled
+    landing.  When the evidence that decides that is missing the second element
+    says which recording is absent and the first is ``False`` meaning
+    **unknown** -- never *exempt*.  Callers refuse an unclassified arm; they do
+    not read it as owing nothing (tessera#299).
+    """
+    mine = schedule_objectives(record)
+    if isinstance(mine, str):
+        return False, mine
+    base = schedule_objectives(control)
+    if isinstance(base, str):
+        return False, f"the drift control's {base}"
+    if len(mine) != len(base) or mine[:-1] != base[:-1] or mine[-1] == base[-1]:
+        return False, None
+    coupled = ran_coupled_landing(record)
+    if isinstance(coupled, str):
+        return False, coupled
+    return not coupled, None
 
 
 def _leg_true(record: dict, leg: str) -> "str | None":
@@ -155,6 +209,17 @@ def assert_screen_receipt(document: dict, *, name: str, where: str) -> "dict[str
             raise PromotionRefusedError(
                 f"{where}: {name} unit {unit!r} carries no arms")
         control = control_arm(record, where=where, unit=unit)
+        # The control's schedule is the baseline every other arm is classified
+        # against, so a control that does not record one exempts the whole unit
+        # at a stroke.  That is a broken document, not one arm's failed claim
+        # (tessera#299).
+        baseline = schedule_objectives(record[control])
+        if isinstance(baseline, str):
+            raise PromotionRefusedError(
+                f"{where}: {name} unit {unit!r} drift control {control!r}: "
+                f"{baseline}.  Which arms owe the matched-pair proof is derived "
+                "from the control's own schedule, so a control that records "
+                "none exempts every arm in the unit from every pair check")
         arms = tuple(sorted(wire_arms(record)))
         if roster is None:
             roster = arms
@@ -189,15 +254,27 @@ def assert_screen_receipt(document: dict, *, name: str, where: str) -> "dict[str
                         "reconstruct the same weights, so an arm-to-arm gap "
                         "in this document is not attributable to the arm")
                 continue
-            if not is_trailing_pair(arm_record, record[control]):
+            # Establish what this arm IS before deciding what it owes.  An arm
+            # the receipt cannot classify is refused by name; it is not read as
+            # an arm with no obligations, and any matched-pair leg it did
+            # record is still read, so a recorded failure cannot be cleared by
+            # deleting the field that classifies the comparison (tessera#299).
+            owes_pair, unknown = classify_trailing_pair(arm_record, record[control])
+            if unknown is not None:
+                arm_failures.setdefault(arm, []).append(
+                    f"{name} unit {unit!r}: {unknown}; an arm that cannot be "
+                    "told from the control's trailing pair is not an arm that "
+                    "owes no matched-pair proof")
+            elif not owes_pair:
                 continue
             pair = arm_record.get(MATCHED_PAIR_FIELD)
             if not isinstance(pair, dict):
-                arm_failures.setdefault(arm, []).append(
-                    f"{name} unit {unit!r}: {MATCHED_PAIR_FIELD} is absent, and "
-                    "this arm's schedule says it is the control's with the "
-                    "trailing objective swapped -- the pair it claims is "
-                    "unproven")
+                if unknown is None:
+                    arm_failures.setdefault(arm, []).append(
+                        f"{name} unit {unit!r}: {MATCHED_PAIR_FIELD} is absent, and "
+                        "this arm's schedule says it is the control's with the "
+                        "trailing objective swapped -- the pair it claims is "
+                        "unproven")
                 continue
             for leg in MATCHED_PAIR_LEGS:
                 bad = _leg_true(pair, leg)
