@@ -268,6 +268,23 @@ Implicit `--grid`/`--q256` defaults keep their deliberate passthrough
 fallbacks, and an explicit `PASSTHROUGH`/`BF16` entry is still a passthrough
 (tessera#211).
 
+`--plan-json` names a mutable file and an export is long, so the exporter
+reads it exactly once, into one `PlanSnapshot`, and never consults the path
+again: planning, a partition's sealed `identity.options.plan`, the
+pre-publication validator and the manifest's `plan` block all read that one
+snapshot, and its sha256 over the exact bytes read is printed with the plan.
+A planner that regenerates or atomically replaces its output part-way through
+an export is therefore neither adopted nor able to fail the run half-written
+-- the plan that drove the encode is the plan that is published. Reading the
+path four times let a tensor written as an E4M3 q1024 wire be published as
+`PASSTHROUGH`, and the validator accepted that because it reread the
+replacement too (tessera#301). The snapshot is also shape-checked at argument
+time, before the first encode, to the same entry grammar the validator
+applies. An explicit `PASSTHROUGH`/`BF16` entry is now a NEGATIVE obligation
+that gate enforces in both callers: a quantized emitted role, or a `routed_moe`
+module, under such an entry is refused by tensor name. That closes the last
+direction in which a published plan and the roles beside it could disagree.
+
 ## 3. Bytes: priced == served
 
 Every artifact the exporter writes has exactly one legal length: the encoder
