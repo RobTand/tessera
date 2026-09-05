@@ -22,6 +22,16 @@ copied or a config written:
     identity of ``--source`` once and proves each entry against it.  A part
     with no stamp -- an older exporter, or the in-memory ``export_checkpoint``
     -- is refused by name, not merged on the strength of its filenames.
+  * **The shards are the bytes that export sealed.** The source stamp proves
+    what went in and cannot prove what is on disk now: a completed output
+    directory re-run into, and left part way, held new shards under the old
+    index, config and source seal, and every check in this file is name-,
+    header- or manifest-shaped, which a valid replacement blob for the same
+    unit at the same rung and shape satisfies (tessera#337).  So each part
+    also stamps ``output`` -- ``output_part_identity``, one sha256 per shard
+    it wrote, taken as it wrote them -- and the merge hashes the files and
+    holds them to it before opening one.  A part with no output stamp is
+    refused like an unsealed one.
   * **The parts were cut to one plan, and each fulfilled its slice.** Every
     part stamps the whole plan; they must agree.  For each part, the tensors
     it owns (the source inventory restricted to its shards) must appear in
@@ -65,8 +75,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 #: ``SHARED_WHEN_WRITTEN`` is the pair older exporters legitimately lack, and
 #: the activation block has its own class below.  Everything else the exporter
 #: writes is compared here except ``CONFIG_PER_PART_FIELDS``: ``accounting``
-#: and ``rungs_q256`` are summed or unioned, and ``plan`` and ``source`` are
-#: the assembly contract ``check_assembly`` proves rather than compares.
+#: and ``rungs_q256`` are summed or unioned, and ``plan``, ``source`` and
+#: ``output`` are the assembly contract ``check_assembly`` proves rather than
+#: compares -- two parts stamp different output digests by construction, so
+#: comparing them here would refuse every honest pair.
 
 
 def shared_fields():
@@ -333,6 +345,38 @@ def _unsealed(name, stamp, schema):
     return None
 
 
+def _unsealed_output(name, stamp, schema):
+    """Why a part's ``output`` block cannot bind its shards to it, or ``None``.
+
+    The counterpart to :func:`_unsealed`, and refusing for the same reason it
+    does: a part that carries no receipt for its OWN bytes is not merged on
+    the strength of the receipt for its input.  ``source`` proves which
+    checkpoint was read, and a directory can hold one run's shards under an
+    earlier run's source seal without contradicting a single field of it
+    (tessera#337) -- so an absent ``output`` block is a part whose bytes
+    nothing can vouch for, not a part that happens to be fine.  Parts written
+    by an exporter before this stamp existed are re-exported, the same answer
+    tessera#300 gave for ``source``.
+    """
+    if stamp is _MISSING:
+        return (f"{name} carries no 'output' block: nothing records the sha256 of "
+                f"the shards its export wrote, so the merge cannot tell them from "
+                f"shards a later failed run left in the same directory under the "
+                f"same config (tessera#337). It was written by an exporter before "
+                f"that stamp existed; re-export it with a current exporter "
+                f"(export_checkpoint_streaming seals each shard as it writes it).")
+    if stamp is None:
+        return (f"{name} carries 'output': null -- the in-memory export_checkpoint "
+                f"writes one file and is not a shard-split part. A part comes from "
+                f"export_checkpoint_streaming; re-export it from the source.")
+    if (not isinstance(stamp, dict) or stamp.get("schema") != schema
+            or not isinstance(stamp.get("files"), dict)):
+        return (f"{name} carries an 'output' block this merge does not read "
+                f"({stamp.get('schema') if isinstance(stamp, dict) else type(stamp).__name__!r}; "
+                f"this merge proves {schema!r}). Re-export it with a current exporter.")
+    return None
+
+
 def _difference(a, b, differ):
     """The keys two tensor mappings disagree on, for a refusal that names them;
     ``differ`` says what a changed value means (a rung, a shard)."""
@@ -367,7 +411,8 @@ def check_assembly(parts, source, blob_suffix, arity):
 
     from tessera.container import parse
     from tessera.errors import TesseraError
-    from tessera.serving_parts import (SOURCE_PART_SCHEMA, source_part_identity,
+    from tessera.serving_parts import (OUTPUT_PART_SCHEMA, SOURCE_PART_SCHEMA,
+                                       sha256_file, source_part_identity,
                                        tensor_names)
 
     # --- every part was cut from --source ------------------------------------
@@ -421,6 +466,48 @@ def check_assembly(parts, source, blob_suffix, arity):
             f"the parts cover {len(owner)} of the source's {len(expected)} "
             f"shards. missing {missing[:5]}{'...' if len(missing) > 5 else ''}"
             f"  unexpected {extra[:5]}")
+
+    # --- each part's shards are the bytes its own export sealed ---------------
+    # Everything above proves what went IN.  It cannot prove what is on disk
+    # now, and that gap is tessera#337: the streaming exporter used to write
+    # into a completed output directory shard by shard and replace the index
+    # and config only at the end, so a re-run that stopped part way left new
+    # shards under the previous run's seal.  The source stamp still verified --
+    # it describes the input -- and every check below is name-, header- or
+    # manifest-shaped, which valid replacement blobs for the same unit at the
+    # same rung and shape all satisfy.  Measured on the unfixed tree, a
+    # two-shard export whose retry failed on its second unit merged clean and
+    # decoded to [9.0, 1.03125] against the [1.03125, 1.03125] its published
+    # config priced.  So the bytes are held to the digests the export took as
+    # it wrote them, before one of them is opened.
+    for part, index, config in parts:
+        stamp = config.get("output", _MISSING)
+        why = _unsealed_output(part.name, stamp, OUTPUT_PART_SCHEMA)
+        if why:
+            raise SystemExit(why)
+        wrote, claimed = stamp["files"], set(index["weight_map"].values())
+        if set(wrote) != claimed:
+            raise SystemExit(
+                f"{part.name}'s output seal covers {sorted(set(wrote) - claimed)} its "
+                f"index does not name, or omits {sorted(claimed - set(wrote))} it does; "
+                f"a receipt that does not cover the shards being published proves "
+                f"nothing about them")
+        for shard, digest in sorted(wrote.items()):
+            payload = part / shard
+            if not payload.exists():
+                raise SystemExit(
+                    f"{part.name}/{shard} is sealed by the part's config but absent "
+                    f"from the part")
+            actual = sha256_file(payload)
+            if actual != digest:
+                raise SystemExit(
+                    f"{part.name}/{shard} is not the file that export wrote: its "
+                    f"sha256 is {actual}, the config that seals it recorded {digest}. "
+                    f"These bytes were replaced after the export completed -- a retry "
+                    f"that failed part way, or a hand-edit -- so the config, index and "
+                    f"source seal beside them describe an artifact this directory no "
+                    f"longer holds (tessera#337). Re-export the part into a fresh "
+                    f"destination; nothing here can say which bytes were meant.")
 
     # --- one plan, stamped whole by every part --------------------------------
     plans = [(part.name, config.get("plan")) for part, _, config in parts]
@@ -518,6 +605,8 @@ def main():
               f"{manifest['totals']['modules']} modules, {manifest['totals']['wire_bytes']} wire bytes")
         return
 
+    from tessera.serving_parts import output_part_stamp
+
     loaded = [load(p) for p in args.parts]
     out = Path(args.out)
     source = Path(args.source)
@@ -551,6 +640,15 @@ def main():
     # The merged checkpoint is bound to the whole source the parts were proved
     # against: the same block a part carries, with every shard's hash.
     base["source"] = identity
+    # And to its own bytes.  ``base`` started life as the FIRST part's config,
+    # so without this the merged checkpoint would publish that part's output
+    # seal as a receipt for the whole directory (tessera#337).  The union of
+    # the parts' seals is the right one and costs nothing: check_assembly has
+    # just held every shard to its digest, and the merge copies the files
+    # unchanged, so re-hashing the copies would only re-read the artifact.
+    base["output"] = output_part_stamp(
+        {shard: config["output"]["files"][shard]
+         for _, _, config in loaded for shard in config["output"]["files"]})
     base["merged_from"] = [p.name for p, _, _ in loaded]
 
     out.mkdir(parents=True, exist_ok=True)

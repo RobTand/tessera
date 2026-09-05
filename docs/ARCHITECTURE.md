@@ -192,10 +192,19 @@ free to change afterwards: what the receipt states is a true statement about
 the publication it read, and a later reader can check which one that was.
 `tools/impacted_tests.py` fails open to the full run and never under-selects:
 that is its whole contract, and deciding it never stats outside the
-repository root either -- an absolute or `..`-escaping literal path is
-refused by lexical normalization alone, before any `resolve()` or `stat()`,
-so a stalled mount under an out-of-tree literal cannot block the selector
-(#325). Every gap in what the graph can prove resolves
+repository root either -- a path is refused on its spelling before any
+`resolve()` or `stat()`, and every step of the resolution that a surviving
+path does get is bounded to the tree, not merely its destination, so a
+stalled mount under an out-of-tree literal cannot block the selector
+(#325, #339). **Refusing to resolve a path is not a finding that the file it names
+is independent of this repository, and the two must not be spelled the same
+way.** An outside spelling can be a local alias directory pointing straight
+back into the checkout -- environment state nothing here records -- so the
+refusal keeps a dependency it cannot attribute to a file: the reading module
+is seeded for every non-inert change and its consumers are selected. Reading
+the refusal as independence produced `verdict='none'`, no tests and no
+diagnostic for a change that moved the reader's own bytes, which is the one
+outcome this contract forbids (#338). Every gap in what the graph can prove resolves
 towards running more tests -- an ambiguous spelling edges to every file it can
 name, a module whose dependencies cannot be established selects its consumers,
 and an unresolvable scope forces the whole suite. A narrowed list is a claim
@@ -242,17 +251,28 @@ Explicit Python file loaders also contribute dependency edges: the non-executing
 lexical bindings, loader aliases and repository globs, using the file path rather
 than the loader's arbitrary module label. A resolved target inside the tree is
 an exact edge whatever its suffix -- a non-Python file is a node under its own
-repository-relative path. Whether a literal is even eligible for that resolve
-is decided lexically first: `os.path.normpath` on the literal (joined to root
-when it is relative) must place it under root before `resolve()`/`stat()` ever
-runs, so an absolute literal outside the tree, or one that escapes via `..`,
-is refused there and reads as the same unknown a crawling glob already
-refuses at its boundary -- never stat'ed to find out (#325). Only a target
-the lexical check already places under root is resolved; if that resolve
-then reveals a symlink carrying it back outside the tree, the target is
-still neither an edge nor an unknown, because that case cannot be told apart
-from a legitimate in-tree read without paying the same stat the lexical
-check exists to avoid. An unresolved recognized loader conservatively seeds its
+repository-relative path. **What is bounded is the resolution, not only its
+destination**, because a normalized final membership says nothing about the
+steps taken to reach it: `Path.resolve` walks a spelling as written, so
+`outside/../repo/driver.py` -- which normalizes into the tree -- still
+`lstat`s `outside` before `..` collapses, and an in-root symlink is followed
+to its outside target before any membership check runs. Both were the #325
+syscall, reachable again through a path a lexical check accepts (#339).
+So a single walk decides the whole question, in `_resolve_within_root`: a
+spelling whose leading components are not root's is refused before any
+filesystem call; after that each component is examined only once the prefix
+it extends is known to be inside root; `..` is applied to a prefix already
+free of symlinks, so it means what the filesystem means by it rather than
+what the string does; a symlink is *read* -- it is in the tree -- but a
+target that leaves the tree ends the walk; and a link chain longer than 40
+ends it too, where `Path.resolve` raised through the caller instead. A
+refusal is the same unknown a crawling glob already gets at its boundary,
+decided without a syscall out there. An absolute literal outside the tree,
+one that escapes via `..`, and an in-root link pointing out of it are one
+rule with one home, and the three entry points -- a bare loader argument, an
+explicit `.resolve()`, and a glob base -- all call it. A target that
+resolved outside the tree used to be dropped in silence; it is now that same
+refusal, which is the conservative direction. An unresolved recognized loader conservatively seeds its
 importing module and downstream tests for every non-inert change; an unresolved
 loader reaching a conftest forces the full population. An unresolved *read* is
 an unknown module only for a module that can parse or execute Python source
@@ -260,7 +280,15 @@ an unknown module only for a module that can parse or execute Python source
 resolved symbol so `re.compile` and `model.eval()` are not it): bytes are a
 Python dependency once something runs them, and treating every unnameable read
 as "any module in the tree" is what held the verdict at `full` for every change
-(#148). A file that will not parse or read states no dependency, which is not
+(#148). A read the resolver *named* and then refused to place is a third state,
+not a case of either: it is no module edge -- the reader executes nothing, so
+it imports nothing and never forces the full run -- but it is not independence
+either, so the reader is seeded for every non-inert change and the receipt
+lists it under `unplaced_data_reads` (#338). What separates the two is whether
+a file was named: a filename assembled from runtime state names nothing the
+diff can hold, while an out-of-tree spelling names exactly one file and only
+the boundary guard stands between it and the tree.
+A file that will not parse or read states no dependency, which is not
 the same as having none: it is the same unknown from the other end, so it too
 may import anything, its consumers are selected, and an unreadable conftest
 forces the population it gates. Reading a failed parse as an empty dependency
@@ -512,6 +540,59 @@ the contract `tessera.serving_parts` already holds a serving part to:
   times the grid arity) and the source tensor's geometry. All of it before a
   byte is copied or a config written; the merged config's `source` is the
   whole-source identity the parts were proved against.
+
+**A completed output is immutable, and its bytes are sealed** (tessera#337).
+Everything above proves what went *in*, or is name-, header- and
+manifest-shaped. None of it bound the bytes on disk to the export that sealed
+them, and `export_checkpoint_streaming` reused a completed output directory:
+it wrote each shard over its old file and replaced the index and config only
+after the last one succeeded. A retry that failed part way therefore left NEW
+shards beside the OLD index, config and `source` seal — which still verified,
+because it describes the input — and valid replacement blobs for the same
+named unit at the same rung and shape passed every check the merge had. The
+merge accepted that mixture and republished it under the original checkpoint's
+identity: measured on CPU with real E2M1x2 q896 encodes, a two-shard export
+whose retry failed on its second unit exited 0 and decoded to
+`[9.0, 1.03125]` against the `[1.03125, 1.03125]` its own published config
+prices. Two things close it, and the second is why the first is not enough:
+
+* **Immutability, at the exporter.** An `out_dir` that already holds a
+  `tessera_config.json` is refused by name (`FileExistsError`) before the
+  source is read, a unit encoded or a byte replaced, so the previous complete
+  artifact survives a retry untouched and a retry names a fresh destination.
+  A directory holding no config was never a complete artifact — an earlier run
+  died before sealing it — and is still written into: that run either
+  completes it or leaves it unsealed, which the merge and reader already
+  refuse. The in-memory `export_checkpoint` has no such window (it replaces
+  its one file whole or not at all) and is unchanged.
+* **The output seal, at the merge.** Every part's `tessera_config.json`
+  carries `output`: `serving_parts.output_part_identity` — one sha256 per
+  shard *this run wrote*, under `schema: tessera.output-part.v1`, taken as
+  each shard is finished rather than in a second pass, so it seals what the
+  run wrote and not what is on disk when the config lands.
+  `check_assembly` hashes the part's shards and holds them to that stamp,
+  after the source proof and **before** it opens a blob — the bytes are proved
+  to be the sealed bytes before anything interprets them. A part with no
+  `output` block is refused like an unsealed one, because `source` cannot
+  vouch for the output and a receipt that does not exist proves nothing. This
+  is the mechanism `merge_serving_parts` already had
+  (`export_partition.output_sha256`, verified before a byte is copied), which
+  is why the modern serving-part path was never exposed: it also refuses a
+  destination that exists at all. `output` is a `tessera_config.json` receipt
+  field and not on the artifact wire, and it is `CONFIG_PER_PART_FIELDS`, so
+  `check_configs` neither compares it across parts (two honest parts stamp
+  different digests) nor mistakes it for a driver's key. The merged
+  checkpoint's `output` is the union of the parts' verified seals, over files
+  copied unchanged.
+
+**What an operator does differently:** re-exporting into a checkpoint directory
+that already exists now refuses. Export to a fresh directory and swap, or
+delete the old one first. And parts exported before this stamp — including any
+cut between tessera#300 and tessera#337 — are refused by the legacy merge until
+re-exported; nothing about them is known to be wrong, but nothing can say which
+bytes survived in their output directories, which is the whole finding. The
+151 GiB GLM export predates tessera#300 and was already refused as unsealed, so
+this adds no cost there.
 
 ## 3. Bytes: priced == served
 

@@ -513,7 +513,7 @@ def ordinary(value: load_spec("loaded", TOOL)): pass
     # Exercise the type-parameter name field on every supported Python,
     # including versions whose parser predates generic-function syntax.
     tree.body[-2].type_params = [SimpleNamespace(name="TOOL")]
-    found, unknown = file_imports(tree, repo / "tests/test_dynamic.py", repo)
+    found, unknown, _ = file_imports(tree, repo / "tests/test_dynamic.py", repo)
     assert unknown, "a type parameter is not the shadowed global file path"
     assert repo / "tools/driver.py" in found, "annotation scope must not leak to a sibling"
 
@@ -1386,3 +1386,131 @@ def test_a_canonical_short_name_does_not_outrank_its_alias_candidates(tmp_path):
         result = impacted.select(repo, [candidate])
         assert result["verdict"] == "narrowed", (candidate, result)
         assert "tests/test_consumer.py" in result["tests"], (candidate, result)
+
+
+def _alias_reader_tree(tmp_path: Path) -> tuple[Path, Path, Path]:
+    """The #338 fixture: an in-tree JSON a reader names through an alias.
+
+    ``alias/`` is a symlink to the checkout, so ``alias/data/...`` and
+    ``repo/data/...`` are the same bytes with two spellings.  The alias is
+    local environment state -- nothing in the repository records it -- which
+    is exactly why the selector must not need to resolve it, and exactly why
+    refusing to resolve it cannot be read as "no dependency".  Everything
+    here is a disposable file under ``tmp_path``; no mount is involved.
+    """
+    root = (tmp_path / "repo").resolve()
+    root.mkdir()
+    alias = tmp_path / "alias"
+    alias.symlink_to(root, target_is_directory=True)
+    (root / "src" / "pkg").mkdir(parents=True)
+    (root / "src" / "pkg" / "__init__.py").write_text("", encoding="utf-8")
+    (root / "data").mkdir()
+    data = root / "data" / "runtime-settings.json"
+    data.write_text('{"value": 1}\n', encoding="utf-8")
+    reader = root / "src" / "pkg" / "reader.py"
+    reader.write_text(
+        "from pathlib import Path\n"
+        f"TARGET = Path({str(alias / 'data/runtime-settings.json')!r})\n"
+        "def load():\n    return TARGET.read_text()\n",
+        encoding="utf-8",
+    )
+    (root / "tests").mkdir()
+    (root / "tests" / "test_consumer.py").write_text(
+        "from pkg.reader import load\n"
+        "def test_consumer():\n    assert load()\n",
+        encoding="utf-8",
+    )
+    return root, reader, data
+
+
+def test_outside_spelled_data_read_still_selects_its_reader(tmp_path: Path) -> None:
+    """tessera#338 -- refusing to resolve an alias is not proof of independence.
+
+    The reader's bytes change when the tracked JSON changes; editing the JSON
+    must therefore reach the reader's test.  Before this, the lexical guard
+    refused the outside spelling and ``wildcard(reading)`` reported nothing
+    for a plain reader, so the receipt was ``verdict='none'``, ``tests=[]``,
+    with no unresolved or unreadable entry naming the file it had dropped --
+    under-selection by a tool whose stated contract is that it never
+    under-selects.
+    """
+    root, reader, data = _alias_reader_tree(tmp_path)
+
+    result = impacted.select(root, ["data/runtime-settings.json"])
+
+    assert result["verdict"] == "narrowed", result
+    assert "tests/test_consumer.py" in result["tests"], result
+    # The receipt has to SAY the dependency is unplaced; the defect was a
+    # silent drop, and a selection with no diagnostic repeats it.
+    assert "src/pkg/reader.py" in result["unplaced_data_reads"], result
+    assert "refused to place" in result["reason"], result["reason"]
+
+
+def test_outside_spelled_read_is_not_promoted_to_an_unknown_importer(
+    tmp_path: Path,
+) -> None:
+    """The dependency is data, not "any module in the tree" (#148 stands).
+
+    A reader that executes nothing imports nothing, so it must not appear as
+    an unresolved file loader, and it must not force the full run.
+    """
+    root, _, _ = _alias_reader_tree(tmp_path)
+
+    result = impacted.select(root, ["data/runtime-settings.json"])
+
+    assert result["unresolved_file_loaders"] == [], result
+    assert result["forces_full"] == [], result
+    _, importers = impacted.build_graph(root)
+    assert "pkg.reader" not in importers.get("*", set()), (
+        "a plain data reader is not an unknown Python importer")
+
+
+def test_in_root_spelling_of_the_same_read_keeps_its_exact_edge(
+    tmp_path: Path,
+) -> None:
+    """The negative control from the #338 proof: nothing about narrowing moved.
+
+    Spelling the identical file from inside the tree still yields the exact
+    data edge -- not the unplaced fallback -- so the fix buys uncertainty
+    only where the resolver actually declined to look.
+    """
+    root, reader, _ = _alias_reader_tree(tmp_path)
+    reader.write_text(
+        reader.read_text(encoding="utf-8").replace(
+            str(tmp_path / "alias"), str(root)),
+        encoding="utf-8",
+    )
+
+    result = impacted.select(root, ["data/runtime-settings.json"])
+
+    assert result["verdict"] == "narrowed", result
+    assert result["tests"] == ["tests/test_consumer.py"], result
+    assert result["unplaced_data_reads"] == [], result
+    _, importers = impacted.build_graph(root)
+    assert importers.get("data/runtime-settings.json") == {"pkg.reader"}
+
+
+def test_an_unnameable_read_still_states_no_dependency(tmp_path: Path) -> None:
+    """#148's rule is untouched: a target that was never NAMED is silence.
+
+    Only a named-and-refused target survives its refusal.  A runtime filename
+    names no file at all, so it must remain what it was -- no edge, no
+    unplaced read, no wildcard -- or every reader depends on every file again.
+    """
+    root, reader, _ = _alias_reader_tree(tmp_path)
+    reader.write_text(
+        "import os\n"
+        "from pathlib import Path\n"
+        "def load(name):\n"
+        "    return (Path(os.environ['DIR']) / name).read_text()\n",
+        encoding="utf-8",
+    )
+
+    result = impacted.select(root, ["data/runtime-settings.json"])
+
+    assert result["verdict"] == "none", result
+    assert result["tests"] == [], result
+    assert result["unplaced_data_reads"] == [], result
+    _, importers = impacted.build_graph(root)
+    assert "pkg.reader" not in importers.get("*", set())
+    assert "pkg.reader" not in importers.get("*data", set())
