@@ -48,7 +48,7 @@ _spec.loader.exec_module(stock)
 
 LAYER = "model.layers.0.self_attn."
 Q, K, V = (f"{LAYER}{role}.weight" for role in ("q_proj", "k_proj", "v_proj"))
-O = f"{LAYER}o_proj.weight"
+O_PROJ = f"{LAYER}o_proj.weight"
 MEMBERS = (Q, K, V)
 
 #: One bf16 ULP at 4.0 -- inside ``FUSED_INPUT_SCALE_ULP``, so this spread is
@@ -59,7 +59,7 @@ IN_BOUND = (4.0, 4.0 * (1.0 + 2.0 ** -8), 4.0)
 def _weights():
     generator = torch.Generator().manual_seed(305)
     return {name: torch.randn(32, 32, generator=generator).bfloat16()
-            for name in (Q, K, V, O)}
+            for name in (Q, K, V, O_PROJ)}
 
 
 def _source(src: Path, shards: "dict[str, list[str]]") -> None:
@@ -86,7 +86,7 @@ def _donor(path: Path, scales: "dict[str, float]") -> None:
 def _export(tmp_path, monkeypatch, *, scales, shards=None, out="out"):
     """Run the real W4A4 export over a donor with these member scales."""
     src = tmp_path / f"src-{out}"
-    _source(src, shards or {"model.safetensors": [Q, K, V, O]})
+    _source(src, shards or {"model.safetensors": [Q, K, V, O_PROJ]})
     donor = tmp_path / f"donor-{out}.safetensors"
     _donor(donor, scales)
     destination = tmp_path / out
@@ -123,7 +123,7 @@ def test_a_within_bound_donor_spread_is_joined_on_every_member(tmp_path, monkeyp
     ``.max()`` to pick 4.015625 -- the smallest calibrated range, the clipping
     side.  Every member must carry the shared helper's value instead, and the
     comparison is against the helper rather than a typed number."""
-    scales = dict(zip(MEMBERS, IN_BOUND)) | {O: 4.0}
+    scales = dict(zip(MEMBERS, IN_BOUND)) | {O_PROJ: 4.0}
     out = _export(tmp_path, monkeypatch, scales=scales)
     joined = shared_input_global_scale(list(IN_BOUND), list(MEMBERS))
     written = _written_scales(out)
@@ -135,7 +135,7 @@ def test_an_already_unified_donor_is_unchanged(tmp_path, monkeypatch):
     """The control: a donor whose calibrator already wrote one amax on every
     sibling (PrismaQuant's own join, spread exactly 0) exports the value it
     arrived with."""
-    scales = {name: 4.0 for name in MEMBERS} | {O: 4.0}
+    scales = {name: 4.0 for name in MEMBERS} | {O_PROJ: 4.0}
     out = _export(tmp_path, monkeypatch, scales=scales)
     assert _written_scales(out) == {name: 4.0 for name in MEMBERS}
 
@@ -147,8 +147,8 @@ def test_siblings_spanning_source_shards_all_carry_the_joined_value(tmp_path, mo
     completion instead would publish q's own scale before k and v arrived
     (#212's schedule is what makes the group wait)."""
     out = _export(tmp_path, monkeypatch,
-                  scales=dict(zip(MEMBERS, IN_BOUND)) | {O: 4.0},
-                  shards={"part-1.safetensors": [Q, O],
+                  scales=dict(zip(MEMBERS, IN_BOUND)) | {O_PROJ: 4.0},
+                  shards={"part-1.safetensors": [Q, O_PROJ],
                           "part-2.safetensors": [K, V]})
     joined = shared_input_global_scale(list(IN_BOUND), list(MEMBERS))
     written = _written_scales(out)
@@ -160,9 +160,9 @@ def test_siblings_spanning_source_shards_all_carry_the_joined_value(tmp_path, mo
 def test_an_unfused_linear_keeps_its_own_donor_scale(tmp_path, monkeypatch):
     """``o_proj`` is its own vLLM Linear with its own input tensor: the join is
     per fused module, not per layer, and a sibling's scale must not reach it."""
-    scales = dict(zip(MEMBERS, IN_BOUND)) | {O: 2.5}
+    scales = dict(zip(MEMBERS, IN_BOUND)) | {O_PROJ: 2.5}
     out = _export(tmp_path, monkeypatch, scales=scales)
-    assert _written_scales(out, (O,)) == {O: 2.5}
+    assert _written_scales(out, (O_PROJ,)) == {O_PROJ: 2.5}
 
 
 def test_a_donor_beyond_the_declared_bound_is_refused_before_any_output(
@@ -174,7 +174,7 @@ def test_a_donor_beyond_the_declared_bound_is_refused_before_any_output(
     checkpoint whose activation quantizer vLLM chooses."""
     with pytest.raises(GrammarError) as caught:
         _export(tmp_path, monkeypatch,
-                scales={Q: 4.0, K: 2.0, V: 4.0, O: 4.0})
+                scales={Q: 4.0, K: 2.0, V: 4.0, O_PROJ: 4.0})
     message = str(caught.value)
     assert "input_global_scale" in message
     assert K[: -len(".weight")] in message
@@ -187,10 +187,10 @@ def test_the_manifest_records_the_scale_that_was_written(tmp_path, monkeypatch):
     unit actually carries, so the join is readable off the manifest instead of
     being inferred from the donor."""
     out = _export(tmp_path, monkeypatch,
-                  scales=dict(zip(MEMBERS, IN_BOUND)) | {O: 2.5})
+                  scales=dict(zip(MEMBERS, IN_BOUND)) | {O_PROJ: 2.5})
     manifest = json.loads((out / "tessera_stock_manifest.json").read_text())
     joined = shared_input_global_scale(list(IN_BOUND), list(MEMBERS))
     recorded = {name: manifest["units"][name]["input_global_scale"]
-                for name in (*MEMBERS, O)}
-    assert recorded == {Q: joined, K: joined, V: joined, O: 2.5}, recorded
-    assert recorded == {**_written_scales(out), O: 2.5}
+                for name in (*MEMBERS, O_PROJ)}
+    assert recorded == {Q: joined, K: joined, V: joined, O_PROJ: 2.5}, recorded
+    assert recorded == {**_written_scales(out), O_PROJ: 2.5}
