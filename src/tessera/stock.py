@@ -30,7 +30,8 @@ import math
 import torch
 
 from .alphabet import E2M1_GRID, PayloadGrid
-from .decode import _grid_and_forests, decode_codes_mixed, materialize_fp8
+from .decode import (_grid_and_forests, decode_codes_mixed, materialize_fp8,
+                     require_untransformed)
 from .errors import GrammarError
 from .manifest import ScalePlaneKind
 from .wire import nvfp4_scale_bytes, nvfp4_scale_bytes_lut
@@ -126,6 +127,14 @@ def materialize_stock(unit, forest, code) -> dict[str, torch.Tensor]:
     kernel lane is where it serves.
     """
     grid, _forests = _grid_and_forests(forest)
+    # A stock tensor stops at codes times scales; the encoder's segment-2a
+    # diagonals and rotation are undone AFTER that product
+    # (``reconstruct_unit``), so a transformed unit has no stock tensor and is
+    # refused by name -- the one rule, from its one home (#233).  The two
+    # CHANNEL branches below would refuse again inside ``materialize_fp8`` /
+    # ``materialize_bf16``; asking here first covers the direct NVFP4 path and
+    # names this entry point.
+    require_untransformed(unit, "materialize_stock")
     plane = getattr(unit, "scale_plane", ScalePlaneKind.S6B)
     if plane is ScalePlaneKind.CHANNEL and grid.name == "BF16":
         from .decode import materialize_bf16_folded
