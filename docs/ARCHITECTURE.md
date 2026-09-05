@@ -846,6 +846,34 @@ where the split is what does not fit. `_shard_unit_for_rank` and
 `check_shard_granularity` raise the same string for the same unit rather than
 each re-deriving a story at its own raise site.
 
+A shard's **RELEASE count vector** is the one thing about it no reader
+derives, and since tessera#336 it survives the round trip. A whole unit's
+per-superblock counts are `grammar.release_quota` of its total -- that total
+at a uniform release density -- which the reader regenerates and the wire
+therefore does not carry. A shard's are the *restriction* of its parent's,
+which no quota reproduces, so they travel as the RELEASE descriptor's
+`PER_SUPERBLOCK` counts. `unit_artifact._as_unit` restored a shard's origin
+and start state and left that vector at its empty default, so a parsed shard
+written out again declared its total at `WHOLE_PLANE` granularity and the
+reader respread it: on the committed 16x512 S6b fixture cut to rows [8, 16) a
+descriptor of `(19, 17)` was rewritten as `(36,)`, read back as the quota
+`(18, 18)`, and 19 of 4096 weights moved by up to 0.10546875 -- with **both**
+artifacts parsing clean, which is what made it a wrong-artifact defect and not
+a crash. The reader now restores the vector at the terminal's own boundary
+(`unit_artifact._shard_release_counts`: a terminal is a prefix of the declared
+extent, so what it selects is the descriptor's vector with every superblock
+past the cut at zero, never the larger full-extent copy), and the writer
+derives the counts from the `release_index` it is about to write and refuses,
+by name, a shard whose declaration disagrees with that placement or that
+carries releases and declares no counts at all
+(`unit_artifact._release_counts_on_the_wire`) -- refused where the bytes are
+decided, rather than respread by whoever reads them. One rule at both ends:
+the reader refuses the same byte string, so a released shard written at
+`WHOLE_PLANE` granularity by the unfixed path is rejected at acceptance and
+has to be re-exported from its parent. Nothing valid moves: a shard of a
+parent that released nothing keeps the whole-unit spelling -- an empty plane
+at `WHOLE_PLANE` granularity -- and a shard `slicing.slice_unit` cut already
+declared its counts, so its bytes are what they were.
 The span-2 kernel lane has one more plane it does not read: COMPLETION. A
 TCQ column at body rate `R` under the grid's cap may spend up to `cap - R`
 further bits per position choosing among its anchor's descendants, and

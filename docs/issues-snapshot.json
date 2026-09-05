@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-05T22:02:16Z",
+ "generated": "2026-09-05T22:05:58Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -1982,11 +1982,11 @@
     "title": "[P0] Prevent failed legacy-export retries from publishing mixed checkpoint bytes"
    },
    "338": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Preserve data dependency uncertainty when the lexical path guard refuses resolution"
    },
    "339": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Prevent path resolution from traversing outside the checkout after the lexical guard passes"
    },
    "34": {
@@ -2014,12 +2014,20 @@
     "title": "export: a completed output is immutable, and its bytes are sealed (#337)"
    },
    "345": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Restore the selector's never-under-select invariant, and bound its path resolution to the tree (#338, #339)"
    },
    "346": {
     "state": "OPEN",
     "title": "[P2] A tracked symlink a module reads has no node of its own, so repointing it selects nothing"
+   },
+   "347": {
+    "state": "OPEN",
+    "title": "merge: drop the old seal before the first transfer, not after the last"
+   },
+   "348": {
+    "state": "OPEN",
+    "title": "Restore a parsed shard's RELEASE counts, and refuse a rewrite that cannot carry them (#336)"
    },
    "35": {
     "state": "CLOSED",
