@@ -16,6 +16,14 @@ already enforces and the wrappers did not re-state:
   outright").  ``tessera_gemm`` says so and checks; those two said so and
   did not.
 
+A third guard is not a divisibility but a length: ``cols`` is the reduction,
+so the activation has to hold ``cols`` elements.  Every GEMV loads ``x_ptr +
+k`` unmasked in k -- the mask is on the weight tile -- so a shorter vector is
+a read past its own storage rather than a shorter dot product, and the
+wrappers took one.  (``kernel._dense_activation``, which is also where the
+strides of a non-contiguous activation are normalised; that half needs a
+launch to observe and lives in ``tests/test_kernel.py``.)
+
 No artifact can encode these shapes -- ``lane_planes.pack_kernel_planes``
 refuses ``rows % 8`` and ``pack_scale_nibbles`` cannot reshape a partial
 group -- so this is a guard on a hand-built call, not a fix to any bytes.
@@ -58,7 +66,7 @@ def _f32(n=64):
     return torch.zeros(n, dtype=torch.float32)
 
 
-def _call(name, rows, cols):
+def _call(name, rows, cols, x=None):
     """Invoke one wrapper with placeholder planes at ``(rows, cols)``.
 
     The tensors are deliberately dummies: every guard under test is a shape
@@ -69,8 +77,11 @@ def _call(name, rows, cols):
     refuses a host pointer at launch, so no kernel ever runs against planes
     too small for the declared shape, and no illegal access is left sticky in
     a CUDA context that the rest of the session would inherit.
+
+    ``x`` overrides the activation, always as a vector; the prefill GEMM
+    takes it as the one row of a batch, which is the shape *its* guard reads.
     """
-    x = torch.zeros(cols)
+    x = torch.zeros(cols) if x is None else x
     assert not x.is_cuda
     if name == "tessera_gemv_sliced":
         return kernel.tessera_gemv_sliced(
@@ -94,7 +105,7 @@ def _call(name, rows, cols):
             _u8(), None, 1.0, rows, cols, 8, 1, half=HALF, max_rate=4)
     if name == "tessera_gemm":
         return kernel.tessera_gemm(
-            torch.zeros(1, cols), _u8(), _u8(), _f32(), _u8(), 1.0, rows, cols,
+            x.reshape(1, -1), _u8(), _u8(), _f32(), _u8(), 1.0, rows, cols,
             half=HALF)
     raise AssertionError(name)
 
@@ -131,6 +142,26 @@ def test_rows_that_do_not_byte_align_a_column_are_refused(name):
     """``rows % 8`` breaks the constant sub-byte shifts the planes assume."""
     with pytest.raises(GrammarError, match=str(BAD_ROWS)):
         _call(name, BAD_ROWS, GOOD_COLS)
+
+
+#: An activation that is not the reduction's length, and *is* a whole number
+#: of column groups, so nothing but the activation check can be what refuses
+#: it.
+SHORT_COLS = GOOD_COLS - HALF
+
+
+@pytest.mark.parametrize("name", GROUPED)
+def test_an_activation_of_the_wrong_length_is_refused(name):
+    """``cols`` is the reduction; the activation has to be that long.
+
+    Every GEMV here loads ``x_ptr + k`` **unmasked** in k -- the mask is on
+    the weight tile, not on the activation -- so a shorter vector is a read
+    past its own storage, not a shorter dot product.  The prefill GEMM masks
+    its k, and refuses the same length through its own ``[M, cols]`` guard;
+    both are named refusals quoting the length that came in.
+    """
+    with pytest.raises(GrammarError, match=str(SHORT_COLS)):
+        _call(name, GOOD_ROWS, GOOD_COLS, x=torch.zeros(SHORT_COLS))
 
 
 @pytest.mark.parametrize("name", GROUPED)

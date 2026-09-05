@@ -76,6 +76,33 @@ def _require_byte_aligned_rows(rows: int) -> None:
         )
 
 
+def _dense_activation(x: torch.Tensor, cols: int) -> torch.Tensor:
+    """``x`` as every GEMV in this module actually addresses it.
+
+    A kernel reads ``x_ptr + k``: a *storage* offset, stride 1, off whatever
+    pointer the launch was handed.  A view with another stride keeps that
+    stride through ``reshape(-1)`` -- reshaping a tensor to the shape it
+    already has returns the tensor itself -- so ``backing[::2]`` arrives with
+    the expected ``[cols]`` shape and the kernel reads ``backing[k]`` where
+    the caller wrote ``backing[2k]``.  The dot product is then over different
+    numbers, and nothing about the launch says so.
+
+    The boundary therefore normalises, which is what the serving window lanes
+    (``kernel_window``, ``kernel_window_gemv``) already do to their
+    activations, and refuses a length that is not the reduction's: every
+    inner load of ``x`` here is *unmasked* in ``k``, so a short activation is
+    an out-of-bounds read and not a short dot product.
+    """
+    flat = x.reshape(-1)
+    if flat.numel() != cols:
+        raise GrammarError(
+            f"the activation holds {flat.numel()} elements for a reduction over "
+            f"{cols} columns: the GEMVs read x[k] for every column and mask "
+            "nothing in k, so a shorter one reads past its own storage"
+        )
+    return flat.contiguous()
+
+
 def build_code_lut(
     forest: AnchorForest, code: ConvCode, device: str = "cuda"
 ) -> torch.Tensor:
@@ -358,7 +385,7 @@ def tessera_gemv(
 
     out = torch.zeros(rows, dtype=torch.float32, device=x.device)
     _gemv_kernel[(triton.cdiv(rows, block_n), split_k)](
-        x.reshape(-1), body, lut, e4m3.reshape(-1),
+        _dense_activation(x, cols), body, lut, e4m3.reshape(-1),
         e2m1_value_table(x.device).float(), out,
         float(global_scale), rows, cols, rate * rows,
         memory=memory, rate=rate, half=half,
@@ -384,7 +411,7 @@ def nvfp4_gemv(
 
     out = torch.zeros(rows, dtype=torch.float32, device=x.device)
     _nvfp4_gemv_kernel[(triton.cdiv(rows, block_n), split_k)](
-        x.reshape(-1), packed.reshape(-1), e4m3.reshape(-1),
+        _dense_activation(x, cols), packed.reshape(-1), e4m3.reshape(-1),
         e2m1_value_table(x.device).float(), out,
         float(global_scale), rows, cols,
         half=half, BLOCK_N=block_n, BLOCK_K=block_k, SPLIT_K=split_k,
@@ -473,7 +500,7 @@ def tessera_gemv_sliced(
     _require_column_groups(cols, half)
     out = torch.zeros(rows, dtype=torch.float32, device=x.device)
     _sliced_gemv_kernel[(triton.cdiv(rows, block_n), split_k)](
-        x.reshape(-1), select_plane, point_plane, lut, e4m3_t.reshape(-1),
+        _dense_activation(x, cols), select_plane, point_plane, lut, e4m3_t.reshape(-1),
         e2m1_value_table(x.device).float(), out,
         float(global_scale), rows, cols,
         memory=memory, rate=rate, half=half, pad=SELECT_PAD,
@@ -542,7 +569,7 @@ def nvfp4_gemv_sliced(
     _require_column_groups(cols, half)
     out = torch.zeros(rows, dtype=torch.float32, device=x.device)
     _nvfp4_sliced_gemv_kernel[(triton.cdiv(rows, block_n), split_k)](
-        x.reshape(-1), packed_t.reshape(-1), e4m3_t.reshape(-1),
+        _dense_activation(x, cols), packed_t.reshape(-1), e4m3_t.reshape(-1),
         e2m1_value_table(x.device).float(), out,
         float(global_scale), rows, cols,
         half=half, BLOCK_N=block_n, SPLIT_K=split_k,
@@ -678,7 +705,7 @@ def tessera_gemv_wide(
     _require_column_groups(cols, half)
     out = torch.zeros(rows, dtype=torch.float32, device=x.device)
     _wide_gemv_kernel[(triton.cdiv(rows, lanes * vec), split_k)](
-        x.reshape(-1), select_plane, point_plane, value_lut, e4m3_t.reshape(-1), out,
+        _dense_activation(x, cols), select_plane, point_plane, value_lut, e4m3_t.reshape(-1), out,
         float(global_scale), rows, cols,
         memory=memory, rate=rate, half=half, pad=SELECT_PAD,
         LANES=lanes, VEC=vec, SPLIT_K=split_k,
@@ -1009,7 +1036,7 @@ def tessera_gemv_tuple_span2(
     _require_column_groups(cols, half)
     out = torch.zeros(rows, dtype=torch.float32, device=x.device)
     _tuple_gemv_span2_kernel[(triton.cdiv(steps, lanes * vec), split_k)](
-        x.reshape(-1), select_plane, label_plane, point_plane, scale_nibbles,
+        _dense_activation(x, cols), select_plane, label_plane, point_plane, scale_nibbles,
         scale_table, label_lut, subset_values, out,
         float(global_scale), rows, steps, cols,
         memory=memory, rate=rate, arity=arity, half=half, pad=SELECT_PAD,
@@ -1214,7 +1241,7 @@ def tessera_gemv_window(
     scale_table_arg = scale_table if lut else scale_plane
     out = torch.zeros(rows, dtype=torch.float32, device=x.device)
     _window_gemv_kernel[(triton.cdiv(steps, lanes * vec), split_k)](
-        x.reshape(-1), plane, offsets, rates, table, values,
+        _dense_activation(x, cols), plane, offsets, rates, table, values,
         scale_plane, scale_table_arg, out,
         float(global_scale), rows, steps, cols,
         window=window_bits, arity=arity, half=half, lut_scale=lut,
@@ -1302,7 +1329,7 @@ def tessera_gemv_tuple(
     _require_column_groups(cols, half)
     out = torch.zeros(rows, dtype=torch.float32, device=x.device)
     _tuple_gemv_kernel[(triton.cdiv(steps, lanes * vec), split_k)](
-        x.reshape(-1), select_plane, point_plane, index_lut, value_table,
+        _dense_activation(x, cols), select_plane, point_plane, index_lut, value_table,
         e4m3_t.reshape(-1), out,
         float(global_scale), rows, steps, cols,
         memory=memory, rate=rate, arity=arity, half=half, pad=SELECT_PAD,
@@ -1459,6 +1486,13 @@ def tessera_gemm(
             f"the reduction runs over the {cols} columns the trellis does NOT "
             "run down"
         )
+    # ``_gemm_kernel`` addresses x as ``offs_m * cols + offs_k``, which is the
+    # row-major storage of a [M, cols] tensor and not the strides of the view
+    # it was handed: ``batch[:, ::2]`` and a transpose both pass the check
+    # above and address a different matrix.  Normalised here for the same
+    # reason ``_dense_activation`` normalises the GEMVs' -- the addressing is
+    # the contract, so the boundary makes it true.
+    x = x.contiguous()
     _require_byte_aligned_rows(rows)
     _require_column_groups(cols, half)
     M = x.shape[0]

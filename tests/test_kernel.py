@@ -160,6 +160,61 @@ def test_one_hot_gemv_decodes_each_column_bit_exactly(unit):
         assert torch.equal(got, unit["reference"][:, k]), f"column {k}"
 
 
+def test_a_strided_activation_is_the_vector_the_caller_wrote(unit):
+    """A ``[cols]`` view with stride 2 is not ``cols`` contiguous elements.
+
+    ``reshape(-1)`` on a tensor that already has the shape asked for returns
+    the tensor itself, so the stride survives into the launch -- and the
+    kernels read ``x_ptr + k``, which walks the *backing storage*.  A one-hot
+    at column 33 of a stride-2 view therefore used to come back as column 66
+    of the reference decode: a legal-looking answer to a question nobody
+    asked.  The prefill GEMM has the same gap in two dimensions, where a
+    column-sliced batch passes the ``[M, cols]`` guard and is then addressed
+    as ``offs_m * cols + offs_k``.
+    """
+    from tessera.kernel import (
+        build_code_lut, build_value_lut, pack_kernel_planes, tessera_gemm,
+        tessera_gemv, tessera_gemv_wide,
+    )
+
+    rows, cols = unit["rows"], unit["cols"]
+    reference = unit["reference"]
+    select, point = pack_kernel_planes(unit["unit"].body_bits)
+    values = build_value_lut(unit["forests"][3], CODE)
+    scales = unit["e4m3"].reshape(rows, cols // 16).t().contiguous()
+    body = torch.frombuffer(
+        bytearray(pack_body(unit["unit"].body_bits, unit["rates"]) + b"\x00"),
+        dtype=torch.uint8,
+    ).to("cuda")
+
+    k = 33
+    backing = torch.zeros(2 * cols, device="cuda")
+    backing[2 * k] = 1.0
+    x = backing[::2]
+    assert tuple(x.shape) == (cols,) and x.stride() == (2,)
+    assert x.reshape(-1).stride() == (2,), "the flatten this lane relies on"
+    got = tessera_gemv_wide(
+        x, select, point, values, scales, unit["global_scale"], rows, cols,
+        lanes=32, split_k=4,
+    )
+    assert torch.equal(got, reference[:, k]), "tessera_gemv_wide"
+    got = tessera_gemv(
+        x, body, build_code_lut(unit["forests"][3], CODE), unit["e4m3"],
+        unit["global_scale"], rows, cols,
+    )
+    assert torch.equal(got, reference[:, k]), "tessera_gemv"
+
+    torch.manual_seed(4)
+    batch = torch.randn(3, 2 * cols, device="cuda")
+    strided = batch[:, ::2]
+    assert tuple(strided.shape) == (3, cols) and not strided.is_contiguous()
+    got = tessera_gemm(
+        strided, select, point, values, scales, unit["global_scale"], rows, cols
+    )
+    want = strided @ reference.t()
+    assert torch.allclose(got, want, rtol=2e-5, atol=2e-4), "tessera_gemm"
+
+
 def test_gemv_matches_the_materialised_path(unit):
     """The two lanes must agree: same artifact, same answer, different route."""
     from tessera.kernel import (
