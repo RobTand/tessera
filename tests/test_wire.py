@@ -6,6 +6,8 @@ counts, sub-byte padding, or whether the artifact is self-describing at all.
 """
 
 import os
+import struct
+import warnings
 from unittest import mock
 
 import pytest
@@ -28,9 +30,11 @@ from tessera.unit_artifact import (
 from tessera.wire import (
     nvfp4_scale_bytes,
     pack_body,
+    pack_fp16,
     pack_uniform,
     scales_from_planes,
     unpack_body,
+    unpack_fp16,
     unpack_uniform,
 )
 
@@ -348,20 +352,18 @@ def test_fused_replay_equals_the_eager_path_bit_for_bit(memory):
     inductor was available -- which is the same class of bug as a producer and
     consumer disagreeing about the wire.
     """
-    from tessera.decode import _fused_replay, replay_body
+    from tessera.decode import replay_body
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     code = ConvCode(memory=memory)
     for rate in (1, 2, 3):
         forest = build_forest(rate)
         bits = torch.randint(0, 1 << rate, (129, 96), device=device, dtype=torch.uint8)
+        # No ``cache_clear()`` around the toggle: the env var is read per call.
         with mock.patch.dict(os.environ, {"TESSERA_FUSED_REPLAY": "0"}):
-            _fused_replay.cache_clear()
             eager = replay_body(bits, forest, code)
-        _fused_replay.cache_clear()
         fused = replay_body(bits, forest, code)
         assert torch.equal(eager, fused)
-    _fused_replay.cache_clear()
 
 
 def test_an_unwritable_global_scale_is_refused_where_the_field_has_a_name():
@@ -425,3 +427,72 @@ def test_a_fifteen_binade_span_is_legal_unless_the_top_word_is_nan():
     # Mantissa 7 at the top binade is 0x7F, which E4M3FN reads as NaN.
     with pytest.raises(GrammarError, match="span 15"):
         nvfp4_scale_bytes(*_scale_plane(base, [0, 0, 0, 7]))
+
+
+def test_the_diagonal_planes_are_little_endian_by_the_format_not_by_the_host():
+    """``pack_fp16``/``unpack_fp16`` document "little-endian" and wrote the
+    host's order.  Every box this has run on is little-endian, so the pin is
+    what the docstring already promised rather than a caught regression: on a
+    big-endian host the old pair round-tripped against itself and against no
+    other reader, which is the one thing a wire format may not do.
+    ``unit_artifact``'s window-table reader states the same rule with the same
+    ``<`` spelling."""
+    values = torch.tensor([1.0, -2.5, 0.0, 65504.0, 6.103515625e-05], dtype=torch.float16)
+    expected = struct.pack("<5e", *(float(v) for v in values))
+    assert pack_fp16(values) == expected
+    assert torch.equal(unpack_fp16(expected, len(values)), values)
+    # A reader that took the host's order would decode the byte-swapped
+    # stream, so the swap has to change the answer.
+    swapped = struct.pack(">5e", *(float(v) for v in values))
+    assert not torch.equal(unpack_fp16(swapped, len(values)), values)
+
+
+def test_the_fusion_switch_is_read_on_every_call_not_once_per_process():
+    """``TESSERA_FUSED_REPLAY`` was read *inside* an ``lru_cache(maxsize=1)``,
+    so the first caller in a process decided for every later one: a serve or a
+    test that set the variable afterwards silently got the earlier decision.
+    Both existing togglers only passed because they called ``cache_clear()``
+    by hand around the toggle, which is a workaround for this and not a
+    property of the knob -- so this test deliberately does not clear anything.
+    """
+    from tessera import decode
+
+    with mock.patch.dict(os.environ, {"TESSERA_FUSED_REPLAY": "1"}):
+        first = decode._fused_replay()
+    with mock.patch.dict(os.environ, {"TESSERA_FUSED_REPLAY": "0"}):
+        assert decode._fused_replay() is None
+        assert decode._fused_decode() is None
+    with mock.patch.dict(os.environ, {"TESSERA_FUSED_REPLAY": "1"}):
+        # And back: the compile is cached, the decision is not.
+        assert decode._fused_replay() is first
+
+
+def test_a_compiled_chain_that_falls_back_is_counted_and_says_so_once():
+    """`except Exception: pass  # fall back, never fail closed` swallowed
+    every exception from the compiled path.  Correct for the output -- the
+    eager path is the same function -- but a permanently broken fusion and a
+    working one were indistinguishable: no counter, no warning, and the
+    fused-path speed claim silently stopped holding."""
+    from tessera import decode
+
+    def _always_raises(*_args):
+        raise RuntimeError("inductor said no")
+
+    decode._FUSION_FALLBACKS.pop("probe", None)
+    decode._FUSION_LAST_ERROR.pop("probe", None)
+    try:
+        with pytest.warns(RuntimeWarning, match="fell back|answered instead"):
+            assert decode._run_fused(_always_raises, (), "probe") is None
+        # Only the first warns; every one counts.
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            assert decode._run_fused(_always_raises, (), "probe") is None
+        count, last = decode.fusion_fallbacks()["probe"]
+        assert count == 2
+        assert "inductor said no" in last
+        # A chain that works is not counted.
+        assert decode._run_fused(lambda: torch.zeros(1), (), "probe") is not None
+        assert decode.fusion_fallbacks()["probe"][0] == 2
+    finally:
+        decode._FUSION_FALLBACKS.pop("probe", None)
+        decode._FUSION_LAST_ERROR.pop("probe", None)

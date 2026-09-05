@@ -3,7 +3,14 @@ import pytest
 import torch
 
 from tessera.errors import GrammarError
-from tessera.fused import FusedMember, pack_fused, parse_fused, shared_lut_global
+from tessera.fused import (
+    _HEADER,
+    _MEMBER,
+    FusedMember,
+    pack_fused,
+    parse_fused,
+    shared_lut_global,
+)
 
 
 def test_container_round_trips_and_refuses_framing_errors():
@@ -130,3 +137,33 @@ def test_a_units_blob_length_is_not_a_function_of_its_shape_grid_and_rate():
     blob = pack_fused([("gate_proj", 8, b"\x01\x02"), ("up_proj", 8, b"\x03")])
     with pytest.raises(GrammarError):
         parse_fused(blob + b"\x00" * 4)
+
+
+def test_the_reader_refuses_a_member_its_writer_could_not_have_written():
+    """`parse_fused` bounds-checked the member table and the blobs but not
+    `name_len`, and never re-checked `rows > 0` the way `pack_fused` does on
+    write.  A truncated name ran the cursor past the end and the framing check
+    then reported the wrong thing one step later:
+
+        GrammarError: fused member 'q_proj\x00...\x00': truncated blob
+
+    -- a name that swallowed the payload, reported as a blob problem.
+    """
+    good = pack_fused([("q_proj", 8, b"\x00" * 12)])
+    assert [m.name for m in parse_fused(good)] == ["q_proj"]
+
+    # A name longer than the bytes that follow it.
+    truncated = good[: _HEADER.size] + _MEMBER.pack(64, 8, 12) + good[_HEADER.size + _MEMBER.size :]
+    with pytest.raises(GrammarError, match="name"):
+        parse_fused(truncated)
+
+    # rows = 0, which the writer refuses.
+    zero_rows = good[: _HEADER.size] + _MEMBER.pack(6, 0, 12) + good[_HEADER.size + _MEMBER.size :]
+    with pytest.raises(GrammarError, match="rows"):
+        parse_fused(zero_rows)
+
+    # A name that is not UTF-8 escaped the taxonomy as UnicodeDecodeError.
+    bad_utf8 = bytearray(good)
+    bad_utf8[_HEADER.size + _MEMBER.size] = 0xFF
+    with pytest.raises(GrammarError, match="UTF-8"):
+        parse_fused(bytes(bad_utf8))

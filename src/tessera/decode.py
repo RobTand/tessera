@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import functools
 import os
+import warnings
 
 import torch
 
@@ -40,6 +41,7 @@ __all__ = [
     "materialize_bf16_folded",
     "reconstruct_unit",
     "unit_half_scales",
+    "fusion_fallbacks",
 ]
 
 
@@ -194,31 +196,97 @@ def _decode_core(
     return reach_flat[anchor.int() * width + completion.int()]
 
 
-@functools.lru_cache(maxsize=1)
+#: Set to "0" to force the eager decode chains.  Read per call, not once per
+#: process: the read used to sit inside the ``lru_cache`` below, so the first
+#: caller in a process decided for every later one and anybody who set the
+#: variable afterwards silently got the earlier answer.  The two tests that
+#: toggle it only ever passed because they call ``cache_clear()`` by hand
+#: around the toggle, which is a workaround for this defect rather than a
+#: property of the knob.
+_FUSED_REPLAY_ENV = "TESSERA_FUSED_REPLAY"
+
+
+def _fusion_enabled() -> bool:
+    """Whether the compiled decode chains may be used, as the environment
+    says *now*.  One dict lookup; the compile itself is still cached."""
+    return os.environ.get(_FUSED_REPLAY_ENV, "1") != "0"
+
+
+@functools.lru_cache(maxsize=2)
+def _compiled(function):
+    """``function`` under inductor, or ``None`` if that is refused.
+
+    ``dynamic=True`` because a model presents hundreds of Linear shapes and a
+    recompile for each would cost more than the fusion saves.  Cached on the
+    function, which is what is expensive; whether to *use* it is
+    ``_fusion_enabled``'s question and is asked every call.
+    """
+    try:
+        return torch.compile(function, dynamic=True)
+    except Exception:  # pragma: no cover - no inductor, no fusion, still correct
+        return None
+
+
 def _fused_decode():
     """``_decode_core`` fused, or ``None``.  See ``_fused_replay``."""
-    if os.environ.get("TESSERA_FUSED_REPLAY", "1") == "0":
-        return None
-    try:
-        return torch.compile(_decode_core, dynamic=True)
-    except Exception:  # pragma: no cover
-        return None
+    return _compiled(_decode_core) if _fusion_enabled() else None
 
 
-@functools.lru_cache(maxsize=1)
 def _fused_replay():
     """``_replay_core`` fused into one kernel, or ``None`` if that is refused.
 
-    ``dynamic=True`` because a model presents hundreds of Linear shapes and a
-    recompile for each would cost more than the fusion saves.  Set
-    ``TESSERA_FUSED_REPLAY=0`` to force the eager path: the two must agree
+    ``TESSERA_FUSED_REPLAY=0`` forces the eager path: the two must agree
     bit-for-bit, and a test asserts they do.
     """
-    if os.environ.get("TESSERA_FUSED_REPLAY", "1") == "0":
-        return None
+    return _compiled(_replay_core) if _fusion_enabled() else None
+
+
+#: How many times each compiled decode chain raised and was answered by its
+#: eager equivalent, this process.  Falling back is correct -- the eager path
+#: is the same function and a test pins them bit-for-bit -- so it is not a
+#: gate and must never become one.  But a permanently broken fusion and a
+#: working one produced identical output and identical silence, which makes
+#: the fused path's speed claim unfalsifiable from inside the process that
+#: lost it.  A counter and the first exception are what tell them apart.
+_FUSION_FALLBACKS: "dict[str, int]" = {}
+#: The last exception each chain fell back on, kept for the same reason.
+_FUSION_LAST_ERROR: "dict[str, BaseException]" = {}
+
+
+def fusion_fallbacks() -> "dict[str, tuple[int, str]]":
+    """Per chain, how often it fell back and what the last exception was.
+
+    Empty is the healthy reading: either every compiled call succeeded or
+    fusion was never asked for.
+    """
+    return {
+        chain: (count, repr(_FUSION_LAST_ERROR[chain]))
+        for chain, count in _FUSION_FALLBACKS.items()
+    }
+
+
+def _run_fused(run, args, chain: str):
+    """The compiled chain's result, or ``None`` having recorded the fall back.
+
+    ``None`` is unambiguous: every chain returns a tensor.  The first fall
+    back of each chain warns once, because the interesting case is the one
+    that happens on call one and then on every call after it.
+    """
     try:
-        return torch.compile(_replay_core, dynamic=True)
-    except Exception:  # pragma: no cover - no inductor, no fusion, still correct
+        return run(*args)
+    except Exception as exc:
+        first = chain not in _FUSION_FALLBACKS
+        _FUSION_FALLBACKS[chain] = _FUSION_FALLBACKS.get(chain, 0) + 1
+        _FUSION_LAST_ERROR[chain] = exc
+        if first:
+            warnings.warn(
+                f"the compiled {chain!r} decode chain raised and the eager "
+                f"path answered instead: {exc!r}. The decoded bytes are "
+                f"unaffected; the fused path's speed claim is. Counted in "
+                f"tessera.decode.fusion_fallbacks().",
+                RuntimeWarning,
+                stacklevel=3,
+            )
         return None
 
 
@@ -324,10 +392,9 @@ def replay_body(
         )
         run = _fused_replay() if body.is_cuda and narrow else None
         if run is not None:
-            try:
-                return run(*args).long()
-            except Exception:  # pragma: no cover - fall back, never fail closed
-                pass
+            fused = _run_fused(run, args, "replay")
+            if fused is not None:
+                return fused.long()
         return _replay_core(*args).long()
 
     # A code whose step is not a shift register still has to decode, so the
@@ -553,7 +620,7 @@ def materialize_nvfp4(
     half: int = 16,
     scale_lut: "torch.Tensor | None" = None,
     scale_global: float = 1.0,
-) -> "tuple[torch.Tensor, torch.Tensor]":
+) -> "tuple[torch.Tensor, torch.Tensor, float]":
     """Pack to the standard NVFP4 layout: 2 nibbles/byte + one E4M3 per 16.
 
     Returns ``(packed[rows, cols//2] uint8, scales[rows, cols//half] uint8,
@@ -851,11 +918,10 @@ def decode_codes_mixed(
             None if start is None else start[which],
         )
         if run is not None:
-            try:
-                codes[:, which] = run(*args)
+            fused = _run_fused(run, args, "decode")
+            if fused is not None:
+                codes[:, which] = fused
                 continue
-            except Exception:  # pragma: no cover - fall back, never fail closed
-                pass
         anchors = replay_body(
             body, picked, code, span, None if start is None else start[which]
         )

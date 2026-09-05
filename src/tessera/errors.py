@@ -16,7 +16,9 @@ class SchemaError(TesseraError):
 
 class CanonicalEncodingError(TesseraError):
     """Manifest bytes are not in canonical form (non-minimal varint, trailing
-    bytes, out-of-order fields, over-long field)."""
+    bytes, out-of-order fields, over-long field), or a field's ordinal is
+    outside the domain its writer can emit (a bool that is not 0 or 1, an
+    enum ordinal no member names, a blob length no writer produces)."""
 
 
 class ManifestError(TesseraError):

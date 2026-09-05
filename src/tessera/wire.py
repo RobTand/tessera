@@ -218,13 +218,25 @@ def unpack_body(
 
 
 def pack_fp16(values: torch.Tensor) -> bytes:
-    """The DIAG_SU/SV planes: one FP16 per channel, little-endian."""
-    return values.detach().to(torch.float16).cpu().numpy().tobytes()
+    """The DIAG_SU/SV planes: one FP16 per channel, little-endian.
+
+    ``<f2``, not ``np.float16``: the wire's byte order is a property of the
+    format, not of whoever is writing it -- the same rule and the same
+    spelling ``unit_artifact``'s window-table reader states for the code
+    table.  ``tobytes()`` on a native-order array writes the host's order,
+    which is correct on every machine this has ever run on and agrees with
+    nothing but itself on a big-endian one.
+    """
+    array = values.detach().to(torch.float16).cpu().numpy()
+    return array.astype("<f2", copy=False).tobytes()
 
 
 def unpack_fp16(data: bytes, count: int, device=None) -> torch.Tensor:
-    array = np.frombuffer(data, dtype=np.float16, count=count)
-    return torch.from_numpy(array.copy()).to(device or "cpu")
+    # ``<f2`` for the reason ``pack_fp16`` writes it, then back to the native
+    # float16: torch cannot wrap an array whose byte order is not the host's.
+    # The ``astype`` is also the copy the read-only buffer needs.
+    array = np.frombuffer(data, dtype="<f2", count=count).astype(np.float16)
+    return torch.from_numpy(array).to(device or "cpu")
 
 
 def scales_from_planes(

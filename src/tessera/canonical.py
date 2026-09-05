@@ -22,8 +22,10 @@ Rules (schema 1a decision D1):
 
 from __future__ import annotations
 
+import enum as _enum
 import hashlib
 from fractions import Fraction
+from typing import TypeVar
 
 from .errors import CanonicalEncodingError
 
@@ -36,6 +38,8 @@ __all__ = [
     "decode_uint",
     "fits_uint",
 ]
+
+_EnumT = TypeVar("_EnumT", bound=_enum.Enum)
 
 DIGEST_BYTES = 32
 _MAX_UINT = (1 << 64) - 1
@@ -192,6 +196,26 @@ class Reader:
         if value > 1:
             raise CanonicalEncodingError(f"bool encoded as {value}")
         return bool(value)
+
+    def enum(self, cls: "type[_EnumT]") -> _EnumT:
+        """One ordinal of a declared enum, or a rejection that names it.
+
+        An ordinal outside the enum's declared domain is a byte string no
+        conforming encoder can produce -- the same argument ``bool`` makes
+        about a flag byte of 2 and ``blob`` makes about an impossible length
+        prefix.  So the reader answers it with a domain rejection here, in
+        the taxonomy (``errors.py``), instead of letting the enum
+        constructor's bare ``ValueError`` escape into a loader that is
+        catching ``TesseraError`` around ``container.parse``.
+        """
+        raw = self.uint()
+        try:
+            return cls(raw)
+        except ValueError:
+            raise CanonicalEncodingError(
+                f"{raw} is not a {cls.__name__} ordinal; the declared domain "
+                f"is {sorted(int(member.value) for member in cls)}"
+            ) from None
 
     def blob(self) -> bytes:
         length = self.uint()

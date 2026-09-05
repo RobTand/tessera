@@ -244,12 +244,16 @@ class ParsedArtifact:
         )
 
 
-def parse(data: bytes, verify_payload_digest: bool = True) -> ParsedArtifact:
+def parse(data: bytes) -> ParsedArtifact:
     """Parse an artifact from **bytes only**, fail-closed.
 
-    `verify_payload_digest` applies to the untruncated artifact; a legal
-    truncation necessarily has a different payload digest, so it is checked
-    only when the plane region is complete.
+    The payload digests are always checked.  There used to be a
+    `verify_payload_digest=False` that turned off every plane digest and the
+    padding-canonicality check together; nothing ever passed it, and an off
+    switch on a fail-closed parser is a way for one caller to read bytes no
+    other reader would accept.  A legal truncation is still not a digest
+    failure: it necessarily has a different payload digest, so the whole-
+    artifact digest is compared only when the plane region is complete.
     """
     if len(data) < HEADER_BYTES:
         raise SchemaError(f"artifact shorter than a {HEADER_BYTES}-byte header")
@@ -299,11 +303,10 @@ def parse(data: bytes, verify_payload_digest: bool = True) -> ParsedArtifact:
         manifest, terminal, side_bytes=side_bytes, physical_bytes=len(plane_region)
     )
 
-    if verify_payload_digest:
-        verify_plane_region(manifest, terminal, plane_region)
-        if len(plane_region) == region_bytes:
-            if hashlib.sha256(plane_region).digest() != manifest.payload_digest:
-                raise SchemaError("payload digest mismatch on a complete artifact")
+    verify_plane_region(manifest, terminal, plane_region)
+    if len(plane_region) == region_bytes:
+        if hashlib.sha256(plane_region).digest() != manifest.payload_digest:
+            raise SchemaError("payload digest mismatch on a complete artifact")
 
     return ParsedArtifact(
         manifest=manifest,

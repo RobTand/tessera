@@ -360,3 +360,14 @@ def test_signed_encoding_refuses_values_outside_its_domain():
     writer.sint(-(1 << 63))  # the boundary is legal
     with pytest.raises(CanonicalEncodingError, match="signed 64-bit domain"):
         writer.sint(-(1 << 70))
+
+
+def test_the_parser_has_no_switch_that_turns_its_digests_off():
+    """`parse(data, verify_payload_digest=False)` disabled every plane digest
+    and the padding-canonicality check in one keyword, and no caller in the
+    tree ever passed it.  A fail-closed parser with an unused off switch is a
+    way for one reader to accept bytes no other reader would."""
+    _manifest, _region, data = make_artifact()
+    assert parse(data)  # the one way in still works
+    with pytest.raises(TypeError):
+        parse(data, verify_payload_digest=False)
