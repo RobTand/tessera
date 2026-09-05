@@ -76,6 +76,85 @@ def _require_byte_aligned_rows(rows: int) -> None:
         )
 
 
+def _require_history_fits_the_pad(memory: int) -> None:
+    """``memory`` history bits have to come out of the select plane's pad.
+
+    Every plane-reading kernel here takes a column's history as the window
+    ending at the current row and starting ``memory`` bits earlier, so row
+    0's window reaches ``memory`` bits into the ``SELECT_PAD`` zero bits the
+    packer writes ahead of each column -- and a deeper code would read the
+    previous column's last rows as its own initial state.
+
+    It is the width bound of the *reads* too, which is why one function
+    states it for all of them.  The sliced and prefill kernels take
+    ``memory + 1`` bits out of a 16-bit window whose first bit lands up to
+    seven bits into a byte, so ``memory + 1 + 7 <= 16``; the wide and tuple
+    kernels take them out of a 24-bit window at the constant offset
+    ``SELECT_PAD - memory``, which needs the same bound from the other side.
+    Both come to ``SELECT_PAD``.
+    """
+    if memory > SELECT_PAD:
+        raise GrammarError(f"memory {memory} exceeds the select pad {SELECT_PAD}")
+
+
+def _require_point_window(rate: int, vec: int) -> None:
+    """A lane's point field, as the two k-tuple kernels actually read it.
+
+    Both read a lane's point bits as **two int32 halves**, ``vec // 2`` codes
+    of ``rate - 1`` bits each, accumulated a byte at a time.  Two conditions
+    follow from that extraction and neither is a preference:
+
+    - a half is a whole number of bytes, so ``rate - 1`` is even and
+      ``vec * (rate - 1)`` a multiple of 16;
+    - a half *fits* an int32, so ``(vec // 2) * (rate - 1) <= 32``.  Past
+      that the byte-at-a-time accumulation shifts the earliest bits out of
+      the register: at rate 11 a half holds 40 bits, the first eight are
+      gone, and half the codes in every lane decode to a different point
+      with nothing to say so.  ``tuple_grid(lloyd_max_grid(64), 2)`` is a
+      supported grid whose cap is exactly that rate.
+    """
+    if (rate - 1) % 2 or (vec * (rate - 1)) % 16:
+        raise GrammarError(
+            f"rate {rate}: the point window is split into two equal byte "
+            "halves, which needs an even (rate-1) and a whole number of bytes"
+        )
+    bits = (vec // 2) * (rate - 1)
+    if bits > 32:
+        raise GrammarError(
+            f"rate {rate}: a lane's {vec // 2} codes carry {bits} point bits "
+            f"per half-window, which the kernel accumulates in an int32 -- "
+            f"{bits - 32} bits would be shifted out before anything read them. "
+            "Narrow the rate, or widen the accumulator deliberately"
+        )
+
+
+def _dense_activation(x: torch.Tensor, cols: int) -> torch.Tensor:
+    """``x`` as every GEMV in this module actually addresses it.
+
+    A kernel reads ``x_ptr + k``: a *storage* offset, stride 1, off whatever
+    pointer the launch was handed.  A view with another stride keeps that
+    stride through ``reshape(-1)`` -- reshaping a tensor to the shape it
+    already has returns the tensor itself -- so ``backing[::2]`` arrives with
+    the expected ``[cols]`` shape and the kernel reads ``backing[k]`` where
+    the caller wrote ``backing[2k]``.  The dot product is then over different
+    numbers, and nothing about the launch says so.
+
+    The boundary therefore normalises, which is what the serving window lanes
+    (``kernel_window``, ``kernel_window_gemv``) already do to their
+    activations, and refuses a length that is not the reduction's: every
+    inner load of ``x`` here is *unmasked* in ``k``, so a short activation is
+    an out-of-bounds read and not a short dot product.
+    """
+    flat = x.reshape(-1)
+    if flat.numel() != cols:
+        raise GrammarError(
+            f"the activation holds {flat.numel()} elements for a reduction over "
+            f"{cols} columns: the GEMVs read x[k] for every column and mask "
+            "nothing in k, so a shorter one reads past its own storage"
+        )
+    return flat.contiguous()
+
+
 def build_code_lut(
     forest: AnchorForest, code: ConvCode, device: str = "cuda"
 ) -> torch.Tensor:
@@ -244,17 +323,24 @@ def _gemv_kernel(
     offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
     acc = tl.zeros((BLOCK_N,), dtype=tl.float32)
 
+    # A split ends where the *split* ends, not where the matrix does.  ``span``
+    # is a column count, not a whole number of ``BLOCK_K`` tiles, so the last
+    # tile of a split generally overhangs it -- 32 columns of overhang at the
+    # wrappers' own defaults (cols=512, SPLIT_K=16, BLOCK_K=64).  Masked
+    # against ``cols`` alone, that overhang is columns the next program also
+    # accumulates, and every one of them enters the dot product twice.
     span = tl.cdiv(cols, SPLIT_K)
     start = pid_k * span
-    for k0 in range(start, tl.minimum(start + span, cols), BLOCK_K):
+    stop = tl.minimum(start + span, cols)
+    for k0 in range(start, stop, BLOCK_K):
         offs_k = k0 + tl.arange(0, BLOCK_K)
-        live = (offs_k[:, None] < cols) & (offs_n[None, :] < rows)
+        live = (offs_k[:, None] < stop) & (offs_n[None, :] < rows)
         nibble = _decode_tile(
             body_ptr, lut_ptr, offs_n, offs_k, live, rows, col_stride_bits, memory, rate
         )
         value = tl.load(value_ptr + nibble, mask=live, other=0.0)
         weight = value * _apply_scale_kn(scale_ptr, offs_n, offs_k, live, cols, half)
-        xs = tl.load(x_ptr + offs_k, mask=offs_k < cols, other=0.0)
+        xs = tl.load(x_ptr + offs_k, mask=offs_k < stop, other=0.0)
         acc += tl.sum(weight * xs[:, None], axis=0)
 
     tl.atomic_add(out_ptr + offs_n, acc * global_scale, mask=offs_n < rows)
@@ -279,17 +365,21 @@ def _nvfp4_gemv_kernel(
     offs_n = pid_n * BLOCK_N + tl.arange(0, BLOCK_N)
     acc = tl.zeros((BLOCK_N,), dtype=tl.float32)
 
+    # The same split-end mask as ``_gemv_kernel``: the comparator partitions K
+    # the same way, so it double-counts the same columns, and a comparator that
+    # reports a doubled dot product as NVFP4's answer corrupts a measurement.
     span = tl.cdiv(cols, SPLIT_K)
     start = pid_k * span
-    for k0 in range(start, tl.minimum(start + span, cols), BLOCK_K):
+    stop = tl.minimum(start + span, cols)
+    for k0 in range(start, stop, BLOCK_K):
         offs_k = k0 + tl.arange(0, BLOCK_K)
-        live = (offs_n[:, None] < rows) & (offs_k[None, :] < cols)
+        live = (offs_n[:, None] < rows) & (offs_k[None, :] < stop)
         flat = offs_n[:, None].to(tl.int64) * cols + offs_k[None, :].to(tl.int64)
         byte = tl.load(packed_ptr + flat // 2, mask=live, other=0).to(tl.int32)
         nibble = tl.where(flat % 2 == 0, byte & 0xF, (byte >> 4) & 0xF)
         value = tl.load(value_ptr + nibble, mask=live, other=0.0)
         weight = value * _apply_scale(scale_ptr, offs_n, offs_k, live, cols, half)
-        xs = tl.load(x_ptr + offs_k, mask=offs_k < cols, other=0.0)
+        xs = tl.load(x_ptr + offs_k, mask=offs_k < stop, other=0.0)
         acc += tl.sum(weight * xs[None, :], axis=1)
 
     tl.atomic_add(out_ptr + offs_n, acc * global_scale, mask=offs_n < rows)
@@ -347,7 +437,7 @@ def tessera_gemv(
 
     out = torch.zeros(rows, dtype=torch.float32, device=x.device)
     _gemv_kernel[(triton.cdiv(rows, block_n), split_k)](
-        x.reshape(-1), body, lut, e4m3.reshape(-1),
+        _dense_activation(x, cols), body, lut, e4m3.reshape(-1),
         e2m1_value_table(x.device).float(), out,
         float(global_scale), rows, cols, rate * rows,
         memory=memory, rate=rate, half=half,
@@ -373,7 +463,7 @@ def nvfp4_gemv(
 
     out = torch.zeros(rows, dtype=torch.float32, device=x.device)
     _nvfp4_gemv_kernel[(triton.cdiv(rows, block_n), split_k)](
-        x.reshape(-1), packed.reshape(-1), e4m3.reshape(-1),
+        _dense_activation(x, cols), packed.reshape(-1), e4m3.reshape(-1),
         e2m1_value_table(x.device).float(), out,
         float(global_scale), rows, cols,
         half=half, BLOCK_N=block_n, BLOCK_K=block_k, SPLIT_K=split_k,
@@ -420,11 +510,18 @@ def _sliced_gemv_kernel(
         )
         for i in tl.static_range(half):
             k = g * half + i
-            # Seven adjacent bits of the select plane: rows n-memory..n.
+            # ``memory + 1`` adjacent bits of the select plane: rows
+            # n-memory..n.  The window is that wide because the history is
+            # that deep -- seven bits at the shipping memory=6 -- so both the
+            # shift and the mask are derived from ``memory`` and not written
+            # for one code.  Its last bit sits at offset ``(p % 8) + memory``
+            # of a 16-bit big-endian read, hence position 15 - that.
             p = k.to(tl.int64) * (rows + pad) + offs_n.to(tl.int64) + (pad - memory)
             lo = tl.load(select_ptr + p // 8, mask=live_n, other=0).to(tl.int32)
             hi = tl.load(select_ptr + p // 8 + 1, mask=live_n, other=0).to(tl.int32)
-            window = (((lo << 8) | hi) >> (9 - (p % 8).to(tl.int32))) & 0x7F
+            window = (((lo << 8) | hi) >> (15 - memory - (p % 8).to(tl.int32))) & (
+                (1 << (memory + 1)) - 1
+            )
 
             q = k.to(tl.int64) * rows * (rate - 1) + offs_n.to(tl.int64) * (rate - 1)
             byte = tl.load(point_ptr + q // 8, mask=live_n, other=0).to(tl.int32)
@@ -459,10 +556,11 @@ def tessera_gemv_sliced(
     from .encode import e2m1_value_table
 
     _require_byte_aligned_rows(rows)
+    _require_history_fits_the_pad(memory)
     _require_column_groups(cols, half)
     out = torch.zeros(rows, dtype=torch.float32, device=x.device)
     _sliced_gemv_kernel[(triton.cdiv(rows, block_n), split_k)](
-        x.reshape(-1), select_plane, point_plane, lut, e4m3_t.reshape(-1),
+        _dense_activation(x, cols), select_plane, point_plane, lut, e4m3_t.reshape(-1),
         e2m1_value_table(x.device).float(), out,
         float(global_scale), rows, cols,
         memory=memory, rate=rate, half=half, pad=SELECT_PAD,
@@ -531,7 +629,7 @@ def nvfp4_gemv_sliced(
     _require_column_groups(cols, half)
     out = torch.zeros(rows, dtype=torch.float32, device=x.device)
     _nvfp4_sliced_gemv_kernel[(triton.cdiv(rows, block_n), split_k)](
-        x.reshape(-1), packed_t.reshape(-1), e4m3_t.reshape(-1),
+        _dense_activation(x, cols), packed_t.reshape(-1), e4m3_t.reshape(-1),
         e2m1_value_table(x.device).float(), out,
         float(global_scale), rows, cols,
         half=half, BLOCK_N=block_n, SPLIT_K=split_k,
@@ -610,9 +708,12 @@ def _wide_gemv_kernel(
             b2 = tl.load(select_ptr + p // 8 + 2, mask=live_base, other=0).to(tl.int32)
             wide = (b0 << 16) | (b1 << 8) | b2
             # `wide` is a 24-bit big-endian window from byte p//8.  Row base+v's
-            # seven history bits end at bit offset (p%8) + v + memory, and
-            # p%8 is the constant `pad - memory`, so the shift is 23 - pad - v.
-            window = (wide[:, None] >> (23 - pad - vec[None, :])) & 0x7F
+            # `memory + 1` history bits end at bit offset (p%8) + v + memory, and
+            # p%8 is the constant `pad - memory`, so the shift is 23 - pad - v
+            # whatever the memory -- but the mask is the window's own width.
+            window = (wide[:, None] >> (23 - pad - vec[None, :])) & (
+                (1 << (memory + 1)) - 1
+            )
 
             # Point plane: 2*VEC bits, byte-aligned.
             q = k.to(tl.int64) * rows * (rate - 1) + base.to(tl.int64) * (rate - 1)
@@ -664,10 +765,11 @@ def tessera_gemv_wide(
     # The other half of the same sentence, which used to live only in that
     # message: the derivation needs ``rows % 8 == 0`` too.
     _require_byte_aligned_rows(rows)
+    _require_history_fits_the_pad(memory)
     _require_column_groups(cols, half)
     out = torch.zeros(rows, dtype=torch.float32, device=x.device)
     _wide_gemv_kernel[(triton.cdiv(rows, lanes * vec), split_k)](
-        x.reshape(-1), select_plane, point_plane, value_lut, e4m3_t.reshape(-1), out,
+        _dense_activation(x, cols), select_plane, point_plane, value_lut, e4m3_t.reshape(-1), out,
         float(global_scale), rows, cols,
         memory=memory, rate=rate, half=half, pad=SELECT_PAD,
         LANES=lanes, VEC=vec, SPLIT_K=split_k,
@@ -974,7 +1076,9 @@ def tessera_gemv_tuple_span2(
 
     ``rate`` must be **odd**, as in ``tessera_gemv_tuple``: the point window is
     split into two equal byte halves, so ``rate - 1`` is even and
-    ``vec * (rate - 1)`` a whole number of bytes.  Enforced below."""
+    ``vec * (rate - 1)`` a whole number of bytes -- and each half must fit the
+    int32 it is accumulated in, which caps ``(vec // 2) * (rate - 1)`` at 32.
+    Both enforced below by ``_require_point_window``."""
     steps = rows // arity
     if rows % arity or steps % 16:
         raise GrammarError(
@@ -986,19 +1090,14 @@ def tessera_gemv_tuple_span2(
             f"vec={vec}: the two-int32-halves split of the point window and the "
             "one-byte label read are derived for VEC=8"
         )
-    if (rate - 1) % 2 or (vec * (rate - 1)) % 16:
-        raise GrammarError(
-            f"rate {rate}: the point window is split into two equal byte "
-            "halves, which needs an even (rate-1) and a whole number of bytes"
-        )
-    if memory > SELECT_PAD:
-        raise GrammarError(f"memory {memory} exceeds the select pad {SELECT_PAD}")
+    _require_point_window(rate, vec)
+    _require_history_fits_the_pad(memory)
     if scale_table.numel() != 16 or scale_table.dtype != torch.float32:
         raise GrammarError("the scale table is sixteen fp32 entries (lut_scale_table)")
     _require_column_groups(cols, half)
     out = torch.zeros(rows, dtype=torch.float32, device=x.device)
     _tuple_gemv_span2_kernel[(triton.cdiv(steps, lanes * vec), split_k)](
-        x.reshape(-1), select_plane, label_plane, point_plane, scale_nibbles,
+        _dense_activation(x, cols), select_plane, label_plane, point_plane, scale_nibbles,
         scale_table, label_lut, subset_values, out,
         float(global_scale), rows, steps, cols,
         memory=memory, rate=rate, arity=arity, half=half, pad=SELECT_PAD,
@@ -1203,7 +1302,7 @@ def tessera_gemv_window(
     scale_table_arg = scale_table if lut else scale_plane
     out = torch.zeros(rows, dtype=torch.float32, device=x.device)
     _window_gemv_kernel[(triton.cdiv(steps, lanes * vec), split_k)](
-        x.reshape(-1), plane, offsets, rates, table, values,
+        _dense_activation(x, cols), plane, offsets, rates, table, values,
         scale_plane, scale_table_arg, out,
         float(global_scale), rows, steps, cols,
         window=window_bits, arity=arity, half=half, lut_scale=lut,
@@ -1268,8 +1367,10 @@ def tessera_gemv_tuple(
 
     ``rate`` must be **odd** -- the point window is split into two equal byte
     halves, which needs an even ``rate - 1`` and ``vec * (rate - 1)`` a whole
-    number of bytes.  Enforced below; stated here because a caller choosing a
-    schedule should not have to read the launch to find out."""
+    number of bytes -- and narrow enough that a half fits the int32 it is
+    accumulated in, which caps ``(vec // 2) * (rate - 1)`` at 32.  Enforced
+    below; stated here because a caller choosing a schedule should not have to
+    read the launch to find out."""
     steps = rows // arity
     if rows % arity or steps % 8:
         raise GrammarError(
@@ -1281,17 +1382,12 @@ def tessera_gemv_tuple(
             f"vec={vec}: the two-int32-halves split of the point window is "
             "derived for VEC=8. Another width needs the shifts re-derived."
         )
-    if (rate - 1) % 2 or (vec * (rate - 1)) % 16:
-        raise GrammarError(
-            f"rate {rate}: the point window is split into two equal byte "
-            "halves, which needs an even (rate-1) and a whole number of bytes"
-        )
-    if memory > SELECT_PAD:
-        raise GrammarError(f"memory {memory} exceeds the select pad {SELECT_PAD}")
+    _require_point_window(rate, vec)
+    _require_history_fits_the_pad(memory)
     _require_column_groups(cols, half)
     out = torch.zeros(rows, dtype=torch.float32, device=x.device)
     _tuple_gemv_kernel[(triton.cdiv(steps, lanes * vec), split_k)](
-        x.reshape(-1), select_plane, point_plane, index_lut, value_table,
+        _dense_activation(x, cols), select_plane, point_plane, index_lut, value_table,
         e4m3_t.reshape(-1), out,
         float(global_scale), rows, steps, cols,
         memory=memory, rate=rate, arity=arity, half=half, pad=SELECT_PAD,
@@ -1369,10 +1465,13 @@ def _gemm_kernel(
         nn = n.to(tl.int64) if WIDE else n
         b = kk * (rows + pad) + (pad - memory) + nn
         byte = b >> 3
-        shift = 9 - (b & 7).to(tl.int32)
+        # ``memory + 1`` bits ending at offset ``(b & 7) + memory`` of a
+        # 16-bit big-endian read; both the shift and the mask follow from the
+        # history's depth rather than from the shipping memory=6.
+        shift = 15 - memory - (b & 7).to(tl.int32)
         s0 = tl.load(select_ptr + byte, mask=live, other=0).to(tl.int32)
         s1 = tl.load(select_ptr + byte + 1, mask=live, other=0).to(tl.int32)
-        window = (((s0 << 8) | s1) >> shift) & 0x7F
+        window = (((s0 << 8) | s1) >> shift) & ((1 << (memory + 1)) - 1)
 
         # Point plane: `rate - 1` bits, densely packed in row order.
         q = (kk * rows + nn) * (rate - 1)
@@ -1448,7 +1547,15 @@ def tessera_gemm(
             f"the reduction runs over the {cols} columns the trellis does NOT "
             "run down"
         )
+    # ``_gemm_kernel`` addresses x as ``offs_m * cols + offs_k``, which is the
+    # row-major storage of a [M, cols] tensor and not the strides of the view
+    # it was handed: ``batch[:, ::2]`` and a transpose both pass the check
+    # above and address a different matrix.  Normalised here for the same
+    # reason ``_dense_activation`` normalises the GEMVs' -- the addressing is
+    # the contract, so the boundary makes it true.
+    x = x.contiguous()
     _require_byte_aligned_rows(rows)
+    _require_history_fits_the_pad(memory)
     _require_column_groups(cols, half)
     M = x.shape[0]
     # Both planes are addressed in bits.  int32 holds the larger of the two up
