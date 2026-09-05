@@ -84,7 +84,13 @@ display quoting cannot conceal metadata under tab/newline-containing paths.
 An import of `pkg.mod` is an edge to `pkg.mod` **and** to every package
 `__init__` above it, because importing a submodule executes them; a file loaded
 by explicit path gets an edge to that file only, because loading by path does
-not.
+not. A relative import in a package's own `__init__.py` climbs from that
+package, not from its parent, so `src/tessera/__init__.py`'s `from .manifest
+import SCHEMA_ID` is the `tessera.manifest -> tessera` edge it looks like. Each
+file is also a node under every name an import root on `sys.path` gives it:
+`tests/` holds no `__init__.py`, so `tests/box_artifacts.py` answers to
+`box_artifacts`, which is how every test in the tree spells it. An ambiguous
+alias edges to every candidate.
 Explicit Python file loaders also contribute dependency edges: the non-executing
 `tessera._dev.source_dependencies` resolver follows finite `Path` expressions,
 lexical bindings, loader aliases and repository globs, using the file path rather
@@ -119,7 +125,12 @@ the reader can execute Python; a parameterized filename in a source-executing
 module is not silently treated as no dependency. What this misses is a source
 read the resolver never sees -- `subprocess.run([sys.executable, path])` above
 all -- which was never an edge here.
-A conftest change reaches its entire test population; a delegated runner-fix task records
+A conftest **reached** -- changed, or importing anything changed -- reaches its
+entire test population, because pytest imports it for every test at or below its
+directory and a fixture consumer names the fixture rather than the module the
+conftest built it from; collection-probe edges are excluded from that walk, so
+one changed test file does not select the population through the conftest that
+execs it. A delegated runner-fix task records
 its targeted regression evidence while the coordinator owns the final full
 dual-population integration run.
 
