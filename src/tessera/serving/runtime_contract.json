@@ -1,6 +1,6 @@
 {
   "schema": "tessera.runtime-contract.v1",
- "contract_version": 21,
+ "contract_version": 22,
  "quant_method": {
   "canonical": "tessera",
   "accepted": [
@@ -194,7 +194,7 @@
   }
  ],
  "lane_eligibility": {
-  "schema": "tessera.lane-eligibility.v8",
+  "schema": "tessera.lane-eligibility.v9",
   "platforms": {
    "sm_121": {
     "compute_capability": [
@@ -249,7 +249,8 @@
       "status": "not_recorded",
       "receipt": null,
       "attribution": "unattributed",
-      "control": null
+      "control": null,
+      "record": null
      }
     }
    },
@@ -298,7 +299,8 @@
       "status": "not_recorded",
       "receipt": null,
       "attribution": "unattributed",
-      "control": null
+      "control": null,
+      "record": null
      }
     }
    },
@@ -350,7 +352,8 @@
       "status": "not_recorded",
       "receipt": null,
       "attribution": "unattributed",
-      "control": null
+      "control": null,
+      "record": null
      }
     }
    },
@@ -417,7 +420,8 @@
       "status": "not_recorded",
       "receipt": null,
       "attribution": "unattributed",
-      "control": null
+      "control": null,
+      "record": null
      }
     }
    },
@@ -477,7 +481,8 @@
       "status": "not_recorded",
       "receipt": null,
       "attribution": "unattributed",
-      "control": null
+      "control": null,
+      "record": null
      }
     }
    },
@@ -541,7 +546,8 @@
       "status": "not_recorded",
       "receipt": null,
       "attribution": "unattributed",
-      "control": null
+      "control": null,
+      "record": null
      }
     }
    },
@@ -582,7 +588,8 @@
       "status": "recorded",
       "receipt": "docs/measurements/tessera-bf16-route-served-2026-09-02.md",
       "attribution": "unattributed",
-      "control": null
+      "control": null,
+      "record": null
      }
     }
    },
@@ -631,7 +638,8 @@
       "status": "recorded",
       "receipt": "docs/measurements/tessera-bf16-route-served-2026-09-02.md",
       "attribution": "unattributed",
-      "control": null
+      "control": null,
+      "record": null
      }
     }
    },
@@ -662,8 +670,29 @@
      "smoke": {
       "status": "recorded",
       "receipt": "docs/measurements/moe-smoke-recorded-2026-09-05.md",
-      "attribution": "unattributed",
-      "control": null
+      "attribution": "shared_with_reference",
+      "control": null,
+      "record": {
+       "instrument": "experiments/moe_greedy_smoke.py",
+       "rule": "repetitive iff the completion ends in a cycle: some period p with 2p <= L has a p-periodic suffix holding >= 2 full periods (s >= 2p), whatever its share of the completion; not_recorded iff the completion is empty (L = 0), which is no completion for a verdict to be true of; recorded otherwise; tokens are the artifact tokenizer's canonical encoding of the returned text",
+       "reference": "bf16_source",
+       "rows": [
+        {"prompt": "P0", "form": "campaign", "interface": "raw_completion", "status": "repetitive", "reference_status": "repetitive"},
+        {"prompt": "P1", "form": "campaign", "interface": "raw_completion", "status": "repetitive", "reference_status": "repetitive"},
+        {"prompt": "P2", "form": "campaign", "interface": "raw_completion", "status": "recorded", "reference_status": "repetitive"},
+        {"prompt": "P3", "form": "campaign", "interface": "raw_completion", "status": "repetitive", "reference_status": "repetitive"},
+        {"prompt": "P4", "form": "campaign", "interface": "chat_template", "status": "recorded", "reference_status": "recorded"},
+        {"prompt": "P5", "form": "campaign", "interface": "chat_template", "status": "recorded", "reference_status": "recorded"},
+        {"prompt": "P6", "form": "campaign", "interface": "chat_template", "status": "recorded", "reference_status": "recorded"},
+        {"prompt": "P0", "form": "pure_greedy", "interface": "raw_completion", "status": "repetitive", "reference_status": "repetitive"},
+        {"prompt": "P1", "form": "pure_greedy", "interface": "raw_completion", "status": "repetitive", "reference_status": "repetitive"},
+        {"prompt": "P2", "form": "pure_greedy", "interface": "raw_completion", "status": "repetitive", "reference_status": "repetitive"},
+        {"prompt": "P3", "form": "pure_greedy", "interface": "raw_completion", "status": "repetitive", "reference_status": "repetitive"},
+        {"prompt": "P4", "form": "pure_greedy", "interface": "chat_template", "status": "recorded", "reference_status": "recorded"},
+        {"prompt": "P5", "form": "pure_greedy", "interface": "chat_template", "status": "recorded", "reference_status": "recorded"},
+        {"prompt": "P6", "form": "pure_greedy", "interface": "chat_template", "status": "recorded", "reference_status": "recorded"}
+       ]
+      }
      }
     }
    },
@@ -702,8 +731,29 @@
      "smoke": {
       "status": "recorded",
       "receipt": "docs/measurements/moe-smoke-recorded-2026-09-05.md",
-      "attribution": "unattributed",
-      "control": null
+      "attribution": "shared_with_reference",
+      "control": null,
+      "record": {
+       "instrument": "experiments/moe_greedy_smoke.py",
+       "rule": "repetitive iff the completion ends in a cycle: some period p with 2p <= L has a p-periodic suffix holding >= 2 full periods (s >= 2p), whatever its share of the completion; not_recorded iff the completion is empty (L = 0), which is no completion for a verdict to be true of; recorded otherwise; tokens are the artifact tokenizer's canonical encoding of the returned text",
+       "reference": "bf16_source",
+       "rows": [
+        {"prompt": "P0", "form": "campaign", "interface": "raw_completion", "status": "repetitive", "reference_status": "repetitive"},
+        {"prompt": "P1", "form": "campaign", "interface": "raw_completion", "status": "repetitive", "reference_status": "repetitive"},
+        {"prompt": "P2", "form": "campaign", "interface": "raw_completion", "status": "recorded", "reference_status": "repetitive"},
+        {"prompt": "P3", "form": "campaign", "interface": "raw_completion", "status": "repetitive", "reference_status": "repetitive"},
+        {"prompt": "P4", "form": "campaign", "interface": "chat_template", "status": "recorded", "reference_status": "recorded"},
+        {"prompt": "P5", "form": "campaign", "interface": "chat_template", "status": "recorded", "reference_status": "recorded"},
+        {"prompt": "P6", "form": "campaign", "interface": "chat_template", "status": "recorded", "reference_status": "recorded"},
+        {"prompt": "P0", "form": "pure_greedy", "interface": "raw_completion", "status": "repetitive", "reference_status": "repetitive"},
+        {"prompt": "P1", "form": "pure_greedy", "interface": "raw_completion", "status": "repetitive", "reference_status": "repetitive"},
+        {"prompt": "P2", "form": "pure_greedy", "interface": "raw_completion", "status": "repetitive", "reference_status": "repetitive"},
+        {"prompt": "P3", "form": "pure_greedy", "interface": "raw_completion", "status": "repetitive", "reference_status": "repetitive"},
+        {"prompt": "P4", "form": "pure_greedy", "interface": "chat_template", "status": "recorded", "reference_status": "recorded"},
+        {"prompt": "P5", "form": "pure_greedy", "interface": "chat_template", "status": "recorded", "reference_status": "recorded"},
+        {"prompt": "P6", "form": "pure_greedy", "interface": "chat_template", "status": "recorded", "reference_status": "recorded"}
+       ]
+      }
      }
     }
    }
@@ -1082,6 +1132,11 @@
       ]
    },
  "changelog": [
+  {
+   "contract_version": 22,
+   "date": "2026-09-05",
+   "change": "Lane-eligibility schema v9 (#327): a smoke's status word is DERIVED from a machine-readable record and checked, and the residual observation the record holds is readable by a consumer again. WHAT WAS WRONG: the per-completion rule was stated and pinned, but the AGGREGATION from a set of completions to the cell's ONE published word was stated exactly once, in a dated measurement file, in the existential form 'at least one prompt reads recorded on both arms in the campaign form'. Nothing in the repository said why 'some' rather than 'all'; nothing derived it; no test computed it (tests/test_cell_evidence.py verified the word by substring-matching two markdown lines of the receipt, so re-running the smoke with a different result changed no test); and the condition was satisfiable by an EMPTY completion, because classify([]) returned recorded. A rule that decides a field a serving gate reads does not live in append-only history, and a gate that cannot catch its own defect is not a gate (AGENTS.md 2, 4, 10). The existential's own justification did not fit the rows that satisfied it either: 'campaign' labels a SAMPLING SHAPE, and the three prompts carrying the positive record are chat turns through the checkpoint's own template, an INTERFACE the v17 campaign never sent. Worse, v21 retired smoke.control in the same release, so after it no cell carried a control, all ten read unattributed, and a consumer at the pin could not tell the two routed_moe cells -- whose smoke cycles on seven of fourteen completions -- from the two dense BF16 cells whose smoke never cycled at all. WHAT THE FIELD IS: smoke gains record, either null or the closed {instrument, rule, reference, rows}. instrument is the repository path to the code that owns the per-completion rule; rule is that code's own statement of it, quoted verbatim, so the rule is readable at the pin (the wheel does not ship experiments/, and a tree test pins the two equal); reference is null or a name from contract.EVIDENCE_CONTROL_REFERENCES; rows is a non-empty set of distinct (prompt, form) pairs, each {prompt, form, interface, status, reference_status} with the verdicts from EVIDENCE_SMOKE_STATUSES, interface from EVIDENCE_SMOKE_INTERFACES (raw_completion | chat_template) and form from EVIDENCE_SMOKE_FORMS (campaign | pure_greedy). No number lives in a cell here either: L, the period and the periodic suffix stay in the receipt and the record carries the verdicts read off them. THE AGGREGATION, in one home (contract.derive_smoke_status, restated in docs/ARCHITECTURE.md beside the grade and attribution derivations and nowhere else): repetitive when some row cycles on this arm and the reference does not -- a degeneration the reference does not share is this route's, and that is the whole content of the word; else recorded when some row reads recorded on this arm AND on the reference (on this arm alone when no reference was run), which is the positive record principle 5's 'generates correctly' leg asks for; else repetitive when any row cycles at all; else not_recorded. The threshold is neither 'some prompt' nor 'all prompts': it is derived from what the word is a claim ABOUT. status is a claim about this ROUTE, so an observation the unquantised reference reproduces is not this route's -- the same principle schema v7's control was added for, applied per (prompt, form) instead of once per cell. attribution is now derived from the record when there is one and from the v7 control when there is not, and a smoke carrying BOTH is refused by name: one derivation, one home. WHAT MOVED ON THE TABLE: no status word moved. Both routed_moe cells still publish recorded, and it is now the word their own record derives -- 14 rows, 6 reading recorded on both arms, 7 cycling on the student, all 7 of those cycling on the BF16 source too, 0 cycling on the student while the source answered. What moved is attribution on those two cells, unattributed -> shared_with_reference, DERIVED and checked: that is the field that makes the residual repetitive observation machine-readable, and it is what now separates these cells from the two dense BF16 cells (recorded, unattributed, no reference arm). The consumer rule ARCHITECTURE.md documents -- refuse on status 'repetitive' AND attribution other than 'shared_with_reference', never on status alone -- has a real cell to read again. THE INTERFACE FINDING, CARRIED: every row names the interface it was taken on, so a consumer reads what the measurement actually found -- through the checkpoint's own chat_template.jinja both arms answer with their own EOS; under raw continuation both arms, student AND BF16 source, end in a cycle. That could not be carried at v8: v8's smoke has one slot for a word that is interface-dependent, and v8's control.outcome vocabulary (identical_completion | different_completion) was written for a ONE-prompt smoke -- on a 14-completion record a bare identical_completion cannot say WHICH prompt, which would be true about the observation and misleading about its meaning, the exact defect v18 was invented to stop. AN ASSERTED STATUS, NAMED: record is nullable, and a cell whose record is null publishes an ASSERTED status -- a word a person read off a receipt, which nothing here can check and which contract.smoke_status_is_derived reports False for. The two dense BF16 cells are in that state: their receipt records one greedy continuation from four census arms of the same route, with no per-completion scoring and no reference arm, so there is no per-(prompt, form) table to transcribe and nothing here invents one. What would give them a derived status is a measurement and not an edit -- experiments/moe_greedy_smoke.py run against a serve of that artifact with its own tokenizer and a BF16 reference arm beside it. The six not_recorded cells never ran a smoke. THE EMPTY-COMPLETION HOLE, CLOSED WHERE THE CONDITION IS DECIDED: classify([]) is not_recorded, so two arms that both return '' for one prompt can no longer manufacture a positive record out of two non-answers; the instrument's RULE string gains the clause. Every completion the 2026-09-05 receipt scored is non-empty (L is 16, 64 or 292-512 on all fourteen rows), so no verdict in it moves. NOT ADDITIVE, and the schema string says so: a v8 reader must not read a v9 document, because record is a key its closed smoke object does not know and because -- the reason the version exists -- a v8 reader goes on treating a status word as asserted prose when it is now the checked output of a stated rule. No rung, route, activation contract, launch, grade, KL entry, qualification, TP/EP bound or byte moved; the decode cell still grades route_only and the evidence debt of docs/measurements/moe-evidence-debt-2026-09-04.md is unchanged. NOT a claim the route is fault-free: a smoke is one prompt family under one runtime, the record now says on which interfaces it cycled, and the receipt says the rest."
+  },
   {
    "contract_version": 21,
    "date": "2026-09-05",

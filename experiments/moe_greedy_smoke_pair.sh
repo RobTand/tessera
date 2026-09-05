@@ -152,6 +152,11 @@ print(json.dumps({"seal": str(seal_path), "seal_sha256": sha256_file(seal_path),
   | tee "$OUT/seal_binding.json"
 serve_arm bf16 "$SOURCE"
 serve_arm tessera "$ARTIFACT"
+# --subject/--reference make the pair carry the evidence.smoke.record block a
+# contract cell transcribes, and the status word contract.derive_smoke_status
+# reads off it, so the receipt and the contract cannot disagree about the word
+# (#327).  The cell is about the Tessera student; the BF16 arm is the reference.
 "$PY" "$TS/experiments/moe_greedy_smoke.py" compare "$OUT/smoke_bf16.json" "$OUT/smoke_tessera.json" \
-  --out "$OUT/pair.json" --markdown "$OUT/pair.md" | tee -a "$OUT/driver.log"
+  --out "$OUT/pair.json" --markdown "$OUT/pair.md" \
+  --subject tessera --reference bf16_source | tee -a "$OUT/driver.log"
 echo "== done $(date --iso-8601=seconds); receipts under $OUT" | tee -a "$OUT/driver.log"
