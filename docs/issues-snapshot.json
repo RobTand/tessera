@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-05T21:56:27Z",
+ "generated": "2026-09-05T22:02:16Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -416,7 +416,7 @@
     "title": "Bind Tessera campaign resume to current inputs and exact priced wire"
    },
    "192": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Pin Tessera by exact commit and contract digest, and read lane-eligibility v6"
    },
    "193": {
@@ -440,7 +440,7 @@
     "title": "test_selected_export_units_resolve_their_own_structure passes alone and fails in the full suite: model-profile registry state leaks between tests"
    },
    "198": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Routed-MoE admission: PrismaQuant refuses on smoke.status alone while contract v20 attributes the repetition to the BF16 source (needs-decision)"
    },
    "199": {
@@ -516,7 +516,7 @@
     "title": "Price the served activation contract from the spec, not the format name (#205)"
    },
    "214": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "fill-route-census accepts a flat legacy census that verify then refuses under the pinned scoped table"
    },
    "215": {
@@ -1978,7 +1978,7 @@
     "title": "[P0] Parsing a released shard drops its counts and rewriting moves the overrides"
    },
    "337": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P0] Prevent failed legacy-export retries from publishing mixed checkpoint bytes"
    },
    "338": {
@@ -2010,12 +2010,16 @@
     "title": "merge_suite: read a publication once, and bind the bytes that were read (#340)"
    },
    "344": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "export: a completed output is immutable, and its bytes are sealed (#337)"
    },
    "345": {
     "state": "OPEN",
     "title": "Restore the selector's never-under-select invariant, and bound its path resolution to the tree (#338, #339)"
+   },
+   "346": {
+    "state": "OPEN",
+    "title": "[P2] A tracked symlink a module reads has no node of its own, so repointing it selects nothing"
    },
    "35": {
     "state": "CLOSED",
