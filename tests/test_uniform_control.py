@@ -388,7 +388,7 @@ def test_the_control_prices_a_unit_exactly_as_prismaquant_charges_for_it(shape):
     import sys
     tree = next((p for p in PQ_TREES if (p / "prismaquant" / "tessera_formats.py").exists()), None)
     if tree is None:
-        pytest.skip("no PrismaQuant tree on this box")
+        box_artifacts.skip_now("prismaquant", "prismaquant", "tessera_formats.py")
     if str(tree) not in sys.path:
         sys.path.insert(0, str(tree))
     try:

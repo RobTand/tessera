@@ -15,7 +15,7 @@ retired one stops being pinned the day it goes (AGENTS.md rule 3).
 from __future__ import annotations
 
 import ast
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 import pytest
 
@@ -24,6 +24,26 @@ import box_artifacts
 TESTS = Path(__file__).resolve().parent
 #: The module that owns the defaults is the one place allowed to spell them.
 OWNER = "box_artifacts.py"
+
+
+def box_address_space() -> list:
+    """The directories the documented roots live in, minimised.
+
+    A root's PARENT is the machine's address space: ``/home/rob`` is one
+    box's home, ``/mnt/shared`` is the mount both boxes carry.  The rule is
+    written over that space rather than over the roster of root defaults
+    because the root a roster cannot catch is exactly the one nobody
+    declared -- ``/mnt/shared/models/Qwen3.8-Flash-Next`` was a literal in a
+    test file while the scan looked only for the seven strings it already
+    knew (AGENTS.md rule 3).  Derived from ``ROOTS``, so a new root widens
+    the rule the day it is added.
+    """
+
+    parents = {str(PurePosixPath(spec.default).parent)
+               for spec in box_artifacts.ROOTS.values()}
+    return sorted(space for space in parents
+                  if not any(other != space and space.startswith(other + "/")
+                             for other in parents))
 
 
 def _docstring_nodes(tree: ast.AST) -> set[int]:
@@ -57,33 +77,39 @@ def _code_strings(path: Path):
             yield node.lineno, node.value
 
 
-def test_a_root_default_is_written_in_exactly_one_module():
+def test_no_test_file_names_a_path_in_the_box_address_space():
     """The pre-fix failure this test was written for::
 
-        AssertionError: a box-artifact root is spelled outside box_artifacts.py
+        AssertionError: a test names a path on somebody's box:
+          test_export_moe_layouts.py:762 names '/mnt/shared/models/Qwen3.8-Flash-Next'
+          in the '/mnt/shared' address space
 
     A path literal in a test file is a claim about which machine the suite is
     running on, and no gate can read it.  Route it through
     ``box_artifacts.require`` / ``.path`` instead, which turns an absent
     artifact into a skip whose reason names the root and the variable that
     moves it.
+
+    This replaces a scan for the ``ROOTS`` defaults themselves, which by
+    construction could not see the one case that matters: a root nobody
+    declared.  ``tests/**`` and not ``tests/*``, for the same reason.
     """
 
-    defaults = {spec.default: spec for spec in box_artifacts.ROOTS.values()}
+    spaces = box_address_space()
+    assert spaces, "ROOTS declares no defaults, so this rule covers nothing"
     offenders = []
-    for module in sorted(TESTS.glob("*.py")):
+    for module in sorted(TESTS.rglob("*.py")):
         if module.name == OWNER:
             continue
         for lineno, text in _code_strings(module):
-            for default, spec in defaults.items():
-                if default in text:
+            for space in spaces:
+                if space + "/" in text:
                     offenders.append(
-                        f"{module.name}:{lineno} spells the {spec.key!r} root "
-                        f"({spec.env}, default {spec.default}) inside {text!r}"
+                        f"{module.relative_to(TESTS)}:{lineno} names {text!r} in the "
+                        f"{space!r} address space"
                     )
     assert not offenders, (
-        "a box-artifact root is spelled outside box_artifacts.py:\n  "
-        + "\n  ".join(offenders)
+        "a test names a path on somebody's box:\n  " + "\n  ".join(offenders)
     )
 
 

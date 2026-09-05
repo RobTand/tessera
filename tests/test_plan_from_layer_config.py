@@ -315,16 +315,13 @@ def test_broadcast_refuses_a_role_whose_shape_differs_at_another_depth():
 
 # -- the accounting the export is checked against ------------------------------
 
-@pytest.mark.skipif(not (PQ_TREE / "prismaquant" / "tessera_formats.py").exists(),
-                    reason="the PrismaQuant tree with tessera_formats is not on this box")
+@box_artifacts.require("prismaquant_worktree", "prismaquant", "tessera_formats.py")
 def test_the_sidecar_reproduces_prismaquants_own_charged_bits():
     # Not "a plausible size": the exact integer the allocator spent its budget
     # in.  Computed by importing PrismaQuant's own accountant, so a divergence
     # here is a divergence between two trees, not between two formulas.
-    config = json.loads((ALLOC / "lc_full_4.0.json").read_text()) \
-        if ALLOC.exists() else None
-    if config is None:
-        pytest.skip("the allocation outputs are not on this box")
+    config = json.loads(box_artifacts.skip_now(
+        "shared_runs", "pq-continuous", "qwen06b", "alloc", "lc_full_4.0.json").read_text())
     expected = config["__prismaquant__"]["body_assignment_payload_bits_total"]
     _plan, provenance = build(config, one_layer_shapes(), prismaquant=PQ_TREE)
     assert provenance["totals"]["prismaquant_charged_bits"] == expected
@@ -334,9 +331,8 @@ def test_the_sidecar_reproduces_prismaquants_own_charged_bits():
         config["__prismaquant__"]["achieved_bits"], abs=1e-12)
 
 
-@pytest.mark.skipif(not (PQ_TREE / "prismaquant" / "tessera_formats.py").exists()
-                    or not ALLOC.exists(),
-                    reason="the PrismaQuant tree or the allocation outputs are not on this box")
+@box_artifacts.require("prismaquant_worktree", "prismaquant", "tessera_formats.py")
+@box_artifacts.require("shared_runs", "pq-continuous", "qwen06b", "alloc")
 def test_broadcasting_keeps_the_allocations_bpp_because_every_layer_has_one_shape():
     config = json.loads((ALLOC / "lc_full_4.0.json").read_text())
     achieved = config["__prismaquant__"]["achieved_bits"]

@@ -291,7 +291,7 @@ def test_the_same_receipt_and_mode_cannot_be_counted_twice(contract):
     ({"status": "recorded", "receipt": None}, "names no receipt"),
     ({"status": "repetitive", "receipt": None}, "names no receipt"),
     ({"status": "not_recorded", "receipt": BF16}, "not_recorded names a receipt"),
-    ({"status": "recorded", "receipt": "/home/rob/x.md"},
+    ({"status": "recorded", "receipt": "/an/absolute/path/x.md"},
      "receipt must be a repository path under 'docs/measurements/'"),
     ({"status": "recorded", "receipt": BF16, "text": "France is"},
      r"smoke carries unknown field\(s\) \['text'\]"),
