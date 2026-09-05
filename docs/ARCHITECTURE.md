@@ -1349,6 +1349,38 @@ record through the gate, watches `hessian` refuse at 2 of 6, and pins
 standing. Flipping that default without a promotion this gate accepts turns
 the suite red.
 
+#### Before the legs: the screen's own recorded proofs are read, not printed
+
+A promotion gate reads a screen document, and that document records the
+evidence that can invalidate the experiment that produced it:
+`drift_control_identical` (the same arm run first and last in one process
+reconstructed the same weights), `landing`/`serialisable`/
+`sink_vs_wire_bit_identical` (the sink the arms were scored off IS the wire
+that ships), and, on a trailing arm, `matched_pair`'s `codes_identical`,
+`bytes_equal`, `inner_objectives_equal` and `inner_refits_identical` (the two
+arms differ in the last scale plane and in nothing else).
+`experiments/refit_trailing_pair.py` wrote and printed all of it;
+`experiments/refit_trailing_pair_gate.py` read none of it, so a screen whose
+control DIFFERS, or whose trailing arm changed its packed codes, still reached
+`assert_plane_promotion` on its ratios alone and could print PROMOTED
+(tessera#250). `experiments/refit_trailing_screen.py` is now the one home for
+that reading, and both the producer and the gate call it: a failed control or
+a mislabelled landing refuses the whole document, in **both** populations,
+before a ratio is computed; a failed matched-pair leg refuses the arm that
+claims the pair. A proof that is absent refuses exactly as a proof that is
+false does.
+
+**Which arms owe the matched-pair proof is derived from the receipt, not
+listed.** A trailing pair is an arm whose recorded refit schedule carries the
+control's inner objectives with the trailing one swapped -- `1,1,1,2` against
+`1,1,1,1` -- and whose `refit_diagnostics` records no coupled landing, because
+#50's coupled landing re-assigns blocks and is *expected* to move the codes
+the next trellis pass sees. Naming `B-Jac`/`B-GS` would pass on the day the
+roster is wrong and would let a receipt exempt an arm by deleting its proof.
+`plane_moved=false` is recorded and deliberately not required: an arm whose
+lever reached nothing is an ineffective arm, which is a result and not a
+broken comparison.
+
 #### The fifth leg: a screen taken off the wire does not promote
 
 On the LUT plane a per-block scale lands on one of sixteen E4M3 entries, and
