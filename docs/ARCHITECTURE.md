@@ -9,7 +9,7 @@ the code that owns it.
 selector traversal budget #353, directory-glob boundary #354, and refused
 data-read suffix coverage #355 verified against base `8dc165b`;
 base `8dc165b` (wire minor 7), encoder-evidence scope correction #198,
-RELEASE cut capability correction #350; legacy auxiliary publication #351;
+RELEASE cut capability correction #350; legacy merge publication #351/#352;
 CI at `df1bc20`,
 packaging metadata at `cd3190a`; contract v22 (the smoke status word is derived
 from a `smoke.record` and checked, #327; routed-MoE smoke recorded,
@@ -609,7 +609,14 @@ prices. Two things close it, and the second is why the first is not enough:
   auxiliaries. Each installed auxiliary is hashed against the source receipt;
   the index and completion config are published only after all auxiliary
   transfers succeed, so a failed tokenizer/config copy cannot seal partial
-  replacement (#351).
+  replacement (#351). Weight and auxiliary transfers use private sibling
+  staging and replace destination entries, so an existing symlink or hardlink
+  cannot redirect a write into a verified input. Staged and installed bytes
+  must match the verified digests before publication (#352). Copy and move
+  modes retain self-assembly into a part directory; an output directory that
+  aliases the BF16 source is refused before any mutation. A failed move
+  installation restores its staged shard to the input path; if restoration
+  also fails, the error names the retained staging file for recovery.
 
 **What an operator does differently:** re-exporting into a checkpoint directory
 that already exists now refuses. Export to a fresh directory and swap, or
