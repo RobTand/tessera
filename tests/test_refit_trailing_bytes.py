@@ -7,13 +7,24 @@ may differ.  It loaded ``.weight`` and ``.input_global_scale`` and recorded
 their differences -- and then decided on the packed codes, the scale plane, the
 tensor-name sets and the wire byte totals alone, so a B side whose BF16
 passthrough weight or activation quantizer had also moved still returned 0 with
-``verdict: "the matched pair"`` (tessera#248).
+``verdict: "the matched pair"`` (tessera#248).  That fix was total over the
+five suffixes the loader *read*, which left the same door one over: a
+``.bias`` or a ``.k_scale`` was not loaded at all, so it was in no count and no
+verdict.  ``CHANGE_POLICY`` is now the only roster there is, and a tensor no
+entry governs refuses the pair by name (tessera#278).
 
 The pairs here are three-tensor toys: what is exercised is the deciding
 predicate, not an encoder.
+
+It also owns the tool's **exit-code contract**, because a second process reads
+it: ``refit_trailing_serve.sh compare-drift`` exists to report "NOT the matched
+pair", so that verdict cannot share a status with the tool failing to reach any
+verdict at all (tessera#269).  Zero is the matched pair, three is the computed
+NOT-matched verdict, one is the tool failing.
 """
 
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -24,8 +35,17 @@ from safetensors.torch import save_file
 
 REPO = Path(__file__).resolve().parents[1]
 TOOL = REPO / "experiments" / "refit_trailing_bytes.py"
+WRAPPER = REPO / "experiments" / "refit_trailing_serve.sh"
 
 UNIT = "model.layers.0.mlp.down_proj"
+
+
+def tool_module():
+    """The module itself, for the constants it owns."""
+    sys.path.insert(0, str(REPO / "experiments"))
+    import refit_trailing_bytes as tool
+
+    return tool
 
 
 def base_tensors() -> dict:
@@ -50,10 +70,17 @@ def write_side(root: Path, tensors: dict, *, wire_bytes: int | None = None) -> P
     return twin
 
 
-def make_pair(tmp_path, *, mutate=None, wire_b_bytes=4096):
-    """A genuine scale-only pair, with one optional extra B-side change."""
+def make_pair(tmp_path, *, mutate=None, both=None, wire_b_bytes=4096):
+    """A genuine scale-only pair, with one optional extra B-side change.
+
+    ``both`` adds a tensor to each side before the treatment, for a pair that
+    carries something the roster never named (tessera#278).
+    """
     a = base_tensors()
     b = base_tensors()
+    if both is not None:
+        both(a)
+        both(b)
     # The trailing refit's whole intervention: the scale plane moves.
     b[f"{UNIT}.weight_scale"] = torch.full((4, 1), 1.5, dtype=torch.float32)
     if mutate is not None:
@@ -142,13 +169,118 @@ def test_a_moved_wire_length_is_still_refused(tmp_path):
     assert record["wire"]["wire_bytes_equal"] is False
 
 
-def test_every_loaded_suffix_has_a_declared_policy():
-    """The policy is a total function of what the loader reads: adding a
-    suffix to ``SUFFIXES`` without saying whether it may move is a refusal,
-    not a silently-ignored tensor."""
-    sys.path.insert(0, str(REPO / "experiments"))
-    import refit_trailing_bytes as tool
+def test_the_not_matched_verdict_is_not_the_tool_failing(tmp_path):
+    """The verdict this stage exists to report gets its own status, and the
+    receipt is written before it is returned: ``compare-drift`` reads a 3 as a
+    reading and anything else as the tool failing (tessera#269)."""
+    def touch_codes(b):
+        b[f"{UNIT}.weight_packed"] = torch.arange(
+            1, 17, dtype=torch.int32).reshape(4, 4)
 
-    assert set(tool.SUFFIXES) == set(tool.CHANGE_POLICY)
+    proc, record = run_tool(tmp_path, *make_pair(tmp_path, mutate=touch_codes))
+    assert record["verdict"] == "NOT the matched pair"
+    assert proc.returncode != 1, \
+        "the computed verdict shares its status with the tool failing"
+    assert proc.returncode == tool_module().EXIT_NOT_MATCHED, (
+        proc.stdout + proc.stderr)
+
+
+def test_a_missing_manifest_is_the_tool_failing_not_a_verdict(tmp_path):
+    """``--wire-a`` at a directory with no ``tessera_serving_manifest.json``
+    reaches no verdict at all, so it must not be reported as one."""
+    a, b = make_pair(tmp_path)
+    (a / "tessera_serving_manifest.json").unlink()
+    proc, record = run_tool(tmp_path, a, b)
+    assert proc.returncode == tool_module().EXIT_TOOL_FAILED, (
+        proc.stdout + proc.stderr)
+    assert record is None, "a failed run wrote a receipt"
+
+
+def test_an_export_with_no_tensors_is_the_tool_failing_not_a_verdict(tmp_path):
+    """An absent or unreadable export dir loads zero tensors and compares
+    nothing.  Before tessera#269 that fell out as "NOT the matched pair" --
+    which is exactly the reading ``compare-drift`` accepts, so an absent
+    ``$INCUMBENT`` would have certified a drift receipt built from nothing."""
+    _, b = make_pair(tmp_path)
+    proc, record = run_tool(tmp_path, tmp_path / "not-exported", b, wire=False)
+    assert "no *.safetensors" in proc.stderr, \
+        f"nothing was compared and the tool returned {proc.returncode} anyway"
+    assert record is None, "a run that compared nothing wrote a receipt"
+    assert proc.returncode == tool_module().EXIT_TOOL_FAILED, (
+        proc.stdout + proc.stderr)
+
+
+def test_a_moved_bias_does_not_certify_the_matched_pair(tmp_path):
+    """The verdict is a claim about the whole checkpoint pair, and it used to
+    be decided over a roster: ``load`` read five suffixes, so a B side whose
+    ``.bias`` had also moved was neither in ``by_suffix`` nor in
+    ``immutable_changed`` and still certified as the matched pair
+    (tessera#278).  A tensor no policy governs is refused, not ignored."""
+    def carry_bias(side):
+        side[f"{UNIT}.bias"] = torch.zeros(4)
+
+    def move_bias(b):
+        b[f"{UNIT}.bias"] = torch.full((4,), 5.0)
+
+    proc, record = run_tool(
+        tmp_path, *make_pair(tmp_path, both=carry_bias, mutate=move_bias))
+    assert "matched pair" not in proc.stdout, (
+        "a pair carrying a tensor no policy governs was decided anyway "
+        f"(exit {proc.returncode})")
+    assert f"{UNIT}.bias" in proc.stderr, proc.stderr
+    assert record is None, "a refused pair wrote a receipt"
+    assert proc.returncode == tool_module().EXIT_TOOL_FAILED, (
+        proc.stdout + proc.stderr)
+
+
+def test_an_unpoliced_suffix_refuses_by_name_even_when_it_is_identical(
+        tmp_path):
+    """Identical today is not a policy: the check cannot say whether this
+    intervention may move a tensor it has no rule for, so it refuses and says
+    which one rather than deciding a pair it cannot see all of."""
+    def carry_kv_scale(side):
+        side[f"{UNIT}.k_scale"] = torch.tensor([1.0])
+
+    proc, record = run_tool(
+        tmp_path, *make_pair(tmp_path, both=carry_kv_scale))
+    assert record is None, (
+        "a tensor no policy governs was ignored and the pair decided anyway "
+        f"(exit {proc.returncode})")
+    assert f"{UNIT}.k_scale" in proc.stderr, proc.stderr
+    assert "the verdict cannot see" in proc.stderr, proc.stderr
+    assert proc.returncode == tool_module().EXIT_TOOL_FAILED, (
+        proc.stdout + proc.stderr)
+
+
+def test_the_exit_codes_are_named_once_and_the_shell_reads_the_same_numbers():
+    """Three outcomes, three codes, named in the module that owns them.  The
+    numbers themselves are the contract, because a second process reads them,
+    and ``refit_trailing_serve.sh`` cannot import a Python constant -- so its
+    own list of accepted codes is pinned here against the module's."""
+    tool = tool_module()
+    assert (tool.EXIT_MATCHED, tool.EXIT_NOT_MATCHED, tool.EXIT_TOOL_FAILED) \
+        == (0, 3, 1)
+    declared = re.search(r'drift_reading_codes="([0-9 ]+)"',
+                         WRAPPER.read_text())
+    assert declared, "compare-drift declares no accepted exit codes"
+    assert {int(c) for c in declared.group(1).split()} == {
+        tool.EXIT_MATCHED, tool.EXIT_NOT_MATCHED}
+
+
+def test_the_policy_is_the_only_roster_the_check_has():
+    """``CHANGE_POLICY`` is total over the checkpoint, not over a second list
+    of suffixes to read: ``load`` reads every tensor and ``policy_suffix``
+    governs it or nothing does, and nothing-does is the refusal above
+    (tessera#278).  A separate load roster would be a set of tensors the
+    verdict cannot see."""
+    tool = tool_module()
+
+    assert not hasattr(tool, "SUFFIXES"), (
+        "a second roster decides what the check reads; CHANGE_POLICY is the "
+        "one home")
+    assert tool.policy_suffix(f"{UNIT}.weight_scale") == ".weight_scale"
+    assert tool.policy_suffix(f"{UNIT}.weight_global_scale") == \
+        ".weight_global_scale"
+    assert tool.policy_suffix(f"{UNIT}.bias") is None
     assert set(tool.CHANGE_POLICY.values()) <= {
         tool.IDENTICAL, tool.MUST_MOVE, tool.MAY_MOVE}
