@@ -694,6 +694,105 @@ def _legacy(name):
     return parse_unit_artifact((LEGACY / f"{name}.tessera").read_bytes(), device="cpu")
 
 
+def _rotated_legacy():
+    """A committed unit re-written with ``R_IN_ONLY`` rotation, on the CPU.
+
+    The rotation is the ONE property here that no committed blob carries and
+    that the encoder is not needed to produce: the unit's own bytes are
+    unchanged and only the manifest's branch says the tensor was rotated, so
+    the whole case runs off committed bytes without a GPU.  This is the
+    reproduction tessera#329 was filed with.
+    """
+    from dataclasses import replace
+
+    from tessera.diagonals import rotation_block_for
+    from tessera.manifest import RotationState
+    from tessera.trellis import ConvCode
+    from tessera.unit_artifact import build_unit_artifact, parse_unit_artifact
+
+    parent = _legacy("e4m3-1024-window-channel-256c")
+    columns = parent.manifest.geometry.columns
+    _m, _region, blob = build_unit_artifact(
+        replace(parent.unit, rotation=RotationState.R_IN_ONLY,
+                rotation_block=rotation_block_for(RotationState.R_IN_ONLY, columns)),
+        "rot", parent.forests, int(parent.manifest.branch.root_q256),
+        parent.code or ConvCode(), fixture_id=None)
+    return parse_unit_artifact(blob, device="cpu")
+
+
+def test_the_seam_refuses_a_rotated_unit_with_the_reason_and_no_impossible_remedy():
+    """A refusal may not name a remedy that cannot exist (tessera#329).
+
+    Rotation refuses EVERY cut of a unit, the identity slice included, so no
+    ``tensor_parallel_size`` above 1 will ever serve it.  Before tessera#304
+    ``can_shard`` wrongly said ``True`` here and the seam fell through to
+    ``slice_unit``, which raised the true reason; afterwards this branch fired
+    instead and could only talk about granularity -- telling the operator to
+    "serve with a tensor_parallel_size that divides it" a unit whose extent the
+    requested degree divides perfectly and whose granularity is 1.  The two
+    assertions below are that arithmetic: the granularity story WOULD have been
+    satisfied, which is exactly why it was the wrong story.
+    """
+    rot = _rotated_legacy()
+    rows, columns = _unit_extent(rot)
+    assert shard_granularity(rot) == (1, 1) and rows % 2 == 0     # 2 divides 16, gran 1
+
+    plan = _seam_plan(rows, columns, AXIS_ROWS, rank=0, tp=2, shards=2)
+    with pytest.raises(ValueError) as excinfo:
+        _shard_unit_for_rank(rot, plan, plan.role("weight"))
+    message = str(excinfo.value)
+    # The actual obstruction, in the cutter's own words.
+    assert "R_IN_ONLY" in message and "rotated unit" in message
+    # ... and no remedy that cannot be followed.
+    assert "granularity" not in message
+    assert "tensor_parallel_size that divides" not in message
+    assert "no divisor to offer" in message and "tensor_parallel_size=1" in message
+
+
+def test_the_two_refusal_sites_say_the_same_thing_about_one_unit():
+    """One rule, one home: ``check_shard_granularity`` carried its own copy.
+
+    Both sites ask ``can_shard`` and both used to re-derive a granularity
+    story at the raise; a reason stated twice is two reasons that will drift.
+    """
+    rot = _rotated_legacy()
+    rows, columns = _unit_extent(rot)
+    plan = _seam_plan(rows, columns, AXIS_ROWS, rank=0, tp=2, shards=2)
+    role = plan.role("weight")
+    with pytest.raises(ValueError) as seam:
+        _shard_unit_for_rank(rot, plan, role)
+    with pytest.raises(ValueError) as check:
+        check_shard_granularity(plan, role, rot)
+    assert str(seam.value) == str(check.value)
+
+
+def test_a_granularity_bound_unit_keeps_the_granularity_message_and_a_real_divisor():
+    """The other population is untouched: the number IS the remedy there.
+
+    The E2M1x2 cap wire is arity 2 over a span-2 trellis, so a row cut must
+    land on a 4-row super-symbol.  Sixteen rows over eight ranks is two rows
+    each and is refused naming 4 -- and four ranks, which 4 does divide, is
+    not refused: the divisor the message points at is shown to work by cutting
+    with it, not asserted.
+    """
+    from tessera.serving.sharding import unsliceable_reason
+
+    unit = _legacy("e2m1x2-896-tcq-lut-256c")
+    rows, columns = _unit_extent(unit)
+    assert shard_granularity(unit) == (4, 16) and unsliceable_reason(unit) is None
+
+    eight = _seam_plan(rows, columns, AXIS_ROWS, rank=0, tp=8, shards=8)
+    with pytest.raises(ValueError) as excinfo:
+        _shard_unit_for_rank(unit, eight, eight.role("weight"))
+    message = str(excinfo.value)
+    assert "granularity 4" in message and "tensor_parallel_size that divides" in message
+    assert "rotat" not in message
+
+    four = _seam_plan(rows, columns, AXIS_ROWS, rank=1, tp=4, shards=4)
+    shard = _shard_unit_for_rank(unit, four, four.role("weight"))
+    assert shard is not unit
+
+
 def test_a_shard_keeps_its_parent_encoder_identity_and_never_asks_the_current_one(monkeypatch):
     """Cutting restricts planes.  It does not encode, so it may not re-attest.
 

@@ -701,6 +701,21 @@ one answer. Unrotated capability and shard reconstruction are unchanged. If
 rotated slicing is ever implemented, both paths move together and its complete
 reconstruction semantics are proved with them.
 
+**And the refusal carries the reason, not a remedy that cannot exist** (#329).
+Aligning the predicate moved the rotated population from `slice_unit`'s raise
+to the serving seam's, and the seam could only talk about granularity: a
+rotated unit at TP=2 was refused with "16 rows, granularity 1 … serve with a
+`tensor_parallel_size` that divides it", where 2 divides 16, the granularity
+is 1, and no degree above 1 will ever serve that unit. `slicing.
+unsliceable_reason` now exposes the sentence beside the boolean — same
+argument shapes, same `_slicing_facts` reading, so "`can_shard` said no" and
+"here is why" are one reading of one unit — and `sharding._cannot_cut` is the
+single home of both refusal texts: the cutter's sentence with **no divisor
+offered** where the unit refuses every cut, the granularity message with one
+where the split is what does not fit. `_shard_unit_for_rank` and
+`check_shard_granularity` raise the same string for the same unit rather than
+each re-deriving a story at its own raise site.
+
 The span-2 kernel lane has one more plane it does not read: COMPLETION. A
 TCQ column at body rate `R` under the grid's cap may spend up to `cap - R`
 further bits per position choosing among its anchor's descendants, and
