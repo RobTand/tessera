@@ -316,6 +316,24 @@ def test_encoder_profile_commits_to_the_convolutional_code():
     assert encoder_profile_id(custom, rates) != encoder_profile_id(ConvCode(3), rates)
 
 
+def test_a_superseded_default_generator_pair_still_reads_back():
+    """Fixing a default generator pair must not orphan the artifacts written
+    under it.  ``(0o5, 0o7)`` shipped as the memory-3 default; the reader's
+    profile-id search covers superseded pairs, so those bytes decode with
+    exactly the machine that wrote them -- digest-verified, never assumed --
+    while the pair is no longer any encoder's default."""
+    old = ConvCode(memory=3, generators=(0o5, 0o7))
+    assert ConvCode(memory=3) != old  # superseded, not the default
+    torch.manual_seed(0)
+    weights = torch.randn(64, 512) * 0.02
+    rates = bresenham_rate_schedule(root_from_q256(640), 512)
+    unit = encode_unit(weights, FORESTS, rates, old, scale_refit=0)
+    _, _, blob = build_unit_artifact(unit, "unit0", FORESTS, 640, old)
+    parsed = parse_unit_artifact(blob)
+    assert parsed.code == old
+    assert torch.equal(read_unit_artifact(blob), reconstruct_unit(unit, FORESTS, old))
+
+
 def test_reader_fails_closed_on_an_unknown_trellis():
     _, unit = _unit()
     manifest, region, blob = build_unit_artifact(unit, "unit0", FORESTS, 640, CODE)
