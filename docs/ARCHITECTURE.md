@@ -660,7 +660,14 @@ at load. One loader clause stays unpublished on purpose --
 `prepare_from_parsed`'s scalar-256-native grid check is an entry-point
 fact of the E4M3 table build, and the same extension reads BF16 window
 wire through `prepare_value_unit` (a scalar grid of 65536 codes), so
-publishing it would call wire unreadable that the lane serves. The
+publishing it would call wire unreadable that the lane serves. Excluded
+from the contract is not homeless, though: that clause's three legs -- a
+`native` byte map, 256 codes, arity 1 -- live in
+`alphabet.PayloadGrid.hardware_byte` and
+`alphabet.require_hardware_byte_grid`, and the window GEMV loader, the
+Triton lane's `window_code_table`, `decode.materialize_fp8` and
+`fp8_route.prepare_tessera_fp8_module` call it rather than spell it (#277).
+The lane predicate's own
 decision has ONE home, `scheme.decide_lane_requirements`: the plan-time
 gate, the byte-time report, the loader and `bf16_route`'s gate all decide
 a unit through it over the published block, so the predicate and the

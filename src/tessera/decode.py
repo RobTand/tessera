@@ -22,7 +22,7 @@ import warnings
 
 import torch
 
-from .alphabet import AnchorForest, PayloadGrid
+from .alphabet import AnchorForest, PayloadGrid, require_hardware_byte_grid
 from .encode import EncodedUnit, e2m1_value_table, grid_value_table, require_memory
 from .errors import GrammarError
 from .grammar import require_column_groups, superblock_count
@@ -779,10 +779,7 @@ def materialize_fp8(
     bytes, so the two former-NaN slots land on their legal neighbour.
     """
     grid, forests = _grid_and_forests(forest)
-    if grid.arity != 1 or grid.native is None or grid.size != 256:
-        raise GrammarError(
-            f"materialize_fp8 needs a scalar 256-code hardware grid, got {grid.name}"
-        )
+    require_hardware_byte_grid(grid, purpose="materialize_fp8")
     if getattr(unit, "scale_plane", ScalePlaneKind.S6B) is not ScalePlaneKind.CHANNEL:
         raise GrammarError(
             "an FP8 per-channel tensor takes one scale per output row: the unit "

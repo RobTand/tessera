@@ -88,6 +88,7 @@ __all__ = [
     "GAUSSIAN_SOURCE",
     "tuple_grid",
     "lloyd_max_grid",
+    "require_hardware_byte_grid",
     "grid_digest",
     "SERIALISABLE_GRIDS",
 ]
@@ -193,6 +194,27 @@ class PayloadGrid:
         grammar cannot express at all.
         """
         return self.payload_bits / self.arity
+
+    @property
+    def hardware_byte(self) -> bool:
+        """Whether this grid's codes ARE hardware bytes.
+
+        Three legs, and every entry point that materialises E4M3 needs all
+        three: a ``native`` byte map (a tuple code is not a hardware byte --
+        see :func:`tuple_grid`; nor is a Lloyd-Max level -- see
+        :func:`lloyd_max_grid`), 256 codes, and arity 1.  The clause lives
+        here because it is a fact *about a grid*, not about any one caller:
+        it was spelled out by hand at four call sites and one of them had
+        already dropped the arity leg (tessera#277).
+        :func:`require_hardware_byte_grid` is the refusal those callers make.
+
+        It is deliberately **not** part of the published ``lane.requires``
+        predicate (#264, contract v20): the same extension reads BF16 window
+        wire through a scalar grid of 65536 codes, so publishing it would
+        call wire unreadable that the lane serves.  Excluded from the
+        contract is not the same as homeless.
+        """
+        return not _hardware_byte_failures(self)
 
     def vector(self, code: int) -> "tuple[float, ...]":
         """The ``arity`` values this code reconstructs, in row order."""
@@ -348,6 +370,56 @@ def lloyd_max_grid(
     """
     levels = _lloyd_levels(GAUSSIAN_SOURCE(samples, sigma), size, iterations)
     return PayloadGrid(name or f"LM{size}", tuple(levels))
+
+
+def _hardware_byte_failures(grid) -> "tuple[str, ...]":
+    """Which of the three hardware-byte legs ``grid`` fails, said in words.
+
+    THE ONLY SPELLING of the clause in this package -- ``tests/
+    test_hardware_byte_grid.py`` pins that ``.size != 256`` appears in no
+    other source file.  Read off attributes rather than off a ``PayloadGrid``
+    isinstance, because the loaders decide this on a parse's ``grid``, which
+    a probe may stand in for.
+    """
+    failures = []
+    if getattr(grid, "native", None) is None:
+        failures.append("carries no native byte map (native=None)")
+    if grid.size != 256:
+        failures.append(f"has {grid.size} codes, not 256")
+    if grid.arity != 1:
+        failures.append(f"has arity {grid.arity}, not 1")
+    return tuple(failures)
+
+
+def require_hardware_byte_grid(
+    grid, *, purpose: str, error: "type[Exception]" = GrammarError
+):
+    """``grid`` back, or a refusal naming it and the leg(s) it fails.
+
+    ONE HOME for "a scalar 256-code hardware grid" (AGENTS.md rule 4).  Four
+    entry points materialise a code through ``native`` -- the window GEMV's
+    ``prepare_from_parsed``, the Triton lane's ``window_code_table``,
+    ``decode.materialize_fp8`` and the FP8 route's
+    ``prepare_tessera_fp8_module`` -- and each wrote the predicate out by
+    hand.  Nothing served wrong bytes, because E4M3 is the only grid the FP8
+    route admits and all four spellings agreed on it; but the window GEMV's
+    had already dropped the arity leg, and a fifth hardware-byte grid would
+    have had to be taught to four sites (tessera#277).
+
+    ``error`` is a parameter because the four callers do not share one class:
+    three raise :class:`~tessera.errors.GrammarError` and
+    ``serving.fp8_route`` raises ``ValueError``, beside its ROUTES-derived
+    refusals of the same role.  Unifying them would widen or narrow a
+    refusal, which giving a rule a home is not a licence to do, so each
+    caller keeps the class it raised.
+    """
+    failures = _hardware_byte_failures(grid)
+    if failures:
+        raise error(
+            f"{purpose} needs a scalar 256-code hardware grid; "
+            f"{grid.name} " + ", ".join(failures)
+        )
+    return grid
 
 
 def grid_digest(grid: PayloadGrid) -> str:
