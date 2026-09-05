@@ -253,16 +253,8 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer):
         raise ValueError(f"unknown residency mode {mode!r}")
     declared = validate_tessera_moe_scheme(scheme, prefix)
     family = declared["family"]
-    from .scheme import MOE_BUILDERS
-    if family not in MOE_BUILDERS:
-        raise ValueError(
-            f"tessera target {prefix!r}: {family} has no expert route in this build "
-            f"(scheme.MOE_BUILDERS names {sorted(MOE_BUILDERS)}). The absences are measured, "
-            "not preferred: on this build the fused-MoE oracle resolves an NVFP4 expert arm "
-            "only under a swiglu_limit clamp that changes the arithmetic the experts execute "
-            "(docs/measurements/nvfp4-moe-oracle-2026-09-02.md), and a 16-bit expert stack is "
-            "the passthrough quantization_config.ignore already gives. An expert stack is "
-            "refused rather than decoded through another family's tile.")
+    from .scheme import refuse_a_family_with_no_expert_route
+    refuse_a_family_with_no_expert_route(family, prefix)
     if mode != MODE_RESIDENT:
         raise ValueError(
             f"tessera target {prefix!r}: the expert route serves {MODE_RESIDENT!r} only. A "

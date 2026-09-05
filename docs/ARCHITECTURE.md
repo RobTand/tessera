@@ -297,6 +297,23 @@ not a passed gate.
 packaged `runtime_contract.json` before the first encode (issue #41).
 Overridden refusals land verbatim in the manifest.
 
+The bound is the *structure's* (issue #135). A dense module is held to the
+format row's `reader_rate_range_q256`, which is the route's own decoder. A
+routed-MoE stack is served by `moe_route` into a fused-MoE kernel the
+contract attests as its own structure, so `scheme.refuse_unserveable_wire`
+takes `structure` and, for `routed_moe`, first refuses a route
+`MOE_BUILDERS` has no builder for (`refuse_a_family_with_no_expert_route`,
+the one home for that rule at plan, gate and load) and then reads the
+union of `rungs_q256` over the `lane_eligibility` cells of that structure
+(`scheme.attested_cells`) rather than the row's range. The exporter reads
+the source's shapes before the plan so it knows which plan entries are
+stacks, refuses a stack at a rung only the dense route reads by the cells'
+ids, stamps `structure` on every `serving_gate` override, and writes
+`attested_by` -- the routed_moe cell ids whose rungs hold the stack's rung
+-- on the stack's manifest record. Until then a routed stack at any E4M3
+rung in `[256, 2048]` passed the gate and reached the encode while the
+routed cells attest exactly q256 1024.
+
 ### 4.4a "The pinned runtime" is a digest, and a harness refuses without it
 
 The pin is one string, `runtime_contract.json`'s

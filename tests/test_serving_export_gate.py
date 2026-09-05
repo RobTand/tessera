@@ -328,3 +328,128 @@ def test_the_route_table_names_the_body_its_own_loader_refuses_by_name():
         refuse_unserveable_wire("E2M1x2", 896, "WINDOW", "LUT", span=1, target="wrong-body")
     with pytest.raises(ValueError, match="span-1 WINDOW body"):
         refuse_unserveable_wire("E4M3", 1024, "TCQ", "CHANNEL", span=2, target="wrong-body")
+
+
+# ------------------------------------- the bound is the STRUCTURE's, not the
+#                                        format row's (#135)
+
+
+def _contract_with_a_dense_only_rung(q256: int) -> dict:
+    """The packaged contract, with ``q256`` attested by the DENSE E4M3 cells only.
+
+    At contract v16 the dense and routed-MoE E4M3 cells attest one rung
+    each, and it is the same one, so the packaged table cannot show a rung
+    one structure attests and the other does not.  This copy adds ``q256``
+    to the format row and to every dense E4M3 cell, and leaves the two
+    routed-MoE cells where they are: it is the shape of the table the day a
+    second dense rung is measured.
+    """
+    import copy
+    from tessera.serving.contract import load_serving_contract
+
+    contract = copy.deepcopy(load_serving_contract())
+    for row in contract["formats"]:
+        if row["family"] == "TESSERA_E4M3_K1":
+            row["attested_rungs_q256"] = sorted(set(row["attested_rungs_q256"]) | {q256})
+            row["candidate_rungs_q256"] = list(row["attested_rungs_q256"])
+    for cell in contract["lane_eligibility"]["cells"]:
+        if cell["family"] == "TESSERA_E4M3_K1" and cell["structure"] == "dense":
+            cell["rungs_q256"] = sorted(set(cell["rungs_q256"]) | {q256})
+    return contract
+
+
+def test_a_routed_stack_is_gated_against_the_routed_moe_cells_not_the_dense_range():
+    """#135: the rung bound a routed-MoE stack is held to is the routed_moe cells'.
+
+    The format row's ``reader_rate_range_q256`` is the DENSE route's reader.
+    A routed stack is served by ``moe_route`` through a different consuming
+    kernel, and the contract attests it as its own structure, at its own
+    rungs, in its own cells -- so a rung the dense cells attest and no
+    routed_moe cell does must be refused for the stack, and the refusal
+    must name the cells whose attestation it falls outside.
+    """
+    from tessera.serving.contract import load_serving_contract
+    from tessera.serving.scheme import STRUCTURE_ROUTED_MOE, attested_cells
+
+    recipe = wire_recipe(GRIDS["E4M3"], 1536)
+    contract = _contract_with_a_dense_only_rung(1536)
+    # The dense route reads it.
+    assert refuse_unserveable_wire("E4M3", 1536, recipe.body.name, recipe.scale_plane.name,
+                                   family="TESSERA_FP8", span=recipe.span,
+                                   target="dense.probe", contract=contract) == "TESSERA_FP8"
+    # The routed route does not, and says which cells it read.
+    routed = attested_cells("TESSERA_E4M3_K1", STRUCTURE_ROUTED_MOE, contract)
+    assert routed and all(1536 not in cell["rungs_q256"] for cell in routed)
+    with pytest.raises(ValueError) as caught:
+        refuse_unserveable_wire("E4M3", 1536, recipe.body.name, recipe.scale_plane.name,
+                                family="TESSERA_FP8", span=recipe.span,
+                                target="stack.probe", structure=STRUCTURE_ROUTED_MOE,
+                                contract=contract)
+    message = str(caught.value)
+    for cell in routed:
+        assert cell["id"] in message, message
+    assert "routed_moe" in message and "[256, 2048]" not in message, message
+
+    # The rung the routed cells DO attest passes on the same table, and on
+    # the packaged one.
+    for table in (contract, load_serving_contract()):
+        for rung in sorted({r for cell in routed for r in cell["rungs_q256"]}):
+            r = wire_recipe(GRIDS["E4M3"], rung)
+            assert refuse_unserveable_wire(
+                "E4M3", rung, r.body.name, r.scale_plane.name, family="TESSERA_FP8",
+                span=r.span, target="stack.probe", structure=STRUCTURE_ROUTED_MOE,
+                contract=table) == "TESSERA_FP8"
+
+
+def test_a_structure_no_cell_attests_is_refused_by_name():
+    """Three refusals, in the order the facts are established.
+
+    A route with no expert builder is refused for THAT reason, before any
+    cell is consulted (a cell for it could never exist); a route with a
+    builder and no cell for the structure is refused as unattested, by the
+    structure's name; a structure the build does not dispatch is refused
+    outright.
+    """
+    import copy
+    from tessera.serving.contract import load_serving_contract
+    from tessera.serving.scheme import STRUCTURE_ROUTED_MOE
+
+    recipe = wire_recipe(GRIDS["BF16"], 1792)
+    with pytest.raises(ValueError) as caught:
+        refuse_unserveable_wire("BF16", 1792, recipe.body.name, recipe.scale_plane.name,
+                                family="TESSERA_BF16", span=recipe.span,
+                                target="bf16.stack", structure=STRUCTURE_ROUTED_MOE)
+    assert "MOE_BUILDERS" in str(caught.value), str(caught.value)
+
+    without = copy.deepcopy(load_serving_contract())
+    without["lane_eligibility"]["cells"] = [
+        cell for cell in without["lane_eligibility"]["cells"]
+        if cell["structure"] != STRUCTURE_ROUTED_MOE]
+    recipe = wire_recipe(GRIDS["E4M3"], 1024)
+    with pytest.raises(ValueError) as caught:
+        refuse_unserveable_wire("E4M3", 1024, recipe.body.name, recipe.scale_plane.name,
+                                family="TESSERA_FP8", span=recipe.span, target="fp8.stack",
+                                structure=STRUCTURE_ROUTED_MOE, contract=without)
+    assert "no lane_eligibility cell" in str(caught.value), str(caught.value)
+    assert "routed_moe" in str(caught.value)
+
+    with pytest.raises(ValueError, match="structure"):
+        refuse_unserveable_wire("E4M3", 1024, recipe.body.name, recipe.scale_plane.name,
+                                family="TESSERA_FP8", target="x", structure="moe")
+
+
+def test_the_exporters_gate_carries_the_structure_into_the_override_record():
+    """``check_recipe`` threads the structure through, and stamps it on the override."""
+    from tessera.serving.scheme import STRUCTURE_ROUTED_MOE
+
+    grid = GRIDS["E4M3"]
+    assert EXPORT.check_recipe(grid, 1536, where="dense.probe") is not None
+    with pytest.raises(SystemExit) as caught:
+        EXPORT.check_recipe(grid, 1536, where="stack.probe", structure=STRUCTURE_ROUTED_MOE)
+    assert "tessera_e4m3_k1_routed_moe_sm121_decode_resident" in str(caught.value)
+    stamped: list = []
+    assert EXPORT.check_recipe(grid, 1536, where="stack.probe", structure=STRUCTURE_ROUTED_MOE,
+                               allow_unserveable=True, overrides=stamped) is not None
+    assert [(r["target"], r["structure"], r["q256"]) for r in stamped] == \
+        [("stack.probe", STRUCTURE_ROUTED_MOE, 1536)]
+    assert "routed_moe" in stamped[0]["refusal"]

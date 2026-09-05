@@ -153,13 +153,15 @@ from tessera.export import (  # noqa: E402
     ActivationSource, encode_linear_planes, wire_recipe)
 from tessera.fused import pack_fused, shared_lut_global  # noqa: E402
 from tessera.serving.contract import (  # noqa: E402
-    classify_construction, construction_entry, load_serving_contract)
+    PAYLOAD_FAMILY_BY_ROUTE, classify_construction, construction_entry,
+    load_serving_contract)
 from tessera.serving.scheme import (  # noqa: E402
-    MOE_BUILDERS, MOE_GROUP_PROJECTIONS, MOE_GROUPS,
+    MOE_GROUP_PROJECTIONS, MOE_GROUPS,
     MOE_SHARD_PROJECTIONS as SHARD_PROJECTION, STRUCTURE_DENSE,
     STRUCTURE_ROUTED_MOE, MOE_SOURCE_IN_FIRST_INTERLEAVED,
     MOE_SOURCE_OUT_FIRST_CHUNKED, MOE_SOURCE_UNPACKED,
-    refuse_unreachable_lane, refuse_unserveable_wire, validate_tessera_moe_scheme)
+    attested_cells, refuse_a_family_with_no_expert_route, refuse_unreachable_lane,
+    refuse_unserveable_wire, validate_tessera_moe_scheme)
 from tessera.stock import (  # noqa: E402
     FLOAT_QUANTIZED, MIXED_PRECISION, NVFP4_PACK_QUANTIZED, materialize_stock,
     share_global, stock_bytes, vllm_fp4_predicate)
@@ -334,7 +336,8 @@ def module_scheme_key(grid, q256: int) -> tuple:
 
 
 def check_recipe(grid, q256: int, where: "str | None" = None, *,
-                 allow_unserveable: bool = False, overrides: "list | None" = None):
+                 allow_unserveable: bool = False, overrides: "list | None" = None,
+                 structure: str = STRUCTURE_DENSE):
     """The recipe this plugin build publishes a decode for, or a refusal.
 
     THE SEAM IS HERE, and it is the export-time half of the load-time gate.
@@ -365,6 +368,14 @@ def check_recipe(grid, q256: int, where: "str | None" = None, *,
     so it passes the gate rather than needing the override.)  Overridden refusals land verbatim in the manifest's
     ``serving_gate`` block, so an artifact that cannot be served says so in its
     own bytes rather than in a shell history.
+
+    ``structure`` is what the wire will be served AS, and it picks the bound
+    (#135): a dense module is held to the route's reader range, a
+    ``routed_moe`` stack to the rungs the contract's ``routed_moe`` cells
+    attest -- the format row's range is the dense reader's, and a stack at
+    a rung only the dense route reads used to pass here and reach the
+    encode.  The override record carries the structure for the same reason
+    the refusal does.
     """
     recipe = wire_recipe(grid, q256)
     target = where or f"--grid {grid.name} --q256 {q256}"
@@ -374,7 +385,8 @@ def check_recipe(grid, q256: int, where: "str | None" = None, *,
         # from the grid alone -- ambiguous the moment two routes hold one
         # grid, with the winner decided by dict order (#51).
         refuse_unserveable_wire(grid.name, q256, recipe.body.name, recipe.scale_plane.name,
-                                family=family_for(grid), span=recipe.span, target=target)
+                                family=family_for(grid), span=recipe.span, target=target,
+                                structure=structure)
     except ValueError as exc:
         if not allow_unserveable:
             raise SystemExit(
@@ -389,7 +401,7 @@ def check_recipe(grid, q256: int, where: "str | None" = None, *,
         if overrides is not None:
             overrides.append({"target": target, "grid": grid.name, "q256": int(q256),
                               "body": recipe.body.name, "plane": recipe.scale_plane.name,
-                              "refusal": str(exc)})
+                              "structure": structure, "refusal": str(exc)})
     return recipe
 
 
@@ -822,15 +834,11 @@ def plan_expert_stack(stack: str, experts: dict, grid, q256: int, *,
       method for it.
     """
     family = family_for(grid)
-    if family not in MOE_BUILDERS:
+    try:
+        refuse_a_family_with_no_expert_route(family, stack)
+    except ValueError as exc:
         raise SystemExit(
-            f"the plan gives the expert stack {stack} grid {grid.name} ({family}), which has no "
-            f"expert route in this plugin build (scheme.MOE_BUILDERS names {sorted(MOE_BUILDERS)}). "
-            "The absences are measured, not preferred: the fused-MoE oracle resolves an NVFP4 "
-            "expert arm only under a swiglu_limit clamp that changes the arithmetic the experts "
-            "execute (docs/measurements/nvfp4-moe-oracle-2026-09-02.md), and a 16-bit stack is "
-            "the passthrough quantization_config.ignore already gives. Plan this stack on a "
-            "family with a route, or leave it out to pass it through as BF16.")
+            f"the plan gives the expert stack {stack} grid {grid.name} ({family}): {exc}") from exc
     indices = sorted(experts)
     if indices != list(range(len(indices))):
         missing = sorted(set(range(max(indices) + 1)) - set(indices))
@@ -1217,6 +1225,28 @@ def main():
     check_recipe(default_grid, args.q256,
                  allow_unserveable=args.allow_unserveable, overrides=gate_overrides)
     check_lanes(required_lanes, default_grid, args.q256)
+    src_config = json.loads((args.src / "config.json").read_text())
+    shards, shapes, expert_shapes, routed_shapes = quantizable(args.src)
+    if not shapes and not expert_shapes and not routed_shapes:
+        raise SystemExit(
+            f"no body weight tensors found under {args.src}. BODY_LAYER matches "
+            f"``model.<...>.layers.<N>.``; this checkpoint's names do not, so there is nothing "
+            "to export rather than nothing to do.")
+
+    # THE PLANNABLE ROUTED-MoE UNIT IS THE STACK.  A plan entry naming
+    # ``<moe>.experts`` is an expert-route plan for the whole stack; a plan
+    # entry naming one of its 864 leaves is the mis-plan below.  The split
+    # happens before the plan is read, because the gate on a plan entry
+    # depends on it: a stack is served as ``routed_moe`` and is held to that
+    # structure's attested rungs, not to the dense reader's range (#135).
+    stacks = expert_stacks(routed_shapes)
+    packed_stacks = packed_expert_stacks(expert_shapes)
+    overlap = sorted(set(stacks) & set(packed_stacks))
+    if overlap:
+        raise SystemExit(
+            f"expert stack(s) {overlap} exist in both unpacked per-expert and packed 3-D "
+            "source layouts. They are two sources for the same runtime tile; refusing rather "
+            "than letting checkpoint or shard order choose which bytes are served.")
     overrides = {}
     source_layout_overrides: dict[str, str] = {}
     if args.plan_json:
@@ -1231,33 +1261,14 @@ def main():
                 overrides[name] = None
             else:
                 g = grid_for(spec["grid"])
-                check_recipe(g, int(spec["q256"]), where=name,
+                structure = (STRUCTURE_ROUTED_MOE if name in stacks or name in packed_stacks
+                             else STRUCTURE_DENSE)
+                check_recipe(g, int(spec["q256"]), where=name, structure=structure,
                              allow_unserveable=args.allow_unserveable, overrides=gate_overrides)
                 check_lanes(required_lanes, g, int(spec["q256"]), where=name)
                 overrides[name] = (g, int(spec["q256"]))
                 if "source_layout" in spec:
                     source_layout_overrides[name] = spec["source_layout"]
-    src_config = json.loads((args.src / "config.json").read_text())
-    shards, shapes, expert_shapes, routed_shapes = quantizable(args.src)
-    if not shapes and not expert_shapes and not routed_shapes:
-        raise SystemExit(
-            f"no body weight tensors found under {args.src}. BODY_LAYER matches "
-            f"``model.<...>.layers.<N>.``; this checkpoint's names do not, so there is nothing "
-            "to export rather than nothing to do.")
-
-    # THE PLANNABLE ROUTED-MoE UNIT IS THE STACK.  A plan entry naming
-    # ``<moe>.experts`` is an expert-route plan for the whole stack; a plan
-    # entry naming one of its 864 leaves is the mis-plan below.  The split
-    # happens before the ``unknown`` check, which knows only about 2-D dense
-    # body weights.
-    stacks = expert_stacks(routed_shapes)
-    packed_stacks = packed_expert_stacks(expert_shapes)
-    overlap = sorted(set(stacks) & set(packed_stacks))
-    if overlap:
-        raise SystemExit(
-            f"expert stack(s) {overlap} exist in both unpacked per-expert and packed 3-D "
-            "source layouts. They are two sources for the same runtime tile; refusing rather "
-            "than letting checkpoint or shard order choose which bytes are served.")
     all_stacks = {**stacks, **packed_stacks}
     stack_overrides = {name: overrides.pop(name)
                        for name in sorted(set(overrides) & set(all_stacks))}
@@ -1587,8 +1598,17 @@ def main():
         for unit in record["units"]:
             expert_units.setdefault(unit["source_tensor"], []).append(
                 dict(unit, stack=stack))
+    # ``attested_by`` is the routed_moe cells whose ``rungs_q256`` hold the
+    # stack's rung -- the gate above read them, and the record says which
+    # (#135, principle 12).  Empty only under --allow-unserveable, where the
+    # manifest's ``serving_gate`` block carries the refusal beside it.
     moe_records = {stack: {"family": record["family"], "grid": record["grid"].name,
                            "q256": record["q256"], "experts": record["experts"],
+                           "attested_by": [
+                               cell["id"] for cell in attested_cells(
+                                   PAYLOAD_FAMILY_BY_ROUTE[record["family"]],
+                                   STRUCTURE_ROUTED_MOE)
+                               if int(record["q256"]) in cell["rungs_q256"]],
                            "source_layout": record["source_layout"],
                            "hidden_size": record["hidden_size"],
                            "intermediate_size": record["intermediate_size"],

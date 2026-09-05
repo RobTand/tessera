@@ -102,6 +102,8 @@ __all__ = [
     "FUSED_CONTAINER",
     "is_tessera_scheme",
     "route_for_grid",
+    "attested_cells",
+    "refuse_a_family_with_no_expert_route",
     "refuse_unserveable_wire",
     "refuse_unreachable_lane",
     "lane_rate_report",
@@ -675,9 +677,55 @@ def route_for_grid(grid: str, family: "str | None" = None) -> "str | None":
     return holders[0] if holders else None
 
 
+def refuse_a_family_with_no_expert_route(route: str, target: str) -> None:
+    """Refuse a routed-MoE stack on a route ``MOE_BUILDERS`` has no builder for.
+
+    ONE HOME for a rule three call sites state: the plugin at load
+    (``moe_route.build_tessera_moe_method``), the exporter at plan time
+    (``plan_expert_stack``) and the export gate (``refuse_unserveable_wire``
+    with ``structure="routed_moe"``), which asks it before it asks what the
+    cells attest -- a route the build cannot dispatch is refused for that
+    reason, not for the absence of a cell that could never exist.
+    """
+    if route in MOE_BUILDERS:
+        return
+    raise ValueError(
+        f"tessera target {target!r}: {route} has no expert route in this build "
+        f"(scheme.MOE_BUILDERS names {sorted(MOE_BUILDERS)}). The absences are measured, "
+        "not preferred: on this build the fused-MoE oracle resolves an NVFP4 expert arm "
+        "only under a swiglu_limit clamp that changes the arithmetic the experts execute "
+        "(docs/measurements/nvfp4-moe-oracle-2026-09-02.md), and a 16-bit expert stack is "
+        "the passthrough quantization_config.ignore already gives. An expert stack is "
+        "refused rather than decoded through another family's tile: plan it on a family "
+        "with a route, or leave it out to pass it through as BF16.")
+
+
+def attested_cells(family: str, structure: str,
+                   contract: "Mapping | None" = None) -> "list[dict]":
+    """The ``lane_eligibility`` cells that attest ``(family, structure)``.
+
+    A cell is the unit of attestation (``contract`` module docstring): it
+    names the platform, family, STRUCTURE, regime, residency and image a
+    container receipt covered, and the rungs it covered them at.  A gate
+    asking what this build has served for a routed-MoE stack reads the cells
+    of that structure and nothing else -- the format row's
+    ``reader_rate_range_q256`` is the dense route's reader, and the routed
+    route runs a different consuming kernel (#135).  Returns the cells in
+    contract order, ``[]`` when none attests the pair; the caller decides
+    whether an empty list is a refusal.
+    """
+    from .contract import load_serving_contract
+
+    payload = load_serving_contract() if contract is None else contract
+    return [cell for cell in payload["lane_eligibility"]["cells"]
+            if cell["family"] == family and cell["structure"] == structure]
+
+
 def refuse_unserveable_wire(grid: str, q256: int, body: str, plane: str,
                             *, family: "str | None" = None,
-                            span: "int | None" = None, target: str) -> str:
+                            span: "int | None" = None, target: str,
+                            structure: str = STRUCTURE_DENSE,
+                            contract: "Mapping | None" = None) -> str:
     """Refuse, AT EXPORT, a wire this plugin build publishes no decode for.
 
     The producer's output range was wider than the consumer's input range, in
@@ -714,8 +762,26 @@ def refuse_unserveable_wire(grid: str, q256: int, body: str, plane: str,
     winner would be whichever entry the dict order puts first (#51); omitting
     ``family`` keeps the old behaviour for grids one route holds, and refuses
     an ambiguous grid instead of guessing.
+
+    ``structure`` names what the wire is served AS, and it picks the BOUND
+    (#135).  A dense module is read by the route's decoder, whose range is
+    the format row's ``reader_rate_range_q256``; a ``routed_moe`` stack is
+    read by ``moe_route`` into a fused-MoE kernel the contract attests
+    separately, as cells of its own structure at their own ``rungs_q256``.
+    Until this parameter existed a routed stack was held to the dense
+    reader's range -- ``[256, 2048]`` on E4M3 -- while the routed cells
+    attest exactly one rung, and no producer gate read them.  The bound for
+    a non-dense structure is the union of its cells' rungs, so a rung the
+    dense cells attest and no routed cell does is refused, and the refusal
+    names the cells it read.  ``contract`` is for a caller holding a table
+    other than the packaged one (tests); the packaged file is the default.
     """
     from .contract import reader_accepts, reader_rate_grid
+
+    if structure not in STRUCTURES:
+        raise ValueError(
+            f"tessera export {target!r}: structure {structure!r} is not one this build "
+            f"dispatches ({STRUCTURES}); there is no route for a wire served as it.")
 
     q256 = int(q256)
     still_legal = (
@@ -729,7 +795,7 @@ def refuse_unserveable_wire(grid: str, q256: int, body: str, plane: str,
             f"tessera export {target!r}: no route in this plugin build holds grid {grid!r}, so "
             f"there is nothing for a q256={q256} wire on it to be served by ({held}). "
             + still_legal)
-    found = reader_rate_grid(route, grid)
+    found = reader_rate_grid(route, grid, contract)
     if found is None:
         raise ValueError(
             f"tessera export {target!r}: {route} holds grid {grid!r}, but runtime_contract.json "
@@ -738,13 +804,42 @@ def refuse_unserveable_wire(grid: str, q256: int, body: str, plane: str,
             f"load. A range is published when a rung has been taken through the decoder and "
             f"measured, never asserted here. " + still_legal)
     family, low, high, step = found
-    if not reader_accepts(q256, low, high, step):
-        span_text = f"[{low}, {high}]" + (f" step {step}" if step != 1 else " (every integer)")
-        raise ValueError(
-            f"tessera export {target!r}: q256={q256} on grid {grid!r} is outside the rungs this "
-            f"build's decoder reads for {family} -- runtime_contract.json publishes {span_text}. "
-            f"Writing it would produce a checkpoint {route} refuses at load. Re-export inside the "
-            f"range, or publish a measured range that contains this rung. " + still_legal)
+    if structure == STRUCTURE_DENSE:
+        if not reader_accepts(q256, low, high, step):
+            span_text = f"[{low}, {high}]" + (f" step {step}" if step != 1 else " (every integer)")
+            raise ValueError(
+                f"tessera export {target!r}: q256={q256} on grid {grid!r} is outside the rungs "
+                f"this build's decoder reads for {family} -- runtime_contract.json publishes "
+                f"{span_text}. Writing it would produce a checkpoint {route} refuses at load. "
+                f"Re-export inside the range, or publish a measured range that contains this "
+                f"rung. " + still_legal)
+    else:
+        refuse_a_family_with_no_expert_route(route, target)
+        # THE FORMAT ROW IS THE DENSE READER'S RANGE.  A non-dense structure
+        # is attested only where a cell of that structure exists, so its
+        # bound is the union of those cells' rungs -- which the contract
+        # validator already keeps inside the row's range, so this is the
+        # tighter of the two and the only one that names the right kernel.
+        cells = attested_cells(family, structure, contract)
+        if not cells:
+            raise ValueError(
+                f"tessera export {target!r}: no lane_eligibility cell in runtime_contract.json "
+                f"attests {family} served as structure {structure!r}, so this build promises "
+                f"no rung for a {structure} stack on grid {grid!r}. A cell is published when a "
+                f"container receipt covers the structure on a runtime image; absence is "
+                f"'unattested', which an export that declares the structure cannot ship on. "
+                + still_legal)
+        rungs = sorted({int(r) for cell in cells for r in cell["rungs_q256"]})
+        if q256 not in rungs:
+            per_cell = "; ".join(f"{cell['id']} attests {sorted(cell['rungs_q256'])}"
+                                 for cell in cells)
+            raise ValueError(
+                f"tessera export {target!r}: q256={q256} on grid {grid!r} is outside the rungs "
+                f"the {structure} cells of runtime_contract.json attest for {family} "
+                f"({rungs}: {per_cell}). The format row's reader range is the dense route's; "
+                f"a {structure} stack is served by a different consuming kernel and is "
+                f"attested only at the rungs its own cells name. Re-plan the stack on one of "
+                f"{rungs}, or serve the rung and publish the cell. " + still_legal)
     expected_plane = ROUTES[route]["plane"]
     if plane != expected_plane:
         raise ValueError(
