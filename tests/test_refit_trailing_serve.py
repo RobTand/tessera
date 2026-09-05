@@ -84,7 +84,6 @@ def harness(tmp_path):
             "TESSERA_RUNS": str(runs),
             "TESSERA_KL_DIR": str(kldir),
             "TESSERA_TEACHER": str(teacher),
-            "TESSERA_KL_CORPUS": str(kldir / "corpus.json"),
             "FAIL_COMPARE": str(int(fail_compare)),
             "FAIL_DUMP": str(int(fail_dump)),
         }

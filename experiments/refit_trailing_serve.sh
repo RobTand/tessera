@@ -125,7 +125,10 @@ serve)
   export TESSERA_KL_NAME="${TESSERA_KL_NAME:-tessera-kl-ts75}"
   source "$(dirname "$0")/runtime_image.sh"
   export TESSERA_KL_IMAGE=$(runtime_image_pin)
-  export TESSERA_KL_CORPUS="${TESSERA_KL_CORPUS:-$KLDIR/corpus_qwen_n8_s512.json}"
+  # Pinned, not defaulted: "the same corpus" is one of the things this pair
+  # holds fixed, so the caller does not get to move it.  Only the directory
+  # follows KLDIR.
+  export TESSERA_KL_CORPUS=$KLDIR/corpus_qwen_n8_s512.json
   export TESSERA_KL_LOGDIR=$RUNS
   dump=$KLDIR/qwen_ts75_$ARM.json
   npz=$dump.npz
