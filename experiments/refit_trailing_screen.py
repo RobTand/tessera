@@ -193,10 +193,13 @@ def assert_screen_receipt(document: dict, *, name: str, where: str) -> "dict[str
 
     Raises :class:`tessera.errors.PromotionRefusedError`, naming the document,
     the unit and the field, for the legs that invalidate the whole screen: the
-    drift control and the wire/landing identity.  Returns the per-arm
+    drift control (its proof AND its schedule, the baseline every other arm is
+    classified against) and the wire/landing identity.  Returns the per-arm
     matched-pair failures, which invalidate one arm's claim rather than the
     document -- keyed by arm name, one entry per arm that failed at least one
-    leg, so the caller refuses that arm and reads the others.
+    leg, so the caller refuses that arm and reads the others.  An arm whose own
+    classification evidence cannot be read is one of those failures: unknown is
+    refused, never exempted (tessera#299).
     """
     units = document.get("units")
     if not isinstance(units, dict) or not units:
