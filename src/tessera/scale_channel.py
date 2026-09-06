@@ -422,9 +422,11 @@ def refit_channel_scale(
     valid = (A > 0) & (B > 0)
     candidate = torch.where(valid, B / A.clamp_min(1e-30), old_eff)
     new_stored, new_eff = land_channel_scale(candidate, global_scale)
-    err_old = A * old_eff * old_eff - 2 * B * old_eff
-    err_new = A * new_eff * new_eff - 2 * B * new_eff
-    keep_new = valid & (err_new < err_old)
+    # Compare the factored quadratic difference. Subtracting separately
+    # rounded losses erases improvements below their shared magnitude
+    # (and made a legacy FP8 row depend on the CPU reduction order, #360).
+    delta = (new_eff - old_eff) * (A * (new_eff + old_eff) - 2 * B)
+    keep_new = valid & (delta < 0)
     stored_out = torch.where(keep_new, new_stored, stored)
     if floor is not None:
         floor_stored, floor_eff = land_at_least(floor.float(), global_scale)

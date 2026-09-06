@@ -805,6 +805,16 @@ fixture outputs do too. New shipping structures still add ordinary fixtures
 and re-base the identity; baseline-neutral witnesses are only for newly found
 blind spots inside a structure the live identity already claimed to cover.
 
+Issue #360 fixes cancellation in the CHANNEL refit's acceptance guard. The
+quadratic loss difference is evaluated as
+`(new - old) * (A * (new + old) - 2 * B)`, rather than subtracting two
+separately rounded losses. A representable improvement smaller than one ulp
+of those losses must still be accepted. The objective, candidate landing,
+invalid-correlation hold and optional reach-floor rule are unchanged. Historical
+artifacts remain readable; a fresh encode can now take an improving FP16 scale
+step that the old guard incorrectly held. The measured scope is recorded in
+`docs/measurements/channel-refit-cancellation-2026-09-06.md`.
+
 ### 3.1a A served receipt names the encoder that wrote its artifact
 
 Runtime evidence remains evidence about the bytes actually served. It does
