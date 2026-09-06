@@ -5,7 +5,7 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
-**Provenance:** current as of the unreleased `v0.1.0` candidate (2026-09-05):
+**Provenance:** current as of `v0.1.0` (2026-09-05):
 selector traversal budget #353, directory-glob boundary #354, and refused
 data-read suffix coverage #355 verified against base `8dc165b`;
 base `8dc165b` (wire minor 7), encoder-evidence scope correction #198,

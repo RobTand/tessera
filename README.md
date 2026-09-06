@@ -24,7 +24,7 @@ EXL3-like reconstruction quality while using FP8 activations**, and a
 encoder's served quality** at equal expanded residency. The comparisons and
 their workloads are [below](#measured-results).
 
-[How it works](#how-it-works) · [The format family](#the-format-family) ·
+[GitHub](https://github.com/RobTand/tessera) · [How it works](#how-it-works) · [The format family](#the-format-family) ·
 [Serving and memory](#serving-and-memory) · [Measured results](#measured-results) ·
 [Getting started](#getting-started)
 
@@ -143,9 +143,9 @@ NVFP4 serving decoder accepts only its listed rung, although the encoder
 also implements other E2M1 constructions.
 
 The code owns these choices:
-[`wire_recipe`](https://github.com/RobTand/tessera/blob/master/src/tessera/export.py)
+[`wire_recipe`](https://github.com/RobTand/tessera/blob/v0.1.0/src/tessera/export.py)
 selects what the exporter writes, and the
-[runtime contract](https://github.com/RobTand/tessera/blob/master/src/tessera/serving/runtime_contract.json)
+[runtime contract](https://github.com/RobTand/tessera/blob/v0.1.0/src/tessera/serving/runtime_contract.json)
 states which combinations have serving evidence.
 
 ## Serving and memory
@@ -200,8 +200,8 @@ sharding machinery can derive rank-local slices from a common encoded unit.
 are not truncatable rate ladders. **Serving is attested only at one rank**;
 there is no multi-rank result, and the NVFP4 route refuses row-axis cuts.
 
-See the [byte-level specification](https://github.com/RobTand/tessera/blob/master/docs/schema/prismaquant.tessera.v1.md)
-and [plan-to-serve architecture](https://github.com/RobTand/tessera/blob/master/docs/ARCHITECTURE.md)
+See the [byte-level specification](https://github.com/RobTand/tessera/blob/v0.1.0/docs/schema/prismaquant.tessera.v1.md)
+and [plan-to-serve architecture](https://github.com/RobTand/tessera/blob/v0.1.0/docs/ARCHITECTURE.md)
 for the complete contracts.
 
 ## Measured results
@@ -249,9 +249,9 @@ rates to each Tessera artifact's byte budget. These Tessera arms use scale
 refitting **without LDLQ**; EXL3 uses its reference quantizer with LDLQ.
 The results are historical tensor screens, not whole-model KL or a result
 for dense layers with different activation distributions. Sources:
-[3-bit production-wire results](https://github.com/RobTand/tessera/blob/master/experiments/results/tessera_frontier.json),
-[4/5-bit production-wire results](https://github.com/RobTand/tessera/blob/master/experiments/results/tessera_frontier_L14.json),
-and the [measurement harness](https://github.com/RobTand/tessera/blob/master/experiments/tessera_frontier.py).
+[3-bit production-wire results](https://github.com/RobTand/tessera/blob/v0.1.0/experiments/results/tessera_frontier.json),
+[4/5-bit production-wire results](https://github.com/RobTand/tessera/blob/v0.1.0/experiments/results/tessera_frontier_L14.json),
+and the [measurement harness](https://github.com/RobTand/tessera/blob/v0.1.0/experiments/tessera_frontier.py).
 
 **Tessera-4 has also improved substantially.** The later LDLQ + scale-refit
 measurement reduces its weight-only output error to **1.097× EXL3 K4** on
@@ -260,14 +260,36 @@ the same six experts, at about four encoded bits per weight. With its
 versus EXL3's **0.06736** weight-only reference and **0.10912** A4
 projection: about **1.68×** and **1.04×**, respectively. That is close to
 the same-activation comparison; the activation cost remains material against
-EXL3's A16 reference. [LDLQ measurement](https://github.com/RobTand/tessera/blob/master/docs/measurements/tessera-ldlq-lut-plane-served-2026-09-02.md#glm-cross-check),
-[EXL3 reference values](https://github.com/RobTand/tessera/blob/master/experiments/results/tessera_frontier_L14.json).
+EXL3's A16 reference. [LDLQ measurement](https://github.com/RobTand/tessera/blob/v0.1.0/docs/measurements/tessera-ldlq-lut-plane-served-2026-09-02.md#glm-cross-check),
+[EXL3 reference values](https://github.com/RobTand/tessera/blob/v0.1.0/experiments/results/tessera_frontier_L14.json).
 
 The computational opportunity is native **W4A4 or W8A8 matrix multiplication**
 from a trellis-compressed artifact. Low-precision tensor-core arithmetic
 and reduced weight traffic can both help throughput, but the benefit depends
 on batch size, decoding cost, and hardware. These quality comparisons do
 not measure an end-to-end speedup over EXL3.
+
+### How Tessera compares with Gridbook
+
+Gridbook provides another useful comparison: its FP8-CB family uses vector
+codebooks and reconstructs FP8 weights, so both sides can be evaluated with
+the **same FP8 activation quantizer**. On the same six GLM expert projections,
+Tessera's window trellis gives lower output error:
+
+| Nominal budget | Tessera-8: encoded bits/weight / output error | Gridbook FP8-CB + imatrix: bits/weight / output error | Tessera / Gridbook error |
+|---|---:|---:|---:|
+| **4 bits/weight** | 4.020 / **0.06732** | 4.008 / 0.08961 (K32) | **0.751× — 24.9% less** |
+| **5 bits/weight** | 5.020 / **0.04017** | 5.008 / 0.05154 (K40) | **0.779× — 22.1% less** |
+
+These are geometric means of the recorded per-tensor measurements, using
+Gridbook's **imatrix-enabled, LDLQ-off** configuration. Tessera uses the
+14-bit window and scale refitting without LDLQ. The budgets are close,
+not identical: the extra Tessera storage is about **0.0125 bit/weight**.
+These direct comparisons do not interpolate that difference away. Both
+columns include activation quantization; neither is a served model score
+or a throughput measurement. Sources:
+[Gridbook measurements](https://github.com/RobTand/tessera/blob/v0.1.0/experiments/results/tessera_vs_exl3_followups.json)
+and [Tessera measurements](https://github.com/RobTand/tessera/blob/v0.1.0/experiments/results/tessera_frontier_L14.json).
 
 ### End-to-end serving
 
@@ -278,9 +300,9 @@ lower bounds**, not full-vocabulary KL or a general benchmark score.
 
 | Experiment | Recorded result | What it establishes |
 |---|---|---|
-| **Qwen3-0.6B, NVFP4** | Tessera **0.50997** versus PrismaQuant NVFP4 GPTQ+JSO **0.51058**, at equal expanded residency over 4,088 scored positions | Parity on this corpus with **opt-in `ldlq_block=8`**. The default remains 32. A 0.12% margin is not a quality lead. [Receipt](https://github.com/RobTand/tessera/blob/master/docs/measurements/tessera-dense4-gap-2026-09-03.md) |
-| **Qwen3-0.6B, BF16 reconstruction** | **0.004923** at roughly **7.13 encoded bits/weight**; identical scores between resident and streamed modes | A compressed BF16-grid artifact served with low measured divergence on this corpus. Quality was measured in **eager** mode; eager and compiled route censuses each covered all 112 declared modules. [Receipt](https://github.com/RobTand/tessera/blob/master/docs/measurements/tessera-bf16-route-served-2026-09-02.md) |
-| **LFM2.5-8B-A1B, FP8 routed MoE** | All **22 expert stacks / 2,112 projections** covered in prefill and decode; prefill KL lower bound **0.0832**, upper bound **1.179** at the declared probability floor | Dispatch coverage and a bounded prefill comparison over 4,096 positions. No decode KL. A later controlled chat smoke records coherent answers from both source and student. [Quality receipt](https://github.com/RobTand/tessera/blob/master/docs/measurements/tessera-lfm-campaign-2026-09-04.md), [chat smoke](https://github.com/RobTand/tessera/blob/master/docs/measurements/moe-smoke-recorded-2026-09-05.md) |
+| **Qwen3-0.6B, NVFP4** | Tessera **0.50997** versus PrismaQuant NVFP4 GPTQ+JSO **0.51058**, at equal expanded residency over 4,088 scored positions | Parity on this corpus with **opt-in `ldlq_block=8`**. The default remains 32. A 0.12% margin is not a quality lead. [Receipt](https://github.com/RobTand/tessera/blob/v0.1.0/docs/measurements/tessera-dense4-gap-2026-09-03.md) |
+| **Qwen3-0.6B, BF16 reconstruction** | **0.004923** at roughly **7.13 encoded bits/weight**; identical scores between resident and streamed modes | A compressed BF16-grid artifact served with low measured divergence on this corpus. Quality was measured in **eager** mode; eager and compiled route censuses each covered all 112 declared modules. [Receipt](https://github.com/RobTand/tessera/blob/v0.1.0/docs/measurements/tessera-bf16-route-served-2026-09-02.md) |
+| **LFM2.5-8B-A1B, FP8 routed MoE** | All **22 expert stacks / 2,112 projections** covered in prefill and decode; prefill KL lower bound **0.0832**, upper bound **1.179** at the declared probability floor | Dispatch coverage and a bounded prefill comparison over 4,096 positions. No decode KL. A later controlled chat smoke records coherent answers from both source and student. [Quality receipt](https://github.com/RobTand/tessera/blob/v0.1.0/docs/measurements/tessera-lfm-campaign-2026-09-04.md), [chat smoke](https://github.com/RobTand/tessera/blob/v0.1.0/docs/measurements/moe-smoke-recorded-2026-09-05.md) |
 
 Dense route censuses cover the three families in resident/streamed and
 eager/compiled combinations on a pinned vLLM 0.28.0 image. The MoE evidence
@@ -288,7 +310,7 @@ covers one model, one FP8 rung, resident/eager only, on a separate pinned
 vLLM 0.28.1rc1 image. Compiled dispatch coverage does not imply compiled
 quality measurements. Historical quality results also do not automatically
 qualify fresh artifacts produced by a later encoder; the contract records
-[that evidence scope](https://github.com/RobTand/tessera/blob/master/docs/measurements/encoder-evidence-scope-2026-09-05.md).
+[that evidence scope](https://github.com/RobTand/tessera/blob/v0.1.0/docs/measurements/encoder-evidence-scope-2026-09-05.md).
 
 **Per-layer rate allocation is gated.** PrismaQuant can propose rates across
 the families, but a multi-rung plan must pass a served comparison with a
@@ -296,7 +318,7 @@ byte-matched uniform control. This matters in practice: one surrogate-selected
 allocation served about **2× worse KL** than its uniform control. Weight-space
 error is useful for screening candidates, but the model's executed output
 is the promotion metric. See
-[the allocation gates](https://github.com/RobTand/tessera/blob/master/docs/ARCHITECTURE.md#4-allocation-and-the-uniform-gate).
+[the allocation gates](https://github.com/RobTand/tessera/blob/v0.1.0/docs/ARCHITECTURE.md#4-allocation-and-the-uniform-gate).
 
 Serving on other GPU architectures, tensor parallelism above one rank,
 expert parallelism, and compiled or streamed MoE remain unmeasured.
@@ -304,7 +326,14 @@ expert parallelism, and compiled or streamed MoE remain unmeasured.
 ## Getting started
 
 The distribution name is **`tessera-quant`**; the Python import is **`tessera`**.
-Install from a source checkout:
+Install the release:
+
+```bash
+pip install tessera-quant==0.1.0
+pip install 'tessera-quant[serve]==0.1.0'  # also install vLLM and JIT-build tooling
+```
+
+Or install from a source checkout:
 
 ```bash
 git clone https://github.com/RobTand/tessera.git
@@ -329,24 +358,27 @@ TESSERA_SERVE_MODE=streamed vllm serve /path/to/tessera-checkpoint
 
 Use `resident` to expand weights at load. Installing vLLM from its package
 index does not reproduce an attested runtime: the
-[packaged contract](https://github.com/RobTand/tessera/blob/master/src/tessera/serving/runtime_contract.json)
+[packaged contract](https://github.com/RobTand/tessera/blob/v0.1.0/src/tessera/serving/runtime_contract.json)
 names the exact serving images and supported combinations.
 
 For encoding and integration, start with the
-[architecture and export pipeline](https://github.com/RobTand/tessera/blob/master/docs/ARCHITECTURE.md#2-the-pipeline),
-[`export_tessera_serving.py`](https://github.com/RobTand/tessera/blob/master/experiments/export_tessera_serving.py),
-and the [`tessera.export` API](https://github.com/RobTand/tessera/blob/master/src/tessera/export.py).
+[architecture and export pipeline](https://github.com/RobTand/tessera/blob/v0.1.0/docs/ARCHITECTURE.md#2-the-pipeline),
+[`export_tessera_serving.py`](https://github.com/RobTand/tessera/blob/v0.1.0/experiments/export_tessera_serving.py),
+and the [`tessera.export` API](https://github.com/RobTand/tessera/blob/v0.1.0/src/tessera/export.py).
 
 ## Development and further reading
 
-- [Architecture](https://github.com/RobTand/tessera/blob/master/docs/ARCHITECTURE.md): recipes, byte accounting, export, serving, and promotion gates.
-- [Wire specification](https://github.com/RobTand/tessera/blob/master/docs/schema/prismaquant.tessera.v1.md): container layout and decoding rules.
-- [Measurement records](https://github.com/RobTand/tessera/tree/master/docs/measurements): workloads, controls, results, and limitations.
-- [Suite population ledger](https://github.com/RobTand/tessera/blob/master/docs/status/suite-populations.md): validation by commit, device, run mode, and skips.
-- [Working rules](https://github.com/RobTand/tessera/blob/master/AGENTS.md): contribution and test requirements. Tests and GPU work run through PrismaBuild.
+- [Architecture](https://github.com/RobTand/tessera/blob/v0.1.0/docs/ARCHITECTURE.md): recipes, byte accounting, export, serving, and promotion gates.
+- [Wire specification](https://github.com/RobTand/tessera/blob/v0.1.0/docs/schema/prismaquant.tessera.v1.md): container layout and decoding rules.
+- [Measurement records](https://github.com/RobTand/tessera/blob/v0.1.0/docs/measurements): workloads, controls, results, and limitations.
+- [Suite population ledger](https://github.com/RobTand/tessera/blob/v0.1.0/docs/status/suite-populations.md): validation by commit, device, run mode, and skips.
+- [Working rules](https://github.com/RobTand/tessera/blob/v0.1.0/AGENTS.md): contribution and test requirements. Tests and GPU work run through PrismaBuild.
 
 Hosted CI checks the bytes-only boundary and built-package contents. GPU
 serving coverage requires its own measured population; read the GPU and
 CPU rows together in the suite ledger.
 
-**License:** [MIT](https://github.com/RobTand/tessera/blob/master/LICENSE).
+Documentation links are pinned to **v0.1.0**, so they describe the same
+release on GitHub and the Python package index.
+
+**License:** [MIT](https://github.com/RobTand/tessera/blob/v0.1.0/LICENSE).
