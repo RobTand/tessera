@@ -366,6 +366,23 @@ For encoding and integration, start with the
 [`export_tessera_serving.py`](https://github.com/RobTand/tessera/blob/v0.1.0/experiments/export_tessera_serving.py),
 and the [`tessera.export` API](https://github.com/RobTand/tessera/blob/v0.1.0/src/tessera/export.py).
 
+## Layout
+
+The main implementation lives under `src/tessera/`:
+
+```text
+encode.py          trellis search and scale refitting
+compensate.py      Hessian-aware error feedback
+wire.py            packed bit streams
+container.py       serialization, parsing, and integrity checks
+footprint.py       exact-byte accounting
+decode.py          reference reconstruction and native tile materialization
+export.py          encoder recipes and checkpoint export
+kernel_window.py   GPU window decoding
+kernel_window_gemv.py  compressed matrix-vector multiplication
+serving/           vLLM plugin, CUDA sources, and runtime contract
+```
+
 ## Development and further reading
 
 - [Architecture](https://github.com/RobTand/tessera/blob/v0.1.0/docs/ARCHITECTURE.md): recipes, byte accounting, export, serving, and promotion gates.
