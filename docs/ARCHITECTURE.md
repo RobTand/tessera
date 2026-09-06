@@ -812,7 +812,11 @@ separately rounded losses. A representable improvement smaller than one ulp
 of those losses must still be accepted. The objective, candidate landing,
 invalid-correlation hold and optional reach-floor rule are unchanged. Historical
 artifacts remain readable; a fresh encode can now take an improving FP16 scale
-step that the old guard incorrectly held. The measured scope is recorded in
+step that the old guard incorrectly held. A portable 16×256 seed-zero Gaussian
+witness adds this previously missed boundary to the behavioral identity; its
+old ARM contribution is baseline-neutral, and the corrected contribution moves
+the identity so cached units from the prior encoder are refused. The measured
+scope is recorded in
 `docs/measurements/channel-refit-cancellation-2026-09-06.md`.
 
 ### 3.1a A served receipt names the encoder that wrote its artifact

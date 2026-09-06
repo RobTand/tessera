@@ -298,6 +298,12 @@ _COMPLETION_BASELINE = (
     "6eefb0383789d3532c957e9b6a828a8b3a7947686e5d2f6979e383d5520c76ca"
 )
 
+# The #360 cancellation witness under the old ARM guard, measured once.
+# Adding the witness is neutral for that behavior; a corrected scale contributes.
+_REFIT_CANCELLATION_BASELINE = (
+    "3ff89553f9f28f2d0de3dbc0a76c4d62e76da574b29bd24892065a77df277a85"
+)
+
 _DOMAIN = b"prismaquant.tessera.v1/encoder_fixture_id"
 
 _LOCK = threading.RLock()
@@ -336,6 +342,20 @@ def _fixture_weight():
     for row in rows:
         weight[row, 0] = OUTLIER_SIGMAS + OUTLIER_SPREAD * rng.random()
     return weight
+
+
+def _refit_cancellation_weight():
+    """A fixed 16 x 256 draw containing the #360 rounded-loss boundary.
+
+    Seed zero is a declared regression input, using the same portable stream
+    as the main fixture. The 128-column fixture missed this byte-moving step.
+    Its old and corrected contributions were measured through the exporter;
+    no stored word or expected output is planted into the encode.
+    """
+    import torch
+
+    return torch.tensor(_gaussian_stream(0, 16 * 256), dtype=torch.float32,
+                        device="cpu").reshape(16, 256)
 
 
 def _unraised_boundary_fixture():
@@ -438,6 +458,8 @@ class Fixture:
     #: Use the deliberately constructed #115 boundary weights instead of the
     #: general mixed raised/unraised fixture.
     unraised_boundary: bool = False
+    #: Reach a strict refit improvement hidden by separately rounded losses.
+    refit_cancellation: bool = False
     #: ``None`` tracks the exporter default.  The boundary witness holds the
     #: initial plane fixed at zero refits so the exact branch reaches bytes.
     scale_refit: "int | None" = None
@@ -536,6 +558,12 @@ def fixtures() -> "tuple[Fixture, ...]":
             compatibility_baseline=_UNRAISED_BOUNDARY_BASELINE,
             unraised_boundary=True,
             scale_refit=0,
+        ),
+        Fixture(
+            "e4m3-1024/window-channel-refit-cancellation",
+            "E4M3", 1024,
+            compatibility_baseline=_REFIT_CANCELLATION_BASELINE,
+            refit_cancellation=True,
         ),
         # The S6b scale plane (tessera#143).  ``wire_recipe`` selects it
         # nowhere, so no case above writes SCALE_BASE at all -- and yet
@@ -654,8 +682,12 @@ def _fixture_blob(case: Fixture) -> bytes:
         return _shard_blob(case)
     if case.released_positions is not None:
         return _release_blob(case)
-    weight = _unraised_boundary_fixture()[0] if case.unraised_boundary \
-        else _fixture_weight()
+    if case.unraised_boundary:
+        weight = _unraised_boundary_fixture()[0]
+    elif case.refit_cancellation:
+        weight = _refit_cancellation_weight()
+    else:
+        weight = _fixture_weight()
     kwargs: dict = {}
     if case.scale_refit is not None:
         kwargs["scale_refit"] = case.scale_refit

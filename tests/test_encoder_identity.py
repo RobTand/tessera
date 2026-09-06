@@ -694,3 +694,25 @@ def test_a_presence_flag_that_is_not_a_bool_is_refused():
     patched = data[:-33] + b"\x02" + data[-32:]
     with pytest.raises(TesseraError, match="bool"):
         Manifest.decode(patched, SCHEMA_MINOR)
+
+
+def test_identity_sees_refit_improvements_below_the_rounded_loss_ulp(identity, monkeypatch):
+    import tessera.scale_channel as sc
+
+    current = sc.refit_channel_scale
+
+    def rounded_loss_guard(work, units, stored, global_scale, metric=None, floor=None):
+        new_stored, effective = current(work, units, stored, global_scale, metric, floor)
+        if metric is not None or floor is not None:
+            return new_stored, effective
+        W, U = work.float(), units.float()
+        A, B = (U * U).sum(dim=1), (W * U).sum(dim=1)
+        old = stored.float() * global_scale
+        old_loss = A * old * old - 2 * B * old
+        new_loss = A * effective * effective - 2 * B * effective
+        held = torch.where(new_loss < old_loss, new_stored, stored)
+        return held, held.float() * global_scale
+
+    monkeypatch.setattr(sc, "refit_channel_scale", rounded_loss_guard)
+    monkeypatch.setattr(ei, "_MEMO", [])
+    assert ei.encoder_fixture_id() != identity
