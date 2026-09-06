@@ -74,12 +74,11 @@ invocations and reads what they return.  It never runs a suite itself, never
 sshes anywhere, and a refused placement comes back as the refusal it is.
 ``--cpus N`` is spent as well as declared: above 1 it becomes pytest's ``-n``,
 so the reservation and the command cannot disagree.  It is clamped **per
-arm**: the GPU arm runs serially whatever is asked, because its workers would
-share one device and its interpreter has no xdist.  Without that clamp the two
-arms could only be submitted together at ``--cpus 1`` -- every ``-n`` run on
-this branch was a lone ``--arm x86`` submission for exactly that reason, which
-is the half-a-result the ledger header warns about, produced by the tool that
-warns about it.
+arm**: the legacy GPU arm selects serial execution, while the x86 arm uses
+``-n``. The clamp originated when the GPU interpreter lacked xdist. Current
+direct PrismaBuild submissions can use scoped xdist on both populations with
+independent process state and aggregate CPU/memory reservations. This wrapper
+retains its existing per-arm setting; it does not detect runtime capability.
 """
 from __future__ import annotations
 
@@ -261,17 +260,14 @@ def _command(arm: dict, surface_json: Path, extra: list[str],
     2026-09-03.  So the declaration and the command are derived from one
     number rather than chosen separately.
 
-    Serial is the default because parallelism is not free here and not always
-    available.  ``-n`` needs ``pytest-xdist`` in the TARGET venv, which is a
-    fact about another box: the CUDA venv on sparky inherits the system
-    interpreter, which has pytest 9.0.3 and no xdist, so a hardcoded ``-n``
-    would abort that arm on an unrecognised argument.  And on the GPU arm the
-    workers share one device, so fanning out is a memory risk, not a speedup.
-    An operator who knows the target venv passes ``--cpus N`` and gets both
-    halves at once.
+    The legacy arm table selects which populations fan out. ``-n`` requires
+    pytest-xdist in the target interpreter; current scoped environments provide
+    it. Direct PrismaBuild submissions may parallelize independent GPU tests
+    with an aggregate memory reservation. The serial setting here is the
+    wrapper's retained policy, not a claim that a shared GPU prevents speedup.
 
-    Which is why the number is passed through ``_arm_cpus`` here rather than
-    used as given: an arm that cannot fan out clamps to serial, so one
+    The number passes through ``_arm_cpus`` rather than being used as given:
+    an arm configured without fanout clamps to serial, so one
     ``--cpus 8`` can submit an ``-n 8`` x86 arm and a serial GPU arm in the
     same run.  Before that, ``--cpus 8`` composed ``-n 8`` for both.
     """

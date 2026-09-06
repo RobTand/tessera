@@ -130,7 +130,7 @@ are in [the corrected receipt](issue-queue-corrected-2026-09-06.json);
 [the ledger](../status/suite-populations.md) retains the original full red run
 separately. No full green result is inferred from this targeted follow-up.
 
-One off-task prose fix accompanies the queue report in a separate commit:
+One off-task prose fix accompanies the queue report in separate commits:
 `tools/merge_suite.py` now describes its legacy serial GPU setting accurately.
 Scoped xdist is installed; shared device presence alone does not prevent
 parallel test processes. No wrapper behavior or default changes.
