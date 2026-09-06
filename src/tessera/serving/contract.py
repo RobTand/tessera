@@ -2139,15 +2139,18 @@ def _validate_construction_output_sizes(entry: Mapping[str, Any], where: str) ->
         return
     if not isinstance(table, Mapping):
         raise ValueError(f"{where}.output_sizes must map module patterns to partition lists")
-    walked = set(entry["offered"]) | {r["prefix_pattern"] for r in entry["never_offered"]}
     disagreeing = {r["prefix_pattern"] for r in entry.get("disagreements", ())}
+    # A disagreeing pattern is struck from ``offered`` too, so it is asked
+    # first: the refusal names the reason the census recorded.
+    walked = (set(entry["offered"]) | {r["prefix_pattern"] for r in entry["never_offered"]}
+              | disagreeing)
     for pattern, sizes in table.items():
         at = f"{where}.output_sizes[{pattern!r}]"
-        if pattern not in walked:
-            raise ValueError(f"{at}: the census walked no Linear of that pattern")
         if pattern in disagreeing:
             raise ValueError(
                 f"{at}: the pattern's members disagreed, so no one partition list is attested")
+        if pattern not in walked:
+            raise ValueError(f"{at}: the census walked no Linear of that pattern")
         if (not isinstance(sizes, list) or not sizes
                 or any(not isinstance(v, int) or isinstance(v, bool) or v <= 0 for v in sizes)):
             raise ValueError(f"{at} must be a non-empty list of positive partition sizes")
