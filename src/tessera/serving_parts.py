@@ -256,8 +256,23 @@ def validate_explicit_plan(plan, modules: dict, config_groups: dict, *, source_t
                 raise ValueError(f"explicit plan stack {name}: declared grid/rung differs from plan")
         else:
             roles = [r for r in all_roles if r.get("tensor") == name]
+            if not roles:
+                raise ValueError(f"explicit plan tensor {name}: expected one emitted role, got 0")
             if len(roles) != 1:
-                raise ValueError(f"explicit plan tensor {name}: expected one emitted role, got {len(roles)}")
+                # tessera#377: a MergedColumnParallelLinear built from ONE source
+                # tensor is emitted as one role per attested output partition,
+                # each a row window of that tensor.  Several roles for one
+                # tensor are accepted only when the windows tile it exactly.
+                windows = sorted((int(r.get("row_offset", 0)), int(r.get("rows", 0))) for r in roles)
+                totals = {int(r.get("source_rows", 0)) for r in roles}
+                covered, tiled = 0, len(totals) == 1
+                for offset, rows in windows:
+                    tiled = tiled and offset == covered and rows > 0
+                    covered += rows
+                if not tiled or covered != next(iter(totals)):
+                    raise ValueError(
+                        f"explicit plan tensor {name}: {len(roles)} emitted roles do not tile "
+                        f"the tensor by row (windows {windows}, source rows {sorted(totals)})")
         for role in roles:
             if role.get("grid") != wanted_grid or role.get("q256") != wanted_rung:
                 raise ValueError(f"explicit plan {name}: emitted role grid/rung differs from plan")

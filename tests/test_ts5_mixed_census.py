@@ -3,21 +3,28 @@ import copy
 
 import pytest
 
+from tessera.serving.contract import construction_entry, output_partitions
 from tessera.serving.scheme import ROUTES, TESSERA_BF16, TESSERA_NVFP4, launch_pairs
 from test_ts5_census_check import IMAGE, TARGETS, _check, _fixture, _promote
 
 
 def _add_dense(case, target, members, *, family=TESSERA_BF16, grid="BF16", q256=1792):
-    plan, config, manifest, census, _ = case
+    plan, config, manifest, census, contract = case
     route = ROUTES[family]
+    # Rows are whatever the pinned LFM census attests for this owner's output
+    # partitions (tessera#377); a member with no attested geometry keeps 64.
+    entry = construction_entry(config["architectures"], contract)
+    sizes = output_partitions(entry, target) if entry is not None else None
+    if sizes is None or len(sizes) != len(members):
+        sizes = [64] * len(members)
     roles = [{"tensor": name, "role": name.removesuffix(".weight").rsplit(".", 1)[-1],
-              "rows": 64, "cols": 128, "grid": grid, "q256": q256, "family": family}
-             for name in members]
+              "rows": rows, "cols": 128, "grid": grid, "q256": q256, "family": family}
+             for name, rows in zip(members, sizes)]
     for name in members:
         plan[name] = {"grid": grid, "q256": q256}
     scheme = {"structure": "dense", "family": family, "grid": grid,
               "body": route["body"], "plane": route["plane"], "q256": q256,
-              "rows": 64 * len(roles), "columns": 128, "wire_bytes": 4096,
+              "rows": sum(r["rows"] for r in roles), "columns": 128, "wire_bytes": 4096,
               "roles": [[r["role"], r["rows"]] for r in roles]}
     config["quantization_config"]["config_groups"][target] = {
         "targets": [target], "format": "TESSERA", "scheme": scheme}

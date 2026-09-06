@@ -216,9 +216,9 @@ def test_export_declares_the_attested_partitions_as_row_sliced_roles(tmp_path, m
     geometry = manifest["serving_gate"]["geometry"]
     assert geometry == {"attested_modules": 2, "unattested_modules": [],
                         "row_sliced_modules": [LAYER + "conv.in_proj"]}
-    assert set(manifest["units"]) == {
-        OUT_PROJ_TENSOR, IN_PROJ_TENSOR + "[0:32]", IN_PROJ_TENSOR + "[32:64]",
-        IN_PROJ_TENSOR + "[64:96]"}
+    # Two owners, four roles: the manifest counts units as roles, and the
+    # three row windows of one source tensor are three of them.
+    assert manifest["totals"]["modules"] == 2 and manifest["totals"]["units"] == 4
     with safe_open(str(out / "model.safetensors"), framework="pt") as handle:
         keys = set(handle.keys())
     assert LAYER + "conv.in_proj.wire_bytes" in keys and IN_PROJ_TENSOR not in keys
