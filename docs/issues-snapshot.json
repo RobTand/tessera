@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-06T03:43:16Z",
+ "generated": "2026-09-06T04:30:54Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -674,6 +674,10 @@
    "25": {
     "state": "CLOSED",
     "title": "Byte-budget selection: min-dloss vs max-disk ratchets now disagree, and the selection records neither"
+   },
+   "250": {
+    "state": "OPEN",
+    "title": "Record bounded LFM campaign and preserve priced bytes through export"
    },
    "26": {
     "state": "CLOSED",
@@ -2098,7 +2102,7 @@
     "title": "Restore the selector's never-under-select invariant, and bound its path resolution to the tree (#338, #339)"
    },
    "346": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] A tracked symlink a module reads has no node of its own, so repointing it selects nothing"
    },
    "347": {
@@ -2150,7 +2154,7 @@
     "title": "Explain Tessera's format family and prepare the 0.1.0 release"
    },
    "358": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] README-only changes omit tests that read the file through a helper"
    },
    "359": {
@@ -2166,12 +2170,32 @@
     "title": "Historical FP8 legacy-byte reproduction fails on x86 CPU release validation"
    },
    "361": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Source reader does not normalize PrismaBuild v2 snapshot metadata"
    },
    "362": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Record Tessera 0.1.0 release validation"
+   },
+   "363": {
+    "state": "OPEN",
+    "title": "[P2] Layer-config translator rejects Tessera strings and emits unsupported routed expert leaf plans"
+   },
+   "364": {
+    "state": "OPEN",
+    "title": "[P2] Profile and reduce 76-second CPU encoder-identity startup in real campaign"
+   },
+   "365": {
+    "state": "CLOSED",
+    "title": "Verify PrismaBuild v2 snapshot source identity"
+   },
+   "366": {
+    "state": "OPEN",
+    "title": "[P2] Root container export leaves safetensors shard unreadable to host verification"
+   },
+   "367": {
+    "state": "CLOSED",
+    "title": "Keep documentation readers and symlink consumers in test selection"
    },
    "37": {
     "state": "CLOSED",
