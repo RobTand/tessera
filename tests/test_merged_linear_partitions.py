@@ -40,11 +40,17 @@ def _receipt(name: str) -> dict:
     return json.loads((RECEIPTS / name).read_text())
 
 
-def _lfm_receipt_with_output_sizes(sizes=(2048, 2048, 2048)) -> dict:
+OUT_PROJ = "model.layers.*.short_conv.out_proj"
+
+
+def _lfm_receipt_with_output_sizes(sizes=(2048, 2048, 2048), out_proj=(2048,)) -> dict:
+    """The committed LFM receipt, with the two ShortConv rows attested."""
     receipt = _receipt(LFM_RECEIPT.name)
     for row in receipt["linears"]:
         if row["prefix_pattern"] == IN_PROJ:
             row["output_sizes"] = list(sizes)
+        elif row["prefix_pattern"] == OUT_PROJ:
+            row["output_sizes"] = list(out_proj)
     return receipt
 
 
@@ -106,10 +112,12 @@ def test_the_committed_receipts_predate_the_field_and_attest_nothing():
 
 def test_a_receipt_that_records_output_sizes_attests_the_partitions_by_checkpoint_name():
     entry = construction_entry_from_receipt(_lfm_receipt_with_output_sizes())
-    assert entry["output_sizes"] == {IN_PROJ: [2048, 2048, 2048]}
+    assert entry["output_sizes"] == {IN_PROJ: [2048, 2048, 2048], OUT_PROJ: [2048]}
     # The checkpoint spells it ``conv``; the runtime builds ``short_conv``.
     assert output_partitions(entry, "model.layers.0.conv.in_proj") == [2048, 2048, 2048]
-    assert output_partitions(entry, "model.layers.0.conv.out_proj") is None
+    assert output_partitions(entry, "model.layers.0.conv.out_proj") == [2048]
+    # A pattern the receipt did not attest is None, not [rows].
+    assert output_partitions(entry, "model.layers.0.self_attn.out_proj") is None
 
 
 def test_a_pattern_whose_members_disagree_on_geometry_attests_nothing():
@@ -117,7 +125,7 @@ def test_a_pattern_whose_members_disagree_on_geometry_attests_nothing():
     row = next(r for r in receipt["linears"] if r["prefix_pattern"] == IN_PROJ)
     row.setdefault("disagreements", {})["output_sizes"] = ["model.layers.1.short_conv.in_proj"]
     entry = construction_entry_from_receipt(receipt)
-    assert "output_sizes" not in entry
+    assert entry["output_sizes"] == {OUT_PROJ: [2048]}
     assert output_partitions(entry, "model.layers.0.conv.in_proj") is None
 
 
@@ -191,7 +199,7 @@ def _export(tmp_path, monkeypatch, entry, *extra):
 
 
 def test_export_declares_the_attested_partitions_as_row_sliced_roles(tmp_path, monkeypatch):
-    entry = construction_entry_from_receipt(_lfm_receipt_with_output_sizes((32, 32, 32)))
+    entry = construction_entry_from_receipt(_lfm_receipt_with_output_sizes((32, 32, 32), (32,)))
     out = _export(tmp_path, monkeypatch, entry)
     config = json.loads((out / "config.json").read_text())["quantization_config"]
     scheme = next(g["scheme"] for g in config["config_groups"].values()
@@ -219,7 +227,7 @@ def test_export_declares_the_attested_partitions_as_row_sliced_roles(tmp_path, m
 def test_the_container_carries_three_members_that_decode_to_the_source_rows(tmp_path, monkeypatch):
     """What the runtime will parse: three members, in partition order, rows intact."""
     from tessera.fused import parse_fused
-    entry = construction_entry_from_receipt(_lfm_receipt_with_output_sizes((32, 32, 32)))
+    entry = construction_entry_from_receipt(_lfm_receipt_with_output_sizes((32, 32, 32), (32,)))
     out = _export(tmp_path, monkeypatch, entry)
     with safe_open(str(out / "model.safetensors"), framework="pt") as handle:
         blob = bytes(handle.get_tensor(LAYER + "conv.in_proj.wire_bytes").numpy().tobytes())
@@ -242,7 +250,7 @@ def test_an_unattested_census_declares_per_tensor_and_says_so(tmp_path, monkeypa
 
 def test_a_checkpoint_that_disagrees_with_the_attested_geometry_is_refused_before_encoding(
         tmp_path, monkeypatch):
-    entry = construction_entry_from_receipt(_lfm_receipt_with_output_sizes((40, 40, 40)))
+    entry = construction_entry_from_receipt(_lfm_receipt_with_output_sizes((40, 40, 40), (32,)))
     with pytest.raises(SystemExit) as excinfo:
         _export(tmp_path, monkeypatch, entry)
     message = str(excinfo.value)
@@ -251,6 +259,6 @@ def test_a_checkpoint_that_disagrees_with_the_attested_geometry_is_refused_befor
 
 
 def test_the_twin_refuses_a_row_sliced_module(tmp_path, monkeypatch):
-    entry = construction_entry_from_receipt(_lfm_receipt_with_output_sizes((32, 32, 32)))
+    entry = construction_entry_from_receipt(_lfm_receipt_with_output_sizes((32, 32, 32), (32,)))
     with pytest.raises(SystemExit, match="--stock-twin was given"):
         _export(tmp_path, monkeypatch, entry, "--stock-twin", str(tmp_path / "twin"))
