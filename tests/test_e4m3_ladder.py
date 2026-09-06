@@ -33,9 +33,12 @@ from tessera.alphabet import (  # noqa: E402
     tuple_grid,
 )
 from tessera.errors import GrammarError  # noqa: E402
-from tessera.export import encode_linear  # noqa: E402
+from tessera.container import parse  # noqa: E402
+from tessera.export import encode_linear, wire_recipe  # noqa: E402
+from tessera.manifest import BodyKind  # noqa: E402
 from tessera.manifest import ScalePlaneKind  # noqa: E402
 from tessera.manifest import RotationState  # noqa: E402
+from tessera.planes import PlaneKind  # noqa: E402
 from tessera.trellis import ConvCode  # noqa: E402
 from tessera.unit_artifact import read_unit_artifact  # noqa: E402
 
@@ -74,6 +77,38 @@ def test_e4m3_squared_is_refused_by_the_wire_not_by_the_registry(monkeypatch):
 
 RUNGS = [256, 512, 768, 1024, 1280, 1536, 1792]
 
+#: The ladder's fixture.  Every invariant this file asserts about the wire --
+#: the reader's reconstruction, and the plane-byte identity below -- is linear
+#: in the tensor's own shape, so a wider tensor pins none of them harder.  It
+#: costs a great deal more.  The E4M3 recipe's body is the window trellis at
+#: ``L=14``, whose only CPU path is the reference Viterbi
+#: (``encode.viterbi_window``), and that is ``O(rows * cols * 2^L)`` per pass
+#: with ``scale_refit`` passes to a rung.  At 128x512 the seven rungs took
+#: **987 s of a 1029 s parallel suite** and were one indivisible item, so no
+#: number of workers could touch them (tessera#374); 32x128 is a sixteenth of
+#: that, and is the shape the rest of this suite's E4M3 units already use.
+#: What the larger tensor did buy is *encoder* coverage at scale -- how the
+#: trellis behaves over more steps and more columns -- and that is a question
+#: for the GPU path and its own measurement, not for a CPU serialisation test.
+LADDER_ROWS, LADDER_COLS = 32, 128
+
+
+def _plane_bytes(blob: bytes) -> "dict[PlaneKind, int]":
+    """The artifact's own per-plane byte inventory, empty planes dropped.
+
+    Read back from the bytes through ``container.parse``, so what this returns
+    is what a reader sees, not what the writer meant.
+    """
+    manifest = parse(blob).manifest
+    terminal = max(manifest.terminals, key=lambda t: t.exact_bytes)
+    order = {kind: index for index, kind in enumerate(manifest.plane_order)}
+    counted = {}
+    for descriptor in manifest.planes:
+        length = descriptor.byte_length(terminal.plane_elements[order[descriptor.kind]])
+        if length:
+            counted[descriptor.kind] = length
+    return counted
+
 
 def test_e4m3_ladder_serialises():
     """Every rung of the 8-bit ladder encodes, writes and reads back, and the
@@ -85,15 +120,35 @@ def test_e4m3_ladder_serialises():
     cost that a small tensor amortises badly -- 256 bytes of forest is 0.125
     bpp over a 64x256 unit and 0.008 over a 256x1024 one.  Pinning the
     increment tests the rate; pinning the total would test the test's tensor.
+
+    The *decomposition*, though, is pinnable and is pinned here exactly, which
+    is what lets the fixture shrink without the test learning less.  This
+    recipe writes three planes and nothing else, and each one's size is a
+    closed form in the wire's own terms: the ALPHABET plane is the per-unit
+    ``2^L`` table at one byte per E4M3 code, the BODY is the rung's ``q256/256``
+    bits per weight, and DIAG_SV is the CHANNEL plane's one fp16 per output
+    row.  Asserting that identity against the parsed artifact says *which*
+    plane every byte went to; the older reading -- total bytes within a tenth
+    of a bit of the same three terms -- could only say that they summed.
     """
     torch.manual_seed(0)
-    w = (torch.randn(128, 512) * 0.05).to(torch.bfloat16)
+    w = (torch.randn(LADDER_ROWS, LADDER_COLS) * 0.05).to(torch.bfloat16)
     sizes = []
     for q256 in RUNGS:
         built = encode_linear(w, grid=E4M3_GRID, q256=q256, name="e4m3",
                               code=CODE, rotation=RotationState.NONE,
                               with_diagonals=False, completion=0, verify=True)
         assert read_unit_artifact(built.blob, device=w.device).shape == w.shape
+        # Exact, and per plane: the recipe's own width for this rung, the
+        # rung's body rate over this tensor, and one fp16 per output row.
+        planes = _plane_bytes(built.blob)
+        assert planes == {
+            PlaneKind.ALPHABET: 1 << wire_recipe(E4M3_GRID, q256).window_bits,
+            PlaneKind.BODY: w.numel() * q256 // 256 // 8,
+            PlaneKind.DIAG_SV: 2 * w.shape[0],
+        }, (q256, planes)
+        # And the plane region is those planes and nothing beside them.
+        assert built.exact_bytes == sum(planes.values())
         sizes.append(built.exact_bytes * 8 / w.numel())
     for lower, upper in zip(sizes, sizes[1:]):
         # The window recipe's table has a fixed size across these rungs;
@@ -102,12 +157,11 @@ def test_e4m3_ladder_serialises():
     # The exporter's overhead above the rung's body rate follows the E4M3
     # recipe: the window body spends no code bit and grows no forest plane,
     # so the overhead is the per-unit 2^L table (8 * 2^L bits over the
-    # tensor -- 2.0 bpp at L=14 on this small tensor, 0.016 at 2048x4096)
-    # plus the CHANNEL plane (one fp16 per row and a global) and the header,
-    # which is under a tenth of a bit at this size.
-    from tessera.export import wire_recipe
-    from tessera.manifest import BodyKind, ScalePlaneKind
-
+    # tensor -- 32.0 bpp at L=14 on this small tensor, 0.016 at 2048x4096)
+    # plus the CHANNEL plane (one fp16 per row).  ``exact_bytes`` is the plane
+    # region, so the header and manifest are outside it and the residual is
+    # exactly zero; the tenth of a bit is slack this reading has never needed,
+    # and the per-plane identity above is what actually pins the three terms.
     recipe = wire_recipe(E4M3_GRID, RUNGS[0])
     assert recipe.body is BodyKind.WINDOW and recipe.scale_plane is ScalePlaneKind.CHANNEL
     table = 8 * (1 << recipe.window_bits) / w.numel()
