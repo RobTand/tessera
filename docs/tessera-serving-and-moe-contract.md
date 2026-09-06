@@ -1046,6 +1046,15 @@ generates the contract rows from them and
 `tests/test_serving_construction.py` re-derives and compares, the same rule
 `native_extensions` follows.
 
+**It also publishes the geometry** (tessera#377): each row's `output_sizes` is
+the runtime's output partition list for that Linear, which the exporter's
+roles must match by position (`sharding.plan_shard`). `contract.output_partitions`
+reads it per checkpoint module and `dense_ownership.partition_members` derives
+the roles — cutting one source tensor by row where the runtime builds a
+`MergedColumnParallelLinear` over it (LFM2 `short_conv.in_proj`), refusing a
+checkpoint whose rows disagree with the attested list. See
+`docs/ARCHITECTURE.md` §4.4b.
+
 **It also publishes the naming bridge.** A row carries the model class's
 `hf_to_vllm_mapper` (unstacked) and `packed_modules_mapping` — the very tables
 `configure_quant_config` hands this plugin — because a producer writing

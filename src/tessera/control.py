@@ -1024,7 +1024,10 @@ def bits_from_manifest(checkpoint: "str | Path") -> "tuple[Fraction, dict]":
     per_tensor = {}
     for module in manifest["modules"].values():
         for role in module["roles"]:
-            per_tensor[role["tensor"]] = Fraction(int(role["wire_bytes"]) * 8)
+            # Summed, not assigned: a merged Linear over one source tensor
+            # declares several row-sliced roles of that tensor (tessera#377).
+            per_tensor[role["tensor"]] = (per_tensor.get(role["tensor"], Fraction(0))
+                                          + Fraction(int(role["wire_bytes"]) * 8))
     return sum(per_tensor.values(), Fraction(0)), per_tensor
 
 

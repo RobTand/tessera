@@ -127,6 +127,7 @@ __all__ = [
     "classify_construction",
     "construction_entry",
     "construction_entry_from_receipt",
+    "output_partitions",
     "normalise_module",
     "vllm_module_name",
     "CONTRACT_FILENAME",
@@ -2078,6 +2079,16 @@ def construction_entry_from_receipt(receipt: Mapping[str, Any]) -> dict[str, Any
     }
     if disagreements:
         entry["disagreements"] = disagreements
+    # The runtime's output partition list per Linear, when the census recorded
+    # one (receipts before tessera#377 did not).  A pattern whose members
+    # disagreed is struck for the same reason it is struck from ``offered``:
+    # it says nothing about the members that were not observed.
+    output_sizes = {
+        row["prefix_pattern"]: [int(s) for s in row["output_sizes"]]
+        for row in ordered
+        if row.get("output_sizes") is not None and row["prefix_pattern"] not in disagreeing}
+    if output_sizes:
+        entry["output_sizes"] = output_sizes
     return entry
 
 
@@ -2093,7 +2104,7 @@ def _validate_construction(block: Any, where: str) -> None:
                       required={"architecture", "runtime", "model", "supports_quant",
                                 "hf_to_vllm_mapper_unstacked", "offered", "never_offered",
                                 "offered_non_linear"},
-                      optional={"receipt", "disagreements"})
+                      optional={"receipt", "disagreements", "output_sizes"})
         name = entry["architecture"]
         if name in seen:
             raise ValueError(
@@ -2106,12 +2117,60 @@ def _validate_construction(block: Any, where: str) -> None:
             raise ValueError(
                 f"{row}: {overlap} are both offered and never offered; a census cannot say both")
         _validate_construction_disagreements(entry, row)
+        _validate_construction_output_sizes(entry, row)
         for key in ("image", "image_id", "vllm"):
             if not entry["runtime"].get(key):
                 raise ValueError(
                     f"{row}.runtime.{key} is empty: a construction answer is a property of the "
                     "image it was observed in, and an unstamped one cannot be checked against "
                     "the image a serve actually runs")
+
+
+def _validate_construction_output_sizes(entry: Mapping[str, Any], where: str) -> None:
+    """Refuse an output-partition table a producer could pair wrongly.
+
+    Every key is a pattern the census walked (offered or never offered), every
+    value a non-empty list of positive partition sizes, and no disagreeing
+    pattern carries one -- ``construction_entry_from_receipt`` strikes those,
+    and a hand-typed block cannot put one back.
+    """
+    table = entry.get("output_sizes")
+    if table is None:
+        return
+    if not isinstance(table, Mapping):
+        raise ValueError(f"{where}.output_sizes must map module patterns to partition lists")
+    disagreeing = {r["prefix_pattern"] for r in entry.get("disagreements", ())}
+    # A disagreeing pattern is struck from ``offered`` too, so it is asked
+    # first: the refusal names the reason the census recorded.
+    walked = (set(entry["offered"]) | {r["prefix_pattern"] for r in entry["never_offered"]}
+              | disagreeing)
+    for pattern, sizes in table.items():
+        at = f"{where}.output_sizes[{pattern!r}]"
+        if pattern in disagreeing:
+            raise ValueError(
+                f"{at}: the pattern's members disagreed, so no one partition list is attested")
+        if pattern not in walked:
+            raise ValueError(f"{at}: the census walked no Linear of that pattern")
+        if (not isinstance(sizes, list) or not sizes
+                or any(not isinstance(v, int) or isinstance(v, bool) or v <= 0 for v in sizes)):
+            raise ValueError(f"{at} must be a non-empty list of positive partition sizes")
+
+
+def output_partitions(entry: Mapping[str, Any], checkpoint_module: str) -> "list[int] | None":
+    """The runtime's output partition list for one checkpoint module, or ``None``.
+
+    ``None`` means the census that covers this architecture predates the
+    field (tessera#377) or observed this pattern's members disagreeing: the
+    geometry is UNATTESTED, not "one partition".  A producer that reads
+    ``None`` declares its roles the way it did before and must say so in the
+    artifact; it may not read it as a clearance.
+    """
+    table = entry.get("output_sizes")
+    if not table:
+        return None
+    pattern = normalise_module(vllm_module_name(entry, checkpoint_module))
+    sizes = table.get(pattern)
+    return None if sizes is None else [int(s) for s in sizes]
 
 
 def _validate_construction_disagreements(entry: Mapping[str, Any], where: str) -> None:

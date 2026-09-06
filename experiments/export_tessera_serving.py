@@ -161,8 +161,9 @@ from tessera.export import (  # noqa: E402
 from tessera.fused import pack_fused, shared_input_global_scale, shared_lut_global  # noqa: E402
 from tessera.serving.contract import (  # noqa: E402
     PAYLOAD_FAMILY_BY_ROUTE, classify_construction, construction_entry,
-    load_serving_contract)
-from tessera.serving.dense_ownership import FUSED, fused_module as _fused_module  # noqa: E402
+    load_serving_contract, output_partitions)
+from tessera.serving.dense_ownership import (  # noqa: E402
+    FUSED, fused_module as _fused_module, partition_members)
 from tessera.serving.scheme import (  # noqa: E402
     MOE_GROUP_PROJECTIONS, MOE_GROUPS,
     MOE_SHARD_PROJECTIONS as SHARD_PROJECTION, STRUCTURE_DENSE,
@@ -1716,6 +1717,62 @@ def main():
     owned = {m for members in modules.values() for m in members}
     assert owned == set(plan)
 
+    # THE GEOMETRY GATE (tessera#377), after the construction gate because it
+    # reads the same census entry.  A module's roles are the runtime's output
+    # partitions in the runtime's order -- ``sharding.plan_shard`` pairs the
+    # two lists by position and refuses a length mismatch -- so the roles are
+    # DERIVED from the attested ``output_sizes`` rather than from the tensor
+    # names: LFM2's ``short_conv.in_proj`` is ONE checkpoint tensor that the
+    # runtime builds as ``MergedColumnParallelLinear(output_sizes=[dim]*3)``,
+    # and the one-role container the name rule produced was refused at load.
+    # A census that predates the field attests nothing; the roles are then the
+    # tensors, as before, and the manifest says the geometry was not checked.
+    partitions: dict[str, tuple] = {}
+    geometry_unattested: list[str] = []
+    for module, members in list(modules.items()):
+        sizes = None if census is None else output_partitions(census, module)
+        if sizes is None:
+            geometry_unattested.append(module)
+        try:
+            parts = partition_members(module, members, {m: plan[m][2] for m in members}, sizes)
+        except ValueError as exc:
+            raise SystemExit(
+                f"{exc}. The partition list is the pinned runtime's, read from the construction "
+                "census (contract.output_partitions); a checkpoint declaring different roles "
+                "is refused at load by sharding.plan_shard, so it is refused here instead.")
+        unfit = [part for part in parts
+                 if part.rows % (plan[part.tensor][0].arity * 32)]
+        if unfit:
+            # The same shape rule the per-tensor plan applied, re-asked on the
+            # row slice the runtime actually builds; the same resolution too.
+            named = sorted({part.tensor for part in unfit} & set(explicit))
+            if named:
+                raise SystemExit(
+                    f"{module}: the plan names {named} at a grid whose tuples (grid.arity * 32) "
+                    f"do not divide the runtime's output partitions {sizes}; an explicit rung is "
+                    "an obligation, so this is refused rather than silently passed through.")
+            print(f"  passthrough {module}: output partitions {sizes} are not whole tuples on "
+                  "the planned grid", flush=True)
+            for m in modules.pop(module):
+                del plan[m]
+                passthrough.append(m)
+            continue
+        partitions[module] = parts
+    sliced_modules = sorted(module for module, parts in partitions.items()
+                            if any(p.row_offset or p.rows != plan[p.tensor][2] for p in parts))
+    if sliced_modules and args.stock_twin is not None:
+        raise SystemExit(
+            f"--stock-twin was given and {len(sliced_modules)} module(s) are merged Linears over "
+            f"one source tensor ({sliced_modules[:4]}...): the twin writes one tensor per role "
+            "and this exporter does not reassemble row slices. Export without a twin.")
+    if geometry_unattested:
+        print(f"  geometry unattested for {len(geometry_unattested)} module(s): the construction "
+              "census predates output_sizes (tessera#377); roles declared per source tensor",
+              flush=True)
+    if sliced_modules:
+        print(f"  {len(sliced_modules)} merged module(s) over one source tensor are declared as "
+              "row-sliced roles per the attested output partitions", flush=True)
+
     cache_unit_names = {ActivationSource.unit_name(unit["tensor"])
                         for record in stack_plan.values() for unit in record["units"]}
     if args.cached_expert_units is not None and not cache_unit_names:
@@ -1806,7 +1863,7 @@ def main():
     passthrough_bytes = 0
     weights_cache: dict[str, torch.Tensor] = {}
     done = 0
-    total = len(plan)
+    total = sum(len(partitions[m]) for m in modules)      # roles, not tensors; this worker's share
 
     # THE EXPERT WORK LIST, keyed by the SOURCE tensor so the encode happens
     # where the tensor is read: one layer's experts span four shards on
@@ -1939,33 +1996,45 @@ def main():
             roles = []
             role_records = []
             stock_tensors: dict[str, dict] = {}
-            for member in members:
-                member_grid, q256, _mr, _mc = plan[member]
+            for part in partitions[module]:
+                member = part.tensor
+                member_grid, q256, source_rows, _mc = plan[member]
                 member_recipe = wire_recipe(member_grid, q256)
-                weight = weights_cache.pop(member).to(args.device, torch.float32).contiguous()
+                whole = part.row_offset == 0 and part.rows == source_rows
+                unit_name = member if whole else f"{member}[{part.row_offset}:{part.row_offset + part.rows}]"
+                weight = weights_cache[member][part.row_offset: part.row_offset + part.rows]
+                weight = weight.to(args.device, torch.float32).contiguous()
                 # A missing key renders RTN and raises nothing; ``for_unit``
                 # refuses instead, and is the same call the library exporters make.
+                # Keyed by the TENSOR: the input side is one width for every
+                # row slice, so the slices share the source tensor's Hessian.
                 extra = ({} if activation is None else
                          activation.for_unit(member, weight.shape[1], args.device,
                                              scale_plane=member_recipe.scale_plane))
                 exported, unit, forests = encode_linear_planes(
-                    weight, grid=member_grid, q256=q256, name=member,
+                    weight, grid=member_grid, q256=q256, name=unit_name,
                     verify=not args.no_verify, **extra)
                 extra.clear()
                 parse_unit_artifact(exported.blob, device=args.device)      # the reader accepts what we wrote
-                role = module_of(member).rsplit(".", 1)[-1]
+                role = part.role
                 roles.append((role, exported.rows, exported.blob, unit, forests))
-                stock_tensors[member] = materialize_stock(unit, forests, DEFAULT_CODE)
+                stock_tensors[unit_name] = materialize_stock(unit, forests, DEFAULT_CODE)
                 role_records.append({
                     "tensor": member, "role": role, "rows": exported.rows, "cols": exported.columns,
+                    # Where in the source tensor this role's rows come from:
+                    # the whole tensor for every role before tessera#377, a
+                    # row window for a merged Linear over one source tensor.
+                    "row_offset": part.row_offset, "source_rows": source_rows,
                     "grid": member_grid.name, "q256": q256, "family": family,
                     "wire_bytes": exported.exact_bytes, "blob_bytes": len(exported.blob),
                     "wire_bpp": float(exported.bpp), "own_global": float(unit.scale_global),
-                    "resident_bytes_stock": stock_bytes(stock_tensors[member]),
+                    "resident_bytes_stock": stock_bytes(stock_tensors[unit_name]),
                 })
                 done += 1
                 if done % 20 == 0 or done == total:
-                    print(f"  [{done}/{total}] {member}  {time.time() - started:.0f}s", flush=True)
+                    print(f"  [{done}/{total}] {unit_name}  {time.time() - started:.0f}s", flush=True)
+            for member in members:
+                del weights_cache[member]
             blob = pack_fused([(r, rows, b) for r, rows, b, _u, _f in roles])
             rows_total = sum(r[1] for r in roles)
             cols = role_records[0]["cols"]
@@ -1976,6 +2045,10 @@ def main():
                 "family": family, "grid": grid.name, "q256": module_q256, "roles": role_records,
                 "container_bytes": len(blob), "rows": rows_total, "cols": cols,
                 "wire_bytes": sum(r["wire_bytes"] for r in role_records),
+                # Whether the roles above are the runtime's attested output
+                # partitions (tessera#377) or, on a census that predates the
+                # field, the source tensors as declared before it.
+                "geometry_attested": module not in geometry_unattested,
             }
             shard_payload[f"{module}.wire_bytes"] = torch.frombuffer(bytearray(blob), dtype=torch.uint8).clone()
             if family == NVFP4:
@@ -1993,7 +2066,7 @@ def main():
                 # scheme, where it only reduces an already-unified checkpoint)
                 # picks the SMALLEST calibrated range and silently clips the
                 # rest (RobTand/prismaquant#196).
-                scale_keys = [f"{module_of(m)}.input_global_scale" for m in members]
+                scale_keys = list(dict.fromkeys(f"{module_of(m)}.input_global_scale" for m in members))
                 missing = [k for k in scale_keys if k not in input_scales]
                 if missing:
                     raise SystemExit(f"no {missing} in {args.input_scales}; W4A4 cannot serve {module}")
@@ -2053,7 +2126,9 @@ def main():
             config_groups[f"tessera_{module.replace('.', '_')}"] = {"format": "TESSERA", "targets": [module], "scheme": scheme}
             module_records[module] = record
             for r in role_records:
-                units[r["tensor"]] = r
+                whole = r["row_offset"] == 0 and r["rows"] == r["source_rows"]
+                key = r["tensor"] if whole else f"{r['tensor']}[{r['row_offset']}:{r['row_offset'] + r['rows']}]"
+                units[key] = r
             del pending_modules[module]
         save_serving_shard(shard_payload, args.out / shard)
         for key in shard_payload:
@@ -2235,6 +2310,16 @@ def main():
             "allow_unrouted": bool(args.allow_unrouted),
             "passthrough_unrouted": bool(args.passthrough_unrouted),
             "unrouted": unrouted_records,
+            # The runtime's output partitions per dense module, from the same
+            # census (tessera#377): which modules were declared against an
+            # attested partition list, and which of those are one source
+            # tensor cut into several roles.  A module in ``unattested`` has
+            # its roles declared per source tensor, unchecked.
+            "geometry": {
+                "attested_modules": len(partitions) - len(geometry_unattested),
+                "unattested_modules": sorted(geometry_unattested),
+                "row_sliced_modules": sliced_modules,
+            },
         },
         # WHAT THE ROUTED-MoE LAYERS GOT, as a value rather than stdout.
         # Unplanned stacks stay at source precision; planned stacks carry wires.

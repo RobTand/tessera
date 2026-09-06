@@ -20,14 +20,14 @@ sys.path.insert(0, str(ROOT))
 sys.path.insert(0, str(ROOT / "src"))
 
 from tessera.serving.contract import (
-    CENSUS_PHASE_REGIMES, PAYLOAD_FAMILY_BY_ROUTE, construction_entry,
+    CENSUS_PHASE_REGIMES, PAYLOAD_FAMILY_BY_ROUTE, construction_entry, output_partitions,
     load_serving_contract, require_runtime_image, vllm_module_name)
 from tessera.serving.scheme import (
     ROUTES, STRUCTURE_DENSE, STRUCTURE_ROUTED_MOE, expert_role_declarations, launch_pairs,
     moe_census_symbol_base as census_symbol_base,
     validate_tessera_scheme)
 from tessera.serving.census import STRUCTURE_BY_RECORD_KIND
-from tessera.serving.dense_ownership import fused_module
+from tessera.serving.dense_ownership import fused_module, partition_members
 from tessera.serving_parts import sha256_file, validate_explicit_plan
 from tools.tessera_route_census import (
     CHECKPOINT_SIDECAR_NAMES, all_structure_agreement, checkpoint_sidecar_hashes,
@@ -62,7 +62,7 @@ def _same_roster(actual, expected, where):
     _require(Counter(actual) == Counter(expected), f"{where} is not the exact planned population")
 
 
-def _population(plan, config, manifest):
+def _population(plan, config, manifest, entry):
     _mapping(plan, "plan")
     planned = {}
     for target, spec in plan.items():
@@ -103,7 +103,7 @@ def _population(plan, config, manifest):
     for target, scheme in schemes.items():
         module = _mapping(modules[target], f"manifest {target}")
         if scheme["structure"] == STRUCTURE_DENSE:
-            units += _dense_population(target, scheme, module, planned, dense_tensors)
+            units += _dense_population(target, scheme, module, planned, dense_tensors, entry)
             continue
         routed_targets.append(target)
         _require(target in planned, f"scheme {target}: unplanned routed target")
@@ -148,8 +148,17 @@ def _population(plan, config, manifest):
     return planned, schemes, units
 
 
-def _dense_population(target, scheme, module, planned, dense_tensors):
-    """Join exact source leaves to the reader's ordered fused-role geometry."""
+def _dense_population(target, scheme, module, planned, dense_tensors, entry):
+    """Join exact source leaves to the reader's ordered fused-role geometry.
+
+    The roles of a dense owner are what ``partition_members`` derives from the
+    runtime's attested output partitions (tessera#377): one role per member
+    tensor, or -- for a ``MergedColumnParallelLinear`` built from ONE source
+    tensor -- one role per partition, each a row window of it.  A manifest
+    whose roles are any other sequence disagrees with the serve's geometry and
+    is refused here, where the disagreement names the module, rather than at
+    load.
+    """
     _require(module.get("structure", STRUCTURE_DENSE) == STRUCTURE_DENSE,
              f"manifest dense {target}: structure disagrees with scheme")
     expected = {"family": scheme["family"], "grid": scheme["grid"],
@@ -159,25 +168,38 @@ def _dense_population(target, scheme, module, planned, dense_tensors):
         _require(module.get(field) == value,
                  f"manifest dense {target}.{field} disagrees with scheme")
     roles = module.get("roles")
-    _require(isinstance(roles, list) and len(roles) == len(scheme["roles"]),
+    _require(isinstance(roles, list) and roles and len(roles) == len(scheme["roles"]),
              f"manifest dense {target}: role population disagrees with scheme")
-    for role, (name, rows), rung in zip(roles, scheme["roles"], scheme["role_q256"]):
+    for role in roles:
         _mapping(role, f"manifest dense {target} role")
         tensor = role.get("tensor")
         _require(isinstance(tensor, str) and tensor in planned,
                  f"manifest dense {target}: unplanned source tensor {tensor!r}")
         _require(tensor.endswith(".weight"), f"manifest dense {target}: source tensor is not a weight")
-        owner, members = fused_module(tensor) or (tensor.removesuffix(".weight"), (tensor,))
-        _require(owner == target and [r.get("tensor") for r in roles] == list(members),
-                 f"manifest dense {target}: source tensor {tensor!r} belongs to owner {owner!r} "
-                 f"with ordered members {members}")
+    tensors = list(dict.fromkeys(r["tensor"] for r in roles))
+    owner, members = fused_module(tensors[0]) or (tensors[0].removesuffix(".weight"), (tensors[0],))
+    _require(owner == target and tensors == list(members),
+             f"manifest dense {target}: source tensor {tensors[0]!r} belongs to owner {owner!r} "
+             f"with ordered members {members}, manifest names {tensors}")
+    # A whole-tensor role written before tessera#377 carries neither field;
+    # its window is the tensor.
+    tensor_rows = {r["tensor"]: int(r.get("source_rows", r.get("rows", 0))) for r in roles}
+    try:
+        expected_members = partition_members(target, members, tensor_rows,
+                                             output_partitions(entry, target))
+    except ValueError as exc:
+        _require(False, f"manifest dense {target}: {exc}")
+    got = [(r["tensor"], r.get("role"), int(r.get("row_offset", 0)), r.get("rows")) for r in roles]
+    want = [(m.tensor, m.role, m.row_offset, m.rows) for m in expected_members]
+    _require(got == want,
+             f"manifest dense {target}: roles {got} are not the runtime's partition {want}")
+    for role, (name, rows), rung in zip(roles, scheme["roles"], scheme["role_q256"]):
+        tensor = role["tensor"]
         expected = {"role": name, "rows": rows, "cols": scheme["columns"],
                     "grid": scheme["grid"], "q256": rung, "family": scheme["family"]}
         for field, value in expected.items():
             _require(role.get(field) == value,
                      f"manifest dense {target} role {tensor}.{field} disagrees with scheme")
-        _require(tensor.removesuffix(".weight").rsplit(".", 1)[-1] == name,
-                 f"manifest dense {target}: source tensor {tensor!r} disagrees with role {name!r}")
         dense_tensors.append(tensor)
     return len(roles)
 
@@ -195,7 +217,9 @@ def check_census(plan, config, manifest, census, *, runtime_image, checkpoint, c
              "campaign requires both supplied checkpoint sidecar file hashes")
     _require(census.get("checkpoint_sidecars") == checkpoint_sidecars,
              "raw census checkpoint sidecar hashes differ from supplied files")
-    planned, schemes, units = _population(plan, config, manifest)
+    entry = construction_entry(config.get("architectures"), contract)
+    _require(entry is not None, "no attested construction name mapper for checkpoint architecture")
+    planned, schemes, units = _population(plan, config, manifest, entry)
     _require(census.get("schema") == "tessera.serving.route_census/2", "raw census schema must be v2")
     runtime = {"image": runtime_image, "execution_mode": "eager"}
     _require(census.get("runtime") == runtime and census.get("compiled") is False,
@@ -204,8 +228,6 @@ def check_census(plan, config, manifest, census, *, runtime_image, checkpoint, c
              "census must record resident execution")
     _require(census.get("verdict") == "served" and census.get("problems") == [],
              "raw census must be served with no problems")
-    entry = construction_entry(config.get("architectures"), contract)
-    _require(entry is not None, "no attested construction name mapper for checkpoint architecture")
     mapping = {target: vllm_module_name(entry, target) for target in schemes}
     _require(len(set(mapping.values())) == len(mapping), "construction maps targets to duplicate owners")
     stored_mapping = census.get("declared_name_mapping")

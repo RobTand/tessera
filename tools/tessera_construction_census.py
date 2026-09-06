@@ -247,6 +247,14 @@ def _free_port() -> int:
         return sock.getsockname()[1]
 
 
+def _output_sizes(module) -> list[int]:
+    """The output partition list the runtime built this Linear with."""
+    sizes = getattr(module, "output_sizes", None)
+    if sizes is None:
+        sizes = [module.output_size]
+    return [int(s) for s in sizes]
+
+
 def census(model, probe) -> dict:
     from vllm.model_executor.layers.linear import LinearBase
 
@@ -265,6 +273,15 @@ def census(model, probe) -> dict:
             "quant_method": type(module.quant_method).__name__,
             "quant_config_is_none": module.quant_config is None,
             "offered_to_quant_config": prefix in asked,
+            # The runtime's output partition list -- ``ColumnParallelLinear.
+            # output_sizes`` (a merged/QKV Linear's per-member sizes; one
+            # entry for a plain column cut) and ``[output_size]`` for a
+            # Linear that has no such list (row-parallel, replicated).  It is
+            # what ``create_weights`` later receives as
+            # ``output_partition_sizes`` and what an exporter must declare
+            # its roles against (tessera#377).  Global sizes: the census
+            # builds at tp=1.
+            "output_sizes": _output_sizes(module),
             "layers": set(),
             "examples": [],
         })
@@ -277,7 +294,8 @@ def census(model, probe) -> dict:
         # census: record the disagreement rather than letting the last one win.
         for field, value in (("quant_config_is_none", module.quant_config is None),
                              ("offered_to_quant_config", prefix in asked),
-                             ("quant_method", type(module.quant_method).__name__)):
+                             ("quant_method", type(module.quant_method).__name__),
+                             ("output_sizes", _output_sizes(module))):
             if row[field] != value:
                 row.setdefault("disagreements", {}).setdefault(field, []).append(prefix)
     for row in rows.values():
@@ -307,15 +325,35 @@ def _supports_quant(model_class) -> bool:
     return issubclass(model_class, SupportsQuant)
 
 
-def runtime_stamp() -> dict:
+def runtime_stamp(runtime_image: str) -> dict:
+    """The runtime this receipt is scoped to, from the launcher's declaration.
+
+    The image is a join key: ``construction_entry`` scopes every eligibility
+    verdict to it and ``test_serving_construction`` compares it to the pin.
+    So it is read the way the route census reads it (issue #132) -- from the
+    ``TESSERA_CENSUS_RUNTIME_IMAGE*`` pair ``experiments/tessera_plugin_run.sh``
+    exports after resolving docker's RepoDigests -- and checked against the
+    image this run was asked for.  An operator-typed string is refused; the
+    previous ``TESSERA_CENSUS_IMAGE`` env was exactly that, and a receipt
+    taken without it said ``unstamped``, which the tree test then refused.
+    """
     import torch
     import vllm
+    # Deliberately local: this file's top level stays stdlib-only so the tree
+    # test can load it beside any interpreter (see test_serving_construction).
+    from tessera.serving.runtime_image import RuntimeImageError, declared_reference
+    try:
+        declaration = declared_reference(runtime_image)
+    except RuntimeImageError as exc:
+        raise SystemExit(f"--runtime-image {runtime_image}: {exc}") from None
+    record = declaration["record"]
     stamp = {
         "vllm": vllm.__version__,
         "torch": torch.__version__,
         "python": platform.python_version(),
-        "image": os.environ.get("TESSERA_CENSUS_IMAGE", "unstamped"),
-        "image_id": os.environ.get("TESSERA_CENSUS_IMAGE_ID", "unstamped"),
+        "image": declaration["image"],
+        "image_id": record.get("local_id") or record.get("resolved_digest") or "unstamped",
+        "image_declaration": declaration,
     }
     try:
         stamp["vllm_file"] = vllm.__file__
@@ -349,7 +387,13 @@ def main() -> int:
     ap.add_argument("--device", default="meta",
                     help="construction device; meta allocates nothing (default)")
     ap.add_argument("--max-model-len", type=int, default=512)
+    ap.add_argument("--runtime-image", required=True,
+                    help="the image this census is scoped to; must equal the reference the "
+                         "launcher (experiments/tessera_plugin_run.sh) declared for this container")
     args = ap.parse_args()
+    # Refuse BEFORE constructing the model: a receipt scoped to nothing is
+    # not worth the build.
+    stamp = runtime_stamp(args.runtime_image)
 
     started = time.time()
     model, probe, vllm_config = build_model(args.model, args.device, args.max_model_len)
@@ -359,7 +403,7 @@ def main() -> int:
         "schema": "tessera.construction-census.v1",
         "taken": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "seconds": round(time.time() - started, 1),
-        "runtime": runtime_stamp(),
+        "runtime": stamp,
         "model": model_stamp(vllm_config, args.model),
         "model_class": f"{model_class.__module__}.{model_class.__name__}",
         "construction_device": args.device,

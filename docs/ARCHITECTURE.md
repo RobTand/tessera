@@ -1425,6 +1425,34 @@ member's `True` as a clearance is how a wire lands where the runtime builds
 BF16. No committed receipt carries a disagreement, so the key is absent from
 every current row.
 
+**The census also attests each Linear's geometry** (tessera#377). A row records
+`output_sizes` — vLLM's `ColumnParallelLinear.output_sizes`, the per-member
+list a merged/QKV Linear is built with, `[output_size]` otherwise — and the
+entry carries it under `output_sizes` (per pattern; a disagreeing pattern is
+struck, as from `offered`). `contract.output_partitions` reads it by
+checkpoint module name through the same mapper replay. The exporter derives a
+dense owner's roles from it with `dense_ownership.partition_members`, after
+the construction gate: as many partitions as source tensors keeps the tensors
+as roles and checks each tensor's rows; **one source tensor over several
+partitions is cut by row in partition order** (roles `<leaf>.<i>`, the same
+cut `MergedColumnParallelLinear.weight_loader` makes with
+`loaded_shard_id=None`); anything else is refused before the first encode.
+This is what LFM2's `short_conv.in_proj` needs — one checkpoint tensor built as
+`MergedColumnParallelLinear(output_sizes=[dim]*3)` — and what
+`sharding.plan_shard` refused at load when the exporter declared one role
+against three partitions. The manifest stamps `geometry_attested` per module
+and `serving_gate.geometry` (attested / unattested / row-sliced modules). A
+receipt that predates the field attests nothing: roles stay per source tensor
+and the manifest says so. The LFM receipt
+(`docs/measurements/construction/lfm25-8b-a1b-eugr-0281rc1.json`) was re-taken
+on the pinned EUGR image on 2026-09-06 and attests `short_conv.in_proj` as
+`[2048, 2048, 2048]`, `self_attn.qkv_proj` as `[2048, 512, 512]` and the dense
+`feed_forward.w13` as `[7168, 7168]`; the GLM and Qwen receipts predate the
+field. The census stamps the image the launcher declared (`--runtime-image`,
+checked by `runtime_image.declared_reference` exactly as the route census
+does); an operator-typed image string is refused. `plan_shard`'s refusal is
+unchanged; it is the gate that caught this.
+
 The census answers "which patterns" in the *runtime's* namespace and a
 producer names modules in the *checkpoint's*, so the two are joined by
 `contract.vllm_module_name` -- the one place this repo computes what vLLM
