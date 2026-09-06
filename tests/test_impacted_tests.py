@@ -1552,3 +1552,51 @@ def test_text_data_changes_reach_readers_regardless_of_suffix(tmp_path, monkeypa
     assert result["unplaced_data_reads"] == (["src/pkg/reader.py"] if alias else [])
     assert result["unresolved_file_loaders"] == []
     assert result["forces_full"] == []
+
+
+@pytest.mark.parametrize("suffix", [".md", ".rst", ".txt"])
+def test_helper_read_selects_a_test_naming_an_inert_input(tmp_path, suffix):
+    repo, _ = _repo(tmp_path)
+    (repo / "tests").mkdir()
+    name = "contract" + suffix
+    (repo / name).write_text("contract\n")
+    (repo / "tests/test_contract.py").write_text(
+        "from pathlib import Path\n"
+        "ROOT = Path(__file__).resolve().parents[1]\n"
+        "def _read(rel): return (ROOT / rel).read_text()\n"
+        f"def test_contract(): assert _read({name!r})\n"
+    )
+    result = impacted.select(repo, [name])
+    assert result["verdict"] == "narrowed"
+    assert "tests/test_contract.py" in result["tests"]
+    assert "inert changed paths require no tests" not in result["reason"]
+
+
+def test_readme_selects_its_existing_helper_read_contract():
+    result = impacted.select(ROOT, ["README.md"])
+    assert "tests/test_doc_scope_69.py" in result["tests"]
+
+
+@pytest.mark.parametrize("directory", [False, True])
+def test_repointing_a_tracked_data_link_selects_transitive_readers(tmp_path, directory):
+    repo, _ = _repo(tmp_path)
+    for folder in ["data/first", "data/second", "support", "tests"]:
+        (repo / folder).mkdir(parents=True)
+    for folder in ["first", "second"]:
+        (repo / "data" / folder / "payload.json").write_text(folder)
+    link = repo / "data/chosen"
+    link.symlink_to("first" if directory else "first/payload.json")
+    expression = 'Path("data/chosen") / "payload.json"' if directory else 'Path("data/chosen")'
+    (repo / "support/reader.py").write_text(
+        'from pathlib import Path\n' + f'PAYLOAD = ({expression}).read_text()\n')
+    (repo / "tests/test_reader.py").write_text('from support.reader import PAYLOAD\n')
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-qm", "reader and its tracked data link")
+    base = _git(repo, "rev-parse", "HEAD")
+    link.unlink()
+    link.symlink_to("second" if directory else "second/payload.json")
+    _git(repo, "add", "data/chosen")
+    _git(repo, "commit", "-qm", "repoint data input")
+    result = _selector(repo, f"{base}...HEAD")
+    assert result["verdict"] == "narrowed"
+    assert "tests/test_reader.py" in result["tests"]

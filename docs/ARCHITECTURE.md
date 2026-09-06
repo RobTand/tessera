@@ -266,12 +266,19 @@ Explicit Python file loaders also contribute dependency edges: the non-executing
 lexical bindings, loader aliases and repository globs, using the file path rather
 than the loader's arbitrary module label. A resolved target inside the tree is
 an exact edge whatever its suffix -- a non-Python file is a node under its own
-repository-relative path. **What is bounded is the resolution, not only its
+repository-relative path. A conservative text fallback also selects tests that
+name a changed non-Python file when a helper hides the read from the resolver.
+This includes Markdown and other documentation suffixes: a named test input is
+not inert merely because it is prose (#358). **What is bounded is the resolution, not only its
 destination**, because a normalized final membership says nothing about the
 steps taken to reach it: `Path.resolve` walks a spelling as written, so
 `outside/../repo/driver.py` -- which normalizes into the tree -- still
 `lstat`s `outside` before `..` collapses, and an in-root symlink is followed
-to its outside target before any membership check runs. Both were the #325
+to its outside target before any membership check runs. The bounded walker
+retains each in-root symlink entry it traverses as a dependency alongside the
+resolved target, including links used by an intermediate `resolve()` or glob
+base. Repointing a tracked link therefore selects the reader and its consumers
+(#346); no lexically collapsed path is used as a substitute for that walk. Both were the #325
 syscall, reachable again through a path a lexical check accepts (#339).
 So a single walk decides the whole question, in `_resolve_within_root`: a
 spelling whose leading components are not root's is refused before any

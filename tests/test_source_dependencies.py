@@ -13,7 +13,7 @@ that scans a source file containing an absolute literal like
 the tree it was measuring.  The module already refused this for globs
 (":314-316": "they must not trigger a filesystem crawl outside this root");
 this is the same escape by another spelling, and one rule -- a literal that
-does not resolve *lexically* under root is an unknown dependency, decided
+cannot be walked entirely inside root is an unknown dependency, decided
 before any ``resolve()``/``stat()`` -- now owns all three call sites.
 
 tessera#338 is the other half of that rule: refusing to *resolve* a path is
@@ -466,7 +466,7 @@ def test_in_root_symlink_to_an_in_root_file_still_resolves(tmp_path, monkeypatch
     """The other control: a link the tree owns is followed, as it always was.
 
     Refusing to leave root is not refusing to resolve.  ``<root>/link.py``
-    pointing at ``<root>/target.py`` still produces the edge to the target,
+    pointing at ``<root>/target.py`` produces edges to the link and target,
     which is what makes the exact-edge narrowing worth having.
     """
     root = (tmp_path / "repo").resolve()
@@ -484,7 +484,7 @@ importlib.util.spec_from_file_location("mod", TARGET)
 
     found, unknown = _scan(source, root)
 
-    assert found == {root / "target.py"}
+    assert found == {root / "target.py", root / "link.py"}
     assert not unknown
 
 
@@ -546,7 +546,7 @@ def test_link_parent_semantics_retain_exact_edge(tmp_path, monkeypatch, absolute
     _guard_resolve_to_root(monkeypatch, root)
     found, unknown = _scan('from pathlib import Path\nimport runpy\n'
                           'runpy.run_path(Path("link") / ".." / "target.py")', root)
-    assert found == {root / "nested" / "target.py"}
+    assert found == {root / "nested" / "target.py", root / "link"}
     assert not unknown
 
 
@@ -605,3 +605,40 @@ def test_plain_glob_retains_exact_edges(tmp_path, monkeypatch):
     assert found == {target}
     assert not unknown
     assert not unplaced
+
+
+@pytest.mark.parametrize("expression", [
+    'Path("link") / "chosen.json"',
+    '(Path("link") / "chosen.json").resolve()',
+    'next_path',
+    'Path("link") / ".." / ".." / "target.json"',
+])
+def test_read_dependencies_keep_each_traversed_link(tmp_path, monkeypatch, expression):
+    root = tmp_path / "repo"
+    (root / "nested" / "child").mkdir(parents=True)
+    (root / "link").symlink_to("nested/child")
+    (root / "nested" / "child" / "chosen.json").symlink_to("../../target.json")
+    (root / "target.json").write_text("{}")
+    _guard_resolve_to_root(monkeypatch, root)
+    source = ('from pathlib import Path\n'
+              'for next_path in Path("link").glob("*.json"):\n'
+              f'    value = ({expression}).read_text()\n')
+    found, unknown, unplaced = _scan_full(source, root)
+    expected = {root / "target.json", root / "link"}
+    if '".."' not in expression:
+        expected.add(root / "nested" / "child" / "chosen.json")
+    assert found == expected
+    assert not unknown and not unplaced
+
+
+def test_empty_glob_keeps_the_link_that_controls_its_members(tmp_path, monkeypatch):
+    root = tmp_path / "repo"
+    (root / "empty").mkdir(parents=True)
+    (root / "link").symlink_to("empty")
+    _guard_resolve_to_root(monkeypatch, root)
+    found, unknown, unplaced = _scan_full(
+        'from pathlib import Path\n'
+        'for item in Path("link").glob("*.json"):\n'
+        '    item.read_text()\n', root)
+    assert found == {root / "link"}
+    assert not unknown and not unplaced
