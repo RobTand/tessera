@@ -835,302 +835,333 @@
   "sidecar_q256_note": "How a fused module's rungs are spelled in the checkpoint's scheme. ONE field, one fact: config_groups[..].scheme.q256 is an integer when every role carries the same rung -- the spelling of every checkpoint written before contract v6, unchanged -- or a list of one integer per role, in the scheme's own roles order, when they differ. A plugin build older than v6 refuses the list form on sight ('q256 must be an integer'), which is the fail-closed direction; a v6 build reads both.",
   "mixed_rung_receipt_note": "Whether a CONTAINER RECEIPT covers a served module whose members took different rungs. It is false: the relaxation is proven by a decode identity (a real Qwen3-0.6B q/k/v at three rungs decodes element-for-element to what the three roles decode alone -- experiments/fused_member_rung_identity.py, tests/test_fused_member_rungs.py), not by a vLLM serve. This is the same distinction loader_axes draws against max_world_size: what the loader accepts is not what a receipt has covered. lane_eligibility is UNCHANGED by this version, so a mixed-rung module's cells resolve exactly as its members' rungs do individually -- unattested where no cell names the rung, which is the honest status and not a refusal."
  },
-   "construction": {
-      "schema": "tessera.construction.v1",
-      "note": "Which Linears the pinned runtime OFFERS to a quant config, per architecture. LinearBase.__init__ takes UnquantizedLinearMethod() in the quant_config is None branch WITHOUT calling get_quant_method, so a model that builds a projection with quant_config=None takes vLLM's own BF16 method and this plugin is never asked -- it cannot refuse, warn, or see the prefix. A wire written there deletes the <module>.weight the runtime wants and puts bytes in its place that nothing decodes. offered/never_offered are vLLM MODULE patterns with repeat indices collapsed to '*'; a producer translates its checkpoint names with hf_to_vllm_mapper_unstacked first (the same table configure_quant_config hands this plugin) and normalises the same way. A name in neither list is a module the runtime does not build -- unless it is listed under the row's optional 'disagreements', which names a pattern whose observed members answered differently and the exact prefixes that differed: such a pattern is struck from 'offered' because it clears none of its members, least of all the ones the census did not observe. Every row is DERIVED from a receipt under docs/measurements/construction/ by contract.construction_entry_from_receipt and re-derived in tests/test_serving_construction.py, so the table cannot drift from the observation; the observation itself is tools/tessera_construction_census.py, which builds the model the way the loader does and records every prefix a probe quant config is offered. An architecture with no row is UNCENSUSED, which is an honest gap and not a claim that everything is routed.",
-      "architectures": [
-         {
-            "architecture": "Glm5NextForConditionalGeneration",
-            "runtime": {
-               "image": "prismaquant/glm53-mia-sm121:487ecf187",
-               "image_id": "sha256:75ea13eda532280afb4a829ab13eb572a4be49cbb47ca0a02a484a98e476ef69",
-               "vllm": "0.1.dev20051+g487ecf187"
-            },
-            "model": {
-               "model_type": "glm5_next",
-               "num_hidden_layers": 4,
-               "layer_types": [
-                  "linear_attention",
-                  "deepseek_sparse_attention",
-                  "linear_attention",
-                  "deepseek_sparse_attention"
-               ],
-               "mlp_layer_types": [
-                  "dense",
-                  "sparse",
-                  "sparse",
-                  "sparse"
-               ]
-            },
-            "supports_quant": false,
-            "hf_to_vllm_mapper_unstacked": {
-               "orig_to_new_prefix": {
-                  "lm_head.": "language_model.lm_head.",
-                  "model.language_model.": "language_model.model.",
-                  "model.visual.": "visual."
-               }
-            },
-            "offered": [
-               "language_model.model.layers.*.mlp.down_proj",
-               "language_model.model.layers.*.mlp.gate_up_proj",
-               "language_model.model.layers.*.mlp.shared_experts.down_proj",
-               "language_model.model.layers.*.mlp.shared_experts.gate_up_proj"
-            ],
-            "never_offered": [
-               {
-                  "prefix_pattern": "language_model.model.layers.*.mlp.gate",
-                  "class": "GateLinear",
-                  "quant_method": "UnquantizedLinearMethod"
-               },
-               {
-                  "prefix_pattern": "language_model.model.layers.*.self_attn.f_b_proj",
-                  "class": "ColumnParallelLinear",
-                  "quant_method": "UnquantizedLinearMethod"
-               },
-               {
-                  "prefix_pattern": "language_model.model.layers.*.self_attn.fused_qkv_a_proj",
-                  "class": "DeepSeekV2FusedQkvAProjLinear",
-                  "quant_method": "UnquantizedLinearMethod"
-               },
-               {
-                  "prefix_pattern": "language_model.model.layers.*.self_attn.g_b_proj",
-                  "class": "ColumnParallelLinear",
-                  "quant_method": "UnquantizedLinearMethod"
-               },
-               {
-                  "prefix_pattern": "language_model.model.layers.*.self_attn.in_proj_qkvbfg_a",
-                  "class": "_Glm5NextMergedColumnParallelLinear",
-                  "quant_method": "UnquantizedLinearMethod"
-               },
-               {
-                  "prefix_pattern": "language_model.model.layers.*.self_attn.indexer.wk_weights_proj",
-                  "class": "MergedColumnParallelLinear",
-                  "quant_method": "UnquantizedLinearMethod"
-               },
-               {
-                  "prefix_pattern": "language_model.model.layers.*.self_attn.indexer.wq_b",
-                  "class": "ReplicatedLinear",
-                  "quant_method": "UnquantizedLinearMethod"
-               },
-               {
-                  "prefix_pattern": "language_model.model.layers.*.self_attn.k_conv1d",
-                  "class": "ColumnParallelLinear",
-                  "quant_method": "UnquantizedLinearMethod"
-               },
-               {
-                  "prefix_pattern": "language_model.model.layers.*.self_attn.kv_b_proj",
-                  "class": "ColumnParallelLinear",
-                  "quant_method": "UnquantizedLinearMethod"
-               },
-               {
-                  "prefix_pattern": "language_model.model.layers.*.self_attn.o_proj",
-                  "class": "RowParallelLinear",
-                  "quant_method": "UnquantizedLinearMethod"
-               },
-               {
-                  "prefix_pattern": "language_model.model.layers.*.self_attn.q_b_proj",
-                  "class": "ColumnParallelLinear",
-                  "quant_method": "UnquantizedLinearMethod"
-               },
-               {
-                  "prefix_pattern": "language_model.model.layers.*.self_attn.q_conv1d",
-                  "class": "ColumnParallelLinear",
-                  "quant_method": "UnquantizedLinearMethod"
-               },
-               {
-                  "prefix_pattern": "language_model.model.layers.*.self_attn.v_conv1d",
-                  "class": "ColumnParallelLinear",
-                  "quant_method": "UnquantizedLinearMethod"
-               },
-               {
-                  "prefix_pattern": "visual.blocks.*.attn.proj",
-                  "class": "RowParallelLinear",
-                  "quant_method": "UnquantizedLinearMethod"
-               },
-               {
-                  "prefix_pattern": "visual.blocks.*.attn.qkv",
-                  "class": "QKVParallelLinear",
-                  "quant_method": "UnquantizedLinearMethod"
-               },
-               {
-                  "prefix_pattern": "visual.blocks.*.mlp.down_proj",
-                  "class": "RowParallelLinear",
-                  "quant_method": "UnquantizedLinearMethod"
-               },
-               {
-                  "prefix_pattern": "visual.blocks.*.mlp.gate_up_proj",
-                  "class": "MergedColumnParallelLinear",
-                  "quant_method": "UnquantizedLinearMethod"
-               },
-               {
-                  "prefix_pattern": "visual.merger.down_proj",
-                  "class": "RowParallelLinear",
-                  "quant_method": "UnquantizedLinearMethod"
-               },
-               {
-                  "prefix_pattern": "visual.merger.gate_up_proj",
-                  "class": "MergedColumnParallelLinear",
-                  "quant_method": "UnquantizedLinearMethod"
-               },
-               {
-                  "prefix_pattern": "visual.merger.proj",
-                  "class": "ColumnParallelLinear",
-                  "quant_method": "UnquantizedLinearMethod"
-               }
-            ],
-            "offered_non_linear": [
-               {
-                  "prefix_pattern": "language_model.lm_head",
-                  "class": "ParallelLMHead"
-               },
-               {
-                  "prefix_pattern": "language_model.model.layers.*.mlp.experts",
-                  "class": "RoutedExperts"
-               }
-            ],
-            "receipt": "docs/measurements/construction/glm53-flash-4layer.json"
-         },
-         {
-            "architecture": "Lfm2MoeForCausalLM",
-            "runtime": {
-               "image": "eugr/spark-vllm@sha256:0afec8d4f79f44685a1ddf758659d33aef3b0f3ec9068e5a7cd1108d30e5581c",
-               "image_id": "sha256:0afec8d4f79f44685a1ddf758659d33aef3b0f3ec9068e5a7cd1108d30e5581c",
-               "vllm": "0.28.1rc1.dev397+gfd4a15126.d20260904"
-            },
-            "model": {
-               "model_type": "lfm2_moe",
-               "num_hidden_layers": 24,
-               "layer_types": [
-                  "linear_attention",
-                  "linear_attention",
-                  "full_attention",
-                  "linear_attention",
-                  "linear_attention",
-                  "linear_attention",
-                  "full_attention",
-                  "linear_attention",
-                  "linear_attention",
-                  "linear_attention",
-                  "full_attention",
-                  "linear_attention",
-                  "linear_attention",
-                  "linear_attention",
-                  "full_attention",
-                  "linear_attention",
-                  "linear_attention",
-                  "linear_attention",
-                  "full_attention",
-                  "linear_attention",
-                  "linear_attention",
-                  "full_attention",
-                  "linear_attention",
-                  "linear_attention"
-               ],
-               "mlp_layer_types": null
-            },
-            "supports_quant": true,
-            "hf_to_vllm_mapper_unstacked": {
-               "orig_to_new_substr": {
-                  ".conv.": ".short_conv."
-               }
-            },
-            "offered": [
-               "model.layers.*.feed_forward.gate",
-               "model.layers.*.feed_forward.w13",
-               "model.layers.*.feed_forward.w2",
-               "model.layers.*.self_attn.out_proj",
-               "model.layers.*.self_attn.qkv_proj",
-               "model.layers.*.short_conv.in_proj",
-               "model.layers.*.short_conv.out_proj"
-            ],
-            "never_offered": [
-               {
-                  "prefix_pattern": "model.layers.*.short_conv.conv1d",
-                  "class": "ColumnParallelLinear",
-                  "quant_method": "UnquantizedLinearMethod"
-               }
-            ],
-            "offered_non_linear": [
-               {
-                  "prefix_pattern": "lm_head",
-                  "class": "ParallelLMHead"
-               },
-               {
-                  "prefix_pattern": "model.layers.*.feed_forward.experts",
-                  "class": "RoutedExperts"
-               }
-            ],
-            "receipt": "docs/measurements/construction/lfm25-8b-a1b-eugr-0281rc1.json"
-         },
-         {
-            "architecture": "Qwen3ForCausalLM",
-            "runtime": {
-               "image": "vllm/vllm-openai:latest",
-               "image_id": "sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
-               "vllm": "0.28.0"
-            },
-            "model": {
-               "model_type": "qwen3",
-               "num_hidden_layers": 28,
-               "layer_types": [
-                  "full_attention",
-                  "full_attention",
-                  "full_attention",
-                  "full_attention",
-                  "full_attention",
-                  "full_attention",
-                  "full_attention",
-                  "full_attention",
-                  "full_attention",
-                  "full_attention",
-                  "full_attention",
-                  "full_attention",
-                  "full_attention",
-                  "full_attention",
-                  "full_attention",
-                  "full_attention",
-                  "full_attention",
-                  "full_attention",
-                  "full_attention",
-                  "full_attention",
-                  "full_attention",
-                  "full_attention",
-                  "full_attention",
-                  "full_attention",
-                  "full_attention",
-                  "full_attention",
-                  "full_attention",
-                  "full_attention"
-               ],
-               "mlp_layer_types": null
-            },
-            "supports_quant": false,
-            "hf_to_vllm_mapper_unstacked": {},
-            "offered": [
-               "model.layers.*.mlp.down_proj",
-               "model.layers.*.mlp.gate_up_proj",
-               "model.layers.*.self_attn.o_proj",
-               "model.layers.*.self_attn.qkv_proj"
-            ],
-            "never_offered": [],
-            "offered_non_linear": [
-               {
-                  "prefix_pattern": "lm_head",
-                  "class": "ParallelLMHead"
-               },
-               {
-                  "prefix_pattern": "model.embed_tokens",
-                  "class": "VocabParallelEmbedding"
-               },
-               {
-                  "prefix_pattern": "model.layers.*.self_attn.attn",
-                  "class": "Attention"
-               }
-            ],
-            "receipt": "docs/measurements/construction/qwen3-0.6b.json"
-         }
-      ]
+ "construction": {
+  "schema": "tessera.construction.v1",
+  "note": "Which Linears the pinned runtime OFFERS to a quant config, per architecture. LinearBase.__init__ takes UnquantizedLinearMethod() in the quant_config is None branch WITHOUT calling get_quant_method, so a model that builds a projection with quant_config=None takes vLLM's own BF16 method and this plugin is never asked -- it cannot refuse, warn, or see the prefix. A wire written there deletes the <module>.weight the runtime wants and puts bytes in its place that nothing decodes. offered/never_offered are vLLM MODULE patterns with repeat indices collapsed to '*'; a producer translates its checkpoint names with hf_to_vllm_mapper_unstacked first (the same table configure_quant_config hands this plugin) and normalises the same way. A name in neither list is a module the runtime does not build -- unless it is listed under the row's optional 'disagreements', which names a pattern whose observed members answered differently and the exact prefixes that differed: such a pattern is struck from 'offered' because it clears none of its members, least of all the ones the census did not observe. Every row is DERIVED from a receipt under docs/measurements/construction/ by contract.construction_entry_from_receipt and re-derived in tests/test_serving_construction.py, so the table cannot drift from the observation; the observation itself is tools/tessera_construction_census.py, which builds the model the way the loader does and records every prefix a probe quant config is offered. An architecture with no row is UNCENSUSED, which is an honest gap and not a claim that everything is routed.",
+  "architectures": [
+   {
+    "architecture": "Glm5NextForConditionalGeneration",
+    "runtime": {
+     "image": "prismaquant/glm53-mia-sm121:487ecf187",
+     "image_id": "sha256:75ea13eda532280afb4a829ab13eb572a4be49cbb47ca0a02a484a98e476ef69",
+     "vllm": "0.1.dev20051+g487ecf187"
+    },
+    "model": {
+     "model_type": "glm5_next",
+     "num_hidden_layers": 4,
+     "layer_types": [
+      "linear_attention",
+      "deepseek_sparse_attention",
+      "linear_attention",
+      "deepseek_sparse_attention"
+     ],
+     "mlp_layer_types": [
+      "dense",
+      "sparse",
+      "sparse",
+      "sparse"
+     ]
+    },
+    "supports_quant": false,
+    "hf_to_vllm_mapper_unstacked": {
+     "orig_to_new_prefix": {
+      "lm_head.": "language_model.lm_head.",
+      "model.language_model.": "language_model.model.",
+      "model.visual.": "visual."
+     }
+    },
+    "offered": [
+     "language_model.model.layers.*.mlp.down_proj",
+     "language_model.model.layers.*.mlp.gate_up_proj",
+     "language_model.model.layers.*.mlp.shared_experts.down_proj",
+     "language_model.model.layers.*.mlp.shared_experts.gate_up_proj"
+    ],
+    "never_offered": [
+     {
+      "prefix_pattern": "language_model.model.layers.*.mlp.gate",
+      "class": "GateLinear",
+      "quant_method": "UnquantizedLinearMethod"
+     },
+     {
+      "prefix_pattern": "language_model.model.layers.*.self_attn.f_b_proj",
+      "class": "ColumnParallelLinear",
+      "quant_method": "UnquantizedLinearMethod"
+     },
+     {
+      "prefix_pattern": "language_model.model.layers.*.self_attn.fused_qkv_a_proj",
+      "class": "DeepSeekV2FusedQkvAProjLinear",
+      "quant_method": "UnquantizedLinearMethod"
+     },
+     {
+      "prefix_pattern": "language_model.model.layers.*.self_attn.g_b_proj",
+      "class": "ColumnParallelLinear",
+      "quant_method": "UnquantizedLinearMethod"
+     },
+     {
+      "prefix_pattern": "language_model.model.layers.*.self_attn.in_proj_qkvbfg_a",
+      "class": "_Glm5NextMergedColumnParallelLinear",
+      "quant_method": "UnquantizedLinearMethod"
+     },
+     {
+      "prefix_pattern": "language_model.model.layers.*.self_attn.indexer.wk_weights_proj",
+      "class": "MergedColumnParallelLinear",
+      "quant_method": "UnquantizedLinearMethod"
+     },
+     {
+      "prefix_pattern": "language_model.model.layers.*.self_attn.indexer.wq_b",
+      "class": "ReplicatedLinear",
+      "quant_method": "UnquantizedLinearMethod"
+     },
+     {
+      "prefix_pattern": "language_model.model.layers.*.self_attn.k_conv1d",
+      "class": "ColumnParallelLinear",
+      "quant_method": "UnquantizedLinearMethod"
+     },
+     {
+      "prefix_pattern": "language_model.model.layers.*.self_attn.kv_b_proj",
+      "class": "ColumnParallelLinear",
+      "quant_method": "UnquantizedLinearMethod"
+     },
+     {
+      "prefix_pattern": "language_model.model.layers.*.self_attn.o_proj",
+      "class": "RowParallelLinear",
+      "quant_method": "UnquantizedLinearMethod"
+     },
+     {
+      "prefix_pattern": "language_model.model.layers.*.self_attn.q_b_proj",
+      "class": "ColumnParallelLinear",
+      "quant_method": "UnquantizedLinearMethod"
+     },
+     {
+      "prefix_pattern": "language_model.model.layers.*.self_attn.q_conv1d",
+      "class": "ColumnParallelLinear",
+      "quant_method": "UnquantizedLinearMethod"
+     },
+     {
+      "prefix_pattern": "language_model.model.layers.*.self_attn.v_conv1d",
+      "class": "ColumnParallelLinear",
+      "quant_method": "UnquantizedLinearMethod"
+     },
+     {
+      "prefix_pattern": "visual.blocks.*.attn.proj",
+      "class": "RowParallelLinear",
+      "quant_method": "UnquantizedLinearMethod"
+     },
+     {
+      "prefix_pattern": "visual.blocks.*.attn.qkv",
+      "class": "QKVParallelLinear",
+      "quant_method": "UnquantizedLinearMethod"
+     },
+     {
+      "prefix_pattern": "visual.blocks.*.mlp.down_proj",
+      "class": "RowParallelLinear",
+      "quant_method": "UnquantizedLinearMethod"
+     },
+     {
+      "prefix_pattern": "visual.blocks.*.mlp.gate_up_proj",
+      "class": "MergedColumnParallelLinear",
+      "quant_method": "UnquantizedLinearMethod"
+     },
+     {
+      "prefix_pattern": "visual.merger.down_proj",
+      "class": "RowParallelLinear",
+      "quant_method": "UnquantizedLinearMethod"
+     },
+     {
+      "prefix_pattern": "visual.merger.gate_up_proj",
+      "class": "MergedColumnParallelLinear",
+      "quant_method": "UnquantizedLinearMethod"
+     },
+     {
+      "prefix_pattern": "visual.merger.proj",
+      "class": "ColumnParallelLinear",
+      "quant_method": "UnquantizedLinearMethod"
+     }
+    ],
+    "offered_non_linear": [
+     {
+      "prefix_pattern": "language_model.lm_head",
+      "class": "ParallelLMHead"
+     },
+     {
+      "prefix_pattern": "language_model.model.layers.*.mlp.experts",
+      "class": "RoutedExperts"
+     }
+    ],
+    "receipt": "docs/measurements/construction/glm53-flash-4layer.json"
    },
+   {
+    "architecture": "Lfm2MoeForCausalLM",
+    "runtime": {
+     "image": "eugr/spark-vllm@sha256:0afec8d4f79f44685a1ddf758659d33aef3b0f3ec9068e5a7cd1108d30e5581c",
+     "image_id": "sha256:0afec8d4f79f44685a1ddf758659d33aef3b0f3ec9068e5a7cd1108d30e5581c",
+     "vllm": "0.28.1rc1.dev397+gfd4a15126.d20260904"
+    },
+    "model": {
+     "model_type": "lfm2_moe",
+     "num_hidden_layers": 24,
+     "layer_types": [
+      "linear_attention",
+      "linear_attention",
+      "full_attention",
+      "linear_attention",
+      "linear_attention",
+      "linear_attention",
+      "full_attention",
+      "linear_attention",
+      "linear_attention",
+      "linear_attention",
+      "full_attention",
+      "linear_attention",
+      "linear_attention",
+      "linear_attention",
+      "full_attention",
+      "linear_attention",
+      "linear_attention",
+      "linear_attention",
+      "full_attention",
+      "linear_attention",
+      "linear_attention",
+      "full_attention",
+      "linear_attention",
+      "linear_attention"
+     ],
+     "mlp_layer_types": null
+    },
+    "supports_quant": true,
+    "hf_to_vllm_mapper_unstacked": {
+     "orig_to_new_substr": {
+      ".conv.": ".short_conv."
+     }
+    },
+    "offered": [
+     "model.layers.*.feed_forward.gate",
+     "model.layers.*.feed_forward.w13",
+     "model.layers.*.feed_forward.w2",
+     "model.layers.*.self_attn.out_proj",
+     "model.layers.*.self_attn.qkv_proj",
+     "model.layers.*.short_conv.in_proj",
+     "model.layers.*.short_conv.out_proj"
+    ],
+    "never_offered": [
+     {
+      "prefix_pattern": "model.layers.*.short_conv.conv1d",
+      "class": "ColumnParallelLinear",
+      "quant_method": "UnquantizedLinearMethod"
+     }
+    ],
+    "offered_non_linear": [
+     {
+      "prefix_pattern": "lm_head",
+      "class": "ParallelLMHead"
+     },
+     {
+      "prefix_pattern": "model.layers.*.feed_forward.experts",
+      "class": "RoutedExperts"
+     }
+    ],
+    "output_sizes": {
+     "model.layers.*.feed_forward.gate": [
+      32
+     ],
+     "model.layers.*.feed_forward.w13": [
+      7168,
+      7168
+     ],
+     "model.layers.*.feed_forward.w2": [
+      2048
+     ],
+     "model.layers.*.self_attn.out_proj": [
+      2048
+     ],
+     "model.layers.*.self_attn.qkv_proj": [
+      2048,
+      512,
+      512
+     ],
+     "model.layers.*.short_conv.conv1d": [
+      2048
+     ],
+     "model.layers.*.short_conv.in_proj": [
+      2048,
+      2048,
+      2048
+     ],
+     "model.layers.*.short_conv.out_proj": [
+      2048
+     ]
+    },
+    "receipt": "docs/measurements/construction/lfm25-8b-a1b-eugr-0281rc1.json"
+   },
+   {
+    "architecture": "Qwen3ForCausalLM",
+    "runtime": {
+     "image": "vllm/vllm-openai:latest",
+     "image_id": "sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+     "vllm": "0.28.0"
+    },
+    "model": {
+     "model_type": "qwen3",
+     "num_hidden_layers": 28,
+     "layer_types": [
+      "full_attention",
+      "full_attention",
+      "full_attention",
+      "full_attention",
+      "full_attention",
+      "full_attention",
+      "full_attention",
+      "full_attention",
+      "full_attention",
+      "full_attention",
+      "full_attention",
+      "full_attention",
+      "full_attention",
+      "full_attention",
+      "full_attention",
+      "full_attention",
+      "full_attention",
+      "full_attention",
+      "full_attention",
+      "full_attention",
+      "full_attention",
+      "full_attention",
+      "full_attention",
+      "full_attention",
+      "full_attention",
+      "full_attention",
+      "full_attention",
+      "full_attention"
+     ],
+     "mlp_layer_types": null
+    },
+    "supports_quant": false,
+    "hf_to_vllm_mapper_unstacked": {},
+    "offered": [
+     "model.layers.*.mlp.down_proj",
+     "model.layers.*.mlp.gate_up_proj",
+     "model.layers.*.self_attn.o_proj",
+     "model.layers.*.self_attn.qkv_proj"
+    ],
+    "never_offered": [],
+    "offered_non_linear": [
+     {
+      "prefix_pattern": "lm_head",
+      "class": "ParallelLMHead"
+     },
+     {
+      "prefix_pattern": "model.embed_tokens",
+      "class": "VocabParallelEmbedding"
+     },
+     {
+      "prefix_pattern": "model.layers.*.self_attn.attn",
+      "class": "Attention"
+     }
+    ],
+    "receipt": "docs/measurements/construction/qwen3-0.6b.json"
+   }
+  ]
+ },
  "changelog": [
   {
    "contract_version": 22,

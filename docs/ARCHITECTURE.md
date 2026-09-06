@@ -1443,8 +1443,15 @@ This is what LFM2's `short_conv.in_proj` needs — one checkpoint tensor built a
 against three partitions. The manifest stamps `geometry_attested` per module
 and `serving_gate.geometry` (attested / unattested / row-sliced modules). A
 receipt that predates the field attests nothing: roles stay per source tensor
-and the manifest says so. `plan_shard`'s refusal is unchanged; it is the gate
-that caught this.
+and the manifest says so. The LFM receipt
+(`docs/measurements/construction/lfm25-8b-a1b-eugr-0281rc1.json`) was re-taken
+on the pinned EUGR image on 2026-09-06 and attests `short_conv.in_proj` as
+`[2048, 2048, 2048]`, `self_attn.qkv_proj` as `[2048, 512, 512]` and the dense
+`feed_forward.w13` as `[7168, 7168]`; the GLM and Qwen receipts predate the
+field. The census stamps the image the launcher declared (`--runtime-image`,
+checked by `runtime_image.declared_reference` exactly as the route census
+does); an operator-typed image string is refused. `plan_shard`'s refusal is
+unchanged; it is the gate that caught this.
 
 The census answers "which patterns" in the *runtime's* namespace and a
 producer names modules in the *checkpoint's*, so the two are joined by

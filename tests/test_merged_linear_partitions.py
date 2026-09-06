@@ -101,13 +101,23 @@ def test_several_tensors_cannot_be_recut_to_a_different_count():
 
 # --- the census and the contract ----------------------------------------------
 
-def test_the_committed_receipts_predate_the_field_and_attest_nothing():
-    """Until a receipt is re-taken, ``output_partitions`` is None, not [rows]."""
+def test_the_lfm_receipt_was_retaken_and_the_others_predate_the_field():
+    """A receipt taken before the field attests nothing: None, not [rows].
+
+    The LFM receipt was re-taken on the pinned EUGR image on 2026-09-06 and
+    carries the partitions; the GLM and Qwen receipts predate the field and
+    keep answering None until they are re-taken.
+    """
     for path in sorted(RECEIPTS.glob("*.json")):
         entry = construction_entry_from_receipt(json.loads(path.read_text()))
-        assert "output_sizes" not in entry, path.name
+        assert ("output_sizes" in entry) == (path.name == LFM_RECEIPT.name), path.name
     entry = construction_entry_from_receipt(_receipt(LFM_RECEIPT.name))
-    assert output_partitions(entry, "model.layers.0.conv.in_proj") is None
+    assert output_partitions(entry, "model.layers.0.conv.in_proj") == [2048, 2048, 2048]
+    assert output_partitions(entry, "model.layers.0.self_attn.qkv_proj") == [2048, 512, 512]
+    assert output_partitions(entry, "model.layers.0.feed_forward.w13") == [7168, 7168]
+    assert entry["runtime"]["image"].startswith("eugr/spark-vllm@sha256:0afec8d4")
+    stale = construction_entry_from_receipt(_receipt("qwen3-0.6b.json"))
+    assert output_partitions(stale, "model.layers.0.self_attn.qkv_proj") is None
 
 
 def test_a_receipt_that_records_output_sizes_attests_the_partitions_by_checkpoint_name():
