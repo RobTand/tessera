@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-06T04:30:54Z",
+ "generated": "2026-09-06T05:28:35Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -376,7 +376,7 @@
     "title": "Measure #87 BF16 boundary instrument A/B with frozen-source receipts"
    },
    "183": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Tessera campaign omits live packed experts; packed MoE capture/export projection remains unsupported"
    },
    "184": {
@@ -676,8 +676,40 @@
     "title": "Byte-budget selection: min-dloss vs max-disk ratchets now disagree, and the selection records neither"
    },
    "250": {
+    "state": "CLOSED",
+    "title": "Complete bounded LFM priced-to-served validation"
+   },
+   "251": {
     "state": "OPEN",
-    "title": "Record bounded LFM campaign and preserve priced bytes through export"
+    "title": "[P2] E4M3 CPU rendering integration tests exceed the 300-second CI limit"
+   },
+   "252": {
+    "state": "CLOSED",
+    "title": "Require every pull request to main to link a repository issue"
+   },
+   "253": {
+    "state": "OPEN",
+    "title": "Quantize and serve a full mixed trellis-4/8/16 LFM2.5 sanity artifact"
+   },
+   "254": {
+    "state": "CLOSED",
+    "title": "Require PRs to link repository issues"
+   },
+   "255": {
+    "state": "CLOSED",
+    "title": "Count observed Tessera calibration rows when Hessians are disabled"
+   },
+   "256": {
+    "state": "CLOSED",
+    "title": "Count observed calibration rows without Hessians"
+   },
+   "257": {
+    "state": "OPEN",
+    "title": "AURA additivity diagnostic labels unverified equal-length probes exact"
+   },
+   "258": {
+    "state": "OPEN",
+    "title": "Prepare and qualify sealed mixed LFM sanity inputs"
    },
    "26": {
     "state": "CLOSED",
@@ -2166,7 +2198,7 @@
     "title": "E4M3 channel_sigma sits on a one-sided reach cliff, and the dyadic ladder cannot see the axis that matters"
    },
    "360": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Historical FP8 legacy-byte reproduction fails on x86 CPU release validation"
    },
    "361": {
@@ -2178,11 +2210,11 @@
     "title": "Record Tessera 0.1.0 release validation"
    },
    "363": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Layer-config translator rejects Tessera strings and emits unsupported routed expert leaf plans"
    },
    "364": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Profile and reduce 76-second CPU encoder-identity startup in real campaign"
    },
    "365": {
@@ -2190,16 +2222,40 @@
     "title": "Verify PrismaBuild v2 snapshot source identity"
    },
    "366": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Root container export leaves safetensors shard unreadable to host verification"
    },
    "367": {
     "state": "CLOSED",
     "title": "Keep documentation readers and symlink consumers in test selection"
    },
+   "368": {
+    "state": "CLOSED",
+    "title": "Preserve expert assignments and publish readable export shards"
+   },
+   "369": {
+    "state": "CLOSED",
+    "title": "Remove encoder identity startup bottleneck with exact scalar search"
+   },
    "37": {
     "state": "CLOSED",
     "title": "The default group knapsack allocates per-member rungs the Tessera exporter refuses"
+   },
+   "370": {
+    "state": "CLOSED",
+    "title": "Preserve small CHANNEL refit improvements and bind the boundary to identity"
+   },
+   "371": {
+    "state": "CLOSED",
+    "title": "Restore dense planner compatibility and check shared rules by identity"
+   },
+   "372": {
+    "state": "OPEN",
+    "title": "Extend the campaign census gate to mixed dense and routed populations"
+   },
+   "373": {
+    "state": "OPEN",
+    "title": "Validate mixed dense and routed campaign census populations"
    },
    "38": {
     "state": "CLOSED",
