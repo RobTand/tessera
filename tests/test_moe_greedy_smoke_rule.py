@@ -297,7 +297,7 @@ def test_the_wrapper_refuses_a_missing_aggregation_before_it_serves_anything(tmp
     serve lock, or either arm.
 
     `$TS` here is a checkout carrying the instrument and its shell helpers and
-    NO `src/`, run by a real interpreter with nothing ambient to fall back on.
+    NO `src/`, with an importable ambient contract offering the expected names.
     The wrapper must refuse by name, and the `docker` recorder on PATH must
     stay empty.
     """
@@ -317,19 +317,25 @@ def test_the_wrapper_refuses_a_missing_aggregation_before_it_serves_anything(tmp
     docker.write_text(f'#!/bin/sh\necho "$@" >> {called}\nexit 0\n')
     docker.chmod(0o755)
     # A real interpreter, with the script's own directory off sys.path so
-    # `experiments/` cannot stand in for the package: the checkout's `src` is
-    # the only thing that could supply the aggregation, and it is not there.
+    # `experiments/` cannot stand in for the package. Only the ambient package
+    # below can supply the aggregation, and its origin must be refused.
     python = bin_dir / "python-bare"
     python.write_text(f'#!/bin/sh\nexec {sys.executable} -P "$@"\n')
     python.chmod(0o755)
 
     out = tmp_path / "out"
+    ambient = _ambient_package(tmp_path, body=(
+        "EVIDENCE_CONTROL_REFERENCES = ('bf16_source',)\n"
+        "LANE_ELIGIBILITY_SCHEMA = 'ambient-contract'\n"
+        "def derive_smoke_status(record): return 'recorded'\n"
+        "def derive_smoke_attribution(record): return 'unattributed'\n"
+    ))
     env = {**os.environ,
            "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
+           "PYTHONPATH": str(ambient),
            "TS": str(checkout), "PY": str(python),
            "IMAGE": "example/image@sha256:" + "0" * 64,
            "EXT": str(tmp_path / "ext"), "VLLM_CACHE": str(tmp_path / "cache")}
-    env.pop("PYTHONPATH", None)
     done = subprocess.run(
         ["bash", str(WRAPPER), str(tmp_path / "source"), str(tmp_path / "artifact"),
          str(tmp_path / "seal.json"), str(out)],

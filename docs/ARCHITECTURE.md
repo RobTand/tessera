@@ -6,6 +6,7 @@ Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
 **Provenance:** current as of `v0.1.0` (2026-09-05):
+smoke aggregation checkout-origin guard verified against base `9da0e62`;
 selector traversal budget #353, directory-glob boundary #354, and refused
 data-read suffix coverage #355 verified against base `8dc165b`;
 base `8dc165b` (wire minor 7), encoder-evidence scope correction #198,
@@ -1851,6 +1852,13 @@ vocabulary attributes a *symptom*, and a recorded smoke has none for it to
 attribute (the arms' recorded completions are not identical -- greedy coherence
 is claimed, closeness is not, and that is the batch cell's KL entry). No grade,
 rung, route or byte moved; the decode cell still grades `route_only`.
+
+The smoke instrument's shared `aggregation()` import also checks that the
+resolved contract module is its own checkout's
+`src/tessera/serving/contract.py`. An incomplete checkout cannot borrow an
+importable host installation's aggregation. Both the preflight and the join
+enforce this origin check; the wrapper runs the preflight before either
+serve, so a provenance mismatch refuses before spending GPU work.
 
 Lane eligibility schema **v9** (contract v22, #327) makes the status word
 **derived**, because v21 left the word itself unowned. The per-completion rule
