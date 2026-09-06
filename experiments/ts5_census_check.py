@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Fail closed on an incomplete MoE campaign census; replay current cells.
+"""Fail closed on an incomplete dense/routed campaign census; replay current cells.
 
 This is a receipt/sidecar gate, not a wire audit or a quality measurement. Run
 under PrismaBuild against the same merged checkpoint mounted by the census.
@@ -23,10 +23,12 @@ from tessera.serving.contract import (
     CENSUS_PHASE_REGIMES, PAYLOAD_FAMILY_BY_ROUTE, construction_entry,
     load_serving_contract, require_runtime_image, vllm_module_name)
 from tessera.serving.scheme import (
-    ROUTES, STRUCTURE_ROUTED_MOE, expert_role_declarations, launch_pairs,
+    ROUTES, STRUCTURE_DENSE, STRUCTURE_ROUTED_MOE, expert_role_declarations, launch_pairs,
     moe_census_symbol_base as census_symbol_base,
-    validate_tessera_moe_scheme)
-from tessera.serving_parts import sha256_file
+    validate_tessera_scheme)
+from tessera.serving.census import STRUCTURE_BY_RECORD_KIND
+from tessera.serving.dense_ownership import fused_module
+from tessera.serving_parts import sha256_file, validate_explicit_plan
 from tools.tessera_route_census import (
     CHECKPOINT_SIDECAR_NAMES, all_structure_agreement, checkpoint_sidecar_hashes,
     declared_rung, join_records_to_declared, parse_eager_shape, phase_shape_problems)
@@ -66,13 +68,12 @@ def _population(plan, config, manifest):
     for target, spec in plan.items():
         if spec in ("PASSTHROUGH", "BF16"):
             continue
-        _require(target.endswith(".experts"),
-                 f"plan {target}: this campaign gate accepts routed expert targets only")
+        _require(isinstance(target, str), "plan targets must be names")
         _mapping(spec, f"plan {target}")
         _require(isinstance(spec.get("grid"), str) and type(spec.get("q256")) is int,
                  f"plan {target}: grid and integer q256 are required")
         planned[target] = spec
-    _require(bool(planned), "plan has no quantized expert targets")
+    _require(bool(planned), "plan has no quantized targets")
     identity = _mapping(manifest.get("export_identity"), "manifest.export_identity")
     _require(_mapping(identity.get("options"), "export_identity.options").get("plan") == plan,
              "manifest export identity does not bind the supplied common plan")
@@ -87,21 +88,28 @@ def _population(plan, config, manifest):
         _require(isinstance(targets, list) and targets, f"config_groups.{key} has no targets")
         _require(group.get("format") == "TESSERA", f"config_groups.{key} is not TESSERA")
         for target in targets:
-            _require(isinstance(target, str) and target in planned and target not in schemes,
-                     f"config_groups.{key}: unplanned or duplicate target {target!r}")
+            _require(isinstance(target, str) and target not in schemes,
+                     f"config_groups.{key}: invalid or duplicate target {target!r}")
             raw = _mapping(group.get("scheme"), f"scheme {target}")
-            _require(raw.get("structure") == STRUCTURE_ROUTED_MOE,
-                     f"scheme {target} is not routed_moe")
-            schemes[target] = validate_tessera_moe_scheme(raw, target)
-            _require(raw.get("grid") == planned[target]["grid"] and
-                     declared_rung(raw) == planned[target]["q256"],
-                     f"scheme {target}: grid/rung differs from plan")
-    _same_roster(list(schemes), list(planned), "config targets")
+            schemes[target] = validate_tessera_scheme(raw, target)
     modules = _mapping(manifest.get("modules"), "manifest.modules")
-    _same_roster(list(modules), list(planned), "manifest modules")
-    units = 0
+    _same_roster(list(modules), list(schemes), "manifest modules/config targets")
+    # The exporter/assembler owns source-leaf coverage and passthrough
+    # obligations. A dense plan names weight tensors, while config targets
+    # name their fused serving owners; the manifest's roles join the two.
+    validate_explicit_plan(plan, modules, groups)
+    units = routed_units = 0
+    dense_tensors, routed_targets = [], []
     for target, scheme in schemes.items():
         module = _mapping(modules[target], f"manifest {target}")
+        if scheme["structure"] == STRUCTURE_DENSE:
+            units += _dense_population(target, scheme, module, planned, dense_tensors)
+            continue
+        routed_targets.append(target)
+        _require(target in planned, f"scheme {target}: unplanned routed target")
+        _require(scheme["grid"] == planned[target]["grid"] and
+                 declared_rung(scheme) == planned[target]["q256"],
+                 f"scheme {target}: grid/rung differs from plan")
         expected = {"structure": STRUCTURE_ROUTED_MOE, "family": scheme["family"],
                     "grid": planned[target]["grid"], "q256": planned[target]["q256"],
                     "experts": scheme["experts"]}
@@ -128,13 +136,50 @@ def _population(plan, config, manifest):
                          f"manifest {target} projection {key}.{field} disagrees with scheme")
         _require(seen == set(expected_roles), f"manifest {target}: missing expert projections")
         units += len(expected_roles)
+        routed_units += len(expected_roles)
+    _same_roster(dense_tensors, [t for t in planned if t not in routed_targets],
+                 "dense planned tensor population")
     summary = _mapping(manifest.get("routed_moe"), "manifest.routed_moe")
-    _same_roster(summary.get("quantized_stacks"), list(planned), "routed_moe.quantized_stacks")
-    _require(summary.get("quantized_logical_units") == units, "routed_moe logical unit count differs")
+    _same_roster(summary.get("quantized_stacks"), routed_targets, "routed_moe.quantized_stacks")
+    _require(summary.get("quantized_logical_units") == routed_units, "routed_moe logical unit count differs")
     totals = _mapping(manifest.get("totals"), "manifest.totals")
-    _require(totals.get("modules") == len(planned) and totals.get("units") == units,
+    _require(totals.get("modules") == len(schemes) and totals.get("units") == units,
              "manifest totals differ from the complete planned projection population")
     return planned, schemes, units
+
+
+def _dense_population(target, scheme, module, planned, dense_tensors):
+    """Join exact source leaves to the reader's ordered fused-role geometry."""
+    _require(module.get("structure", STRUCTURE_DENSE) == STRUCTURE_DENSE,
+             f"manifest dense {target}: structure disagrees with scheme")
+    expected = {"family": scheme["family"], "grid": scheme["grid"],
+                "q256": scheme["q256"], "rows": scheme["rows"], "cols": scheme["columns"],
+                "container_bytes": scheme["wire_bytes"]}
+    for field, value in expected.items():
+        _require(module.get(field) == value,
+                 f"manifest dense {target}.{field} disagrees with scheme")
+    roles = module.get("roles")
+    _require(isinstance(roles, list) and len(roles) == len(scheme["roles"]),
+             f"manifest dense {target}: role population disagrees with scheme")
+    for role, (name, rows), rung in zip(roles, scheme["roles"], scheme["role_q256"]):
+        _mapping(role, f"manifest dense {target} role")
+        tensor = role.get("tensor")
+        _require(isinstance(tensor, str) and tensor in planned,
+                 f"manifest dense {target}: unplanned source tensor {tensor!r}")
+        _require(tensor.endswith(".weight"), f"manifest dense {target}: source tensor is not a weight")
+        owner, members = fused_module(tensor) or (tensor.removesuffix(".weight"), (tensor,))
+        _require(owner == target and [r.get("tensor") for r in roles] == list(members),
+                 f"manifest dense {target}: source tensor {tensor!r} belongs to owner {owner!r} "
+                 f"with ordered members {members}")
+        expected = {"role": name, "rows": rows, "cols": scheme["columns"],
+                    "grid": scheme["grid"], "q256": rung, "family": scheme["family"]}
+        for field, value in expected.items():
+            _require(role.get(field) == value,
+                     f"manifest dense {target} role {tensor}.{field} disagrees with scheme")
+        _require(tensor.removesuffix(".weight").rsplit(".", 1)[-1] == name,
+                 f"manifest dense {target}: source tensor {tensor!r} disagrees with role {name!r}")
+        dense_tensors.append(tensor)
+    return len(roles)
 
 
 def check_census(plan, config, manifest, census, *, runtime_image, checkpoint, checkpoint_sidecars,
@@ -161,7 +206,7 @@ def check_census(plan, config, manifest, census, *, runtime_image, checkpoint, c
              "raw census must be served with no problems")
     entry = construction_entry(config.get("architectures"), contract)
     _require(entry is not None, "no attested construction name mapper for checkpoint architecture")
-    mapping = {target: vllm_module_name(entry, target) for target in planned}
+    mapping = {target: vllm_module_name(entry, target) for target in schemes}
     _require(len(set(mapping.values())) == len(mapping), "construction maps targets to duplicate owners")
     stored_mapping = census.get("declared_name_mapping")
     if stored_mapping is None:
@@ -192,19 +237,26 @@ def check_census(plan, config, manifest, census, *, runtime_image, checkpoint, c
         for name, record in observed.items():
             scheme = runtime_schemes[owner[name]]
             family = scheme["family"]
+            structure = scheme["structure"]
             _, rows, columns = parse_eager_shape(record.get("shape"))
-            # create_weights stamps the w13 tile rows and model hidden size
-            # into route_shape; derive both from the validated owner scheme.
-            _require((rows, columns) == (scheme["groups"]["w13"]["rows"], scheme["hidden_size"]),
-                     f"{phase}: {name} shape N/K disagrees with declared expert tile")
-            _require(record.get("kind") == "moe" and record.get("state") == "served" and
+            # Routed create_weights records the w13 tile; dense records its
+            # fused Linear shape. Both come from the validated owner scheme.
+            geometry = ((scheme["groups"]["w13"]["rows"], scheme["hidden_size"])
+                        if structure == STRUCTURE_ROUTED_MOE
+                        else (scheme["rows"], scheme["columns"]))
+            _require((rows, columns) == geometry,
+                     f"{phase}: {name} shape N/K disagrees with declared {structure} tile")
+            _require(STRUCTURE_BY_RECORD_KIND.get(record.get("kind")) == structure and
+                     record.get("state") == "served" and
                      record.get("policy") == f"{family}:resident" and
                      record.get("contract") == ROUTES[family]["activation_contract"],
-                     f"{phase}: {name} kind/state/policy/activation disagrees with declared route")
-            pair = (census_symbol_base(record.get("symbol")), record.get("decoder"))
-            _require(pair in launch_pairs(family, structure=STRUCTURE_ROUTED_MOE,
+                     f"{phase}: {name} kind/state/policy/activation disagrees with declared {structure} route")
+            symbol = (census_symbol_base(record.get("symbol"))
+                      if structure == STRUCTURE_ROUTED_MOE else record.get("symbol"))
+            pair = (symbol, record.get("decoder"))
+            _require(pair in launch_pairs(family, structure=structure,
                                           regime=regime, mode="resident"),
-                     f"{phase}: {name} launch pair {pair} is not owned by its declared route")
+                     f"{phase}: {name} launch pair {pair} is not owned by its declared {structure} route")
         symbols[phase] = sorted({record["symbol"] for record in observed.values()})
     shape_problems = phase_shape_problems(owner_records, phase_regimes=CENSUS_PHASE_REGIMES,
                                          require_each_owner=True)
@@ -215,16 +267,18 @@ def check_census(plan, config, manifest, census, *, runtime_image, checkpoint, c
     platform = f"sm_{capability[0]}{capability[1]}"
     agreement, problems = all_structure_agreement(
         records, cells=contract["lane_eligibility"]["cells"], phase_regimes=CENSUS_PHASE_REGIMES,
-        platform=platform, declared_rungs={mapping[t]: planned[t]["q256"] for t in planned},
+        platform=platform, declared_rungs={mapping[t]: declared_rung(schemes[t]) for t in schemes},
         record_owners=owners, families_by_route=PAYLOAD_FAMILY_BY_ROUTE,
         runtime_image=runtime_image, execution_mode="eager")
     _require(not problems, f"current contract launch disagreement: {problems}")
     if require_attested:
-        block = agreement["structures"][STRUCTURE_ROUTED_MOE]
-        _require(block["agrees"] is True and all(
-            phase["covered_by_cell"] == len(expected_owners) and phase["unattested"] == 0
-            for phase in block["phases"].values()),
-            "current contract does not attest every planned owner in both driven phases")
+        for structure, count in Counter(s["structure"] for s in schemes.values()).items():
+            block = agreement["structures"][structure]
+            _require(block["agrees"] is True and all(
+                phase["covered_by_cell"] == count and phase["unattested"] == 0
+                for phase in block["phases"].values()),
+                f"current contract does not attest every planned {structure} owner in both driven phases: "
+                f"{block['phases']}")
     return {"schema": "tessera.ts5-census-check/1", "verdict": "passed",
             "require_attested": require_attested, "runtime": runtime, "residency": "resident",
             "checkpoint": str(checkpoint), "census_checkpoint": census.get("checkpoint"),
