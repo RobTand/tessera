@@ -17,7 +17,8 @@ def _git(root, *args):
                                     "-c", "user.email=test@example.invalid", *args]).decode().strip()
 
 
-def _snapshot(tmp_path, name, content="same source\n", *, extra=None, bad=None):
+def _snapshot(tmp_path, name, content="same source\n", *, extra=None, bad=None,
+              version=1, schema_version=None):
     root = tmp_path / name / "pending" / "checkout"
     root.mkdir(parents=True)
     requests = tmp_path / name / "requests"
@@ -44,7 +45,7 @@ def _snapshot(tmp_path, name, content="same source\n", *, extra=None, bad=None):
     raw = json.dumps(stamp, indent=1, sort_keys=True).encode()
     (root / filename).write_bytes(raw)
     _git(root, "add", "-A")
-    _git(root, "commit", "-qm", "PrismaBuild pbrun checkout snapshot v1")
+    _git(root, "commit", "-qm", f"PrismaBuild pbrun checkout snapshot v{version}")
     head = _git(root, "rev-parse", "HEAD")
     entry = {"path": filename, "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
     if bad == "closure-size":
@@ -62,7 +63,7 @@ def _snapshot(tmp_path, name, content="same source\n", *, extra=None, bad=None):
                  "result_path": f"pbrun_result.{fingerprint}.txt"},
         "params": {"command": command, "cwd": ".", "demand": demand,
                    "placement": placement, "checkout_snapshot": {
-                       "schema": "prismaquant.prismabuild.pbrun_checkout_snapshot.v1",
+                       "schema": f"prismaquant.prismabuild.pbrun_checkout_snapshot.v{schema_version or version}",
                        "commit": "0" * 40 if bad == "snapshot" else head,
                        "subdirectory": ".", "input": snapshot_input}},
         "inputs": [snapshot_input], "environment": {
@@ -86,13 +87,17 @@ def _measure(fixture, **kwargs):
     return module.measured_source(root, request_root=requests, owner="e" * 64, **kwargs)
 
 
-def test_arm_specific_snapshots_retain_ids_but_have_one_effective_source(tmp_path):
-    left = _measure(_snapshot(tmp_path, "gpu"))
-    right = _measure(_snapshot(tmp_path, "x86"))
+@pytest.mark.parametrize("versions", [(1, 1), (2, 2), (1, 2)])
+def test_arm_specific_snapshots_retain_ids_but_have_one_effective_source(tmp_path, versions):
+    left = _measure(_snapshot(tmp_path, "gpu", version=versions[0]))
+    right = _measure(_snapshot(tmp_path, "x86", version=versions[1]))
     assert left["snapshot_commit"] != right["snapshot_commit"]
     assert left["verification"] == right["verification"] == "verified"
     assert left["sha256"] == right["sha256"]
     assert len(left["excluded_metadata"]) == len(right["excluded_metadata"]) == 1
+    changed = _measure(_snapshot(tmp_path, "changed", "different source\n",
+                                 version=versions[1]))
+    assert changed["sha256"] != right["sha256"]
 
 
 def test_same_original_head_does_not_hide_changed_source_bytes(tmp_path):
@@ -112,11 +117,22 @@ def test_extra_exact_grammar_metadata_is_source_not_scaffolding(tmp_path):
 
 
 @pytest.mark.parametrize("bad", ["filename", "extra-key", "cwd", "closure-size", "closure-hash", "snapshot"])
-def test_unverifiable_closure_metadata_never_establishes_source_equivalence(tmp_path, bad):
-    record = _measure(_snapshot(tmp_path, "gpu", bad=bad))
+@pytest.mark.parametrize("version", [1, 2])
+def test_unverifiable_closure_metadata_never_establishes_source_equivalence(tmp_path, bad, version):
+    record = _measure(_snapshot(tmp_path, "gpu", bad=bad, version=version))
     assert record["verification"] == "unknown"
     assert record["sha256"] is None and record["excluded_metadata"] == []
     assert record["reason"]
+
+
+@pytest.mark.parametrize("version,schema_version", [(3, 3), (2, 1)])
+def test_unknown_or_mismatched_snapshot_versions_cannot_establish_identity(
+        tmp_path, version, schema_version):
+    record = _measure(_snapshot(tmp_path, "gpu", version=version,
+                                schema_version=schema_version))
+    assert record["verification"] == "unknown"
+    assert record["sha256"] is None and record["excluded_metadata"] == []
+    assert "snapshot" in record["reason"]
 
 
 @pytest.mark.parametrize("change", ["bytes", "mode", "delete", "untracked", "closure"])
