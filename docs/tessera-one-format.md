@@ -7,6 +7,13 @@ measured and linked; the frontier table is filled by
 `experiments/tessera_frontier.py` on the production encoder and says so
 where a cell is still the experiment's protocol rather than the wire's.
 
+**Historical scope:** the frontier measurements below describe the named
+2026-09-01/02 encoders. The implementation-status and planned-work entries
+are a snapshot from that development period; later encoder, BF16, and serving
+work supersedes them. For current recipes, supported routes, and evidence,
+read [ARCHITECTURE.md](ARCHITECTURE.md) and the
+[runtime contract](../src/tessera/serving/runtime_contract.json).
+
 ## 1. The grammar
 
 A Tessera unit is one point in a five-axis space, and the 4-bit and 8-bit
@@ -60,7 +67,8 @@ the experts' and not a general one.
 * **Recipe.** `export.wire_recipe(grid, q256)` is the single statement of
   which point of the grammar the exporter writes for a grid; the exporter,
   the config, the merge guard and (via the seam) PrismaQuant read it. Today
-  every grid resolves to `TCQ_RECIPE` (span 2 over LUT16).
+  the per-grid choices are defined there; the window and TCQ defaults at this
+  snapshot's close are recorded in §5 below.
 * **Accounting.** `calculator.terminal_rate` prices every combination
   (window table inline, CHANNEL rows inline) and agrees with the built
   artifact to the bit (`tests/test_channel_plane.py`,
