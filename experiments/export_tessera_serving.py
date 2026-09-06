@@ -130,10 +130,12 @@ import copy
 import hashlib
 import json
 import math
+import os
 import re
 import shutil
 import subprocess
 import sys
+import tempfile
 import time
 from fractions import Fraction
 from pathlib import Path
@@ -173,7 +175,23 @@ from tessera.stock import (  # noqa: E402
 from tessera.unit_artifact import parse_unit_artifact  # noqa: E402
 from tessera.serving_parts import (  # noqa: E402
     BODY_LAYER, SCHEMA as PART_SCHEMA, export_identity, parse_partition,
-    partition_owner, sha256_file, summarize_modules, validate_explicit_plan)
+    make_artifact_readable, partition_owner, sha256_file, summarize_modules, validate_explicit_plan)
+
+
+def save_serving_shard(payload: dict, destination: Path) -> None:
+    """Publish complete, host-readable main/twin bytes in one rename (#366)."""
+    descriptor, temporary = tempfile.mkstemp(prefix=f".{destination.name}.",
+                                             suffix=".partial", dir=destination.parent)
+    os.close(descriptor)
+    staging = Path(temporary)
+    try:
+        save_file({key: value.contiguous() for key, value in payload.items()},
+                  str(staging), metadata={"format": "pt"})
+        make_artifact_readable(staging)
+        staging.replace(destination)
+    finally:
+        staging.unlink(missing_ok=True)
+
 
 FUSED = (
     (re.compile(r"^(.*\.self_attn\.)(q_proj|k_proj|v_proj)\.weight$"), "qkv_proj", ("q_proj", "k_proj", "v_proj")),
@@ -2056,12 +2074,12 @@ def main():
             for r in role_records:
                 units[r["tensor"]] = r
             del pending_modules[module]
-        save_file({k: v.contiguous() for k, v in shard_payload.items()}, str(args.out / shard), metadata={"format": "pt"})
+        save_serving_shard(shard_payload, args.out / shard)
         for key in shard_payload:
             new_weight_map[key] = shard
         print(f"wrote {shard}: {len(shard_payload)} tensors", flush=True)
         if twin is not None:
-            save_file({k: v.contiguous() for k, v in twin_payload.items()}, str(twin / shard), metadata={"format": "pt"})
+            save_serving_shard(twin_payload, twin / shard)
             for key in twin_payload:
                 twin_weight_map[key] = shard
             print(f"wrote twin {shard}: {len(twin_payload)} tensors", flush=True)

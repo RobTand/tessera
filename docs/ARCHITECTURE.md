@@ -6,6 +6,8 @@ Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
 **Provenance:** `v0.1.0` plus repository tooling updates (2026-09-05):
+Direct main/twin shard readability #366 and layer-config routed-stack handoff
+#363 against base `828ba1f`;
 PrismaBuild snapshot v2 source verification #361 against base `76ea29c`;
 smoke aggregation checkout-origin guard verified against base `9da0e62`;
 selector traversal budget #353, directory-glob boundary #354, and refused
@@ -433,6 +435,34 @@ own input tensor and keeps its own donor value. The per-unit
 `input_global_scale` in `tessera_stock_manifest.json` records what was
 actually written, so the join is read off the receipt rather than inferred
 from the donor.
+
+The assignment translator accepts Tessera shorthand and dictionary entries through
+one full-match rung reader (#363). It uses the exporter's body, router and expert
+classification, including nested language-model prefixes. Its provenance continues
+to account for each logical expert unit at its exact allocated rung, while the
+export plan names the runtime's whole expert stack. A stack must be entirely BF16
+or entirely one exact Tessera grid/rung; partial selections and differing rungs
+are refused before output. BF16 routers are recorded as immutable passthroughs
+and omitted from exporter overrides; a quantized router assignment is refused.
+
+When the allocation carries `tessera_expert_projection`, the translator verifies
+its checkpoint identity, request, producer answer and logical-unit binding against
+the producer's current `project_expert_plan` before using it. Packed source slicing
+and logical geometry therefore remain producer-owned. Unpacked stacks can use the
+exporter's direct membership classification; an unallocated packed stack is an
+explicit BF16 stack. Selected stacks re-enter the ordinary exporter planner before
+the plan is written. Uniform-control output uses the same stack handoff, and
+routed stacks refuse `broadcast-by-role` because it cannot preserve an explicit
+per-stack allocation.
+
+The direct exporter and stock-twin writer apply the same read-permission policy
+as serving-part assembly (#366): each newly written safetensors shard gains
+owner/group/other read bits, with no new write or execute bits. A temporary file
+beside the destination receives the complete payload and final permissions before
+an atomic rename publishes it. A failed write or permission finalization leaves
+any previous shard intact and removes the temporary file. This policy touches
+only the new output shard; source checkpoints and historical artifacts retain
+their original bytes and modes.
 
 ### 2.1 Whole-layer export parts have one checked assembly
 
