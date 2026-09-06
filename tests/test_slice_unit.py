@@ -90,14 +90,17 @@ GRIDS = {g.name: g for g in SERIALISABLE_GRIDS.values()}
 #: recipe, in the minor-7 envelope (tessera#144): the COMPLETION descriptor
 #: moved behind SCALE_REFINE, the header minor byte is 7, and the
 #: behaviour-derived encoder identity moved with them.  Their payload and
-#: envelope are pinned together because those are the bytes served.
+#: envelope are pinned together because those are the bytes served. Issue #360
+#: updates the CHANNEL refit and derived identity; the two LUT payloads stay
+#: identical under their old stamp. The CHANNEL unit changes two scale words
+#: and seven body choices. Receipts: channel-refit-cancellation-2026-09-06.md.
 CURRENT_ENCODER_UNIT_DIGESTS = {
     "e4m3-window-channel": (
-        "26e006ff7e8ab53332ddd69c745b489ee42f9b116d409aeff7a21713a5c7bd3e", 21192),
+        "482e1ae55bac89f68513bfab0a3ce613d28180bfe9ff9d65ec38956a6be6724c", 21192),
     "e2m1-tcq-lut-release": (
-        "0087d4081d8a2fcda249f009c4aa87efb7ca72480ba0d041bfe3b6c6420c971e", 8431),
+        "a7dccfb6bcbcaf20373b849609089306acf34e22f0911c208964ac84e0aa89a0", 8431),
     "e2m1x2-subcap-window-lut": (
-        "200948c181bc57b9797cfbd52bf7c7940e66e74a7c0e76f4becab307cee3c99e", 8092),
+        "bddea472944c748065b7ce17095ef7f59e46fed318814b73b4c4b3b7284bcea1", 8092),
 }
 
 #: The same, for the encoder-free artifact ``conftest.make_artifact`` builds --

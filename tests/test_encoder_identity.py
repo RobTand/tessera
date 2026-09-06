@@ -164,14 +164,12 @@ def test_a_compatibility_witness_contributes_exactly_when_its_bytes_moved(identi
     Every witness, not the first one: a set membership test would pass with a
     wrong constant on any case it did not reach.
 
-    Since schema minor 7 (tessera#144) every witness *does* contribute: the
-    LADDER plane layout reordered the terminal record of every fixture, so no
-    encoded contribution matches the baseline measured under minors 0-6.  That
-    is the mechanism working, not failing -- the encoder's output moved for
-    every artifact, and the identity moved with it.  The baselines are
-    measured history and are **not** advanced to bless the new bytes
-    (``encoder_identity`` docstring, schema §1g); a witness that matched its
-    baseline again would mean one had been.
+    The schema-minor-7 transition (tessera#144) moved every witness then
+    present by reordering its terminal record. Later witnesses, including the
+    refit boundary (#360), record their own historical baseline once. The
+    baselines are measured history and are **not** advanced to bless new bytes
+    (``encoder_identity`` docstring, schema §1g). A witness contributes whenever
+    its current bytes differ from its own baseline.
     """
     witnesses = [
         case for case in ei.fixtures()

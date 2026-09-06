@@ -87,3 +87,31 @@ all 95, with no skips/uncollected modules and six CUDA-allocating tests.
 Both terminal exits were zero and CAS payloads verified. These validation
 snapshots include the independently measured exact scalar-search optimization
 from #364; the refit reproduction comparison above predates that optimization.
+
+
+## Integration fixture follow-up
+
+The combined GPU suite on integration commit `e080a6e39933` failed three
+`test_encoded_unit_bytes_match_encoder_identity_baseline` cases at
+`assert (hashlib.sha256(blob).hexdigest(), len(blob)) == (digest, size)`.
+Action `488bd21f8afefb39bd1b38f03f9caedc66fc303b6583d6cdec4b8d468ad7bdb2`
+reproduced both LUT cases exactly under the old identity stamp: their new
+hashes move only with the stamp. The E4M3 CHANNEL unit also moves payload.
+
+Action `5b7315294aa8510f060a09331204c9321fa02374c540dca30b2d78e1ce17646a`
+replayed the old rounded-loss guard and old stamp and recovered the original
+E4M3 hash `26e006ff7e8ab53332ddd69c745b489ee42f9b116d409aeff7a21713a5c7bd3e`.
+The corrected guard changes two stored scale words and seven body choices;
+the artifact remains 21,192 bytes. The complete new hash is
+`482e1ae55bac89f68513bfab0a3ce613d28180bfe9ff9d65ec38956a6be6724c`.
+The synthetic unit's final plain SSE changes from 0.024550989270210266 to
+0.024551386013627052. This is not a quality improvement claim: that fixture
+uses the unweighted trellis default, for which refit/trellis alternation is
+not guaranteed to descend the same objective (the refit docstring states the
+conditions). The correction preserves improvements in each scale step.
+
+Both scoped diagnostics exited zero and their CAS payloads were verified.
+An earlier diagnostic, action `1462c33c6c347a9969c6997ca6cc209b5f5db157441da50d834f6e88d313b6e4`,
+omitted `PYTHONPATH=src` and read an installed package; it is retained as
+invalid evidence and superseded by the scoped replay above. The historical
+layout-only hashes and original legacy artifacts remain untouched.
