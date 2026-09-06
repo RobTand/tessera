@@ -164,14 +164,12 @@ def test_a_compatibility_witness_contributes_exactly_when_its_bytes_moved(identi
     Every witness, not the first one: a set membership test would pass with a
     wrong constant on any case it did not reach.
 
-    Since schema minor 7 (tessera#144) every witness *does* contribute: the
-    LADDER plane layout reordered the terminal record of every fixture, so no
-    encoded contribution matches the baseline measured under minors 0-6.  That
-    is the mechanism working, not failing -- the encoder's output moved for
-    every artifact, and the identity moved with it.  The baselines are
-    measured history and are **not** advanced to bless the new bytes
-    (``encoder_identity`` docstring, schema §1g); a witness that matched its
-    baseline again would mean one had been.
+    The schema-minor-7 transition (tessera#144) moved every witness then
+    present by reordering its terminal record. Later witnesses, including the
+    refit boundary (#360), record their own historical baseline once. The
+    baselines are measured history and are **not** advanced to bless new bytes
+    (``encoder_identity`` docstring, schema §1g). A witness contributes whenever
+    its current bytes differ from its own baseline.
     """
     witnesses = [
         case for case in ei.fixtures()
@@ -694,3 +692,25 @@ def test_a_presence_flag_that_is_not_a_bool_is_refused():
     patched = data[:-33] + b"\x02" + data[-32:]
     with pytest.raises(TesseraError, match="bool"):
         Manifest.decode(patched, SCHEMA_MINOR)
+
+
+def test_identity_sees_refit_improvements_below_the_rounded_loss_ulp(identity, monkeypatch):
+    import tessera.scale_channel as sc
+
+    current = sc.refit_channel_scale
+
+    def rounded_loss_guard(work, units, stored, global_scale, metric=None, floor=None):
+        new_stored, effective = current(work, units, stored, global_scale, metric, floor)
+        if metric is not None or floor is not None:
+            return new_stored, effective
+        W, U = work.float(), units.float()
+        A, B = (U * U).sum(dim=1), (W * U).sum(dim=1)
+        old = stored.float() * global_scale
+        old_loss = A * old * old - 2 * B * old
+        new_loss = A * effective * effective - 2 * B * effective
+        held = torch.where(new_loss < old_loss, new_stored, stored)
+        return held, held.float() * global_scale
+
+    monkeypatch.setattr(sc, "refit_channel_scale", rounded_loss_guard)
+    monkeypatch.setattr(ei, "_MEMO", [])
+    assert ei.encoder_fixture_id() != identity

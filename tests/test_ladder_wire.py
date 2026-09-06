@@ -8,10 +8,10 @@ round trip through code that shares the change:
   with a sidecar recording the tensor that tree decoded each to.  The current
   reader must decode every one to the same tensor, under the same minor and
   the same plane order.
-* **The legacy writer is exact.**  ``layout=PlaneLayout.LEGACY`` with the
-  identity that tree stamped must reproduce every one of those blobs byte for
-  byte; otherwise a test "building an old artifact" would only prove the
-  reader agrees with the writer it was changed alongside.
+* **The legacy writer is exact.** Rewriting the parsed historical planes with
+  their historical identity reproduces each blob exactly. Fresh encodes are
+  also held to those bytes, except the separately recorded #360 correction:
+  one FP8 scale word previously held by loss cancellation now improves.
 
 Plus the packing the minor introduces (``wire.pack_levels``) and the one
 fact worth stating about the default recipe table: an empty completion axis
@@ -77,6 +77,13 @@ def test_a_pre_change_artifact_reads_to_the_tensor_its_writer_decoded(label):
     decoded = read_unit_artifact(blob)
     assert list(decoded.shape) == case["decoded_shape"]
     assert _tensor_digest(decoded) == case["decoded_sha256"]
+    parsed = parse_unit_artifact(blob)
+    rebuilt = build_unit_artifact(
+        parsed.unit, "u", parsed.forests, parsed.manifest.branch.root_q256,
+        parsed.code, fixture_id=bytes.fromhex(META["encoder_fixture_id"]),
+        layout=PlaneLayout.LEGACY,
+    )[2]
+    assert rebuilt == blob
 
 
 def test_the_legacy_set_covers_the_planes_and_bodies_the_minor_touches():
@@ -97,7 +104,7 @@ def test_the_legacy_set_covers_the_planes_and_bodies_the_minor_touches():
 def _legacy_builders():
     """The eleven encodes of ``tests/data/legacy/generate_legacy_blobs.py``,
     as (label, build) where build(layout, fixture_id) -> blob.  The encodes
-    are deterministic on CPU (fixed generator seeds, no torch RNG)."""
+    use fixed Torch seeds; input bytes themselves are not portable (#360)."""
     old = bytes.fromhex(META["encoder_fixture_id"])
 
     def artifact(label, unit, forests, code=DEFAULT_CODE):
@@ -155,9 +162,13 @@ def _legacy_builders():
 
 
 @pytest.mark.parametrize("label,build", list(_legacy_builders()))
-def test_the_legacy_writer_reproduces_the_pre_change_bytes(label, build):
+def test_the_legacy_layout_encode_reproduces_its_recorded_bytes(label, build):
     assert label in META["cases"]
-    assert build() == (LEGACY / f"{label}.tessera").read_bytes()
+    # Preserve the historical blob for read/rewrite checks above. The one
+    # corrected refit output is separate evidence, not a regenerated baseline.
+    corrected = LEGACY.parent / "refit-cancellation" / f"{label}.tessera"
+    expected = corrected if corrected.exists() else LEGACY / f"{label}.tessera"
+    assert build() == expected.read_bytes()
 
 
 # --- the packing -------------------------------------------------------------

@@ -1,0 +1,218 @@
+{
+  "schema": "tessera.merge_suite.v1",
+  "generated_utc": "2026-09-06T04:58:20Z",
+  "commits_measured": {
+    "by_arm": {
+      "gpu": "56bd2abb42ca554f269ee5001869eec5e28a8078",
+      "x86": "32cc0312c95e1c4675136fdd98810ba4d55202ad"
+    },
+    "agree": false,
+    "unstamped_arms": [],
+    "effective_source": {
+      "by_arm": {
+        "gpu": "0fa2332c8954d19391b048f46c02345ba70dd1ac3c95c513d0333c7692a2ff7b",
+        "x86": "0fa2332c8954d19391b048f46c02345ba70dd1ac3c95c513d0333c7692a2ff7b"
+      },
+      "agree": true,
+      "unverified_arms": []
+    }
+  },
+  "verdict": "red on one of: gpu, x86",
+  "reading_note": "Original full integration before corrective commits. CPU publication retains its sealed surface.cpu.json path; arm is named x86 for the paired ledger. Both raw snapshot IDs and verified effective source are preserved. Subsequent targeted corrections are separate measurements, not a rewrite of this red result.",
+  "scope": "Full integration before corrective commits; local integration e080a6e399330d0d98e273d1526744d96119a43b",
+  "arms": [
+    {
+      "arm": "gpu",
+      "returncode": 1,
+      "exit_status_observed": true,
+      "exit_status_source": "pool",
+      "exit_status_note": "the submitting process did not survive to watch this run, so the exit status is the one PrismaBuild's worker recorded for action 1d9f852ae9ee on sparky -- read from the pool's own outcome record, not inferred from the population.",
+      "surface": {
+        "schema": "tessera.test_surface.v3",
+        "role": "population",
+        "worker_id": null,
+        "xdist_workers": 12,
+        "commit": "56bd2abb42ca554f269ee5001869eec5e28a8078",
+        "source_identity": {
+          "schema": "tessera.suite_source.v1",
+          "snapshot_commit": "56bd2abb42ca554f269ee5001869eec5e28a8078",
+          "sha256": "0fa2332c8954d19391b048f46c02345ba70dd1ac3c95c513d0333c7692a2ff7b",
+          "verification": "verified",
+          "excluded_metadata": [
+            {
+              "bytes": 153,
+              "path": ".pbrun-closure.99d05dd634457b93.json",
+              "sha256": "ed47e54a30bc15d7bf8f7d4dce3d4dc4771d911b1875102cb0fd65873593ce06",
+              "action_key": "1d9f852ae9ee992b173bb130d40c6482b99395af018ea47829f56ea9947bd815",
+              "request_sha256": "bf34e4be74f37d5e72711a3b5b621664458c542a8e0ec1e084fd9ac9b8a3d986"
+            }
+          ],
+          "files_verified": 1023,
+          "measurement_span": {
+            "entry_sha256": "0fa2332c8954d19391b048f46c02345ba70dd1ac3c95c513d0333c7692a2ff7b",
+            "entry_snapshot_commit": "56bd2abb42ca554f269ee5001869eec5e28a8078",
+            "entry_verification": "verified",
+            "agrees": true
+          },
+          "workers": {
+            "gw0": "agrees",
+            "gw1": "agrees",
+            "gw10": "agrees",
+            "gw11": "agrees",
+            "gw2": "agrees",
+            "gw3": "agrees",
+            "gw4": "agrees",
+            "gw5": "agrees",
+            "gw6": "agrees",
+            "gw7": "agrees",
+            "gw8": "agrees",
+            "gw9": "agrees"
+          }
+        },
+        "cuda": true,
+        "device": "torch 2.11.0+cu130, 1 CUDA device(s), device 0 = NVIDIA GB10",
+        "strict_cuda": true,
+        "counts": {
+          "passed": 3611,
+          "failed": 5,
+          "error": 0,
+          "skipped": 10,
+          "xfailed": 1,
+          "xpassed": 0
+        },
+        "skip_reasons": {
+          "could not import 'vllm': No module named 'vllm'": 3,
+          "e2m1-tcq-lut-release does not cut 4 ways along columns": 2,
+          "e2m1-tcq-lut-release does not cut 8 ways along columns": 2,
+          "needs two CUDA devices": 2,
+          "E2M1 publishes no reader range": 1
+        },
+        "cuda_surface": {
+          "executed": 486,
+          "measured_by": "tests during whose call torch's CUDA allocator recorded a new allocation",
+          "is_a_floor": true,
+          "box_artifact_skips": {}
+        },
+        "not_collected": []
+      }
+    },
+    {
+      "arm": "x86",
+      "returncode": 1,
+      "exit_status_observed": true,
+      "exit_status_source": "pool",
+      "exit_status_note": "the submitting process did not survive to watch this run, so the exit status is the one PrismaBuild's worker recorded for action 488ba455ec05 on dl380g10 -- read from the pool's own outcome record, not inferred from the population.",
+      "surface": {
+        "schema": "tessera.test_surface.v3",
+        "role": "population",
+        "worker_id": null,
+        "xdist_workers": 16,
+        "commit": "32cc0312c95e1c4675136fdd98810ba4d55202ad",
+        "source_identity": {
+          "schema": "tessera.suite_source.v1",
+          "snapshot_commit": "32cc0312c95e1c4675136fdd98810ba4d55202ad",
+          "sha256": "0fa2332c8954d19391b048f46c02345ba70dd1ac3c95c513d0333c7692a2ff7b",
+          "verification": "verified",
+          "excluded_metadata": [
+            {
+              "bytes": 153,
+              "path": ".pbrun-closure.54966c6d1b4fb002.json",
+              "sha256": "ed47e54a30bc15d7bf8f7d4dce3d4dc4771d911b1875102cb0fd65873593ce06",
+              "action_key": "488ba455ec05dee3fb2249324ea6fc0f193c3d2a30d2c3b43856ebcfe32d4d59",
+              "request_sha256": "3e3ab1d9db556311f93b04dc0c20ea409da61f6205114cb78cd5e22f6aed7c8b"
+            }
+          ],
+          "files_verified": 1023,
+          "measurement_span": {
+            "entry_sha256": "0fa2332c8954d19391b048f46c02345ba70dd1ac3c95c513d0333c7692a2ff7b",
+            "entry_snapshot_commit": "32cc0312c95e1c4675136fdd98810ba4d55202ad",
+            "entry_verification": "verified",
+            "agrees": true
+          },
+          "workers": {
+            "gw0": "agrees",
+            "gw1": "agrees",
+            "gw10": "agrees",
+            "gw11": "agrees",
+            "gw12": "agrees",
+            "gw13": "agrees",
+            "gw14": "agrees",
+            "gw15": "agrees",
+            "gw2": "agrees",
+            "gw3": "agrees",
+            "gw4": "agrees",
+            "gw5": "agrees",
+            "gw6": "agrees",
+            "gw7": "agrees",
+            "gw8": "agrees",
+            "gw9": "agrees"
+          }
+        },
+        "cuda": false,
+        "device": "torch 2.11.0+cpu reports no CUDA device",
+        "strict_cuda": false,
+        "counts": {
+          "passed": 3045,
+          "failed": 2,
+          "error": 0,
+          "skipped": 549,
+          "xfailed": 0,
+          "xpassed": 0
+        },
+        "skip_reasons": {
+          "needs a CUDA device": 89,
+          "the encoder is a CUDA path": 82,
+          "the lane is a CUDA kernel": 76,
+          "the fused window Viterbi is a CUDA path": 52,
+          "encoder is a GPU job": 43,
+          "the kernel lane is a CUDA path": 30,
+          "the Viterbi is CUDA": 29,
+          "the captured TCQ trellis is a CUDA path": 29,
+          "the encoder is a GPU job": 23,
+          "the fused window Viterbi is a CUDA path and needs triton": 20,
+          "the Tessera encoder is a CUDA path": 14,
+          "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-reach-gridbook/model.safetensors is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 11,
+          "the fused window Viterbi is CUDA": 8,
+          "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/compile-dispatch/serve_qwen_dispatch_eager.log is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 6,
+          "needs CUDA": 6,
+          "box artifact absent: BF16 source checkpoints the encoder reads -- /home/rob/models/Qwen3-0.6B/model.safetensors is not on this box (set TESSERA_MODELS_DIR; documented default /home/rob/models)": 5,
+          "the kernel lane runs on CUDA": 5,
+          "box artifact absent: the PrismaQuant checkout whose pricing this suite is pinned against -- /home/rob/prismaquant/prismaquant/tessera_formats.py is not on this box (set TESSERA_PRISMAQUANT_DIR; documented default /home/rob/prismaquant)": 3,
+          "could not import 'vllm': No module named 'vllm'": 3,
+          "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-reach-stock-twin/model.safetensors is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 2,
+          "box artifact absent: the PrismaQuant worktree carrying the continuous-rate branch -- /home/rob/pq-wt/tessera-continuous/prismaquant/tessera_formats.py is not on this box (set TESSERA_PRISMAQUANT_WORKTREE; documented default /home/rob/pq-wt/tessera-continuous)": 2,
+          "needs two CUDA devices": 2,
+          "E2M1 publishes no reader range": 1,
+          "box artifact absent: BF16 source checkpoints the encoder reads -- /home/rob/models/Qwen3-0.6B is not on this box (set TESSERA_MODELS_DIR; documented default /home/rob/models)": 1,
+          "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-reach-gridbook is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 1,
+          "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/stock/serve_qwen_stock_tessera-k2-graph.log is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 1,
+          "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/stock/serve_qwen_stock_tessera-k2.log is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 1,
+          "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/tsplugin/vllm-cache-fresh/torch_compile_cache/torch_aot_compile/15957ad9e7a72f1d7539f792e4d4cee6e704e2e99696f07e909c209f30f5ddec is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 1,
+          "box artifact absent: kl_tool.py and kl_estimator.py, the untracked served-KL instrument -- nothing set KL_TOOL_DIR and its default is not resolved for this root (set KL_TOOL_DIR; documented default /home/rob/dq-runs)": 1,
+          "could not import 'transformers': No module named 'transformers'": 1,
+          "needs a CUDA device: the positive arm builds the extension": 1
+        },
+        "cuda_surface": {
+          "executed": 0,
+          "measured_by": "tests during whose call torch's CUDA allocator recorded a new allocation",
+          "is_a_floor": true,
+          "box_artifact_skips": {
+            "box artifact absent: BF16 source checkpoints the encoder reads -- /home/rob/models/Qwen3-0.6B is not on this box (set TESSERA_MODELS_DIR; documented default /home/rob/models)": 1,
+            "box artifact absent: BF16 source checkpoints the encoder reads -- /home/rob/models/Qwen3-0.6B/model.safetensors is not on this box (set TESSERA_MODELS_DIR; documented default /home/rob/models)": 5,
+            "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/compile-dispatch/serve_qwen_dispatch_eager.log is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 6,
+            "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-reach-gridbook is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 1,
+            "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-reach-gridbook/model.safetensors is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 11,
+            "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-reach-stock-twin/model.safetensors is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 2,
+            "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/stock/serve_qwen_stock_tessera-k2-graph.log is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 1,
+            "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/stock/serve_qwen_stock_tessera-k2.log is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 1,
+            "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/tsplugin/vllm-cache-fresh/torch_compile_cache/torch_aot_compile/15957ad9e7a72f1d7539f792e4d4cee6e704e2e99696f07e909c209f30f5ddec is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 1,
+            "box artifact absent: kl_tool.py and kl_estimator.py, the untracked served-KL instrument -- nothing set KL_TOOL_DIR and its default is not resolved for this root (set KL_TOOL_DIR; documented default /home/rob/dq-runs)": 1,
+            "box artifact absent: the PrismaQuant checkout whose pricing this suite is pinned against -- /home/rob/prismaquant/prismaquant/tessera_formats.py is not on this box (set TESSERA_PRISMAQUANT_DIR; documented default /home/rob/prismaquant)": 3,
+            "box artifact absent: the PrismaQuant worktree carrying the continuous-rate branch -- /home/rob/pq-wt/tessera-continuous/prismaquant/tessera_formats.py is not on this box (set TESSERA_PRISMAQUANT_WORKTREE; documented default /home/rob/pq-wt/tessera-continuous)": 2
+          }
+        },
+        "not_collected": []
+      }
+    }
+  ]
+}

@@ -112,7 +112,7 @@ def test_one_submission_fans_out_the_x86_arm_and_keeps_the_gpu_arm_serial(tmp_pa
     """One ``--cpus`` for two arms that cannot spend it the same way.
 
     ``--cpus 8`` composed ``-n 8`` for BOTH arms, and the GPU arm's
-    interpreter has no pytest-xdist: it would have exited on an unrecognised
+    interpreter then had no pytest-xdist: it would exit on an unrecognised
     argument before collecting a test.  So the tool could submit its two arms
     together only at ``--cpus 1``, and every ``-n`` run this branch made was a
     lone ``--arm x86`` submission -- a row with `not submitted in this run`

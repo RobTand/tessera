@@ -442,3 +442,19 @@ def test_a_raised_row_lands_at_or_inside_the_reach():
     floor = amax / reach
     assert bool((effective[over] >= floor[over]).all())
     assert bool((effective[over] <= floor[over] * (1 + 2.0 ** -10)).all())
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
+def test_refit_keeps_an_improvement_smaller_than_the_loss_ulp(device):
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("needs a CUDA device")
+    # Exact binary inputs: the nearest fp16 word is 1, but subtracting two
+    # rounded quadratic losses can erase its strict improvement.
+    work = torch.tensor([[1 + 2**-11 - 2**-16]], device=device)
+    units = torch.ones_like(work)
+    stored = torch.tensor([1 + 2**-10], dtype=torch.float16, device=device)
+    new_stored, effective = refit_channel_scale(work, units, stored, 1.0)
+    assert new_stored.item() == 1.0
+    old_loss = (work.double() - stored.double().reshape(-1, 1)).square().sum()
+    new_loss = (work.double() - effective.double().reshape(-1, 1)).square().sum()
+    assert new_loss < old_loss
