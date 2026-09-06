@@ -247,6 +247,14 @@ def _free_port() -> int:
         return sock.getsockname()[1]
 
 
+def _output_sizes(module) -> list[int]:
+    """The output partition list the runtime built this Linear with."""
+    sizes = getattr(module, "output_sizes", None)
+    if sizes is None:
+        sizes = [module.output_size]
+    return [int(s) for s in sizes]
+
+
 def census(model, probe) -> dict:
     from vllm.model_executor.layers.linear import LinearBase
 
@@ -265,6 +273,15 @@ def census(model, probe) -> dict:
             "quant_method": type(module.quant_method).__name__,
             "quant_config_is_none": module.quant_config is None,
             "offered_to_quant_config": prefix in asked,
+            # The runtime's output partition list -- ``ColumnParallelLinear.
+            # output_sizes`` (a merged/QKV Linear's per-member sizes; one
+            # entry for a plain column cut) and ``[output_size]`` for a
+            # Linear that has no such list (row-parallel, replicated).  It is
+            # what ``create_weights`` later receives as
+            # ``output_partition_sizes`` and what an exporter must declare
+            # its roles against (tessera#377).  Global sizes: the census
+            # builds at tp=1.
+            "output_sizes": _output_sizes(module),
             "layers": set(),
             "examples": [],
         })
@@ -277,7 +294,8 @@ def census(model, probe) -> dict:
         # census: record the disagreement rather than letting the last one win.
         for field, value in (("quant_config_is_none", module.quant_config is None),
                              ("offered_to_quant_config", prefix in asked),
-                             ("quant_method", type(module.quant_method).__name__)):
+                             ("quant_method", type(module.quant_method).__name__),
+                             ("output_sizes", _output_sizes(module))):
             if row[field] != value:
                 row.setdefault("disagreements", {}).setdefault(field, []).append(prefix)
     for row in rows.values():
