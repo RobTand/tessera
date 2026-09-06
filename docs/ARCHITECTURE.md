@@ -6,7 +6,8 @@ Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
 **Provenance:** `v0.1.0` plus repository tooling updates (2026-09-05):
-Layer-config representation and routed-stack handoff #363 against base `828ba1f`;
+Direct main/twin shard readability #366 and layer-config routed-stack handoff
+#363 against base `828ba1f`;
 PrismaBuild snapshot v2 source verification #361 against base `76ea29c`;
 smoke aggregation checkout-origin guard verified against base `9da0e62`;
 selector traversal budget #353, directory-glob boundary #354, and refused
@@ -446,6 +447,15 @@ explicit BF16 stack. Selected stacks re-enter the ordinary exporter planner befo
 the plan is written. Uniform-control output uses the same stack handoff, and
 routed stacks refuse `broadcast-by-role` because it cannot preserve an explicit
 per-stack allocation.
+
+The direct exporter and stock-twin writer apply the same read-permission policy
+as serving-part assembly (#366): each newly written safetensors shard gains
+owner/group/other read bits, with no new write or execute bits. A temporary file
+beside the destination receives the complete payload and final permissions before
+an atomic rename publishes it. A failed write or permission finalization leaves
+any previous shard intact and removes the temporary file. This policy touches
+only the new output shard; source checkpoints and historical artifacts retain
+their original bytes and modes.
 
 ### 2.1 Whole-layer export parts have one checked assembly
 

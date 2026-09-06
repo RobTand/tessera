@@ -43,6 +43,16 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def make_artifact_readable(path: Path) -> None:
+    """Give one newly produced shard the serving handoff's read permissions.
+
+    Add no write or execute bits. Call only on the output being published,
+    never on a source checkpoint or a copy-mode source part.
+    """
+    path.chmod(stat.S_IMODE(path.stat().st_mode)
+               | stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
+
+
 def _leaf(name: str) -> str:
     if not isinstance(name, str) or Path(name).name != name or name in ("", ".", ".."):
         raise ValueError(f"shard must be a local filename: {name!r}")
@@ -379,8 +389,7 @@ def merge_serving_parts(paths, out: Path, source: Path, *, move=False) -> dict:
         # A completed artifact must be readable by the serving identity,
         # including root-squashed containers on NFS. Copy-mode source parts
         # keep their private modes; only the destination gains read bits.
-        destination.chmod(stat.S_IMODE(destination.stat().st_mode)
-                          | stat.S_IRUSR | stat.S_IRGRP | stat.S_IROTH)
+        make_artifact_readable(destination)
     for pattern in ("*.json", "*.txt", "*.jinja", "*.model"):
         for aux in source.glob(pattern):
             if aux.name not in ("config.json", "model.safetensors.index.json", "tessera_serving_manifest.json", "tessera_part_config.json"):

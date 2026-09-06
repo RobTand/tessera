@@ -329,3 +329,75 @@ def test_a_passthrough_stack_entry_refuses_an_emitted_routed_moe_module():
     with pytest.raises(ValueError) as caught:
         validate_explicit_plan({stack: "PASSTHROUGH"}, modules, {})
     assert stack in str(caught.value) and "PASSTHROUGH" in str(caught.value)
+
+
+def test_main_and_twin_shards_are_readable_by_an_unprivileged_consumer(tmp_path, monkeypatch):
+    """A root container's 0600 safetensors result must cross the host handoff.
+
+    The same test runs as an ordinary user in CPU CI; the root-writer arm
+    drops the reader to nobody and therefore exercises the other-read bit.
+    """
+    import hashlib
+    import os
+    import stat
+    import subprocess
+    import sys
+    import tempfile
+
+    real_save = exporter.save_file
+    written = []
+    sources = []
+
+    def private_save(tensors, filename, **kwargs):
+        real_save(tensors, filename, **kwargs)
+        path = Path(filename)
+        path.chmod(0o600)  # reproduce the measured writer result on every library version
+        written.append(hashlib.sha256(path.read_bytes()).hexdigest())
+        source = root / "src" / "model.safetensors"
+        sources.append((stat.S_IMODE(source.stat().st_mode), hashlib.sha256(source.read_bytes()).hexdigest()))
+
+    monkeypatch.setattr(exporter, "save_file", private_save)
+    with tempfile.TemporaryDirectory(prefix="tessera-shard-handoff-", dir="/tmp") as directory:
+        root = Path(directory)
+        root.chmod(0o755)
+        name = BODY + "0.mlp.down_proj.weight"
+        out = _run(root, monkeypatch, {name: _tensor(32, 32, 0)},
+                   {name: "BF16"}, "--layers", "0", "--stock-twin", str(root / "twin"))
+        for destination, digest in zip((out, root / "twin"), written, strict=True):
+            path = destination / "model.safetensors"
+            assert stat.S_IMODE(path.stat().st_mode) == 0o644
+            assert hashlib.sha256(path.read_bytes()).hexdigest() == digest
+            # The directory is a traversable artifact destination; this test
+            # targets the newly written shard, not umask policy for ancestors.
+            destination.chmod(0o755)
+            consumer = 65534 if os.geteuid() == 0 else os.geteuid()
+            kwargs = {"user": consumer, "group": 65534, "extra_groups": []} if os.geteuid() == 0 else {}
+            read = subprocess.run([sys.executable, "-c",
+                "import hashlib,os,pathlib,sys; assert os.geteuid()!=0; "
+                "print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())",
+                str(path)], capture_output=True, text=True, **kwargs)
+            assert read.returncode == 0, read.stderr
+            assert read.stdout.strip() == digest
+        assert len(written) == 2
+        source = root / "src" / "model.safetensors"
+        assert all(value == (stat.S_IMODE(source.stat().st_mode),
+                             hashlib.sha256(source.read_bytes()).hexdigest()) for value in sources)
+
+
+def test_a_failed_shard_write_keeps_the_previous_published_bytes(tmp_path, monkeypatch):
+    name = BODY + "0.mlp.down_proj.weight"
+    out = tmp_path / "out"
+    out.mkdir()
+    previous = out / "model.safetensors"
+    previous.write_bytes(b"previous published shard")
+
+    def failed_save(_tensors, filename, **_kwargs):
+        Path(filename).write_bytes(b"incomplete replacement")
+        raise OSError("writer failed before publication")
+
+    monkeypatch.setattr(exporter, "save_file", failed_save)
+    with pytest.raises(OSError, match="before publication"):
+        _run(tmp_path, monkeypatch, {name: _tensor(32, 32, 0)},
+             {name: "BF16"}, "--layers", "0")
+    assert previous.read_bytes() == b"previous published shard"
+    assert sorted(p.name for p in out.iterdir()) == ["model.safetensors"]
