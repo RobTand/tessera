@@ -189,15 +189,14 @@ def test_the_plan_converter_asks_the_exporter_rather_than_restating_the_rule():
         "plan_from_layer_config", ROOT / "experiments" / "plan_from_layer_config.py")
     plan = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(plan)
-    assert plan.module_scheme_key.__module__ == "export_tessera_serving"
+    export = importlib.import_module("export_tessera_serving")
+    # The scheme key AND fused roster come from the owning exporter (#37,
+    # #211). Object identity catches a copied implementation without making
+    # import whitespace, grouping or additional imported names a contract.
+    assert plan.module_scheme_key is export.module_scheme_key
+    assert plan.fused_module is export.fused_module
     e4m3 = grid_for_name("E4M3")
     assert plan.module_scheme_key(e4m3, 900) == _exporter().module_scheme_key(e4m3, 900)
-    source = (ROOT / "experiments" / "plan_from_layer_config.py").read_text()
-    # The scheme key AND the fused roster are both imported from the exporter
-    # (#37, #211): a copied-back constant of either fails here.
-    assert "from export_tessera_serving import fused_module, module_scheme_key" in source
-    assert plan.fused_module.__module__ == "export_tessera_serving"
-    assert "chosen[m][0], chosen[m][1]) for m in present" not in source
 
 
 # --- the decode --------------------------------------------------------------
