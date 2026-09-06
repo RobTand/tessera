@@ -618,11 +618,15 @@ def main(argv=None):
                              with_control=not args.no_uniform_control)
     logical_plan = plan
     plan = stack_plan(logical_plan, stack_members, layouts)
-    # Re-enter the producer's ordinary stack planner before writing the handoff.
-    _shards, dense, packed, routed = quantizable(args.model)
-    project_expert_plan({**dense, **packed, **routed},
-                       json.loads((args.model / "config.json").read_text()),
-                       {stack: plan[stack] for stack in stack_members if isinstance(plan[stack], dict)})
+    # Only quantized expert stacks need model-config geometry. Dense planning
+    # remains a header-only operation, including its selection warning.
+    selected_stacks = {stack: plan[stack] for stack in stack_members
+                       if isinstance(plan[stack], dict)}
+    if selected_stacks:
+        _shards, dense, packed, routed = quantizable(args.model)
+        project_expert_plan({**dense, **packed, **routed},
+                           json.loads((args.model / "config.json").read_text()),
+                           selected_stacks)
     provenance["expert_stacks"] = {stack: {"units": members, "planned_as": plan[stack]}
                                    for stack, members in stack_members.items()}
     provenance["immutable_bf16_routers"] = sorted(routers)

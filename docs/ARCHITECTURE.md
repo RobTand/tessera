@@ -6,6 +6,7 @@ Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
 **Provenance:** `v0.1.0` plus repository tooling updates (2026-09-05):
+Dense header-only translator compatibility against base `6faa5ce`;
 Direct main/twin shard readability #366 and layer-config routed-stack handoff
 #363 against base `828ba1f`;
 PrismaBuild snapshot v2 source verification #361 against base `76ea29c`;
@@ -451,7 +452,9 @@ the producer's current `project_expert_plan` before using it. Packed source slic
 and logical geometry therefore remain producer-owned. Unpacked stacks can use the
 exporter's direct membership classification; an unallocated packed stack is an
 explicit BF16 stack. Selected stacks re-enter the ordinary exporter planner before
-the plan is written. Uniform-control output uses the same stack handoff, and
+the plan is written. With no selected expert stacks or carried projection, the
+translator needs only tensor headers; it does not require `config.json` for a
+dense allocation or its selection warning. Uniform-control output uses the same stack handoff, and
 routed stacks refuse `broadcast-by-role` because it cannot preserve an explicit
 per-stack allocation.
 
