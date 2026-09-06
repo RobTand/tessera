@@ -5,7 +5,8 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
-**Provenance:** `v0.1.0` plus repository tooling updates (2026-09-05):
+**Provenance:** `v0.1.0` plus repository tooling updates (2026-09-06):
+Mixed dense/routed campaign census coverage (PrismaQuant #253) against base `6faa5ce`;
 Dense header-only translator compatibility against base `6faa5ce`;
 Direct main/twin shard readability #366 and layer-config routed-stack handoff
 #363 against base `828ba1f`;
@@ -2166,10 +2167,22 @@ structure axis is refused. The axis is a non-empty, duplicate-free string list
 and equals the cells' first-occurrence projection exactly; set-equivalent
 duplicate or reordered spellings are not a second form of the same contract.
 
-`experiments/ts5_census_check.py` gates the full routed-MoE campaign receipt.
-Its common plan, merged config and serving manifest must describe exactly one
-nonempty expert-stack population, including every expert projection and rung;
-the roster and geometry come from the scheme helpers, not a campaign count.
+`experiments/ts5_census_check.py` gates a complete dense, routed-MoE or mixed
+campaign receipt. Its common plan, merged config and serving manifest must
+describe exactly one nonempty quantized population. Dense plan entries name
+source weight tensors; their ordered manifest roles join them to the fused
+serving owners validated by the shared exporter ownership rule. Routed
+entries name complete stacks, including every expert projection. The existing
+`serving_parts.validate_explicit_plan` checks source-leaf/rung coverage and
+explicit `BF16`/`PASSTHROUGH` obligations; a `BF16` grid object remains a
+quantized wire, distinct from those passthrough strings. Dense scheme
+validation checks ordered fused roles, per-role rungs, geometry and container
+size. Exact config/manifest owner and planned matrix rosters are required,
+with separate routed-summary and whole-population counts. Counts come from
+these declarations rather than a campaign roster. The gate retains the
+`export_identity.options.plan` binding requirement: a direct export carrying
+only `manifest.plan` needs an independently truthful identity seal before this
+gate can admit it.
 Both driven phases must contain exactly one served record per planned owner,
 under the explicit serving-image digest, eager execution and resident mode.
 The checker replays construction mapping and ownership, validates launch pairs
@@ -2177,7 +2190,7 @@ and activation contracts even when no cell exists, and requires distinct,
 nonempty eager shapes at every owner using the census's shared shape check.
 Shapes use telemetry's canonical `M<n>:N<n>:K<n>` spelling; `scheme.regime_of_m`
 must map each observed M to the phase it claims. The campaign also compares
-N/K with that owner's validated expert tile geometry, so arbitrary strings or
+N/K with that owner's validated dense or expert tile geometry, so arbitrary strings or
 two batch-shaped observations cannot claim decode/prefill coverage.
 It preserves actual backend suffixes. Host/container checkpoint paths may
 differ: the raw census records `checkpoint_sidecars`, SHA256s of the exact
@@ -2192,8 +2205,12 @@ tensor/wire validation. Exporter image provenance is not a serving-image
 eligibility rule.
 The initial check permits genuinely unattested owners. `--require-attested`
 replays the same raw records against the **current** packaged contract and
-requires every planned owner covered in both phases, ignoring stale embedded
-agreement. The result fingerprints its inputs and current contract. This is a
+requires every planned owner of **each structure** covered in both phases,
+ignoring stale embedded agreement. The ordinary result preserves real
+per-structure unattested counts; covered routed owners cannot attest dense
+owners, nor the reverse. Exact runtime image scope remains unchanged and no
+new cell is published by this gate. The result fingerprints its inputs and
+current contract. This is a
 population/dispatch receipt gate, not a wire audit or the separate served-KL
 quality gate, and publishes no cells itself.
 
