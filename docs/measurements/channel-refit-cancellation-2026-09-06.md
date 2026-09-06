@@ -93,7 +93,7 @@ from #364; the refit reproduction comparison above predates that optimization.
 
 The combined GPU suite on integration commit `e080a6e39933` failed three
 `test_encoded_unit_bytes_match_encoder_identity_baseline` cases at
-`assert (hashlib.sha256(blob).hexdigest(), len(blob)) == (digest, size)`.
+`assert (len(blob), hashlib.sha256(blob).hexdigest()) == (size, digest)`.
 Action `488bd21f8afefb39bd1b38f03f9caedc66fc303b6583d6cdec4b8d468ad7bdb2`
 reproduced both LUT cases exactly under the old identity stamp: their new
 hashes move only with the stamp. The E4M3 CHANNEL unit also moves payload.
@@ -115,3 +115,22 @@ An earlier diagnostic, action `1462c33c6c347a9969c6997ca6cc209b5f5db157441da50d8
 omitted `PYTHONPATH=src` and read an installed package; it is retained as
 invalid evidence and superseded by the scoped replay above. The historical
 layout-only hashes and original legacy artifacts remain untouched.
+
+The corrected combined selection at `4e19ed5` passes all 48 selected files:
+x86 CPU action `54926b2f28a247abf4cf74866a93d4d8c5e66212c1ea5fd54bdeb76e4cbb799f`
+reports 1,237 passed / 159 skipped / zero uncollected, with 24 workers.
+Strict-CUDA GB10 action `11d8fe4c703afba4ec75e3a0f77914048a161009214fe808ab5ce5734584d345`
+reports 1,407 passed / four skipped / zero uncollected and 97 CUDA-allocating
+tests, with 12 workers. The four skips are `e2m1-tcq-lut-release does not cut
+4 ways along columns` ×2 and `e2m1-tcq-lut-release does not cut 8 ways along
+columns` ×2. Both exits are zero, CAS payload hashes verified and effective
+source identities agree. Native math/build threads were bounded to one per
+worker. The complete CPU skip histogram, selected files and both populations
+are in [the corrected receipt](issue-queue-corrected-2026-09-06.json);
+[the ledger](../status/suite-populations.md) retains the original full red run
+separately. No full green result is inferred from this targeted follow-up.
+
+One off-task prose fix accompanies the queue report in a separate commit:
+`tools/merge_suite.py` now describes its legacy serial GPU setting accurately.
+Scoped xdist is installed; shared device presence alone does not prevent
+parallel test processes. No wrapper behavior or default changes.
