@@ -11,21 +11,30 @@
 # CPU only, no GPU, no published ports, containers named tess375-cid-* and
 # removed here.  Run it through PrismaBuild, not by hand.
 set -u
+TS=${TS:-$(cd "$(dirname "$0")/.." && pwd)}
+IMAGE=${IMAGE:-ubuntu:24.04}
+source "$TS/experiments/runtime_image.sh"
+# Gated like every other wrapper here that starts a container (#100): this one
+# runs ubuntu, not the serving image, and the gate stamps the digest that
+# actually produced the numbers below instead of leaving the reader with a
+# floating tag.  The rule caught this script when it was written ungated --
+# which is the same rule this issue is about, applied to its author.
+runtime_image_require "$IMAGE" || exit 2
 D=$(mktemp -d "${TMPDIR:-/home/rob/tmp}/cidprobe.XXXXXX") || exit 1
 echo "== which docker: $(command -v docker)"
 echo
 echo "== A) docker start is refused by the PB shim (this is why create+start is out)"
-docker create --name tess375-cid-a ubuntu:24.04 sleep 5; echo "create rc=$?"
+docker create --name tess375-cid-a "$IMAGE" sleep 5; echo "create rc=$?"
 docker start tess375-cid-a; echo "start rc=$?"
 docker rm -f tess375-cid-a >/dev/null 2>&1; echo "rm rc=$?"
 echo
 echo "== B) run -d --cidfile, healthy container"
-docker run -d --cidfile "$D/b.cid" --name tess375-cid-b ubuntu:24.04 sleep 3 >/dev/null 2>&1
+docker run -d --cidfile "$D/b.cid" --name tess375-cid-b "$IMAGE" sleep 3 >/dev/null 2>&1
 echo "run rc=$?  cidfile=[$(cat "$D/b.cid" 2>/dev/null)]"
 docker rm -f "$(cat "$D/b.cid" 2>/dev/null)" >/dev/null 2>&1; echo "rm-by-id rc=$?"
 echo
 echo "== C) run -d --cidfile, start FAILS (bad entrypoint)"
-docker run -d --cidfile "$D/c.cid" --name tess375-cid-c --entrypoint /no/such/binary ubuntu:24.04
+docker run -d --cidfile "$D/c.cid" --name tess375-cid-c --entrypoint /no/such/binary "$IMAGE"
 echo "run rc=$?"
 echo "cidfile=[$(cat "$D/c.cid" 2>/dev/null)]"
 echo "container still present by id? [$(docker inspect -f '{{.State.Status}}' "$(cat "$D/c.cid" 2>/dev/null)" 2>/dev/null)]"

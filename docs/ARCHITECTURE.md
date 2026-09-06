@@ -1405,7 +1405,7 @@ affinity mask through as `--cpuset-cpus` and states `OMP_NUM_THREADS`,
 `MKL_NUM_THREADS`, `OPENBLAS_NUM_THREADS` and `MAX_JOBS` at its size: a host
 export does not cross into a container, a `--cpus` quota changes no CPU count a
 library can read, and `_NPROCESSORS_ONLN` still reports all 20 host CPUs inside
-a cpuset (`experiments/container_limits_probe.sh`, sparky, PB mask 1-3,19).
+a cpuset (`experiments/container_limits_probe.sh`, sparky, PB action `00869be43ebc`).
 
 `serve_and_dump_kl.sh` reaps its named container on every exit, including an
 unexpected shell failure. Successful removal is remembered so normal exit

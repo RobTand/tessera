@@ -62,12 +62,13 @@ owned_container_cpu_count() {  # size of a "0-3,8,10-11" mask
 # The numbers below are not chosen, they are read off the mask this process was
 # given, and the flags that carry them were picked from a measurement:
 # `experiments/container_limits_probe.sh`, run on sparky under a PrismaBuild
-# reservation of CPUs 1-3,19 (ubuntu:24.04, no GPU, no ports):
+# reservation of CPUs 4,10 (action 00869be43ebc; ubuntu:24.04, no GPU, no
+# ports).  The mask is whatever PB granted that run; the conclusions are not:
 #
 #   host export OMP_NUM_THREADS=3, no flags -> in-container OMP_NUM_THREADS unset
-#   --cpus=2 (CFS quota)                    -> nproc 4, _NPROCESSORS_ONLN 20
-#   --cpuset-cpus=1-3                       -> nproc 3, _NPROCESSORS_ONLN 20
-#   --cpuset-cpus=1-3 -e OMP_NUM_THREADS=4  -> OMP_NUM_THREADS 4 in the container
+#   --cpus=2 (CFS quota)                    -> nproc 2, _NPROCESSORS_ONLN 20
+#   --cpuset-cpus=4-4                       -> nproc 1, _NPROCESSORS_ONLN 20
+#   --cpuset-cpus=4-4 -e OMP_NUM_THREADS=4  -> OMP_NUM_THREADS 4 in the container
 #
 # Line one is the issue's premise, measured: a host export does not cross into
 # a container, so a serve started this way runs on the image's defaults.  Line
@@ -77,7 +78,7 @@ owned_container_cpu_count() {  # size of a "0-3,8,10-11" mask
 # Line three is why the thread counts are stated anyway: even inside a cpuset,
 # sysconf(_SC_NPROCESSORS_ONLN) still reports all 20 host CPUs, and that is the
 # count a pool sized from sysconf rather than from the affinity mask reads --
-# 20 threads on 3 permitted CPUs pay the oversubscription without gaining a
+# 20 threads on one permitted CPU pay the oversubscription without gaining a
 # core.  The counts are therefore stated, not inferred: which libraries size
 # from which of the two is a per-runtime detail this wrapper should not have to
 # know.  MAX_JOBS bounds the same thing
@@ -120,7 +121,8 @@ owned_container_limits() {
 # writes the cidfile between create and start, so a container that is created
 # and then fails to start still leaves its id on disk -- which is exactly the
 # failure this issue is about.  Measured, `experiments/cidfile_probe.sh` on
-# sparky through PrismaBuild (action b762148a7eb7):
+# sparky through PrismaBuild (action 00869be43ebc, ubuntu:24.04 at
+# sha256:33ceb71981b602c1a7443a53469e4dba065f7503eab3078a2d7a57a2ab987517):
 #
 #   docker create ... -> rc 0, id printed
 #   docker start   ... -> rc 125, "docker shim: start/compose-up cannot attach
