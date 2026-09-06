@@ -629,3 +629,16 @@ def test_read_dependencies_keep_each_traversed_link(tmp_path, monkeypatch, expre
         expected.add(root / "nested" / "child" / "chosen.json")
     assert found == expected
     assert not unknown and not unplaced
+
+
+def test_empty_glob_keeps_the_link_that_controls_its_members(tmp_path, monkeypatch):
+    root = tmp_path / "repo"
+    (root / "empty").mkdir(parents=True)
+    (root / "link").symlink_to("empty")
+    _guard_resolve_to_root(monkeypatch, root)
+    found, unknown, unplaced = _scan_full(
+        'from pathlib import Path\n'
+        'for item in Path("link").glob("*.json"):\n'
+        '    item.read_text()\n', root)
+    assert found == {root / "link"}
+    assert not unknown and not unplaced

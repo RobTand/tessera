@@ -611,6 +611,8 @@ def file_imports(tree, path, root):
             else:
                 unknown = unknown or wildcard(reading)
             continue
+        # A resolved glob base is a dependency even when it yields no files.
+        found.update(links)
         for value in values:
             try:
                 target = Path(value)
