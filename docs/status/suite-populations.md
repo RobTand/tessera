@@ -39,8 +39,9 @@ failure count is still a fact while a zero in it does not make the row green,
 because a suite can exit non-zero after a clean summary.
 
 `mode` is how that arm ran, and it changes what the row means as much as the
-device does. The GPU arm is always `serial` -- its workers would share one
-device and its CUDA venv has no xdist -- while the x86 arm runs `-n <cpus>`, so
+device does. The legacy `merge_suite.py` wrapper clamps its GPU arm to
+`serial`; direct PrismaBuild runs can install scoped xdist and reserve
+parallel workers on the same device. Its x86 arm runs `-n <cpus>`, so
 two rows of one commit can differ by more than the box. On `d11dc01` the gpu
 row is green and the x86 row is red at 5 failed, and those five are an
 `-n`-only defect in the suite's own conftest, not a CUDA one. Match a pair by
@@ -91,3 +92,22 @@ Both publish `8c21637ae168` and verified source hash
 GPU calls allocated in 472 tests; neither arm skipped for absent box artifacts.
 The intentionally interrupted serial attempts are preserved separately and
 are not success receipts.
+
+
+## Tessera 0.1.0 release validation
+
+Direct PrismaBuild submissions, with both final full-suite populations recorded
+together. [Commands, source audit, failed attempts and verbatim skip reasons](../measurements/release-v0.1.0-validation-2026-09-05.md).
+
+| Run | Device / toolchain | Mode | Passed | Failed | Skipped | Xfailed | Uncollected | PB exit |
+|---|---|---|---:|---:|---:|---:|---:|---:|
+| Final full GPU, sparky | torch 2.11.0+cu130, 1 CUDA device(s), device 0 = NVIDIA GB10 | -n 12, worksteal, strict-CUDA | 3581 | 0 | 10 | 1 | 0 | 0 |
+| Final full CPU, sparklina | torch 2.11.0+cu130 reports no CUDA device | -n 12, worksteal | 3020 | 0 | 544 | 0 | 0 | 0 |
+| Earlier full x86, dl380g10 | torch 2.11.0+cpu reports no CUDA device | -n 12, worksteal | 3012 | 1 | 548 | 0 | 0 | 1 |
+| Final selected x86, 42 files | torch 2.11.0+cpu reports no CUDA device | -n 16, worksteal | 993 | 0 | 68 | 0 | 0 | 0 |
+
+The final aarch64 pair matches the tagged source after independent verification
+of the v2 snapshot metadata. The earlier full x86 run is red and measured the
+pre-smoke-fix tree; its historical fixture failure reproduces on pristine master.
+Selected x86 checks on the final tree pass. No arm is represented by another
+arm's pass count.
