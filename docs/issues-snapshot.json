@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-05T22:51:48Z",
+ "generated": "2026-09-06T03:43:16Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -488,7 +488,7 @@
     "title": "pq-decisions: #175 receipt (no token needed), #87 reopened + driver replays the candidate decision"
    },
    "208": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "#87 first paired quantized campaign: Qwen3-0.6B BF16 control vs native NVFP4 on Sparky, one exclusive action, accept = 0 newly-broken pairs on screen and held-out"
    },
    "209": {
@@ -572,7 +572,7 @@
     "title": "Tessera campaign and export lane: ask the contract, not the format name (#221)"
    },
    "227": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Bind Tessera cached scores and validation to the resolved activation-scale policy"
    },
    "228": {
@@ -588,28 +588,88 @@
     "title": "Footprint: production selector bypasses the tested manifest functions; latent double-subtraction"
    },
    "230": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Bind cached activation-aware costs to the resolved activation-scale policy (#227)"
    },
    "231": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Keep priced Hessian and scale inputs bound across the exporter handoff"
    },
    "232": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Scoped census replay accepts missing or contradictory runtime-image declarations"
    },
    "233": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Validate the producer\u2019s v9 smoke-record grammar before deriving admission"
    },
    "234": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Preserve serving conditions in production Tessera route admission"
+   },
+   "235": {
+    "state": "CLOSED",
+    "title": "Bind Tessera export inputs and preserve runtime admission evidence"
+   },
+   "236": {
+    "state": "CLOSED",
+    "title": "[P1] Grouped UCB underprices correlated AURA uncertainty"
+   },
+   "237": {
+    "state": "OPEN",
+    "title": "[P2] Connect joint AURA and prefill-aware selection for overlapping Tessera families"
+   },
+   "238": {
+    "state": "CLOSED",
+    "title": "Reuse shared anchored shapes for Tessera curve replay"
+   },
+   "239": {
+    "state": "CLOSED",
+    "title": "[P1] Coordinator recovery can mistake a helper exit for an ownership mismatch"
    },
    "24": {
     "state": "CLOSED",
     "title": "aggregate_fused_siblings: empty format intersection makes the group vanish from the DP (no fallback, no error)"
+   },
+   "240": {
+    "state": "CLOSED",
+    "title": "Recover completed helpers across process-exit races"
+   },
+   "241": {
+    "state": "CLOSED",
+    "title": "Add joint AURA scoring and prefill-aware discrete allocation"
+   },
+   "242": {
+    "state": "CLOSED",
+    "title": "Bound paired validation server startup memory"
+   },
+   "243": {
+    "state": "CLOSED",
+    "title": "Report actual priced coverage in Tessera campaigns"
+   },
+   "244": {
+    "state": "OPEN",
+    "title": "[P2] Cluster campaign CI still has a refill-order race and an unexplained recovery failure"
+   },
+   "245": {
+    "state": "CLOSED",
+    "title": "Retain refused pairing evidence and add bounded stack diagnostics"
+   },
+   "246": {
+    "state": "CLOSED",
+    "title": "Declare exact treatment stacks for paired quantized validation"
+   },
+   "247": {
+    "state": "CLOSED",
+    "title": "Preserve parent-owned LFM expert bias during packed routing"
+   },
+   "248": {
+    "state": "CLOSED",
+    "title": "Record completed Qwen3 validation and held-out NVFP4 refusal"
+   },
+   "249": {
+    "state": "CLOSED",
+    "title": "Read saved Tessera rung strings in export assignments"
    },
    "25": {
     "state": "CLOSED",
@@ -2050,7 +2110,7 @@
     "title": "Restore a parsed shard's RELEASE counts, and refuse a rewrite that cannot carry them (#336)"
    },
    "349": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P0] Rewriting a whole-unit RELEASE terminal redistributes its overrides"
    },
    "35": {
@@ -2058,32 +2118,60 @@
     "title": "LUT-plane block-scale refit: try a Gauss-Seidel sweep, the one untried optimiser on the 4-bit weight leg"
    },
    "350": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] can_shard admits row cuts of released partial-superblock units that slice_unit rejects"
    },
    "351": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P0] Reusing a legacy merge destination publishes old model configuration and tokenizer with new weights"
    },
    "352": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P0] A legacy merge destination symlink can overwrite a verified input and publish a false output seal"
    },
    "353": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Keep the symlink depth budget when resolving absolute in-root targets"
    },
    "354": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Bound directory-only glob filtering before it follows an out-of-tree symlink"
    },
    "355": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Preserve refused data-read dependencies when the changed file has an inert suffix"
+   },
+   "356": {
+    "state": "CLOSED",
+    "title": "Fix audited RELEASE, export publication, and test selection defects"
+   },
+   "357": {
+    "state": "CLOSED",
+    "title": "Explain Tessera's format family and prepare the 0.1.0 release"
+   },
+   "358": {
+    "state": "OPEN",
+    "title": "[P1] README-only changes omit tests that read the file through a helper"
+   },
+   "359": {
+    "state": "CLOSED",
+    "title": "Refuse ambient contract imports in smoke instrumentation"
    },
    "36": {
     "state": "CLOSED",
     "title": "E4M3 channel_sigma sits on a one-sided reach cliff, and the dyadic ladder cannot see the axis that matters"
+   },
+   "360": {
+    "state": "OPEN",
+    "title": "Historical FP8 legacy-byte reproduction fails on x86 CPU release validation"
+   },
+   "361": {
+    "state": "OPEN",
+    "title": "Source reader does not normalize PrismaBuild v2 snapshot metadata"
+   },
+   "362": {
+    "state": "OPEN",
+    "title": "Record Tessera 0.1.0 release validation"
    },
    "37": {
     "state": "CLOSED",

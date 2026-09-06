@@ -1289,8 +1289,9 @@ failure count is still a fact while a zero in it does not make the row green,
 because a suite can exit non-zero after a clean summary.
 
 `mode` is how that arm ran, and it changes what the row means as much as the
-device does. The GPU arm is always `serial` -- its workers would share one
-device and its CUDA venv has no xdist -- while the x86 arm runs `-n <cpus>`, so
+device does. The legacy `merge_suite.py` wrapper clamps its GPU arm to
+`serial`; direct PrismaBuild runs can install scoped xdist and reserve
+parallel workers on the same device. Its x86 arm runs `-n <cpus>`, so
 two rows of one commit can differ by more than the box. On `d11dc01` the gpu
 row is green and the x86 row is red at 5 failed, and those five are an
 `-n`-only defect in the suite's own conftest, not a CUDA one. Match a pair by
