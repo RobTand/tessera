@@ -36,6 +36,10 @@
 OWNED_CONTAINER_LABEL=${OWNED_CONTAINER_LABEL:-tessera.owner}
 OWNED_CONTAINER_IDS=()
 OWNED_CONTAINER_LAST_ID=""
+#: Cidfile paths handed to `docker run`, recorded BEFORE the run.  An id
+#: reaches OWNED_CONTAINER_IDS one line after the container exists, and a
+#: trap can run in that window -- see owned_container_cleanup.
+OWNED_CONTAINER_CIDFILES=()
 
 owned_container_cpu_list() {  # the CPUs this process may actually run on
   local list
@@ -153,9 +157,17 @@ owned_container_start() {
     return 2
   fi
   owned_container_limits || return 2
-  cidfile=${OWNED_CONTAINER_CIDDIR:-${OUT:-$PWD}}/owned-container-$$-${#OWNED_CONTAINER_IDS[@]}.cid
+  # Indexed by start attempts, not by ids: an attempt that registers no id
+  # still consumed a path, and reusing it would point two starts at one file.
+  cidfile=${OWNED_CONTAINER_CIDDIR:-${OUT:-$PWD}}/owned-container-$$-${#OWNED_CONTAINER_CIDFILES[@]}.cid
   mkdir -p "$(dirname "$cidfile")"
   rm -f "$cidfile"          # docker refuses to write a cidfile that exists
+  # Recorded before the run, because after it is too late: `docker run`
+  # creates the container and writes its id here, and this shell does not
+  # reach the next line until it returns.  A SIGTERM delivered during the
+  # run is handled at exactly that boundary -- container created, id not yet
+  # recorded -- so the cidfile is the only handle the trap can have.
+  OWNED_CONTAINER_CIDFILES+=("$cidfile")
   # `|| rc=$?` and not a bare call: callers run under `set -e`, where a failing
   # `docker run` would abort the shell on this line and the cidfile below would
   # never be read -- leaking exactly the container this helper exists to own.
@@ -166,7 +178,6 @@ owned_container_start() {
   # Read the id whether or not the run succeeded: a failed start is the case
   # that leaks, so its id is the one that matters most.
   id=$(cat "$cidfile" 2>/dev/null || true)
-  rm -f "$cidfile"
   if [[ "$id" =~ ^[0-9a-f]{64}$ ]]; then
     OWNED_CONTAINER_IDS+=("$id")
     OWNED_CONTAINER_LAST_ID=$id
@@ -175,6 +186,9 @@ owned_container_start() {
     echo "owned_container: docker run returned no container id for $name" >&2
     return 1
   fi
+  # Removed only now: until the id above is recorded, this file is the sole
+  # handle on the container, and cleanup reads it.
+  rm -f "$cidfile"
   if [ "$rc" -ne 0 ]; then
     echo "owned_container: docker run failed for $name (rc=$rc)" >&2
     return 1
@@ -189,7 +203,21 @@ owned_container_running() {  # by id, never by name
 
 # Idempotent: safe from an EXIT trap that also runs on the normal path.
 owned_container_cleanup() {
-  local id
+  local id cidfile
+  # Read the cidfiles first.  `docker run -d --cidfile` creates the container
+  # and writes its id there before it returns, so a trap that runs between
+  # that return and the id reaching OWNED_CONTAINER_IDS sees an empty list and
+  # a container that exists.  That window is where a SIGTERM during startup
+  # used to leak; the file closes it.  Reaping an id twice is harmless.
+  for cidfile in ${OWNED_CONTAINER_CIDFILES[@]+"${OWNED_CONTAINER_CIDFILES[@]}"}; do
+    id=$(cat "$cidfile" 2>/dev/null || true)
+    [[ "$id" =~ ^[0-9a-f]{64}$ ]] || continue
+    OWNED_CONTAINER_IDS+=("$id")
+  done
+  for cidfile in ${OWNED_CONTAINER_CIDFILES[@]+"${OWNED_CONTAINER_CIDFILES[@]}"}; do
+    rm -f "$cidfile"
+  done
+  OWNED_CONTAINER_CIDFILES=()
   [ "${#OWNED_CONTAINER_IDS[@]}" -gt 0 ] || return 0
   for id in "${OWNED_CONTAINER_IDS[@]}"; do
     [ -n "$id" ] || continue

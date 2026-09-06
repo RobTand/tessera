@@ -263,6 +263,46 @@ def test_a_signal_during_startup_reaps_the_container(tmp_path):
     assert (out / "events").read_text().count("lock_released") >= 1
 
 
+def test_cleanup_in_the_window_before_the_id_is_recorded_still_reaps(tmp_path):
+    """The window `test_a_signal_during_startup_reaps_the_container` races for.
+
+    `docker run -d --cidfile` creates the container and writes its id to the
+    cidfile before it returns, and the id reaches `OWNED_CONTAINER_IDS` on the
+    next line.  A trap runs at exactly that boundary, so cleanup can be called
+    with a container that exists and an empty id list.  The signal test can
+    only reach this state by winning a race -- it passed on an 8-shard fleet
+    run and failed in CI -- so this one assembles the state instead: the
+    cidfile registered as `owned_container_start` registers it, the container
+    written as the fake docker writes it, and nothing in `OWNED_CONTAINER_IDS`.
+
+    Without the cidfile scan, `owned_container_cleanup` returns on the empty
+    array and the container survives.
+    """
+    env = _env(tmp_path)
+    state = Path(env["FAKE_DOCKER_STATE"])
+    state.mkdir(parents=True, exist_ok=True)
+    cid = "b" * 64
+    (state / f"{cid}.json").write_text(
+        json.dumps({"name": "ts198-smoke-bf16", "running": True, "argv": ["run", "-d"]}))
+    cidfile = tmp_path / "owned-container-1-0.cid"
+    cidfile.write_text(cid)
+
+    script = tmp_path / "window.sh"
+    script.write_text(f"""#!/usr/bin/env bash
+set -euo pipefail
+source "{HELPER}"
+OWNED_CONTAINER_CIDFILES=("{cidfile}")
+OWNED_CONTAINER_IDS=()
+owned_container_cleanup
+""")
+    script.chmod(0o755)
+    proc = subprocess.run([str(script)], env=env, capture_output=True, text=True,
+                          timeout=60)
+    assert proc.returncode == 0, proc.stderr
+    assert _store(env) == {}, f"leaked from the pre-record window: {_store(env)}"
+    assert not cidfile.exists(), "cleanup left the cidfile behind"
+
+
 def test_a_preexisting_name_is_refused_not_removed(tmp_path):
     """Someone else's container under our name is refused, never reaped."""
     env = _env(tmp_path)
