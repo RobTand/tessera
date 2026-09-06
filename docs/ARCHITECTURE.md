@@ -6,6 +6,8 @@ Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
 **Provenance:** `v0.1.0` plus repository tooling updates (2026-09-06):
+Row-sliced dense owner counted once in the census planned-tensor roster
+against base `5ac9b72`;
 Mixed dense/routed campaign census coverage (PrismaQuant #253) against base `6faa5ce`;
 Dense header-only translator compatibility against base `6faa5ce`;
 Direct main/twin shard readability #366 and layer-config routed-stack handoff
@@ -2199,7 +2201,10 @@ duplicate or reordered spellings are not a second form of the same contract.
 campaign receipt. Its common plan, merged config and serving manifest must
 describe exactly one nonempty quantized population. Dense plan entries name
 source weight tensors; their ordered manifest roles join them to the fused
-serving owners validated by the shared exporter ownership rule. Routed
+serving owners validated by the shared exporter ownership rule. A
+row-sliced owner (#377) declares one role per attested output partition of
+ONE source tensor, so the planned-tensor roster counts source tensors, not
+roles: counting roles refuses the manifest the runtime builds exactly. Routed
 entries name complete stacks, including every expert projection. The existing
 `serving_parts.validate_explicit_plan` checks source-leaf/rung coverage and
 explicit `BF16`/`PASSTHROUGH` obligations; a `BF16` grid object remains a

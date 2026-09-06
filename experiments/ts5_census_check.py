@@ -200,7 +200,9 @@ def _dense_population(target, scheme, module, planned, dense_tensors, entry):
         for field, value in expected.items():
             _require(role.get(field) == value,
                      f"manifest dense {target} role {tensor}.{field} disagrees with scheme")
-        dense_tensors.append(tensor)
+    # The roster is of planned source tensors. A row-sliced owner (tessera#377)
+    # emits several roles for one tensor, so each tensor is counted once.
+    dense_tensors.extend(dict.fromkeys(r["tensor"] for r in roles))
     return len(roles)
 
 
