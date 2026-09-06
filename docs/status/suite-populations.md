@@ -111,3 +111,19 @@ of the v2 snapshot metadata. The earlier full x86 run is red and measured the
 pre-smoke-fix tree; its historical fixture failure reproduces on pristine master.
 Selected x86 checks on the final tree pass. No arm is represented by another
 arm's pass count.
+
+
+## Issue queue integration — 2026-09-06
+
+The full combined run below is red. Both arms measured verified source
+`0fa2332c8954d19391b048f46c02345ba70dd1ac3c95c513d0333c7692a2ff7b`;
+the distinct snapshot IDs are preserved. The CPU arm found two converter
+compatibility failures; the GPU arm found those and three encoder-bound
+slicing hashes affected by the CHANNEL correction. GPU also recorded one
+pre-existing historical-checkpoint xfail and 486 CUDA-allocating tests.
+[Receipt with both populations and verbatim skips](../measurements/issue-queue-integration-2026-09-06.json).
+
+| measured (UTC) | commit | master head? | arm | mode | device | passed | failed | skipped | not collected | exit |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| 2026-09-06T04:44:05Z | `56bd2abb42ca`<br>source `0fa2332c8954` | unknown | gpu | -n 12 | torch 2.11.0+cu130, 1 CUDA device(s), device 0 = NVIDIA GB10 | 3611 | 5 | 10 | 0 | 1 (pool) |
+| 2026-09-06T04:56:01Z | `32cc0312c95e`<br>source `0fa2332c8954` | unknown | x86 | -n 16 | torch 2.11.0+cpu reports no CUDA device | 3045 | 2 | 549 | 0 | 1 (pool) |
