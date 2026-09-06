@@ -41,7 +41,18 @@ def _git(root, *args):
                                    stderr=subprocess.DEVNULL, timeout=10)
 
 
-def _verified_stamp(root, commit, request_root, owner):
+def _snapshot_schema(root, commit):
+    """Recognize PB snapshots without treating an unknown version as source."""
+    subject = _git(root, "log", "-1", "--format=%s", commit).strip()
+    prefix = b"PrismaBuild pbrun checkout snapshot "
+    if not subject.startswith(prefix):
+        return None
+    version = subject[len(prefix):]
+    _require(version in (b"v1", b"v2"), "unsupported PB snapshot version")
+    return "prismaquant.prismabuild.pbrun_checkout_snapshot." + version.decode()
+
+
+def _verified_stamp(root, commit, request_root, owner, snapshot_schema):
     """The directory prefix locates requests; only the full checks verify one."""
     match = re.fullmatch(r"([0-9a-f]{12})\.[^/]+", root.parent.name)
     _require(root.name == "checkout" and match, "PB action locator is unavailable")
@@ -60,7 +71,7 @@ def _verified_stamp(root, commit, request_root, owner):
              and action["task"]["definition_version"] == "v1", "unsupported PB action")
     params = action["params"]
     snapshot = params["checkout_snapshot"]
-    _require(snapshot["schema"] == "prismaquant.prismabuild.pbrun_checkout_snapshot.v1"
+    _require(snapshot["schema"] == snapshot_schema
              and snapshot["commit"] == commit, "PB action names another snapshot")
     _require(snapshot["input"] in action["inputs"], "PB snapshot input is not sealed")
     _require(params["cwd"] == snapshot["subdirectory"], "PB logical cwd differs")
@@ -265,11 +276,13 @@ def measured_source(checkout, *, request_root=REQUEST_ROOT, owner=None,
         record["snapshot_commit"] = commit
         status_args = ("status", "--porcelain=v1", "--untracked-files=all", "-z")
         _require(not _git(root, *status_args), "source checkout is dirty")
-        is_snapshot = _git(root, "log", "-1", "--format=%s").strip() == b"PrismaBuild pbrun checkout snapshot v1"
+        snapshot_schema = _snapshot_schema(root, commit)
+        is_snapshot = snapshot_schema is not None
         excluded = None
         if is_snapshot:
             stamp = _verified_stamp(root, commit, request_root,
-                                    os.environ.get("PRISMABUILD_CONTAINER_OWNER") if owner is None else owner)
+                                    os.environ.get("PRISMABUILD_CONTAINER_OWNER") if owner is None else owner,
+                                    snapshot_schema)
             excluded = os.fsencode(stamp["path"])
         files = _source_files(root, commit, excluded)
         _require(_git(root, "rev-parse", "HEAD").decode().strip() == commit

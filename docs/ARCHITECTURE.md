@@ -5,7 +5,8 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
-**Provenance:** current as of `v0.1.0` (2026-09-05):
+**Provenance:** `v0.1.0` plus repository tooling updates (2026-09-05):
+PrismaBuild snapshot v2 source verification #361 against base `76ea29c`;
 smoke aggregation checkout-origin guard verified against base `9da0e62`;
 selector traversal budget #353, directory-glob boundary #354, and refused
 data-read suffix coverage #355 verified against base `8dc165b`;
@@ -82,6 +83,9 @@ the exact generated closure member verified against that action's sealed CAS
 request is omitted. The action-prefix directory is a bounded lookup hint,
 not proof: the full action key, snapshot commit, container owner, closure
 hash/size, logical path and generated filename fingerprint must all agree.
+Snapshot subjects v1 and v2 must match the sealed snapshot schema. Unknown
+snapshot versions yield `unknown`, rather than being hashed as ordinary Git
+source. Both supported versions retain the same strict closure verification.
 Other closure-looking tracked files remain source. Original-head and dirty
 stamps are never substituted for the actual source hash. Post-materialization
 dirty state, ambiguous/missing requests or failed verification yield `unknown`.
