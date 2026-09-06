@@ -469,3 +469,124 @@ def test_the_unit_table_carries_the_shape_the_rate_was_charged_on():
         # on a different row count, because the CHANNEL plane amortises over rows.
         assert (rows["model.layers.0.self_attn.q_proj"]["prismaquant_charged_bpp"]
                 < rows["model.layers.0.self_attn.k_proj"]["prismaquant_charged_bpp"])
+
+
+def test_shorthand_and_dictionary_preserve_mixed_dense_assignment():
+    config = uniform_config()
+    config["model.layers.0.mlp.down_proj"] = "BF16"
+    expected = build(config, one_layer_shapes(), with_control=False)
+    config = {name: entry["tessera_format"] if isinstance(entry, dict) else entry
+              for name, entry in config.items()}
+    assert build(config, one_layer_shapes(), with_control=False) == expected
+
+
+@pytest.mark.parametrize("entry", ["TESSERA_E4M3_K1_R1024\n",
+                                    {"tessera_format": "TESSERA_E4M3_K1_R1024\n"}])
+def test_rung_grammar_refuses_trailing_newlines(entry):
+    with pytest.raises(PLAN.PlanError, match="spelling"):
+        PLAN.parse_entry("model.layers.0.mlp.down_proj", entry)
+
+
+def _moe_plan_source(tmp_path, *, packed=False):
+    import torch
+    from safetensors.torch import save_file
+    from tessera.serving_parts import source_identity
+    import export_tessera_serving as export
+
+    src = tmp_path / "source"
+    src.mkdir()
+    stack = "model.layers.0.feed_forward.experts"
+    tensors = {f"model.layers.0.feed_forward.gate.weight": torch.zeros(2, 64),
+               "model.layers.0.self_attn.o_proj.weight": torch.zeros(64, 64)}
+    if packed:
+        tensors.update({f"{stack}.gate_up_proj.weight": torch.zeros(2, 128, 64),
+                        f"{stack}.down_proj.weight": torch.zeros(2, 64, 64)})
+    else:
+        tensors.update({f"{stack}.{expert}.{role}.weight": torch.zeros(64, 64)
+                        for expert in range(2) for role in ("w1", "w2", "w3")})
+    save_file(tensors, str(src / "model.safetensors"))
+    config = {"architectures": ["Lfm2MoeForCausalLM"], "hidden_size": 64,
+              "moe_intermediate_size": 64, "num_experts": 2}
+    (src / "config.json").write_text(json.dumps(config))
+    request = {stack: {"grid": "E4M3", "q256": 1024,
+                      "source_layout": "out_first_chunked" if packed else "unpacked_per_expert"}}
+    projection = export.project_expert_plan({n: tuple(t.shape) for n, t in tensors.items()}, config, request)
+    projection["source"] = source_identity(src)
+    keys = ("cols", "expert", "group", "projection", "rows", "source_layout",
+            "source_slice", "source_tensor", "tensor")
+    units = {u["tensor"][:-7]: {k: u[k] for k in keys}
+             for u in projection["stacks"][stack]["units"]}
+    carried = {"schema": "prismaquant.tessera_expert_projection.v1", "producer": projection,
+               "stacks": {stack: units}, "request": request}
+    return src, stack, units, carried
+
+
+@pytest.mark.parametrize("packed", [False, True])
+@pytest.mark.parametrize("choice", ["TESSERA_E4M3_K1_R1024", "BF16"])
+def test_actual_translator_hands_off_whole_expert_stacks(tmp_path, monkeypatch, packed, choice):
+    import export_tessera_serving as export
+    src, stack, units, carried = _moe_plan_source(tmp_path, packed=packed)
+    assignment = {name: choice for name in units}
+    router = "model.layers.0.feed_forward.gate"
+    assignment[router] = "BF16"
+    assignment["model.layers.0.self_attn.o_proj"] = "BF16"
+    assignment["__prismaquant__"] = {"tessera_expert_projection": carried}
+    path, out = tmp_path / "assignment.json", tmp_path / "plan.json"
+    path.write_text(json.dumps(assignment))
+    PLAN.main([str(path), str(src), str(out), "--no-uniform-control"])
+    plan = json.loads(out.read_text())
+    assert router + ".weight" not in plan
+    assert not set(plan) & {n + ".weight" for n in units}
+    assert set(plan) == {stack, "model.layers.0.self_attn.o_proj.weight"}
+    provenance = json.loads(out.with_suffix(".json.provenance.json").read_text())
+    assert provenance["coverage"]["unplanned_body_linears"] == 0
+    dictionary = {name: tessera(entry) if isinstance(entry, str) and entry.startswith("TESSERA_") else entry
+                  for name, entry in assignment.items()}
+    path.write_text(json.dumps(dictionary))
+    PLAN.main([str(path), str(src), str(out), "--no-uniform-control"])
+    assert json.loads(out.read_text()) == plan
+    assert json.loads(out.with_suffix(".json.provenance.json").read_text()) == provenance
+    if not packed:
+        dictionary.pop("__prismaquant__")
+        path.write_text(json.dumps(dictionary))
+        PLAN.main([str(path), str(src), str(out), "--no-uniform-control"])
+        assert json.loads(out.read_text()) == plan
+    if choice == "BF16":
+        assert plan[stack] == "BF16"
+        assert provenance["totals"]["quantized_params"] == 0
+    else:
+        assert plan[stack] == carried["request"][stack]
+        _, dense, packed_shapes, routed = export.quantizable(src)
+        actual = export.project_expert_plan({**dense, **packed_shapes, **routed},
+                    json.loads((src / "config.json").read_text()), {stack: plan[stack]})
+        assert actual["stacks"][stack]["units"] == carried["producer"]["stacks"][stack]["units"]
+        assert provenance["totals"]["quantized_params"] == 6 * 64 * 64
+
+    class PlanningCompleted(Exception):
+        pass
+
+    def after_planning(_config, targets):
+        assert targets == ([stack] if choice != "BF16" else [])
+        raise PlanningCompleted
+
+    monkeypatch.setattr(export, "unrouted_modules", after_planning)
+    argv = ["export", str(src), str(tmp_path / "export"), "--plan-json", str(out),
+            "--grid", "E4M3", "--q256", "1024", "--device", "cpu"]
+    if choice == "BF16":
+        argv += ["--layers", "0"]  # explicitly request a pure passthrough copy
+    monkeypatch.setattr("sys.argv", argv)
+    with pytest.raises(PlanningCompleted):
+        export.main()
+
+
+@pytest.mark.parametrize("bad_choice", ["BF16", "TESSERA_E4M3_K1_R1083"])
+def test_translator_refuses_incompatible_projected_stack_before_export(tmp_path, bad_choice):
+    src, stack, units, carried = _moe_plan_source(tmp_path)
+    assignment = {name: "TESSERA_E4M3_K1_R1024" for name in units}
+    assignment[next(iter(units))] = bad_choice
+    assignment["__prismaquant__"] = {"tessera_expert_projection": carried}
+    path, out = tmp_path / "assignment.json", tmp_path / "plan.json"
+    path.write_text(json.dumps(assignment))
+    with pytest.raises(PLAN.PlanError, match="whole stack"):
+        PLAN.main([str(path), str(src), str(out), "--no-uniform-control"])
+    assert not out.exists()

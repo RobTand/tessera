@@ -100,8 +100,6 @@ import sys
 from fractions import Fraction
 from pathlib import Path
 
-from safetensors import safe_open
-
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from tessera.control import (  # noqa: E402
@@ -115,7 +113,11 @@ from tessera.errors import TesseraError  # noqa: E402
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from export_tessera_serving import fused_module, module_scheme_key  # noqa: E402
+from export_tessera_serving import (  # noqa: E402
+    MOE_ROUTER, MOE_SOURCE_UNPACKED, body_layer, expert_stacks, fused_module, module_scheme_key,
+    packed_expert_stacks, project_expert_plan, quantizable,
+)
+from tessera.serving_parts import source_identity  # noqa: E402
 
 #: ``TESSERA_<BASE>_K<arity>_R<rung>`` -- the allocator's format spelling.
 FORMAT = re.compile(r"^TESSERA_(?P<base>[A-Z0-9]+)_K(?P<arity>\d+)_R(?P<rung>\d+)$")
@@ -142,7 +144,7 @@ def grid_of(family: str) -> str:
     The exporter's ``--grid`` vocabulary spells arity as an ``xN`` suffix and
     arity 1 as a bare base, which is the same object under a different name.
     """
-    match = FAMILY.match(family)
+    match = FAMILY.fullmatch(family)
     if not match:
         raise PlanError(f"not a Tessera family name: {family!r}")
     arity = int(match.group("arity"))
@@ -152,12 +154,16 @@ def grid_of(family: str) -> str:
 def parse_entry(qname: str, entry) -> tuple:
     """``(kind, payload)``: ``("tessera", (grid, q256))``, ``("bf16", None)`` or ``("other", label)``."""
     if isinstance(entry, str):
-        return ("bf16", None) if entry in BF16_CHOICES else ("other", entry)
+        if entry in BF16_CHOICES:
+            return ("bf16", None)
+        if not entry.startswith("TESSERA_"):
+            return ("other", entry)
+        entry = {"tessera_format": entry}
     if not isinstance(entry, dict):
         raise PlanError(f"{qname}: unreadable layer_config entry {entry!r}")
     fmt = entry.get("tessera_format")
     if fmt:
-        if GROUP.match(fmt):
+        if GROUP.fullmatch(fmt):
             raise PlanError(
                 f"{qname}: {fmt!r} is a whole-GROUP option (one family, a rung per member), "
                 "not a rung, and there is no single rate it could stand for -- the members "
@@ -166,7 +172,7 @@ def parse_entry(qname: str, entry) -> tuple:
                 "in expand_fused_sibling_assignment before writing an assignment; a plan that "
                 "still carries the group name means that expansion did not run.  Re-export "
                 "the layer_config from an allocator that expands it.")
-        match = FORMAT.match(fmt)
+        match = FORMAT.fullmatch(fmt)
         if not match:
             raise PlanError(f"{qname}: {fmt!r} is not the TESSERA_<BASE>_K<arity>_R<rung> spelling")
         family = f"TESSERA_{match.group('base')}_K{match.group('arity')}"
@@ -185,23 +191,71 @@ def parse_entry(qname: str, entry) -> tuple:
 
 
 def body_weights(model: Path) -> dict:
-    """``{tensor name: (rows, cols)}`` for every 2-D ``model.layers.*.weight``."""
-    index = model / "model.safetensors.index.json"
-    if index.exists():
-        shards = sorted({s for s in json.loads(index.read_text())["weight_map"].values()})
-    else:
-        shards = sorted(p.name for p in model.glob("*.safetensors"))
-    shapes = {}
-    for shard in shards:
-        with safe_open(str(model / shard), framework="pt") as handle:
-            for name in handle.keys():
-                if name.startswith("model.layers.") and name.endswith(".weight"):
-                    shape = tuple(handle.get_slice(name).get_shape())
-                    if len(shape) == 2:
-                        shapes[name] = shape
+    """Producer-classified dense and unpacked logical body weights."""
+    _shards, dense, _packed, routed = quantizable(model)
+    shapes = {**dense, **routed}
     if not shapes:
-        raise PlanError(f"no 2-D model.layers.*.weight tensors in {model}")
+        raise PlanError(f"no 2-D body weight tensors in {model}")
     return shapes
+
+
+def model_plan_context(model: Path, config: dict):
+    """Use the exporter's classification and its carried projection, never guess slices."""
+    _shards, dense, packed, routed = quantizable(model)
+    stacks = expert_stacks(routed)
+    packed_stacks = packed_expert_stacks(packed)
+    if set(stacks) & set(packed_stacks):
+        raise PlanError("expert stack appears in both packed and unpacked source layouts")
+    shapes = {**dense, **routed}
+    members = {stack: [name for expert in experts.values() for name, _shape in expert.values()]
+               for stack, experts in stacks.items()}
+    layouts = {stack: MOE_SOURCE_UNPACKED for stack in stacks}
+    carried = (config.get("__prismaquant__") or {}).get("tessera_expert_projection")
+    if carried is not None:
+        if not isinstance(carried, dict) or carried.get("schema") != "prismaquant.tessera_expert_projection.v1":
+            raise PlanError("unreadable carried Tessera expert projection")
+        producer = carried.get("producer", {})
+        request = carried.get("request")
+        if not isinstance(request, dict) or producer.get("schema") != "tessera.expert_projection.v1":
+            raise PlanError("carried projection lacks the producer request/answer")
+        if producer.get("source") != source_identity(model):
+            raise PlanError("carried expert projection source identity disagrees with this checkpoint")
+        current = project_expert_plan({**dense, **packed, **routed},
+                    json.loads((model / "config.json").read_text()), request)
+        if current["stacks"] != producer.get("stacks"):
+            raise PlanError("carried expert projection disagrees with the producer's current source projection")
+        bindings = carried.get("stacks")
+        if not isinstance(bindings, dict) or set(bindings) != set(current["stacks"]):
+            raise PlanError("carried projection stack binding does not cover its producer answer")
+        for stack, projected in current["stacks"].items():
+            expected = {unit["tensor"][:-len(".weight")]:
+                        {key: value for key, value in unit.items() if key != "wire"}
+                        for unit in projected["units"]}
+            if bindings[stack] != expected:
+                raise PlanError(f"{stack}: carried unit binding disagrees with the producer projection")
+            members[stack] = [unit["tensor"] for unit in projected["units"]]
+            layouts[stack] = projected["source_layout"]
+            shapes.update({unit["tensor"]: (unit["rows"], unit["cols"])
+                           for unit in projected["units"]})
+    # An unallocated packed stack is an explicit passthrough. Quantized logical
+    # units require the producer projection above to put them in the shape table.
+    for stack in packed_stacks:
+        members.setdefault(stack, [])
+    return shapes, members, layouts
+
+
+def stack_plan(plan: dict, members: dict, layouts: dict) -> dict:
+    """Replace logical leaves only when the whole stack has one exact choice."""
+    result = dict(plan)
+    for stack, tensors in sorted(members.items()):
+        choices = [result.pop(tensor) for tensor in tensors]
+        choice = choices[0] if choices else "BF16"
+        if any(value != choice for value in choices):
+            raise PlanError(f"{stack}: the producer serves the whole stack at one exact rung; "
+                            "mixed Tessera/BF16 choices or differing rungs cannot be exported")
+        result[stack] = (dict(choice, source_layout=layouts[stack])
+                         if isinstance(choice, dict) else choice)
+    return result
 
 
 def role_of(qname: str) -> str:
@@ -209,8 +263,7 @@ def role_of(qname: str) -> str:
 
 
 def layer_of(qname: str) -> int:
-    parts = qname.split(".")
-    return int(parts[2])
+    return body_layer(qname + ".weight")
 
 
 def fused_key(qname: str):
@@ -542,12 +595,37 @@ def main(argv=None):
     args = ap.parse_args(argv)
 
     config = json.loads(args.layer_config.read_text())
-    shapes = body_weights(args.model)
-    plan, provenance = build(config, shapes, cover=args.cover,
+    shapes, stack_members, layouts = model_plan_context(args.model, config)
+    if args.cover != "as-allocated" and stack_members:
+        raise PlanError("broadcast-by-role cannot extrapolate routed expert stacks; use as-allocated")
+    routers = {name for name in shapes if MOE_ROUTER.fullmatch(name)}
+    for name in routers:
+        qname = name[:-len(".weight")]
+        if qname in config and parse_entry(qname, config[qname])[0] != "bf16":
+            raise PlanError(f"{qname}: an immutable MoE router must remain BF16")
+    # Router BF16 is a disposition, not an exporter override: GateLinear never
+    # asks a quantization method to load it and the exporter refuses that key.
+    allocation = {name: entry for name, entry in config.items()
+                  if name + ".weight" not in routers}
+    shapes = {name: shape for name, shape in shapes.items() if name not in routers}
+    for name in allocation:
+        if not name.startswith("__") and name + ".weight" not in shapes:
+            raise PlanError(f"{name}: allocation unit is absent from the producer's logical body projection")
+    plan, provenance = build(allocation, shapes, cover=args.cover,
                              allow_disagreement=args.allow_fused_disagreement,
                              prismaquant=args.prismaquant,
                              control_rule=args.control_rule,
                              with_control=not args.no_uniform_control)
+    logical_plan = plan
+    plan = stack_plan(logical_plan, stack_members, layouts)
+    # Re-enter the producer's ordinary stack planner before writing the handoff.
+    _shards, dense, packed, routed = quantizable(args.model)
+    project_expert_plan({**dense, **packed, **routed},
+                       json.loads((args.model / "config.json").read_text()),
+                       {stack: plan[stack] for stack in stack_members if isinstance(plan[stack], dict)})
+    provenance["expert_stacks"] = {stack: {"units": members, "planned_as": plan[stack]}
+                                   for stack, members in stack_members.items()}
+    provenance["immutable_bf16_routers"] = sorted(routers)
     provenance["source_layer_config"] = str(args.layer_config.resolve())
     provenance["model"] = str(args.model.resolve())
     args.out.parent.mkdir(parents=True, exist_ok=True)
@@ -603,11 +681,11 @@ def main(argv=None):
               f"tessera#2): serve the byte-matched uniform control "
               f"(experiments/uniform_control.py verify) before this plan ships.")
     if args.write_uniform_plan is not None:
-        units = units_from_plan(plan, shapes)
+        units = units_from_plan(logical_plan, shapes)
         control = uniform_control(units, rule=args.control_rule)
         args.write_uniform_plan.parent.mkdir(parents=True, exist_ok=True)
         args.write_uniform_plan.write_text(
-            json.dumps(control.plan, indent=2, sort_keys=True))
+            json.dumps(stack_plan(control.plan, stack_members, layouts), indent=2, sort_keys=True))
         print(f"  -> {args.write_uniform_plan}  (uniform {control.grid} "
               f"R{control.q256}, the control arm)")
     print(f"  -> {args.out}\n  -> {sidecar}")
