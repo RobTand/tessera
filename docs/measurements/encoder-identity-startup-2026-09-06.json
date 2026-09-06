@@ -1,0 +1,852 @@
+{
+  "actions": {
+    "after_batch": {
+      "action_key": "561c1b1d3ecec4bbd84049f645fca8529713f74b529f39382cdf1a098bbde4e0",
+      "cas": {
+        "payload_sha256": "95a5185f5a4e00fedee3416ad135ab384fe4ae58ad5aa917eeb5000a4d314c5f",
+        "payload_verified_sha256": "95a5185f5a4e00fedee3416ad135ab384fe4ae58ad5aa917eeb5000a4d314c5f",
+        "receipt_sha256": "eb73f3507275c3fb1fe2dabba2bee17a0e0dd232841555f8259af07f5bb90fd2",
+        "verified": true
+      },
+      "elapsed_s": 11.73143744468689,
+      "host": "sparky",
+      "resource_telemetry": {
+        "complete": true,
+        "cpu_seconds": 11.42496,
+        "memory_max_bytes": 8589934592,
+        "memory_peak_bytes": 434618368,
+        "oom_kill": 0,
+        "oom_local": 0,
+        "wall_seconds": 11.747407184011536
+      },
+      "returncode": 0,
+      "terminal_state": "done"
+    },
+    "after_profile": {
+      "action_key": "9321392ea6b9fe108002b3365c8d00bd15272cee81c2596cedc2b7dbfa1be6a5",
+      "cas": {
+        "payload_sha256": "06b9316e55041549539ff50b3a4ead92c4a27a5714b1da01726d34b94f622915",
+        "payload_verified_sha256": "06b9316e55041549539ff50b3a4ead92c4a27a5714b1da01726d34b94f622915",
+        "receipt_sha256": "33cee2f77a68b3591fafd50bf9bbcd034ebb57fe889e37af6c2579ce103b21c3",
+        "verified": true
+      },
+      "elapsed_s": 7.332270622253418,
+      "host": "sparky",
+      "resource_telemetry": {
+        "complete": true,
+        "cpu_seconds": 7.054439,
+        "memory_max_bytes": 8589934592,
+        "memory_peak_bytes": 434810880,
+        "oom_kill": 0,
+        "oom_local": 0,
+        "wall_seconds": 7.347050816984847
+      },
+      "returncode": 0,
+      "terminal_state": "done"
+    },
+    "before_batch": {
+      "action_key": "f5e9b816b80a4755ffdd5017f9bc1e25b6655504cb5d287f51f0b4a3e4ff165e",
+      "cas": {
+        "payload_sha256": "b2f3f1e1ede941b55a65bd3493d53012bac878f621c3dda2144e8bce230df2d5",
+        "payload_verified_sha256": "b2f3f1e1ede941b55a65bd3493d53012bac878f621c3dda2144e8bce230df2d5",
+        "receipt_sha256": "95d1184063b345a43b8a30a8bfc4280a430dfdcf7d2b654e6eb8975a42522ac1",
+        "verified": true
+      },
+      "elapsed_s": 92.54364705085754,
+      "host": "sparky",
+      "resource_telemetry": {
+        "complete": true,
+        "cpu_seconds": 92.238547,
+        "memory_max_bytes": 8589934592,
+        "memory_peak_bytes": 4701855744,
+        "oom_kill": 0,
+        "oom_local": 0,
+        "wall_seconds": 92.55777201199089
+      },
+      "returncode": 0,
+      "terminal_state": "done"
+    },
+    "before_profile": {
+      "action_key": "c8a3e326233193e8bf734dbc5e8b667b7c98fee6813105e3a74029c77da13bbc",
+      "cas": {
+        "payload_sha256": "2dadfead6370c302453de0f661dd38a8c954069bf3fb1826c904734f556475d3",
+        "payload_verified_sha256": "2dadfead6370c302453de0f661dd38a8c954069bf3fb1826c904734f556475d3",
+        "receipt_sha256": "a8554449474415d33c7b2c1b460290072f700ffd47bb302eef112a1dc50502b1",
+        "verified": true
+      },
+      "elapsed_s": 86.44653749465942,
+      "host": "sparky",
+      "resource_telemetry": {
+        "complete": true,
+        "cpu_seconds": 86.157391,
+        "memory_max_bytes": 8589934592,
+        "memory_peak_bytes": 4702277632,
+        "oom_kill": 0,
+        "oom_local": 0,
+        "wall_seconds": 86.46587047501816
+      },
+      "returncode": 0,
+      "terminal_state": "done"
+    },
+    "docs_baseline": {
+      "action_key": "73d5f0af3a6a88fe9b155065650022d0f8d049a0a285f10425e55bce4e4fdbd4",
+      "cas": {
+        "payload_sha256": "e0b590dc342f6baa1adf4c1e6215d2b64bad30c5c4cf9e90343c6d1c5e48b571",
+        "payload_verified_sha256": "e0b590dc342f6baa1adf4c1e6215d2b64bad30c5c4cf9e90343c6d1c5e48b571",
+        "receipt_sha256": "111d16c7da358fabfbd06555372fc7a37c7e775c2898bc502065ee66ff177f74",
+        "verified": true
+      },
+      "elapsed_s": 4.380829811096191,
+      "host": "sparky",
+      "resource_telemetry": {
+        "complete": true,
+        "cpu_seconds": 5.926691,
+        "memory_max_bytes": 4294967296,
+        "memory_peak_bytes": 214376448,
+        "oom_kill": 0,
+        "oom_local": 0,
+        "wall_seconds": 4.394366375985555
+      },
+      "returncode": 0,
+      "terminal_state": "done"
+    },
+    "docs_fixed": {
+      "action_key": "da2f18a87f3f16cd2b7675127c4f6c945fcc2de43013d34f25b7c32c0ba3e333",
+      "cas": {
+        "payload_sha256": "707d59ea777ca1c86bd63e68d82ae179d757cb104c98e71b790db849cadff361",
+        "payload_verified_sha256": "707d59ea777ca1c86bd63e68d82ae179d757cb104c98e71b790db849cadff361",
+        "receipt_sha256": "377aab860f3010b28223610ce90b1ed4b0799abebcf9863b43a726a3e1af1e44",
+        "verified": true
+      },
+      "elapsed_s": 5.233505725860596,
+      "host": "dl380g10",
+      "resource_telemetry": {
+        "complete": true,
+        "cpu_seconds": 7.239786,
+        "memory_max_bytes": 4294967296,
+        "memory_peak_bytes": 573882368,
+        "oom_kill": 0,
+        "oom_local": 0,
+        "wall_seconds": 5.266789081000752
+      },
+      "returncode": 0,
+      "terminal_state": "done"
+    },
+    "selected_cpu": {
+      "action_key": "c9ea2770123262f372857fe5f617515dd10bebb8e65fcfae1502efc0d13bb993",
+      "cas": {
+        "reason": "nonzero action publishes no successful CAS result",
+        "verified": false
+      },
+      "elapsed_s": 256.0019996166229,
+      "host": "sparklina",
+      "resource_telemetry": {
+        "complete": true,
+        "cpu_seconds": 1314.510324,
+        "memory_max_bytes": 51539607552,
+        "memory_peak_bytes": 9219502080,
+        "oom_kill": 0,
+        "oom_local": 0,
+        "wall_seconds": 256.017263957001
+      },
+      "returncode": 1,
+      "terminal_state": "failed"
+    }
+  },
+  "arms": {
+    "after": {
+      "affinity": [
+        5
+      ],
+      "commit": "165798efa8d927ad22c45e336af7ff06c586d416",
+      "default_sigma": {
+        "BF16": 7.125611986528897e+37,
+        "E2M1": 2.121320343559643,
+        "E2M1x2": 2.121320343559643,
+        "E4M3": 94.18039850841602
+      },
+      "default_sigma_cold_calls": [
+        {
+          "name": "BF16",
+          "seconds": 0.08330327199655585,
+          "sigma": 7.125611986528897e+37
+        },
+        {
+          "name": "E4M3",
+          "seconds": 0.06796597101492807,
+          "sigma": 94.18039850841602
+        },
+        {
+          "name": "E2M1",
+          "seconds": 0.06708401499781758,
+          "sigma": 2.121320343559643
+        },
+        {
+          "name": "E2M1x2",
+          "seconds": 0.06683039799099788,
+          "sigma": 2.121320343559643
+        }
+      ],
+      "elapsed_s": 10.33036756515503,
+      "finished_unix": 1788668776.5159175,
+      "fixtures": [
+        {
+          "encoded_sha256": "412242e0cda9b3dd5c8ec0137beb547177b73b2ca6b541237cdb485dc0fa173c",
+          "label": "e4m3-1024/window-channel",
+          "seconds": 0.913618012011284
+        },
+        {
+          "encoded_sha256": "a41ce4e9cae2ad908c01ca60023960a5ffbf5823afd938053215bab1106319ae",
+          "label": "bf16-1024/window-channel",
+          "seconds": 1.2832838899921626
+        },
+        {
+          "encoded_sha256": "77c1e5d5eab0a709c96c582d94160261299f2d1c2dff96df6e617094f4237f45",
+          "label": "e2m1x2-768/window-lut",
+          "seconds": 0.18941152698243968
+        },
+        {
+          "encoded_sha256": "eef825b3939cc5eea426dcb247800e7cf61d0b924333f37f50f74fdffcfd0357",
+          "label": "e2m1x2-896/tcq-lut",
+          "seconds": 0.5395303720142692
+        },
+        {
+          "encoded_sha256": "dcf8a63b328d5527dfd49feddb303c0ba8c81362b5b04180767224beeeb75924",
+          "label": "e2m1-768/tcq-lut",
+          "seconds": 0.5319039049791172
+        },
+        {
+          "encoded_sha256": "28a934d24d952b4e395a9cfcb3188476997c88a22ca6e78c60363faf3bae4125",
+          "label": "e4m3-1024/channel+activation",
+          "seconds": 0.5115265659987926
+        },
+        {
+          "encoded_sha256": "9ed53b7dfd403b5a80ad3ec7889ab030fb63fd8c28434d9efef20f4a9ba0f27d",
+          "label": "e2m1x2-768/lut+activation",
+          "seconds": 0.13905168400378898
+        },
+        {
+          "encoded_sha256": "b2da616f2433f9bde8ba772b260b5484309fb937275a821c4a2a3260fcb42ec1",
+          "label": "e4m3-1024/window-channel-unraised-boundary",
+          "seconds": 0.11122776599950157
+        },
+        {
+          "encoded_sha256": "7cc1b0314b166ea53b07808a0067d2f47953770f50de2969c4a0c95bb21b8ede",
+          "label": "e2m1-768/s6b",
+          "seconds": 0.24517737899441272
+        },
+        {
+          "encoded_sha256": "372953223482a06fb1db1e15a7e7aa64cc02bce6d535c1789a4c72915b528bcc",
+          "label": "e2m1-768/diagonals",
+          "seconds": 0.2449500339862425
+        },
+        {
+          "encoded_sha256": "88b682934c9a0f9de974033b817eb9d54055d63b1a06764b45fdeb81eac17202",
+          "label": "e2m1-256/completion",
+          "seconds": 0.6547220119973645
+        },
+        {
+          "encoded_sha256": "29429b9bac683b76506193bcbd57cbe8e996e609a229fe84ec7470817792abdd",
+          "label": "e2m1-768/release",
+          "seconds": 0.03595144298742525
+        },
+        {
+          "encoded_sha256": "20873b76261a0a91925a26c30a5f4b03853bf5e621d6b0452c84ed2fbf65ea98",
+          "label": "e2m1-768/shard",
+          "seconds": 0.49190180501318537
+        }
+      ],
+      "host": "sparky",
+      "id": "220ee0aaed5fd628f6fe92c02b08cbdf90b6e26b76313fa505a9b32fecbf973c",
+      "netdata": {
+        "gpu_power_samples_w": [
+          4
+        ],
+        "host_cpu_max_percent": 11.7262202,
+        "host_cpu_mean_percent": 6.7887778,
+        "host_cpu_samples": 9
+      },
+      "platform": "Linux-6.17.0-1032-nvidia-aarch64-with-glibc2.39",
+      "python": "3.12.3 (main, Jul 15 2026, 23:46:41) [GCC 13.3.0]",
+      "rusage": {
+        "maxrss": 625524,
+        "stime": 0.142946,
+        "utime": 10.923923
+      },
+      "started_unix": 1788668766.18555,
+      "threads": 1,
+      "torch": "2.11.0+cu130",
+      "units": [
+        {
+          "blob_sha256": "d1b81c321441e439acead41d926e02d6d1af449dcd4dbe00233aa028649641fb",
+          "bytes": 18072,
+          "index": 0,
+          "seconds": 6.451732456975151
+        },
+        {
+          "blob_sha256": "e07efe9293bf95504498a521eb7ba77b1b0c3cc8f53599292d6034db59c461dc",
+          "bytes": 18072,
+          "index": 1,
+          "seconds": 0.5537840529868845
+        },
+        {
+          "blob_sha256": "d44ef4fb028b9fd3fa0d28df2a55573aab262c50a84040b875a1d739c17375e1",
+          "bytes": 18072,
+          "index": 2,
+          "seconds": 0.5552219310193323
+        },
+        {
+          "blob_sha256": "06908e07cad0e37766fe173c3662162b3e8dc08468eba64d677861b75abf6164",
+          "bytes": 18072,
+          "index": 3,
+          "seconds": 0.556053662992781
+        },
+        {
+          "blob_sha256": "7f7eafcf83f42c7b01db4819fbe2d4f0c50a37fe7b1750c67cf97fdaed980405",
+          "bytes": 18072,
+          "index": 4,
+          "seconds": 0.5539665970136411
+        },
+        {
+          "blob_sha256": "5e16e28d098ce822d0f779647c7575f8ad6b8744b3331f50d3c800239e8b5377",
+          "bytes": 18072,
+          "index": 5,
+          "seconds": 0.5538395089970436
+        },
+        {
+          "blob_sha256": "fa189e517fd3475a9cfc66bd065141d383ba26554c7740a21b6a2430eff59b3e",
+          "bytes": 18072,
+          "index": 6,
+          "seconds": 0.5528304809995461
+        },
+        {
+          "blob_sha256": "c8461c03f2be97dc1baa8e2ea90fe6c4b9aeb5634b17ecad80d1620585526af3",
+          "bytes": 18072,
+          "index": 7,
+          "seconds": 0.5527873440005351
+        }
+      ]
+    },
+    "before": {
+      "affinity": [
+        5
+      ],
+      "commit": "5c5cd1a570fcf0bbc739cbedd78a8354ac5da50b",
+      "default_sigma": {
+        "BF16": 7.125611986528897e+37,
+        "E2M1": 2.121320343559643,
+        "E2M1x2": 2.121320343559643,
+        "E4M3": 94.18039850841602
+      },
+      "default_sigma_cold_calls": [
+        {
+          "name": "BF16",
+          "seconds": 80.79562924901256,
+          "sigma": 7.125611986528897e+37
+        },
+        {
+          "name": "E4M3",
+          "seconds": 0.10060627700295299,
+          "sigma": 94.18039850841602
+        },
+        {
+          "name": "E2M1",
+          "seconds": 0.06805078699835576,
+          "sigma": 2.121320343559643
+        },
+        {
+          "name": "E2M1x2",
+          "seconds": 0.06772985801217146,
+          "sigma": 2.121320343559643
+        }
+      ],
+      "elapsed_s": 91.18533635139465,
+      "finished_unix": 1788668763.5549712,
+      "fixtures": [
+        {
+          "encoded_sha256": "412242e0cda9b3dd5c8ec0137beb547177b73b2ca6b541237cdb485dc0fa173c",
+          "label": "e4m3-1024/window-channel",
+          "seconds": 0.9488743820111267
+        },
+        {
+          "encoded_sha256": "a41ce4e9cae2ad908c01ca60023960a5ffbf5823afd938053215bab1106319ae",
+          "label": "bf16-1024/window-channel",
+          "seconds": 82.00113029300701
+        },
+        {
+          "encoded_sha256": "77c1e5d5eab0a709c96c582d94160261299f2d1c2dff96df6e617094f4237f45",
+          "label": "e2m1x2-768/window-lut",
+          "seconds": 0.19206997100263834
+        },
+        {
+          "encoded_sha256": "eef825b3939cc5eea426dcb247800e7cf61d0b924333f37f50f74fdffcfd0357",
+          "label": "e2m1x2-896/tcq-lut",
+          "seconds": 0.5401790140022058
+        },
+        {
+          "encoded_sha256": "dcf8a63b328d5527dfd49feddb303c0ba8c81362b5b04180767224beeeb75924",
+          "label": "e2m1-768/tcq-lut",
+          "seconds": 0.5339289699913934
+        },
+        {
+          "encoded_sha256": "28a934d24d952b4e395a9cfcb3188476997c88a22ca6e78c60363faf3bae4125",
+          "label": "e4m3-1024/channel+activation",
+          "seconds": 0.5086648229917046
+        },
+        {
+          "encoded_sha256": "9ed53b7dfd403b5a80ad3ec7889ab030fb63fd8c28434d9efef20f4a9ba0f27d",
+          "label": "e2m1x2-768/lut+activation",
+          "seconds": 0.139429110015044
+        },
+        {
+          "encoded_sha256": "b2da616f2433f9bde8ba772b260b5484309fb937275a821c4a2a3260fcb42ec1",
+          "label": "e4m3-1024/window-channel-unraised-boundary",
+          "seconds": 0.11124871001811698
+        },
+        {
+          "encoded_sha256": "7cc1b0314b166ea53b07808a0067d2f47953770f50de2969c4a0c95bb21b8ede",
+          "label": "e2m1-768/s6b",
+          "seconds": 0.24842545698629692
+        },
+        {
+          "encoded_sha256": "372953223482a06fb1db1e15a7e7aa64cc02bce6d535c1789a4c72915b528bcc",
+          "label": "e2m1-768/diagonals",
+          "seconds": 0.24769670199020766
+        },
+        {
+          "encoded_sha256": "88b682934c9a0f9de974033b817eb9d54055d63b1a06764b45fdeb81eac17202",
+          "label": "e2m1-256/completion",
+          "seconds": 0.6552801410143729
+        },
+        {
+          "encoded_sha256": "29429b9bac683b76506193bcbd57cbe8e996e609a229fe84ec7470817792abdd",
+          "label": "e2m1-768/release",
+          "seconds": 0.03568988898769021
+        },
+        {
+          "encoded_sha256": "20873b76261a0a91925a26c30a5f4b03853bf5e621d6b0452c84ed2fbf65ea98",
+          "label": "e2m1-768/shard",
+          "seconds": 0.49529228400206193
+        }
+      ],
+      "host": "sparky",
+      "id": "220ee0aaed5fd628f6fe92c02b08cbdf90b6e26b76313fa505a9b32fecbf973c",
+      "netdata": {
+        "gpu_power_samples_w": [
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4,
+          4
+        ],
+        "host_cpu_max_percent": 16.5322585,
+        "host_cpu_mean_percent": 7.479271352222222,
+        "host_cpu_samples": 90
+      },
+      "platform": "Linux-6.17.0-1032-nvidia-aarch64-with-glibc2.39",
+      "python": "3.12.3 (main, Jul 15 2026, 23:46:41) [GCC 13.3.0]",
+      "rusage": {
+        "maxrss": 4784628,
+        "stime": 72.078813,
+        "utime": 19.798137
+      },
+      "started_unix": 1788668672.3696349,
+      "threads": 1,
+      "torch": "2.11.0+cu130",
+      "units": [
+        {
+          "blob_sha256": "d1b81c321441e439acead41d926e02d6d1af449dcd4dbe00233aa028649641fb",
+          "bytes": 18072,
+          "index": 0,
+          "seconds": 87.22238371797721
+        },
+        {
+          "blob_sha256": "e07efe9293bf95504498a521eb7ba77b1b0c3cc8f53599292d6034db59c461dc",
+          "bytes": 18072,
+          "index": 1,
+          "seconds": 0.5600364000129048
+        },
+        {
+          "blob_sha256": "d44ef4fb028b9fd3fa0d28df2a55573aab262c50a84040b875a1d739c17375e1",
+          "bytes": 18072,
+          "index": 2,
+          "seconds": 0.5613926299847662
+        },
+        {
+          "blob_sha256": "06908e07cad0e37766fe173c3662162b3e8dc08468eba64d677861b75abf6164",
+          "bytes": 18072,
+          "index": 3,
+          "seconds": 0.5641250899934676
+        },
+        {
+          "blob_sha256": "7f7eafcf83f42c7b01db4819fbe2d4f0c50a37fe7b1750c67cf97fdaed980405",
+          "bytes": 18072,
+          "index": 4,
+          "seconds": 0.5614890939905308
+        },
+        {
+          "blob_sha256": "5e16e28d098ce822d0f779647c7575f8ad6b8744b3331f50d3c800239e8b5377",
+          "bytes": 18072,
+          "index": 5,
+          "seconds": 0.5696970989811234
+        },
+        {
+          "blob_sha256": "fa189e517fd3475a9cfc66bd065141d383ba26554c7740a21b6a2430eff59b3e",
+          "bytes": 18072,
+          "index": 6,
+          "seconds": 0.5667181579919998
+        },
+        {
+          "blob_sha256": "c8461c03f2be97dc1baa8e2ea90fe6c4b9aeb5634b17ecad80d1620585526af3",
+          "bytes": 18072,
+          "index": 7,
+          "seconds": 0.5793557520082686
+        }
+      ]
+    }
+  },
+  "artifact_root": "/mnt/shared/tessera-runs/identity-startup",
+  "artifacts": {
+    "after/batch.json": {
+      "bytes": 40205,
+      "sha256": "b622509a9697009d13f95da820e5fe121dabf90170d112963398ac2db2c792b4"
+    },
+    "after/batch.pstats": {
+      "bytes": 123874,
+      "sha256": "b6311d9b269427454cc83eaa4fe44958660a2d7c324d916ead95ec38b42f77c0"
+    },
+    "after/profile.json": {
+      "bytes": 4829,
+      "sha256": "11b214facbd8662f40712a89c42df354493247769273c9c4e302a8e4560344ed"
+    },
+    "after/profile.pstats": {
+      "bytes": 148599,
+      "sha256": "86cf73018ac29a901417090c29e2f022b6677b4597c9b954911777fd4f7cbff6"
+    },
+    "before/batch.json": {
+      "bytes": 183036,
+      "sha256": "dc92d6acc6e50f289be1069c77a8e93472f3a4ae5e1b3c4b374aec22a6d15b6c"
+    },
+    "before/batch.pstats": {
+      "bytes": 123769,
+      "sha256": "71d2a2572c880cfa19a8394656243857f1bd55dd61ba8e72aab3b87fcc526001"
+    },
+    "before/profile.json": {
+      "bytes": 26848,
+      "sha256": "a387184f48d217f321e38e02422dd171b38ae8f84aebfe06af94284ed7242b27"
+    },
+    "before/profile.pstats": {
+      "bytes": 150804,
+      "sha256": "686af6f7d3ea57f78f24102f848a07e2dd72add55fb180977d2c10fecbfa46ae"
+    },
+    "cpu-surface.json": {
+      "bytes": 6283,
+      "sha256": "2561b3b5a2a9409e83f09cb9b9569a1f83350dd11b2285b15ab2c2c2e2bd6da7"
+    },
+    "cpu.log": {
+      "bytes": 14841,
+      "sha256": "4cd0fc3fef78a5178cd1de8c77072c71a5931d2ed58e75aa467534fbf235a16a"
+    },
+    "docs-baseline.json": {
+      "bytes": 3814,
+      "sha256": "4afa77d8af9337f961600a945f84dc245dcb52f4bce1cf4b944943609b2704b7"
+    },
+    "docs-fixed.json": {
+      "bytes": 1622,
+      "sha256": "aba8892545842c90d996d3da03b28a955be53ddbbc5aa76167b339d49cec467b"
+    },
+    "instruments/profile_tessera_identity.py": {
+      "bytes": 1853,
+      "sha256": "8d70f2b39c0d2c2f05aa67f38ce8c7c19be567cb1b57aba55ef78ac446a8cbb9"
+    },
+    "instruments/profile_tessera_identity_batch.py": {
+      "bytes": 3049,
+      "sha256": "fee82f4aeb9d31564c68d4a8f0c449dd2cdae7c94276420cfcbc08a68fc44ac5"
+    }
+  },
+  "base": "828ba1f",
+  "comparison": {
+    "default_sigmas_equal": true,
+    "fixture_contributions_equal": true,
+    "identity_equal": true,
+    "normal_artifacts_equal": true
+  },
+  "docs_baseline_population": {
+    "commit": "1b37c089e23c91dc7ee7f2156a397920a6dcd901",
+    "counts": {
+      "error": 0,
+      "failed": 0,
+      "passed": 3,
+      "skipped": 0,
+      "xfailed": 0,
+      "xpassed": 0
+    },
+    "cuda": false,
+    "cuda_surface": {
+      "box_artifact_skips": {},
+      "executed": 0,
+      "is_a_floor": true,
+      "measured_by": "tests during whose call torch's CUDA allocator recorded a new allocation"
+    },
+    "device": "no torch in this interpreter (ModuleNotFoundError)",
+    "not_collected": [
+      "test_audit_byte_baseline.py",
+      "test_audit_container_accounting.py",
+      "test_audit_doc_claims.py",
+      "test_audit_sec2.py",
+      "test_bf16_route.py",
+      "test_cached_producer.py",
+      "test_census_engagement.py",
+      "test_channel_plane.py",
+      "test_codebook.py",
+      "test_compensate.py",
+      "test_completion_rate_axis.py",
+      "test_decode_regime_subset.py",
+      "test_e4m3_ladder.py",
+      "test_encoder_fit_caps.py",
+      "test_encoder_identity.py",
+      "test_export.py",
+      "test_export_moe_layouts.py",
+      "test_export_plan_cache.py",
+      "test_fused.py",
+      "test_issue56_column_groups.py",
+      "test_kernel.py",
+      "test_kernel_shape_guards.py",
+      "test_kernel_window.py",
+      "test_kernel_window_gemv.py",
+      "test_kl_reference_usable.py",
+      "test_ktuple.py",
+      "test_ladder_wire.py",
+      "test_landing_ordering.py",
+      "test_lane_planes.py",
+      "test_lane_planes_refusals.py",
+      "test_lane_reachability.py",
+      "test_ldl_block_penalty.py",
+      "test_ldlq_block_budget.py",
+      "test_ldlq_lut_plane.py",
+      "test_ldlq_window.py",
+      "test_loadcost_sweep.py",
+      "test_lut_exact_fit.py",
+      "test_lut_stop_dtype.py",
+      "test_lut_stop_ulp_band.py",
+      "test_matched_reach.py",
+      "test_menu_selection_requirement.py",
+      "test_merge_guard.py",
+      "test_merge_tessera_parts.py",
+      "test_moe_wire_weight_error_controls.py",
+      "test_payload_grid.py",
+      "test_plan_from_layer_config.py",
+      "test_plane_promotion.py",
+      "test_priced_inputs_snapshot.py",
+      "test_profile_reach.py",
+      "test_rate_menu.py",
+      "test_recipe_table.py",
+      "test_refit_trailing.py",
+      "test_refit_trailing_bytes.py",
+      "test_refit_trailing_pair_gate.py",
+      "test_release_tail_sharding.py",
+      "test_rotate_checkpoint.py",
+      "test_scale_refit.py",
+      "test_serving_export_gate.py",
+      "test_serving_ops_compile.py",
+      "test_shipped_checkpoint_minor7.py",
+      "test_slice_unit.py",
+      "test_span_and_lut.py",
+      "test_stock.py",
+      "test_stock_declared_format.py",
+      "test_tcq_graph.py",
+      "test_uniform_control.py",
+      "test_window_body.py",
+      "test_window_graph.py",
+      "test_window_viterbi_fast.py",
+      "test_wire.py"
+    ],
+    "role": "population",
+    "schema": "tessera.test_surface.v3",
+    "skip_reasons": {},
+    "source_identity": {
+      "excluded_metadata": [
+        {
+          "action_key": "73d5f0af3a6a88fe9b155065650022d0f8d049a0a285f10425e55bce4e4fdbd4",
+          "bytes": 153,
+          "path": ".pbrun-closure.71a87e84f76929ca.json",
+          "request_sha256": "efabb43a5f5db99a70a19ccbec7ebfd8caf9a94346ef0f405b2d0475084d5ded",
+          "sha256": "621199efb479f925668525771a58c07f9fa2bf5ae3799b06010109648e61ebe9"
+        }
+      ],
+      "files_verified": 1018,
+      "measurement_span": {
+        "agrees": true,
+        "entry_sha256": "5f63c67c6e975e7d507b90199218bfad40b64c823918a292b81bcfcb971cd633",
+        "entry_snapshot_commit": "1b37c089e23c91dc7ee7f2156a397920a6dcd901",
+        "entry_verification": "verified"
+      },
+      "schema": "tessera.suite_source.v1",
+      "sha256": "5f63c67c6e975e7d507b90199218bfad40b64c823918a292b81bcfcb971cd633",
+      "snapshot_commit": "1b37c089e23c91dc7ee7f2156a397920a6dcd901",
+      "verification": "verified",
+      "workers": {
+        "gw0": "agrees",
+        "gw1": "agrees"
+      }
+    },
+    "strict_cuda": false,
+    "worker_id": null,
+    "xdist_workers": 2
+  },
+  "docs_fixed_population": {
+    "commit": "2b9abd41aa551017162003db2bb770cca51dfbf9",
+    "counts": {
+      "error": 0,
+      "failed": 0,
+      "passed": 3,
+      "skipped": 0,
+      "xfailed": 0,
+      "xpassed": 0
+    },
+    "cuda": false,
+    "cuda_surface": {
+      "box_artifact_skips": {},
+      "executed": 0,
+      "is_a_floor": true,
+      "measured_by": "tests during whose call torch's CUDA allocator recorded a new allocation"
+    },
+    "device": "torch 2.11.0+cpu reports no CUDA device",
+    "not_collected": [],
+    "role": "population",
+    "schema": "tessera.test_surface.v3",
+    "skip_reasons": {},
+    "source_identity": {
+      "excluded_metadata": [
+        {
+          "action_key": "da2f18a87f3f16cd2b7675127c4f6c945fcc2de43013d34f25b7c32c0ba3e333",
+          "bytes": 153,
+          "path": ".pbrun-closure.0bdda5a7df83997d.json",
+          "request_sha256": "dee8afd523ebbe2422709c7ddd54d55ae24cfc866eadc74ba3b49f0bc571ff46",
+          "sha256": "5637d8c17ba3ec024851bddce0f1eb7892f50e32c19d0b6f4772e7f48d1bedc4"
+        }
+      ],
+      "files_verified": 1020,
+      "measurement_span": {
+        "agrees": true,
+        "entry_sha256": "51336dd4eb02a67e43b0ebf28a4bdb39aea09028d68a8d4b792f290155c75dfd",
+        "entry_snapshot_commit": "2b9abd41aa551017162003db2bb770cca51dfbf9",
+        "entry_verification": "verified"
+      },
+      "schema": "tessera.suite_source.v1",
+      "sha256": "51336dd4eb02a67e43b0ebf28a4bdb39aea09028d68a8d4b792f290155c75dfd",
+      "snapshot_commit": "2b9abd41aa551017162003db2bb770cca51dfbf9",
+      "verification": "verified",
+      "workers": {
+        "gw0": "agrees",
+        "gw1": "agrees"
+      }
+    },
+    "strict_cuda": false,
+    "worker_id": null,
+    "xdist_workers": 2
+  },
+  "implementation_commit": "cf23390",
+  "schema": "tessera.encoder_identity_startup.v1",
+  "selected_cpu_population": {
+    "commit": "200111746301f516f2a43a30fd22febf9134b4d4",
+    "counts": {
+      "error": 0,
+      "failed": 1,
+      "passed": 3029,
+      "skipped": 544,
+      "xfailed": 0,
+      "xpassed": 0
+    },
+    "cuda": false,
+    "cuda_surface": {
+      "box_artifact_skips": {
+        "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/compile-dispatch/serve_qwen_dispatch_eager.log is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 6,
+        "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/stock/serve_qwen_stock_tessera-k2-graph.log is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 1,
+        "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/stock/serve_qwen_stock_tessera-k2.log is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 1,
+        "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/tsplugin/vllm-cache-fresh/torch_compile_cache/torch_aot_compile/15957ad9e7a72f1d7539f792e4d4cee6e704e2e99696f07e909c209f30f5ddec is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 1,
+        "box artifact absent: kl_tool.py and kl_estimator.py, the untracked served-KL instrument -- nothing set KL_TOOL_DIR and its default is not resolved for this root (set KL_TOOL_DIR; documented default /home/rob/dq-runs)": 1,
+        "box artifact absent: the PrismaQuant checkout whose pricing this suite is pinned against -- /home/rob/prismaquant/prismaquant/tessera_formats.py is not on this box (set TESSERA_PRISMAQUANT_DIR; documented default /home/rob/prismaquant)": 3,
+        "box artifact absent: the PrismaQuant worktree carrying the continuous-rate branch -- /home/rob/pq-wt/tessera-continuous/prismaquant/tessera_formats.py is not on this box (set TESSERA_PRISMAQUANT_WORKTREE; documented default /home/rob/pq-wt/tessera-continuous)": 2
+      },
+      "executed": 0,
+      "is_a_floor": true,
+      "measured_by": "tests during whose call torch's CUDA allocator recorded a new allocation"
+    },
+    "device": "torch 2.11.0+cu130 reports no CUDA device",
+    "not_collected": [],
+    "role": "population",
+    "schema": "tessera.test_surface.v3",
+    "skip_reasons": {
+      "E2M1 publishes no reader range": 1,
+      "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/compile-dispatch/serve_qwen_dispatch_eager.log is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 6,
+      "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/stock/serve_qwen_stock_tessera-k2-graph.log is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 1,
+      "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/stock/serve_qwen_stock_tessera-k2.log is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 1,
+      "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/tsplugin/vllm-cache-fresh/torch_compile_cache/torch_aot_compile/15957ad9e7a72f1d7539f792e4d4cee6e704e2e99696f07e909c209f30f5ddec is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 1,
+      "box artifact absent: kl_tool.py and kl_estimator.py, the untracked served-KL instrument -- nothing set KL_TOOL_DIR and its default is not resolved for this root (set KL_TOOL_DIR; documented default /home/rob/dq-runs)": 1,
+      "box artifact absent: the PrismaQuant checkout whose pricing this suite is pinned against -- /home/rob/prismaquant/prismaquant/tessera_formats.py is not on this box (set TESSERA_PRISMAQUANT_DIR; documented default /home/rob/prismaquant)": 3,
+      "box artifact absent: the PrismaQuant worktree carrying the continuous-rate branch -- /home/rob/pq-wt/tessera-continuous/prismaquant/tessera_formats.py is not on this box (set TESSERA_PRISMAQUANT_WORKTREE; documented default /home/rob/pq-wt/tessera-continuous)": 2,
+      "could not import 'vllm': No module named 'vllm'": 3,
+      "encoder is a GPU job": 43,
+      "needs CUDA": 6,
+      "needs a CUDA device": 88,
+      "needs a CUDA device: the positive arm builds the extension": 1,
+      "needs two CUDA devices": 2,
+      "the Tessera encoder is a CUDA path": 14,
+      "the Viterbi is CUDA": 29,
+      "the captured TCQ trellis is a CUDA path": 29,
+      "the encoder is a CUDA path": 84,
+      "the encoder is a GPU job": 26,
+      "the fused window Viterbi is CUDA": 8,
+      "the fused window Viterbi is a CUDA path": 52,
+      "the fused window Viterbi is a CUDA path and needs triton": 20,
+      "the kernel lane is a CUDA path": 30,
+      "the kernel lane runs on CUDA": 5,
+      "the lane is a CUDA kernel": 88
+    },
+    "source_identity": {
+      "excluded_metadata": [
+        {
+          "action_key": "c9ea2770123262f372857fe5f617515dd10bebb8e65fcfae1502efc0d13bb993",
+          "bytes": 153,
+          "path": ".pbrun-closure.a902831fd425543d.json",
+          "request_sha256": "8ab31d0d00dc25e678763a7d0fc01115230fa70d0b3b3ed16b493c980124a006",
+          "sha256": "34817f3550c0e700e247a375070e40a99603805b72f90446dfa479989d4f56b7"
+        }
+      ],
+      "files_verified": 1018,
+      "measurement_span": {
+        "agrees": true,
+        "entry_sha256": "2b6da7ed22d915d34ed87f0b2fe562c169aee0279e77d73ee234a4e71d7a6f44",
+        "entry_snapshot_commit": "200111746301f516f2a43a30fd22febf9134b4d4",
+        "entry_verification": "verified"
+      },
+      "schema": "tessera.suite_source.v1",
+      "sha256": "2b6da7ed22d915d34ed87f0b2fe562c169aee0279e77d73ee234a4e71d7a6f44",
+      "snapshot_commit": "200111746301f516f2a43a30fd22febf9134b4d4",
+      "verification": "verified",
+      "workers": {
+        "gw0": "agrees",
+        "gw1": "agrees",
+        "gw10": "agrees",
+        "gw11": "agrees",
+        "gw2": "agrees",
+        "gw3": "agrees",
+        "gw4": "agrees",
+        "gw5": "agrees",
+        "gw6": "agrees",
+        "gw7": "agrees",
+        "gw8": "agrees",
+        "gw9": "agrees"
+      }
+    },
+    "strict_cuda": false,
+    "worker_id": null,
+    "xdist_workers": 12
+  }
+}
