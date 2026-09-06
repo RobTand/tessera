@@ -28,6 +28,11 @@ Re-stamped 2026-09-05 on `codex/audit4-input-handoff` for the producer's
 priced-input snapshot intake (PrismaQuant #231; §2.3). Wire, encoder recipes
 and runtime contract remain at the versions above.
 
+Re-stamped 2026-09-06 on `tessera/375-owned-container-cleanup` for
+owned-container cleanup and explicit container thread bounds in the serve
+wrappers (#375; §4.4). Wire, encoder recipes and runtime contract remain at
+the versions above.
+
 ## 1. Scope
 
 This doc covers the path from a PrismaQuant rung assignment to a served
@@ -1378,6 +1383,29 @@ treats the pathname as the exact destination (`ln -T`), so an existing legacy
 directory cannot turn acquisition into successful creation of a link inside it.
 Legacy owner liveness is `/proc/<pid>` existence: denial of permission to signal
 a process is never treated as evidence that it has died.
+
+`experiments/owned_container.sh` owns what a wrapper may reap and the CPU
+budget it hands a container (#375). A container's name is a mutable label
+anyone can hold; its id is the identity Docker assigns at creation. So the
+helper launches with `docker run -d --cidfile`, which puts the 64-hex id on
+disk between creation and start, and addresses every later `logs`, liveness
+probe and `rm -f` by that id -- a name already in use is refused (exit 2),
+never removed, because the party entitled to clear it is whoever took it. A
+`tessera.owner` label carries the serve lock's own `pid:start:nonce` token for
+a human reading `docker ps`; it is never what the reaper matches on.
+`moe_greedy_smoke_pair.sh` reaps through it on EXIT and on INT/TERM/HUP, so a
+signal during startup no longer leaves a serve alive under a released lock;
+SIGKILL runs no trap and is a stated limitation. The id is taken from a cidfile
+rather than from a `docker create` whose id is handed to `docker start`,
+because PrismaBuild's docker shim refuses `docker start` outright
+(`tools/docker`, `_starts_unowned_container`, exit 125): a container started
+that way carries none of PB's ownership labels, so the create/start spelling
+cannot run inside an admitted action. The same helper passes the launcher's own
+affinity mask through as `--cpuset-cpus` and states `OMP_NUM_THREADS`,
+`MKL_NUM_THREADS`, `OPENBLAS_NUM_THREADS` and `MAX_JOBS` at its size: a host
+export does not cross into a container, a `--cpus` quota changes no CPU count a
+library can read, and `_NPROCESSORS_ONLN` still reports all 20 host CPUs inside
+a cpuset (`experiments/container_limits_probe.sh`, sparky, PB mask 1-3,19).
 
 `serve_and_dump_kl.sh` reaps its named container on every exit, including an
 unexpected shell failure. Successful removal is remembered so normal exit

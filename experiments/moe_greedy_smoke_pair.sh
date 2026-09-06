@@ -10,6 +10,12 @@
 # and reaped before the other starts; the two receipts are then joined by
 # `moe_greedy_smoke.py compare` into the pair the measurement doc quotes.
 #
+# Containers are owned, not named: each arm is launched through
+# `experiments/owned_container.sh`, which refuses a name already in use, keeps
+# the container's own id, and reaps by that id from EXIT and from INT/TERM/HUP.
+# The same helper hands the container the launcher's CPU mask and an explicit
+# thread count, because a host export does not cross into a container (#375).
+#
 # Host memory is gated, not assumed: the GPU and host share one pool, and this
 # script refuses to start a serve while MemAvailable is under $MIN_AVAIL_GIB.
 # A telemetry log per arm samples MemAvailable every 10 s so the receipt can
@@ -34,6 +40,7 @@ source "$TS/experiments/runtime_image.sh"
 source "$TS/experiments/build_identity.sh"
 source "$TS/experiments/serve_metrics.sh"
 source "$TS/experiments/serve_lock.sh"
+source "$TS/experiments/owned_container.sh"
 mkdir -p "$OUT" "$EXT" "$VLLM_CACHE"
 [ -e "$OUT/pair.json" ] && { echo "REFUSED: $OUT/pair.json exists; a rerun gets its own directory"; exit 2; }
 # The run ENDS in a join that imports the contract's aggregation, and both
@@ -69,30 +76,50 @@ from tessera.serving_parts import source_identity
 print(json.dumps(source_identity(sys.argv[1]), indent=2, sort_keys=True))' "$1"
 }
 
+# Everything this arm must give back, in one place and safe to run twice: the
+# container first -- by the immutable id `owned_container_start` captured, never
+# by the name -- then the telemetry sampler, and the serve lock last, so the box
+# is never advertised as free while a serve of ours still holds the GPU.
+SERVE_ARM_TELE=""
+serve_arm_cleanup() {
+  owned_container_cleanup
+  if [ -n "${SERVE_ARM_TELE:-}" ]; then
+    kill "$SERVE_ARM_TELE" 2>/dev/null || true
+    wait "$SERVE_ARM_TELE" 2>/dev/null || true
+    SERVE_ARM_TELE=""
+  fi
+  serve_lock_release
+}
+
 serve_arm() {
-  local arm="$1" model="$2" name="${NAME_PREFIX}-$1" log="$OUT/serve_$1.log"
+  local arm="$1" model="$2" name="${NAME_PREFIX}-$1" log="$OUT/serve_$1.log" cid
   local model_mount; model_mount="$(cd "$model" && pwd)"
   require_memory "$arm"
   identity "$model" > "$OUT/identity_${arm}_before.json"
   serve_lock_acquire
-  trap 'serve_lock_release' EXIT
-  docker rm -f "$name" >/dev/null 2>&1 || true
+  # EXIT does not run on a signal, and a signal during a 40-minute startup is
+  # exactly when a container is left behind, so the handlers are spelled out
+  # and each exits with the signal's own status after cleaning up.
+  trap 'serve_arm_cleanup' EXIT
+  trap 'serve_arm_cleanup; exit 130' INT
+  trap 'serve_arm_cleanup; exit 143' TERM
+  trap 'serve_arm_cleanup; exit 129' HUP
   telemetry > "$OUT/telemetry_$arm.log" 2>&1 &
-  local tele=$!
+  SERVE_ARM_TELE=$!
   if [ "$arm" = "bf16" ]; then
     # experiments/ts5_lfm_teacher_bound.py's serve, verbatim in effect: the
     # image's own vLLM, no plugin, eager, the model mounted read-only.
-    docker run -d --name "$name" --gpus all --ipc=host -p "${PORT}:8000" \
+    owned_container_start "$name" --gpus all --ipc=host -p "${PORT}:8000" \
       -v /mnt/shared:/mnt/shared:ro -v "${model_mount}:${model_mount}:ro" \
       --memory=64g --memory-swap=64g $(build_identity_docker_env) \
       --entrypoint=vllm "$IMAGE" serve "$model" --served-model-name kl-target \
       --host 0.0.0.0 --port 8000 --max-model-len 4096 --max-num-seqs 8 \
       --gpu-memory-utilization "$UTIL" --max-logprobs 1024 --enforce-eager \
-      --trust-remote-code >/dev/null
+      --trust-remote-code
   else
     # experiments/tessera_plugin_served.sh's container body, verbatim: link the
     # CUDA headers, install this tree's plugin editable, serve resident + eager.
-    docker run -d --name "$name" --gpus all --ipc=host -p "${PORT}:8000" \
+    owned_container_start "$name" --gpus all --ipc=host -p "${PORT}:8000" \
       -v /mnt/shared:/mnt/shared:ro -v "${model_mount}:${model_mount}:ro" \
       -v "$TS/src":/work/src:ro -v "$TS/pyproject.toml":/work/pyproject.toml:ro \
       -v "$EXT":/ext -v "$VLLM_CACHE":/root/.cache/vllm \
@@ -106,14 +133,18 @@ pip install --no-deps --no-build-isolation -q -e /work 2>&1 | tail -2
 python3 -c "import importlib.metadata as m; print(\"[plugin] vllm.general_plugins:\", [e.name for e in m.entry_points(group=\"vllm.general_plugins\")])"
 exec vllm serve '"$model"' --served-model-name kl-target --host 0.0.0.0 --port 8000 \
   --max-model-len 4096 --max-num-seqs 8 --gpu-memory-utilization "${TESSERA_GPU_MEM_UTIL}" \
-  --max-logprobs 1024 --enforce-eager --trust-remote-code' >/dev/null
+  --max-logprobs 1024 --enforce-eager --trust-remote-code'
   fi
+  cid=$OWNED_CONTAINER_LAST_ID
+  echo "$arm container $cid (name $name)" | tee -a "$OUT/driver.log"
   local up=0
   for i in $(seq 1 240); do
     if curl -sf "http://127.0.0.1:${PORT}/v1/models" >/dev/null 2>&1; then
       echo "$arm up after ${i}0s" | tee -a "$OUT/driver.log"; up=1; break
     fi
-    if ! docker ps -q -f "name=^/${name}$" | grep -q .; then break; fi
+    # Liveness by id, so the loop follows the container this run actually
+    # created, even if something else takes the name while the serve is up.
+    if ! owned_container_running "$cid"; then break; fi
     sleep 10
   done
   local rc=0
@@ -124,10 +155,8 @@ exec vllm serve '"$model"' --served-model-name kl-target --host 0.0.0.0 --port 8
   else
     echo "$arm: serve did not come up or is speculative; see $log" | tee -a "$OUT/driver.log"; rc=1
   fi
-  docker logs "$name" > "$log" 2>&1 || true
-  docker rm -f "$name" >/dev/null 2>&1 || true
-  kill "$tele" 2>/dev/null || true; wait "$tele" 2>/dev/null || true
-  serve_lock_release; trap - EXIT
+  docker logs "$cid" > "$log" 2>&1 || true
+  serve_arm_cleanup; trap - EXIT INT TERM HUP
   # After the reap, never before: a stamp that failed first would leave a
   # headless serve holding the GPU.
   local mode=""; [ "$arm" = "tessera" ] && mode=resident
