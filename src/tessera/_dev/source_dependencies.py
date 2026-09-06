@@ -262,7 +262,7 @@ def _executes_python_source(tree):
 _MAX_LINK_DEPTH = 40
 
 
-def _resolve_within_root(path, root, budget=None):
+def _resolve_within_root(path, root, budget=None, links=None):
     """Resolve *path* without ever naming a location outside *root*.
 
     Returns the resolved absolute path, or ``None`` when the spelling or the
@@ -289,6 +289,10 @@ def _resolve_within_root(path, root, budget=None):
     the filesystem means by it; and a symlink whose target leaves the tree
     ends the walk -- the link itself is in-root and readable, its target is
     never approached.
+
+    ``links`` collects the in-root link entries actually traversed. Repointing
+    one changes the read even when its old and new targets are both in-root,
+    so these entries are dependencies alongside the resolved destination.
     """
     base = Path(os.path.normpath(str(root)))
     absolute = path if path.is_absolute() else base / path
@@ -299,10 +303,10 @@ def _resolve_within_root(path, root, budget=None):
         # it later, walking it means stat'ing outside root first.
         return None
     return _walk_within_root(
-        base, parts[len(prefix):], base, [_MAX_LINK_DEPTH] if budget is None else budget)
+        base, parts[len(prefix):], base, [_MAX_LINK_DEPTH] if budget is None else budget, links)
 
 
-def _walk_within_root(current, parts, base, budget):
+def _walk_within_root(current, parts, base, budget, links=None):
     """One component at a time from *current*, which is already inside *base*."""
     for part in parts:
         if not part or part == ".":
@@ -322,6 +326,8 @@ def _walk_within_root(current, parts, base, budget):
             # is what ``resolve(strict=False)`` does with it too.
             current = candidate
             continue
+        if links is not None:
+            links.add(candidate)
         # One budget covers every link, including absolute targets and later
         # components after a recursive target walk returns (#353).
         if budget[0] == 0:
@@ -329,15 +335,15 @@ def _walk_within_root(current, parts, base, budget):
         budget[0] -= 1
         target = Path(link)
         if target.is_absolute():
-            current = _resolve_within_root(target, base, budget)
+            current = _resolve_within_root(target, base, budget, links)
         else:
-            current = _walk_within_root(current, target.parts, base, budget)
+            current = _walk_within_root(current, target.parts, base, budget, links)
         if current is None:
             return None
     return current
 
 
-def _place(paths, root, refused):
+def _place(paths, root, refused, links=None):
     """The paths the boundary guard will not let us place, resolved if it will.
 
     Returns ``None`` when any of *paths* is refused -- recorded in *refused*
@@ -349,7 +355,7 @@ def _place(paths, root, refused):
     """
     resolved = set()
     for path in paths:
-        within = _resolve_within_root(path, root)
+        within = _resolve_within_root(path, root, links=links)
         if within is None:
             if refused is not None:
                 refused.append(path)
@@ -358,7 +364,7 @@ def _place(paths, root, refused):
     return resolved
 
 
-def _values(node, scope, root, visiting=frozenset(), refused=None):
+def _values(node, scope, root, visiting=frozenset(), refused=None, links=None):
     """All statically established values; None means some alternative is unknown.
 
     ``refused``, when given, collects the paths a boundary guard declined to
@@ -381,13 +387,13 @@ def _values(node, scope, root, visiting=frozenset(), refused=None):
             return None
         result = set()
         for expression in here.bindings[node.id]:
-            value = _values(expression, here, root, visiting | {key}, refused)
+            value = _values(expression, here, root, visiting | {key}, refused, links)
             if value is None:
                 return None
             result.update(value)
         return result
     if isinstance(node, ast.Attribute):
-        values = _values(node.value, scope, root, visiting, refused)
+        values = _values(node.value, scope, root, visiting, refused, links)
         if values is None:
             return None
         result = set()
@@ -402,8 +408,8 @@ def _values(node, scope, root, visiting=frozenset(), refused=None):
                 return None
         return result
     if isinstance(node, ast.Subscript) and isinstance(node.value, ast.Attribute) and node.value.attr == "parents":
-        paths = _values(node.value.value, scope, root, visiting, refused)
-        indices = _values(node.slice, scope, root, visiting, refused)
+        paths = _values(node.value.value, scope, root, visiting, refused, links)
+        indices = _values(node.slice, scope, root, visiting, refused, links)
         if paths is not None and indices is not None:
             if not all(isinstance(path, Path) for path in paths) or not all(
                     isinstance(index, int) for index in indices):
@@ -413,8 +419,8 @@ def _values(node, scope, root, visiting=frozenset(), refused=None):
             except IndexError:
                 return None
     if isinstance(node, ast.BinOp):
-        left = _values(node.left, scope, root, visiting, refused)
-        right = _values(node.right, scope, root, visiting, refused)
+        left = _values(node.left, scope, root, visiting, refused, links)
+        right = _values(node.right, scope, root, visiting, refused, links)
         if left is None or right is None:
             return None
         result = set()
@@ -429,7 +435,7 @@ def _values(node, scope, root, visiting=frozenset(), refused=None):
         return result
     if isinstance(node, ast.Call):
         if isinstance(node.func, ast.Attribute) and node.func.attr in {"resolve", "glob", "rglob", "joinpath"}:
-            paths = _values(node.func.value, scope, root, visiting, refused)
+            paths = _values(node.func.value, scope, root, visiting, refused, links)
             if paths is None or not all(isinstance(path, Path) for path in paths):
                 return None
             if node.func.attr == "resolve" and not node.args and not node.keywords:
@@ -438,9 +444,9 @@ def _values(node, scope, root, visiting=frozenset(), refused=None):
                 # stat'ed to find out (rule 4; was :308).  ``_place`` is the
                 # resolve, so this expression never reaches ``Path.resolve``
                 # and never walks a step outside the tree (#339).
-                return _place(paths, root, refused)
+                return _place(paths, root, refused, links)
             if len(node.args) == 1 and not node.keywords:
-                args = _values(node.args[0], scope, root, visiting, refused)
+                args = _values(node.args[0], scope, root, visiting, refused, links)
                 if args is None or not all(isinstance(arg, str) for arg in args):
                     return None
                 if node.func.attr == "joinpath":
@@ -456,7 +462,7 @@ def _values(node, scope, root, visiting=frozenset(), refused=None):
                 # ``Path.resolve`` that needed it (#339); a relative base is
                 # now joined to root rather than to the process's cwd, which
                 # is what the guard above already assumed of it.
-                bases = _place(paths, root, refused)
+                bases = _place(paths, root, refused, links)
                 if bases is None:
                     return None
                 # pathlib's trailing-separator filter follows DirEntry links
@@ -473,10 +479,10 @@ def _values(node, scope, root, visiting=frozenset(), refused=None):
                     return {item for base in bases for arg in args
                             for item in base.glob(arg)}
             return None
-        functions = _values(node.func, scope, root, visiting, refused)
+        functions = _values(node.func, scope, root, visiting, refused, links)
         if functions is None or len(node.args) != 1 or node.keywords:
             return None
-        args = _values(node.args[0], scope, root, visiting, refused)
+        args = _values(node.args[0], scope, root, visiting, refused, links)
         if args is None:
             return None
         result = set()
@@ -571,8 +577,9 @@ def file_imports(tree, path, root):
         # expressions, so the ``values is None`` below can tell "no target
         # was nameable" from "a named target was not placeable".
         refused = []
+        links = set()
         try:
-            functions = _values(call.func, scope, root, refused=refused)
+            functions = _values(call.func, scope, root, refused=refused, links=links)
             if loader in _READ_METHODS:
                 # Reading source bytes is already a dependency, whether the
                 # consumer later ast.parse/execs them or asserts on the text.
@@ -585,7 +592,7 @@ def file_imports(tree, path, root):
                         ("symbol", "builtins.open"), ("symbol", "io.open")}:
                     expression = call.args[0] if call.args else next(
                         (arg.value for arg in call.keywords if arg.arg == "file"), None)
-                    values = _values(expression, scope, root, refused=refused)
+                    values = _values(expression, scope, root, refused=refused, links=links)
                 else:
                     values = None
             else:
@@ -594,7 +601,7 @@ def file_imports(tree, path, root):
                     (arg.value for arg in call.keywords if arg.arg == keyword), None)
                 if functions != {("symbol", _SYMBOLS[loader])}:
                     unknown = True
-                values = _values(expression, scope, root, refused=refused)
+                values = _values(expression, scope, root, refused=refused, links=links)
         except (OSError, ValueError, TypeError, RecursionError):
             values = None
         if values is None or not all(isinstance(value, (str, Path)) for value in values):
@@ -622,7 +629,7 @@ def file_imports(tree, path, root):
             # state this repository never sees, so the dependency survives it
             # as an unplaced read (#338).
             try:
-                placed = _place({target}, root, None)
+                placed = _place({target}, root, None, links)
             except (OSError, ValueError):
                 placed = None
             if placed is None:
@@ -633,4 +640,5 @@ def file_imports(tree, path, root):
             # the tree used to be dropped in silence, and it is now the same
             # refusal as any other step that leaves root.
             found.update(placed)
+            found.update(links)
     return found, unknown, unplaced

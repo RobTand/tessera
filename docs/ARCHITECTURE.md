@@ -274,7 +274,11 @@ destination**, because a normalized final membership says nothing about the
 steps taken to reach it: `Path.resolve` walks a spelling as written, so
 `outside/../repo/driver.py` -- which normalizes into the tree -- still
 `lstat`s `outside` before `..` collapses, and an in-root symlink is followed
-to its outside target before any membership check runs. Both were the #325
+to its outside target before any membership check runs. The bounded walker
+retains each in-root symlink entry it traverses as a dependency alongside the
+resolved target, including links used by an intermediate `resolve()` or glob
+base. Repointing a tracked link therefore selects the reader and its consumers
+(#346); no lexically collapsed path is used as a substitute for that walk. Both were the #325
 syscall, reachable again through a path a lexical check accepts (#339).
 So a single walk decides the whole question, in `_resolve_within_root`: a
 spelling whose leading components are not root's is refused before any
