@@ -173,6 +173,10 @@ mkdir -p "$OUT" "$EXT" "$VLLM_CACHE"
 require_memory() {{ :; }}
 mem_avail_gib() {{ echo 99; }}
 identity() {{ echo '{{}}'; }}
+# The wrapper gates its image with runtime_image_require before it serves;
+# these tests stub the gate, and `test_an_ungated_image_is_refused` is what
+# proves the stub is standing in for a check that really does bite.
+RUNTIME_IMAGE_JSON=${{RUNTIME_IMAGE_JSON-'{{"stub": true}}'}}
 serve_lock_acquire() {{ SERVE_LOCK_TOKEN=test:1:2; export SERVE_LOCK_TOKEN; echo lock_acquired >> "$OUT/events"; }}
 serve_lock_release() {{ [ -n "${{SERVE_LOCK_TOKEN:-}}" ] || return 0; unset SERVE_LOCK_TOKEN; echo lock_released >> "$OUT/events"; }}
 serve_require_no_spec_decode() {{ return 0; }}
@@ -326,6 +330,20 @@ def test_the_wrapper_never_calls_docker_start(tmp_path):
     assert calls, "the wrapper made no docker calls"
     assert not any(a[:1] == ["start"] or a[:2] == ["container", "start"]
                    for a in calls), f"docker start is refused under PB: {calls}"
+
+
+def test_an_ungated_image_is_refused(tmp_path):
+    """No container starts before `runtime_image_require` has run (#100)."""
+    if not HELPER.exists():
+        pytest.skip("wrapper under test predates experiments/owned_container.sh")
+    env = _env(tmp_path)
+    env["RUNTIME_IMAGE_JSON"] = ""          # the gate did not run
+    out = tmp_path / "out"
+    proc = subprocess.run([str(_driver(tmp_path)), str(out)], env=env,
+                          capture_output=True, text=True, timeout=120)
+    assert proc.returncode != 0
+    assert "runtime_image_require" in proc.stderr, proc.stderr
+    assert _store(env) == {}, f"a container started ungated: {_store(env)}"
 
 
 @pytest.mark.parametrize("mask,count", [

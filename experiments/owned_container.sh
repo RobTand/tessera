@@ -24,6 +24,11 @@
 # `owned_container_limits` for why the mask is spelled with --cpuset-cpus and
 # why the thread counts are stated explicitly rather than left to the runtime.
 #
+# The image gate is not this file's to run -- the caller knows which argument
+# is the image -- but `owned_container_start` refuses to start anything until
+# `runtime_image_require` has published RUNTIME_IMAGE_JSON, so a wrapper
+# cannot reach a container by forgetting the gate (#100).
+#
 # Limitation, stated rather than papered over: SIGKILL runs no trap, so a
 # `kill -9` of the wrapper still leaves its container. The serve lock survives
 # that case by pid/start-time reaping; container cleanup cannot.
@@ -133,6 +138,16 @@ owned_container_limits() {
 #                         "created" -- the leak, with its handle in hand
 owned_container_start() {
   local name=$1 id cidfile rc; shift
+  # The image gate is the caller's (it knows which of these arguments is the
+  # image), but starting a container whose image was never gated is exactly
+  # what #100 forbids, so this refuses rather than trusting the caller to have
+  # remembered.  RUNTIME_IMAGE_JSON is what `runtime_image_require` publishes
+  # on every path it returns from, including the "no manifest digest" one, so
+  # it answers "was the gate run" without asserting what the gate concluded.
+  if [ -z "${RUNTIME_IMAGE_JSON:-}" ]; then
+    echo "REFUSED: $name would start before runtime_image_require gated its image (#100)" >&2
+    return 2
+  fi
   if docker container inspect "$name" >/dev/null 2>&1; then
     echo "REFUSED: a container named $name already exists; this wrapper removes only containers it created" >&2
     return 2
