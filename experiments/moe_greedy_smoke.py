@@ -289,6 +289,14 @@ def aggregation():
     this file and must be reachable from it.
     """
     try:
+        from tessera.serving import contract
+
+        expected = (Path(__file__).resolve().parents[1]
+                    / "src/tessera/serving/contract.py").resolve()
+        resolved = Path(contract.__file__).resolve()
+        if resolved != expected:
+            raise ImportError(
+                f"contract resolved to {resolved}, expected this checkout's {expected}")
         from tessera.serving.contract import derive_smoke_attribution, derive_smoke_status
     except ImportError as exc:
         raise SystemExit(
