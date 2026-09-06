@@ -139,32 +139,26 @@ that catches it, by reporting a byte move where there is none.
 Cost, measured
 --------------
 
-The original seven encodes of a 16x128 unit, on sparky (GB10, CPU only, box
-under load): **42.5 s in a cold process, 1.7 s in a warm one**, memoised so any
-process pays it once. Issue #116 adds an eighth, baseline-neutral 16x128
-witness; its incremental time has not been isolated from that shared cold
-start. Almost all of the original 41 s difference is ``_plan_for`` building the
-window tables and anchor forests for the five distinct ``(grid, rung)`` pairs
--- work an exporter does anyway -- which is why the cost lands where it does.
+The process computes the complete CPU fixture set once. That cold cost is
+material for short campaigns and independently admitted worker processes; a
+merge guard compares stamped identities without computing fixtures.
 
-Issue #143's five off-wire witnesses were measured against exactly that set, in
-fresh processes on sparklina (GB10, CPU only): **eight fixtures 40.74 s cold /
-1.32 s warm, thirteen fixtures 42.10 s cold / 2.12 s warm** -- +1.36 s cold and
-+0.80 s warm.  Four of the five ride a plan an earlier case already builds, so
-they cost an encode each and no forest; only ``e2m1-256/completion`` builds
-anything, and one rung lower the forests are small (0.20 s measured, against
-the 41 s the rung above it costs).  Where the cost lands is unchanged:
+Issue #364 isolated an 85.21 s cold identity build on one GB10 CPU: 80.33 s
+landed in the BF16 fixture. The CHANNEL spread objective used a 4096-by-alphabet
+distance matrix at each candidate spread, repeatedly allocating roughly 2 GiB
+for BF16. Searching the two neighbours in the already sorted scalar alphabet
+computes the exact same nearest distance without that matrix. The same fixture
+set then took 6.07 s, with every contribution and the final identity unchanged.
+This is an optimization of the shared numerical operation, not a shortcut
+around the behavioral witnesses or an additional identity cache.
 
+These are profiled cold-process measurements on one CPU, not GPU encoding
+throughput or an estimate for a full checkpoint. Earlier issue-#143 measurements
+(eight fixtures 40.74 s cold / 1.32 s warm; thirteen 42.10 s / 2.12 s) describe
+that earlier corpus and source, not the current startup. Full environment,
+receipts and the bounded campaign comparison are recorded in
+``docs/measurements/encoder-identity-startup-2026-09-06.md``.
 
-* An **export** computes it, once, before its first unit.  Against an encode
-  that runs for hours it is not a cost anyone can measure.
-* A **merge guard** computes nothing.  It compares the ``encoder_fixture_id``
-  string each part stamped into its ``tessera_config.json``.
-* A **resume** would happen inside a process that is about to encode, so it
-  pays the same single warm-up that process pays anyway (:func:`resumable`).
-
-That is the honest answer to "make the fixtures tiny": they are not free in a
-cold process, and no consumer that has nothing to encode is asked to pay.
 """
 
 from __future__ import annotations

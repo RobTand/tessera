@@ -731,6 +731,14 @@ every artifact already on disk is byte-identical across the bump. The wire is
 `docs/schema/prismaquant.tessera.v1.md` §1g, which also states what the fixture
 set is blind to.
 
+The CPU identity still encodes every witness. Issue #364 reduces its cold
+startup by computing the CHANNEL spread objective's nearest scalar distance
+from the two sorted neighbours, in float64, rather than materializing the
+sample-by-alphabet matrix. The objective, candidate spreads, tie behavior and
+fixture contributions are unchanged; no persistent identity cache or device
+substitution is involved. The measured before/after and exact contribution
+comparison are in `docs/measurements/encoder-identity-startup-2026-09-06.md`.
+
 Issue #87 is the first post-identity encoder move: a CHANNEL row raised to the
 body's reach now lands that lower bound upward instead of rounding below it by
 one fp16 ulp. The behaviour-derived identity moves as a consequence, so a

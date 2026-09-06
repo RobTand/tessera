@@ -102,7 +102,15 @@ def _default_sigma(name: str, values: "tuple[float, ...]", arity: int) -> float:
         sigma = peak * 2.0 ** (-k / 4)
         # Nearest grid value to each sample expressed in grid units.
         scaled = sample * sigma
-        err = (scaled.unsqueeze(1) - scalar.unsqueeze(0)).abs().min(dim=1).values
+        # On a sorted scalar alphabet the nearest value is one of the two
+        # neighbours of the insertion point.  Subtract those same float64
+        # values directly: this preserves the exhaustive minimum exactly,
+        # including midpoint ties, without a samples-by-alphabet matrix
+        # (roughly 2 GiB per spread for BF16).
+        right = torch.searchsorted(scalar, scaled).clamp_max(scalar.numel() - 1)
+        left = (right - 1).clamp_min(0)
+        err = torch.minimum((scaled - scalar[left]).abs(),
+                            (scaled - scalar[right]).abs())
         rel = float((err * err).mean() / (sigma * sigma))
         if best_err is None or rel < best_err:
             best, best_err = sigma, rel
