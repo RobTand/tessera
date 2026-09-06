@@ -40,12 +40,25 @@ def _receipt(name: str) -> dict:
     return json.loads((RECEIPTS / name).read_text())
 
 
+def _receipt_before_the_field(name: str) -> dict:
+    """The committed receipt as a census taken before tessera#377 wrote it.
+
+    The LFM receipt was re-taken with ``output_sizes`` on 2026-09-06; these
+    fixtures need the pre-field shape so they can attest exactly the rows a
+    test names and nothing else.
+    """
+    receipt = _receipt(name)
+    for row in receipt["linears"]:
+        row.pop("output_sizes", None)
+    return receipt
+
+
 OUT_PROJ = "model.layers.*.short_conv.out_proj"
 
 
 def _lfm_receipt_with_output_sizes(sizes=(2048, 2048, 2048), out_proj=(2048,)) -> dict:
-    """The committed LFM receipt, with the two ShortConv rows attested."""
-    receipt = _receipt(LFM_RECEIPT.name)
+    """The LFM receipt with ONLY the two ShortConv rows attested."""
+    receipt = _receipt_before_the_field(LFM_RECEIPT.name)
     for row in receipt["linears"]:
         if row["prefix_pattern"] == IN_PROJ:
             row["output_sizes"] = list(sizes)
@@ -246,7 +259,7 @@ def test_the_container_carries_three_members_that_decode_to_the_source_rows(tmp_
 
 
 def test_an_unattested_census_declares_per_tensor_and_says_so(tmp_path, monkeypatch):
-    entry = construction_entry_from_receipt(_receipt(LFM_RECEIPT.name))
+    entry = construction_entry_from_receipt(_receipt_before_the_field(LFM_RECEIPT.name))
     out = _export(tmp_path, monkeypatch, entry)
     manifest = json.loads((out / "tessera_serving_manifest.json").read_text())
     module = manifest["modules"][LAYER + "conv.in_proj"]
