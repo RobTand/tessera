@@ -266,7 +266,10 @@ Explicit Python file loaders also contribute dependency edges: the non-executing
 lexical bindings, loader aliases and repository globs, using the file path rather
 than the loader's arbitrary module label. A resolved target inside the tree is
 an exact edge whatever its suffix -- a non-Python file is a node under its own
-repository-relative path. **What is bounded is the resolution, not only its
+repository-relative path. A conservative text fallback also selects tests that
+name a changed non-Python file when a helper hides the read from the resolver.
+This includes Markdown and other documentation suffixes: a named test input is
+not inert merely because it is prose (#358). **What is bounded is the resolution, not only its
 destination**, because a normalized final membership says nothing about the
 steps taken to reach it: `Path.resolve` walks a spelling as written, so
 `outside/../repo/driver.py` -- which normalizes into the tree -- still

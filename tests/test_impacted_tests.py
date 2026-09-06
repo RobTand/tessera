@@ -1552,3 +1552,26 @@ def test_text_data_changes_reach_readers_regardless_of_suffix(tmp_path, monkeypa
     assert result["unplaced_data_reads"] == (["src/pkg/reader.py"] if alias else [])
     assert result["unresolved_file_loaders"] == []
     assert result["forces_full"] == []
+
+
+@pytest.mark.parametrize("suffix", [".md", ".rst", ".txt"])
+def test_helper_read_selects_a_test_naming_an_inert_input(tmp_path, suffix):
+    repo, _ = _repo(tmp_path)
+    (repo / "tests").mkdir()
+    name = "contract" + suffix
+    (repo / name).write_text("contract\n")
+    (repo / "tests/test_contract.py").write_text(
+        "from pathlib import Path\n"
+        "ROOT = Path(__file__).resolve().parents[1]\n"
+        "def _read(rel): return (ROOT / rel).read_text()\n"
+        f"def test_contract(): assert _read({name!r})\n"
+    )
+    result = impacted.select(repo, [name])
+    assert result["verdict"] == "narrowed"
+    assert "tests/test_contract.py" in result["tests"]
+    assert "inert changed paths require no tests" not in result["reason"]
+
+
+def test_readme_selects_its_existing_helper_read_contract():
+    result = impacted.select(ROOT, ["README.md"])
+    assert "tests/test_doc_scope_69.py" in result["tests"]

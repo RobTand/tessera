@@ -519,7 +519,7 @@ def _selection_reason(
     if unplaced_reads:
         parts.append("reads of paths this resolver named but refused to place "
                      "conservatively select their readers' consumers")
-    if inert_paths - data_matched and not unplaced_reads:
+    if inert_paths - data_matched - text_matched and not unplaced_reads:
         parts.append("inert changed paths require no tests")
     return "; ".join(parts) or "no changed path requires a test"
 
@@ -608,18 +608,18 @@ def select(root: Path, changed: list[str], *, comparison: str = "") -> dict:
         if rel and Path(rel).name.startswith("test_"):
             found.add(rel)
     tests = sorted(found)
-    # Non-Python changes have no import edges.  Fall back to text: a test that
-    # names the file is coupled to it, and one that never mentions it is not.
+    # A helper can hide a read from the finite expression resolver. Keep the
+    # conservative text fallback for every non-Python suffix: Markdown and
+    # other documentation can be executable test inputs too (#358).
     data_matched = {f for f in data_changed if importers.get(f)}
-    opaque_py = {f for f in changed
-                 if Path(f).suffix not in INERT and Path(f).suffix != ".py"}
+    text_candidates = {f for f in changed if Path(f).suffix != ".py"}
     text_matched: set[str] = set()
-    if opaque_py:
+    if text_candidates:
         all_tests = [p for p in (root / "tests").rglob("test_*.py")]
         for path in all_tests:
             body = path.read_text(encoding="utf-8", errors="replace")
             matches = {
-                f for f in opaque_py if f in body or Path(f).name in body
+                f for f in text_candidates if f in body or Path(f).name in body
             }
             if matches:
                 tests.append(str(path.relative_to(root)))
