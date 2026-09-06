@@ -80,3 +80,29 @@ receipt identities are appended to the qualification record.
 The coordinator owns the full integration suite on the eventual merge result.
 This prerequisite does not close PrismaQuant #253 or claim actual mixed-model
 runtime, performance or quality qualification.
+
+
+## Coordinator integration result
+
+Both full populations ran once through PrismaBuild on the same effective source
+`8cebd5e`, using eight GPU-visible workers on GB10 and sixteen CPU workers on x86,
+with native/build threads bounded to one. GPU: 3,587 passed, one failed,
+25 skipped, one expected failure; 486 tests allocated on the device. CPU:
+3,061 passed, one failed, 549 skipped. Neither population had uncollected
+modules. The ledger retains both original nonzero exits and exact source
+agreement; the missing-artifact, absent-vLLM and two-device skips are not
+claimed as covered by this run.
+
+Both failures were the same documentation check: the offline tracker snapshot
+did not yet include the two new references in this measurement document.
+Commit `7018fa2` refreshed that snapshot from GitHub. The affected check then
+passed all three tests, zero skips/uncollected, in PB action
+`3936ac3d43d44a7168464b8fa14faa7e125fcf6f540e5fb6ef898e058c7f3542`.
+No executable code changed for that correction, so the full populations were
+not repeated. Original failures remain failed records; this is their explicit
+disposition, not a rewritten green suite.
+
+Exact actions, measured snapshots, output hashes and the correction are in
+[data/mixed-census-2026-09-06/integration.json](data/mixed-census-2026-09-06/integration.json).
+The full joined receipt and per-worker populations are under
+`/mnt/shared/tessera-measurements/mixed-lfm-237-2026-09-06/census-integration-373`.

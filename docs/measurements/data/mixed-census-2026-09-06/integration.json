@@ -1,0 +1,77 @@
+{
+  "schema": "tessera.mixed-census-integration.v1",
+  "measured_commit": "8cebd5ec2d9626b76fc6c50f718ec0c26cccf66f",
+  "effective_source_agrees": true,
+  "full_suite_actions": [
+    {
+      "arm": "gpu",
+      "action": "4b819972697717d502c56eaefd3be5644af2c881f554df6c268050b091b0f646",
+      "terminal_sha256": "48fb21d2ae56917d44415892d61d849bed811a07f5e0d9bbf8d34f89adf8dbfa",
+      "status": "failed",
+      "returncode": 1,
+      "elapsed_s": 240.90274715423584,
+      "worker": "sparklina",
+      "scope_cleanup_complete": true,
+      "counts": {
+        "passed": 3587,
+        "failed": 1,
+        "error": 0,
+        "skipped": 25,
+        "xfailed": 1,
+        "xpassed": 0
+      },
+      "surface_path": "/mnt/shared/tessera-measurements/mixed-lfm-237-2026-09-06/census-integration-373/surface.gpu.json",
+      "surface_sha256": "303410edead36fadccec7d149dadf33f9304717fc64d66ce87864cfaf9d5d079",
+      "snapshot": {
+        "commit": "86791d7c29767673de49917fe83b086fbdd3440f",
+        "input": {
+          "bytes": 7565559,
+          "id": "pbrun.checkout-snapshot",
+          "sha256": "dde185db58569ffdf6cb80d33f80313cb59734d95d1dd6d1767263b05ff7defe"
+        },
+        "parent": "8cebd5ec2d9626b76fc6c50f718ec0c26cccf66f",
+        "refs": {},
+        "schema": "prismaquant.prismabuild.pbrun_checkout_snapshot.v2",
+        "subdirectory": "."
+      }
+    },
+    {
+      "arm": "x86",
+      "action": "84959e9e288cf0e5071690066d1c7af61342cd439de0c6adbd5f65aa8cf5eb49",
+      "terminal_sha256": "d814b1c55676f4f16d78091ac5302119bd611421142ca2a2f15c19d10f44380e",
+      "status": "failed",
+      "returncode": 1,
+      "elapsed_s": 1029.1114265918732,
+      "worker": "dl380g10",
+      "scope_cleanup_complete": true,
+      "counts": {
+        "passed": 3061,
+        "failed": 1,
+        "error": 0,
+        "skipped": 549,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "surface_path": "/mnt/shared/tessera-measurements/mixed-lfm-237-2026-09-06/census-integration-373/surface.x86.json",
+      "surface_sha256": "99f9007f324c991eba3ef02db77902c9f088616550b5193b979f422200966ec5",
+      "snapshot": {
+        "commit": "f558a5e3653790341370c0e39ff7b2a7ebd6a3f8",
+        "input": {
+          "bytes": 7565560,
+          "id": "pbrun.checkout-snapshot",
+          "sha256": "284bf51bb09ba7fbd5156f49a680b9b6a665d88ddb731e207ba81a6cb06c4748"
+        },
+        "parent": "8cebd5ec2d9626b76fc6c50f718ec0c26cccf66f",
+        "refs": {},
+        "schema": "prismaquant.prismabuild.pbrun_checkout_snapshot.v2",
+        "subdirectory": "."
+      }
+    }
+  ],
+  "only_failure": "new tracker references absent from docs/issues-snapshot.json",
+  "fix_commit": "7018fa2222925416b4c88cc8b6afab834dcac906",
+  "postfix_action": "3936ac3d43d44a7168464b8fa14faa7e125fcf6f540e5fb6ef898e058c7f3542",
+  "postfix_test_result": "3 passed, 0 skipped, 0 uncollected; rc0",
+  "postfix_payload_sha256": "5b24e63345b165facea598c84fbbb9bfd9c71a6609280f8e9ee999e88f7c244e",
+  "disposition": "Full suite original failures retained. Issue snapshot refreshed from GitHub; the affected documentation check passed. No full-suite repetition for a metadata-only fix."
+}
