@@ -55,3 +55,28 @@ artifact roots, and the unsupported E2M1 reader range; their full reasons are
 retained in the qualification record. The CPU result does not qualify those
 surfaces. Actual mixed-model runtime census and quality measurements belong
 to the separate campaign.
+
+## Delivery rebase, 2026-09-06
+
+The implementation was subsequently rebased onto master
+`a9eb572e1b90b17f716562192910681e65430fba` for
+[Tessera #372](https://github.com/RobTand/tessera/issues/372).
+The only conflict was the architecture provenance header; both the upstream
+dense translator entry and the mixed census entry were retained. Executable
+changes applied without conflicts. The original `6faa5ce` evidence above is
+preserved as measured history; the serving campaign's frozen source is separate.
+
+PB action `82de4959c03543878108a421bd6fac3c2705b9e93b3ddb8037337445a836e626`
+tested rebased commit `bf59f624ca597a587bcc1647d3d6f125bc65b205`:
+**94 passed, 3 skipped, 0 uncollected modules, exit 0** in 42.15 seconds.
+It covered the three focused census files and the two previously failing
+translator files, whose failures are fixed in the new base. It ran on dl380g10,
+Python 3.14.4 and PyTorch 2.11.0+cpu, with eight xdist workers using
+`--dist worksteal` and native threads bounded to one. The three skips were
+verbatim `needs a CUDA device`; no tests allocated on CUDA. Actual terminal
+status and CAS payload size/hash were verified; the complete command and
+receipt identities are appended to the qualification record.
+
+The coordinator owns the full integration suite on the eventual merge result.
+This prerequisite does not close PrismaQuant #253 or claim actual mixed-model
+runtime, performance or quality qualification.

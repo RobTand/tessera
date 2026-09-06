@@ -384,6 +384,75 @@
         "path": "/mnt/shared/prismabuild-fleet/cas/blobs/e3/e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
         "receipt_sha256": "d1f089b270c801992330b36f07564be2672392196d47271377b087cda16fcf32"
       }
+    },
+    "rebased_focused": {
+      "action_key": "82de4959c03543878108a421bd6fac3c2705b9e93b3ddb8037337445a836e626",
+      "terminal_record": "/mnt/shared/prismabuild-fleet/pb-queue/done/82de4959c03543878108a421bd6fac3c2705b9e93b3ddb8037337445a836e626.json",
+      "status": "executed",
+      "returncode": 0,
+      "worker": "dl380g10",
+      "snapshot": {
+        "commit": "2f65aebb383ec907ed95a3bda47075d1e64021c1",
+        "input": {
+          "bytes": 7563905,
+          "id": "pbrun.checkout-snapshot",
+          "sha256": "2288ba6a1e40d9db34751dfc37dae1f43119637b91e6c31e09e1375e76eca890"
+        },
+        "parent": "bf59f624ca597a587bcc1647d3d6f125bc65b205",
+        "refs": {},
+        "schema": "prismaquant.prismabuild.pbrun_checkout_snapshot.v2",
+        "subdirectory": "."
+      },
+      "request": "/mnt/shared/prismabuild-fleet/cas/requests/82/82de4959c03543878108a421bd6fac3c2705b9e93b3ddb8037337445a836e626.json",
+      "command": [
+        "/home/rob/venvs/pb-cpu/bin/python",
+        "-m",
+        "pytest",
+        "-n",
+        "8",
+        "--dist",
+        "worksteal",
+        "--durations=10",
+        "-ra",
+        "tests/test_ts5_census_check.py",
+        "tests/test_ts5_mixed_census.py",
+        "tests/test_census_no_torch.py",
+        "tests/test_fused_member_rungs.py",
+        "tests/test_menu_selection_requirement.py"
+      ],
+      "demand": {
+        "cpu": 8,
+        "mem_gb": 8
+      },
+      "test_summary": [
+        "======================== 94 passed, 3 skipped in 42.15s ========================"
+      ],
+      "surface": [
+        "tessera surface: NO CUDA -- torch 2.11.0+cpu reports no CUDA device",
+        "tessera surface: NO CUDA -- torch 2.11.0+cpu reports no CUDA device",
+        "tessera surface: 3 test(s) skipped, 0 module(s) not collected",
+        "tessera surface: this run did not exercise the CUDA-gated surface. Its pass count is not coverage of it.",
+        "tessera surface: skip reasons, verbatim --",
+        "tessera surface: 0 test(s) allocated on the device"
+      ],
+      "skip_reasons": [
+        "SKIPPED [2] tests/test_fused_member_rungs.py:216: needs a CUDA device",
+        "SKIPPED [1] tests/test_fused_member_rungs.py:261: needs a CUDA device"
+      ],
+      "cas_result": {
+        "payload_path": "/mnt/shared/prismabuild-fleet/cas/blobs/35/359e6323b816fd231ba0c027754f3c8ec2c9278a7bb416c4b3d0b53fdc4cbcf6",
+        "sha256": "359e6323b816fd231ba0c027754f3c8ec2c9278a7bb416c4b3d0b53fdc4cbcf6",
+        "bytes": 2446,
+        "receipt_sha256": "02e604cb8a69cdbc4d3a823f50c869b2987b7306828c20b759c19f8665637a76"
+      }
     }
+  },
+  "delivery_rebase": {
+    "base": "a9eb572e1b90b17f716562192910681e65430fba",
+    "tested_commit": "bf59f624ca597a587bcc1647d3d6f125bc65b205",
+    "conflicts": [
+      "docs/ARCHITECTURE.md provenance header only; retained both upstream dense translator and mixed census entries"
+    ],
+    "issue": "https://github.com/RobTand/tessera/issues/372"
   }
 }
