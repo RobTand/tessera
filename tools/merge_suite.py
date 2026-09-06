@@ -146,10 +146,9 @@ ARMS = {
         "strict_cuda": True,
         "fans_out": False,
         "serial_because": (
-            "this arm runs serially whatever --cpus says: its workers would "
-            "share one device, and pytest-xdist is absent from the CUDA venv's "
-            "interpreter, so -n would abort the run on an unrecognised "
-            "argument rather than fan it out"
+            "this legacy wrapper selects serial GPU execution whatever "
+            "--cpus says; direct PrismaBuild submissions may use xdist "
+            "when the tests have independent process state"
         ),
     },
     "x86": {
