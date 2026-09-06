@@ -96,10 +96,8 @@ def test_e4m3_ladder_serialises():
         assert read_unit_artifact(built.blob, device=w.device).shape == w.shape
         sizes.append(built.exact_bytes * 8 / w.numel())
     for lower, upper in zip(sizes, sizes[1:]):
-        # One payload bit, plus the ALPHABET plane's own growth: it holds one
-        # byte per anchor and the anchor count doubles with the rate, so the
-        # top step carries 128 extra bytes.  That is a charged plane doing its
-        # job, not slack in the accounting.
+        # The window recipe's table has a fixed size across these rungs;
+        # each step adds one body bit per weight, subject to wire alignment.
         assert 1.0 <= upper - lower <= 1.02, sizes   # window body: no forest to grow
     # The exporter's overhead above the rung's body rate follows the E4M3
     # recipe: the window body spends no code bit and grows no forest plane,
