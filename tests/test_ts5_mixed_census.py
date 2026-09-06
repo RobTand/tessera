@@ -3,7 +3,9 @@ import copy
 
 import pytest
 
-from tessera.serving.contract import construction_entry, output_partitions
+from tessera.serving.contract import (
+    construction_entry, output_partitions, vllm_module_name)
+from tessera.serving.dense_ownership import partition_members
 from tessera.serving.scheme import ROUTES, TESSERA_BF16, TESSERA_NVFP4, launch_pairs
 from test_ts5_census_check import IMAGE, TARGETS, _check, _fixture, _promote
 
@@ -109,6 +111,73 @@ def test_full_lfm_mix_counts_74_owners_and_2178_matrices():
     result = _check(case)
     assert len(result["expected_owners"]) == 74
     assert result["expected_projection_units"] == 2178
+
+
+ROW_SLICED = "model.layers.1.conv.in_proj"
+
+
+def _add_row_sliced_dense(case, target=ROW_SLICED, *, family=TESSERA_BF16, grid="BF16", q256=1792):
+    """One source tensor, several attested output partitions (tessera#377).
+
+    LFM2's ``ShortConv`` builds ``in_proj`` as a ``MergedColumnParallelLinear``
+    over ONE checkpoint tensor, so the owner declares one role per partition,
+    each a row window of that tensor. The roles come from ``partition_members``
+    rather than from the member names, which is the whole point of #377.
+    """
+    plan, config, manifest, census, contract = case
+    route = ROUTES[family]
+    entry = construction_entry(config["architectures"], contract)
+    sizes = output_partitions(entry, target)
+    assert sizes == [2048, 2048, 2048], f"{target} is not row-sliced in the pinned contract: {sizes}"
+    tensor = target + ".weight"
+    source_rows = sum(sizes)
+    members = partition_members(target, [tensor], {tensor: source_rows}, sizes)
+    roles = [{"tensor": m.tensor, "role": m.role, "rows": m.rows, "row_offset": m.row_offset,
+              "source_rows": source_rows, "cols": 128, "grid": grid, "q256": q256,
+              "family": family} for m in members]
+    plan[tensor] = {"grid": grid, "q256": q256}
+    scheme = {"structure": "dense", "family": family, "grid": grid,
+              "body": route["body"], "plane": route["plane"], "q256": q256,
+              "rows": source_rows, "columns": 128, "wire_bytes": 4096,
+              "roles": [[m.role, m.rows] for m in members]}
+    config["quantization_config"]["config_groups"][target] = {
+        "targets": [target], "format": "TESSERA", "scheme": scheme}
+    manifest["modules"][target] = {"family": family, "grid": grid, "q256": q256,
+        "rows": source_rows, "cols": 128, "container_bytes": 4096, "roles": roles}
+    manifest["export_identity"]["options"]["plan"] = copy.deepcopy(plan)
+    manifest["totals"]["modules"] += 1
+    manifest["totals"]["units"] += len(roles)
+    owner = vllm_module_name(entry, target)
+    for phase, regime in (("decode", "decode"), ("prefill", "batch")):
+        symbol, decoder = sorted(launch_pairs(family, structure="dense", regime=regime,
+                                             mode="resident"))[0]
+        census["records"][phase][owner] = {"kind": "dense", "state": "served",
+            "policy": family + ":resident", "contract": route["activation_contract"],
+            "symbol": symbol, "decoder": decoder,
+            "shape": f"M{1 if phase == 'decode' else 64}:N{source_rows}:K128"}
+        census["record_owner"][phase][owner] = owner
+    census["declared_name_mapping"][target] = owner
+    return members
+
+
+def test_row_sliced_dense_owner_counts_its_one_source_tensor_once():
+    """One tensor, three roles: the planned-tensor roster counts the tensor once.
+
+    Every other dense fixture gives each role its own tensor, so the roster
+    could count roles and still agree. A row-sliced owner separates the two,
+    and counting roles refuses a manifest the runtime builds exactly.
+    """
+    case = _fixture()
+    members = _add_row_sliced_dense(case)
+    assert [(m.tensor, m.role, m.row_offset, m.rows) for m in members] == [
+        (ROW_SLICED + ".weight", "in_proj.0", 0, 2048),
+        (ROW_SLICED + ".weight", "in_proj.1", 2048, 2048),
+        (ROW_SLICED + ".weight", "in_proj.2", 4096, 2048)]
+    result = _check(case)
+    assert result["verdict"] == "passed"
+    assert "model.layers.1.short_conv.in_proj" in result["expected_owners"]
+    assert (result["expected_projection_units"]
+            == _check(_fixture())["expected_projection_units"] + len(members))
 
 
 def test_routed_attestation_does_not_promote_unattested_dense_owners():
