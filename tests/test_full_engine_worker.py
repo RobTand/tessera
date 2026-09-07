@@ -264,3 +264,18 @@ def test_existing_global_workspace_and_retired_cache_buffers_remain_observable(m
     assert len(rows) == 3
     assert sum(tensor is current for _, tensor in rows) == 2
     assert rows[-1][1] is retired
+
+
+def test_failed_selected_capacity_is_preserved_and_stops_worker(monkeypatch, worker_module, tmp_path):
+    import json
+    recorder = SimpleNamespace(_errors=[], snapshot=lambda *args, **kwargs: None)
+    plan = {"selected_configuration": {"capacity_assertions": {}}, "output_directory": str(tmp_path)}
+    monkeypatch.setattr(worker_module, "claim", lambda: (recorder, plan))
+    observation = {"capacity_assertions": {"passed": False}, "received_argument_scope": "actual initialization argument"}
+    monkeypatch.setattr(worker_module, "inspect_worker_kv", lambda *args, **kwargs: observation)
+    worker = worker_module.ResourceCaptureWorker()
+    worker.model_runner = SimpleNamespace(kv_cache_config=object())
+    with pytest.raises(RuntimeError, match="failed selected assertions"):
+        worker.initialize_from_config(object())
+    assert json.loads(next(tmp_path.glob("kv-worker-*.json")).read_text()) == observation
+    assert recorder._errors == ["actual resolved KV capacity differs from selected assertions"]

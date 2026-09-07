@@ -47,7 +47,7 @@ bound (#376; §2.4). Serving defaults, wire and release gates are unchanged.
 
 Re-stamped 2026-09-07 on `codex/full-engine-resource-ledger` for the
 raw engine allocation recorder, opt-in stock worker startup integration,
-resolved KV group/spec and capacity-policy observations, persistent runtime
+resolved KV group/spec and selected capacity assertions, persistent runtime
 buffer/workspace references, and
 explicit incomplete admission boundary (§2.4). No full-engine fixed-resource price or runtime qualification
 is established by the raw ledger.
@@ -821,6 +821,13 @@ concrete spec types, typed dtypes, group page sizes and kernel block sizes.
 Explicit capacity-policy values and missing fields are recorded alongside them;
 descriptor sizes are never summed into physical storage. Automatic capacity
 remains assignment-dependent and cannot supply a fixed planner KV charge.
+The standalone `full_engine_kv` helper can inspect an ordinary stock worker
+through its supported RPC without constructing the resource observer. It records
+actual storage views and deduplicated backings, distinguishes resident recurrent
+pages from block-table width, and checks an externally supplied capacity
+expectation. The resource worker preserves those observations before refusing
+a mismatch. Passing capacity checks is neither served-concurrency validation
+nor full-model resource admission.
 Observer settings and incomplete raw captures cannot qualify a served model.
 
 Its distinct `tessera.full_engine_raw_resource_ledger.v1` schema never emits a
