@@ -49,6 +49,8 @@ Re-stamped 2026-09-07 on `codex/native-moe-receipts` for the complete routed
 owner research receipt (#395; §2.5), including captured routing transport and
 existing vLLM workspace ownership. Re-stamped on `0693cf18` for the optional
 paired source-execution descriptor and independent qualification digest.
+Re-stamped 2026-09-07 for the explicit first-model KV capacity configuration
+and native factory binding; packaged defaults and release gates are unchanged.
 
 ## 1. Scope
 
@@ -774,6 +776,20 @@ input, top-k IDs and post-normalization routing weights are immutable inputs;
 the router itself is outside this operator. Any dtype transport must reproduce
 the original captured bytes on exact roundtrip. BF16 routing weights are not
 renormalized to satisfy a sum-equals-one assumption.
+
+The selected first-model integration configuration is now
+`experiments/configs/lfm25_first_model_fixed_kv_20260907.json`, with explicit
+`kv_cache_memory_bytes=412286976`. Its stock-helper capacity projection covers
+eight 4096-token requests using 2097 shared pool blocks, including one null
+block and hybrid/recurrent padding. Actual resolved specs, layout and unique
+physical storage must be asserted in a fresh engine capture before resource
+admission. The preceding automatic-capacity configuration and its captures
+retain their original identities. The native standalone factory validates and
+binds the explicit byte value into `CacheConfig`; it does not allocate KV or
+certify capacity. Full-engine stock vLLM bypasses `gpu_memory_utilization` only
+for KV sizing when explicit bytes are supplied: the retained 0.35 value still
+controls the startup free-memory check. Any configuration change requires new
+request/preflight/panel identities rather than reusing old fixed-resource data.
 
 Preparation warms both actual phases before freezing lazy libraries, resolved
 backend configuration, expert tensor identities and the existing

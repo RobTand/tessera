@@ -1,0 +1,105 @@
+{
+  "capacity_assertions": {
+    "attention_block_size": 16,
+    "attention_dtype": "torch.bfloat16",
+    "attention_head_size": 64,
+    "attention_num_kv_heads": 8,
+    "group_kinds": [
+      "recurrent",
+      "recurrent",
+      "recurrent",
+      "full_attention"
+    ],
+    "group_layer_counts": [
+      6,
+      6,
+      6,
+      6
+    ],
+    "max_model_len": 4096,
+    "max_num_batched_tokens": 2048,
+    "max_num_seqs": 8,
+    "null_blocks": 1,
+    "num_blocks": 2097,
+    "num_prefill_checkpoint_blocks": 0,
+    "num_speculative_blocks": 0,
+    "page_size_bytes": 32768,
+    "physical_pool_block_bytes": 196608,
+    "recurrent_cache_mode": "align",
+    "resident_pages_per_request_by_group": [
+      2,
+      2,
+      2,
+      256
+    ],
+    "schema": "tessera.first_model_kv_capacity_expectations.v1",
+    "status": "must_verify_against_next_actual_engine_capture",
+    "tensor_parallel_size": 1,
+    "unique_physical_storage_bytes": 412286976,
+    "unobserved_fields_requiring_capture": [
+      "resolved recurrent block size",
+      "complete resolved spec fields",
+      "complete physical cache layout"
+    ]
+  },
+  "engine_args": {
+    "data_parallel_size": 1,
+    "dtype": "bfloat16",
+    "enable_chunked_prefill": true,
+    "enable_expert_parallel": false,
+    "enable_prefix_caching": true,
+    "enforce_eager": true,
+    "gpu_memory_utilization": 0.35,
+    "kernel_config": {
+      "moe_backend": "auto"
+    },
+    "kv_cache_memory_bytes": 412286976,
+    "max_model_len": 4096,
+    "max_num_batched_tokens": 2048,
+    "max_num_seqs": 8,
+    "pipeline_parallel_size": 1,
+    "tensor_parallel_size": 1
+  },
+  "environment": {
+    "TESSERA_SERVE_MODE": "resident"
+  },
+  "model_family": "LFM2.5-8B-A1B",
+  "qualification": {
+    "blocking_issue": "https://github.com/RobTand/tessera/issues/397",
+    "cell_promotion": false,
+    "model_served": false,
+    "release_qualified": false,
+    "runtime_status": "upstream_source_verified_native_rmsnorm_and_entrypoint_smoke_only",
+    "scope": "Clean upstream source and native smoke evidence do not qualify a model or change a serving gate."
+  },
+  "runtime_identity": {
+    "actual_container_image_id": "record_separately_in_each_execution_receipt",
+    "plugin_install": "separate_pinned_source_install_into_official_base",
+    "plugin_source_commit": "382a1a97dc89618173a2c0799ac569d473b9dc2a",
+    "runtime_image_semantics": "immutable_official_stock_base_container_reference",
+    "upstream_vllm_commit": "1970f3ed4be7fa8620e4ddc4a12c36a8384cfc27"
+  },
+  "runtime_image": "vllm/vllm-openai@sha256:4e31c581716a5cb9ef31eddb0a425842b75cab07d5cd63fb9572e69ae8794c33",
+  "schema": "tessera.first_model_serving_config.v1",
+  "selection": {
+    "authority": "explicit first-model integration configuration selected by the coordinator after reading the stock-helper capacity derivation",
+    "capacity_derivation": {
+      "cas_payload_sha256": "5ec24cf68bee92d0b8c66a7d4c2da6560fb7a5d7f0b4fefe4299964badf47b3b",
+      "path": "/mnt/shared/tessera-native376-resource/kv-capacity-1970/diagnostic-01/derivation.json",
+      "prismabuild_action": "d400e8ba22f66aebae0f82e6fe672733cf6e31811f643f1d7574167920e2e748",
+      "schema": "tessera.stock_kv_capacity_projection.v1",
+      "sha256": "23e506bf87e36e3fb4e05caf15e29450aad887d0d0e89fab453d9a3b67787268"
+    },
+    "date": "2026-09-07",
+    "effective_setting_notes": {
+      "gpu_memory_utilization": "0.35 remains the stock startup free-memory gate; explicit kv_cache_memory_bytes bypasses it only for KV capacity sizing",
+      "native_factory": "all supplied factory config fields must bind resolved state; the standalone operator factory does not initialize a full engine or allocate KV",
+      "num_gpu_blocks_override": "not supplied; stock derives the block count from explicit byte capacity and actual resolved group/page sizes",
+      "scope": "new integration configuration, not a packaged serving default or release promotion; prior auto-sized captures retain their original identities"
+    },
+    "new_explicit_choice": {
+      "kv_cache_memory_bytes": 412286976
+    },
+    "supersedes_configuration_sha256": "1b3bd7af48a0c859a89c9c42f18aa6131a246911fdf194943369bc41b7aad134"
+  }
+}

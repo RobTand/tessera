@@ -292,7 +292,10 @@ def resolve_serving_config(path, runtime_image):
         "enable_prefix_caching", "enforce_eager", "gpu_memory_utilization", "kernel_config",
         "max_model_len", "max_num_batched_tokens", "max_num_seqs", "pipeline_parallel_size",
         "tensor_parallel_size"}
-    dense._fields(args, required, "serving engine arguments")
+    optional = {"kv_cache_memory_bytes"} & set(args)
+    dense._fields(args, required | optional, "serving engine arguments")
+    if "kv_cache_memory_bytes" in args:
+        dense._integer(args["kv_cache_memory_bytes"], "kv_cache_memory_bytes", 1)
     if (args["dtype"] != "bfloat16" or args["enforce_eager"] is not True
             or args["enable_expert_parallel"] is not False
             or any(type(args[key]) is not int or args[key] != 1 for key in
@@ -309,6 +312,7 @@ def resolve_serving_config(path, runtime_image):
             max_num_batched_tokens=args["max_num_batched_tokens"], max_num_seqs=args["max_num_seqs"],
             enable_chunked_prefill=args["enable_chunked_prefill"]),
         cache_config=CacheConfig(gpu_memory_utilization=args["gpu_memory_utilization"],
+            kv_cache_memory_bytes=args.get("kv_cache_memory_bytes"),
             enable_prefix_caching=args["enable_prefix_caching"]),
         parallel_config=ParallelConfig(tensor_parallel_size=1, pipeline_parallel_size=1,
             data_parallel_size=1, enable_expert_parallel=False),

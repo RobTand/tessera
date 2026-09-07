@@ -450,3 +450,52 @@ def test_probe_subset_scope_remains_explicit_and_joins_the_panel_calibration():
         changed["probe_scope"].update(patch)
         with pytest.raises(ValueError, match="subset scope"):
             moe.validate_panel(changed)
+
+
+def _fake_serving_config_runtime(monkeypatch):
+    """Observe arguments at the stock config-construction boundary on CPU."""
+    import sys
+    from types import ModuleType, SimpleNamespace
+    module = ModuleType('vllm.config')
+    for name in ('CacheConfig', 'ParallelConfig', 'SchedulerConfig', 'KernelConfig', 'CompilationConfig'):
+        setattr(module, name, lambda **kwargs: SimpleNamespace(**kwargs))
+    module.VllmConfig = lambda **kwargs: SimpleNamespace(**kwargs, device_config={})
+    compilation = ModuleType('vllm.config.compilation')
+    compilation.CompilationMode = SimpleNamespace(NONE='none')
+    compilation.CUDAGraphMode = SimpleNamespace(NONE='none')
+    monkeypatch.setitem(sys.modules, 'vllm.config', module)
+    monkeypatch.setitem(sys.modules, 'vllm.config.compilation', compilation)
+    monkeypatch.setattr(moe, '_plain', lambda value: vars(value) if isinstance(value, SimpleNamespace) else value)
+    monkeypatch.setenv('TESSERA_SERVE_MODE', 'resident')
+
+
+def test_explicit_kv_capacity_enters_actual_factory_config_and_identity(monkeypatch, tmp_path):
+    import json
+    from pathlib import Path
+    _fake_serving_config_runtime(monkeypatch)
+    source = Path(__file__).resolve().parents[1] / 'experiments/configs/lfm25_first_model_clean_20260907.json'
+    document = json.loads(source.read_text())
+    old, old_identity = moe.resolve_serving_config(source, document['runtime_image'])
+    document['engine_args']['kv_cache_memory_bytes'] = 412286976
+    path = tmp_path / 'explicit-kv.json'
+    path.write_text(json.dumps(document))
+    actual, identity = moe.resolve_serving_config(path, document['runtime_image'])
+    assert actual.cache_config.kv_cache_memory_bytes == 412286976
+    assert identity['resolved']['cache_config']['kv_cache_memory_bytes'] == 412286976
+    assert identity['file_sha256'] != old_identity['file_sha256']
+    assert old.cache_config.kv_cache_memory_bytes is None
+    assert actual.cache_config.gpu_memory_utilization == 0.35
+
+
+@pytest.mark.parametrize('value', [0, -1, True, None, 412286976.0])
+def test_invalid_explicit_kv_capacity_refuses_before_factory(monkeypatch, tmp_path, value):
+    import json
+    from pathlib import Path
+    _fake_serving_config_runtime(monkeypatch)
+    source = Path(__file__).resolve().parents[1] / 'experiments/configs/lfm25_first_model_clean_20260907.json'
+    document = json.loads(source.read_text())
+    document['engine_args']['kv_cache_memory_bytes'] = value
+    path = tmp_path / 'invalid-kv.json'
+    path.write_text(json.dumps(document))
+    with pytest.raises(ValueError):
+        moe.resolve_serving_config(path, document['runtime_image'])

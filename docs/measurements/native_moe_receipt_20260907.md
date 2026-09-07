@@ -226,3 +226,48 @@ No tolerance was relaxed. The diagnostic JSON is
 its independently rehashed safetensors capture SHA256 is
 `8452ec28f9b325e52fcc6745ee4aa16d6828374e45650380b3e56ade770fffb2`.
 Stock runtime and sealed cache bytes remained unchanged after this diagnostic.
+
+## Explicit first-model KV capacity and coherent native context
+
+The coordinator selected a new integration configuration,
+`experiments/configs/lfm25_first_model_fixed_kv_20260907.json`, SHA256
+`f5064609d62a3e61ef1d9bb87b2b62ea10b31b71759db3dce666543d7585233e`.
+It supplies `kv_cache_memory_bytes=412286976` for eight 4096-token requests,
+with unchanged 2048 scheduled-token limit and eager TP1. This new configuration
+supersedes neither the bytes nor the claims of earlier auto-sized captures.
+The stock 0.35 utilization setting still controls startup free-memory admission;
+it is bypassed only for KV sizing when explicit bytes are supplied.
+
+An admitted CPU projection through the exact installed stock1970 helpers
+reproduced all four original full-engine KV outer placement descriptors.
+The shared physical pool has six 32768-byte pages per block, one full-attention
+group needing 256 pages per request and three recurrent align-mode groups
+needing two each. Eight requests plus one shared null block need 2097 blocks,
+or 412286976 bytes. Recurrent padding is included; the four aliased group
+placement descriptors must not be summed. The projection explicitly does not
+claim that r3 retained complete resolved recurrent specs or that the new pool
+has been observed in an engine. The new config carries mandatory expectations
+for the next actual capture rather than admitting the projection as fixed cost.
+
+The derivation at
+`/mnt/shared/tessera-native376-resource/kv-capacity-1970/diagnostic-01/derivation.json`
+has SHA256 `23e506bf87e36e3fb4e05caf15e29450aad887d0d0e89fab453d9a3b67787268`.
+PB `d400e8ba22f66aebae0f82e6fe672733cf6e31811f643f1d7574167920e2e748`
+ran CPU-only in the official ARM container with two CPUs and 8 GiB, exit 0,
+and all 4967 stock files unchanged. Verified CAS payload:
+`5ec24cf68bee92d0b8c66a7d4c2da6560fb7a5d7f0b4fefe4299964badf47b3b`.
+
+The native resolver previously refused the extra explicit-capacity argument.
+Regression PB `7d295e5d84ba48f2d22e4da1675bae094fd83294a61d8a8750a3ff2d75f95a18`
+recorded one failure and five passing rejection cases. The resolver now binds
+positive explicit bytes directly into the actual `CacheConfig`; omission keeps
+the preceding automatic-capacity context. Invalid values still refuse.
+PB `e836133da60099ff4c8eaae8ef6dca91aecdb34f908da396744807c1671cb7ee`
+then passed **202 tests**, with no skips or missing collection, using four CPU
+workers on DL380 and Torch2.11.0+cpu. Verified CAS payload:
+`c385697c68331888833a502757a7ea2b1aee0a836a6ffc97f01317826d772972`.
+Initial attempt `6afcb4429835…` used an interpreter without Torch, skipped the
+module and exited5; it is missing-tool evidence, not the behavioral regression.
+New native request, runtime preflight and independent panel identities are
+required after this resolver/config change. No previous resource observation
+is relabeled as belonging to the new configuration.
