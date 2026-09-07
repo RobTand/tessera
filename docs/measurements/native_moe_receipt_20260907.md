@@ -346,3 +346,14 @@ absent from the producer's actual v1 receipt. The actual frozen panel carries
 the identity and resources carry the observed digest/bytes. PrismaQuant issue
 RobTand/prismaquant#328 tracks the reader repair and receipt-shaped regression;
 no measured receipt is rewritten to accommodate it.
+
+PQ reader repair RobTand/prismaquant#329 subsequently passed its receipt-shaped regression and
+84 CPU tests, then consumed the unchanged native receipt through PB
+`5c5626d6e391486c1d5ebb174becb53651b808d429161814b47338c27776fe5f`.
+The accepted observation at
+`/mnt/shared/tessera-measurements/first-model-20260907/native-moe-panel-r1024/consumed-03.json`
+has SHA256 `4ec5fe3f02048549ab3abe8a4926572aac91ab89d3333a45d74d8b89617b6ddb`.
+It preserves all timings and resource values above, with full-model runtime
+admission still false. The independent CPU validation/CAS audit is
+`workspace-reader-328-audit.json` beside that output, SHA256
+`061b971bc210256174b29e14b1ce60cf75a29ce226c80ba0c7b4ea556f5bcda9`.
