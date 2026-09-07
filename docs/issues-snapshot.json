@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-07T14:15:03Z",
+ "generated": "2026-09-07T15:21:44Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -1000,7 +1000,7 @@
     "title": "Bridge measured Tessera anchor wires into full-model joint AURA"
    },
    "323": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Bind native and full-engine measured runtime provenance explicitly"
    },
    "324": {
@@ -1015,9 +1015,25 @@
     "state": "OPEN",
     "title": "CI optimization: running only affected tests per PR"
    },
+   "327": {
+    "state": "CLOSED",
+    "title": "Bind original runtime observations through explicit provenance"
+   },
+   "328": {
+    "state": "OPEN",
+    "title": "Native MoE receipt reader expects workspace fields absent from producer schema"
+   },
+   "329": {
+    "state": "OPEN",
+    "title": "Read native MoE workspace from the published receipt panel"
+   },
    "33": {
     "state": "CLOSED",
     "title": "gridbook: sync MoE prefill overhead cleanup"
+   },
+   "330": {
+    "state": "OPEN",
+    "title": "Reuse bound anchor identities and sample joint preparation"
    },
    "34": {
     "state": "CLOSED",
@@ -2651,10 +2667,10 @@
    },
    "400": {
     "state": "OPEN",
-    "title": "Capture full-engine allocation ownership and runtime provenance"
+    "title": "Observe full-engine resource ownership and native timing partitions"
    },
    "401": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Extend exact cached-unit export to dense campaign originals"
    },
    "402": {
@@ -2662,8 +2678,28 @@
     "title": "P2: Reject incomplete original-batch profiler and numeric telemetry coverage"
    },
    "403": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Reuse exact dense campaign originals through closed cache export"
+   },
+   "404": {
+    "state": "OPEN",
+    "title": "Reuse already-bound immutable grid digests in reader profile validation"
+   },
+   "405": {
+    "state": "OPEN",
+    "title": "Refuse a smoke bound that empties the plan, like the default does"
+   },
+   "406": {
+    "state": "OPEN",
+    "title": "Reuse immutable registered grid digests in reader validation"
+   },
+   "407": {
+    "state": "OPEN",
+    "title": "Qualify original-wire checkpoints through complete stock-vLLM generation"
+   },
+   "408": {
+    "state": "OPEN",
+    "title": "Avoid int64 bit matrices when decoding narrow wire fields"
    },
    "41": {
     "state": "CLOSED",

@@ -357,3 +357,18 @@ It preserves all timings and resource values above, with full-model runtime
 admission still false. The independent CPU validation/CAS audit is
 `workspace-reader-328-audit.json` beside that output, SHA256
 `061b971bc210256174b29e14b1ce60cf75a29ce226c80ba0c7b4ea556f5bcda9`.
+
+Final delivery checks after merging current master (including cached dense
+export PR #403) ran through PB
+`33033d7f7429c98b36f048b29b423aba399b7a0da8debd5429d9e3096953a65e`.
+Native measurement modules compiled and 204 tests passed, including all 202
+native receipt/resource tests; the sole failure was the offline issue index
+missing the newly filed PrismaQuant workspace-reader issue/PR. Refreshing the
+existing index fixed that reference failure: PB
+`ddc8bc3679f34ed8a03c2fcfe3f5cb8ba3bacb4aca15b4531c90833257962640`
+passed all three reference checks. Both runs reported zero skips or missing
+collection. The final reference action exited zero with complete scope cleanup;
+`delivery-cpu-audit.json` beside the native evidence rehashes its CAS and
+canonical receipt and records the initial terminal failure without relabeling it.
+The audit SHA256 is
+`56a8e58aa014aceb28f648d94eed086074638f7009657af7c76a56c2743c91c7`.
