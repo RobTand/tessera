@@ -130,6 +130,11 @@ def main() -> int:
     ap.add_argument("--profile-experts", type=int, default=8,
                     help="units under the profiler (both arms), to bound the trace")
     ap.add_argument("--skip-unbatched", action="store_true")
+    ap.add_argument("--only-profile", action="store_true", help="skip the timed arms; profile only")
+    ap.add_argument("--profile-cpu", action="store_true",
+                    help="record CPU-side events too (the default is CUDA activity only: the "
+                         "coset trellis emits millions of aten ops a unit and the CPU event "
+                         "table OOM-killed a 40 GB action)")
     ap.add_argument("--l2-sweep", action="store_true")
     ap.add_argument("--l2-budgets", type=lambda s: [int(x) for x in s.split(",")],
                     default=[0, 4 << 20, 8 << 20, 16 << 20, 32 << 20])
@@ -181,6 +186,10 @@ def main() -> int:
     results: list[dict] = []
     shas: dict[str, dict[str, str]] = {}
 
+    def checkpoint():
+        Path(out_dir, "results.json").write_text(json.dumps(
+            {"env": env, "phases": PHASES, "arms": results, "blob_sha": shas}, indent=1, default=str))
+
     def run_arm(tag, family, q256, names, batch, recipe, kwargs, repeat):
         ws = [weights[n] for n in names]
         params = sum(w.numel() for w in ws)
@@ -203,6 +212,7 @@ def main() -> int:
         rec["blob_sha"] = {n: _sha(b) for n, b in zip(names, blobs)}
         results.append(rec)
         print(f"[bench] {label}: {rec['params_per_s'] / 1e6:.3f} Mparam/s", flush=True)
+        checkpoint()
         # identity across arms, per unit
         for n, b in zip(names, blobs):
             key = f"{family}@{q256}"
@@ -225,13 +235,13 @@ def main() -> int:
             kwargs = {n: source.for_unit(n, weights[n].shape[1], device,
                                          scale_plane=recipe.scale_plane, weight=weights[n])
                       for n in experts + [dense]}
-        for r in range(args.repeats):
+        for r in range(args.repeats if not args.only_profile else 0):
             if not args.skip_unbatched:
                 run_arm("unbatched", family, q256, experts, 1, recipe, kwargs, r)
             if encode_linears is not None:
                 for b in batch_sizes:
                     run_arm("batched", family, q256, experts, b, recipe, kwargs, r)
-        if args.dense:
+        if args.dense and not args.only_profile:
             for r in range(args.repeats):
                 run_arm("unbatched", family, q256, [dense], 1, recipe, kwargs, r)
                 if encode_linears is not None and args.dense_copies > 1:
@@ -254,6 +264,7 @@ def main() -> int:
                         raise SystemExit("IDENTITY BROKEN on the dense copies")
                     results.append(rec)
                     print(f"[bench] {label}: {rec['params_per_s'] / 1e6:.3f} Mparam/s", flush=True)
+                    checkpoint()
 
         if args.profile:
             from torch.profiler import ProfilerActivity, profile
@@ -262,9 +273,9 @@ def main() -> int:
             arms = [("unbatched", 1)]
             if encode_linears is not None:
                 arms.append(("batched", args.profile_batch))
+            activities = [ProfilerActivity.CUDA] + ([ProfilerActivity.CPU] if args.profile_cpu else [])
             for tag, b in arms:
-                with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
-                             record_shapes=False, with_stack=False) as prof:
+                with profile(activities=activities, record_shapes=False, with_stack=False) as prof:
                     with phase(f"{family}@{q256}.profile.{tag}.B{b}", family=family, q256=q256,
                                batch=b, units=len(subset), arm=f"profile_{tag}"):
                         if tag == "unbatched":
@@ -292,6 +303,7 @@ def main() -> int:
                 for r in sync:
                     print(f"    sync: {r['count']:8d}  {r['cpu_total_us'] / 1e6:8.3f}s cpu  {r['name']}", flush=True)
             Path(out_dir, f"profile_{family}@{q256}.json").write_text(json.dumps(tables, indent=1))
+            checkpoint()
 
     env["finished_epoch"] = time.time()
     Path(out_dir, "results.json").write_text(json.dumps(
