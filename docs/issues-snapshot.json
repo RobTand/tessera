@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-07T18:03:31Z",
+ "generated": "2026-09-07T18:58:21Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -876,7 +876,7 @@
     "title": "[P2] Expert projection fallback misses a common routed family in differently ordered stack menus"
    },
    "296": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Streamed qualification source manifest accepts unlisted packages that shadow sealed modules"
    },
    "297": {
@@ -888,7 +888,7 @@
     "title": "Repair packed campaign identity, merge integrity and export handoff"
    },
    "299": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Make the PQ237 source seal refuse what it never enumerated (#296)"
    },
    "3": {
@@ -1066,6 +1066,10 @@
    "338": {
     "state": "OPEN",
     "title": "PQ237 harness rejects current joint probe source-execution identity"
+   },
+   "339": {
+    "state": "OPEN",
+    "title": "fix: bind source execution in joint qualification harness"
    },
    "34": {
     "state": "CLOSED",
@@ -2698,7 +2702,7 @@
     "title": "loadcost.py truncates to a multiple of 256 before measuring, so no published load figure covers the partial-superblock shape"
    },
    "400": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Observe full-engine resource ownership and native timing partitions"
    },
    "401": {
@@ -2756,6 +2760,22 @@
    "413": {
     "state": "CLOSED",
     "title": "Record retirement and recovery for the original batch profiler"
+   },
+   "414": {
+    "state": "OPEN",
+    "title": "Qualify GLM 288-expert native wire controls on stock vLLM"
+   },
+   "415": {
+    "state": "OPEN",
+    "title": "Add bounded q512 and selected-expert GLM streamed research controls"
+   },
+   "416": {
+    "state": "CLOSED",
+    "title": "Use CPU annotation ranges for full-engine timing partitions"
+   },
+   "417": {
+    "state": "OPEN",
+    "title": "research: GLM q512 control and selected-expert packed decode"
    },
    "42": {
     "state": "CLOSED",
