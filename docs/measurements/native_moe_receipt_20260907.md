@@ -293,3 +293,56 @@ must join the actual installed package identity and file roster of the native
 capture. The read-only artifact comparison is retained at
 `/mnt/shared/tessera-native376-resource/native-moe-original-r1024/package-identity-diagnostic.json`,
 SHA256 `aa2560d05b1a666cca404f01c2bd7649c3fdb7f38b2f18f9cf126bd5308bde3d`.
+
+## Corrected fixed-KV original-wire native observation
+
+The final original-96 panel uses request `prepare-03/request.json`, independently
+frozen `panel-03.json` (file SHA256
+`2090eb469f5e46f001ab27da49068937ba56cd7ea22e849ad3453a646522c9c3`),
+and native runtime identity
+`a0a72558667a2836856d952e10d64014f6fb7b60d86bc0fabd464ca0435692ed`.
+It retains the fixed-KV configuration `f5064609...`, the corrected shared FP8
+activation arithmetic and the actual native TRITON whole routed owner boundary.
+Router computation is outside this measured boundary; selected IDs and weights
+are checked against the original source capture. No sum of expert leaf timings
+is substituted for the whole invocation.
+
+PB timing action `1cbfe802699317ec7443bf68d41360ec5493b143a60f38146e4818e8d7155bed`
+and separate profiler action
+`b46560b08862f233e5fb29461855081aff5fd5bbf5e2cb307c02a298ecd40b78`
+both ran on Sparklina, with actual exit zero and complete scope cleanup. Each
+reserved four CPUs, 16 GiB aggregate and an 8 GiB GPU subset, with one native
+thread per library. The exact runtime and canonical panel identities match
+between the two processes. The sealed Triton cache is unchanged in both; loaded
+package origins match the canonical installed source files and all 4,967 stock
+vLLM files remain unchanged.
+
+For 32 CUDA-event samples after eight warmup iterations, median whole-apply
+latency was **1.906431973 ms for prefill M=512** and **0.263167992 ms for decode
+M=1**. Both numerical gates passed: maximum absolute output error was
+0.0009765625 and 0.000244140625 respectively, and activation QDQ matched exactly.
+The independently profiled invocation recorded two fused MoE kernels totaling
+1692.047 us for prefill and 235.883 us for decode. These are a baseline boundary
+price and an instrumented replay, not an optimization delta.
+
+The measured operator residency is 353,042,432 bytes. Persistent vLLM workspace
+is separately 23,068,672 bytes. Complete incremental operator scratch bounds,
+including output, are 7,367,680 bytes for prefill and 14,848 bytes for decode.
+These bounds do not establish model-fixed resources or cross-operator workspace
+composition and remain insufficient for an admissible full-model runtime table.
+
+Evidence under `/mnt/shared/tessera-native376-resource/native-moe-original-r1024/`:
+
+- `measure-03/receipt.json`: SHA256 `e2c5c85158b405fa419c095788328b2895268df19761581ec72b05be8f0d04a4`.
+- `measure-03/receipt.json.memory.json`: SHA256 `b72417b4f243f3c296dc0fdd0153503eb4fba8496db85b6cb37a414e95198a83`.
+- `measure-03/pb-audit.json`: SHA256 `57c80ded5a0bf1e50723e93e663580501906868910965056e275928c7b357c29`; rehashes every stdout-bound artifact and CAS payload `a0963620f429d2785a43adca9370d90cabf7b721b94ca32a335812b0196a9d39`.
+- `profile-02/profile.json`: SHA256 `f9b834c75bd48faa07ef713ea3a870bb83ce6b6d40517e3bd2f4568907f90b0e`; includes both CPU and CUDA profiles, numerical gates and separately hashed Chrome traces.
+- `profile-02/pb-audit.json`: SHA256 `1771b260117204c8c330b4b8bd311bd7634a9a10f452d7aed73ad8fcf0ea5b18`; rehashes profiler artifacts and CAS payload `119290d887d43f1c342002b87c69ebc9e60a0882ebd479ef7478f3e3a65915a1`.
+- `measure-profile-netdata-03/index.json`: SHA256 `46f6c4d1f108ff51b1463adbf96af75a3d1d68b73b78cc25a2d485ab24762948`; all ten selected raw power/clock/memory/CPU series from both GB10 hosts were captured with no missing series. The finite panels have low duty cycle; these host-level series do not resolve per-operator energy or establish saturation.
+
+The first PQ consumption of these unchanged measured bytes failed with
+`KeyError: 'workspace'`: its fixture had invented top-level workspace fields
+absent from the producer's actual v1 receipt. The actual frozen panel carries
+the identity and resources carry the observed digest/bytes. PrismaQuant issue
+RobTand/prismaquant#328 tracks the reader repair and receipt-shaped regression;
+no measured receipt is rewritten to accommodate it.
