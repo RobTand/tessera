@@ -167,3 +167,62 @@ the packaged default reference separately. No packaged pin changed.
 `prepare-02` (`1d207ab84d5d…`) passed, but `prepare-03` supersedes its harness
 identity after adding the source-execution panel fields. No request, tensor
 or wire regeneration was required for that refresh.
+
+## Stable generated runtime and original activation refusal
+
+The first measured and profiled attempts (`73374e99491a…` and
+`dc99662066de…`) correctly refused runtime identity before numerical evaluation.
+An untimed comparison (`39b928f768cf…`) isolated the only differing runtime
+field to the generated Triton `cuda_utils` shared library: fresh container
+compilation produced different bytes. The launcher now reuses the existing
+`TRITON_CACHE_DIR`, seals every generated file after untimed preparation, and
+checks the complete file/hash map before and after every subsequent action.
+No native hash check was weakened and no parallel weight cache was introduced.
+
+Preparation `5a97746e3d8949957c5ae9b611709e259fca8734c32004bfe1dd2d58afd76296`
+passed on Sparklina. `prepare-04/preflight.json` beneath the preceding evidence
+root supersedes preparation 03; SHA256:
+`0e588e8d5217bbc6235cc2e349cae302100b498a4e04bde626f790f251f5fe28`.
+Its runtime SHA256 is
+`eabb129c797d76e03c110d070e45b99d69db91d67b003b21f82a6b3c45a0d1df`.
+The 33-file cache seal SHA256 is
+`7bc5f26063c602a51cc1b8d843ffdecb6234c81b97ccd8ce799b0a99a4752399`.
+PrismaQuant independently froze panel 02, SHA256
+`479206a4e228249a1a5f22e3229cb5b3b79d0ae0b4e1f31459d4d0c5c4b143e0`,
+against that runtime and the unchanged original request/source proof.
+
+Measurement `448959d34a5b975af5188a00c2a2dd40a45f79772af9cb26a374cfb5292c896e`
+then reached the numerical gate and exited 2 (`numerical_refused`; PB wrapper
+exit 1). Whole-owner output passed both phases, with maximum absolute errors
+0.00146484375 prefill and 0.000244140625 decode. Decode input QDQ was exact.
+Prefill input QDQ failed the fixed atol=rtol=0.015625 gate, maximum absolute
+error 0.0703125 and maximum normalized error 2.6605080831408774. Consequently
+there are **no timings and no admitted operator resource bounds** from this
+attempt. The retained native weights and workspace are observations only.
+The receipt is `measure-02/receipt.json`, SHA256
+`dffa1514d65612a936876da8398f1553ddaa2e7c7dc36d30dae4877582fc1215`;
+its raw memory trace SHA256 is
+`7464e4364ed7eaf2df4369b3904898f986e31615d28314593fa82adca90d87ac`.
+All 4,967 stock files and all 33 cache artifacts were unchanged; the exact
+owned container exited 2 and was removed. Both-host Netdata evidence contains
+ten series with none missing (`measure-02/netdata/index.json`, SHA256
+`bf82b1a8948f060863bd8c2045d91cff1e0ced44d56375574cfebc63e65c06fd`).
+
+A small admitted diagnostic,
+`2c01d0c7b6aa4d2a0ad2ea22787432c267de21441da30183cd1b6574868b639d`,
+passed on Sparklina and captured native FP8 code bits, FP32 scales, inputs and
+reference QDQ without changing any original bytes. Of 512 prefill row scales,
+256 differed from the PrismaQuant formula. Division by the captured native
+scale reproduced every native code bit; division by the PrismaQuant scale did
+not. The one-ULP scale differences can flip FP8 midpoint rounding: row 53,
+column 232 has input -0.0908203125, native scale 0.0021623882930725813 and
+PrismaQuant scale 0.002162388525903225, giving code -44 versus -40. There were
+4,050 differing BF16 QDQ values; decode was exact. Compressed-tensors reproduced
+the frozen reference QDQ exactly. This localizes the incompatibility to scale
+and quantizer arithmetic; it does not yet establish a replacement formula.
+No tolerance was relaxed. The diagnostic JSON is
+`activation-diagnostic-01/diagnostic.json`, SHA256
+`851f140f29abed96922014ae00d7f90ab252511480b9af60ef10bd0189d004c2`;
+its independently rehashed safetensors capture SHA256 is
+`8452ec28f9b325e52fcc6745ee4aa16d6828374e45650380b3e56ade770fffb2`.
+Stock runtime and sealed cache bytes remained unchanged after this diagnostic.
