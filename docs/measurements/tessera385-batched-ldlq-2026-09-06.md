@@ -87,3 +87,11 @@ before admission. Resume: `/usr/bin/python3 /home/rob/tmp/tessera385/submit.py
 /home/rob/tmp/tessera385/command-bench-base-02.json` and
 `... command-bench-head-02.json`, then
 `/usr/bin/python3 /home/rob/tmp/tessera385/power_by_phase.py <out-dir>/results.json`.
+
+## Review continuation — 2026-09-06
+
+The [PR 386 review report](tessera386-review-2026-09-06.md) records the later
+paired B8 before/after measurements, byte comparison, profiler evidence,
+both-host telemetry, validation repairs, and their explicit limits. The
+original handoff above remains historical; the later B8 result does not
+qualify the unmeasured B32 or dense after arms.

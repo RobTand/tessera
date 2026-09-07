@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-07T02:51:53Z",
+ "generated": "2026-09-07T03:19:26Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -872,12 +872,20 @@
     "title": "Validate campaign journal inputs before merging and canonicalize refusal records"
    },
    "295": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Expert projection fallback misses a common routed family in differently ordered stack menus"
    },
    "296": {
     "state": "OPEN",
     "title": "[P2] Streamed qualification source manifest accepts unlisted packages that shadow sealed modules"
+   },
+   "297": {
+    "state": "CLOSED",
+    "title": "Fix expert projection fallback across differently ordered stack menus"
+   },
+   "298": {
+    "state": "OPEN",
+    "title": "Carry packed expert sampling through campaign merge and export"
    },
    "3": {
     "state": "CLOSED",
@@ -2468,6 +2476,10 @@
    "387": {
     "state": "OPEN",
     "title": "Geometry fallback can publish empty Tessera config_groups after dropping the last implicit owner"
+   },
+   "388": {
+    "state": "OPEN",
+    "title": "P1: uniform-control accounting test still permits dropped TCQ forest bytes"
    },
    "39": {
     "state": "CLOSED",
