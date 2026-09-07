@@ -1,10 +1,44 @@
 """Resource-observer refusal regressions; CPU inputs are not GPU evidence."""
 import copy
+import ctypes
 import json
 import os
 from pathlib import Path
+import sys
+from types import SimpleNamespace
 
 import pytest
+
+
+def test_context_lookup_uses_the_collectors_loaded_cupti(monkeypatch):
+    from experiments.native_operator_resources import NativeMemoryCollector
+
+    def current_context(pointer):
+        ctypes.cast(pointer, ctypes.POINTER(ctypes.c_void_p))[0] = 123
+        return 0
+
+    def context_id(context, pointer):
+        assert context.value == 123
+        ctypes.cast(pointer, ctypes.POINTER(ctypes.c_uint32))[0] = 42
+        return 0
+
+    def load(name):
+        assert name == "libcuda.so.1", "CUPTI must use the collector's linked dependency"
+        return SimpleNamespace(cuCtxGetCurrent=current_context)
+
+    monkeypatch.setattr(ctypes, "CDLL", load)
+    monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(cuda=SimpleNamespace(
+        memory_snapshot=lambda: [], synchronize=lambda device: None,
+        reset_peak_memory_stats=lambda device: None, memory_allocated=lambda device: 0,
+        max_memory_allocated=lambda device: 0, get_allocator_backend=lambda: "native")))
+    collector = object.__new__(NativeMemoryCollector)
+    collector.start_code = 0
+    collector._lib = SimpleNamespace(cuptiGetContextId=context_id)
+    collector.mark = lambda name: 1
+    sentinel = object()
+    output, observation = collector.observe_apply(lambda: sentinel, "fixture")
+    assert output is sentinel
+    assert observation["context_id"] == 42
 
 
 @pytest.fixture
@@ -149,3 +183,41 @@ def test_incomplete_real_trace_never_produces_resource_zero(real_evidence, defec
     assert actual["status"] == "incomplete", actual
     assert actual["peak_scratch_bytes"] is None
     assert actual["reasons"]
+
+
+def test_argument_capture_configuration_is_accepted(real_evidence):
+    from experiments.native_operator_resources import validate_cupti_capture
+    trace = real_evidence["trace"]
+    trace["argument_schema"] = "tessera.cuda_memory_api_arguments.v1"
+    trace["configuration"].extend(
+        {"operation": name, "code": 0} for name in (
+            "subscribe_arguments", "unsubscribe_arguments",
+            "enable_argument_callback_20", "enable_argument_callback_22",
+            "enable_argument_callback_25", "enable_argument_callback_26",
+            "enable_argument_callback_27", "enable_argument_callback_28"))
+    assert validate_cupti_capture(trace) == trace["process_id"]
+
+
+@pytest.mark.parametrize("defect", ["missing", "duplicate", "failed", "unknown_schema", "unexpected"])
+def test_argument_capture_configuration_is_exact(real_evidence, defect):
+    from experiments.native_operator_resources import validate_cupti_capture
+    trace = real_evidence["trace"]
+    trace["argument_schema"] = "tessera.cuda_memory_api_arguments.v1"
+    trace["configuration"].extend(
+        {"operation": name, "code": 0} for name in (
+            "subscribe_arguments", "unsubscribe_arguments",
+            "enable_argument_callback_20", "enable_argument_callback_22",
+            "enable_argument_callback_25", "enable_argument_callback_26",
+            "enable_argument_callback_27", "enable_argument_callback_28"))
+    if defect == "missing":
+        trace["configuration"].pop()
+    elif defect == "duplicate":
+        trace["configuration"].append(trace["configuration"][-1])
+    elif defect == "failed":
+        trace["configuration"][-1]["code"] = 1
+    elif defect == "unknown_schema":
+        trace["argument_schema"] = "unknown"
+    else:
+        trace["configuration"].append({"operation": "enable_argument_callback_9999", "code": 0})
+    with pytest.raises(ValueError):
+        validate_cupti_capture(trace)

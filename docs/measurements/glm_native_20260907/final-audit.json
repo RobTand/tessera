@@ -1,0 +1,1107 @@
+{
+  "schema": "tessera.glm_native_final_audit.v1",
+  "source_binding": [
+    {
+      "role": "gate_proj",
+      "original_source_payload_matches_bound_copy": true,
+      "source": {
+        "name": "model.language_model.layers.3.mlp.experts.0.gate_proj.weight",
+        "shard": "/mnt/shared/models/GLM-5.3-Flash-BF16/model-00057-of-00120.safetensors",
+        "header_sha256": "00f43f34b051ae7333ba87461ef4fcf903ad50e92d44ef950682efe6c6049d4f",
+        "header_bytes": 44344,
+        "spec": {
+          "dtype": "BF16",
+          "shape": [
+            2048,
+            4096
+          ],
+          "data_offsets": [
+            219816152,
+            236593368
+          ]
+        },
+        "payload": {
+          "path": "/mnt/shared/tessera-glm-native-20260907/gate_proj.source.bf16",
+          "sha256": "064b14ae60248fccd556db5307c0f1bc3f068b994292dfc35de722cb7d7466a6",
+          "bytes": 16777216
+        }
+      }
+    },
+    {
+      "role": "up_proj",
+      "original_source_payload_matches_bound_copy": true,
+      "source": {
+        "name": "model.language_model.layers.3.mlp.experts.0.up_proj.weight",
+        "shard": "/mnt/shared/models/GLM-5.3-Flash-BF16/model-00057-of-00120.safetensors",
+        "header_sha256": "00f43f34b051ae7333ba87461ef4fcf903ad50e92d44ef950682efe6c6049d4f",
+        "header_bytes": 44344,
+        "spec": {
+          "dtype": "BF16",
+          "shape": [
+            2048,
+            4096
+          ],
+          "data_offsets": [
+            236593368,
+            253370584
+          ]
+        },
+        "payload": {
+          "path": "/mnt/shared/tessera-glm-native-20260907/up_proj.source.bf16",
+          "sha256": "31f1be11376067d2355ae565b160e6a945d715fe2a0d5fd735f25154f50b92b8",
+          "bytes": 16777216
+        }
+      }
+    },
+    {
+      "role": "down_proj",
+      "original_source_payload_matches_bound_copy": true,
+      "source": {
+        "name": "model.language_model.layers.3.mlp.experts.0.down_proj.weight",
+        "shard": "/mnt/shared/models/GLM-5.3-Flash-BF16/model-00057-of-00120.safetensors",
+        "header_sha256": "00f43f34b051ae7333ba87461ef4fcf903ad50e92d44ef950682efe6c6049d4f",
+        "header_bytes": 44344,
+        "spec": {
+          "dtype": "BF16",
+          "shape": [
+            4096,
+            2048
+          ],
+          "data_offsets": [
+            203038936,
+            219816152
+          ]
+        },
+        "payload": {
+          "path": "/mnt/shared/tessera-glm-native-20260907/down_proj.source.bf16",
+          "sha256": "a036cad6640735824566e6ba8eb52eb13b262ab2cb2f2cc6ab1a7fa8f0db5e9c",
+          "bytes": 16777216
+        }
+      }
+    }
+  ],
+  "all_completed_containers_removed": true,
+  "outcomes": [
+    {
+      "run": "construction-01",
+      "returncode": 1,
+      "container_exit_code": 1,
+      "container_removed": true,
+      "status": null,
+      "reason": null,
+      "receipt": null
+    },
+    {
+      "run": "construction-02",
+      "returncode": 0,
+      "container_exit_code": 0,
+      "container_removed": true,
+      "status": "constructed_on_meta",
+      "reason": null,
+      "receipt": {
+        "path": "/mnt/shared/tessera-glm-native-20260907/construction-02/receipt.json",
+        "sha256": "55bde513451a402bcba2feb4a1c10836621dbf0e8e69f6331efe224306ba3fd2",
+        "bytes": 17319
+      }
+    },
+    {
+      "run": "control-1024-01",
+      "returncode": 1,
+      "container_exit_code": 1,
+      "container_removed": true,
+      "status": "failed",
+      "reason": "No module named 'vllm.model_executor.models.glm5next'",
+      "receipt": {
+        "path": "/mnt/shared/tessera-glm-native-20260907/control-1024-01/receipt.json",
+        "sha256": "217de3d9a679f834e291625f03fdee13dbc2f59a513a2305c0cfafc0e665d432",
+        "bytes": 1453
+      }
+    },
+    {
+      "run": "control-1024-02",
+      "returncode": 1,
+      "container_exit_code": 1,
+      "container_removed": true,
+      "status": "failed",
+      "reason": "Duplicate layer name: language_model.model.layers.3.mlp.experts",
+      "receipt": {
+        "path": "/mnt/shared/tessera-glm-native-20260907/control-1024-02/receipt.json",
+        "sha256": "c4609175f46c3eee5688366114668d91a5864128fb43fe2842873d55355ebca5",
+        "bytes": 2362
+      }
+    },
+    {
+      "run": "control-1024-03",
+      "returncode": 0,
+      "container_exit_code": 0,
+      "container_removed": true,
+      "status": "repeated_source_control_passed",
+      "reason": null,
+      "receipt": {
+        "path": "/mnt/shared/tessera-glm-native-20260907/control-1024-03/receipt.json",
+        "sha256": "e7986ca7e14eea48fced258583d4e035993580a7a39cf89295fd8e5428b190bb",
+        "bytes": 4034
+      }
+    },
+    {
+      "run": "control-768-01",
+      "returncode": 1,
+      "container_exit_code": 1,
+      "container_removed": true,
+      "status": "failed",
+      "reason": "Duplicate layer name: language_model.model.layers.3.mlp.experts",
+      "receipt": {
+        "path": "/mnt/shared/tessera-glm-native-20260907/control-768-01/receipt.json",
+        "sha256": "9cf1376a8873ac38a2d528a83f7b708aaee765542bbd0ec85501c7ed401d5f4b",
+        "bytes": 2362
+      }
+    },
+    {
+      "run": "control-768-02",
+      "returncode": 0,
+      "container_exit_code": 0,
+      "container_removed": true,
+      "status": "repeated_source_control_passed",
+      "reason": null,
+      "receipt": {
+        "path": "/mnt/shared/tessera-glm-native-20260907/control-768-02/receipt.json",
+        "sha256": "dd690cc0d068a64e835f3efa5fd9f2c1205e6493ef094dc42e588104e38f47eb",
+        "bytes": 4029
+      }
+    },
+    {
+      "run": "encode-1024-down_proj",
+      "returncode": 0,
+      "container_exit_code": 0,
+      "container_removed": true,
+      "status": "encoded_source_projection",
+      "reason": null,
+      "receipt": {
+        "path": "/mnt/shared/tessera-glm-native-20260907/encode-1024-down_proj/receipt.json",
+        "sha256": "6056cae9a4ec2bb29bba12c68aa4d84cbef3b3a9e6899d31121646439965143a",
+        "bytes": 1782
+      }
+    },
+    {
+      "run": "encode-1024-gate_proj",
+      "returncode": 0,
+      "container_exit_code": 0,
+      "container_removed": true,
+      "status": "encoded_source_projection",
+      "reason": null,
+      "receipt": {
+        "path": "/mnt/shared/tessera-glm-native-20260907/encode-1024-gate_proj/receipt.json",
+        "sha256": "f0c14d22774342f3afc1c77e5cd54d922801f750498f1bbe45404c209c6a899a",
+        "bytes": 1782
+      }
+    },
+    {
+      "run": "encode-1024-up_proj",
+      "returncode": 0,
+      "container_exit_code": 0,
+      "container_removed": true,
+      "status": "encoded_source_projection",
+      "reason": null,
+      "receipt": {
+        "path": "/mnt/shared/tessera-glm-native-20260907/encode-1024-up_proj/receipt.json",
+        "sha256": "bd28b49298bbd6bb4ef5c19bfeb6629645eb0a22e5bf25c39a8906c211ea1693",
+        "bytes": 1776
+      }
+    },
+    {
+      "run": "encode-768-down_proj",
+      "returncode": 0,
+      "container_exit_code": 0,
+      "container_removed": true,
+      "status": "encoded_source_projection",
+      "reason": null,
+      "receipt": {
+        "path": "/mnt/shared/tessera-glm-native-20260907/encode-768-down_proj/receipt.json",
+        "sha256": "cd7d1a63a6a9bbce4e46f35868d683223c22d0f6ca5e27441bc19a8b6faf0609",
+        "bytes": 1781
+      }
+    },
+    {
+      "run": "encode-768-gate_proj",
+      "returncode": 0,
+      "container_exit_code": 0,
+      "container_removed": true,
+      "status": "encoded_source_projection",
+      "reason": null,
+      "receipt": {
+        "path": "/mnt/shared/tessera-glm-native-20260907/encode-768-gate_proj/receipt.json",
+        "sha256": "2ad24c8d6f251dc480670101667dc66305b4a739c5b52cef84049b3b83eef0e0",
+        "bytes": 1781
+      }
+    },
+    {
+      "run": "encode-768-up_proj",
+      "returncode": 0,
+      "container_exit_code": 0,
+      "container_removed": true,
+      "status": "encoded_source_projection",
+      "reason": null,
+      "receipt": {
+        "path": "/mnt/shared/tessera-glm-native-20260907/encode-768-up_proj/receipt.json",
+        "sha256": "d4ef8c5057df01aaca0dacbf9f4f709f174afcdda378a30b04e59826b9657700",
+        "bytes": 1775
+      }
+    },
+    {
+      "run": "resident-construction-01",
+      "returncode": 0,
+      "container_exit_code": 0,
+      "container_removed": true,
+      "status": "constructed_on_meta",
+      "reason": null,
+      "receipt": {
+        "path": "/mnt/shared/tessera-glm-native-20260907/resident-construction-01/receipt.json",
+        "sha256": "43d7c585308293d278ed9c4e9eeb6af4a786a39c8fcdecf7e339c9d0172628ec",
+        "bytes": 5958
+      }
+    },
+    {
+      "run": "streamed-construction-01",
+      "returncode": 0,
+      "container_exit_code": 0,
+      "container_removed": true,
+      "status": "refused",
+      "reason": "tessera target 'language_model.model.layers.3.mlp.experts': the expert route serves 'resident' only. A streamed expert stack would decode E x 2 containers inside every forward, which is a different kernel story than the dense streamed route's and carries no measurement; refusing is what keeps 'streamed' meaning one thing.",
+      "receipt": {
+        "path": "/mnt/shared/tessera-glm-native-20260907/streamed-construction-01/receipt.json",
+        "sha256": "f2cdc7ebe00fc8ffc00192056ddb3d408aac8531e92c6e3f41ec673e773078ef",
+        "bytes": 6608
+      }
+    }
+  ],
+  "files": [
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/construction-01/container-inspect.json",
+      "sha256": "5e1e52d6492aa298e46015e55b6a07c06761de12efc59a2f60890ff01fa18f70",
+      "bytes": 10863
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/construction-01/container.cid",
+      "sha256": "a093436ad2f104d51e9bfe29c2d57d50c2ee2c1f9bdaf84b678d9972fd074fd4",
+      "bytes": 64
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/construction-01/container.log",
+      "sha256": "be3491fe604c513d5247ebac7b3321b68a27c6d73dde03e7ed173afa74d08c31",
+      "bytes": 2303
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/construction-01/image-inspect.json",
+      "sha256": "236604faeb8802407a5d56b8b136f8920790c1cab940abcbf2be7dd6cb2177e5",
+      "bytes": 8225
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/construction-01/launch.json",
+      "sha256": "a6fe30e3e527808f26db134014fc799107efe0d9d74aa0a57906603099850a6a",
+      "bytes": 2940
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/construction-01/launcher-result.json",
+      "sha256": "6d85d4ef321e138d6cf82412fc3a351eae433ff0c4b7a41f88e067a176396080",
+      "bytes": 210
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/construction-02/container-inspect.json",
+      "sha256": "3517d47ac07a9b8633873b5c2a1ee10c4ad90bc5a34b7f23c3a7584458e7ce2b",
+      "bytes": 10863
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/construction-02/container.cid",
+      "sha256": "0fe14bf140459b0b07a3419a4147f6a652cd1676fbf6223ebd1d38525226eec0",
+      "bytes": 64
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/construction-02/container.log",
+      "sha256": "b21d7f4e5d740b954a91b85d0e4d7c28e532bbafb5c27be74b8c2f377c452f22",
+      "bytes": 4634
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/construction-02/image-inspect.json",
+      "sha256": "236604faeb8802407a5d56b8b136f8920790c1cab940abcbf2be7dd6cb2177e5",
+      "bytes": 8225
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/construction-02/installation.json",
+      "sha256": "0bb1bf06086044791a3f9796e3e1b4110863529fadd91868ad2c87877030129e",
+      "bytes": 534
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/construction-02/launch.json",
+      "sha256": "3155fceaa070e2c20a7a184b6ffdf7c932a5bdf835c56e628d33fecceb7e8d06",
+      "bytes": 2939
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/construction-02/launcher-result.json",
+      "sha256": "bcadda01bc6b636fee4e6521af287fe13707c1955ebe212c05f9c4694a5e4622",
+      "bytes": 210
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/construction-02/package-identity.json",
+      "sha256": "f0a3e5441b8d72902ee97c0efd3a4f02f220dda1b0716447cfbe3425f2e55ecd",
+      "bytes": 39375
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/construction-02/receipt.json",
+      "sha256": "55bde513451a402bcba2feb4a1c10836621dbf0e8e69f6331efe224306ba3fd2",
+      "bytes": 17319
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-1024-01/container-inspect.json",
+      "sha256": "4457cbb407a05575a00490d087e0175d63f9ac5c04ee6a00d979527a3babe478",
+      "bytes": 11306
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-1024-01/container.cid",
+      "sha256": "b522a3bf6acffa7ef3237d44a33e8bf53ede912ab71cc2e525efd3bd9425e3ab",
+      "bytes": 64
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-1024-01/container.log",
+      "sha256": "da5e0a7a97e196d1ca673cd0809dc1d66122be387bd2f737cbe2fd9f1d543b6e",
+      "bytes": 1679
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-1024-01/image-inspect.json",
+      "sha256": "236604faeb8802407a5d56b8b136f8920790c1cab940abcbf2be7dd6cb2177e5",
+      "bytes": 8225
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-1024-01/installation.json",
+      "sha256": "0bb1bf06086044791a3f9796e3e1b4110863529fadd91868ad2c87877030129e",
+      "bytes": 534
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-1024-01/launch.json",
+      "sha256": "f63c093c442d3d6b8f8908227a1f91ea612b0cd8eacaa44e409f09091373ac78",
+      "bytes": 3274
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-1024-01/launcher-result.json",
+      "sha256": "4b5513dae0ef0b1f27b131ca8cb8d964ca4c3026230a9b1caba6cf0b6e7ff00a",
+      "bytes": 209
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-1024-01/package-identity.json",
+      "sha256": "b3e3298b7ed594b82a0c2dc2b2621a2ef5f08fbd8520fe25aabe61c5a5d6beb6",
+      "bytes": 38218
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-1024-01/receipt.json",
+      "sha256": "217de3d9a679f834e291625f03fdee13dbc2f59a513a2305c0cfafc0e665d432",
+      "bytes": 1453
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-1024-02/container-inspect.json",
+      "sha256": "add64ebe45c68d4dffa5286f380ffd2e778cab89bf95ec22f9845f92a9315884",
+      "bytes": 11306
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-1024-02/container.cid",
+      "sha256": "3973fe158f36552122715bccde3b6336ff4f3d60708bbc7bfde45357b4138609",
+      "bytes": 64
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-1024-02/container.log",
+      "sha256": "30294eeab26577b36bd6f47e73ec5561766c3f3db4e3938bd395efa2ccbaa298",
+      "bytes": 4728
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-1024-02/image-inspect.json",
+      "sha256": "236604faeb8802407a5d56b8b136f8920790c1cab940abcbf2be7dd6cb2177e5",
+      "bytes": 8225
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-1024-02/installation.json",
+      "sha256": "0bb1bf06086044791a3f9796e3e1b4110863529fadd91868ad2c87877030129e",
+      "bytes": 534
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-1024-02/launch.json",
+      "sha256": "4d1fca5d4e9e79e22befb1318b1ad96b1b81ce17ae7b4c89f182b7cdae5920ac",
+      "bytes": 3274
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-1024-02/launcher-result.json",
+      "sha256": "bf4c7f92950d37350ae6eaa9265bdc7dc65312dd6b812a7a78488012104723a0",
+      "bytes": 211
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-1024-02/package-identity.json",
+      "sha256": "98c2cd6e386f0528b47a593fa9019e73b083c9341f3c6487c8a3f75d14375087",
+      "bytes": 44066
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-1024-02/receipt.json",
+      "sha256": "c4609175f46c3eee5688366114668d91a5864128fb43fe2842873d55355ebca5",
+      "bytes": 2362
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-1024-03/container-inspect.json",
+      "sha256": "19ab79a071a3f9a5031277f7ddf397ef6ae3470ca46d98b012d95033d3c08b4f",
+      "bytes": 11307
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-1024-03/container.cid",
+      "sha256": "40169609cce674a4adf7ce6ba4892dbce48a9eb2021f6784831b88371c36e84a",
+      "bytes": 64
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-1024-03/container.log",
+      "sha256": "f37d51e22cd5a8d429d6058f294b3ee40a74592a32643c5f6f0b6e795f199f23",
+      "bytes": 6001
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-1024-03/image-inspect.json",
+      "sha256": "236604faeb8802407a5d56b8b136f8920790c1cab940abcbf2be7dd6cb2177e5",
+      "bytes": 8225
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-1024-03/installation.json",
+      "sha256": "0bb1bf06086044791a3f9796e3e1b4110863529fadd91868ad2c87877030129e",
+      "bytes": 534
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-1024-03/launch.json",
+      "sha256": "d1648c6bd8f21b76a1dfb7f934ba7e0d0309f085eebee36b9f624f77dd5b9662",
+      "bytes": 3274
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-1024-03/launcher-result.json",
+      "sha256": "a7a7f2490383234a11dcbafff18ae21ebbe54e5157ae4e4b0520d59f6dbcc017",
+      "bytes": 210
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-1024-03/load-progress.json",
+      "sha256": "368282b24231623f9c779bc2cc691bd1e35eee8f6fef7f0f901612d75959a05b",
+      "bytes": 14363
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-1024-03/operator-progress.json",
+      "sha256": "196f0842fad482d2a9341b838f9d199521bbf620827eddcc749f9f9fe5c85e5d",
+      "bytes": 1251
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-1024-03/package-identity.json",
+      "sha256": "bb6bd256574243e067f9040976d1fab97cc1141a332cb77058a3db89f555c184",
+      "bytes": 44946
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-1024-03/receipt.json",
+      "sha256": "e7986ca7e14eea48fced258583d4e035993580a7a39cf89295fd8e5428b190bb",
+      "bytes": 4034
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-1024-03/tile-progress.json",
+      "sha256": "3d3a5536bdf85af18c42a47e7ffbb0c834e9c363e6afa66573701c01b7e974c0",
+      "bytes": 56
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-768-01/container-inspect.json",
+      "sha256": "d2aeef4d71bcddc2ce8e339ddd4879b9d1b62b12c0dd3b339a36c8c3d508d884",
+      "bytes": 11306
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-768-01/container.cid",
+      "sha256": "7b6fef2bb8170a96165ec2dd71a3bb3872b09a8258f1214295d78ece670d98d9",
+      "bytes": 64
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-768-01/container.log",
+      "sha256": "bca3a3d389cb3bfc5a9085fa4042c22b6f83c3fc77e64b306b4d79873163cf69",
+      "bytes": 4725
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-768-01/image-inspect.json",
+      "sha256": "236604faeb8802407a5d56b8b136f8920790c1cab940abcbf2be7dd6cb2177e5",
+      "bytes": 8225
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-768-01/installation.json",
+      "sha256": "0bb1bf06086044791a3f9796e3e1b4110863529fadd91868ad2c87877030129e",
+      "bytes": 534
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-768-01/launch.json",
+      "sha256": "67555523cc048a00ed618662e6e73da45d08c907d1e213f3e90c1766e9c3b954",
+      "bytes": 3278
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-768-01/launcher-result.json",
+      "sha256": "578d9895e76e3bfe114dfece5e202b1d35d8b19a2601a08f48a2d74cb887b270",
+      "bytes": 209
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-768-01/package-identity.json",
+      "sha256": "98c2cd6e386f0528b47a593fa9019e73b083c9341f3c6487c8a3f75d14375087",
+      "bytes": 44066
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-768-01/receipt.json",
+      "sha256": "9cf1376a8873ac38a2d528a83f7b708aaee765542bbd0ec85501c7ed401d5f4b",
+      "bytes": 2362
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-768-02/container-inspect.json",
+      "sha256": "87e0aae031f80d7bfc915ebcbc09f65d953371dde0eb5f8cd8e0162d87410077",
+      "bytes": 11306
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-768-02/container.cid",
+      "sha256": "e3265f2e34c12b730be65e154764e2f34eed974ab66572295cabcbaee73818a8",
+      "bytes": 64
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-768-02/container.log",
+      "sha256": "d41d6b24f79ebb7a5f7f0b281b95ba417416ef619a3ac4d23118f6713ec0e8d1",
+      "bytes": 5993
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-768-02/image-inspect.json",
+      "sha256": "236604faeb8802407a5d56b8b136f8920790c1cab940abcbf2be7dd6cb2177e5",
+      "bytes": 8225
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-768-02/installation.json",
+      "sha256": "0bb1bf06086044791a3f9796e3e1b4110863529fadd91868ad2c87877030129e",
+      "bytes": 534
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-768-02/launch.json",
+      "sha256": "8f7d62e10a37fd6d4b924503bbfdd4a40d3a2224ca6d510fecf9696bace744f6",
+      "bytes": 3279
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-768-02/launcher-result.json",
+      "sha256": "2acf4d83dde8bceb5b03a672550374c15b4d15312d346c789958499f15057b7d",
+      "bytes": 211
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-768-02/load-progress.json",
+      "sha256": "6d4feb9496ceeef60cf605980fa2f2d412969b02815f5855bb63a8b0f1768d3f",
+      "bytes": 14361
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-768-02/operator-progress.json",
+      "sha256": "75fcdce0ae2eabfcd8ad6cccbc02cb0cb9956fddb917e7e403b3af4cf15caaee",
+      "bytes": 1252
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-768-02/package-identity.json",
+      "sha256": "bb6bd256574243e067f9040976d1fab97cc1141a332cb77058a3db89f555c184",
+      "bytes": 44946
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-768-02/receipt.json",
+      "sha256": "dd690cc0d068a64e835f3efa5fd9f2c1205e6493ef094dc42e588104e38f47eb",
+      "bytes": 4029
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-768-02/tile-progress.json",
+      "sha256": "3d3a5536bdf85af18c42a47e7ffbb0c834e9c363e6afa66573701c01b7e974c0",
+      "bytes": 56
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-1024-down_proj/container-inspect.json",
+      "sha256": "99b096b47b40a5b7363e1c5145ec14d5808c5891ffb9a7aaf34ec1aac2cd0731",
+      "bytes": 11561
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-1024-down_proj/container.cid",
+      "sha256": "99640f31c448eab09951c8f301f74ba2366ca1a08b2534c9738d18587bc51591",
+      "bytes": 64
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-1024-down_proj/container.log",
+      "sha256": "aad4e2322b936208187b4e298db4b4264d3892dd9c406b1b542980e3c0109966",
+      "bytes": 1697
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-1024-down_proj/image-inspect.json",
+      "sha256": "236604faeb8802407a5d56b8b136f8920790c1cab940abcbf2be7dd6cb2177e5",
+      "bytes": 8225
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-1024-down_proj/independent-stock.safetensors",
+      "sha256": "f3e1730d0ab5ccb5c9c3981ac4406156a091258beeb094acee3aefc80d9358b2",
+      "bytes": 8405160
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-1024-down_proj/installation.json",
+      "sha256": "0bb1bf06086044791a3f9796e3e1b4110863529fadd91868ad2c87877030129e",
+      "bytes": 534
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-1024-down_proj/launch.json",
+      "sha256": "ab15ea3674077950d7c032cfb2599171885a7255a4917c16f4e59820bc49cd6e",
+      "bytes": 3448
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-1024-down_proj/launcher-result.json",
+      "sha256": "d02a70059043834765959c4c11973ede65dfe95a8de5b06710c11414ba0d9949",
+      "bytes": 211
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-1024-down_proj/package-identity.json",
+      "sha256": "2f57d979df1f28ae12cd773cf99819902dea9a4d3d2a597da846b2091ea31279",
+      "bytes": 39947
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-1024-down_proj/projection.wire",
+      "sha256": "1a623782d76be34fa58035acb1fb0a48de62ca7e2ee425b57a15e1251ddc5f13",
+      "bytes": 4219616
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-1024-down_proj/receipt.json",
+      "sha256": "6056cae9a4ec2bb29bba12c68aa4d84cbef3b3a9e6899d31121646439965143a",
+      "bytes": 1782
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-1024-gate_proj/container-inspect.json",
+      "sha256": "d9b6bcebf98aa37b189a8601550e3aa63babe1adff2ad7c1e1b1c0e6fabcd9a0",
+      "bytes": 11559
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-1024-gate_proj/container.cid",
+      "sha256": "954317276cdcb93a82b45d968c7cb597599c13ad1b299601adc199d843a475ab",
+      "bytes": 64
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-1024-gate_proj/container.log",
+      "sha256": "db7a06581b8d64007ee2f63222bee00a08d72d4e9fad20de428d9258deb8e4d7",
+      "bytes": 1697
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-1024-gate_proj/image-inspect.json",
+      "sha256": "236604faeb8802407a5d56b8b136f8920790c1cab940abcbf2be7dd6cb2177e5",
+      "bytes": 8225
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-1024-gate_proj/independent-stock.safetensors",
+      "sha256": "05c3d3ae116222fc80ad64eb21fe2f3337e4d6dcb08e4ca5c733f1a08423aefa",
+      "bytes": 8396960
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-1024-gate_proj/installation.json",
+      "sha256": "0bb1bf06086044791a3f9796e3e1b4110863529fadd91868ad2c87877030129e",
+      "bytes": 534
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-1024-gate_proj/launch.json",
+      "sha256": "17e74dc01d9eb06709d0000b0a11f5f19c27133f018496cabff3bf25b1081d4b",
+      "bytes": 3446
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-1024-gate_proj/launcher-result.json",
+      "sha256": "cab568fe7e5424c8a0ace2cba1580f8a0c629539113e0c3e24112bbf185a525c",
+      "bytes": 209
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-1024-gate_proj/package-identity.json",
+      "sha256": "2f57d979df1f28ae12cd773cf99819902dea9a4d3d2a597da846b2091ea31279",
+      "bytes": 39947
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-1024-gate_proj/projection.wire",
+      "sha256": "15f1bf49b556d7e38d30e267a639966bf38b96d503c7913b18645063147f800a",
+      "bytes": 4215584
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-1024-gate_proj/receipt.json",
+      "sha256": "f0c14d22774342f3afc1c77e5cd54d922801f750498f1bbe45404c209c6a899a",
+      "bytes": 1782
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-1024-up_proj/container-inspect.json",
+      "sha256": "ab8cb8bc989d233f77f1f9d6b13cd629bd1021832731b53b1f3c0739d5148b49",
+      "bytes": 11550
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-1024-up_proj/container.cid",
+      "sha256": "6b389c4936444e53ee24e7c97dbcc0ff6be3e633c17594b0ed86b25ccc046b58",
+      "bytes": 64
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-1024-up_proj/container.log",
+      "sha256": "7f1fab49c7897fa1cb52a603609b158f1da23df07103b25add864a0b191998c4",
+      "bytes": 1691
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-1024-up_proj/image-inspect.json",
+      "sha256": "236604faeb8802407a5d56b8b136f8920790c1cab940abcbf2be7dd6cb2177e5",
+      "bytes": 8225
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-1024-up_proj/independent-stock.safetensors",
+      "sha256": "a500aca18401417dc745a6b70dc6465b1efde5257bbdfcf039586573f88d6a9d",
+      "bytes": 8396960
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-1024-up_proj/installation.json",
+      "sha256": "0bb1bf06086044791a3f9796e3e1b4110863529fadd91868ad2c87877030129e",
+      "bytes": 534
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-1024-up_proj/launch.json",
+      "sha256": "03b504374a2d8627c446c3549aba2fc7118eb0203437a09b978eb8b2243471b1",
+      "bytes": 3440
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-1024-up_proj/launcher-result.json",
+      "sha256": "0fc417f2b2d20dcae86478c948df6b8eab86c73d339bb2f91ca1914e45479d43",
+      "bytes": 210
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-1024-up_proj/package-identity.json",
+      "sha256": "2f57d979df1f28ae12cd773cf99819902dea9a4d3d2a597da846b2091ea31279",
+      "bytes": 39947
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-1024-up_proj/projection.wire",
+      "sha256": "339b962fd3c5cd44ea59730c5dafc4245142161dc384b26f09aec2c325df5199",
+      "bytes": 4215580
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-1024-up_proj/receipt.json",
+      "sha256": "bd28b49298bbd6bb4ef5c19bfeb6629645eb0a22e5bf25c39a8906c211ea1693",
+      "bytes": 1776
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-768-down_proj/container-inspect.json",
+      "sha256": "fef26d877cca8f81cf1f4f045df9f051a03804fd7b0f944328cf3a6654273a5a",
+      "bytes": 11555
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-768-down_proj/container.cid",
+      "sha256": "e807399a93b01aeba4e30474cbb9656b5de8550f5fa1889279353db99c7aabe8",
+      "bytes": 64
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-768-down_proj/container.log",
+      "sha256": "71f268814b027110d259488c277661e23e83d9dbe569eb7b69a187b34afe0999",
+      "bytes": 1694
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-768-down_proj/image-inspect.json",
+      "sha256": "236604faeb8802407a5d56b8b136f8920790c1cab940abcbf2be7dd6cb2177e5",
+      "bytes": 8225
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-768-down_proj/independent-stock.safetensors",
+      "sha256": "e60112ad4f4516184b21c431ec8074d648c06f9e3aa6ec77f7dc68e928c6ed4e",
+      "bytes": 8405160
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-768-down_proj/installation.json",
+      "sha256": "0bb1bf06086044791a3f9796e3e1b4110863529fadd91868ad2c87877030129e",
+      "bytes": 534
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-768-down_proj/launch.json",
+      "sha256": "66f9ce7934e93787c2f79955120e1318d0531a07d7f36fe1c922a2c747723a38",
+      "bytes": 3442
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-768-down_proj/launcher-result.json",
+      "sha256": "931560cd23763b657b08d8d57567d40b16c39e09450951e79d0edce60060322c",
+      "bytes": 210
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-768-down_proj/package-identity.json",
+      "sha256": "2f57d979df1f28ae12cd773cf99819902dea9a4d3d2a597da846b2091ea31279",
+      "bytes": 39947
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-768-down_proj/projection.wire",
+      "sha256": "47d9b73d57f761ba655e4fdce5418a75278a5eeb77890213cc982e83278d3d48",
+      "bytes": 3171040
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-768-down_proj/receipt.json",
+      "sha256": "cd7d1a63a6a9bbce4e46f35868d683223c22d0f6ca5e27441bc19a8b6faf0609",
+      "bytes": 1781
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-768-gate_proj/container-inspect.json",
+      "sha256": "cd4a9084555d07940e42554f189d52c4c847fb4d0fe60eb8e7c50e512fc7827d",
+      "bytes": 11557
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-768-gate_proj/container.cid",
+      "sha256": "70f09258b91afa2beaca0d58161cfef449333e857b7a8d409280180b4b9212d9",
+      "bytes": 64
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-768-gate_proj/container.log",
+      "sha256": "686b00cf12cedefe5f5e94dd4aeb07c51cd9ec64c9e27a17be8bf19de97a5f70",
+      "bytes": 1694
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-768-gate_proj/image-inspect.json",
+      "sha256": "236604faeb8802407a5d56b8b136f8920790c1cab940abcbf2be7dd6cb2177e5",
+      "bytes": 8225
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-768-gate_proj/independent-stock.safetensors",
+      "sha256": "3ef4c312bc758beb3f959ac8dd5075601082872e33f12a9c170c3646f48b76b4",
+      "bytes": 8396960
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-768-gate_proj/installation.json",
+      "sha256": "0bb1bf06086044791a3f9796e3e1b4110863529fadd91868ad2c87877030129e",
+      "bytes": 534
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-768-gate_proj/launch.json",
+      "sha256": "0c2c1527c6eb417098b88c00d1447a80fe6d3a808dca008332534c139aa62f6e",
+      "bytes": 3447
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-768-gate_proj/launcher-result.json",
+      "sha256": "58e9d24569ea1c7fcd276e5194d87bb466d7b18d2fc9d1af64245364385bc27f",
+      "bytes": 211
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-768-gate_proj/package-identity.json",
+      "sha256": "2f57d979df1f28ae12cd773cf99819902dea9a4d3d2a597da846b2091ea31279",
+      "bytes": 39947
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-768-gate_proj/projection.wire",
+      "sha256": "b6e71439dd4ffaeb4e5e5bb2867a214654024f58bd3fb3cb079fdfc451d8fc50",
+      "bytes": 3166991
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-768-gate_proj/receipt.json",
+      "sha256": "2ad24c8d6f251dc480670101667dc66305b4a739c5b52cef84049b3b83eef0e0",
+      "bytes": 1781
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-768-up_proj/container-inspect.json",
+      "sha256": "c70db62b81b97831f0b12f38c3212a5437938dc063ce402dfb99305b39485d91",
+      "bytes": 11544
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-768-up_proj/container.cid",
+      "sha256": "a3865ffa620f35a6dee2d9213198af8ecdc2f2ea964871f0f3b4c076cdd7eb73",
+      "bytes": 64
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-768-up_proj/container.log",
+      "sha256": "b3d64059d3f0411a62e989a5cd9e9f2a33f4aeeddce7aecbd56d1abf80e6e6ed",
+      "bytes": 1688
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-768-up_proj/image-inspect.json",
+      "sha256": "236604faeb8802407a5d56b8b136f8920790c1cab940abcbf2be7dd6cb2177e5",
+      "bytes": 8225
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-768-up_proj/independent-stock.safetensors",
+      "sha256": "aa1d5bf7635967b3940eed23dc70792ab7854b1366e581dd156cbe821d062e32",
+      "bytes": 8396960
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-768-up_proj/installation.json",
+      "sha256": "0bb1bf06086044791a3f9796e3e1b4110863529fadd91868ad2c87877030129e",
+      "bytes": 534
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-768-up_proj/launch.json",
+      "sha256": "934812bee23d80a8ec360171855a25f15e0c1d0e7dd71316779231cc95ff5c97",
+      "bytes": 3436
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-768-up_proj/launcher-result.json",
+      "sha256": "54319111a465f7355b087431ba8665bec57779e6842e8cf36ade7d95138303af",
+      "bytes": 210
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-768-up_proj/package-identity.json",
+      "sha256": "2f57d979df1f28ae12cd773cf99819902dea9a4d3d2a597da846b2091ea31279",
+      "bytes": 39947
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-768-up_proj/projection.wire",
+      "sha256": "a100705086e36a9a42811f171d363e58d202352742416c185e8510e0c55658b8",
+      "bytes": 3166987
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-768-up_proj/receipt.json",
+      "sha256": "d4ef8c5057df01aaca0dacbf9f4f709f174afcdda378a30b04e59826b9657700",
+      "bytes": 1775
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/resident-construction-01/constructor-only-quant-config.json",
+      "sha256": "89189a0c80b3f5d031b98df224eec06274956211611906e5fb95e62a8622f0ec",
+      "bytes": 1542
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/resident-construction-01/container-inspect.json",
+      "sha256": "e1ca79e7df193726fdd1610fe7220a99073ab80e7af2b290b1a512f9e332bfbf",
+      "bytes": 11082
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/resident-construction-01/container.cid",
+      "sha256": "c260a9e76856f1270444dffecdb74d68b700ef9ab6283e00fe12e014ec1d54a4",
+      "bytes": 64
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/resident-construction-01/container.log",
+      "sha256": "f59e1f2cc933eb46dd2bbb16fab3619bcd00daf6fd7af055d18d06d4fd8b001b",
+      "bytes": 4964
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/resident-construction-01/image-inspect.json",
+      "sha256": "236604faeb8802407a5d56b8b136f8920790c1cab940abcbf2be7dd6cb2177e5",
+      "bytes": 8225
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/resident-construction-01/installation.json",
+      "sha256": "0bb1bf06086044791a3f9796e3e1b4110863529fadd91868ad2c87877030129e",
+      "bytes": 534
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/resident-construction-01/launch.json",
+      "sha256": "137f6ee8a2ebe7a5961d389387c51b6574b5e7230f0580590ecad9a9b9ff4c6f",
+      "bytes": 3052
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/resident-construction-01/launcher-result.json",
+      "sha256": "f8b4f08030205679f2c27790e105e76c2118cd62e673ca2a6af8fbb1f392d790",
+      "bytes": 211
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/resident-construction-01/package-identity.json",
+      "sha256": "19c921c81c2d69fb2f6c535d0dbd9418fda0cc577a5e8ee168e1d2c181457ce0",
+      "bytes": 45061
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/resident-construction-01/receipt.json",
+      "sha256": "43d7c585308293d278ed9c4e9eeb6af4a786a39c8fcdecf7e339c9d0172628ec",
+      "bytes": 5958
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/streamed-construction-01/constructor-only-quant-config.json",
+      "sha256": "89189a0c80b3f5d031b98df224eec06274956211611906e5fb95e62a8622f0ec",
+      "bytes": 1542
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/streamed-construction-01/container-inspect.json",
+      "sha256": "83399459d7921fd2c8f778f869b0af52433c21ba23517f623cf8746f68ba3402",
+      "bytes": 11082
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/streamed-construction-01/container.cid",
+      "sha256": "65330a570311daccb32312ba420bfb28665dace14dc0688e869ab92a386c962f",
+      "bytes": 64
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/streamed-construction-01/container.log",
+      "sha256": "e1fd05dd071f685135a3bb3f2e56f4408fa332fb63f568e9026bf3a15e2614ee",
+      "bytes": 4679
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/streamed-construction-01/image-inspect.json",
+      "sha256": "236604faeb8802407a5d56b8b136f8920790c1cab940abcbf2be7dd6cb2177e5",
+      "bytes": 8225
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/streamed-construction-01/installation.json",
+      "sha256": "0bb1bf06086044791a3f9796e3e1b4110863529fadd91868ad2c87877030129e",
+      "bytes": 534
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/streamed-construction-01/launch.json",
+      "sha256": "0fe846be0b306367b0e010bcb15c3ff6fe471e88d12dd92223dea936a20f19d6",
+      "bytes": 3051
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/streamed-construction-01/launcher-result.json",
+      "sha256": "c4387f25fe830ef87e13b4b4c0aa49fc1295a2f60947d934c65a3e5124286fcc",
+      "bytes": 210
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/streamed-construction-01/package-identity.json",
+      "sha256": "98c2cd6e386f0528b47a593fa9019e73b083c9341f3c6487c8a3f75d14375087",
+      "bytes": 44066
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/streamed-construction-01/receipt.json",
+      "sha256": "f2cdc7ebe00fc8ffc00192056ddb3d408aac8531e92c6e3f41ec673e773078ef",
+      "bytes": 6608
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/request.json",
+      "sha256": "96915ace44fe757381c87b996fb926551a3dd5dd29d21d10a2d087e45dcf44ea",
+      "bytes": 2711
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/control-request.json",
+      "sha256": "5c9ec4e848b80cc61c76822ba8034abb2b8fee6dde0bec779bbed769e461bfb9",
+      "bytes": 3029
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/pb-evidence-audit.json",
+      "sha256": "50ddbbf0fa0550478b85904dc572a8438166bffc9939d0dff32a39b4ef2cf248",
+      "bytes": 29320
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/construction-audit.json",
+      "sha256": "b4f94019b3d712efa667c4d283e7622265986b84359e24abcae46648569923c2",
+      "bytes": 5567
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/external-overlap.json",
+      "sha256": "532411cc04d9a9f222755bc1e960b1dcc0ad41bdea2cad4b8f4bb8f4ac2f78b9",
+      "bytes": 605
+    },
+    {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encoding-campaign.json",
+      "sha256": "6ef686bd0cb4751a1908a7dd02ef238862c86e727b5feb876c4d5b57fd3d96fb",
+      "bytes": 5005
+    }
+  ],
+  "claims": {
+    "construction_actual_glm_factory": true,
+    "resident_loader_and_operator_control_rungs": [
+      1024,
+      768
+    ],
+    "experts": 288,
+    "top_k": 8,
+    "all_trained_experts": false,
+    "expert_permutation_proof": false,
+    "full_model_generation": false,
+    "model_quality": false,
+    "streamed_admitted": false,
+    "runtime_cell_promoted": false,
+    "performance_claim": false
+  },
+  "final_controls": {
+    "experiments/glm_native_construction.py": {
+      "path": "experiments/glm_native_construction.py",
+      "sha256": "86c85e99328a5f21aacac51004d899d309b63aa27f5f06800f4215de11f88612",
+      "bytes": 11598
+    },
+    "experiments/run_glm_native_construction.py": {
+      "path": "experiments/run_glm_native_construction.py",
+      "sha256": "f5560906ef24b42a742cf04925f0eafc12c2e0198b636e1c88b311716173161f",
+      "bytes": 5630
+    },
+    "experiments/glm_repeated_expert_control.py": {
+      "path": "experiments/glm_repeated_expert_control.py",
+      "sha256": "c3b20989ca546dd5dd6b0604f58a922f41313143039ea8d9958e34b4d299b494",
+      "bytes": 14340
+    },
+    "tools/tessera_construction_census.py": {
+      "path": "tools/tessera_construction_census.py",
+      "sha256": "6848a7ef91a29a756eb42f278bb856f254103fca195234334af5db6d1b46c785",
+      "bytes": 19315
+    }
+  }
+}

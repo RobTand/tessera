@@ -1,0 +1,39 @@
+{
+  "schema": "tessera.glm_native_construction.v1",
+  "stage": "streamed",
+  "request_sha256": "96915ace44fe757381c87b996fb926551a3dd5dd29d21d10a2d087e45dcf44ea",
+  "control_scope": {
+    "layers": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "mtp_layers": 0,
+    "weights_loaded": false,
+    "vision": "original meta construction",
+    "geometry": "original hidden4096 intermediate2048 experts288 top8",
+    "quality_claim": false,
+    "production_admission": false
+  },
+  "runtime": {
+    "vllm": "0.28.1rc1.dev451+g1970f3ed4",
+    "torch": "2.13.0+cu130",
+    "image": "vllm/vllm-openai@sha256:4e31c581716a5cb9ef31eddb0a425842b75cab07d5cd63fb9572e69ae8794c33"
+  },
+  "tensor_device": "meta",
+  "weight_bytes_loaded": 0,
+  "forward_executed": false,
+  "runtime_cell_promoted": false,
+  "tp_size": 1,
+  "ep_size": 1,
+  "status": "refused",
+  "exception_type": "ValueError",
+  "reason": "tessera target 'language_model.model.layers.3.mlp.experts': the expert route serves 'resident' only. A streamed expert stack would decode E x 2 containers inside every forward, which is a different kernel story than the dense streamed route's and carries no measurement; refusing is what keeps 'streamed' meaning one thing.",
+  "traceback": "Traceback (most recent call last):\n  File \"/work/experiments/glm_native_construction.py\", line 181, in main\n    model, used_quant, config = census.build_model(request['bounded_config'], 'meta', 512,\n                                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/work/tools/tessera_construction_census.py\", line 229, in build_model\n    model = initialize_model(vllm_config=vllm_config)\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.12/dist-packages/vllm/tracing/otel.py\", line 178, in sync_wrapper\n    return func(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.12/dist-packages/vllm/model_executor/model_loader/utils.py\", line 60, in initialize_model\n    model = model_class(vllm_config=vllm_config, prefix=prefix)\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.12/dist-packages/vllm/models/glm5next/nvidia/model.py\", line 1054, in __init__\n    self.language_model = init_vllm_registered_model(\n                          ^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.12/dist-packages/vllm/model_executor/models/utils.py\", line 609, in init_vllm_registered_model\n    return initialize_model(vllm_config=vllm_config, prefix=prefix)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.12/dist-packages/vllm/tracing/otel.py\", line 178, in sync_wrapper\n    return func(*args, **kwargs)\n           ^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.12/dist-packages/vllm/model_executor/model_loader/utils.py\", line 60, in initialize_model\n    model = model_class(vllm_config=vllm_config, prefix=prefix)\n            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.12/dist-packages/vllm/models/glm5next/nvidia/model.py\", line 899, in __init__\n    self.model = Glm5NextModel(\n                 ^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.12/dist-packages/vllm/models/glm5next/nvidia/model.py\", line 630, in __init__\n    self.start_layer, self.end_layer, self.layers = make_layers(\n                                                    ^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.12/dist-packages/vllm/model_executor/models/utils.py\", line 880, in make_layers\n    + get_offloader().wrap_modules(\n      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.12/dist-packages/vllm/model_executor/offloader/base.py\", line 119, in wrap_modules\n    return list(modules_generator)\n           ^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.12/dist-packages/vllm/model_executor/models/utils.py\", line 881, in <genexpr>\n    layer_fn(prefix=f\"{prefix}.{idx}\") for idx in range(start_layer, end_layer)\n    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.12/dist-packages/vllm/models/glm5next/nvidia/model.py\", line 622, in get_layer\n    return Glm5NextDecoderLayer(\n           ^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.12/dist-packages/vllm/models/glm5next/nvidia/model.py\", line 346, in __init__\n    self.mlp = Glm5NextMoE(\n               ^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.12/dist-packages/vllm/models/glm5next/nvidia/model.py\", line 225, in __init__\n    self.experts = FusedMoEFactory(\n                   ^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/fused_moe/layer.py\", line 373, in FusedMoEFactory\n    routed_experts = routed_experts_cls(\n                     ^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/fused_moe/routed_experts.py\", line 123, in __init__\n    self.quant_method = self._get_quant_method(\n                        ^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/fused_moe/routed_experts.py\", line 203, in _get_quant_method\n    quant_method = resolve_quant_method(quant_config, self, prefix)\n                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/quantization/base_config.py\", line 288, in resolve_quant_method\n    base_quant_method = quant_config.get_quant_method(layer, prefix)\n                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.12/dist-packages/tessera/serving/config.py\", line 384, in get_quant_method\n    return build_tessera_moe_method(scheme, prefix, self._mode, layer)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File \"/usr/local/lib/python3.12/dist-packages/tessera/serving/moe_route.py\", line 259, in build_tessera_moe_method\n    raise ValueError(\nValueError: tessera target 'language_model.model.layers.3.mlp.experts': the expert route serves 'resident' only. A streamed expert stack would decode E x 2 containers inside every forward, which is a different kernel story than the dense streamed route's and carries no measurement; refusing is what keeps 'streamed' meaning one thing.\n",
+  "expected_streamed_refusal": true,
+  "stock_core_unchanged": true,
+  "package_identity_sha256": "98c2cd6e386f0528b47a593fa9019e73b083c9341f3c6487c8a3f75d14375087",
+  "cuda_peak_allocated_bytes": 52428800,
+  "cuda_peak_reserved_bytes": 52428800
+}

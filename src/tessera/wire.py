@@ -113,6 +113,11 @@ def refuse_dirty_slack(raw: np.ndarray, used: int, what: str) -> None:
 def _from_bits(bits: np.ndarray, width: int) -> np.ndarray:
     if width == 0:
         return np.zeros(0, dtype=np.int64)
+    if 1 <= width <= 8:
+        # These fields fit in one byte. Keep unpacked bits byte-sized rather
+        # than allocating and reducing two rows-by-width int64 matrices.
+        packed = np.packbits(bits.reshape(-1, width), axis=1, bitorder="big")[:, 0]
+        return (packed >> (8 - width)).astype(np.int64)
     rows = bits.reshape(-1, width).astype(np.int64)
     shifts = np.arange(width - 1, -1, -1, dtype=np.int64)
     return (rows << shifts).sum(axis=1)
@@ -207,6 +212,18 @@ def unpack_body(
     # elsewhere.  A stored-label position carries ``rate + 1`` bits, which still
     # fits a byte at every serialisable grid's cap (7 + 1).
     widest = max((max(field_widths(rate, span)) for rate in rates), default=0)
+    target = torch.device(device or "cpu")
+    if (target.type == "cuda" and widest <= 8
+            and all(rate >= 0 for rate in rates)
+            and (span == 1 or all(rate > 0 for rate in rates))):
+        try:
+            from .kernel_wire import unpack_body_cuda
+        except ModuleNotFoundError as exc:
+            # The kernels extra is optional; plain torch readers remain valid.
+            if exc.name != "triton":
+                raise
+        else:
+            return unpack_body_cuda(data, rates, rows, target, span)
     out = np.zeros((rows, len(rates)), dtype=np.uint8 if widest <= 8 else np.int32)
     cursor = 0
     for column, rate in enumerate(rates):

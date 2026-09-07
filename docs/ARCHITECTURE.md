@@ -5,7 +5,25 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
-**Provenance:** `v0.1.0` plus repository tooling updates (2026-09-06):
+Device BODY unpacking (2026-09-07, base `a29dbec6`) retains the shared
+`wire.unpack_body` length/padding checks. CUDA destinations reconstruct
+byte-sized fields directly from packed words through `kernel_wire` when the
+optional Triton dependency is installed; CPU, wider-field and Triton-free
+requests retain the NumPy path. `kernel_bits` owns the existing
+MSB-first packed-word readers shared with `kernel_window`. This changes reader
+execution and source identity, without changing wire bytes or serving gates.
+
+Re-stamped 2026-09-07 for the complete original-unit export intake (#401):
+`--cached-units` extends the existing closed bundle to dense and routed units;
+wire recipes, runtime contracts and serving gates are unchanged (§3.2).
+
+**Provenance:** `v0.1.0` plus repository tooling updates (2026-09-07):
+CUPTI v1 argument-collector configuration validation against base `7e61578c`;
+existing Mamba CpuGpuBuffer owner traversal against base `ec54aa42`;
+Argument-bound host mappings, native workspace ownership and loaded full-engine
+runtime identity against base `049b726e`; installer digest and loaded module
+file/spec-origin joins against base `8918caa7`;
+
 Row-sliced dense owner counted once in the census planned-tensor roster
 against base `5ac9b72`;
 Mixed dense/routed campaign census coverage (PrismaQuant #253) against base `6faa5ce`;
@@ -45,7 +63,40 @@ Re-stamped 2026-09-07 on `codex/native-operator-receipts-376` for the
 original-wire native dense research receipt and explicit operator resource
 bound (#376; §2.4). Serving defaults, wire and release gates are unchanged.
 
+Re-stamped 2026-09-07 on `codex/full-engine-resource-ledger` for the
+raw engine allocation recorder, opt-in stock worker startup integration,
+resolved KV group/spec and selected capacity assertions, persistent runtime
+buffer/workspace references, complete native-apply observation, selected
+original-wire checkpoint binding, direct retention of native Torch snapshot
+values with exact history-prefix hashes (against base `81999058`), shared frame
+values/canonical row chunks and lossless compact capture v2 (against base
+`150280b8`), flat-field canonical JSON batching against base `78f9c763`,
+an explicitly incomplete first-native-prefix qualification, and separate same-run timing partitions with
+explicit incomplete admission boundaries (§2.4). No full-engine fixed-resource price or runtime qualification
+is established by the raw ledger. Reconciled with the merged native-MoE,
+original-unit export and byte-decoder architecture at base `a29dbec6`.
+
+Re-stamped 2026-09-07 on `codex/native-moe-receipts` for the complete routed
+owner research receipt (#395; §2.5), including captured routing transport and
+existing vLLM workspace ownership. Re-stamped on `0693cf18` for the optional
+paired source-execution descriptor and independent qualification digest.
+Re-stamped 2026-09-07 for the explicit first-model KV capacity configuration
+and native factory binding; packaged defaults and release gates are unchanged.
+
+Re-stamped 2026-09-07 on `codex/reader-byte-unpack` for byte-sized narrow
+field decoding in `wire._from_bits` (§3). Wire grammar and
+`encoder_profile_id` remain unchanged; the reader source digest changes.
+
 ## 1. Scope
+
+Re-stamped 2026-09-07 for the selected-expert research control (#415):
+`PreparedWindow.stack` and `PreparedTesseraFp8Module.stack` reuse the existing
+packed-window reader with an owned expert axis. An explicit device-ID tensor
+selects fresh decoded FP8 tiles in bounded expert chunks; no decoded pool is
+retained. This is an eager research entry point: dynamic expert cardinality,
+temporary memory and stock global-to-compact expert mapping require separate
+measurement. The production MoE route still requires resident mode. Wire
+layout, packaged cells, release pins and serving gates are unchanged.
 
 This doc covers the path from a PrismaQuant rung assignment to a served
 Tessera checkpoint: `experiments/plan_from_layer_config.py` (assignment to
@@ -758,6 +809,219 @@ quality. Those require their own engine receipts before a PrismaQuant runtime
 price or release admission. `experiments/qualify_native_operator.py` is a
 synthetic BF16 instrumentation fixture and cannot stand in for a real PWC row.
 
+`experiments/full_engine_resources.py` provides a separate worker-side raw
+capture surface, `FullEngineResourceRecorder`, reusing that CUPTI collector.
+It pairs synchronized Torch allocator snapshots/history with named storage
+owners and unit invocation boundaries. Its constructor requires an explicit
+`max_checkpoints` budget covering planned boundaries and terminal capture;
+closing checkpoints remain reserved. Per-attempt host elapsed time and
+encoded history-prefix size disclose the observer's resource-pass cost, with no
+GPU timing interpretation. Torch's returned Python snapshot is retained directly.
+`experiments/full_engine_snapshot_codec.py` interns exact repeated frame arrays,
+reuses canonical row chunks for unchanged history rows, and streams the same
+expanded JSON bytes through SHA-256. Changed rows and timestamp revisions keep
+their original exact prefix checks. Logical prefix size, encoded/reused row
+counts, shallow cache storage and process RSS/high-water observations distinguish
+logical bytes from physical observer overhead; PB aggregate peak is separate.
+Capture v2 writes a hash-bound frame dictionary and explicit frame references.
+The parser verifies and expands it to the exact legacy v1 JSON values; legacy
+v1 captures remain readable. The ledger's `capture_sha256` remains the expanded
+v1 canonical digest, while `artifacts.capture.json.sha256` binds the actual
+compact file bytes. Finalization size, encoding/write time and parser time are
+retained separately. The former full-snapshot JSON round trip is absent;
+its historical size field is `null` in new captures.
+The CPU parser deduplicates aliases,
+replays address generations through completed frees, and preserves outputs
+whose lifetime crosses a unit boundary. Raw history/checkpoint, segment and
+CUPTI evidence must reconcile; unknown owners, external/static allocations,
+missing records and potentially truncated history stay incomplete. Capture
+failures and exact raw-file hashes remain in the receipt.
+
+`--qualify-first-native-prefix` is a separate resource-observer qualification:
+it retains startup and the first complete native invocation, closes collection,
+and lets the remaining stock request execute unobserved. Its workload identity
+and scope explicitly declare the prefix; capture errors retain the missing
+full-unit invocations and its incomplete status. It cannot substitute for a
+full capture. Ordinary full-mode identities and checkpoint budgets are unchanged.
+Adjacent snapshots retain exact revisions to earlier history fields. The
+parser reconstructs each original prefix byte-for-byte from recorded
+`time_us` revisions and recognizes Torch's marker appended after snapshot
+return; changes to ownership, streams, pools or stacks still refuse. It does
+not use revised timestamps for timing. Requested allocation/storage bytes
+remain distinct from rounded allocator block sizes observed at checkpoints;
+the replayed live peak is explicitly requested bytes, excluding rounding.
+This does not qualify the Torch/CUPTI ownership or timing join.
+
+`experiments/capture_full_engine_resources.py` adds an opt-in, intrusive
+source-BF16 or hash-bound original-wire reference observation pass using the stock runtime's supported `worker_cls`
+configuration. Its early Python process bootstrap starts CUPTI before Torch
+and records allocator history before CUDA initialization; each spawned process
+owns its collector, and fork-inherited or late worker captures refuse. The
+worker subclass calls the stock device, model-load, KV-allocation, execution
+and sampling methods, adding synchronized checkpoints and bounded forward
+hooks for explicitly selected canonical units. `--all-units` resolves every
+canonical dense unit and routed-expert group to its actual quantization
+method `apply` boundary. The expert boundary excludes routing; monolithic or
+ambiguous methods refuse. Shared method instances dispatch by actual layer
+identity, and patches are restored after observation. Dynamic input and output
+tensor references preserve backings crossing each boundary. For original-wire
+references, native parameters and buffers, including scale storage, are candidate
+owners; tensors also registered outside canonical native modules remain fixed.
+Conflicting storage aliases still refuse rather than receiving a chosen label. The invocation budget is armed
+by an explicit RPC after engine initialization,
+so stock startup warmup cannot consume the requested workload's observations.
+Raw scheduler token counts and new/cached request state identify those steps.
+Model parameters, buffers and the runner's shared attention/recurrent KV
+tensor views supply raw storage owners. Source-BF16 candidate ownership applies
+to canonical weight tensors, while
+router state remains fixed even when registered again beneath the expert
+module. Historical conflicting category labels remain unknown in the raw
+ledger, with each supplied owner label retained and no admission.
+Bounded traversal of explicitly selected runner state and already initialized
+workspace/cache managers retains tensor aliases, including host/UVA views and
+retired FlashInfer cache buffers, plus the existing `vllm.v1.utils.CpuGpuBuffer`
+references used by Mamba alignment state. It does not call properties or create buffers.
+These references are shared owners whose candidate/workload dependence remains
+unresolved. CUPTI exit callbacks retain actual host/device pointer arguments,
+allocation extents and explicit null frees. Successful callbacks must join their
+API and reciprocal memory records. The shared capture validator requires the
+exact successful setup/teardown operations for the declared argument schema;
+unknown schemas and missing, duplicate, failed or additional operations refuse.
+Old activity-only captures receive no such
+exemptions. CPU and CUDA mappings join one live pinned-host allocation and
+count its physical backing once, while unsupported/pageable-host storage remains
+unmatched. A pinned extension reads Torch's existing mutex-protected BLAS
+workspace maps. An explicit native allocation-site rule may identify shared
+storage only through exact observed source and mapped-library bytes, ordered
+allocation frames, and a still-live allocation generation matching an active
+Torch block. It claims no native getter, historical byte constant, or fixed
+assignment-independent charge.
+`--reference-proof` verifies the export statement, original-wire member census,
+source identity, original blobs, and closed checkpoint file hashes before
+selecting the reference model. It binds the loaded checkpoint separately from
+the source model and keeps exporter/PB provenance admission explicit and
+unimplemented. The launcher binds the canonical source census, selected assignment,
+selected engine settings, observer settings, workload, device UUID and installed
+runtime manifest, and verifies the stock core before and after the pass.
+Worker observations also hash the actual mapped shared objects, including
+generated native binaries, and retain any unreadable-path errors. Post-init
+runtime observations preserve the native runtime census under `base`, separately
+record actual engine execution/configuration and observer library identities,
+and freshly recompute Tessera's encoder source hash. A distinct loaded-package
+record binds actual module paths, `sys.path`, and every installed package file
+to the installer roster after verifying its originally planned evidence digest.
+Every loaded Tessera module must have a verifiable file and import-spec origin
+resolving to the same installed roster entry and actual file hash; missing or
+changed paths, origins and bytes refuse. The raw ledger preserves its
+original core-manifest digest and separately records the measured-runtime hash.
+An explicit calibration input may supply the canonical int64[512,512] fixture's
+first row unchanged as a TokenPrompt; the actual generated-token decode remains
+distinct from a native boundary decode proxy.
+The received and runner-resolved KV configurations retain all dataclass fields,
+concrete spec types, typed dtypes, group page sizes and kernel block sizes.
+Explicit capacity-policy values and missing fields are recorded alongside them;
+descriptor sizes are never summed into physical storage. Automatic capacity
+remains assignment-dependent and cannot supply a fixed planner KV charge.
+The standalone `full_engine_kv` helper can inspect an ordinary stock worker
+through its supported RPC without constructing the resource observer. It records
+actual storage views and deduplicated backings, distinguishes resident recurrent
+pages from block-table width, and checks an externally supplied capacity
+expectation. The resource worker preserves those observations before refusing
+a mismatch. Passing capacity checks is neither served-concurrency validation
+nor full-model resource admission.
+Observer settings and incomplete raw captures cannot qualify a served model.
+
+Its distinct `tessera.full_engine_raw_resource_ledger.v1` schema never emits a
+fixed-resource object or timings: `fixed_resources` and `timings` remain null,
+`admission` is `not_implemented`, and
+`full_model_fixed_resources_complete` remains false even when the restricted
+raw ledger reconciles. Neither a whole-engine peak nor supplied operator
+medians are converted into fixed costs. Runtime provenance, complete external
+and host/UMA ownership, stream/timing attribution, and an explicitly bound
+shared attention/recurrent cache-capacity policy require further engine
+qualification. No application default or serving gate reads this raw ledger.
+
+`--observation-mode timings --all-units` uses a separate stock worker without
+allocation collection. Its runtime record leaves resource-only instrumentation
+fields null even when those assets are available in the launch plan.
+After one identical warmup, it interleaves profiled control
+and partition requests, resets prefix state for every request, and requires the
+unchanged 512-token calibration prompt and identical generated tokens. Native
+`apply` boundaries record CUDA events on the engine main stream. Every adjacent
+fixed gap is measured directly using the same event sequence; no independently
+measured operator median or kernel-duration sum is subtracted. Zero-token stock request-cleanup calls retain explicit CPU observation ranges
+without consuming a prefill/decode step. Any GPU operation outside those two
+measured steps still refuses the partition. A separate
+observer stream joins the main completion event and stock asynchronous output
+copy event without introducing a wait into the engine streams.
+
+`full_engine_timings` recomputes the recorded partition from the profile: every
+canonical unit must execute once in each 512-token prefill and one-token decode,
+stream IDs are queried against the actual current CUDA context (including
+the default stream), every GPU operation must have a unique launch and step
+scope, native operations
+must remain on the measured main stream, and only the explicitly joined copy
+stream may carry other work. Copy work overlapping native units refuses. The
+sum must recompose the whole interval within only binary32 representation
+rounding. Raw files survive an incomplete partition and the launcher then fails.
+`observed_same_run_partition` describes observed coverage, not profiler health,
+observer overhead qualification or a fixed timing price. Complete collection,
+overhead, runtime/assignment admission and full memory ownership remain explicit
+qualification gaps; `timings` stays null and admission remains unimplemented.
+
+### 2.5 Whole routed receipts preserve the actual expert owner
+
+`experiments/bench_native_moe_operator.py` prepares the complete 32-expert
+E4M3 K1 R1024 owner from all 96 original PWC wires. Expert and gate/up/down
+role order is explicit. It uses stock vLLM's LFM `FusedMoEFactory`, the actual
+captured selection bias, and versioned serving settings, then invokes the
+existing resident modular `quant_method.apply` at eager TP1/EP1. The captured
+input, top-k IDs and post-normalization routing weights are immutable inputs;
+the router itself is outside this operator. Any dtype transport must reproduce
+the original captured bytes on exact roundtrip. BF16 routing weights are not
+renormalized to satisfy a sum-equals-one assumption.
+
+The selected first-model integration configuration is now
+`experiments/configs/lfm25_first_model_fixed_kv_20260907.json`, with explicit
+`kv_cache_memory_bytes=412286976`. Its stock-helper capacity projection covers
+eight 4096-token requests using 2097 shared pool blocks, including one null
+block and hybrid/recurrent padding. Actual resolved specs, layout and unique
+physical storage must be asserted in a fresh engine capture before resource
+admission. The preceding automatic-capacity configuration and its captures
+retain their original identities. The native standalone factory validates and
+binds the explicit byte value into `CacheConfig`; it does not allocate KV or
+certify capacity. Full-engine stock vLLM bypasses `gpu_memory_utilization` only
+for KV sizing when explicit bytes are supplied: the retained 0.35 value still
+controls the startup free-memory check. Any configuration change requires new
+request/preflight/panel identities rather than reusing old fixed-resource data.
+
+Preparation warms both actual phases before freezing lazy libraries, resolved
+backend configuration, expert tensor identities and the existing
+`vllm.WorkspaceManager` allocation. The workspace is then locked. Its portable
+layout and byte count are bound separately from runtime binaries, and its
+process storage pointers must remain stable during measurement. A panel binds
+every member's source, render, wire and joint operator identity through the
+consumer's existing `RuntimeBinding`; no scalar group cost or summed leaf
+latency is produced here. An explicit `probe_scope` retains a first-sequence
+integration screen and its parent/subset calibration identities when the joint
+probe uses only that subset; native captured tensors keep their own identities.
+The optional paired `source_execution` and
+`source_execution_qualification_sha256` fields preserve the source model's
+module configuration selectors and an independent qualification digest (or
+explicit null). They are part of the full panel hash. The native producer
+validates their closed grammar; the PrismaQuant consumer owns the source
+backend/proof join. Adding them changes no captured routing or tensor bytes.
+
+Both phases must pass the predeclared activation-QDQ and whole-output gates
+and observed native route before either phase receives CUDA-event samples.
+The producer reuses the dense allocation collector and conservative scratch
+analysis, and collects decision timing only after the collector stops.
+Layer-resident storage and shared-workspace storage remain separate fields.
+Even complete operator scratch evidence leaves full-engine fixed allocations,
+KV capacity and cross-operator workspace composition unresolved. Separate
+Torch-profiler replay and explicit artifact publication retain evidence; this
+research boundary does not promote a runtime cell or qualify a release.
+
 ## 3. Bytes: priced == served
 
 Every artifact the exporter writes has exactly one legal length: the encoder
@@ -784,6 +1048,12 @@ per unit, checked by `experiments/check_wire_against_plan.py`. A plan that
 leaves a body Linear unnamed does not get a passthrough: the exporter falls
 back to its `--grid`/`--q256` default, so the converter names every unpriced
 Linear `"BF16"` explicitly.
+
+The CPU wire reader reconstructs fields of one through eight bits with
+`numpy.packbits` into byte storage, then widens each decoded value once to
+`int64`. Wider fields retain the integer shift/reduction path. This bounds
+intermediate allocation without changing MSB-first ordering, public result
+dtypes, or the existing truncation and dirty-slack refusals.
 
 ### 3.1 Which encoder cut the bytes is on the artifact
 
@@ -962,8 +1232,9 @@ per-unit Hessian plus capture identity and full activation settings, resolved
 recipe, encoder behavior/source identities, and the whole blob digest.
 Its `encoding_input_identity` is shared by dense and projected campaign
 callers; `unit_input_identity` adds the producer's explicit expert projection.
-Both use the same unit-record construction and wire verifier, while the
-export boundary still requires the projected identity and exact field equality.
+Both use the same unit-record construction and wire verifier. Expert export
+requires the projected identity; dense export uses the common encoding identity.
+Both require exact field equality against freshly supplied source and capture.
 `export_tessera_serving.py --cached-expert-units MANIFEST` requires exact
 coverage of the planned experts and the full source checkpoint seal. It
 checks those receipts against the actual source slices and capture, validates
@@ -971,8 +1242,12 @@ wire geometry/rates/profile/reach/encoder identity and complete plane extents,
 and wraps accepted blobs in
 `pack_fused` unchanged. Their original unit-id spelling is preserved. A
 missing selected rung, including an interpolated rate with no measured blob,
-refuses; this intake has no encode fallback. The ordinary dense encode path
-and all defaults remain unchanged. The cache mode requires a fresh output
+refuses; this intake has no encode fallback. `--cached-units MANIFEST` uses
+that same bundle and verifier for the complete planned dense-plus-expert roster.
+It frames each verified dense original into its declared fused role and records
+its original blob SHA. Dense row-sliced modules refuse because a whole original
+unit cannot stand for a different source slice. The two cache flags are mutually
+exclusive; the expert-only flag preserves its prior scope. The cache mode requires a fresh output
 directory and records each accepted blob's SHA in the export manifest.
 
 These are producer evidence and tests only. They do not promote a recipe,

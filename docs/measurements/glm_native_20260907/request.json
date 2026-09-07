@@ -1,0 +1,68 @@
+{
+  "schema": "tessera.glm_native_qualification_request.v1",
+  "runtime_image": "vllm/vllm-openai@sha256:4e31c581716a5cb9ef31eddb0a425842b75cab07d5cd63fb9572e69ae8794c33",
+  "source_model": "/mnt/shared/models/GLM-5.3-Flash-BF16",
+  "source_config": {
+    "path": "/mnt/shared/models/GLM-5.3-Flash-BF16/config.json",
+    "sha256": "33e63ec7fe607658be712bd6dd3c16c6549960d8e7f0483d34b939881b55f943",
+    "bytes": 5939
+  },
+  "bounded_config": "/mnt/shared/tessera-glm-native-20260907/four-layer-config",
+  "config_files": {
+    "chat_template.jinja": {
+      "path": "/mnt/shared/tessera-glm-native-20260907/four-layer-config/chat_template.jinja",
+      "sha256": "34d5ee66b12fa6446cdae131c352b8f68cd85369e0e6fda115583805fada3891",
+      "bytes": 10644
+    },
+    "config.json": {
+      "path": "/mnt/shared/tessera-glm-native-20260907/four-layer-config/config.json",
+      "sha256": "08d95d6ad5c1d49176ea9e4a7b859de3a85a9f0e69e6d736237b48400ed9ada1",
+      "bytes": 3066
+    },
+    "generation_config.json": {
+      "path": "/mnt/shared/tessera-glm-native-20260907/four-layer-config/generation_config.json",
+      "sha256": "230c30609ecbbb9e6583bedde8e7bdda0c6eb8fe5fad0eaeb3d1b293d751cb4f",
+      "bytes": 194
+    },
+    "processor_config.json": {
+      "path": "/mnt/shared/tessera-glm-native-20260907/four-layer-config/processor_config.json",
+      "sha256": "aae38374c94b08cc9b0547c6e64f05b951bd9735cea571c6988f5ed552bed3ed",
+      "bytes": 909
+    },
+    "tokenizer.json": {
+      "path": "/mnt/shared/tessera-glm-native-20260907/four-layer-config/tokenizer.json",
+      "sha256": "19e773648cb4e65de8660ea6365e10acca112d42a854923df93db4a6f333a82d",
+      "bytes": 20217442
+    },
+    "tokenizer_config.json": {
+      "path": "/mnt/shared/tessera-glm-native-20260907/four-layer-config/tokenizer_config.json",
+      "sha256": "98b1271574f41abf89427ae2dda030d94dc9478f0edc5a8bd240db213c6fd5fc",
+      "bytes": 761
+    }
+  },
+  "source_archive": {
+    "path": "/mnt/shared/tessera-glm-native-20260907/tessera-a29dbec6-source.tar",
+    "sha256": "0e39b1c6f771f18cb6bc562e9f031098819091db0fb2500dc19eda9c2ece8849",
+    "bytes": 17274880
+  },
+  "source_commit": "a29dbec6",
+  "core_manifest": {
+    "path": "/mnt/shared/tessera-clean-runtime-20260907/official-primary/runtime-inventory.json",
+    "sha256": "d4aa04edf388da29679585f4688a2b62d879bcc65349866ba37ed96b7b1e467e",
+    "bytes": 923329
+  },
+  "control_scope": {
+    "layers": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "mtp_layers": 0,
+    "weights_loaded": false,
+    "vision": "original meta construction",
+    "geometry": "original hidden4096 intermediate2048 experts288 top8",
+    "quality_claim": false,
+    "production_admission": false
+  }
+}

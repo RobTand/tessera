@@ -142,3 +142,5 @@ unsupported-cut skips. [Selected files, paired receipt and verbatim skips](../me
 | 2026-09-06T05:00:59Z | `bd3aa129a742`<br>source `760085e54749` | unknown | x86 | -n 24 | torch 2.11.0+cpu reports no CUDA device | 1237 | 0 | 159 | 0 | 0 (pool) |
 | 2026-09-06T05:27:06Z | `86791d7c2976`<br>source `42a25323d15d` | unknown | gpu | -n 8 | torch 2.11.0+cu130, 1 CUDA device(s), device 0 = NVIDIA GB10 | 3587 | 1 | 25 | 0 | 1 (pool) |
 | 2026-09-06T05:40:29Z | `f558a5e36537`<br>source `42a25323d15d` | unknown | x86 | -n 16 | torch 2.11.0+cpu reports no CUDA device | 3061 | 1 | 549 | 0 | 1 (pool) |
+| 2026-09-07T16:15:14.087488+00:00 | `e078d1307927`<br>source `e30af0061bf2` | unknown | x86 | -n 24 | torch 2.11.0+cpu reports no CUDA device | 3371 | 0 | 559 | 0 | 0 (pool) |
+| 2026-09-07T16:34:46.954038+00:00 | `792c0d3b93b3`<br>source `e30af0061bf2` | unknown | gpu | -n 8 | torch 2.13.0+cu130, 1 CUDA device(s), device 0 = NVIDIA GB10 | 3941 | 0 | 7 | 0 | 0 (pool) |

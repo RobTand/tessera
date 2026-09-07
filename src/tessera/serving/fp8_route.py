@@ -59,11 +59,12 @@ from .scheme import ROUTES, TESSERA_FP8, parse_tessera_blob_for_scheme, validate
 from .sharding import plan_shard_for_layer, require_axis_supported, shard_parsed_roles
 from .telemetry import (DECODER_TORCH_WINDOW, DECODER_WINDOW_GEMV, emit_route,
                         note_lane_refusal, route_shape)
-from .window import PreparedWindow, prepare_window
+from .window import PreparedWindow, _fingerprint, prepare_window, require_expert_ids
 
 __all__ = [
     "ACTIVATION_CONTRACT",
     "PreparedTesseraFp8Module",
+    "PreparedTesseraFp8Batch",
     "prepare_tessera_fp8_module",
     "build_tessera_fp8_method",
 ]
@@ -125,6 +126,56 @@ class PreparedTesseraFp8Module:
         if len(self.__roles) == 1:
             return self.__roles[0].window.decode()
         return torch.cat([r.window.decode() for r in self.__roles], 0)
+
+    @classmethod
+    def stack(cls, modules: Sequence[PreparedTesseraFp8Module]) -> PreparedTesseraFp8Batch:
+        """Own packed expert windows for an explicit research selection path."""
+        modules = tuple(modules)
+        if not modules:
+            raise ValueError("stacking needs at least one prepared FP8 module")
+        first = modules[0]
+        def layout(module):
+            return (module.rows, module.columns, module.device,
+                    tuple((r.name, r.row_offset, r.rows) for r in module.__roles))
+        if any(layout(module) != layout(first) for module in modules):
+            raise ValueError("stacked FP8 modules must share roles and geometry")
+        windows = [PreparedWindow.stack([m.__roles[i].window for m in modules])
+                   for i in range(len(first.__roles))]
+        return PreparedTesseraFp8Batch(
+            windows, torch.stack([m.__scale for m in modules]), first.role_names,
+            first.rows, first.columns, first.device)
+
+
+class PreparedTesseraFp8Batch:
+    """Packed research expert owner, decoding only supplied device IDs.
+
+    No production route selects this owner. Its outputs are fresh temporary
+    FP8 byte tensors; the stock MoE kernel still owns its normal workspaces.
+    """
+
+    def __init__(self, windows, scales, role_names, rows, columns, device):
+        self.__windows = tuple(windows)
+        self.__scales = scales
+        self.__scale_fingerprint = _fingerprint(scales)
+        self.role_names, self.rows, self.columns, self.device = role_names, rows, columns, scales.device
+        self.experts = scales.shape[0]
+
+    def row_scale(self, expert_ids):
+        require_expert_ids(expert_ids, self.device)
+        if _fingerprint(self.__scales) != self.__scale_fingerprint:
+            raise RuntimeError("prepared Tessera FP8 batch scale changed after preparation")
+        return self.__scales.index_select(0, expert_ids)
+
+    def wire_bytes_resident(self):
+        return sum(w.resident_bytes() for w in self.__windows)
+
+    def resident_bytes(self):
+        return self.wire_bytes_resident() + self.__scales.numel() * self.__scales.element_size()
+
+    def decode(self, expert_ids, *, max_experts_per_chunk):
+        parts = [w.decode(expert_ids, max_experts_per_chunk=max_experts_per_chunk)
+                 for w in self.__windows]
+        return parts[0] if len(parts) == 1 else torch.cat(parts, 1)
 
 
 def prepare_tessera_fp8_module(parsed_roles, device=None) -> PreparedTesseraFp8Module:

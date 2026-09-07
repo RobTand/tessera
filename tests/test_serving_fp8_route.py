@@ -99,6 +99,45 @@ def test_the_fp8_routes_decoder_is_pure_torch():
     assert telemetry.DECODER_TORCH_WINDOW in telemetry.DECODERS
 
 
+def _selected_module(expert, names=('gate', 'up')):
+    from tessera.serving.window import prepare_window
+    generator = torch.Generator().manual_seed(907 + expert)
+    roles = []
+    for position, name in enumerate(names):
+        window = prepare_window(
+            torch.randint(0, 4, (16, 8), generator=generator, dtype=torch.uint8),
+            [2] * 8, 8, torch.randperm(256, generator=generator).to(torch.uint8), 'cpu')
+        roles.append(route._Fp8Role(name, position * 16, 16, window))
+    return route.PreparedTesseraFp8Module(
+        roles, rows=len(names) * 16, columns=8,
+        scale=torch.arange(len(names) * 16, dtype=torch.float32) + expert + 1,
+        device=torch.device('cpu'))
+
+
+def test_selected_expert_modules_preserve_distinct_roles_scales_and_id_order():
+    modules = [_selected_module(expert) for expert in range(4)]
+    batch = route.PreparedTesseraFp8Module.stack(modules)
+    ids = torch.tensor([3, 0, 2, 3])
+    expected = torch.stack([m.decode() for m in modules]).index_select(0, ids)
+    assert torch.equal(batch.decode(ids, max_experts_per_chunk=2), expected)
+    assert torch.equal(batch.row_scale(ids), torch.stack([m.row_scale() for m in modules]).index_select(0, ids))
+    assert batch.role_names == ('gate', 'up')
+    assert batch.decode(ids[:0], max_experts_per_chunk=2).shape == (0, 32, 8)
+    first = batch.decode(ids, max_experts_per_chunk=1)
+    second = batch.decode(ids, max_experts_per_chunk=4)
+    assert first.data_ptr() != second.data_ptr()
+    assert batch.resident_bytes() == batch.wire_bytes_resident() + 4 * 32 * 4
+    modules[0]._PreparedTesseraFp8Module__scale.zero_()
+    assert batch.row_scale(torch.tensor([0]))[0, 0].item() == 1
+
+
+def test_selected_expert_modules_refuse_mixed_role_order_and_empty_stack():
+    with pytest.raises(ValueError, match='at least one'):
+        route.PreparedTesseraFp8Module.stack([])
+    with pytest.raises(ValueError, match='roles'):
+        route.PreparedTesseraFp8Module.stack([_selected_module(0), _selected_module(1, ('up', 'gate'))])
+
+
 # --- the numerics ------------------------------------------------------------
 
 def _install_vllm_stubs(monkeypatch):

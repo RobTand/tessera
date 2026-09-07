@@ -1,0 +1,90 @@
+{
+  "schema": "tessera.glm_repeated_expert_control.v1",
+  "base_request": {
+    "path": "/mnt/shared/tessera-glm-native-20260907/request.json",
+    "sha256": "96915ace44fe757381c87b996fb926551a3dd5dd29d21d10a2d087e45dcf44ea",
+    "bytes": 2711
+  },
+  "source_index": {
+    "path": "/mnt/shared/models/GLM-5.3-Flash-BF16/model.safetensors.index.json",
+    "sha256": "e6007bd58fb7e07f9fe69544257ee2713f252ef5855bbf685b48c991d524ef0f",
+    "bytes": 4083163
+  },
+  "source_tensors": {
+    "gate_proj": {
+      "name": "model.language_model.layers.3.mlp.experts.0.gate_proj.weight",
+      "shard": "/mnt/shared/models/GLM-5.3-Flash-BF16/model-00057-of-00120.safetensors",
+      "header_sha256": "00f43f34b051ae7333ba87461ef4fcf903ad50e92d44ef950682efe6c6049d4f",
+      "header_bytes": 44344,
+      "spec": {
+        "dtype": "BF16",
+        "shape": [
+          2048,
+          4096
+        ],
+        "data_offsets": [
+          219816152,
+          236593368
+        ]
+      },
+      "payload": {
+        "path": "/mnt/shared/tessera-glm-native-20260907/gate_proj.source.bf16",
+        "sha256": "064b14ae60248fccd556db5307c0f1bc3f068b994292dfc35de722cb7d7466a6",
+        "bytes": 16777216
+      }
+    },
+    "up_proj": {
+      "name": "model.language_model.layers.3.mlp.experts.0.up_proj.weight",
+      "shard": "/mnt/shared/models/GLM-5.3-Flash-BF16/model-00057-of-00120.safetensors",
+      "header_sha256": "00f43f34b051ae7333ba87461ef4fcf903ad50e92d44ef950682efe6c6049d4f",
+      "header_bytes": 44344,
+      "spec": {
+        "dtype": "BF16",
+        "shape": [
+          2048,
+          4096
+        ],
+        "data_offsets": [
+          236593368,
+          253370584
+        ]
+      },
+      "payload": {
+        "path": "/mnt/shared/tessera-glm-native-20260907/up_proj.source.bf16",
+        "sha256": "31f1be11376067d2355ae565b160e6a945d715fe2a0d5fd735f25154f50b92b8",
+        "bytes": 16777216
+      }
+    },
+    "down_proj": {
+      "name": "model.language_model.layers.3.mlp.experts.0.down_proj.weight",
+      "shard": "/mnt/shared/models/GLM-5.3-Flash-BF16/model-00057-of-00120.safetensors",
+      "header_sha256": "00f43f34b051ae7333ba87461ef4fcf903ad50e92d44ef950682efe6c6049d4f",
+      "header_bytes": 44344,
+      "spec": {
+        "dtype": "BF16",
+        "shape": [
+          4096,
+          2048
+        ],
+        "data_offsets": [
+          203038936,
+          219816152
+        ]
+      },
+      "payload": {
+        "path": "/mnt/shared/tessera-glm-native-20260907/down_proj.source.bf16",
+        "sha256": "a036cad6640735824566e6ba8eb52eb13b262ab2cb2f2cc6ab1a7fa8f0db5e9c",
+        "bytes": 16777216
+      }
+    }
+  },
+  "q256": [
+    1024,
+    768
+  ],
+  "experts": 288,
+  "top_k": 8,
+  "source_expert": 0,
+  "source_layer": 3,
+  "control_scope": "Three real trained source matrices from expert 0 repeated into all 288 expert slots. Synthetic hidden states and controlled top8 routes. Not all trained experts, full-model quality, calibration, or an expert permutation proof. No runtime cell promotion."
+}

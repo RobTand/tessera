@@ -1262,9 +1262,13 @@ def main():
     ap.add_argument("--stock-twin", type=Path, default=None,
                     help="also write the compressed-tensors materialisation of the same wires here")
     ap.add_argument("--device", default="cuda")
-    ap.add_argument("--cached-expert-units", type=Path, default=None,
+    cache_options = ap.add_mutually_exclusive_group()
+    cache_options.add_argument("--cached-expert-units", type=Path, default=None,
                     help="closed exact-unit cache manifest for every planned expert; "
                          "missing/unmeasured units refuse, with no re-encode fallback")
+    cache_options.add_argument("--cached-units", type=Path, default=None,
+                    help="closed exact-unit cache manifest for every planned dense and expert unit; "
+                         "requires whole source tensors for dense roles, with no re-encode fallback")
     ap.add_argument("--no-verify", action="store_true")
     ap.add_argument("--layers", type=int, default=None, help="encode only the first N layers (smoke)")
     ap.add_argument("--partition", type=parse_partition, metavar="INDEX/COUNT",
@@ -1808,23 +1812,33 @@ def main():
                         for record in stack_plan.values() for unit in record["units"]}
     if args.cached_expert_units is not None and not cache_unit_names:
         raise SystemExit("--cached-expert-units requires a nonempty explicit expert stack plan")
-    if args.cached_expert_units is not None and args.out.exists():
-        raise SystemExit("cached expert export requires a fresh output directory")
+    if args.cached_units is not None:
+        if sliced_modules:
+            raise SystemExit("--cached-units requires whole dense source tensors; "
+                             f"row-sliced modules cannot reuse whole original wires: {sliced_modules}")
+        cache_unit_names.update(ActivationSource.unit_name(part.tensor)
+                                for parts in partitions.values() for part in parts)
+    cache_path = args.cached_units or args.cached_expert_units
+    cache_scope = "cached_units" if args.cached_units is not None else "cached_expert_units"
+    if cache_path is not None and not cache_unit_names:
+        raise SystemExit("cached export requires a nonempty planned unit roster")
+    if cache_path is not None and args.out.exists():
+        raise SystemExit("cached export requires a fresh output directory")
     partition_record = None
     if args.partition:
         index, count = args.partition
         options = {key: value for key, value in vars(args).items()
                    if key not in {"src", "out", "partition", "partition_runtime_image",
                                   "device", "stock_twin", "plan_json", "hessian", "input_scales",
-                                  "cached_expert_units", "priced_inputs", "priced_inputs_sha256"}}
+                                  "cached_expert_units", "cached_units", "priced_inputs", "priced_inputs_sha256"}}
         if priced_inputs is not None:
             options["priced_inputs_sha256"] = priced_inputs.sha256
         options["plan"] = plan_snapshot.published() if plan_snapshot is not None else None
         for key in ("hessian", "input_scales"):
             path = getattr(args, key)
             options[key + "_sha256"] = sha256_file(path) if path else None
-        if args.cached_expert_units is not None:
-            options["cached_expert_units_sha256"] = sha256_file(args.cached_expert_units)
+        if cache_path is not None:
+            options[cache_scope + "_sha256"] = sha256_file(cache_path)
         identity = export_identity(args.src, options, args.partition_runtime_image,
                                    Path(__file__).resolve().parents[1])
         from tessera.encoder_identity import encoder_fixture_id
@@ -1850,13 +1864,13 @@ def main():
               f"{len(stack_plan)} routed stacks, {len(modules)} dense modules", flush=True)
 
     cached_units = None
-    if args.cached_expert_units is not None:
+    if cache_path is not None:
         from tessera.cached_unit import CachedUnitBundle, read_manifest
         from tessera.serving_parts import source_identity
         source = (partition_record["identity"]["source"] if partition_record is not None
                   else source_identity(args.src))
-        cached_units = CachedUnitBundle(read_manifest(args.cached_expert_units),
-                                        args.cached_expert_units.parent, cache_unit_names, source)
+        cached_units = CachedUnitBundle(read_manifest(cache_path),
+                                        cache_path.parent, cache_unit_names, source)
 
     input_scales = {}
     if args.input_scales:
@@ -2034,22 +2048,36 @@ def main():
                 whole = part.row_offset == 0 and part.rows == source_rows
                 unit_name = member if whole else f"{member}[{part.row_offset}:{part.row_offset + part.rows}]"
                 weight = weights_cache[member][part.row_offset: part.row_offset + part.rows]
-                weight = weight.to(args.device, torch.float32).contiguous()
                 # A missing key renders RTN and raises nothing; ``for_unit``
                 # refuses instead, and is the same call the library exporters make.
                 # Keyed by the TENSOR: the input side is one width for every
                 # row slice, so the slices share the source tensor's Hessian.
-                extra = ({} if activation is None else
-                         activation.for_unit(member, weight.shape[1], args.device,
-                                             scale_plane=member_recipe.scale_plane))
-                exported, unit, forests = encode_linear_planes(
-                    weight, grid=member_grid, q256=q256, name=unit_name,
-                    verify=not args.no_verify, **extra)
-                extra.clear()
-                parse_unit_artifact(exported.blob, device=args.device)      # the reader accepts what we wrote
+                cache_record = None
+                if args.cached_units is None:
+                    weight = weight.to(args.device, torch.float32).contiguous()
+                    extra = ({} if activation is None else
+                             activation.for_unit(member, weight.shape[1], args.device,
+                                                 scale_plane=member_recipe.scale_plane))
+                    exported, unit, forests = encode_linear_planes(
+                        weight, grid=member_grid, q256=q256, name=unit_name,
+                        verify=not args.no_verify, **extra)
+                    extra.clear()
+                    parse_unit_artifact(exported.blob, device=args.device)
+                    stock_code = DEFAULT_CODE
+                else:
+                    from tessera.cached_unit import encoding_input_identity, verify_cached_unit
+                    from tessera.export import ExportedUnit
+                    expected = encoding_input_identity(weight, member, member_grid, q256,
+                                                       activation=activation)
+                    cached_blob, cache_record = cached_units.read(expected["unit"])
+                    accepted = verify_cached_unit(cached_blob, cache_record, expected)
+                    parsed = parse_unit_artifact(accepted.blob, device=args.device)
+                    unit, forests, stock_code = parsed.unit, parsed.forests, parsed.code
+                    exported = ExportedUnit(unit_name, accepted.blob, part.rows, weight.shape[1],
+                                            q256, accepted.wire_bytes)
                 role = part.role
                 roles.append((role, exported.rows, exported.blob, unit, forests))
-                stock_tensors[unit_name] = materialize_stock(unit, forests, DEFAULT_CODE)
+                stock_tensors[unit_name] = materialize_stock(unit, forests, stock_code)
                 role_records.append({
                     "tensor": member, "role": role, "rows": exported.rows, "cols": exported.columns,
                     # Where in the source tensor this role's rows come from:
@@ -2060,6 +2088,8 @@ def main():
                     "wire_bytes": exported.exact_bytes, "blob_bytes": len(exported.blob),
                     "wire_bpp": float(exported.bpp), "own_global": float(unit.scale_global),
                     "resident_bytes_stock": stock_bytes(stock_tensors[unit_name]),
+                    **({"cached_blob_sha256": cache_record["blob_sha256"]}
+                       if cache_record is not None else {}),
                 })
                 done += 1
                 if done % 20 == 0 or done == total:
@@ -2304,7 +2334,7 @@ def main():
     families = sorted({m["family"] for m in module_records.values()})
     manifest = {
         "source": str(args.src), "git": git_hash(), "written": time.strftime("%Y-%m-%dT%H:%M:%S"),
-        **({"cached_expert_units": {"manifest_sha256": cached_units.manifest_sha256,
+        **({cache_scope: {"manifest_sha256": cached_units.manifest_sha256,
                                     "manifest_encoding": "canonical_json.sorted_compact.v1",
                                     "planned_units": len(cache_unit_names)}}
            if cached_units is not None else {}),
