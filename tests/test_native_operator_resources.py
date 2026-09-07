@@ -1,10 +1,44 @@
 """Resource-observer refusal regressions; CPU inputs are not GPU evidence."""
 import copy
+import ctypes
 import json
 import os
 from pathlib import Path
+import sys
+from types import SimpleNamespace
 
 import pytest
+
+
+def test_context_lookup_uses_the_collectors_loaded_cupti(monkeypatch):
+    from experiments.native_operator_resources import NativeMemoryCollector
+
+    def current_context(pointer):
+        ctypes.cast(pointer, ctypes.POINTER(ctypes.c_void_p))[0] = 123
+        return 0
+
+    def context_id(context, pointer):
+        assert context.value == 123
+        ctypes.cast(pointer, ctypes.POINTER(ctypes.c_uint32))[0] = 42
+        return 0
+
+    def load(name):
+        assert name == "libcuda.so.1", "CUPTI must use the collector's linked dependency"
+        return SimpleNamespace(cuCtxGetCurrent=current_context)
+
+    monkeypatch.setattr(ctypes, "CDLL", load)
+    monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(cuda=SimpleNamespace(
+        memory_snapshot=lambda: [], synchronize=lambda device: None,
+        reset_peak_memory_stats=lambda device: None, memory_allocated=lambda device: 0,
+        max_memory_allocated=lambda device: 0, get_allocator_backend=lambda: "native")))
+    collector = object.__new__(NativeMemoryCollector)
+    collector.start_code = 0
+    collector._lib = SimpleNamespace(cuptiGetContextId=context_id)
+    collector.mark = lambda name: 1
+    sentinel = object()
+    output, observation = collector.observe_apply(lambda: sentinel, "fixture")
+    assert output is sentinel
+    assert observation["context_id"] == 42
 
 
 @pytest.fixture

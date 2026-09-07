@@ -1,0 +1,40 @@
+{
+  "engine_args": {
+    "data_parallel_size": 1,
+    "dtype": "bfloat16",
+    "enable_chunked_prefill": true,
+    "enable_expert_parallel": false,
+    "enable_prefix_caching": true,
+    "enforce_eager": true,
+    "gpu_memory_utilization": 0.35,
+    "kernel_config": {
+      "moe_backend": "auto"
+    },
+    "max_model_len": 4096,
+    "max_num_batched_tokens": 2048,
+    "max_num_seqs": 8,
+    "pipeline_parallel_size": 1,
+    "tensor_parallel_size": 1
+  },
+  "environment": {
+    "TESSERA_SERVE_MODE": "resident"
+  },
+  "model_family": "LFM2.5-8B-A1B",
+  "qualification": {
+    "blocking_issue": "https://github.com/RobTand/tessera/issues/397",
+    "final_serving_gate": "requires clean upstream runtime and requalification",
+    "runtime_status": "research_only_downstream_core_patches"
+  },
+  "runtime_image": "eugr/spark-vllm@sha256:0afec8d4f79f44685a1ddf758659d33aef3b0f3ec9068e5a7cd1108d30e5581c",
+  "schema": "tessera.first_model_serving_config.v1",
+  "selection": {
+    "authority": "explicit first-model integration configuration selected by the coordinator",
+    "date": "2026-09-07",
+    "new_explicit_choice": {
+      "max_num_batched_tokens": 2048
+    },
+    "prior_served_log": "/mnt/shared/tessera-runs/ts5/lfm25/astra-campaign-r2/student-bound-r1/serve_student.log",
+    "prior_served_log_sha256": "caac53bdc28a5ea3e39483b6cb208e32c899fbfd5279a415900a77bf8f2acd5c",
+    "scope": "The 2048-token scheduler limit is selected now; it is not a retroactive measurement claim."
+  }
+}

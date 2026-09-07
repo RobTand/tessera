@@ -71,8 +71,9 @@ class NativeMemoryCollector:
         context = ctypes.c_void_p()
         if driver.cuCtxGetCurrent(ctypes.byref(context)) != 0 or not context.value:
             raise RuntimeError("no current CUDA context")
-        cupti = ctypes.CDLL("libcupti.so")
-        get_id = cupti.cuptiGetContextId
+        # Resolve from the collector's linked CUPTI, including images that ship
+        # only a versioned SONAME and no development libcupti.so symlink.
+        get_id = self._lib.cuptiGetContextId
         get_id.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32)]
         context_id = ctypes.c_uint32()
         if get_id(context, ctypes.byref(context_id)) != 0:
