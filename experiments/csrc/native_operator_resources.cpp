@@ -11,7 +11,14 @@
 
 namespace {
 std::mutex mu;
-std::vector<std::string> events, apis, markers, drops, errors, configuration;
+std::vector<std::string> events, apis, arguments, markers, drops, errors, configuration;
+CUpti_SubscriberHandle subscriber;
+bool subscribed = false;
+const CUpti_CallbackId argument_callbacks[] = {
+  CUPTI_RUNTIME_TRACE_CBID_cudaMalloc_v3020, CUPTI_RUNTIME_TRACE_CBID_cudaFree_v3020,
+  CUPTI_RUNTIME_TRACE_CBID_cudaHostAlloc_v3020, CUPTI_RUNTIME_TRACE_CBID_cudaMallocHost_v3020,
+  CUPTI_RUNTIME_TRACE_CBID_cudaFreeHost_v3020, CUPTI_RUNTIME_TRACE_CBID_cudaHostGetDevicePointer_v3020
+};
 bool started = false, stopped = false;
 uint64_t begin_ns = 0, end_ns = 0;
 uint32_t version = 0;
@@ -35,6 +42,54 @@ void configured(CUptiResult code, const char* operation) {
   check(code, operation);
   std::lock_guard<std::mutex> lock(mu);
   configuration.push_back("{\"operation\":" + quote(operation) + ",\"code\":" + std::to_string(code) + "}");
+}
+void CUPTIAPI argument_callback(void*, CUpti_CallbackDomain domain, CUpti_CallbackId cbid, const void* data) {
+  if (domain != CUPTI_CB_DOMAIN_RUNTIME_API) return;
+  const auto* info = static_cast<const CUpti_CallbackData*>(data);
+  if (info->callbackSite != CUPTI_API_EXIT) return;
+  if (!info->functionParams || !info->functionReturnValue) {
+    check(CUPTI_ERROR_INVALID_PARAMETER, "missing_argument_callback_data"); return;
+  }
+  const int result = *static_cast<const cudaError_t*>(info->functionReturnValue);
+  uint64_t timestamp = 0;
+  if (!check(cuptiGetTimestamp(&timestamp), "argument_timestamp")) return;
+  std::ostringstream o;
+  o << "{\"name\":" << quote(info->functionName) << ",\"process_id\":" << getpid()
+    << ",\"correlation_id\":" << info->correlationId << ",\"callback_id\":" << cbid
+    << ",\"timestamp_ns\":" << timestamp << ",\"site\":\"exit\",\"return_value\":" << result;
+  switch (cbid) {
+    case CUPTI_RUNTIME_TRACE_CBID_cudaMalloc_v3020: {
+      const auto* p = static_cast<const cudaMalloc_v3020_params*>(info->functionParams);
+      o << ",\"bytes\":" << p->size << ",\"device_address\":"
+        << (result == 0 && p->devPtr ? reinterpret_cast<uintptr_t>(*p->devPtr) : 0); break;
+    }
+    case CUPTI_RUNTIME_TRACE_CBID_cudaFree_v3020: {
+      const auto* p = static_cast<const cudaFree_v3020_params*>(info->functionParams);
+      o << ",\"device_address\":" << reinterpret_cast<uintptr_t>(p->devPtr); break;
+    }
+    case CUPTI_RUNTIME_TRACE_CBID_cudaHostAlloc_v3020: {
+      const auto* p = static_cast<const cudaHostAlloc_v3020_params*>(info->functionParams);
+      o << ",\"bytes\":" << p->size << ",\"flags\":" << p->flags << ",\"host_address\":"
+        << (result == 0 && p->pHost ? reinterpret_cast<uintptr_t>(*p->pHost) : 0); break;
+    }
+    case CUPTI_RUNTIME_TRACE_CBID_cudaMallocHost_v3020: {
+      const auto* p = static_cast<const cudaMallocHost_v3020_params*>(info->functionParams);
+      o << ",\"bytes\":" << p->size << ",\"host_address\":"
+        << (result == 0 && p->ptr ? reinterpret_cast<uintptr_t>(*p->ptr) : 0); break;
+    }
+    case CUPTI_RUNTIME_TRACE_CBID_cudaFreeHost_v3020: {
+      const auto* p = static_cast<const cudaFreeHost_v3020_params*>(info->functionParams);
+      o << ",\"host_address\":" << reinterpret_cast<uintptr_t>(p->ptr); break;
+    }
+    case CUPTI_RUNTIME_TRACE_CBID_cudaHostGetDevicePointer_v3020: {
+      const auto* p = static_cast<const cudaHostGetDevicePointer_v3020_params*>(info->functionParams);
+      o << ",\"host_address\":" << reinterpret_cast<uintptr_t>(p->pHost) << ",\"flags\":" << p->flags
+        << ",\"device_address\":" << (result == 0 && p->pDevice ? reinterpret_cast<uintptr_t>(*p->pDevice) : 0); break;
+    }
+    default: check(CUPTI_ERROR_INVALID_PARAMETER, "unexpected_argument_callback"); return;
+  }
+  o << '}';
+  std::lock_guard<std::mutex> lock(mu); arguments.push_back(o.str());
 }
 void dropped(CUcontext ctx, uint32_t stream) {
   size_t n = 0;
@@ -104,6 +159,13 @@ extern "C" int tessera_memory_start() {
   configured(cuptiActivityEnable(CUPTI_ACTIVITY_KIND_MEMORY_POOL), "enable_memory_pool");
   configured(cuptiActivityEnable(CUPTI_ACTIVITY_KIND_RUNTIME), "enable_runtime");
   configured(cuptiActivityEnable(CUPTI_ACTIVITY_KIND_DRIVER), "enable_driver");
+  const auto subscription = cuptiSubscribe(&subscriber, argument_callback, nullptr);
+  configured(subscription, "subscribe_arguments");
+  subscribed = subscription == CUPTI_SUCCESS;
+  if (subscribed) for (auto cbid : argument_callbacks) {
+    const std::string name = "enable_argument_callback_" + std::to_string(cbid);
+    configured(cuptiEnableCallback(1, subscriber, CUPTI_CB_DOMAIN_RUNTIME_API, cbid), name.c_str());
+  }
   std::lock_guard<std::mutex> lock(mu);
   return errors.empty() ? 0 : -2;
 }
@@ -122,6 +184,10 @@ extern "C" int tessera_memory_stop(const char* path) {
                     CUPTI_ACTIVITY_KIND_RUNTIME, CUPTI_ACTIVITY_KIND_DRIVER})
     check(cuptiActivityDisable(kind), "disable_activity");
   configured(cuptiActivityFlushAll(0), "flush_after_disable");
+  if (subscribed) {
+    configured(cuptiUnsubscribe(subscriber), "unsubscribe_arguments");
+    subscribed = false;
+  }
   dropped(nullptr, 0);
   check(cuptiGetTimestamp(&end_ns), "stop_timestamp");
   stopped = true;
@@ -131,6 +197,8 @@ extern "C" int tessera_memory_stop(const char* path) {
       << ",\"cupti_version\":" << version << ",\"start_ns\":" << begin_ns << ",\"end_ns\":" << end_ns
       << ",\"completed_buffers\":" << buffers << ",\"pool_records\":" << pools;
   array(out, "memory_events", events); array(out, "api_events", apis); array(out, "markers", markers);
+  out << ",\"argument_schema\":\"tessera.cuda_memory_api_arguments.v1\"";
+  array(out, "api_argument_events", arguments);
   array(out, "dropped_records", drops); array(out, "errors", errors);
   array(out, "configuration", configuration);
   out << "}\n"; out.close();

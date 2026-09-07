@@ -11,6 +11,7 @@ from contextlib import contextmanager
 from collections import deque
 from dataclasses import dataclass
 import hashlib
+import ctypes
 import json
 import os
 from pathlib import Path
@@ -21,6 +22,8 @@ from time import perf_counter_ns
 from experiments.native_operator_resources import (
     MEMORY_API_OPERATIONS, MEMORY_OWNERSHIP_API, NativeMemoryCollector, validate_cupti_capture,
 )
+from experiments.full_engine_native_owners import checkpoint_site_owners
+from experiments.full_engine_cuda_domains import analyze_memory_api_arguments, match_host_owner
 
 CAPTURE_SCHEMA = "tessera.full_engine_resource_capture.v1"
 LEDGER_SCHEMA = "tessera.full_engine_raw_resource_ledger.v1"
@@ -161,11 +164,56 @@ class TensorOwner:
     provenance: str
 
 
+@dataclass(frozen=True)
+class NativeStorageOwner:
+    """Actual native storage-map entry, without manufacturing a Tensor view."""
+    owner_id: str
+    category: str
+    device_type: str
+    device_id: int
+    address: int
+    bytes: int
+    provenance: str
+    native_binding: dict
+
+
+class BlasWorkspaceObserver:
+    """Read Torch's existing mutex-protected maps through the pinned extension."""
+    def __init__(self, library, expected_sha256):
+        path = Path(library).resolve(strict=True)
+        self.library_sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
+        if self.library_sha256 != expected_sha256:
+            raise ValueError("BLAS workspace observer library identity changed")
+        if not _torch().cuda.is_initialized():
+            raise RuntimeError("BLAS workspace observer must load after Torch CUDA initialization")
+        self._lib = ctypes.CDLL(str(path))
+        self._lib.tessera_blas_workspace_snapshot.restype = ctypes.c_char_p
+        self._lib.tessera_blas_workspace_snapshot.argtypes = []
+
+    def owners(self):
+        raw = json.loads(self._lib.tessera_blas_workspace_snapshot())
+        if raw.get("schema") != "tessera.torch_blas_workspace_observation.v1":
+            raise ValueError("unsupported Torch BLAS workspace observation")
+        for row in raw["workspaces"]:
+            yield NativeStorageOwner(
+                f"{row['owner']}:handle={row['handle']}:stream={row['stream']}", "shared",
+                row["device_type"], row["device_id"], row["address"], row["bytes"],
+                "existing Torch BLAS handle/stream workspace map; selected-assignment dependence unresolved",
+                {"handle": row["handle"], "stream": row["stream"], "observer_library_sha256": self.library_sha256})
+
+
 def _owner_row(owner):
     _text(owner.owner_id, "owner_id")
     _text(owner.provenance, "owner provenance")
     if owner.category not in OWNER_CATEGORIES:
         raise ValueError("unsupported owner category")
+    if isinstance(owner, NativeStorageOwner):
+        size = _int(owner.bytes, "native storage bytes")
+        return {"owner_id": owner.owner_id, "category": owner.category,
+                "provenance": owner.provenance, "device_type": owner.device_type,
+                "device_id": owner.device_id, "address": owner.address, "bytes": size,
+                "storage_offset_bytes": 0, "view_extent_bytes": size,
+                "observation_kind": "native_storage_map", "native_binding": owner.native_binding}
     tensor = owner.tensor
     storage = tensor.untyped_storage()
     itemsize = tensor.element_size()
@@ -294,7 +342,7 @@ class FullEngineResourceRecorder:
             finally:
                 self._stack.pop()
 
-    def finish(self, directory, *, owners=()):
+    def finish(self, directory, *, owners=(), native_ownership_evidence=(), measured_runtime_sha256=None):
         self._open()
         if self._stack:
             raise RuntimeError("cannot finish inside an open unit scope")
@@ -323,7 +371,9 @@ class FullEngineResourceRecorder:
                "observer_cost": {"scope": "synchronized_resource_observer_host_wall_time",
                                  "gpu_timing_eligible": False, "snapshot_attempts": self._observer_cost},
                "torch_snapshot": self._last_snapshot, "checkpoints": self._checkpoints,
-               "unit_intervals": self._intervals, "cupti_trace": cupti}
+               "unit_intervals": self._intervals, "cupti_trace": cupti,
+               "native_ownership_evidence": list(native_ownership_evidence),
+               "measured_runtime_sha256": measured_runtime_sha256}
         (directory / "capture.json").write_bytes(_json_bytes(raw) + b"\n")
         receipt = analyze_engine_resource_ledger(raw)
         artifacts = {}
@@ -374,8 +424,8 @@ def _checkpoint_blocks(checkpoint, live, segments, device):
         raise ValueError("allocator snapshot disagrees with replayed lifetimes")
 
 
-def _checkpoint_owners(checkpoint, live, device, issues):
-    storages, owner_ids, unmatched = {}, set(), []
+def _checkpoint_owners(checkpoint, live, device, issues, domains=None):
+    storages, host_storages, owner_ids, unmatched = {}, {}, set(), []
     for owner in checkpoint["owners"]:
         owner_id = _text(owner["owner_id"], "owner_id")
         _text(owner["provenance"], "owner provenance")
@@ -385,10 +435,6 @@ def _checkpoint_owners(checkpoint, live, device, issues):
         category = owner["category"]
         if category not in OWNER_CATEGORIES or category == "unknown":
             issues.append(f"owner {owner_id}: unknown category")
-        if owner["device_type"] != "cuda" or owner["device_id"] != device:
-            issues.append(f"owner {owner_id}: host/other-device storage is outside device census")
-            unmatched.append(owner)
-            continue
         size = _int(owner["bytes"], "storage bytes")
         if size == 0:
             continue
@@ -396,8 +442,23 @@ def _checkpoint_owners(checkpoint, live, device, issues):
         offset, extent = _int(owner["storage_offset_bytes"], "view offset"), _int(owner["view_extent_bytes"], "view extent")
         if offset + extent > size:
             raise ValueError("owner view exceeds its backing storage")
-        if address not in live or size > live[address]["bytes"]:
-            issues.append(f"owner {owner_id}: no matching live Torch backing allocation")
+        torch_match = (owner["device_type"] == "cuda" and owner["device_id"] == device
+                       and address in live and size <= live[address]["bytes"])
+        host = match_host_owner(owner, checkpoint["cupti_timestamp_ns"], domains, device) if domains else None
+        if torch_match and host is not None:
+            raise ValueError("owner ambiguously matches Torch device and pinned-host storage")
+        if host is not None:
+            ident = host["allocation_id"]
+            entry = host_storages.setdefault(ident, {"allocation_id": ident, "address": host["address"],
+                "bytes": host["bytes"], "category": category, "owners": [], "views": []})
+            if entry["category"] != category:
+                issues.append("aliased pinned-host storage has conflicting categories: " + ident)
+                entry["category"] = "unknown"
+            entry["owners"].append(owner_id)
+            entry["views"].append(owner)
+            continue
+        if not torch_match:
+            issues.append(f"owner {owner_id}: no matching live Torch or pinned-host backing allocation")
             unmatched.append(owner)
             continue
         allocation = live[address]
@@ -419,6 +480,8 @@ def _checkpoint_owners(checkpoint, live, device, issues):
     return {"label": checkpoint["label"], "trace_index": checkpoint["trace_index"],
             "owner_count": len(owner_ids), "unique_owned_storage_bytes": sum(r["bytes"] for r in storages.values()),
             "unmatched_storage_observations": unmatched,
+            "pinned_host_storages": [host_storages[k] for k in sorted(host_storages)],
+            "unique_pinned_host_backing_bytes": sum(row["bytes"] for row in host_storages.values()),
             "storages": [storages[k] for k in sorted(storages)]}
 
 
@@ -427,6 +490,9 @@ def _cupti_coverage(raw, segment_operations, issues):
     pid = validate_cupti_capture(trace)
     if pid != raw["process_id"]:
         raise ValueError("CUPTI capture belongs to another process")
+    argument_domains = analyze_memory_api_arguments(trace)
+    issues.extend(argument_domains["issues"])
+    handled_arguments = {tuple(key) for key in argument_domains["handled_api_keys"]}
     device, context = raw["identity"]["device_id"], raw["context_id"]
     begin, end = _int(trace["start_ns"], "CUPTI start", 1), _int(trace["end_ns"], "CUPTI end", 1)
     markers = {}
@@ -447,7 +513,9 @@ def _cupti_coverage(raw, segment_operations, issues):
             raise ValueError("CUDA API is outside collection or has reversed timestamps")
         apis.setdefault(key, []).append((name, first, last, api["return_value"]))
         if MEMORY_OWNERSHIP_API.match(name):
-            if name not in MEMORY_API_OPERATIONS or type(api["return_value"]) is not int or api["return_value"] != 0:
+            if key in handled_arguments:
+                continue
+            elif name not in MEMORY_API_OPERATIONS or type(api["return_value"]) is not int or api["return_value"] != 0:
                 issues.append("unsupported or failed CUDA allocation API: " + name)
             else:
                 if key in required or key[0] != pid:
@@ -488,7 +556,7 @@ def _cupti_coverage(raw, segment_operations, issues):
         issues.append("allocation API lacks its reciprocal memory operation")
     if unknown:
         issues.append("unattributed external/static/unsupported CUDA memory records")
-    return unknown
+    return unknown, argument_domains
 
 
 def analyze_engine_resource_ledger(raw):
@@ -561,6 +629,7 @@ def analyze_engine_resource_ledger(raw):
         for index, (begin, end, _, _) in enumerate(intervals):
             if any(begin < other_begin < end < other_end for other_begin, other_end, _, _ in intervals[index + 1:]):
                 raise ValueError("unit intervals cross instead of nesting")
+        domains = analyze_memory_api_arguments(raw["cupti_trace"])
         live, generations, segments = {}, {}, {}
         rows, segment_operations, checkpoint_live = [], [], set()
         peak = 0
@@ -618,7 +687,10 @@ def analyze_engine_resource_ledger(raw):
             if index + 1 in by_index:
                 checkpoint = by_index[index + 1]
                 _checkpoint_blocks(checkpoint, live, segments, device)
-                result["checkpoints"].append(_checkpoint_owners(checkpoint, live, device, issues))
+                checkpoint = dict(checkpoint, owners=list(checkpoint["owners"]))
+                for evidence in raw.get("native_ownership_evidence", []):
+                    checkpoint["owners"].extend(checkpoint_site_owners(checkpoint, live, history, evidence, device))
+                result["checkpoints"].append(_checkpoint_owners(checkpoint, live, device, issues, domains))
                 checkpoint_live.update(row["allocation_id"] for row in live.values())
         for row in rows:
             interval = next((r for r in intervals if r[2] == row["unit_invocation"]), None)
@@ -637,7 +709,7 @@ def analyze_engine_resource_ledger(raw):
         result["torch_allocations"] = rows
         result["torch_observed_live_peak_bytes"] = peak
         result["torch_observed_live_peak_scope"] = "requested_allocation_bytes_excluding_allocator_rounding"
-        result["unattributed_external_records"] = _cupti_coverage(raw, segment_operations, issues)
+        result["unattributed_external_records"], result["cuda_argument_domains"] = _cupti_coverage(raw, segment_operations, issues)
         result["status"] = "incomplete" if issues else "observed_raw_ledger"
     except (KeyError, TypeError, ValueError, IndexError) as exc:
         issues.append(str(exc))

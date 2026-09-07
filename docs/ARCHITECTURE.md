@@ -5,7 +5,9 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
-**Provenance:** `v0.1.0` plus repository tooling updates (2026-09-06):
+**Provenance:** `v0.1.0` plus repository tooling updates (2026-09-07):
+Argument-bound host mappings and native workspace ownership
+against base `049b726e`;
 Row-sliced dense owner counted once in the census planned-tensor roster
 against base `5ac9b72`;
 Mixed dense/routed campaign census coverage (PrismaQuant #253) against base `6faa5ce`;
@@ -808,9 +810,17 @@ Bounded traversal of explicitly selected runner state and already initialized
 workspace/cache managers retains tensor aliases, including host/UVA views and
 retired FlashInfer cache buffers. It does not call properties or create buffers.
 These references are shared owners whose candidate/workload dependence remains
-unresolved. Host and unmatched CUDA tensor views remain explicit unmatched
-storage observations, without interrupting later checkpoint replay or becoming
-Torch allocation charges.
+unresolved. CUPTI exit callbacks retain actual host/device pointer arguments,
+allocation extents and explicit null frees. Successful callbacks must join their
+API and reciprocal memory records; old activity-only captures receive no such
+exemptions. CPU and CUDA mappings join one live pinned-host allocation and
+count its physical backing once, while unsupported/pageable-host storage remains
+unmatched. A pinned extension reads Torch's existing mutex-protected BLAS
+workspace maps. An explicit native allocation-site rule may identify shared
+storage only through exact observed source and mapped-library bytes, ordered
+allocation frames, and a still-live allocation generation matching an active
+Torch block. It claims no native getter, historical byte constant, or fixed
+assignment-independent charge.
 The launcher binds the canonical source census, source-BF16 assignment,
 selected engine settings, observer settings, workload, device UUID and installed
 runtime manifest, and verifies the stock core before and after the pass.
