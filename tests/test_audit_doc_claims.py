@@ -5,13 +5,13 @@ deleted, and a claim it keeps gets stated exactly.  A docstring nothing
 executes drifts back the moment the code moves, so the two claims with
 arithmetic in them are pinned here.
 
-* ``ConvCode(memory=0)`` -- the one behavioural change.  It **fails on
-  master**: the dataclass constructed, and torch answers ``state >> -1`` with
+* ``ConvCode(memory=0)`` -- the original behavioural change. Before its fix,
+  the dataclass constructed, and torch answers ``state >> -1`` with
   zero instead of raising, so a zero-memory code encoded every position from a
   constant select bit rather than faulting.
 * ``EncodedUnit.sse`` and the forest-plane byte rule -- regression guards.
-  They pass on both sides by construction; they exist so the field comment and
-  ``docs/schema/prismaquant.tessera.v1.md`` stop being prose nothing checks.
+  The current SSE checks cover unweighted, post-release error from the returned
+  planes and codes; the forest checks cover the schema's byte accounting.
 """
 
 import pytest
@@ -116,7 +116,7 @@ def test_the_forest_planes_are_bounded_by_2300_bytes():
         assert total <= 2300
 
 
-# --- EncodedUnit.sse: three meanings, and always pre-release ---------------
+# --- EncodedUnit.sse: unweighted error from the returned artifact ---------
 
 
 ROWS, COLS, RATE = 32, 64, 2
