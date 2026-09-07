@@ -47,7 +47,8 @@ No kernel-duration sum is subtracted from CUDA-event elapsed time.
         ranges = {name: [] for name in capture["ranges"]}
         launches, gpu = {}, []
         for event in profile["traceEvents"]:
-            if event.get("ph") == "X" and event.get("name") in ranges:
+            if (event.get("ph") == "X" and event.get("cat") == "user_annotation"
+                    and event.get("name") in ranges):
                 ranges[event["name"]].append(event)
             category = event.get("cat", "")
             if category in {"cuda_runtime", "cuda_driver"} and "correlation" in event.get("args", {}):

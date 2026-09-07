@@ -76,3 +76,35 @@ All ten Netdata files were acquired/rehashed; CPU/RAM dimensions have 252 valid
 samples each, framebuffer and memory clocks have zero, and GPU core clocks/
 power have 239 valid samples and 13 nulls each, on both hosts. No missing
 observations were interpolated.
+
+## CPU annotation correction
+
+The analyzer now requires `cat == "user_annotation"` for CPU observation
+ranges. It still rejects missing or duplicate CPU ranges; a GPU projection
+cannot replace one. The regression was reproduced before the code change
+through PB `018245144520c8f2d44261304947b344c5d17dc2a10fdc4195464340aaa821ca`: 
+one failed, two passed, no skips or missing collection, x86 Torch 2.11 CPU,
+three workers. Exit 1 and cleanup/release were checked; expected failed jobs
+do not publish a successful CAS receipt.
+
+A first validation submission `a129a8d84cd6` named a nonexistent timing-stream
+test file; no tests ran and its failure/cleanup were verified. The corrected
+submission `c632d835c495324893db098e3e68f53a7848a32d2c76a8a5c3cf8d9e68f75c91`
+compiled the module, passed all 30 timing/boundary tests with zero skips or
+missing collection, then reanalyzed the exact retained capture/profile bytes.
+It used x86 Torch 2.11 CPU, four workers and 4 GiB; exit 0, cleanup/release and
+CAS receipt/payload hashes were independently checked. Receipt:
+`b123a6cc40841393fff44394c9f39a98f3b30b963675f4bd544521345029f2b7`.
+
+The reanalysis reports `observed_same_run_partition`, zero issues, both
+canonical steps and all 1066 GPU operations (548 prefill, 518 decode) on the
+explicit main/copy streams 7/13. Each step retains all 38 units and 39 direct
+adjacent gaps. The reanalysis artifact is
+`full-engine-reference-timing-r1/annotation-replay-r1.json` under the shared
+root, SHA-256
+`393e6f4487aa351275b430a8e7b528a998153fca62aef7d5492598506ef819c4`.
+No GPU rerun was needed for this parser correction. The original failed launch
+and partition receipt remain unchanged. Prices remain null: profiler collection
+health, observer overhead, runtime admission and full-engine memory closure
+still need qualification. One paired profiled capture cannot establish those
+contracts or an uninstrumented engine speedup.
