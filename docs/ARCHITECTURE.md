@@ -45,6 +45,11 @@ Re-stamped 2026-09-07 on `codex/native-operator-receipts-376` for the
 original-wire native dense research receipt and explicit operator resource
 bound (#376; §2.4). Serving defaults, wire and release gates are unchanged.
 
+Re-stamped 2026-09-07 on `codex/full-engine-resource-ledger` for the
+standalone raw engine allocation recorder and explicit incomplete admission
+boundary (§2.4). No full-engine fixed-resource price or runtime qualification
+is established by the raw ledger.
+
 ## 1. Scope
 
 This doc covers the path from a PrismaQuant rung assignment to a served
@@ -757,6 +762,31 @@ allocator slack, KV cache, CUDA graph pools, routed-expert execution or served
 quality. Those require their own engine receipts before a PrismaQuant runtime
 price or release admission. `experiments/qualify_native_operator.py` is a
 synthetic BF16 instrumentation fixture and cannot stand in for a real PWC row.
+
+`experiments/full_engine_resources.py` provides a separate worker-side raw
+capture surface, `FullEngineResourceRecorder`, reusing that CUPTI collector.
+It pairs synchronized Torch allocator snapshots/history with named storage
+owners and unit invocation boundaries. Its constructor requires an explicit
+`max_checkpoints` budget covering planned boundaries and terminal capture;
+closing checkpoints remain reserved. Per-attempt host elapsed time and
+serialized snapshot size disclose the observer's resource-pass cost, with no
+GPU timing interpretation. The CPU parser deduplicates aliases,
+replays address generations through completed frees, and preserves outputs
+whose lifetime crosses a unit boundary. Raw history/checkpoint, segment and
+CUPTI evidence must reconcile; unknown owners, external/static allocations,
+missing records and potentially truncated history stay incomplete. Capture
+failures and exact raw-file hashes remain in the receipt. The collector has
+no engine startup hook and has not been qualified on an actual engine.
+
+Its distinct `tessera.full_engine_raw_resource_ledger.v1` schema never emits a
+fixed-resource object or timings: `fixed_resources` and `timings` remain null,
+`admission` is `not_implemented`, and
+`full_model_fixed_resources_complete` remains false even when the restricted
+raw ledger reconciles. Neither a whole-engine peak nor supplied operator
+medians are converted into fixed costs. Runtime provenance, complete external
+and host/UMA ownership, stream/timing attribution, and an explicitly bound
+shared attention/recurrent cache-capacity policy require further engine
+qualification. No application default or serving gate reads this raw ledger.
 
 ## 3. Bytes: priced == served
 
