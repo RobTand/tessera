@@ -1631,13 +1631,16 @@ def main():
                     passthrough.append(m)
     owned = {m for members in modules.values() for m in members}
     assert owned == set(plan)
-    if not plan and not stack_plan and args.layers is None:
+    if not plan and not stack_plan and args.layers != 0:
         # An export that quantized NOTHING used to report success and write a
         # checkpoint with an empty ``config_groups``, which the plugin refuses
         # at load ("a Tessera checkpoint declares its wires in
         # config_groups").  Same shape of fault as #86: silent here, expensive
         # there.  ``--layers 0`` is how a passthrough copy is asked for on
-        # purpose, so it stays legal.
+        # purpose, so it stays legal -- and ONLY it.  ``--layers N`` for N > 0
+        # is a smoke bound, not a request for a passthrough copy: the caller
+        # asked for a partial encode, and an encode that produced nothing is
+        # the same fault under a smaller roster (#391).
         raise SystemExit(
             f"nothing was planned: all {len(shapes)} dense body weights were passed through. A "
             "Linear is planned only when its rows are a whole number of tuples (grid.arity * 32) "
@@ -1686,14 +1689,15 @@ def main():
                     passthrough.append(member)
             print(f"  {len(unrouted)} module(s) pass through at source precision; "
                   f"{len(modules)} module(s) remain in the plan", flush=True)
-            if not plan and not stack_plan and args.layers is None:
+            if not plan and not stack_plan and args.layers != 0:
                 # The same refusal as above, re-asked, because the check above
                 # ran BEFORE this loop and this loop is another way ``plan``
                 # empties.  Without it, --passthrough-unrouted on a model whose
                 # every module is unrouted writes the empty ``config_groups``
                 # the earlier guard exists to prevent -- and it is the likelier
                 # path of the two, since a wholly unrouted architecture is
-                # exactly when someone reaches for the flag.
+                # exactly when someone reaches for the flag.  ``--layers 0``
+                # is exempt; a smoke bound is not (#391).
                 raise SystemExit(
                     f"nothing is left to encode: --passthrough-unrouted passed "
                     f"through all {len(unrouted)} unrouted module(s) and no "
@@ -1760,7 +1764,7 @@ def main():
                 passthrough.append(m)
             continue
         partitions[module] = parts
-    if not plan and not stack_plan and args.layers is None:
+    if not plan and not stack_plan and args.layers != 0:
         # The THIRD way ``plan`` empties, and the same refusal as the two
         # above.  The geometry gate runs after both of them, so a module that
         # passed the construction gate can still be demoted here -- for a row
@@ -1772,7 +1776,9 @@ def main():
         # a module the plan names explicitly is refused a few lines up,
         # because an explicit rung is an obligation.  ``--layers 0`` stays
         # legal, as it is in both siblings: it is how a passthrough copy is
-        # asked for on purpose.
+        # asked for on purpose.  ``--layers N`` for N > 0 does NOT: it is a
+        # smoke bound, and #391 reproduced this exact fault through it on the
+        # branch that closed #387 -- the exemption was wider than its reason.
         raise SystemExit(
             "nothing is left to encode: the geometry gate passed through "
             f"{len(geometry_passthrough)} module(s) that were still planned, because the "
