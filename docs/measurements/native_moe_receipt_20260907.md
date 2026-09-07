@@ -84,3 +84,34 @@ SHA256 `337bbbca32a9ec0dbc453f05edff309a089875eff00c159b7d7e45596ea6a156`.
 This is build evidence only; allocation capture on the clean runtime remains
 a separate gate. The build command, actual image ID and artifact hash are in
 its `.build.json` sidecar and the verified PB result.
+
+## Clean collector allocation qualification
+
+The first allocation run, PB `77f24643ccee47e909218eb80688898b97268883192d102df679d54cb3e21aa9`,
+failed before its apply interval because the stock image ships `libcupti.so.13`
+without a `libcupti.so` development symlink. Context lookup now resolves
+`cuptiGetContextId` from the collector's already loaded, linked dependency.
+A CPU regression first failed on that extra library lookup (`9cd52894…`), then
+the three receipt/resource modules passed **185 tests**, with no skips or
+missing collection, under PB `3075f972efd582a36394de9426bf8b7d3e025e1896234296d23c250c36cbc7d1`.
+Its independently rehashed CAS payload is
+`94a66ea4ed7c48cc2ccf22d77868d96f3d54a679ffc33ce7ee266d69efca14cb`.
+
+PB `58d9bcb75600116e259209e14f489a24ad99d11c0935d135cbb460be3fea84e8`
+then finished on Sparky with exit 0 in the same official image, reserving two
+CPUs, 8 GiB total and 3 GiB GPU memory, with native threads bounded to one.
+The qualification observed the deliberately transient **123,456 external CUDA
+bytes** and **1,048,576 Torch bytes**. Their conservative sum was 1,172,032
+bytes. CUPTI 130001 reported successful configuration and flushes, no errors,
+and zero dropped records. Torch was `2.13.0+cu130`. This exercises the collector,
+not model weights, kernels, latency, or full-engine fixed resources.
+
+The checked raw trace is at
+`/mnt/shared/tessera-native376-resource/clean1970-resource-qualification-r2/trace.json`,
+SHA256 `b2513f4e0d6e225ed55888ba8f71abad8407f8d56dc9afd47e7235f32f65c39c`.
+Its qualification sidecar SHA256 is
+`d359059367d4349afe55d915216f197ef5e3b26bf9beed86250a5a0ecf4af065`;
+the independently rehashed PB payload is
+`8a9666bfba6340b3405dbf953d6e80e4a49b854bf662c9e5f6dff2dd3f88fdbd`.
+The directory retains actual image/container inspections and the exact owned
+container's completed status. No collector C++ or model artifact changed.
