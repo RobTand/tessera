@@ -143,7 +143,17 @@ def _stream_id(stream):
     get_id.restype = ctypes.c_int
     value = ctypes.c_uint32()
     handle = stream.cuda_stream
-    code = get_id(None, ctypes.c_void_p(handle), int(handle == 2), ctypes.byref(value))
+    # CUPTI cannot resolve CUDA's null/default stream without its context.
+    # Query the active driver context and let CUPTI verify stream membership.
+    driver = ctypes.CDLL("libcuda.so.1")
+    get_context = driver.cuCtxGetCurrent
+    get_context.argtypes = [ctypes.POINTER(ctypes.c_void_p)]
+    get_context.restype = ctypes.c_int
+    context = ctypes.c_void_p()
+    code = get_context(ctypes.byref(context))
+    if code or not context.value:
+        raise RuntimeError(f"active CUDA context lookup failed: {code}")
+    code = get_id(context, ctypes.c_void_p(handle), int(handle == 2), ctypes.byref(value))
     if code:
         raise RuntimeError(f"CUPTI stream identity lookup failed: {code}")
     return value.value

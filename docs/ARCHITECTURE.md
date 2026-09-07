@@ -896,7 +896,9 @@ copy event without introducing a wait into the engine streams.
 
 `full_engine_timings` recomputes the recorded partition from the profile: every
 canonical unit must execute once in each 512-token prefill and one-token decode,
-every GPU operation must have a unique launch and step scope, native operations
+stream IDs are queried against the actual current CUDA context (including
+the default stream), every GPU operation must have a unique launch and step
+scope, native operations
 must remain on the measured main stream, and only the explicitly joined copy
 stream may carry other work. Copy work overlapping native units refuses. The
 sum must recompose the whole interval within only binary32 representation

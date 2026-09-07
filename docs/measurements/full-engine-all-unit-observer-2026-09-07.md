@@ -83,3 +83,36 @@ pre-stop inspect, stop reason, and telemetry are retained under
 `/mnt/shared/tessera-native376-resource/full-engine-timing-r1/`. Netdata index
 SHA-256: `e5f1fe898cc39ecdb188a3c6ce005f5bedb86bc8356ce7634d7c10cfd2d3edf2`.
 This is an observer integration failure, not a runtime performance result.
+
+## Actual default-stream context qualification — later 2026-09-07
+
+Corrected source run `34cbdd270e205cda1abd178d1f00a3bcaa386f628ccde791beb72ac76602b6da`
+passed the zero-token cleanup path, then refused CUPTI's stream-ID query with
+code 20 for the stock CUDA default stream. It exited 1, PB recorded complete
+cleanup, and all ten Netdata series were retained with zero missing series
+under `full-engine-timing-r2`. No timing run or successful CAS payload exists.
+
+A tiny stock-image GPU qualifier isolated this without another model load:
+`753b2dbffc0cd6fb930ac7cd97d25de3cf80f96bdac161021afe2f9fa702f67c`.
+CUDA stream handle zero plus a null context returned code 20. Passing the actual
+`cuCtxGetCurrent` context returned stream ID 7, matching its profiler kernel.
+An explicitly created stream returned ID 13, also matching the profiler. The
+observer now queries the active context and asks CUPTI to verify membership;
+missing contexts and failed queries still refuse. No stream ID is guessed.
+
+The exact fixed observer function then ran in PB
+`deea806b620e6da2e1fa9923816282c9e15fb38e3a30bab1f58ea6b8958ec1f5`,
+returning IDs 7 and 13 for the default and created streams and matching both
+recorded GPU operations. Exit 0, complete cleanup and CAS payload
+`72383ad8140bb92e3a46d22ab56add4c5084e56945dfc01f5db7c2d63245a6f9`
+were independently verified. Result SHA-256
+`c6f6165ba64b1e2cb18a6123b0f01849a248b1ddad93c8ad8bd3c509978c292b`,
+profile SHA-256
+`2214eb16ca5ea2c3869dd98d6f6827c12b88e0c0f5608fe8f9fa13c3d7b82719`;
+files are under
+`/mnt/shared/tessera-native376-resource/timing-stream-qualification-r2/`.
+Both tiny checks used the selected immutable stock image on GB10, two reserved
+CPUs, 4 GiB aggregate memory and a 2 GiB GPU subset. They qualify only this
+stream lookup, not timing overhead, profiler completeness or full-engine cost.
+An earlier attempt `02eb556c1f83` failed before CUDA work because its root user
+could not write the NFS output; the checks above ran as UID/GID 1000.
