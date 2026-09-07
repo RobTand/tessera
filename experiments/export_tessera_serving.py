@@ -1729,6 +1729,7 @@ def main():
     # tensors, as before, and the manifest says the geometry was not checked.
     partitions: dict[str, tuple] = {}
     geometry_unattested: list[str] = []
+    geometry_passthrough: list[str] = []
     for module, members in list(modules.items()):
         sizes = None if census is None else output_partitions(census, module)
         if sizes is None:
@@ -1753,11 +1754,35 @@ def main():
                     "an obligation, so this is refused rather than silently passed through.")
             print(f"  passthrough {module}: output partitions {sizes} are not whole tuples on "
                   "the planned grid", flush=True)
+            geometry_passthrough.append(module)
             for m in modules.pop(module):
                 del plan[m]
                 passthrough.append(m)
             continue
         partitions[module] = parts
+    if not plan and not stack_plan and args.layers is None:
+        # The THIRD way ``plan`` empties, and the same refusal as the two
+        # above.  The geometry gate runs after both of them, so a module that
+        # passed the construction gate can still be demoted here -- for a row
+        # slice the runtime builds, not for anything the per-tensor plan could
+        # see -- and when it was the last one the export returned normally and
+        # wrote the empty ``config_groups`` the plugin refuses at load
+        # (``TesseraConfig.from_config``: "a Tessera checkpoint declares its
+        # wires in config_groups").  The implicit default is where this bites:
+        # a module the plan names explicitly is refused a few lines up,
+        # because an explicit rung is an obligation.  ``--layers 0`` stays
+        # legal, as it is in both siblings: it is how a passthrough copy is
+        # asked for on purpose.
+        raise SystemExit(
+            "nothing is left to encode: the geometry gate passed through "
+            f"{len(geometry_passthrough)} module(s) that were still planned, because the "
+            "runtime's output partitions are not whole tuples (grid.arity * 32) on the "
+            "planned grid, and no module remains in the plan. The "
+            "partition list is the pinned runtime's, read from the construction census "
+            "(contract.output_partitions), so this is a fact about how the runtime builds these "
+            "Linears and not about the checkpoint. The checkpoint would carry an empty "
+            "config_groups and the plugin refuses that at load. Plan a grid whose tuples divide "
+            "these partitions, or pass --layers 0 to write a passthrough copy deliberately.")
     sliced_modules = sorted(module for module, parts in partitions.items()
                             if any(p.row_offset or p.rows != plan[p.tensor][2] for p in parts))
     if sliced_modules and args.stock_twin is not None:
