@@ -281,8 +281,9 @@ def test_failed_selected_capacity_is_preserved_and_stops_worker(monkeypatch, wor
     assert recorder._errors == ["actual resolved KV capacity differs from selected assertions"]
 
 
+@pytest.mark.parametrize("defect", ["package_changed", "evidence_changed", "missing_file", "missing_spec", "origin_mismatch"])
 def test_full_engine_runtime_preserves_base_and_checks_installed_package(
-        monkeypatch, worker_module, tmp_path):
+        monkeypatch, worker_module, tmp_path, defect):
     import copy
     import hashlib
     import json
@@ -293,8 +294,8 @@ def test_full_engine_runtime_preserves_base_and_checks_installed_package(
     module_file.write_text("# immutable fixture\n")
     cached_file = package / "cached_unit.py"
     cached_file.write_text("# cache fixture\n")
-    cached = SimpleNamespace(__file__=str(cached_file))
-    module = SimpleNamespace(__file__=str(module_file), cached_unit=cached)
+    cached = SimpleNamespace(__file__=str(cached_file), __spec__=SimpleNamespace(origin=str(cached_file)))
+    module = SimpleNamespace(__file__=str(module_file), __spec__=SimpleNamespace(origin=str(module_file)), cached_unit=cached)
     for name in tuple(sys.modules):
         if name == "tessera" or name.startswith("tessera."):
             monkeypatch.delitem(sys.modules, name)
@@ -310,6 +311,7 @@ def test_full_engine_runtime_preserves_base_and_checks_installed_package(
     plan = {"selected_configuration": {"runtime_image": "fixture@sha256:abc",
             "engine_args": {"enforce_eager": True, "tensor_parallel_size": 1}, "environment": {}},
             "identity": {"configuration_sha256": "b" * 64}, "runtime_evidence": str(installer),
+            "runtime_evidence_sha256": hashlib.sha256(installer.read_bytes()).hexdigest(),
             "observer_engine_args": {}, "observer_environment": {}, "scope": "fixture",
             "collector_library_sha256": "c" * 64, "collector_library": "/fixture/collector.so"}
     result = worker_module.full_engine_runtime_observation(plan)
@@ -319,6 +321,20 @@ def test_full_engine_runtime_preserves_base_and_checks_installed_package(
     assert result["loaded_package"]["package_files"] == files
     assert result["loaded_package"]["package_files_unchanged_from_installer"] is True
     assert result["loaded_package"]["cached_unit_file"] == str(cached_file)
-    cached_file.write_text("# changed after install\n")
-    with pytest.raises(ValueError, match="changed from installer"):
+    if defect == "package_changed":
+        cached_file.write_text("# changed after install\n")
+        message = "changed from installer"
+    elif defect == "evidence_changed":
+        installer.write_text(json.dumps({"plugin_files": files, "unplanned_replacement": True}))
+        message = "runtime evidence.*digest"
+    elif defect == "missing_file":
+        cached.__file__ = None
+        message = "module.*file/origin"
+    elif defect == "missing_spec":
+        cached.__spec__ = None
+        message = "module.*file/origin"
+    elif defect == "origin_mismatch":
+        cached.__spec__.origin = str(module_file)
+        message = "module.*file/origin"
+    with pytest.raises(ValueError, match=message):
         worker_module.full_engine_runtime_observation(plan)

@@ -7,7 +7,8 @@ the code that owns it.
 
 **Provenance:** `v0.1.0` plus repository tooling updates (2026-09-07):
 Argument-bound host mappings, native workspace ownership and loaded full-engine
-runtime identity against base `049b726e`;
+runtime identity against base `049b726e`; installer digest and loaded module
+file/spec-origin joins against base `8918caa7`;
 Row-sliced dense owner counted once in the census planned-tensor roster
 against base `5ac9b72`;
 Mixed dense/routed campaign census coverage (PrismaQuant #253) against base `6faa5ce`;
@@ -830,7 +831,10 @@ runtime observations preserve the native runtime census under `base`, separately
 record actual engine execution/configuration and observer library identities,
 and freshly recompute Tessera's encoder source hash. A distinct loaded-package
 record binds actual module paths, `sys.path`, and every installed package file
-to the installer roster; byte changes refuse. The raw ledger preserves its
+to the installer roster after verifying its originally planned evidence digest.
+Every loaded Tessera module must have a verifiable file and import-spec origin
+resolving to the same installed roster entry and actual file hash; missing or
+changed paths, origins and bytes refuse. The raw ledger preserves its
 original core-manifest digest and separately records the measured-runtime hash.
 An explicit calibration input may supply the canonical int64[512,512] fixture's
 first row unchanged as a TokenPrompt; the actual generated-token decode remains

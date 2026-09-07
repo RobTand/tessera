@@ -123,19 +123,39 @@ def full_engine_runtime_observation(plan):
                                              "bytes": path.stat().st_size}
              for path in sorted(package.rglob("*"))
              if path.is_file() and "__pycache__" not in path.parts}
-    installer = json.loads(Path(plan["runtime_evidence"]).read_text())
+    installer_bytes = Path(plan["runtime_evidence"]).read_bytes()
+    installer_sha256 = hashlib.sha256(installer_bytes).hexdigest()
+    if installer_sha256 != plan["runtime_evidence_sha256"]:
+        raise ValueError("runtime evidence changed from its planned digest")
+    installer = json.loads(installer_bytes)
     if files != installer["plugin_files"]:
         raise ValueError("post-init Tessera package files changed from installer evidence")
-    module_paths = {name: getattr(module, "__file__", None)
-        for name, module in sorted(tuple(sys.modules.items()))
-        if name == "tessera" or name.startswith("tessera.")}
-    for name, filename in module_paths.items():
-        if filename is not None:
-            path = Path(filename).resolve()
-            if not path.is_relative_to(package) or str(path.relative_to(package)) not in files:
-                raise ValueError("loaded Tessera module is outside the installed package roster: " + name)
+    modules = {name: module for name, module in sorted(tuple(sys.modules.items()))
+               if name == "tessera" or name.startswith("tessera.")}
+    if not {"tessera", "tessera.cached_unit"} <= modules.keys():
+        raise ValueError("loaded Tessera package/cached_unit modules are missing")
+    module_paths, module_identities = {}, {}
+    for name, module in modules.items():
+        filename = getattr(module, "__file__", None)
+        origin = getattr(getattr(module, "__spec__", None), "origin", None)
+        if not isinstance(filename, str) or not filename or not isinstance(origin, str) or not origin:
+            raise ValueError("loaded Tessera module has missing file/origin: " + name)
+        try:
+            path, origin_path = Path(filename).resolve(strict=True), Path(origin).resolve(strict=True)
+        except OSError as exc:
+            raise ValueError("loaded Tessera module has unverifiable file/origin: " + name) from exc
+        if (path != origin_path or not path.is_relative_to(package)
+                or str(path.relative_to(package)) not in files):
+            raise ValueError("loaded Tessera module file/origin differs from the package roster: " + name)
+        actual_sha = hashlib.sha256(path.read_bytes()).hexdigest()
+        if actual_sha != files[str(path.relative_to(package))]["sha256"]:
+            raise ValueError("loaded Tessera module bytes changed during observation: " + name)
+        module_paths[name] = str(path)
+        module_identities[name] = {"file": str(path), "origin": str(origin_path), "sha256": actual_sha}
     loaded = {"schema": "tessera.loaded_package_identity.v1",
         "encoder_source_sha256": base["source"]["tessera_package_sha256"],
+        "package_path": str(package), "installer_evidence_sha256": installer_sha256,
+        "loaded_tessera_modules": module_identities, "module_identity_errors": [],
         "package_files": files, "package_files_unchanged_from_installer": True,
         "tessera_file": tessera.__file__, "cached_unit_file": tessera.cached_unit.__file__,
         "sys_path": list(sys.path),
