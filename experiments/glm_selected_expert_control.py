@@ -6,6 +6,8 @@ from experiments.glm_repeated_expert_control import error
 
 
 def run(args, selected, templates, scheme, layer, method, w13, w2, s13, s2):
+    if not isinstance(selected.get('cases'), list) or not selected['cases']:
+        raise ValueError('selected-expert control requires a nonempty list of cases')
     import gc
     import torch
     from tessera.serving.fp8_route import PreparedTesseraFp8Module, prepare_tessera_fp8_module
