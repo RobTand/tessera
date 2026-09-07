@@ -139,6 +139,11 @@ def validate_cupti_capture(trace):
     expected_configuration = {"register_callbacks", "allocation_source", "enable_memory2",
                               "enable_memory_pool", "enable_runtime", "enable_driver",
                               "flush_before_disable", "flush_after_disable"}
+    if "argument_schema" in trace:
+        from experiments.full_engine_cuda_domains import ARGUMENT_SCHEMA, ARGUMENT_CONFIGURATION
+        if trace["argument_schema"] != ARGUMENT_SCHEMA:
+            raise ValueError("unsupported CUDA memory argument schema")
+        expected_configuration |= ARGUMENT_CONFIGURATION
     configuration = trace["configuration"]
     if (len(configuration) != len(expected_configuration)
             or {r["operation"] for r in configuration} != expected_configuration

@@ -40,6 +40,7 @@ def run(args):
     assert cudart.cudaFreeHost(host) == 0
     receipt = recorder.finish(args.output / "capture", owners=owners)
     raw = json.loads((args.output / "capture/capture.json").read_text())
+    assert "cuda_argument_domains" in receipt, receipt["issues"]
     domains = receipt["cuda_argument_domains"]
     assert domains["status"] == "observed_argument_domains", domains
     assert domains["null_device_frees"]

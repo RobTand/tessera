@@ -7,6 +7,10 @@ import re
 
 
 ARGUMENT_SCHEMA = "tessera.cuda_memory_api_arguments.v1"
+# CUDA runtime callback IDs are part of the v1 collector ABI.
+ARGUMENT_CALLBACK_IDS = frozenset({20, 22, 25, 26, 27, 28})
+ARGUMENT_CONFIGURATION = {"subscribe_arguments", "unsubscribe_arguments"} | {
+    f"enable_argument_callback_{cbid}" for cbid in ARGUMENT_CALLBACK_IDS}
 CALLBACK_APIS = {"cudaMalloc", "cudaFree", "cudaHostAlloc", "cudaMallocHost",
                  "cudaFreeHost", "cudaHostGetDevicePointer"}
 HOST_APIS = {"cudaHostAlloc": "allocate", "cudaMallocHost": "allocate", "cudaFreeHost": "free"}

@@ -6,6 +6,7 @@ Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
 **Provenance:** `v0.1.0` plus repository tooling updates (2026-09-07):
+CUPTI v1 argument-collector configuration validation against base `7e61578c`;
 Argument-bound host mappings, native workspace ownership and loaded full-engine
 runtime identity against base `049b726e`; installer digest and loaded module
 file/spec-origin joins against base `8918caa7`;
@@ -813,7 +814,10 @@ retired FlashInfer cache buffers. It does not call properties or create buffers.
 These references are shared owners whose candidate/workload dependence remains
 unresolved. CUPTI exit callbacks retain actual host/device pointer arguments,
 allocation extents and explicit null frees. Successful callbacks must join their
-API and reciprocal memory records; old activity-only captures receive no such
+API and reciprocal memory records. The shared capture validator requires the
+exact successful setup/teardown operations for the declared argument schema;
+unknown schemas and missing, duplicate, failed or additional operations refuse.
+Old activity-only captures receive no such
 exemptions. CPU and CUDA mappings join one live pinned-host allocation and
 count its physical backing once, while unsupported/pageable-host storage remains
 unmatched. A pinned extension reads Torch's existing mutex-protected BLAS
