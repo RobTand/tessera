@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-07T03:19:26Z",
+ "generated": "2026-09-07T08:09:49Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -864,11 +864,11 @@
     "title": "Price a routed expert stack as one Tessera decision unit, from a sample of its experts"
    },
    "293": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Connect packed stack sampling through campaign selection and scoped allocation"
    },
    "294": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Validate campaign journal inputs before merging and canonicalize refusal records"
    },
    "295": {
@@ -884,8 +884,12 @@
     "title": "Fix expert projection fallback across differently ordered stack menus"
    },
    "298": {
+    "state": "CLOSED",
+    "title": "Repair packed campaign identity, merge integrity and export handoff"
+   },
+   "299": {
     "state": "OPEN",
-    "title": "Carry packed expert sampling through campaign merge and export"
+    "title": "Make the PQ237 source seal refuse what it never enumerated (#296)"
    },
    "3": {
     "state": "CLOSED",
@@ -895,13 +899,101 @@
     "state": "CLOSED",
     "title": "Keep vendored Gridbook fused FP4 prefill opt-in"
    },
+   "300": {
+    "state": "CLOSED",
+    "title": "[P2] Route compatible campaign expert anchors through Tessera batch encoding"
+   },
+   "301": {
+    "state": "CLOSED",
+    "title": "Complete sampled Tessera selections through deterministic selected-wire materialization"
+   },
+   "302": {
+    "state": "CLOSED",
+    "title": "Run Tessera campaign quanta in declared Docker environments"
+   },
+   "303": {
+    "state": "CLOSED",
+    "title": "Support declared Docker runtimes for Tessera campaign quanta"
+   },
+   "304": {
+    "state": "CLOSED",
+    "title": "Batch compatible Tessera campaign expert anchors"
+   },
+   "305": {
+    "state": "CLOSED",
+    "title": "Reuse verified campaign calibration captures across PB quanta"
+   },
+   "306": {
+    "state": "CLOSED",
+    "title": "Bind native operator panels to exact calibration and joint AURA inputs"
+   },
+   "307": {
+    "state": "CLOSED",
+    "title": "Complete sampled allocations through selected-wire materialization"
+   },
+   "308": {
+    "state": "CLOSED",
+    "title": "Implement the bounded PQ native operator panel and receipt consumer"
+   },
+   "309": {
+    "state": "CLOSED",
+    "title": "Bind complete routed MoE native measurements to all PQ members and captured routing"
+   },
    "31": {
     "state": "CLOSED",
     "title": "Repair integration CI portability"
    },
+   "310": {
+    "state": "CLOSED",
+    "title": "P0: restore valid LFM checkpoint state and resident/streamed forward parity"
+   },
+   "311": {
+    "state": "OPEN",
+    "title": "P0: streaming compressed-tensors export narrows persistent FP32 buffers before passthrough"
+   },
+   "312": {
+    "state": "CLOSED",
+    "title": "fix: restore LFM checkpoint state and streamed source parity"
+   },
+   "313": {
+    "state": "CLOSED",
+    "title": "feat: measure profile-owned packed experts with streamed joint AURA"
+   },
+   "314": {
+    "state": "CLOSED",
+    "title": "Bind whole routed native panels to original members and captured routing"
+   },
+   "315": {
+    "state": "CLOSED",
+    "title": "Reuse canonical calibration across campaign quanta"
+   },
+   "316": {
+    "state": "CLOSED",
+    "title": "Record canonical capture and matched reuse/maxima evidence"
+   },
+   "317": {
+    "state": "CLOSED",
+    "title": "Price packed source Linears with streamed joint AURA"
+   },
+   "318": {
+    "state": "OPEN",
+    "title": "Bound full-calibration streamed joint AURA with deterministic microbatches"
+   },
+   "319": {
+    "state": "OPEN",
+    "title": "Bound streamed joint AURA with versioned calibration microbatches"
+   },
    "32": {
     "state": "CLOSED",
     "title": "Sync post-0.3 Gridbook runtime safety fixes"
+   },
+   "320": {
+    "state": "CLOSED",
+    "title": "Fix standalone campaign planner package imports"
+   },
+   "321": {
+    "state": "OPEN",
+    "title": "Match native FP8 activation arithmetic and preserve signed zero"
    },
    "33": {
     "state": "CLOSED",
@@ -2470,20 +2562,60 @@
     "title": "Encoder: batch many same-shape units (and rungs) into one LDLQ trellis call \u2014 the campaign runs at 16 W of 140 W because each Viterbi launch is 32 columns wide"
    },
    "386": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Batch the LDLQ encoder along the column axis, byte-identical per unit (#385, priority 1)"
    },
    "387": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Geometry fallback can publish empty Tessera config_groups after dropping the last implicit owner"
    },
    "388": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "P1: uniform-control accounting test still permits dropped TCQ forest bytes"
+   },
+   "389": {
+    "state": "CLOSED",
+    "title": "Refuse an export the geometry gate emptied, before it publishes (#387)"
    },
    "39": {
     "state": "CLOSED",
     "title": "The byte baseline is blind to every condition the CHANNEL fixes touch"
+   },
+   "390": {
+    "state": "CLOSED",
+    "title": "Price the forest on both sides, or refuse the pairing (#388)"
+   },
+   "391": {
+    "state": "OPEN",
+    "title": "The empty-config_groups guards exempt every --layers N, but only --layers 0 is a deliberate passthrough"
+   },
+   "392": {
+    "state": "CLOSED",
+    "title": "Reduce encoder host synchronization while preserving greedy decisions"
+   },
+   "393": {
+    "state": "CLOSED",
+    "title": "Produce original-wire native dense receipts with observed allocation bounds"
+   },
+   "394": {
+    "state": "CLOSED",
+    "title": "Retain unused TCQ SSE experiment with full B32 small-delta evidence"
+   },
+   "395": {
+    "state": "OPEN",
+    "title": "Research: whole routed-expert native operator receipts"
+   },
+   "396": {
+    "state": "CLOSED",
+    "title": "Initialize identity before collecting trailing refit diagnostics"
+   },
+   "397": {
+    "state": "OPEN",
+    "title": "Pinned EUGR runtime carries a core KV-sizing patch; unmodified-runtime gate remains unresolved"
+   },
+   "398": {
+    "state": "OPEN",
+    "title": "Add original-wire whole routed-MoE measurement receipts"
    },
    "4": {
     "state": "CLOSED",
