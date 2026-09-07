@@ -3092,11 +3092,10 @@ def _encode_unit_steps(
             # Normalised to the column's loudest position so the fp32 path
             # costs stay O(1); a per-column constant moves no argmin.
             weights = (scale / scale.amax(dim=0, keepdim=True)) ** 2
-        # ``trellis_pass`` writes ``codes``/``anchors``/``body_bits``; its
-        # return is the Viterbi's own cost, in whatever units this pass's
-        # targets and weights are, and it is deliberately dropped -- the unit's
-        # ``sse`` is computed once at the end, from the planes and codes the
-        # unit returns.
+        # ``trellis_pass`` writes ``codes``/``anchors``/``body_bits`` from the
+        # yielded Viterbi answers. The driver discards the trellis's cost;
+        # the unit's ``sse`` is computed once at the end, from the planes and
+        # codes the unit returns.
         if ldl is None:
             targets = work / scale
             yield from trellis_pass(targets, weights)
