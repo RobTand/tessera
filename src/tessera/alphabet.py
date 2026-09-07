@@ -423,6 +423,16 @@ def require_hardware_byte_grid(
     return grid
 
 
+def _grid_digest_fields(grid: PayloadGrid) -> tuple:
+    return (grid.name, grid.values, grid.native, grid.arity, grid.keys, grid.partition)
+
+
+# Populated from the registry's already-computed digests after its construction.
+# Identity keys avoid PayloadGrid's generated hash walking the whole BF16 grid.
+# Strong references prevent object-id reuse; the roster bounds retained state.
+_REGISTERED_GRID_DIGESTS: dict[int, tuple[PayloadGrid, str, tuple]] = {}
+
+
 def grid_digest(grid: PayloadGrid) -> str:
     """A stable identity for a grid, for the wire.
 
@@ -447,6 +457,14 @@ def grid_digest(grid: PayloadGrid) -> str:
     it is enforced at construction rather than re-stated here so the byte
     stream, and with it every registered digest, stays exactly what it was.
     """
+    cached = _REGISTERED_GRID_DIGESTS.get(id(grid))
+    if cached is not None and cached[0] is grid:
+        # All saved fields are recursively immutable builtins. Even an
+        # object.__setattr__ bypass of frozen=True invalidates this shortcut
+        # when it replaces a field. Unknown/mutable grids still hash values.
+        if all(now is saved for now, saved in zip(_grid_digest_fields(grid), cached[2])):
+            return cached[1]
+
     import hashlib
     import struct
 
@@ -630,6 +648,31 @@ SERIALISABLE_GRIDS: "dict[str, PayloadGrid]" = {
     grid_digest(grid): grid
     for grid in (E2M1_GRID, tuple_grid(E2M1_GRID, 2), E4M3_GRID, BF16_GRID)
 }
+
+
+def _registered_grid_digests() -> dict[int, tuple[PayloadGrid, str, tuple]]:
+    """Retain immutable registry identities without caching arbitrary inputs."""
+    result = {}
+    for digest, grid in SERIALISABLE_GRIDS.items():
+        # frozen=True only freezes attributes, not user-supplied lists or
+        # mutable numeric subclasses. Check the closed registry once, never
+        # the payload on each read. Later registry additions remain uncached.
+        if (type(grid) is PayloadGrid
+                and type(grid.name) is str and type(grid.partition) is str
+                and type(grid.arity) is int
+                and type(grid.values) is tuple
+                and all(type(value) in (float, int) for value in grid.values)
+                and (grid.native is None or (
+                    type(grid.native) is tuple
+                    and all(type(code) is int for code in grid.native)))
+                and type(grid.keys) is tuple
+                and all(type(key) is tuple and all(type(rank) is int for rank in key)
+                        for key in grid.keys)):
+            result[id(grid)] = (grid, digest, _grid_digest_fields(grid))
+    return result
+
+
+_REGISTERED_GRID_DIGESTS = _registered_grid_digests()
 
 
 def _forest_plane_failure(grid: PayloadGrid) -> "str | None":

@@ -112,3 +112,16 @@ The result is outstanding at this checkpoint. Artifacts and launch log are at
 `/mnt/shared/tessera-native376-resource/full-engine-reference-r3/` and the sibling
 `full-engine-reference-r3-launcher.log`. Complete resource closure and timings
 remain unmeasured; the native-owner refusal is unchanged.
+
+While the immutable remote `3340b253` full capture ran, PR #400 was reconciled
+with master `a29dbec6`. Both architecture sections/provenance records were
+retained. The collector resolution preserves the shared `current_context_id`
+method; its only delta from the captured branch is the incoming explanatory
+SONAME comment. Compilation plus all full-engine, native-resource and native-MoE
+receipt CPU checks passed: 311 tests, zero skipped or missing, x86 Torch 2.11
+CPU with 8 workers, PB
+`ddd2dfb86f629873f3a2c9ce3a7506fb44ab4628036845c755657014d6588d72`.
+Exit 0, cleanup and receipt/payload hashes were checked; receipt
+`e91eb130bfcfa3ff0adcfd45a5d17a4071f9aa1dadd8339d5fb903b225c4b8b5`.
+This integration check does not change the source identity of the running
+experiment or claim GPU coverage for the CPU suite.

@@ -118,7 +118,7 @@ PROCESS_THREAD_LIMITS = dict.fromkeys(
     ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MAX_JOBS"), "1"
 )
 # Cleanup backstop, matching the deployed PB worker's TERM grace. The inner
-# command needs its own deadline: deployed pbrun parses but ignores --timeout-s.
+# command also enforces its deadline within the PB action's admitted timeout.
 TIMEOUT_KILL_AFTER_S = 5.0
 
 #: Where the pool publishes what it did.  A finished action's outcome record
@@ -1442,8 +1442,8 @@ def main() -> int:
                          "declared to the pool and, above 1, passed to pytest "
                          "as -n so the reservation and the command cannot "
                          "disagree. Clamped to 1 for any arm that cannot fan "
-                         "out -- the GPU arm always, since its workers share "
-                         "one device and the CUDA venv has no pytest-xdist -- "
+                         "out -- the legacy GPU arm always selects serial "
+                         "execution, independently of installed xdist -- "
                          "so one number can submit an -n x86 arm and a serial "
                          "GPU arm in the same run. Default 1")
     ap.add_argument("--mem-gb", type=int, default=16)

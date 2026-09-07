@@ -1870,7 +1870,14 @@ def _refit_scales_lut_metric(
             q = (Ec @ H) * Ec
             return float(q.sum() if rw is None else (q * rw).sum())
 
-    stepped = target if _REFIT_DIAG is None else target.clone()
+    diagnostic = _REFIT_DIAG
+    if diagnostic is not None:
+        from .encoder_identity import building
+        # The first exported unit computes its identity with internal fixture
+        # encodes. Those are not refits of the unit being measured.
+        if building():
+            diagnostic = None
+    stepped = target if diagnostic is None else target.clone()
     valid = (A > 0) & (target > 0)
     target = torch.where(valid, target, S)
     weights = torch.where(valid, A, torch.zeros_like(A))
@@ -1950,7 +1957,7 @@ def _refit_scales_lut_metric(
             # The incumbent stands; the record describes the plane returned,
             # which is what the sink's one consumer scores.
             coupled = {"cost": best, "sweeps": coupled["sweeps"], "moves": 0}
-    if _REFIT_DIAG is not None:
+    if diagnostic is not None:
         # Debug-only, floats only, appended after every decision this call
         # made.  The refit's landed error is three things added together and
         # the landed number alone cannot tell them apart:
@@ -1977,7 +1984,7 @@ def _refit_scales_lut_metric(
         # leg legitimately carries the flag past three separable inner passes.
         # A record that said a sweep ran there would misdescribe the refit to
         # the one consumer this dict has, a measurement.
-        _REFIT_DIAG.append({
+        diagnostic.append({
             "gauss_seidel": bool(gauss_seidel) and metric.ndim != 1,
             "gauss_seidel_requested": bool(gauss_seidel),
             "metric_ndim": int(metric.ndim),
