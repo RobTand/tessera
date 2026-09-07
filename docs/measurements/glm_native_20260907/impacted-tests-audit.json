@@ -1,0 +1,729 @@
+{
+  "schema": "tessera.glm_impacted_tests_audit.v1",
+  "source_commit": "ecd8d960387d36e9448fbec199106b96b9ef778c",
+  "files": 50,
+  "shards": 20,
+  "workers_per_shard": 2,
+  "native_threads_per_worker": 1,
+  "distribution": "worksteal",
+  "memory_gib_per_shard": 4,
+  "passed": 1261,
+  "skipped": 71,
+  "not_collected": 0,
+  "cuda_coverage": false,
+  "all_terminal_exits_zero": true,
+  "all_scopes_cleaned": true,
+  "result": {
+    "path": "/mnt/shared/tessera-glm-native-20260907/impacted-tests-02-result.json",
+    "sha256": "b83af25726944926c3ce7c65c421fd7b7a019df440b0cca349ef61e2cc5a595a",
+    "bytes": 97217
+  },
+  "selection": {
+    "path": "/mnt/shared/tessera-glm-native-20260907/impacted-tests-02.json",
+    "sha256": "b953a1b76d56afe4a6c99d8002f010831476475314ac35898d59bbccfdfbfdb7",
+    "bytes": 7179
+  },
+  "command": {
+    "path": "/mnt/shared/tessera-glm-native-20260907/impacted-tests-02-command.json",
+    "sha256": "556986bb8a88d6fc6adeb349d1ccf1d2b7c0a720ef7b464d7e63218184336a7c",
+    "bytes": 2376
+  },
+  "setup_refusal": {
+    "path": "/mnt/shared/tessera-glm-native-20260907/impacted-tests-result.json",
+    "sha256": "d2859b4be88bc7695f8891b6e4f5adb8adfdb3065fd374bbc3b055cad0d05b85",
+    "bytes": 11461
+  },
+  "rows": [
+    {
+      "shard": 0,
+      "files": [
+        "tests/test_audit_byte_baseline.py",
+        "tests/test_menu_selection_requirement.py",
+        "tests/test_stock_declared_format.py"
+      ],
+      "passed": 33,
+      "skipped": 0,
+      "not_collected": 0,
+      "device": "cpu",
+      "torch": "2.11.0+cpu",
+      "skip_reasons_verbatim": [],
+      "action_key": "b184c4e11b6a978d8c9c41f6fd4b5c0c9d4da63c04aece9745fa6d3d6dbe39b2",
+      "terminal": {
+        "path": "/mnt/shared/prismabuild-fleet/pb-queue/done/b184c4e11b6a978d8c9c41f6fd4b5c0c9d4da63c04aece9745fa6d3d6dbe39b2.json",
+        "sha256": "ecf86b1c9ef983743fcb64968b000c5433e182e007681a29c9076a31e70c9985",
+        "bytes": 9124
+      },
+      "payload": {
+        "path": "/mnt/shared/prismabuild-fleet/cas/blobs/7c/7c26d648672b7c3c8ad509638136a7605c94c54dae65e142c0be548c8fad161c",
+        "sha256": "7c26d648672b7c3c8ad509638136a7605c94c54dae65e142c0be548c8fad161c",
+        "bytes": 1630
+      },
+      "cas_receipt_sha256": "0efeea8a1d577778a98c7b30f060815a6f81caf849daf5baea0330d42351c15d",
+      "scope_cleanup_complete": true,
+      "cpu_allocation": {
+        "fallback": [],
+        "preferred": [
+          10,
+          11
+        ]
+      }
+    },
+    {
+      "shard": 1,
+      "files": [
+        "tests/test_box_artifacts.py",
+        "tests/test_merge_guard.py",
+        "tests/test_stock_input_scale_join.py"
+      ],
+      "passed": 56,
+      "skipped": 43,
+      "not_collected": 0,
+      "device": "cpu",
+      "torch": "2.11.0+cpu",
+      "skip_reasons_verbatim": [
+        "       43  encoder is a GPU job"
+      ],
+      "action_key": "a09e588d7e8774176d3bb8b76f8f05a994a188480cbd93d00bf2d6c2e9722c88",
+      "terminal": {
+        "path": "/mnt/shared/prismabuild-fleet/pb-queue/done/a09e588d7e8774176d3bb8b76f8f05a994a188480cbd93d00bf2d6c2e9722c88.json",
+        "sha256": "d21532d94ecb30d7167a2ddc0855d27f24b978850488c1c06f972b8201195103",
+        "bytes": 9254
+      },
+      "payload": {
+        "path": "/mnt/shared/prismabuild-fleet/cas/blobs/9c/9c34ce8b901a4b278f72ed1d1419be5333075591dff4845bc8623167b9fe7505",
+        "sha256": "9c34ce8b901a4b278f72ed1d1419be5333075591dff4845bc8623167b9fe7505",
+        "bytes": 1753
+      },
+      "cas_receipt_sha256": "2e1626e319f2321402ae33220119eec2158d97bc3d09dfd92482a733f27cd667",
+      "scope_cleanup_complete": true,
+      "cpu_allocation": {
+        "fallback": [],
+        "preferred": [
+          30,
+          31
+        ]
+      }
+    },
+    {
+      "shard": 2,
+      "files": [
+        "tests/test_cached_producer.py",
+        "tests/test_merge_suite.py",
+        "tests/test_stock_shard_scheduling.py"
+      ],
+      "passed": 123,
+      "skipped": 0,
+      "not_collected": 0,
+      "device": "cpu",
+      "torch": "2.11.0+cpu",
+      "skip_reasons_verbatim": [],
+      "action_key": "8d68c1378e13daef7a5c2d28304ce2ced45852c6d2512a3aa135a8da896018ba",
+      "terminal": {
+        "path": "/mnt/shared/prismabuild-fleet/pb-queue/done/8d68c1378e13daef7a5c2d28304ce2ced45852c6d2512a3aa135a8da896018ba.json",
+        "sha256": "05cf372f69718cfa1ac1fa24c7334b379a5b07e860a70880e1236fff9a6ee62f",
+        "bytes": 9159
+      },
+      "payload": {
+        "path": "/mnt/shared/prismabuild-fleet/cas/blobs/3b/3be74e8f1baad28c9bd74cfe810fb5d0f5ee0f9721dd3c72e4653408c9983549",
+        "sha256": "3be74e8f1baad28c9bd74cfe810fb5d0f5ee0f9721dd3c72e4653408c9983549",
+        "bytes": 1664
+      },
+      "cas_receipt_sha256": "19b1e7b83df3231c7a35d113fe6e8c9d8f718e1c9009808672c58cb6fc6f7f3d",
+      "scope_cleanup_complete": true,
+      "cpu_allocation": {
+        "fallback": [],
+        "preferred": [
+          24,
+          25
+        ]
+      }
+    },
+    {
+      "shard": 3,
+      "files": [
+        "tests/test_cell_evidence.py",
+        "tests/test_merge_tessera_parts.py",
+        "tests/test_ts5_bound_collision.py"
+      ],
+      "passed": 116,
+      "skipped": 0,
+      "not_collected": 0,
+      "device": "cpu",
+      "torch": "2.11.0+cpu",
+      "skip_reasons_verbatim": [],
+      "action_key": "adb25d3dd0d2d4278da703a91d1c2556a273af282d494d996c275fb8bf2d531b",
+      "terminal": {
+        "path": "/mnt/shared/prismabuild-fleet/pb-queue/done/adb25d3dd0d2d4278da703a91d1c2556a273af282d494d996c275fb8bf2d531b.json",
+        "sha256": "0eb5c4cceafa2602b074026583dfdcb8ead1706f64dfe0a5a07d7e12bbc1a20c",
+        "bytes": 9261
+      },
+      "payload": {
+        "path": "/mnt/shared/prismabuild-fleet/cas/blobs/eb/eb5f62a2d9ee589aa627f908f997326f52af2f25cf5621c5047075d80ab706f2",
+        "sha256": "eb5f62a2d9ee589aa627f908f997326f52af2f25cf5621c5047075d80ab706f2",
+        "bytes": 1767
+      },
+      "cas_receipt_sha256": "4d03209e53ec7841b7907aa9287028839c1c005f72b596cac506186569fbd4a5",
+      "scope_cleanup_complete": true,
+      "cpu_allocation": {
+        "fallback": [],
+        "preferred": [
+          16,
+          17
+        ]
+      }
+    },
+    {
+      "shard": 4,
+      "files": [
+        "tests/test_census_runtime_wiring.py",
+        "tests/test_merged_linear_partitions.py",
+        "tests/test_ts5_bound_model_seal.py"
+      ],
+      "passed": 38,
+      "skipped": 0,
+      "not_collected": 0,
+      "device": "cpu",
+      "torch": "2.11.0+cpu",
+      "skip_reasons_verbatim": [],
+      "action_key": "d2a771d1edcdb45419cf871bf750b7e372b0b0a1c9042d15bbb7d5ca68a9d75f",
+      "terminal": {
+        "path": "/mnt/shared/prismabuild-fleet/pb-queue/done/d2a771d1edcdb45419cf871bf750b7e372b0b0a1c9042d15bbb7d5ca68a9d75f.json",
+        "sha256": "90d412ca007639556a9097ecf6212280fd86c2b22a5381cc21f059f3a4a73326",
+        "bytes": 9235
+      },
+      "payload": {
+        "path": "/mnt/shared/prismabuild-fleet/cas/blobs/e7/e787d3dcb89d5aeb39b365e4adc0ff95c11b2ab250e1cf4cb6dceea4d234e327",
+        "sha256": "e787d3dcb89d5aeb39b365e4adc0ff95c11b2ab250e1cf4cb6dceea4d234e327",
+        "bytes": 1739
+      },
+      "cas_receipt_sha256": "55998187f3bd79def1c3b3ba9adcfee779a40c746b87c01511e48ed0f95fe399",
+      "scope_cleanup_complete": true,
+      "cpu_allocation": {
+        "fallback": [],
+        "preferred": [
+          20,
+          21
+        ]
+      }
+    },
+    {
+      "shard": 5,
+      "files": [
+        "tests/test_compile_build_forensics.py",
+        "tests/test_moe_greedy_smoke_rule.py",
+        "tests/test_ts5_census_check.py"
+      ],
+      "passed": 80,
+      "skipped": 0,
+      "not_collected": 0,
+      "device": "cpu",
+      "torch": "2.11.0+cpu",
+      "skip_reasons_verbatim": [],
+      "action_key": "fb115eb72df2ce8e19155eecdf162ec67f87d21f91954be7897450d5abf38de7",
+      "terminal": {
+        "path": "/mnt/shared/prismabuild-fleet/pb-queue/done/fb115eb72df2ce8e19155eecdf162ec67f87d21f91954be7897450d5abf38de7.json",
+        "sha256": "dbb6d78d7444e4f38c22868b6bab94dc86e1823c8c95d0ef1318c0aa510a4de3",
+        "bytes": 9226
+      },
+      "payload": {
+        "path": "/mnt/shared/prismabuild-fleet/cas/blobs/3e/3eca81dd16f055a46954fe8a9a2903a2d47188412de3e5bd3beec065b4a41c60",
+        "sha256": "3eca81dd16f055a46954fe8a9a2903a2d47188412de3e5bd3beec065b4a41c60",
+        "bytes": 1733
+      },
+      "cas_receipt_sha256": "4faa02e6eaab051ad2296e4e380ce3cb0a078ddc92b2de447bf8474b2d1941c4",
+      "scope_cleanup_complete": true,
+      "cpu_allocation": {
+        "fallback": [],
+        "preferred": [
+          36,
+          37
+        ]
+      }
+    },
+    {
+      "shard": 6,
+      "files": [
+        "tests/test_enum_domain_rejection.py",
+        "tests/test_native_moe_operator_receipt.py",
+        "tests/test_ts5_mixed_census.py"
+      ],
+      "passed": 123,
+      "skipped": 0,
+      "not_collected": 0,
+      "device": "cpu",
+      "torch": "2.11.0+cpu",
+      "skip_reasons_verbatim": [],
+      "action_key": "26169cfb1ba4a5aa6a425a42b286d147d3ecc04159b47720c5c4e6848f3d83d4",
+      "terminal": {
+        "path": "/mnt/shared/prismabuild-fleet/pb-queue/done/26169cfb1ba4a5aa6a425a42b286d147d3ecc04159b47720c5c4e6848f3d83d4.json",
+        "sha256": "38f85258d0c8ac48f77db58490010923f9eedfd948d21878a2a2932d17b7c8e7",
+        "bytes": 9320
+      },
+      "payload": {
+        "path": "/mnt/shared/prismabuild-fleet/cas/blobs/34/348ff3e5ec91cbea591e3f42eda5dc86d1ac09eb5c1fa7e23c08d1f0b45d46b4",
+        "sha256": "348ff3e5ec91cbea591e3f42eda5dc86d1ac09eb5c1fa7e23c08d1f0b45d46b4",
+        "bytes": 1831
+      },
+      "cas_receipt_sha256": "66a6e692471803e03880fe64418bbad8b1a90bf2a79d76df2133c5a8473848c7",
+      "scope_cleanup_complete": true,
+      "cpu_allocation": {
+        "fallback": [],
+        "preferred": [
+          26,
+          27
+        ]
+      }
+    },
+    {
+      "shard": 7,
+      "files": [
+        "tests/test_experiment_import_roots.py",
+        "tests/test_native_operator_receipt.py",
+        "tests/test_ts5_passthrough_correction.py"
+      ],
+      "passed": 73,
+      "skipped": 0,
+      "not_collected": 0,
+      "device": "cpu",
+      "torch": "2.11.0+cpu",
+      "skip_reasons_verbatim": [],
+      "action_key": "00cc953b9e4e10d3eab232968417c8d4dad10402c6b18045b2acf9482be726fe",
+      "terminal": {
+        "path": "/mnt/shared/prismabuild-fleet/pb-queue/done/00cc953b9e4e10d3eab232968417c8d4dad10402c6b18045b2acf9482be726fe.json",
+        "sha256": "684345468f15d698cd1bd4e9444ff20a553bd33239aad44f28cf9fdb6cafa12b",
+        "bytes": 9259
+      },
+      "payload": {
+        "path": "/mnt/shared/prismabuild-fleet/cas/blobs/4a/4ae4adc2409809f49d2969623af6ecf172eff0ab0525a24cdb41f06c3924393f",
+        "sha256": "4ae4adc2409809f49d2969623af6ecf172eff0ab0525a24cdb41f06c3924393f",
+        "bytes": 1765
+      },
+      "cas_receipt_sha256": "997a5343f3c302ea80386fcf6457d7e3448b6f0dac32d0b3747b0818bda128c4",
+      "scope_cleanup_complete": true,
+      "cpu_allocation": {
+        "fallback": [],
+        "preferred": [
+          32,
+          33
+        ]
+      }
+    },
+    {
+      "shard": 8,
+      "files": [
+        "tests/test_export_construction_gate.py",
+        "tests/test_native_operator_resources.py",
+        "tests/test_ts5_stage_attempt.py"
+      ],
+      "passed": 39,
+      "skipped": 0,
+      "not_collected": 0,
+      "device": "cpu",
+      "torch": "2.11.0+cpu",
+      "skip_reasons_verbatim": [],
+      "action_key": "dde8b2f5335c18c089889ed79d62077b00376e795aa3cddad0adabab6b8be471",
+      "terminal": {
+        "path": "/mnt/shared/prismabuild-fleet/pb-queue/done/dde8b2f5335c18c089889ed79d62077b00376e795aa3cddad0adabab6b8be471.json",
+        "sha256": "326070db53fb35a8ddfc09bce8aca60f44d6a3be3ce2e60e62872475f67e3cfe",
+        "bytes": 8619
+      },
+      "payload": {
+        "path": "/mnt/shared/prismabuild-fleet/cas/blobs/e7/e792ef08425f65e9fbc4bafe6048183fd7cff8dd1de85dea16586cc9f4f671e1",
+        "sha256": "e792ef08425f65e9fbc4bafe6048183fd7cff8dd1de85dea16586cc9f4f671e1",
+        "bytes": 1129
+      },
+      "cas_receipt_sha256": "933f45da9707fc07d1a65901961d12528bcd3fa8a3f51af10dd0ed5daf0c4b76",
+      "scope_cleanup_complete": true,
+      "cpu_allocation": {
+        "fallback": [],
+        "preferred": [
+          22,
+          23
+        ]
+      }
+    },
+    {
+      "shard": 9,
+      "files": [
+        "tests/test_export_explicit_plan.py",
+        "tests/test_no_gridbook_import.py",
+        "tests/test_uniform_control.py"
+      ],
+      "passed": 82,
+      "skipped": 6,
+      "not_collected": 0,
+      "device": "cpu",
+      "torch": "2.11.0+cpu",
+      "skip_reasons_verbatim": [
+        "        6  box artifact absent: the PrismaQuant checkout whose pricing this suite is pinned against -- /home/rob/prismaquant/prismaquant/tessera_formats.py is not on this box (set TESSERA_PRISMAQUANT_DIR; documented default /home/rob/prismaquant)"
+      ],
+      "action_key": "fc392c8007569258d7ec0d110f690ced48bf623547954e66783aabfea4e84bee",
+      "terminal": {
+        "path": "/mnt/shared/prismabuild-fleet/pb-queue/done/fc392c8007569258d7ec0d110f690ced48bf623547954e66783aabfea4e84bee.json",
+        "sha256": "d7bde402c5878dcb45c82b6c8aa6ad17401563820e9816cf772da400e3b8156f",
+        "bytes": 9819
+      },
+      "payload": {
+        "path": "/mnt/shared/prismabuild-fleet/cas/blobs/f8/f87b23f66c8f54b236018b6799c28f2c4316fca0d647797bb3abb3a700a82ff1",
+        "sha256": "f87b23f66c8f54b236018b6799c28f2c4316fca0d647797bb3abb3a700a82ff1",
+        "bytes": 2316
+      },
+      "cas_receipt_sha256": "fd92b42e22a07f701e436f17ded8916e37ee7a175ca2b69659c43373ad5d923c",
+      "scope_cleanup_complete": true,
+      "cpu_allocation": {
+        "fallback": [],
+        "preferred": [
+          28,
+          29
+        ]
+      }
+    },
+    {
+      "shard": 10,
+      "files": [
+        "tests/test_export_ignore_completeness.py",
+        "tests/test_original_wire_generation_origins.py"
+      ],
+      "passed": 7,
+      "skipped": 1,
+      "not_collected": 0,
+      "device": "cpu",
+      "torch": "2.11.0+cpu",
+      "skip_reasons_verbatim": [
+        "        1  the encoder is a GPU job"
+      ],
+      "action_key": "57ee5635f5651025d3bc9bec434ce78e251af9fac368a1bcd05ea50bd2de8341",
+      "terminal": {
+        "path": "/mnt/shared/prismabuild-fleet/pb-queue/done/57ee5635f5651025d3bc9bec434ce78e251af9fac368a1bcd05ea50bd2de8341.json",
+        "sha256": "76d12efaa566f4a933f5106813bcb060135215fab719c6a97e53d51e34cb7d92",
+        "bytes": 8504
+      },
+      "payload": {
+        "path": "/mnt/shared/prismabuild-fleet/cas/blobs/92/92d50bd3f0d250b49b47c074f6fc8355fd534c7ba50b6659ccb4ee0a31e68e8b",
+        "sha256": "92d50bd3f0d250b49b47c074f6fc8355fd534c7ba50b6659ccb4ee0a31e68e8b",
+        "bytes": 1020
+      },
+      "cas_receipt_sha256": "a85ad1a1c8ad5e40a53b615eeaffc68eb7c541c09b53ae0272d68750886dd18a",
+      "scope_cleanup_complete": true,
+      "cpu_allocation": {
+        "fallback": [],
+        "preferred": [
+          14,
+          15
+        ]
+      }
+    },
+    {
+      "shard": 11,
+      "files": [
+        "tests/test_export_moe_layouts.py",
+        "tests/test_plan_from_layer_config.py"
+      ],
+      "passed": 67,
+      "skipped": 5,
+      "not_collected": 0,
+      "device": "cpu",
+      "torch": "2.11.0+cpu",
+      "skip_reasons_verbatim": [
+        "        2  the encoder is a GPU job",
+        "        2  box artifact absent: the PrismaQuant worktree carrying the continuous-rate branch -- /home/rob/pq-wt/tessera-continuous/prismaquant/tessera_formats.py is not on this box (set TESSERA_PRISMAQUANT_WORKTREE; documented default /home/rob/pq-wt/tessera-continuous)",
+        "        1  box artifact absent: BF16 source checkpoints the encoder reads -- /home/rob/models/Qwen3-0.6B is not on this box (set TESSERA_MODELS_DIR; documented default /home/rob/models)"
+      ],
+      "action_key": "3c1cb4202fa50a36cac6d6f6c0a689cdfa6cceb4c5f79a7b6dd5300b9ac0c5c1",
+      "terminal": {
+        "path": "/mnt/shared/prismabuild-fleet/pb-queue/done/3c1cb4202fa50a36cac6d6f6c0a689cdfa6cceb4c5f79a7b6dd5300b9ac0c5c1.json",
+        "sha256": "dc4719a8872de1fe1ede877e585bea23389280587900258bcaf5d81af467b540",
+        "bytes": 10229
+      },
+      "payload": {
+        "path": "/mnt/shared/prismabuild-fleet/cas/blobs/f6/f6bc383d5627cfc5a13c24b9a74daedb84cf06a21b333877b4f6f3bcd7abeeeb",
+        "sha256": "f6bc383d5627cfc5a13c24b9a74daedb84cf06a21b333877b4f6f3bcd7abeeeb",
+        "bytes": 2733
+      },
+      "cas_receipt_sha256": "f4ebec999422007b6f749d0475381d237d99341174011d11e181abde69cea84e",
+      "scope_cleanup_complete": true,
+      "cpu_allocation": {
+        "fallback": [],
+        "preferred": [
+          4,
+          5
+        ]
+      }
+    },
+    {
+      "shard": 12,
+      "files": [
+        "tests/test_export_moe_write.py",
+        "tests/test_refit_trailing.py"
+      ],
+      "passed": 25,
+      "skipped": 5,
+      "not_collected": 0,
+      "device": "cpu",
+      "torch": "2.11.0+cpu",
+      "skip_reasons_verbatim": [
+        "        5  the encoder is a GPU job"
+      ],
+      "action_key": "8cbc5f5fc58c04b07ad5a918fb7868d1ec2efcbcb45c570c89f4bda11bd88c96",
+      "terminal": {
+        "path": "/mnt/shared/prismabuild-fleet/pb-queue/done/8cbc5f5fc58c04b07ad5a918fb7868d1ec2efcbcb45c570c89f4bda11bd88c96.json",
+        "sha256": "da5409501ab80cdd98965be00fe7a22dd8f5c86f7df1d0884b4996b3453998d6",
+        "bytes": 9130
+      },
+      "payload": {
+        "path": "/mnt/shared/prismabuild-fleet/cas/blobs/b6/b68f1aafa0e99ea65bdc6d3f85a8a4cc60a0b60b1c0503dfa9dc3319b7032cdc",
+        "sha256": "b68f1aafa0e99ea65bdc6d3f85a8a4cc60a0b60b1c0503dfa9dc3319b7032cdc",
+        "bytes": 1639
+      },
+      "cas_receipt_sha256": "86a4f17623c3a4406787a91579af42d1b407d4a706a29346f98d38557cde7f64",
+      "scope_cleanup_complete": true,
+      "cpu_allocation": {
+        "fallback": [],
+        "preferred": [
+          6,
+          7
+        ]
+      }
+    },
+    {
+      "shard": 13,
+      "files": [
+        "tests/test_glm53_allocate_l1_warning.py",
+        "tests/test_refresh_issues.py"
+      ],
+      "passed": 11,
+      "skipped": 0,
+      "not_collected": 0,
+      "device": "cpu",
+      "torch": "2.11.0+cpu",
+      "skip_reasons_verbatim": [],
+      "action_key": "2d1eef31740fa22685fd5ee66f833edc21c3b52767817ca64455c580220b2619",
+      "terminal": {
+        "path": "/mnt/shared/prismabuild-fleet/pb-queue/done/2d1eef31740fa22685fd5ee66f833edc21c3b52767817ca64455c580220b2619.json",
+        "sha256": "8d3c9b5e66304aee1f39f81e024fb967349e22be46a8379f72f6b27f3154448f",
+        "bytes": 8255
+      },
+      "payload": {
+        "path": "/mnt/shared/prismabuild-fleet/cas/blobs/c8/c820c2be8d3ed664bdefff84d62dc5a8868668e176a5d2de6b2abcdc682f0c0d",
+        "sha256": "c820c2be8d3ed664bdefff84d62dc5a8868668e176a5d2de6b2abcdc682f0c0d",
+        "bytes": 772
+      },
+      "cas_receipt_sha256": "761d37f8530c879a1e5fad9b1bc32987d07396886f1b08cccfcb8029141873a3",
+      "scope_cleanup_complete": true,
+      "cpu_allocation": {
+        "fallback": [],
+        "preferred": [
+          34,
+          35
+        ]
+      }
+    },
+    {
+      "shard": 14,
+      "files": [
+        "tests/test_impacted_tests.py",
+        "tests/test_route_census_regimes.py"
+      ],
+      "passed": 103,
+      "skipped": 0,
+      "not_collected": 0,
+      "device": "cpu",
+      "torch": "2.11.0+cpu",
+      "skip_reasons_verbatim": [],
+      "action_key": "a3ec5bf7b59b2fc40e5866f659a64cc944b149f41f5c36ffd880bf29962e467d",
+      "terminal": {
+        "path": "/mnt/shared/prismabuild-fleet/pb-queue/done/a3ec5bf7b59b2fc40e5866f659a64cc944b149f41f5c36ffd880bf29962e467d.json",
+        "sha256": "6f10426c35498d56a9d9db665fad9f583676d67cb6ed1c88cbc0ca8f322d4114",
+        "bytes": 9143
+      },
+      "payload": {
+        "path": "/mnt/shared/prismabuild-fleet/cas/blobs/9f/9fc3bbe0e0bd87f17253af86c2f1ca68dca65fac9100781bf5d788826e767b59",
+        "sha256": "9fc3bbe0e0bd87f17253af86c2f1ca68dca65fac9100781bf5d788826e767b59",
+        "bytes": 1643
+      },
+      "cas_receipt_sha256": "7562a7f2437294146a266ac12108c7994c41fae52bab736590e5220b5b1baa79",
+      "scope_cleanup_complete": true,
+      "cpu_allocation": {
+        "fallback": [],
+        "preferred": [
+          38,
+          39
+        ]
+      }
+    },
+    {
+      "shard": 15,
+      "files": [
+        "tests/test_inductor_determinism_knob.py",
+        "tests/test_runtime_image_pin.py"
+      ],
+      "passed": 38,
+      "skipped": 0,
+      "not_collected": 0,
+      "device": "cpu",
+      "torch": "2.11.0+cpu",
+      "skip_reasons_verbatim": [],
+      "action_key": "79a33353b2ca6ccf3527bf94ee6243af715ef4064728b6816cfe8a1a1fcc5ddc",
+      "terminal": {
+        "path": "/mnt/shared/prismabuild-fleet/pb-queue/done/79a33353b2ca6ccf3527bf94ee6243af715ef4064728b6816cfe8a1a1fcc5ddc.json",
+        "sha256": "cdac070cc1ea3194e36f4c20537c3011a5efac38c711476b56dcd291b1408edb",
+        "bytes": 8878
+      },
+      "payload": {
+        "path": "/mnt/shared/prismabuild-fleet/cas/blobs/08/0886ccca7fa0549ef0729df98a494d39fece54792d419968c76b7f4bc917c597",
+        "sha256": "0886ccca7fa0549ef0729df98a494d39fece54792d419968c76b7f4bc917c597",
+        "bytes": 1387
+      },
+      "cas_receipt_sha256": "fc294b528d6d7ab688d18f562b0af428bf1d7537f08d32efc290f6c3fa0740a0",
+      "scope_cleanup_complete": true,
+      "cpu_allocation": {
+        "fallback": [],
+        "preferred": [
+          0,
+          1
+        ]
+      }
+    },
+    {
+      "shard": 16,
+      "files": [
+        "tests/test_issue_refs.py",
+        "tests/test_serve_build_identity.py"
+      ],
+      "passed": 58,
+      "skipped": 9,
+      "not_collected": 0,
+      "device": "cpu",
+      "torch": "2.11.0+cpu",
+      "skip_reasons_verbatim": [
+        "        6  box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/compile-dispatch/serve_qwen_dispatch_eager.log is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)",
+        "        1  box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/stock/serve_qwen_stock_tessera-k2.log is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)",
+        "        1  box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/stock/serve_qwen_stock_tessera-k2-graph.log is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)",
+        "        1  box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/tsplugin/vllm-cache-fresh/torch_compile_cache/torch_aot_compile/15957ad9e7a72f1d7539f792e4d4cee6e704e2e99696f07e909c209f30f5ddec is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)"
+      ],
+      "action_key": "0cd02c23e74f4ddbac038f1c2ec3a6975571e56f572b0e8191a1e5af69ebe1f6",
+      "terminal": {
+        "path": "/mnt/shared/prismabuild-fleet/pb-queue/done/0cd02c23e74f4ddbac038f1c2ec3a6975571e56f572b0e8191a1e5af69ebe1f6.json",
+        "sha256": "842850cd1b6dbc7bf2c92444ec7f32c43ac1193765ff3190a5e30ebb6c4116b8",
+        "bytes": 11370
+      },
+      "payload": {
+        "path": "/mnt/shared/prismabuild-fleet/cas/blobs/be/be2d86c12e76b356befce11e738dff01ce986da0b9a37b8af9e8c4d6cf3e02a0",
+        "sha256": "be2d86c12e76b356befce11e738dff01ce986da0b9a37b8af9e8c4d6cf3e02a0",
+        "bytes": 3871
+      },
+      "cas_receipt_sha256": "960102c4736ba47683665cd3bbf6a6b3897f5312f59b71b53f8dbee87db9b809",
+      "scope_cleanup_complete": true,
+      "cpu_allocation": {
+        "fallback": [],
+        "preferred": [
+          2,
+          3
+        ]
+      }
+    },
+    {
+      "shard": 17,
+      "files": [
+        "tests/test_kernel_shape_guards.py",
+        "tests/test_serving_construction.py"
+      ],
+      "passed": 61,
+      "skipped": 0,
+      "not_collected": 0,
+      "device": "cpu",
+      "torch": "2.11.0+cpu",
+      "skip_reasons_verbatim": [],
+      "action_key": "6ec353174947dce9c24da1f074ab8a0099798c840b4c39d4d7a3c97365d91891",
+      "terminal": {
+        "path": "/mnt/shared/prismabuild-fleet/pb-queue/done/6ec353174947dce9c24da1f074ab8a0099798c840b4c39d4d7a3c97365d91891.json",
+        "sha256": "98419fb6ccff2df90c5a34f54f29fe7556d1556d6bd5614f4a7293bad2b98bc3",
+        "bytes": 8845
+      },
+      "payload": {
+        "path": "/mnt/shared/prismabuild-fleet/cas/blobs/04/042b66988d13649558b20a58eb4666435f85aa945ae8a07f1792a761b070b5a0",
+        "sha256": "042b66988d13649558b20a58eb4666435f85aa945ae8a07f1792a761b070b5a0",
+        "bytes": 1350
+      },
+      "cas_receipt_sha256": "20f12123822ae57805ed7aa4ac1d495bc450c9c0759b7455c5e13f94b28051ce",
+      "scope_cleanup_complete": true,
+      "cpu_allocation": {
+        "fallback": [],
+        "preferred": [
+          12,
+          13
+        ]
+      }
+    },
+    {
+      "shard": 18,
+      "files": [
+        "tests/test_kl_tool_decode_regime.py",
+        "tests/test_serving_native_extensions.py"
+      ],
+      "passed": 32,
+      "skipped": 1,
+      "not_collected": 0,
+      "device": "cpu",
+      "torch": "2.11.0+cpu",
+      "skip_reasons_verbatim": [
+        "        1  box artifact absent: kl_tool.py and kl_estimator.py, the untracked served-KL instrument -- nothing set KL_TOOL_DIR and its default is not resolved for this root (set KL_TOOL_DIR; documented default /home/rob/dq-runs)"
+      ],
+      "action_key": "953ef86d0300aeefda6659a3426d8be6fd76164e69fe2d1ce74613f3e3422564",
+      "terminal": {
+        "path": "/mnt/shared/prismabuild-fleet/pb-queue/done/953ef86d0300aeefda6659a3426d8be6fd76164e69fe2d1ce74613f3e3422564.json",
+        "sha256": "66695011fa4ea9f6b4eb9bd82c1b02dbfd36d3cc0bc72e5454cefee3a1a686ac",
+        "bytes": 9489
+      },
+      "payload": {
+        "path": "/mnt/shared/prismabuild-fleet/cas/blobs/77/775ab1b02b6fcc07452c382cb26d7f1122e518b749c2e7c0015663a762eb3a56",
+        "sha256": "775ab1b02b6fcc07452c382cb26d7f1122e518b749c2e7c0015663a762eb3a56",
+        "bytes": 1995
+      },
+      "cas_receipt_sha256": "4684668c7e0770fffc8ebd7445ca6df186e08e1a1e4f113d90a8ea82dc0ac203",
+      "scope_cleanup_complete": true,
+      "cpu_allocation": {
+        "fallback": [],
+        "preferred": [
+          18,
+          19
+        ]
+      }
+    },
+    {
+      "shard": 19,
+      "files": [
+        "tests/test_lane_reachability.py",
+        "tests/test_serving_parts.py"
+      ],
+      "passed": 96,
+      "skipped": 1,
+      "not_collected": 0,
+      "device": "cpu",
+      "torch": "2.11.0+cpu",
+      "skip_reasons_verbatim": [
+        "        1  needs a CUDA device: the positive arm builds the extension"
+      ],
+      "action_key": "235711a199aa5ee785ed706cef74d80dca2b1cc6b24aeb56c081606b22a0d43f",
+      "terminal": {
+        "path": "/mnt/shared/prismabuild-fleet/pb-queue/done/235711a199aa5ee785ed706cef74d80dca2b1cc6b24aeb56c081606b22a0d43f.json",
+        "sha256": "3ddbe3ad57cac74ab3dc1cd114c3e70b42f764edbb4d7252de8ff76bba1cd93a",
+        "bytes": 9238
+      },
+      "payload": {
+        "path": "/mnt/shared/prismabuild-fleet/cas/blobs/6b/6bc6d068be1f8c8036744d21f9f696986eeaf70affb8e9d26df76c583bfb3e7d",
+        "sha256": "6bc6d068be1f8c8036744d21f9f696986eeaf70affb8e9d26df76c583bfb3e7d",
+        "bytes": 1749
+      },
+      "cas_receipt_sha256": "90f72dcc33739324a5e4df4cb7706cfb7038ce89886b7c3e352aae2c85d2cde3",
+      "scope_cleanup_complete": true,
+      "cpu_allocation": {
+        "fallback": [],
+        "preferred": [
+          8,
+          9
+        ]
+      }
+    }
+  ]
+}

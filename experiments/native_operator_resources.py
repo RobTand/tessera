@@ -16,6 +16,14 @@ from pathlib import Path
 import re
 
 TRACE_SCHEMA = "tessera.cupti_memory_trace.v1"
+MEMORY_API_OPERATIONS = {"cudaMalloc": "allocate", "cuMemAlloc": "allocate",
+                         "cudaFree": "free", "cuMemFree": "free"}
+MEMORY_OWNERSHIP_API = re.compile(
+    r"^(cudaMalloc|cudaFree|cudaHost|cudaMemPool|cudaImportExternalMemory|"
+    r"cudaDestroyExternalMemory|cudaExternalMemory|cudaIpcOpenMemHandle|"
+    r"cuMemAlloc|cuMemFree|cuMemHost|cuMemPool|cuMemCreate|cuMemMap|"
+    r"cuMemUnmap|cuMemRelease|cuMemImport|cuMemAddress|cuImportExternalMemory|"
+    r"cuDestroyExternalMemory|cuExternalMemory|cuIpcOpenMemHandle|cuArray|cuMipmappedArray)")
 
 
 class NativeMemoryCollector:
@@ -62,11 +70,8 @@ class NativeMemoryCollector:
         path.write_text(json.dumps(raw, sort_keys=True) + "\n")
         return raw
 
-    def observe_apply(self, apply, name, *, device=0):
-        """Collect Torch allocation counters around one synchronized invocation."""
-        import torch
-        if self.start_code != 0:
-            raise RuntimeError("CUPTI collection initialization failed")
+    def current_context_id(self):
+        """Read the current CUDA context's CUPTI identity without creating one."""
         driver = ctypes.CDLL("libcuda.so.1")
         context = ctypes.c_void_p()
         if driver.cuCtxGetCurrent(ctypes.byref(context)) != 0 or not context.value:
@@ -78,6 +83,14 @@ class NativeMemoryCollector:
         context_id = ctypes.c_uint32()
         if get_id(context, ctypes.byref(context_id)) != 0:
             raise RuntimeError("CUPTI context identity unavailable")
+        return context_id.value
+
+    def observe_apply(self, apply, name, *, device=0):
+        """Collect Torch allocation counters around one synchronized invocation."""
+        import torch
+        if self.start_code != 0:
+            raise RuntimeError("CUPTI collection initialization failed")
+        context_id = self.current_context_id()
         def segments():
             return [{"address": r["address"], "total_size": r["total_size"]}
                     for r in torch.cuda.memory_snapshot() if r["device"] == device]
@@ -89,7 +102,7 @@ class NativeMemoryCollector:
         output = apply()
         torch.cuda.synchronize(device)
         self.mark(name + ":end")
-        observation = {"device_id": device, "context_id": context_id.value,
+        observation = {"device_id": device, "context_id": context_id,
                        "allocator_backend": torch.cuda.get_allocator_backend(),
                        "before_allocated_bytes": baseline,
                        "peak_allocated_bytes": torch.cuda.max_memory_allocated(device),
@@ -111,6 +124,39 @@ def _segments(observation, name):
     if any(a + n > b for (a, n), (b, _) in zip(result, result[1:])):
         raise ValueError("allocator segments overlap")
     return result
+
+
+def validate_cupti_capture(trace):
+    """Validate shared collection health, without claiming allocation ownership."""
+    if trace["schema"] != TRACE_SCHEMA:
+        raise ValueError("unsupported CUPTI trace schema")
+    capture = trace["capture"]
+    if (capture["started_before_cuda_libraries"] is not True
+            or type(capture["start_code"]) is not int or capture["start_code"] != 0
+            or type(capture["stop_code"]) is not int or capture["stop_code"] != 0
+            or not re.fullmatch("[0-9a-f]{64}", capture["collector_library_sha256"])):
+        raise ValueError("capture bootstrap/completion evidence failed")
+    if trace["errors"] or _integer(trace["pool_records"]) != 0:
+        raise ValueError("CUPTI errors or unsupported pool records")
+    expected_configuration = {"register_callbacks", "allocation_source", "enable_memory2",
+                              "enable_memory_pool", "enable_runtime", "enable_driver",
+                              "flush_before_disable", "flush_after_disable"}
+    if "argument_schema" in trace:
+        from experiments.full_engine_cuda_domains import ARGUMENT_SCHEMA, ARGUMENT_CONFIGURATION
+        if trace["argument_schema"] != ARGUMENT_SCHEMA:
+            raise ValueError("unsupported CUDA memory argument schema")
+        expected_configuration |= ARGUMENT_CONFIGURATION
+    configuration = trace["configuration"]
+    if (len(configuration) != len(expected_configuration)
+            or {r["operation"] for r in configuration} != expected_configuration
+            or any(_integer(r["code"]) != 0 for r in configuration)):
+        raise ValueError("missing successful CUPTI configuration/flush evidence")
+    if _integer(trace["completed_buffers"], 1) + 1 != len(trace["dropped_records"]):
+        raise ValueError("missing per-buffer/final dropped-record observation")
+    if any(_integer(r["code"]) != 0 or _integer(r["count"]) != 0 for r in trace["dropped_records"]):
+        raise ValueError("CUPTI dropped records or failed dropped-record query")
+    pid = _integer(trace["process_id"], 1)
+    return pid
 
 
 def analyze_trace(trace, *, interval, torch_observation):
@@ -142,29 +188,7 @@ def analyze_trace(trace, *, interval, torch_observation):
               "full_model_fixed_resources_complete": False}
     reasons = result["reasons"]
     try:
-        if trace["schema"] != TRACE_SCHEMA:
-            raise ValueError("unsupported CUPTI trace schema")
-        capture = trace["capture"]
-        if (capture["started_before_cuda_libraries"] is not True
-                or type(capture["start_code"]) is not int or capture["start_code"] != 0
-                or type(capture["stop_code"]) is not int or capture["stop_code"] != 0
-                or not re.fullmatch("[0-9a-f]{64}", capture["collector_library_sha256"])):
-            raise ValueError("capture bootstrap/completion evidence failed")
-        if trace["errors"] or _integer(trace["pool_records"]) != 0:
-            raise ValueError("CUPTI errors or unsupported pool records")
-        expected_configuration = {"register_callbacks", "allocation_source", "enable_memory2",
-                                  "enable_memory_pool", "enable_runtime", "enable_driver",
-                                  "flush_before_disable", "flush_after_disable"}
-        configuration = trace["configuration"]
-        if (len(configuration) != len(expected_configuration)
-                or {r["operation"] for r in configuration} != expected_configuration
-                or any(_integer(r["code"]) != 0 for r in configuration)):
-            raise ValueError("missing successful CUPTI configuration/flush evidence")
-        if _integer(trace["completed_buffers"], 1) + 1 != len(trace["dropped_records"]):
-            raise ValueError("missing per-buffer/final dropped-record observation")
-        if any(_integer(r["code"]) != 0 or _integer(r["count"]) != 0 for r in trace["dropped_records"]):
-            raise ValueError("CUPTI dropped records or failed dropped-record query")
-        pid = _integer(trace["process_id"], 1)
+        pid = validate_cupti_capture(trace)
         starts = [r["timestamp_ns"] for r in trace["markers"] if r["name"] == interval + ":begin"]
         ends = [r["timestamp_ns"] for r in trace["markers"] if r["name"] == interval + ":end"]
         if len(starts) != 1 or len(ends) != 1:
@@ -185,13 +209,8 @@ def analyze_trace(trace, *, interval, torch_observation):
             raise ValueError("Torch peak precedes baseline; counter interval mismatch")
         # Callback names are emitted by CUPTI itself. Versions identify the
         # ABI; strip only that suffix when comparing documented CUDA APIs.
-        supported = {"cudaMalloc", "cudaFree", "cuMemAlloc", "cuMemFree"}
-        ownership = re.compile(
-            r"^(cudaMalloc|cudaFree|cudaHost|cudaMemPool|cudaImportExternalMemory|"
-            r"cudaDestroyExternalMemory|cudaExternalMemory|cudaIpcOpenMemHandle|"
-            r"cuMemAlloc|cuMemFree|cuMemHost|cuMemPool|cuMemCreate|cuMemMap|"
-            r"cuMemUnmap|cuMemRelease|cuMemImport|cuMemAddress|cuImportExternalMemory|"
-            r"cuDestroyExternalMemory|cuExternalMemory|cuIpcOpenMemHandle|cuArray|cuMipmappedArray)")
+        supported = MEMORY_API_OPERATIONS
+        ownership = MEMORY_OWNERSHIP_API
         if not trace["api_events"]:
             raise ValueError("no observed CUDA API records")
         by_correlation, required_operations = {}, {}
