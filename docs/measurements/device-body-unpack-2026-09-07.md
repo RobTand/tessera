@@ -154,3 +154,30 @@ CAS payload:
 `84488e47613c49f5bd0c0b366fe9454c731db0fed643eab0afdb0368f56acec9`;
 receipt:
 `54b414cef4e4e1d633fcc4cd8b0b67b2b10254b3d00b6d2892a99fff71962655`.
+
+## Master integration and issue-reference snapshot — 2026-09-07
+
+Merge `90056f7b565435d0f1b26b4f98501589364c92e6` incorporates master
+`9afbcfe752e7533dbfaaf8dba708cf1fba0e68bc` without source conflicts.
+Independent rehashing of all 73 source files confirms the measured reader
+identity remains
+`83a398827f18c9d8f898ebf2103c712ebf8aa688ffba12f2f73f8f07ddd80ae2`;
+`merge-source-identity-01.json` records it under the evidence root above.
+No completed GPU functional or performance runs were repeated.
+
+PB `66d719ecdb3b` ran the runtime-image policy and impacted-test selector
+checks on dl380g10: 128 passed, zero skipped, no CUDA allocation, four xdist
+workers and native threads bounded to one. Its CPU-only controller reported
+72 Torch-dependent modules uncollected outside these selected files. Terminal
+exit zero, scope cleanup and the actual CAS payload were independently checked
+in `merge-integration-verified-01.json` under the evidence root.
+
+The second pre-merge CI run passed the image policy but failed the issue-reference
+check because this report referenced the newly opened PR before the offline
+issue snapshot knew it existed. `tools/refresh_issues.py` refreshed that snapshot
+from GitHub; this changes documentation bookkeeping only.
+
+PB `64b549be5adc` then passed all three issue-reference checks on dl380g10
+with zero skips and no CUDA allocation (the same 72 out-of-scope uncollected
+modules). Exit zero, scope cleanup and CAS payload were independently verified
+in `issue-reference-verified-01.json` under the evidence root.
