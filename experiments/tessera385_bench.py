@@ -13,7 +13,9 @@ every unit's blob, so the identity claim is a receipt, not a belief.
 Warmup phases precede measured repeats. ``--profile`` captures one expert by
 default (at most eight) per selected arm with CUDA activity only; CPU-event
 tables can exhaust host memory on the production coset trellis. Profiles are
-separate from timing.
+separate from timing. ``--sample-profile`` instead samples Python/native
+stacks during a full-size encoder call after the unprofiled timing, without
+shrinking the expert count or retaining an all-event CUDA trace.
 
 ``--l2-sweep`` measures the window body's one wide call at explicit
 ``TESSERA_WINDOW_L2_BYTES`` budgets in subprocesses (the budget is read at
@@ -27,6 +29,7 @@ import hashlib
 import json
 import os
 import resource
+import signal
 import subprocess
 import sys
 import time
@@ -175,6 +178,57 @@ print(json.dumps({"budget": _l2_budget(t.device), "width": width, "batches": len
     return 0
 
 
+
+def _sampled_profile(args, output: Path, run):
+    """Sample the full admitted encoder process without retaining every CUDA event."""
+    log_path = output.with_suffix(".log")
+    command = [args.sample_profiler, "record", "--pid", str(os.getpid()),
+               "--output", str(output), "--format", "speedscope",
+               "--rate", str(args.sample_rate), "--native", "--threads"]
+    started = time.time()
+    with log_path.open("w") as log:
+        process = subprocess.Popen(command, stdout=log, stderr=subprocess.STDOUT)
+        import ctypes
+        libc = ctypes.CDLL(None, use_errno=True)
+        try:
+            # Permit this exact same-UID sampler child under Linux Yama policy.
+            # PR_SET_PTRACER is restored when the owned child has exited.
+            if libc.prctl(0x59616D61, process.pid, 0, 0, 0) != 0:
+                raise OSError(ctypes.get_errno(), "cannot authorize the sample profiler")
+            ready_deadline = time.monotonic() + 10
+            while "Sampling process" not in log_path.read_text():
+                if process.poll() is not None:
+                    raise RuntimeError(f"sample profiler failed before attachment: {log_path.read_text()}")
+                if time.monotonic() >= ready_deadline:
+                    raise RuntimeError(f"sample profiler did not attach within 10 seconds: {log_path.read_text()}")
+                time.sleep(0.01)
+            result = run()
+        finally:
+            if process.poll() is None:
+                process.send_signal(signal.SIGINT)
+            try:
+                returncode = process.wait(timeout=30)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+                raise RuntimeError("sample profiler did not stop within 30 seconds")
+            finally:
+                libc.prctl(0x59616D61, 0, 0, 0, 0)
+    if returncode != 0:
+        raise RuntimeError(f"sample profiler exited {returncode}: {log_path.read_text()}")
+    payload = json.loads(output.read_text())
+    sample_count = sum(len(p.get("samples", [])) for p in payload.get("profiles", []))
+    if sample_count == 0:
+        raise RuntimeError("sample profiler produced no samples")
+    record = {"command": command, "binary_sha256": _file_sha(args.sample_profiler),
+              "start_epoch": started, "end_epoch": time.time(),
+              "sample_count": sample_count, "output": str(output),
+              "output_sha256": _file_sha(output), "log": str(log_path),
+              "log_sha256": _file_sha(log_path),
+              "scope": "full encoder call; sampled Python/native stacks, not CUDA kernel events"}
+    _atomic_json(output.with_suffix(".receipt.json"), record)
+    return result
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--units", default="/mnt/shared/tessera-measurements/tessera385-2026-09-06/units")
@@ -191,6 +245,10 @@ def main() -> int:
                     help="auto preserves available arms; explicit batched/both requires encode_linears")
     ap.add_argument("--run-label", default="", help="external ABBA arm/position, recorded verbatim")
     ap.add_argument("--profile", action="store_true")
+    ap.add_argument("--sample-profile", action="store_true",
+                    help="sample full expert workload with py-spy after unprofiled timing")
+    ap.add_argument("--sample-profiler", default="/opt/py-spy")
+    ap.add_argument("--sample-rate", type=int, default=100)
     ap.add_argument("--profile-batch", type=int, default=32)
     ap.add_argument("--profile-experts", type=int, default=1,
                     help="1..8 units per selected arm; use 8 with --profile-batch 8 for real B8")
@@ -208,8 +266,10 @@ def main() -> int:
     args = ap.parse_args()
     if args.expert_count < 1 or args.dense_copies < 1 or args.repeats < 1 or args.warmup_repeats < 0:
         ap.error("expert-count, dense-copies and repeats must be positive; warmup-repeats must be nonnegative")
-    if args.only_profile and not args.profile:
-        ap.error("--only-profile requires --profile")
+    if args.only_profile and not (args.profile or args.sample_profile):
+        ap.error("--only-profile requires --profile or --sample-profile")
+    if args.sample_profile and (args.profile or args.sample_rate < 1):
+        ap.error("sample-profile requires a positive rate and excludes all-event profile")
     if not 1 <= args.profile_experts <= 8 or args.profile_batch < 1:
         ap.error("profile-experts must be between 1 and 8; profile-batch must be positive")
     if args.profile_input_columns and (not args.only_profile or args.profile_input_columns < 32
@@ -245,6 +305,7 @@ def main() -> int:
 
     env = {
         "hostname": os.uname().nodename, "torch": torch.__version__,
+        "container_image": os.environ.get("TESSERA_PRODUCER_IMAGE"),
         "device": torch.cuda.get_device_name(0), "tessera_file": tessera.__file__,
         "tessera_git": subprocess.run(["git", "rev-parse", "HEAD"], capture_output=True,
                                       text=True, cwd=Path(tessera.__file__).parent).stdout.strip(),
@@ -389,6 +450,18 @@ def main() -> int:
                     for tag, b in dense_arms:
                         run_arm(tag, family, q256, [dense] * b, b, recipe, kwargs, r,
                                 kind=kind, workload="dense_copies" if b > 1 else "dense")
+
+        if args.sample_profile:
+            for tag, b in timing_arms:
+                if args.only_profile:
+                    for r in range(args.warmup_repeats):
+                        run_arm(tag, family, q256, experts, b, recipe, kwargs, r,
+                                kind="sample_profile_warmup")
+                output = out_dir / f"samples_{family}@{q256}_{tag}.B{b}.json"
+                _sampled_profile(args, output,
+                    lambda tag=tag, b=b: run_arm(tag, family, q256, experts, b, recipe,
+                                               kwargs, 0, kind="sample_profile"))
+                checkpoint()
 
         if args.profile:
             from torch.profiler import ProfilerActivity, profile
