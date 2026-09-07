@@ -230,6 +230,75 @@ def test_export_consumes_complete_bundle_without_encoder(tmp_path, encoded, monk
     assert all(role["cached_blob_sha256"] for role in receipt["modules"][STACK]["roles"])
 
 
+@pytest.mark.parametrize("include_experts", [False, True])
+@pytest.mark.parametrize("omit_dense", [False, True])
+def test_complete_cached_export_preserves_dense_and_expert_originals(
+        tmp_path, encoded, monkeypatch, include_experts, omit_dense):
+    from safetensors import safe_open
+    from safetensors.torch import save_file
+    from tessera.serving_parts import source_identity
+
+    api, exporter = _api(), _exporter()
+    src, cache = tmp_path / "src", tmp_path / "cache"
+    src.mkdir(); cache.mkdir()
+    dense = {f"model.layers.0.feed_forward.{role}.weight": encoded[0].clone()
+             for role in ("w1", "w3", "w2")}
+    tensors = dict(dense)
+    choices = {name: {"grid": "E4M3", "q256": 1024} for name in dense}
+    config = {"architectures": ["Lfm2MoeForCausalLM"],
+              "hidden_size": 32, "moe_intermediate_size": 32, "num_experts": 1}
+    if include_experts:
+        tensors.update({f"{STACK}.0.{role}.weight": encoded[0].clone()
+                        for role in ("w1", "w3", "w2")})
+        choices[STACK] = {"grid": "E4M3", "q256": 1024}
+    save_file(tensors, str(src / "model.safetensors"))
+    (src / "config.json").write_text(json.dumps(config))
+    identities = [api.encoding_input_identity(weight, name, E4M3_GRID, 1024)
+                  for name, weight in dense.items()]
+    if include_experts:
+        projection = exporter.project_expert_plan({k: list(v.shape) for k, v in tensors.items()},
+                                                  config, {STACK: choices[STACK]})
+        identities.extend(api.unit_input_identity(tensors[unit["source_tensor"]], unit,
+                          E4M3_GRID, 1024) for unit in projection["stacks"][STACK]["units"])
+    records = {}
+    for index, identity in enumerate(identities):
+        filename = f"unit-{index}.tessera"
+        (cache / filename).write_bytes(encoded[1])
+        records[identity["unit"]] = api.make_unit_record(encoded[1], identity, filename=filename)
+    if omit_dense:
+        del records[next(iter(dense)).removesuffix(".weight")]
+    manifest_path = cache / "manifest.json"
+    manifest_path.write_text(json.dumps({"schema": api.CACHE_SCHEMA,
+        "source": source_identity(src), "units": records}))
+    plan_path = tmp_path / "plan.json"
+    plan_path.write_text(json.dumps(choices))
+    def forbidden(*args, **kwargs):
+        raise AssertionError("an original dense or expert wire was re-encoded")
+    monkeypatch.setattr(exporter, "encode_linear_planes", forbidden)
+    # The packaged LFM census has real 7168-row MLP roles; this miniature
+    # checkpoint has 32-row roles and exercises the same fusion partitioner.
+    monkeypatch.setattr(exporter, "output_partitions",
+                        lambda census, module: [32, 32] if module.endswith('.w13') else [32])
+    out = tmp_path / "out"
+    monkeypatch.setattr("sys.argv", ["export", str(src), str(out), "--plan-json", str(plan_path),
+        "--cached-units", str(manifest_path), "--device", "cpu", "--allow-unrouted", "--allow-unserveable"])
+    if omit_dense:
+        with pytest.raises(ValueError, match="coverage"):
+            exporter.main()
+        assert not out.exists()
+        return
+    exporter.main()
+    with safe_open(str(out / "model.safetensors"), framework="pt") as handle:
+        members = [unit for name in handle.keys() if name.endswith((".wire", ".wire_bytes"))
+                   for unit in parse_fused(handle.get_tensor(name).numpy().tobytes())]
+    assert len(members) == len(tensors)
+    assert all(unit.blob == encoded[1] for unit in members)
+    receipt = json.loads((out / "tessera_serving_manifest.json").read_text())
+    assert receipt["cached_units"]["planned_units"] == len(tensors)
+    assert all(role["cached_blob_sha256"] for module in receipt["modules"].values()
+               for role in module["roles"])
+
+
 def test_projection_packed_layout_is_explicit_and_serialized():
     exporter = _exporter()
     stack = "model.layers.2.mlp.experts"
