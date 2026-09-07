@@ -194,6 +194,8 @@ def main() -> int:
     ap.add_argument("--profile-batch", type=int, default=32)
     ap.add_argument("--profile-experts", type=int, default=1,
                     help="1..8 units per selected arm; use 8 with --profile-batch 8 for real B8")
+    ap.add_argument("--profile-input-columns", type=int, default=0,
+                    help="profile-only leading input columns; slices weights/Hessians before preparation")
     ap.add_argument("--skip-unbatched", action="store_true")
     ap.add_argument("--only-profile", action="store_true", help="skip the timed arms; profile only")
     ap.add_argument("--profile-cpu", action="store_true",
@@ -210,6 +212,9 @@ def main() -> int:
         ap.error("--only-profile requires --profile")
     if not 1 <= args.profile_experts <= 8 or args.profile_batch < 1:
         ap.error("profile-experts must be between 1 and 8; profile-batch must be positive")
+    if args.profile_input_columns and (not args.only_profile or args.profile_input_columns < 32
+                                       or args.profile_input_columns % 32):
+        ap.error("profile-input-columns requires only-profile and a positive multiple of 32")
     if args.profile_cpu:
         ap.error("--profile-cpu is unsafe for production experts (unbounded CPU event table); use CUDA-only --profile")
     if args.skip_unbatched and args.arms in ("unbatched", "both"):
@@ -300,6 +305,15 @@ def main() -> int:
     with phase("resident_weights", kind="preparation"):
         weights = {n: tensors[f"weight/{n}"].to(device) for n in names_needed}
     hessians = {n: tensors[f"hessian/{n}"] for n in names_needed}
+    if args.profile_input_columns:
+        cols = args.profile_input_columns
+        if any(cols > weights[n].shape[1] for n in names_needed):
+            ap.error("profile-input-columns exceeds a captured unit input dimension")
+        weights = {n: w[:, :cols].contiguous() for n, w in weights.items()}
+        hessians = {n: h[:cols, :cols].contiguous() for n, h in hessians.items()}
+        env["profile_input_derivation"] = {
+            "operation": "leading input columns and matching Hessian principal submatrix",
+            "columns": cols, "scope": "profiler evidence only; not the full timing workload"}
     source = ActivationSource(hessians=hessians, provenance=dict(meta["identity"]))
     env["input_identity"] = meta["identity"]
     env["workload"] = {n: {"shape": list(weights[n].shape), "dtype": str(weights[n].dtype)}
