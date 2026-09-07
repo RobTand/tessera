@@ -1,0 +1,513 @@
+{
+  "expected_scratch_bytes": {
+    "decode": 1536,
+    "prefill": 10240
+  },
+  "expected_startup_bytes": 102512,
+  "provenance": {
+    "action_key_prefix": "9ff240d13eae",
+    "api_filter": "retain every non-query API overlapping either named apply interval",
+    "api_omitted_query_names": [
+      "cudaGetDevice_v3020",
+      "cuDevicePrimaryCtxGetState",
+      "cudaGetLastError_v3020",
+      "cuKernelGetName",
+      "cuCtxGetCurrent"
+    ],
+    "api_records_original": 17750,
+    "api_records_retained": 9,
+    "canonical_receipt_sha256": "3a827cd901cd4a27b256218a63aac01d4d069548331f76b01c1a0e4b58a1ac34",
+    "canonical_trace_path": "/mnt/shared/tessera-native376-resource/native-bf16-r6/receipt.memory.json",
+    "canonical_trace_sha256": "b886c059267717cf6dea3651820e9934c08ac56430c691e51558160823eff8da",
+    "scope": "CPU regression excerpt of actual BF16 GPU trace; not standalone qualification evidence",
+    "static_bytes_original": 265469,
+    "static_filter": "retain first exact DEVICE_STATIC allocation per source library; all dynamic and host memory records retained",
+    "static_records_original": 2902,
+    "static_records_retained": 2
+  },
+  "torch_observations": {
+    "decode": {
+      "after_segments": [
+        {
+          "address": 246878002216960,
+          "total_size": 33554432
+        },
+        {
+          "address": 246878251778048,
+          "total_size": 20971520
+        },
+        {
+          "address": 246878763483136,
+          "total_size": 2097152
+        }
+      ],
+      "allocator_backend": "native",
+      "before_allocated_bytes": 44131840,
+      "before_segments": [
+        {
+          "address": 246878002216960,
+          "total_size": 33554432
+        },
+        {
+          "address": 246878251778048,
+          "total_size": 20971520
+        },
+        {
+          "address": 246878763483136,
+          "total_size": 2097152
+        }
+      ],
+      "context_id": 1,
+      "device_id": 0,
+      "peak_allocated_bytes": 44133376
+    },
+    "prefill": {
+      "after_segments": [
+        {
+          "address": 246878002216960,
+          "total_size": 33554432
+        },
+        {
+          "address": 246878251778048,
+          "total_size": 20971520
+        },
+        {
+          "address": 246878763483136,
+          "total_size": 2097152
+        }
+      ],
+      "allocator_backend": "native",
+      "before_allocated_bytes": 44131840,
+      "before_segments": [
+        {
+          "address": 246878002216960,
+          "total_size": 33554432
+        },
+        {
+          "address": 246878251778048,
+          "total_size": 20971520
+        },
+        {
+          "address": 246878763483136,
+          "total_size": 2097152
+        }
+      ],
+      "context_id": 1,
+      "device_id": 0,
+      "peak_allocated_bytes": 44142080
+    }
+  },
+  "trace": {
+    "api_events": [
+      {
+        "correlation_id": 16663,
+        "end_ns": 1788755271982104765,
+        "name": "cuLaunchKernelEx",
+        "process_id": 1,
+        "return_value": 0,
+        "start_ns": 1788755271982099933,
+        "thread_id": 755488
+      },
+      {
+        "correlation_id": 16665,
+        "end_ns": 1788755271982108749,
+        "name": "cudaLaunchKernelExC_v11060",
+        "process_id": 1,
+        "return_value": 0,
+        "start_ns": 1788755271982105485,
+        "thread_id": 755488
+      },
+      {
+        "correlation_id": 16676,
+        "end_ns": 1788755271982119549,
+        "name": "cudaLaunchKernel_v7000",
+        "process_id": 1,
+        "return_value": 0,
+        "start_ns": 1788755271982116493,
+        "thread_id": 755488
+      },
+      {
+        "correlation_id": 16690,
+        "end_ns": 1788755271982129965,
+        "name": "cudaLaunchKernel_v7000",
+        "process_id": 1,
+        "return_value": 0,
+        "start_ns": 1788755271982127661,
+        "thread_id": 755488
+      },
+      {
+        "correlation_id": 16696,
+        "end_ns": 1788755271982148941,
+        "name": "cudaDeviceSynchronize_v3020",
+        "process_id": 1,
+        "return_value": 0,
+        "start_ns": 1788755271982147261,
+        "thread_id": 755488
+      },
+      {
+        "correlation_id": 17250,
+        "end_ns": 1788755271983423755,
+        "name": "cudaLaunchKernel_v7000",
+        "process_id": 1,
+        "return_value": 0,
+        "start_ns": 1788755271983419595,
+        "thread_id": 755488
+      },
+      {
+        "correlation_id": 17261,
+        "end_ns": 1788755271983432555,
+        "name": "cudaLaunchKernel_v7000",
+        "process_id": 1,
+        "return_value": 0,
+        "start_ns": 1788755271983429771,
+        "thread_id": 755488
+      },
+      {
+        "correlation_id": 17275,
+        "end_ns": 1788755271983442027,
+        "name": "cudaLaunchKernel_v7000",
+        "process_id": 1,
+        "return_value": 0,
+        "start_ns": 1788755271983439275,
+        "thread_id": 755488
+      },
+      {
+        "correlation_id": 17281,
+        "end_ns": 1788755271983460683,
+        "name": "cudaDeviceSynchronize_v3020",
+        "process_id": 1,
+        "return_value": 0,
+        "start_ns": 1788755271983458859,
+        "thread_id": 755488
+      }
+    ],
+    "capture": {
+      "collector_library_sha256": "1a893cec8e7386c48b86f69ebb6c677b009f9aa0653afae5b88594e8deaaaf73",
+      "start_code": 0,
+      "started_before_cuda_libraries": true,
+      "stop_code": 0
+    },
+    "completed_buffers": 2,
+    "configuration": [
+      {
+        "code": 0,
+        "operation": "register_callbacks"
+      },
+      {
+        "code": 0,
+        "operation": "allocation_source"
+      },
+      {
+        "code": 0,
+        "operation": "enable_memory2"
+      },
+      {
+        "code": 0,
+        "operation": "enable_memory_pool"
+      },
+      {
+        "code": 0,
+        "operation": "enable_runtime"
+      },
+      {
+        "code": 0,
+        "operation": "enable_driver"
+      },
+      {
+        "code": 0,
+        "operation": "flush_before_disable"
+      },
+      {
+        "code": 0,
+        "operation": "flush_after_disable"
+      }
+    ],
+    "cupti_version": 130001,
+    "dropped_records": [
+      {
+        "code": 0,
+        "context_handle": 0,
+        "count": 0,
+        "stream_id": 755488
+      },
+      {
+        "code": 0,
+        "context_handle": 0,
+        "count": 0,
+        "stream_id": 755488
+      },
+      {
+        "code": 0,
+        "context_handle": 0,
+        "count": 0,
+        "stream_id": 0
+      }
+    ],
+    "end_ns": 1788755271996324454,
+    "errors": [],
+    "markers": [
+      {
+        "name": "prefill:begin",
+        "timestamp_ns": 1788755271982071373
+      },
+      {
+        "name": "prefill:end",
+        "timestamp_ns": 1788755271982150717
+      },
+      {
+        "name": "decode:begin",
+        "timestamp_ns": 1788755271983400491
+      },
+      {
+        "name": "decode:end",
+        "timestamp_ns": 1788755271983461915
+      }
+    ],
+    "memory_events": [
+      {
+        "address": 246878763483136,
+        "async": false,
+        "bytes": 2097152,
+        "context_id": 1,
+        "correlation_id": 139,
+        "device_id": 0,
+        "device_memory": true,
+        "memory_kind": 3,
+        "operation": "allocate",
+        "pool_type": 0,
+        "process_id": 1,
+        "source": "/usr/local/lib/python3.12/dist-packages/torch/lib/libc10_cuda.so",
+        "stream_id": 4294967295,
+        "timestamp_ns": 1788755262822050727
+      },
+      {
+        "address": 246878809620480,
+        "async": false,
+        "bytes": 4,
+        "context_id": 1,
+        "correlation_id": 320,
+        "device_id": 0,
+        "device_memory": false,
+        "memory_kind": 2,
+        "operation": "allocate",
+        "pool_type": 0,
+        "process_id": 1,
+        "source": "/usr/local/lib/python3.12/dist-packages/torch/lib/libtorch_cuda.so",
+        "stream_id": 4294967295,
+        "timestamp_ns": 1788755267268678318
+      },
+      {
+        "address": 246878809620992,
+        "async": false,
+        "bytes": 1,
+        "context_id": 1,
+        "correlation_id": 1014,
+        "device_id": 0,
+        "device_memory": false,
+        "memory_kind": 2,
+        "operation": "allocate",
+        "pool_type": 0,
+        "process_id": 1,
+        "source": "/usr/local/lib/python3.12/dist-packages/torch/lib/libtorch_cuda.so",
+        "stream_id": 4294967295,
+        "timestamp_ns": 1788755267400447456
+      },
+      {
+        "address": 246878251778048,
+        "async": false,
+        "bytes": 20971520,
+        "context_id": 1,
+        "correlation_id": 1306,
+        "device_id": 0,
+        "device_memory": true,
+        "memory_kind": 3,
+        "operation": "allocate",
+        "pool_type": 0,
+        "process_id": 1,
+        "source": "/usr/local/lib/python3.12/dist-packages/torch/lib/libc10_cuda.so",
+        "stream_id": 4294967295,
+        "timestamp_ns": 1788755267406951541
+      },
+      {
+        "address": 246878809620992,
+        "async": false,
+        "bytes": 1,
+        "context_id": 1,
+        "correlation_id": 3517,
+        "device_id": 0,
+        "device_memory": false,
+        "memory_kind": 2,
+        "operation": "free",
+        "pool_type": 0,
+        "process_id": 1,
+        "source": "",
+        "stream_id": 4294967295,
+        "timestamp_ns": 1788755268122187775
+      },
+      {
+        "address": 246878809620480,
+        "async": false,
+        "bytes": 4,
+        "context_id": 1,
+        "correlation_id": 3518,
+        "device_id": 0,
+        "device_memory": false,
+        "memory_kind": 2,
+        "operation": "free",
+        "pool_type": 0,
+        "process_id": 1,
+        "source": "",
+        "stream_id": 4294967295,
+        "timestamp_ns": 1788755268122204991
+      },
+      {
+        "address": 246878121754624,
+        "async": false,
+        "bytes": 4,
+        "context_id": 1,
+        "correlation_id": 3980,
+        "device_id": 0,
+        "device_memory": false,
+        "memory_kind": 2,
+        "operation": "allocate",
+        "pool_type": 0,
+        "process_id": 1,
+        "source": "/usr/local/lib/python3.12/dist-packages/torch/lib/libtorch_cuda.so",
+        "stream_id": 4294967295,
+        "timestamp_ns": 1788755268125247898
+      },
+      {
+        "address": 246878121755136,
+        "async": false,
+        "bytes": 1,
+        "context_id": 1,
+        "correlation_id": 6332,
+        "device_id": 0,
+        "device_memory": false,
+        "memory_kind": 2,
+        "operation": "allocate",
+        "pool_type": 0,
+        "process_id": 1,
+        "source": "/usr/local/lib/python3.12/dist-packages/torch/lib/libtorch_cuda.so",
+        "stream_id": 4294967295,
+        "timestamp_ns": 1788755268140489520
+      },
+      {
+        "address": 246878121755648,
+        "async": false,
+        "bytes": 8,
+        "context_id": 1,
+        "correlation_id": 6566,
+        "device_id": 0,
+        "device_memory": false,
+        "memory_kind": 2,
+        "operation": "allocate",
+        "pool_type": 0,
+        "process_id": 1,
+        "source": "/usr/local/lib/python3.12/dist-packages/torch/lib/libtorch_cuda.so",
+        "stream_id": 4294967295,
+        "timestamp_ns": 1788755268167141283
+      },
+      {
+        "address": 246878044160000,
+        "async": false,
+        "bytes": 1024,
+        "context_id": 1,
+        "correlation_id": 11631,
+        "device_id": 0,
+        "device_memory": true,
+        "memory_kind": 3,
+        "operation": "allocate",
+        "pool_type": 0,
+        "process_id": 1,
+        "source": "/usr/local/lib/python3.12/dist-packages/nvidia/cu13/lib/libcublas.so.13",
+        "stream_id": 4294967295,
+        "timestamp_ns": 1788755271630257869
+      },
+      {
+        "address": 246878044161024,
+        "async": false,
+        "bytes": 131072,
+        "context_id": 1,
+        "correlation_id": 11640,
+        "device_id": 0,
+        "device_memory": true,
+        "memory_kind": 3,
+        "operation": "allocate",
+        "pool_type": 0,
+        "process_id": 1,
+        "source": "/usr/local/lib/python3.12/dist-packages/nvidia/cu13/lib/libcublas.so.13",
+        "stream_id": 4294967295,
+        "timestamp_ns": 1788755271630268909
+      },
+      {
+        "address": 246878035771392,
+        "async": false,
+        "bytes": 8388608,
+        "context_id": 1,
+        "correlation_id": 11649,
+        "device_id": 0,
+        "device_memory": true,
+        "memory_kind": 3,
+        "operation": "allocate",
+        "pool_type": 0,
+        "process_id": 1,
+        "source": "/usr/local/lib/python3.12/dist-packages/nvidia/cu13/lib/libcublas.so.13",
+        "stream_id": 4294967295,
+        "timestamp_ns": 1788755271630492381
+      },
+      {
+        "address": 246878002216960,
+        "async": false,
+        "bytes": 33554432,
+        "context_id": 1,
+        "correlation_id": 11659,
+        "device_id": 0,
+        "device_memory": true,
+        "memory_kind": 3,
+        "operation": "allocate",
+        "pool_type": 0,
+        "process_id": 1,
+        "source": "/usr/local/lib/python3.12/dist-packages/torch/lib/libc10_cuda.so",
+        "stream_id": 4294967295,
+        "timestamp_ns": 1788755271631290715
+      },
+      {
+        "address": 246878759288832,
+        "async": false,
+        "bytes": 102400,
+        "context_id": 0,
+        "correlation_id": 0,
+        "device_id": 0,
+        "device_memory": false,
+        "memory_kind": 6,
+        "operation": "allocate",
+        "pool_type": 0,
+        "process_id": 1,
+        "source": "/usr/local/lib/python3.12/dist-packages/torch/lib/libtorch_cuda.so",
+        "stream_id": 0,
+        "timestamp_ns": 1788755262823716005
+      },
+      {
+        "address": 246878762139904,
+        "async": false,
+        "bytes": 112,
+        "context_id": 0,
+        "correlation_id": 0,
+        "device_id": 0,
+        "device_memory": false,
+        "memory_kind": 6,
+        "operation": "allocate",
+        "pool_type": 0,
+        "process_id": 1,
+        "source": "/usr/local/lib/python3.12/dist-packages/nvidia/cu13/lib/libcublasLt.so.13",
+        "stream_id": 0,
+        "timestamp_ns": 1788755271629911390
+      }
+    ],
+    "pool_records": 0,
+    "process_id": 1,
+    "schema": "tessera.cupti_memory_trace.v1",
+    "start_ns": 1788755255364068954
+  }
+}

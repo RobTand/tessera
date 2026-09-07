@@ -14,6 +14,12 @@ def real_evidence():
     return json.loads(Path(path).read_text())
 
 
+@pytest.fixture
+def real_static_evidence():
+    path = Path(__file__).parent / "fixtures" / "native_operator_resource_static_startup.json"
+    return json.loads(path.read_text())
+
+
 def test_missing_collection_is_unknown_not_zero():
     from experiments.native_operator_resources import analyze_trace
     result = analyze_trace({}, interval="apply", torch_observation={})
@@ -37,6 +43,54 @@ def test_real_transient_native_allocation_is_counted(real_evidence):
     assert actual["peak_scratch_bytes"] == (actual["external_native_peak_bytes"]
                                               + actual["torch_peak_increment_bytes"])
     assert actual["full_model_fixed_resources_complete"] is False
+
+
+@pytest.mark.parametrize("phase", ["prefill", "decode"])
+def test_real_preexisting_static_storage_is_separate_from_operator_scratch(real_static_evidence, phase):
+    from experiments.native_operator_resources import analyze_trace
+    actual = analyze_trace(real_static_evidence["trace"], interval=phase,
+                           torch_observation=real_static_evidence["torch_observations"][phase])
+    assert actual["status"] == "complete_operator_bound", actual
+    assert actual["external_native_peak_bytes"] == 0
+    assert actual["peak_scratch_bytes"] == real_static_evidence["expected_scratch_bytes"][phase]
+    assert actual["startup_static"]["live_bytes"] == real_static_evidence["expected_startup_bytes"]
+    assert actual["startup_static"]["live_allocation_count"] == 2
+    assert actual["startup_static"]["raw_context_ids"] == [0]
+    assert actual["full_model_fixed_resources_complete"] is False
+
+
+@pytest.mark.parametrize("defect", ["static_allocate_inside", "static_free_inside", "static_wrong_device",
+                                    "static_unknown_context", "static_unknown_source", "static_duplicate",
+                                    "dynamic_zero_context", "dynamic_wrong_device"])
+def test_static_domain_does_not_relax_dynamic_or_in_apply_ownership(real_static_evidence, defect):
+    from experiments.native_operator_resources import analyze_trace
+    data = copy.deepcopy(real_static_evidence)
+    trace = data["trace"]
+    static = next(r for r in trace["memory_events"] if r["memory_kind"] == 6)
+    dynamic = next(r for r in trace["memory_events"] if r["memory_kind"] == 3)
+    begin = next(r["timestamp_ns"] for r in trace["markers"] if r["name"] == "prefill:begin")
+    if defect == "static_allocate_inside":
+        static["timestamp_ns"] = begin + 1
+    elif defect == "static_free_inside":
+        freed = copy.deepcopy(static)
+        freed.update(operation="free", timestamp_ns=begin + 1)
+        trace["memory_events"].append(freed)
+    elif defect == "static_wrong_device":
+        static["device_id"] += 1
+    elif defect == "static_unknown_context":
+        static["context_id"] = 17
+    elif defect == "static_unknown_source":
+        static["source"] = ""
+    elif defect == "static_duplicate":
+        trace["memory_events"].append(copy.deepcopy(static))
+    elif defect == "dynamic_zero_context":
+        dynamic["context_id"] = 0
+    elif defect == "dynamic_wrong_device":
+        dynamic["device_id"] += 1
+    actual = analyze_trace(trace, interval="prefill", torch_observation=data["torch_observations"]["prefill"])
+    assert actual["status"] == "incomplete", actual
+    assert actual["peak_scratch_bytes"] is None
+    assert actual["reasons"]
 
 
 @pytest.mark.parametrize("defect", ["dropped", "missing_drop_query", "missing_enable", "wrong_context",

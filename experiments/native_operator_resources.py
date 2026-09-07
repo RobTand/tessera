@@ -125,12 +125,19 @@ def analyze_trace(trace, *, interval, torch_observation):
     v1 requires a warmed stable allocator: any CUDA allocation/free touching
     its segments during apply refuses composition, preventing pointer-reuse
     ambiguities when separating external memory from Torch suballocations.
+    Preexisting DEVICE_STATIC records have a separate startup ledger. CUDA 13
+    can report those with raw context/correlation/stream zero; this is observed
+    metadata, not an assertion that zero is CUPTI_INVALID_CONTEXT_ID or that
+    the storage belongs to the operator's context. Static changes during apply
+    still refuse the bound, and startup bytes never substitute for full-model
+    fixed-resource evidence.
     """
     result = {"schema": "tessera.native_operator_resource_bound.v1", "status": "incomplete",
               "scope": "warmed_eager_operator_incremental_live_allocations",
               "composition": "sum_of_independent_peaks_including_output",
               "peak_scratch_bytes": None, "external_native_peak_bytes": None,
               "torch_peak_increment_bytes": None, "reasons": [],
+              "startup_static": None,
               "full_model_fixed_resources_complete": False}
     reasons = result["reasons"]
     try:
@@ -198,7 +205,7 @@ def analyze_trace(trace, *, interval, torch_observation):
         events = sorted(trace["memory_events"], key=lambda r: r["timestamp_ns"])
         if not events:
             raise ValueError("no observed allocation records; collection not demonstrated")
-        live, new_live = {}, {}
+        live, new_live, static_live = {}, {}, {}
         external_peak = 0
         for row in events:
             t = _integer(row["timestamp_ns"], 1)
@@ -211,14 +218,39 @@ def analyze_trace(trace, *, interval, torch_observation):
                 continue
             if row["memory_kind"] not in (3, 6) or row["async"] is not False or row["pool_type"] != 0:
                 raise ValueError("unsupported managed/async/pool/unknown memory domain")
+            address, size = _integer(row["address"], 1), _integer(row["bytes"], 1)
+            inside = begin <= t <= end
+            if row["memory_kind"] == 6:
+                if inside:
+                    raise ValueError("module/static allocation or free occurred during apply")
+                # DEVICE_STATIC is a distinct CUPTI memory domain. Preserve
+                # the raw coordinates observed on the qualified CUDA 13
+                # runtime; never grant context-zero tolerance to DEVICE rows.
+                raw_context = _integer(row["context_id"])
+                known_static_coordinates = (trace["cupti_version"] == 130001
+                                            and raw_context == 0
+                                            and row["correlation_id"] == 0
+                                            and row["stream_id"] == 0)
+                if row["device_id"] != device or not (raw_context == context or known_static_coordinates):
+                    raise ValueError("startup static allocation has unsupported device/context coordinates")
+                key = (device, raw_context, address)
+                if row["operation"] == "allocate":
+                    if not isinstance(row["source"], str) or not row["source"]:
+                        raise ValueError("startup static allocation source is unknown")
+                    if key in static_live:
+                        raise ValueError("duplicate live startup static allocation")
+                    static_live[key] = (size, row["source"])
+                elif row["operation"] == "free":
+                    allocation = static_live.pop(key, None)
+                    if allocation is None or allocation[0] != size:
+                        raise ValueError("static free lacks matching startup allocation bytes/context")
+                else:
+                    raise ValueError("unknown startup static memory operation")
+                continue
             if row["device_id"] != device or row["context_id"] != context:
                 raise ValueError("allocation device/context differs from operator")
-            address, size = _integer(row["address"], 1), _integer(row["bytes"], 1)
             key = (device, context, address)
-            inside = begin <= t <= end
             if inside:
-                if row["memory_kind"] != 3:
-                    raise ValueError("module/static allocation occurred during apply")
                 names = by_correlation.get((pid, row["correlation_id"]), [])
                 if not names or any(name not in supported for name in names):
                     raise ValueError("memory operation has no supported API correlation")
@@ -246,8 +278,22 @@ def analyze_trace(trace, *, interval, torch_observation):
                 raise ValueError("unknown memory operation")
         if new_live:
             raise ValueError("native allocation retained after apply; fixed ownership unresolved")
+        startup_sources = {}
+        for size, source in static_live.values():
+            entry = startup_sources.setdefault(source, {"source": source, "live_bytes": 0,
+                                                        "live_allocation_count": 0})
+            entry["live_bytes"] += size
+            entry["live_allocation_count"] += 1
+        startup = {"scope": "observed_live_device_static_before_apply",
+                   "live_bytes": sum(size for size, _ in static_live.values()),
+                   "live_allocation_count": len(static_live),
+                   "raw_context_ids": sorted({key[1] for key in static_live}),
+                   "sources": [startup_sources[source] for source in sorted(startup_sources)],
+                   "operator_context_attributed": False,
+                   "full_model_fixed_resources_complete": False}
         result.update(status="complete_operator_bound", peak_scratch_bytes=peak - base + external_peak,
                       external_native_peak_bytes=external_peak, torch_peak_increment_bytes=peak - base,
+                      startup_static=startup,
                       interval={"name": interval, "begin_ns": begin, "end_ns": end},
                       process_id=pid, device_id=device, context_id=context)
     except (KeyError, TypeError, ValueError) as exc:
