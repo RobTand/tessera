@@ -279,3 +279,46 @@ def test_failed_selected_capacity_is_preserved_and_stops_worker(monkeypatch, wor
         worker.initialize_from_config(object())
     assert json.loads(next(tmp_path.glob("kv-worker-*.json")).read_text()) == observation
     assert recorder._errors == ["actual resolved KV capacity differs from selected assertions"]
+
+
+def test_full_engine_runtime_preserves_base_and_checks_installed_package(
+        monkeypatch, worker_module, tmp_path):
+    import copy
+    import hashlib
+    import json
+    from experiments import bench_native_operator
+    package = tmp_path / "tessera"
+    package.mkdir()
+    module_file = package / "__init__.py"
+    module_file.write_text("# immutable fixture\n")
+    cached_file = package / "cached_unit.py"
+    cached_file.write_text("# cache fixture\n")
+    cached = SimpleNamespace(__file__=str(cached_file))
+    module = SimpleNamespace(__file__=str(module_file), cached_unit=cached)
+    for name in tuple(sys.modules):
+        if name == "tessera" or name.startswith("tessera."):
+            monkeypatch.delitem(sys.modules, name)
+    monkeypatch.setitem(sys.modules, "tessera", module)
+    monkeypatch.setitem(sys.modules, "tessera.cached_unit", cached)
+    files = {p.name: {"bytes": p.stat().st_size, "sha256": hashlib.sha256(p.read_bytes()).hexdigest()}
+             for p in package.iterdir()}
+    installer = tmp_path / "installer.json"
+    installer.write_text(json.dumps({"plugin_files": files}))
+    base = {"schema": "native fixture", "execution": {"native_only": True},
+            "source": {"tessera_package_sha256": "a" * 64}}
+    monkeypatch.setattr(bench_native_operator, "observe_runtime", lambda image: copy.deepcopy(base))
+    plan = {"selected_configuration": {"runtime_image": "fixture@sha256:abc",
+            "engine_args": {"enforce_eager": True, "tensor_parallel_size": 1}, "environment": {}},
+            "identity": {"configuration_sha256": "b" * 64}, "runtime_evidence": str(installer),
+            "observer_engine_args": {}, "observer_environment": {}, "scope": "fixture",
+            "collector_library_sha256": "c" * 64, "collector_library": "/fixture/collector.so"}
+    result = worker_module.full_engine_runtime_observation(plan)
+    assert result["base"] == base
+    assert result["actual_execution"]["execution_mode"] == "eager"
+    assert result["configuration_sha256"] == "b" * 64
+    assert result["loaded_package"]["package_files"] == files
+    assert result["loaded_package"]["package_files_unchanged_from_installer"] is True
+    assert result["loaded_package"]["cached_unit_file"] == str(cached_file)
+    cached_file.write_text("# changed after install\n")
+    with pytest.raises(ValueError, match="changed from installer"):
+        worker_module.full_engine_runtime_observation(plan)

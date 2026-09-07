@@ -79,10 +79,22 @@ def prepare(args):
     assignment = {"schema": "tessera.source_bf16_observer_assignment.v1",
                   "source_sha256": canonical_hash(source),
                   "units": {row["unit_id"]: "source_bf16" for row in roster}}
-    workload = {"messages": [{"role": "user", "content": "Return exactly the word blue."}],
-                "sampling": {"temperature": 0.0, "seed": 0, "max_tokens": 2,
-                             "ignore_eos": True},
-                "scope": "two scheduled steps for raw allocation observation; no quality claim"}
+    if args.calibration is not None:
+        if digest(args.calibration) != args.calibration_sha256:
+            raise ValueError("calibration bytes differ from the declared immutable fixture")
+        from safetensors import safe_open
+        with safe_open(str(args.calibration), framework="np") as fixture:
+            token_ids = fixture.get_tensor("calibration_ids")
+        if token_ids.shape != (512, 512) or str(token_ids.dtype) != "int64":
+            raise ValueError("resource calibration requires int64[512,512] calibration_ids")
+        workload = {"prompt_token_ids": token_ids[0].tolist(),
+                    "calibration": {"path": str(args.calibration.resolve()),
+                        "sha256": args.calibration_sha256, "key": "calibration_ids", "row": 0},
+                    "scope": "canonical first 512-token sequence unchanged; actual generated-token decode, distinct from native boundary decode proxy"}
+    else:
+        workload = {"messages": [{"role": "user", "content": "Return exactly the word blue."}],
+                    "scope": "two scheduled steps for raw allocation observation; no quality claim"}
+    workload["sampling"] = {"temperature": 0.0, "seed": 0, "max_tokens": 2, "ignore_eos": True}
     uuid = subprocess.check_output(["nvidia-smi", "--query-gpu=uuid", "--format=csv,noheader"],
                                    text=True).strip().splitlines()
     if len(uuid) != 1:
@@ -99,6 +111,7 @@ def prepare(args):
             "collector_library_sha256": digest(args.collector),
             "output_directory": str(args.output.resolve()), "model": str(args.model.resolve()),
             "selected_configuration": config, "runtime_evidence_sha256": digest(args.runtime_evidence),
+            "runtime_evidence": str(args.runtime_evidence.resolve()),
             "core_manifest": str(args.core_manifest.resolve()), "assignment": assignment,
             "canonical_roster": roster, "canonical_modules": [row["module"] for row in roster],
             "observed_units": units, "workload": workload,
@@ -108,6 +121,12 @@ def prepare(args):
             "observer_engine_args": {"worker_cls": "experiments.full_engine_worker.ResourceCaptureWorker"},
             "observer_environment": {"VLLM_WORKER_MULTIPROC_METHOD": "spawn"},
             "scope": "intrusive raw resource capture; no timing, fixed-resource or release admission"}
+    if args.workspaces is not None:
+        plan["blas_workspace_observer"] = {"path": str(args.workspaces.resolve()),
+                                          "sha256": digest(args.workspaces)}
+    if args.owner_rule is not None:
+        plan["native_owner_rule"] = {"path": str(args.owner_rule.resolve()),
+                                     "sha256": digest(args.owner_rule)}
     path = args.output / "observer-plan.json"
     path.write_text(json.dumps(plan, sort_keys=True, indent=2) + "\n")
     root = Path(__file__).resolve().parents[1]
@@ -129,8 +148,14 @@ def run(plan_path):
     llm = LLM(model=plan["model"], seed=0,
               **plan["selected_configuration"]["engine_args"], **plan["observer_engine_args"])
     armed = llm.collective_rpc("resource_capture_arm")
-    responses = llm.chat(plan["workload"]["messages"],
-                         SamplingParams(**plan["workload"]["sampling"]), use_tqdm=False)
+    workload = plan["workload"]
+    sampling = SamplingParams(**workload["sampling"])
+    if "prompt_token_ids" in workload:
+        responses = llm.generate({"prompt_token_ids": workload["prompt_token_ids"]}, sampling, use_tqdm=False)
+        if len(responses) != 1 or responses[0].prompt_token_ids != workload["prompt_token_ids"]:
+            raise ValueError("engine changed the explicit calibration TokenPrompt")
+    else:
+        responses = llm.chat(workload["messages"], sampling, use_tqdm=False)
     workers = llm.collective_rpc("resource_capture_finish")
     audit_after = audit_core(plan["core_manifest"])
     if len(workers) != 1:
@@ -160,6 +185,10 @@ def main():
     parser.add_argument("--core-manifest", type=Path)
     parser.add_argument("--runtime-evidence", type=Path)
     parser.add_argument("--output", type=Path)
+    parser.add_argument("--calibration", type=Path)
+    parser.add_argument("--calibration-sha256")
+    parser.add_argument("--workspaces", type=Path)
+    parser.add_argument("--owner-rule", type=Path)
     parser.add_argument("--unit", action="append", default=[])
     args = parser.parse_args()
     if args.run_plan:

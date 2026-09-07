@@ -14,7 +14,7 @@ from types import SimpleNamespace
 from vllm.v1.worker.gpu_worker import Worker
 
 from experiments.full_engine_bootstrap import claim
-from experiments.full_engine_resources import TensorOwner
+from experiments.full_engine_resources import TensorOwner, BlasWorkspaceObserver
 from experiments.full_engine_kv import kv_config_value, kv_configuration_observation, inspect_worker_kv
 
 
@@ -112,9 +112,60 @@ def native_library_observation():
             "libraries": libraries, "errors": errors, "runtime_admission": False}
 
 
+def full_engine_runtime_observation(plan):
+    """Fresh post-initialization package/source and actual loaded-runtime census."""
+    import tessera
+    import tessera.cached_unit
+    from experiments.bench_native_operator import observe_runtime
+    base = observe_runtime(plan["selected_configuration"]["runtime_image"])
+    package = Path(tessera.__file__).resolve().parent
+    files = {str(path.relative_to(package)): {"sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                                             "bytes": path.stat().st_size}
+             for path in sorted(package.rglob("*"))
+             if path.is_file() and "__pycache__" not in path.parts}
+    installer = json.loads(Path(plan["runtime_evidence"]).read_text())
+    if files != installer["plugin_files"]:
+        raise ValueError("post-init Tessera package files changed from installer evidence")
+    module_paths = {name: getattr(module, "__file__", None)
+        for name, module in sorted(tuple(sys.modules.items()))
+        if name == "tessera" or name.startswith("tessera.")}
+    for name, filename in module_paths.items():
+        if filename is not None:
+            path = Path(filename).resolve()
+            if not path.is_relative_to(package) or str(path.relative_to(package)) not in files:
+                raise ValueError("loaded Tessera module is outside the installed package roster: " + name)
+    loaded = {"schema": "tessera.loaded_package_identity.v1",
+        "encoder_source_sha256": base["source"]["tessera_package_sha256"],
+        "package_files": files, "package_files_unchanged_from_installer": True,
+        "tessera_file": tessera.__file__, "cached_unit_file": tessera.cached_unit.__file__,
+        "sys_path": list(sys.path),
+        "loaded_module_paths": module_paths}
+    return {"schema": "tessera.full_engine_runtime.v1", "base": base,
+        "loaded_package": loaded,
+        "actual_execution": {"mode": os.environ.get("TESSERA_SERVE_MODE", "resident"),
+            "execution_mode": "eager" if plan["selected_configuration"]["engine_args"]["enforce_eager"] else "graph",
+            "tensor_parallel": plan["selected_configuration"]["engine_args"]["tensor_parallel_size"],
+            "expert_parallel": 1},
+        "configuration_sha256": plan["identity"]["configuration_sha256"],
+        "execution": {"engine_args": plan["selected_configuration"]["engine_args"],
+            "environment": plan["selected_configuration"]["environment"],
+            "configuration_sha256": plan["identity"]["configuration_sha256"],
+            "observer_engine_args": plan["observer_engine_args"],
+            "observer_environment": plan["observer_environment"], "scope": plan["scope"]},
+        "source": {"full_engine_worker_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest()},
+        "instrumentation": {"resource_collector": {"library_sha256": plan["collector_library_sha256"],
+                                                   "loaded_path": plan["collector_library"]},
+            "blas_workspace_observer": {"library_sha256": plan["blas_workspace_observer"]["sha256"],
+                                        "loaded_path": plan["blas_workspace_observer"]["path"]}
+                                       if plan.get("blas_workspace_observer") else None,
+            "native_owner_rule": plan.get("native_owner_rule")}}
+
+
+
 class ResourceCaptureWorker(Worker):
     def __init__(self, *args, **kwargs):
         self._resource_recorder, self._resource_plan = claim()
+        self._resource_blas_observer = None
         self._resource_calls = 0
         self._resource_armed = False
         self._resource_startup_calls = 0
@@ -127,6 +178,8 @@ class ResourceCaptureWorker(Worker):
         super().__init__(*args, **kwargs)
 
     def _resource_owners(self):
+        if self._resource_blas_observer is not None:
+            yield from self._resource_blas_observer.owners()
         runner = getattr(self, "model_runner", None)
         model = getattr(runner, "model", None)
         if model is not None:
@@ -151,6 +204,9 @@ class ResourceCaptureWorker(Worker):
 
     def init_device(self):
         result = super().init_device()
+        if "blas_workspace_observer" in self._resource_plan:
+            spec = self._resource_plan["blas_workspace_observer"]
+            self._resource_blas_observer = BlasWorkspaceObserver(spec["path"], spec["sha256"])
         self._resource_checkpoint("device_initialized")
         return result
 
@@ -260,8 +316,24 @@ class ResourceCaptureWorker(Worker):
                     f"observed unit {name} had {count} invocations, expected "
                     f"{self._resource_plan['max_invocations_per_unit']}")
         directory = Path(self._resource_plan["output_directory"]) / f"worker-{os.getpid()}"
+        runtime = full_engine_runtime_observation(self._resource_plan)
         native_libraries = native_library_observation()
-        result = self._resource_recorder.finish(directory, owners=self._resource_owners())
+        native_evidence = []
+        if "native_owner_rule" in self._resource_plan:
+            from experiments.full_engine_native_owners import capture_rule_evidence, validate_rule_evidence
+            spec = self._resource_plan["native_owner_rule"]
+            content = Path(spec["path"]).read_bytes()
+            if hashlib.sha256(content).hexdigest() != spec["sha256"]:
+                raise ValueError("native ownership rule changed after plan preparation")
+            evidence = capture_rule_evidence(json.loads(content), native_libraries["libraries"])
+            validate_rule_evidence(evidence)
+            native_evidence.append(evidence)
+        result = self._resource_recorder.finish(directory, owners=self._resource_owners(),
+                                                native_ownership_evidence=native_evidence,
+                                                measured_runtime_sha256=hashlib.sha256(json.dumps(runtime,
+                                                    sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest())
+        (directory / "post-native-package.json").write_text(json.dumps(runtime["loaded_package"], sort_keys=True, indent=2) + "\n")
+        (directory / "runtime-observation.json").write_text(json.dumps(runtime, sort_keys=True, indent=2) + "\n")
         (directory / "worker-observations.json").write_text(json.dumps({
             "worker_class": f"{type(self).__module__}.{type(self).__name__}",
             "model_runner_class": f"{type(self.model_runner).__module__}.{type(self.model_runner).__name__}",

@@ -6,8 +6,8 @@ Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
 **Provenance:** `v0.1.0` plus repository tooling updates (2026-09-07):
-Argument-bound host mappings and native workspace ownership
-against base `049b726e`;
+Argument-bound host mappings, native workspace ownership and loaded full-engine
+runtime identity against base `049b726e`;
 Row-sliced dense owner counted once in the census planned-tensor roster
 against base `5ac9b72`;
 Mixed dense/routed campaign census coverage (PrismaQuant #253) against base `6faa5ce`;
@@ -825,7 +825,16 @@ The launcher binds the canonical source census, source-BF16 assignment,
 selected engine settings, observer settings, workload, device UUID and installed
 runtime manifest, and verifies the stock core before and after the pass.
 Worker observations also hash the actual mapped shared objects, including
-generated native binaries, and retain any unreadable-path errors.
+generated native binaries, and retain any unreadable-path errors. Post-init
+runtime observations preserve the native runtime census under `base`, separately
+record actual engine execution/configuration and observer library identities,
+and freshly recompute Tessera's encoder source hash. A distinct loaded-package
+record binds actual module paths, `sys.path`, and every installed package file
+to the installer roster; byte changes refuse. The raw ledger preserves its
+original core-manifest digest and separately records the measured-runtime hash.
+An explicit calibration input may supply the canonical int64[512,512] fixture's
+first row unchanged as a TokenPrompt; the actual generated-token decode remains
+distinct from a native boundary decode proxy.
 The received and runner-resolved KV configurations retain all dataclass fields,
 concrete spec types, typed dtypes, group page sizes and kernel block sizes.
 Explicit capacity-policy values and missing fields are recorded alongside them;
