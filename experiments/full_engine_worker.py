@@ -108,7 +108,9 @@ class ResourceCaptureWorker(Worker):
         self._resource_checkpoint("kv_allocated")
         self._resource_kv_description = {
             "num_blocks": kv_cache_config.num_blocks,
-            "tensors": [{"size": tensor.size, "shared_by": tensor.shared_by}
+            "tensors": [{"size": tensor.size, "layers": tensor.layers,
+                         "layer_stride": tensor.layer_stride,
+                         "block_stride": tensor.block_stride, "offset": tensor.offset}
                         for tensor in kv_cache_config.kv_cache_tensors],
             "scope": "stock KV configuration descriptors; do not sum as physical storage"}
         return result

@@ -71,6 +71,8 @@ def worker_module(monkeypatch):
             return scheduler_output
         def sample_tokens(self, grammar_output):
             return grammar_output
+        def initialize_from_config(self, kv_cache_config):
+            return "kv initialized"
     monkeypatch.setitem(sys.modules, "vllm.v1.worker.gpu_worker", SimpleNamespace(Worker=StockWorker))
     sys.modules.pop("experiments.full_engine_worker", None)
     module = importlib.import_module("experiments.full_engine_worker")
@@ -115,3 +117,18 @@ def test_failed_stock_execute_still_records_boundary_and_disarms(monkeypatch, wo
         worker.execute_model(None)
     assert seen == ["execute:1:begin", "execute:1:end"]
     assert worker._resource_active is False
+
+
+def test_worker_preserves_stock_1970_kv_placement_descriptors(monkeypatch, worker_module):
+    seen = []
+    recorder = SimpleNamespace(snapshot=lambda label, **kwargs: seen.append(label))
+    monkeypatch.setattr(worker_module, "claim", lambda: (recorder, {}))
+    worker = worker_module.ResourceCaptureWorker()
+    tensor = SimpleNamespace(size=8192, layers=["attention", "recurrent"],
+                             layer_stride=512, block_stride=1024, offset=128)
+    config = SimpleNamespace(num_blocks=8, kv_cache_tensors=[tensor])
+    assert worker.initialize_from_config(config) == "kv initialized"
+    assert worker._resource_kv_description["tensors"] == [{
+        "size": 8192, "layers": ["attention", "recurrent"],
+        "layer_stride": 512, "block_stride": 1024, "offset": 128}]
+    assert seen == ["before_kv_allocation", "kv_allocated"]
