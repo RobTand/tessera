@@ -26,6 +26,10 @@ placement guard #349 and cut-specific refusal diagnostics (2026-09-05). Re-stamp
 line with any change to the wire, the recipe table, the serving lane, the
 plugin contract or a gate (AGENTS.md principle 10).
 
+Re-stamped 2026-09-07 on `review/tessera405-empty-plan` for the empty-plan
+smoke-bound refusal (#391/#405), against `d185d5c1`. Explicit `--layers 0`
+remains the deliberate passthrough-copy request.
+
 Re-stamped 2026-09-05 on `codex/audit4-input-handoff` for the producer's
 priced-input snapshot intake (PrismaQuant #231; §2.3). Wire, encoder recipes
 and runtime contract remain at the versions above.
@@ -531,6 +535,15 @@ scheme, and `--passthrough-unrouted` reaching a module the plan names.
 Implicit `--grid`/`--q256` defaults keep their deliberate passthrough
 fallbacks, and an explicit `PASSTHROUGH`/`BF16` entry is still a passthrough
 (tessera#211).
+
+Before encoding, the exporter refuses an empty dense-and-expert plan after
+initial construction, after `--passthrough-unrouted`, and after the geometry
+gate. This applies to the default and to a nonzero `--layers` smoke bound:
+a request for a partial encode must not silently produce zero encoded modules.
+Only explicit `--layers 0` permits an empty plan as a deliberate passthrough
+copy; it does not attest a loadable Tessera checkpoint. The smoke-bound refusal
+and zero-layer passthrough are covered by `test_merged_linear_partitions.py`
+(tessera#391).
 
 `--plan-json` names a mutable file and an export is long, so the exporter
 reads it exactly once, into one `PlanSnapshot`, and never consults the path

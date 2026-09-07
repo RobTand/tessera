@@ -1266,7 +1266,8 @@ def main():
                     help="closed exact-unit cache manifest for every planned expert; "
                          "missing/unmeasured units refuse, with no re-encode fallback")
     ap.add_argument("--no-verify", action="store_true")
-    ap.add_argument("--layers", type=int, default=None, help="encode only the first N layers (smoke)")
+    ap.add_argument("--layers", type=int, default=None,
+                    help="encode only the first N layers (smoke); 0 requests a passthrough copy")
     ap.add_argument("--partition", type=parse_partition, metavar="INDEX/COUNT",
                     help="write only whole layers owned by layer %% COUNT == INDEX; "
                          "non-body tensors belong to index 0. Merge every part before serving.")
