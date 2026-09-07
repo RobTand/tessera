@@ -328,6 +328,7 @@ def test_recorder_publishes_hash_bound_raw_inputs_and_keeps_unknowns(capture, mo
     assert len(costs) == 2
     assert not any(isinstance(value, dict) and "device_traces" in value for value in encoded_values)
     assert all(c["host_observer_elapsed_ns"] > 0 and c["serialized_history_prefix_bytes"] > 0 for c in costs)
+    assert all(c["history_row_encoding"]["encoded_rows"] >= 0 for c in costs)
     assert raw["observer_cost"]["gpu_timing_eligible"] is False
     with pytest.raises(RuntimeError, match="closed"):
         recorder.snapshot("late")

@@ -24,6 +24,10 @@ from experiments.native_operator_resources import (
 )
 from experiments.full_engine_native_owners import checkpoint_site_owners
 from experiments.full_engine_cuda_domains import analyze_memory_api_arguments, match_host_owner
+from experiments.full_engine_snapshot_codec import (
+    CanonicalHistoryPrefix, SnapshotFramePool, canonical_snapshot_digest,
+    compact_capture, expand_capture,
+)
 
 CAPTURE_SCHEMA = "tessera.full_engine_resource_capture.v1"
 LEDGER_SCHEMA = "tessera.full_engine_raw_resource_ledger.v1"
@@ -39,6 +43,22 @@ def _json_bytes(value):
 
 def _sha(value):
     return hashlib.sha256(_json_bytes(value)).hexdigest()
+
+
+def process_memory_observation():
+    result = {"scope": "Linux worker process RSS/high-water observation, not aggregate admitted memory",
+              "rss_bytes": None, "high_water_bytes": None, "errors": []}
+    try:
+        fields = {line.split(":", 1)[0]: line.split(":", 1)[1].split()
+                  for line in Path("/proc/self/status").read_text().splitlines() if ":" in line}
+        for source, target in (("VmRSS", "rss_bytes"), ("VmHWM", "high_water_bytes")):
+            value, unit = fields[source]
+            if unit != "kB":
+                raise ValueError("unexpected process memory unit")
+            result[target] = int(value) * 1024
+    except (OSError, KeyError, ValueError) as exc:
+        result["errors"].append(str(exc))
+    return result
 
 
 def _int(value, where, minimum=0):
@@ -105,11 +125,12 @@ def _verify_history_prefixes(history, checkpoints):
     if not all(isinstance(row, dict) for row in history):
         raise ValueError("invalid allocator history records")
     modes = {checkpoint.get("history_boundary", "included_snapshot_marker") for checkpoint in checkpoints}
+    prefixes = CanonicalHistoryPrefix()
     if modes == {"included_snapshot_marker"}:
         for checkpoint in checkpoints:
             index = _int(checkpoint["trace_index"], "trace_index", 1)
             if (index > len(history) or history[index - 1]["action"] != "snapshot"
-                    or checkpoint["history_prefix_sha256"] != _sha(history[:index])):
+                    or checkpoint["history_prefix_sha256"] != prefixes.observe(history[:index])["history_prefix_sha256"]):
                 raise ValueError("checkpoint history prefix is missing, changed or truncated")
         return {"snapshot_marker_placement": "included", "revised_time_fields": 0,
                 "timing_eligible": False}
@@ -120,7 +141,7 @@ def _verify_history_prefixes(history, checkpoints):
     for number in range(len(checkpoints) - 1, -1, -1):
         checkpoint = checkpoints[number]
         index = _int(checkpoint["trace_index"], "trace_index", 1)
-        if index != len(working) or checkpoint["history_prefix_sha256"] != _sha(working):
+        if index != len(working) or checkpoint["history_prefix_sha256"] != prefixes.observe(working)["history_prefix_sha256"]:
             raise ValueError("exact checkpoint history prefix cannot be reconstructed")
         if number == len(checkpoints) - 1:
             if checkpoint["label"] != "capture_end" or index != len(history):
@@ -237,8 +258,9 @@ class FullEngineResourceRecorder:
     Checkpoints synchronize the selected device and copy allocator snapshots;
     this is an intrusive resource pass, never a timing pass. ``max_checkpoints``
     must cover the caller's planned boundaries plus the terminal checkpoint.
-    Per-snapshot host elapsed time and encoded history bytes record observer cost;
-    encoded size is not an estimate of Python's resident memory. No vLLM worker
+    Per-snapshot host time, encoded/reused row counts, shared frame storage and
+    process memory observations record observer cost. Logical history size is
+    not an estimate of Python's resident memory. No vLLM worker
     hooks or configuration changes are installed here. ``finish`` preserves
     capture failures and raw inputs, with full fixed-resource admission false.
     """
@@ -253,6 +275,8 @@ class FullEngineResourceRecorder:
         self._closed = False
         self._errors, self._checkpoints, self._intervals, self._stack = [], [], [], []
         self._last_snapshot = None
+        self._frame_pool = SnapshotFramePool()
+        self._history_prefix = CanonicalHistoryPrefix(self._frame_pool)
         self._observer_cost = []
         self._context_id = None
         self._collector = NativeMemoryCollector(library)
@@ -298,18 +322,23 @@ class FullEngineResourceRecorder:
             self._context_id = context_id
             rows = [_owner_row(owner) for owner in owners]
             # Torch materializes a fresh Python snapshot. Retain that owned
-            # value; serializing and decoding the entire history plus segment
-            # stacks here duplicates the exact trace encoding below at every
-            # native boundary. The complete capture is serialized at finish.
+            # value and share exact frame arrays across snapshots. Reuse row
+            # chunks while hashing the unchanged expanded canonical bytes.
             raw = self._torch.cuda.memory._snapshot()
+            intern_started = perf_counter_ns()
+            self._frame_pool.intern_value(raw)
+            cost["frame_interning_elapsed_ns"] = perf_counter_ns() - intern_started
             trace = raw["device_traces"][self.device]
-            encoded_trace = _json_bytes(trace)
-            cost["serialized_history_prefix_bytes"] = len(encoded_trace)
+            hash_started = perf_counter_ns()
+            history_encoding = self._history_prefix.observe(trace, already_interned=True)
+            cost["history_encoding_elapsed_ns"] = perf_counter_ns() - hash_started
+            cost["serialized_history_prefix_bytes"] = history_encoding["serialized_history_prefix_bytes"]
+            cost["history_row_encoding"] = history_encoding
             timestamp = self._collector.mark(label)
             checkpoint = {"label": label, "trace_index": len(trace),
                           "history_boundary": "before_current_snapshot_marker",
                           "cupti_timestamp_ns": timestamp,
-                          "history_prefix_sha256": hashlib.sha256(encoded_trace).hexdigest(),
+                          "history_prefix_sha256": history_encoding["history_prefix_sha256"],
                           "segments": raw["segments"], "owners": rows}
             if self._last_snapshot is not None:
                 checkpoint["previous_history_revision"] = history_revision(
@@ -321,6 +350,7 @@ class FullEngineResourceRecorder:
             self._errors.append(f"snapshot {label}: {type(exc).__name__}: {exc}")
             raise
         finally:
+            cost["process_memory"] = process_memory_observation()
             cost["host_observer_elapsed_ns"] = perf_counter_ns() - started
             self._observer_cost.append(cost)
 
@@ -382,10 +412,28 @@ class FullEngineResourceRecorder:
                "unit_intervals": self._intervals, "cupti_trace": cupti,
                "native_ownership_evidence": list(native_ownership_evidence),
                "measured_runtime_sha256": measured_runtime_sha256}
-        (directory / "capture.json").write_bytes(_json_bytes(raw) + b"\n")
-        receipt = analyze_engine_resource_ledger(raw)
+        finalization_started = perf_counter_ns()
+        memory_before = process_memory_observation()
+        compact = compact_capture(raw, self._frame_pool)
+        encoded = _json_bytes(compact)
+        (directory / "capture.json").write_bytes(encoded + b"\n")
+        serialized_bytes = len(encoded) + 1
+        del encoded
+        write_elapsed = perf_counter_ns() - finalization_started
+        analysis_started = perf_counter_ns()
+        receipt = analyze_engine_resource_ledger(compact)
+        (directory / "finalization.json").write_bytes(_json_bytes({
+            "scope": "resource observer finalization; not engine latency or Python resident-memory estimate",
+            "capture_encoding": compact["schema"], "serialized_capture_bytes": serialized_bytes,
+            "unique_frame_values": len(self._frame_pool.entries),
+            "unique_frame_encoded_bytes": self._frame_pool.encoded_bytes,
+            "history_cache_memory": self._history_prefix.retained_memory(),
+            "process_memory_before": memory_before,
+            "process_memory_after": process_memory_observation(),
+            "compact_encode_and_write_elapsed_ns": write_elapsed,
+            "ledger_analysis_elapsed_ns": perf_counter_ns() - analysis_started}) + b"\n")
         artifacts = {}
-        for name in ("capture.json", "cupti-memory.json"):
+        for name in ("capture.json", "cupti-memory.json", "finalization.json"):
             path = directory / name
             if path.exists():
                 content = path.read_bytes()
@@ -586,11 +634,12 @@ def analyze_engine_resource_ledger(raw):
                                      "cache capacity policy", "full-engine timing partition"]}
     issues = result["issues"]
     try:
+        raw = expand_capture(raw)
         if raw["schema"] != CAPTURE_SCHEMA:
             raise ValueError("unsupported full-engine capture schema")
         identity = _identity(raw["identity"])
         result["identity"] = identity
-        result["capture_sha256"] = _sha(raw)
+        result["capture_sha256"] = canonical_snapshot_digest(raw)
         _int(raw["process_id"], "process_id", 1)
         _int(raw["context_id"], "context_id", 1)
         capture = raw["capture"]

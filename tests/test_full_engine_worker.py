@@ -137,6 +137,65 @@ def test_stock_warmup_cannot_consume_the_workload_capture_budget(monkeypatch, wo
     assert worker._resource_calls == 0
 
 
+def test_first_native_prefix_closes_observer_and_preserves_remaining_stock_execution(monkeypatch, worker_module, tmp_path):
+    from contextlib import contextmanager
+    checkpoints, finished = [], []
+    @contextmanager
+    def scope(unit, **kwargs):
+        checkpoints.append((unit, "begin"))
+        yield
+        checkpoints.append((unit, "end"))
+    recorder = SimpleNamespace(_errors=[], unit_scope=scope,
+                               snapshot=lambda label, **kwargs: checkpoints.append(label))
+    roster = [{"unit_id": "g:fixture", "module": "fixture"}]
+    plan = {"max_execute_calls": 2, "max_invocations_per_unit": 2,
+            "output_directory": str(tmp_path),
+            "unit_boundary": "native_apply", "canonical_roster": roster, "observed_units": roster,
+            "qualification_prefix": {"native_invocations": 1, "complete_engine_capture": False}}
+    monkeypatch.setattr(worker_module, "claim", lambda: (recorder, plan))
+    worker = worker_module.ResourceCaptureWorker()
+    worker._resource_invocations = {"fixture": 0}
+    worker._resource_active = worker._resource_armed = True
+    monkeypatch.setattr(worker_module, "tensor_leaves", lambda value, name: [])
+    def finish(**kwargs):
+        finished.append(kwargs)
+        return {"receipt": {"status": "incomplete", "fixed_resources": None}}
+    worker._resource_write_capture = finish
+    boundary = {"unit_id": "g:fixture", "module": "fixture", "boundary": "dense.quant_method.apply", "includes_router": False}
+    with worker._resource_observe_apply(boundary, {"arguments": (), "result": None}):
+        pass
+    assert checkpoints == [("g:fixture", "begin"), ("g:fixture", "end")]
+    assert finished == [{"prefix_only": True}]
+    assert worker._resource_prefix_closed and not worker._resource_active
+    assert "unobserved" in recorder._errors[0]
+    step = SimpleNamespace(total_num_scheduled_tokens=1)
+    assert worker.execute_model(step) is step
+    assert worker.sample_tokens("stock result") == "stock result"
+    assert worker.resource_capture_finish()["receipt"]["fixed_resources"] is None
+    assert len(checkpoints) == 2 and len(finished) == 1
+    assert list(tmp_path.glob("prefix-observer-worker-*.pstats"))
+
+
+@pytest.mark.parametrize("defect", ["two_invocations", "boolean_count", "claims_complete", "partial_roster", "forward_boundary"])
+def test_prefix_qualification_refuses_ambiguous_or_full_capture_claims(monkeypatch, worker_module, defect):
+    roster = [{"unit_id": "g:fixture", "module": "fixture"}]
+    plan = {"unit_boundary": "native_apply", "canonical_roster": roster, "observed_units": roster,
+            "qualification_prefix": {"native_invocations": 1, "complete_engine_capture": False}}
+    if defect == "two_invocations":
+        plan["qualification_prefix"]["native_invocations"] = 2
+    elif defect == "boolean_count":
+        plan["qualification_prefix"]["native_invocations"] = True
+    elif defect == "claims_complete":
+        plan["qualification_prefix"]["complete_engine_capture"] = True
+    elif defect == "partial_roster":
+        plan["observed_units"] = []
+    else:
+        plan["unit_boundary"] = "module_forward"
+    monkeypatch.setattr(worker_module, "claim", lambda: (SimpleNamespace(), plan))
+    with pytest.raises(ValueError, match="prefix qualification"):
+        worker_module.ResourceCaptureWorker()
+
+
 def test_failed_stock_execute_still_records_boundary_and_disarms(monkeypatch, worker_module):
     seen = []
     recorder = SimpleNamespace(snapshot=lambda label, **kwargs: seen.append(label))

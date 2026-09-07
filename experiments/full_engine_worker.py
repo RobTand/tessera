@@ -6,6 +6,7 @@ audits the installed core before and after this worker runs.
 """
 import json
 import hashlib
+import cProfile
 import os
 import sys
 from contextlib import contextmanager
@@ -197,7 +198,9 @@ def full_engine_runtime_observation(plan):
             "configuration_sha256": plan["identity"]["configuration_sha256"],
             "observer_engine_args": plan["observer_engine_args"],
             "observer_environment": plan["observer_environment"], "scope": plan["scope"]},
-        "source": {"full_engine_worker_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest()},
+        "source": {"full_engine_worker_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
+            "full_engine_resources_sha256": hashlib.sha256(Path(__file__).with_name("full_engine_resources.py").read_bytes()).hexdigest(),
+            "full_engine_snapshot_codec_sha256": hashlib.sha256(Path(__file__).with_name("full_engine_snapshot_codec.py").read_bytes()).hexdigest()},
         "instrumentation": {"resource_collector": {"library_sha256": plan["collector_library_sha256"],
                                                    "loaded_path": plan["collector_library"]}
                                                   if plan.get("observation_mode", "resources") == "resources" else None,
@@ -212,6 +215,14 @@ def full_engine_runtime_observation(plan):
 class ResourceCaptureWorker(Worker):
     def __init__(self, *args, **kwargs):
         self._resource_recorder, self._resource_plan = claim()
+        prefix = self._resource_plan.get("qualification_prefix")
+        if prefix is not None:
+            if (type(prefix) is not dict or type(prefix.get("native_invocations")) is not int
+                    or prefix["native_invocations"] != 1 or prefix.get("complete_engine_capture") is not False
+                    or self._resource_plan.get("unit_boundary") != "native_apply"
+                    or not self._resource_plan.get("canonical_roster")
+                    or self._resource_plan.get("observed_units") != self._resource_plan["canonical_roster"]):
+                raise ValueError("prefix qualification requires exactly one invocation of the full native roster")
         self._resource_blas_observer = None
         self._resource_calls = 0
         self._resource_armed = False
@@ -224,6 +235,8 @@ class ResourceCaptureWorker(Worker):
         self._resource_events = []
         self._resource_native_boundaries = None
         self._resource_native_patches = None
+        self._resource_prefix_closed = False
+        self._resource_prefix_result = None
         super().__init__(*args, **kwargs)
 
     def _resource_owners(self):
@@ -253,6 +266,8 @@ class ResourceCaptureWorker(Worker):
                     "existing runtime state/workspace reference; candidate and workload dependence unresolved")
 
     def _resource_checkpoint(self, name):
+        if self._resource_prefix_closed:
+            return
         self._resource_recorder.snapshot(name, owners=self._resource_owners())
 
     def init_device(self):
@@ -326,8 +341,23 @@ class ResourceCaptureWorker(Worker):
             "execute_call": self._resource_calls,
             "input_tensors": [{"name": key, "shape": list(tensor.shape), "dtype": str(tensor.dtype)}
                               for key, tensor in tensor_leaves(call["arguments"], "input")]})
-        with self._resource_recorder.unit_scope(unit_id, owners=owners):
-            yield
+        profiler = cProfile.Profile() if self._resource_plan.get("qualification_prefix") else None
+        if profiler is not None:
+            profiler.enable()
+        try:
+            with self._resource_recorder.unit_scope(unit_id, owners=owners):
+                yield
+            if self._resource_plan.get("qualification_prefix"):
+                self._resource_active = False
+                self._resource_prefix_closed = True
+                self._resource_recorder._errors.append(
+                    "bounded first-native prefix qualification; the remaining engine execution is unobserved")
+                self._resource_prefix_result = self._resource_write_capture(prefix_only=True)
+        finally:
+            if profiler is not None:
+                profiler.disable()
+                path = Path(self._resource_plan["output_directory"]) / f"prefix-observer-worker-{os.getpid()}.pstats"
+                profiler.dump_stats(str(path))
 
     def initialize_from_config(self, kv_cache_config):
         self._resource_checkpoint("before_kv_allocation")
@@ -354,7 +384,8 @@ class ResourceCaptureWorker(Worker):
             self._resource_startup_calls += 1
             return super().execute_model(scheduler_output)
         self._resource_calls += 1
-        self._resource_active = self._resource_calls <= self._resource_plan["max_execute_calls"]
+        self._resource_active = (not self._resource_prefix_closed
+                                 and self._resource_calls <= self._resource_plan["max_execute_calls"])
         if self._resource_active:
             self._resource_scheduler_steps.append({
                 "execute_call": self._resource_calls,
@@ -392,6 +423,13 @@ class ResourceCaptureWorker(Worker):
                 "scope": "subsequent execution belongs to the explicit observation workload"}
 
     def resource_capture_finish(self):
+        if self._resource_plan.get("qualification_prefix"):
+            if self._resource_prefix_result is None:
+                raise RuntimeError("first-native prefix qualification did not produce its bounded capture")
+            return self._resource_prefix_result
+        return self._resource_write_capture()
+
+    def _resource_write_capture(self, *, prefix_only=False):
         if not self._resource_armed:
             raise RuntimeError("cannot finish before the observation workload was armed")
         for handle in self._resource_hooks:
@@ -432,6 +470,8 @@ class ResourceCaptureWorker(Worker):
             "startup_execute_calls": self._resource_startup_calls,
             "scheduler_steps": self._resource_scheduler_steps,
             "kv_configuration": getattr(self, "_resource_kv_description", None),
-            "scope": "intrusive raw engine resource pass; timing and admission ineligible"
+            "qualification_prefix": self._resource_plan.get("qualification_prefix") if prefix_only else None,
+            "scope": ("bounded startup/first-native prefix only; subsequent request execution unobserved"
+                      if prefix_only else "intrusive raw engine resource pass; timing and admission ineligible")
         }, sort_keys=True))
         return {"directory": str(directory), "receipt": result}

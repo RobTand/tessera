@@ -74,6 +74,9 @@ def prepare(args):
     roster = canonical_roster(census)
     by_id = {row["unit_id"]: row for row in roster}
     mode = getattr(args, "observation_mode", "resources")
+    prefix_only = getattr(args, "qualify_first_native_prefix", False)
+    if prefix_only and (mode != "resources" or not args.all_units or args.unit):
+        raise ValueError("first-native prefix qualification requires resource mode and the complete native roster")
     units = roster if getattr(args, "all_units", False) else [by_id[name] for name in args.unit]
     if len(units) != len({row["unit_id"] for row in units}):
         raise ValueError("duplicate observed unit")
@@ -103,6 +106,11 @@ def prepare(args):
         workload = {"messages": [{"role": "user", "content": "Return exactly the word blue."}],
                     "scope": "two scheduled steps for raw allocation observation; no quality claim"}
     workload["sampling"] = {"temperature": 0.0, "seed": 0, "max_tokens": 2, "ignore_eos": True}
+    if prefix_only:
+        workload["resource_qualification"] = {
+            "scope": "startup and first native invocation only; remaining request execution is unobserved",
+            "native_invocations": 1, "complete_engine_capture": False,
+            "profiler": "cProfile around first native observation and capture finalization"}
     if mode == "timings":
         if args.calibration is None or not args.all_units or args.unit:
             raise ValueError("timing observation requires the canonical calibration and --all-units without a partial --unit selection")
@@ -140,6 +148,9 @@ def prepare(args):
             "scope": "intrusive raw resource capture; no timing, fixed-resource or release admission"}
     plan["observation_mode"] = mode
     plan["unit_boundary"] = "native_apply" if args.all_units else "module_forward"
+    if prefix_only:
+        plan["qualification_prefix"] = workload["resource_qualification"]
+        plan["scope"] = "bounded first-native resource prefix qualification; incomplete engine capture, no admission"
     if reference is not None:
         plan["reference_checkpoint"] = reference
         plan["model"] = reference["checkpoint"]
@@ -202,6 +213,7 @@ def run(plan_path):
                      "outputs": [{"text": item.text, "token_ids": item.token_ids,
                                   "finish_reason": item.finish_reason} for item in response.outputs]}
                     for response in responses],
+        "qualification_prefix": plan.get("qualification_prefix"),
         "full_model_fixed_resources_complete": False, "timings": None,
         "admission": "not_implemented"}
     (output / "run.json").write_text(json.dumps(result, sort_keys=True, indent=2) + "\n")
@@ -269,6 +281,7 @@ def main():
     parser.add_argument("--observation-mode", choices=("resources", "timings"), default="resources")
     parser.add_argument("--timing-samples", type=int, default=1)
     parser.add_argument("--reference-proof", type=Path)
+    parser.add_argument("--qualify-first-native-prefix", action="store_true")
     args = parser.parse_args()
     if args.run_plan:
         run(args.run_plan)

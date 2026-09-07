@@ -55,7 +55,9 @@ raw engine allocation recorder, opt-in stock worker startup integration,
 resolved KV group/spec and selected capacity assertions, persistent runtime
 buffer/workspace references, complete native-apply observation, selected
 original-wire checkpoint binding, direct retention of native Torch snapshot
-values with exact history-prefix hashes (against base `81999058`), and separate same-run timing partitions with
+values with exact history-prefix hashes (against base `81999058`), shared frame
+values/canonical row chunks and lossless compact capture v2 (against base
+`150280b8`), an explicitly incomplete first-native-prefix qualification, and separate same-run timing partitions with
 explicit incomplete admission boundaries (§2.4). No full-engine fixed-resource price or runtime qualification
 is established by the raw ledger.
 
@@ -779,16 +781,33 @@ owners and unit invocation boundaries. Its constructor requires an explicit
 `max_checkpoints` budget covering planned boundaries and terminal capture;
 closing checkpoints remain reserved. Per-attempt host elapsed time and
 encoded history-prefix size disclose the observer's resource-pass cost, with no
-GPU timing interpretation. Torch's returned Python snapshot is retained directly;
-the exact canonical history prefix is encoded once for its unchanged SHA-256,
-and the complete capture is serialized at finish. The former full-snapshot
-JSON round trip is absent; its historical size field is `null` in new captures.
+GPU timing interpretation. Torch's returned Python snapshot is retained directly.
+`experiments/full_engine_snapshot_codec.py` interns exact repeated frame arrays,
+reuses canonical row chunks for unchanged history rows, and streams the same
+expanded JSON bytes through SHA-256. Changed rows and timestamp revisions keep
+their original exact prefix checks. Logical prefix size, encoded/reused row
+counts, shallow cache storage and process RSS/high-water observations distinguish
+logical bytes from physical observer overhead; PB aggregate peak is separate.
+Capture v2 writes a hash-bound frame dictionary and explicit frame references.
+The parser verifies and expands it to the exact legacy v1 JSON values; legacy
+v1 captures remain readable. The ledger's `capture_sha256` remains the expanded
+v1 canonical digest, while `artifacts.capture.json.sha256` binds the actual
+compact file bytes. Finalization size, encoding/write time and parser time are
+retained separately. The former full-snapshot JSON round trip is absent;
+its historical size field is `null` in new captures.
 The CPU parser deduplicates aliases,
 replays address generations through completed frees, and preserves outputs
 whose lifetime crosses a unit boundary. Raw history/checkpoint, segment and
 CUPTI evidence must reconcile; unknown owners, external/static allocations,
 missing records and potentially truncated history stay incomplete. Capture
 failures and exact raw-file hashes remain in the receipt.
+
+`--qualify-first-native-prefix` is a separate resource-observer qualification:
+it retains startup and the first complete native invocation, closes collection,
+and lets the remaining stock request execute unobserved. Its workload identity
+and scope explicitly declare the prefix; capture errors retain the missing
+full-unit invocations and its incomplete status. It cannot substitute for a
+full capture. Ordinary full-mode identities and checkpoint budgets are unchanged.
 Adjacent snapshots retain exact revisions to earlier history fields. The
 parser reconstructs each original prefix byte-for-byte from recorded
 `time_us` revisions and recognizes Torch's marker appended after snapshot
