@@ -306,10 +306,11 @@ def test_the_geometry_gate_emptying_the_plan_is_refused_before_publication(
     divide.  The 64-row partition would have been fine on its own.  So no
     module survives, and before the fix this call did not raise at all.
 
-    The guard is conditioned on ``args.layers is None``, exactly as its two
+    The guard is conditioned on ``args.layers != 0``, exactly as its two
     siblings are, so an explicit ``--layers 0`` remains exempt and still
     writes a passthrough copy -- see
-    ``test_layers_zero_still_writes_a_passthrough_copy_when_geometry_demotes_everything``.
+    ``test_layers_zero_still_writes_a_passthrough_copy_when_geometry_demotes_everything``
+    -- while a smoke bound does not; see the sibling below.
     """
     entry = construction_entry_from_receipt(
         _lfm_receipt_with_output_sizes((16, 16, 64), (16, 16)))
@@ -356,3 +357,31 @@ def test_layers_zero_still_writes_a_passthrough_copy_when_geometry_demotes_every
     with safe_open(str(out / "model.safetensors"), framework="pt") as handle:
         keys = set(handle.keys())
     assert IN_PROJ_TENSOR in keys and OUT_PROJ_TENSOR in keys
+
+
+def test_a_smoke_bound_that_empties_the_plan_is_refused_like_the_default(
+        tmp_path, monkeypatch):
+    """tessera#391: the guards were exempted by ``--layers`` at all, not by 0.
+
+    ``--layers 0`` is a deliberate passthrough copy and an empty
+    ``config_groups`` is exactly what it asks for.  ``--layers N`` for N > 0 is
+    a different request -- a smoke bound, as the exporter itself calls it when
+    it refuses a rung past the bound ("or encode past the smoke bound").  The
+    caller asked for a *partial encode*, so an encode that produced nothing is
+    the same #387 fault under a smaller roster, and the wider exemption left it
+    reachable on the branch that fixed it.  Reproduced on both bases before the
+    fix: ``config_groups: {}``, ``model.safetensors`` written, exit 0.
+
+    Same fixture as the sibling above, so the only difference between the two
+    calls is the flag.
+    """
+    entry = construction_entry_from_receipt(
+        _lfm_receipt_with_output_sizes((16, 16, 64), (16, 16)))
+    with pytest.raises(SystemExit) as excinfo:
+        _export(tmp_path, monkeypatch, entry, "--layers", "2")
+    message = str(excinfo.value)
+    assert "nothing is left to encode" in message, message
+    assert "config_groups" in message and "--layers 0" in message, message
+    out = tmp_path / "out"
+    assert not out.exists() or not list(out.glob("*.safetensors")), (
+        "the refusal fired only after writing the checkpoint")
