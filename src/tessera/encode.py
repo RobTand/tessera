@@ -1284,6 +1284,17 @@ def e4m3_positive_values(device=None) -> torch.Tensor:
     )
 
 
+def _host_floats(values: "list[torch.Tensor]") -> "list[float]":
+    """Read a whole comparison back in ONE device drain.
+
+    ``float(t)`` per candidate is one ``cudaStreamSynchronize`` per candidate,
+    and a refit compares three of them.  Stacking first converts every element
+    by the same float32 -> float64 widening ``float()`` performed, so the
+    numbers the accept test sees are the numbers it always saw.
+    """
+    return torch.stack(values).double().tolist()
+
+
 def _lut_cost(targets: torch.Tensor, weights: torch.Tensor, table: torch.Tensor) -> torch.Tensor:
     """``sum_h A_h (s_h - nearest(table, s_h))^2`` -- the plane's weighted error."""
     gap = (targets[:, None] - table[None, :]).abs().amin(dim=1)
@@ -1886,9 +1897,9 @@ def _refit_scales_lut_metric(
         B = (W.reshape(rows, nb, half) * Ub * h).sum(dim=2)
         target = torch.where(A > 0, B / A.clamp_min(1e-30), S)
 
-        def cost(C: torch.Tensor) -> float:
+        def cost(C: torch.Tensor) -> torch.Tensor:
             q = A * C * C - 2.0 * B * C
-            return float(q.sum() if rw is None else (q * rw).sum())
+            return q.sum() if rw is None else (q * rw).sum()
     else:
         H = metric.to(W.dtype).to(W.device)
         Hd = torch.diagonal(H.reshape(nb, half, nb, half), dim1=0, dim2=2).permute(2, 0, 1)
@@ -1929,10 +1940,10 @@ def _refit_scales_lut_metric(
         t = torch.where(den > 0, num / den.clamp_min(1e-30), torch.zeros_like(num))
         target = S + t.clamp_min(0.0).unsqueeze(1) * step
 
-        def cost(C: torch.Tensor) -> float:
+        def cost(C: torch.Tensor) -> torch.Tensor:
             Ec = W - C.repeat_interleave(half, dim=1) * U
             q = (Ec @ H) * Ec
-            return float(q.sum() if rw is None else (q * rw).sum())
+            return q.sum() if rw is None else (q * rw).sum()
 
     stepped = target if _REFIT_DIAG is None else target.clone()
     valid = (A > 0) & (target > 0)
@@ -1946,7 +1957,6 @@ def _refit_scales_lut_metric(
     flat_t, flat_w = target.reshape(-1), weights.reshape(-1)
 
     best_bytes, best_index, best_eff = table_bytes, index.long(), S
-    before = best = cost(S)
     won = "kept"
     if _LUT_LANDING == "table":
         old_table = _lut_values(table_bytes, global_scale)
@@ -1959,11 +1969,18 @@ def _refit_scales_lut_metric(
         # makes this monotone once the cross-block terms are charged -- under a
         # separable metric it never wins, because re-assignment lands every block
         # on its own minimiser.
+        candidates = []
         for label, cand_bytes, cand_table in (("old-table", table_bytes, old_table),
                                               ("new-table", new_bytes, new_table)):
             idx = _nearest(flat_t, cand_table)
             eff = cand_table[idx].reshape(rows, nb)
-            here = cost(eff)
+            candidates.append((label, cand_bytes, idx, eff))
+        # One drain for the whole comparison: the incumbent and both candidates
+        # are scored on the device and read back together.
+        before, *scores = _host_floats([cost(S)]
+                                       + [cost(e) for _, _, _, e in candidates])
+        best = before
+        for (label, cand_bytes, idx, eff), here in zip(candidates, scores):
             if here < best:
                 best, best_bytes, best_index, best_eff, won = here, cand_bytes, idx, eff, label
     else:
@@ -1981,7 +1998,8 @@ def _refit_scales_lut_metric(
             cand = free[_nearest(flat_t, free)].reshape(rows, nb)
         else:
             cand = target
-        here = cost(cand)
+        before, here = _host_floats([cost(S), cost(cand)])
+        best = before
         if here < best:
             best, best_eff, won = here, cand, _LUT_LANDING
     landed = best
@@ -2047,8 +2065,8 @@ def _refit_scales_lut_metric(
             "metric_ndim": int(metric.ndim),
             "rows": int(rows), "blocks": int(nb),
             "before": before,
-            "stepped": cost(stepped),
-            "continuous": cost(target),
+            "stepped": float(cost(stepped)),
+            "continuous": float(cost(target)),
             "landed": landed,
             "landing": _LUT_LANDING,
             "reverted": int((~valid).sum()),
@@ -2246,16 +2264,17 @@ def _refit_scales_lut(
     # a held half under the new table is charged at its true cost and the
     # step is monotone with no hole: under the old table each valid half
     # lands on its exact minimiser and each held half on the entry it holds.
-    def exact_cost(table: torch.Tensor) -> "tuple[torch.Tensor, float]":
+    def exact_cost(table: torch.Tensor) -> "tuple[torch.Tensor, torch.Tensor]":
         index = _nearest(targets, table)
         c = table[index]
-        return index, float((A * c * c - 2.0 * B * c).sum())
+        return index, (A * c * c - 2.0 * B * c).sum()
 
     old_table = _lut_values(table_bytes, global_scale)
     new_bytes, new_table = _fit_lut(targets, weights, global_scale, table_bytes.numel(),
                                     exact=exact_fit)
     old_index, old_cost = exact_cost(old_table)
     new_index, new_cost = exact_cost(new_table)
+    old_cost, new_cost = _host_floats([old_cost, new_cost])
     if new_cost < old_cost:
         table_bytes, table, index = new_bytes, new_table, new_index
     else:
