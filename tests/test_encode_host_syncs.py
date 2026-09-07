@@ -7,15 +7,15 @@ ahead and enqueue the next block's work.  The #283 profile measured that as
 92 % of self CPU in ``cudaStreamSynchronize`` on a shipping anchor row.
 
 These tests count those reads with torch's own instrument
-(``torch.cuda.set_sync_debug_mode``) and hold each site to a bound derived
-from what the site actually has to decide, never to a round number:
+(``torch.cuda.set_sync_debug_mode``) and distinguish per-trial/per-block reads
+from the intended per-pass or per-sweep decisions:
 
 * ``_fit_lut``'s swap refinement decides one accept per *index*, not one per
   *trial*, so its host reads must not scale with the trial count.
 * ``_coupled_landing``'s sweep decides one stop test and one move count per
   *sweep*, not per block.
 * ``viterbi_window_fused`` returns one ``sse`` float per call, not per chunk,
-  and none at all when the caller does not ask for it.
+  regardless of the chunk count.
 
 The bytes are pinned separately, by oracles that re-implement the sequential
 semantics these rewrites had to preserve.
@@ -32,12 +32,12 @@ cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="a CUDA path")
 
 
 def sync_ops(fn):
-    """``(result, [warning text])`` -- every synchronising op ``fn`` performed.
+    """``(result, [warning text])`` -- instrumented synchronizing ops ``fn`` performed.
 
-    ``set_sync_debug_mode("warn")`` is torch's own accounting of the call
-    sites that force a ``cudaStreamSynchronize``; counting them is cheaper
-    and sharper than reading a profiler table, and it is the same set the
-    profiler's ``cudaStreamSynchronize`` row aggregates.
+    ``set_sync_debug_mode("warn")`` is torch's own accounting of
+    instrumented call sites that synchronize. The prototype does not promise
+    exhaustive coverage of CUDA runtime synchronization; full runtime counts
+    belong to the profiler evidence, rather than this warning counter.
     """
     torch.cuda.synchronize()
     with warnings.catch_warnings(record=True) as seen:
