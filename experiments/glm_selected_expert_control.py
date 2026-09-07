@@ -84,7 +84,6 @@ def run(args, selected, templates, scheme, layer, method, w13, w2, s13, s2):
         del compact_first, compact_second
 
         allocated_before = torch.cuda.memory_allocated()
-        torch.cuda.reset_peak_memory_stats()
         with torch.profiler.record_function('selected_expert_window_decode'):
             first = packed['w13'].decode(selected_ids, max_experts_per_chunk=chunk).view(torch.float8_e4m3fn)
             second = packed['w2'].decode(selected_ids, max_experts_per_chunk=chunk).view(torch.float8_e4m3fn)
@@ -106,7 +105,9 @@ def run(args, selected, templates, scheme, layer, method, w13, w2, s13, s2):
             'deliberately_wrong_mapping': wrong_error,
             'all_selected_tiles_and_scales_exact': True,
             'allocated_before_decode': allocated_before,
-            'peak_allocated_with_decode_and_oracle': torch.cuda.max_memory_allocated(),
+            # Preserve the whole-control allocator high-water mark. These
+            # functional controls do not claim an isolated per-case peak.
+            'process_peak_allocated_after_case': torch.cuda.max_memory_allocated(),
             'fresh_decoded_weight_bytes': first.numel() + second.numel()})
         write(args.out, 'selected-expert-progress.json', results)
         del first, second, got, wrong, expected, mapped, compact_kernel
