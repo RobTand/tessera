@@ -298,6 +298,12 @@ def test_recorder_publishes_hash_bound_raw_inputs_and_keeps_unknowns(capture, mo
     monkeypatch.setattr(module, "NativeMemoryCollector", Collector)
     monkeypatch.setattr(module, "_torch", lambda: SimpleNamespace(cuda=cuda))
     monkeypatch.setattr(module.os, "getpid", lambda: capture["process_id"])
+    encoded_values = []
+    original_encode = module._json_bytes
+    def observe_encoding(value):
+        encoded_values.append(value)
+        return original_encode(value)
+    monkeypatch.setattr(module, "_json_bytes", observe_encoding)
     recorder = module.FullEngineResourceRecorder("unused.so", capture["identity"], max_checkpoints=2)
     recorder.snapshot("startup")
     with pytest.raises(RuntimeError, match="checkpoint budget"):
@@ -320,7 +326,8 @@ def test_recorder_publishes_hash_bound_raw_inputs_and_keeps_unknowns(capture, mo
     assert raw["capture"]["max_checkpoints"] == 2
     costs = raw["observer_cost"]["snapshot_attempts"]
     assert len(costs) == 2
-    assert all(c["host_observer_elapsed_ns"] > 0 and c["serialized_snapshot_bytes"] > 0 for c in costs)
+    assert not any(isinstance(value, dict) and "device_traces" in value for value in encoded_values)
+    assert all(c["host_observer_elapsed_ns"] > 0 and c["serialized_history_prefix_bytes"] > 0 for c in costs)
     assert raw["observer_cost"]["gpu_timing_eligible"] is False
     with pytest.raises(RuntimeError, match="closed"):
         recorder.snapshot("late")

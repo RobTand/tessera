@@ -54,7 +54,8 @@ Re-stamped 2026-09-07 on `codex/full-engine-resource-ledger` for the
 raw engine allocation recorder, opt-in stock worker startup integration,
 resolved KV group/spec and selected capacity assertions, persistent runtime
 buffer/workspace references, complete native-apply observation, selected
-original-wire checkpoint binding, and separate same-run timing partitions with
+original-wire checkpoint binding, direct retention of native Torch snapshot
+values with exact history-prefix hashes (against base `81999058`), and separate same-run timing partitions with
 explicit incomplete admission boundaries (§2.4). No full-engine fixed-resource price or runtime qualification
 is established by the raw ledger.
 
@@ -777,8 +778,12 @@ It pairs synchronized Torch allocator snapshots/history with named storage
 owners and unit invocation boundaries. Its constructor requires an explicit
 `max_checkpoints` budget covering planned boundaries and terminal capture;
 closing checkpoints remain reserved. Per-attempt host elapsed time and
-serialized snapshot size disclose the observer's resource-pass cost, with no
-GPU timing interpretation. The CPU parser deduplicates aliases,
+encoded history-prefix size disclose the observer's resource-pass cost, with no
+GPU timing interpretation. Torch's returned Python snapshot is retained directly;
+the exact canonical history prefix is encoded once for its unchanged SHA-256,
+and the complete capture is serialized at finish. The former full-snapshot
+JSON round trip is absent; its historical size field is `null` in new captures.
+The CPU parser deduplicates aliases,
 replays address generations through completed frees, and preserves outputs
 whose lifetime crosses a unit boundary. Raw history/checkpoint, segment and
 CUPTI evidence must reconcile; unknown owners, external/static allocations,

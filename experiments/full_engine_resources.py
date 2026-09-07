@@ -79,6 +79,8 @@ def history_revision(previous, current):
     """
     changes = []
     for index, (before, after) in enumerate(zip(previous, current)):
+        if before == after:
+            continue
         fields = {}
         for key in sorted(before.keys() | after.keys()):
             if key not in before or key not in after or before[key] != after[key]:
@@ -235,8 +237,8 @@ class FullEngineResourceRecorder:
     Checkpoints synchronize the selected device and copy allocator snapshots;
     this is an intrusive resource pass, never a timing pass. ``max_checkpoints``
     must cover the caller's planned boundaries plus the terminal checkpoint.
-    Per-snapshot host elapsed time and serialized bytes record observer cost;
-    serialized size is not an estimate of Python's resident memory. No vLLM worker
+    Per-snapshot host elapsed time and encoded history bytes record observer cost;
+    encoded size is not an estimate of Python's resident memory. No vLLM worker
     hooks or configuration changes are installed here. ``finish`` preserves
     capture failures and raw inputs, with full fixed-resource admission false.
     """
@@ -286,7 +288,8 @@ class FullEngineResourceRecorder:
             self._errors.append("planned checkpoint budget exhausted before snapshot: " + label)
             raise RuntimeError("planned checkpoint budget exhausted")
         started = perf_counter_ns()
-        cost = {"label": label, "serialized_snapshot_bytes": None}
+        cost = {"label": label, "serialized_snapshot_bytes": None,
+                "serialized_history_prefix_bytes": None}
         try:
             self._torch.cuda.synchronize(self.device)
             context_id = self._collector.current_context_id()
@@ -294,14 +297,19 @@ class FullEngineResourceRecorder:
                 raise ValueError("CUDA context changed during engine capture")
             self._context_id = context_id
             rows = [_owner_row(owner) for owner in owners]
-            encoded = _json_bytes(self._torch.cuda.memory._snapshot())
-            cost["serialized_snapshot_bytes"] = len(encoded)
-            raw = json.loads(encoded)
+            # Torch materializes a fresh Python snapshot. Retain that owned
+            # value; serializing and decoding the entire history plus segment
+            # stacks here duplicates the exact trace encoding below at every
+            # native boundary. The complete capture is serialized at finish.
+            raw = self._torch.cuda.memory._snapshot()
             trace = raw["device_traces"][self.device]
+            encoded_trace = _json_bytes(trace)
+            cost["serialized_history_prefix_bytes"] = len(encoded_trace)
             timestamp = self._collector.mark(label)
             checkpoint = {"label": label, "trace_index": len(trace),
                           "history_boundary": "before_current_snapshot_marker",
-                          "cupti_timestamp_ns": timestamp, "history_prefix_sha256": _sha(trace),
+                          "cupti_timestamp_ns": timestamp,
+                          "history_prefix_sha256": hashlib.sha256(encoded_trace).hexdigest(),
                           "segments": raw["segments"], "owners": rows}
             if self._last_snapshot is not None:
                 checkpoint["previous_history_revision"] = history_revision(
