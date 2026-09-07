@@ -73,3 +73,18 @@ CPU tests pass with zero skips or missing modules. The source scripts match the
 measured harness bytes. `delivery-cpu-audit.json` rehashes the terminal CAS
 `cc71e51a1c37064462986606c7f5c24e303a6fa1338b3abd043f832f1a7b383a`
 and canonical receipt and confirms exit zero and scope cleanup.
+
+The first delivery CI exposed a missing test dependency declaration: its
+intentional no-Torch environment cannot import serving telemetry for the two
+origin-observer tests. PB `ef73f9c578812459e5db307df06cdf73a50df9242ede8b2bcc0052413bdae758`
+reproduced both import failures while the import-safety test passed. The two
+telemetry tests now declare their Torch dependency individually; the import
+safety check remains collected without Torch. No measured harness changed.
+PB `9cdd72253473f483891471b21957dc5559053d79a8a6371508fadb7e759c3655`
+then passed four import/reference checks with exactly two explicit Torch skips
+and no missing modules. PB
+`e0c564a889e19f563236adae95e37e8a825ed6295ac6e4502de35d55c6ec1de9`
+compiled the changed test and passed all three origin tests with Torch installed
+and GPU hidden, with zero skips or missing collection. The terminal/CAS audit
+`optional-torch-tests-audit.json` beside the full-reference evidence has SHA256
+`525bbb742072399cd6a6c6abeb559f74e39d8faba34c0e17a1b832e59edf3e4e`.

@@ -4,6 +4,7 @@ import os
 from pathlib import Path
 import sys
 from types import SimpleNamespace
+import pytest
 
 
 def load_probe():
@@ -16,6 +17,7 @@ def load_probe():
 
 
 def test_canonical_loaded_origins_are_accepted():
+    pytest.importorskip('torch', reason='serving telemetry requires torch')
     record = load_probe().observed(SimpleNamespace(named_modules=lambda: []))['package_identity']
     assert record.get('loaded_module_origins_verified', True)
     assert record['fresh_encoder_source_sha256'] == record['independently_recomputed_source_sha256']
@@ -27,6 +29,7 @@ def test_probe_import_does_not_consume_worker_arguments(monkeypatch):
 
 
 def test_foreign_loaded_source_is_rejected_even_when_package_hash_matches(tmp_path, monkeypatch):
+    pytest.importorskip('torch', reason='serving telemetry requires torch')
     probe = load_probe()
     empty_model = SimpleNamespace(named_modules=lambda: [])
     before = probe.observed(empty_model)['package_identity']
