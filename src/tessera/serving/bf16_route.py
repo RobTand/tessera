@@ -438,7 +438,7 @@ class PreparedBf16Gemv:
         return any(bool(r.scalar("rate_one")) for r in self.__roles)
 
     def resident_bytes(self) -> int:
-        """Device bytes the repacked wire and its tables occupy."""
+        """Tensor bytes retained by the wire and tables, including CPU runs."""
         return sum(t.numel() * t.element_size()
                    for r in self.__roles for t in r.tensors)
 
