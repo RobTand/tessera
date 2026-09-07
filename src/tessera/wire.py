@@ -212,6 +212,18 @@ def unpack_body(
     # elsewhere.  A stored-label position carries ``rate + 1`` bits, which still
     # fits a byte at every serialisable grid's cap (7 + 1).
     widest = max((max(field_widths(rate, span)) for rate in rates), default=0)
+    target = torch.device(device or "cpu")
+    if (target.type == "cuda" and widest <= 8
+            and all(rate >= 0 for rate in rates)
+            and (span == 1 or all(rate > 0 for rate in rates))):
+        try:
+            from .kernel_wire import unpack_body_cuda
+        except ModuleNotFoundError as exc:
+            # The kernels extra is optional; plain torch readers remain valid.
+            if exc.name != "triton":
+                raise
+        else:
+            return unpack_body_cuda(data, rates, rows, target, span)
     out = np.zeros((rows, len(rates)), dtype=np.uint8 if widest <= 8 else np.int32)
     cursor = 0
     for column, rate in enumerate(rates):
