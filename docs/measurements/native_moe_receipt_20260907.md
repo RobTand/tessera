@@ -271,3 +271,25 @@ module and exited5; it is missing-tool evidence, not the behavioral regression.
 New native request, runtime preflight and independent panel identities are
 required after this resolver/config change. No previous resource observation
 is relabeled as belonging to the new configuration.
+
+## Source checkout and installed package identity
+
+Canonical producer382's source-tree encoder hash is
+`57809bff862b880dc397e6d271a80c04d6c87d1af3bba12c076648fc5443355c`.
+The native runtime's installed-package hash is
+`8239d56568b0b2298a05c61b7a2dc0c85b7fc76a25c4bb6dae0fe2d7ecdf428b`.
+Both use the same `encoder_source_sha256` algorithm. Packaging excludes
+`tessera._dev*` in `pyproject.toml`: five development Python files exist in
+the archive and are absent from the installation. Every one of the 67 installed
+files matches the archive's bytes and size, with no extra installed file.
+Hashing the installed subset of the archive reproduces the runtime hash exactly.
+The source-code hash includes 71 archive files or 66 installed files; those
+counts exclude the separately sealed runtime contract JSON.
+
+This is a verified packaging distinction, not evidence of JIT source mutation.
+The producer source-tree and installed serving package identities remain
+distinct scopes and cannot replace one another. Full-engine serving observations
+must join the actual installed package identity and file roster of the native
+capture. The read-only artifact comparison is retained at
+`/mnt/shared/tessera-native376-resource/native-moe-original-r1024/package-identity-diagnostic.json`,
+SHA256 `aa2560d05b1a666cca404f01c2bd7649c3fdb7f38b2f18f9cf126bd5308bde3d`.
