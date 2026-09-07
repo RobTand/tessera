@@ -131,3 +131,26 @@ Passing CAS payload:
 `25a2d52775ae50fea37640ca16ad00226fe30fc02bc85e25dd093fbfa522a26a`;
 receipt:
 `ea248afbf45edd19b2d2d8ac979b8276f29d703da8e559a116292aab2ef7f5e9`.
+
+## Validation-wrapper gate correction — 2026-09-07
+
+PR #419's first bytes-only CI run reported one failure in
+`test_every_wrapper_that_starts_a_container_gates_and_names_no_digest`:
+`device_unpack_check.sh` had not called the shared `runtime_image_require`
+gate. Its explicit image digest alone did not satisfy the wrapper policy.
+The wrapper now uses that existing gate and forwards its resolved image
+metadata into the container. Its image, CPU/GPU mode handling and all reader
+source files are unchanged; the completed functional and performance results
+above were not rerun.
+
+PB `f49766005c00` ran `tests/test_runtime_image_pin.py` on dl380g10 with four
+xdist workers/native threads bounded to one: 36 passed, zero skipped and no
+CUDA allocation. The CPU-only controller reported 71 Torch-dependent modules
+not collected outside this targeted policy surface; this does not replace the
+separate CPU/CUDA reader coverage. Terminal exit zero, cleanup and CAS payload
+were independently verified in
+`/mnt/shared/tessera-clean-runtime-20260907/reader-device-unpack/wrapper-policy-verified-01.json`.
+CAS payload:
+`84488e47613c49f5bd0c0b366fe9454c731db0fed643eab0afdb0368f56acec9`;
+receipt:
+`54b414cef4e4e1d633fcc4cd8b0b67b2b10254b3d00b6d2892a99fff71962655`.
