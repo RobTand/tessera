@@ -1,0 +1,15 @@
+# CUPTI argument observer configuration repair — 2026-09-07
+
+The actual V4 tiny CUDA qualifier action `17a1d33ce048b75de8023328f6d28b4db8e4e7369fdfc8793c61434502376444` failed: the activity-only health validator refused the new argument collector's 16 successful configuration operations, then the qualifier masked that refusal with `KeyError: cuda_argument_domains`. Its raw capture is retained at `/mnt/shared/tessera-native376-resource/resource-observer-qualification-r1/capture/`.
+
+The validator now requires the exact configuration operations for the declared argument schema, including successful subscription, all six v1 CUDA runtime callbacks and unsubscription. Unknown schemas, missing/duplicate/failed callbacks and extra operations refuse. Activity-only captures retain their previous exact operation set. The qualifier reports the ledger's refusal reasons when domain analysis is unavailable.
+
+PrismaBuild CPU pre-fix action `f4298586f2c799f159c24638f08645aa0098f0ce4385cc8aa3591fd6cb50a4e5` ran the six new controls with two xdist workers: 1 failed, 5 passed, 0 skipped; no Torch interpreter, 72 unrelated modules not collected. The regression failure was `ValueError: missing successful CUPTI configuration/flush evidence` at `experiments/native_operator_resources.py:146`.
+
+Post-fix action `ba3199d21c8d1166d44fc2d1634253d820c0f766dc3715d60666949622bbea32` ran `tests/test_native_operator_resources.py tests/test_full_engine_resources.py tests/test_full_engine_cuda_domains.py -n 4 --dist worksteal --durations=5`: **89 passed, 0 skipped, 0 modules not collected**, CPU-only Torch 2.11.0+cpu on dl380g10. Four CPUs/four GiB were reserved; OMP/MKL/OpenBLAS threads were each bounded at one. It establishes parser behavior, not CUDA coverage.
+
+Actual CUDA qualifier action `45412c9015704be2126f0eb489db0b5137c5199d5d4389941037deb71078cc71` passed on sparky (GB10 SM121) in the immutable stock image `vllm/vllm-openai@sha256:4e31c581716a5cb9ef31eddb0a425842b75cab07d5cd63fb9572e69ae8794c33`. Two CPUs/four GiB shared memory and a two-GiB GPU subset were reserved. It observed a 128-byte mapped pinned-host allocation through free, an explicit null-device free, and the actual 33,554,432-byte Torch BLAS workspace map entry agreeing with the active allocator block. Qualification artifact: `/mnt/shared/tessera-native376-resource/resource-observer-qualification-r2/qualification.json`, SHA-256 `0c60c2fd3effe617cbe7ee2a43433d4d994d0772b33ec7dcde7e16185596d91c`.
+
+Both post-fix actions have verified terminal exit 0, complete broker cleanup and CAS payload hashes. Their terminal records are under `/mnt/shared/prismabuild-fleet/pb-queue/done/` with the full action key; respective CAS receipt hashes are `514f453d84303d6b439744613859ab7868ecb79da26f7f5c84c8d5bd9e64e6a3` (CPU) and `acf3172fbc35f394b8a797cc8ffa6c5b60719fda5fd3470fe226246b0daa62ff` (CUDA).
+
+This is observer qualification only. It establishes no fixed-resource price, full engine memory closure, timing, throughput, quality or release admission. No performance claim is made.
