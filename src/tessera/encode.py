@@ -1048,7 +1048,9 @@ def viterbi_window(
     wrows = None if weights is None else weights.float().reshape(steps, arity, cols)
     table = vectors.float().to(device)
     states = torch.empty(steps, cols, dtype=torch.long, device=device)
-    sse = 0.0
+    # float64 on the device, in the chunk order the host accumulator used: the
+    # same float, and no drain per chunk (see ``window_viterbi``).
+    sse = torch.zeros((), dtype=torch.float64, device=device)
     for start in range(0, cols, chunk):
         x = tuples[:, :, start : start + chunk]                  # [steps, arity, n]
         n = x.shape[2]
@@ -1070,7 +1072,7 @@ def viterbi_window(
             # share one predecessor class.
             cost = best.repeat_interleave(fan, dim=0) + branch
         final, state = cost.min(dim=0)                           # [n]
-        sse += float(final.sum())
+        sse = sse + final.sum().double()
         column = torch.empty(steps, n, dtype=torch.long, device=device)
         for step in range(steps - 1, -1, -1):
             column[step] = state
@@ -1078,7 +1080,7 @@ def viterbi_window(
             pred = back[step].gather(0, lowbits.unsqueeze(0)).squeeze(0).long()
             state = (pred << (window_bits - rate)) | lowbits
         states[:, start : start + chunk] = column
-    return states, sse
+    return states, float(sse)
 
 
 def _pack_scales(

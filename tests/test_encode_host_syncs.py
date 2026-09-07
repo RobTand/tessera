@@ -201,3 +201,47 @@ def test_the_accept_walk_is_not_an_argmin(device):
     idx, base = encode._greedy_accept(costs.tolist(), 100.0, step)
     assert idx == 0 and base == 5.0
     assert int(torch.argmin(costs)) == 1
+
+
+# ------------------------------------------------------- viterbi_window_fused
+
+def _window_case(L, R, arity, rows, cols, seed=17):
+    g = torch.Generator().manual_seed(seed)
+    targets = torch.randn(rows, cols, generator=g).cuda()
+    vectors = torch.randn(1 << L, arity, generator=g).cuda()
+    weights = (torch.rand(rows, cols, generator=g) + 0.5).cuda()
+    return targets, vectors, weights
+
+
+@cuda
+def test_the_window_call_syncs_once_whatever_the_chunk_count():
+    """``sse`` is one float per call.  Reading it per chunk makes the count a
+    function of the column width, which is exactly what a wide batched call
+    was supposed to buy back."""
+    from tessera.window_viterbi import fused_available, viterbi_window_fused
+    if not fused_available():
+        pytest.skip("the fused window Viterbi needs triton")
+    targets, vectors, weights = _window_case(12, 4, 1, 64, 300)
+    # warm the plan and its capture: the first call builds them.
+    viterbi_window_fused(targets, vectors, 12, 4, weights=weights, chunk=64)
+    _, syncs = sync_ops(lambda: viterbi_window_fused(
+        targets, vectors, 12, 4, weights=weights, chunk=64))
+    assert len(syncs) <= 1, f"{len(syncs)} host syncs over 5 chunks of 64 columns"
+
+
+@cuda
+@pytest.mark.parametrize("cols,chunk", [(300, 64), (129, 32), (64, 512)])
+def test_the_window_sse_is_the_reference_float(cols, chunk):
+    """The float64 device accumulator adds the same fp32 chunk sums in the
+    same order the host accumulator did, so the float is the same float."""
+    from tessera.encode import viterbi_window
+    from tessera.window_viterbi import fused_available, viterbi_window_fused
+    if not fused_available():
+        pytest.skip("the fused window Viterbi needs triton")
+    targets, vectors, weights = _window_case(12, 4, 1, 64, cols)
+    ref, sse_ref = viterbi_window(targets, vectors, 12, 4, weights=weights,
+                                  impl="reference", chunk=chunk)
+    got, sse = viterbi_window_fused(targets, vectors, 12, 4, weights=weights,
+                                    chunk=chunk)
+    assert torch.equal(got, ref)
+    assert sse == sse_ref

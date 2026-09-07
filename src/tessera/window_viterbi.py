@@ -733,9 +733,9 @@ def viterbi_window_fused(targets, vectors, window_bits: int, rate: int,
     The machine is picked by ``_plan_for_call`` and is never the answer: a
     per-call plan and a persistent one run the same ``one_batch`` over the same
     values in the same order, and the epilogue below -- the final ``min`` over
-    states, ``sse += float(final.sum())`` and the traceback -- runs on the host
-    stream either way, so the ``sse`` float is summed in the reference's order
-    whichever plan produced the front.
+    states, the float64 ``sse`` accumulation and the traceback -- runs on the
+    host stream either way, so the ``sse`` float is summed in the reference's
+    order whichever plan produced the front.
     """
     import triton
 
@@ -755,7 +755,10 @@ def viterbi_window_fused(targets, vectors, window_bits: int, rate: int,
         plan.capture()
 
     states = torch.empty(steps, cols, dtype=torch.long, device=device)
-    sse = 0.0
+    # The chunk sums stay on the device and are added in float64 there, in the
+    # order the host accumulator added them, so the float this returns is the
+    # float it always returned -- without draining the device once per chunk.
+    sse = torch.zeros((), dtype=torch.float64, device=device)
     b = 0
     for start in range(0, cols, chunk):
         n = min(chunk, cols - start)
@@ -766,7 +769,7 @@ def viterbi_window_fused(targets, vectors, window_bits: int, rate: int,
 
         cost = plan.front_all[:n].t().contiguous()            # [size, n]
         final, state = cost.min(dim=0)                        # [n]
-        sse += float(final.sum())
+        sse = sse + final.sum().double()
         tb = 128
         traceback_kernel[(triton.cdiv(n, tb),)](
             plan.back, state.to(torch.int32), states, n, cols, steps, low, start,
@@ -779,4 +782,4 @@ def viterbi_window_fused(targets, vectors, window_bits: int, rate: int,
         # ``plan.back`` when this returns; the event is what the next cache
         # hit (possibly on another stream) orders itself behind.
         plan.record_done()
-    return states, sse
+    return states, float(sse)
