@@ -65,3 +65,11 @@ actual exit and container/scope cleanup. The fresh functional cache logged
 new-shape Triton compilation during the request; no latency or energy claim is
 made from this finite serve. Separate warmed resource and timing measurements
 must carry their own sealed generated binaries and evidence.
+
+Delivery validation on current master with cached-dense export PR #403 merged
+passed PB `570f43de99a9afba3bb845bb21197bc3e9e7a1b0101bc3774fdb6601e6f70d7a`:
+all eight qualification scripts compile, and six package-origin/issue-reference
+CPU tests pass with zero skips or missing modules. The source scripts match the
+measured harness bytes. `delivery-cpu-audit.json` rehashes the terminal CAS
+`cc71e51a1c37064462986606c7f5c24e303a6fa1338b3abd043f832f1a7b383a`
+and canonical receipt and confirms exit zero and scope cleanup.
