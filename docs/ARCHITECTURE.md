@@ -36,7 +36,8 @@ wrappers (#375; §4.4). Wire, encoder recipes and runtime contract remain at
 the versions above.
 
 Re-stamped 2026-09-06 on `main-campaign/tessera385-batched-ldlq` for the
-encoder's batch axis and the window plan rule (#385; §3.1b). Wire, encoder
+encoder's batch axis, shared-setting presence checks and the window plan rule
+(#385; §3.1b). Wire, encoder
 recipes, `encoder_fixture_id` and runtime contract remain at the versions
 above.
 
@@ -878,8 +879,10 @@ The batched entry points are `export.encode_linears_planes` /
 for the batch, per-unit inputs either as sequences (`ldl`, `refit_metric`,
 `refit_metric_trailing`) or as `per_unit`, one `ActivationSource.for_unit`
 mapping per weight, whose non-tensor keys (`ldl_block`, `refit_reach_floor`,
-`refit_gauss_seidel`) must agree across the batch and are refused by key when
-they do not. A producer hands a list of same-shape, same-rung units -- an
+`refit_gauss_seidel`) must agree across the batch, including presence: each
+shared key is present in every mapping or omitted from every mapping. A
+disagreement is refused by key before fixture computation. A producer hands a
+list of same-shape, same-rung units -- an
 expert stack's projections are the natural batch -- and gets each unit's
 `ExportedUnit` in order.
 

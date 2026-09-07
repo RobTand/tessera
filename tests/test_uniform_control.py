@@ -484,11 +484,12 @@ def test_the_control_prices_a_unit_exactly_as_prismaquant_charges_for_it(shape):
     DP and the byte gate, so they are pinned together rather than trusted.
 
     One term is allowed to differ, and only one: a **TCQ** body's ALPHABET and
-    DESCENDANT planes.  This side started charging them on 2026-09-02 (issue
-    #43) because ``encode_linear`` writes them; PrismaQuant does not yet
-    (RobTand/prismaquant#126).  So the assertion is "equal, or light by exactly
-    the forest", which passes on both sides of that fix and still catches any
-    other drift.  A window body has no forest and must agree exactly.
+    DESCENDANT planes. This side started charging them on 2026-09-02 (issue
+    #43) because ``encode_linear`` writes them; PrismaQuant added the same
+    charge in RobTand/prismaquant#126. The historical assertion still permits
+    "equal, or light by exactly the forest", so it accepts both versions and
+    cannot detect a regression that drops that charge. A window body has no
+    forest and must agree exactly.
     """
     from tessera.grammar import bresenham_rate_schedule, forest_plane_bytes, root_from_q256
     from tessera.manifest import BodyKind

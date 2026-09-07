@@ -124,8 +124,10 @@ _WINDOW_GRAPH_MIN_CALLS = 2
 #: bytes, the larger of the two at every shipping rung); ``nmax`` is the
 #: call's width capped at ``chunk`` (512), so a batched call of 512 columns
 #: over 1792 rows at L=14, R=7 holds ~117 MiB and one over 7168 rows ~470
-#: MiB.  Eight such is the bound on residency; a caller that batches wider
-#: shapes than its device can hold eight of sizes its batch to the device.
+#: MiB. A persistent plan also owns full-call input buffers, including the
+#: optional metric weights, which grow with ``cols`` beyond ``chunk``. Eight
+#: is a bound on plan count, not bytes; callers size their batch for the
+#: scratch and input buffers of the shapes they retain.
 #:
 #: The shipping schedule asks for few shapes.  Bresenham spreads a fractional
 #: rate over the columns, so at the served rung (E4M3, q256=1042) every one of

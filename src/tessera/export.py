@@ -1686,6 +1686,14 @@ def encode_linears_planes(
         ldl = [m.pop("ldl", None) for m in per_unit]
         refit_metric = [m.pop("refit_metric", None) for m in per_unit]
         refit_metric_trailing = [m.pop("refit_metric_trailing", None) for m in per_unit]
+        for key in sorted(set().union(*(m.keys() for m in per_unit))):
+            missing = [name for name, m in zip(names, per_unit) if key not in m]
+            if missing:
+                raise GrammarError(
+                    f"per_unit[{key!r}] is missing for {missing!r} but present "
+                    "for another unit. Shared settings must be explicit in "
+                    "every mapping or omitted from every mapping"
+                )
         shared: dict = {}
         for name, m in zip(names, per_unit):
             for key, value in m.items():

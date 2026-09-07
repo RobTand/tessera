@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-06T17:58:01Z",
+ "generated": "2026-09-07T03:19:26Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -648,7 +648,7 @@
     "title": "Report actual priced coverage in Tessera campaigns"
    },
    "244": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Cluster campaign CI still has a refill-order race and an unexplained recovery failure"
    },
    "245": {
@@ -688,7 +688,7 @@
     "title": "Require every pull request to main to link a repository issue"
    },
    "253": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Quantize and serve a full mixed trellis-4/8/16 LFM2.5 sanity artifact"
    },
    "254": {
@@ -724,15 +724,15 @@
     "title": "Validate paired joint AURA assignment diagnostics"
    },
    "261": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Qualify fixed-teacher joint AURA through streamed producer and persisted candidate currency"
    },
    "262": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Populate static Tessera activation scales in the transient anchor renderer"
    },
    "263": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Qualify joint AURA through streamed checkpoints and frozen corpus inputs"
    },
    "264": {
@@ -740,11 +740,11 @@
     "title": "Bound CPU Tessera integration fixtures by trellis geometry"
    },
    "265": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Bind mixed LFM serving sanity to assembled artifact identity"
    },
    "266": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Preserve static activation scales in transient Tessera anchors"
    },
    "267": {
@@ -764,16 +764,128 @@
     "title": "export: silent BF16 coercion of an unschemed format should be a hard failure (and the exporter should declare EXPORTABLE_FORMATS)"
    },
    "270": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Fix the refill-order race in the cluster campaign CI, and say what the recovery failure is not (#244)"
+   },
+   "271": {
+    "state": "CLOSED",
+    "title": "Retain the unit's own activation source in the streamed harness (#261)"
+   },
+   "272": {
+    "state": "CLOSED",
+    "title": "Streamed harness retains the encoder's probe activation source instead of the unit's"
+   },
+   "273": {
+    "state": "CLOSED",
+    "title": "Streamed joint AURA checkpoint reload refuses: x**2 vs x*x differ by one ulp"
+   },
+   "274": {
+    "state": "CLOSED",
+    "title": "Square joint AURA probe samples identically at both sites (#273)"
+   },
+   "275": {
+    "state": "OPEN",
+    "title": "[P2] Qualify Tessera-4/8/16 ladder interpolation on LFM2.5: close or diagnose every LOO surface, include the BF16 family, gate on served KL"
+   },
+   "276": {
+    "state": "CLOSED",
+    "title": "Streaming probe cannot run LFM2.5: _layer_attention_type does not look at the conv mixer child"
+   },
+   "277": {
+    "state": "CLOSED",
+    "title": "Name an LFM2.5 conv layer by asking its mixer child"
+   },
+   "278": {
+    "state": "CLOSED",
+    "title": "Allocator prints 'N of N priced rungs are attested' for an explicit Tessera menu without reading the contract"
+   },
+   "279": {
+    "state": "CLOSED",
+    "title": "Count a Tessera rung as attested only when the admission predicate says so"
    },
    "28": {
     "state": "CLOSED",
     "title": "Runtime shape coercion is per-Linear, so it can de-promote one member of a packed/fused serving group (late fused-coherence failure)"
    },
+   "280": {
+    "state": "CLOSED",
+    "title": "Tessera campaign plans a packed-expert stack on the cheapest rung, not a routable one"
+   },
+   "281": {
+    "state": "CLOSED",
+    "title": "Plan a packed-expert stack on a family the producer can route"
+   },
+   "282": {
+    "state": "CLOSED",
+    "title": "Tessera campaign is one monolithic GPU action; fan it out per (unit, family) surface through pbcampaign so both boxes take rows"
+   },
+   "283": {
+    "state": "OPEN",
+    "title": "Tessera campaign encode loop runs at 16 W of 140 W (96% util): profile it before the next campaign"
+   },
+   "284": {
+    "state": "CLOSED",
+    "title": "Tessera menu: add a contract-READABLE mode between attested and research, and stop the campaign encoding rungs the pinned reader cannot decode"
+   },
+   "285": {
+    "state": "CLOSED",
+    "title": "Tessera campaign at GLM scale: price packed stacks from an h_trace-weighted expert sample with bracketed anchors (design + validation plan)"
+   },
+   "286": {
+    "state": "CLOSED",
+    "title": "Design the Tessera campaign for GLM scale: stack sampling, bracketed anchors, readable menu"
+   },
+   "287": {
+    "state": "CLOSED",
+    "title": "Add a contract-readable Tessera menu mode so the campaign stops pricing rungs no reader decodes"
+   },
+   "288": {
+    "state": "OPEN",
+    "title": "Tessera campaign writes a zero-row cost table and exits 0 when the resolved menu is empty"
+   },
+   "289": {
+    "state": "CLOSED",
+    "title": "Fan the Tessera anchor campaign out per fused group, and merge it back into one cost table"
+   },
    "29": {
     "state": "CLOSED",
     "title": "export: runtime coercion omits source_kind, so every FP8_SOURCE Linear is judged illegal and fills runtime_coercions with bogus rows"
+   },
+   "290": {
+    "state": "CLOSED",
+    "title": "Tessera lane cannot allocate routed experts: probe rows are packed stacks, the campaign prices projected per-expert units, and the serving scope has no vocabulary for a projected slice"
+   },
+   "291": {
+    "state": "OPEN",
+    "title": "tessera_campaign exits 0 with an empty cost table when every unit's menu is empty (attested/readable narrowing) \u2014 must refuse"
+   },
+   "292": {
+    "state": "CLOSED",
+    "title": "Price a routed expert stack as one Tessera decision unit, from a sample of its experts"
+   },
+   "293": {
+    "state": "OPEN",
+    "title": "[P1] Connect packed stack sampling through campaign selection and scoped allocation"
+   },
+   "294": {
+    "state": "OPEN",
+    "title": "Validate campaign journal inputs before merging and canonicalize refusal records"
+   },
+   "295": {
+    "state": "CLOSED",
+    "title": "[P2] Expert projection fallback misses a common routed family in differently ordered stack menus"
+   },
+   "296": {
+    "state": "OPEN",
+    "title": "[P2] Streamed qualification source manifest accepts unlisted packages that shadow sealed modules"
+   },
+   "297": {
+    "state": "CLOSED",
+    "title": "Fix expert projection fallback across differently ordered stack menus"
+   },
+   "298": {
+    "state": "OPEN",
+    "title": "Carry packed expert sampling through campaign merge and export"
    },
    "3": {
     "state": "CLOSED",
@@ -2306,11 +2418,11 @@
     "title": "Validate mixed dense and routed campaign census populations"
    },
    "374": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "E4M3 serialization test dominates the parallel CPU suite at 987 seconds"
    },
    "375": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Smoke pair wrapper needs owned-container cleanup on failure and explicit container thread bounds"
    },
    "376": {
@@ -2318,15 +2430,15 @@
     "title": "Research: native dense operator receipts for PQ runtime pricing"
    },
    "377": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "LFM ShortConv in_proj: export declares one role, vLLM builds three output partitions; every Tessera route refuses the module at load"
    },
    "378": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Derive dense roles from the runtime's attested output partitions (#377)"
    },
    "379": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Shrink the E4M3 ladder's fixture and pin its bytes per plane"
    },
    "38": {
@@ -2334,8 +2446,40 @@
     "title": "PrismaQuant's Tessera dev pin re-stales on every contract edit: attested path dead, 7 tests red"
    },
    "380": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Own the smoke pair's containers by id, and bound their threads (#375)"
+   },
+   "381": {
+    "state": "CLOSED",
+    "title": "Mixed census gate refuses a row-sliced dense owner: the planned-tensor roster counts roles, not tensors"
+   },
+   "382": {
+    "state": "CLOSED",
+    "title": "Count a row-sliced dense owner's source tensor once in the census roster"
+   },
+   "383": {
+    "state": "CLOSED",
+    "title": "Encode the E4M3 ladder at the cost its own invariants need (#374)"
+   },
+   "384": {
+    "state": "CLOSED",
+    "title": "After #374, one refusal test is 57% of the E4M3 file: is the encode reached before the grammar check?"
+   },
+   "385": {
+    "state": "OPEN",
+    "title": "Encoder: batch many same-shape units (and rungs) into one LDLQ trellis call \u2014 the campaign runs at 16 W of 140 W because each Viterbi launch is 32 columns wide"
+   },
+   "386": {
+    "state": "OPEN",
+    "title": "Batch the LDLQ encoder along the column axis, byte-identical per unit (#385, priority 1)"
+   },
+   "387": {
+    "state": "OPEN",
+    "title": "Geometry fallback can publish empty Tessera config_groups after dropping the last implicit owner"
+   },
+   "388": {
+    "state": "OPEN",
+    "title": "P1: uniform-control accounting test still permits dropped TCQ forest bytes"
    },
    "39": {
     "state": "CLOSED",

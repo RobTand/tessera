@@ -184,3 +184,27 @@ def test_per_unit_settings_that_disagree_are_refused_by_key():
     per_unit[0]["unrouted"] = 1
     with pytest.raises(GrammarError, match="unrouted"):
         encode_linears(weights, grid=grid, q256=q256, per_unit=per_unit)
+
+
+@pytest.mark.parametrize("key,value", [
+    ("ldl_block", 8), ("refit_reach_floor", True), ("refit_gauss_seidel", True),
+])
+@pytest.mark.parametrize("specified_unit", [0, 1])
+def test_a_shared_setting_missing_from_one_mapping_is_refused(
+        monkeypatch, key, value, specified_unit):
+    """An omitted setting must not inherit another unit's explicit choice.
+
+    Refuse before fixture work or CUDA allocation; neither is needed to
+    diagnose a batch whose mappings disagree about its shared schedule.
+    """
+    import tessera.export as export
+
+    def reached_encode():
+        pytest.fail("incomplete per_unit settings reached encoder fixture")
+
+    monkeypatch.setattr(export, "stamped_fixture_id", reached_encode)
+    mappings = [{}, {}]
+    mappings[specified_unit][key] = value
+    with pytest.raises(GrammarError, match=key):
+        encode_linears([torch.empty(64, 256)] * 2, grid=E4M3_GRID, q256=1024,
+                       per_unit=mappings)
