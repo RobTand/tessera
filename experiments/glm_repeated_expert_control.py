@@ -186,6 +186,12 @@ def consume(args, request, control):
                 'vs_bf16_source_arithmetic_screen': error(got, source_out),
                 'source_gate_or_up_values_clipped': clipped})
             write(args.out, 'operator-progress.json', results)
+        selected_result = None
+        if args.selected_request:
+            from experiments.glm_selected_expert_control import run
+            selected_result = run(args, json.loads(args.selected_request.read_text()),
+                templates, scheme, layer, method, w13, w2, s13, s2)
+            write(args.out, 'selected-expert-receipt.json', selected_result)
         return {'status': 'repeated_source_control_passed', 'q256': args.q256,
             'input_receipts': input_receipts, 'backend': plain(method.fp8_backend),
             'moe_class': type(moe).__module__ + '.' + type(moe).__qualname__,
@@ -193,7 +199,8 @@ def consume(args, request, control):
             'owner_prefix': layer.layer_name, 'scheme': scheme,
             'all_864_projection_tiles_and_scales_exact': exact, 'operator_controls': results,
             'weight_shapes': [list(layer.w13_weight.shape), list(layer.w2_weight.shape)],
-            'resident_parameter_bytes': sum(p.numel() * p.element_size() for p in layer.parameters())}
+            'resident_parameter_bytes': sum(p.numel() * p.element_size() for p in layer.parameters()),
+            **({'selected_expert_control': selected_result} if selected_result is not None else {})}
 
 
 def main():
@@ -206,6 +213,7 @@ def main():
     parser.add_argument('--q256', type=int, required=True)
     parser.add_argument('--construction', type=Path)
     parser.add_argument('--producer-manifest', type=Path)
+    parser.add_argument('--selected-request', type=Path)
     args = parser.parse_args()
     request = json.loads(args.request.read_text())
     control = json.loads(args.control_request.read_text())
@@ -214,7 +222,20 @@ def main():
     for row in (request['source_config'], request['source_archive'], request['core_manifest'],
                 *request['config_files'].values()):
         assert digest(row['path']) == row['sha256']
-    core, core_files = install(request, args.out)
+    installation_request = request
+    selected = None
+    if args.selected_request:
+        assert args.stage == 'control'
+        selected = json.loads(args.selected_request.read_text())
+        assert selected['schema'] == 'tessera.glm_selected_expert_request.v1'
+        for key, actual in (('control_request', args.control_request), ('construction', args.construction),
+                            ('producer_manifest', args.producer_manifest)):
+            assert actual is not None and str(actual) == selected[key]['path']
+            assert digest(actual) == selected[key]['sha256']
+        assert digest(selected['reader_source_archive']['path']) == selected['reader_source_archive']['sha256']
+        installation_request = {**request, 'source_archive': selected['reader_source_archive'],
+                                'source_commit': selected['reader_source_commit']}
+    core, core_files = install(installation_request, args.out)
     import torch
     from _pb_native_moe_measure.per_job_install import files
     from experiments.original_wire_generation import observed
@@ -225,6 +246,10 @@ def main():
     if args.producer_manifest:
         record['producer_manifest'] = {'path': str(args.producer_manifest),
                                        'sha256': digest(args.producer_manifest)}
+    if selected is not None:
+        record['selected_request'] = {'path': str(args.selected_request), 'sha256': digest(args.selected_request)}
+        record['construction'] = selected['construction']
+        record['reader_source_archive'] = selected['reader_source_archive']
     rc = 0
     try:
         record.update((encode if args.stage == 'encode' else consume)(args, request, control))

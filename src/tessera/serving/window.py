@@ -43,7 +43,7 @@ from typing import Optional, Sequence
 
 import torch
 
-__all__ = ["PreparedWindow", "prepare_window", "WINDOW_READ_BYTES", "WINDOW_BITS_LIMIT"]
+__all__ = ["PreparedWindow", "PreparedWindowBatch", "prepare_window", "WINDOW_READ_BYTES", "WINDOW_BITS_LIMIT"]
 
 #: Bytes gathered per position.  The window of a position starts at bit
 #: ``(t + 1) * R`` of its column's stream, so it begins at most 7 bits into
@@ -56,8 +56,18 @@ def _fingerprint(t: torch.Tensor):
     return (t.data_ptr(), t._version, tuple(t.shape), t.dtype, t.device)
 
 
+def require_expert_ids(expert_ids: torch.Tensor, device):
+    """Validate selection metadata without reading any device ID to the CPU."""
+    if expert_ids.ndim != 1:
+        raise ValueError("expert IDs must be one-dimensional")
+    if expert_ids.dtype not in (torch.int32, torch.int64):
+        raise ValueError("expert IDs must have integer int32 or int64 dtype")
+    if expert_ids.device != device:
+        raise ValueError("expert IDs must share the packed window device")
+
+
 class _RateGroup:
-    """Every column at one rate: their packed streams as rows of one plane."""
+    """Columns at one rate; a batch adds an expert axis to the packed plane."""
 
     __slots__ = ("rate", "plane", "gather", "shift", "which")
 
@@ -129,6 +139,44 @@ class PreparedWindow:
         if tuple(_fingerprint(t) for t in self.tensors()) != self.__fingerprints:
             raise RuntimeError("prepared Tessera window changed after preparation")
 
+    @classmethod
+    def stack(cls, windows: Sequence[PreparedWindow]) -> PreparedWindowBatch:
+        """Own a packed expert axis for research selected-expert decoding.
+
+        Layout comparisons happen at preparation. Bodies, initial states and
+        alphabet values may differ; the gather geometry must agree exactly.
+        This does not change the single-window or production serving route.
+        """
+        windows = tuple(windows)
+        if not windows:
+            raise ValueError("stacking needs at least one prepared window")
+        first = windows[0]
+        for window in windows:
+            window._require_unchanged()
+            if (window.steps, window.cols, window.window_bits, window.device,
+                window.__table.dtype, window.rates) != (
+                    first.steps, first.cols, first.window_bits, first.device,
+                    first.__table.dtype, first.rates):
+                raise ValueError("stacked windows must share their layout")
+            for a, b in zip(first.__groups, window.__groups):
+                if (a.plane.shape != b.plane.shape or any(
+                    not torch.equal(x, y) for x, y in zip(
+                        (a.gather, a.shift, a.which), (b.gather, b.shift, b.which)))):
+                    raise ValueError("stacked windows must share their layout")
+            if (first.__inverse is None) != (window.__inverse is None) or (
+                first.__inverse is not None and not torch.equal(first.__inverse, window.__inverse)
+            ):
+                raise ValueError("stacked windows must share their layout")
+        groups = [
+            _RateGroup(g.rate, torch.stack([w.__groups[i].plane for w in windows]),
+                       g.gather.clone(), g.shift.clone(), g.which.clone())
+            for i, g in enumerate(first.__groups)
+        ]
+        return PreparedWindowBatch(
+            groups, torch.stack([w.__table for w in windows]),
+            None if first.__inverse is None else first.__inverse.clone(),
+            first.steps, first.cols, first.window_bits, first.device)
+
     def decode(self) -> torch.Tensor:
         """What the table holds, ``[steps, cols]``, in a fresh tensor.
 
@@ -158,6 +206,60 @@ class PreparedWindow:
         else:
             ordered = torch.index_select(torch.cat(parts, 0), 0, self.__inverse)
         return ordered.t().contiguous()
+
+
+class PreparedWindowBatch:
+    """Packed windows with a leading expert axis; no persistent decoded pool.
+
+    The caller supplies device IDs and an explicit temporary-expansion bound.
+    Dynamic selection is an eager research path, not a compiled-route claim.
+    """
+
+    def __init__(self, groups, table, inverse, steps, cols, window_bits, device):
+        self.__groups = tuple(groups)
+        self.__table = table
+        self.__inverse = inverse
+        self.steps, self.cols = int(steps), int(cols)
+        self.window_bits, self.device = int(window_bits), table.device
+        self.experts = table.shape[0]
+        self.__fingerprints = tuple(_fingerprint(t) for t in self.tensors())
+
+    def tensors(self):
+        out = [t for g in self.__groups for t in g.tensors()] + [self.__table]
+        if self.__inverse is not None:
+            out.append(self.__inverse)
+        return tuple(out)
+
+    def resident_bytes(self):
+        return sum(t.numel() * t.element_size() for t in self.tensors())
+
+    def decode(self, expert_ids: torch.Tensor, *, max_experts_per_chunk: int):
+        """Fresh ``[selected, steps, cols]`` in ID order, including repeats."""
+        if tuple(_fingerprint(t) for t in self.tensors()) != self.__fingerprints:
+            raise RuntimeError("prepared Tessera window batch changed after preparation")
+        require_expert_ids(expert_ids, self.device)
+        if type(max_experts_per_chunk) is not int or max_experts_per_chunk <= 0:
+            raise ValueError("max_experts_per_chunk must be a positive integer")
+        mask = (1 << self.window_bits) - 1
+        chunks = []
+        for start in range(0, expert_ids.numel(), max_experts_per_chunk):
+            ids = expert_ids[start:start + max_experts_per_chunk]
+            tables = self.__table.index_select(0, ids)
+            parts = []
+            for g in self.__groups:
+                selected = g.plane.index_select(0, ids)
+                m = selected.shape[1]
+                b = selected.index_select(2, g.gather).view(
+                    ids.numel(), m, self.steps, WINDOW_READ_BYTES).to(torch.int32)
+                word = (b[..., 0] << 24) | (b[..., 1] << 16) | (b[..., 2] << 8) | b[..., 3]
+                state = (word >> g.shift) & mask
+                parts.append(tables.gather(1, state.reshape(ids.numel(), -1).long()).view(
+                    ids.numel(), m, self.steps))
+            ordered = parts[0] if len(parts) == 1 else torch.cat(parts, 1).index_select(1, self.__inverse)
+            chunks.append(ordered.transpose(1, 2).contiguous())
+        if not chunks:
+            return self.__table.new_empty((0, self.steps, self.cols))
+        return chunks[0] if len(chunks) == 1 else torch.cat(chunks, 0)
 
 
 def _pack(body_bits, rates, window_bits, initial_state):
