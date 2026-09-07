@@ -103,6 +103,19 @@ class SnapshotFramePool:
     def parts(self, value):
         """Emit exactly json.dumps(sort_keys=True,separators=(',',':')) bytes."""
         if type(value) is dict and all(type(key) is str for key in value):
+            # Allocator/API rows have scalar fields and short coordinate
+            # arrays. Encode those together in C, preserving a separately
+            # shared frame chunk, instead of calling JSON once per scalar.
+            if all(key == "frames" or _flat_json_field(item) for key, item in value.items()):
+                if "frames" not in value:
+                    yield _json_bytes(value)
+                else:
+                    before = {key: item for key, item in value.items() if key < "frames"}
+                    after = {key: item for key, item in value.items() if key > "frames"}
+                    yield (_json_bytes(before)[:-1] + b"," if before else b"{") + b'"frames":'
+                    yield self.intern(value["frames"])["encoded"]
+                    yield b"," + _json_bytes(after)[1:] if after else b"}"
+                return
             yield b"{"
             for index, key in enumerate(sorted(value)):
                 if index:
@@ -117,6 +130,9 @@ class SnapshotFramePool:
                     yield from self.parts(value[key])
             yield b"}"
         elif type(value) in (list, tuple):
+            if all(type(item) not in (dict, list, tuple) for item in value):
+                yield _json_bytes(value)
+                return
             yield b"["
             for index, item in enumerate(value):
                 if index:
@@ -143,6 +159,12 @@ class SnapshotFramePool:
         if pending:
             parts.append(bytes(pending))
         return tuple(parts)
+
+
+def _flat_json_field(value):
+    if type(value) in (list, tuple):
+        return all(type(item) not in (dict, list, tuple) for item in value)
+    return type(value) is not dict
 
 
 class CanonicalHistoryPrefix:

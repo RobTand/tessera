@@ -108,6 +108,11 @@ def test_compact_frame_damage_is_rejected(defect):
 
 
 @pytest.mark.parametrize("value", [None, True, 1, 1.0, -0.0, "µ\n", (1, 2),
-                                  {"frames": [{"name": "µ", "line": 1}], "nested": [False, {"a": 0.5}]}])
+                                  {"frames": [{"name": "µ", "line": 1}], "nested": [False, {"a": 0.5}]},
+                                  {"frames": []}, {"a": -0.0, "frames": []},
+                                  {"z": [True, 1.0, "µ"], "frames": [{"name": "a"}]},
+                                  {"z": None, "frames": [{"name": "a"}], "a": (1, -0.0)},
+                                  {"frames": [{"name": "a"}], "nested": {"frames": []}},
+                                  {"empty": {}, "list": [], "tuple": ()}])
 def test_streamed_canonical_digest_matches_standard_json(value):
     assert canonical_snapshot_digest(value) == hashlib.sha256(encoded(value)).hexdigest()
