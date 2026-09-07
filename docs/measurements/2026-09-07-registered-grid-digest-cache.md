@@ -147,3 +147,24 @@ Torch 2.11.0+cpu, 0 skips/uncollected modules). This is a separate helper
 packaging correction; package source and frozen reader identities are unchanged.
 
 Post-removal PB `36986ef92d473c2f92e90b36086400fc45a7127554638ae33aee73071c2ced2b` passed all 36 runtime-image tests on DL380 with four workers, no skips or missing collection; terminal exit 0 and CAS payload were verified.
+
+### Master update and reproduction-path correction — 2026-09-07
+
+Master `81c16c54` (#403) merged cleanly into this branch at `05deb9e1`.
+Its cached-export integration changes exporter/tests/docs but no package
+source, so frozen reader14df and its measurements remain unchanged. The
+bounded grid-digest and complete-cached-export interaction gate passed **18
+tests** on DL380, four xdist workers, Torch 2.11.0+cpu, no CUDA, no skips or
+missing collection (19.96 seconds). PB
+`ca5d55b8eea1b0865694c0a82975a083f0dbf4d43b506e4f17df3ea8ae0c8b8c`
+terminal exit 0 and CAS payload were independently checked. This is not a
+whole-suite or CUDA-surface claim.
+
+Correction to the helper path instruction above: the retained absolute path
+identifies evidence; it cannot be executed directly by a new PB action, since
+PB requires executable helper bytes inside its checkout snapshot. Replaying
+the historical helper requires its original recorded snapshot, which already
+contains the relative script. New CPU interaction checks use the installed
+`/home/rob/venvs/pb-cpu/bin/python` on the x86 Torch worker, through PB, rather
+than restoring the dated wrapper to the live experiment tree. The refused
+external-helper submission executed no tests and produced no action receipt.
