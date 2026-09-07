@@ -40,7 +40,7 @@ from functools import lru_cache
 from pathlib import Path
 import threading
 from types import MappingProxyType
-from typing import Mapping, NamedTuple
+from typing import Mapping, NamedTuple, Sequence
 
 import torch
 
@@ -49,7 +49,7 @@ from .alphabet import (
 )
 from .container import SCHEMA_MINOR
 from .decode import reconstruct_unit
-from .encode import EncodedUnit, encode_unit
+from .encode import EncodedUnit, encode_unit, encode_units
 from .errors import GrammarError
 from .grammar import Q256_UNIT, bresenham_rate_schedule
 # The TP-agnosticism rule lives with the cutter (``tessera.slicing``, re-exported
@@ -1582,8 +1582,144 @@ def encode_linear_planes(
     the milliseconds, and an exporter that only *believes* it round-trips is
     how a rendering confound gets into an artifact.
     """
-    if weight.ndim != 2:
-        raise ValueError(f"{name}: expected a 2-D weight, got {tuple(weight.shape)}")
+    return encode_linears_planes(
+        [weight], grid=grid, q256=q256, names=[name], code=code, group=group,
+        half=half, rotation=rotation, with_diagonals=with_diagonals,
+        completion=completion, verify=verify, scale_refit=scale_refit,
+        span=span, scale_plane=scale_plane, trellis_weighting=trellis_weighting,
+        body=body, window_bits=window_bits, window_seed=window_seed,
+        window_sigma=window_sigma, channel_sigma=channel_sigma,
+        ldl=[ldl], ldl_block=ldl_block, refit_metric=[refit_metric],
+        refit_metric_trailing=[refit_metric_trailing],
+        refit_reach_floor=refit_reach_floor,
+        refit_gauss_seidel=refit_gauss_seidel,
+        refit_lut_exact=refit_lut_exact,
+        refit_coupled_landing=refit_coupled_landing,
+    )[0]
+
+
+#: The keys of ``ActivationSource.for_unit`` that are one tensor PER UNIT, and
+#: so travel to ``encode_units`` as a sequence; every other key it emits is
+#: an encoder setting the batch shares and must agree across the units.
+_PER_UNIT_KEYS = ("ldl", "refit_metric", "refit_metric_trailing")
+
+
+def encode_linears_planes(
+    weights: "Sequence[torch.Tensor]",
+    *,
+    grid: PayloadGrid,
+    q256: int,
+    names: "Sequence[str] | None" = None,
+    per_unit: "Sequence[Mapping] | None" = None,
+    code: ConvCode = DEFAULT_CODE,
+    group: int = DEFAULT_GROUP,
+    half: int = DEFAULT_HALF,
+    rotation: RotationState = RotationState.NONE,
+    with_diagonals: bool = False,
+    completion: "int | None" = 0,
+    verify: bool = True,
+    scale_refit: int = DEFAULT_SCALE_REFIT,
+    span: "int | None" = None,
+    scale_plane: "ScalePlaneKind | None" = None,
+    trellis_weighting: str = DEFAULT_TRELLIS_WEIGHTING,
+    body: "BodyKind | None" = None,
+    window_bits: "int | None" = None,
+    window_seed: "int | None" = None,
+    window_sigma: "float | None" = DEFAULT_WINDOW_SIGMA,
+    channel_sigma: "float | None" = DEFAULT_CHANNEL_SIGMA,
+    ldl: "Sequence[torch.Tensor | None] | None" = None,
+    ldl_block: int = DEFAULT_LDLQ_BLOCK,
+    refit_metric: "Sequence[torch.Tensor | None] | None" = None,
+    refit_metric_trailing: "Sequence[torch.Tensor | None] | None" = None,
+    refit_reach_floor: bool = False,
+    refit_gauss_seidel: bool = False,
+    refit_lut_exact: bool = False,
+    refit_coupled_landing: bool | str = False,
+) -> "list[tuple[ExportedUnit, EncodedUnit, object]]":
+    """``encode_linear_planes`` over a batch of same-shape weights at one rung.
+
+    The batched entry point (tessera#385): one recipe resolution, one rate
+    schedule and one set of forests for the batch, then ``encode.encode_units``
+    runs every unit through one trellis schedule with the Viterbi calls
+    joined along the column axis, and each unit's bytes are built and
+    verified exactly as ``encode_linear_planes`` builds and verifies one.
+    Every unit's blob is byte-identical to the blob ``encode_linear_planes``
+    writes for that unit alone; ``encode_linear_planes`` is this function at
+    one unit.
+
+    Per-unit inputs come one of two ways, never both:
+
+    * ``ldl`` / ``refit_metric`` / ``refit_metric_trailing`` as sequences of
+      ``len(weights)`` (``None`` for the sequence means ``None`` for every
+      unit), with ``ldl_block`` and the refit flags shared; or
+    * ``per_unit``: one mapping per weight, each exactly what
+      ``ActivationSource.for_unit`` returned for that unit.  The tensor keys
+      (``_PER_UNIT_KEYS``) are split out per unit; the remaining keys
+      (``ldl_block``, ``refit_reach_floor``, ``refit_gauss_seidel``) are
+      encoder settings the joined trellis has to share, so they must agree
+      across the mappings and are applied for the batch.  A disagreement is
+      refused by key: a batch whose units want different block schedules is
+      two batches, not one.
+
+    ``names`` labels each artifact (``"unit"`` for all when omitted).  Returns
+    ``(exported, unit, forests)`` per weight, in order.
+    """
+    weights = list(weights)
+    count = len(weights)
+    if count == 0:
+        raise ValueError("encode_linears_planes needs at least one weight")
+    names = ["unit"] * count if names is None else list(names)
+    if len(names) != count:
+        raise ValueError(f"{len(names)} names for {count} weights")
+    for name, weight in zip(names, weights):
+        if weight.ndim != 2:
+            raise ValueError(f"{name}: expected a 2-D weight, got {tuple(weight.shape)}")
+    if per_unit is not None:
+        if ldl is not None or refit_metric is not None or refit_metric_trailing is not None:
+            raise ValueError(
+                "per_unit carries each unit's ldl / refit_metric / "
+                "refit_metric_trailing; pass one spelling, not both"
+            )
+        per_unit = [dict(m) for m in per_unit]
+        if len(per_unit) != count:
+            raise ValueError(f"{len(per_unit)} per_unit mappings for {count} weights")
+        ldl = [m.pop("ldl", None) for m in per_unit]
+        refit_metric = [m.pop("refit_metric", None) for m in per_unit]
+        refit_metric_trailing = [m.pop("refit_metric_trailing", None) for m in per_unit]
+        for key in sorted(set().union(*(m.keys() for m in per_unit))):
+            missing = [name for name, m in zip(names, per_unit) if key not in m]
+            if missing:
+                raise GrammarError(
+                    f"per_unit[{key!r}] is missing for {missing!r} but present "
+                    "for another unit. Shared settings must be explicit in "
+                    "every mapping or omitted from every mapping"
+                )
+        shared: dict = {}
+        for name, m in zip(names, per_unit):
+            for key, value in m.items():
+                if key not in shared:
+                    shared[key] = (name, value)
+                elif shared[key][1] != value:
+                    raise GrammarError(
+                        f"per_unit[{key!r}] differs across the batch: {name} "
+                        f"has {value!r}, {shared[key][0]} has {shared[key][1]!r}. "
+                        "The joined trellis runs one schedule, so an encoder "
+                        "setting is one value per batch -- split the batch"
+                    )
+        allowed = {"ldl_block", "refit_reach_floor", "refit_gauss_seidel"}
+        unknown = set(shared) - allowed
+        if unknown:
+            raise GrammarError(
+                f"per_unit carries keys this entry point does not route: "
+                f"{sorted(unknown)}; it accepts what ActivationSource.for_unit "
+                f"returns ({sorted(allowed | set(_PER_UNIT_KEYS))})"
+            )
+        if "ldl_block" in shared:
+            ldl_block = shared["ldl_block"][1]
+        if "refit_reach_floor" in shared:
+            refit_reach_floor = shared["refit_reach_floor"][1]
+        if "refit_gauss_seidel" in shared:
+            refit_gauss_seidel = shared["refit_gauss_seidel"][1]
     # Compute the encoder identity here, before any encode and on the calling
     # thread, rather than leaving ``build_unit_artifact`` to trigger it from
     # wherever the last unit happens to finish.  The fixture encodes are torch
@@ -1592,11 +1728,12 @@ def encode_linear_planes(
     # so every unit after the first pays nothing.  Inside the fixture build
     # itself it answers ``None`` and does no work.
     stamped_fixture_id()
-    rows, columns = weight.shape
-    if rows % grid.arity:
-        raise GrammarError(
-            f"{name}: {rows} rows is not divisible by the grid arity {grid.arity}"
-        )
+    rows, columns = weights[0].shape
+    for name, weight in zip(names, weights):
+        if weight.shape[0] % grid.arity:
+            raise GrammarError(
+                f"{name}: {weight.shape[0]} rows is not divisible by the grid arity {grid.arity}"
+            )
     recipe = _resolve_recipe(
         grid, span, scale_plane, body, window_bits, window_seed, window_sigma,
         channel_sigma,
@@ -1607,9 +1744,9 @@ def encode_linear_planes(
     source_sigma = channel_sigma if scale_plane is ScalePlaneKind.CHANNEL else None
     rates, forests = _plan_for(grid, q256, columns, body, source_sigma)
     if body is BodyKind.WINDOW and completion not in (None, 0):
-        raise GrammarError(f"{name}: a window body has no completion axis")
-    unit = encode_unit(
-        weight, forests, rates, code,
+        raise GrammarError(f"{names[0]}: a window body has no completion axis")
+    units = encode_units(
+        weights, forests, rates, code,
         rotation=rotation, with_diagonals=with_diagonals,
         completion=0 if body is BodyKind.WINDOW else completion, group=group, half=half,
         scale_refit=scale_refit, span=span, scale_plane=scale_plane,
@@ -1623,29 +1760,41 @@ def encode_linear_planes(
         refit_lut_exact=refit_lut_exact,
         refit_coupled_landing=refit_coupled_landing,
     )
-    # ``q256`` here is the rung's PER-POSITION rate (the R-number in a rung
-    # name, and what ``artifact_bpp`` prices).  ``build_unit_artifact`` declares
-    # the per-CODE rate, and a code spans ``arity`` positions.  Passing the
-    # per-position number straight through produces a legal artifact whose
-    # manifest states half the rate it carries -- silent, and exactly the
-    # confusion ``build_unit_artifact``'s own comment flags.
-    _, region, blob = build_unit_artifact(
-        unit, name, forests, q256 * grid.arity, code
-    )
-    if verify:
-        recovered = read_unit_artifact(blob, device=weight.device)
-        reference = reconstruct_unit(unit, forests, code)
-        if not torch.equal(recovered, reference):
-            raise GrammarError(
-                f"{name}: the bytes do not decode to the encoder's own "
-                "reconstruction -- refusing to write a unit whose surrogate "
-                "and payload disagree"
-            )
-    exported = ExportedUnit(
-        name=name, blob=blob, rows=rows, columns=columns,
-        q256=q256, exact_bytes=len(region),
-    )
-    return exported, unit, forests
+    out = []
+    for name, weight, unit in zip(names, weights, units):
+        # ``q256`` here is the rung's PER-POSITION rate (the R-number in a rung
+        # name, and what ``artifact_bpp`` prices).  ``build_unit_artifact`` declares
+        # the per-CODE rate, and a code spans ``arity`` positions.  Passing the
+        # per-position number straight through produces a legal artifact whose
+        # manifest states half the rate it carries -- silent, and exactly the
+        # confusion ``build_unit_artifact``'s own comment flags.
+        _, region, blob = build_unit_artifact(
+            unit, name, forests, q256 * grid.arity, code
+        )
+        if verify:
+            recovered = read_unit_artifact(blob, device=weight.device)
+            reference = reconstruct_unit(unit, forests, code)
+            if not torch.equal(recovered, reference):
+                raise GrammarError(
+                    f"{name}: the bytes do not decode to the encoder's own "
+                    "reconstruction -- refusing to write a unit whose surrogate "
+                    "and payload disagree"
+                )
+        out.append((ExportedUnit(
+            name=name, blob=blob, rows=int(weight.shape[0]), columns=columns,
+            q256=q256, exact_bytes=len(region),
+        ), unit, forests))
+    return out
+
+
+def encode_linears(weights: "Sequence[torch.Tensor]", **kwargs) -> "list[ExportedUnit]":
+    """``encode_linears_planes`` returning the serialised units alone.
+
+    The batched ``encode_linear``: the keyword surface is
+    ``encode_linears_planes``'s, and each returned blob is the blob
+    ``encode_linear`` would write for that weight alone.
+    """
+    return [exported for exported, _, _ in encode_linears_planes(weights, **kwargs)]
 
 
 def encode_linear(weight: torch.Tensor, **kwargs) -> ExportedUnit:

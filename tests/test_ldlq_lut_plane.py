@@ -921,6 +921,12 @@ def test_a_free_landing_is_refused_where_it_would_mean_something_else():
     """Every context where the ceiling would be read off the wrong quantity,
     refused by its own message rather than accepted as a silent no-op."""
     from tessera.encode import lut_landing
+    from tessera.encoder_identity import encoder_fixture_id
+
+    # Resolve the process-wide identity before changing the encoder's mode.
+    # A fresh xdist worker otherwise builds CHANNEL fixtures inside "none"
+    # and observes that fixture's refusal instead of the requested unit's.
+    encoder_fixture_id()
 
     w = _weights(seed=52).bfloat16()
     H = _hessian(seed=52)

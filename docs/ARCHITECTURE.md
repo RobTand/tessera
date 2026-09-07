@@ -35,6 +35,12 @@ owned-container cleanup and explicit container thread bounds in the serve
 wrappers (#375; §4.4). Wire, encoder recipes and runtime contract remain at
 the versions above.
 
+Re-stamped 2026-09-06 on `main-campaign/tessera385-batched-ldlq` for the
+encoder's batch axis, shared-setting presence checks and the window plan rule
+(#385; §3.1b). Wire, encoder
+recipes, `encoder_fixture_id` and runtime contract remain at the versions
+above.
+
 ## 1. Scope
 
 This doc covers the path from a PrismaQuant rung assignment to a served
@@ -848,6 +854,53 @@ is a screen: it never changes the evidence grade, supplies a served KL, or
 proves that historical KL is a bound on a fresh encode. The existing KL
 entries retain their historical artifact scope. This is a pre-release
 contract correction; no released-schema migration is provided.
+
+### 3.1b The encoder has a batch axis, and it is the same encoder
+
+`encode.encode_units` (tessera#385) encodes `B` same-shape units through one
+LDLQ schedule. Each unit keeps its own scale plane, its own LDL feedback
+(`residual @ ldl_factor`, at the same shapes and strides as alone), its own
+scale refit and its own `sse`; only the Viterbi is shared. Where a unit would
+call `viterbi_window` or `viterbi_columns` on its `[rows, n]` column slice,
+the batch joins the `B` slices along the column axis into one `[rows, B*n]`
+call. Both trellises are per column -- branch metric, min-scan and traceback
+-- so each unit's columns of the joined answer are the columns its own call
+would return, and the blob each unit gets out is **byte-identical** to the
+blob `encode_linear` writes for it alone. `encode_unit` is this driver at
+`B=1`: the per-unit body is a generator that yields each trellis call and
+receives its own columns back, so there is one implementation and not a fast
+path beside a reference. `encoder_fixture_id` does not move.
+`tests/test_batched_encode_identity.py` pins blob equality unit by unit at
+BF16_K1@1792, E4M3_K1@1024, E2M1_K2@896 and the mixed-rate E4M3@1042 with
+LDLQ on at the default refit schedule.
+
+The batched entry points are `export.encode_linears_planes` /
+`export.encode_linears`: one recipe, one rate schedule and one set of forests
+for the batch, per-unit inputs either as sequences (`ldl`, `refit_metric`,
+`refit_metric_trailing`) or as `per_unit`, one `ActivationSource.for_unit`
+mapping per weight, whose non-tensor keys (`ldl_block`, `refit_reach_floor`,
+`refit_gauss_seidel`) must agree across the batch, including presence: each
+shared key is present in every mapping or omitted from every mapping. A
+disagreement is refused by key before fixture computation. A producer hands a
+list of same-shape, same-rung units -- an
+expert stack's projections are the natural batch -- and gets each unit's
+`ExportedUnit` in order.
+
+What the batch buys is measured, not assumed, and it differs by body. The
+coset trellis (`_TCQPlan`, the E2M1_K2 cap rung) is launch-bound at
+`ldl_block` columns a call, so joining `B` blocks divides its launch count by
+`B`. The fused window body is tiled over an L2-bounded column width
+(`window_viterbi._layout`, width 32 at L=14), so a wider call there is more
+tiles of the same width and the gain is per-call overhead only; the numbers
+are in `docs/measurements/tessera385-batched-ldlq-2026-09-06.md`. Two things
+the batch made necessary: the per-(block, rate) column index is computed once
+from the schedule instead of a `torch.nonzero` sync per block per pass, and a
+wide window call now keeps a persistent plan like a narrow one -- under the
+old six-batch rule every batched LDLQ block would have captured a fresh graph
+(device sync, allocator flush) hundreds of times a pass. `_plan_for_call`
+has two rules now: eager under `TESSERA_WINDOW_GRAPH=0`, otherwise a
+persistent plan on the second call of a shape (`_WINDOW_GRAPH_MIN_CALLS`),
+bounded at `_WINDOW_PLAN_CACHE` plans per thread.
 
 ### 3.2 Exact campaign unit intake (explicit, not a serving qualification)
 
