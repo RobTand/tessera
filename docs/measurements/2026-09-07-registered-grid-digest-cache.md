@@ -77,3 +77,52 @@ independently rehashed; retained bindings are in
 The impacted-test selector selects 187 files because the alphabet reaches
 `conftest`; the coordinator owns that broad integration population. Production
 14-wire GPU equality and before/after work-per-joule remain unmeasured here.
+
+## Matched production-wire verifier comparison
+
+Coordinator PB `c9ed62c27e35d4abc52dbbef32e110d5c3b60aa6075af7916796484904628997`
+completed on Sparklina GB10 with exit 0, CPUs 5–8, four native threads,
+Torch 2.13.0+cu130 / CUDA 13.0. Both arms verified the same two original dense
+units and 14 original wires/renders using `verify_anchor_render` and the same
+PWC transfer, with 411,071,318 resident-prefetched bytes and no cache misses.
+The original producer package and imported module objects stayed unchanged.
+The optimized reader was loaded from a separate frozen package with source
+hash `14df4432…`. All 14 comparison records were equal; each arm refused
+render, source, settings and wire corruption (eight checks total). No separate
+Hessian-corruption GPU case was included in these eight checks.
+
+Three interleaved measured pairs, after separately recorded first parses:
+
+| Pair | Before (s) | After (s) |
+| --- | ---: | ---: |
+| 0 | 3.987748117 | 3.199549645 |
+| 1 | 3.994050134 | 3.213331999 |
+| 2 | 3.998542494 | 3.170378920 |
+| Median | 3.994050134 | 3.199549645 |
+
+The measured ratio is **1.248316× for this resident verifier workload**.
+This compares the combined PQ per-unit source/H identity reuse plus optimized
+reader against the prior verifier; it does not isolate the grid-cache change.
+Binding and source/H hashing remain inside the after-arm timer. Per-cell render
+file checksums remain inside both arms. The scope excludes whole-model streaming
+and its capture/file-hash intake;
+this is not a whole-preparation or whole-pipeline speedup. First parse is not
+claimed disk-cold. The py-spy sampler ran at 50 Hz and the diagnostic Torch
+profiles were collected separately from the measured pairs. Across stacks
+containing `before_verify`, 96 of 1,303 samples included `grid_digest`; across
+`after_verify`, none of 1,047 did. These sample populations include first-parse
+and diagnostic phases and must not be treated as phase-specific time shares.
+The remaining after samples include 236 NumPy `_sum` leaves and 152
+`wire._from_bits` leaves, motivating a separately measured decoder follow-up.
+
+Evidence roots:
+`/mnt/shared/tessera-measurements/first-model-20260907/full-model-joint-aura/qualify-reader-ab-01/`
+and sibling `qualify-reader-ab-sampler-01/`. `results.json` SHA256 is
+`5ab6c302dfd418c437fec1936168ecd86b0360726ad2e6205d29a545e8aac8f8`;
+`stacks.raw` SHA256 is
+`8c2168b14a2e217400eb89e9c29f45b19c44dcb61cdb61b476a30d620dee9036`.
+The actual PB terminal, CAS payload and all 11 files bound in
+`verified-evidence.json` were independently rehashed for this record.
+Both-host Netdata is retained, but its approximately 10-second power sampling
+cannot resolve these 3–4-second arms. **No arm energy or work/J claim follows.**
+The broader 187-file integration population remains coordinator-owned.
