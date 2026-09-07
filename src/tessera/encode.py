@@ -1288,6 +1288,39 @@ def _lut_cost(targets: torch.Tensor, weights: torch.Tensor, table: torch.Tensor)
     return (weights * gap * gap).sum()
 
 
+def _unused_bytes(all_bytes: torch.Tensor, candidate_bytes: torch.Tensor) -> torch.Tensor:
+    """``all_bytes`` minus ``candidate_bytes``, in ``all_bytes``'s own order.
+
+    The mask select this replaces is a ``nonzero``: the host has to learn the
+    output's shape, which drains the device once per swap pass.  The count is
+    known without asking -- the table holds DISTINCT bytes drawn from
+    ``all_bytes``, so exactly ``len(all_bytes) - len(candidate_bytes)`` are
+    unused -- and a stable ascending sort of the "is used" flag puts the unused
+    ones first, in their original order, which is what the mask select returned.
+    """
+    keep = all_bytes.numel() - candidate_bytes.numel()
+    order = torch.argsort(torch.isin(all_bytes, candidate_bytes).to(torch.uint8),
+                          stable=True)
+    return all_bytes.index_select(0, order[:keep])
+
+
+def _greedy_accept(costs: "list[float]", base: float, step: float):
+    """One index's swap trials, walked in order; ``(accepted k or None, base)``.
+
+    This is not an ``argmin``.  The accept test is relative to the RUNNING
+    cost, so a trial cheaper than every other but only a hair below the one
+    already accepted is rejected -- and the walk's answer differs from the
+    minimum whenever that happens.  Keeping the walk is what makes the batched
+    scoring below a rewrite of *where* the trials are evaluated rather than of
+    *which* one is taken.
+    """
+    chosen = None
+    for k, cost in enumerate(costs):
+        if cost < base * (1.0 - step):
+            chosen, base = k, cost
+    return chosen, base
+
+
 def _nearest(targets: torch.Tensor, table: torch.Tensor) -> torch.Tensor:
     """Index of the nearest table entry, in the linear domain.
 
@@ -1503,10 +1536,10 @@ def _fit_lut(
         keep[drop] = False
         table, candidate_bytes = table[keep], candidate_bytes[keep]
 
+    n_table = table.numel()
     for _ in range(swaps):
         improved = False
         base_cost = _lut_cost(s, w, table)
-        base = float(base_cost)
         # The stop test is derived from the precision of the dtype the cost
         # is accumulated in: a swap must lower the running cost by at least
         # one ulp of that cost, else the "improvement" is rounding noise. An
@@ -1514,17 +1547,46 @@ def _fit_lut(
         step = (torch.finfo(base_cost.dtype).eps
                 if base_cost.is_floating_point() else 0.0)
         all_bytes = torch.arange(first + FIRST, last + FIRST, dtype=torch.long, device=device)
-        unused = all_bytes[~torch.isin(all_bytes, candidate_bytes)]
-        for i in range(table.numel()):
-            for byte in unused.tolist():
-                trial = table.clone()
-                trial[i] = grid_values[byte - FIRST]
-                cost = float(_lut_cost(s, w, trial))
-                if cost < base * (1.0 - step):
-                    table, base, improved = trial, cost, True
-                    candidate_bytes = candidate_bytes.clone()
-                    candidate_bytes[i] = byte
-                    unused = all_bytes[~torch.isin(all_bytes, candidate_bytes)]
+        unused = _unused_bytes(all_bytes, candidate_bytes)
+        # Every trial at index ``i`` OVERWRITES position ``i``, so its cost is
+        # a function of the other ``entries - 1`` values alone -- never of
+        # which byte an earlier accept at the same index left there.  So a
+        # whole block of trials can be scored before any of them is read back,
+        # and an accept invalidates only the indices AFTER it.  The walk
+        # speculates from ``start`` to the end of the table, reads the block in
+        # one go, and restarts at the first index that accepted: one host read
+        # per pass plus one per accepting index, against one per trial.
+        # ``_greedy_accept`` keeps the sequential accept test exactly, in the
+        # Python float64 the comparison was always made in.
+        base = None
+        start = 0
+        while start < n_table:
+            trials = [] if base is not None else [base_cost]
+            for i in range(start, n_table):
+                for k in range(unused.numel()):
+                    trial = table.clone()
+                    trial[i] = grid_values[unused[k] - FIRST]
+                    trials.append(_lut_cost(s, w, trial))
+            scored = torch.stack(trials).double().tolist()
+            if base is None:
+                base, scored = scored[0], scored[1:]
+            width = unused.numel()
+            hit = None
+            for i in range(start, n_table):
+                chosen, base = _greedy_accept(
+                    scored[(i - start) * width:(i - start + 1) * width], base, step)
+                if chosen is not None:
+                    hit, improved = (i, chosen), True
+                    break
+            if hit is None:
+                break
+            i, k = hit
+            table = table.clone()
+            table[i] = grid_values[unused[k] - FIRST]
+            candidate_bytes = candidate_bytes.clone()
+            candidate_bytes[i] = unused[k]
+            unused = _unused_bytes(all_bytes, candidate_bytes)
+            start = i + 1
         if not improved:
             break
     order = torch.argsort(candidate_bytes)
