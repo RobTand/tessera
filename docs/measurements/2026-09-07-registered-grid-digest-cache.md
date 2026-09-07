@@ -40,3 +40,40 @@ has no Torch (71 Torch-dependent modules unavailable). It is not a passing
 compatibility run. Follow-up CPU compatibility and namespaced-reader actions
 require the installed x86 CPU Torch environment; production GPU performance
 and wire evidence are recorded by the coordinator separately.
+
+## Completed CPU validation
+
+The x86 worker stopped announcing while the follow-ups waited. Unclaimed
+follow-ups were withdrawn. Two attempts using the original producer image on
+Sparklina (`15d9f7d525c9…`, `7fb26c3222a5…`) failed before execution because
+that image is absent there; Sparky retries were withdrawn before launch after
+the coordinator identified its quiesced supervisor. These are environment
+failures, not test passes. The final runs reused the established PQ CPU
+container environment through `experiments/reader_cpu_checks.sh`:
+`eugr/spark-vllm@sha256:0afec8d4f79f44685a1ddf758659d33aef3b0f3ec9068e5a7cd1108d30e5581c`,
+GPU visibility disabled, existing shared pytest dependencies, native threads one.
+
+PB `d0f09fdd6f4ab67de1d5d59aa8264cf41d14041590f58697f6cfe3589a801b60`
+completed on Sparklina with exit 0: **20 passed, zero skipped, zero modules
+missing collection**, Python 3.12.3, Torch 2.13.0+cu130 with no CUDA device,
+pytest 8.4.2 / xdist 3.8.0, four workers. Command:
+`bash experiments/reader_cpu_checks.sh -m pytest -n 4 --dist worksteal --durations=5 -p no:cacheprovider tests/test_grid_digest_cache.py tests/test_ktuple.py -k 'digest or profile or unknown_grid or free_grid'`.
+This is CPU correctness coverage, not CUDA surface coverage or timing evidence.
+
+PB `bf5405ec544bf69024a3e7ccfe0f9d4a2a50da92cc96506f7731cd39c31a1d8c`
+completed with exit 0 on Sparklina, one CPU: the original producer as `tessera`
+and optimized reader as `tessera_reader_<source_sha256>` decoded all **11**
+retained legacy fixtures bit-exactly, and both implementations refused profile
+and payload corruptions (**44** refusal checks). Imported modules stayed under
+their respective declared package roots; primary producer identity remained
+unchanged. Result:
+`/mnt/shared/tessera-clean-runtime-20260907/reader-grid-cache/namespace-cpu.json`,
+SHA256 `f9c0304181b388438e7be01d709b81e619906afa2ac771c52d111065b2a212d7`.
+
+Compile PB `236662d00ac1f627b5965c38fab330cf9b6626e30f1a02c7e38d161331e89ec1`
+also completed with exit 0. Terminal/CAS payloads and the namespace result were
+independently rehashed; retained bindings are in
+`/mnt/shared/tessera-clean-runtime-20260907/reader-grid-cache/verified-receipts.json`.
+The impacted-test selector selects 187 files because the alphabet reaches
+`conftest`; the coordinator owns that broad integration population. Production
+14-wire GPU equality and before/after work-per-joule remain unmeasured here.
