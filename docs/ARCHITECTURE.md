@@ -53,8 +53,9 @@ bound (#376; §2.4). Serving defaults, wire and release gates are unchanged.
 Re-stamped 2026-09-07 on `codex/full-engine-resource-ledger` for the
 raw engine allocation recorder, opt-in stock worker startup integration,
 resolved KV group/spec and selected capacity assertions, persistent runtime
-buffer/workspace references, and
-explicit incomplete admission boundary (§2.4). No full-engine fixed-resource price or runtime qualification
+buffer/workspace references, complete native-apply observation, selected
+original-wire checkpoint binding, and separate same-run timing partitions with
+explicit incomplete admission boundaries (§2.4). No full-engine fixed-resource price or runtime qualification
 is established by the raw ledger.
 
 ## 1. Scope
@@ -793,13 +794,21 @@ the replayed live peak is explicitly requested bytes, excluding rounding.
 This does not qualify the Torch/CUPTI ownership or timing join.
 
 `experiments/capture_full_engine_resources.py` adds an opt-in, intrusive
-source-BF16 observation pass using the stock runtime's supported `worker_cls`
+source-BF16 or hash-bound original-wire reference observation pass using the stock runtime's supported `worker_cls`
 configuration. Its early Python process bootstrap starts CUPTI before Torch
 and records allocator history before CUDA initialization; each spawned process
 owns its collector, and fork-inherited or late worker captures refuse. The
 worker subclass calls the stock device, model-load, KV-allocation, execution
 and sampling methods, adding synchronized checkpoints and bounded forward
-hooks for explicitly selected canonical units. The invocation budget is armed
+hooks for explicitly selected canonical units. `--all-units` resolves every
+canonical dense unit and routed-expert group to its actual quantization
+method `apply` boundary. The expert boundary excludes routing; monolithic or
+ambiguous methods refuse. Shared method instances dispatch by actual layer
+identity, and patches are restored after observation. Dynamic input and output
+tensor references preserve backings crossing each boundary. For original-wire
+references, native parameters and buffers, including scale storage, are candidate
+owners; tensors also registered outside canonical native modules remain fixed.
+Conflicting storage aliases still refuse rather than receiving a chosen label. The invocation budget is armed
 by an explicit RPC after engine initialization,
 so stock startup warmup cannot consume the requested workload's observations.
 Raw scheduler token counts and new/cached request state identify those steps.
@@ -828,7 +837,11 @@ storage only through exact observed source and mapped-library bytes, ordered
 allocation frames, and a still-live allocation generation matching an active
 Torch block. It claims no native getter, historical byte constant, or fixed
 assignment-independent charge.
-The launcher binds the canonical source census, source-BF16 assignment,
+`--reference-proof` verifies the export statement, original-wire member census,
+source identity, original blobs, and closed checkpoint file hashes before
+selecting the reference model. It binds the loaded checkpoint separately from
+the source model and keeps exporter/PB provenance admission explicit and
+unimplemented. The launcher binds the canonical source census, selected assignment,
 selected engine settings, observer settings, workload, device UUID and installed
 runtime manifest, and verifies the stock core before and after the pass.
 Worker observations also hash the actual mapped shared objects, including
@@ -868,6 +881,28 @@ medians are converted into fixed costs. Runtime provenance, complete external
 and host/UMA ownership, stream/timing attribution, and an explicitly bound
 shared attention/recurrent cache-capacity policy require further engine
 qualification. No application default or serving gate reads this raw ledger.
+
+`--observation-mode timings --all-units` uses a separate stock worker without
+allocation collection. After one identical warmup, it interleaves profiled control
+and partition requests, resets prefix state for every request, and requires the
+unchanged 512-token calibration prompt and identical generated tokens. Native
+`apply` boundaries record CUDA events on the engine main stream. Every adjacent
+fixed gap is measured directly using the same event sequence; no independently
+measured operator median or kernel-duration sum is subtracted. A separate
+observer stream joins the main completion event and stock asynchronous output
+copy event without introducing a wait into the engine streams.
+
+`full_engine_timings` recomputes the recorded partition from the profile: every
+canonical unit must execute once in each 512-token prefill and one-token decode,
+every GPU operation must have a unique launch and step scope, native operations
+must remain on the measured main stream, and only the explicitly joined copy
+stream may carry other work. Copy work overlapping native units refuses. The
+sum must recompose the whole interval within only binary32 representation
+rounding. Raw files survive an incomplete partition and the launcher then fails.
+`observed_same_run_partition` describes observed coverage, not profiler health,
+observer overhead qualification or a fixed timing price. Complete collection,
+overhead, runtime/assignment admission and full memory ownership remain explicit
+qualification gaps; `timings` stays null and admission remains unimplemented.
 
 ## 3. Bytes: priced == served
 

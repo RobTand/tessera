@@ -1,4 +1,4 @@
-"""Launch an intrusive source-BF16 stock-vLLM resource pass, without admission.
+"""Launch a bound stock-vLLM resource/timing observation, without admission.
 
 Run inside an admitted PrismaBuild action in the attested stock container.
 The first process verifies inputs and writes the observer plan. A fresh Python
@@ -73,12 +73,20 @@ def prepare(args):
         raise ValueError("runtime manifest differs from per-job installation evidence")
     roster = canonical_roster(census)
     by_id = {row["unit_id"]: row for row in roster}
-    units = [by_id[name] for name in args.unit]
+    mode = getattr(args, "observation_mode", "resources")
+    units = roster if getattr(args, "all_units", False) else [by_id[name] for name in args.unit]
     if len(units) != len({row["unit_id"] for row in units}):
         raise ValueError("duplicate observed unit")
     assignment = {"schema": "tessera.source_bf16_observer_assignment.v1",
                   "source_sha256": canonical_hash(source),
                   "units": {row["unit_id"]: "source_bf16" for row in roster}}
+    reference = None
+    if getattr(args, "reference_proof", None) is not None:
+        if not args.all_units or args.unit:
+            raise ValueError("original-wire reference observation requires --all-units without partial selection")
+        from experiments.full_engine_reference import verify_reference_checkpoint
+        reference = verify_reference_checkpoint(args.reference_proof, source, roster, digest(args.census))
+        assignment = reference["assignment"]
     if args.calibration is not None:
         if digest(args.calibration) != args.calibration_sha256:
             raise ValueError("calibration bytes differ from the declared immutable fixture")
@@ -95,6 +103,15 @@ def prepare(args):
         workload = {"messages": [{"role": "user", "content": "Return exactly the word blue."}],
                     "scope": "two scheduled steps for raw allocation observation; no quality claim"}
     workload["sampling"] = {"temperature": 0.0, "seed": 0, "max_tokens": 2, "ignore_eos": True}
+    if mode == "timings":
+        if args.calibration is None or not args.all_units or args.unit:
+            raise ValueError("timing observation requires the canonical calibration and --all-units without a partial --unit selection")
+        if type(args.timing_samples) is not int or args.timing_samples < 1:
+            raise ValueError("timing_samples must be a positive integer")
+        workload["timing_protocol"] = {"samples": args.timing_samples,
+            "arms": ["control", "partition"], "cache_state": "reset_prefix_cache before every request",
+            "warmup": "one identical request before the interleaved profiled arm pairs",
+            "scope": "observer qualification; no admitted timing price"}
     uuid = subprocess.check_output(["nvidia-smi", "--query-gpu=uuid", "--format=csv,noheader"],
                                    text=True).strip().splitlines()
     if len(uuid) != 1:
@@ -121,6 +138,17 @@ def prepare(args):
             "observer_engine_args": {"worker_cls": "experiments.full_engine_worker.ResourceCaptureWorker"},
             "observer_environment": {"VLLM_WORKER_MULTIPROC_METHOD": "spawn"},
             "scope": "intrusive raw resource capture; no timing, fixed-resource or release admission"}
+    plan["observation_mode"] = mode
+    plan["unit_boundary"] = "native_apply" if args.all_units else "module_forward"
+    if reference is not None:
+        plan["reference_checkpoint"] = reference
+        plan["model"] = reference["checkpoint"]
+        plan["identity"]["source_model_sha256"] = plan["identity"]["model_sha256"]
+        plan["identity"]["model_sha256"] = reference["checkpoint_sha256"]
+    if mode == "timings":
+        plan["timing_samples"] = args.timing_samples
+        plan["observer_engine_args"] = {"worker_cls": "experiments.full_engine_timing_worker.TimingCaptureWorker"}
+        plan["scope"] = "profiled all-native-unit event partition; observer qualification, no admitted timing or fixed-resource price"
     if args.workspaces is not None:
         plan["blas_workspace_observer"] = {"path": str(args.workspaces.resolve()),
                                           "sha256": digest(args.workspaces)}
@@ -133,8 +161,12 @@ def prepare(args):
     env = os.environ.copy()
     env.update(config["environment"])
     env.update(plan["observer_environment"])
-    env.update({"TESSERA_ENGINE_RESOURCE_PLAN": str(path.resolve()),
-                "PYTHONPATH": str(root / "experiments/resource_bootstrap") + os.pathsep + str(root)})
+    if mode == "resources":
+        env.update({"TESSERA_ENGINE_RESOURCE_PLAN": str(path.resolve()),
+                    "PYTHONPATH": str(root / "experiments/resource_bootstrap") + os.pathsep + str(root)})
+    else:
+        env.pop("TESSERA_ENGINE_RESOURCE_PLAN", None)
+        env.update({"TESSERA_ENGINE_TIMING_PLAN": str(path.resolve()), "PYTHONPATH": str(root)})
     os.execve(sys.executable, [sys.executable, "-m", "experiments.capture_full_engine_resources",
                              "--run-plan", str(path.resolve())], env)
 
@@ -147,6 +179,8 @@ def run(plan_path):
     from vllm import LLM, SamplingParams
     llm = LLM(model=plan["model"], seed=0,
               **plan["selected_configuration"]["engine_args"], **plan["observer_engine_args"])
+    if plan.get("observation_mode") == "timings":
+        return run_timings(llm, plan, plan_path, started, audit_before)
     armed = llm.collective_rpc("resource_capture_arm")
     workload = plan["workload"]
     sampling = SamplingParams(**workload["sampling"])
@@ -175,6 +209,47 @@ def run(plan_path):
                       "worker_count": len(workers), "admission": "not_implemented"}), flush=True)
 
 
+def run_timings(llm, plan, plan_path, started, audit_before):
+    from vllm import SamplingParams
+    workload = plan["workload"]
+    sampling = SamplingParams(**workload["sampling"])
+
+    def request():
+        if llm.reset_prefix_cache() is not True:
+            raise RuntimeError("timing request could not establish cold prefix state")
+        responses = llm.generate({"prompt_token_ids": workload["prompt_token_ids"]}, sampling, use_tqdm=False)
+        if len(responses) != 1 or responses[0].prompt_token_ids != workload["prompt_token_ids"]:
+            raise ValueError("timing engine changed the canonical TokenPrompt")
+        tokens = [item.token_ids for item in responses[0].outputs]
+        if len(tokens) != 1 or len(tokens[0]) != 2:
+            raise ValueError("timing request did not generate exactly two tokens")
+        return tokens[0]
+
+    warmup_tokens = request()
+    arms = []
+    for sample in range(plan["timing_samples"]):
+        for arm in ("control", "partition"):
+            armed = llm.collective_rpc("timing_capture_arm", args=(arm, sample))
+            tokens = request()
+            workers = llm.collective_rpc("timing_capture_finish")
+            if len(workers) != 1 or tokens != warmup_tokens:
+                raise ValueError("timing worker population or generated tokens changed between arms")
+            arms.append({"arm": arm, "sample": sample, "armed": armed, "tokens": tokens, "workers": workers})
+    coverage_verified = all(item["workers"][0]["partition"]["status"] == "observed_same_run_partition"
+                            for item in arms if item["arm"] == "partition")
+    result = {"schema": "tessera.stock_engine_raw_timing_run.v1", "scope": plan["scope"],
+              "plan_sha256": digest(plan_path), "started_unix": started, "finished_unix": time.time(),
+              "core_audit_before": audit_before, "core_audit_after": audit_core(plan["core_manifest"]),
+              "warmup_tokens": warmup_tokens, "arms": arms, "timings": None,
+              "partition_coverage_verified": coverage_verified,
+              "full_model_fixed_resources_complete": False, "admission": "not_implemented"}
+    path = Path(plan["output_directory"]) / "run.json"
+    path.write_text(json.dumps(result, sort_keys=True, indent=2) + "\n")
+    print(json.dumps({"artifact": str(path), "sha256": digest(path), "admission": "not_implemented"}), flush=True)
+    if not coverage_verified:
+        raise RuntimeError("all-unit profiler/event partition remains incomplete; retained raw timing run: " + str(path))
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-plan", type=Path)
@@ -190,6 +265,10 @@ def main():
     parser.add_argument("--workspaces", type=Path)
     parser.add_argument("--owner-rule", type=Path)
     parser.add_argument("--unit", action="append", default=[])
+    parser.add_argument("--all-units", action="store_true")
+    parser.add_argument("--observation-mode", choices=("resources", "timings"), default="resources")
+    parser.add_argument("--timing-samples", type=int, default=1)
+    parser.add_argument("--reference-proof", type=Path)
     args = parser.parse_args()
     if args.run_plan:
         run(args.run_plan)
@@ -197,7 +276,7 @@ def main():
         if any(getattr(args, name) is None for name in
                ("config", "census", "model", "collector", "core_manifest", "runtime_evidence", "output")):
             parser.error("prepare requires all input, runtime, collector and output paths")
-        if not args.unit:
+        if not args.unit and not args.all_units:
             parser.error("select at least one canonical --unit")
         prepare(args)
 

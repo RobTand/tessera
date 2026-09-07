@@ -317,7 +317,7 @@ class FullEngineResourceRecorder:
             self._observer_cost.append(cost)
 
     @contextmanager
-    def unit_scope(self, unit_id):
+    def unit_scope(self, unit_id, *, owners=None):
         self._open()
         _text(unit_id, "unit_id")
         if len(self._checkpoints) + len(self._stack) + 3 > self.max_checkpoints:
@@ -325,7 +325,7 @@ class FullEngineResourceRecorder:
             raise RuntimeError("planned checkpoint budget cannot cover unit boundaries")
         invocation_id = f"unit:{len(self._intervals)}"
         begin, end = invocation_id + ":begin", invocation_id + ":end"
-        self.snapshot(begin)
+        self.snapshot(begin, owners=owners() if owners is not None else ())
         interval = {"invocation_id": invocation_id, "unit_id": unit_id,
                     "begin_checkpoint": begin, "end_checkpoint": None}
         self._intervals.append(interval)
@@ -337,7 +337,7 @@ class FullEngineResourceRecorder:
             raise
         finally:
             try:
-                self._snapshot(end, closing=True)
+                self._snapshot(end, closing=True, owners=owners() if owners is not None else ())
                 interval["end_checkpoint"] = end
             finally:
                 self._stack.pop()

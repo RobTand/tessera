@@ -351,3 +351,13 @@ def test_runtime_owners_include_mamba_cpu_gpu_buffer(worker_module, monkeypatch)
     buffer.cpu = Tensor()
     buffer.gpu = Tensor()
     assert [name for name, _ in worker_module.runtime_tensor_leaves(buffer, "mamba")] == ["mamba.cpu", "mamba.gpu"]
+
+
+def test_reference_owner_parameters_include_scales_but_exclude_external_router_alias(worker_module):
+    weight, scale, router = object(), object(), object()
+    owner = SimpleNamespace(named_parameters=lambda **kwargs: [("weight_fp8", weight), ("bias_alias", router)],
+                            named_buffers=lambda **kwargs: [("scale_b", scale)])
+    model = SimpleNamespace(named_parameters=lambda **kwargs: [("dense.weight_fp8", weight), ("dense.bias_alias", router),
+                                                               ("router.bias", router)],
+                            named_buffers=lambda **kwargs: [("dense.scale_b", scale)])
+    assert worker_module.reference_candidate_tensor_ids(model, [{"owner": owner, "boundary": "dense.quant_method.apply"}]) == {id(weight), id(scale)}

@@ -27,6 +27,26 @@ def test_storage_aliases_are_counted_once_without_fixed_resource_admission(captu
     assert result["admission"] == "not_implemented"
 
 
+def test_native_boundary_owners_are_observed_again_after_output_creation():
+    from experiments.full_engine_resources import FullEngineResourceRecorder
+    recorder = object.__new__(FullEngineResourceRecorder)
+    recorder._open = lambda: None
+    recorder._checkpoints, recorder._stack, recorder._intervals, recorder._errors = [], [], [], []
+    recorder.max_checkpoints = 3
+    observations, owners = [], ["input backing"]
+
+    def snapshot(label, *, owners=(), **kwargs):
+        observations.append((label, list(owners)))
+        recorder._checkpoints.append({"label": label})
+
+    recorder.snapshot = recorder._snapshot = snapshot
+    with recorder.unit_scope("l:fixture", owners=lambda: iter(owners)):
+        owners.append("output backing")
+    assert observations == [("unit:0:begin", ["input backing"]),
+                            ("unit:0:end", ["input backing", "output backing"])]
+    assert recorder._intervals[0]["end_checkpoint"] == "unit:0:end"
+
+
 def test_conflicting_alias_categories_remain_unknown_without_hiding_other_checkpoints(capture):
     from experiments.full_engine_resources import analyze_engine_resource_ledger
     capture["checkpoints"][0]["owners"][1]["category"] = "candidate"

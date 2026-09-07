@@ -8,6 +8,7 @@ import json
 import hashlib
 import os
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -16,6 +17,7 @@ from vllm.v1.worker.gpu_worker import Worker
 from experiments.full_engine_bootstrap import claim
 from experiments.full_engine_resources import TensorOwner, BlasWorkspaceObserver
 from experiments.full_engine_kv import kv_config_value, kv_configuration_observation, inspect_worker_kv
+from experiments.full_engine_timing_boundaries import resolve_apply_boundaries, observe_apply_boundaries
 
 
 def parameter_category(name, canonical_modules):
@@ -25,6 +27,27 @@ def parameter_category(name, canonical_modules):
     return "candidate" if (name.rsplit(".", 1)[-1] in {"weight", "w13_weight", "w2_weight"}
                            and any(name.startswith(module + ".")
                                    for module in canonical_modules)) else "fixed"
+
+
+def reference_candidate_tensor_ids(model, boundaries):
+    """Read actual native owner parameters/buffers, preserving external aliases.
+
+The reference assignment defines the canonical owners. A registered tensor
+also named outside those owners (for example the shared router bias) remains
+fixed. Different tensor objects sharing storage still meet the ledger's alias
+conflict checks; no partial backing is silently assigned.
+    """
+    candidate = set()
+    prefixes = []
+    for row in boundaries:
+        owner = row["owner"]
+        prefixes.append(row["boundary"].removesuffix(".quant_method.apply") + ".")
+        candidate.update(id(tensor) for _, tensor in
+                         list(owner.named_parameters(remove_duplicate=False)) + list(owner.named_buffers(remove_duplicate=False)))
+    external = {id(tensor) for name, tensor in
+                list(model.named_parameters(remove_duplicate=False)) + list(model.named_buffers(remove_duplicate=False))
+                if not any(name.startswith(prefix) for prefix in prefixes)}
+    return candidate - external
 
 
 def tensor_leaves(value, prefix):
@@ -176,7 +199,8 @@ def full_engine_runtime_observation(plan):
             "observer_environment": plan["observer_environment"], "scope": plan["scope"]},
         "source": {"full_engine_worker_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest()},
         "instrumentation": {"resource_collector": {"library_sha256": plan["collector_library_sha256"],
-                                                   "loaded_path": plan["collector_library"]},
+                                                   "loaded_path": plan["collector_library"]}
+                                                  if plan.get("observation_mode", "resources") == "resources" else None,
             "blas_workspace_observer": {"library_sha256": plan["blas_workspace_observer"]["sha256"],
                                         "loaded_path": plan["blas_workspace_observer"]["path"]}
                                        if plan.get("blas_workspace_observer") else None,
@@ -197,6 +221,8 @@ class ResourceCaptureWorker(Worker):
         self._resource_invocations = {}
         self._resource_scopes = {}
         self._resource_events = []
+        self._resource_native_boundaries = None
+        self._resource_native_patches = None
         super().__init__(*args, **kwargs)
 
     def _resource_owners(self):
@@ -205,13 +231,17 @@ class ResourceCaptureWorker(Worker):
         runner = getattr(self, "model_runner", None)
         model = getattr(runner, "model", None)
         if model is not None:
+            reference_ids = (reference_candidate_tensor_ids(model, self._resource_native_boundaries)
+                             if self._resource_plan.get("reference_checkpoint") and self._resource_native_boundaries is not None else None)
             for kind, tensors in (("parameter", model.named_parameters(remove_duplicate=False)),
                                   ("buffer", model.named_buffers(remove_duplicate=False))):
                 for name, tensor in tensors:
                     if tensor.device.type == "cuda":
-                        yield TensorOwner(f"model:{kind}:{name}", parameter_category(
-                            name, self._resource_plan["canonical_modules"]), tensor,
-                            "source BF16 canonical weight tensors; other named state fixed")
+                        category = ("candidate" if id(tensor) in reference_ids else "fixed") if reference_ids is not None else parameter_category(
+                            name, self._resource_plan["canonical_modules"])
+                        yield TensorOwner(f"model:{kind}:{name}", category, tensor,
+                            "canonical native owner tensor with external aliases fixed" if reference_ids is not None
+                            else "source BF16 canonical weight tensors; other named state fixed")
         if runner is not None:
             for name, tensor in tensor_leaves(getattr(runner, "kv_caches", []), "kv_cache"):
                 yield TensorOwner(name, "kv", tensor,
@@ -235,7 +265,12 @@ class ResourceCaptureWorker(Worker):
     def load_model(self, *args, **kwargs):
         self._resource_checkpoint("before_model_load")
         result = super().load_model(*args, **kwargs)
+        if self._resource_plan.get("unit_boundary") == "native_apply":
+            self._resource_native_boundaries = resolve_apply_boundaries(self.model_runner.model, self._resource_plan["observed_units"])
+            self._resource_invocations = {row["module"]: 0 for row in self._resource_native_boundaries}
         self._resource_checkpoint("model_loaded")
+        if self._resource_native_boundaries is not None:
+            return result
         modules = dict(self.model_runner.model.named_modules())
         for unit in self._resource_plan["observed_units"]:
             name = unit["module"]
@@ -266,6 +301,32 @@ class ResourceCaptureWorker(Worker):
                 modules[name].register_forward_pre_hook(before, with_kwargs=True),
                 modules[name].register_forward_hook(after, always_call=True)])
         return result
+
+    @contextmanager
+    def _resource_observe_apply(self, boundary, call):
+        if not self._resource_active:
+            yield
+            return
+        name, unit_id = boundary["module"], boundary["unit_id"]
+        invocation = self._resource_invocations[name]
+        if invocation >= self._resource_plan["max_invocations_per_unit"]:
+            raise RuntimeError("canonical native unit exceeded the declared invocation budget: " + unit_id)
+        self._resource_invocations[name] += 1
+
+        def owners():
+            yield from self._resource_owners()
+            for kind, value in (("input", call["arguments"]), ("output", call["result"])):
+                for label, tensor in tensor_leaves(value, kind):
+                    yield TensorOwner(f"native:{unit_id}:{invocation}:{label}", "shared", tensor,
+                                      "observed native boundary tensor; carried lifetime retained, not a fixed activation price")
+
+        self._resource_events.append({"unit_id": unit_id, "module": name, "boundary": boundary["boundary"],
+            "includes_router": boundary["includes_router"], "invocation": invocation,
+            "execute_call": self._resource_calls,
+            "input_tensors": [{"name": key, "shape": list(tensor.shape), "dtype": str(tensor.dtype)}
+                              for key, tensor in tensor_leaves(call["arguments"], "input")]})
+        with self._resource_recorder.unit_scope(unit_id, owners=owners):
+            yield
 
     def initialize_from_config(self, kv_cache_config):
         self._resource_checkpoint("before_kv_allocation")
@@ -322,6 +383,9 @@ class ResourceCaptureWorker(Worker):
         if self._resource_armed:
             raise RuntimeError("resource workload was already armed")
         self._resource_checkpoint("ready_for_workload")
+        if self._resource_native_boundaries is not None:
+            self._resource_native_patches = observe_apply_boundaries(self._resource_native_boundaries, self._resource_observe_apply)
+            self._resource_native_patches.__enter__()
         self._resource_armed = True
         return {"pid": os.getpid(), "startup_execute_calls": self._resource_startup_calls,
                 "scope": "subsequent execution belongs to the explicit observation workload"}
@@ -332,6 +396,9 @@ class ResourceCaptureWorker(Worker):
         for handle in self._resource_hooks:
             handle.remove()
         self._resource_hooks.clear()
+        if self._resource_native_patches is not None:
+            self._resource_native_patches.__exit__(None, None, None)
+            self._resource_native_patches = None
         for name, count in self._resource_invocations.items():
             if count != self._resource_plan["max_invocations_per_unit"]:
                 self._resource_recorder._errors.append(
@@ -364,6 +431,6 @@ class ResourceCaptureWorker(Worker):
             "startup_execute_calls": self._resource_startup_calls,
             "scheduler_steps": self._resource_scheduler_steps,
             "kv_configuration": getattr(self, "_resource_kv_description", None),
-            "scope": "intrusive raw source-BF16 resource pass; timing and admission ineligible"
+            "scope": "intrusive raw engine resource pass; timing and admission ineligible"
         }, sort_keys=True))
         return {"directory": str(directory), "receipt": result}
