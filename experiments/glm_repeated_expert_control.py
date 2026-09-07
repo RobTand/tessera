@@ -69,8 +69,16 @@ def consume(args, request, control):
     e, h, n = int(text['n_routed_experts']), int(text['hidden_size']), int(text['moe_intermediate_size'])
     assert e == control['experts'] and text['num_experts_per_tok'] == control['top_k']
     templates, stock, source, input_receipts = {}, {}, {}, {}
+    producer_manifest = None
+    if args.producer_manifest:
+        producer_manifest = json.loads(args.producer_manifest.read_text())
+        assert producer_manifest['control_request_sha256'] == digest(args.control_request)
+        assert set(producer_manifest['projections']) == set(control['source_tensors'])
     for role, row in control['source_tensors'].items():
-        root = args.control_request.parent / f'encode-{args.q256}-{role}'
+        root = (Path(producer_manifest['projections'][role]['directory']) if producer_manifest
+                else args.control_request.parent / f'encode-{args.q256}-{role}')
+        if producer_manifest:
+            assert digest(root / 'receipt.json') == producer_manifest['projections'][role]['receipt_sha256']
         receipt = json.loads((root / 'receipt.json').read_text())
         launch = json.loads((root / 'launcher-result.json').read_text())
         assert receipt['status'] == 'encoded_source_projection'
@@ -197,6 +205,7 @@ def main():
     parser.add_argument('--role', choices=('gate_proj', 'up_proj', 'down_proj'))
     parser.add_argument('--q256', type=int, required=True)
     parser.add_argument('--construction', type=Path)
+    parser.add_argument('--producer-manifest', type=Path)
     args = parser.parse_args()
     request = json.loads(args.request.read_text())
     control = json.loads(args.control_request.read_text())
@@ -213,6 +222,9 @@ def main():
         'request_sha256': digest(args.request), 'control_request_sha256': digest(args.control_request),
         'control_scope': control['control_scope'], 'runtime_cell_promoted': False,
         'stage': args.stage, 'tp_size': 1, 'ep_size': 1}
+    if args.producer_manifest:
+        record['producer_manifest'] = {'path': str(args.producer_manifest),
+                                       'sha256': digest(args.producer_manifest)}
     rc = 0
     try:
         record.update((encode if args.stage == 'encode' else consume)(args, request, control))

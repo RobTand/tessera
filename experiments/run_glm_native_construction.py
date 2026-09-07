@@ -23,6 +23,7 @@ def main():
     parser.add_argument('--stage', choices=('construction', 'resident', 'streamed', 'encode', 'control'), required=True)
     parser.add_argument('--construction', type=Path)
     parser.add_argument('--control-request', type=Path)
+    parser.add_argument('--producer-manifest', type=Path)
     parser.add_argument('--role', choices=('gate_proj', 'up_proj', 'down_proj'))
     parser.add_argument('--q256', type=int)
     parser.add_argument('--cpus', type=int, default=4)
@@ -62,7 +63,7 @@ def main():
         '--out', str(root), '--stage', args.stage]
     if args.construction:
         command += ['--construction', str(args.construction)]
-    for name in ('control_request', 'role', 'q256'):
+    for name in ('control_request', 'producer_manifest', 'role', 'q256'):
         value = getattr(args, name)
         if value is not None:
             command += ['--' + name.replace('_', '-'), str(value)]
