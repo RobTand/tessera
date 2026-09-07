@@ -52,6 +52,9 @@ class ResourceCaptureWorker(Worker):
     def __init__(self, *args, **kwargs):
         self._resource_recorder, self._resource_plan = claim()
         self._resource_calls = 0
+        self._resource_armed = False
+        self._resource_startup_calls = 0
+        self._resource_scheduler_steps = []
         self._resource_active = False
         self._resource_hooks = []
         self._resource_invocations = {}
@@ -132,9 +135,22 @@ class ResourceCaptureWorker(Worker):
         return result
 
     def execute_model(self, scheduler_output):
+        if not self._resource_armed:
+            self._resource_startup_calls += 1
+            return super().execute_model(scheduler_output)
         self._resource_calls += 1
         self._resource_active = self._resource_calls <= self._resource_plan["max_execute_calls"]
         if self._resource_active:
+            self._resource_scheduler_steps.append({
+                "execute_call": self._resource_calls,
+                "total_num_scheduled_tokens": scheduler_output.total_num_scheduled_tokens,
+                "num_scheduled_tokens": scheduler_output.num_scheduled_tokens,
+                "new_requests": [{"req_id": request.req_id,
+                                  "num_computed_tokens": request.num_computed_tokens,
+                                  "prompt_token_count": len(request.prompt_token_ids)}
+                                 for request in scheduler_output.scheduled_new_reqs],
+                "cached_requests": {"req_ids": scheduler_output.scheduled_cached_reqs.req_ids,
+                    "num_computed_tokens": scheduler_output.scheduled_cached_reqs.num_computed_tokens}})
             self._resource_checkpoint(f"execute:{self._resource_calls}:begin")
         try:
             return super().execute_model(scheduler_output)
@@ -145,11 +161,21 @@ class ResourceCaptureWorker(Worker):
 
     def sample_tokens(self, grammar_output):
         result = super().sample_tokens(grammar_output)
-        if self._resource_calls <= self._resource_plan["max_execute_calls"]:
+        if self._resource_armed and self._resource_calls <= self._resource_plan["max_execute_calls"]:
             self._resource_checkpoint(f"sample:{self._resource_calls}:end")
         return result
 
+    def resource_capture_arm(self):
+        if self._resource_armed:
+            raise RuntimeError("resource workload was already armed")
+        self._resource_checkpoint("ready_for_workload")
+        self._resource_armed = True
+        return {"pid": os.getpid(), "startup_execute_calls": self._resource_startup_calls,
+                "scope": "subsequent execution belongs to the explicit observation workload"}
+
     def resource_capture_finish(self):
+        if not self._resource_armed:
+            raise RuntimeError("cannot finish before the observation workload was armed")
         for handle in self._resource_hooks:
             handle.remove()
         self._resource_hooks.clear()
@@ -166,6 +192,8 @@ class ResourceCaptureWorker(Worker):
             "model_runner_class": f"{type(self.model_runner).__module__}.{type(self.model_runner).__name__}",
             "native_libraries": native_libraries,
             "execute_calls": self._resource_calls, "units": self._resource_events,
+            "startup_execute_calls": self._resource_startup_calls,
+            "scheduler_steps": self._resource_scheduler_steps,
             "kv_configuration": getattr(self, "_resource_kv_description", None),
             "scope": "intrusive raw source-BF16 resource pass; timing and admission ineligible"
         }, sort_keys=True))

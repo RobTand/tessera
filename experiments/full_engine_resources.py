@@ -189,6 +189,7 @@ class FullEngineResourceRecorder:
             trace = raw["device_traces"][self.device]
             timestamp = self._collector.mark(label)
             checkpoint = {"label": label, "trace_index": len(trace),
+                          "history_boundary": "before_current_snapshot_marker",
                           "cupti_timestamp_ns": timestamp, "history_prefix_sha256": _sha(trace),
                           "segments": raw["segments"], "owners": rows}
             if self._last_snapshot is not None:

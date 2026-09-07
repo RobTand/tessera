@@ -787,8 +787,12 @@ and records allocator history before CUDA initialization; each spawned process
 owns its collector, and fork-inherited or late worker captures refuse. The
 worker subclass calls the stock device, model-load, KV-allocation, execution
 and sampling methods, adding synchronized checkpoints and bounded forward
-hooks for explicitly selected canonical units. Model parameters, buffers and
-the runner's shared attention/recurrent KV tensor views supply raw storage
+hooks for explicitly selected canonical units. The invocation budget is armed
+by an explicit RPC after engine initialization,
+so stock startup warmup cannot consume the requested workload's observations.
+Raw scheduler token counts and new/cached request state identify those steps.
+Model parameters, buffers and the runner's shared attention/recurrent KV
+tensor views supply raw storage
 owners. The launcher binds the canonical source census, source-BF16 assignment,
 selected engine settings, observer settings, workload, device UUID and installed
 runtime manifest, and verifies the stock core before and after the pass.

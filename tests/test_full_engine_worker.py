@@ -111,12 +111,29 @@ def test_worker_bounds_execute_capture_but_preserves_stock_outputs(monkeypatch, 
     monkeypatch.setattr(worker_module, "claim", lambda: (recorder, plan))
     worker = worker_module.ResourceCaptureWorker()
     assert worker.init_device() == "device"
+    worker.resource_capture_arm()
     for index in range(1, 4):
-        assert worker.execute_model(index) == index
+        step = SimpleNamespace(total_num_scheduled_tokens=index, num_scheduled_tokens={"fixture": index},
+            scheduled_new_reqs=[], scheduled_cached_reqs=SimpleNamespace(req_ids=[], num_computed_tokens=[]))
+        assert worker.execute_model(step) is step
         assert worker.sample_tokens(index) == index
-    assert seen == ["device_initialized", "execute:1:begin", "execute:1:end", "sample:1:end",
+    assert seen == ["device_initialized", "ready_for_workload", "execute:1:begin", "execute:1:end", "sample:1:end",
                     "execute:2:begin", "execute:2:end", "sample:2:end"]
     assert worker._resource_active is False
+    assert len(worker._resource_scheduler_steps) == 2
+    with pytest.raises(RuntimeError, match="already armed"):
+        worker.resource_capture_arm()
+
+
+def test_stock_warmup_cannot_consume_the_workload_capture_budget(monkeypatch, worker_module):
+    seen = []
+    recorder = SimpleNamespace(snapshot=lambda label, **kwargs: seen.append(label))
+    monkeypatch.setattr(worker_module, "claim", lambda: (recorder, {"max_execute_calls": 2}))
+    worker = worker_module.ResourceCaptureWorker()
+    assert worker.execute_model("stock warmup") == "stock warmup"
+    assert worker.sample_tokens("warmup sample") == "warmup sample"
+    assert seen == []
+    assert worker._resource_calls == 0
 
 
 def test_failed_stock_execute_still_records_boundary_and_disarms(monkeypatch, worker_module):
@@ -127,9 +144,12 @@ def test_failed_stock_execute_still_records_boundary_and_disarms(monkeypatch, wo
         raise RuntimeError("stock fixture failed")
     monkeypatch.setattr(worker_module.Worker, "execute_model", fail)
     worker = worker_module.ResourceCaptureWorker()
+    worker.resource_capture_arm()
+    step = SimpleNamespace(total_num_scheduled_tokens=1, num_scheduled_tokens={"fixture": 1},
+        scheduled_new_reqs=[], scheduled_cached_reqs=SimpleNamespace(req_ids=[], num_computed_tokens=[]))
     with pytest.raises(RuntimeError, match="stock fixture"):
-        worker.execute_model(None)
-    assert seen == ["execute:1:begin", "execute:1:end"]
+        worker.execute_model(step)
+    assert seen == ["ready_for_workload", "execute:1:begin", "execute:1:end"]
     assert worker._resource_active is False
 
 

@@ -104,7 +104,7 @@ def prepare(args):
             "observed_units": units, "workload": workload,
             "max_history_entries": 1_000_000, "max_execute_calls": 2,
             "max_invocations_per_unit": 2,
-            "max_checkpoints": 6 + 2 * 3 + 2 * 2 * len(units),
+            "max_checkpoints": 7 + 2 * 3 + 2 * 2 * len(units),
             "observer_engine_args": {"worker_cls": "experiments.full_engine_worker.ResourceCaptureWorker"},
             "observer_environment": {"VLLM_WORKER_MULTIPROC_METHOD": "spawn"},
             "scope": "intrusive raw resource capture; no timing, fixed-resource or release admission"}
@@ -128,6 +128,7 @@ def run(plan_path):
     from vllm import LLM, SamplingParams
     llm = LLM(model=plan["model"], seed=0,
               **plan["selected_configuration"]["engine_args"], **plan["observer_engine_args"])
+    armed = llm.collective_rpc("resource_capture_arm")
     responses = llm.chat(plan["workload"]["messages"],
                          SamplingParams(**plan["workload"]["sampling"]), use_tqdm=False)
     workers = llm.collective_rpc("resource_capture_finish")
@@ -136,6 +137,7 @@ def run(plan_path):
         raise ValueError("resource observer expected exactly one worker result")
     result = {"schema": "tessera.stock_engine_raw_resource_run.v1", "scope": plan["scope"],
         "plan_sha256": digest(plan_path), "started_unix": started, "finished_unix": time.time(),
+        "workload_arm": armed,
         "core_audit_before": audit_before, "core_audit_after": audit_after, "workers": workers,
         "outputs": [{"prompt_token_ids": response.prompt_token_ids,
                      "outputs": [{"text": item.text, "token_ids": item.token_ids,
