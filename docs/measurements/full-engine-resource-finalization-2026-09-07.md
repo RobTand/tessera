@@ -140,3 +140,45 @@ verified exit 0, cleanup and receipt/payload hashes. Receipts are respectively
 `8ce979e0db31280aac921d0e5a09be3dca17dbcd0b1863d952f43964c92f53e4`.
 The no-Torch suite inventory also lists 73 optional Torch modules outside this
 requested worker-only collection; that is not a missing requested test.
+
+The full original-wire R3 capture finished at 17:50:55 UTC. The owned
+container and launcher returned zero, the container was removed, all 4967
+stock vLLM core files remained unchanged, and the sealed native cache entries
+were unchanged. The actual scheduler ran 512 prefill tokens then one decode
+token. All 38 native units have exactly two invocations, all 76 intervals
+close, all 165 checkpoints exist through `capture_end`, and every fixed-KV
+capacity assertion passed. CUPTI retained 1,457,614 API events with zero
+dropped records. All ten Netdata series on the two hosts were retrieved and
+rehashed. This establishes capture coverage, not resource admission.
+
+The compact capture has 487,414,494 bytes and SHA-256
+`6baf6cd6d2a09b5f0277bfc68e7c635cdf23377c388cc94e2ecd060877898476`;
+CUPTI has 276,487,924 bytes and SHA-256
+`5b913334cd5773b776c3708b9dfcdb6ee404511bef7d352d801417e3b6652189`.
+Final encoding/writing took 8.222 seconds and ledger analysis 205.296 seconds.
+Worker process high-water RSS was 8,468,684,800 bytes. The owned container's
+measured cgroup memory peak was 10,420,998,144 bytes; 759 telemetry samples
+had no collection errors, and host MemAvailable stayed above
+101,599,830,016 bytes. These are observer/process/container measurements,
+not engine latency, GPU allocation totals or an engine speedup.
+
+The final receipt is still incomplete: the supplied FlashInfer source-BF16
+allocation-site rule requires `fused_moe_120.so`, which the all-native
+original-wire process did not map. The actual receipt preserves that identity
+refusal; it has no derived checkpoints or admitted fixed-resource/timing
+price. The exact history join verified prefixes with 808,627 revised time
+fields, and explicitly remains timing-ineligible. No owner rule was silently
+relaxed or substituted. A separate hypothetical CPU replay without that
+inapplicable rule is retained to diagnose allocation gaps; it cannot replace
+the original capture or qualify a price.
+
+The full audit, including all checked file hashes and raw coverage evidence,
+is `full-engine-reference-r3/resources/verified-resource-audit.json` under
+`/mnt/shared/tessera-native376-resource`, SHA-256
+`89be5b7363d27ca5017a09a70e6997cc71dc6124d6a97c32dc76a3a9e2367d35`.
+
+CI `34149641735` on `6ba56ec6` passed: 1554 pure tests passed, 97 skipped
+(including the six explicitly Torch-dependent worker tests), and 73 optional
+modules were outside the bytes-only collection. Byte-layer imports, empty
+denylist refusal, wheel contents and sdist contents also passed. The complete
+log is `/mnt/shared/tessera-native376-resource/ci-34149641735.log`.
