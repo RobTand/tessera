@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-07T18:58:21Z",
+ "generated": "2026-09-07T19:51:29Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -948,7 +948,7 @@
     "title": "P0: restore valid LFM checkpoint state and resident/streamed forward parity"
    },
    "311": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "P0: streaming compressed-tensors export narrows persistent FP32 buffers before passthrough"
    },
    "312": {
@@ -1008,7 +1008,7 @@
     "title": "Qualify completed Tessera anchors for exact full-model joint AURA"
    },
    "325": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Keep persistent FP32 buffers unnarrowed through the streaming export"
    },
    "326": {
@@ -1064,16 +1064,32 @@
     "title": "Avoid materialized products in qualified joint AURA reductions"
    },
    "338": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "PQ237 harness rejects current joint probe source-execution identity"
    },
    "339": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "fix: bind source execution in joint qualification harness"
    },
    "34": {
     "state": "CLOSED",
     "title": "gridbook: sync dotted MoE target boundary"
+   },
+   "340": {
+    "state": "OPEN",
+    "title": "P0: standalone export resume cache does not bind source checkpoint identity"
+   },
+   "341": {
+    "state": "OPEN",
+    "title": "Stream canonical GLM calibration through bounded source residency"
+   },
+   "342": {
+    "state": "CLOSED",
+    "title": "Preserve persistent buffer bytes in fresh and resumed streaming export"
+   },
+   "343": {
+    "state": "OPEN",
+    "title": "Stream canonical GLM calibration through bounded source residency"
    },
    "35": {
     "state": "CLOSED",
@@ -2754,7 +2770,7 @@
     "title": "Record merged CPU and strict CUDA suite evidence"
    },
    "412": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Qualify bounded GLM 288-expert top-8 native wire routes"
    },
    "413": {
@@ -2762,7 +2778,7 @@
     "title": "Record retirement and recovery for the original batch profiler"
    },
    "414": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Qualify GLM 288-expert native wire controls on stock vLLM"
    },
    "415": {
@@ -2776,6 +2792,14 @@
    "417": {
     "state": "OPEN",
     "title": "research: GLM q512 control and selected-expert packed decode"
+   },
+   "418": {
+    "state": "CLOSED",
+    "title": "Reconstruct CUDA BODY fields on the requested device"
+   },
+   "419": {
+    "state": "CLOSED",
+    "title": "Reconstruct byte-sized BODY fields on CUDA"
    },
    "42": {
     "state": "CLOSED",

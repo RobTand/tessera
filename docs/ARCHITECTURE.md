@@ -5,6 +5,14 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Device BODY unpacking (2026-09-07, base `a29dbec6`) retains the shared
+`wire.unpack_body` length/padding checks. CUDA destinations reconstruct
+byte-sized fields directly from packed words through `kernel_wire` when the
+optional Triton dependency is installed; CPU, wider-field and Triton-free
+requests retain the NumPy path. `kernel_bits` owns the existing
+MSB-first packed-word readers shared with `kernel_window`. This changes reader
+execution and source identity, without changing wire bytes or serving gates.
+
 Re-stamped 2026-09-07 for the complete original-unit export intake (#401):
 `--cached-units` extends the existing closed bundle to dense and routed units;
 wire recipes, runtime contracts and serving gates are unchanged (§3.2).
