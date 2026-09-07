@@ -132,3 +132,24 @@ measured files, SHA-256
 `selected-integration-audit.json` binds the selector, command, all 20 results,
 compile, source identity and prior functional audit, SHA-256
 `c2f9afa5b82522d3800e8d81e1f5a85970f13e61dd09b476d75892900b0242fe`.
+
+## Final reader integration
+
+Root merged the newly reviewed device-unpack reader from master
+`bc4946285a1f8c66d0be159d641477a00892776d` at `33b2a813`.
+The only conflict was the offline issue snapshot, regenerated through the
+existing refresh tool. All five measured serving/harness files remain
+byte-identical to the selected-expert measurement.
+
+PB `618f3a0a4afc2c3803e33b6b9cab159ba8fe7cca8066d3a0a70081aae8ef1e8d`
+passed 27 focused window, FP8 and issue-reference tests; 34 CUDA cases were
+skipped explicitly (22 BODY-unpack and 12 serving cases), with zero uncollected
+modules. Portable DL380 CPU4/memory4 GiB, Torch 2.11 CPU, worksteal/native
+threads one. GPU coverage remains the separately recorded measurements;
+no GPU run was repeated for this source-disjoint merge.
+Root verified actual exits, canonical CAS receipt/payload, source bundle and
+resource cleanup in `/home/rob/tmp/selected-reader-root-interaction-audit.json`.
+The preceding action `172640ce0c0a8cff92535733c3f9aa31a21f5a9a0308221b95b1a97aa0489c5c`
+was invalid collection: root named a nonexistent architecture test file;
+pytest exited 5 and PB exited 1 with no success receipt. The corrected
+selection above replaced it.
