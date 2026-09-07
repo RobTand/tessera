@@ -219,10 +219,11 @@ person or agent — changing the code.
   mistaken for one this process saw. When no single finished action wrote the
   path -- still in flight, requeued, or two of them did -- the row stays `not
   observed` and no status is borrowed, because published failures prove red
-  while their absence does not prove green. **The pool requeues on any
-  non-zero exit**, so a red arm reads `not observed` for as long as its
-  retries last; the `failed` column is what carries the verdict there, and
-  both red rows on `d11dc01` and `82f0047` are exactly that case. Each row names the commit **that arm** reported measuring, not
+  while their absence does not prove green. **Retries follow the action
+  policy**, so an arm still awaiting a configured retry reads `not observed`;
+  the `failed` column carries a published failure. Both historical red rows
+  on `d11dc01` and `82f0047` were retrying; current single-attempt actions
+  terminate after their first non-zero exit. Each row names the commit **that arm** reported measuring, not
   the one the receipt was assembled against: the arms are separate processes
   on separate boxes, and a GPU arm queued behind a held reservation can place
   after the checkout has moved. Two different source trees in one run are two
