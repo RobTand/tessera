@@ -41,6 +41,10 @@ encoder's batch axis, shared-setting presence checks and the window plan rule
 recipes, `encoder_fixture_id` and runtime contract remain at the versions
 above.
 
+Re-stamped 2026-09-07 on `codex/native-operator-receipts-376` for the
+original-wire native dense research receipt and explicit operator resource
+bound (#376; §2.4). Serving defaults, wire and release gates are unchanged.
+
 ## 1. Scope
 
 This doc covers the path from a PrismaQuant rung assignment to a served
@@ -713,6 +717,36 @@ if it changes a priced input; replacement after intake cannot change the
 owned tensors and float values used by the encode. The build expectation is
 also protected against replacement by its argument digest. Standalone exports
 without an external allocation binding retain their existing behavior.
+
+### 2.4 Native dense receipts bind one actual operator, not an engine
+
+`experiments/bench_native_operator.py` prepares one dense resident/eager/TP1
+operator through the existing create/load/process lifecycle from the retained
+original unit wire. Preparation verifies actual source values and the wire's
+bytes-only decode against the supplied PrismaQuant PWC render. It emits
+untimed native tensor, scheme, runtime image, binary and arithmetic identities
+for a separately frozen panel. Both prefill and decode must match the panel's
+input, activation QDQ, output and observed serving route before any CUDA-event
+timings. Panel tolerances are explicit. Tensor and execution-state drift
+around the numerical gate, timing and resource invocation refuses the receipt.
+
+The optional fresh-process CUPTI collector in
+`experiments/native_operator_resources.py` observes allocations before CUDA
+initialization and records supported allocation/free APIs, device/context,
+bytes, intervals, successful activity configuration and every dropped-record
+query. A warmed stable Torch allocator permits a conservative scratch bound:
+Torch's incremental live-allocation peak plus the external native allocation
+peak, including temporary allocations freed before return. These independent
+peaks include output storage; they are a bound, not a simultaneous exact peak.
+Resident buffers are counted by unique GPU storage. Missing or dropped
+records, changed allocator reservations, unknown ownership and unsupported
+async, pooled, managed or imported allocation domains remain incomplete.
+
+`complete_operator_bound` never establishes full-model fixed allocations,
+allocator slack, KV cache, CUDA graph pools, routed-expert execution or served
+quality. Those require their own engine receipts before a PrismaQuant runtime
+price or release admission. `experiments/qualify_native_operator.py` is a
+synthetic BF16 instrumentation fixture and cannot stand in for a real PWC row.
 
 ## 3. Bytes: priced == served
 

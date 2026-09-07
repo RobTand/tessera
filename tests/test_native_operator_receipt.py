@@ -587,3 +587,42 @@ def test_eager_context_refuses_compilation_and_capture(monkeypatch, compiling, c
     monkeypatch.setattr(torch.cuda, 'is_current_stream_capturing', lambda: capturing)
     with pytest.raises(ValueError, match='eager'):
         _module()._require_eager_context()
+
+
+def test_resource_probe_numerical_failure_refuses_timing_receipt(monkeypatch):
+    fixture = _fake_lifecycle(monkeypatch)
+    module, panel, prepared, tensors, _ = fixture
+    calls = []
+    class Collector:
+        def observe_apply(self, apply, phase, *, device):
+            calls.append(phase)
+            output = apply()
+            if phase == 'decode':
+                output.mul_(2)
+            return output, {'fixture': 'fake allocator observation'}
+    with pytest.raises(ValueError, match='resource invocation numerical/route mismatch'):
+        module.measure_prepared_operator(prepared, panel, tensors, warmup_iterations=2,
+                                          iterations=3, resource_collector=Collector())
+    assert calls == ['prefill', 'decode']
+
+
+def test_operator_resource_bound_never_completes_full_model_resources(monkeypatch):
+    fixture = _fake_lifecycle(monkeypatch)
+    module, panel, prepared, tensors, _ = fixture
+    class Collector:
+        def observe_apply(self, apply, phase, *, device):
+            return apply(), {'fixture': 'fake allocator observation'}
+    receipt = module.measure_prepared_operator(prepared, panel, tensors, warmup_iterations=2,
+                                               iterations=3, resource_collector=Collector())
+    from experiments import native_operator_resources
+    monkeypatch.setattr(native_operator_resources, 'analyze_trace',
+                        lambda *args, **kwargs: {'status': 'complete_operator_bound', 'peak_scratch_bytes': 123})
+    module.attach_resource_trace(receipt, {'fixture': 'fake trace'})
+    assert receipt['resources']['status'] == 'complete_operator_bound'
+    assert receipt['resources']['unknown'] == ['fixed_and_full_model_resources']
+    assert receipt['resources']['trace_sha256'] == _json_sha({'fixture': 'fake trace'})
+    del receipt['resources']['phases']['decode']['torch_observation']
+    del receipt['resources']['phases']['decode']['bound']
+    receipt['resources']['status'] = 'incomplete'
+    module.attach_resource_trace(receipt, {'fixture': 'fake trace'})
+    assert receipt['resources']['status'] == 'incomplete'

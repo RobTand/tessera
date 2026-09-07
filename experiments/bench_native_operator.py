@@ -2,8 +2,9 @@
 
 Preparation is separate from measurement: callers freeze its native/runtime
 identities in an independent panel before collecting timings. This is not a
-vLLM engine benchmark, format admission, or complete resource price. v1 reports
-unknown native scratch explicitly and cannot populate a full runtime table.
+vLLM engine benchmark, format admission, or complete resource price. An optional
+fresh-process CUPTI collector proves a conservative operator scratch bound;
+fixed/full-model resources still require independent engine evidence.
 """
 from __future__ import annotations
 
@@ -421,7 +422,8 @@ def _check_phase_tensors(panel, phase_tensors):
                 raise ValueError(f"{phase}: actual {name} differs from independent panel")
 
 
-def measure_prepared_operator(prepared, panel, phase_tensors, *, warmup_iterations, iterations):
+def measure_prepared_operator(prepared, panel, phase_tensors, *, warmup_iterations, iterations,
+                              resource_collector=None):
     """Gate BOTH phases/QDQ before any timings; retain explicit resource gaps."""
     import torch
     from tessera.serving.telemetry import read_route
@@ -478,6 +480,21 @@ def measure_prepared_operator(prepared, panel, phase_tensors, *, warmup_iteratio
                 observed = read_route(layer)
                 if observed != observations[phase]["route"]:
                     raise ValueError(f"{phase}: native route changed during timing")
+            if resource_collector is not None:
+                for phase in PHASES:
+                    _check_prepared(prepared, panel)
+                    _check_phase_tensors(panel, phase_tensors)
+                    output, allocation = resource_collector.observe_apply(
+                        lambda phase=phase: method.apply(layer, phase_tensors[phase]["input"]),
+                        phase, device=phase_tensors[phase]["input"].device.index)
+                    error = compare_tensors(output, phase_tensors[phase]["reference_output"], **panel["numerics"])
+                    if error["status"] != "passed" or read_route(layer) != observations[phase]["route"]:
+                        raise ValueError(f"{phase}: resource invocation numerical/route mismatch")
+                    resource_phases[phase]["torch_observation"] = allocation
+                    resource_phases[phase]["numerics"] = error
+                    del output
+                    _check_prepared(prepared, panel)
+                    _check_phase_tensors(panel, phase_tensors)
         _check_prepared(prepared, panel)
     return {"schema": RECEIPT_SCHEMA, "status": "timing_admissible" if passed else "numerical_refused",
             "panel": panel, "panel_sha256": identity_sha256(panel), "runtime": prepared["runtime"],
@@ -485,6 +502,24 @@ def measure_prepared_operator(prepared, panel, phase_tensors, *, warmup_iteratio
             "phases": observations, "resources": {"status": "incomplete", "scope": "torch_allocator_observation",
                 "resident_bytes": _resident_bytes(layer), "phases": resource_phases,
                 "unknown": ["native_and_library_scratch_outside_torch_allocator", "fixed_and_full_model_resources"]}}
+
+
+def attach_resource_trace(receipt, trace):
+    """Compose operator bounds only; never infer engine fixed/KV resources."""
+    from experiments.native_operator_resources import analyze_trace
+    resources = receipt["resources"]
+    for phase in PHASES:
+        observed = resources["phases"][phase]
+        if "torch_observation" in observed:
+            observed["bound"] = analyze_trace(trace, interval=phase,
+                                               torch_observation=observed["torch_observation"])
+    resources["trace_sha256"] = identity_sha256(trace)
+    complete = all(resources["phases"][phase].get("bound", {}).get("status") == "complete_operator_bound"
+                   for phase in PHASES)
+    if complete:
+        resources.update(status="complete_operator_bound", scope="warmed_eager_operator",
+                         unknown=["fixed_and_full_model_resources"])
+    return receipt
 
 
 def main(argv=None):
@@ -497,6 +532,7 @@ def main(argv=None):
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--warmup-iterations", type=int, default=8)
     parser.add_argument("--iterations", type=int, default=32)
+    parser.add_argument("--resource-library", type=Path, help="CUPTI collector built before this fresh process starts")
     args = parser.parse_args(argv)
     if args.prepare == (args.panel is not None):
         parser.error("supply exactly one of --prepare or --panel")
@@ -514,12 +550,24 @@ def main(argv=None):
         protected.add(args.panel.resolve())
     if args.out.resolve() in protected:
         raise ValueError("receipt output would overwrite an input artifact")
+    collector = None
+    trace_path = args.out.with_suffix(args.out.suffix + ".memory.json")
+    if args.resource_library:
+        if trace_path.resolve() in protected or args.resource_library.resolve() == args.out.resolve():
+            raise ValueError("resource output would overwrite an input artifact")
+        from experiments.native_operator_resources import NativeMemoryCollector
+        collector = NativeMemoryCollector(args.resource_library)
     from safetensors.torch import load_file
     tensors = load_file(str(artifact("tensors_path")), device="cuda")
     prepared = prepare_native_operator(artifact("wire_path").read_bytes(),
         json.loads(artifact("wire_record_path").read_text()), tensors["source_weight"], tensors["rendered_weight"],
         unit=request["unit"], format_name=request["format"], runtime_image=request["runtime_image"],
         input_global_scale=request["input_global_scale"], execution=request["execution"])
+    if collector is not None:
+        prepared["runtime"]["resource_collector"] = {
+            "library_sha256": collector.library_sha256,
+            "analysis_source_sha256": hashlib.sha256(
+                Path(__file__).with_name("native_operator_resources.py").read_bytes()).hexdigest()}
     if args.prepare:
         result = {"schema": "tessera.native_dense_preflight.v1", "status": "untimed_preparation",
                   "operator": prepared["operator"], "runtime": prepared["runtime"],
@@ -530,8 +578,13 @@ def main(argv=None):
         phase_tensors = {phase: {key: tensors[f"{phase}.{key}"] for key in
                          ("input", "reference_qdq", "reference_output")} for phase in PHASES}
         result = measure_prepared_operator(prepared, json.loads(args.panel.read_text()), phase_tensors,
-            warmup_iterations=args.warmup_iterations, iterations=args.iterations)
+            warmup_iterations=args.warmup_iterations, iterations=args.iterations,
+            resource_collector=collector)
     args.out.parent.mkdir(parents=True, exist_ok=True)
+    if collector is not None:
+        trace = collector.finish(trace_path)
+        if not args.prepare:
+            attach_resource_trace(result, trace)
     args.out.write_text(json.dumps(result, sort_keys=True, indent=2, allow_nan=False) + "\n")
     return 0 if args.prepare or result["status"] == "timing_admissible" else 2
 
