@@ -182,3 +182,13 @@ CI `34149641735` on `6ba56ec6` passed: 1554 pure tests passed, 97 skipped
 modules were outside the bytes-only collection. Byte-layer imports, empty
 denylist refusal, wheel contents and sdist contents also passed. The complete
 log is `/mnt/shared/tessera-native376-resource/ci-34149641735.log`.
+
+Netdata sample-quality correction: all ten files were acquired and rehashed,
+but acquisition success does not establish complete samples. On both hosts,
+CPU and RAM dimensions have all 1520 observations. Framebuffer free/used/
+reserved and clock `mem` have zero valid observations (1520 nulls each).
+Graphics/video/SM clocks and power each have 1506 valid observations and
+14 nulls. The raw files are retained without interpolation. Dimension counts
+are recorded in `full-engine-reference-r3/resources/netdata/sample-quality.json`
+under the same shared artifact root. Memory claims above use the independently
+retained cgroup/process/host counters, not these unavailable GPU memory fields.
