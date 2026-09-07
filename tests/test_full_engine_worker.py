@@ -167,3 +167,57 @@ def test_worker_preserves_stock_1970_kv_placement_descriptors(monkeypatch, worke
         "size": 8192, "layers": ["attention", "recurrent"],
         "layer_stride": 512, "block_stride": 1024, "offset": 128}]
     assert seen == ["before_kv_allocation", "kv_allocated"]
+
+
+def test_resolved_kv_description_preserves_group_types_and_capacity_policy(worker_module):
+    from dataclasses import dataclass
+    import torch
+
+    @dataclass
+    class RecurrentSpec:
+        block_size: int
+        shapes: tuple
+        dtypes: tuple
+        page_size_padded: int
+
+        @property
+        def page_size_bytes(self):
+            return self.page_size_padded
+
+    @dataclass
+    class Group:
+        layer_names: list
+        kv_cache_spec: object
+        is_eagle_group: bool = False
+        enable_kv_transfer: bool = True
+
+    @dataclass
+    class Config:
+        num_blocks: int
+        kv_cache_tensors: list
+        kv_cache_groups: list
+        prefix_cache_retention_interval: int = 64
+        kv_cache_layout: str = "block_layer"
+
+    config = Config(8, [], [Group(["conv"], RecurrentSpec(64, ((2, 4),), (torch.bfloat16,), 1024))])
+    cache = SimpleNamespace(gpu_memory_utilization=0.35, kv_cache_memory_bytes=8192,
+                            num_gpu_blocks_override=None)
+    worker = SimpleNamespace(vllm_config=SimpleNamespace(cache_config=cache),
+                             model_runner=SimpleNamespace(kv_cache_config=config, kernel_block_sizes=[64]))
+    result = worker_module.kv_configuration_observation(worker, config)
+    assert result["capacity_policy"]["values"]["kv_cache_memory_bytes"] == 8192
+    assert "block_size" in result["capacity_policy"]["missing_fields"]
+    resolved = result["runner_resolved"]
+    assert resolved["fields"]["num_blocks"] == 8
+    group = resolved["fields"]["kv_cache_groups"][0]
+    spec = group["fields"]["kv_cache_spec"]
+    assert spec["type"].endswith("RecurrentSpec")
+    assert spec["fields"]["dtypes"] == [{"torch_dtype": "torch.bfloat16"}]
+    assert result["group_page_size_bytes"] == [1024]
+    assert result["physical_backing_bytes"] is None
+    assert result["runtime_admission"] is False
+
+
+def test_kv_config_serialization_refuses_unrecordable_values(worker_module):
+    with pytest.raises(TypeError, match="unsupported"):
+        worker_module.kv_config_value(object())

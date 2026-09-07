@@ -7,12 +7,64 @@ audits the installed core before and after this worker runs.
 import json
 import hashlib
 import os
+import dataclasses
+import enum
+import math
+from fractions import Fraction
 from pathlib import Path
 
 from vllm.v1.worker.gpu_worker import Worker
 
 from experiments.full_engine_bootstrap import claim
 from experiments.full_engine_resources import TensorOwner
+
+
+def kv_config_value(value):
+    """Explicit JSON form for the pinned runtime's resolved KV dataclasses."""
+    import torch
+    kind = f"{type(value).__module__}.{type(value).__qualname__}"
+    if isinstance(value, enum.Enum):
+        return {"enum_type": kind, "value": kv_config_value(value.value)}
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return {"type": kind, "fields": {field.name: kv_config_value(getattr(value, field.name))
+                                          for field in dataclasses.fields(value)}}
+    if isinstance(value, torch.dtype):
+        return {"torch_dtype": str(value)}
+    if isinstance(value, Fraction):
+        return {"fraction": [value.numerator, value.denominator]}
+    if value is None or type(value) in (str, bool, int):
+        return value
+    if type(value) is float and math.isfinite(value):
+        return value
+    if isinstance(value, (tuple, list)):
+        return [kv_config_value(item) for item in value]
+    if isinstance(value, dict) and all(type(key) is str for key in value):
+        return {key: kv_config_value(value[key]) for key in sorted(value)}
+    raise TypeError(f"unsupported resolved KV configuration value: {kind}")
+
+
+def kv_configuration_observation(worker, received):
+    runner = getattr(worker, "model_runner", None)
+    resolved = getattr(runner, "kv_cache_config", None)
+    cache = getattr(getattr(worker, "vllm_config", None), "cache_config", None)
+    policy_fields = ("gpu_memory_utilization", "kv_cache_memory_bytes", "num_gpu_blocks_override",
+                     "block_size", "user_specified_block_size", "cache_dtype",
+                     "mamba_block_size", "user_specified_mamba_block_size", "mamba_cache_dtype",
+                     "mamba_ssm_cache_dtype", "mamba_cache_mode", "enable_prefix_caching")
+    values = {name: kv_config_value(getattr(cache, name)) for name in policy_fields if hasattr(cache, name)}
+    groups = getattr(resolved, "kv_cache_groups", [])
+    # The original descriptor projection remains readable by earlier consumers.
+    return {"num_blocks": received.num_blocks,
+            "tensors": [{"size": tensor.size, "layers": tensor.layers,
+                         "layer_stride": tensor.layer_stride, "block_stride": tensor.block_stride,
+                         "offset": tensor.offset} for tensor in received.kv_cache_tensors],
+            "received": kv_config_value(received) if dataclasses.is_dataclass(received) else None,
+            "runner_resolved": kv_config_value(resolved),
+            "group_page_size_bytes": [kv_config_value(group.kv_cache_spec.page_size_bytes) for group in groups],
+            "kernel_block_sizes": kv_config_value(getattr(runner, "kernel_block_sizes", None)),
+            "capacity_policy": {"values": values, "missing_fields": sorted(set(policy_fields) - values.keys())},
+            "physical_backing_bytes": None, "runtime_admission": False,
+            "scope": "actual stock resolved KV descriptors and policy; physical storage is independently deduplicated"}
 
 
 def parameter_category(name, canonical_modules):
@@ -129,13 +181,7 @@ class ResourceCaptureWorker(Worker):
         self._resource_checkpoint("before_kv_allocation")
         result = super().initialize_from_config(kv_cache_config)
         self._resource_checkpoint("kv_allocated")
-        self._resource_kv_description = {
-            "num_blocks": kv_cache_config.num_blocks,
-            "tensors": [{"size": tensor.size, "layers": tensor.layers,
-                         "layer_stride": tensor.layer_stride,
-                         "block_stride": tensor.block_stride, "offset": tensor.offset}
-                        for tensor in kv_cache_config.kv_cache_tensors],
-            "scope": "stock KV configuration descriptors; do not sum as physical storage"}
+        self._resource_kv_description = kv_configuration_observation(self, kv_cache_config)
         return result
 
     def execute_model(self, scheduler_output):

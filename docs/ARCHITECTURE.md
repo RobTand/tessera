@@ -46,7 +46,8 @@ original-wire native dense research receipt and explicit operator resource
 bound (#376; §2.4). Serving defaults, wire and release gates are unchanged.
 
 Re-stamped 2026-09-07 on `codex/full-engine-resource-ledger` for the
-raw engine allocation recorder, opt-in stock worker startup integration, and
+raw engine allocation recorder, opt-in stock worker startup integration,
+resolved KV group/spec and capacity-policy observations, and
 explicit incomplete admission boundary (§2.4). No full-engine fixed-resource price or runtime qualification
 is established by the raw ledger.
 
@@ -807,6 +808,11 @@ selected engine settings, observer settings, workload, device UUID and installed
 runtime manifest, and verifies the stock core before and after the pass.
 Worker observations also hash the actual mapped shared objects, including
 generated native binaries, and retain any unreadable-path errors.
+The received and runner-resolved KV configurations retain all dataclass fields,
+concrete spec types, typed dtypes, group page sizes and kernel block sizes.
+Explicit capacity-policy values and missing fields are recorded alongside them;
+descriptor sizes are never summed into physical storage. Automatic capacity
+remains assignment-dependent and cannot supply a fixed planner KV charge.
 Observer settings and incomplete raw captures cannot qualify a served model.
 
 Its distinct `tessera.full_engine_raw_resource_ledger.v1` schema never emits a
