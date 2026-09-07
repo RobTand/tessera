@@ -257,6 +257,7 @@ def test_failed_stock_execute_still_records_boundary_and_disarms(monkeypatch, wo
 
 
 def test_worker_preserves_stock_1970_kv_placement_descriptors(monkeypatch, worker_module):
+    pytest.importorskip("torch")
     seen = []
     recorder = SimpleNamespace(snapshot=lambda label, **kwargs: seen.append(label))
     monkeypatch.setattr(worker_module, "claim", lambda: (recorder, {}))
@@ -273,7 +274,7 @@ def test_worker_preserves_stock_1970_kv_placement_descriptors(monkeypatch, worke
 
 def test_resolved_kv_description_preserves_group_types_and_capacity_policy(worker_module):
     from dataclasses import dataclass
-    import torch
+    torch = pytest.importorskip("torch")
 
     @dataclass
     class RecurrentSpec:
@@ -321,13 +322,14 @@ def test_resolved_kv_description_preserves_group_types_and_capacity_policy(worke
 
 
 def test_kv_config_serialization_refuses_unrecordable_values(worker_module):
+    pytest.importorskip("torch")
     with pytest.raises(TypeError, match="unsupported"):
         worker_module.kv_config_value(object())
 
 
 def test_runtime_owners_retain_aliases_and_host_views_without_traversing_model(
         monkeypatch, worker_module):
-    import torch
+    torch = pytest.importorskip("torch")
     buffer = torch.empty(16, dtype=torch.int32)
     state = SimpleNamespace(first=buffer, alias=buffer[1:])
     state.cycle = state
@@ -342,6 +344,7 @@ def test_runtime_owners_retain_aliases_and_host_views_without_traversing_model(
 
 
 def test_runtime_owner_traversal_is_bounded_and_does_not_call_properties(worker_module):
+    pytest.importorskip("torch")
     class State:
         __module__ = "vllm.v1.worker.fixture"
 
@@ -355,7 +358,7 @@ def test_runtime_owner_traversal_is_bounded_and_does_not_call_properties(worker_
 
 
 def test_existing_global_workspace_and_retired_cache_buffers_remain_observable(monkeypatch, worker_module):
-    import torch
+    torch = pytest.importorskip("torch")
     current, retired = torch.empty(8), torch.empty(4)
     manager = SimpleNamespace(_current_workspaces=[current], _locked=True)
     monkeypatch.setitem(sys.modules, "vllm.v1.worker.workspace", SimpleNamespace(_manager=manager))

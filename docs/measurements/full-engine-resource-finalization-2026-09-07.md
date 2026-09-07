@@ -125,3 +125,18 @@ Exit 0, cleanup and receipt/payload hashes were checked; receipt
 `e91eb130bfcfa3ff0adcfd45a5d17a4071f9aa1dadd8339d5fb903b225c4b8b5`.
 This integration check does not change the source identity of the running
 experiment or claim GPU coverage for the CPU suite.
+
+The first bytes-only CI run after integration (`34148812110`) exposed six
+worker tests that use Torch without marking that dependency (1554 passed,
+91 skipped, six failed with `ModuleNotFoundError: torch`). Per-test
+`pytest.importorskip("torch")` guards preserve the other pure worker tests.
+The corrected worker module passed both admitted CPU populations: no-Torch
+ARM PB `42d8505e8d0169d00799f8a08161a9c192ae507e8afac36d37b53a202561f102`,
+30 passed and six skipped, and x86 Torch 2.11 CPU PB
+`6a33dbced960038606c7fef947bf9879091d87dbf6a07124f20302ec32a5f3b1`,
+36 passed and zero skipped or missing. Both used four workers and had
+verified exit 0, cleanup and receipt/payload hashes. Receipts are respectively
+`df64a4c57d69884fa3145117ebc9e205e736a249b235aa136f7aae3191a6a553` and
+`8ce979e0db31280aac921d0e5a09be3dca17dbcd0b1863d952f43964c92f53e4`.
+The no-Torch suite inventory also lists 73 optional Torch modules outside this
+requested worker-only collection; that is not a missing requested test.
