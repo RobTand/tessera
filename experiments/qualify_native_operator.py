@@ -25,55 +25,74 @@ def main():
     from tessera.export import encode_linear
     from tessera.unit_artifact import read_unit_artifact
     from experiments import bench_native_operator as bench
-    unit, fmt = 'fixture.dense', 'TESSERA_BF16_K1_R512'
-    torch.manual_seed(376)
-    weight = (torch.randn(32, 32, device='cuda') * 0.02).bfloat16()
-    encoded = encode_linear(weight.float(), grid=BF16_GRID, q256=512, name=fmt, verify=True)
-    identity = encoding_input_identity(weight, unit, BF16_GRID, 512)
-    record = make_unit_record(encoded.blob, identity, filename='fixture.tessera')
-    rendered = read_unit_artifact(encoded.blob, device='cuda').bfloat16()
-    prepared = bench.prepare_native_operator(encoded.blob, record, weight, rendered, unit=unit,
-        format_name=fmt, runtime_image=args.runtime_image)
-    operator = prepared['operator']
-    fixture_sha = lambda label: hashlib.sha256(('instrumentation fixture ONLY: ' + label).encode()).hexdigest()
-    joint = {'schema': 'prismaquant.joint_aura.operator.v1', 'qname': unit, 'format': fmt,
-        'probe_identity_sha256': fixture_sha('probe'), 'source_weight': bench.tensor_identity(weight),
-        'rendered_weight': bench.tensor_identity(rendered),
-        'activation': {'clip_enabled': False, 'input_global_scale': None}}
-    route = {'kind': 'dense', 'policy': 'TESSERA_BF16:resident', 'symbol': 'torch.mm',
-        'decoder': 'torch_window', 'contract': 'bf16_unquantized'}
-    phases, tensors = {}, {}
-    for phase, m in [('prefill', 32), ('decode', 1)]:
-        x = torch.eye(32, device='cuda', dtype=torch.bfloat16)[:m].contiguous()
-        reference = torch.mm(x.float(), rendered.float().T).bfloat16()
-        tensors[phase] = {'input': x, 'reference_qdq': x.clone(), 'reference_output': reference}
-        phases[phase] = {'m': m, 'expected_route': route,
-            **{key: bench.tensor_identity(value) for key, value in tensors[phase].items()}}
-    panel = {'schema': bench.PANEL_SCHEMA, 'unit': unit, 'format': fmt, 'shape': [32, 32],
-        'source_sha256': fixture_sha('synthetic source'), 'calibration_sha256': fixture_sha('basis vectors'),
-        'cost_sha256': fixture_sha('NO joint cost'), 'probe_identity_sha256': fixture_sha('probe'),
-        'joint_operator_identity_sha256': bench.identity_sha256(joint), 'joint_operator_identity': joint,
-        'wire': {'blob_sha256': record['blob_sha256'], 'blob_bytes': len(encoded.blob), 'record': record},
-        'execution': dict(bench.EXECUTION), 'runtime': prepared['runtime'],
-        'native_tensors_sha256': bench.identity_sha256(operator['native_tensors']),
-        'scheme_sha256': operator['scheme_sha256'], 'numerics': {'atol': 0.0, 'rtol': 0.0}, 'phases': phases}
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    (args.out.parent / 'fixture.tessera').write_bytes(encoded.blob)
-    (args.out.parent / 'fixture-panel.json').write_text(json.dumps(panel, indent=2) + '\n')
-    try:
-        receipt = bench.measure_prepared_operator(prepared, panel, tensors,
-            warmup_iterations=8, iterations=8, resource_collector=collector)
-    finally:
-        trace = collector.finish(args.out.with_suffix('.memory.json'))
-    bench.attach_resource_trace(receipt, trace)
-    receipt['qualification_scope'] = 'synthetic BF16 instrumentation fixture; no actual PWC/joint-cost/release evidence'
-    args.out.write_text(json.dumps(receipt, indent=2, allow_nan=False) + '\n')
-    summary = {'status': receipt['status'], 'resources': receipt['resources']['status'],
-               'phases': {phase: {'numerics': receipt['phases'][phase]['numerics'],
-                                 'bound': receipt['resources']['phases'][phase].get('bound')}
-                          for phase in bench.PHASES}}
-    print(json.dumps(summary, sort_keys=True))
-    return 0 if receipt['status'] == 'timing_admissible' and receipt['resources']['status'] == 'complete_operator_bound' else 2
+    with bench.native_runtime_context():
+        unit, fmt = 'fixture.dense', 'TESSERA_BF16_K1_R512'
+        torch.manual_seed(376)
+        weight = (torch.randn(32, 32, device='cuda') * 0.02).bfloat16()
+        encoded = encode_linear(weight.float(), grid=BF16_GRID, q256=512, name=fmt, verify=True)
+        identity = encoding_input_identity(weight, unit, BF16_GRID, 512)
+        record = make_unit_record(encoded.blob, identity, filename='fixture.tessera')
+        rendered = read_unit_artifact(encoded.blob, device='cuda').bfloat16()
+        prepared = bench.prepare_native_operator(encoded.blob, record, weight, rendered, unit=unit,
+            format_name=fmt, runtime_image=args.runtime_image)
+        prepared['runtime']['resource_collector'] = {
+            'library_sha256': collector.library_sha256,
+            'analysis_source_sha256': hashlib.sha256(
+                Path(__file__).with_name('native_operator_resources.py').read_bytes()).hexdigest()}
+        operator = prepared['operator']
+        fixture_sha = lambda label: hashlib.sha256(('instrumentation fixture ONLY: ' + label).encode()).hexdigest()
+        joint = {'schema': 'prismaquant.joint_aura.operator.v1', 'qname': unit, 'format': fmt,
+            'probe_identity_sha256': fixture_sha('probe'), 'source_weight': bench.tensor_identity(weight),
+            'rendered_weight': bench.tensor_identity(rendered),
+            'activation': {'clip_enabled': False, 'input_global_scale': None}}
+        route = {'kind': 'dense', 'policy': 'TESSERA_BF16:resident', 'symbol': 'torch.mm',
+            'decoder': 'torch_window', 'contract': 'bf16_unquantized'}
+        phases, tensors = {}, {}
+        for phase, m in [('prefill', 32), ('decode', 1)]:
+            x = torch.eye(32, device='cuda', dtype=torch.bfloat16)[:m].contiguous()
+            reference = torch.mm(x.float(), rendered.float().T).bfloat16()
+            tensors[phase] = {'input': x, 'reference_qdq': x.clone(), 'reference_output': reference}
+            phases[phase] = {'m': m, 'expected_route': route,
+                **{key: bench.tensor_identity(value) for key, value in tensors[phase].items()}}
+        panel = {'schema': bench.PANEL_SCHEMA, 'unit': unit, 'format': fmt, 'shape': [32, 32],
+            'source_sha256': fixture_sha('synthetic source'), 'calibration_sha256': fixture_sha('basis vectors'),
+            'cost_sha256': fixture_sha('NO joint cost'), 'probe_identity_sha256': fixture_sha('probe'),
+            'joint_operator_identity_sha256': bench.identity_sha256(joint), 'joint_operator_identity': joint,
+            'wire': {'blob_sha256': record['blob_sha256'], 'blob_bytes': len(encoded.blob), 'record': record},
+            'execution': dict(bench.EXECUTION), 'runtime': prepared['runtime'],
+            'native_tensors_sha256': bench.identity_sha256(operator['native_tensors']),
+            'scheme_sha256': operator['scheme_sha256'], 'numerics': {'atol': 0.0, 'rtol': 0.0}, 'phases': phases}
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        (args.out.parent / 'fixture.tessera').write_bytes(encoded.blob)
+        (args.out.parent / 'wire-record.json').write_text(json.dumps(record, indent=2) + '\n')
+        from safetensors.torch import save_file
+        save_file({'source_weight': weight, 'rendered_weight': rendered,
+                   **{f'{phase}.{name}': value.clone().contiguous()
+                      for phase, values in tensors.items() for name, value in values.items()}},
+                  str(args.out.parent / 'tensors.safetensors'))
+        request = {'schema': 'tessera.native_dense_request.v1', 'unit': unit, 'format': fmt,
+            'wire_path': 'fixture.tessera', 'wire_record_path': 'wire-record.json',
+            'tensors_path': 'tensors.safetensors', 'runtime_image': args.runtime_image,
+            'input_global_scale': None, 'execution': dict(bench.EXECUTION)}
+        (args.out.parent / 'request.json').write_text(json.dumps(request, indent=2) + '\n')
+        (args.out.parent / 'fixture-panel.json').write_text(json.dumps(panel, indent=2) + '\n')
+        try:
+            receipt = bench.measure_prepared_operator(prepared, panel, tensors,
+                warmup_iterations=8, iterations=8, resource_collector=collector)
+        finally:
+            trace = collector.finish(args.out.with_suffix('.memory.json'))
+        bench.attach_resource_trace(receipt, trace)
+        if receipt['resources']['status'] == 'complete_operator_bound':
+            bench.time_after_resource_collection(prepared, panel, tensors, receipt, collector=collector,
+                                                  warmup_iterations=8, iterations=8)
+        receipt['qualification_scope'] = 'synthetic BF16 instrumentation fixture; no actual PWC/joint-cost/release evidence'
+        args.out.write_text(json.dumps(receipt, indent=2, allow_nan=False) + '\n')
+        summary = {'status': receipt['status'], 'resources': receipt['resources']['status'],
+                   'phases': {phase: {'numerics': receipt['phases'][phase]['numerics'],
+                                     'bound': receipt['resources']['phases'][phase].get('bound')}
+                              for phase in bench.PHASES}}
+        print(json.dumps(summary, sort_keys=True))
+        return 0 if receipt['status'] == 'timing_admissible' and receipt['resources']['status'] == 'complete_operator_bound' else 2
 
 
 if __name__ == '__main__':

@@ -729,6 +729,10 @@ for a separately frozen panel. Both prefill and decode must match the panel's
 input, activation QDQ, output and observed serving route before any CUDA-event
 timings. Panel tolerances are explicit. Tensor and execution-state drift
 around the numerical gate, timing and resource invocation refuses the receipt.
+The standalone CLI initializes vLLM's actual TP1 context and loads weights
+under `no_grad`, preserving the loader's tensor version-counter seals. CUDA
+UUIDs join Torch to the driver's observed UUID; native binary identities retain
+canonical paths as well as hashes, including distinct same-basename libraries.
 
 The optional fresh-process CUPTI collector in
 `experiments/native_operator_resources.py` observes allocations before CUDA
@@ -741,6 +745,12 @@ peaks include output storage; they are a bound, not a simultaneous exact peak.
 Resident buffers are counted by unique GPU storage. Missing or dropped
 records, changed allocator reservations, unknown ownership and unsupported
 async, pooled, managed or imported allocation domains remain incomplete.
+Preexisting CUDA module/static allocations retain their raw context IDs in a
+separate startup ledger; they do not become operator scratch or a complete
+fixed-resource price. Decision CUDA-event samples run after the allocation
+collector stops. `--profile` replays the frozen panel in a separate process
+with Torch's CPU/CUDA profiler and returns a distinct profiling schema, so
+profiling and allocation collection never compete for CUPTI ownership.
 
 `complete_operator_bound` never establishes full-model fixed allocations,
 allocator slack, KV cache, CUDA graph pools, routed-expert execution or served

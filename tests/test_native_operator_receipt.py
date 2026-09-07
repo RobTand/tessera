@@ -297,6 +297,7 @@ def _fake_lifecycle(monkeypatch, *, bad_output=False, bad_route=False):
 
     monkeypatch.setattr(module, "_require_cuda_tensor", lambda *args, **kwargs: None)
     monkeypatch.setattr(module, "_require_eager_context", lambda: None)
+    monkeypatch.setattr(module, "_check_native_library_scope", lambda runtime: None)
     # Real storage admission rejects CPU. This explicit fake observes unique
     # CPU backing bytes solely to exercise the incomplete-resource schema.
     monkeypatch.setattr(module, "_resident_bytes", lambda layer: sum({
@@ -467,7 +468,8 @@ def _fake_preparation(monkeypatch):
 
         def process_weights_after_loading(layer):
             assert bytes(layer.wire_bytes.tolist()) == container
-            assert torch.is_inference_mode_enabled()
+            assert not torch.is_grad_enabled()
+            assert not torch.is_inference_mode_enabled()
             del layer.wire_bytes
             layer.register_buffer("weight_bf16", rendered.clone())
             layer.tessera_family = "TESSERA_BF16"
@@ -504,6 +506,7 @@ def test_preparation_uses_existing_original_wire_create_load_process_lifecycle(m
     assert operator["rendered_weight"] == _tensor_identity(rendered)
     assert operator["native_tensors"] == {"weight_bf16": _tensor_identity(rendered)}
     assert operator["scheme_sha256"] == _json_sha(operator["scheme"])
+    assert operator["declared_route"] == _panel_fixture()[0]["phases"]["prefill"]["expected_route"]
 
 
 def test_preparation_refuses_decode_that_differs_from_actual_pwc_render(monkeypatch):
@@ -626,3 +629,40 @@ def test_operator_resource_bound_never_completes_full_model_resources(monkeypatc
     receipt['resources']['status'] = 'incomplete'
     module.attach_resource_trace(receipt, {'fixture': 'fake trace'})
     assert receipt['resources']['status'] == 'incomplete'
+
+
+def test_lazy_loaded_library_requires_new_runtime_preparation(monkeypatch, tmp_path):
+    module = _module()
+    original = tmp_path / 'original.so'
+    changed = tmp_path / 'additional.so'
+    monkeypatch.setattr(module, '_mapped_shared_libraries', lambda: {original, changed})
+    with pytest.raises(ValueError, match='loaded after preparation'):
+        module._check_native_library_scope({'native_libraries': {str(original): 'fixture hash'}})
+
+
+@pytest.mark.parametrize('closed,complete', [(False, True), (True, False)])
+def test_decision_timing_requires_closed_collector_and_complete_bounds(monkeypatch, closed, complete):
+    fixture = _fake_lifecycle(monkeypatch)
+    module, panel, prepared, tensors, trace = fixture
+    receipt = _measure(fixture)
+    receipt['status'] = 'resources_observed'
+    receipt['resources']['status'] = 'complete_operator_bound' if complete else 'incomplete'
+    trace.clear()
+    with pytest.raises(ValueError):
+        module.time_after_resource_collection(prepared, panel, tensors, receipt,
+            collector=SimpleNamespace(_finished=closed), warmup_iterations=2, iterations=3)
+    assert trace == []
+
+
+def test_decision_samples_follow_stopped_resource_collection(monkeypatch):
+    fixture = _fake_lifecycle(monkeypatch)
+    module, panel, prepared, tensors, trace = fixture
+    receipt = _measure(fixture)
+    receipt['status'] = 'resources_observed'
+    receipt['resources']['status'] = 'complete_operator_bound'
+    trace.clear()
+    module.time_after_resource_collection(prepared, panel, tensors, receipt,
+        collector=SimpleNamespace(_finished=True), warmup_iterations=2, iterations=3)
+    assert receipt['status'] == 'timing_admissible'
+    assert receipt['timing_scope'] == 'cuda_events_after_resource_collector_stop'
+    assert [kind for kind, _ in trace].count('time') == 2

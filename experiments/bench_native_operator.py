@@ -12,6 +12,7 @@ import hashlib
 import json
 import math
 from pathlib import Path
+from contextlib import contextmanager
 
 PANEL_SCHEMA = "tessera.native_dense_panel.v1"
 RECEIPT_SCHEMA = "tessera.native_dense_operator_receipt.v1"
@@ -20,6 +21,30 @@ EXECUTION = {"owner_kind": "single_dense", "mode": "resident",
              "execution_mode": "eager", "tensor_parallel": 1, "bias": False}
 PHASES = ("prefill", "decode")
 ROUTE_KEYS = {"kind", "policy", "symbol", "decoder", "contract"}
+
+
+@contextmanager
+def native_runtime_context():
+    """Fresh-process vLLM TP1 context required by real BasevLLMParameter."""
+    import tempfile
+    import torch
+    from vllm.config import VllmConfig, set_current_vllm_config
+    from vllm.distributed import (init_distributed_environment,
+        ensure_model_parallel_initialized, destroy_model_parallel, destroy_distributed_environment)
+    if torch.distributed.is_initialized():
+        raise ValueError("standalone native receipt requires a fresh distributed context")
+    with tempfile.TemporaryDirectory(prefix="tessera-native-tp1-") as temporary:
+        rendezvous = Path(temporary) / "rendezvous"
+        with set_current_vllm_config(VllmConfig()):
+            try:
+                init_distributed_environment(world_size=1, rank=0,
+                    distributed_init_method=rendezvous.as_uri(),
+                    local_rank=torch.cuda.current_device(), backend="gloo")
+                ensure_model_parallel_initialized(1, 1)
+                yield
+            finally:
+                destroy_model_parallel()
+                destroy_distributed_environment()
 
 
 def identity_sha256(value):
@@ -202,6 +227,22 @@ def observe_arithmetic():
             "deterministic_warn_only": torch.is_deterministic_algorithms_warn_only_enabled()}
 
 
+def _mapped_shared_libraries():
+    paths = set()
+    for line in Path("/proc/self/maps").read_text().splitlines():
+        parts = line.split(maxsplit=5)
+        if len(parts) == 6 and parts[5].startswith("/") and ".so" in parts[5]:
+            paths.add(Path(parts[5]).resolve())
+    return paths
+
+
+def _check_native_library_scope(runtime):
+    declared = set(runtime["native_libraries"])
+    unobserved = {str(path) for path in _mapped_shared_libraries()} - declared
+    if unobserved:
+        raise ValueError("native libraries loaded after preparation: " + ", ".join(sorted(unobserved)))
+
+
 def _native_tensors(layer):
     import torch
     result = {name: tensor_identity(value) for name, value in
@@ -259,15 +300,16 @@ def observe_runtime(runtime_image):
     import importlib.metadata
     import subprocess
     import sys
+    from uuid import UUID
     import torch
     import tessera
     from tessera.cached_unit import encoder_source_sha256
     from tessera.serving.runtime_image import declared_reference
     declaration = declared_reference(runtime_image)
     props = torch.cuda.get_device_properties(torch.cuda.current_device())
-    uuid = str(getattr(props, "uuid", ""))
-    if not uuid:
-        raise ValueError("runtime device UUID is unavailable")
+    # Torch's _CUuuid omits NVIDIA-SMI's GPU- prefix. Join the actual UUID,
+    # never a visible index (CUDA_VISIBLE_DEVICES can remap that index).
+    uuid = "GPU-" + str(UUID(str(getattr(props, "uuid", "")).removeprefix("GPU-")))
     lines = subprocess.check_output(["nvidia-smi", "--query-gpu=uuid,driver_version",
                                      "--format=csv,noheader"], text=True).splitlines()
     drivers = {parts[0].strip(): parts[1].strip() for line in lines
@@ -279,20 +321,17 @@ def observe_runtime(runtime_image):
     paths.update(p.resolve() for p in (Path(torch.__file__).parent / "lib").glob("*cuda*.so*"))
     # Include dynamically loaded CUDA/cuBLAS dependencies, not only Python's
     # torch.ops registration list. This is a Linux/CUDA research harness.
-    for line in Path("/proc/self/maps").read_text().splitlines():
-        parts = line.split(maxsplit=5)
-        if len(parts) == 6 and parts[5].startswith("/") and ".so" in parts[5]:
-            paths.add(Path(parts[5]).resolve())
+    paths.update(_mapped_shared_libraries())
     for name, module in tuple(sys.modules.items()):
         filename = getattr(module, "__file__", None)
         if name.startswith("vllm") and filename and ".so" in filename:
             paths.add(Path(filename).resolve())
+    # CUDA's Python binding packages can load distinct extensions with the
+    # same basename. Preserve their canonical paths and bytes independently.
     libraries = {}
     for path in sorted(paths):
-        if path.name in libraries:
-            raise ValueError(f"ambiguous native library basename {path.name}")
         with path.open("rb") as stream:
-            libraries[path.name] = hashlib.file_digest(stream, "sha256").hexdigest()
+            libraries[str(path)] = hashlib.file_digest(stream, "sha256").hexdigest()
     package = Path(tessera.__file__).parent
     encoder_source_sha256.cache_clear()
     return {"schema": RUNTIME_SCHEMA, "image": runtime_image, "image_declaration": declaration,
@@ -319,7 +358,7 @@ def prepare_native_operator(blob, record, source_weight, rendered_weight, *, uni
     from tessera.cached_unit import verify_cached_unit, tensor_identity as producer_tensor_identity
     from tessera.fused import pack_fused
     from tessera.serving.lane import build_tessera_method
-    from tessera.serving.scheme import ROUTES, TESSERA_NVFP4, validate_tessera_scheme
+    from tessera.serving.scheme import ROUTES, TESSERA_NVFP4, validate_tessera_scheme, launch_pairs, STRUCTURE_DENSE
     from tessera.unit_artifact import read_unit_artifact
     if identity_sha256(execution if execution is not None else EXECUTION) != identity_sha256(EXECUTION):
         raise ValueError("only single dense eager resident TP1 preparation is supported")
@@ -341,6 +380,10 @@ def prepare_native_operator(blob, record, source_weight, rendered_weight, *, uni
     if len(families) != 1:
         raise ValueError("wire has no unique dense serving owner")
     family = families[0]
+    launches = launch_pairs(family, structure=STRUCTURE_DENSE, mode="resident")
+    if len(launches) != 1:
+        raise ValueError("resident dense declaration does not identify one native route")
+    declared_symbol, declared_decoder = next(iter(launches))
     rows, columns = source_weight.shape
     container = pack_fused([("weight", rows, blob)])
     manifest = accepted.manifest
@@ -366,13 +409,18 @@ def prepare_native_operator(blob, record, source_weight, rendered_weight, *, uni
     elif input_global_scale is not None:
         raise ValueError("dynamic/identity activation route must not carry static input_global_scale")
     layer.to(source_weight.device)
-    with torch.inference_mode():
+    # PreparedWindow seals tensor version counters during loading. Inference
+    # tensors have no version counter; the loader runs with gradients disabled.
+    with torch.no_grad():
         method.process_weights_after_loading(layer)
     actual_g = float(layer.trellis_input_global_scale.reshape(())) if family == TESSERA_NVFP4 else None
     operator = {"wire_sha256": hashlib.sha256(blob).hexdigest(), "wire_record_sha256": identity_sha256(record),
                 "rendered_weight": tensor_identity(decoded), "activation_contract": layer.tessera_activation_contract,
                 "input_global_scale": actual_g, "clip_enabled": False,
                 "scheme": json.loads(json.dumps(scheme)), "scheme_sha256": identity_sha256(scheme),
+                "declared_route": {"kind": "dense", "policy": f"{family}:resident",
+                    "symbol": declared_symbol, "decoder": declared_decoder,
+                    "contract": ROUTES[family]["activation_contract"]},
                 "native_tensors": _native_tensors(layer)}
     operator["source_weight"] = tensor_identity(source_weight)
     return {"method": method, "layer": layer, "operator": operator, "runtime": observe_runtime(runtime_image)}
@@ -388,6 +436,7 @@ def _check_prepared(prepared, panel):
         raise ValueError("actual native execution differs from single dense resident TP1 panel")
     if observe_arithmetic() != panel["runtime"].get("arithmetic"):
         raise ValueError("actual arithmetic settings differ from independent panel")
+    _check_native_library_scope(panel["runtime"])
     if prepared["runtime"] != panel["runtime"]:
         raise ValueError("observed runtime differs from independent panel")
     if identity_sha256(operator["native_tensors"]) != panel["native_tensors_sha256"]:
@@ -472,9 +521,16 @@ def measure_prepared_operator(prepared, panel, phase_tensors, *, warmup_iteratio
             for phase in PHASES:
                 _check_prepared(prepared, panel)
                 _check_phase_tensors(panel, phase_tensors)
-                observations[phase]["measurement"] = time_apply(
-                    lambda phase=phase: method.apply(layer, phase_tensors[phase]["input"]),
-                    warmup_iterations=warmup_iterations, iterations=iterations)
+                if resource_collector is None:
+                    observations[phase]["measurement"] = time_apply(
+                        lambda phase=phase: method.apply(layer, phase_tensors[phase]["input"]),
+                        warmup_iterations=warmup_iterations, iterations=iterations)
+                else:
+                    # Warm the allocator with real applies, but do not price
+                    # calls while CUPTI memory/API collection is active.
+                    for _ in range(warmup_iterations):
+                        method.apply(layer, phase_tensors[phase]["input"])
+                    torch.cuda.synchronize()
                 _check_prepared(prepared, panel)
                 _check_phase_tensors(panel, phase_tensors)
                 observed = read_route(layer)
@@ -496,12 +552,41 @@ def measure_prepared_operator(prepared, panel, phase_tensors, *, warmup_iteratio
                     _check_prepared(prepared, panel)
                     _check_phase_tensors(panel, phase_tensors)
         _check_prepared(prepared, panel)
-    return {"schema": RECEIPT_SCHEMA, "status": "timing_admissible" if passed else "numerical_refused",
+    status = ("resources_observed" if resource_collector is not None else "timing_admissible") if passed else "numerical_refused"
+    return {"schema": RECEIPT_SCHEMA, "status": status,
             "panel": panel, "panel_sha256": identity_sha256(panel), "runtime": prepared["runtime"],
             "runtime_sha256": identity_sha256(prepared["runtime"]), "operator": prepared["operator"],
             "phases": observations, "resources": {"status": "incomplete", "scope": "torch_allocator_observation",
                 "resident_bytes": _resident_bytes(layer), "phases": resource_phases,
                 "unknown": ["native_and_library_scratch_outside_torch_allocator", "fixed_and_full_model_resources"]}}
+
+
+def time_after_resource_collection(prepared, panel, phase_tensors, receipt, *, collector,
+                                   warmup_iterations, iterations):
+    """Price only after allocation profiling is closed and its bound passed."""
+    from tessera.serving.telemetry import read_route
+    if not collector._finished:
+        raise ValueError("resource collector must be closed before decision timing")
+    if (receipt["status"] != "resources_observed"
+            or receipt["resources"]["status"] != "complete_operator_bound"):
+        raise ValueError("complete operator resource bounds required before decision timing")
+    if receipt["panel_sha256"] != identity_sha256(panel):
+        raise ValueError("timing panel differs from resource panel")
+    import torch
+    with torch.inference_mode():
+        for phase in PHASES:
+            _check_prepared(prepared, panel)
+            _check_phase_tensors(panel, phase_tensors)
+            receipt["phases"][phase]["measurement"] = time_apply(
+                lambda phase=phase: prepared["method"].apply(prepared["layer"], phase_tensors[phase]["input"]),
+                warmup_iterations=warmup_iterations, iterations=iterations)
+            _check_prepared(prepared, panel)
+            _check_phase_tensors(panel, phase_tensors)
+            if read_route(prepared["layer"]) != receipt["phases"][phase]["route"]:
+                raise ValueError(f"{phase}: native route changed during decision timing")
+    receipt["status"] = "timing_admissible"
+    receipt["timing_scope"] = "cuda_events_after_resource_collector_stop"
+    return receipt
 
 
 def attach_resource_trace(receipt, trace):
@@ -522,6 +607,55 @@ def attach_resource_trace(receipt, trace):
     return receipt
 
 
+def profile_prepared_operator(prepared, panel, phase_tensors, *, output_prefix,
+                              warmup_iterations, iterations):
+    """Separate-process profiling evidence; never a resource or price receipt."""
+    import torch
+    from torch.profiler import profile, ProfilerActivity
+    gate = measure_prepared_operator(prepared, panel, phase_tensors,
+        warmup_iterations=warmup_iterations, iterations=iterations)
+    result = {"schema": "tessera.native_dense_profile.v1", "status": "numerical_refused",
+              "panel_sha256": gate["panel_sha256"], "runtime_sha256": gate["runtime_sha256"],
+              "scope": "separate_process_torch_profiler_replay_not_resource_or_price_receipt",
+              "phases": {}}
+    if gate["status"] != "timing_admissible":
+        return result
+    for phase in PHASES:
+        # Both phases already passed the strict unprofiled gate. Profiler
+        # instrumentation may map extra libraries of its own after entry.
+        if _native_tensors(prepared["layer"]) != prepared["operator"]["native_tensors"]:
+            raise ValueError("native tensors changed before profiling")
+        if observe_arithmetic() != panel["runtime"]["arithmetic"]:
+            raise ValueError("arithmetic changed before profiling")
+        _check_phase_tensors(panel, phase_tensors)
+        with torch.inference_mode(), profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+                                             record_shapes=True, profile_memory=True) as prof:
+            output = prepared["method"].apply(prepared["layer"], phase_tensors[phase]["input"])
+            torch.cuda.synchronize()
+        numerics = compare_tensors(output, phase_tensors[phase]["reference_output"], **panel["numerics"])
+        if numerics["status"] != "passed":
+            raise ValueError(f"{phase}: profiled invocation failed numerical gate")
+        del output
+        _check_phase_tensors(panel, phase_tensors)
+        events = prof.key_averages()
+        kernels = [{"name": e.key, "calls": e.count, "self_device_us": e.self_device_time_total}
+                   for e in events if e.device_type == torch.autograd.DeviceType.CUDA]
+        if not kernels or sum(e["self_device_us"] for e in kernels) <= 0:
+            raise ValueError(f"{phase}: profiler recorded no CUDA kernel work")
+        trace = Path(str(output_prefix) + f".{phase}.trace.json")
+        prof.export_chrome_trace(str(trace))
+        result["phases"][phase] = {"numerics": numerics, "qdq_numerics": gate["phases"][phase]["qdq_numerics"],
+            "kernels": sorted(kernels, key=lambda row: -row["self_device_us"]),
+            "cpu": [{"name": e.key, "calls": e.count, "self_cpu_us": e.self_cpu_time_total}
+                    for e in sorted(events, key=lambda e: -e.self_cpu_time_total)
+                    if e.device_type == torch.autograd.DeviceType.CPU][:20],
+            "trace_file": trace.name, "trace_sha256": hashlib.sha256(trace.read_bytes()).hexdigest()}
+    result["status"] = "profiled"
+    result["instrumentation_libraries"] = sorted(
+        {str(path) for path in _mapped_shared_libraries()} - set(panel["runtime"]["native_libraries"]))
+    return result
+
+
 def main(argv=None):
     """Explicit artifact transport; preflight never silently becomes a panel."""
     import argparse
@@ -529,6 +663,7 @@ def main(argv=None):
     parser.add_argument("--request", required=True, type=Path)
     parser.add_argument("--panel", type=Path, help="independent frozen panel; omit only with --prepare")
     parser.add_argument("--prepare", action="store_true", help="emit untimed native/runtime facts for panel preparation")
+    parser.add_argument("--profile", action="store_true", help="separate-process Torch profiler replay; no resource collector or price receipt")
     parser.add_argument("--out", required=True, type=Path)
     parser.add_argument("--warmup-iterations", type=int, default=8)
     parser.add_argument("--iterations", type=int, default=32)
@@ -536,6 +671,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.prepare == (args.panel is not None):
         parser.error("supply exactly one of --prepare or --panel")
+    if args.profile and args.prepare:
+        parser.error("--profile requires --panel")
     request = json.loads(args.request.read_text())
     _fields(request, ("schema", "unit", "format", "wire_path", "wire_record_path", "tensors_path",
                       "runtime_image", "input_global_scale", "execution"), "request")
@@ -550,43 +687,78 @@ def main(argv=None):
         protected.add(args.panel.resolve())
     if args.out.resolve() in protected:
         raise ValueError("receipt output would overwrite an input artifact")
+    if args.profile and any(Path(str(args.out) + f".{phase}.trace.json").resolve() in protected for phase in PHASES):
+        raise ValueError("profile output would overwrite an input artifact")
     collector = None
+    collector_finished = False
+    collector_library_sha256 = None
+    profiling_library = None
     trace_path = args.out.with_suffix(args.out.suffix + ".memory.json")
     if args.resource_library:
-        if trace_path.resolve() in protected or args.resource_library.resolve() == args.out.resolve():
+        protected.add(args.resource_library.resolve())
+        if trace_path.resolve() in protected or args.out.resolve() in protected:
             raise ValueError("resource output would overwrite an input artifact")
         from experiments.native_operator_resources import NativeMemoryCollector
-        collector = NativeMemoryCollector(args.resource_library)
-    from safetensors.torch import load_file
-    tensors = load_file(str(artifact("tensors_path")), device="cuda")
-    prepared = prepare_native_operator(artifact("wire_path").read_bytes(),
-        json.loads(artifact("wire_record_path").read_text()), tensors["source_weight"], tensors["rendered_weight"],
-        unit=request["unit"], format_name=request["format"], runtime_image=request["runtime_image"],
-        input_global_scale=request["input_global_scale"], execution=request["execution"])
-    if collector is not None:
-        prepared["runtime"]["resource_collector"] = {
-            "library_sha256": collector.library_sha256,
-            "analysis_source_sha256": hashlib.sha256(
-                Path(__file__).with_name("native_operator_resources.py").read_bytes()).hexdigest()}
-    if args.prepare:
-        result = {"schema": "tessera.native_dense_preflight.v1", "status": "untimed_preparation",
-                  "operator": prepared["operator"], "runtime": prepared["runtime"],
-                  "native_tensors_sha256": identity_sha256(prepared["operator"]["native_tensors"]),
-                  "scheme_sha256": prepared["operator"]["scheme_sha256"],
-                  "runtime_sha256": identity_sha256(prepared["runtime"])}
-    else:
-        phase_tensors = {phase: {key: tensors[f"{phase}.{key}"] for key in
-                         ("input", "reference_qdq", "reference_output")} for phase in PHASES}
-        result = measure_prepared_operator(prepared, json.loads(args.panel.read_text()), phase_tensors,
-            warmup_iterations=args.warmup_iterations, iterations=args.iterations,
-            resource_collector=collector)
-    args.out.parent.mkdir(parents=True, exist_ok=True)
-    if collector is not None:
-        trace = collector.finish(trace_path)
-        if not args.prepare:
-            attach_resource_trace(result, trace)
-    args.out.write_text(json.dumps(result, sort_keys=True, indent=2, allow_nan=False) + "\n")
-    return 0 if args.prepare or result["status"] == "timing_admissible" else 2
+        if args.profile:
+            # Load the exact observer binary for runtime identity, but never
+            # register its CUPTI callbacks while Kineto owns collection.
+            import ctypes
+            profiling_library = ctypes.CDLL(str(args.resource_library.resolve(strict=True)))
+            collector_library_sha256 = hashlib.sha256(args.resource_library.read_bytes()).hexdigest()
+        else:
+            collector = NativeMemoryCollector(args.resource_library)
+            collector_library_sha256 = collector.library_sha256
+    def run():
+        nonlocal collector_finished
+        from safetensors.torch import load_file
+        tensors = load_file(str(artifact("tensors_path")), device="cuda")
+        prepared = prepare_native_operator(artifact("wire_path").read_bytes(),
+            json.loads(artifact("wire_record_path").read_text()), tensors["source_weight"], tensors["rendered_weight"],
+            unit=request["unit"], format_name=request["format"], runtime_image=request["runtime_image"],
+            input_global_scale=request["input_global_scale"], execution=request["execution"])
+        if collector_library_sha256 is not None:
+            prepared["runtime"]["resource_collector"] = {
+                "library_sha256": collector_library_sha256,
+                "analysis_source_sha256": hashlib.sha256(
+                    Path(__file__).with_name("native_operator_resources.py").read_bytes()).hexdigest()}
+        if args.prepare:
+            result = {"schema": "tessera.native_dense_preflight.v1", "status": "untimed_preparation",
+                      "operator": prepared["operator"], "runtime": prepared["runtime"],
+                      "native_tensors_sha256": identity_sha256(prepared["operator"]["native_tensors"]),
+                      "scheme_sha256": prepared["operator"]["scheme_sha256"],
+                      "runtime_sha256": identity_sha256(prepared["runtime"])}
+        else:
+            phase_tensors = {phase: {key: tensors[f"{phase}.{key}"] for key in
+                             ("input", "reference_qdq", "reference_output")} for phase in PHASES}
+            if args.profile:
+                args.out.parent.mkdir(parents=True, exist_ok=True)
+                result = profile_prepared_operator(prepared, json.loads(args.panel.read_text()), phase_tensors,
+                    output_prefix=args.out, warmup_iterations=args.warmup_iterations, iterations=args.iterations)
+            else:
+                result = measure_prepared_operator(prepared, json.loads(args.panel.read_text()), phase_tensors,
+                    warmup_iterations=args.warmup_iterations, iterations=args.iterations,
+                    resource_collector=collector)
+        args.out.parent.mkdir(parents=True, exist_ok=True)
+        if collector is not None:
+            collector_finished = True
+            trace = collector.finish(trace_path)
+            if not args.prepare:
+                attach_resource_trace(result, trace)
+                if result["status"] == "resources_observed" and result["resources"]["status"] == "complete_operator_bound":
+                    time_after_resource_collection(prepared, json.loads(args.panel.read_text()), phase_tensors,
+                        result, collector=collector, warmup_iterations=args.warmup_iterations, iterations=args.iterations)
+        args.out.write_text(json.dumps(result, sort_keys=True, indent=2, allow_nan=False) + "\n")
+        admissible = (result["status"] == "profiled" if args.profile else result["status"] == "timing_admissible" and
+                      (collector is None or result["resources"]["status"] == "complete_operator_bound"))
+        return 0 if args.prepare or admissible else 2
+    try:
+        with native_runtime_context():
+            return run()
+    finally:
+        # Refused preparation/measurement keeps the raw failure trace too.
+        if collector is not None and not collector_finished:
+            args.out.parent.mkdir(parents=True, exist_ok=True)
+            collector.finish(trace_path)
 
 
 if __name__ == "__main__":
