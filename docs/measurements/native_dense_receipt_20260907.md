@@ -80,3 +80,26 @@ is claimed by this implementation qualification.
   `/mnt/shared/prismabuild-fleet/cas/requests/<first-two-action-characters>/<action>.json`.
   CUDA runs use the existing `experiments/runtime_image.sh` declaration helper,
   the PB-owned Docker CPU affinity, and a fresh container process per action.
+
+## Subsequent profiler replay qualification
+
+PB `bd152dddfbe4f2711a02fe007845c3c3a1ace6a902cebd747fe6a034cb2edcb2`
+returned zero for a fresh generic preparation, frozen synthetic replay panel and
+separate-process `--profile`. Both phases again passed exact QDQ/output parity;
+prefill recorded cuBLAS MMA/reduction and elementwise kernels, and decode
+recorded cuBLAS GEMV and elementwise kernels. The CPU/CUDA profiler output and
+Chrome traces are retained under `native-bf16-r7/profile-r2.json*`; their hashes
+and PB CAS bytes were independently checked.
+
+The first replay (`2ce1fccf0f44`) refused a runtime mismatch. Diagnostic action
+`8f2ed8e00736` established the sole difference: the original combined
+encode/prepare fixture had mapped an encoder-only Triton `cuda_utils` binary.
+A fresh generic preparation was therefore used to freeze a new synthetic replay
+panel. No source, tensor, numerical tolerance or identity-gate change was made.
+The actual LFM preflight already used this generic preparation path.
+
+Host-level evidence from both GB10 hosts is retained at
+`/mnt/shared/tessera-native376-resource/netdata-qualification-20260907/`:
+CPU, RAM, power, clocks and reported framebuffer series, with request URLs and
+row counts in `index.json`. These short instrumentation invocations do not
+support an energy-efficiency estimate or sustained-throughput comparison.
