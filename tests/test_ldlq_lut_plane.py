@@ -776,6 +776,10 @@ def test_the_trailing_mode_lands_the_last_refit_only():
     all.  Read from the sink, which records ``coupled`` only where the sweep
     ran, and from the inner passes matching the plain arm's to the float."""
     from tessera.encode import refit_diagnostics
+    from tessera.encoder_identity import encoder_fixture_id
+    # Identity fixtures also refit scales. Resolve them before observing only
+    # this experiment's three refit passes in a fresh pytest worker.
+    encoder_fixture_id()
     w = _weights(seed=20).bfloat16()
     H = _hessian(seed=20, coupling=4.0)
     kw = dict(grid=K2, q256=CAP, name="x", scale_refit=3, refit_metric=H,

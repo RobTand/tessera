@@ -5,6 +5,10 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-07 for the complete original-unit export intake (#401):
+`--cached-units` extends the existing closed bundle to dense and routed units;
+wire recipes, runtime contracts and serving gates are unchanged (§3.2).
+
 **Provenance:** `v0.1.0` plus repository tooling updates (2026-09-06):
 Row-sliced dense owner counted once in the census planned-tensor roster
 against base `5ac9b72`;
@@ -1022,8 +1026,9 @@ per-unit Hessian plus capture identity and full activation settings, resolved
 recipe, encoder behavior/source identities, and the whole blob digest.
 Its `encoding_input_identity` is shared by dense and projected campaign
 callers; `unit_input_identity` adds the producer's explicit expert projection.
-Both use the same unit-record construction and wire verifier, while the
-export boundary still requires the projected identity and exact field equality.
+Both use the same unit-record construction and wire verifier. Expert export
+requires the projected identity; dense export uses the common encoding identity.
+Both require exact field equality against freshly supplied source and capture.
 `export_tessera_serving.py --cached-expert-units MANIFEST` requires exact
 coverage of the planned experts and the full source checkpoint seal. It
 checks those receipts against the actual source slices and capture, validates
@@ -1031,8 +1036,12 @@ wire geometry/rates/profile/reach/encoder identity and complete plane extents,
 and wraps accepted blobs in
 `pack_fused` unchanged. Their original unit-id spelling is preserved. A
 missing selected rung, including an interpolated rate with no measured blob,
-refuses; this intake has no encode fallback. The ordinary dense encode path
-and all defaults remain unchanged. The cache mode requires a fresh output
+refuses; this intake has no encode fallback. `--cached-units MANIFEST` uses
+that same bundle and verifier for the complete planned dense-plus-expert roster.
+It frames each verified dense original into its declared fused role and records
+its original blob SHA. Dense row-sliced modules refuse because a whole original
+unit cannot stand for a different source slice. The two cache flags are mutually
+exclusive; the expert-only flag preserves its prior scope. The cache mode requires a fresh output
 directory and records each accepted blob's SHA in the export manifest.
 
 These are producer evidence and tests only. They do not promote a recipe,

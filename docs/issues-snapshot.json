@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-07T08:09:49Z",
+ "generated": "2026-09-07T14:15:03Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -976,11 +976,11 @@
     "title": "Price packed source Linears with streamed joint AURA"
    },
    "318": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Bound full-calibration streamed joint AURA with deterministic microbatches"
    },
    "319": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Bound streamed joint AURA with versioned calibration microbatches"
    },
    "32": {
@@ -992,8 +992,28 @@
     "title": "Fix standalone campaign planner package imports"
    },
    "321": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Match native FP8 activation arithmetic and preserve signed zero"
+   },
+   "322": {
+    "state": "CLOSED",
+    "title": "Bridge measured Tessera anchor wires into full-model joint AURA"
+   },
+   "323": {
+    "state": "OPEN",
+    "title": "Bind native and full-engine measured runtime provenance explicitly"
+   },
+   "324": {
+    "state": "CLOSED",
+    "title": "Qualify completed Tessera anchors for exact full-model joint AURA"
+   },
+   "325": {
+    "state": "OPEN",
+    "title": "Keep persistent FP32 buffers unnarrowed through the streaming export"
+   },
+   "326": {
+    "state": "OPEN",
+    "title": "CI optimization: running only affected tests per PR"
    },
    "33": {
     "state": "CLOSED",
@@ -2617,6 +2637,10 @@
     "state": "OPEN",
     "title": "Add original-wire whole routed-MoE measurement receipts"
    },
+   "399": {
+    "state": "OPEN",
+    "title": "Derive full-engine resource ownership and noncandidate timing partitions"
+   },
    "4": {
     "state": "CLOSED",
     "title": "Design a cost that ranks rungs of one format at matched bytes"
@@ -2624,6 +2648,22 @@
    "40": {
     "state": "CLOSED",
     "title": "loadcost.py truncates to a multiple of 256 before measuring, so no published load figure covers the partial-superblock shape"
+   },
+   "400": {
+    "state": "OPEN",
+    "title": "Capture full-engine allocation ownership and runtime provenance"
+   },
+   "401": {
+    "state": "OPEN",
+    "title": "Extend exact cached-unit export to dense campaign originals"
+   },
+   "402": {
+    "state": "OPEN",
+    "title": "P2: Reject incomplete original-batch profiler and numeric telemetry coverage"
+   },
+   "403": {
+    "state": "OPEN",
+    "title": "Reuse exact dense campaign originals through closed cache export"
    },
    "41": {
     "state": "CLOSED",
