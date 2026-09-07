@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-07T16:52:51Z",
+ "generated": "2026-09-07T18:03:31Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -1046,6 +1046,26 @@
    "333": {
     "state": "CLOSED",
     "title": "Reuse the invariant device codepoint table in served NVFP4 QDQ"
+   },
+   "334": {
+    "state": "CLOSED",
+    "title": "[P1] Zero automatic prefetch budget is treated as unlimited"
+   },
+   "335": {
+    "state": "CLOSED",
+    "title": "Respect zero automatic file-prefetch budgets"
+   },
+   "336": {
+    "state": "CLOSED",
+    "title": "Add qualified opt-in fused joint projection backend"
+   },
+   "337": {
+    "state": "CLOSED",
+    "title": "Avoid materialized products in qualified joint AURA reductions"
+   },
+   "338": {
+    "state": "OPEN",
+    "title": "PQ237 harness rejects current joint probe source-execution identity"
    },
    "34": {
     "state": "CLOSED",
@@ -2686,7 +2706,7 @@
     "title": "Extend exact cached-unit export to dense campaign originals"
    },
    "402": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "P2: Reject incomplete original-batch profiler and numeric telemetry coverage"
    },
    "403": {
@@ -2726,8 +2746,16 @@
     "title": "docs: clarify current PB deadlines and configured retries"
    },
    "411": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Record merged CPU and strict CUDA suite evidence"
+   },
+   "412": {
+    "state": "OPEN",
+    "title": "Qualify bounded GLM 288-expert top-8 native wire routes"
+   },
+   "413": {
+    "state": "CLOSED",
+    "title": "Record retirement and recovery for the original batch profiler"
    },
    "42": {
     "state": "CLOSED",

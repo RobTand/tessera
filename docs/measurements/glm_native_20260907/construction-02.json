@@ -1,0 +1,651 @@
+{
+  "schema": "tessera.glm_native_construction.v1",
+  "stage": "construction",
+  "request_sha256": "96915ace44fe757381c87b996fb926551a3dd5dd29d21d10a2d087e45dcf44ea",
+  "control_scope": {
+    "layers": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "mtp_layers": 0,
+    "weights_loaded": false,
+    "vision": "original meta construction",
+    "geometry": "original hidden4096 intermediate2048 experts288 top8",
+    "quality_claim": false,
+    "production_admission": false
+  },
+  "runtime": {
+    "vllm": "0.28.1rc1.dev451+g1970f3ed4",
+    "torch": "2.13.0+cu130",
+    "image": "vllm/vllm-openai@sha256:4e31c581716a5cb9ef31eddb0a425842b75cab07d5cd63fb9572e69ae8794c33"
+  },
+  "tensor_device": "meta",
+  "weight_bytes_loaded": 0,
+  "forward_executed": false,
+  "runtime_cell_promoted": false,
+  "tp_size": 1,
+  "ep_size": 1,
+  "status": "constructed_on_meta",
+  "owners": [
+    {
+      "name": "language_model.model.layers.3.mlp.experts.routed_experts",
+      "prefix": "language_model.model.layers.3.mlp.experts",
+      "class": "vllm.model_executor.layers.fused_moe.routed_experts.RoutedExperts",
+      "method": "vllm.model_executor.layers.fused_moe.unquantized_fused_moe_method.UnquantizedFusedMoEMethod",
+      "backend": null,
+      "attributes": {
+        "global_num_experts": 288,
+        "local_num_experts": 288,
+        "top_k": 8,
+        "activation": "silu",
+        "swiglu_limit": 10.0,
+        "swiglu_alpha": null,
+        "swiglu_beta": null,
+        "scoring_func": "sigmoid",
+        "renormalize": true,
+        "use_grouped_topk": true,
+        "num_expert_group": 1,
+        "topk_group": 1,
+        "routed_scaling_factor": 2.5,
+        "apply_router_weight_on_input": false,
+        "e_score_correction_bias": {
+          "shape": [
+            288
+          ],
+          "dtype": "torch.float32",
+          "device": "meta"
+        },
+        "tessera_family": null,
+        "tessera_mode": null
+      },
+      "moe_config": {
+        "num_experts": 288,
+        "experts_per_token": 8,
+        "hidden_dim": 4096,
+        "intermediate_size": 2048,
+        "num_local_experts": 288,
+        "num_logical_experts": 288,
+        "activation": "silu",
+        "device": "cuda",
+        "routing_method": 2,
+        "moe_parallel_config": {
+          "tp_size": 1,
+          "pcp_size": 1,
+          "dp_size": 1,
+          "ep_size": 1,
+          "tp_rank": 0,
+          "pcp_rank": 0,
+          "dp_rank": 0,
+          "ep_rank": 0,
+          "sp_size": 1,
+          "use_ep": false,
+          "all2all_backend": "allgather_reducescatter",
+          "enable_eplb": false
+        },
+        "in_dtype": "torch.bfloat16",
+        "router_logits_dtype": "torch.float32",
+        "hidden_dim_unpadded": 4096,
+        "intermediate_size_per_partition_unpadded": 2048,
+        "intermediate_pad": null,
+        "moe_backend": "auto",
+        "max_num_tokens": 2048,
+        "has_bias": false,
+        "is_lora_enabled": false,
+        "skip_final_all_reduce": false,
+        "defer_moe_finalize": false,
+        "defer_moe_finalize_max_num_tokens": -1,
+        "swiglu_limit": 10.0,
+        "swiglu_alpha": null,
+        "swiglu_beta": null,
+        "activation_situ_beta": null,
+        "activation_situ_linear_beta": null,
+        "max_capture_size": 0,
+        "intermediate_size_per_partition": 2048,
+        "rocm_aiter_fmoe_enabled": null,
+        "aiter_fmoe_shared_expert_enabled": null
+      },
+      "parameters": {
+        "e_score_correction_bias": {
+          "shape": [
+            288
+          ],
+          "dtype": "torch.float32",
+          "device": "meta"
+        },
+        "w13_weight": {
+          "shape": [
+            288,
+            4096,
+            4096
+          ],
+          "dtype": "torch.bfloat16",
+          "device": "meta"
+        },
+        "w2_weight": {
+          "shape": [
+            288,
+            4096,
+            2048
+          ],
+          "dtype": "torch.bfloat16",
+          "device": "meta"
+        }
+      }
+    }
+  ],
+  "model_class": "vllm.models.glm5next.nvidia.model.Glm5NextForConditionalGeneration",
+  "model": {
+    "path": "/mnt/shared/tessera-glm-native-20260907/four-layer-config",
+    "architectures": [
+      "Glm5NextForConditionalGeneration"
+    ],
+    "model_type": "glm5_next",
+    "num_hidden_layers": 4,
+    "layer_types": [
+      "linear_attention",
+      "linear_attention",
+      "linear_attention",
+      "deepseek_sparse_attention"
+    ],
+    "mlp_layer_types": [
+      "dense",
+      "dense",
+      "dense",
+      "sparse"
+    ],
+    "first_k_dense_replace": 3
+  },
+  "packed_modules_mapping": {
+    "qkv_proj": [
+      "q_proj",
+      "k_proj",
+      "v_proj"
+    ],
+    "gate_up_proj": [
+      "gate_up_proj"
+    ]
+  },
+  "hf_to_vllm_mapper_unstacked": {
+    "orig_to_new_prefix": {
+      "lm_head.": "language_model.lm_head.",
+      "model.language_model.": "language_model.model.",
+      "model.visual.": "visual."
+    }
+  },
+  "supports_quant": false,
+  "linears": [
+    {
+      "prefix_pattern": "language_model.model.layers.*.mlp.down_proj",
+      "class": "RowParallelLinear",
+      "quant_method": "UnquantizedLinearMethod",
+      "quant_config_is_none": false,
+      "offered_to_quant_config": true,
+      "output_sizes": [
+        4096
+      ],
+      "layers": [
+        0,
+        1,
+        2
+      ],
+      "examples": [
+        "language_model.model.layers.0.mlp.down_proj",
+        "language_model.model.layers.1.mlp.down_proj"
+      ]
+    },
+    {
+      "prefix_pattern": "language_model.model.layers.*.mlp.gate",
+      "class": "GateLinear",
+      "quant_method": "UnquantizedLinearMethod",
+      "quant_config_is_none": true,
+      "offered_to_quant_config": false,
+      "output_sizes": [
+        288
+      ],
+      "layers": [
+        3
+      ],
+      "examples": [
+        "language_model.model.layers.3.mlp.gate"
+      ]
+    },
+    {
+      "prefix_pattern": "language_model.model.layers.*.mlp.gate_up_proj",
+      "class": "MergedColumnParallelLinear",
+      "quant_method": "UnquantizedLinearMethod",
+      "quant_config_is_none": false,
+      "offered_to_quant_config": true,
+      "output_sizes": [
+        12288,
+        12288
+      ],
+      "layers": [
+        0,
+        1,
+        2
+      ],
+      "examples": [
+        "language_model.model.layers.0.mlp.gate_up_proj",
+        "language_model.model.layers.1.mlp.gate_up_proj"
+      ]
+    },
+    {
+      "prefix_pattern": "language_model.model.layers.*.mlp.shared_experts.down_proj",
+      "class": "RowParallelLinear",
+      "quant_method": "UnquantizedLinearMethod",
+      "quant_config_is_none": false,
+      "offered_to_quant_config": true,
+      "output_sizes": [
+        4096
+      ],
+      "layers": [
+        3
+      ],
+      "examples": [
+        "language_model.model.layers.3.mlp.shared_experts.down_proj"
+      ]
+    },
+    {
+      "prefix_pattern": "language_model.model.layers.*.mlp.shared_experts.gate_up_proj",
+      "class": "MergedColumnParallelLinear",
+      "quant_method": "UnquantizedLinearMethod",
+      "quant_config_is_none": false,
+      "offered_to_quant_config": true,
+      "output_sizes": [
+        2048,
+        2048
+      ],
+      "layers": [
+        3
+      ],
+      "examples": [
+        "language_model.model.layers.3.mlp.shared_experts.gate_up_proj"
+      ]
+    },
+    {
+      "prefix_pattern": "language_model.model.layers.*.self_attn.f_b_proj",
+      "class": "ColumnParallelLinear",
+      "quant_method": "UnquantizedLinearMethod",
+      "quant_config_is_none": true,
+      "offered_to_quant_config": false,
+      "output_sizes": [
+        8192
+      ],
+      "layers": [
+        0,
+        1,
+        2
+      ],
+      "examples": [
+        "language_model.model.layers.0.self_attn.f_b_proj",
+        "language_model.model.layers.1.self_attn.f_b_proj"
+      ]
+    },
+    {
+      "prefix_pattern": "language_model.model.layers.*.self_attn.fused_qkv_a_proj",
+      "class": "DeepSeekV2FusedQkvAProjLinear",
+      "quant_method": "UnquantizedLinearMethod",
+      "quant_config_is_none": true,
+      "offered_to_quant_config": false,
+      "output_sizes": [
+        1536,
+        512
+      ],
+      "layers": [
+        3
+      ],
+      "examples": [
+        "language_model.model.layers.3.self_attn.fused_qkv_a_proj"
+      ]
+    },
+    {
+      "prefix_pattern": "language_model.model.layers.*.self_attn.g_b_proj",
+      "class": "ColumnParallelLinear",
+      "quant_method": "UnquantizedLinearMethod",
+      "quant_config_is_none": true,
+      "offered_to_quant_config": false,
+      "output_sizes": [
+        8192
+      ],
+      "layers": [
+        0,
+        1,
+        2
+      ],
+      "examples": [
+        "language_model.model.layers.0.self_attn.g_b_proj",
+        "language_model.model.layers.1.self_attn.g_b_proj"
+      ]
+    },
+    {
+      "prefix_pattern": "language_model.model.layers.*.self_attn.in_proj_qkvbfg_a",
+      "class": "_Glm5NextMergedColumnParallelLinear",
+      "quant_method": "UnquantizedLinearMethod",
+      "quant_config_is_none": true,
+      "offered_to_quant_config": false,
+      "output_sizes": [
+        8192,
+        8192,
+        8192,
+        64,
+        128,
+        128
+      ],
+      "layers": [
+        0,
+        1,
+        2
+      ],
+      "examples": [
+        "language_model.model.layers.0.self_attn.in_proj_qkvbfg_a",
+        "language_model.model.layers.1.self_attn.in_proj_qkvbfg_a"
+      ]
+    },
+    {
+      "prefix_pattern": "language_model.model.layers.*.self_attn.indexer.wk_weights_proj",
+      "class": "MergedColumnParallelLinear",
+      "quant_method": "UnquantizedLinearMethod",
+      "quant_config_is_none": true,
+      "offered_to_quant_config": false,
+      "output_sizes": [
+        128,
+        32
+      ],
+      "layers": [
+        3
+      ],
+      "examples": [
+        "language_model.model.layers.3.self_attn.indexer.wk_weights_proj"
+      ]
+    },
+    {
+      "prefix_pattern": "language_model.model.layers.*.self_attn.indexer.wq_b",
+      "class": "ReplicatedLinear",
+      "quant_method": "UnquantizedLinearMethod",
+      "quant_config_is_none": true,
+      "offered_to_quant_config": false,
+      "output_sizes": [
+        4096
+      ],
+      "layers": [
+        3
+      ],
+      "examples": [
+        "language_model.model.layers.3.self_attn.indexer.wq_b"
+      ]
+    },
+    {
+      "prefix_pattern": "language_model.model.layers.*.self_attn.k_conv1d",
+      "class": "ColumnParallelLinear",
+      "quant_method": "UnquantizedLinearMethod",
+      "quant_config_is_none": true,
+      "offered_to_quant_config": false,
+      "output_sizes": [
+        8192
+      ],
+      "layers": [
+        0,
+        1,
+        2
+      ],
+      "examples": [
+        "language_model.model.layers.0.self_attn.k_conv1d",
+        "language_model.model.layers.1.self_attn.k_conv1d"
+      ]
+    },
+    {
+      "prefix_pattern": "language_model.model.layers.*.self_attn.kv_b_proj",
+      "class": "ColumnParallelLinear",
+      "quant_method": "UnquantizedLinearMethod",
+      "quant_config_is_none": true,
+      "offered_to_quant_config": false,
+      "output_sizes": [
+        32768
+      ],
+      "layers": [
+        3
+      ],
+      "examples": [
+        "language_model.model.layers.3.self_attn.kv_b_proj"
+      ]
+    },
+    {
+      "prefix_pattern": "language_model.model.layers.*.self_attn.o_proj",
+      "class": "RowParallelLinear",
+      "quant_method": "UnquantizedLinearMethod",
+      "quant_config_is_none": true,
+      "offered_to_quant_config": false,
+      "output_sizes": [
+        4096
+      ],
+      "layers": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "examples": [
+        "language_model.model.layers.0.self_attn.o_proj",
+        "language_model.model.layers.1.self_attn.o_proj"
+      ]
+    },
+    {
+      "prefix_pattern": "language_model.model.layers.*.self_attn.q_b_proj",
+      "class": "ColumnParallelLinear",
+      "quant_method": "UnquantizedLinearMethod",
+      "quant_config_is_none": true,
+      "offered_to_quant_config": false,
+      "output_sizes": [
+        16384
+      ],
+      "layers": [
+        3
+      ],
+      "examples": [
+        "language_model.model.layers.3.self_attn.q_b_proj"
+      ]
+    },
+    {
+      "prefix_pattern": "language_model.model.layers.*.self_attn.q_conv1d",
+      "class": "ColumnParallelLinear",
+      "quant_method": "UnquantizedLinearMethod",
+      "quant_config_is_none": true,
+      "offered_to_quant_config": false,
+      "output_sizes": [
+        8192
+      ],
+      "layers": [
+        0,
+        1,
+        2
+      ],
+      "examples": [
+        "language_model.model.layers.0.self_attn.q_conv1d",
+        "language_model.model.layers.1.self_attn.q_conv1d"
+      ]
+    },
+    {
+      "prefix_pattern": "language_model.model.layers.*.self_attn.v_conv1d",
+      "class": "ColumnParallelLinear",
+      "quant_method": "UnquantizedLinearMethod",
+      "quant_config_is_none": true,
+      "offered_to_quant_config": false,
+      "output_sizes": [
+        8192
+      ],
+      "layers": [
+        0,
+        1,
+        2
+      ],
+      "examples": [
+        "language_model.model.layers.0.self_attn.v_conv1d",
+        "language_model.model.layers.1.self_attn.v_conv1d"
+      ]
+    },
+    {
+      "prefix_pattern": "visual.blocks.*.attn.proj",
+      "class": "RowParallelLinear",
+      "quant_method": "UnquantizedLinearMethod",
+      "quant_config_is_none": true,
+      "offered_to_quant_config": false,
+      "output_sizes": [
+        1024
+      ],
+      "layers": [],
+      "examples": [
+        "visual.blocks.0.attn.proj",
+        "visual.blocks.1.attn.proj"
+      ]
+    },
+    {
+      "prefix_pattern": "visual.blocks.*.attn.qkv",
+      "class": "QKVParallelLinear",
+      "quant_method": "UnquantizedLinearMethod",
+      "quant_config_is_none": true,
+      "offered_to_quant_config": false,
+      "output_sizes": [
+        1024,
+        1024,
+        1024
+      ],
+      "layers": [],
+      "examples": [
+        "visual.blocks.0.attn.qkv",
+        "visual.blocks.1.attn.qkv"
+      ]
+    },
+    {
+      "prefix_pattern": "visual.blocks.*.mlp.down_proj",
+      "class": "RowParallelLinear",
+      "quant_method": "UnquantizedLinearMethod",
+      "quant_config_is_none": true,
+      "offered_to_quant_config": false,
+      "output_sizes": [
+        1024
+      ],
+      "layers": [],
+      "examples": [
+        "visual.blocks.0.mlp.down_proj",
+        "visual.blocks.1.mlp.down_proj"
+      ]
+    },
+    {
+      "prefix_pattern": "visual.blocks.*.mlp.gate_up_proj",
+      "class": "MergedColumnParallelLinear",
+      "quant_method": "UnquantizedLinearMethod",
+      "quant_config_is_none": true,
+      "offered_to_quant_config": false,
+      "output_sizes": [
+        4096,
+        4096
+      ],
+      "layers": [],
+      "examples": [
+        "visual.blocks.0.mlp.gate_up_proj",
+        "visual.blocks.1.mlp.gate_up_proj"
+      ]
+    },
+    {
+      "prefix_pattern": "visual.merger.down_proj",
+      "class": "RowParallelLinear",
+      "quant_method": "UnquantizedLinearMethod",
+      "quant_config_is_none": true,
+      "offered_to_quant_config": false,
+      "output_sizes": [
+        4096
+      ],
+      "layers": [],
+      "examples": [
+        "visual.merger.down_proj"
+      ]
+    },
+    {
+      "prefix_pattern": "visual.merger.gate_up_proj",
+      "class": "MergedColumnParallelLinear",
+      "quant_method": "UnquantizedLinearMethod",
+      "quant_config_is_none": true,
+      "offered_to_quant_config": false,
+      "output_sizes": [
+        10240,
+        10240
+      ],
+      "layers": [],
+      "examples": [
+        "visual.merger.gate_up_proj"
+      ]
+    },
+    {
+      "prefix_pattern": "visual.merger.proj",
+      "class": "ColumnParallelLinear",
+      "quant_method": "UnquantizedLinearMethod",
+      "quant_config_is_none": true,
+      "offered_to_quant_config": false,
+      "output_sizes": [
+        4096
+      ],
+      "layers": [],
+      "examples": [
+        "visual.merger.proj"
+      ]
+    }
+  ],
+  "offered_non_linear": [
+    {
+      "prefix_pattern": "language_model.lm_head",
+      "class": "ParallelLMHead"
+    },
+    {
+      "prefix_pattern": "language_model.model.layers.*.mlp.experts",
+      "class": "RoutedExperts"
+    }
+  ],
+  "offered_modules": [
+    [
+      "language_model.model.layers.0.mlp.gate_up_proj",
+      "MergedColumnParallelLinear"
+    ],
+    [
+      "language_model.model.layers.0.mlp.down_proj",
+      "RowParallelLinear"
+    ],
+    [
+      "language_model.model.layers.1.mlp.gate_up_proj",
+      "MergedColumnParallelLinear"
+    ],
+    [
+      "language_model.model.layers.1.mlp.down_proj",
+      "RowParallelLinear"
+    ],
+    [
+      "language_model.model.layers.2.mlp.gate_up_proj",
+      "MergedColumnParallelLinear"
+    ],
+    [
+      "language_model.model.layers.2.mlp.down_proj",
+      "RowParallelLinear"
+    ],
+    [
+      "language_model.model.layers.3.mlp.shared_experts.gate_up_proj",
+      "MergedColumnParallelLinear"
+    ],
+    [
+      "language_model.model.layers.3.mlp.shared_experts.down_proj",
+      "RowParallelLinear"
+    ],
+    [
+      "language_model.model.layers.3.mlp.experts",
+      "RoutedExperts"
+    ],
+    [
+      "language_model.lm_head",
+      "ParallelLMHead"
+    ]
+  ],
+  "stock_core_unchanged": true,
+  "package_identity_sha256": "f0a3e5441b8d72902ee97c0efd3a4f02f220dda1b0716447cfbe3425f2e55ecd",
+  "cuda_peak_allocated_bytes": 52428800,
+  "cuda_peak_reserved_bytes": 52428800
+}

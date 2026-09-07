@@ -1,0 +1,139 @@
+{
+  "schema": "tessera.glm_repeated_expert_control_result.v1",
+  "request_sha256": "96915ace44fe757381c87b996fb926551a3dd5dd29d21d10a2d087e45dcf44ea",
+  "control_request_sha256": "5c9ec4e848b80cc61c76822ba8034abb2b8fee6dde0bec779bbed769e461bfb9",
+  "control_scope": "Three real trained source matrices from expert 0 repeated into all 288 expert slots. Synthetic hidden states and controlled top8 routes. Not all trained experts, full-model quality, calibration, or an expert permutation proof. No runtime cell promotion.",
+  "runtime_cell_promoted": false,
+  "stage": "control",
+  "tp_size": 1,
+  "ep_size": 1,
+  "status": "repeated_source_control_passed",
+  "q256": 768,
+  "input_receipts": {
+    "gate_proj": {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-768-gate_proj/receipt.json",
+      "sha256": "2ad24c8d6f251dc480670101667dc66305b4a739c5b52cef84049b3b83eef0e0"
+    },
+    "up_proj": {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-768-up_proj/receipt.json",
+      "sha256": "d4ef8c5057df01aaca0dacbf9f4f709f174afcdda378a30b04e59826b9657700"
+    },
+    "down_proj": {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-768-down_proj/receipt.json",
+      "sha256": "cd7d1a63a6a9bbce4e46f35868d683223c22d0f6ca5e27441bc19a8b6faf0609"
+    }
+  },
+  "backend": "TRITON",
+  "moe_class": "vllm.models.glm5next.nvidia.model.Glm5NextMoE",
+  "owner_class": "vllm.model_executor.layers.fused_moe.routed_experts.RoutedExperts",
+  "owner_prefix": "language_model.model.layers.3.mlp.experts",
+  "scheme": {
+    "family": "TESSERA_FP8",
+    "structure": "routed_moe",
+    "grid": "E4M3",
+    "body": "WINDOW",
+    "plane": "CHANNEL",
+    "experts": 288,
+    "groups": {
+      "w13": {
+        "rows": 4096,
+        "columns": 4096,
+        "q256": 768,
+        "wire_stride": 3166991,
+        "roles": [
+          [
+            "gate_proj",
+            2048
+          ],
+          [
+            "up_proj",
+            2048
+          ]
+        ]
+      },
+      "w2": {
+        "rows": 4096,
+        "columns": 2048,
+        "q256": 768,
+        "wire_stride": 3171040,
+        "roles": [
+          [
+            "down_proj",
+            4096
+          ]
+        ]
+      }
+    }
+  },
+  "all_864_projection_tiles_and_scales_exact": true,
+  "operator_controls": [
+    {
+      "case": "decode",
+      "tokens": 1,
+      "input_multiplier": 1.0,
+      "expert_slots_covered": 8,
+      "vs_independent_stock_fp8": {
+        "finite": true,
+        "max_abs": 0.0,
+        "relative_l2": 0.0
+      },
+      "vs_bf16_source_arithmetic_screen": {
+        "finite": true,
+        "max_abs": 1.9700417518615723,
+        "relative_l2": 0.2358391135931015
+      },
+      "source_gate_or_up_values_clipped": 0
+    },
+    {
+      "case": "all_expert_slots",
+      "tokens": 36,
+      "input_multiplier": 1.0,
+      "expert_slots_covered": 288,
+      "vs_independent_stock_fp8": {
+        "finite": true,
+        "max_abs": 0.0,
+        "relative_l2": 0.0
+      },
+      "vs_bf16_source_arithmetic_screen": {
+        "finite": true,
+        "max_abs": 2.5462560653686523,
+        "relative_l2": 0.23341411352157593
+      },
+      "source_gate_or_up_values_clipped": 0
+    },
+    {
+      "case": "clamp_stress",
+      "tokens": 4,
+      "input_multiplier": 64.0,
+      "expert_slots_covered": 32,
+      "vs_independent_stock_fp8": {
+        "finite": true,
+        "max_abs": 0.0,
+        "relative_l2": 0.0
+      },
+      "vs_bf16_source_arithmetic_screen": {
+        "finite": true,
+        "max_abs": 277.33685302734375,
+        "relative_l2": 0.4176503121852875
+      },
+      "source_gate_or_up_values_clipped": 7739
+    }
+  ],
+  "weight_shapes": [
+    [
+      288,
+      4096,
+      4096
+    ],
+    [
+      288,
+      4096,
+      2048
+    ]
+  ],
+  "resident_parameter_bytes": 7257195648,
+  "stock_core_unchanged": true,
+  "package_identity_sha256": "bb6bd256574243e067f9040976d1fab97cc1141a332cb77058a3db89f555c184",
+  "cuda_peak_allocated_bytes": 20075277824,
+  "cuda_peak_reserved_bytes": 22712156160
+}

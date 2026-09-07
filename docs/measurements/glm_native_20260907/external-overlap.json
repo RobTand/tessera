@@ -1,0 +1,17 @@
+{
+  "observed_epoch": 1788803924.1547267,
+  "external_container": "602ce5df509059e3f5059cf30fe5766ed924ce9e09dc384a4c63bd68b53638e0",
+  "external_scope": "root full cost run begun17:53:21UTC, possible96GiB total/88GiB GPU demand",
+  "control_scope": "Functional gates only; no isolated timing or throughput claim. Both controls also overlap each other.",
+  "host_memavailable_gib_at_check": 49,
+  "affinity_adjustments": [
+    {
+      "run": "control-1024-03",
+      "already_completed_and_removed": true
+    },
+    {
+      "run": "control-768-02",
+      "already_completed_and_removed": true
+    }
+  ]
+}
