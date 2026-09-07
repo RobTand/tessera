@@ -88,6 +88,69 @@ def history_revision(previous, current):
             "scope": "observed raw history revisions; prefix admission remains strict"}
 
 
+def _verify_history_prefixes(history, checkpoints):
+    """Verify each exact recorded prefix, rewinding observed timestamp revisions.
+
+    Only ``time_us`` annotation revisions are supported. Allocation, pool,
+    stream and stack identities cannot change. Revisions never make Torch's
+    timestamps a qualified clock or price a unit's runtime.
+    """
+    if not isinstance(checkpoints, list) or not all(isinstance(row, dict) for row in checkpoints):
+        raise ValueError("invalid allocator checkpoint records")
+    if not all(isinstance(row, dict) for row in history):
+        raise ValueError("invalid allocator history records")
+    modes = {checkpoint.get("history_boundary", "included_snapshot_marker") for checkpoint in checkpoints}
+    if modes == {"included_snapshot_marker"}:
+        for checkpoint in checkpoints:
+            index = _int(checkpoint["trace_index"], "trace_index", 1)
+            if (index > len(history) or history[index - 1]["action"] != "snapshot"
+                    or checkpoint["history_prefix_sha256"] != _sha(history[:index])):
+                raise ValueError("checkpoint history prefix is missing, changed or truncated")
+        return {"snapshot_marker_placement": "included", "revised_time_fields": 0,
+                "timing_eligible": False}
+    if modes != {"before_current_snapshot_marker"}:
+        raise ValueError("unknown or mixed allocator snapshot boundary convention")
+    working = list(history)
+    revised = 0
+    for number in range(len(checkpoints) - 1, -1, -1):
+        checkpoint = checkpoints[number]
+        index = _int(checkpoint["trace_index"], "trace_index", 1)
+        if index != len(working) or checkpoint["history_prefix_sha256"] != _sha(working):
+            raise ValueError("exact checkpoint history prefix cannot be reconstructed")
+        if number == len(checkpoints) - 1:
+            if checkpoint["label"] != "capture_end" or index != len(history):
+                raise ValueError("terminal returned snapshot boundary is missing")
+        elif history[index]["action"] != "snapshot":
+            raise ValueError("returned snapshot has no following history marker")
+        if not number:
+            if "previous_history_revision" in checkpoint:
+                raise ValueError("initial checkpoint cannot revise an absent predecessor")
+            break
+        previous_index = _int(checkpoints[number - 1]["trace_index"], "previous trace_index", 1)
+        revision = checkpoint["previous_history_revision"]
+        if (not previous_index < index or _int(revision["previous_length"], "previous revision length") != previous_index
+                or _int(revision["current_length"], "current revision length") != index
+                or revision["missing_previous_rows"]):
+            raise ValueError("history revision lengths/order are incomplete")
+        seen = set()
+        for change in revision["changes"]:
+            row_index = _int(change["index"], "revision index")
+            if row_index >= previous_index or row_index in seen or set(change["fields"]) != {"time_us"}:
+                raise ValueError("duplicate, out-of-range or unsupported history field revision")
+            seen.add(row_index)
+            value = change["fields"]["time_us"]
+            before = _int(value["before"], "previous time_us")
+            after = _int(value["after"], "current time_us")
+            if (value["before_present"] is not True or value["after_present"] is not True
+                    or before == after or working[row_index].get("time_us") != after):
+                raise ValueError("history timestamp revision disagrees with observed bytes")
+            working[row_index] = {**working[row_index], "time_us": before}
+            revised += 1
+        working = working[:previous_index]
+    return {"snapshot_marker_placement": "appended_after_snapshot_return",
+            "revised_time_fields": revised, "timing_eligible": False}
+
+
 @dataclass(frozen=True)
 class TensorOwner:
     """Caller-named ownership observation, not an independently admitted claim."""
@@ -295,7 +358,12 @@ def _checkpoint_blocks(checkpoint, live, segments, device):
             block_size = _int(block["size"], "block size", 1)
             cursor += block_size
             if block["state"] in ("active_allocated", "active_awaiting_free"):
-                observed_active[block["address"]] = (block_size, block["state"])
+                requested = _int(block["requested_size"], "requested block size", 1)
+                if requested > block_size:
+                    raise ValueError("requested allocation exceeds rounded allocator block")
+                observed_active[block["address"]] = (requested, block["state"])
+                if block["address"] in live:
+                    live[block["address"]]["allocator_block_bytes_observed"].add(block_size)
             elif block["state"] != "inactive":
                 raise ValueError("unknown allocator block state")
         if cursor != address + size:
@@ -457,14 +525,13 @@ def analyze_engine_resource_ledger(raw):
             raise ValueError("Torch history is missing or may have reached its ring capacity")
         if any(trace for index, trace in enumerate(traces) if index != device):
             raise ValueError("Torch history contains another device")
+        result["history_join"] = _verify_history_prefixes(history, raw["checkpoints"])
         by_index, by_label = {}, {}
         for checkpoint in raw["checkpoints"]:
             label = _text(checkpoint["label"], "checkpoint label")
             index = _int(checkpoint["trace_index"], "trace_index", 1)
             if label in by_label or index in by_index or index > len(history):
                 raise ValueError("checkpoint label/index is duplicate or outside history")
-            if history[index - 1]["action"] != "snapshot" or checkpoint["history_prefix_sha256"] != _sha(history[:index]):
-                raise ValueError("checkpoint history prefix is missing, changed or truncated")
             by_index[index], by_label[label] = checkpoint, index
         if not by_index or max(by_index) != len(history):
             raise ValueError("final allocator checkpoint/history boundary is missing")
@@ -518,6 +585,7 @@ def analyze_engine_resource_ledger(raw):
                        "free_requested_index": None, "free_completed_index": None,
                        "unit_invocation": scopes[0][2] if scopes else None,
                        "scope_stack": [r[3] for r in scopes],
+                       "allocator_block_bytes_observed": set(),
                        "observed_owners": set(), "observed_categories": set()}
                 live[address] = row
                 rows.append(row)
@@ -556,8 +624,10 @@ def analyze_engine_resource_ledger(raw):
                 issues.append("allocation ownership category changed: " + row["allocation_id"])
             row["observed_owners"] = sorted(row["observed_owners"])
             row["observed_categories"] = sorted(row["observed_categories"])
+            row["allocator_block_bytes_observed"] = sorted(row["allocator_block_bytes_observed"])
         result["torch_allocations"] = rows
         result["torch_observed_live_peak_bytes"] = peak
+        result["torch_observed_live_peak_scope"] = "requested_allocation_bytes_excluding_allocator_rounding"
         result["unattributed_external_records"] = _cupti_coverage(raw, segment_operations, issues)
         result["status"] = "incomplete" if issues else "observed_raw_ledger"
     except (KeyError, TypeError, ValueError, IndexError) as exc:

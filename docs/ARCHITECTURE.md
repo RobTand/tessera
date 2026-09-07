@@ -776,9 +776,14 @@ whose lifetime crosses a unit boundary. Raw history/checkpoint, segment and
 CUPTI evidence must reconcile; unknown owners, external/static allocations,
 missing records and potentially truncated history stay incomplete. Capture
 failures and exact raw-file hashes remain in the receipt.
-Adjacent snapshots retain exact revisions to earlier history fields for
-diagnosis; this does not relax history-prefix reconciliation or qualify the
-Torch/CUPTI join.
+Adjacent snapshots retain exact revisions to earlier history fields. The
+parser reconstructs each original prefix byte-for-byte from recorded
+`time_us` revisions and recognizes Torch's marker appended after snapshot
+return; changes to ownership, streams, pools or stacks still refuse. It does
+not use revised timestamps for timing. Requested allocation/storage bytes
+remain distinct from rounded allocator block sizes observed at checkpoints;
+the replayed live peak is explicitly requested bytes, excluding rounding.
+This does not qualify the Torch/CUPTI ownership or timing join.
 
 `experiments/capture_full_engine_resources.py` adds an opt-in, intrusive
 source-BF16 observation pass using the stock runtime's supported `worker_cls`

@@ -39,6 +39,87 @@ def test_pointer_reuse_is_a_new_lifetime_and_escaped_output_is_preserved(capture
     assert result["fixed_resources"] is None
 
 
+def _digest(value):
+    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+@pytest.fixture
+def returned_snapshot_capture(capture):
+    """Synthetic ownership, actual stock Torch's observed snapshot convention."""
+    from experiments.full_engine_resources import history_revision
+    history = capture["torch_snapshot"]["device_traces"][0]
+    history.pop()  # A snapshot records its marker after returning its history.
+    previous = None
+    for number, checkpoint in enumerate(capture["checkpoints"], 1):
+        checkpoint["trace_index"] -= 1
+        checkpoint["history_boundary"] = "before_current_snapshot_marker"
+        version = copy.deepcopy(history[:checkpoint["trace_index"]])
+        version[0]["time_us"] = 100 * number
+        checkpoint["history_prefix_sha256"] = _digest(version)
+        if previous is not None:
+            checkpoint["previous_history_revision"] = history_revision(previous, version)
+        previous = version
+    history[0]["time_us"] = 300
+    return capture
+
+
+def test_returned_snapshot_boundaries_reconcile_exact_timestamp_revisions(returned_snapshot_capture):
+    from experiments.full_engine_resources import analyze_engine_resource_ledger
+    result = analyze_engine_resource_ledger(returned_snapshot_capture)
+    assert result["status"] == "observed_raw_ledger", result["issues"]
+    assert result["history_join"]["revised_time_fields"] == 2
+    assert result["history_join"]["timing_eligible"] is False
+    assert len(result["checkpoints"]) == 3
+    assert result["fixed_resources"] is None and result["timings"] is None
+
+
+@pytest.mark.parametrize("defect", ["missing_revision", "wrong_after", "wrong_before",
+    "duplicate_revision", "missing_marker", "ownership_field", "missing_rows", "unknown_boundary"])
+def test_revision_join_never_accepts_missing_or_ownership_changes(returned_snapshot_capture, defect):
+    from experiments.full_engine_resources import analyze_engine_resource_ledger
+    raw = returned_snapshot_capture
+    checkpoint = raw["checkpoints"][1]
+    revision = checkpoint["previous_history_revision"]
+    if defect == "missing_revision":
+        checkpoint.pop("previous_history_revision")
+    elif defect == "wrong_after":
+        revision["changes"][0]["fields"]["time_us"]["after"] += 1
+    elif defect == "wrong_before":
+        revision["changes"][0]["fields"]["time_us"]["before"] += 1
+    elif defect == "duplicate_revision":
+        revision["changes"].append(copy.deepcopy(revision["changes"][0]))
+    elif defect == "missing_marker":
+        raw["torch_snapshot"]["device_traces"][0][checkpoint["trace_index"]]["action"] = "alloc"
+    elif defect == "ownership_field":
+        revision["changes"][0]["fields"]["addr"] = {
+            "before_present": True, "before": 8192, "after_present": True, "after": 4096}
+    elif defect == "missing_rows":
+        revision["missing_previous_rows"] = [{}]
+    elif defect == "unknown_boundary":
+        checkpoint["history_boundary"] = "guessed"
+    result = analyze_engine_resource_ledger(raw)
+    assert result["status"] == "incomplete", result
+    assert result["issues"] and result["fixed_resources"] is None
+
+
+def test_requested_storage_and_rounded_allocator_block_are_distinct(capture):
+    from experiments.full_engine_resources import analyze_engine_resource_ledger
+    history = capture["torch_snapshot"]["device_traces"][0]
+    history[1]["size"] = 32
+    for checkpoint in capture["checkpoints"]:
+        checkpoint["history_prefix_sha256"] = _digest(history[:checkpoint["trace_index"]])
+        checkpoint["segments"][0]["blocks"][0]["requested_size"] = 32
+        for owner in checkpoint["owners"]:
+            if owner["address"] == 4096:
+                owner.update(bytes=32, shape=[32], view_extent_bytes=32)
+    capture["torch_snapshot"]["segments"][0]["blocks"][0]["requested_size"] = 32
+    result = analyze_engine_resource_ledger(capture)
+    assert result["status"] == "observed_raw_ledger", result["issues"]
+    assert result["checkpoints"][0]["unique_owned_storage_bytes"] == 32
+    assert result["torch_allocations"][0]["allocator_block_bytes_observed"] == [512]
+    assert result["torch_observed_live_peak_scope"] == "requested_allocation_bytes_excluding_allocator_rounding"
+
+
 @pytest.mark.parametrize("defect", ["missing_history", "history_not_early", "history_full",
                                     "missing_free_pair", "conflicting_alias", "owner_outside_allocation",
                                     "checkpoint_prefix_changed", "unmatched_free", "unknown_external",
