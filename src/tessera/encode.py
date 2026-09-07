@@ -2131,7 +2131,11 @@ def _coupled_landing(W, U, Ub, H, A, C, I, table, half, start_cost,
                 break
         kept_C, kept_I = C.clone(), I.clone()
         prev = now
-        moved = 0
+        # The move count stays on the device for the whole sweep: the sweep
+        # decides ONE host question -- did anything move -- and asking it per
+        # block drained the device ``nb`` times for an answer nothing reads
+        # until the block loop is over.
+        moved = torch.zeros((), dtype=torch.long, device=C.device)
         for b in range(nb):
             lo, hi = b * half, (b + 1) * half
             Ubb = Ub[:, b, :]
@@ -2145,13 +2149,21 @@ def _coupled_landing(W, U, Ub, H, A, C, I, table, half, start_cost,
             # above and the measured reason in ``_refit_scales_lut``) -- the
             # sweep may re-assign, never collapse.
             take = (Ab > 0) & (s > 0) & (gain > 0)
-            if bool(take.any()):
-                d = torch.where(take, new - C[:, b], torch.zeros_like(new))
-                G = G - (d.unsqueeze(1) * Ubb) @ H[lo:hi, :]
-                C[:, b] = torch.where(take, new, C[:, b])
-                I[:, b] = torch.where(take, j, I[:, b])
-                moved += int(take.sum())
+            # Unconditional and masked.  ``d`` is zero wherever ``take`` is
+            # false, so the push through H's rows subtracts an exact zero and
+            # both ``where``s return their own operands: the guard this
+            # replaces decided nothing the mask does not, and deciding it cost
+            # a device drain per block.  (A zero's SIGN can differ in ``G``
+            # where the guard skipped the subtraction; it cannot reach ``s``,
+            # because +0 and -0 sum alike and ``G`` is recomputed from ``E``
+            # at the top of every sweep.)
+            d = torch.where(take, new - C[:, b], torch.zeros_like(new))
+            G = G - (d.unsqueeze(1) * Ubb) @ H[lo:hi, :]
+            C[:, b] = torch.where(take, new, C[:, b])
+            I[:, b] = torch.where(take, j, I[:, b])
+            moved = moved + take.sum()
         sweeps += 1
+        moved = int(moved)
         moves += moved
         last_moved = moved
         if moved == 0:

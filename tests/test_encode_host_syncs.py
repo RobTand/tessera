@@ -245,3 +245,105 @@ def test_the_window_sse_is_the_reference_float(cols, chunk):
                                     chunk=chunk)
     assert torch.equal(got, ref)
     assert sse == sse_ref
+
+
+# -------------------------------------------------------- _coupled_landing
+
+def _coupled_case(device, rows=8, nb=4, half=16, seed=3):
+    g = torch.Generator().manual_seed(seed)
+    cols = nb * half
+    W = torch.randn(rows, cols, generator=g).to(device)
+    U = (torch.randn(rows, cols, generator=g) * 0.5).to(device)
+    Ub = U.reshape(rows, nb, half)
+    M = torch.randn(cols, cols, generator=g)
+    H = (M @ M.t() / cols + torch.eye(cols)).to(device)
+    A = torch.einsum("rbi,bij,rbj->rb", Ub, torch.diagonal(
+        H.reshape(nb, half, nb, half), dim1=0, dim2=2).permute(2, 0, 1), Ub)
+    table = (e4m3_positive_values(device) * (2.0 ** -6))[40:56]
+    C = table[torch.randint(0, table.numel(), (rows, nb), generator=g)].to(device)
+    I = torch.zeros(rows, nb, dtype=torch.long, device=device)
+    E = W - C.repeat_interleave(half, dim=1) * U
+    start = float(((E @ H) * E).sum())
+    return W, U, Ub, H, A, C, I, table, half, start
+
+
+@cuda
+def test_coupled_landing_host_reads_are_per_sweep():
+    """The sweep decides two host questions -- has the recomputed cost stopped
+    improving, and did anything move -- once per sweep.  Asking them per block
+    multiplies both by ``nb``."""
+    args = _coupled_case("cuda", nb=8)
+    out, syncs = sync_ops(lambda: encode._coupled_landing(*args))
+    sweeps = out[3]["sweeps"]
+    assert sweeps >= 1
+    assert len(syncs) <= 2 * sweeps + 2, (
+        f"{len(syncs)} host syncs over {sweeps} sweeps of 8 blocks: the sweep "
+        f"is still reading the device once per block")
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
+@pytest.mark.parametrize("seed", [3, 11])
+def test_coupled_landing_matches_the_branching_oracle(device, seed):
+    """The masked unconditional update returns the branch's plane exactly,
+    including the sweeps in which some block moves nothing at all."""
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("a CUDA path")
+    args = _coupled_case(device, nb=6, seed=seed)
+    C, I, cost, rec = encode._coupled_landing(*args)
+    oC, oI, ocost, orec = _coupled_landing_oracle(*args)
+    assert torch.equal(C, oC)
+    assert torch.equal(I, oI)
+    assert cost == ocost
+    assert rec == orec
+
+
+def _coupled_landing_oracle(W, U, Ub, H, A, C, I, table, half, start_cost,
+                            row_weight=None):
+    """``_coupled_landing`` as it stood: the update guarded by ``take.any()``
+    and the move count read per block."""
+    rows, nb = C.shape
+    C, I = C.clone(), I.clone()
+    eps = torch.finfo(torch.float32).eps
+    prev = start_cost
+    sweeps = moves = 0
+    rw = None if row_weight is None else row_weight.reshape(rows, 1)
+    kept_C = kept_I = None
+    last_moved = 0
+    while True:
+        E = W - C.repeat_interleave(half, dim=1) * U
+        G = E @ H
+        now = float(((G * E) if rw is None else (G * E * rw)).sum())
+        if sweeps:
+            if now >= prev:
+                C, I = kept_C, kept_I
+                moves -= last_moved
+                break
+            if prev - now <= eps * prev:
+                break
+        kept_C, kept_I = C.clone(), I.clone()
+        prev = now
+        moved = 0
+        for b in range(nb):
+            lo, hi = b * half, (b + 1) * half
+            Ubb = Ub[:, b, :]
+            Ab = A[:, b]
+            s = C[:, b] + (G[:, lo:hi] * Ubb).sum(dim=1) / Ab.clamp_min(1e-30)
+            j = (s[:, None] - table[None, :]).abs().argmin(dim=1)
+            new = table[j]
+            gain = Ab * ((C[:, b] - s) ** 2 - (new - s) ** 2)
+            take = (Ab > 0) & (s > 0) & (gain > 0)
+            if bool(take.any()):
+                d = torch.where(take, new - C[:, b], torch.zeros_like(new))
+                G = G - (d.unsqueeze(1) * Ubb) @ H[lo:hi, :]
+                C[:, b] = torch.where(take, new, C[:, b])
+                I[:, b] = torch.where(take, j, I[:, b])
+                moved += int(take.sum())
+        sweeps += 1
+        moves += moved
+        last_moved = moved
+        if moved == 0:
+            break
+    E = W - C.repeat_interleave(half, dim=1) * U
+    q = (E @ H) * E
+    final = float(q.sum() if rw is None else (q * rw).sum())
+    return C, I, final, {"cost": final, "sweeps": sweeps, "moves": moves}
