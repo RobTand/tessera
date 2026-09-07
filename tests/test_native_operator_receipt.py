@@ -41,7 +41,8 @@ def _panel_fixture():
     execution = {"owner_kind": "single_dense", "mode": "resident",
                  "execution_mode": "eager", "tensor_parallel": 1, "bias": False}
     runtime = {"schema": "tessera.native_dense_runtime.v1", "fixture": "CPU mocks; not GPU evidence",
-               "execution": execution, "source_sha256": _sha("fake runtime source")}
+               "execution": execution, "source_sha256": _sha("fake runtime source"),
+               "arithmetic": _module().observe_arithmetic()}
     weight = torch.arange(128 * 256, dtype=torch.float32).reshape(128, 256).remainder(7).to(torch.bfloat16)
     activation = {"schema": "prismaquant.joint_aura.activation.v1", "quantizes_input": False,
                   "act_bits": 16, "act_dtype_name": None, "act_group_size": None,
@@ -267,6 +268,7 @@ def _fake_lifecycle(monkeypatch, *, bad_output=False, bad_route=False):
     layer = torch.nn.Module()
     layer.register_buffer("weight", weight)
     layer.tessera_family = "TESSERA_BF16"
+    layer.tp_size, layer.tp_rank = 1, 0
     layer.tessera_mode = "resident"
     layer.tessera_scheme = copy.deepcopy(observed["scheme"])
     trace = []
@@ -294,6 +296,7 @@ def _fake_lifecycle(monkeypatch, *, bad_output=False, bad_route=False):
                 "warmup_iterations": warmup_iterations, "samples_ms": [0.3, 0.1, 0.2]}
 
     monkeypatch.setattr(module, "_require_cuda_tensor", lambda *args, **kwargs: None)
+    monkeypatch.setattr(module, "_require_eager_context", lambda: None)
     # Real storage admission rejects CPU. This explicit fake observes unique
     # CPU backing bytes solely to exercise the incomplete-resource schema.
     monkeypatch.setattr(module, "_resident_bytes", lambda layer: sum({
@@ -523,3 +526,64 @@ def test_preparation_refuses_format_recipe_disagreement_before_owner_build(monke
     with pytest.raises(ValueError, match="format differs"):
         module.prepare_native_operator(blob, record, source, rendered, **kwargs)
     assert "build owner" not in trace
+
+
+@pytest.mark.parametrize("phase", ["prefill", "decode"])
+@pytest.mark.parametrize("name", ["input", "reference_qdq", "reference_output"])
+def test_phase_tensor_mutation_during_timing_refuses_receipt(monkeypatch, phase, name):
+    fixture = _fake_lifecycle(monkeypatch)
+    module, _, _, tensors, _ = fixture
+    original_time = module.time_apply
+
+    def mutating_time(*args, **kwargs):
+        result = original_time(*args, **kwargs)
+        # Outputs are >256 in BF16, where adding one can round away.
+        tensors[phase][name].mul_(2)
+        return result
+
+    monkeypatch.setattr(module, "time_apply", mutating_time)
+    with pytest.raises(ValueError, match="independent panel"):
+        _measure(fixture)
+
+
+@pytest.mark.parametrize("attribute,value", [("tp_size", 2), ("tp_rank", 1),
+    ("tessera_mode", "streamed"), ("tessera_family", "TESSERA_FP8")])
+def test_actual_execution_drift_refuses_before_timing(monkeypatch, attribute, value):
+    fixture = _fake_lifecycle(monkeypatch)
+    _, _, prepared, _, trace = fixture
+    setattr(prepared["layer"], attribute, value)
+    with pytest.raises(ValueError, match="execution"):
+        _measure(fixture)
+    assert not any(kind == "time" for kind, _ in trace)
+
+
+def test_wrong_cuda_device_refuses_before_events(monkeypatch):
+    monkeypatch.setattr(torch.cuda, "current_device", lambda: 0)
+    value = SimpleNamespace(device=torch.device("cuda:1"), dtype=torch.bfloat16, ndim=2)
+    with pytest.raises(ValueError, match="current CUDA device"):
+        _module()._require_cuda_tensor(value)
+
+
+def test_arithmetic_drift_during_timing_refuses_receipt(monkeypatch):
+    fixture = _fake_lifecycle(monkeypatch)
+    module, _, _, _, _ = fixture
+    original_time = module.time_apply
+    original_precision = torch.get_float32_matmul_precision()
+
+    def mutating_time(*args, **kwargs):
+        result = original_time(*args, **kwargs)
+        monkeypatch.setattr(torch, 'get_float32_matmul_precision',
+                            lambda: 'high' if original_precision != 'high' else 'highest')
+        return result
+
+    monkeypatch.setattr(module, 'time_apply', mutating_time)
+    with pytest.raises(ValueError, match='arithmetic'):
+        _measure(fixture)
+
+
+@pytest.mark.parametrize('compiling,capturing', [(True, False), (False, True)])
+def test_eager_context_refuses_compilation_and_capture(monkeypatch, compiling, capturing):
+    monkeypatch.setattr(torch.compiler, 'is_compiling', lambda: compiling)
+    monkeypatch.setattr(torch.cuda, 'is_current_stream_capturing', lambda: capturing)
+    with pytest.raises(ValueError, match='eager'):
+        _module()._require_eager_context()

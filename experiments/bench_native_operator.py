@@ -181,6 +181,24 @@ def _require_cuda_tensor(tensor):
     import torch
     if tensor.device.type != "cuda" or tensor.dtype != torch.bfloat16 or tensor.ndim != 2:
         raise ValueError("native receipt requires actual 2-D CUDA BF16 tensors")
+    if tensor.device.index != torch.cuda.current_device():
+        raise ValueError("native receipt tensor must use the current CUDA device")
+
+
+def _require_eager_context():
+    import torch
+    if torch.compiler.is_compiling() or torch.cuda.is_current_stream_capturing():
+        raise ValueError("execution requires eager calls outside compilation/CUDA graph capture")
+
+
+def observe_arithmetic():
+    import torch
+    return {"float32_matmul_precision": torch.get_float32_matmul_precision(),
+            "allow_tf32": torch.backends.cuda.matmul.allow_tf32,
+            "allow_fp16_reduced_precision_reduction": torch.backends.cuda.matmul.allow_fp16_reduced_precision_reduction,
+            "allow_bf16_reduced_precision_reduction": torch.backends.cuda.matmul.allow_bf16_reduced_precision_reduction,
+            "deterministic_algorithms": torch.are_deterministic_algorithms_enabled(),
+            "deterministic_warn_only": torch.is_deterministic_algorithms_warn_only_enabled()}
 
 
 def _native_tensors(layer):
@@ -277,7 +295,7 @@ def observe_runtime(runtime_image):
     package = Path(tessera.__file__).parent
     encoder_source_sha256.cache_clear()
     return {"schema": RUNTIME_SCHEMA, "image": runtime_image, "image_declaration": declaration,
-            "execution": dict(EXECUTION),
+            "execution": dict(EXECUTION), "arithmetic": observe_arithmetic(),
             "versions": {"torch": torch.__version__, "vllm": importlib.metadata.version("vllm"),
                          "cuda": torch.version.cuda},
             "gpu": {"name": props.name, "uuid": uuid, "capability": [props.major, props.minor],
@@ -361,6 +379,14 @@ def prepare_native_operator(blob, record, source_weight, rendered_weight, *, uni
 
 def _check_prepared(prepared, panel):
     operator, layer = prepared["operator"], prepared["layer"]
+    _require_eager_context()
+    if (type(getattr(layer, "tp_size", None)) is not int or layer.tp_size != 1
+            or type(getattr(layer, "tp_rank", None)) is not int or layer.tp_rank != 0
+            or layer.tessera_mode != "resident"
+            or layer.tessera_family != operator["scheme"]["family"]):
+        raise ValueError("actual native execution differs from single dense resident TP1 panel")
+    if observe_arithmetic() != panel["runtime"].get("arithmetic"):
+        raise ValueError("actual arithmetic settings differ from independent panel")
     if prepared["runtime"] != panel["runtime"]:
         raise ValueError("observed runtime differs from independent panel")
     if identity_sha256(operator["native_tensors"]) != panel["native_tensors_sha256"]:
@@ -385,6 +411,16 @@ def _check_prepared(prepared, panel):
         raise ValueError("native activation contract differs from panel")
 
 
+def _check_phase_tensors(panel, phase_tensors):
+    for phase in PHASES:
+        tensors, expected = phase_tensors[phase], panel["phases"][phase]
+        _fields(tensors, ("input", "reference_qdq", "reference_output"), phase + " tensors")
+        for name, tensor in tensors.items():
+            _require_cuda_tensor(tensor)
+            if tensor_identity(tensor) != expected[name]:
+                raise ValueError(f"{phase}: actual {name} differs from independent panel")
+
+
 def measure_prepared_operator(prepared, panel, phase_tensors, *, warmup_iterations, iterations):
     """Gate BOTH phases/QDQ before any timings; retain explicit resource gaps."""
     import torch
@@ -393,17 +429,14 @@ def measure_prepared_operator(prepared, panel, phase_tensors, *, warmup_iteratio
     _integer(warmup_iterations, "warmup_iterations")
     _integer(iterations, "iterations", 3)
     _fields(phase_tensors, PHASES, "phase tensors")
+    _check_phase_tensors(panel, phase_tensors)
     _check_prepared(prepared, panel)
     layer, method = prepared["layer"], prepared["method"]
     observations, resource_phases = {}, {}
     with torch.inference_mode():
         for phase in PHASES:
             tensors, expected = phase_tensors[phase], panel["phases"][phase]
-            _fields(tensors, ("input", "reference_qdq", "reference_output"), phase + " tensors")
-            for name, tensor in tensors.items():
-                _require_cuda_tensor(tensor)
-                if tensor_identity(tensor) != expected[name]:
-                    raise ValueError(f"{phase}: actual {name} differs from independent panel")
+            _check_phase_tensors(panel, phase_tensors)
             x = tensors["input"]
             qdq = represented_native_input(layer, x)
             torch.cuda.synchronize()
@@ -430,15 +463,18 @@ def measure_prepared_operator(prepared, panel, phase_tensors, *, warmup_iteratio
             resource_phases[phase] = {"input_bytes": x.untyped_storage().nbytes(),
                 "output_bytes": output.untyped_storage().nbytes(), "torch_peak_increment_bytes": peak}
             del output, qdq
+            _check_phase_tensors(panel, phase_tensors)
         passed = all(observations[p][key]["status"] == "passed" for p in PHASES for key in ("numerics", "qdq_numerics"))
         if passed:
             _check_prepared(prepared, panel)
             for phase in PHASES:
                 _check_prepared(prepared, panel)
+                _check_phase_tensors(panel, phase_tensors)
                 observations[phase]["measurement"] = time_apply(
                     lambda phase=phase: method.apply(layer, phase_tensors[phase]["input"]),
                     warmup_iterations=warmup_iterations, iterations=iterations)
                 _check_prepared(prepared, panel)
+                _check_phase_tensors(panel, phase_tensors)
                 observed = read_route(layer)
                 if observed != observations[phase]["route"]:
                     raise ValueError(f"{phase}: native route changed during timing")
