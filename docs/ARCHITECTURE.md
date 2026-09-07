@@ -41,6 +41,11 @@ encoder's batch axis, shared-setting presence checks and the window plan rule
 recipes, `encoder_fixture_id` and runtime contract remain at the versions
 above.
 
+Re-stamped 2026-09-07 on `main-campaign/tessera385-host-syncs` for ordered
+device-side cost accumulation and grouped encoder comparison readbacks
+(#385; §3.1b). The encoder's acceptance rules and fixture identity are
+unchanged.
+
 ## 1. Scope
 
 This doc covers the path from a PrismaQuant rung assignment to a served
@@ -901,6 +906,19 @@ old six-batch rule every batched LDLQ block would have captured a fresh graph
 has two rules now: eager under `TESSERA_WINDOW_GRAPH=0`, otherwise a
 persistent plan on the second call of a shape (`_WINDOW_GRAPH_MIN_CALLS`),
 bounded at `_WINDOW_PLAN_CACHE` plans per thread.
+
+The encoder groups host cost readbacks without changing their comparison
+order. Window chunk sums are added sequentially in device float64 and read
+once at return, preserving the former Python-float accumulation. LUT refits
+read incumbent and candidate costs together; the swap search scores trials
+ahead but keeps the ordered greedy acceptance walk, recomputing later-index
+trials after an acceptance changes the table. The coupled landing sweep
+applies masked updates and reads its move count once per sweep. These changes
+reduce synchronization opportunities, while speculative trial scoring and
+masked updates can add device work; throughput and work per joule require
+measurement on the actual workload. `tests/test_encode_host_syncs.py` checks
+ordered-cost and byte oracles alongside bounded synchronization-warning
+regressions; those warning counts are not a complete CUDA event census.
 
 ### 3.2 Exact campaign unit intake (explicit, not a serving qualification)
 
