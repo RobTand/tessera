@@ -168,3 +168,23 @@ Spark capacity plan must also include the source's immutable weights, packed
 body bytes, scales/tables, KV and transient tiles; the q768 functional pass
 does not establish that the complete model fits. TP2 and EP remain separate
 gates. The larger single/dual-Spark GLM goal remains open.
+
+## Validation addendum — 2026-09-07
+
+The final selector at `ecd8d960387d36e9448fbec199106b96b9ef778c` narrowed
+to 50 test files. PB's supported fanout ran them in 20 actions on x86
+`dl380g10`, two xdist workers per action, worksteal, native threads one,
+4 GiB per action: **1,261 passed, 71 skipped, zero modules uncollected**.
+This was CPU-only on torch `2.11.0+cpu`; it does not cover CUDA-gated tests.
+The skips include CUDA-only tests and missing model/PrismaQuant/served-log/KL
+artifacts. Every exact reason, terminal record, CAS payload hash and cleanup
+check is in [the selected-test audit](glm_native_20260907/impacted-tests-audit.json),
+SHA256 `390b4b19c97daf9360b28029848e0f357a1c6fd9f922e15d4b42632013c7bc9f`.
+
+The first fanout request was refused before execution because its interpreter
+adapter lived outside the snapshot. `experiments/glm_control_pytest_python.py`
+now binds that small adapter into the repository: PB still owns the test
+partition, while the adapter supplies the required xdist options. The initial
+refusal is retained and contributes no passing tests. All 20 actual actions
+ended successfully and their scopes were cleaned. The native control scripts
+were also compiled by their successful actual vLLM executions.
