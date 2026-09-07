@@ -149,7 +149,7 @@ def test_gauss_seidel_reads_coupling_from_either_schedule_leg():
                       refit_gauss_seidel=True)
 
 
-def test_the_diagnostic_records_the_optimiser_that_ran():
+def test_the_diagnostic_records_the_optimiser_that_ran(monkeypatch):
     """``refit_gauss_seidel`` rides the whole schedule, and on the inner passes
     the metric is 1-D, where the sweep is provably the parallel step -- the
     encoder reads the flag only on the coupled branch.  The record must say
@@ -160,6 +160,10 @@ def test_the_diagnostic_records_the_optimiser_that_ran():
     """
     from tessera.compensate import block_ldl, regularize_hessian
     from tessera.encode import refit_diagnostics
+    from tessera import encoder_identity
+
+    # First-call identity fixtures must not enter this unit's measurement.
+    monkeypatch.setattr(encoder_identity, "_MEMO", [])
 
     g = torch.Generator(device="cpu").manual_seed(21)
     w = (torch.randn(64, 256, generator=g) * 0.02).to(dtype=torch.float32)
@@ -180,6 +184,7 @@ def test_the_diagnostic_records_the_optimiser_that_ran():
     swept = records(refit_metric=h, refit_metric_trailing=H,
                     refit_gauss_seidel=True)
     assert len(control) == len(swept) == 4
+    assert all(record["rows"] == 64 for record in control + swept)
     # What ran: three separable steps, then one sweep.
     assert [d["gauss_seidel"] for d in swept] == [False, False, False, True]
     # What was asked for, kept so the arm is still identifiable.

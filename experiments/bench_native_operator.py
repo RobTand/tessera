@@ -24,7 +24,7 @@ ROUTE_KEYS = {"kind", "policy", "symbol", "decoder", "contract"}
 
 
 @contextmanager
-def native_runtime_context():
+def native_runtime_context(vllm_config=None):
     """Fresh-process vLLM TP1 context required by real BasevLLMParameter."""
     import tempfile
     import torch
@@ -35,7 +35,7 @@ def native_runtime_context():
         raise ValueError("standalone native receipt requires a fresh distributed context")
     with tempfile.TemporaryDirectory(prefix="tessera-native-tp1-") as temporary:
         rendezvous = Path(temporary) / "rendezvous"
-        with set_current_vllm_config(VllmConfig()):
+        with set_current_vllm_config(VllmConfig() if vllm_config is None else vllm_config):
             try:
                 init_distributed_environment(world_size=1, rank=0,
                     distributed_init_method=rendezvous.as_uri(),

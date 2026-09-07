@@ -1,0 +1,50 @@
+{
+  "engine_args": {
+    "data_parallel_size": 1,
+    "dtype": "bfloat16",
+    "enable_chunked_prefill": true,
+    "enable_expert_parallel": false,
+    "enable_prefix_caching": true,
+    "enforce_eager": true,
+    "gpu_memory_utilization": 0.35,
+    "kernel_config": {
+      "moe_backend": "auto"
+    },
+    "max_model_len": 4096,
+    "max_num_batched_tokens": 2048,
+    "max_num_seqs": 8,
+    "pipeline_parallel_size": 1,
+    "tensor_parallel_size": 1
+  },
+  "environment": {
+    "TESSERA_SERVE_MODE": "resident"
+  },
+  "model_family": "LFM2.5-8B-A1B",
+  "qualification": {
+    "blocking_issue": "https://github.com/RobTand/tessera/issues/397",
+    "cell_promotion": false,
+    "model_served": false,
+    "release_qualified": false,
+    "runtime_status": "upstream_source_verified_native_rmsnorm_and_entrypoint_smoke_only",
+    "scope": "Clean upstream source and native smoke evidence do not qualify a model or change a serving gate."
+  },
+  "runtime_identity": {
+    "actual_container_image_id": "record_separately_in_each_execution_receipt",
+    "plugin_install": "separate_pinned_source_install_into_official_base",
+    "plugin_source_commit": "382a1a97dc89618173a2c0799ac569d473b9dc2a",
+    "runtime_image_semantics": "immutable_official_stock_base_container_reference",
+    "upstream_vllm_commit": "1970f3ed4be7fa8620e4ddc4a12c36a8384cfc27"
+  },
+  "runtime_image": "vllm/vllm-openai@sha256:4e31c581716a5cb9ef31eddb0a425842b75cab07d5cd63fb9572e69ae8794c33",
+  "schema": "tessera.first_model_serving_config.v1",
+  "selection": {
+    "authority": "explicit first-model integration configuration selected by the coordinator",
+    "date": "2026-09-07",
+    "new_explicit_choice": {
+      "max_num_batched_tokens": 2048
+    },
+    "prior_served_log": "/mnt/shared/tessera-runs/ts5/lfm25/astra-campaign-r2/student-bound-r1/serve_student.log",
+    "prior_served_log_sha256": "caac53bdc28a5ea3e39483b6cb208e32c899fbfd5279a415900a77bf8f2acd5c",
+    "scope": "The 2048-token scheduler limit is selected now; it is not a retroactive measurement claim."
+  }
+}
