@@ -285,3 +285,74 @@ def test_the_twin_refuses_a_row_sliced_module(tmp_path, monkeypatch):
     entry = construction_entry_from_receipt(_lfm_receipt_with_output_sizes((32, 32, 32), (32,)))
     with pytest.raises(SystemExit, match="--stock-twin was given"):
         _export(tmp_path, monkeypatch, entry, "--stock-twin", str(tmp_path / "twin"))
+
+
+def test_the_geometry_gate_emptying_the_plan_is_refused_before_publication(
+        tmp_path, monkeypatch):
+    """tessera#387: the third way ``plan`` empties had no guard.
+
+    Two guards already refuse an export that would publish an empty
+    ``config_groups`` -- one after the per-tensor plan, one after
+    ``--passthrough-unrouted``.  The geometry gate is a third way to empty
+    ``plan``, it runs after both, and it demoted the last module without
+    re-asking.  ``main`` then returned normally and wrote a checkpoint whose
+    ``config_groups`` is ``{}``; ``TesseraConfig.from_config`` refuses that at
+    load, hours later and on someone else's machine.
+
+    The fixture is not uniformly 16: ``(16, 16, 64)`` and ``(16, 16)``.  What
+    makes it empty the plan is that a module is demoted when *any* of its
+    output partitions is not a whole number of tuples, and every module here
+    has at least one 16-row partition, which a BF16 tuple of 32 rows does not
+    divide.  The 64-row partition would have been fine on its own.  So no
+    module survives, and before the fix this call did not raise at all.
+
+    The guard is conditioned on ``args.layers is None``, exactly as its two
+    siblings are, so an explicit ``--layers 0`` remains exempt and still
+    writes a passthrough copy -- see
+    ``test_layers_zero_still_writes_a_passthrough_copy_when_geometry_demotes_everything``.
+    """
+    entry = construction_entry_from_receipt(
+        _lfm_receipt_with_output_sizes((16, 16, 64), (16, 16)))
+    with pytest.raises(SystemExit) as excinfo:
+        _export(tmp_path, monkeypatch, entry)
+    message = str(excinfo.value)
+    assert "nothing is left to encode" in message, message
+    assert "config_groups" in message and "--layers 0" in message, message
+    out = tmp_path / "out"
+    assert not out.exists() or not list(out.glob("*.safetensors")), (
+        "the refusal fired only after writing the checkpoint")
+
+
+def test_one_module_surviving_the_geometry_gate_is_still_exported(tmp_path, monkeypatch):
+    """The guard must fire on an EMPTY plan, not on a demotion.
+
+    ``in_proj``'s partitions are not whole tuples and it is passed through;
+    ``out_proj``'s single 32-row partition is one BF16 tuple and it is not.
+    A guard that refused here would turn a routine partial passthrough into a
+    failed export.
+    """
+    entry = construction_entry_from_receipt(
+        _lfm_receipt_with_output_sizes((16, 16, 64), (32,)))
+    out = _export(tmp_path, monkeypatch, entry)
+    config = json.loads((out / "config.json").read_text())["quantization_config"]
+    declared = {t for g in config["config_groups"].values() for t in g["targets"]}
+    assert declared == {LAYER + "conv.out_proj"}, declared
+    assert LAYER + "conv.in_proj" in json.loads(
+        (out / "config.json").read_text())["quantization_config"]["ignore"]
+
+
+def test_layers_zero_still_writes_a_passthrough_copy_when_geometry_demotes_everything(
+        tmp_path, monkeypatch):
+    """``--layers 0`` is how a passthrough copy is asked for on purpose.
+
+    Both sibling guards exempt it and this one must too, or the deliberate
+    request becomes unreachable on exactly the models that need it.
+    """
+    entry = construction_entry_from_receipt(
+        _lfm_receipt_with_output_sizes((16, 16, 64), (16, 16)))
+    out = _export(tmp_path, monkeypatch, entry, "--layers", "0")
+    config = json.loads((out / "config.json").read_text())["quantization_config"]
+    assert config["config_groups"] == {}
+    with safe_open(str(out / "model.safetensors"), framework="pt") as handle:
+        keys = set(handle.keys())
+    assert IN_PROJ_TENSOR in keys and OUT_PROJ_TENSOR in keys
