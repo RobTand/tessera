@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-07T15:21:44Z",
+ "generated": "2026-09-07T16:52:51Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -1020,11 +1020,11 @@
     "title": "Bind original runtime observations through explicit provenance"
    },
    "328": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Native MoE receipt reader expects workspace fields absent from producer schema"
    },
    "329": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Read native MoE workspace from the published receipt panel"
    },
    "33": {
@@ -1032,8 +1032,20 @@
     "title": "gridbook: sync MoE prefill overhead cleanup"
    },
    "330": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Reuse bound anchor identities and sample joint preparation"
+   },
+   "331": {
+    "state": "CLOSED",
+    "title": "Verify anchor render bytes during PWC preparation loads"
+   },
+   "332": {
+    "state": "CLOSED",
+    "title": "Reuse resident NVFP4 codepoints in joint projection QDQ"
+   },
+   "333": {
+    "state": "CLOSED",
+    "title": "Reuse the invariant device codepoint table in served NVFP4 QDQ"
    },
    "34": {
     "state": "CLOSED",
@@ -2650,7 +2662,7 @@
     "title": "Pinned EUGR runtime carries a core KV-sizing patch; unmodified-runtime gate remains unresolved"
    },
    "398": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Add original-wire whole routed-MoE measurement receipts"
    },
    "399": {
@@ -2682,7 +2694,7 @@
     "title": "Reuse exact dense campaign originals through closed cache export"
    },
    "404": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Reuse already-bound immutable grid digests in reader profile validation"
    },
    "405": {
@@ -2690,20 +2702,32 @@
     "title": "Refuse a smoke bound that empties the plan, like the default does"
    },
    "406": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Reuse immutable registered grid digests in reader validation"
    },
    "407": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Qualify original-wire checkpoints through complete stock-vLLM generation"
    },
    "408": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Avoid int64 bit matrices when decoding narrow wire fields"
+   },
+   "409": {
+    "state": "CLOSED",
+    "title": "Decode narrow wire fields without int64 bit matrices"
    },
    "41": {
     "state": "CLOSED",
     "title": "The encoder can write two wires the serving plugin publishes no decodable range for"
+   },
+   "410": {
+    "state": "CLOSED",
+    "title": "docs: clarify current PB deadlines and configured retries"
+   },
+   "411": {
+    "state": "OPEN",
+    "title": "Record merged CPU and strict CUDA suite evidence"
    },
    "42": {
     "state": "CLOSED",
