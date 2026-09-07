@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
-from collections import Counter
+from collections import Counter, namedtuple
 from fractions import Fraction
 from pathlib import Path
 
@@ -37,7 +37,13 @@ from tessera.control import (
     units_from_plan,
 )
 from tessera.errors import ControlNotByteMatchedError, GrammarError, TesseraError
-from tessera.export import rung_ceiling
+from tessera.export import rung_ceiling, wire_recipe
+from tessera.grammar import (
+    bresenham_rate_schedule,
+    forest_plane_bytes,
+    root_from_q256,
+)
+from tessera.manifest import BodyKind
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -472,8 +478,72 @@ PQ_TREES = tuple(
     if tree is not None
 )
 
+#: The shapes the two accountants are pinned on: a dense Linear, a packed
+#: expert, and the receipt's own ``down_proj``.
+PQ_SHAPES = [(2048, 4096), (96, 768), (1024, 3072)]
 
-@pytest.mark.parametrize("shape", [(2048, 4096), (96, 768), (1024, 3072)])
+#: One unit, priced twice.  ``mine`` is this module's layout walk, ``theirs``
+#: PrismaQuant's closed form, and ``forest`` the TCQ ALPHABET+DESCENDANT term
+#: that used to be the difference between them -- carried alongside rather
+#: than folded in, because a gate that cannot name the term it is holding
+#: cannot tell "equal" from "equal because the term is zero here".
+_Priced = namedtuple("_Priced", "grid q body mine theirs forest")
+
+
+def _prismaquant_tessera_formats():
+    """The PrismaQuant pricing module this suite is pinned against.
+
+    ``PQ_TREES`` is a preference order, not a compatibility ladder: every tree
+    in it is expected to be a *current* PrismaQuant that charges the forest.
+    An older one does not get a looser assertion, it gets a failure naming the
+    tree -- see the accounting test.
+    """
+    import sys
+    tree = next((p for p in PQ_TREES if (p / "prismaquant" / "tessera_formats.py").exists()), None)
+    if tree is None:
+        box_artifacts.skip_now("prismaquant", "prismaquant", "tessera_formats.py")
+    if str(tree) not in sys.path:
+        sys.path.insert(0, str(tree))
+    try:
+        import prismaquant.tessera_formats as tessera_formats
+    except Exception as exc:                                    # pragma: no cover - env
+        pytest.skip(f"PrismaQuant not importable: {exc}")
+    return tessera_formats
+
+
+def _price_both_ways(tessera_formats, shape):
+    """The nine rungs of the accounting gate, each priced by both accountants.
+
+    Written once and called by both tests below, so the regression exercises
+    the *same* pricing path the gate does.  A regression test that restated
+    the arithmetic would only pin the restatement.
+    """
+    rows, columns = shape
+    priced = []
+    for grid_name, family, ceiling in (
+        ("E2M1", "TESSERA_E2M1_K1", 768),
+        ("E2M1x2", "TESSERA_E2M1_K2", 896),
+        ("E4M3", "TESSERA_E4M3_K1", 2048),
+    ):
+        for q in (256, ceiling // 2, ceiling):
+            mine = unit_wire_bits(grid_name, q, rows, columns)
+            theirs = Fraction(
+                tessera_formats.artifact_bpp(family, q, shape=shape)
+            ) * rows * columns
+            grid = grid_for_name(grid_name)
+            body = BodyKind(wire_recipe(grid, q).body)
+            if body is BodyKind.TCQ:
+                rates = bresenham_rate_schedule(
+                    root_from_q256(q * grid.arity), columns, grid.rate_cap
+                )
+                forest = 8 * sum(forest_plane_bytes(rates, grid.rate_cap))
+            else:
+                forest = 0
+            priced.append(_Priced(grid_name, q, body, mine, theirs, forest))
+    return priced
+
+
+@pytest.mark.parametrize("shape", PQ_SHAPES)
 def test_the_control_prices_a_unit_exactly_as_prismaquant_charges_for_it(shape):
     """The allocator's byte budget and this control must be one currency.
 
@@ -483,48 +553,115 @@ def test_the_control_prices_a_unit_exactly_as_prismaquant_charges_for_it(shape):
     accountants for one wire is the bug that overcharged Tessera 6.25% on the
     DP and the byte gate, so they are pinned together rather than trusted.
 
-    One term is allowed to differ, and only one: a **TCQ** body's ALPHABET and
-    DESCENDANT planes. This side started charging them on 2026-09-02 (issue
-    #43) because ``encode_linear`` writes them; PrismaQuant added the same
-    charge in RobTand/prismaquant#126. The historical assertion still permits
-    "equal, or light by exactly the forest", so it accepts both versions and
-    cannot detect a regression that drops that charge. A window body has no
-    forest and must agree exactly.
+    **Exactly equal, with no term excused.**  Until 2026-09-06 one term was:
+    a TCQ body's ALPHABET and DESCENDANT planes, which this side started
+    charging on 2026-09-02 (issue #43) and PrismaQuant did not yet
+    (RobTand/prismaquant#126).  The allowance was written as ``theirs in
+    (mine, mine - forest)`` so it would pass on both sides of that fix.  It
+    outlived it: PrismaQuant#126 landed, ``tessera_formats`` now charges the
+    forest through *this repository's own* ``forest_plane_bytes``
+    (``prismaquant/tessera_formats.py`` ``_forest_bytes``), and the
+    disjunction went on certifying a wire it no longer described -- a
+    PrismaQuant that stopped charging the forest again would have passed this
+    gate unchanged.  It is not vacuous cover either: of the 27 rows this test
+    prices, 12 carry a TCQ body and every one of them has a forest of 160 to
+    4096 bits, so the excused branch was reachable on every shape.  Issue #388.
+
+    ``55f7f87e`` wrote that hole down in this docstring -- "cannot detect a
+    regression that drops that charge" -- and left the disjunction standing.
+    A test that documents what it fails to catch still fails to catch it, so
+    the prose is replaced here by the assertion it was describing.
+
+    There is no versioned compatibility branch, because no supported source
+    needs one: an older PrismaQuant is a failure naming the tree, not a
+    quieter assertion.  The proof that this assertion bites is the next test,
+    ``test_a_prismaquant_that_stopped_charging_the_forest_is_refused``.
     """
-    from tessera.grammar import bresenham_rate_schedule, forest_plane_bytes, root_from_q256
-    from tessera.manifest import BodyKind
-    from tessera.export import wire_recipe
-    import sys
-    tree = next((p for p in PQ_TREES if (p / "prismaquant" / "tessera_formats.py").exists()), None)
-    if tree is None:
-        box_artifacts.skip_now("prismaquant", "prismaquant", "tessera_formats.py")
-    if str(tree) not in sys.path:
-        sys.path.insert(0, str(tree))
+    tessera_formats = _prismaquant_tessera_formats()
+    priced = _price_both_ways(tessera_formats, shape)
+    assert len(priced) == 9
+    for row in priced:
+        assert row.theirs == row.mine, (
+            f"{row.grid} q={row.q} at {shape}: PrismaQuant charges {row.theirs} "
+            f"bits, this control {row.mine} -- a gap of {row.mine - row.theirs}, "
+            f"against a forest term of {row.forest}. If this is an older "
+            f"PrismaQuant, it is not the source this gate certifies; point "
+            f"TESSERA_PRISMAQUANT_DIR at a tree that charges the forest "
+            f"(RobTand/prismaquant#126)."
+        )
+    tcq = [row for row in priced if row.body is BodyKind.TCQ]
+    assert tcq, (
+        f"no TCQ body at {shape}: the forest term is the whole subject of "
+        f"issue #388 and this shape does not exercise it"
+    )
+    for row in tcq:
+        assert row.forest > 0, (
+            f"{row.grid} q={row.q} at {shape} has a TCQ body and a zero "
+            f"forest, so equality here says nothing about the forest"
+        )
+
+
+@pytest.mark.parametrize("shape", PQ_SHAPES)
+def test_a_prismaquant_that_stopped_charging_the_forest_is_refused(shape, monkeypatch):
+    """Drop the forest charge on the PrismaQuant side; the gate above must bite.
+
+    The mutation is the defect, not a hand-built number: ``tessera_formats``
+    does ``from tessera.grammar import forest_plane_bytes`` and calls it from
+    ``_forest_bytes``, so rebinding that one name *in PrismaQuant's module*
+    is precisely "PrismaQuant stops charging the ALPHABET and DESCENDANT
+    planes", and it leaves this repository's own ruler (``unit_wire_bits``)
+    untouched.  Patching ``tessera.grammar`` instead would move both sides at
+    once and measure nothing.
+
+    What a pass here proves: the accounting gate refuses a PrismaQuant that
+    stops consuming ``forest_plane_bytes``, and the assertion it replaced --
+    ``theirs in (mine, mine - forest)``, re-evaluated below on the same
+    mutated numbers -- does not.  What it does not prove: that the wire
+    really carries those planes -- ``tests/test_rate_menu.py`` holds that,
+    pinning ``encode_linear(...).exact_bytes * 8`` against ``unit_wire_bits``
+    and the forest delta against ``forest_plane_bytes`` -- nor anything about
+    a served artifact.  This is a gate-integrity test.
+
+    ``_forest_bytes`` is ``lru_cache``d, so the cache is cleared on the way in
+    *and* on the way out: ``monkeypatch.undo`` restores the function but not
+    the answers it already memoised, and a zeroed entry surviving this test
+    would make the real gate read green for the rest of the session.  The
+    final re-pricing is the receipt that it did not.
+    """
+    tessera_formats = _prismaquant_tessera_formats()
+    baseline = _price_both_ways(tessera_formats, shape)
+    tcq = [row for row in baseline if row.body is BodyKind.TCQ]
+    assert tcq, shape
+
     try:
-        from prismaquant.tessera_formats import artifact_bpp
-    except Exception as exc:                                    # pragma: no cover - env
-        pytest.skip(f"PrismaQuant not importable: {exc}")
-    rows, columns = shape
-    checked = 0
-    for grid_name, family, ceiling in (
-        ("E2M1", "TESSERA_E2M1_K1", 768),
-        ("E2M1x2", "TESSERA_E2M1_K2", 896),
-        ("E4M3", "TESSERA_E4M3_K1", 2048),
-    ):
-        for q in (256, ceiling // 2, ceiling):
-            mine = unit_wire_bits(grid_name, q, rows, columns)
-            theirs = Fraction(artifact_bpp(family, q, shape=shape)) * rows * columns
-            grid = grid_for_name(grid_name)
-            if BodyKind(wire_recipe(grid, q).body) is BodyKind.TCQ:
-                rates = bresenham_rate_schedule(
-                    root_from_q256(q * grid.arity), columns, grid.rate_cap
-                )
-                forest = 8 * sum(forest_plane_bytes(rates, grid.rate_cap))
-            else:
-                forest = 0
-            assert theirs in (mine, mine - forest), (grid_name, q, shape, mine, theirs)
-            checked += 1
-    assert checked == 9
+        monkeypatch.setattr(
+            tessera_formats, "forest_plane_bytes", lambda rates, cap: (0, 0)
+        )
+        tessera_formats._forest_bytes.cache_clear()
+        mutated = _price_both_ways(tessera_formats, shape)
+    finally:
+        monkeypatch.undo()
+        tessera_formats._forest_bytes.cache_clear()
+
+    refused = 0
+    for was, now in zip(baseline, mutated):
+        if was.body is not BodyKind.TCQ:
+            # A window body has no forest; the mutation cannot reach it, and
+            # saying so keeps the count below honest about its population.
+            assert now.theirs == was.theirs == was.mine, (was, now)
+            continue
+        assert now.theirs == was.mine - was.forest, (was, now)
+        # The new assertion refuses it ...
+        assert now.theirs != was.mine, (was, now)
+        # ... and the one it replaced does not.  This line is the issue:
+        # it is the old gate, evaluated on the regression it was meant to
+        # catch, passing.
+        assert now.theirs in (was.mine, was.mine - was.forest), (was, now)
+        refused += 1
+    assert refused == len(tcq)
+
+    restored = _price_both_ways(tessera_formats, shape)
+    assert restored == baseline, "the zeroed forest leaked past this test"
 
 
 # ------------------------------------------------------------- what it reports
