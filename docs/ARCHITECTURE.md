@@ -89,6 +89,15 @@ field decoding in `wire._from_bits` (§3). Wire grammar and
 
 ## 1. Scope
 
+Re-stamped 2026-09-07 for the selected-expert research control (#415):
+`PreparedWindow.stack` and `PreparedTesseraFp8Module.stack` reuse the existing
+packed-window reader with an owned expert axis. An explicit device-ID tensor
+selects fresh decoded FP8 tiles in bounded expert chunks; no decoded pool is
+retained. This is an eager research entry point: dynamic expert cardinality,
+temporary memory and stock global-to-compact expert mapping require separate
+measurement. The production MoE route still requires resident mode. Wire
+layout, packaged cells, release pins and serving gates are unchanged.
+
 This doc covers the path from a PrismaQuant rung assignment to a served
 Tessera checkpoint: `experiments/plan_from_layer_config.py` (assignment to
 plan), `experiments/export_tessera_serving.py` (plan to checkpoint),

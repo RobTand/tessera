@@ -69,8 +69,16 @@ def consume(args, request, control):
     e, h, n = int(text['n_routed_experts']), int(text['hidden_size']), int(text['moe_intermediate_size'])
     assert e == control['experts'] and text['num_experts_per_tok'] == control['top_k']
     templates, stock, source, input_receipts = {}, {}, {}, {}
+    producer_manifest = None
+    if args.producer_manifest:
+        producer_manifest = json.loads(args.producer_manifest.read_text())
+        assert producer_manifest['control_request_sha256'] == digest(args.control_request)
+        assert set(producer_manifest['projections']) == set(control['source_tensors'])
     for role, row in control['source_tensors'].items():
-        root = args.control_request.parent / f'encode-{args.q256}-{role}'
+        root = (Path(producer_manifest['projections'][role]['directory']) if producer_manifest
+                else args.control_request.parent / f'encode-{args.q256}-{role}')
+        if producer_manifest:
+            assert digest(root / 'receipt.json') == producer_manifest['projections'][role]['receipt_sha256']
         receipt = json.loads((root / 'receipt.json').read_text())
         launch = json.loads((root / 'launcher-result.json').read_text())
         assert receipt['status'] == 'encoded_source_projection'
@@ -178,6 +186,12 @@ def consume(args, request, control):
                 'vs_bf16_source_arithmetic_screen': error(got, source_out),
                 'source_gate_or_up_values_clipped': clipped})
             write(args.out, 'operator-progress.json', results)
+        selected_result = None
+        if args.selected_request:
+            from experiments.glm_selected_expert_control import run
+            selected_result = run(args, json.loads(args.selected_request.read_text()),
+                templates, scheme, layer, method, w13, w2, s13, s2)
+            write(args.out, 'selected-expert-receipt.json', selected_result)
         return {'status': 'repeated_source_control_passed', 'q256': args.q256,
             'input_receipts': input_receipts, 'backend': plain(method.fp8_backend),
             'moe_class': type(moe).__module__ + '.' + type(moe).__qualname__,
@@ -185,7 +199,8 @@ def consume(args, request, control):
             'owner_prefix': layer.layer_name, 'scheme': scheme,
             'all_864_projection_tiles_and_scales_exact': exact, 'operator_controls': results,
             'weight_shapes': [list(layer.w13_weight.shape), list(layer.w2_weight.shape)],
-            'resident_parameter_bytes': sum(p.numel() * p.element_size() for p in layer.parameters())}
+            'resident_parameter_bytes': sum(p.numel() * p.element_size() for p in layer.parameters()),
+            **({'selected_expert_control': selected_result} if selected_result is not None else {})}
 
 
 def main():
@@ -197,6 +212,8 @@ def main():
     parser.add_argument('--role', choices=('gate_proj', 'up_proj', 'down_proj'))
     parser.add_argument('--q256', type=int, required=True)
     parser.add_argument('--construction', type=Path)
+    parser.add_argument('--producer-manifest', type=Path)
+    parser.add_argument('--selected-request', type=Path)
     args = parser.parse_args()
     request = json.loads(args.request.read_text())
     control = json.loads(args.control_request.read_text())
@@ -205,7 +222,20 @@ def main():
     for row in (request['source_config'], request['source_archive'], request['core_manifest'],
                 *request['config_files'].values()):
         assert digest(row['path']) == row['sha256']
-    core, core_files = install(request, args.out)
+    installation_request = request
+    selected = None
+    if args.selected_request:
+        assert args.stage == 'control'
+        selected = json.loads(args.selected_request.read_text())
+        assert selected['schema'] == 'tessera.glm_selected_expert_request.v1'
+        for key, actual in (('control_request', args.control_request), ('construction', args.construction),
+                            ('producer_manifest', args.producer_manifest)):
+            assert actual is not None and str(actual) == selected[key]['path']
+            assert digest(actual) == selected[key]['sha256']
+        assert digest(selected['reader_source_archive']['path']) == selected['reader_source_archive']['sha256']
+        installation_request = {**request, 'source_archive': selected['reader_source_archive'],
+                                'source_commit': selected['reader_source_commit']}
+    core, core_files = install(installation_request, args.out)
     import torch
     from _pb_native_moe_measure.per_job_install import files
     from experiments.original_wire_generation import observed
@@ -213,6 +243,13 @@ def main():
         'request_sha256': digest(args.request), 'control_request_sha256': digest(args.control_request),
         'control_scope': control['control_scope'], 'runtime_cell_promoted': False,
         'stage': args.stage, 'tp_size': 1, 'ep_size': 1}
+    if args.producer_manifest:
+        record['producer_manifest'] = {'path': str(args.producer_manifest),
+                                       'sha256': digest(args.producer_manifest)}
+    if selected is not None:
+        record['selected_request'] = {'path': str(args.selected_request), 'sha256': digest(args.selected_request)}
+        record['construction'] = selected['construction']
+        record['reader_source_archive'] = selected['reader_source_archive']
     rc = 0
     try:
         record.update((encode if args.stage == 'encode' else consume)(args, request, control))
@@ -225,9 +262,10 @@ def main():
         assert identity['loaded_module_origins_verified']
         write(args.out, 'package-identity.json', identity)
         assert files(core) == core_files, 'Installed stock vLLM changed'
+        retained_peaks = getattr(args, '_glm_cuda_peaks', {})
         record.update(stock_core_unchanged=True, package_identity_sha256=digest(args.out / 'package-identity.json'),
-            cuda_peak_allocated_bytes=torch.cuda.max_memory_allocated(),
-            cuda_peak_reserved_bytes=torch.cuda.max_memory_reserved())
+            cuda_peak_allocated_bytes=max(torch.cuda.max_memory_allocated(), retained_peaks.get('allocated', 0)),
+            cuda_peak_reserved_bytes=max(torch.cuda.max_memory_reserved(), retained_peaks.get('reserved', 0)))
         write(args.out, 'receipt.json', record)
     return rc
 

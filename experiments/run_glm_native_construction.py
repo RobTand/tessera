@@ -23,6 +23,8 @@ def main():
     parser.add_argument('--stage', choices=('construction', 'resident', 'streamed', 'encode', 'control'), required=True)
     parser.add_argument('--construction', type=Path)
     parser.add_argument('--control-request', type=Path)
+    parser.add_argument('--producer-manifest', type=Path)
+    parser.add_argument('--selected-request', type=Path)
     parser.add_argument('--role', choices=('gate_proj', 'up_proj', 'down_proj'))
     parser.add_argument('--q256', type=int)
     parser.add_argument('--cpus', type=int, default=4)
@@ -62,7 +64,7 @@ def main():
         '--out', str(root), '--stage', args.stage]
     if args.construction:
         command += ['--construction', str(args.construction)]
-    for name in ('control_request', 'role', 'q256'):
+    for name in ('control_request', 'producer_manifest', 'selected_request', 'role', 'q256'):
         value = getattr(args, name)
         if value is not None:
             command += ['--' + name.replace('_', '-'), str(value)]
@@ -70,6 +72,8 @@ def main():
                 Path('tools/tessera_construction_census.py')]
     if entry != 'glm_native_construction.py':
         controls.append(Path('experiments') / entry)
+    if args.selected_request:
+        controls.append(Path('experiments/glm_selected_expert_control.py'))
     before = {str(p): digest(p) for p in controls}
     start = time.time()
     (root / 'launch.json').write_text(json.dumps({'command': command, 'environment': env,

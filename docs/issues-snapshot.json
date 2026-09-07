@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-07T19:42:26Z",
+ "generated": "2026-09-07T19:51:29Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -1086,6 +1086,10 @@
    "342": {
     "state": "CLOSED",
     "title": "Preserve persistent buffer bytes in fresh and resumed streaming export"
+   },
+   "343": {
+    "state": "OPEN",
+    "title": "Stream canonical GLM calibration through bounded source residency"
    },
    "35": {
     "state": "CLOSED",
@@ -2790,11 +2794,11 @@
     "title": "research: GLM q512 control and selected-expert packed decode"
    },
    "418": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Reconstruct CUDA BODY fields on the requested device"
    },
    "419": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Reconstruct byte-sized BODY fields on CUDA"
    },
    "42": {

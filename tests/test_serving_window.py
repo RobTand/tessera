@@ -102,6 +102,80 @@ def test_eager_guard_refuses_a_replaced_plane():
         prepared.decode()
 
 
+@pytest.mark.parametrize('value_table', [False, True])
+def test_selected_experts_preserve_tables_initial_states_and_permutations(value_table):
+    from tessera.serving.window import PreparedWindow
+
+    rates = [1, 3, 2, 4, 1, 4, 3, 2]
+    windows = []
+    for expert in range(5):
+        body, table = _unit(19, len(rates), rates, 9, seed=701 + expert)
+        if value_table:
+            table = (table.float() / 32 - 4).bfloat16()
+        initial = torch.arange(len(rates), dtype=torch.int32) + expert * 7
+        windows.append(prepare_window(body, rates, 9, table, 'cpu', initial_state=initial))
+    full_reference = torch.stack([window.decode() for window in windows])
+    assert any(not torch.equal(full_reference[0], row) for row in full_reference[1:])
+    batch = PreparedWindow.stack(windows)
+    ids = torch.tensor([4, 1, 3, 0, 4, 2], dtype=torch.int64)
+    got = batch.decode(ids, max_experts_per_chunk=2)
+    assert torch.equal(got, full_reference.index_select(0, ids))
+    assert got.dtype == full_reference.dtype
+    assert torch.equal(batch.decode(ids.int(), max_experts_per_chunk=3), got)
+    # Independent calls must not alias a reusable mutable output pool.
+    again = batch.decode(ids, max_experts_per_chunk=6)
+    assert again.data_ptr() != got.data_ptr() and torch.equal(again, got)
+    assert batch.decode(ids[:0], max_experts_per_chunk=2).shape == (0, 19, len(rates))
+
+
+def test_stacked_windows_own_their_packed_bytes_and_guard_mutation():
+    from tessera.serving.window import PreparedWindow
+
+    body, table = _unit(16, 4, [2] * 4, 8, seed=703)
+    source = prepare_window(body, [2] * 4, 8, table, 'cpu')
+    expected = source.decode().unsqueeze(0)
+    batch = PreparedWindow.stack([source, source])
+    assert batch.resident_bytes() == sum(t.numel() * t.element_size() for t in batch.tensors())
+    source.tensors()[0].zero_()
+    assert torch.equal(batch.decode(torch.tensor([1]), max_experts_per_chunk=1), expected)
+    batch.tensors()[0].zero_()
+    with pytest.raises(RuntimeError, match='changed after preparation'):
+        batch.decode(torch.tensor([0]), max_experts_per_chunk=1)
+
+
+def test_stacked_windows_refuse_incompatible_layouts_and_invalid_selection():
+    from tessera.serving.window import PreparedWindow
+
+    body, table = _unit(16, 4, [2] * 4, 8, seed=704)
+    first = prepare_window(body, [2] * 4, 8, table, 'cpu')
+    other_body, other_table = _unit(16, 4, [1, 3, 1, 3], 8, seed=705)
+    other = prepare_window(other_body, [1, 3, 1, 3], 8, other_table, 'cpu')
+    with pytest.raises(ValueError, match='layout'):
+        PreparedWindow.stack([first, other])
+    with pytest.raises(ValueError, match='at least one'):
+        PreparedWindow.stack([])
+    batch = PreparedWindow.stack([first])
+    with pytest.raises(ValueError, match='integer'):
+        batch.decode(torch.tensor([0.]), max_experts_per_chunk=1)
+    with pytest.raises(ValueError, match='one-dimensional'):
+        batch.decode(torch.tensor([[0]]), max_experts_per_chunk=1)
+    with pytest.raises(ValueError, match='positive'):
+        batch.decode(torch.tensor([0]), max_experts_per_chunk=0)
+    with pytest.raises((IndexError, RuntimeError)):
+        batch.decode(torch.tensor([1]), max_experts_per_chunk=1)
+
+
+def test_prepared_window_owns_initial_state_provenance():
+    body, table = _unit(16, 4, [2] * 4, 8, seed=706)
+    initial = torch.arange(4, dtype=torch.int32)
+    window = prepare_window(body, [2] * 4, 8, table, 'cpu', initial_state=initial)
+    expected = window.decode()
+    initial.zero_()
+    # Caller mutation must not invalidate an otherwise private prepared owner.
+    assert torch.equal(window.decode(), expected)
+    assert torch.equal(window.initial_state, torch.arange(4, dtype=torch.int32))
+
+
 # --- the table's dtype is the FAMILY's, not the decoder's -------------------
 # A third family (TESSERA_BF16) shares this window body but snaps its 2^L
 # alphabet to bf16 VALUES instead of E4M3 codes, and decodes to a bf16 tile for
