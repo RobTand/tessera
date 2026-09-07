@@ -515,11 +515,32 @@ def phase_identities(phase_tensors):
 
 def validate_panel(panel):
     """Check the independently frozen 96-member join before CUDA execution."""
+    source_fields = ("source_execution", "source_execution_qualification_sha256")
+    optional = source_fields if isinstance(panel, dict) and any(key in panel for key in source_fields) else ()
     dense._fields(panel, ("schema", "unit", "format", "shape", "members", "profile_role_order",
         "routing", "routing_capture_sha256", "source_sha256", "calibration_sha256", "cost_sha256",
         "probe_identity_sha256", "probe_scope", "runtime_binding", "execution", "runtime", "native_tensors_sha256",
         "scheme_sha256", "config_sha256", "serving_config_sha256", "workspace", "workspace_sha256",
-        "numerics", "phases"), "panel")
+        "numerics", "phases", *optional), "panel")
+    if optional:
+        source = panel["source_execution"]
+        dense._fields(source, ("schema", "modules"), "source execution")
+        if (source["schema"] != "prismaquant.joint_aura.source_execution.v1"
+                or not isinstance(source["modules"], dict) or "" not in source["modules"]):
+            raise ValueError("source execution requires the explicit root configuration")
+        for path, selectors in source["modules"].items():
+            if (not isinstance(path, str) or "\0" in path or not isinstance(selectors, dict)
+                    or not selectors or set(selectors) - {"attention", "experts"}):
+                raise ValueError("source execution module/selectors are malformed")
+            if any(value is not None and not isinstance(value, (str, dict)) for value in selectors.values()):
+                raise ValueError("source execution selector must be a string, mapping or null")
+        try:
+            dense.identity_sha256(source)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("source execution must contain finite JSON values") from exc
+        qualification = panel["source_execution_qualification_sha256"]
+        if qualification is not None:
+            dense._sha(qualification, "source execution qualification")
     if panel["schema"] != PANEL_SCHEMA or panel["format"] != FORMAT:
         raise ValueError("whole MoE panel schema or format unsupported")
     if not isinstance(panel["unit"], str) or not panel["unit"]:

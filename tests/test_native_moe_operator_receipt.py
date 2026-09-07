@@ -182,6 +182,50 @@ def test_frozen_panel_accepts_complete_members_and_unallocated_workspace_slot():
     assert moe.validate_panel(panel) == panel
 
 
+@pytest.mark.parametrize("qualification", [None, _sha("independent source execution proof")])
+def test_panel_preserves_explicit_source_execution_and_qualification(qualification):
+    panel = _panel()
+    panel.update(source_execution={"schema": "prismaquant.joint_aura.source_execution.v1",
+        "modules": {"": {"attention": "eager", "experts": "grouped_mm"},
+                    "model.layers.2": {"experts": {"text": "grouped_mm"}}}},
+        source_execution_qualification_sha256=qualification)
+    original = dense.identity_sha256(panel)
+    assert moe.validate_panel(panel) == panel
+    assert dense.identity_sha256(panel) == original
+    panel["source_execution"]["modules"][""]["experts"] = "eager"
+    assert dense.identity_sha256(panel) != original
+
+
+@pytest.mark.parametrize("defect", ["missing_descriptor", "missing_qualification", "bad_sha",
+    "bad_schema", "extra_field", "no_root", "empty_selectors", "unknown_selector", "bad_selector"])
+def test_panel_refuses_malformed_source_execution_join(defect):
+    panel = _panel()
+    panel.update(source_execution={"schema": "prismaquant.joint_aura.source_execution.v1",
+        "modules": {"": {"attention": "eager", "experts": "grouped_mm"}}},
+        source_execution_qualification_sha256=None)
+    execution = panel["source_execution"]
+    if defect == "missing_descriptor":
+        panel.pop("source_execution")
+    elif defect == "missing_qualification":
+        panel.pop("source_execution_qualification_sha256")
+    elif defect == "bad_sha":
+        panel["source_execution_qualification_sha256"] = "unverified"
+    elif defect == "bad_schema":
+        execution["schema"] = "unknown"
+    elif defect == "extra_field":
+        execution["assertion"] = "measured"
+    elif defect == "no_root":
+        execution["modules"] = {"child": {"experts": "grouped_mm"}}
+    elif defect == "empty_selectors":
+        execution["modules"][""] = {}
+    elif defect == "unknown_selector":
+        execution["modules"][""]["other"] = "ignored"
+    elif defect == "bad_selector":
+        execution["modules"][""]["experts"] = ["grouped_mm"]
+    with pytest.raises(ValueError):
+        moe.validate_panel(panel)
+
+
 @pytest.mark.parametrize("mutate", [
     lambda p: p["runtime_binding"]["member_operator_identity_sha256"].pop(next(iter(p["runtime_binding"]["member_formats"]))),
     lambda p: p["runtime_binding"].update(operator_route="vllm.fused_moe.modular_kernel:OTHER"),

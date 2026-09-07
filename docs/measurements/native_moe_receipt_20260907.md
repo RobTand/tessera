@@ -115,3 +115,55 @@ the independently rehashed PB payload is
 `8a9666bfba6340b3405dbf953d6e80e4a49b854bf662c9e5f6dff2dd3f88fdbd`.
 The directory retains actual image/container inspections and the exact owned
 container's completed status. No collector C++ or model artifact changed.
+
+## Original 96-wire preparation and source execution identity
+
+The canonical request at
+`/mnt/shared/tessera-measurements/first-model-20260907/native-moe-panel-r1024/prepare-01/request.json`
+has SHA256 `94096681f0573620ad59c05b12eab4bfa9abba6cb4acfc7b658f6c1729246fb6`.
+Its actual shape is E=32, hidden=2048, intermediate=1792, top-k=4. The earlier
+factory-only smoke's intermediate=1024 was synthetic and is not evidence for
+this captured shape.
+
+The independent panel can now carry the paired `source_execution` and
+`source_execution_qualification_sha256` fields. The former has closed schema
+`prismaquant.joint_aura.source_execution.v1`, an explicit root configuration,
+and named module attention/expert selectors. The latter is a SHA256 or
+explicit null. Both enter the panel hash; PrismaQuant owns the independent
+source-backend/proof join. CPU regression PB `d1caa1f10e9d…` first refused the
+two valid new panels. PB
+`4ee5e00060c2ec25544f5c5b79f891a11fc244f9c1aba3e9985c762bee3ee9e7`
+then passed **196 tests**, with no skips or missing collection, across the
+three receipt/resource modules. Verified CPU CAS payload:
+`5094c0dc045b29e1144ebb0138ffb1c45f40b74e06a7b93b1b876b50b402b522`.
+
+Actual native preparation PB
+`3f7e7ae7f37e45b188e4fba85a4cfbb1c6e0448d7d20d866357026c4b74371a4`
+finished on Sparklina with exit 0. It loaded all original wires, checked their
+PWC renders, and warmed both captured phases. The TRITON FP8 owner retained
+four native expert weight/scale tensors and one locked workspace allocation
+of **23,068,672 bytes**. All 4,967 stock vLLM files remained unchanged after
+execution. The exact owned container exited 0 without OOM and was removed.
+The job reserved four CPUs, 16 GiB total and 8 GiB GPU memory, with native
+threads bounded to one. Sparklina is an explicit subsequent-run dependency:
+the frozen runtime binds the observed GPU UUID and local image declaration.
+
+The authoritative preflight is
+`/mnt/shared/tessera-native376-resource/native-moe-original-r1024/prepare-03/preflight.json`,
+SHA256 `794829fc60af194514571ff90512e4e0ebe07f1f64d3adc3c273805d3d809188`.
+Its independently rehashed PB payload is
+`e2dfb612885737fd29097bfd47d06c4dcce032d4055d4a334dd928bff2fdb3d3`;
+raw CUPTI trace SHA256 is
+`2aac6d5cb2bb0ec399264d5c5e4a4da973cebe7063c5d5e8e54de4f88c22d4b6`,
+with successful configuration/flushes and no errors or dropped records.
+This is untimed preparation, not a numerical verdict, operator resource
+bound, full-engine resource price or release qualification.
+
+Two prior attempts remain bounded evidence. `prepare-01` (`b4aa6b240e74…`)
+reached native warmup but refused the missing launcher image-declaration pair.
+The launcher now reuses the existing resolver and `container_env` against the
+explicit research configuration plus actual Docker inspection, preserving
+the packaged default reference separately. No packaged pin changed.
+`prepare-02` (`1d207ab84d5d…`) passed, but `prepare-03` supersedes its harness
+identity after adding the source-execution panel fields. No request, tensor
+or wire regeneration was required for that refresh.

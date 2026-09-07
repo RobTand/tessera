@@ -47,7 +47,8 @@ bound (#376; §2.4). Serving defaults, wire and release gates are unchanged.
 
 Re-stamped 2026-09-07 on `codex/native-moe-receipts` for the complete routed
 owner research receipt (#395; §2.5), including captured routing transport and
-existing vLLM workspace ownership.
+existing vLLM workspace ownership. Re-stamped on `0693cf18` for the optional
+paired source-execution descriptor and independent qualification digest.
 
 ## 1. Scope
 
@@ -784,6 +785,12 @@ consumer's existing `RuntimeBinding`; no scalar group cost or summed leaf
 latency is produced here. An explicit `probe_scope` retains a first-sequence
 integration screen and its parent/subset calibration identities when the joint
 probe uses only that subset; native captured tensors keep their own identities.
+The optional paired `source_execution` and
+`source_execution_qualification_sha256` fields preserve the source model's
+module configuration selectors and an independent qualification digest (or
+explicit null). They are part of the full panel hash. The native producer
+validates their closed grammar; the PrismaQuant consumer owns the source
+backend/proof join. Adding them changes no captured routing or tensor bytes.
 
 Both phases must pass the predeclared activation-QDQ and whole-output gates
 and observed native route before either phase receives CUDA-event samples.
