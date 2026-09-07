@@ -165,6 +165,17 @@ def test_stacked_windows_refuse_incompatible_layouts_and_invalid_selection():
         batch.decode(torch.tensor([1]), max_experts_per_chunk=1)
 
 
+def test_prepared_window_owns_initial_state_provenance():
+    body, table = _unit(16, 4, [2] * 4, 8, seed=706)
+    initial = torch.arange(4, dtype=torch.int32)
+    window = prepare_window(body, [2] * 4, 8, table, 'cpu', initial_state=initial)
+    expected = window.decode()
+    initial.zero_()
+    # Caller mutation must not invalidate an otherwise private prepared owner.
+    assert torch.equal(window.decode(), expected)
+    assert torch.equal(window.initial_state, torch.arange(4, dtype=torch.int32))
+
+
 # --- the table's dtype is the FAMILY's, not the decoder's -------------------
 # A third family (TESSERA_BF16) shares this window body but snaps its 2^L
 # alphabet to bf16 VALUES instead of E4M3 codes, and decodes to a bf16 tile for

@@ -362,6 +362,6 @@ def prepare_window(body_bits: torch.Tensor, rates: Sequence[int], window_bits: i
     if len(groups) > 1:
         inverse = torch.argsort(torch.tensor(order, dtype=torch.int64, device=device)).contiguous()
     if initial_state is not None:
-        initial_state = initial_state.to(device).contiguous()
+        initial_state = initial_state.to(device).contiguous().clone()
     return PreparedWindow(groups, table.contiguous().clone(), inverse, steps, cols, window_bits,
                           device, initial_state)
