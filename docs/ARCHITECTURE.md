@@ -46,8 +46,8 @@ original-wire native dense research receipt and explicit operator resource
 bound (#376; §2.4). Serving defaults, wire and release gates are unchanged.
 
 Re-stamped 2026-09-07 on `codex/full-engine-resource-ledger` for the
-standalone raw engine allocation recorder and explicit incomplete admission
-boundary (§2.4). No full-engine fixed-resource price or runtime qualification
+raw engine allocation recorder, opt-in stock worker startup integration, and
+explicit incomplete admission boundary (§2.4). No full-engine fixed-resource price or runtime qualification
 is established by the raw ledger.
 
 ## 1. Scope
@@ -775,8 +775,21 @@ replays address generations through completed frees, and preserves outputs
 whose lifetime crosses a unit boundary. Raw history/checkpoint, segment and
 CUPTI evidence must reconcile; unknown owners, external/static allocations,
 missing records and potentially truncated history stay incomplete. Capture
-failures and exact raw-file hashes remain in the receipt. The collector has
-no engine startup hook and has not been qualified on an actual engine.
+failures and exact raw-file hashes remain in the receipt.
+
+`experiments/capture_full_engine_resources.py` adds an opt-in, intrusive
+source-BF16 observation pass using the stock runtime's supported `worker_cls`
+configuration. Its early Python process bootstrap starts CUPTI before Torch
+and records allocator history before CUDA initialization; each spawned process
+owns its collector, and fork-inherited or late worker captures refuse. The
+worker subclass calls the stock device, model-load, KV-allocation, execution
+and sampling methods, adding synchronized checkpoints and bounded forward
+hooks for explicitly selected canonical units. Model parameters, buffers and
+the runner's shared attention/recurrent KV tensor views supply raw storage
+owners. The launcher binds the canonical source census, source-BF16 assignment,
+selected engine settings, observer settings, workload, device UUID and installed
+runtime manifest, and verifies the stock core before and after the pass.
+Observer settings and incomplete raw captures cannot qualify a served model.
 
 Its distinct `tessera.full_engine_raw_resource_ledger.v1` schema never emits a
 fixed-resource object or timings: `fixed_resources` and `timings` remain null,
