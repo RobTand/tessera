@@ -96,7 +96,9 @@ def test_static_domain_does_not_relax_dynamic_or_in_apply_ownership(real_static_
 @pytest.mark.parametrize("defect", ["dropped", "missing_drop_query", "missing_enable", "wrong_context",
                                     "missing_free", "changed_reservations", "missing_correlation",
                                     "duplicate_allocate", "async", "graph", "no_memory_records",
-                                    "unobserved_external_mapping"])
+                                    "unobserved_external_mapping", "missing_transient_memory_pair",
+                                    "allocation_api_outside_interval", "memory_outside_api",
+                                    "ambiguous_api_correlation"])
 def test_incomplete_real_trace_never_produces_resource_zero(real_evidence, defect):
     from experiments.native_operator_resources import analyze_trace
     data = copy.deepcopy(real_evidence)
@@ -127,6 +129,18 @@ def test_incomplete_real_trace_never_produces_resource_zero(real_evidence, defec
         api["name"] = "cudaGraphLaunch_v10000"
     elif defect == "no_memory_records":
         trace["memory_events"] = []
+    elif defect == "missing_transient_memory_pair":
+        trace["memory_events"] = [r for r in trace["memory_events"] if r not in rows]
+    elif defect == "allocation_api_outside_interval":
+        api = next(r for r in trace["api_events"] if r["correlation_id"] == rows[0]["correlation_id"])
+        api["start_ns"] = start - 2
+        api["end_ns"] = start - 1
+    elif defect == "memory_outside_api":
+        api = next(r for r in trace["api_events"] if r["correlation_id"] == rows[0]["correlation_id"])
+        api["end_ns"] = rows[0]["timestamp_ns"] - 1
+    elif defect == "ambiguous_api_correlation":
+        api = next(r for r in trace["api_events"] if r["correlation_id"] == rows[0]["correlation_id"])
+        trace["api_events"].append(copy.deepcopy(api))
     elif defect == "unobserved_external_mapping":
         api = copy.deepcopy(next(r for r in trace["api_events"] if r["correlation_id"] == rows[0]["correlation_id"]))
         api.update(name="cudaExternalMemoryGetMappedBuffer_v10000", correlation_id=900000)

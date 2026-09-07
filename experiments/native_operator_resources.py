@@ -193,19 +193,29 @@ def analyze_trace(trace, *, interval, torch_observation):
             r"cuDestroyExternalMemory|cuExternalMemory|cuIpcOpenMemHandle|cuArray|cuMipmappedArray)")
         if not trace["api_events"]:
             raise ValueError("no observed CUDA API records")
-        by_correlation = {}
+        by_correlation, required_operations = {}, {}
         for api in trace["api_events"]:
             name = re.sub(r"_v\d+$", "", api["name"])
-            by_correlation.setdefault((_integer(api["process_id"], 1), _integer(api["correlation_id"])), []).append(name)
-            if begin <= api["start_ns"] <= end and ownership.match(name):
+            key = (_integer(api["process_id"], 1), _integer(api["correlation_id"]))
+            api_start, api_end = _integer(api["start_ns"], 1), _integer(api["end_ns"], 1)
+            if api_end < api_start:
+                raise ValueError("CUDA API timestamps are reversed")
+            by_correlation.setdefault(key, []).append((name, api_start, api_end))
+            overlaps = api_start <= end and api_end >= begin
+            if overlaps and ownership.match(name):
                 if name not in supported or _integer(api["return_value"]) != 0:
                     raise ValueError("unsupported or failed allocation API: " + name)
-            if begin <= api["start_ns"] <= end and name.startswith(("cudaGraph", "cuGraph")):
+                if key[0] != pid or not begin <= api_start <= api_end <= end:
+                    raise ValueError("allocation API crosses the apply process/interval")
+                if key in required_operations:
+                    raise ValueError("ambiguous allocation API correlation")
+                required_operations[key] = ("allocate" if name in {"cudaMalloc", "cuMemAlloc"} else "free")
+            if overlaps and name.startswith(("cudaGraph", "cuGraph")):
                 raise ValueError("CUDA graph execution is outside eager resource scope")
         events = sorted(trace["memory_events"], key=lambda r: r["timestamp_ns"])
         if not events:
             raise ValueError("no observed allocation records; collection not demonstrated")
-        live, new_live, static_live = {}, {}, {}
+        live, new_live, static_live, observed_operations = {}, {}, {}, set()
         external_peak = 0
         for row in events:
             t = _integer(row["timestamp_ns"], 1)
@@ -251,13 +261,18 @@ def analyze_trace(trace, *, interval, torch_observation):
                 raise ValueError("allocation device/context differs from operator")
             key = (device, context, address)
             if inside:
-                names = by_correlation.get((pid, row["correlation_id"]), [])
-                if not names or any(name not in supported for name in names):
-                    raise ValueError("memory operation has no supported API correlation")
-                expected_names = ({"cudaMalloc", "cuMemAlloc"} if row["operation"] == "allocate"
-                                  else {"cudaFree", "cuMemFree"})
-                if not all(name in expected_names for name in names):
+                correlation = (pid, _integer(row["correlation_id"]))
+                apis = by_correlation.get(correlation, [])
+                if len(apis) != 1 or correlation not in required_operations:
+                    raise ValueError("memory operation has no unambiguous in-apply API correlation")
+                _, api_start, api_end = apis[0]
+                if not api_start <= t <= api_end:
+                    raise ValueError("memory operation timestamp is outside its API")
+                if row["operation"] != required_operations[correlation]:
                     raise ValueError("allocation operation disagrees with its API")
+                if correlation in observed_operations:
+                    raise ValueError("multiple memory operations share an API correlation")
+                observed_operations.add(correlation)
                 if any(address < a + n and a < address + size for a, n in segments):
                     raise ValueError("allocator segment changed during apply")
             if row["operation"] == "allocate":
@@ -276,6 +291,11 @@ def analyze_trace(trace, *, interval, torch_observation):
                     del new_live[key]
             else:
                 raise ValueError("unknown memory operation")
+        # Coverage is reciprocal: API records without their MEMORY2 rows may
+        # hide an entire transient lifetime even when startup memory, enables
+        # and dropped-record queries look valid. Such gaps must remain unknown.
+        if observed_operations != set(required_operations):
+            raise ValueError("allocation API lacks its matching memory operation")
         if new_live:
             raise ValueError("native allocation retained after apply; fixed ownership unresolved")
         startup_sources = {}
