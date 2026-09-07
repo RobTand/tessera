@@ -41,6 +41,9 @@ encoder's batch axis, shared-setting presence checks and the window plan rule
 recipes, `encoder_fixture_id` and runtime contract remain at the versions
 above.
 
+Re-stamped 2026-09-07 on `codex/unused-ldlq-sse` for joined TCQ calls
+leaving their unused diagnostic SSE on device (#385; §3.1b).
+
 ## 1. Scope
 
 This doc covers the path from a PrismaQuant rung assignment to a served
@@ -873,6 +876,11 @@ path beside a reference. `encoder_fixture_id` does not move.
 `tests/test_batched_encode_identity.py` pins blob equality unit by unit at
 BF16_K1@1792, E4M3_K1@1024, E2M1_K2@896 and the mixed-rate E4M3@1042 with
 LDLQ on at the default refit schedule.
+
+The joined TCQ runner returns paths without extracting the diagnostic trellis
+SSE as a host float. The public `viterbi_columns` API still returns its float
+SSE; each encoded unit still computes its own reconstruction SSE. This omits
+an unused host read without changing the trellis, paths or stored bytes.
 
 The batched entry points are `export.encode_linears_planes` /
 `export.encode_linears`: one recipe, one rate schedule and one set of forests

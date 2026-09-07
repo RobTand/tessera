@@ -653,6 +653,27 @@ def viterbi_columns(
     evaluated the same way -- the difference is the launch stream, which is
     what issue #13 measured and what a graph removes.
     """
+    anchors, bits, plan = _viterbi_columns_plan(
+        targets, forest, code, completion, span=span, weights=weights, impl=impl,
+    )
+    return anchors, bits, plan.sse()
+
+
+def _viterbi_columns_plan(
+    targets: torch.Tensor,
+    forest: AnchorForest,
+    code: ConvCode,
+    completion: int,
+    span: int = 1,
+    weights: "torch.Tensor | None" = None,
+    impl: str = "auto",
+) -> "tuple[torch.Tensor, torch.Tensor, _TCQPlan]":
+    """Run the trellis without reading its diagnostic cost back to the host.
+
+    The public wrapper reads the float SSE when requested. Joined encoder
+    calls need only the paths and leave the stream queued. Cached-plan paths
+    are cloned before return so the next replay cannot overwrite an answer.
+    """
     if impl not in ("auto", "reference", "graph"):
         raise GrammarError(f"unknown viterbi_columns impl {impl!r}")
     device = targets.device
@@ -700,7 +721,7 @@ def viterbi_columns(
                         span=span, owns_input=False)
         plan.bind(targets, weights)
         plan.run()
-        return plan.anchors, plan.bits, plan.sse()
+        return plan.anchors, plan.bits, plan
 
     plan = _tcq_plan(key, device=device, rows=rows, cols=cols,
                      dtype=targets.dtype, weight_dtype=weight_dtype,
@@ -715,9 +736,9 @@ def viterbi_columns(
             # tensors.  The plan is dropped so the next call does not retry.
             _tcq_maps()[0].pop(key, None)
             plan.run()
-            return plan.anchors.clone(), plan.bits.clone(), plan.sse()
+            return plan.anchors.clone(), plan.bits.clone(), plan
     plan.replay()
-    return plan.anchors.clone(), plan.bits.clone(), plan.sse()
+    return plan.anchors.clone(), plan.bits.clone(), plan
 
 
 @functools.lru_cache(maxsize=64)
@@ -3321,7 +3342,7 @@ def _run_joined(calls: "list[_TrellisCall]"):
         if len(calls) == 1:
             return [state]
         return [state[:, i * n:(i + 1) * n] for i in range(len(calls))]
-    a, b, _ = viterbi_columns(
+    a, b, _ = _viterbi_columns_plan(
         joined, lead.forest, lead.code, lead.level, span=lead.span, weights=joined_w,
     )
     if len(calls) == 1:
