@@ -126,3 +126,24 @@ The actual PB terminal, CAS payload and all 11 files bound in
 Both-host Netdata is retained, but its approximately 10-second power sampling
 cannot resolve these 3–4-second arms. **No arm energy or work/J claim follows.**
 The broader 187-file integration population remains coordinator-owned.
+
+### Run-helper disposition and CI gate — 2026-09-07
+
+The dated CPU helper named above is retained as measurement evidence at
+`/mnt/shared/tessera-clean-runtime-20260907/reader-grid-cache/reader_cpu_checks.sh`
+(SHA256 `b3630a7a36996cb3740443c37041537b618e3095f19aadf13bd13fdbeff60634`). Its exact
+bytes reproduce the recorded PQ CPU test environment; use that absolute path
+in the commands above. It is retired from live `experiments/`: that tree's
+container wrappers must derive and enforce Tessera's canonical serving-image
+pin, and this CPU-only, dated PQ environment is not a serving runtime. The
+image gate is unchanged. Historical PB snapshots retain the original helper.
+
+The existing guard failed before removal at
+`tests/test_runtime_image_pin.py:481`: `reader_cpu_checks.sh starts a container
+without gating its image`. PB
+`94804d494829c6d41162cd014297f8644c39c1dd7c4cc48d72fbb3f71bac5e15`
+reproduced it on DL380 (1 expected failure, 35 passes, four xdist workers;
+Torch 2.11.0+cpu, 0 skips/uncollected modules). This is a separate helper
+packaging correction; package source and frozen reader identities are unchanged.
+
+Post-removal PB `36986ef92d473c2f92e90b36086400fc45a7127554638ae33aee73071c2ced2b` passed all 36 runtime-image tests on DL380 with four workers, no skips or missing collection; terminal exit 0 and CAS payload were verified.
