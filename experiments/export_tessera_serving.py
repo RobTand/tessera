@@ -1688,7 +1688,7 @@ def main():
                   f"{len(modules)} module(s) remain in the plan", flush=True)
             if not plan and not stack_plan and args.layers is None:
                 # The same refusal as above, re-asked, because the check above
-                # ran BEFORE this loop and this loop is the other way ``plan``
+                # ran BEFORE this loop and this loop is another way ``plan``
                 # empties.  Without it, --passthrough-unrouted on a model whose
                 # every module is unrouted writes the empty ``config_groups``
                 # the earlier guard exists to prevent -- and it is the likelier
