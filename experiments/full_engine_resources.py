@@ -375,7 +375,7 @@ def _checkpoint_blocks(checkpoint, live, segments, device):
 
 
 def _checkpoint_owners(checkpoint, live, device, issues):
-    storages, owner_ids = {}, set()
+    storages, owner_ids, unmatched = {}, set(), []
     for owner in checkpoint["owners"]:
         owner_id = _text(owner["owner_id"], "owner_id")
         _text(owner["provenance"], "owner provenance")
@@ -387,6 +387,7 @@ def _checkpoint_owners(checkpoint, live, device, issues):
             issues.append(f"owner {owner_id}: unknown category")
         if owner["device_type"] != "cuda" or owner["device_id"] != device:
             issues.append(f"owner {owner_id}: host/other-device storage is outside device census")
+            unmatched.append(owner)
             continue
         size = _int(owner["bytes"], "storage bytes")
         if size == 0:
@@ -396,7 +397,9 @@ def _checkpoint_owners(checkpoint, live, device, issues):
         if offset + extent > size:
             raise ValueError("owner view exceeds its backing storage")
         if address not in live or size > live[address]["bytes"]:
-            raise ValueError("owner has no matching live backing allocation")
+            issues.append(f"owner {owner_id}: no matching live Torch backing allocation")
+            unmatched.append(owner)
+            continue
         allocation = live[address]
         key = allocation["allocation_id"]
         entry = storages.setdefault(key, {"allocation_id": key, "address": address,
@@ -415,6 +418,7 @@ def _checkpoint_owners(checkpoint, live, device, issues):
         entry["owners"].sort()
     return {"label": checkpoint["label"], "trace_index": checkpoint["trace_index"],
             "owner_count": len(owner_ids), "unique_owned_storage_bytes": sum(r["bytes"] for r in storages.values()),
+            "unmatched_storage_observations": unmatched,
             "storages": [storages[k] for k in sorted(storages)]}
 
 

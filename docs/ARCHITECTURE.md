@@ -47,7 +47,8 @@ bound (#376; §2.4). Serving defaults, wire and release gates are unchanged.
 
 Re-stamped 2026-09-07 on `codex/full-engine-resource-ledger` for the
 raw engine allocation recorder, opt-in stock worker startup integration,
-resolved KV group/spec and capacity-policy observations, and
+resolved KV group/spec and capacity-policy observations, persistent runtime
+buffer/workspace references, and
 explicit incomplete admission boundary (§2.4). No full-engine fixed-resource price or runtime qualification
 is established by the raw ledger.
 
@@ -803,6 +804,13 @@ to canonical weight tensors, while
 router state remains fixed even when registered again beneath the expert
 module. Historical conflicting category labels remain unknown in the raw
 ledger, with each supplied owner label retained and no admission.
+Bounded traversal of explicitly selected runner state and already initialized
+workspace/cache managers retains tensor aliases, including host/UVA views and
+retired FlashInfer cache buffers. It does not call properties or create buffers.
+These references are shared owners whose candidate/workload dependence remains
+unresolved. Host and unmatched CUDA tensor views remain explicit unmatched
+storage observations, without interrupting later checkpoint replay or becoming
+Torch allocation charges.
 The launcher binds the canonical source census, source-BF16 assignment,
 selected engine settings, observer settings, workload, device UUID and installed
 runtime manifest, and verifies the stock core before and after the pass.

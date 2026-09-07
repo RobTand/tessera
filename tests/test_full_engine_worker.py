@@ -221,3 +221,46 @@ def test_resolved_kv_description_preserves_group_types_and_capacity_policy(worke
 def test_kv_config_serialization_refuses_unrecordable_values(worker_module):
     with pytest.raises(TypeError, match="unsupported"):
         worker_module.kv_config_value(object())
+
+
+def test_runtime_owners_retain_aliases_and_host_views_without_traversing_model(
+        monkeypatch, worker_module):
+    import torch
+    buffer = torch.empty(16, dtype=torch.int32)
+    state = SimpleNamespace(first=buffer, alias=buffer[1:])
+    state.cycle = state
+    state.model = torch.nn.Linear(16, 16)
+    monkeypatch.setattr(worker_module, "claim", lambda: (None, {}))
+    worker = worker_module.ResourceCaptureWorker()
+    worker.model_runner = SimpleNamespace(req_states=state)
+    owners = list(worker._resource_owners())
+    assert {row.owner_id for row in owners} == {"runner:req_states.first", "runner:req_states.alias"}
+    assert {row.category for row in owners} == {"shared"}
+    assert {row.tensor.untyped_storage().data_ptr() for row in owners} == {buffer.untyped_storage().data_ptr()}
+
+
+def test_runtime_owner_traversal_is_bounded_and_does_not_call_properties(worker_module):
+    class State:
+        __module__ = "vllm.v1.worker.fixture"
+
+        @property
+        def dangerous(self):
+            pytest.fail("observer called a property")
+
+    assert list(worker_module.runtime_tensor_leaves(State(), "fixture")) == []
+    with pytest.raises(RuntimeError, match="budget"):
+        list(worker_module.runtime_tensor_leaves([[[1]]], "fixture", max_nodes=2))
+
+
+def test_existing_global_workspace_and_retired_cache_buffers_remain_observable(monkeypatch, worker_module):
+    import torch
+    current, retired = torch.empty(8), torch.empty(4)
+    manager = SimpleNamespace(_current_workspaces=[current], _locked=True)
+    monkeypatch.setitem(sys.modules, "vllm.v1.worker.workspace", SimpleNamespace(_manager=manager))
+    monkeypatch.setitem(sys.modules, "flashinfer.utils", SimpleNamespace(
+        _cache_buf={("scratch", torch.device("cpu")): current}, _cache_buf_retired=[retired]))
+    rows = [(name, tensor) for root, value in worker_module.persistent_runtime_roots(None)
+            for name, tensor in worker_module.runtime_tensor_leaves(value, root)]
+    assert len(rows) == 3
+    assert sum(tensor is current for _, tensor in rows) == 2
+    assert rows[-1][1] is retired

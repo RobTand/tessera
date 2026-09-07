@@ -209,6 +209,18 @@ def test_raw_whole_engine_peak_and_supplied_times_never_become_fixed_prices(capt
     assert result["timings"] is None
 
 
+def test_unmatched_mapped_storage_preserves_later_checkpoint_evidence(capture):
+    from experiments.full_engine_resources import analyze_engine_resource_ledger
+    row = copy.deepcopy(capture["checkpoints"][0]["owners"][0])
+    row.update(owner_id="runner:uva", address=999999, category="shared")
+    capture["checkpoints"][0]["owners"].append(row)
+    result = analyze_engine_resource_ledger(capture)
+    assert result["status"] == "incomplete"
+    assert len(result["checkpoints"]) == len(capture["checkpoints"])
+    assert result["checkpoints"][0]["unmatched_storage_observations"] == [row]
+    assert result["fixed_resources"] is None
+
+
 def test_recorder_validates_identity_before_starting_a_collector(monkeypatch):
     from experiments import full_engine_resources as module
     monkeypatch.setattr(module, "NativeMemoryCollector", lambda _: pytest.fail("collector started"))

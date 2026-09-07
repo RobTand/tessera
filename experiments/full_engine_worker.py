@@ -10,8 +10,10 @@ import os
 import dataclasses
 import enum
 import math
+import sys
 from fractions import Fraction
 from pathlib import Path
+from types import SimpleNamespace
 
 from vllm.v1.worker.gpu_worker import Worker
 
@@ -89,6 +91,63 @@ def tensor_leaves(value, prefix):
             yield from tensor_leaves(item, f"{prefix}.{key}")
 
 
+def runtime_tensor_leaves(value, prefix, *, max_nodes=20000):
+    """Read existing runtime state without properties, imports or allocations.
+
+    Ancestor cycles stop, while distinct alias paths remain separate witnesses.
+    Only explicitly selected runtime state classes are traversed. Model modules
+    use their existing named-parameter/buffer census instead.
+    """
+    import torch
+    remaining = max_nodes
+
+    def visit(item, name, ancestors):
+        nonlocal remaining
+        remaining -= 1
+        if remaining < 0 or len(ancestors) > 32:
+            raise RuntimeError("runtime tensor owner traversal budget exhausted")
+        if isinstance(item, torch.Tensor):
+            yield name, item
+            return
+        if id(item) in ancestors or isinstance(item, torch.nn.Module):
+            return
+        ancestors = ancestors | {id(item)}
+        if isinstance(item, (tuple, list)):
+            children = [(f"{name}[{index}]", child) for index, child in enumerate(item)]
+        elif isinstance(item, dict):
+            # Cache keys include (name, torch.device); repr is retained only in
+            # an owner label and is never evaluated or treated as storage proof.
+            children = [(f"{name}[{key!r}]", child) for key, child in sorted(item.items(), key=lambda row: repr(row[0]))]
+        elif isinstance(item, SimpleNamespace) or type(item).__module__.startswith(
+                ("vllm.v1.worker.", "vllm.v1.attention.", "vllm.attention.", "flashinfer.")):
+            children = [(f"{name}.{key}", child) for key, child in sorted(vars(item).items())]
+        else:
+            return
+        for child_name, child in children:
+            yield from visit(child, child_name, ancestors)
+
+    yield from visit(value, prefix, set())
+
+
+def persistent_runtime_roots(runner):
+    """References only: observe the stock managers' already allocated storage."""
+    if runner is not None:
+        for name in ("req_states", "input_buffers", "sampler", "model_state", "block_tables",
+                     "structured_outputs_worker", "prompt_logprobs_worker", "kv_block_zeroer",
+                     "attn_groups", "execute_model_state", "intermediate_tensors", "draft_tokens_handler"):
+            if name in vars(runner):
+                yield "runner:" + name, vars(runner)[name]
+    workspace = sys.modules.get("vllm.v1.worker.workspace")
+    manager = vars(workspace).get("_manager") if workspace is not None else None
+    if manager is not None:
+        yield "vllm:workspace_manager", manager
+    flashinfer = sys.modules.get("flashinfer.utils")
+    if flashinfer is not None:
+        for name in ("_cache_buf", "_cache_buf_retired"):
+            if name in vars(flashinfer):
+                yield "flashinfer.utils:" + name, vars(flashinfer)[name]
+
+
 def native_library_observation():
     from experiments.bench_native_operator import _mapped_shared_libraries
     libraries = {}
@@ -133,6 +192,10 @@ class ResourceCaptureWorker(Worker):
             for name, tensor in tensor_leaves(getattr(runner, "kv_caches", []), "kv_cache"):
                 yield TensorOwner(name, "kv", tensor,
                                  "stock GPUModelRunner.kv_caches; shared storage deduplicated")
+        for root, value in persistent_runtime_roots(runner):
+            for name, tensor in runtime_tensor_leaves(value, root):
+                yield TensorOwner(name, "shared", tensor,
+                    "existing runtime state/workspace reference; candidate and workload dependence unresolved")
 
     def _resource_checkpoint(self, name):
         self._resource_recorder.snapshot(name, owners=self._resource_owners())
