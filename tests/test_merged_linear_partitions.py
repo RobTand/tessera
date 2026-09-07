@@ -299,8 +299,17 @@ def test_the_geometry_gate_emptying_the_plan_is_refused_before_publication(
     ``config_groups`` is ``{}``; ``TesseraConfig.from_config`` refuses that at
     load, hours later and on someone else's machine.
 
-    Every partition here is 16 rows against a BF16 tuple of 32, so no module
-    survives.  Before the fix this call did not raise at all.
+    The fixture is not uniformly 16: ``(16, 16, 64)`` and ``(16, 16)``.  What
+    makes it empty the plan is that a module is demoted when *any* of its
+    output partitions is not a whole number of tuples, and every module here
+    has at least one 16-row partition, which a BF16 tuple of 32 rows does not
+    divide.  The 64-row partition would have been fine on its own.  So no
+    module survives, and before the fix this call did not raise at all.
+
+    The guard is conditioned on ``args.layers is None``, exactly as its two
+    siblings are, so an explicit ``--layers 0`` remains exempt and still
+    writes a passthrough copy -- see
+    ``test_layers_zero_still_writes_a_passthrough_copy_when_geometry_demotes_everything``.
     """
     entry = construction_entry_from_receipt(
         _lfm_receipt_with_output_sizes((16, 16, 64), (16, 16)))
