@@ -109,3 +109,26 @@ source/configuration bindings are in the request, launch and audit files.
 Earlier unexecuted requests 01–03 and their source archives are retained as
 superseded, with explicit predecessor bindings. Production remains resident;
 packaged runtime cells, release pins and promotion gates are unchanged.
+
+## Master integration — 2026-09-07
+
+After prerequisite #414 merged, integration commit `0c4156e595` merged master
+`9afbcfe752` without conflict and retained its full-engine resource changes.
+All five serving/harness Python files remain byte-identical to the measured
+`be0934bbfb` source. No GPU rerun was needed or performed.
+
+The dependency selector covered 72 files, including newly merged full-engine
+readers. PB fanout used 20 actions with two xdist workers, one native thread
+per worker and 2 GiB per action: **1,680 passed, 156 skipped, zero uncollected
+modules**. All tests ran on dl380g10 with CPU Torch 2.11.0; the skips remain
+137 GPU-dependent cases and 19 absent box artifacts. All terminal exits,
+cleanup records, CAS payloads and source bundle hashes were checked. A separate
+portable PB compile action `60716b724aae` passed on Sparklina for the five
+serving/harness modules and three affected test modules.
+
+`selected-integration-source-identity.json` records paired hashes for the five
+measured files, SHA-256
+`99fbc331a7fc7660c63ad7d2ef94ba755334633e9df18f76d0f638a3601700f0`.
+`selected-integration-audit.json` binds the selector, command, all 20 results,
+compile, source identity and prior functional audit, SHA-256
+`c2f9afa5b82522d3800e8d81e1f5a85970f13e61dd09b476d75892900b0242fe`.
