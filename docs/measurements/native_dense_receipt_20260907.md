@@ -103,3 +103,17 @@ Host-level evidence from both GB10 hosts is retained at
 CPU, RAM, power, clocks and reported framebuffer series, with request URLs and
 row counts in `index.json`. These short instrumentation invocations do not
 support an energy-efficiency estimate or sustained-throughput comparison.
+
+## Publication binding
+
+The CLI now prints the written receipt and raw-memory SHA256 values into stdout,
+so PB's CAS output directly binds the externally retained artifact bytes. The
+publication change passed the same 98 CPU tests in PB `14913bdafba3`, and actual
+LFM preflight `e4da3810effaaa1bd276abfbd6ce37f88bfd2dd1850b9a2747157fc267640d89`
+returned zero. Its CAS publication matches `native-preflight.v2.json` SHA256
+`6d4f7e81c31241f11908f6c836b78f082f9ed0b959db89b03c0135252247c981`
+and raw trace SHA256
+`42b5ce4e83b1295df1075eaaeb1576c5815d6f41214d185a7fc4d59b774bac1f`.
+Use this versioned preflight for the eventual independent real-model panel;
+the earlier preflight is retained as bounded history. No wire, tensor or
+numerical-tolerance bytes changed.
