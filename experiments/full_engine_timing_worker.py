@@ -44,6 +44,9 @@ class TimingCaptureWorker(Worker):
 
     def execute_model(self, scheduler_output):
         if self._timing_recorder is not None:
+            if scheduler_output.total_num_scheduled_tokens == 0:
+                with self._timing_recorder.housekeeping(scheduler_output):
+                    return super().execute_model(scheduler_output)
             runner = self.model_runner
             self._timing_recorder.begin_step(scheduler_output, runner.main_stream, runner.output_copy_stream)
         return super().execute_model(scheduler_output)

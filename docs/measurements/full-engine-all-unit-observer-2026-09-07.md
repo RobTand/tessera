@@ -53,3 +53,33 @@ The compile command was `python -m compileall -q` over
 `full_engine_worker.py` under `experiments/`. The test command was
 `python -m pytest -q -n 6 --dist worksteal` over the corresponding five test
 files (the timing worker and launcher use the worker/boundary tests).
+
+## Actual stock zero-token cleanup regression — later 2026-09-07
+
+The queued source qualifier `997eaf62bbe316a4c8d1c2d880f206e4f12fea6c802876f455e6744bf09256b4`
+ran after fleet recovery. At 14:52:32 UTC its first observed scheduler call had
+zero scheduled tokens and a finished warmup request ID. Stock model runner
+`v1/worker/gpu/model_runner.py:1575` updates/frees request state and returns
+without a model forward for that call. The timing worker incorrectly consumed
+it as the expected 512-token prefill and raised. The live engine exception is
+the pre-fix regression; no timing partition was produced.
+
+The observer now retains an explicit housekeeping CPU range for zero-token
+calls without consuming a prefill/decode step. A GPU operation in such a range
+still refuses the partition because it lies outside the two measured steps.
+It is not silently assigned to a fixed bucket or removed from the GPU trace.
+PB `e708b3ab81fc1161aa62ccaf4cd68978d84319c4c7976ef1825729bc89bf719d`
+passed **27 tests**, 0 skips/0 missing, including cleanup-state and unexpected
+cleanup GPU-work cases, on dl380g10/Torch 2.11.0+cpu with four workers and bounded
+native threads. Exit 0, complete cleanup and independently rehashed CAS payload
+`3ab2352539e9e05f2b6b6068d6390071c050e09ad7224c38ceec782306b50bad` verified.
+
+The failed GPU container outlived its crashed engine worker. After retaining
+logs and exact container/PB ownership, it was stopped; the launcher recorded
+exit 137, removed that container and captured all ten Netdata series across
+both hosts with no missing series. PB recorded failure and complete resource
+cleanup, with no successful CAS payload. Artifacts, the original traceback,
+pre-stop inspect, stop reason, and telemetry are retained under
+`/mnt/shared/tessera-native376-resource/full-engine-timing-r1/`. Netdata index
+SHA-256: `e5f1fe898cc39ecdb188a3c6ce005f5bedb86bc8356ce7634d7c10cfd2d3edf2`.
+This is an observer integration failure, not a runtime performance result.

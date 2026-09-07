@@ -96,3 +96,40 @@ def test_incomplete_event_or_gpu_coverage_stays_unpriced(evidence, defect):
     assert result["status"] == "incomplete", (defect, result)
     assert result["issues"]
     assert result["timings"] is None
+
+
+def test_zero_token_cleanup_does_not_consume_prefill_step():
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+    from experiments.full_engine_timings import FullEngineTimingRecorder
+    recorder = FullEngineTimingRecorder.__new__(FullEngineTimingRecorder)
+    recorder.current, recorder.ranges, recorder.steps = None, {}, []
+    recorder.torch = SimpleNamespace(profiler=SimpleNamespace(record_function=lambda name: nullcontext()))
+    scheduler = SimpleNamespace(total_num_scheduled_tokens=0, finished_req_ids={"warmup"})
+    with recorder.housekeeping(scheduler):
+        assert recorder.current is None
+    assert recorder.steps == []
+    assert list(recorder.ranges.values()) == [{"kind": "housekeeping", "scheduled_tokens": 0,
+                                               "finished_request_ids": ["warmup"]}]
+    scheduler.total_num_scheduled_tokens = 1
+    with pytest.raises(RuntimeError, match="schedules tokens"):
+        with recorder.housekeeping(scheduler):
+            pass
+
+
+@pytest.mark.parametrize("gpu_work", [False, True])
+def test_cleanup_scope_is_retained_and_cannot_hide_gpu_work(evidence, gpu_work):
+    capture, profile = evidence
+    capture["ranges"]["cleanup"] = {"kind": "housekeeping", "scheduled_tokens": 0,
+                                    "finished_request_ids": ["warmup"]}
+    profile["traceEvents"].append({"ph": "X", "name": "cleanup", "pid": 10, "tid": 20,
+                                    "ts": -100, "dur": 50})
+    if gpu_work:
+        profile["traceEvents"].extend([
+            {"ph": "X", "cat": "cuda_runtime", "name": "cudaLaunchKernel", "pid": 10, "tid": 20,
+             "ts": -90, "dur": 1, "args": {"correlation": 5000}},
+            {"ph": "X", "cat": "kernel", "name": "cleanup_gpu", "ts": -80, "dur": 5,
+             "args": {"correlation": 5000, "device": 0, "stream": 7}}])
+    result = analyze_profile_partition(capture, profile)
+    assert result["status"] == ("incomplete" if gpu_work else "observed_same_run_partition")
+    assert result["timings"] is None

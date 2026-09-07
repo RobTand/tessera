@@ -888,7 +888,9 @@ and partition requests, resets prefix state for every request, and requires the
 unchanged 512-token calibration prompt and identical generated tokens. Native
 `apply` boundaries record CUDA events on the engine main stream. Every adjacent
 fixed gap is measured directly using the same event sequence; no independently
-measured operator median or kernel-duration sum is subtracted. A separate
+measured operator median or kernel-duration sum is subtracted. Zero-token stock request-cleanup calls retain explicit CPU observation ranges
+without consuming a prefill/decode step. Any GPU operation outside those two
+measured steps still refuses the partition. A separate
 observer stream joins the main completion event and stock asynchronous output
 copy event without introducing a wait into the engine streams.
 

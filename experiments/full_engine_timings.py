@@ -171,6 +171,17 @@ class FullEngineTimingRecorder:
         event.record(stream)
         return event
 
+    @contextmanager
+    def housekeeping(self, scheduler):
+        """Retain stock request cleanup; any GPU launch here still refuses."""
+        if self.current is not None or scheduler.total_num_scheduled_tokens != 0:
+            raise RuntimeError("housekeeping overlaps a timed step or schedules tokens")
+        name = "tessera.engine.housekeeping." + str(len(self.ranges))
+        self.ranges[name] = {"kind": "housekeeping", "scheduled_tokens": 0,
+                             "finished_request_ids": sorted(scheduler.finished_req_ids)}
+        with self.torch.profiler.record_function(name):
+            yield
+
     def begin_step(self, scheduler, main_stream, copy_stream):
         if self.current is not None or len(self.steps) >= 2:
             raise RuntimeError("overlapping or excess timed engine steps")
