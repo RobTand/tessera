@@ -1561,6 +1561,10 @@ def _fit_lut(
                 if base_cost.is_floating_point() else 0.0)
         all_bytes = torch.arange(first + FIRST, last + FIRST, dtype=torch.long, device=device)
         unused = _unused_bytes(all_bytes, candidate_bytes)
+        # Gathered once, and indexed by a PYTHON int below: ``grid_values[t]``
+        # for a 0-dim tensor ``t`` converts the index with ``item()``, which is
+        # the very drain this loop is here to remove.
+        unused_values = grid_values.index_select(0, unused - FIRST)
         # Every trial at index ``i`` OVERWRITES position ``i``, so its cost is
         # a function of the other ``entries - 1`` values alone -- never of
         # which byte an earlier accept at the same index left there.  So a
@@ -1578,7 +1582,7 @@ def _fit_lut(
             for i in range(start, n_table):
                 for k in range(unused.numel()):
                     trial = table.clone()
-                    trial[i] = grid_values[unused[k] - FIRST]
+                    trial[i] = unused_values[k]
                     trials.append(_lut_cost(s, w, trial))
             scored = torch.stack(trials).double().tolist()
             if base is None:
@@ -1595,10 +1599,11 @@ def _fit_lut(
                 break
             i, k = hit
             table = table.clone()
-            table[i] = grid_values[unused[k] - FIRST]
+            table[i] = unused_values[k]
             candidate_bytes = candidate_bytes.clone()
             candidate_bytes[i] = unused[k]
             unused = _unused_bytes(all_bytes, candidate_bytes)
+            unused_values = grid_values.index_select(0, unused - FIRST)
             start = i + 1
         if not improved:
             break

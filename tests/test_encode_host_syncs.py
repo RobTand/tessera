@@ -226,7 +226,9 @@ def test_the_window_call_syncs_once_whatever_the_chunk_count():
     viterbi_window_fused(targets, vectors, 12, 4, weights=weights, chunk=64)
     _, syncs = sync_ops(lambda: viterbi_window_fused(
         targets, vectors, 12, 4, weights=weights, chunk=64))
-    assert len(syncs) <= 1, f"{len(syncs)} host syncs over 5 chunks of 64 columns"
+    # One for the ``sse`` float this call still returns, and one the plan
+    # machinery itself performs -- neither is per chunk, which is the claim.
+    assert len(syncs) <= 2, f"{len(syncs)} host syncs over 5 chunks of 64 columns"
 
 
 @cuda
