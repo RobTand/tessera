@@ -88,10 +88,11 @@ not a bound on queueing/retries, detached sessions/containers, or descendants
 left after a command completes before its deadline. Host `timeout` binaries
 are not trusted as interchangeable: the dl380g10 uutils 0.8.0 probe returned
 137 while leaving a same-group child in state S; both Sparks had GNU 9.4.
-The deployed pbrun parses but does not apply
-its own `--timeout-s`; its worker may report outer status 1 for any nonzero
-inner result, so a receipt must not claim it observed numeric 124/137 merely
-from that outer status. The command and deadline/grace are retained per arm.
+The deployed pbrun seals `--timeout-s` as `execution_timeout_s`; its pool
+applies the effective action budget and records requested/effective values
+and any ceiling clamp (verified 2026-09-07 against the published client and
+pool). A worker's outer nonzero status is still not evidence of the inner
+numeric 124/137: retain the inner logs and command deadline/grace per arm.
 
 Each population retains the actual Git snapshot commit and separately records
 `tessera.suite_source.v1`: SHA-256 over every tracked source path, executable
