@@ -116,3 +116,27 @@ CPUs, 4 GiB aggregate memory and a 2 GiB GPU subset. They qualify only this
 stream lookup, not timing overhead, profiler completeness or full-engine cost.
 An earlier attempt `02eb556c1f83` failed before CUDA work because its root user
 could not write the NFS output; the checks above ran as UID/GID 1000.
+
+## Timing instrumentation truth regression — later 2026-09-07
+
+Review of the final timing plan found that the runtime record cleared its
+allocation collector but still reported a BLAS observer and native allocation
+owner rule if those resource-only assets were supplied in the plan. The timing
+worker never loaded or used them. PB regression
+`6af45f329f85c81f9b55545629c803de759584c60c552373baabce64dbaf77eb`
+reproduced the false fields in all five package/provenance fixture cases.
+
+The shared runtime observer now leaves all three resource-only instrumentation
+fields null in timing mode, while preserving them for resource mode. The queued
+timing action `18201d10261c` was withdrawn before admission and superseded;
+no measured artifact was overwritten. Resource action `1806dd5f8e59` is
+unaffected because its mode already reports those instruments correctly.
+
+PB `974e03d96b8c5d7fa4d323e2aab189ecef906973f8292251c24b687a8710e7b3`
+ran explicit compile checks and **55 passing tests**, 0 skips/0 missing, for the
+worker, timing recorder and native boundaries on dl380g10/Torch 2.11.0+cpu with
+six workers, 8 GiB aggregate memory and native threads bounded to one. Exit 0,
+complete cleanup and independently rehashed CAS payload
+`696ead1ff1a40aef13fcebfc563071ed5256be64c9afd9cb109592ed86f742f0`
+verified. This fixes observation truth; no runtime relation or fixed price is
+admitted by these tests.

@@ -203,8 +203,9 @@ def full_engine_runtime_observation(plan):
                                                   if plan.get("observation_mode", "resources") == "resources" else None,
             "blas_workspace_observer": {"library_sha256": plan["blas_workspace_observer"]["sha256"],
                                         "loaded_path": plan["blas_workspace_observer"]["path"]}
-                                       if plan.get("blas_workspace_observer") else None,
-            "native_owner_rule": plan.get("native_owner_rule")}}
+                                       if plan.get("observation_mode", "resources") == "resources" and plan.get("blas_workspace_observer") else None,
+            "native_owner_rule": plan.get("native_owner_rule")
+                                 if plan.get("observation_mode", "resources") == "resources" else None}}
 
 
 

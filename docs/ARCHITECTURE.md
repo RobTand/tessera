@@ -883,7 +883,9 @@ shared attention/recurrent cache-capacity policy require further engine
 qualification. No application default or serving gate reads this raw ledger.
 
 `--observation-mode timings --all-units` uses a separate stock worker without
-allocation collection. After one identical warmup, it interleaves profiled control
+allocation collection. Its runtime record leaves resource-only instrumentation
+fields null even when those assets are available in the launch plan.
+After one identical warmup, it interleaves profiled control
 and partition requests, resets prefix state for every request, and requires the
 unchanged 512-token calibration prompt and identical generated tokens. Native
 `apply` boundaries record CUDA events on the engine main stream. Every adjacent

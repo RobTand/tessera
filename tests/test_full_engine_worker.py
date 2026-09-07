@@ -321,6 +321,17 @@ def test_full_engine_runtime_preserves_base_and_checks_installed_package(
     assert result["loaded_package"]["package_files"] == files
     assert result["loaded_package"]["package_files_unchanged_from_installer"] is True
     assert result["loaded_package"]["cached_unit_file"] == str(cached_file)
+    timing_plan = dict(plan, observation_mode="timings",
+                       blas_workspace_observer={"path": "/fixture/blas.so", "sha256": "d" * 64},
+                       native_owner_rule={"path": "/fixture/rule.json", "sha256": "e" * 64})
+    timing = worker_module.full_engine_runtime_observation(timing_plan)
+    assert timing["instrumentation"] == {"resource_collector": None,
+                                         "blas_workspace_observer": None, "native_owner_rule": None}
+    resource = worker_module.full_engine_runtime_observation(dict(timing_plan, observation_mode="resources"))
+    assert resource["instrumentation"] == {
+        "resource_collector": {"library_sha256": "c" * 64, "loaded_path": "/fixture/collector.so"},
+        "blas_workspace_observer": {"library_sha256": "d" * 64, "loaded_path": "/fixture/blas.so"},
+        "native_owner_rule": timing_plan["native_owner_rule"]}
     if defect == "package_changed":
         cached_file.write_text("# changed after install\n")
         message = "changed from installer"
