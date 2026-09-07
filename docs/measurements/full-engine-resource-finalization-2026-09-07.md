@@ -80,3 +80,35 @@ Most history exists at model load, before the first observed native invocation.
 The 789,593 retained timestamp revisions remain a separate checkpoint-growth
 cost; a complete-run size/time budget must account for them. The complete
 capture and timing pass have not been restarted at this checkpoint.
+
+## Conditional full-run capacity estimate and direct launch
+
+PB CPU artifact inspection
+`262595d29337ce7a4f59d680536737f5744ecdb796cb890ed77c38059babd104`
+measured the parsed Python 3.12.3 component sizes. The largest prefix checkpoint
+occupied 134,141,307 Python bytes and 27,609,131 canonical compact bytes.
+Charging this observed maximum to all 165 planned checkpoints gives 22.13 GB
+of checkpoint objects. Conservatively allowing three simultaneous checkpoint
+representations gives 66.40 GB, with approximately 4.86 GB of capture wire
+bytes plus model, collector and other state. The planning estimate was roughly
+94 GB including a growth allowance; it is conditional on native history/API
+and checkpoint growth, not a hard bound or a measured full-run peak.
+
+The inspection artifact is
+`/mnt/shared/tessera-native376-resource/reference-prefix-growth-audit-r1.json`,
+SHA-256 `7bf6ad9b5f24b7ec431494e98e3e201ff4d691cba04d53e880417de10119d932`.
+Exit 0, cleanup and receipt/payload hashes were checked; CAS receipt
+`13b139406b818ecb2034fe3802b13fc221674a8b486388df43f8648ea58e0418`.
+
+A fresh Lina observation found 124.06 GB available physical memory and no GPU
+process or container. At 17:25:36 UTC, the full 76-invocation resource capture
+started at source `3340b253`, directly under the user's expanded vLLM exemption.
+It has no PB submission or GPU quota. The owned launcher retains the exact
+container identity, source/image/calibration/cache identities, sampled cgroup
+memory/CPU counters and host MemAvailable, and both-host Netdata. Its host CPU
+affinity is unrestricted with native-library threads bounded to one; this
+differs from the earlier PB CPU mask and does not establish an engine speedup.
+The result is outstanding at this checkpoint. Artifacts and launch log are at
+`/mnt/shared/tessera-native376-resource/full-engine-reference-r3/` and the sibling
+`full-engine-reference-r3-launcher.log`. Complete resource closure and timings
+remain unmeasured; the native-owner refusal is unchanged.
