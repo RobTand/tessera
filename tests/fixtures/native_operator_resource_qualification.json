@@ -1,0 +1,364 @@
+{
+  "expected_external_bytes": 123456,
+  "provenance": {
+    "action_key": "60301769b227b23b5fad88bcc5dae8e3f16696fb3a0b86de0f72f9be73d741ac",
+    "api_filter": "retain every API interval overlapping qualification:begin through qualification:end; all memory/configuration/drop/marker records retained verbatim; omit only cuGetProcAddress_v2 and cuDeviceGetAttribute startup queries",
+    "api_omitted_query_names": [
+      "cuGetProcAddress_v2",
+      "cuDeviceGetAttribute"
+    ],
+    "api_records_original": 720,
+    "api_records_retained": 20,
+    "canonical_qualification_sha256": "ba227845531e379e85823a169f66fee8e2770a916f24c7737715a326ff6460c5",
+    "canonical_trace_path": "/mnt/shared/tessera-native376-resource/qualification-r2.json",
+    "canonical_trace_sha256": "1fee21253cca5933cce0bb617c5116a04b2973161514a875925be7b52b55f897",
+    "exit_code": 0,
+    "scope": "CPU regression excerpt; canonical full-process evidence is the original PB GPU trace",
+    "worker": "sparky"
+  },
+  "result": {
+    "composition": "sum_of_independent_peaks_including_output",
+    "context_id": 1,
+    "device_id": 0,
+    "external_native_peak_bytes": 123456,
+    "full_model_fixed_resources_complete": false,
+    "interval": {
+      "begin_ns": 1788754490621922727,
+      "end_ns": 1788754490622423786,
+      "name": "qualification"
+    },
+    "peak_scratch_bytes": 1172032,
+    "process_id": 1,
+    "reasons": [],
+    "schema": "tessera.native_operator_resource_bound.v1",
+    "scope": "warmed_eager_operator_incremental_live_allocations",
+    "status": "complete_operator_bound",
+    "torch_peak_increment_bytes": 1048576
+  },
+  "torch_observation": {
+    "after_segments": [
+      {
+        "address": 248262860734464,
+        "total_size": 2097152
+      }
+    ],
+    "allocator_backend": "native",
+    "before_allocated_bytes": 0,
+    "before_segments": [
+      {
+        "address": 248262860734464,
+        "total_size": 2097152
+      }
+    ],
+    "context_id": 1,
+    "device_id": 0,
+    "peak_allocated_bytes": 1048576
+  },
+  "torch_version": "2.13.0+cu130",
+  "trace": {
+    "api_events": [
+      {
+        "correlation_id": 149,
+        "end_ns": 1788754490621949911,
+        "name": "cudaGetDevice_v3020",
+        "process_id": 1,
+        "return_value": 0,
+        "start_ns": 1788754490621949735,
+        "thread_id": 204842784
+      },
+      {
+        "correlation_id": 150,
+        "end_ns": 1788754490621951415,
+        "name": "cudaGetDevice_v3020",
+        "process_id": 1,
+        "return_value": 0,
+        "start_ns": 1788754490621951303,
+        "thread_id": 204842784
+      },
+      {
+        "correlation_id": 151,
+        "end_ns": 1788754490621952967,
+        "name": "cudaGetDevice_v3020",
+        "process_id": 1,
+        "return_value": 0,
+        "start_ns": 1788754490621952839,
+        "thread_id": 204842784
+      },
+      {
+        "correlation_id": 152,
+        "end_ns": 1788754490621955943,
+        "name": "cuDevicePrimaryCtxGetState",
+        "process_id": 1,
+        "return_value": 0,
+        "start_ns": 1788754490621955783,
+        "thread_id": 204842784
+      },
+      {
+        "correlation_id": 153,
+        "end_ns": 1788754490621956279,
+        "name": "cudaGetDevice_v3020",
+        "process_id": 1,
+        "return_value": 0,
+        "start_ns": 1788754490621956167,
+        "thread_id": 204842784
+      },
+      {
+        "correlation_id": 154,
+        "end_ns": 1788754490621956567,
+        "name": "cuDevicePrimaryCtxGetState",
+        "process_id": 1,
+        "return_value": 0,
+        "start_ns": 1788754490621956503,
+        "thread_id": 204842784
+      },
+      {
+        "correlation_id": 155,
+        "end_ns": 1788754490621956823,
+        "name": "cudaGetDevice_v3020",
+        "process_id": 1,
+        "return_value": 0,
+        "start_ns": 1788754490621956727,
+        "thread_id": 204842784
+      },
+      {
+        "correlation_id": 597,
+        "end_ns": 1788754490622088072,
+        "name": "cuDriverGetVersion",
+        "process_id": 1,
+        "return_value": 0,
+        "start_ns": 1788754490622087896,
+        "thread_id": 204842784
+      },
+      {
+        "correlation_id": 598,
+        "end_ns": 1788754490622090968,
+        "name": "cuInit",
+        "process_id": 1,
+        "return_value": 0,
+        "start_ns": 1788754490622088248,
+        "thread_id": 204842784
+      },
+      {
+        "correlation_id": 599,
+        "end_ns": 1788754490622091768,
+        "name": "cuModuleGetLoadingMode",
+        "process_id": 1,
+        "return_value": 0,
+        "start_ns": 1788754490622091704,
+        "thread_id": 204842784
+      },
+      {
+        "correlation_id": 600,
+        "end_ns": 1788754490622116920,
+        "name": "cuDeviceGetCount",
+        "process_id": 1,
+        "return_value": 0,
+        "start_ns": 1788754490622116840,
+        "thread_id": 204842784
+      },
+      {
+        "correlation_id": 601,
+        "end_ns": 1788754490622117208,
+        "name": "cuDeviceGet",
+        "process_id": 1,
+        "return_value": 0,
+        "start_ns": 1788754490622117000,
+        "thread_id": 204842784
+      },
+      {
+        "correlation_id": 602,
+        "end_ns": 1788754490622130408,
+        "name": "cuDeviceGetName",
+        "process_id": 1,
+        "return_value": 0,
+        "start_ns": 1788754490622118072,
+        "thread_id": 204842784
+      },
+      {
+        "correlation_id": 603,
+        "end_ns": 1788754490622137304,
+        "name": "cuDeviceTotalMem_v2",
+        "process_id": 1,
+        "return_value": 0,
+        "start_ns": 1788754490622131048,
+        "thread_id": 204842784
+      },
+      {
+        "correlation_id": 692,
+        "end_ns": 1788754490622153832,
+        "name": "cuDeviceGetUuid",
+        "process_id": 1,
+        "return_value": 0,
+        "start_ns": 1788754490622153432,
+        "thread_id": 204842784
+      },
+      {
+        "correlation_id": 716,
+        "end_ns": 1788754490622337465,
+        "name": "cudaMalloc_v3020",
+        "process_id": 1,
+        "return_value": 0,
+        "start_ns": 1788754490622212601,
+        "thread_id": 204842784
+      },
+      {
+        "correlation_id": 717,
+        "end_ns": 1788754490622415546,
+        "name": "cudaFree_v3020",
+        "process_id": 1,
+        "return_value": 0,
+        "start_ns": 1788754490622339353,
+        "thread_id": 204842784
+      },
+      {
+        "correlation_id": 718,
+        "end_ns": 1788754490622419418,
+        "name": "cudaGetDevice_v3020",
+        "process_id": 1,
+        "return_value": 0,
+        "start_ns": 1788754490622419178,
+        "thread_id": 204842784
+      },
+      {
+        "correlation_id": 719,
+        "end_ns": 1788754490622421338,
+        "name": "cudaDeviceSynchronize_v3020",
+        "process_id": 1,
+        "return_value": 0,
+        "start_ns": 1788754490622420234,
+        "thread_id": 204842784
+      },
+      {
+        "correlation_id": 720,
+        "end_ns": 1788754490622422042,
+        "name": "cudaGetDevice_v3020",
+        "process_id": 1,
+        "return_value": 0,
+        "start_ns": 1788754490622421930,
+        "thread_id": 204842784
+      }
+    ],
+    "capture": {
+      "collector_library_sha256": "1a893cec8e7386c48b86f69ebb6c677b009f9aa0653afae5b88594e8deaaaf73",
+      "start_code": 0,
+      "started_before_cuda_libraries": true,
+      "stop_code": 0
+    },
+    "completed_buffers": 1,
+    "configuration": [
+      {
+        "code": 0,
+        "operation": "register_callbacks"
+      },
+      {
+        "code": 0,
+        "operation": "allocation_source"
+      },
+      {
+        "code": 0,
+        "operation": "enable_memory2"
+      },
+      {
+        "code": 0,
+        "operation": "enable_memory_pool"
+      },
+      {
+        "code": 0,
+        "operation": "enable_runtime"
+      },
+      {
+        "code": 0,
+        "operation": "enable_driver"
+      },
+      {
+        "code": 0,
+        "operation": "flush_before_disable"
+      },
+      {
+        "code": 0,
+        "operation": "flush_after_disable"
+      }
+    ],
+    "cupti_version": 130001,
+    "dropped_records": [
+      {
+        "code": 0,
+        "context_handle": 0,
+        "count": 0,
+        "stream_id": 204842784
+      },
+      {
+        "code": 0,
+        "context_handle": 0,
+        "count": 0,
+        "stream_id": 0
+      }
+    ],
+    "end_ns": 1788754490623143278,
+    "errors": [],
+    "markers": [
+      {
+        "name": "qualification:begin",
+        "timestamp_ns": 1788754490621922727
+      },
+      {
+        "name": "qualification:end",
+        "timestamp_ns": 1788754490622423786
+      }
+    ],
+    "memory_events": [
+      {
+        "address": 248262860734464,
+        "async": false,
+        "bytes": 2097152,
+        "context_id": 1,
+        "correlation_id": 136,
+        "device_id": 0,
+        "device_memory": true,
+        "memory_kind": 3,
+        "operation": "allocate",
+        "pool_type": 0,
+        "process_id": 1,
+        "source": "/usr/local/lib/python3.12/dist-packages/torch/lib/libc10_cuda.so",
+        "stream_id": 4294967295,
+        "timestamp_ns": 1788754490621199874
+      },
+      {
+        "address": 248262858637312,
+        "async": false,
+        "bytes": 123456,
+        "context_id": 1,
+        "correlation_id": 716,
+        "device_id": 0,
+        "device_memory": true,
+        "memory_kind": 3,
+        "operation": "allocate",
+        "pool_type": 0,
+        "process_id": 1,
+        "source": "/lib/aarch64-linux-gnu/libffi.so.8",
+        "stream_id": 4294967295,
+        "timestamp_ns": 1788754490622334697
+      },
+      {
+        "address": 248262858637312,
+        "async": false,
+        "bytes": 123456,
+        "context_id": 1,
+        "correlation_id": 717,
+        "device_id": 0,
+        "device_memory": true,
+        "memory_kind": 3,
+        "operation": "free",
+        "pool_type": 0,
+        "process_id": 1,
+        "source": "",
+        "stream_id": 4294967295,
+        "timestamp_ns": 1788754490622342873
+      }
+    ],
+    "pool_records": 0,
+    "process_id": 1,
+    "schema": "tessera.cupti_memory_trace.v1",
+    "start_ns": 1788754489927154764
+  }
+}
