@@ -70,15 +70,13 @@ class NativeMemoryCollector:
         path.write_text(json.dumps(raw, sort_keys=True) + "\n")
         return raw
 
-    @staticmethod
-    def current_context_id():
+    def current_context_id(self):
         """Read the current CUDA context's CUPTI identity without creating one."""
         driver = ctypes.CDLL("libcuda.so.1")
         context = ctypes.c_void_p()
         if driver.cuCtxGetCurrent(ctypes.byref(context)) != 0 or not context.value:
             raise RuntimeError("no current CUDA context")
-        cupti = ctypes.CDLL("libcupti.so")
-        get_id = cupti.cuptiGetContextId
+        get_id = self._lib.cuptiGetContextId
         get_id.argtypes = [ctypes.c_void_p, ctypes.POINTER(ctypes.c_uint32)]
         context_id = ctypes.c_uint32()
         if get_id(context, ctypes.byref(context_id)) != 0:
