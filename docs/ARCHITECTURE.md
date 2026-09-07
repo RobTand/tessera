@@ -56,6 +56,10 @@ paired source-execution descriptor and independent qualification digest.
 Re-stamped 2026-09-07 for the explicit first-model KV capacity configuration
 and native factory binding; packaged defaults and release gates are unchanged.
 
+Re-stamped 2026-09-07 on `codex/reader-byte-unpack` for byte-sized narrow
+field decoding in `wire._from_bits` (§3). Wire grammar and
+`encoder_profile_id` remain unchanged; the reader source digest changes.
+
 ## 1. Scope
 
 This doc covers the path from a PrismaQuant rung assignment to a served
@@ -848,6 +852,12 @@ per unit, checked by `experiments/check_wire_against_plan.py`. A plan that
 leaves a body Linear unnamed does not get a passthrough: the exporter falls
 back to its `--grid`/`--q256` default, so the converter names every unpriced
 Linear `"BF16"` explicitly.
+
+The CPU wire reader reconstructs fields of one through eight bits with
+`numpy.packbits` into byte storage, then widens each decoded value once to
+`int64`. Wider fields retain the integer shift/reduction path. This bounds
+intermediate allocation without changing MSB-first ordering, public result
+dtypes, or the existing truncation and dirty-slack refusals.
 
 ### 3.1 Which encoder cut the bytes is on the artifact
 
