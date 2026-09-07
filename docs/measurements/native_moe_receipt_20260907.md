@@ -1,0 +1,86 @@
+# Whole-MoE receipt boundary: CPU and factory evidence — 2026-09-07
+
+This records initial implementation evidence for #395. No original 96-member
+wire stack was loaded or applied in these runs. There is no whole-MoE latency,
+quality result, complete engine resource price, runtime-cell promotion or
+release qualification here. The next gates use the canonical regenerated
+capture, original PWC wires and independently frozen PrismaQuant panel.
+
+## CPU boundary and lifecycle checks
+
+PB `98a457255259d924acb5c8ea97dfbe13e159551b460537a9887404a0c3b6be83`
+finished on dl380g10 with exit 0: **184 passed, 0 skipped, 0 uncollected**.
+Torch was `2.11.0+cpu`; no GPU surface was exercised. Compilation checks also
+passed. The admitted action reserved four CPUs and 8 GiB with OMP/MKL/OpenBLAS
+threads bounded to one and pytest `-n 4 --dist worksteal --durations=8` on:
+
+- `tests/test_native_moe_operator_receipt.py`
+- `tests/test_native_operator_receipt.py`
+- `tests/test_native_operator_resources.py`
+
+The tests cover the complete ordered member join, exact routing transport and
+bias, observed factory configuration, phase/output gates before all timings,
+mutations during timing, workspace pointer drift and timing after collector
+shutdown. The panel preserves `probe_scope` when the joint probe is an explicit
+first-sequence integration screen; this does not change the full native capture.
+
+CAS payload SHA256:
+`7494063f8b33c7c7f2204ebefb9e4af67e86a44d96178489fb05dcc39bc62b25`.
+Actual logs, terminal coordinates and independently recomputed payload hashes
+are retained in `/mnt/shared/tessera-native376-resource/native-moe-395-validation/`.
+An earlier CPU tooling attempt (`501de022…`) lacked Torch and skipped the two
+Torch-dependent modules; its 29 passes are not validation of this producer.
+
+## Stock-runtime factory construction
+
+PB `e59018cd0f10bc1f42f7bbdf8134f4e113bdbbb49d2e772605604e7f582107e7`
+finished on Sparky with exit 0, using four CPUs, 12 GiB total memory and a 4 GiB
+GPU budget. The image was the actual official stock base
+`vllm/vllm-openai@sha256:4e31c581716a5cb9ef31eddb0a425842b75cab07d5cd63fb9572e69ae8794c33`,
+upstream commit `1970f3ed4be7fa8620e4ddc4a12c36a8384cfc27`. Canonical Tessera
+source `382a1a97dc89618173a2c0799ac569d473b9dc2a` was installed separately with
+no dependencies; all 4,967 stock vLLM files matched before and after installation.
+The launcher bound the actual Docker image ID and the official RepoDigest,
+then verified the owned container's image and exit status.
+
+The stock LFM factory, supplied its grouped sigmoid routing and an explicit
+synthetic FP32 selection bias, constructed E=32, hidden=2048, intermediate=1024,
+top-k=4, BF16, TP1/EP1 with maximum scheduled tokens 2048. Its observed backend
+was **TRITON**, and its checkpoint role mapping was `w1,w2,w3` (gate/down/up).
+The source wire container role order remains explicitly `w1,w3,w2` (gate/up/down).
+The factory's recorded routing-method enum value was 2. These are configuration
+observations; this smoke did not execute an expert kernel or establish speed.
+
+The selected serving config is
+`experiments/configs/lfm25_first_model_clean_20260907.json`, SHA256
+`1b3bd7af48a0c859a89c9c42f18aa6131a246911fdf194943369bc41b7aad134`.
+Factory CAS payload SHA256:
+`538cba1001794b104c3e7eb49dfebd0a384ed0e235268744c3dbd70103ad9e8f`.
+`native-moe-395-validation/factory-smoke.json` extracts the actual JSON record;
+`native-moe-clean-context-r4/` retains installation, image and container evidence.
+
+Two earlier findings were corrected before this pass. Action `aee98709…`
+refused the config's native `set` type; `_plain` now represents sets
+explicitly and sorts their JSON values deterministically, with no repr fallback.
+Action `2892c6f6…` reached the native MoE import but FlashInfer could not write
+its cache after dropping UID. The launcher now sets the library's supported
+`FLASHINFER_WORKSPACE_BASE` to an owned temporary path. No runtime core file
+was patched to fix either failure. The first transport attempt `02d1c4d…`
+failed to import the harness because the launcher omitted `/work` from its
+Python path; it did not reach the factory.
+
+## Clean collector build
+
+PB `3df90b5dad1bbc8393d9f173976fc23b0ea8390f4cbdefcef075b5a7183e02be`
+built the existing C++ observer against that stock image with exit 0. The
+image's packaged CUPTI headers/libraries live under
+`/usr/local/lib/python3.12/dist-packages/nvidia/cu13/`; the earlier build
+`3ba096a2…` found no `cupti.h` in the old image's CUDA include location.
+The source was unchanged, SHA256
+`530cac2f30ccfa3d8581755b84457f6283df96f1dd6e22092200507a85533357`.
+The resulting shared library is
+`/mnt/shared/tessera-native376-resource/clean1970-native_operator_resources.so`,
+SHA256 `337bbbca32a9ec0dbc453f05edff309a089875eff00c159b7d7e45596ea6a156`.
+This is build evidence only; allocation capture on the clean runtime remains
+a separate gate. The build command, actual image ID and artifact hash are in
+its `.build.json` sidecar and the verified PB result.

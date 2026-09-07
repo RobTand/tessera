@@ -45,6 +45,10 @@ Re-stamped 2026-09-07 on `codex/native-operator-receipts-376` for the
 original-wire native dense research receipt and explicit operator resource
 bound (#376; §2.4). Serving defaults, wire and release gates are unchanged.
 
+Re-stamped 2026-09-07 on `codex/native-moe-receipts` for the complete routed
+owner research receipt (#395; §2.5), including captured routing transport and
+existing vLLM workspace ownership.
+
 ## 1. Scope
 
 This doc covers the path from a PrismaQuant rung assignment to a served
@@ -757,6 +761,39 @@ allocator slack, KV cache, CUDA graph pools, routed-expert execution or served
 quality. Those require their own engine receipts before a PrismaQuant runtime
 price or release admission. `experiments/qualify_native_operator.py` is a
 synthetic BF16 instrumentation fixture and cannot stand in for a real PWC row.
+
+### 2.5 Whole routed receipts preserve the actual expert owner
+
+`experiments/bench_native_moe_operator.py` prepares the complete 32-expert
+E4M3 K1 R1024 owner from all 96 original PWC wires. Expert and gate/up/down
+role order is explicit. It uses stock vLLM's LFM `FusedMoEFactory`, the actual
+captured selection bias, and versioned serving settings, then invokes the
+existing resident modular `quant_method.apply` at eager TP1/EP1. The captured
+input, top-k IDs and post-normalization routing weights are immutable inputs;
+the router itself is outside this operator. Any dtype transport must reproduce
+the original captured bytes on exact roundtrip. BF16 routing weights are not
+renormalized to satisfy a sum-equals-one assumption.
+
+Preparation warms both actual phases before freezing lazy libraries, resolved
+backend configuration, expert tensor identities and the existing
+`vllm.WorkspaceManager` allocation. The workspace is then locked. Its portable
+layout and byte count are bound separately from runtime binaries, and its
+process storage pointers must remain stable during measurement. A panel binds
+every member's source, render, wire and joint operator identity through the
+consumer's existing `RuntimeBinding`; no scalar group cost or summed leaf
+latency is produced here. An explicit `probe_scope` retains a first-sequence
+integration screen and its parent/subset calibration identities when the joint
+probe uses only that subset; native captured tensors keep their own identities.
+
+Both phases must pass the predeclared activation-QDQ and whole-output gates
+and observed native route before either phase receives CUDA-event samples.
+The producer reuses the dense allocation collector and conservative scratch
+analysis, and collects decision timing only after the collector stops.
+Layer-resident storage and shared-workspace storage remain separate fields.
+Even complete operator scratch evidence leaves full-engine fixed allocations,
+KV capacity and cross-operator workspace composition unresolved. Separate
+Torch-profiler replay and explicit artifact publication retain evidence; this
+research boundary does not promote a runtime cell or qualify a release.
 
 ## 3. Bytes: priced == served
 
