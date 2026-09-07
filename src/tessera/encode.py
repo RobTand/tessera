@@ -27,6 +27,7 @@ import os
 import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
+from typing import Sequence
 
 import torch
 
@@ -2328,6 +2329,228 @@ def encode_unit(
     sets the shipping defaults (``export.DEFAULT_SPAN``,
     ``export.DEFAULT_SCALE_PLANE``).
     """
+    return encode_units(
+        [weights], forest, rates, code,
+        rotation=rotation,
+        with_diagonals=with_diagonals,
+        diagonals=[diagonals],
+        completion=completion,
+        released_positions=released_positions,
+        group=group,
+        half=half,
+        scale_headroom=scale_headroom,
+        superblock=superblock,
+        scale_refit=scale_refit,
+        span=span,
+        scale_plane=scale_plane,
+        trellis_weighting=trellis_weighting,
+        body=body,
+        window_bits=window_bits,
+        window_seed=window_seed,
+        window_sigma=window_sigma,
+        channel_sigma=channel_sigma,
+        ldl=[ldl],
+        ldl_block=ldl_block,
+        refit_metric=[refit_metric],
+        refit_metric_trailing=[refit_metric_trailing],
+        refit_reach_floor=refit_reach_floor,
+        refit_gauss_seidel=refit_gauss_seidel,
+        refit_lut_exact=refit_lut_exact,
+        refit_coupled_landing=refit_coupled_landing,
+    )[0]
+
+
+def encode_units(
+    weights: "Sequence[torch.Tensor]",
+    forest: "AnchorForest | dict[int, AnchorForest]",
+    rates: "tuple[int, ...]",
+    code: ConvCode = ConvCode(),
+    rotation: RotationState = RotationState.NONE,
+    with_diagonals: bool = False,
+    diagonals: "Sequence[Diagonals | None] | None" = None,
+    completion: int | None = None,
+    released_positions: int = 0,
+    group: int = 32,
+    half: int = 16,
+    scale_headroom: float = 1.0,
+    superblock: int = 256,
+    scale_refit: int = 4,
+    span: int = 1,
+    scale_plane: ScalePlaneKind = ScalePlaneKind.S6B,
+    trellis_weighting: str = "none",
+    body: BodyKind = BodyKind.TCQ,
+    window_bits: int = 0,
+    window_seed: int = 0,
+    window_sigma: "float | None" = None,
+    channel_sigma: "float | None" = None,
+    ldl: "Sequence[torch.Tensor | None] | None" = None,
+    ldl_block: int = 32,   # DEFAULT_LDLQ_BLOCK in export.py; kept literal to avoid a cycle
+    refit_metric: "Sequence[torch.Tensor | None] | None" = None,
+    refit_metric_trailing: "Sequence[torch.Tensor | None] | None" = None,
+    refit_reach_floor: bool = False,
+    refit_gauss_seidel: bool = False,
+    refit_lut_exact: bool = False,
+    refit_coupled_landing: bool | str = False,
+) -> "list[EncodedUnit]":
+    """Encode ``len(weights)`` same-shape Linears through ONE trellis schedule.
+
+    The batch axis of ``encode_unit`` (tessera#385).  Every unit runs exactly
+    the per-unit encode -- its own scale plane, its own LDL feedback
+    (``residual @ ldl_factor`` at the same shapes and strides), its own scale
+    refit, its own ``sse`` -- and only the Viterbi is shared: at each point
+    where a unit would call ``viterbi_window`` or ``viterbi_columns`` on its
+    ``[rows, n]`` slice of columns, the batch joins the ``B`` slices along the
+    column axis and makes one ``[rows, B * n]`` call.  Columns are independent
+    inside both trellises (``viterbi_window``, ``viterbi_columns``: the branch
+    metric and the min-scan are per column, the traceback is per column), so
+    each unit's columns of the joined answer are the columns its own call would
+    have returned.  The wire per unit is therefore **byte-identical** to
+    ``encode_unit`` on that unit alone, and ``encode_unit`` IS this function at
+    ``B = 1`` -- there is one implementation, not a fast path and a reference.
+
+    What it buys: the trellis launch count is divided by ``B``.  Under LDLQ a
+    unit makes ``cols / ldl_block`` narrow Viterbi calls per pass, each a
+    ``steps``-deep chain of launches over ``ldl_block`` columns; the coset
+    trellis (``_TCQPlan``) is launch-bound at that width and the campaign's
+    ``[1792, 2048]`` experts ran it at 32 columns a call.  Joined, one chain
+    covers ``B * ldl_block`` columns for the same launches.  The fused window
+    body is a different case, and this does not pretend otherwise: its step
+    kernel is already tiled over an L2-bounded column width
+    (``window_viterbi._layout``), so a wider call there is more tiles of the
+    same width, and the gain is the per-call overhead only.
+
+    Per-unit arguments are sequences of ``len(weights)``: ``weights``, and
+    optionally ``diagonals``, ``ldl``, ``refit_metric`` and
+    ``refit_metric_trailing`` (``None`` for the whole sequence means ``None``
+    for every unit).  Everything else is shared, because the joined call must
+    be the same call for every unit: one grid and forests, one rate schedule,
+    one body, one plane, one ``ldl_block`` and pass count.  A batch that mixes
+    units with and without an LDL factor is refused -- the block schedule is
+    what keeps the units in step -- as is one whose weights differ in shape or
+    device.  ``rows`` must match because the joined tensor is ``[rows, B * n]``;
+    ``cols`` because the schedule is per column.
+
+    Memory is ``B`` times one unit's working set (``work``, the LDLQ ``base``
+    / ``ldlq_target`` / ``recon`` / ``targets`` in fp32) plus the joined
+    call's own buffers; the caller sizes ``B`` to the device.
+
+    Returns the ``EncodedUnit`` per unit, in order.
+    """
+    count = len(weights)
+    if count == 0:
+        raise GrammarError("encode_units needs at least one unit")
+
+    def per_unit(name, values):
+        if values is None:
+            return [None] * count
+        values = list(values)
+        if len(values) != count:
+            raise GrammarError(
+                f"{name}: {len(values)} entries for {count} units -- a per-unit "
+                "argument is one entry per weight, in order"
+            )
+        return values
+
+    weights = list(weights)
+    diagonals_ = per_unit("diagonals", diagonals)
+    ldl_ = per_unit("ldl", ldl)
+    refit_metric_ = per_unit("refit_metric", refit_metric)
+    refit_metric_trailing_ = per_unit("refit_metric_trailing", refit_metric_trailing)
+    if count > 1:
+        shapes = {tuple(w.shape) for w in weights}
+        if len(shapes) != 1:
+            raise GrammarError(
+                f"a batch shares one shape; got {sorted(shapes)}. The joined "
+                "trellis call is [rows, B * n], so rows must agree, and the rate "
+                "schedule is per column, so cols must"
+            )
+        devices = {str(w.device) for w in weights}
+        if len(devices) != 1:
+            raise GrammarError(f"a batch lives on one device; got {sorted(devices)}")
+        with_ldl = [l is not None for l in ldl_]
+        if any(with_ldl) and not all(with_ldl):
+            raise GrammarError(
+                "a batch runs one LDLQ schedule: every unit carries an LDL "
+                "factor or none does. The block schedule is what keeps the "
+                "units' trellis calls in step"
+            )
+
+    steps = [
+        _encode_unit_steps(
+            weights[i], forest, rates, code,
+            rotation=rotation,
+            with_diagonals=with_diagonals,
+            diagonals=diagonals_[i],
+            completion=completion,
+            released_positions=released_positions,
+            group=group,
+            half=half,
+            scale_headroom=scale_headroom,
+            superblock=superblock,
+            scale_refit=scale_refit,
+            span=span,
+            scale_plane=scale_plane,
+            trellis_weighting=trellis_weighting,
+            body=body,
+            window_bits=window_bits,
+            window_seed=window_seed,
+            window_sigma=window_sigma,
+            channel_sigma=channel_sigma,
+            ldl=ldl_[i],
+            ldl_block=ldl_block,
+            refit_metric=refit_metric_[i],
+            refit_metric_trailing=refit_metric_trailing_[i],
+            refit_reach_floor=refit_reach_floor,
+            refit_gauss_seidel=refit_gauss_seidel,
+            refit_lut_exact=refit_lut_exact,
+            refit_coupled_landing=refit_coupled_landing,
+        )
+        for i in range(count)
+    ]
+    return _drive_in_step(steps)
+
+
+def _encode_unit_steps(
+    weights: torch.Tensor,
+    forest: "AnchorForest | dict[int, AnchorForest]",
+    rates: "tuple[int, ...]",
+    code: ConvCode = ConvCode(),
+    rotation: RotationState = RotationState.NONE,
+    with_diagonals: bool = False,
+    diagonals: "Diagonals | None" = None,
+    completion: int | None = None,
+    released_positions: int = 0,
+    group: int = 32,
+    half: int = 16,
+    scale_headroom: float = 1.0,
+    superblock: int = 256,
+    scale_refit: int = 4,
+    span: int = 1,
+    scale_plane: ScalePlaneKind = ScalePlaneKind.S6B,
+    trellis_weighting: str = "none",
+    body: BodyKind = BodyKind.TCQ,
+    window_bits: int = 0,
+    window_seed: int = 0,
+    window_sigma: "float | None" = None,
+    channel_sigma: "float | None" = None,
+    ldl: "torch.Tensor | None" = None,
+    ldl_block: int = 32,   # DEFAULT_LDLQ_BLOCK in export.py; kept literal to avoid a cycle
+    refit_metric: "torch.Tensor | None" = None,
+    refit_metric_trailing: "torch.Tensor | None" = None,
+    refit_reach_floor: bool = False,
+    refit_gauss_seidel: bool = False,
+    refit_lut_exact: bool = False,
+    refit_coupled_landing: bool | str = False,
+):
+    """``encode_unit``'s body as a generator: every trellis call is yielded.
+
+    The per-unit encode, verbatim, except that where it would call the
+    Viterbi it yields a ``_TrellisCall`` and receives the answer for its own
+    columns.  ``encode_units`` drives one of these per unit in lock step and
+    runs the yielded calls joined along the column axis; the generator's
+    return value is the ``EncodedUnit``.  Not an entry point: ``encode_unit``
+    and ``encode_units`` are.
+    """
     if weights.ndim != 2:
         raise GrammarError(f"expected a 2-D weight, got shape {tuple(weights.shape)}")
     rows, cols = weights.shape
@@ -2505,7 +2728,6 @@ def encode_unit(
     completion_bits = torch.zeros(steps, cols, dtype=torch.long, device=device)
     codes = torch.zeros(steps, cols, dtype=torch.long, device=device)
     vectors = grid_vector_table(grid, device)
-    rate_vector = torch.tensor(rates, device=device)
     window_codes = window_vectors = None
     if body is BodyKind.WINDOW:
         # Under a CHANNEL plane the table models the Gaussian the rows were
@@ -2537,55 +2759,76 @@ def encode_unit(
             return channel_scale_field(channel_rows, global_scale, rows, cols)
         return torch.repeat_interleave(effective, half).reshape(rows, cols)
 
+    # The columns each (range, rate) pair owns, computed once from the
+    # schedule instead of by a ``torch.nonzero`` per block per pass: the
+    # schedule is static, so the index is too, and ``nonzero`` is a
+    # device-to-host sync -- one per LDLQ block per rate per pass, which on
+    # the campaign's shapes was several hundred a unit (tessera#385).  The
+    # indices are exactly what ``nonzero`` returned: ascending, one per
+    # column whose rate is ``present`` inside the half-open range.
+    column_index: dict = {}
+
+    def columns_of(lo: int, hi: int, present: int) -> torch.Tensor:
+        key = (lo, hi, present)
+        found = column_index.get(key)
+        if found is None:
+            found = torch.tensor(
+                [i for i in range(lo, hi) if rates[i] == present],
+                dtype=torch.long, device=device,
+            )
+            column_index[key] = found
+        return found
+
     def trellis_pass(
         targets: torch.Tensor,
         weights: "torch.Tensor | None" = None,
         span_cols: "tuple[int, int] | None" = None,
-    ) -> float:
+    ):
         # One Viterbi per rate: columns are independent, so a mixed-rate
         # schedule is a partition of columns and not a harder problem.
         # ``span_cols`` restricts the pass to a half-open range of columns and
         # is the whole of what LDLQ needs from the trellis: because the Viterbi
         # carries no state across columns, encoding a range is bit-identical to
         # the same columns of a full pass over the same targets and scale.
-        total = 0.0
-        in_range = None
-        if span_cols is not None:
-            lo, hi = span_cols
-            column = torch.arange(cols, device=device)
-            in_range = (column >= lo) & (column < hi)
+        #
+        # A generator, not a function: the Viterbi itself is not called here.
+        # Each call is YIELDED as a ``_TrellisCall`` to ``encode_units``, which
+        # runs it -- joined along the column axis with the same call from
+        # every other unit of its batch, since columns are independent -- and
+        # sends this unit's slice of the answer back.  The Viterbi's own cost
+        # is not returned: the unit's ``sse`` is computed once at the end,
+        # from the planes and codes the unit returns.
+        lo, hi = (0, cols) if span_cols is None else span_cols
         if body is BodyKind.WINDOW:
             # One table for every rate: a state indexes the same entry
             # whatever width the column's new bits have.
             for present in sorted(set(rates)):
-                which = torch.nonzero(
-                    (rate_vector == present) if in_range is None
-                    else ((rate_vector == present) & in_range)
-                ).squeeze(1)
+                which = columns_of(lo, hi, present)
                 if which.numel() == 0:
                     continue
                 sub = targets[:, which].contiguous()
                 sub_w = None if weights is None else weights[:, which].contiguous()
-                state, s_ = viterbi_window(sub, window_vectors, window_bits, present, weights=sub_w)
-                total += s_
+                state = yield _TrellisCall(
+                    body=body, rate=present, targets=sub, weights=sub_w,
+                    window_vectors=window_vectors, window_bits=window_bits,
+                )
                 anchors[:, which] = state
                 body_bits[:, which] = (state & ((1 << present) - 1)).to(body_dtype)
                 codes[:, which] = window_codes.long()[state]
-            return total
+            return
         for present in sorted(set(rates)):
             picked = forests[present]
             depth = picked.cap - present
             level = depth if completion is None else min(completion, depth)
-            which = torch.nonzero(
-                (rate_vector == present) if in_range is None
-                else ((rate_vector == present) & in_range)
-            ).squeeze(1)
+            which = columns_of(lo, hi, present)
             if which.numel() == 0:
                 continue
             sub = targets[:, which].contiguous()
             sub_w = None if weights is None else weights[:, which].contiguous()
-            a, b, s_ = viterbi_columns(sub, picked, code, level, span=span, weights=sub_w)
-            total += s_
+            a, b = yield _TrellisCall(
+                body=body, rate=present, targets=sub, weights=sub_w,
+                forest=picked, code=code, level=level, span=span,
+            )
             blocks = _anchor_block_table(picked, device)
             reachable = blocks[:, :: 1 << (depth - level)]
             per_pos = vectors[reachable][a]              # [steps, n, D, arity]
@@ -2595,7 +2838,6 @@ def encode_unit(
             body_bits[:, which] = b.to(body_dtype)
             completion_bits[:, which] = c_bits
             codes[:, which] = reachable[a, c_bits]
-        return total
 
     # The amax plane and the trellis are each set without knowledge of the
     # other.  ``scale_refit`` alternates them: re-fit every half's scale to
@@ -2857,7 +3099,7 @@ def encode_unit(
         # unit returns.
         if ldl is None:
             targets = work / scale
-            trellis_pass(targets, weights)
+            yield from trellis_pass(targets, weights)
         else:
             # LDLQ: quantise column blocks last to first, and push each
             # block's reconstruction residual into the blocks still to come.
@@ -2874,7 +3116,7 @@ def encode_unit(
                 # Only this block's columns are read; scaling the whole matrix
                 # once per block would cost the pass a factor of cols/block.
                 targets[:, start:stop] = ldlq_target[:, start:stop] / scale[:, start:stop]
-                trellis_pass(targets, weights, span_cols=(start, stop))
+                yield from trellis_pass(targets, weights, span_cols=(start, stop))
                 block_units = (
                     vectors[codes[:, start:stop]].permute(0, 2, 1).reshape(rows, stop - start)
                 )
@@ -3020,6 +3262,115 @@ def encode_unit(
         channel_sigma=reach_channel_sigma,
         table_reach=table_reach,
     )
+
+
+@dataclass(frozen=True, eq=False)
+class _TrellisCall:
+    """One unit's Viterbi call, as ``_encode_unit_steps`` yields it.
+
+    ``targets``/``weights`` are this unit's ``[rows, n]`` column slice.  A
+    WINDOW call names its table; a TCQ call its forest, code, completion level
+    and span.  ``same_call_as`` is the check that two units' calls can be
+    joined: the shared arguments make them the same call by construction, and
+    this is where that construction is asserted rather than assumed.
+    """
+
+    body: BodyKind
+    rate: int
+    targets: torch.Tensor
+    weights: "torch.Tensor | None"
+    window_vectors: "torch.Tensor | None" = None
+    window_bits: int = 0
+    forest: "AnchorForest | None" = None
+    code: "ConvCode | None" = None
+    level: int = 0
+    span: int = 1
+
+    def same_call_as(self, other: "_TrellisCall") -> bool:
+        return (
+            self.body is other.body
+            and self.rate == other.rate
+            and tuple(self.targets.shape) == tuple(other.targets.shape)
+            and (self.weights is None) == (other.weights is None)
+            and self.window_bits == other.window_bits
+            and self.forest is other.forest
+            and self.code == other.code
+            and self.level == other.level
+            and self.span == other.span
+        )
+
+
+def _run_joined(calls: "list[_TrellisCall]"):
+    """Run one Viterbi over every call's columns; return each call's answer.
+
+    At one call the tensor handed to the Viterbi IS that call's tensor -- no
+    copy, no view -- so ``encode_unit`` runs the same object through the same
+    plan cache as it did before the batch axis existed.
+    """
+    lead = calls[0]
+    n = lead.targets.shape[1]
+    if len(calls) == 1:
+        joined, joined_w = lead.targets, lead.weights
+    else:
+        joined = torch.cat([c.targets for c in calls], dim=1)
+        joined_w = (None if lead.weights is None
+                    else torch.cat([c.weights for c in calls], dim=1))
+    if lead.body is BodyKind.WINDOW:
+        state, _ = viterbi_window(
+            joined, lead.window_vectors, lead.window_bits, lead.rate, weights=joined_w,
+        )
+        if len(calls) == 1:
+            return [state]
+        return [state[:, i * n:(i + 1) * n] for i in range(len(calls))]
+    a, b, _ = viterbi_columns(
+        joined, lead.forest, lead.code, lead.level, span=lead.span, weights=joined_w,
+    )
+    if len(calls) == 1:
+        return [(a, b)]
+    return [(a[:, i * n:(i + 1) * n], b[:, i * n:(i + 1) * n]) for i in range(len(calls))]
+
+
+def _drive_in_step(steps: list) -> "list[EncodedUnit]":
+    """Advance every unit's generator together, joining each round's calls.
+
+    Every unit runs the same schedule -- the same passes over the same blocks
+    at the same rates -- so the generators yield the same call at the same
+    time and finish together.  A batch that falls out of step is a bug in
+    that construction, and it is refused by name rather than run.
+    """
+    count = len(steps)
+    results: list = [None] * count
+    pending: list = [None] * count
+
+    def advance(i, value):
+        try:
+            pending[i] = steps[i].send(value)
+        except StopIteration as stop:
+            results[i] = stop.value
+            pending[i] = None
+
+    for i in range(count):
+        advance(i, None)
+    while True:
+        live = [i for i in range(count) if pending[i] is not None]
+        if not live:
+            break
+        if len(live) != count:
+            raise GrammarError(
+                f"batch fell out of step: {count - len(live)} of {count} units "
+                "finished while the rest still had trellis calls to make"
+            )
+        lead = pending[0]
+        for i in live[1:]:
+            if not pending[i].same_call_as(lead):
+                raise GrammarError(
+                    f"batch fell out of step: unit {i} asked for a different "
+                    "trellis call than unit 0 at the same point of the schedule"
+                )
+        answers = _run_joined([pending[i] for i in live])
+        for i, answer in zip(live, answers):
+            advance(i, answer)
+    return results
 
 
 def _completion_choice(

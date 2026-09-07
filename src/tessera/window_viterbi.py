@@ -94,32 +94,38 @@ _L2_BUDGET = int(os.environ.get("TESSERA_WINDOW_L2_BYTES", "0")) or None
 _GRAPH_ENV = "TESSERA_WINDOW_GRAPH"
 #: Captures are serialised per process; see ``_WindowPlan.capture``.
 _CAPTURE_LOCK = threading.Lock()
-#: How many batches one call must carry before capturing inside that call pays
-#: for itself.  Capture costs about 17 us a node and replay saves about 3.6 us
-#: a node, so a call that runs the loop five times over cannot get its capture
-#: back and a call that runs it six times can.  This is the break-even the
-#: module has always used; what changed in issue #94 is that falling below it
-#: no longer means "run eager forever" (see ``_WINDOW_GRAPH_MIN_CALLS``).
-_GRAPH_MIN_BATCHES = 6
 #: How many times one shape must be asked for before a PERSISTENT plan is
 #: built for it and captured.  A capture is paid once per shape and saves on
 #: every call after it, so the only question is whether a shape recurs at all;
 #: one is the case that must not pay, since a shape seen once would buy a
 #: capture it never replays.  This is the half issue #94 was about: LDLQ hands
-#: this function ``ldl_block`` columns at a time, which is ONE batch, so
-#: ``_GRAPH_MIN_BATCHES`` refused the capture on every one of the hundreds of
-#: identical calls a pass makes -- while the same tensor encoded in one call
-#: captured and replayed 96 times.  The eager and captured spellings were
-#: split by whether the caller was compensating, which is not a property the
-#: launch stream has any business reading.
+#: this function ``ldl_block`` columns at a time, which is ONE batch, and the
+#: old break-even rule (six batches a call, ``_GRAPH_MIN_BATCHES``) refused
+#: the capture on every one of the hundreds of identical calls a pass makes
+#: -- while the same tensor encoded in one call captured and replayed 96
+#: times.  The eager and captured spellings were split by whether the caller
+#: was compensating, which is not a property the launch stream has any
+#: business reading.
+#:
+#: The other half of that rule -- a call wide enough to amortise its own
+#: capture captured INSIDE the call, on a per-call plan, and kept nothing --
+#: went with tessera#385.  A batched LDLQ (``encode.encode_units``) makes the
+#: narrow calls wide again: ``B`` units' blocks joined along the column axis
+#: is one call of ``B * ldl_block`` columns, hundreds of times a pass, at ONE
+#: shape.  Under the old rule every one of them paid a fresh capture, and a
+#: capture is not only its own nodes: ``torch.cuda.graph`` synchronises the
+#: device and empties the caching allocator on entry, so the LDL feedback
+#: matmuls between the calls re-allocated from the driver every block.  A
+#: wide shape that recurs earns a persistent plan exactly as a narrow one
+#: does, and the rule is now one rule.
 _WINDOW_GRAPH_MIN_CALLS = 2
-#: How many shapes hold buffers at once, per thread.  Plans are only kept for
-#: calls below ``_GRAPH_MIN_BATCHES``, which bounds what one holds: its front
-#: and traceback cover fewer than six batches of columns.  A full-width call
-#: keeps today's behaviour -- per-call buffers, captured and dropped inside the
-#: call -- because persisting one would pin the whole tensor's traceback (at
-#: L=14, R=4 over 3072 columns, 545 MiB) to buy nothing but the one capture
-#: that call already amortises over its own 96 batches.
+#: How many shapes hold buffers at once, per thread.  What one holds is its
+#: front (``nmax * 2^L`` floats) and its traceback (``nmax * steps * low``
+#: bytes, the larger of the two at every shipping rung); ``nmax`` is the
+#: call's width capped at ``chunk`` (512), so a batched call of 512 columns
+#: over 1792 rows at L=14, R=7 holds ~117 MiB and one over 7168 rows ~470
+#: MiB.  Eight such is the bound on residency; a caller that batches wider
+#: shapes than its device can hold eight of sizes its batch to the device.
 #:
 #: The shipping schedule asks for few shapes.  Bresenham spreads a fractional
 #: rate over the columns, so at the served rung (E4M3, q256=1042) every one of
@@ -475,12 +481,15 @@ class _WindowPlan:
     Why a persistent plan at all (issue #94): every batch is the same
     ``2 + steps`` launches at the same pointers, with only the three-integer
     descriptor moving, and the descriptor lives on the device so one capture
-    covers every batch.  A call wide enough to run six batches therefore
-    captures inside itself and always did.  LDLQ makes the calls narrow
+    covers every batch.  A call wide enough to run six batches used to
+    capture inside itself, and keep nothing.  LDLQ makes the calls narrow
     instead of few -- ``ldl_block`` columns is ONE batch -- so the same tensor,
     same table, same rate ran captured when it was encoded in one call and
     eager when it was encoded in ``cols / ldl_block`` of them, hundreds of
     times a pass, plus a fresh allocate and a fresh board query each time.
+    A batched LDLQ (tessera#385) then made those hundreds of calls wide, and
+    the per-call capture would have been paid hundreds of times; the plan is
+    now persistent at every width (``_plan_for_call``).
     """
 
     __slots__ = ("device", "rows", "cols", "arity", "size", "rate", "chunk",
@@ -660,21 +669,23 @@ class _WindowPlan:
 def _plan_for_call(*, device, rows, cols, arity, size, rate, chunk, has_weights):
     """The plan this call runs on, and whether it should be captured.
 
-    Three rules, and the first two are the ones the module has always had:
+    Two rules:
 
     * ``TESSERA_WINDOW_GRAPH=0`` is the eager loop on a per-call plan -- the
       spelling that owns nothing, so it is also the control an A/B measures
       against.
-    * a call carrying ``_GRAPH_MIN_BATCHES`` batches or more captures inside
-      itself, on a per-call plan, exactly as before.  It amortises its own
-      capture and persisting its buffers would pin the whole tensor's
-      traceback to save a capture worth 3% of the call.
-    * anything narrower is the issue #94 case.  It gets a PERSISTENT plan the
-      second time its shape is asked for, so the capture is paid once and
-      replayed by every call after -- which is what turns LDLQ's hundreds of
-      one-batch calls from hundreds of eager step loops into hundreds of
-      replays.  The first call of a shape stays eager on a per-call plan, so
-      a shape seen once never buys a capture it cannot use.
+    * otherwise a shape gets a PERSISTENT plan the second time it is asked
+      for (the first time at ``TESSERA_WINDOW_GRAPH=1``), so the capture is
+      paid once and replayed by every call after -- which is what turns
+      LDLQ's hundreds of one-batch calls from hundreds of eager step loops
+      into hundreds of replays (issue #94), and a batched LDLQ's hundreds of
+      wide calls from hundreds of captures into hundreds of replays
+      (tessera#385).  The first call of a shape stays eager on a per-call
+      plan, so a shape seen once never buys a capture it cannot use.
+
+    There used to be a third: a call wide enough to run six batches captured
+    inside itself and kept nothing.  See ``_WINDOW_GRAPH_MIN_CALLS`` for why
+    that rule went.
     """
     forced = _resolve_graph()
     plans, seen = _window_maps()
@@ -702,9 +713,6 @@ def _plan_for_call(*, device, rows, cols, arity, size, rate, chunk, has_weights)
     while len(seen) > 64:
         seen.popitem(last=False)
 
-    batches = len(_layout(device, size, cols, chunk)[2])
-    if batches >= _GRAPH_MIN_BATCHES:
-        return fresh(False), True                         # captures inside this call
     if forced is None and count < _WINDOW_GRAPH_MIN_CALLS:
         return fresh(False), False
     plan = fresh(True)

@@ -3,8 +3,7 @@
 ``window_viterbi.viterbi_window_fused`` is the machine behind the WINDOW body,
 which is the default E4M3 wire -- the shipping per-channel recipe.  Its batch is
 ``2 + steps`` Triton launches at fixed pointers with a three-integer descriptor
-on the device, so one capture replays for every batch; a call wide enough to run
-six batches has always captured inside itself.
+on the device, so one capture replays for every batch.
 
 LDLQ makes the calls narrow instead of few.  ``ldl_block`` columns is ONE batch,
 so the same tensor, the same table and the same rate ran captured when it was
@@ -132,21 +131,28 @@ def test_env_zero_keeps_no_plan(monkeypatch):
     assert not _window_maps()[0]
 
 
-def test_a_wide_call_keeps_no_plan(monkeypatch):
-    """A call that runs six batches or more amortises its own capture, so it
-    keeps today's per-call buffers rather than pinning a whole tensor's
-    traceback for the life of the thread."""
+def test_a_wide_call_keeps_a_plan_on_a_repeat(monkeypatch):
+    """A wide call used to capture inside itself and keep nothing, on the
+    reasoning that it amortised its own capture.  A batched LDLQ
+    (tessera#385) makes hundreds of wide calls at one shape a pass, so the
+    wide shape earns a persistent plan exactly as a narrow one does -- and
+    returns the reference's bytes from it."""
     monkeypatch.delenv("TESSERA_WINDOW_GRAPH", raising=False)
-    from tessera.window_viterbi import _GRAPH_MIN_BATCHES, _layout
+    from tessera.window_viterbi import _layout
 
     targets, vectors, _ = _case(14, 4, 1, 64, 512, False, seed=51)
-    assert len(_layout(targets.device, 1 << 14, 512, 512)[2]) >= _GRAPH_MIN_BATCHES
+    assert len(_layout(targets.device, 1 << 14, 512, 512)[2]) >= 6
     window_plan_cache_clear()
     ref, sse_ref = viterbi_window(targets, vectors, 14, 4, impl="reference")
-    for _ in range(3):
+    got, sse = viterbi_window(targets, vectors, 14, 4, impl="fused")
+    assert torch.equal(got, ref) and sse == sse_ref
+    assert not _window_maps()[0], "one call should not have kept a plan"
+    for _ in range(2):
         got, sse = viterbi_window(targets, vectors, 14, 4, impl="fused")
         assert torch.equal(got, ref) and sse == sse_ref
-    assert not _window_maps()[0]
+    plans = _window_maps()[0]
+    assert len(plans) == 1, "the repeat should have kept exactly one plan"
+    assert next(iter(plans.values())).graph is not None
 
 
 def test_an_unparseable_lever_is_refused(monkeypatch):
