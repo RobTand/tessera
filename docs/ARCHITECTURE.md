@@ -49,6 +49,17 @@ Re-stamped 2026-09-07 on `codex/native-operator-receipts-376` for the
 original-wire native dense research receipt and explicit operator resource
 bound (#376; §2.4). Serving defaults, wire and release gates are unchanged.
 
+Re-stamped 2026-09-07 on `codex/native-moe-receipts` for the complete routed
+owner research receipt (#395; §2.5), including captured routing transport and
+existing vLLM workspace ownership. Re-stamped on `0693cf18` for the optional
+paired source-execution descriptor and independent qualification digest.
+Re-stamped 2026-09-07 for the explicit first-model KV capacity configuration
+and native factory binding; packaged defaults and release gates are unchanged.
+
+Re-stamped 2026-09-07 on `codex/reader-byte-unpack` for byte-sized narrow
+field decoding in `wire._from_bits` (§3). Wire grammar and
+`encoder_profile_id` remain unchanged; the reader source digest changes.
+
 ## 1. Scope
 
 This doc covers the path from a PrismaQuant rung assignment to a served
@@ -762,6 +773,59 @@ quality. Those require their own engine receipts before a PrismaQuant runtime
 price or release admission. `experiments/qualify_native_operator.py` is a
 synthetic BF16 instrumentation fixture and cannot stand in for a real PWC row.
 
+### 2.5 Whole routed receipts preserve the actual expert owner
+
+`experiments/bench_native_moe_operator.py` prepares the complete 32-expert
+E4M3 K1 R1024 owner from all 96 original PWC wires. Expert and gate/up/down
+role order is explicit. It uses stock vLLM's LFM `FusedMoEFactory`, the actual
+captured selection bias, and versioned serving settings, then invokes the
+existing resident modular `quant_method.apply` at eager TP1/EP1. The captured
+input, top-k IDs and post-normalization routing weights are immutable inputs;
+the router itself is outside this operator. Any dtype transport must reproduce
+the original captured bytes on exact roundtrip. BF16 routing weights are not
+renormalized to satisfy a sum-equals-one assumption.
+
+The selected first-model integration configuration is now
+`experiments/configs/lfm25_first_model_fixed_kv_20260907.json`, with explicit
+`kv_cache_memory_bytes=412286976`. Its stock-helper capacity projection covers
+eight 4096-token requests using 2097 shared pool blocks, including one null
+block and hybrid/recurrent padding. Actual resolved specs, layout and unique
+physical storage must be asserted in a fresh engine capture before resource
+admission. The preceding automatic-capacity configuration and its captures
+retain their original identities. The native standalone factory validates and
+binds the explicit byte value into `CacheConfig`; it does not allocate KV or
+certify capacity. Full-engine stock vLLM bypasses `gpu_memory_utilization` only
+for KV sizing when explicit bytes are supplied: the retained 0.35 value still
+controls the startup free-memory check. Any configuration change requires new
+request/preflight/panel identities rather than reusing old fixed-resource data.
+
+Preparation warms both actual phases before freezing lazy libraries, resolved
+backend configuration, expert tensor identities and the existing
+`vllm.WorkspaceManager` allocation. The workspace is then locked. Its portable
+layout and byte count are bound separately from runtime binaries, and its
+process storage pointers must remain stable during measurement. A panel binds
+every member's source, render, wire and joint operator identity through the
+consumer's existing `RuntimeBinding`; no scalar group cost or summed leaf
+latency is produced here. An explicit `probe_scope` retains a first-sequence
+integration screen and its parent/subset calibration identities when the joint
+probe uses only that subset; native captured tensors keep their own identities.
+The optional paired `source_execution` and
+`source_execution_qualification_sha256` fields preserve the source model's
+module configuration selectors and an independent qualification digest (or
+explicit null). They are part of the full panel hash. The native producer
+validates their closed grammar; the PrismaQuant consumer owns the source
+backend/proof join. Adding them changes no captured routing or tensor bytes.
+
+Both phases must pass the predeclared activation-QDQ and whole-output gates
+and observed native route before either phase receives CUDA-event samples.
+The producer reuses the dense allocation collector and conservative scratch
+analysis, and collects decision timing only after the collector stops.
+Layer-resident storage and shared-workspace storage remain separate fields.
+Even complete operator scratch evidence leaves full-engine fixed allocations,
+KV capacity and cross-operator workspace composition unresolved. Separate
+Torch-profiler replay and explicit artifact publication retain evidence; this
+research boundary does not promote a runtime cell or qualify a release.
+
 ## 3. Bytes: priced == served
 
 Every artifact the exporter writes has exactly one legal length: the encoder
@@ -788,6 +852,12 @@ per unit, checked by `experiments/check_wire_against_plan.py`. A plan that
 leaves a body Linear unnamed does not get a passthrough: the exporter falls
 back to its `--grid`/`--q256` default, so the converter names every unpriced
 Linear `"BF16"` explicitly.
+
+The CPU wire reader reconstructs fields of one through eight bits with
+`numpy.packbits` into byte storage, then widens each decoded value once to
+`int64`. Wider fields retain the integer shift/reduction path. This bounds
+intermediate allocation without changing MSB-first ordering, public result
+dtypes, or the existing truncation and dirty-slack refusals.
 
 ### 3.1 Which encoder cut the bytes is on the artifact
 

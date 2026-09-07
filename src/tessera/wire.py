@@ -113,6 +113,11 @@ def refuse_dirty_slack(raw: np.ndarray, used: int, what: str) -> None:
 def _from_bits(bits: np.ndarray, width: int) -> np.ndarray:
     if width == 0:
         return np.zeros(0, dtype=np.int64)
+    if 1 <= width <= 8:
+        # These fields fit in one byte. Keep unpacked bits byte-sized rather
+        # than allocating and reducing two rows-by-width int64 matrices.
+        packed = np.packbits(bits.reshape(-1, width), axis=1, bitorder="big")[:, 0]
+        return (packed >> (8 - width)).astype(np.int64)
     rows = bits.reshape(-1, width).astype(np.int64)
     shifts = np.arange(width - 1, -1, -1, dtype=np.int64)
     return (rows << shifts).sum(axis=1)

@@ -1,0 +1,170 @@
+# Reuse immutable registered grid digests — 2026-09-07
+
+The reader repeatedly recomputed complete payload-grid SHA-256 digests while
+searching `encoder_profile_id`, even though `SERIALISABLE_GRIDS` already holds
+those exact digests. A 30.004-second py-spy observation of the original dense
+anchor preparation contains direct
+`read_unit_artifact → parse_unit_artifact → encoder_profile_id → grid_digest`
+stacks. The raw observation and both-host Netdata/process samples are retained
+at `/mnt/shared/tessera-measurements/first-model-20260907/joint-prepare-live-profile-03/`.
+This is an observed hotspot, not a measured speedup for this change.
+
+`grid_digest` now reuses the registry's digest for the exact registered grid
+object when its saved fields remain identical. Registration checks recursively
+immutable builtin values once. The cache is bounded by the initial registry;
+unknown grids and later registry additions use the original hashing algorithm.
+Field replacement, including an `object.__setattr__` bypass of `frozen=True`,
+invalidates the shortcut. No digest grammar, profile input, refusal or decoder
+operation changes.
+
+The optimized reader package source hash is
+`14df443217e2a6a1bc4857532f0b5ead7fa7f5755dbd61e96605659940a8a1bc` under
+`tessera.cached_unit.encoder_source_sha256`'s complete source-tree algorithm.
+The frozen original producer remains
+`57809bff862b880dc397e6d271a80c04d6c87d1af3bba12c076648fc5443355c`.
+An external consumer may load the reader under a separate package namespace;
+`experiments/qualify_reader_namespace.py` checks that coexistence against the
+retained small wire fixtures. That CPU qualification is distinct from the
+coordinator's actual 14-wire GPU comparison and before/after measurement.
+
+Pre-fix PB action
+`f0c419d9f06716fb1be305928837d6b0788713d2e0d959368915d170384b2702`
+ran on dl380g10, Python 3.14.4, Torch 2.11.0+cpu, pytest `-n 4 --dist worksteal`,
+with native threads fixed at one. Four registered-grid call-count regressions
+failed at `tests/test_grid_digest_cache.py:24` (`assert 2 == 0`); nine mutation
+and unknown-grid checks passed, with no skips or missing collection. The
+post-change action `cc4a0bc2564cda9fcbb9bb0dddfb6051d5d2b141a3722a52d27849039cc7e530`
+on Sparklina passed all 13 new tests but failed collection of the existing
+Torch-dependent compatibility file because that worker's pb-cpu environment
+has no Torch (71 Torch-dependent modules unavailable). It is not a passing
+compatibility run. Follow-up CPU compatibility and namespaced-reader actions
+require the installed x86 CPU Torch environment; production GPU performance
+and wire evidence are recorded by the coordinator separately.
+
+## Completed CPU validation
+
+The x86 worker stopped announcing while the follow-ups waited. Unclaimed
+follow-ups were withdrawn. Two attempts using the original producer image on
+Sparklina (`15d9f7d525c9…`, `7fb26c3222a5…`) failed before execution because
+that image is absent there; Sparky retries were withdrawn before launch after
+the coordinator identified its quiesced supervisor. These are environment
+failures, not test passes. The final runs reused the established PQ CPU
+container environment through `experiments/reader_cpu_checks.sh`:
+`eugr/spark-vllm@sha256:0afec8d4f79f44685a1ddf758659d33aef3b0f3ec9068e5a7cd1108d30e5581c`,
+GPU visibility disabled, existing shared pytest dependencies, native threads one.
+
+PB `d0f09fdd6f4ab67de1d5d59aa8264cf41d14041590f58697f6cfe3589a801b60`
+completed on Sparklina with exit 0: **20 passed, zero skipped, zero modules
+missing collection**, Python 3.12.3, Torch 2.13.0+cu130 with no CUDA device,
+pytest 8.4.2 / xdist 3.8.0, four workers. Command:
+`bash experiments/reader_cpu_checks.sh -m pytest -n 4 --dist worksteal --durations=5 -p no:cacheprovider tests/test_grid_digest_cache.py tests/test_ktuple.py -k 'digest or profile or unknown_grid or free_grid'`.
+This is CPU correctness coverage, not CUDA surface coverage or timing evidence.
+
+PB `bf5405ec544bf69024a3e7ccfe0f9d4a2a50da92cc96506f7731cd39c31a1d8c`
+completed with exit 0 on Sparklina, one CPU: the original producer as `tessera`
+and optimized reader as `tessera_reader_<source_sha256>` decoded all **11**
+retained legacy fixtures bit-exactly, and both implementations refused profile
+and payload corruptions (**44** refusal checks). Imported modules stayed under
+their respective declared package roots; primary producer identity remained
+unchanged. Result:
+`/mnt/shared/tessera-clean-runtime-20260907/reader-grid-cache/namespace-cpu.json`,
+SHA256 `f9c0304181b388438e7be01d709b81e619906afa2ac771c52d111065b2a212d7`.
+
+Compile PB `236662d00ac1f627b5965c38fab330cf9b6626e30f1a02c7e38d161331e89ec1`
+also completed with exit 0. Terminal/CAS payloads and the namespace result were
+independently rehashed; retained bindings are in
+`/mnt/shared/tessera-clean-runtime-20260907/reader-grid-cache/verified-receipts.json`.
+The impacted-test selector selects 187 files because the alphabet reaches
+`conftest`; the coordinator owns that broad integration population. Production
+14-wire GPU equality and before/after work-per-joule remain unmeasured here.
+
+## Matched production-wire verifier comparison
+
+Coordinator PB `c9ed62c27e35d4abc52dbbef32e110d5c3b60aa6075af7916796484904628997`
+completed on Sparklina GB10 with exit 0, CPUs 5–8, four native threads,
+Torch 2.13.0+cu130 / CUDA 13.0. Both arms verified the same two original dense
+units and 14 original wires/renders using `verify_anchor_render` and the same
+PWC transfer, with 411,071,318 resident-prefetched bytes and no cache misses.
+The original producer package and imported module objects stayed unchanged.
+The optimized reader was loaded from a separate frozen package with source
+hash `14df4432…`. All 14 comparison records were equal; each arm refused
+render, source, settings and wire corruption (eight checks total). No separate
+Hessian-corruption GPU case was included in these eight checks.
+
+Three interleaved measured pairs, after separately recorded first parses:
+
+| Pair | Before (s) | After (s) |
+| --- | ---: | ---: |
+| 0 | 3.987748117 | 3.199549645 |
+| 1 | 3.994050134 | 3.213331999 |
+| 2 | 3.998542494 | 3.170378920 |
+| Median | 3.994050134 | 3.199549645 |
+
+The measured ratio is **1.248316× for this resident verifier workload**.
+This compares the combined PQ per-unit source/H identity reuse plus optimized
+reader against the prior verifier; it does not isolate the grid-cache change.
+Binding and source/H hashing remain inside the after-arm timer. Per-cell render
+file checksums remain inside both arms. The scope excludes whole-model streaming
+and its capture/file-hash intake;
+this is not a whole-preparation or whole-pipeline speedup. First parse is not
+claimed disk-cold. The py-spy sampler ran at 50 Hz and the diagnostic Torch
+profiles were collected separately from the measured pairs. Across stacks
+containing `before_verify`, 96 of 1,303 samples included `grid_digest`; across
+`after_verify`, none of 1,047 did. These sample populations include first-parse
+and diagnostic phases and must not be treated as phase-specific time shares.
+The remaining after samples include 236 NumPy `_sum` leaves and 152
+`wire._from_bits` leaves, motivating a separately measured decoder follow-up.
+
+Evidence roots:
+`/mnt/shared/tessera-measurements/first-model-20260907/full-model-joint-aura/qualify-reader-ab-01/`
+and sibling `qualify-reader-ab-sampler-01/`. `results.json` SHA256 is
+`5ab6c302dfd418c437fec1936168ecd86b0360726ad2e6205d29a545e8aac8f8`;
+`stacks.raw` SHA256 is
+`8c2168b14a2e217400eb89e9c29f45b19c44dcb61cdb61b476a30d620dee9036`.
+The actual PB terminal, CAS payload and all 11 files bound in
+`verified-evidence.json` were independently rehashed for this record.
+Both-host Netdata is retained, but its approximately 10-second power sampling
+cannot resolve these 3–4-second arms. **No arm energy or work/J claim follows.**
+The broader 187-file integration population remains coordinator-owned.
+
+### Run-helper disposition and CI gate — 2026-09-07
+
+The dated CPU helper named above is retained as measurement evidence at
+`/mnt/shared/tessera-clean-runtime-20260907/reader-grid-cache/reader_cpu_checks.sh`
+(SHA256 `b3630a7a36996cb3740443c37041537b618e3095f19aadf13bd13fdbeff60634`). Its exact
+bytes reproduce the recorded PQ CPU test environment; use that absolute path
+in the commands above. It is retired from live `experiments/`: that tree's
+container wrappers must derive and enforce Tessera's canonical serving-image
+pin, and this CPU-only, dated PQ environment is not a serving runtime. The
+image gate is unchanged. Historical PB snapshots retain the original helper.
+
+The existing guard failed before removal at
+`tests/test_runtime_image_pin.py:481`: `reader_cpu_checks.sh starts a container
+without gating its image`. PB
+`94804d494829c6d41162cd014297f8644c39c1dd7c4cc48d72fbb3f71bac5e15`
+reproduced it on DL380 (1 expected failure, 35 passes, four xdist workers;
+Torch 2.11.0+cpu, 0 skips/uncollected modules). This is a separate helper
+packaging correction; package source and frozen reader identities are unchanged.
+
+Post-removal PB `36986ef92d473c2f92e90b36086400fc45a7127554638ae33aee73071c2ced2b` passed all 36 runtime-image tests on DL380 with four workers, no skips or missing collection; terminal exit 0 and CAS payload were verified.
+
+### Master update and reproduction-path correction — 2026-09-07
+
+Master `81c16c54` (#403) merged cleanly into this branch at `05deb9e1`.
+Its cached-export integration changes exporter/tests/docs but no package
+source, so frozen reader14df and its measurements remain unchanged. The
+bounded grid-digest and complete-cached-export interaction gate passed **18
+tests** on DL380, four xdist workers, Torch 2.11.0+cpu, no CUDA, no skips or
+missing collection (19.96 seconds). PB
+`ca5d55b8eea1b0865694c0a82975a083f0dbf4d43b506e4f17df3ea8ae0c8b8c`
+terminal exit 0 and CAS payload were independently checked. This is not a
+whole-suite or CUDA-surface claim.
+
+Correction to the helper path instruction above: the retained absolute path
+identifies evidence; it cannot be executed directly by a new PB action, since
+PB requires executable helper bytes inside its checkout snapshot. Replaying
+the historical helper requires its original recorded snapshot, which already
+contains the relative script. New CPU interaction checks use the installed
+`/home/rob/venvs/pb-cpu/bin/python` on the x86 Torch worker, through PB, rather
+than restoring the dated wrapper to the live experiment tree. The refused
+external-helper submission executed no tests and produced no action receipt.
