@@ -7,6 +7,7 @@ the code that owns it.
 
 **Provenance:** `v0.1.0` plus repository tooling updates (2026-09-07):
 CUPTI v1 argument-collector configuration validation against base `7e61578c`;
+existing Mamba CpuGpuBuffer owner traversal against base `ec54aa42`;
 Argument-bound host mappings, native workspace ownership and loaded full-engine
 runtime identity against base `049b726e`; installer digest and loaded module
 file/spec-origin joins against base `8918caa7`;
@@ -810,7 +811,8 @@ module. Historical conflicting category labels remain unknown in the raw
 ledger, with each supplied owner label retained and no admission.
 Bounded traversal of explicitly selected runner state and already initialized
 workspace/cache managers retains tensor aliases, including host/UVA views and
-retired FlashInfer cache buffers. It does not call properties or create buffers.
+retired FlashInfer cache buffers, plus the existing `vllm.v1.utils.CpuGpuBuffer`
+references used by Mamba alignment state. It does not call properties or create buffers.
 These references are shared owners whose candidate/workload dependence remains
 unresolved. CUPTI exit callbacks retain actual host/device pointer arguments,
 allocation extents and explicit null frees. Successful callbacks must join their

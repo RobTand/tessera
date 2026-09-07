@@ -338,3 +338,16 @@ def test_full_engine_runtime_preserves_base_and_checks_installed_package(
         message = "module.*file/origin"
     with pytest.raises(ValueError, match=message):
         worker_module.full_engine_runtime_observation(plan)
+
+
+def test_runtime_owners_include_mamba_cpu_gpu_buffer(worker_module, monkeypatch):
+    class Tensor:
+        pass
+    monkeypatch.setitem(sys.modules, "torch", SimpleNamespace(Tensor=Tensor, nn=SimpleNamespace(Module=type("Module", (), {}))))
+    # Stock MambaSpecDecodeGPUContext creates this utility wrapper outside
+    # vllm.v1.worker.*; both existing backing references must survive census.
+    cls = type("CpuGpuBuffer", (), {"__module__": "vllm.v1.utils"})
+    buffer = cls()
+    buffer.cpu = Tensor()
+    buffer.gpu = Tensor()
+    assert [name for name, _ in worker_module.runtime_tensor_leaves(buffer, "mamba")] == ["mamba.cpu", "mamba.gpu"]

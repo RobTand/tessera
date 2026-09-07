@@ -67,8 +67,10 @@ def runtime_tensor_leaves(value, prefix, *, max_nodes=20000):
             # Cache keys include (name, torch.device); repr is retained only in
             # an owner label and is never evaluated or treated as storage proof.
             children = [(f"{name}[{key!r}]", child) for key, child in sorted(item.items(), key=lambda row: repr(row[0]))]
-        elif isinstance(item, SimpleNamespace) or type(item).__module__.startswith(
-                ("vllm.v1.worker.", "vllm.v1.attention.", "vllm.attention.", "flashinfer.")):
+        elif (isinstance(item, SimpleNamespace)
+                or (type(item).__module__, type(item).__name__) == ("vllm.v1.utils", "CpuGpuBuffer")
+                or type(item).__module__.startswith(
+                    ("vllm.v1.worker.", "vllm.v1.attention.", "vllm.attention.", "flashinfer."))):
             children = [(f"{name}.{key}", child) for key, child in sorted(vars(item).items())]
         else:
             return
