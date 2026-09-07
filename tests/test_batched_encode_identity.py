@@ -124,8 +124,8 @@ def test_three_units_at_two_rates_through_the_plane_entry():
         for i, (w, l, m) in enumerate(zip(weights, ldl, metric))
     ]
     together = encode_linears_planes(
-        weights, grid=grid, q256=q256, ldl=ldl, ldl_block=next(iter(block)),
-        refit_metric=metric)
+        weights, grid=grid, q256=q256, names=[f"u{i}" for i in range(3)],
+        ldl=ldl, ldl_block=next(iter(block)), refit_metric=metric)
     for (exported, unit, _), (exported_b, unit_b, _) in zip(alone, together):
         assert exported_b.blob == exported.blob
         assert torch.equal(unit_b.codes, unit.codes)
