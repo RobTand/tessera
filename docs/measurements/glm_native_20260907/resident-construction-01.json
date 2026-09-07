@@ -1,0 +1,220 @@
+{
+  "schema": "tessera.glm_native_construction.v1",
+  "stage": "resident",
+  "request_sha256": "96915ace44fe757381c87b996fb926551a3dd5dd29d21d10a2d087e45dcf44ea",
+  "control_scope": {
+    "layers": [
+      0,
+      1,
+      2,
+      3
+    ],
+    "mtp_layers": 0,
+    "weights_loaded": false,
+    "vision": "original meta construction",
+    "geometry": "original hidden4096 intermediate2048 experts288 top8",
+    "quality_claim": false,
+    "production_admission": false
+  },
+  "runtime": {
+    "vllm": "0.28.1rc1.dev451+g1970f3ed4",
+    "torch": "2.13.0+cu130",
+    "image": "vllm/vllm-openai@sha256:4e31c581716a5cb9ef31eddb0a425842b75cab07d5cd63fb9572e69ae8794c33"
+  },
+  "tensor_device": "meta",
+  "weight_bytes_loaded": 0,
+  "forward_executed": false,
+  "runtime_cell_promoted": false,
+  "tp_size": 1,
+  "ep_size": 1,
+  "status": "constructed_on_meta",
+  "owners": [
+    {
+      "name": "language_model.model.layers.3.mlp.experts.routed_experts",
+      "prefix": "language_model.model.layers.3.mlp.experts",
+      "class": "vllm.model_executor.layers.fused_moe.routed_experts.RoutedExperts",
+      "method": "tessera.serving.moe_route.build_tessera_moe_method.<locals>.TesseraMoEMethod",
+      "backend": "TRITON",
+      "attributes": {
+        "global_num_experts": 288,
+        "local_num_experts": 288,
+        "top_k": 8,
+        "activation": "silu",
+        "swiglu_limit": 10.0,
+        "swiglu_alpha": null,
+        "swiglu_beta": null,
+        "scoring_func": "sigmoid",
+        "renormalize": true,
+        "use_grouped_topk": true,
+        "num_expert_group": 1,
+        "topk_group": 1,
+        "routed_scaling_factor": 2.5,
+        "apply_router_weight_on_input": false,
+        "e_score_correction_bias": {
+          "shape": [
+            288
+          ],
+          "dtype": "torch.float32",
+          "device": "meta"
+        },
+        "tessera_family": "TESSERA_FP8",
+        "tessera_mode": "resident"
+      },
+      "moe_config": {
+        "num_experts": 288,
+        "experts_per_token": 8,
+        "hidden_dim": 4096,
+        "intermediate_size": 2048,
+        "num_local_experts": 288,
+        "num_logical_experts": 288,
+        "activation": "silu",
+        "device": "cuda",
+        "routing_method": 2,
+        "moe_parallel_config": {
+          "tp_size": 1,
+          "pcp_size": 1,
+          "dp_size": 1,
+          "ep_size": 1,
+          "tp_rank": 0,
+          "pcp_rank": 0,
+          "dp_rank": 0,
+          "ep_rank": 0,
+          "sp_size": 1,
+          "use_ep": false,
+          "all2all_backend": "allgather_reducescatter",
+          "enable_eplb": false
+        },
+        "in_dtype": "torch.bfloat16",
+        "router_logits_dtype": "torch.float32",
+        "hidden_dim_unpadded": 4096,
+        "intermediate_size_per_partition_unpadded": 2048,
+        "intermediate_pad": null,
+        "moe_backend": "auto",
+        "max_num_tokens": 2048,
+        "has_bias": false,
+        "is_lora_enabled": false,
+        "skip_final_all_reduce": false,
+        "defer_moe_finalize": false,
+        "defer_moe_finalize_max_num_tokens": -1,
+        "swiglu_limit": 10.0,
+        "swiglu_alpha": null,
+        "swiglu_beta": null,
+        "activation_situ_beta": null,
+        "activation_situ_linear_beta": null,
+        "max_capture_size": 0,
+        "intermediate_size_per_partition": 2048,
+        "rocm_aiter_fmoe_enabled": null,
+        "aiter_fmoe_shared_expert_enabled": null
+      },
+      "parameters": {
+        "e_score_correction_bias": {
+          "shape": [
+            288
+          ],
+          "dtype": "torch.float32",
+          "device": "meta"
+        },
+        "w13_wire": {
+          "shape": [
+            288,
+            2,
+            1
+          ],
+          "dtype": "torch.uint8",
+          "device": "meta"
+        },
+        "w2_wire": {
+          "shape": [
+            288,
+            1
+          ],
+          "dtype": "torch.uint8",
+          "device": "meta"
+        },
+        "w13_weight": {
+          "shape": [
+            288,
+            4096,
+            4096
+          ],
+          "dtype": "torch.float8_e4m3fn",
+          "device": "meta"
+        },
+        "w2_weight": {
+          "shape": [
+            288,
+            4096,
+            2048
+          ],
+          "dtype": "torch.float8_e4m3fn",
+          "device": "meta"
+        },
+        "w13_weight_scale": {
+          "shape": [
+            288,
+            4096,
+            1
+          ],
+          "dtype": "torch.float32",
+          "device": "meta"
+        },
+        "w2_weight_scale": {
+          "shape": [
+            288,
+            4096,
+            1
+          ],
+          "dtype": "torch.float32",
+          "device": "meta"
+        }
+      }
+    }
+  ],
+  "model_class": "vllm.models.glm5next.nvidia.model.Glm5NextForConditionalGeneration",
+  "model": {
+    "path": "/mnt/shared/tessera-glm-native-20260907/four-layer-config",
+    "architectures": [
+      "Glm5NextForConditionalGeneration"
+    ],
+    "model_type": "glm5_next",
+    "num_hidden_layers": 4,
+    "layer_types": [
+      "linear_attention",
+      "linear_attention",
+      "linear_attention",
+      "deepseek_sparse_attention"
+    ],
+    "mlp_layer_types": [
+      "dense",
+      "dense",
+      "dense",
+      "sparse"
+    ],
+    "first_k_dense_replace": 3
+  },
+  "packed_modules_mapping": {
+    "qkv_proj": [
+      "q_proj",
+      "k_proj",
+      "v_proj"
+    ],
+    "gate_up_proj": [
+      "gate_up_proj"
+    ]
+  },
+  "hf_to_vllm_mapper_unstacked": {
+    "orig_to_new_prefix": {
+      "lm_head.": "language_model.lm_head.",
+      "model.language_model.": "language_model.model.",
+      "model.visual.": "visual."
+    }
+  },
+  "supports_quant": false,
+  "mapped_targets": [
+    "language_model.model.layers.3.mlp.experts"
+  ],
+  "stock_core_unchanged": true,
+  "package_identity_sha256": "19c921c81c2d69fb2f6c535d0dbd9418fda0cc577a5e8ee168e1d2c181457ce0",
+  "cuda_peak_allocated_bytes": 52428800,
+  "cuda_peak_reserved_bytes": 52428800
+}

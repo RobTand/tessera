@@ -198,8 +198,8 @@ def _probe_config_class():
     return ProbeConfig
 
 
-def build_model(model_path: str, device: str, max_model_len: int):
-    """Construct the model the way the loader does, on ``device``."""
+def build_model(model_path: str, device: str, max_model_len: int, *, quant_config=None):
+    """Construct through the stock loader, with a probe or explicit quant config."""
     import torch
     from vllm.config import set_current_vllm_config
     from vllm.distributed import (init_distributed_environment,
@@ -215,7 +215,7 @@ def build_model(model_path: str, device: str, max_model_len: int):
         tensor_parallel_size=1,
     )
     vllm_config = engine_args.create_engine_config()
-    probe = _probe_config_class()()
+    probe = _probe_config_class()() if quant_config is None else quant_config
     vllm_config.quant_config = probe
     # ``initialize_model_parallel`` reads the CURRENT config, so the whole
     # bring-up sits inside the context the loader itself uses.
