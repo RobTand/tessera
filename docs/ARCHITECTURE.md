@@ -41,6 +41,10 @@ encoder's batch axis, shared-setting presence checks and the window plan rule
 recipes, `encoder_fixture_id` and runtime contract remain at the versions
 above.
 
+Re-stamped 2026-09-07 on `codex/native-operator-receipts-376` for the
+original-wire native dense research receipt and explicit operator resource
+bound (#376; §2.4). Serving defaults, wire and release gates are unchanged.
+
 ## 1. Scope
 
 This doc covers the path from a PrismaQuant rung assignment to a served
@@ -88,10 +92,11 @@ not a bound on queueing/retries, detached sessions/containers, or descendants
 left after a command completes before its deadline. Host `timeout` binaries
 are not trusted as interchangeable: the dl380g10 uutils 0.8.0 probe returned
 137 while leaving a same-group child in state S; both Sparks had GNU 9.4.
-The deployed pbrun parses but does not apply
-its own `--timeout-s`; its worker may report outer status 1 for any nonzero
-inner result, so a receipt must not claim it observed numeric 124/137 merely
-from that outer status. The command and deadline/grace are retained per arm.
+The deployed pbrun seals `--timeout-s` as `execution_timeout_s`; its pool
+applies the effective action budget and records requested/effective values
+and any ceiling clamp (verified 2026-09-07 against the published client and
+pool). A worker's outer nonzero status is still not evidence of the inner
+numeric 124/137: retain the inner logs and command deadline/grace per arm.
 
 Each population retains the actual Git snapshot commit and separately records
 `tessera.suite_source.v1`: SHA-256 over every tracked source path, executable
@@ -712,6 +717,46 @@ if it changes a priced input; replacement after intake cannot change the
 owned tensors and float values used by the encode. The build expectation is
 also protected against replacement by its argument digest. Standalone exports
 without an external allocation binding retain their existing behavior.
+
+### 2.4 Native dense receipts bind one actual operator, not an engine
+
+`experiments/bench_native_operator.py` prepares one dense resident/eager/TP1
+operator through the existing create/load/process lifecycle from the retained
+original unit wire. Preparation verifies actual source values and the wire's
+bytes-only decode against the supplied PrismaQuant PWC render. It emits
+untimed native tensor, scheme, runtime image, binary and arithmetic identities
+for a separately frozen panel. Both prefill and decode must match the panel's
+input, activation QDQ, output and observed serving route before any CUDA-event
+timings. Panel tolerances are explicit. Tensor and execution-state drift
+around the numerical gate, timing and resource invocation refuses the receipt.
+The standalone CLI initializes vLLM's actual TP1 context and loads weights
+under `no_grad`, preserving the loader's tensor version-counter seals. CUDA
+UUIDs join Torch to the driver's observed UUID; native binary identities retain
+canonical paths as well as hashes, including distinct same-basename libraries.
+
+The optional fresh-process CUPTI collector in
+`experiments/native_operator_resources.py` observes allocations before CUDA
+initialization and records supported allocation/free APIs, device/context,
+bytes, intervals, successful activity configuration and every dropped-record
+query. A warmed stable Torch allocator permits a conservative scratch bound:
+Torch's incremental live-allocation peak plus the external native allocation
+peak, including temporary allocations freed before return. These independent
+peaks include output storage; they are a bound, not a simultaneous exact peak.
+Resident buffers are counted by unique GPU storage. Missing or dropped
+records, changed allocator reservations, unknown ownership and unsupported
+async, pooled, managed or imported allocation domains remain incomplete.
+Preexisting CUDA module/static allocations retain their raw context IDs in a
+separate startup ledger; they do not become operator scratch or a complete
+fixed-resource price. Decision CUDA-event samples run after the allocation
+collector stops. `--profile` replays the frozen panel in a separate process
+with Torch's CPU/CUDA profiler and returns a distinct profiling schema, so
+profiling and allocation collection never compete for CUPTI ownership.
+
+`complete_operator_bound` never establishes full-model fixed allocations,
+allocator slack, KV cache, CUDA graph pools, routed-expert execution or served
+quality. Those require their own engine receipts before a PrismaQuant runtime
+price or release admission. `experiments/qualify_native_operator.py` is a
+synthetic BF16 instrumentation fixture and cannot stand in for a real PWC row.
 
 ## 3. Bytes: priced == served
 
