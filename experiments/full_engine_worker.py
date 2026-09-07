@@ -454,7 +454,12 @@ class ResourceCaptureWorker(Worker):
             if hashlib.sha256(content).hexdigest() != spec["sha256"]:
                 raise ValueError("native ownership rule changed after plan preparation")
             evidence = capture_rule_evidence(json.loads(content), native_libraries["libraries"])
-            validate_rule_evidence(evidence)
+            try:
+                validate_rule_evidence(evidence)
+            except ValueError as exc:
+                # Preserve the failed observation. The ledger validates this
+                # same evidence again before assigning any native ownership.
+                self._resource_recorder._errors.append(f"native ownership evidence invalid: {exc}")
             native_evidence.append(evidence)
         result = self._resource_recorder.finish(directory, owners=self._resource_owners(),
                                                 native_ownership_evidence=native_evidence,

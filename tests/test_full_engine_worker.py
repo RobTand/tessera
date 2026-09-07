@@ -105,6 +105,49 @@ def test_native_observation_hashes_generated_bytes_and_retains_missing_paths(
     assert result["runtime_admission"] is False
 
 
+@pytest.mark.parametrize("library_state", ["absent", "changed"])
+def test_invalid_native_owner_identity_retains_raw_capture_and_refusal(
+        monkeypatch, worker_module, tmp_path, library_state):
+    import hashlib
+    import json
+    from pathlib import Path
+    from experiments.full_engine_resources import analyze_engine_resource_ledger
+    source = tmp_path / "native.py"
+    source.write_text("# measured native allocation site\n")
+    rule = {"schema": "tessera.native_allocation_site_owner_rule.v1",
+            "category": "shared", "required_allocation_frames_in_order": [{"name": "allocate"}],
+            "required_source_files": {str(source): {"sha256": hashlib.sha256(source.read_bytes()).hexdigest()}},
+            "required_mapped_library": {"path": "/fixture/native.so", "sha256": "a" * 64, "bytes": 12}}
+    rule_path = tmp_path / "rule.json"
+    rule_path.write_text(json.dumps(rule))
+    recorder = SimpleNamespace(_errors=[])
+    def finish(directory, *, native_ownership_evidence, **kwargs):
+        directory.mkdir(parents=True)
+        raw = json.loads((Path(__file__).parent / "fixtures/full_engine_resource_ledger.json").read_text())
+        raw["native_ownership_evidence"] = native_ownership_evidence
+        raw["capture"]["errors"].extend(recorder._errors)
+        (directory / "capture.json").write_text(json.dumps(raw))
+        return analyze_engine_resource_ledger(raw)
+    recorder.finish = finish
+    plan = {"output_directory": str(tmp_path / "capture"), "max_invocations_per_unit": 2,
+            "native_owner_rule": {"path": str(rule_path), "sha256": hashlib.sha256(rule_path.read_bytes()).hexdigest()}}
+    monkeypatch.setattr(worker_module, "claim", lambda: (recorder, plan))
+    monkeypatch.setattr(worker_module, "full_engine_runtime_observation", lambda plan: {"loaded_package": {}})
+    libraries = {} if library_state == "absent" else {"/fixture/native.so": {"sha256": "b" * 64, "bytes": 12}}
+    monkeypatch.setattr(worker_module, "native_library_observation", lambda: {"libraries": libraries})
+    worker = worker_module.ResourceCaptureWorker()
+    worker._resource_armed = True
+    worker._resource_owners = lambda: []
+    result = worker._resource_write_capture()
+    raw = json.loads((Path(result["directory"]) / "capture.json").read_text())
+    assert raw["native_ownership_evidence"][0]["mapped_libraries"] == libraries
+    assert any("native owner mapped library identity differs" in error for error in raw["capture"]["errors"])
+    assert result["receipt"]["status"] == "incomplete"
+    assert result["receipt"]["fixed_resources"] is None
+    assert any("native owner mapped library identity differs" in error for error in result["receipt"]["issues"])
+    assert not result["receipt"]["checkpoints"]
+
+
 def test_worker_bounds_execute_capture_but_preserves_stock_outputs(monkeypatch, worker_module):
     seen = []
     recorder = SimpleNamespace(snapshot=lambda label, **kwargs: seen.append(label))

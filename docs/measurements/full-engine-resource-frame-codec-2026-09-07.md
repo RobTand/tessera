@@ -95,3 +95,28 @@ After adding deterministic cProfile output to the prefix path, PB
 compiled the worker/launcher and passed all 34 worker tests on x86 Torch 2.11
 CPU, zero skipped or missing. Exit, cleanup and CAS receipt/payload hashes were
 verified; receipt `14acc588fd44d89465c4f7087c97b5a289083bc5a754c592415ae8002da9227f`.
+
+## Bounded reference prefix R1: retained failure, 16:49 UTC
+
+PB `0d7badee5f0ef4cc84770cff0216b82757ee9314d60964ea6574a2dc1edb5d5a`
+ran on Sparklina with 4 CPUs, 64 GiB physical memory and a 48 GiB GPU subset.
+The first native invocation completed, but the required native ownership
+library identity failed validation before recorder finalization. The worker
+therefore produced no raw capture. The retained profile and both-host Netdata
+(10 series, zero missing) are under
+`/mnt/shared/tessera-native376-resource/full-engine-reference-prefix-r1/resources/`.
+The launcher and container exited 1; PB cleanup was complete and the exact
+container was independently confirmed removed. PB aggregate peak was
+5,662,146,560 B with no OOM. These observations do not qualify finalization.
+
+The worker now retains invalid native ownership evidence and an explicit
+capture error, then finalizes. The ledger revalidates the unchanged evidence
+before assigning any native ownership and still refuses it. This does not
+accept an absent or changed library. Two CPU regressions reproduced the lost
+capture before the fix in PB
+`6ee7ccc264eec0d2abc1cd3ccb9409eef368178334ee3d5d21a35cc0184fdd39`.
+Compile and 104 worker/resource/native-owner/codec tests passed after the fix in
+PB `c91dd62167486c0bc49092d229850e042c7886ec92b6c0bea45f3e40df4c8ce3`
+on x86 Torch 2.11 CPU, 6 workers, zero skipped or missing. Exit 0, cleanup and
+CAS receipt/payload hashes were checked; receipt
+`6203c931a93f99aacd7a902e327f29a1b0c49de4d71e7247162cf0657f1e7105`.
