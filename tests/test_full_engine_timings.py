@@ -15,13 +15,13 @@ def evidence():
         offset = int(sid) * 1000
         step_name = "step." + sid
         capture["ranges"][step_name] = {"kind": "step", "step_id": sid}
-        events.append({"ph": "X", "name": step_name, "pid": 10, "tid": 20, "ts": offset, "dur": 900})
+        events.append({"ph": "X", "cat": "user_annotation", "name": step_name, "pid": 10, "tid": 20, "ts": offset, "dur": 900})
         units = []
         for index, unit in enumerate(capture["canonical_unit_ids"]):
             name = f"unit.{sid}.{index}"
             capture["ranges"][name] = {"kind": "unit", "step_id": sid, "unit_id": unit}
             units.append({"unit_id": unit, "range_name": name, "elapsed_ms": 1.0})
-            events.append({"ph": "X", "name": name, "pid": 10, "tid": 20, "ts": offset + 100 + index * 200, "dur": 100})
+            events.append({"ph": "X", "cat": "user_annotation", "name": name, "pid": 10, "tid": 20, "ts": offset + 100 + index * 200, "dur": 100})
             correlation = offset + index
             events.extend([
                 {"ph": "X", "cat": "cuda_runtime", "name": "cudaLaunchKernel", "pid": 10, "tid": 20,
@@ -122,7 +122,7 @@ def test_cleanup_scope_is_retained_and_cannot_hide_gpu_work(evidence, gpu_work):
     capture, profile = evidence
     capture["ranges"]["cleanup"] = {"kind": "housekeeping", "scheduled_tokens": 0,
                                     "finished_request_ids": ["warmup"]}
-    profile["traceEvents"].append({"ph": "X", "name": "cleanup", "pid": 10, "tid": 20,
+    profile["traceEvents"].append({"ph": "X", "cat": "user_annotation", "name": "cleanup", "pid": 10, "tid": 20,
                                     "ts": -100, "dur": 50})
     if gpu_work:
         profile["traceEvents"].extend([
@@ -133,3 +133,20 @@ def test_cleanup_scope_is_retained_and_cannot_hide_gpu_work(evidence, gpu_work):
     result = analyze_profile_partition(capture, profile)
     assert result["status"] == ("incomplete" if gpu_work else "observed_same_run_partition")
     assert result["timings"] is None
+
+
+@pytest.mark.parametrize("cpu_range_state", ["unique", "missing", "duplicate"])
+def test_gpu_annotation_projection_cannot_duplicate_or_replace_cpu_range(evidence, cpu_range_state):
+    capture, profile = evidence
+    events = profile["traceEvents"]
+    cpu_ranges = [event for event in events if event.get("cat") == "user_annotation"]
+    # Kineto emits GPU projections with the same record_function names.
+    events.extend(dict(event, cat="gpu_user_annotation", pid=0, tid=7)
+                  for event in cpu_ranges)
+    if cpu_range_state == "missing":
+        events.remove(cpu_ranges[0])
+    elif cpu_range_state == "duplicate":
+        events.append(dict(cpu_ranges[0]))
+    result = analyze_profile_partition(capture, profile)
+    assert result["status"] == ("observed_same_run_partition" if cpu_range_state == "unique" else "incomplete"), result
+    assert result["timings"] is None and result["admission"] == "not_implemented"
