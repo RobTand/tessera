@@ -776,6 +776,9 @@ whose lifetime crosses a unit boundary. Raw history/checkpoint, segment and
 CUPTI evidence must reconcile; unknown owners, external/static allocations,
 missing records and potentially truncated history stay incomplete. Capture
 failures and exact raw-file hashes remain in the receipt.
+Adjacent snapshots retain exact revisions to earlier history fields for
+diagnosis; this does not relax history-prefix reconciliation or qualify the
+Torch/CUPTI join.
 
 `experiments/capture_full_engine_resources.py` adds an opt-in, intrusive
 source-BF16 observation pass using the stock runtime's supported `worker_cls`
@@ -789,6 +792,8 @@ the runner's shared attention/recurrent KV tensor views supply raw storage
 owners. The launcher binds the canonical source census, source-BF16 assignment,
 selected engine settings, observer settings, workload, device UUID and installed
 runtime manifest, and verifies the stock core before and after the pass.
+Worker observations also hash the actual mapped shared objects, including
+generated native binaries, and retain any unreadable-path errors.
 Observer settings and incomplete raw captures cannot qualify a served model.
 
 Its distinct `tessera.full_engine_raw_resource_ledger.v1` schema never emits a

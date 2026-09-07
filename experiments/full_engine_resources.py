@@ -66,6 +66,28 @@ def _torch():
     return torch
 
 
+def history_revision(previous, current):
+    """Retain exact observed prefix changes; this does not qualify a join.
+
+    Real Torch snapshots can revise history annotations and append their own
+    marker after returning the snapshot. Keep the old and new field values so
+    a refusal is diagnosable from the raw artifact, without excluding fields
+    from its existing prefix hash or guessing why they changed.
+    """
+    changes = []
+    for index, (before, after) in enumerate(zip(previous, current)):
+        fields = {}
+        for key in sorted(before.keys() | after.keys()):
+            if key not in before or key not in after or before[key] != after[key]:
+                fields[key] = {"before_present": key in before, "before": before.get(key),
+                               "after_present": key in after, "after": after.get(key)}
+        if fields:
+            changes.append({"index": index, "fields": fields})
+    return {"previous_length": len(previous), "current_length": len(current),
+            "missing_previous_rows": previous[len(current):], "changes": changes,
+            "scope": "observed raw history revisions; prefix admission remains strict"}
+
+
 @dataclass(frozen=True)
 class TensorOwner:
     """Caller-named ownership observation, not an independently admitted claim."""
@@ -169,6 +191,9 @@ class FullEngineResourceRecorder:
             checkpoint = {"label": label, "trace_index": len(trace),
                           "cupti_timestamp_ns": timestamp, "history_prefix_sha256": _sha(trace),
                           "segments": raw["segments"], "owners": rows}
+            if self._last_snapshot is not None:
+                checkpoint["previous_history_revision"] = history_revision(
+                    self._last_snapshot["device_traces"][self.device], trace)
             self._checkpoints.append(checkpoint)
             self._last_snapshot = raw
             return checkpoint

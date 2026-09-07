@@ -5,6 +5,7 @@ must never be used as timings or as fixed/KV admission. The owning launcher
 audits the installed core before and after this worker runs.
 """
 import json
+import hashlib
 import os
 from pathlib import Path
 
@@ -30,6 +31,21 @@ def tensor_leaves(value, prefix):
     elif isinstance(value, dict):
         for key, item in sorted(value.items()):
             yield from tensor_leaves(item, f"{prefix}.{key}")
+
+
+def native_library_observation():
+    from experiments.bench_native_operator import _mapped_shared_libraries
+    libraries = {}
+    errors = []
+    for path in sorted(_mapped_shared_libraries()):
+        try:
+            with path.open("rb") as stream:
+                libraries[str(path)] = {"sha256": hashlib.file_digest(stream, "sha256").hexdigest(),
+                                        "bytes": path.stat().st_size}
+        except OSError as exc:
+            errors.append({"path": str(path), "error": str(exc)})
+    return {"scope": "actual mapped shared-object bytes, including generated native libraries",
+            "libraries": libraries, "errors": errors, "runtime_admission": False}
 
 
 class ResourceCaptureWorker(Worker):
@@ -143,9 +159,12 @@ class ResourceCaptureWorker(Worker):
                     f"observed unit {name} had {count} invocations, expected "
                     f"{self._resource_plan['max_invocations_per_unit']}")
         directory = Path(self._resource_plan["output_directory"]) / f"worker-{os.getpid()}"
+        native_libraries = native_library_observation()
         result = self._resource_recorder.finish(directory, owners=self._resource_owners())
         (directory / "worker-observations.json").write_text(json.dumps({
             "worker_class": f"{type(self).__module__}.{type(self).__name__}",
+            "model_runner_class": f"{type(self.model_runner).__module__}.{type(self.model_runner).__name__}",
+            "native_libraries": native_libraries,
             "execute_calls": self._resource_calls, "units": self._resource_events,
             "kv_configuration": getattr(self, "_resource_kv_description", None),
             "scope": "intrusive raw source-BF16 resource pass; timing and admission ineligible"

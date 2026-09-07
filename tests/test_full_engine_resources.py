@@ -122,6 +122,23 @@ def test_recorder_validates_identity_before_starting_a_collector(monkeypatch):
         module.FullEngineResourceRecorder("unused.so", {}, max_checkpoints=1)
 
 
+def test_history_revision_preserves_changes_without_guessing_their_meaning():
+    from experiments.full_engine_resources import history_revision
+    before = [{"action": "alloc", "addr": 1024, "time_us": 100, "frames": [{"name": "old"}]},
+              {"action": "snapshot", "size": 16}]
+    after = [{"action": "alloc", "addr": 1024, "time_us": 101, "frames": [{"name": "new"}]},
+             {"action": "snapshot", "size": 16}, {"action": "alloc", "addr": 2048}]
+    result = history_revision(before, after)
+    assert result["previous_length"] == 2 and result["current_length"] == 3
+    assert result["missing_previous_rows"] == []
+    assert result["changes"] == [{"index": 0, "fields": {
+        "frames": {"before_present": True, "before": [{"name": "old"}],
+                   "after_present": True, "after": [{"name": "new"}]},
+        "time_us": {"before_present": True, "before": 100,
+                    "after_present": True, "after": 101}}}]
+    assert history_revision(after, before)["missing_previous_rows"] == [after[-1]]
+
+
 def test_recorder_publishes_hash_bound_raw_inputs_and_keeps_unknowns(capture, monkeypatch, tmp_path):
     from experiments import full_engine_resources as module
     calls = []
