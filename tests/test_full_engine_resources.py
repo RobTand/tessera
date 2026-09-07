@@ -27,6 +27,19 @@ def test_storage_aliases_are_counted_once_without_fixed_resource_admission(captu
     assert result["admission"] == "not_implemented"
 
 
+def test_conflicting_alias_categories_remain_unknown_without_hiding_other_checkpoints(capture):
+    from experiments.full_engine_resources import analyze_engine_resource_ledger
+    capture["checkpoints"][0]["owners"][1]["category"] = "candidate"
+    result = analyze_engine_resource_ledger(capture)
+    assert result["status"] == "incomplete"
+    assert len(result["checkpoints"]) == 3
+    assert result["checkpoints"][0]["storages"][0]["category"] == "unknown"
+    assert result["checkpoints"][0]["storages"][0]["owner_categories"] == {
+        "embedding.weight": "fixed", "lm_head.weight": "candidate"}
+    assert result["torch_allocations"][0]["observed_categories"] == ["candidate", "fixed"]
+    assert result["fixed_resources"] is None
+
+
 def test_pointer_reuse_is_a_new_lifetime_and_escaped_output_is_preserved(capture):
     from experiments.full_engine_resources import analyze_engine_resource_ledger
     result = analyze_engine_resource_ledger(capture)

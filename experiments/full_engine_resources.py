@@ -400,10 +400,15 @@ def _checkpoint_owners(checkpoint, live, device, issues):
         allocation = live[address]
         key = allocation["allocation_id"]
         entry = storages.setdefault(key, {"allocation_id": key, "address": address,
-                                         "bytes": size, "category": category, "owners": []})
-        if entry["bytes"] != size or entry["category"] != category:
-            raise ValueError("aliased storage has conflicting size/category ownership")
+                                         "bytes": size, "category": category, "owners": [],
+                                         "owner_categories": {}})
+        if entry["bytes"] != size:
+            raise ValueError("aliased storage has conflicting backing sizes")
+        if entry["category"] != category:
+            issues.append("aliased storage has conflicting category ownership: " + key)
+            entry["category"] = "unknown"
         entry["owners"].append(owner_id)
+        entry["owner_categories"][owner_id] = category
         allocation["observed_owners"].add(owner_id)
         allocation["observed_categories"].add(category)
     for entry in storages.values():

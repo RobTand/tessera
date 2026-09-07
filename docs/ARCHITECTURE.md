@@ -797,8 +797,12 @@ by an explicit RPC after engine initialization,
 so stock startup warmup cannot consume the requested workload's observations.
 Raw scheduler token counts and new/cached request state identify those steps.
 Model parameters, buffers and the runner's shared attention/recurrent KV
-tensor views supply raw storage
-owners. The launcher binds the canonical source census, source-BF16 assignment,
+tensor views supply raw storage owners. Source-BF16 candidate ownership applies
+to canonical weight tensors, while
+router state remains fixed even when registered again beneath the expert
+module. Historical conflicting category labels remain unknown in the raw
+ledger, with each supplied owner label retained and no admission.
+The launcher binds the canonical source census, source-BF16 assignment,
 selected engine settings, observer settings, workload, device UUID and installed
 runtime manifest, and verifies the stock core before and after the pass.
 Worker observations also hash the actual mapped shared objects, including

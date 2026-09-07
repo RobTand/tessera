@@ -16,8 +16,12 @@ from experiments.full_engine_resources import TensorOwner
 
 
 def parameter_category(name, canonical_modules):
-    return "candidate" if any(name.startswith(module + ".")
-                              for module in canonical_modules) else "fixed"
+    # This launcher accepts source BF16 only. Canonical weight tensors are
+    # candidates; router state can also be registered beneath an experts module
+    # and remains fixed even when both module paths alias the same Parameter.
+    return "candidate" if (name.rsplit(".", 1)[-1] in {"weight", "w13_weight", "w2_weight"}
+                           and any(name.startswith(module + ".")
+                                   for module in canonical_modules)) else "fixed"
 
 
 def tensor_leaves(value, prefix):
@@ -72,7 +76,7 @@ class ResourceCaptureWorker(Worker):
                     if tensor.device.type == "cuda":
                         yield TensorOwner(f"model:{kind}:{name}", parameter_category(
                             name, self._resource_plan["canonical_modules"]), tensor,
-                            "stock model named tensors; canonical-module prefix classification")
+                            "source BF16 canonical weight tensors; other named state fixed")
         if runner is not None:
             for name, tensor in tensor_leaves(getattr(runner, "kv_caches", []), "kv_cache"):
                 yield TensorOwner(name, "kv", tensor,

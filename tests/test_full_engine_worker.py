@@ -85,6 +85,7 @@ def test_parameter_classification_keeps_router_and_tied_head_fixed(worker_module
     units = ["model.layers.2.feed_forward.experts", "model.layers.0.feed_forward.w13"]
     assert classify("model.layers.2.feed_forward.experts.w13_weight", units) == "candidate"
     assert classify("model.layers.2.feed_forward.gate.weight", units) == "fixed"
+    assert classify("model.layers.2.feed_forward.experts.routed_experts.e_score_correction_bias", units) == "fixed"
     assert classify("model.layers.2.feed_forward.experts_extra.weight", units) == "fixed"
     assert classify("lm_head.weight", units) == "fixed"
     assert classify("model.embed_tokens.weight", units) == "fixed"
