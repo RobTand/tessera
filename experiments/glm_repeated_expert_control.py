@@ -262,9 +262,10 @@ def main():
         assert identity['loaded_module_origins_verified']
         write(args.out, 'package-identity.json', identity)
         assert files(core) == core_files, 'Installed stock vLLM changed'
+        retained_peaks = getattr(args, '_glm_cuda_peaks', {})
         record.update(stock_core_unchanged=True, package_identity_sha256=digest(args.out / 'package-identity.json'),
-            cuda_peak_allocated_bytes=torch.cuda.max_memory_allocated(),
-            cuda_peak_reserved_bytes=torch.cuda.max_memory_reserved())
+            cuda_peak_allocated_bytes=max(torch.cuda.max_memory_allocated(), retained_peaks.get('allocated', 0)),
+            cuda_peak_reserved_bytes=max(torch.cuda.max_memory_reserved(), retained_peaks.get('reserved', 0)))
         write(args.out, 'receipt.json', record)
     return rc
 

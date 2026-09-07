@@ -58,6 +58,13 @@ def run(args, selected, templates, scheme, layer, method, w13, w2, s13, s2):
             shared_experts=None, shared_experts_input=None)
 
     resident = kernel(s13, diagnostic_s2)
+    # Preserve prior peaks across per-case counter resets, including if a
+    # later assertion fails before this function can return its receipt.
+    peaks = {'allocated': 0, 'reserved': 0}
+    args._glm_cuda_peaks = peaks
+    def retain_peaks():
+        peaks['allocated'] = max(peaks['allocated'], torch.cuda.max_memory_allocated())
+        peaks['reserved'] = max(peaks['reserved'], torch.cuda.max_memory_reserved())
     results = []
     for case in selected['cases']:
         tokens = int(case['tokens'])
@@ -85,10 +92,15 @@ def run(args, selected, templates, scheme, layer, method, w13, w2, s13, s2):
         assert mapping_error['finite'] and mapping_error['max_abs'] == 0, mapping_error
         del compact_first, compact_second
 
+        torch.cuda.synchronize()
+        retain_peaks()
+        torch.cuda.reset_peak_memory_stats()
         allocated_before = torch.cuda.memory_allocated()
         with torch.profiler.record_function('selected_expert_window_decode'):
             first = packed['w13'].decode(selected_ids, max_experts_per_chunk=chunk).view(torch.float8_e4m3fn)
             second = packed['w2'].decode(selected_ids, max_experts_per_chunk=chunk).view(torch.float8_e4m3fn)
+        torch.cuda.synchronize()
+        decode_peak = torch.cuda.max_memory_allocated()
         # Every selected expert byte, in the actual nontrivial compact order.
         assert torch.equal(first.view(torch.uint8), w13.index_select(0, selected_ids).view(torch.uint8))
         assert torch.equal(second.view(torch.uint8), w2.index_select(0, selected_ids).view(torch.uint8))
@@ -107,16 +119,18 @@ def run(args, selected, templates, scheme, layer, method, w13, w2, s13, s2):
             'deliberately_wrong_mapping': wrong_error,
             'all_selected_tiles_and_scales_exact': True,
             'allocated_before_decode': allocated_before,
-            # Preserve the whole-control allocator high-water mark. These
-            # functional controls do not claim an isolated per-case peak.
-            'process_peak_allocated_after_case': torch.cuda.max_memory_allocated(),
+            'decode_peak_allocated_bytes': decode_peak,
+            'decode_incremental_peak_bytes': decode_peak - allocated_before,
+            'case_peak_allocated_with_verification_bytes': torch.cuda.max_memory_allocated(),
             'fresh_decoded_weight_bytes': first.numel() + second.numel()})
         write(args.out, 'selected-expert-progress.json', results)
         del first, second, got, wrong, expected, mapped, compact_kernel
+    retain_peaks()
     return {'schema': 'tessera.glm_selected_expert_control.v1',
         'status': 'selected_expert_functional_control_passed', 'cases': results,
         'packed_owner_bytes': {name: p.resident_bytes() for name, p in packed.items()},
         'max_experts_per_chunk': chunk, 'dynamic_cardinality_sync': 'torch.unique eager',
+        'whole_control_peak_bytes': peaks,
         'diagnostic_expert_signature': 'down row scale times 1 + bit(global expert, row modulo 9)',
         'performance_claim': False, 'production_route_changed': False,
         'runtime_cell_promoted': False, 'all_trained_experts': False}
