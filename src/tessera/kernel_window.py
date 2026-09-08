@@ -6,8 +6,8 @@ E4M3_RECIPE``) stores ~4.07 bpp on disk and serves as a stock per-channel FP8
 tensor.  Serving it *resident* decodes once at load and holds 8 bpp, which is
 plain FP8's footprint: the wire's saving lands on disk and nowhere else.
 Serving it *streamed* holds the packed wire and decodes per forward, and the
-only decoder that existed for that was pure torch (``gridbook.
-tessera_window.PreparedWindow.decode``): correct, traceable, and 20-40x off
+only decoder that existed for that was pure torch (``tessera.serving.
+window.PreparedWindow.decode``): correct, traceable, and 20-40x off
 the memory-bandwidth bound, so the streamed mode paid more in decode than it
 saved in bytes.
 
@@ -32,8 +32,8 @@ row axis, so a GEMV's reduction axis (the input columns) is the axis that
 does not carry state.
 
 WHAT IS SHARED WITH THE REST OF THE TREE.  The packing is the wire's own
-(``lane_planes.pack_window_planes``, the same bytes ``gridbook.
-tessera_window.prepare_window`` reads), the code table is the unit's own
+(``lane_planes.pack_window_planes``, the same bytes ``tessera.serving.
+window.prepare_window`` reads), the code table is the unit's own
 ALPHABET plane, the byte map is the grid's ``native`` and the row scale is
 ``scale_channel.channel_scale_field``'s expression.  Nothing here re-derives
 a table the reference decoder builds, so the two cannot drift.
