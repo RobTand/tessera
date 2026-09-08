@@ -15,6 +15,7 @@ from pathlib import Path
 def build_model(model_path, device, max_model_len, *, quant_config, distributed):
     import torch
     from datetime import timedelta
+    from urllib.parse import urlsplit
     from vllm.config import set_current_vllm_config
     from vllm.distributed import init_distributed_environment, initialize_model_parallel
     from vllm.engine.arg_utils import EngineArgs
@@ -23,10 +24,14 @@ def build_model(model_path, device, max_model_len, *, quant_config, distributed)
 
     assert distributed['world_size'] == 2 and distributed['rank'] in (0,1)
     assert distributed['init_method'].startswith('tcp://')
+    rendezvous = urlsplit(distributed['init_method'])
+    assert rendezvous.hostname and rendezvous.port and not rendezvous.path
     torch.cuda.set_device(0)  # one visible GPU per explicitly configured host
     config = EngineArgs(model=model_path,load_format='dummy',enforce_eager=True,
         max_model_len=max_model_len,trust_remote_code=True,tensor_parallel_size=2,
-        disable_custom_all_reduce=True).create_engine_config()
+        disable_custom_all_reduce=True,distributed_executor_backend='mp',
+        nnodes=2,node_rank=distributed['rank'],
+        master_addr=rendezvous.hostname,master_port=rendezvous.port).create_engine_config()
     config.quant_config = quant_config
     timeout = distributed['timeout_seconds']
     assert type(timeout) is int and 1 <= timeout <= 180
