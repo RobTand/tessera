@@ -110,3 +110,28 @@ No successful measurement was repeated to fill capacity.
 
 No full-model residency, shared-expert execution, trained-router/model quality,
 TP2, heterogeneous expert layouts or release eligibility is claimed.
+
+Reproduction uses the immutable `harness-02` tree under the evidence root:
+
+```sh
+python3 experiments/run_glm_native_construction.py \
+  --request /mnt/shared/tessera-glm-native-20260907/request.json \
+  --packed-request /mnt/shared/tessera-measurements/glm-packed-lifecycle-20260908/request-packed-02.json \
+  --out /mnt/shared/tessera-measurements/glm-packed-lifecycle-20260908/NEW-OUTPUT \
+  --stage control --memory-gib 48 --cpus 4
+```
+
+Use `request-resident-01.json` or `request-diagnostic-01.json` for those arms;
+each request binds its source archive and inputs. Every original invocation's
+complete Docker command, affinity, hashes and environment are in its
+`launch.json`, and execution output is in `container.log`.
+
+The CPU test command submitted through `pbrun.py --anywhere --cpus 4
+--demand mem_gb=4 --priority -10` with OMP/MKL/OpenBLAS threads set to one was:
+
+```sh
+/home/rob/venvs/pb-cpu/bin/python -m pytest -n 4 --dist worksteal \
+  --durations 10 -q tests/test_serving_moe_selected.py \
+  tests/test_serving_moe_route.py tests/test_serving_moe_dispatch.py \
+  --surface-json /mnt/shared/tessera-measurements/glm-packed-lifecycle-20260908/targeted-surface-04.json
+```
