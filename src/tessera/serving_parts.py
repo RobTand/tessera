@@ -280,6 +280,8 @@ def validate_explicit_plan(plan, modules: dict, config_groups: dict, *, source_t
 
 def merge_serving_parts(paths, out: Path, source: Path, *, move=False) -> dict:
     """Prove identities, ownership and written tensor coverage before publishing."""
+    from .moe_execution import ResearchSelectedMoeConfig, ResearchSelectedMoeInput
+
     out, source = Path(out), Path(source)
     if out.exists():
         raise ValueError(f"merge output already exists: {out}")
@@ -305,7 +307,6 @@ def merge_serving_parts(paths, out: Path, source: Path, *, move=False) -> dict:
         raise ValueError("serving partition identity mismatch (source, plan, encoder or runtime)")
     research_execution = None
     if "research_selected_moe" in identity["options"]:
-        from .moe_execution import ResearchSelectedMoeInput
         research_execution = ResearchSelectedMoeInput.from_record(
             identity["options"]["research_selected_moe"])
     execution_config = ({"research_selected_moe": research_execution.config.as_checkpoint()}
@@ -337,6 +338,14 @@ def merge_serving_parts(paths, out: Path, source: Path, *, move=False) -> dict:
             raise ValueError(f"partition {rank}: source tensor coverage disagrees with ownership")
         covered.update(owned)
         qconfig = config["quantization_config"]
+        # Validate every carrier before equality: JSON floats and booleans can
+        # compare equal to the integer-only declaration in Python.
+        if "research_selected_moe" in qconfig:
+            ResearchSelectedMoeConfig.from_checkpoint(qconfig["research_selected_moe"])
+        if "research_selected_moe" in manifest:
+            ResearchSelectedMoeInput.from_record(manifest["research_selected_moe"])
+        if "research_selected_moe" in part["identity"]["options"]:
+            ResearchSelectedMoeInput.from_record(part["identity"]["options"]["research_selected_moe"])
         if ({k: qconfig[k] for k in ("research_selected_moe",)
              if k in qconfig} != execution_config
                 or {k: manifest[k] for k in ("research_selected_moe",) if k in manifest}

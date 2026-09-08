@@ -111,6 +111,9 @@ class ResearchSelectedMoeInput:
                 or not isinstance(record["input_utf8"], str)):
             raise ValueError("research_selected_moe input record has missing or unknown fields")
         snapshot = cls.from_bytes(record["input_utf8"].encode("utf-8"))
+        # Python equates True/1 and 2.0/2; the carried JSON has the same typed
+        # grammar as the original input even when those values compare equal.
+        ResearchSelectedMoeConfig.from_checkpoint(record["config"])
         if snapshot.record() != record:
             raise ValueError("research_selected_moe input record digest/content mismatch")
         return snapshot

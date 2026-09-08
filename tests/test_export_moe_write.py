@@ -106,8 +106,30 @@ def test_research_export_preserves_wires_and_snapshots_execution(tmp_path, monke
         "input_utf8": text, "config": block}
     if partition:
         assert manifest["export_identity"]["options"]["research_selected_moe"] == manifest["research_selected_moe"]
-        # A valid but different dispatch in a part must not override its seal.
+        # Numeric equality must not accept JSON floats in an integer-only carrier.
         part_config = part / "tessera_part_config.json"
+        part_manifest = part / "tessera_serving_manifest.json"
+        original_config = part_config.read_text()
+        original_manifest = part_manifest.read_text()
+        for carrier in ("config", "manifest", "identity"):
+            for field in ("expected_tensor_parallel_size", "max_experts_per_chunk"):
+                payload = json.loads(original_config if carrier == "config" else original_manifest)
+                if carrier == "config":
+                    carried = payload["quantization_config"]["research_selected_moe"]
+                elif carrier == "manifest":
+                    carried = payload["research_selected_moe"]["config"]
+                else:
+                    carried = payload["export_partition"]["identity"]["options"]["research_selected_moe"]["config"]
+                carried[field] = float(carried[field])
+                changed = part_config if carrier == "config" else part_manifest
+                changed.write_text(json.dumps(payload))
+                refused_out = selected / f"refused-{carrier}-{field}"
+                with pytest.raises(ValueError, match="research_selected_moe"):
+                    merge_serving_parts([part], refused_out, selected / "src")
+                assert not refused_out.exists()
+                part_config.write_text(original_config)
+                part_manifest.write_text(original_manifest)
+        # A valid but different dispatch in a part must not override its seal.
         payload = json.loads(part_config.read_text())
         payload["quantization_config"]["research_selected_moe"]["decode_backend"] = "torch"
         part_config.write_text(json.dumps(payload))
