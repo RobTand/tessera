@@ -5,6 +5,12 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-08 for calibrated packed complete-cache intake (#433),
+against base `f6faf7e59fa6`. The CLI accepts `--hessian` with a packed expert
+plan only under `--cached-units`; exact existing per-unit source/projection/H
+receipt checks govern intake (§3.2). Encoder package bytes, wire recipes and
+serving qualification are unchanged.
+
 Re-stamped 2026-09-08 for the explicit packed research checkpoint bridge
 (#430), against base `b9cda5b03efe`. The optional
 `quantization_config.research_selected_moe` object uses the closed
@@ -1362,6 +1368,18 @@ its original blob SHA. Dense row-sliced modules refuse because a whole original
 unit cannot stand for a different source slice. The two cache flags are mutually
 exclusive; the expert-only flag preserves its prior scope. The cache mode requires a fresh output
 directory and records each accepted blob's SHA in the export manifest.
+
+For packed expert plans, `--hessian` is accepted only with complete
+`--cached-units` intake. The existing producer projection supplies each logical
+expert tensor and source slice; its exact logical H key, column geometry,
+actual source/H bytes and full calibration settings must match the cached
+receipt. The physical stack key is never an H fallback. Bounded canonical
+references use `ActivationSource.from_capture` and authenticate one source
+payload per logical H lookup without retaining earlier H tensors. Legacy
+`.pt` captures retain their eager reader. A missing dense or expert cache entry
+refuses complete coverage; no unit is re-encoded. Packed-H exports without
+`--cached-units`, including expert-only cache mode, continue to refuse before
+encoding. This CLI exception changes no producer package source seal.
 
 These are producer evidence and tests only. They do not promote a recipe,
 open an eligibility cell, or replace the source-matched served measurements
