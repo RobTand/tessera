@@ -33,9 +33,11 @@ is a private device clone fingerprinted at preparation, as on ``ops``'s
 prepared module; the eager path re-checks the fingerprints, a compiled
 forward skips the untraceable data-pointer comparison.
 
-Pure torch throughout: this decoder needs no CUDA extension, which is why the
+The default backend is pure torch and needs no CUDA extension, which is why the
 FP8 route serves without one wherever the window GEMV lane did not prepare
 (``fp8_gemv``) -- the resident mode always, the streamed mode as its fallback.
+The research batch owner also offers explicit ``backend="triton"`` through
+``tessera.kernel_window``, reading these same prepared tensors directly.
 """
 from __future__ import annotations
 
@@ -233,13 +235,29 @@ class PreparedWindowBatch:
     def resident_bytes(self):
         return sum(t.numel() * t.element_size() for t in self.tensors())
 
-    def decode(self, expert_ids: torch.Tensor, *, max_experts_per_chunk: int):
-        """Fresh ``[selected, steps, cols]`` in ID order, including repeats."""
+    def decode(self, expert_ids: torch.Tensor, *, max_experts_per_chunk: int,
+               backend: str = "torch"):
+        """Fresh ``[selected, steps, cols]`` in ID order, including repeats.
+
+        ``torch`` is the reference/default. Explicit ``triton`` is CUDA-only
+        and bounds launches by chunk while allocating only the final output.
+        Both consume these same packed planes and alphabet dtype.
+        """
         if tuple(_fingerprint(t) for t in self.tensors()) != self.__fingerprints:
             raise RuntimeError("prepared Tessera window batch changed after preparation")
         require_expert_ids(expert_ids, self.device)
         if type(max_experts_per_chunk) is not int or max_experts_per_chunk <= 0:
             raise ValueError("max_experts_per_chunk must be a positive integer")
+        if backend not in ("torch", "triton"):
+            raise ValueError(f"unknown selected window backend {backend!r}")
+        if backend == "triton":
+            if self.device.type != "cuda":
+                raise ValueError("the triton selected window backend requires CUDA")
+            from tessera.kernel_window import decode_selected_windows
+
+            return decode_selected_windows(
+                self.__groups, self.__table, expert_ids, self.steps, self.cols,
+                self.window_bits, max_experts_per_chunk)
         mask = (1 << self.window_bits) - 1
         chunks = []
         for start in range(0, expert_ids.numel(), max_experts_per_chunk):

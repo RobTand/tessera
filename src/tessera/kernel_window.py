@@ -58,6 +58,7 @@ __all__ = [
     "prepare_window_unit",
     "prepare_from_parsed",
     "decode_fp8_tile",
+    "decode_selected_windows",
     "decode_value_tile",
     "window_gemv",
     "window_value_linear",
@@ -418,6 +419,71 @@ def _state_of(span, sub, code, v, rate, init, window: tl.constexpr):
     state = (span >> (64 - sub - v * rate - window)) & MASK
     d = (code + 1) * rate
     return state | tl.where(d < window, (init << (d & 63)) & MASK, 0)
+
+
+@triton.jit
+def _decode_selected_kernel(
+    plane_ptr, gather_ptr, shift_ptr, which_ptr, table_ptr, ids_ptr, out_ptr,
+    STEPS: tl.constexpr, COLS: tl.constexpr, GROUP_COLS: tl.constexpr,
+    PLANE_BYTES: tl.constexpr, EXPERTS: tl.constexpr, ID_STRIDE: tl.constexpr,
+    SELECT_START, WINDOW: tl.constexpr,
+    BLOCK_T: tl.constexpr, BLOCK_C: tl.constexpr,
+):
+    """Read the serving owner's four-byte windows; write final selected rows.
+
+    As in ``_decode_kernel``, stream positions are contiguous while reading,
+    then a register/shared transpose makes output columns contiguous. The
+    prepared pad already contains each expert's row-sliced initial state.
+    """
+    selected = SELECT_START + tl.program_id(2)
+    expert = tl.load(ids_ptr + selected * ID_STRIDE)
+    valid_expert = (expert >= 0) & (expert < EXPERTS)
+    # Keep addressing legal even if the asynchronous bounds assertion fails.
+    safe_expert = tl.where(valid_expert, expert, 0).to(tl.int64)
+    t = tl.program_id(0) * BLOCK_T + tl.arange(0, BLOCK_T)
+    c = tl.program_id(1) * BLOCK_C + tl.arange(0, BLOCK_C)
+    active = (c[:, None] < GROUP_COLS) & (t[None, :] < STEPS) & valid_expert
+    row = (safe_expert * GROUP_COLS + c.to(tl.int64)) * PLANE_BYTES
+    word = tl.full((BLOCK_C, BLOCK_T), 0, tl.uint32)
+    for byte in tl.static_range(4):
+        offset = tl.load(gather_ptr + t * 4 + byte, t < STEPS, other=0)
+        value = tl.load(plane_ptr + row[:, None] + offset[None, :], active, other=0)
+        word = (word << 8) | value.to(tl.uint32)
+    shift = tl.load(shift_ptr + t, t < STEPS, other=0)
+    state = (word >> shift[None, :]) & ((1 << WINDOW) - 1)
+    value = tl.load(table_ptr + safe_expert * (1 << WINDOW) + state,
+                    active, other=0)
+    col = tl.load(which_ptr + c, c < GROUP_COLS, other=0)
+    out = (selected.to(tl.int64) * STEPS + t[:, None]) * COLS + col[None, :]
+    tl.store(out_ptr + out, tl.trans(value),
+             (t[:, None] < STEPS) & (c[None, :] < GROUP_COLS))
+
+
+def decode_selected_windows(groups, table, expert_ids, steps, cols, window_bits,
+                            max_experts_per_chunk):
+    """Eager research decode over ``PreparedWindowBatch``'s existing tensors.
+
+    No repacking, alternate table or retained decoded pool. Only the final
+    output and O(selected) ID validation exist outside the kernel; chunks
+    bound launches and write disjoint slices of that one output allocation.
+    Caller owns metadata/fingerprint checks. Invalid IDs trigger a device
+    assertion, and every plane/table read is independently bounded in-kernel.
+    """
+    torch._assert_async(torch.all((expert_ids >= 0) & (expert_ids < table.shape[0])),
+                        "selected window expert IDs out of range")
+    out = table.new_empty((expert_ids.numel(), steps, cols))
+    if not expert_ids.numel() or not steps or not cols:
+        return out
+    for start in range(0, expert_ids.numel(), max_experts_per_chunk):
+        count = min(max_experts_per_chunk, expert_ids.numel() - start)
+        for group in groups:
+            _decode_selected_kernel[(triton.cdiv(steps, 32),
+                                     triton.cdiv(group.plane.shape[1], 32), count)](
+                group.plane, group.gather, group.shift, group.which, table,
+                expert_ids, out, steps, cols, group.plane.shape[1],
+                group.plane.shape[2], table.shape[0], expert_ids.stride(0),
+                start, window_bits, 32, 32, num_warps=4)
+    return out
 
 
 @triton.jit

@@ -226,3 +226,17 @@ def test_a_code_map_on_a_value_table_is_refused_not_silently_applied():
     with pytest.raises(ValueError, match="remaps CODES"):
         _tiny_window(torch.zeros(16, dtype=torch.bfloat16),
                      code_map=torch.arange(16, dtype=torch.uint8))
+
+
+def test_selected_backend_is_explicit_and_refuses_cpu_triton():
+    from tessera.serving.window import PreparedWindow
+
+    body, table = _unit(16, 4, [2] * 4, 8, seed=709)
+    batch = PreparedWindow.stack([prepare_window(body, [2] * 4, 8, table, 'cpu')])
+    ids = torch.tensor([0])
+    with pytest.raises(ValueError, match='backend'):
+        batch.decode(ids, max_experts_per_chunk=1, backend='automatic')
+    with pytest.raises(ValueError, match='CUDA'):
+        batch.decode(ids, max_experts_per_chunk=1, backend='triton')
+    assert torch.equal(batch.decode(ids, max_experts_per_chunk=1, backend='torch'),
+                       batch.decode(ids, max_experts_per_chunk=1))
