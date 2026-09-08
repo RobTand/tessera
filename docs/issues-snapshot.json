@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-07T19:51:29Z",
+ "generated": "2026-09-08T08:15:18Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -1012,7 +1012,7 @@
     "title": "Keep persistent FP32 buffers unnarrowed through the streaming export"
    },
    "326": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "CI optimization: running only affected tests per PR"
    },
    "327": {
@@ -1076,11 +1076,11 @@
     "title": "gridbook: sync dotted MoE target boundary"
    },
    "340": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "P0: standalone export resume cache does not bind source checkpoint identity"
    },
    "341": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Stream canonical GLM calibration through bounded source residency"
    },
    "342": {
@@ -1088,16 +1088,104 @@
     "title": "Preserve persistent buffer bytes in fresh and resumed streaming export"
    },
    "343": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Stream canonical GLM calibration through bounded source residency"
+   },
+   "344": {
+    "state": "CLOSED",
+    "title": "Skip empty joint projection leases during checkpoint resume"
+   },
+   "345": {
+    "state": "CLOSED",
+    "title": "P1: fused joint resume creates a lease for fully checkpointed layers"
+   },
+   "346": {
+    "state": "CLOSED",
+    "title": "Track explicit source provenance for interrupted joint AURA continuation"
+   },
+   "347": {
+    "state": "CLOSED",
+    "title": "Preserve explicit source provenance across joint AURA resumes"
+   },
+   "348": {
+    "state": "CLOSED",
+    "title": "Bind the source checkpoint identity into the export resume manifest"
+   },
+   "349": {
+    "state": "CLOSED",
+    "title": "Remove misleading streamed AURA resume ETA"
    },
    "35": {
     "state": "CLOSED",
     "title": "gridbook: sync fail-closed runtime contracts"
    },
+   "350": {
+    "state": "CLOSED",
+    "title": "Report measured AURA progress without misleading resume ETA"
+   },
+   "351": {
+    "state": "CLOSED",
+    "title": "Carry verified anchor export identity through joint AURA allocation"
+   },
+   "352": {
+    "state": "CLOSED",
+    "title": "Honor declared dispatch identity rules and validate runtime prefix maps correctly"
+   },
+   "353": {
+    "state": "CLOSED",
+    "title": "Honor declared dispatch identity rules and repair prefix validation"
+   },
+   "354": {
+    "state": "CLOSED",
+    "title": "Carry verified original metadata into completed joint allocation tables"
+   },
+   "355": {
+    "state": "CLOSED",
+    "title": "Bind export resumes to source identity and refuse orphaned layers"
+   },
+   "356": {
+    "state": "CLOSED",
+    "title": "Avoid repeated source identity validation in joint AURA allocation"
+   },
+   "357": {
+    "state": "CLOSED",
+    "title": "Reuse validated joint AURA identities across allocator candidates"
+   },
+   "358": {
+    "state": "CLOSED",
+    "title": "Preserve feasible minimum-loss endpoint despite allocator bin rounding"
+   },
+   "359": {
+    "state": "CLOSED",
+    "title": "Preserve feasible minimum-loss allocation endpoints"
+   },
    "36": {
     "state": "CLOSED",
     "title": "gridbook: sync parity harness and cold CUDA loader hardening"
+   },
+   "360": {
+    "state": "CLOSED",
+    "title": "Qualify expandable CUDA segments for the GLM workspace memory failure"
+   },
+   "361": {
+    "state": "CLOSED",
+    "title": "experiment(glm): record successful expandable-allocator workspace"
+   },
+   "362": {
+    "state": "CLOSED",
+    "title": "Expose the existing shared-input source-release policy for streamed capture"
+   },
+   "363": {
+    "state": "CLOSED",
+    "title": "Expose opt-in shared-input release for streamed capture"
+   },
+   "364": {
+    "state": "CLOSED",
+    "title": "Add checked phase admission for canonical shared capture"
+   },
+   "365": {
+    "state": "CLOSED",
+    "title": "Add checked phase admission for shared calibration capture"
    },
    "37": {
     "state": "CLOSED",
@@ -2674,7 +2762,7 @@
     "title": "Price the forest on both sides, or refuse the pairing (#388)"
    },
    "391": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "The empty-config_groups guards exempt every --layers N, but only --layers 0 is a deliberate passthrough"
    },
    "392": {
@@ -2698,7 +2786,7 @@
     "title": "Initialize identity before collecting trailing refit diagnostics"
    },
    "397": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Pinned EUGR runtime carries a core KV-sizing patch; unmodified-runtime gate remains unresolved"
    },
    "398": {
@@ -2738,7 +2826,7 @@
     "title": "Reuse already-bound immutable grid digests in reader profile validation"
    },
    "405": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Refuse a smoke bound that empties the plan, like the default does"
    },
    "406": {
@@ -2782,7 +2870,7 @@
     "title": "Qualify GLM 288-expert native wire controls on stock vLLM"
    },
    "415": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Add bounded q512 and selected-expert GLM streamed research controls"
    },
    "416": {
@@ -2790,7 +2878,7 @@
     "title": "Use CPU annotation ranges for full-engine timing partitions"
    },
    "417": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "research: GLM q512 control and selected-expert packed decode"
    },
    "418": {
@@ -2804,6 +2892,14 @@
    "42": {
     "state": "CLOSED",
     "title": "The window GEMV needs an A-side decision before it can be wired into a route"
+   },
+   "420": {
+    "state": "OPEN",
+    "title": "P2: sizing a GLM menu hashes zero payloads; add authoritative extent-only layout API"
+   },
+   "421": {
+    "state": "OPEN",
+    "title": "Price Tessera layouts without materializing payloads"
    },
    "43": {
     "state": "CLOSED",
