@@ -27,7 +27,7 @@ from .grammar import (
     forest_plane_bytes,
     root_from_q256,
 )
-from .layout import TerminalSpec, build_planes, build_terminal
+from .layout import TerminalSpec, build_plane_extents, build_terminal_extent
 from .manifest import Geometry
 
 __all__ = [
@@ -167,7 +167,7 @@ CITED_FIGURES: tuple[Figure, ...] = (
 # precisely so they cannot drift.  A second, weaker accountant inside the one
 # module whose thesis is "derived means derived" is the drift, not the cure:
 # every rate this module publishes goes through ``terminal_rate``, which walks
-# the real descriptors and charges what the wire charges.
+# the shared plane extents and charges what the wire charges.
 
 
 def terminal_rate(
@@ -227,7 +227,7 @@ def terminal_rate(
     sized from the schedule by :func:`tessera.grammar.forest_plane_bytes`.  It
     defaults to ``False`` because every figure this module publishes, and the
     two accountant-identity tests that pin them, are *position-domain* rates --
-    the calculator is handed empty forest blobs by construction and states
+    the calculator declares empty forest extents by construction and states
     what the position planes cost.  A caller pricing a whole unit on the wire
     wants ``True``: :func:`tessera.control.unit_wire_bits` passes it, because
     without it the wire's byte-matched control was 512 B light on every
@@ -258,16 +258,11 @@ def terminal_rate(
     if code_bytes not in (1, 2):
         raise GrammarError(f"a code plane element is one or two bytes, not {code_bytes}")
     if window_bits:
-        alphabet, descendant = bytes(code_bytes << window_bits), b""
+        alphabet_bytes, descendant_bytes = code_bytes << window_bits, 0
     elif with_forest:
-        # Zero-filled blobs of the wire's own lengths: the layout charges a
-        # plane by its extent, and the forest's contents never reach the byte
-        # count.  Routed through ``build_planes`` rather than added afterwards
-        # so any alignment the descriptors impose is charged too.
-        a_bytes, d_bytes = forest_plane_bytes(rates, cap)
-        alphabet, descendant = bytes(a_bytes), bytes(d_bytes)
+        alphabet_bytes, descendant_bytes = forest_plane_bytes(rates, cap)
     else:
-        alphabet, descendant = b"", b""
+        alphabet_bytes, descendant_bytes = 0, 0
     spec = TerminalSpec(
         slot_id="calc",
         completion_bits=tuple(
@@ -279,22 +274,12 @@ def terminal_rate(
         with_diagonals=with_diagonals,
         with_row_scale=with_row_scale,
     )
-    # ``spec`` is what sizes the COMPLETION plane, so the layout is built with
-    # it rather than without it: ``unit_artifact`` passes it and this is the
-    # second implementation of the same schema, so the two should not differ in
-    # what they hand the layout.
-    #
-    # It is a **no-op today**, verified rather than assumed: 520 configurations
-    # (cap 3/7, arity 1/2, every rung at stride 64, completion 0/1/2/full, with
-    # and without the refinement plane) are bit-identical with and without it.
-    # ``build_terminal`` recomputes the exact byte count from ``spec``, so the
-    # plane extent never reaches the returned value.  Kept because a latent
-    # divergence between the two accountants is exactly the bug class this
-    # function keeps having, not because a rung was ever mispriced here.
-    planes = build_planes(geometry, rates, alphabet, descendant, cap=cap, arity=arity,
+    # The calculator and writer size the same declared terminal through the
+    # shared layout arithmetic. Payload identity is irrelevant to this rate.
+    planes = build_plane_extents(geometry, rates, alphabet_bytes, descendant_bytes, cap=cap, arity=arity,
                           spec=spec, span=span, with_row_scale=with_row_scale)
-    return build_terminal(
-        geometry, rates, spec, planes, len(alphabet), len(descendant),
+    return build_terminal_extent(
+        geometry, rates, spec, planes, alphabet_bytes, descendant_bytes,
         cap=cap, arity=arity, span=span
     ).exact_bpp
 

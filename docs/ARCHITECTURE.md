@@ -87,6 +87,14 @@ Re-stamped 2026-09-07 on `codex/reader-byte-unpack` for byte-sized narrow
 field decoding in `wire._from_bits` (§3). Wire grammar and
 `encoder_profile_id` remain unchanged; the reader source digest changes.
 
+Re-stamped 2026-09-08 for payload-free layout pricing (#420), against base
+`01d48d8d`: `layout.build_plane_extents` and `build_terminal_extent` return
+validated extents without allocating payloads or assigning content identities.
+`PlaneDescriptor` and `TerminalRecord` inherit the same geometry and validation;
+writers add the actual payload digests and retain their canonical serialization.
+`calculator.terminal_rate` uses these extents. Wire bytes, encoder recipes,
+serving defaults and release gates retain their existing contracts.
+
 ## 1. Scope
 
 Re-stamped 2026-09-07 for the selected-expert research control (#415):
