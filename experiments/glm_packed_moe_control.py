@@ -166,7 +166,7 @@ def run(args, request, outer):
         stages['after_create'] = memory()
         initial_parameters = {name:plain(value) for name,value in layer.named_parameters(recurse=False)}
         if outer['arm'] == 'packed':
-            assert set(initial_parameters) == {'w13_wire','w2_wire'}
+            assert set(initial_parameters) == {'e_score_correction_bias','w13_wire','w2_wire'}
             assert layer.tessera_mode == 'research_selected'
         def weights():
             for expert in range(e):
@@ -182,7 +182,8 @@ def run(args, request, outer):
         stages['after_prepare'] = memory()
         parameters = dict(layer.named_parameters(recurse=False))
         if outer['arm'] == 'packed':
-            assert not parameters and method.moe_kernel is None and method.moe_quant_config is None
+            assert set(parameters) == {'e_score_correction_bias'}
+            assert method.moe_kernel is None and method.moe_quant_config is None
             resident_bytes = method.research_resident_bytes()
         else:
             resident_bytes = sum(p.numel()*p.element_size() for p in parameters.values())
