@@ -37,6 +37,7 @@ __all__ = [
     "BitOrder",
     "CountGranularity",
     "PayloadDtype",
+    "PlaneExtent",
     "PlaneDescriptor",
     "CANONICAL_PLANE_ORDER",
 ]
@@ -294,8 +295,8 @@ NORMATIVE_ELEMENT_BITS.update(
 
 
 @dataclass(frozen=True)
-class PlaneDescriptor:
-    """One plane's complete self-description.
+class PlaneExtent:
+    """A plane's validated geometry and byte extent, without payload identity.
 
     `counts` is the per-granule element-count vector -- the quantity canonical
     placement does *not* remove.  `restart_offsets` is the offset/restart table
@@ -313,7 +314,6 @@ class PlaneDescriptor:
     counts: tuple[int, ...]
     restart_offsets: tuple[int, ...]
     payload_dtype: PayloadDtype
-    content_digest: bytes
 
     def __post_init__(self) -> None:
         # Two enum members are refused outright rather than half-supported.
@@ -366,8 +366,6 @@ class PlaneDescriptor:
             )
         if any(count < 0 for count in self.counts):
             raise PlaneLayoutError(f"{self.kind.name}: negative element count")
-        if len(self.content_digest) != DIGEST_BYTES:
-            raise PlaneLayoutError(f"{self.kind.name}: malformed content digest")
         if self.count_granularity is CountGranularity.WHOLE_PLANE:
             if len(self.counts) != 1:
                 raise PlaneLayoutError(
@@ -434,6 +432,18 @@ class PlaneDescriptor:
         raw = bits_to_bytes(count * self.element_bits)
         remainder = raw % self.alignment_bytes
         return raw if remainder == 0 else raw + (self.alignment_bytes - remainder)
+
+
+@dataclass(frozen=True)
+class PlaneDescriptor(PlaneExtent):
+    """A wire descriptor: the shared extent plus the actual payload digest."""
+
+    content_digest: bytes
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if len(self.content_digest) != DIGEST_BYTES:
+            raise PlaneLayoutError(f"{self.kind.name}: malformed content digest")
 
     def encode(self, writer: Writer) -> None:
         (

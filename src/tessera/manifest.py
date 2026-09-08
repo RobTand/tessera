@@ -59,6 +59,7 @@ __all__ = [
     "WINDOW_BITS_MAX",
     "ReachParams",
     "ShardOrigin",
+    "TerminalExtent",
     "TerminalRecord",
     "Manifest",
 ]
@@ -549,8 +550,8 @@ class ShardOrigin:
 
 
 @dataclass(frozen=True)
-class TerminalRecord:
-    """One concrete, exactly-priced terminal.
+class TerminalExtent:
+    """One exactly-priced terminal extent, without payload identity.
 
     `plane_elements` is the per-plane element count *in the unit's wire
     order* (``Manifest.plane_order``: by layout, and by whether the unit is a
@@ -563,7 +564,6 @@ class TerminalRecord:
     plane_elements: tuple[int, ...]
     exact_bytes: int
     exact_bpp: Fraction
-    payload_digest: bytes
 
     def __post_init__(self) -> None:
         # Either wire order: nine entries for a whole unit, ten for a shard,
@@ -582,14 +582,24 @@ class TerminalRecord:
             raise ManifestError(f"terminal {self.slot_id!r}: negative plane count")
         if self.exact_bytes < 0:
             raise ManifestError(f"terminal {self.slot_id!r}: negative byte count")
-        if len(self.payload_digest) != DIGEST_BYTES:
-            raise ManifestError(
-                f"terminal {self.slot_id!r}: malformed payload digest"
-            )
         if not 0 <= self.clip_exponent_code < 8:
             raise ManifestError(
                 f"terminal {self.slot_id!r}: clip exponent code "
                 f"{self.clip_exponent_code} outside the declared 3-bit domain"
+            )
+
+
+@dataclass(frozen=True)
+class TerminalRecord(TerminalExtent):
+    """A wire terminal: the shared extent plus the payload digest."""
+
+    payload_digest: bytes
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        if len(self.payload_digest) != DIGEST_BYTES:
+            raise ManifestError(
+                f"terminal {self.slot_id!r}: malformed payload digest"
             )
 
     def _identity_bytes(self, branch: BranchIdentity, profile_id: bytes) -> bytes:

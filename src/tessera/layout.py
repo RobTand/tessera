@@ -50,6 +50,7 @@ from .grammar import (
 from .trellis import body_bits as _body_bits
 from .manifest import (
     Geometry,
+    TerminalExtent,
     TerminalRecord,
 )
 from .planes import (
@@ -61,6 +62,7 @@ from .planes import (
     CountGranularity,
     IndexDomain,
     PayloadDtype,
+    PlaneExtent,
     PlaneDescriptor,
     PlaneKind,
     PlaneLayout,
@@ -69,6 +71,8 @@ from .planes import (
 
 __all__ = [
     "TerminalSpec",
+    "build_plane_extents",
+    "build_terminal_extent",
     "build_planes",
     "build_terminal",
     "ZERO_DIGEST",
@@ -311,7 +315,7 @@ def _superblock_counts(
     return tuple(counts)
 
 
-def content_byte_length(descriptor: PlaneDescriptor) -> int:
+def content_byte_length(descriptor: PlaneExtent) -> int:
     """Bytes of real content in a plane, before alignment padding."""
     return bits_to_bytes(descriptor.element_count * descriptor.element_bits)
 
@@ -346,14 +350,13 @@ def build_plane_region(
     return bytes(region)
 
 
-def build_planes(
+def build_plane_extents(
     geometry: Geometry,
     rates: tuple[int, ...],
-    alphabet_blob: bytes,
-    descendant_blob: bytes,
+    alphabet_bytes: int,
+    descendant_bytes: int,
     alignment_bytes: int = 1,
     max_released: int = 0,
-    payloads: "dict[PlaneKind, bytes] | None" = None,
     with_diagonals: bool = True,
     cap: int = C_FULL_BITS,
     arity: int = 1,
@@ -363,8 +366,10 @@ def build_planes(
     state_bits: int = 0,
     release_counts: "tuple[int, ...] | None" = None,
     layout: PlaneLayout = PlaneLayout.LADDER,
-) -> tuple[PlaneDescriptor, ...]:
-    """Full-extent descriptors, one per plane, in the layout's wire order.
+) -> tuple[PlaneExtent, ...]:
+    """Payload-free extents, one per plane, in the layout's wire order.
+
+    Blob lengths are integer inputs; no payload is allocated or hashed.
 
     ``layout`` selects the wire (``planes.PlaneLayout``).  The default is the
     current one, minor 7: COMPLETION after the scale planes and cut by depth
@@ -442,8 +447,8 @@ def build_planes(
             geometry,
             rates,
             spec,
-            len(alphabet_blob),
-            len(descendant_blob),
+            alphabet_bytes,
+            descendant_bytes,
             max_released,
             cap=cap,
             arity=arity,
@@ -496,30 +501,9 @@ def build_planes(
         for count in counts:
             offsets.append(running)
             running += count
-        # The plane's digest covers its exact on-wire byte range -- content
-        # plus the zero padding -- so `parse` can verify it against the bytes it
-        # actually holds.  Digesting a placeholder (this was `sha256(b"")` for
-        # every non-blob plane) made the field unverifiable by construction:
-        # review finding F1.
         bits = NORMATIVE_ELEMENT_BITS.get(kind) or state_bits
-        need = bits_to_bytes(total * bits)
-        default = (
-            alphabet_blob
-            if kind is PlaneKind.ALPHABET
-            else descendant_blob if kind is PlaneKind.DESCENDANT else bytes(need)
-        )
-        blob = (payloads or {}).get(kind, default)
-        if len(blob) != need:
-            raise PlaneLayoutError(
-                f"{kind.name}: payload is {len(blob)} bytes, the plane holds "
-                f"exactly {need}"
-            )
-        raw = bits_to_bytes(total * bits)
-        padded = raw + (
-            0 if raw % alignment_bytes == 0 else alignment_bytes - raw % alignment_bytes
-        )
         descriptors.append(
-            PlaneDescriptor(
+            PlaneExtent(
                 kind=kind,
                 index_domain=_INDEX_DOMAIN[kind],
                 storage=Storage.INLINE,
@@ -530,10 +514,116 @@ def build_planes(
                 counts=counts,
                 restart_offsets=tuple(offsets),
                 payload_dtype=_DTYPE[kind],
-                content_digest=hashlib.sha256(blob + bytes(padded - raw)).digest(),
             )
         )
     return tuple(descriptors)
+
+
+def build_planes(
+    geometry: Geometry,
+    rates: tuple[int, ...],
+    alphabet_blob: bytes,
+    descendant_blob: bytes,
+    alignment_bytes: int = 1,
+    max_released: int = 0,
+    payloads: "dict[PlaneKind, bytes] | None" = None,
+    with_diagonals: bool = True,
+    cap: int = C_FULL_BITS,
+    arity: int = 1,
+    spec: "TerminalSpec | None" = None,
+    span: int = 1,
+    with_row_scale: bool = False,
+    state_bits: int = 0,
+    release_counts: "tuple[int, ...] | None" = None,
+    layout: PlaneLayout = PlaneLayout.LADDER,
+) -> tuple[PlaneDescriptor, ...]:
+    """Build wire descriptors by hashing payloads over their shared extents.
+
+    See :func:`build_plane_extents` for the geometry and layout parameters.
+    Omitted payloads are zero-filled, as in :func:`build_plane_region`.
+    """
+    extents = build_plane_extents(
+        geometry, rates, len(alphabet_blob), len(descendant_blob),
+        alignment_bytes=alignment_bytes, max_released=max_released,
+        with_diagonals=with_diagonals, cap=cap, arity=arity, spec=spec,
+        span=span, with_row_scale=with_row_scale, state_bits=state_bits,
+        release_counts=release_counts, layout=layout,
+    )
+    descriptors = []
+    for extent in extents:
+        kind = extent.kind
+        need = content_byte_length(extent)
+        if payloads is not None and kind in payloads:
+            blob = payloads[kind]
+        elif kind is PlaneKind.ALPHABET:
+            blob = alphabet_blob
+        elif kind is PlaneKind.DESCENDANT:
+            blob = descendant_blob
+        else:
+            blob = bytes(need)
+        if len(blob) != need:
+            raise PlaneLayoutError(
+                f"{kind.name}: payload is {len(blob)} bytes, the plane holds "
+                f"exactly {need}"
+            )
+        descriptors.append(PlaneDescriptor(
+            **vars(extent),
+            content_digest=hashlib.sha256(
+                blob + bytes(extent.byte_length() - need)
+            ).digest(),
+        ))
+    return tuple(descriptors)
+
+
+def build_terminal_extent(
+    geometry: Geometry,
+    rates: tuple[int, ...],
+    spec: TerminalSpec,
+    planes: tuple[PlaneExtent, ...],
+    alphabet_bytes: int,
+    descendant_bytes: int,
+    cap: int = C_FULL_BITS,
+    arity: int = 1,
+    span: int = 1,
+) -> TerminalExtent:
+    """Validate and price a terminal using the writer's exact plane arithmetic."""
+    if len(spec.completion_bits) != len(rates):
+        raise GrammarError(
+            f"terminal {spec.slot_id!r}: completion vector covers "
+            f"{len(spec.completion_bits)} columns, rates cover {len(rates)}"
+        )
+    for column, (rate, completion) in enumerate(zip(rates, spec.completion_bits)):
+        if not 0 <= completion <= completion_capacity(rate, cap):
+            raise GrammarError(
+                f"terminal {spec.slot_id!r} column {column}: completion "
+                f"{completion} exceeds capacity "
+                f"{completion_capacity(rate, cap)} at rate {rate} (cap {cap})"
+            )
+    if not 0 <= spec.released_positions <= geometry.positions:
+        raise GrammarError(f"terminal {spec.slot_id!r}: release count out of range")
+
+    by_kind = {plane.kind: plane for plane in planes}
+    elements, total_bytes = [], 0
+    # The terminal's count array is indexed by the *unit's* wire order, and a
+    # shard's has one more entry than a whole unit's.  Taking it from the spec
+    # and the descriptors rather than from a module constant is what keeps
+    # the three from drifting.
+    layout = layout_of((plane.kind for plane in planes), spec.state_bits > 0)
+    for kind in plane_order(spec.state_bits > 0, layout):
+        count = _counts_for(
+            kind, geometry, rates, spec, alphabet_bytes, descendant_bytes,
+            cap=cap, arity=arity, span=span,
+        )
+        elements.append(count)
+        total_bytes += by_kind[kind].byte_length(count)
+
+    return TerminalExtent(
+        slot_id=spec.slot_id,
+        clip_exponent_code=spec.clip_exponent_code,
+        plane_elements=tuple(elements),
+        exact_bytes=total_bytes,
+        exact_bpp=Fraction(8 * total_bytes, geometry.quantizable_params),
+    )
 
 
 def build_terminal(
@@ -568,43 +658,17 @@ def build_terminal(
     is in exactly one wire order, and taking it as a second parameter would
     only let the two disagree.
     """
-    if len(spec.completion_bits) != len(rates):
-        raise GrammarError(
-            f"terminal {spec.slot_id!r}: completion vector covers "
-            f"{len(spec.completion_bits)} columns, rates cover {len(rates)}"
-        )
-    for column, (rate, completion) in enumerate(zip(rates, spec.completion_bits)):
-        if not 0 <= completion <= completion_capacity(rate, cap):
-            raise GrammarError(
-                f"terminal {spec.slot_id!r} column {column}: completion "
-                f"{completion} exceeds capacity "
-                f"{completion_capacity(rate, cap)} at rate {rate} (cap {cap})"
-            )
-    if not 0 <= spec.released_positions <= geometry.positions:
-        raise GrammarError(f"terminal {spec.slot_id!r}: release count out of range")
-
-    by_kind = {plane.kind: plane for plane in planes}
-    elements, total_bytes = [], 0
-    # The terminal's count array is indexed by the *unit's* wire order, and a
-    # shard's has one more entry than a whole unit's.  Taking it from the spec
-    # and the descriptors rather than from a module constant is what keeps
-    # the three from drifting.
-    layout = layout_of((plane.kind for plane in planes), spec.state_bits > 0)
-    for kind in plane_order(spec.state_bits > 0, layout):
-        count = _counts_for(
-            kind, geometry, rates, spec, alphabet_bytes, descendant_bytes,
-            cap=cap, arity=arity, span=span,
-        )
-        elements.append(count)
-        total_bytes += by_kind[kind].byte_length(count)
-
+    extent = build_terminal_extent(
+        geometry, rates, spec, planes, alphabet_bytes, descendant_bytes,
+        cap=cap, arity=arity, span=span,
+    )
+    total_bytes = extent.exact_bytes
     if plane_region is None:
         # No bytes were supplied, so no bytes were hashed.  ``sha256(zeros)``
         # is a well-formed 32-byte digest that verifies against a zero region,
         # which is a plausible-looking lie about data nobody hashed; the
         # all-zero sentinel is not a digest of anything and cannot be mistaken
-        # for one.  Callers that only price a terminal (``calculator``) read
-        # ``exact_bpp`` and never this field.
+        # for one. Payload-free pricing uses ``build_terminal_extent``.
         payload_digest = ZERO_DIGEST
     else:
         if len(plane_region) < total_bytes:
@@ -617,9 +681,9 @@ def build_terminal(
     return TerminalRecord(
         slot_id=spec.slot_id,
         clip_exponent_code=spec.clip_exponent_code,
-        plane_elements=tuple(elements),
-        exact_bytes=total_bytes,
-        exact_bpp=Fraction(8 * total_bytes, geometry.quantizable_params),
+        plane_elements=extent.plane_elements,
+        exact_bytes=extent.exact_bytes,
+        exact_bpp=extent.exact_bpp,
         payload_digest=payload_digest,
     )
 
