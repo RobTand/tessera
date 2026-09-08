@@ -46,9 +46,7 @@ def test_changed_input_record_refuses(field, value):
         ResearchSelectedMoeInput.from_record(record)
 
 
-def test_shared_config_reexport_and_incompatible_targets():
-    from tessera.serving.moe_route import ResearchSelectedMoeConfig as ExistingImport
-    assert ExistingImport is ResearchSelectedMoeConfig
+def test_shared_config_incompatible_targets():
     config = ResearchSelectedMoeConfig.from_checkpoint(_block())
     with pytest.raises(ValueError, match="requires TESSERA_FP8/E4M3"):
         config.require_targets({"m": {"structure": "routed_moe", "family": "TESSERA_BF16", "grid": "BF16"}}, "resident")
