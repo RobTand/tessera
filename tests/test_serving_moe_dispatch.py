@@ -17,6 +17,7 @@ silent ``None`` for a MoE-looking layer), never the roster.
 """
 from __future__ import annotations
 
+import json
 import sys
 import types
 
@@ -27,6 +28,117 @@ torch = pytest.importorskip("torch")
 from tessera.serving import lane                                    # noqa: E402
 from tessera.serving.lane import TESSERA_MODE_ENV                   # noqa: E402
 from tessera.serving.scheme import TESSERA_NVFP4                    # noqa: E402
+
+
+def _research_checkpoint(tp=1, backend="triton"):
+    return {"schema": "tessera.research_selected_moe.v1",
+            "max_experts_per_chunk": 3, "decode_backend": backend,
+            "expected_tensor_parallel_size": tp}
+
+
+def _expert_config(block):
+    from tessera.serving.scheme import TESSERA_FP8
+    scheme = {"family": TESSERA_FP8, "structure": "routed_moe", "grid": "E4M3",
+              "body": "WINDOW", "plane": "CHANNEL", "experts": 4,
+              "groups": {
+                  "w13": {"rows": 128, "columns": 128, "q256": 512,
+                          "wire_stride": 10000, "roles": [["gate_proj", 64], ["up_proj", 64]]},
+                  "w2": {"rows": 128, "columns": 64, "q256": 512,
+                         "wire_stride": 10000, "roles": [["down_proj", 128]]}}}
+    return {"quant_method": "tessera", "config_groups": {
+        "expert": {"targets": ["model.layers.1.mlp.experts"], "scheme": scheme}},
+        "ignore": ["model.layers.2.mlp.experts"], "research_selected_moe": block}
+
+
+@pytest.mark.parametrize("tp", [1, 2])
+@pytest.mark.parametrize("backend", ["torch", "triton"])
+def test_checkpoint_reconstruction_selects_existing_packed_owner(monkeypatch, tp, backend):
+    from tessera.serving import config as config_module, moe_route
+    import vllm.model_executor.layers.fused_moe as moe
+
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    block = _research_checkpoint(tp, backend)
+    # The worker receives JSON, never the native control's local config subclass.
+    payload = json.loads(json.dumps(_expert_config(block)))
+    config = TesseraConfig.from_config(payload)
+    facts, calls = [], []
+    monkeypatch.setattr(config_module, "declare_compile_identity", lambda **kw: facts.append(kw))
+    result = object()
+    def build(*args, **kwargs):
+        calls.append((args, kwargs))
+        return result
+    monkeypatch.setattr(moe_route, "build_tessera_moe_method", build)
+    layer = moe.RoutedExperts()
+    assert config.get_quant_method(layer, "model.layers.1.mlp.experts") is result
+    selected = calls[0][1].get("research_selected")
+    assert isinstance(selected, moe_route.ResearchSelectedMoeConfig), (
+        "checkpoint reconstructed the ordinary FP8 materialized owner")
+    assert selected.expected_tensor_parallel_size == tp
+    assert selected.decode_backend == backend
+    assert selected.max_experts_per_chunk == 3
+    assert facts[0]["serve_mode"] == "resident"
+    assert "research_selected_moe" in facts[0]
+    assert config.get_quant_method(layer, "model.layers.2.mlp.experts") is None
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("block", [None, [], {},
+    {**_research_checkpoint(), "schema": "future"},
+    {**_research_checkpoint(), "extra": 1},
+    {k: v for k, v in _research_checkpoint().items() if k != "decode_backend"},
+    *[{**_research_checkpoint(), "max_experts_per_chunk": value} for value in [True, 0, -1, 1.0, "3"]],
+    *[{**_research_checkpoint(), "expected_tensor_parallel_size": value} for value in [True, 0, 3, 1.0, "2"]],
+    *[{**_research_checkpoint(), "decode_backend": value} for value in [None, [], "auto"]],
+])
+def test_checkpoint_research_request_refuses_malformed_before_loading(monkeypatch, block):
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    with pytest.raises(ValueError, match="research_selected_moe"):
+        TesseraConfig.from_config(_expert_config(block))
+
+
+def test_checkpoint_research_request_refuses_streamed_and_no_routed_target(monkeypatch):
+    monkeypatch.setenv(TESSERA_MODE_ENV, "streamed")
+    with pytest.raises(ValueError, match="research_selected_moe.*resident"):
+        TesseraConfig.from_config(_expert_config(_research_checkpoint()))
+    lane.reset_for_tests()
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    dense = _config()
+    dense["research_selected_moe"] = _research_checkpoint()
+    with pytest.raises(ValueError, match="research_selected_moe.*routed"):
+        TesseraConfig.from_config(dense)
+
+
+def test_ordinary_checkpoint_retains_builder_and_compile_identity(monkeypatch):
+    from tessera.serving import config as config_module, moe_route
+    import vllm.model_executor.layers.fused_moe as moe
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    payload = _expert_config(_research_checkpoint())
+    del payload["research_selected_moe"]
+    config = TesseraConfig.from_config(payload)
+    facts, calls = [], []
+    monkeypatch.setattr(config_module, "declare_compile_identity", lambda **kw: facts.append(kw))
+    monkeypatch.setattr(moe_route, "build_tessera_moe_method", lambda *a, **kw: calls.append((a, kw)))
+    config.get_quant_method(moe.RoutedExperts(), "model.layers.1.mlp.experts")
+    assert calls[0][1] == {}
+    assert facts == [{"serve_mode": "resident"}]
+
+
+def test_checkpoint_execution_identity_distinguishes_every_execution_choice(monkeypatch):
+    from tessera.serving import config as config_module, moe_route
+    import vllm.model_executor.layers.fused_moe as moe
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    facts = []
+    monkeypatch.setattr(config_module, "declare_compile_identity", lambda **kw: facts.append(kw))
+    monkeypatch.setattr(moe_route, "build_tessera_moe_method", lambda *a, **kw: None)
+    base = _research_checkpoint()
+    variants = [base, {**base, "expected_tensor_parallel_size": 2},
+                {**base, "decode_backend": "torch"}, {**base, "max_experts_per_chunk": 5}]
+    for block in [*variants, dict(reversed(list(base.items())))]:
+        config = TesseraConfig.from_config(_expert_config(block))
+        config.get_quant_method(moe.RoutedExperts(), "model.layers.1.mlp.experts")
+    hashes = [fact["research_selected_moe"] for fact in facts]
+    assert len(set(hashes[:4])) == 4
+    assert hashes[0] == hashes[-1]
 
 
 def _module(name):

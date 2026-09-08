@@ -73,6 +73,8 @@ unqualified.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 from typing import Any, Mapping
 
 import torch
@@ -197,6 +199,13 @@ class TesseraConfig(QuantizationConfig):
         # Resolve the residency HERE, at config parse, so an unset or misspelt
         # mode is one clear message before any weight is touched.
         self._mode = serve_mode()
+        self._research_selected_moe = None
+        if "research_selected_moe" in full_config:
+            from .moe_route import ResearchSelectedMoeConfig
+
+            self._research_selected_moe = ResearchSelectedMoeConfig.from_checkpoint(
+                full_config["research_selected_moe"])
+            self._research_selected_moe.require_targets(self.target_scheme, self._mode)
         self._declared = False
 
     def _check_overlap(self) -> None:
@@ -361,7 +370,12 @@ class TesseraConfig(QuantizationConfig):
             return
         # The mode selects a different compiled forward over the same files, so
         # it must be in vLLM's compile-cache key before any hash is computed.
-        declare_compile_identity(serve_mode=self._mode)
+        facts = {"serve_mode": self._mode}
+        if self._research_selected_moe is not None:
+            facts["research_selected_moe"] = hashlib.sha256(json.dumps(
+                self._research_selected_moe.as_checkpoint(), sort_keys=True,
+                separators=(",", ":")).encode()).hexdigest()
+        declare_compile_identity(**facts)
         self._declared = True
 
     def get_quant_method(self, layer: torch.nn.Module,
@@ -383,6 +397,10 @@ class TesseraConfig(QuantizationConfig):
                 self._declare_once()
                 from .moe_route import build_tessera_moe_method
 
+                if self._research_selected_moe is not None:
+                    return build_tessera_moe_method(
+                        scheme, prefix, self._mode, layer,
+                        research_selected=self._research_selected_moe)
                 return build_tessera_moe_method(scheme, prefix, self._mode, layer)
             if scheme is not None:
                 raise ValueError(

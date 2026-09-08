@@ -54,7 +54,7 @@ expert count, hidden size or intermediate size that disagrees with the
 sidecar; and a non-gated MoE, whose ``w13`` is one shard rather than the pair
 this route's groups describe.
 
-The explicit Python-only ``ResearchSelectedMoeConfig`` separately permits eager
+The explicit ``ResearchSelectedMoeConfig`` separately permits eager
 TP1 or TP2 selected decode. TP2 validates whole original wires, then invokes
 the existing role slicer before packing; it preserves global expert IDs and
 leaves output reduction to stock vLLM. It is not a qualified runtime cell.
@@ -83,6 +83,7 @@ from typing import Mapping, Sequence
 
 import torch
 
+from ..moe_execution import ResearchSelectedMoeConfig
 from ..moe_layout import W13_PROJECTIONS, MoePacked, unpack_moe_wires
 from .lane import MODE_RESIDENT, MODES
 from .scheme import (MOE_GEMM_SYMBOL, MOE_GROUP_SHARDS, MOE_GROUPS, ROUTES,
@@ -110,26 +111,6 @@ ACTIVATION_CONTRACT = ROUTES[TESSERA_FP8]["activation_contract"]
 GEMM_SYMBOL = MOE_GEMM_SYMBOL
 
 
-@dataclass(frozen=True)
-class ResearchSelectedMoeConfig:
-    """Explicit Python-only construction; no checkpoint or environment opt-in.
-
-    This does not name a production residency mode or a qualified runtime cell.
-    The normal ``TesseraConfig`` never supplies it. The bound limits decoder
-    temporaries, not the final selected FP8 stack or whole-engine workspace.
-    """
-
-    max_experts_per_chunk: int
-    decode_backend: str = "torch"
-    expected_tensor_parallel_size: int = 1
-
-    def __post_init__(self):
-        if type(self.max_experts_per_chunk) is not int or self.max_experts_per_chunk <= 0:
-            raise ValueError("max_experts_per_chunk must be a positive integer")
-        if type(self.expected_tensor_parallel_size) is not int or self.expected_tensor_parallel_size not in (1, 2):
-            raise ValueError("expected_tensor_parallel_size must be exactly 1 or 2")
-        if self.decode_backend not in ("torch", "triton"):
-            raise ValueError(f"unknown selected window backend {self.decode_backend!r}")
 
 
 def census_expected(*, compiled: bool = False) -> dict:

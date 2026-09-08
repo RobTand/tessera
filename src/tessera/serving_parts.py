@@ -303,6 +303,15 @@ def merge_serving_parts(paths, out: Path, source: Path, *, move=False) -> dict:
     identity = loaded[0][2]["identity"]
     if any(row[2]["identity"] != identity for row in loaded[1:]):
         raise ValueError("serving partition identity mismatch (source, plan, encoder or runtime)")
+    research_execution = None
+    if "research_selected_moe" in identity["options"]:
+        from .moe_execution import ResearchSelectedMoeInput
+        research_execution = ResearchSelectedMoeInput.from_record(
+            identity["options"]["research_selected_moe"])
+    execution_config = ({"research_selected_moe": research_execution.config.as_checkpoint()}
+                        if research_execution is not None else {})
+    execution_record = ({"research_selected_moe": research_execution.record()}
+                        if research_execution is not None else {})
     if source_identity(source) != identity["source"]:
         raise ValueError("source identity changed since partition export")
     expected_source = set(identity["source"]["tensors"])
@@ -328,6 +337,11 @@ def merge_serving_parts(paths, out: Path, source: Path, *, move=False) -> dict:
             raise ValueError(f"partition {rank}: source tensor coverage disagrees with ownership")
         covered.update(owned)
         qconfig = config["quantization_config"]
+        if ({k: qconfig[k] for k in ("research_selected_moe",)
+             if k in qconfig} != execution_config
+                or {k: manifest[k] for k in ("research_selected_moe",) if k in manifest}
+                != execution_record):
+            raise ValueError(f"partition {rank}: research_selected_moe disagrees with sealed export identity")
         if {k: v for k, v in config.items() if k != "quantization_config"} != source_config:
             raise ValueError(f"partition {rank}: model config disagrees with source identity")
         if qconfig["quant_method"] != "tessera" or qconfig["format"] != base_format:
@@ -377,8 +391,13 @@ def merge_serving_parts(paths, out: Path, source: Path, *, move=False) -> dict:
     validate_explicit_plan(identity["options"].get("plan"), modules, groups,
                            source_tensors=expected_source)
     config = copy.deepcopy(source_config)
+    if research_execution is not None:
+        research_execution.config.require_targets(
+            {target: group["scheme"] for group in groups.values() for target in group["targets"]},
+            "resident")
     config["quantization_config"] = {"quant_method": "tessera", "format": base_format,
                                       **base_slicing,
+                                      **execution_config,
                                       "config_groups": groups, "ignore": sorted(ignore)}
     manifest = copy.deepcopy(loaded[0][3])
     manifest.pop("export_partition")

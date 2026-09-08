@@ -1,5 +1,6 @@
 """A serving part is incomplete by construction; only its checked union loads."""
 import json
+import hashlib
 import stat
 import struct
 from pathlib import Path
@@ -7,6 +8,31 @@ from pathlib import Path
 import pytest
 
 from tessera import serving_parts as parts
+
+
+@pytest.mark.parametrize("carrier", ["config", "manifest", "identity"])
+def test_research_execution_cannot_be_added_to_only_one_carrier(tmp_path, carrier):
+    source, paths = _fixture(tmp_path)
+    block = {"schema": "tessera.research_selected_moe.v1", "max_experts_per_chunk": 3,
+             "decode_backend": "triton", "expected_tensor_parallel_size": 2}
+    text = json.dumps(block)
+    record = {"input_utf8": text, "input_sha256": hashlib.sha256(text.encode()).hexdigest(),
+              "config": block}
+    for path in paths:
+        if carrier == "config":
+            config_path = path / "tessera_part_config.json"
+            config = json.loads(config_path.read_text())
+            config["quantization_config"]["research_selected_moe"] = block
+            config_path.write_text(json.dumps(config))
+        elif carrier == "manifest":
+            _change(path, lambda m: m.update(research_selected_moe=record))
+        else:
+            _change(path, lambda m: m["export_partition"]["identity"]["options"].update(
+                research_selected_moe=record))
+    out = tmp_path / "merged"
+    with pytest.raises(ValueError, match="research_selected_moe"):
+        parts.merge_serving_parts(paths, out, source)
+    assert not out.exists()
 
 
 def _tensor_file(path, names):
