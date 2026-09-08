@@ -231,3 +231,25 @@ def test_invalid_global_routing_is_refused_before_any_decode(original_wires,stub
     with pytest.raises(ValueError,match='invalid global expert ID'):
         method.apply(layer,torch.randn(1,HIDDEN),torch.ones(1,2),
                      torch.tensor([[0,bad_id]],dtype=torch.int32),None,None)
+
+
+def test_research_backend_is_explicit_and_reaches_selected_owner(original_wires, stub_runtime, monkeypatch):
+    with pytest.raises(ValueError, match='backend'):
+        moe_route.ResearchSelectedMoeConfig(max_experts_per_chunk=2, decode_backend='auto')
+    assert moe_route.ResearchSelectedMoeConfig(max_experts_per_chunk=2).decode_backend == 'torch'
+    _, _, scheme, _ = original_wires
+    layer = _layer()
+    method = moe_route.build_tessera_moe_method(scheme, 'm', 'resident', layer,
+        research_selected=moe_route.ResearchSelectedMoeConfig(max_experts_per_chunk=2, decode_backend='triton'))
+    method.create_weights(layer, EXPERTS, HIDDEN, INTER, torch.bfloat16)
+    _load(method, layer, original_wires)
+    method.process_weights_after_loading(layer)
+    calls = []
+    decode = method._packed.decode
+    def observed(ids, *, max_experts_per_chunk, backend):
+        calls.append(backend)
+        return decode(ids, max_experts_per_chunk=max_experts_per_chunk, backend='torch')
+    monkeypatch.setattr(method._packed, 'decode', observed)
+    method.apply(layer, torch.randn(1, HIDDEN), torch.ones(1, 2),
+                 torch.tensor([[0, 2]], dtype=torch.int32), None, None)
+    assert calls == ['triton']
