@@ -1,0 +1,13 @@
+# GLM TP2 and bounded Hessian reader integration — 2026-09-08
+
+The reviewed source integration is `3ddb55c558208b63ae53bd18de45b14d9af3e145`: research TP2 branch `4cefd8d5f214b648aaed57846b5f5baaf6b212f4` plus bounded public H reader `615e1c0302693447a9cd713bb1f9dddc21fbd378`. Git merged the two without conflicts. The H reader changes input ownership and producer source identity; the TP2 branch changes only the explicitly enabled research path. No runtime eligibility or serving pin is promoted.
+
+The coordinator CPU integration suite passed 3618 tests with 602 skips, zero failures/errors and zero missing collection. It ran the complete 207-file test roster in 20 PB-managed shards, each using 2 xdist workers, 8 GiB and one native thread per worker, on dl380g10 with Torch 2.11.0+cpu. The aggregate peak requested capacity was 40 CPUs / 160 GiB; PrismaBuild owned placement and concurrency. This is CPU coverage only. The CUDA population was not run by this suite. The complete verbatim skip histogram, including absent historical artifacts, is retained in `cpu-population-summary.json`.
+
+All 20 terminal return codes, completed scope cleanup, canonical CAS receipt bodies, actual output bytes and source bundles were independently verified. Every tested source differs from the integration commit only by its generated PB closure. Every actual population hash appears in its corresponding CAS stdout, reports agreed worker/entry source and names the exact action; all share one effective source identity. `root-cpu-cas-source-audit.json` and `cpu-population-summary.json` preserve that evidence. The full suite invocation/result and individual population files are under `/mnt/shared/tessera-measurements/glm-tp2-hessian-integration-20260908`.
+
+The H reader's original targeted suite separately passed 71 tests with zero skips or missing collection, CPU only, in PB action `740c213d5bd5fd890cf2496d421363d8a8fd23cd696b5548663504066bfa40b2`; its independently verified source matches `615e1c03` exactly apart from the PB closure. The unsorted-reference metadata regression was fixed in its own commit after a recorded failure.
+
+Native TP2 completion is still pending. Prepared native06 was never executed and is retained as superseded evidence; native07 binds this integrated source and keeps the original controls and wire inputs. It must wait for successful original capture completion, scope cleanup and both-box workload availability. No native fit, speed, quality or throughput claim follows from these CPU results.
+
+Tracking: [Tessera #428](https://github.com/RobTand/tessera/issues/428), [TP2 research #426](https://github.com/RobTand/tessera/issues/426), [PrismaQuant #425](https://github.com/RobTand/prismaquant/issues/425).

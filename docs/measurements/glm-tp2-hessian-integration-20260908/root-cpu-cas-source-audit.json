@@ -1,0 +1,202 @@
+[
+  {
+    "action": "35c1473a56bfd56efac508fec23397218c24538582764b27a9dc6bf0d211e261",
+    "receipt": "6afe0de76dff0a76af897f7e009ba4deac23d3895239bb569115ee460d89a9d4",
+    "payload_sha256": "e693da282d78d4870c16f14a65b198680d362f320f5a040c3e34f3ea09369e5d",
+    "snapshot": "fef1506b0aab6b9e58f431b8b0a8360bbe146aec",
+    "source_diff_from_commit": [
+      ".pbrun-closure.33b98bff9001f083.json"
+    ],
+    "stdout_tail": " -- torch 2.11.0+cpu reports no CUDA device\ntessera surface: 44 test(s) skipped, 0 module(s) not collected\ntessera surface: this run did not exercise the CUDA-gated surface. Its pass count is not coverage of it.\ntessera surface: skip reasons, verbatim --\n       23  the lane is a CUDA kernel\n       12  needs a CUDA device\n        5  box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-reach-gridbook/model.safetensors is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)\n        2  box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-reach-stock-twin/model.safetensors is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)\n        2  the kernel lane is a CUDA path\ntessera surface: 0 test(s) allocated on the device\ntessera surface: skipped for evidence this box does not hold --\n        5  box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-reach-gridbook/model.safetensors is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)\n        2  box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-reach-stock-twin/model.safetensors is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)\ntessera surface: population written to /mnt/shared/tessera-measurements/glm-tp2-hessian-integration-20260908/cpu-surface-0.json sha256:f901ec208609e6b56c884a9d2e70b83f91719d7211f462d9f40b10c8c1015bd6\n153 passed, 44 skipped in 288.88s (0:04:48)\n"
+  },
+  {
+    "action": "ae52a61adca5bba266a3414217fd0e46017d376e9a0200396bd3fc9dcfc9cab5",
+    "receipt": "2eabed060599ed86bedfe11c5dcb1502bb72055a6b3aa8a23cca351031a930d5",
+    "payload_sha256": "3640effaee699777ff7a7c41ea0848e81a2b2739f506d4952ba4083b5171aaf2",
+    "snapshot": "11b42391649be904429701360eab78c752246615",
+    "source_diff_from_commit": [
+      ".pbrun-closure.be733ddfd5876df8.json"
+    ],
+    "stdout_tail": "bringing up nodes...\nbringing up nodes...\n\nss.sss....sssssss..sss..............................................ssss [ 37%]\nsssssssss................sssssssssssssssssssssssssssssssssssssssssss.ss. [ 75%]\n..............................................                           [100%]\n\ntessera surface: NO CUDA -- torch 2.11.0+cpu reports no CUDA device\ntessera surface: 73 test(s) skipped, 0 module(s) not collected\ntessera surface: this run did not exercise the CUDA-gated surface. Its pass count is not coverage of it.\ntessera surface: skip reasons, verbatim --\n       53  the lane is a CUDA kernel\n       13  the encoder is a GPU job\n        5  box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-reach-gridbook/model.safetensors is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)\n        2  needs two CUDA devices\ntessera surface: 0 test(s) allocated on the device\ntessera surface: skipped for evidence this box does not hold --\n        5  box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-reach-gridbook/model.safetensors is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)\ntessera surface: population written to /mnt/shared/tessera-measurements/glm-tp2-hessian-integration-20260908/cpu-surface-1.json sha256:a89f6bf852a4d5b2d9d31ee74d1b58f8998b2244733a29d976d5af0bc0f942cb\n117 passed, 73 skipped in 69.48s (0:01:09)\n"
+  },
+  {
+    "action": "a82eb75204c2443f9c3da582a1175fa5da782af07febe60a30b5f26a4dbae228",
+    "receipt": "0f1bb824ba2a837b44f9d7c4fc8351effe2b8e8d10ae0285ff110cc0e6fc1c24",
+    "payload_sha256": "0cd76c9a91eea4b9cb614fa4064a4f1e17ac006f58141340d47eb42b6fb33b3f",
+    "snapshot": "0c01ced9d1ef578b7d9f08e18721cbb136e00a2f",
+    "source_diff_from_commit": [
+      ".pbrun-closure.6f7d9ba57f7157f0.json"
+    ],
+    "stdout_tail": "bringing up nodes...\nbringing up nodes...\n\n......ss................................................................ [ 36%]\n..........ssssssssssssssssssss...............................s.......... [ 73%]\n................................................s....                    [100%]\n\ntessera surface: NO CUDA -- torch 2.11.0+cpu reports no CUDA device\ntessera surface: 24 test(s) skipped, 0 module(s) not collected\ntessera surface: this run did not exercise the CUDA-gated surface. Its pass count is not coverage of it.\ntessera surface: skip reasons, verbatim --\n       20  the fused window Viterbi is a CUDA path and needs triton\n        2  box artifact absent: the PrismaQuant worktree carrying the continuous-rate branch -- /home/rob/pq-wt/tessera-continuous/prismaquant/tessera_formats.py is not on this box (set TESSERA_PRISMAQUANT_WORKTREE; documented default /home/rob/pq-wt/tessera-continuous)\n        1  the encoder is a CUDA path\n        1  needs CUDA\ntessera surface: 0 test(s) allocated on the device\ntessera surface: skipped for evidence this box does not hold --\n        2  box artifact absent: the PrismaQuant worktree carrying the continuous-rate branch -- /home/rob/pq-wt/tessera-continuous/prismaquant/tessera_formats.py is not on this box (set TESSERA_PRISMAQUANT_WORKTREE; documented default /home/rob/pq-wt/tessera-continuous)\ntessera surface: population written to /mnt/shared/tessera-measurements/glm-tp2-hessian-integration-20260908/cpu-surface-2.json sha256:42fc5008fe17db1055ed8c8737449186c6df4fbd593f9d1cfd9af1bc43e887a6\n173 passed, 24 skipped in 49.55s\n"
+  },
+  {
+    "action": "7d6fc5765b76cc23f36c248c7f089356ba865b834a638869987549d7bcee53d8",
+    "receipt": "a02d65b8907757e0537481ef9c7bb1645534ace3c889cf17b1980e189f18413b",
+    "payload_sha256": "78fc81415a14eaf4359aec17cef6f118ea1064048002744ffd91b421a314e9b0",
+    "snapshot": "e8f25341145c723f9a534f8a7a79090b34fbc346",
+    "source_diff_from_commit": [
+      ".pbrun-closure.515163937c09559d.json"
+    ],
+    "stdout_tail": "bringing up nodes...\nbringing up nodes...\n\n................................................sss..................... [ 50%]\n........ssssssssssssssssssssssssssssssssssssssssssssssss.....ssss....... [100%]\n\ntessera surface: NO CUDA -- torch 2.11.0+cpu reports no CUDA device\ntessera surface: 56 test(s) skipped, 0 module(s) not collected\ntessera surface: this run did not exercise the CUDA-gated surface. Its pass count is not coverage of it.\ntessera surface: skip reasons, verbatim --\n       52  the fused window Viterbi is a CUDA path\n        3  needs a CUDA device\n        1  box artifact absent: kl_tool.py and kl_estimator.py, the untracked served-KL instrument -- nothing set KL_TOOL_DIR and its default is not resolved for this root (set KL_TOOL_DIR; documented default /home/rob/dq-runs)\ntessera surface: 0 test(s) allocated on the device\ntessera surface: skipped for evidence this box does not hold --\n        1  box artifact absent: kl_tool.py and kl_estimator.py, the untracked served-KL instrument -- nothing set KL_TOOL_DIR and its default is not resolved for this root (set KL_TOOL_DIR; documented default /home/rob/dq-runs)\ntessera surface: population written to /mnt/shared/tessera-measurements/glm-tp2-hessian-integration-20260908/cpu-surface-3.json sha256:02e8ae432cee7d7e9f7b5de0153dbae68cf8db8aeaa5590d762308b0a626a08d\n89 passed, 56 skipped in 106.12s (0:01:46)\n"
+  },
+  {
+    "action": "3a6a39c17ea5e789c096f43b4b47a71c79288008eccf7fdf09cee970fb1d1854",
+    "receipt": "3d8de3b941e2fde6a7f91542e7f1874ba3300356f33f79ab79c23085e828eae0",
+    "payload_sha256": "9a3aba74ee27f5b541ee7f071c759743f5d9438d33a4df7d994c401bdb48f6d6",
+    "snapshot": "7a2d2635807e8aba05a2c8bd7cb4f98b38c8dfbd",
+    "source_diff_from_commit": [
+      ".pbrun-closure.990d39be7d462038.json"
+    ],
+    "stdout_tail": "bringing up nodes...\nbringing up nodes...\n\n...........................ssss.s..s.................................... [ 21%]\n..............ss........................................................ [ 43%]\n........................................................................ [ 65%]\n...................................ssssssss............................. [ 87%]\n....ssssssssssssssss..sssssssssssssssss..                                [100%]\n=============================== warnings summary ===============================\ntests/test_wire.py: 14 warnings\n  /home/rob/venvs/pb-cpu/lib/python3.14/site-packages/torch/jit/_script.py:359: DeprecationWarning: `torch.jit.script_method` is not supported in Python 3.14+ and may break. Please switch to `torch.compile` or `torch.export`.\n    warnings.warn(\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n\ntessera surface: NO CUDA -- torch 2.11.0+cpu reports no CUDA device\ntessera surface: 49 test(s) skipped, 0 module(s) not collected\ntessera surface: this run did not exercise the CUDA-gated surface. Its pass count is not coverage of it.\ntessera surface: skip reasons, verbatim --\n       43  encoder is a GPU job\n        6  the encoder is a GPU job\ntessera surface: 0 test(s) allocated on the device\ntessera surface: population written to /mnt/shared/tessera-measurements/glm-tp2-hessian-integration-20260908/cpu-surface-4.json sha256:0e3aa322682033632918a2e7186c4438c8ccd704d56bdbbd71c7f2ed5eb71c2f\n280 passed, 49 skipped, 14 warnings in 236.07s (0:03:56)\n"
+  },
+  {
+    "action": "cbf8fc1cc7c66686ae7364d9df29332efb0b2a617e61df523814139ba059fd27",
+    "receipt": "69c0a04fd49c09b5665d6c29a3b0d0b7cd9ffea0842f35942c8e5ef404cc0e2f",
+    "payload_sha256": "da7115091f8ac6abe010107cc10ffe6dbe072a0914357bccaa2fe300cc7c8f29",
+    "snapshot": "b9f186f42dc7c066daf3135cc0ad0c5437c1d45b",
+    "source_diff_from_commit": [
+      ".pbrun-closure.0955e4d8773e01e0.json"
+    ],
+    "stdout_tail": "bringing up nodes...\nbringing up nodes...\n\n........................................................................ [ 36%]\n........................................................................ [ 73%]\n..............sssssssssssssssssss............sss.....                    [100%]\n\ntessera surface: NO CUDA -- torch 2.11.0+cpu reports no CUDA device\ntessera surface: 22 test(s) skipped, 0 module(s) not collected\ntessera surface: this run did not exercise the CUDA-gated surface. Its pass count is not coverage of it.\ntessera surface: skip reasons, verbatim --\n       22  BODY device unpack requires CUDA\ntessera surface: 0 test(s) allocated on the device\ntessera surface: population written to /mnt/shared/tessera-measurements/glm-tp2-hessian-integration-20260908/cpu-surface-5.json sha256:0858f3bea567f9559beb93623bffbe4d099669eeac1129727cf14dd681a76b4f\n175 passed, 22 skipped in 126.99s (0:02:06)\n"
+  },
+  {
+    "action": "5ec0d844bfd1d397f28cc0bd2558d50b7313756a045ea763dfb48fca44350727",
+    "receipt": "9ee8683148358f0e920fef1a16e8f2bbf88cc0ea3a393cdf5079fa7df78de6bc",
+    "payload_sha256": "2c6dfb26a97a61c5a4f30221778349ab6c90477c98b5b4f023a18668e836219c",
+    "snapshot": "5ac09c5fcaf44605ae352b115c6f70d5a8c100e3",
+    "source_diff_from_commit": [
+      ".pbrun-closure.74908a6d455d40d3.json"
+    ],
+    "stdout_tail": "bringing up nodes...\nbringing up nodes...\n\nssssssss..............................ssssssssssssssssssss.............. [ 31%]\n........................................................................ [ 62%]\n.........................................s..s........................... [ 94%]\n.............                                                            [100%]\n\ntessera surface: NO CUDA -- torch 2.11.0+cpu reports no CUDA device\ntessera surface: 30 test(s) skipped, 0 module(s) not collected\ntessera surface: this run did not exercise the CUDA-gated surface. Its pass count is not coverage of it.\ntessera surface: skip reasons, verbatim --\n       20  selected window kernel requires CUDA\n        8  the trellises are CUDA\n        2  the encoder is a GPU job\ntessera surface: 0 test(s) allocated on the device\ntessera surface: population written to /mnt/shared/tessera-measurements/glm-tp2-hessian-integration-20260908/cpu-surface-6.json sha256:16e585a03c0d918023486400e1b1e6f9a49d257211b13cdba152c3079072f552\n199 passed, 30 skipped in 81.25s (0:01:21)\n"
+  },
+  {
+    "action": "f83520462e81d495a8d7b1d97b935ee0c1ba48af1871a8867e056beaa225d0f0",
+    "receipt": "8b95d66941372ad324f8ef6ab6aeb6d79d4e3cb5188dc4933c01b118daf60a98",
+    "payload_sha256": "93868ba297a35f65aaf690673e99eabf10ed20498d530ef2c7d2cec66c84a947",
+    "snapshot": "200a8e5c2fa56d21db03c770db9e8eef7de72b5f",
+    "source_diff_from_commit": [
+      ".pbrun-closure.6742683176345672.json"
+    ],
+    "stdout_tail": "umented default /home/rob/tessera-runs)\n        1  box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/tsplugin/vllm-cache-fresh/torch_compile_cache/torch_aot_compile/15957ad9e7a72f1d7539f792e4d4cee6e704e2e99696f07e909c209f30f5ddec is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)\ntessera surface: 0 test(s) allocated on the device\ntessera surface: skipped for evidence this box does not hold --\n        6  box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/compile-dispatch/serve_qwen_dispatch_eager.log is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)\n        1  box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/stock/serve_qwen_stock_tessera-k2-graph.log is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)\n        1  box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/stock/serve_qwen_stock_tessera-k2.log is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)\n        1  box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/tsplugin/vllm-cache-fresh/torch_compile_cache/torch_aot_compile/15957ad9e7a72f1d7539f792e4d4cee6e704e2e99696f07e909c209f30f5ddec is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)\ntessera surface: population written to /mnt/shared/tessera-measurements/glm-tp2-hessian-integration-20260908/cpu-surface-7.json sha256:61edeb2c39b74abe5f11cd8b52815bbe489eacb575d93d537f529a06ac12079d\n227 passed, 49 skipped in 34.50s\n"
+  },
+  {
+    "action": "4f7dfc2273ae31e16cc52dc8e50690a9e5618f863fa20d00e670808127bb0eef",
+    "receipt": "3cbe6574bf25630acc8a4d3b9b705043d0ea1b821d40485501a775a7ba3ac856",
+    "payload_sha256": "6f584685f96960d6b3972d74979da3e42afce06658cd64bc363f5cd4f4318feb",
+    "snapshot": "48b1ff9dc91f45ad5ef1dc182d8f2b41b24de9fe",
+    "source_diff_from_commit": [
+      ".pbrun-closure.5a05bad522677791.json"
+    ],
+    "stdout_tail": "bringing up nodes...\nbringing up nodes...\n\n........................................................................ [ 50%]\n......................................................................   [100%]\n\ntessera surface: NO CUDA -- torch 2.11.0+cpu reports no CUDA device\ntessera surface: 0 test(s) skipped, 0 module(s) not collected\ntessera surface: this run did not exercise the CUDA-gated surface. Its pass count is not coverage of it.\ntessera surface: 0 test(s) allocated on the device\ntessera surface: population written to /mnt/shared/tessera-measurements/glm-tp2-hessian-integration-20260908/cpu-surface-8.json sha256:60ebd27d4d8574e05acce8a3dd6e7d88b50b7b5cf27f75baa2c06725ebed2abd\n142 passed in 93.65s (0:01:33)\n"
+  },
+  {
+    "action": "2ba4cdfa6dfbc75b772cdba49d1a3e14271d2360397628d49b758103b44525d1",
+    "receipt": "13bbe10a807f7f209ee37df2eaa0be0a34424f76c5def50837fac32fabb6423f",
+    "payload_sha256": "eed411accdf70ab11ee33c8c5cadde595727307899619da6a171dfce97faa05e",
+    "snapshot": "714348e7503b413a26f732ea36866fc83f070af6",
+    "source_diff_from_commit": [
+      ".pbrun-closure.bc52d7966effcdfa.json"
+    ],
+    "stdout_tail": "bringing up nodes...\nbringing up nodes...\n\n....................s......s...........................................s [ 33%]\nssssssssss.............sssss............................................ [ 67%]\n......................................................................   [100%]\n\ntessera surface: NO CUDA -- torch 2.11.0+cpu reports no CUDA device\ntessera surface: 18 test(s) skipped, 0 module(s) not collected\ntessera surface: this run did not exercise the CUDA-gated surface. Its pass count is not coverage of it.\ntessera surface: skip reasons, verbatim --\n       17  needs a CUDA device\n        1  needs a CUDA device: the positive arm builds the extension\ntessera surface: 0 test(s) allocated on the device\ntessera surface: population written to /mnt/shared/tessera-measurements/glm-tp2-hessian-integration-20260908/cpu-surface-9.json sha256:d657d5f5743680a8247caf58f9e929e2b538f32705e660bf1bc5b1463fb42ab3\n196 passed, 18 skipped in 80.02s (0:01:20)\n"
+  },
+  {
+    "action": "a19d97565ce584a56d67c4085df41a6078a193b82d2bf7055c05799d5685b344",
+    "receipt": "b4a43d077f056bde15a2b706830506520203a610b18bff0db60eaae74ef53162",
+    "payload_sha256": "88db0988916972e99c073b22790cb975843d9fd7d64fb0766c3ada1d565da36a",
+    "snapshot": "61220b224023551eb9cf7e25324a7833d2836632",
+    "source_diff_from_commit": [
+      ".pbrun-closure.55f62d3bd73c3914.json"
+    ],
+    "stdout_tail": "bringing up nodes...\nbringing up nodes...\n\n........................................................................ [ 78%]\n....................                                                     [100%]\n=============================== warnings summary ===============================\ntests/test_serving_ops_compile.py: 14 warnings\n  /home/rob/venvs/pb-cpu/lib/python3.14/site-packages/torch/jit/_script.py:359: DeprecationWarning: `torch.jit.script_method` is not supported in Python 3.14+ and may break. Please switch to `torch.compile` or `torch.export`.\n    warnings.warn(\n\n-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html\n\ntessera surface: NO CUDA -- torch 2.11.0+cpu reports no CUDA device\ntessera surface: 1 test(s) skipped, 0 module(s) not collected\ntessera surface: this run did not exercise the CUDA-gated surface. Its pass count is not coverage of it.\ntessera surface: skip reasons, verbatim --\n        1  box artifact absent: kl_tool.py and kl_estimator.py, the untracked served-KL instrument -- nothing set KL_TOOL_DIR and its default is not resolved for this root (set KL_TOOL_DIR; documented default /home/rob/dq-runs)\ntessera surface: 0 test(s) allocated on the device\ntessera surface: skipped for evidence this box does not hold --\n        1  box artifact absent: kl_tool.py and kl_estimator.py, the untracked served-KL instrument -- nothing set KL_TOOL_DIR and its default is not resolved for this root (set KL_TOOL_DIR; documented default /home/rob/dq-runs)\ntessera surface: population written to /mnt/shared/tessera-measurements/glm-tp2-hessian-integration-20260908/cpu-surface-10.json sha256:2527ae0767ce4e6992b59dfe7ed35b0ad79c6747055a8c829fc7f9f9b1fa36bd\n92 passed, 1 skipped, 14 warnings in 68.90s (0:01:08)\n"
+  },
+  {
+    "action": "40ed31ed53bc17b5d93caa89c3301cfebd2ec06d27fd024cced61b765ddde4f5",
+    "receipt": "846ca75ea67a5338777e22fbae70b17596dd726a6ce7c2a5d3ef81dd2cdc92cf",
+    "payload_sha256": "0d5e2ece39b747f13c09b2461105a596ad14244db909635c6fbfc1e13aed9d00",
+    "snapshot": "60dd4a9ff815c320b7cc840b8fbec2a3552b4125",
+    "source_diff_from_commit": [
+      ".pbrun-closure.0701ab1024e13c8c.json"
+    ],
+    "stdout_tail": "bringing up nodes...\nbringing up nodes...\n\n........................................................................ [ 44%]\n........................................................................ [ 89%]\n.................                                                        [100%]\n\ntessera surface: NO CUDA -- torch 2.11.0+cpu reports no CUDA device\ntessera surface: 0 test(s) skipped, 0 module(s) not collected\ntessera surface: this run did not exercise the CUDA-gated surface. Its pass count is not coverage of it.\ntessera surface: 0 test(s) allocated on the device\ntessera surface: population written to /mnt/shared/tessera-measurements/glm-tp2-hessian-integration-20260908/cpu-surface-11.json sha256:2e9aeaa3027f8ec259872c60d4f531a07b59648259b0a450c6ef003107c509d1\n161 passed in 37.88s\n"
+  },
+  {
+    "action": "adefefba0030c980f89f6bc6b30f279af99f5e77cbea6cece4a854edb94ebfe8",
+    "receipt": "97e9df8edceb8a68e7ff7d4433dd7a4e460ce9cdebffeb9e1b7941ed12358485",
+    "payload_sha256": "a0cfd6a50fe0d54962b248bb0f9935f61af870b67162985596b4a71dbd084495",
+    "snapshot": "52e2bb311c3e124a18959d56a09434b2434725c7",
+    "source_diff_from_commit": [
+      ".pbrun-closure.4dc13f227952b0d7.json"
+    ],
+    "stdout_tail": "bringing up nodes...\nbringing up nodes...\n\n........................................................................ [ 24%]\n........................................................................ [ 49%]\n........................................................................ [ 73%]\n......................sssssssssssssssssss............................... [ 98%]\n.....                                                                    [100%]\n\ntessera surface: NO CUDA -- torch 2.11.0+cpu reports no CUDA device\ntessera surface: 19 test(s) skipped, 0 module(s) not collected\ntessera surface: this run did not exercise the CUDA-gated surface. Its pass count is not coverage of it.\ntessera surface: skip reasons, verbatim --\n       19  needs a CUDA device\ntessera surface: 0 test(s) allocated on the device\ntessera surface: population written to /mnt/shared/tessera-measurements/glm-tp2-hessian-integration-20260908/cpu-surface-12.json sha256:0a9ee78a9934bbc0aadc74cdc03b0ee1491830589fc404271963ea59c04aa293\n274 passed, 19 skipped in 54.51s\n"
+  },
+  {
+    "action": "5a03bea81f8842a5b72cf646fdddcee6c9b232399f21763b267d5e63701ef4a6",
+    "receipt": "ed2974abb488facf2bad55ef8d3ef4282acdc7f2b1c71f1b3cf191b6f31f2077",
+    "payload_sha256": "152b388a6e338ec90394128060f66b36a0bd7e7119346c33c578f5c160f15413",
+    "snapshot": "3975d011f1299286d4f1056153a5f4b2e3e00390",
+    "source_diff_from_commit": [
+      ".pbrun-closure.be524ffb458d59fb.json"
+    ],
+    "stdout_tail": "bringing up nodes...\nbringing up nodes...\n\n........................................................................ [ 19%]\n.............sssss.s.......ss............s.ss....ss...sss............... [ 38%]\n........................................................................ [ 57%]\nssssssssssssssss........................................................ [ 76%]\n...............................................................sssssssss [ 95%]\nssss............                                                         [100%]\n\ntessera surface: NO CUDA -- torch 2.11.0+cpu reports no CUDA device\ntessera surface: 45 test(s) skipped, 0 module(s) not collected\ntessera surface: this run did not exercise the CUDA-gated surface. Its pass count is not coverage of it.\ntessera surface: skip reasons, verbatim --\n       29  the Viterbi is CUDA\n       16  needs a CUDA device\ntessera surface: 0 test(s) allocated on the device\ntessera surface: population written to /mnt/shared/tessera-measurements/glm-tp2-hessian-integration-20260908/cpu-surface-13.json sha256:7f305444164e7a7e7c2e38b2078e8b5dc760990b5e3ff38143d6eacc0841762a\n331 passed, 45 skipped in 86.84s (0:01:26)\n"
+  },
+  {
+    "action": "50646d954b4a830daae1b9c63b92c762767853b9cc7681324bc802b97003058c",
+    "receipt": "b9efbe5e1a8f4a219ab9ab25dcfd5502af723f3b8a8cf30b53179405ac2b23fd",
+    "payload_sha256": "38c384fefc4d559121740219d5c9c8f3d2e369a56fccc44fedf1209ed13e0293",
+    "snapshot": "8f24c1fe4a7b17e9c70c55e73db505ab077c2661",
+    "source_diff_from_commit": [
+      ".pbrun-closure.fd8f89947642af8f.json"
+    ],
+    "stdout_tail": "bringing up nodes...\nbringing up nodes...\n\n.............s..........s..........................................sssss [ 48%]\nssss.ss....s.s........s.........................................s.s.ssss [ 97%]\ns.s                                                                      [100%]\n\ntessera surface: NO CUDA -- torch 2.11.0+cpu reports no CUDA device\ntessera surface: 24 test(s) skipped, 0 module(s) not collected\ntessera surface: this run did not exercise the CUDA-gated surface. Its pass count is not coverage of it.\ntessera surface: skip reasons, verbatim --\n       14  the Tessera encoder is a CUDA path\n        8  the fused window Viterbi is CUDA\n        2  could not import 'vllm': No module named 'vllm'\ntessera surface: 0 test(s) allocated on the device\ntessera surface: population written to /mnt/shared/tessera-measurements/glm-tp2-hessian-integration-20260908/cpu-surface-14.json sha256:1691f7c61e7db952e61ab7efc02df9e8b15b65ccc29fb2b6732a0e181afe6b71\n123 passed, 24 skipped in 142.23s (0:02:22)\n"
+  },
+  {
+    "action": "f8ae348c72911708a47d714f6fef15ceea71874a333c6fba23fb985c44a0c8f8",
+    "receipt": "9858200653129440d594417a7d6b64f0150860261d1caa0b5e385e8cb8182505",
+    "payload_sha256": "af5ae1e00bb1e5d1d5aa844b163733b11553c96fbe5155d6e38bec90eee1922a",
+    "snapshot": "eeac58758e29064a5730b9ba28b146bcc0d793c0",
+    "source_diff_from_commit": [
+      ".pbrun-closure.6ce1d49b5fba4512.json"
+    ],
+    "stdout_tail": "bringing up nodes...\nbringing up nodes...\n\n........................................................................ [ 60%]\n...............................................                          [100%]\n\ntessera surface: NO CUDA -- torch 2.11.0+cpu reports no CUDA device\ntessera surface: 0 test(s) skipped, 0 module(s) not collected\ntessera surface: this run did not exercise the CUDA-gated surface. Its pass count is not coverage of it.\ntessera surface: 0 test(s) allocated on the device\ntessera surface: population written to /mnt/shared/tessera-measurements/glm-tp2-hessian-integration-20260908/cpu-surface-15.json sha256:f4667943fd516cc7847ef5a2d1e6be8283a89ddf1a19d64b9295d91e21c8d6d4\n119 passed in 42.63s\n"
+  },
+  {
+    "action": "1ea7f8d4a4b4644f406d5a4d32467235575c6669fef550c9cd2a0ec42bcea136",
+    "receipt": "925783801b7abbbd46287aa159f17991aab579e902029d9decaafa137a1af865",
+    "payload_sha256": "2b76e73866b07738420e487599b207891f692baea7a92955acf7eeb540f96c9d",
+    "snapshot": "34f1c9bc02cf0f44f6c36dd3e30c195e53192d1d",
+    "source_diff_from_commit": [
+      ".pbrun-closure.522dc4de9ded5ea7.json"
+    ],
+    "stdout_tail": "bringing up nodes...\nbringing up nodes...\n\n........................................................................ [ 40%]\n........................................................................ [ 80%]\n....................................                                     [100%]\n\ntessera surface: NO CUDA -- torch 2.11.0+cpu reports no CUDA device\ntessera surface: 0 test(s) skipped, 0 module(s) not collected\ntessera surface: this run did not exercise the CUDA-gated surface. Its pass count is not coverage of it.\ntessera surface: 0 test(s) allocated on the device\ntessera surface: population written to /mnt/shared/tessera-measurements/glm-tp2-hessian-integration-20260908/cpu-surface-16.json sha256:042b3be8228c3c002e4efbe224d251df7f0aee1cd9e5c79eec367bda56bd423c\n180 passed in 6.22s\n"
+  },
+  {
+    "action": "3d766441621304765eb606d1da88edfccbdcd4f7e5a08790921045b0680b8da7",
+    "receipt": "8082591e81c4f73a4dc5973615d2a39169cc53c8948cd5229a8ec8c46b92ae78",
+    "payload_sha256": "7b23966a44276f718ef6e263ac9674df243f42ebc498ba9258ee139737248d45",
+    "snapshot": "ec4bc426b388ca4e8ece9a79e7d6dd71dad1cf62",
+    "source_diff_from_commit": [
+      ".pbrun-closure.27e07bd54874941e.json"
+    ],
+    "stdout_tail": "bringing up nodes...\nbringing up nodes...\n\nsssssssss............................................................... [ 38%]\n...............................sss........................ssssssssssssss [ 76%]\nsssss.......................................                             [100%]\n\ntessera surface: NO CUDA -- torch 2.11.0+cpu reports no CUDA device\ntessera surface: 32 test(s) skipped, 0 module(s) not collected\ntessera surface: this run did not exercise the CUDA-gated surface. Its pass count is not coverage of it.\ntessera surface: skip reasons, verbatim --\n       28  the kernel lane is a CUDA path\n        3  box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-reach-gridbook/model.safetensors is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)\n        1  could not import 'transformers': No module named 'transformers'\ntessera surface: 0 test(s) allocated on the device\ntessera surface: skipped for evidence this box does not hold --\n        3  box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-reach-gridbook/model.safetensors is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)\ntessera surface: population written to /mnt/shared/tessera-measurements/glm-tp2-hessian-integration-20260908/cpu-surface-17.json sha256:da9d107c098c5efaa372e88898b33c4d47567bd670d006ed7cc4b79d15223dc8\n157 passed, 32 skipped in 136.58s (0:02:16)\n"
+  },
+  {
+    "action": "919a52bf1a55df982dc1833adc6c80eaec73b377d2eddf804ebccc60a06ae903",
+    "receipt": "06fcc89c83e5e5d72291b4ce2559873bca38273b9bb78fb0a3ff55996382b423",
+    "payload_sha256": "99882e46fe22b755c143bc3f860affc969f248cf1950d949b6f196f836537d9b",
+    "snapshot": "bf8d47a96028d7f97d4f6b421650db587b184ac1",
+    "source_diff_from_commit": [
+      ".pbrun-closure.cbdbe6d61359756c.json"
+    ],
+    "stdout_tail": "bringing up nodes...\nbringing up nodes...\n\nssssssssssssssssssssssssssssssss........................................ [ 27%]\n...................................................s.................... [ 54%]\n.........................ss..................ssss.ssssssssssssssssss.... [ 82%]\n..........ssssssssssssssssss.ssssssss..........                          [100%]\n\ntessera surface: NO CUDA -- torch 2.11.0+cpu reports no CUDA device\ntessera surface: 83 test(s) skipped, 0 module(s) not collected\ntessera surface: this run did not exercise the CUDA-gated surface. Its pass count is not coverage of it.\ntessera surface: skip reasons, verbatim --\n       81  the encoder is a CUDA path\n        1  E2M1 publishes no reader range\n        1  box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-reach-gridbook is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)\ntessera surface: 0 test(s) allocated on the device\ntessera surface: skipped for evidence this box does not hold --\n        1  box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-reach-gridbook is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)\ntessera surface: population written to /mnt/shared/tessera-measurements/glm-tp2-hessian-integration-20260908/cpu-surface-18.json sha256:ed8798948bae1458967a4920c8d7cbc1dce12cf8845541ffc1e1ddf0f4d4215d\n180 passed, 83 skipped in 70.95s (0:01:10)\n"
+  },
+  {
+    "action": "450fe15006ae3e42cf4eed63370e26ba328d91b2aaa0ae6c5f66a59ca95c5ff7",
+    "receipt": "4f01423ef330d44e75f68ae2c3553169d3f9d293a587d74a4ecfa71eaca67dbf",
+    "payload_sha256": "e855eaf3e3a31b5dee4587d89eb6896ecc54b5e5d6517fd2ad372a04754ca30d",
+    "snapshot": "4fe3bd1d0004b9f43e0e6b34edcdcdca328dcf6e",
+    "source_diff_from_commit": [
+      ".pbrun-closure.afb21acfc35d761e.json"
+    ],
+    "stdout_tail": "bringing up nodes...\nbringing up nodes...\n\n.....sssssssssssssssssssss.............................................. [ 25%]\n........................................................sssss.....ssssss [ 50%]\n........................................................................ [ 76%]\n...........................................................s.......      [100%]\n\ntessera surface: NO CUDA -- torch 2.11.0+cpu reports no CUDA device\ntessera surface: 33 test(s) skipped, 0 module(s) not collected\ntessera surface: this run did not exercise the CUDA-gated surface. Its pass count is not coverage of it.\ntessera surface: skip reasons, verbatim --\n       22  needs a CUDA device\n        6  box artifact absent: the PrismaQuant checkout whose pricing this suite is pinned against -- /home/rob/prismaquant/prismaquant/tessera_formats.py is not on this box (set TESSERA_PRISMAQUANT_DIR; documented default /home/rob/prismaquant)\n        5  the kernel lane runs on CUDA\ntessera surface: 0 test(s) allocated on the device\ntessera surface: skipped for evidence this box does not hold --\n        6  box artifact absent: the PrismaQuant checkout whose pricing this suite is pinned against -- /home/rob/prismaquant/prismaquant/tessera_formats.py is not on this box (set TESSERA_PRISMAQUANT_DIR; documented default /home/rob/prismaquant)\ntessera surface: population written to /mnt/shared/tessera-measurements/glm-tp2-hessian-integration-20260908/cpu-surface-19.json sha256:7a3f87255fa0a4ea28442c9b4d286c74527746dbd7d534863d17ffd4b935c662\n250 passed, 33 skipped in 64.92s (0:01:04)\n"
+  }
+]
