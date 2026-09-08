@@ -46,9 +46,16 @@ def test_changed_input_record_refuses(field, value):
         ResearchSelectedMoeInput.from_record(record)
 
 
-def test_shared_config_reexport_and_incompatible_targets():
-    from tessera.serving.moe_route import ResearchSelectedMoeConfig as ExistingImport
-    assert ExistingImport is ResearchSelectedMoeConfig
+def test_shared_config_incompatible_targets():
     config = ResearchSelectedMoeConfig.from_checkpoint(_block())
     with pytest.raises(ValueError, match="requires TESSERA_FP8/E4M3"):
         config.require_targets({"m": {"structure": "routed_moe", "family": "TESSERA_BF16", "grid": "BF16"}}, "resident")
+
+
+@pytest.mark.parametrize("field,value", [("expected_tensor_parallel_size", True),
+    ("expected_tensor_parallel_size", 1.0), ("max_experts_per_chunk", 2.0)])
+def test_carried_config_refuses_numeric_type_aliases(field, value):
+    record = ResearchSelectedMoeInput.from_bytes(json.dumps(_block()).encode()).record()
+    record["config"][field] = value
+    with pytest.raises(ValueError, match="research_selected_moe"):
+        ResearchSelectedMoeInput.from_record(record)

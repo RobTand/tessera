@@ -30,6 +30,12 @@ from tessera.serving.lane import TESSERA_MODE_ENV                   # noqa: E402
 from tessera.serving.scheme import TESSERA_NVFP4                    # noqa: E402
 
 
+def test_shared_config_preserves_existing_import():
+    from tessera.moe_execution import ResearchSelectedMoeConfig
+    from tessera.serving.moe_route import ResearchSelectedMoeConfig as ExistingImport
+    assert ExistingImport is ResearchSelectedMoeConfig
+
+
 def _research_checkpoint(tp=1, backend="triton"):
     return {"schema": "tessera.research_selected_moe.v1",
             "max_experts_per_chunk": 3, "decode_backend": backend,

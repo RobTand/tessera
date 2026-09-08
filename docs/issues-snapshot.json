@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-08T19:04:25Z",
+ "generated": "2026-09-08T20:09:10Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -1436,15 +1436,15 @@
     "title": "Implement recomputable full-engine fixed-resource producer admission for runtime v2"
    },
    "421": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Refuse stale Tessera and serving metadata when frontier selection changes assignment"
    },
    "422": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Expose closed GLM capture compatibility issuance through a bound plan"
    },
    "423": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Add shared-capture issuance and preserve GLM recipe provenance"
    },
    "424": {
@@ -1452,8 +1452,24 @@
     "title": "Add closed CPU/meta issuance CLI for original GLM capture compatibility"
    },
    "425": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Carry bounded canonical Hessian references through full-roster export"
+   },
+   "426": {
+    "state": "OPEN",
+    "title": "Derive the selected-anchor plan terms and measure the row's process floor"
+   },
+   "427": {
+    "state": "CLOSED",
+    "title": "Keep complete GLM Hessian handoff bounded through export"
+   },
+   "428": {
+    "state": "OPEN",
+    "title": "P1: Refuse stalled adaptive anchor rounds without repeating measured members"
+   },
+   "429": {
+    "state": "OPEN",
+    "title": "Preserve adaptive prices across failures and prepare profiled GLM anchors"
    },
    "43": {
     "state": "CLOSED",
@@ -3166,16 +3182,24 @@
     "title": "Add research TP2 packed MoE ownership with bounded native controls"
    },
    "428": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Bound canonical Hessian export inputs without a full tensor union"
    },
    "429": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Integrate bounded canonical Hessian inputs and research TP2 controls"
    },
    "43": {
     "state": "CLOSED",
     "title": "The q256 rate axis is not monotone in bits at the E2M1x2 cap, and small units carry up to 209 dominated rungs"
+   },
+   "430": {
+    "state": "OPEN",
+    "title": "Bridge explicit packed selected-expert execution from checkpoint to stock engine"
+   },
+   "431": {
+    "state": "OPEN",
+    "title": "Bridge packed research execution from checkpoint through export"
    },
    "44": {
     "state": "CLOSED",
