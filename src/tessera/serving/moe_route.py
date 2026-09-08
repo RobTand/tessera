@@ -532,7 +532,7 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
                 self._w13_len = self._w2_len = self._wire_ids = None
                 self._packed = prepared
                 self._research_phase = 'ready'
-                layer.tessera_decoder = 'research_selected_torch_window'
+                layer.tessera_decoder = f'research_selected_{research_selected.decode_backend}_window'
                 layer.tessera_backend = str(getattr(self.fp8_backend, 'value', self.fp8_backend))
                 return
 

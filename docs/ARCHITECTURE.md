@@ -2069,7 +2069,8 @@ independently planned twin over a nonconstant table.
 **Research selected decode.** `PreparedWindowBatch.decode` and
 `PreparedTesseraFp8Batch.decode` accept an explicit `backend="torch"|"triton"`.
 `ResearchSelectedMoeConfig.decode_backend` forwards that explicit choice through
-the research lifecycle. The default remains the eager Torch reference. The CUDA-only Triton selection
+the research lifecycle; the prepared layer's research decoder label names
+that same explicit backend. The default remains the eager Torch reference. The CUDA-only Triton selection
 uses `kernel_window.decode_selected_windows` to read the owner's existing
 rate-group packed planes, gathers, shifts, column mapping and expert alphabets
 straight into one fresh `[selected, steps, columns]` output. The alphabet dtype,

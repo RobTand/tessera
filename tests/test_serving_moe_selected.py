@@ -244,6 +244,7 @@ def test_research_backend_is_explicit_and_reaches_selected_owner(original_wires,
     method.create_weights(layer, EXPERTS, HIDDEN, INTER, torch.bfloat16)
     _load(method, layer, original_wires)
     method.process_weights_after_loading(layer)
+    assert layer.tessera_decoder == 'research_selected_triton_window'
     calls = []
     decode = method._packed.decode
     def observed(ids, *, max_experts_per_chunk, backend):
