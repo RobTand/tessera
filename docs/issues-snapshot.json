@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-08T20:09:10Z",
+ "generated": "2026-09-08T22:01:26Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -1464,16 +1464,48 @@
     "title": "Keep complete GLM Hessian handoff bounded through export"
    },
    "428": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "P1: Refuse stalled adaptive anchor rounds without repeating measured members"
    },
    "429": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Preserve adaptive prices across failures and prepare profiled GLM anchors"
    },
    "43": {
     "state": "CLOSED",
     "title": "Release PrismaQuant 0.5.0"
+   },
+   "430": {
+    "state": "OPEN",
+    "title": "tessera_campaign_container attaches the GPU by default, so a row that reserved none still gets the device"
+   },
+   "431": {
+    "state": "OPEN",
+    "title": "Let the GPU grant decide the container attachment, not a remembered flag"
+   },
+   "432": {
+    "state": "CLOSED",
+    "title": "Constrain packed GLM research allocation and freeze the checkpoint producer"
+   },
+   "433": {
+    "state": "CLOSED",
+    "title": "Constrain GLM packed research candidates and freeze the reviewed producer"
+   },
+   "434": {
+    "state": "CLOSED",
+    "title": "Gold runners cannot express stock TP2 multi-node topology"
+   },
+   "435": {
+    "state": "OPEN",
+    "title": "Routed-expert family allow-list duplicates the pinned contract's routed_moe cells instead of deriving from them"
+   },
+   "436": {
+    "state": "CLOSED",
+    "title": "Bind explicit stock topology in offline gold instruments"
+   },
+   "437": {
+    "state": "OPEN",
+    "title": "Streamed gold teacher lacks authenticated full-vocabulary companion and GLM source binding"
    },
    "44": {
     "state": "CLOSED",
@@ -3198,8 +3230,20 @@
     "title": "Bridge explicit packed selected-expert execution from checkpoint to stock engine"
    },
    "431": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Bridge packed research execution from checkpoint through export"
+   },
+   "432": {
+    "state": "CLOSED",
+    "title": "Validate JSON checkpoint selection in the native GLM packed control"
+   },
+   "433": {
+    "state": "OPEN",
+    "title": "Allow calibrated packed checkpoints through complete cached-unit export"
+   },
+   "434": {
+    "state": "OPEN",
+    "title": "fix(export): accept calibrated packed complete-cache intake"
    },
    "44": {
     "state": "CLOSED",
