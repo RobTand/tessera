@@ -65,9 +65,11 @@ fact from what has been served, and the cell names exactly the second.
 
 MoE AND PARALLELISM. Expert parallelism assigns whole expert units; tensor
 parallelism inside an expert partitions gate/up rows and down columns. The
-existing dense unit slicer can express these cuts, but the current expert
-builder refuses TP/EP above one and does not call that slicer. Dense loader
-axes therefore do not establish an implemented routed-expert TP path.
+existing dense unit slicer can express these cuts, but the production expert
+builder refuses TP/EP above one and does not call that slicer. The separate
+explicit ``ResearchSelectedMoeConfig(expected_tensor_parallel_size=2)`` path
+uses it for rank-local packed expert ownership; production MoE TP remains
+unqualified.
 """
 from __future__ import annotations
 

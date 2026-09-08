@@ -131,9 +131,11 @@ name rather than defaulted.
 
 MoE can reuse these unit-level cuts: tensor parallelism inside each expert
 partitions gate/up rows independently and down columns; expert parallelism
-assigns whole experts instead. The current routed-expert builder refuses
-TP above one and does not call these slicing functions. The dense loader
-axes in this module are not an implemented MoE TP route.
+assigns whole experts instead. The production routed-expert builder refuses
+TP above one and does not call these slicing functions. The separate explicit
+``ResearchSelectedMoeConfig(expected_tensor_parallel_size=2)`` path reuses them
+for rank-local packed expert ownership; dense loader axes alone do not
+qualify a production MoE TP route.
 """
 from __future__ import annotations
 
