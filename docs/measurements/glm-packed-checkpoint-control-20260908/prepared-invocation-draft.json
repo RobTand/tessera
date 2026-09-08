@@ -1,0 +1,67 @@
+{
+  "status": "DRAFT_PENDING_REVIEWED_SOURCE_AND_ROOT_GPU_CLEARANCE",
+  "harness_commit": "6c0e77e66e",
+  "source_base": "f3b6953f0c5821ab2108b6db9942f9a2e0179e91",
+  "pending": [
+    "source_commit",
+    "source_archive",
+    "source_and_harness_freeze",
+    "root_gpu_clearance",
+    "immediate_host_load_check"
+  ],
+  "host": "sparklina",
+  "runtime_image": "vllm/vllm-openai@sha256:4e31c581716a5cb9ef31eddb0a425842b75cab07d5cd63fb9572e69ae8794c33",
+  "cpus": 4,
+  "memory_gib": 48,
+  "timeout_seconds": 600,
+  "network": "none",
+  "request": {
+    "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/request-tp1-draft.json",
+    "sha256": "1f5838c9cc12ffaa6a65383f360b3f1cd074d4048a5778bc1919ad3267961449"
+  },
+  "checkpoint_config": {
+    "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/checkpoint-config-tp1.json",
+    "sha256": "2e860568c5a5a664291c554d1185e250c1f792273126146306931274169e8fca"
+  },
+  "harness": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/harness",
+  "out": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/native-tp1-01",
+  "argv": [
+    "python3",
+    "experiments/run_glm_native_construction.py",
+    "--request",
+    "/mnt/shared/tessera-glm-native-20260907/request.json",
+    "--packed-request",
+    "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/request-tp1-draft.json",
+    "--out",
+    "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/native-tp1-01",
+    "--stage",
+    "control",
+    "--cpus",
+    "4",
+    "--memory-gib",
+    "48",
+    "--timeout-seconds",
+    "600"
+  ],
+  "control_scope": "One actual 288-expert GLM owner; original q512 role wires repeated over 288 experts; 864 projection loads; saved decode and empty inputs; no encoding or timing loop.",
+  "telemetry": {
+    "required_for_performance_claim": false,
+    "performance_claim": false,
+    "host_observation": "Both Spark Netdata CPU, available memory, swap IO and board power over actual launch interval; retain fetch failures explicitly.",
+    "in_process": "Existing synchronized owner/load CUDA memory observations; no runtime or work-per-joule comparison without paired profiler evidence."
+  },
+  "predicates": [
+    "Exact source archive install and unchanged complete stock core before/after",
+    "checkpoint-reconstruction.json binds exact JSON SHA and ordinary tessera.serving.config.TesseraConfig resolved from stock registry",
+    "stock initialize_model retains ordinary TesseraConfig and exact parsed research object",
+    "native owner starts with wire buffers and research_selected/loading; complete load finalizes ready with routing bias only and packed owner",
+    "864 original projection loads; no persistent full FP8 expert parameters; no retained stock moe kernel/config",
+    "decode and empty exact output versus independent stock plus exact selected tiles/scales",
+    "no native TP2 execution, no trained router/shared-expert or final reduction claim for TP1 direct method control",
+    "launcher and container exit zero, no OOM/timeout, immutable controls and removed owned container"
+  ],
+  "limits": [
+    "No complete checkpoint weight export or full engine automatic sidecar discovery is claimed: this control parses the checkpoint quantization JSON and passes the registered config into the existing stock constructor.",
+    "No six full models, full-model fit, text generation, model quality, trained expert diversity, TP2 collectives, throughput or production cell promotion."
+  ]
+}

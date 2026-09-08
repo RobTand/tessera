@@ -1,0 +1,81 @@
+{
+  "schema": "root.glm_checkpoint_native01_evidence_audit.v1",
+  "source_commit": "07ad344c3275bb2fa7ce2432f93d89945d66f4c2",
+  "packaging_exclusions": [
+    "_dev/__init__.py",
+    "_dev/source_dependencies.py",
+    "_dev/suite_deadline.py",
+    "_dev/suite_source.py",
+    "_dev/surface_publication.py"
+  ],
+  "packaged_source_files": 70,
+  "packaged_encoder_source_sha256": "7d1e3b011eaba8d3a779656e4e3cfda9d9c3db41b7cf7d35aedb3d8b094f99df",
+  "verified_loaded_modules": 47,
+  "verified_final_launcher_artifact_count": 16,
+  "supplemental_netdata_sha256": "79c56eebe3f1115fc3b3827bc5166ff739eb6fc0675d3f448fb9871d8b956255",
+  "receipt_sha256": "5b3224b9ceb596d34227abec670ff28c9e9d5abdb0036d2d5077abf339217719",
+  "launcher_result": {
+    "started_epoch": 1788899421.7823632,
+    "finished_epoch": 1788899481.1039293,
+    "returncode": 0,
+    "timed_out": false,
+    "timeout_seconds": 600,
+    "container_exit_code": 0,
+    "oom_killed": false,
+    "container_removed": true,
+    "controls_unchanged": true
+  },
+  "checkpoint_reconstruction": {
+    "checkpoint_config": {
+      "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/checkpoint-config-tp1.json",
+      "sha256": "2e860568c5a5a664291c554d1185e250c1f792273126146306931274169e8fca"
+    },
+    "config_class": "tessera.serving.config.TesseraConfig",
+    "registry_key": "tessera",
+    "research_selected_moe": {
+      "decode_backend": "triton",
+      "expected_tensor_parallel_size": 1,
+      "max_experts_per_chunk": 8,
+      "schema": "tessera.research_selected_moe.v1"
+    },
+    "quantization_sha256": "a9f74fff3d8717e2f519fbdbbb1b935cef1b37845954efeac9af925dd323d9e1"
+  },
+  "owner_resident_bytes": 1853603840,
+  "stock_core_files": 4967,
+  "cases": [
+    {
+      "case": {
+        "input_multiplier": 1.0,
+        "name": "decode",
+        "seed": 574,
+        "tokens": 1
+      },
+      "output_vs_independent_stock": {
+        "finite": true,
+        "max_abs": 0.0,
+        "relative_l2": 0.0
+      },
+      "all_selected_tiles_and_scales_exact": true
+    },
+    {
+      "case": {
+        "input_multiplier": 1.0,
+        "name": "empty",
+        "seed": 578,
+        "tokens": 0
+      },
+      "output_vs_independent_stock": {
+        "finite": true,
+        "max_abs": 0.0,
+        "relative_l2": 0.0
+      },
+      "all_selected_tiles_and_scales_exact": true
+    }
+  ],
+  "limits": [
+    "One TP1 288-expert owner; original three role wires repeated across experts",
+    "Checkpoint JSON reconstructed using ordinary stock-registered config, passed into bounded stock constructor",
+    "No full engine automatic sidecar discovery, trained router, shared expert, TP2, model quality or throughput qualification",
+    "Package excludes tessera._dev; native package source seal differs from raw producer source seal by documented packaging only"
+  ]
+}

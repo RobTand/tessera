@@ -1,0 +1,43 @@
+{
+  "stages": {
+    "before_create": {
+      "allocated_bytes": 52428800,
+      "reserved_bytes": 52428800,
+      "peak_allocated_bytes": 52428800,
+      "peak_reserved_bytes": 52428800,
+      "epoch": 1788899450.2535148
+    },
+    "after_create": {
+      "allocated_bytes": 1936940544,
+      "reserved_bytes": 1941962752,
+      "peak_allocated_bytes": 1936940544,
+      "peak_reserved_bytes": 1941962752,
+      "epoch": 1788899450.3079057
+    },
+    "after_wire_load": {
+      "allocated_bytes": 1936940544,
+      "reserved_bytes": 1941962752,
+      "peak_allocated_bytes": 1936940544,
+      "peak_reserved_bytes": 1941962752,
+      "epoch": 1788899450.4692862
+    },
+    "after_prepare": {
+      "allocated_bytes": 1959380480,
+      "reserved_bytes": 6442450944,
+      "peak_allocated_bytes": 4471234048,
+      "peak_reserved_bytes": 6442450944,
+      "epoch": 1788899477.6046457
+    }
+  },
+  "owner_resident_bytes": 1853603840,
+  "parameters": {
+    "e_score_correction_bias": {
+      "shape": [
+        288
+      ],
+      "dtype": "torch.float32",
+      "device": "cuda:0"
+    }
+  },
+  "no_persistent_full_fp8": true
+}
