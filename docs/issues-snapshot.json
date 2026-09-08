@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-08T23:10:02Z",
+ "generated": "2026-09-08T23:26:49Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -3268,6 +3268,10 @@
    "435": {
     "state": "OPEN",
     "title": "Research packed TP2 allocates full checkpoint wire banks before rank-local slicing"
+   },
+   "436": {
+    "state": "OPEN",
+    "title": "Keep research TP2 expert intake rank-local on stock vLLM"
    },
    "44": {
     "state": "CLOSED",
