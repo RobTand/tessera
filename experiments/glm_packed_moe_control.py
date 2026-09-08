@@ -1,4 +1,4 @@
-"""Explicit TP1 eager lifecycle control on unchanged stock vLLM.
+"""Explicit TP1/TP2 eager lifecycle control on unchanged stock vLLM.
 
 Original q512 wires and saved inputs are common to the resident/packed arms.
 An additional source-derived diagnostic wire fixture can bind distinct expert
@@ -132,11 +132,15 @@ def run(args, request, outer):
     quant_dict = {'quant_method':'tessera','format':'tessera',
         'config_groups':{'glm_experts':{'format':'TESSERA','targets':['model.language_model.layers.3.mlp.experts'],'scheme':scheme}},
         'ignore':sorted({p for p,_ in baseline['offered_modules'] if p != target})}
+    tp_size = outer.get('tp_size',1)
+    assert type(tp_size) is int and tp_size in (1,2) and (tp_size == 1 or outer['arm'] == 'packed')
+    tp_rank = 0 if tp_size == 1 else outer['distributed']['rank']
     quant_cls = TesseraConfig
     if outer['arm'] == 'packed':
         from tessera.serving.moe_route import ResearchSelectedMoeConfig, build_tessera_moe_method
         research = ResearchSelectedMoeConfig(max_experts_per_chunk=outer['max_experts_per_chunk'],
-                                             decode_backend=outer.get('decode_backend', 'torch'))
+            decode_backend=outer.get('decode_backend', 'torch'),
+            expected_tensor_parallel_size=tp_size)
         class ResearchConfig(TesseraConfig):
             def get_quant_method(self,layer,prefix):
                 declaration = self.target_scheme.get(prefix)
@@ -145,7 +149,16 @@ def run(args, request, outer):
                 return super().get_quant_method(layer,prefix)
         quant_cls = ResearchConfig
     quant = quant_cls.from_config(quant_dict)
-    model,mapped,config = census.build_model(request['bounded_config'],'meta',512,quant_config=quant)
+    if tp_size == 1:
+        model,mapped,config = census.build_model(request['bounded_config'],'meta',512,quant_config=quant)
+    else:
+        from experiments.glm_packed_tp2_control import build_model
+        model,mapped,config = build_model(request['bounded_config'],'meta',512,quant_config=quant,
+                                          distributed=outer['distributed'])
+    paired_request_sha256 = None
+    if tp_size == 2:
+        from experiments.glm_packed_tp2_control import verify_common_request
+        paired_request_sha256 = verify_common_request(outer)
     assert target in mapped.target_scheme and config.model_config.enforce_eager
     owner_name = baseline['owners'][0]['name']
     moe_type = type(model.get_submodule(owner_name.rsplit('.experts.',1)[0]))
@@ -193,9 +206,13 @@ def run(args, request, outer):
             'no_persistent_full_fp8':outer['arm']=='packed'})
 
         # Allocate the independent stock oracle only after measuring the load.
-        first = torch.cat([stock[r]['weight'] for r in ('gate_proj','up_proj')]).cuda().unsqueeze(0).repeat(e,1,1)
-        second = stock['down_proj']['weight'].cuda().unsqueeze(0).repeat(e,1,1)
-        s13 = torch.cat([stock[r]['weight_scale'].flatten() for r in ('gate_proj','up_proj')]).cuda().view(1,2*n,1).repeat(e,1,1)
+        # Stock TP2 slices each role of the full independent source; local
+        # post-SwiGLU activation quantization makes TP1 FP8 a different oracle.
+        local_n = n // tp_size
+        lo,hi = tp_rank * local_n,(tp_rank + 1) * local_n
+        first = torch.cat([stock[r]['weight'][lo:hi] for r in ('gate_proj','up_proj')]).cuda().unsqueeze(0).repeat(e,1,1)
+        second = stock['down_proj']['weight'][:,lo:hi].contiguous().cuda().unsqueeze(0).repeat(e,1,1)
+        s13 = torch.cat([stock[r]['weight_scale'].flatten()[lo:hi] for r in ('gate_proj','up_proj')]).cuda().view(1,2*local_n,1).repeat(e,1,1)
         s2 = stock['down_proj']['weight_scale'].cuda().view(1,h,1).repeat(e,1,1)
         if diagnostics is not None:
             bits = (torch.arange(h,device='cuda') % (e-1).bit_length()).view(1,h,1)
@@ -214,6 +231,12 @@ def run(args, request, outer):
                 apply_router_weight_on_input=layer.apply_router_weight_on_input,
                 shared_experts=None,shared_experts_input=None)
 
+        dense_source_records = None
+        if tp_size == 2:
+            from experiments.glm_packed_tp2_control import load_shared_and_gate
+            dense_source_records = load_shared_and_gate(moe,request['source_model'],
+                target.removesuffix('.experts'),index_sha256=outer['source_index_sha256'])
+            write(args.out,'shared-and-gate-source.json',dense_source_records)
         saved_inputs = load_file(checked(outer['inputs']),device='cuda') if outer.get('inputs') else None
         generated_inputs = {}
         results = []
@@ -235,6 +258,12 @@ def run(args, request, outer):
             assert parity['finite'] and parity['max_abs'] == 0, (name,parity)
             del got
             row = {'case':case,'output_vs_independent_stock':parity}
+            if tp_size == 2 and tokens:
+                from experiments.glm_packed_tp2_control import check_runner
+                stock_partial = lambda xx,ww,ii:apply_oracle(full_oracle,xx,first,second,ww,ii)
+                row['stock_runner_controlled_routing'] = check_runner(moe,config,x,ids,stock_partial)
+                row['stock_runner_trained_gate'] = check_runner(moe,config,x,ids,stock_partial,
+                                                                trained_router=True)
             if outer['arm'] == 'packed':
                 selected_ids = torch.unique(ids).flip(0)
                 decoded = method._packed.decode(selected_ids,max_experts_per_chunk=outer['max_experts_per_chunk'],
@@ -306,8 +335,10 @@ def run(args, request, outer):
             'load_stages':stages,'cases':results,'input_file_sha256':digest(args.out/'inputs.safetensors'),
             'backend':plain(method.fp8_backend),'actual_moe_class':type(moe).__module__+'.'+type(moe).__qualname__,
             'actual_owner_class':type(layer).__module__+'.'+type(layer).__qualname__,
-            'trained_diverse_experts':False,'trained_router_executed':False,'shared_experts_executed':False,
-            'model_quality_probe':False,'runtime_cell_promoted':False,'tp_size':1,'ep_size':1}
+            'trained_diverse_experts':False,'trained_router_executed':tp_size==2,'shared_experts_executed':tp_size==2,
+            'shared_and_gate_source_records':dense_source_records,'tp_rank':tp_rank,
+            'paired_request_sha256':paired_request_sha256,
+            'model_quality_probe':False,'runtime_cell_promoted':False,'tp_size':tp_size,'ep_size':1}
 
 
 def main():

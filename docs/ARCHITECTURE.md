@@ -17,6 +17,9 @@ Re-stamped 2026-09-07 for the complete original-unit export intake (#401):
 `--cached-units` extends the existing closed bundle to dense and routed units;
 wire recipes, runtime contracts and serving gates are unchanged (§3.2).
 
+**Provenance:** Research packed TP2 role slicing re-stamped 2026-09-08 against
+base `98aa317a06`; explicit research construction only, no runtime-cell change.
+
 **Provenance:** `v0.1.0` plus repository tooling updates (2026-09-07):
 CUPTI v1 argument-collector configuration validation against base `7e61578c`;
 existing Mamba CpuGpuBuffer owner traversal against base `ec54aa42`;
@@ -2065,6 +2068,24 @@ CPU and a device check that a shared replica answers within the bound of its
 independently planned twin over a nonconstant table.
 
 ### 4.4d The expert stack is a STRUCTURE, not a module
+
+**Research TP2 ownership.** `ResearchSelectedMoeConfig` defaults to
+`expected_tensor_parallel_size=1`; an explicit value of `2` must agree with
+the runtime's actual TP size. Each rank loads and validates every original
+full expert wire, then uses `plan_shard` and `shard_parsed_roles` to cut gate
+and up independently along their output rows and down along its input columns.
+The existing packed FP8/window owners retain those local roles and preserve
+nonzero row-cut initial states. There is no checkpoint rewrite or persistent
+full decoded expert stack. Global expert IDs and router weights are unchanged;
+the method returns the rank's partial output, leaving shared-expert combination
+and the final all-reduce to stock vLLM. EP, DP, PCP, SP, EPLB, runtime padding,
+deferred finalize, and disabled final reduction are refused. This remains
+eager research construction outside normal `TesseraConfig`; native two-rank
+execution and whole-engine fit require their own receipts. In particular,
+stock FP8 activation quantization after SwiGLU is rank-local, so the native
+comparator is stock TP2 on independent full-weight slices, not a bit-exact TP1
+FP8 output. See `docs/design/glm-packed-moe-tp2-research.md` for the source-bound
+slice and memory contracts.
 
 **Research selected decode.** `PreparedWindowBatch.decode` and
 `PreparedTesseraFp8Batch.decode` accept an explicit `backend="torch"|"triton"`.

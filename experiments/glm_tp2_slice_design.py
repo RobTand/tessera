@@ -165,3 +165,33 @@ def test_rolewise_w13_partition_and_partial_sum_oracle(source):
         'max_abs':float((got-full).abs().max()),'wrong_fused_aggregate_slice_max_abs':wrong_max,
         'rank_local_activation_amax':[v.tolist() for v in scale_spans],
         'request_sha256':sha(request_path)},indent=2)+'\n')
+
+
+@pytest.mark.parametrize('rank',[0,1])
+def test_original_q512_wires_through_research_moe_preparation(source,rank):
+    from experiments.glm_native_construction import scheme_for
+    from tessera.serving.moe_route import prepare_tessera_packed_moe_experts
+    from tessera.serving.scheme import validate_tessera_moe_scheme
+    request_path,request,sources = source
+    producer = json.loads(checked(request['producer_manifest']).read_text())
+    wires = {role:(Path(row['directory'])/'projection.wire').read_bytes()
+             for role,row in producer['projections'].items()}
+    scheme = scheme_for({'hidden_size':4096,'moe_intermediate_size':2048,'n_routed_experts':1})
+    for group in scheme['groups'].values():
+        group['q256'] = 512
+        group['wire_stride'] = max(len(wires[role]) for role,_ in group['roles'])
+    owner = prepare_tessera_packed_moe_experts(
+        {'w13':[[wires['gate_proj'],wires['up_proj']]],'w2':[[wires['down_proj']]]},
+        validate_tessera_moe_scheme(scheme,'glm.experts'),'glm.experts',device='cpu',tp_rank=rank,tp_size=2)
+    decoded = owner.decode(torch.tensor([0],dtype=torch.int32),max_experts_per_chunk=1)
+    lo,hi = rank*1024,(rank+1)*1024
+    expected13 = torch.cat([sources[role][1]['weight'][lo:hi] for role in ROLES[:2]])
+    expected2 = sources['down_proj'][1]['weight'][:,lo:hi].contiguous()
+    assert torch.equal(decoded.w13_weight[0].view(torch.uint8),expected13.view(torch.uint8))
+    assert torch.equal(decoded.w2_weight[0].view(torch.uint8),expected2.view(torch.uint8))
+    expected_scale13 = torch.cat([sources[role][1]['weight_scale'].flatten()[lo:hi] for role in ROLES[:2]])
+    assert torch.equal(decoded.w13_weight_scale[0].flatten(),expected_scale13)
+    assert torch.equal(decoded.w2_weight_scale[0].flatten(),sources['down_proj'][1]['weight_scale'].flatten())
+    out = Path(request['out'])/f'moe-preparation-rank{rank}.json'
+    out.write_text(json.dumps({'rank':rank,'tp_size':2,'experts':1,'selected_tiles_and_scales_exact':True,
+        'resident_bytes':owner.resident_bytes(),'request_sha256':sha(request_path)},indent=2)+'\n')
