@@ -1,0 +1,353 @@
+{
+  "schema": "tessera.glm_tp2_hessian_integration_cpu_audit.v1",
+  "source_commit": "3ddb55c558208b63ae53bd18de45b14d9af3e145",
+  "mode": "CPU only,20 PB-managed shards with2 xdist workers each; native threads1;8GiB per shard",
+  "counts": {
+    "passed": 3618,
+    "failed": 0,
+    "error": 0,
+    "skipped": 602,
+    "xfailed": 0,
+    "xpassed": 0
+  },
+  "skip_reasons": {
+    "the lane is a CUDA kernel": 76,
+    "needs a CUDA device": 89,
+    "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-reach-gridbook/model.safetensors is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 13,
+    "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-reach-stock-twin/model.safetensors is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 2,
+    "the kernel lane is a CUDA path": 30,
+    "the encoder is a GPU job": 26,
+    "needs two CUDA devices": 2,
+    "the fused window Viterbi is a CUDA path and needs triton": 20,
+    "box artifact absent: the PrismaQuant worktree carrying the continuous-rate branch -- /home/rob/pq-wt/tessera-continuous/prismaquant/tessera_formats.py is not on this box (set TESSERA_PRISMAQUANT_WORKTREE; documented default /home/rob/pq-wt/tessera-continuous)": 2,
+    "needs CUDA": 6,
+    "the encoder is a CUDA path": 82,
+    "the fused window Viterbi is a CUDA path": 52,
+    "box artifact absent: kl_tool.py and kl_estimator.py, the untracked served-KL instrument -- nothing set KL_TOOL_DIR and its default is not resolved for this root (set KL_TOOL_DIR; documented default /home/rob/dq-runs)": 2,
+    "encoder is a GPU job": 43,
+    "BODY device unpack requires CUDA": 22,
+    "selected window kernel requires CUDA": 20,
+    "the trellises are CUDA": 8,
+    "the captured TCQ trellis is a CUDA path": 29,
+    "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/compile-dispatch/serve_qwen_dispatch_eager.log is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 6,
+    "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/stock/serve_qwen_stock_tessera-k2-graph.log is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 1,
+    "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/stock/serve_qwen_stock_tessera-k2.log is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 1,
+    "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/tsplugin/vllm-cache-fresh/torch_compile_cache/torch_aot_compile/15957ad9e7a72f1d7539f792e4d4cee6e704e2e99696f07e909c209f30f5ddec is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 1,
+    "could not import 'vllm': No module named 'vllm'": 3,
+    "needs a CUDA device: the positive arm builds the extension": 1,
+    "the Viterbi is CUDA": 29,
+    "the Tessera encoder is a CUDA path": 14,
+    "the fused window Viterbi is CUDA": 8,
+    "could not import 'transformers': No module named 'transformers'": 1,
+    "E2M1 publishes no reader range": 1,
+    "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-reach-gridbook is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 1,
+    "box artifact absent: the PrismaQuant checkout whose pricing this suite is pinned against -- /home/rob/prismaquant/prismaquant/tessera_formats.py is not on this box (set TESSERA_PRISMAQUANT_DIR; documented default /home/rob/prismaquant)": 6,
+    "the kernel lane runs on CUDA": 5
+  },
+  "not_collected": [],
+  "source_identity_sha256": "ec9b5ea521e10cd536b68fea8daa1f5ad004db3035e854aaa1d1f4449d25c3c2",
+  "populations": [
+    {
+      "action": "35c1473a56bfd56efac508fec23397218c24538582764b27a9dc6bf0d211e261",
+      "path": "/mnt/shared/tessera-measurements/glm-tp2-hessian-integration-20260908/cpu-surface-0.json",
+      "sha256": "f901ec208609e6b56c884a9d2e70b83f91719d7211f462d9f40b10c8c1015bd6",
+      "counts": {
+        "passed": 153,
+        "failed": 0,
+        "error": 0,
+        "skipped": 44,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "snapshot": "fef1506b0aab6b9e58f431b8b0a8360bbe146aec",
+      "source_identity_sha256": "ec9b5ea521e10cd536b68fea8daa1f5ad004db3035e854aaa1d1f4449d25c3c2"
+    },
+    {
+      "action": "ae52a61adca5bba266a3414217fd0e46017d376e9a0200396bd3fc9dcfc9cab5",
+      "path": "/mnt/shared/tessera-measurements/glm-tp2-hessian-integration-20260908/cpu-surface-1.json",
+      "sha256": "a89f6bf852a4d5b2d9d31ee74d1b58f8998b2244733a29d976d5af0bc0f942cb",
+      "counts": {
+        "passed": 117,
+        "failed": 0,
+        "error": 0,
+        "skipped": 73,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "snapshot": "11b42391649be904429701360eab78c752246615",
+      "source_identity_sha256": "ec9b5ea521e10cd536b68fea8daa1f5ad004db3035e854aaa1d1f4449d25c3c2"
+    },
+    {
+      "action": "a82eb75204c2443f9c3da582a1175fa5da782af07febe60a30b5f26a4dbae228",
+      "path": "/mnt/shared/tessera-measurements/glm-tp2-hessian-integration-20260908/cpu-surface-2.json",
+      "sha256": "42fc5008fe17db1055ed8c8737449186c6df4fbd593f9d1cfd9af1bc43e887a6",
+      "counts": {
+        "passed": 173,
+        "failed": 0,
+        "error": 0,
+        "skipped": 24,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "snapshot": "0c01ced9d1ef578b7d9f08e18721cbb136e00a2f",
+      "source_identity_sha256": "ec9b5ea521e10cd536b68fea8daa1f5ad004db3035e854aaa1d1f4449d25c3c2"
+    },
+    {
+      "action": "7d6fc5765b76cc23f36c248c7f089356ba865b834a638869987549d7bcee53d8",
+      "path": "/mnt/shared/tessera-measurements/glm-tp2-hessian-integration-20260908/cpu-surface-3.json",
+      "sha256": "02e8ae432cee7d7e9f7b5de0153dbae68cf8db8aeaa5590d762308b0a626a08d",
+      "counts": {
+        "passed": 89,
+        "failed": 0,
+        "error": 0,
+        "skipped": 56,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "snapshot": "e8f25341145c723f9a534f8a7a79090b34fbc346",
+      "source_identity_sha256": "ec9b5ea521e10cd536b68fea8daa1f5ad004db3035e854aaa1d1f4449d25c3c2"
+    },
+    {
+      "action": "3a6a39c17ea5e789c096f43b4b47a71c79288008eccf7fdf09cee970fb1d1854",
+      "path": "/mnt/shared/tessera-measurements/glm-tp2-hessian-integration-20260908/cpu-surface-4.json",
+      "sha256": "0e3aa322682033632918a2e7186c4438c8ccd704d56bdbbd71c7f2ed5eb71c2f",
+      "counts": {
+        "passed": 280,
+        "failed": 0,
+        "error": 0,
+        "skipped": 49,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "snapshot": "7a2d2635807e8aba05a2c8bd7cb4f98b38c8dfbd",
+      "source_identity_sha256": "ec9b5ea521e10cd536b68fea8daa1f5ad004db3035e854aaa1d1f4449d25c3c2"
+    },
+    {
+      "action": "cbf8fc1cc7c66686ae7364d9df29332efb0b2a617e61df523814139ba059fd27",
+      "path": "/mnt/shared/tessera-measurements/glm-tp2-hessian-integration-20260908/cpu-surface-5.json",
+      "sha256": "0858f3bea567f9559beb93623bffbe4d099669eeac1129727cf14dd681a76b4f",
+      "counts": {
+        "passed": 175,
+        "failed": 0,
+        "error": 0,
+        "skipped": 22,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "snapshot": "b9f186f42dc7c066daf3135cc0ad0c5437c1d45b",
+      "source_identity_sha256": "ec9b5ea521e10cd536b68fea8daa1f5ad004db3035e854aaa1d1f4449d25c3c2"
+    },
+    {
+      "action": "5ec0d844bfd1d397f28cc0bd2558d50b7313756a045ea763dfb48fca44350727",
+      "path": "/mnt/shared/tessera-measurements/glm-tp2-hessian-integration-20260908/cpu-surface-6.json",
+      "sha256": "16e585a03c0d918023486400e1b1e6f9a49d257211b13cdba152c3079072f552",
+      "counts": {
+        "passed": 199,
+        "failed": 0,
+        "error": 0,
+        "skipped": 30,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "snapshot": "5ac09c5fcaf44605ae352b115c6f70d5a8c100e3",
+      "source_identity_sha256": "ec9b5ea521e10cd536b68fea8daa1f5ad004db3035e854aaa1d1f4449d25c3c2"
+    },
+    {
+      "action": "f83520462e81d495a8d7b1d97b935ee0c1ba48af1871a8867e056beaa225d0f0",
+      "path": "/mnt/shared/tessera-measurements/glm-tp2-hessian-integration-20260908/cpu-surface-7.json",
+      "sha256": "61edeb2c39b74abe5f11cd8b52815bbe489eacb575d93d537f529a06ac12079d",
+      "counts": {
+        "passed": 227,
+        "failed": 0,
+        "error": 0,
+        "skipped": 49,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "snapshot": "200a8e5c2fa56d21db03c770db9e8eef7de72b5f",
+      "source_identity_sha256": "ec9b5ea521e10cd536b68fea8daa1f5ad004db3035e854aaa1d1f4449d25c3c2"
+    },
+    {
+      "action": "4f7dfc2273ae31e16cc52dc8e50690a9e5618f863fa20d00e670808127bb0eef",
+      "path": "/mnt/shared/tessera-measurements/glm-tp2-hessian-integration-20260908/cpu-surface-8.json",
+      "sha256": "60ebd27d4d8574e05acce8a3dd6e7d88b50b7b5cf27f75baa2c06725ebed2abd",
+      "counts": {
+        "passed": 142,
+        "failed": 0,
+        "error": 0,
+        "skipped": 0,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "snapshot": "48b1ff9dc91f45ad5ef1dc182d8f2b41b24de9fe",
+      "source_identity_sha256": "ec9b5ea521e10cd536b68fea8daa1f5ad004db3035e854aaa1d1f4449d25c3c2"
+    },
+    {
+      "action": "2ba4cdfa6dfbc75b772cdba49d1a3e14271d2360397628d49b758103b44525d1",
+      "path": "/mnt/shared/tessera-measurements/glm-tp2-hessian-integration-20260908/cpu-surface-9.json",
+      "sha256": "d657d5f5743680a8247caf58f9e929e2b538f32705e660bf1bc5b1463fb42ab3",
+      "counts": {
+        "passed": 196,
+        "failed": 0,
+        "error": 0,
+        "skipped": 18,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "snapshot": "714348e7503b413a26f732ea36866fc83f070af6",
+      "source_identity_sha256": "ec9b5ea521e10cd536b68fea8daa1f5ad004db3035e854aaa1d1f4449d25c3c2"
+    },
+    {
+      "action": "a19d97565ce584a56d67c4085df41a6078a193b82d2bf7055c05799d5685b344",
+      "path": "/mnt/shared/tessera-measurements/glm-tp2-hessian-integration-20260908/cpu-surface-10.json",
+      "sha256": "2527ae0767ce4e6992b59dfe7ed35b0ad79c6747055a8c829fc7f9f9b1fa36bd",
+      "counts": {
+        "passed": 92,
+        "failed": 0,
+        "error": 0,
+        "skipped": 1,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "snapshot": "61220b224023551eb9cf7e25324a7833d2836632",
+      "source_identity_sha256": "ec9b5ea521e10cd536b68fea8daa1f5ad004db3035e854aaa1d1f4449d25c3c2"
+    },
+    {
+      "action": "40ed31ed53bc17b5d93caa89c3301cfebd2ec06d27fd024cced61b765ddde4f5",
+      "path": "/mnt/shared/tessera-measurements/glm-tp2-hessian-integration-20260908/cpu-surface-11.json",
+      "sha256": "2e9aeaa3027f8ec259872c60d4f531a07b59648259b0a450c6ef003107c509d1",
+      "counts": {
+        "passed": 161,
+        "failed": 0,
+        "error": 0,
+        "skipped": 0,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "snapshot": "60dd4a9ff815c320b7cc840b8fbec2a3552b4125",
+      "source_identity_sha256": "ec9b5ea521e10cd536b68fea8daa1f5ad004db3035e854aaa1d1f4449d25c3c2"
+    },
+    {
+      "action": "adefefba0030c980f89f6bc6b30f279af99f5e77cbea6cece4a854edb94ebfe8",
+      "path": "/mnt/shared/tessera-measurements/glm-tp2-hessian-integration-20260908/cpu-surface-12.json",
+      "sha256": "0a9ee78a9934bbc0aadc74cdc03b0ee1491830589fc404271963ea59c04aa293",
+      "counts": {
+        "passed": 274,
+        "failed": 0,
+        "error": 0,
+        "skipped": 19,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "snapshot": "52e2bb311c3e124a18959d56a09434b2434725c7",
+      "source_identity_sha256": "ec9b5ea521e10cd536b68fea8daa1f5ad004db3035e854aaa1d1f4449d25c3c2"
+    },
+    {
+      "action": "5a03bea81f8842a5b72cf646fdddcee6c9b232399f21763b267d5e63701ef4a6",
+      "path": "/mnt/shared/tessera-measurements/glm-tp2-hessian-integration-20260908/cpu-surface-13.json",
+      "sha256": "7f305444164e7a7e7c2e38b2078e8b5dc760990b5e3ff38143d6eacc0841762a",
+      "counts": {
+        "passed": 331,
+        "failed": 0,
+        "error": 0,
+        "skipped": 45,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "snapshot": "3975d011f1299286d4f1056153a5f4b2e3e00390",
+      "source_identity_sha256": "ec9b5ea521e10cd536b68fea8daa1f5ad004db3035e854aaa1d1f4449d25c3c2"
+    },
+    {
+      "action": "50646d954b4a830daae1b9c63b92c762767853b9cc7681324bc802b97003058c",
+      "path": "/mnt/shared/tessera-measurements/glm-tp2-hessian-integration-20260908/cpu-surface-14.json",
+      "sha256": "1691f7c61e7db952e61ab7efc02df9e8b15b65ccc29fb2b6732a0e181afe6b71",
+      "counts": {
+        "passed": 123,
+        "failed": 0,
+        "error": 0,
+        "skipped": 24,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "snapshot": "8f24c1fe4a7b17e9c70c55e73db505ab077c2661",
+      "source_identity_sha256": "ec9b5ea521e10cd536b68fea8daa1f5ad004db3035e854aaa1d1f4449d25c3c2"
+    },
+    {
+      "action": "f8ae348c72911708a47d714f6fef15ceea71874a333c6fba23fb985c44a0c8f8",
+      "path": "/mnt/shared/tessera-measurements/glm-tp2-hessian-integration-20260908/cpu-surface-15.json",
+      "sha256": "f4667943fd516cc7847ef5a2d1e6be8283a89ddf1a19d64b9295d91e21c8d6d4",
+      "counts": {
+        "passed": 119,
+        "failed": 0,
+        "error": 0,
+        "skipped": 0,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "snapshot": "eeac58758e29064a5730b9ba28b146bcc0d793c0",
+      "source_identity_sha256": "ec9b5ea521e10cd536b68fea8daa1f5ad004db3035e854aaa1d1f4449d25c3c2"
+    },
+    {
+      "action": "1ea7f8d4a4b4644f406d5a4d32467235575c6669fef550c9cd2a0ec42bcea136",
+      "path": "/mnt/shared/tessera-measurements/glm-tp2-hessian-integration-20260908/cpu-surface-16.json",
+      "sha256": "042b3be8228c3c002e4efbe224d251df7f0aee1cd9e5c79eec367bda56bd423c",
+      "counts": {
+        "passed": 180,
+        "failed": 0,
+        "error": 0,
+        "skipped": 0,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "snapshot": "34f1c9bc02cf0f44f6c36dd3e30c195e53192d1d",
+      "source_identity_sha256": "ec9b5ea521e10cd536b68fea8daa1f5ad004db3035e854aaa1d1f4449d25c3c2"
+    },
+    {
+      "action": "3d766441621304765eb606d1da88edfccbdcd4f7e5a08790921045b0680b8da7",
+      "path": "/mnt/shared/tessera-measurements/glm-tp2-hessian-integration-20260908/cpu-surface-17.json",
+      "sha256": "da9d107c098c5efaa372e88898b33c4d47567bd670d006ed7cc4b79d15223dc8",
+      "counts": {
+        "passed": 157,
+        "failed": 0,
+        "error": 0,
+        "skipped": 32,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "snapshot": "ec4bc426b388ca4e8ece9a79e7d6dd71dad1cf62",
+      "source_identity_sha256": "ec9b5ea521e10cd536b68fea8daa1f5ad004db3035e854aaa1d1f4449d25c3c2"
+    },
+    {
+      "action": "919a52bf1a55df982dc1833adc6c80eaec73b377d2eddf804ebccc60a06ae903",
+      "path": "/mnt/shared/tessera-measurements/glm-tp2-hessian-integration-20260908/cpu-surface-18.json",
+      "sha256": "ed8798948bae1458967a4920c8d7cbc1dce12cf8845541ffc1e1ddf0f4d4215d",
+      "counts": {
+        "passed": 180,
+        "failed": 0,
+        "error": 0,
+        "skipped": 83,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "snapshot": "bf8d47a96028d7f97d4f6b421650db587b184ac1",
+      "source_identity_sha256": "ec9b5ea521e10cd536b68fea8daa1f5ad004db3035e854aaa1d1f4449d25c3c2"
+    },
+    {
+      "action": "450fe15006ae3e42cf4eed63370e26ba328d91b2aaa0ae6c5f66a59ca95c5ff7",
+      "path": "/mnt/shared/tessera-measurements/glm-tp2-hessian-integration-20260908/cpu-surface-19.json",
+      "sha256": "7a3f87255fa0a4ea28442c9b4d286c74527746dbd7d534863d17ffd4b935c662",
+      "counts": {
+        "passed": 250,
+        "failed": 0,
+        "error": 0,
+        "skipped": 33,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "snapshot": "4fe3bd1d0004b9f43e0e6b34edcdcdca328dcf6e",
+      "source_identity_sha256": "ec9b5ea521e10cd536b68fea8daa1f5ad004db3035e854aaa1d1f4449d25c3c2"
+    }
+  ],
+  "gpu_surface": "NOT_RUN_IN_THIS_CPU_SUITE",
+  "source_verification": "All terminal/receipt/result/source bundles independently verified; only PB closure differs from integration commit; each actual population hash bound to CAS stdout."
+}

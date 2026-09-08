@@ -28,6 +28,7 @@ def main():
     parser.add_argument('--packed-request', type=Path)
     parser.add_argument('--role', choices=('gate_proj', 'up_proj', 'down_proj'))
     parser.add_argument('--q256', type=int)
+    parser.add_argument('--timeout-seconds',type=int)
     parser.add_argument('--cpus', type=int, default=4)
     parser.add_argument('--memory-gib', type=int, default=12)
     args = parser.parse_args()
@@ -53,7 +54,23 @@ def main():
         env['VLLM_DISABLE_SHARED_EXPERTS_STREAM'] = '1'
     if args.stage == 'encode':
         env['PRISMABUILD_CONTAINER_OWNER'] = os.environ['PRISMABUILD_CONTAINER_OWNER']
-    command = ['docker', 'run', '--gpus', 'all', '--network', 'none',
+    packed = json.loads(args.packed_request.read_text()) if args.packed_request else {}
+    network = 'host' if packed.get('tp_size',1) == 2 else 'none'
+    if network == 'host':
+        assert args.timeout_seconds is not None and 1 <= args.timeout_seconds <= 600
+        env['TORCH_NCCL_ASYNC_ERROR_HANDLING'] = '1'
+        fabric = packed['distributed'].get('ipv4_tcp_fabric')
+        if fabric is not None:
+            import ipaddress
+            assert len(fabric['rank_addresses']) == 2 and fabric['interface']
+            rank = packed['distributed']['rank']
+            addresses = [str(ipaddress.IPv4Address(value)) for value in fabric['rank_addresses']]
+            observed = json.loads(subprocess.check_output(['ip','-j','-4','address','show','dev',fabric['interface']]))
+            assert addresses[rank] in {row['local'] for dev in observed for row in dev['addr_info']}
+            env.update(GLOO_SOCKET_IFNAME=fabric['interface'],
+                NCCL_SOCKET_IFNAME='='+fabric['interface'],NCCL_SOCKET_FAMILY='AF_INET',
+                NCCL_IB_DISABLE='1',VLLM_HOST_IP=addresses[rank])
+    command = ['docker', 'run', '--gpus', 'all', '--network', network,
         '--cpuset-cpus', ','.join(map(str, affinity)), '--memory', f'{args.memory_gib}g',
         '--memory-swap', f'{args.memory_gib}g', '--shm-size', '1g', '--cidfile', str(cidfile),
         '--name', 'tessera-glm-construction-' + uuid.uuid4().hex,
@@ -82,6 +99,8 @@ def main():
         controls.append(Path('experiments/glm_selected_expert_control.py'))
     if args.packed_request:
         controls.append(args.packed_request)
+        if packed.get('tp_size',1) == 2:
+            controls.append(Path('experiments/glm_packed_tp2_control.py'))
     before = {str(p): digest(p) for p in controls}
     start = time.time()
     (root / 'launch.json').write_text(json.dumps({'command': command, 'environment': env,
@@ -89,10 +108,27 @@ def main():
         'affinity': affinity, 'memory_limit_gib': args.memory_gib,
         'execution_authority': ('PrismaBuild admitted producer' if args.stage == 'encode'
                                 else 'explicit user vLLM exemption 2026-09-07'),
-        'started_epoch': start}, indent=2) + '\n')
+        'timeout_seconds':args.timeout_seconds,'started_epoch': start}, indent=2) + '\n')
+    timed_out = False
     with (root / 'container.log').open('w') as log:
-        result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT)
+        try:
+            result = subprocess.run(command,stdout=log,stderr=subprocess.STDOUT,
+                                    timeout=args.timeout_seconds)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+            result = subprocess.CompletedProcess(command,124)
+    if not cidfile.exists():
+        (root/'launcher-result.json').write_text(json.dumps({'returncode':result.returncode,
+            'timed_out':timed_out,'container_id_recorded':False,'finished_epoch':time.time()},indent=2)+'\n')
+        return result.returncode or 125
     cid = cidfile.read_text().strip()
+    if timed_out:
+        # The CID was recorded by this launch. Stop only that owned container;
+        # killing the docker client at timeout does not stop its payload.
+        try:
+            subprocess.run(['docker','stop','--time','10',cid],check=True,timeout=20)
+        except (subprocess.TimeoutExpired,subprocess.CalledProcessError):
+            subprocess.run(['docker','kill',cid],check=True,timeout=10)
     container = json.loads(subprocess.check_output(['docker', 'inspect', cid]))[0]
     assert container['Id'] == cid and container['Image'] == inspected['Id']
     assert not container['State']['Running']
@@ -100,7 +136,8 @@ def main():
     subprocess.run(['docker', 'rm', cid], check=True)
     after = {str(p): digest(p) for p in controls}
     record = {'started_epoch': start, 'finished_epoch': time.time(),
-        'returncode': result.returncode, 'container_exit_code': container['State']['ExitCode'],
+        'returncode': result.returncode,'timed_out':timed_out,'timeout_seconds':args.timeout_seconds,
+        'container_exit_code': container['State']['ExitCode'],
         'oom_killed': container['State']['OOMKilled'], 'container_removed': True,
         'controls_unchanged': before == after}
     (root / 'launcher-result.json').write_text(json.dumps(record, indent=2) + '\n')

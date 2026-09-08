@@ -1,0 +1,12 @@
+[
+  {
+    "action": "d767d708ab5f43f0d7625ba4f2f933b7621cc2aec289a1e7264a12de543799af",
+    "receipt": "90067ac594a004980e4cee1bcb4770af5656d1f4b362206f2e07b4a0ca4b9220",
+    "payload_sha256": "26b09d27e63b639d8367c674fbe5c7bfb357f30284eb8cb5e6d140278f8ac8f0",
+    "snapshot": "447564b502803819b68b7553e2172458813c06d0",
+    "source_diff_from_commit": [
+      ".pbrun-closure.e7f205772bb8a896.json"
+    ],
+    "stdout_tail": "............................                                             [100%]\n\ntessera surface: NO CUDA -- torch 2.11.0+cpu reports no CUDA device\ntessera surface: 0 test(s) skipped, 0 module(s) not collected\ntessera surface: this run did not exercise the CUDA-gated surface. Its pass count is not coverage of it.\ntessera surface: 0 test(s) allocated on the device\n28 passed in 3.65s\n"
+  }
+]

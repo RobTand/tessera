@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-08T10:18:25Z",
+ "generated": "2026-09-08T19:04:25Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -1208,7 +1208,7 @@
     "title": "producer: make CB byte and artifact budgets exact"
    },
    "370": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Enable selected-source Tessera anchors from complete canonical capture"
    },
    "371": {
@@ -1220,20 +1220,120 @@
     "title": "Bind portable campaign images to executable content"
    },
    "373": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Bound exact streamed AURA boundaries and rolling cotangents"
    },
    "374": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Bound joint probe candidate residency with transient operator statistics"
+   },
+   "375": {
+    "state": "CLOSED",
+    "title": "Bound streamed AURA exact boundary and cotangent residency"
+   },
+   "376": {
+    "state": "CLOSED",
+    "title": "Enable selected-source Tessera anchors from canonical capture"
+   },
+   "377": {
+    "state": "CLOSED",
+    "title": "Bound Hessian sidecar serialization without changing archive bytes"
+   },
+   "378": {
+    "state": "CLOSED",
+    "title": "Bound joint probe candidate residency with deferred operator contractions"
+   },
+   "379": {
+    "state": "CLOSED",
+    "title": "Bound Hessian sidecar pages without changing archive bytes"
    },
    "38": {
     "state": "CLOSED",
     "title": "release: bump Gridbook source to 0.4.0"
    },
+   "380": {
+    "state": "CLOSED",
+    "title": "Coalesce consumed source payloads before page release to bound file-cache retention"
+   },
+   "381": {
+    "state": "CLOSED",
+    "title": "Bound research candidate residency through existing ProductionWeightCache windows"
+   },
+   "382": {
+    "state": "CLOSED",
+    "title": "Coalesce consumed source spans to release retained file-cache folios"
+   },
+   "383": {
+    "state": "CLOSED",
+    "title": "Bound joint anchor qualification by resident unit and candidate windows"
+   },
+   "384": {
+    "state": "CLOSED",
+    "title": "Bound research candidate residency through ProductionWeightCache windows"
+   },
+   "385": {
+    "state": "CLOSED",
+    "title": "Plan bounded joint-statistics target windows from shared activation grouping"
+   },
+   "386": {
+    "state": "CLOSED",
+    "title": "Integrate bounded GLM probe memory primitives"
+   },
+   "387": {
+    "state": "CLOSED",
+    "title": "Plan bounded joint-statistics windows using shared activation requirements"
+   },
+   "388": {
+    "state": "OPEN",
+    "title": "Selected-source anchor rows re-hash the whole source checkpoint per row: about 84.8 TB of NFS reads across the 132 GLM rows"
+   },
+   "389": {
+    "state": "OPEN",
+    "title": "Selected-anchor encoder memo holds --anchor-batch-size entries while pending order is rung-major, so every (unit, rung) pair refactorizes; no CLI test covers an s: stack group"
+   },
    "39": {
     "state": "CLOSED",
     "title": "policy: constrain native parity and production CB menu"
+   },
+   "390": {
+    "state": "OPEN",
+    "title": "autoscale.selected_anchor_resources uses chosen multipliers with no process baseline; native guard peak 2.61 GB against a 12.6 MB plan"
+   },
+   "391": {
+    "state": "CLOSED",
+    "title": "dispatch_tessera_campaign refuses the whole campaign when the widest row does not fit, blocking the 90 admissible rows"
+   },
+   "392": {
+    "state": "CLOSED",
+    "title": "Integrate bounded operator windows into streamed joint AURA"
+   },
+   "393": {
+    "state": "CLOSED",
+    "title": "Release completed anchor and sidecar pages without hashing the bytes again"
+   },
+   "394": {
+    "state": "CLOSED",
+    "title": "Amortize streamed AURA baseline source loads with exact layer-major capture"
+   },
+   "395": {
+    "state": "CLOSED",
+    "title": "Tessera anchor completion and export-input write re-hash the bytes they just wrote"
+   },
+   "396": {
+    "state": "CLOSED",
+    "title": "Hessian capture page release is fail-open when torch writes no data/ record"
+   },
+   "397": {
+    "state": "CLOSED",
+    "title": "Refuse a Hessian capture write that produced no stable tensor record"
+   },
+   "398": {
+    "state": "CLOSED",
+    "title": "test_selected_capture_cli_reaches_existing_streamed_source fails on CUDA hosts: bounded capture env gate fires inside the test"
+   },
+   "399": {
+    "state": "CLOSED",
+    "title": "test: set the bounded-capture environment before the selected-source CLI check"
    },
    "4": {
     "state": "CLOSED",
@@ -1243,13 +1343,117 @@
     "state": "CLOSED",
     "title": "Fix partial LFM CB expert export layouts"
    },
+   "400": {
+    "state": "CLOSED",
+    "title": "Capture exact AURA boundaries once per source layer"
+   },
+   "401": {
+    "state": "CLOSED",
+    "title": "Bound joint anchor qualification through existing capture and PWC windows"
+   },
+   "402": {
+    "state": "CLOSED",
+    "title": "Bound streamed joint probing with exact target and candidate windows"
+   },
+   "403": {
+    "state": "OPEN",
+    "title": "Exact layer-major visitor cannot re-prefetch a layer evicted between schedule and install"
+   },
+   "404": {
+    "state": "CLOSED",
+    "title": "Qualify planned-size joint statistics storage and turnover"
+   },
+   "405": {
+    "state": "CLOSED",
+    "title": "Read verified capture artifacts once under explicit buffer budgets"
+   },
+   "406": {
+    "state": "CLOSED",
+    "title": "Integrate capture page-release and writer safeguards"
+   },
+   "407": {
+    "state": "CLOSED",
+    "title": "Submit the campaign rows that fit instead of refusing them all"
+   },
+   "408": {
+    "state": "CLOSED",
+    "title": "Add opt-in single-read capture loading with bounded admission"
+   },
+   "409": {
+    "state": "CLOSED",
+    "title": "Selected-source rows byte-verify only the shards they read; inherit the rest from the census roster (code half of #388)"
+   },
    "41": {
     "state": "CLOSED",
     "title": "Remove vendored Gridbook runtime and consolidate CB ABI"
    },
+   "410": {
+    "state": "CLOSED",
+    "title": "Byte-verify only the shards a selected-source row reads"
+   },
+   "411": {
+    "state": "CLOSED",
+    "title": "Authenticate consumed source shards through complete-capture descriptor leases"
+   },
+   "412": {
+    "state": "CLOSED",
+    "title": "No CLI test drives a selected-source row over an s: stack group, so the completed-anchor page release is uncovered (coverage half of #389)"
+   },
+   "413": {
+    "state": "CLOSED",
+    "title": "Cover the completed-anchor page release with a stack-group CLI row"
+   },
+   "414": {
+    "state": "CLOSED",
+    "title": "Qualify an explicit GLM KDA derivative without changing original capture identity"
+   },
+   "415": {
+    "state": "CLOSED",
+    "title": "Bind and qualify an opt-in GLM KDA source derivative"
+   },
+   "416": {
+    "state": "CLOSED",
+    "title": "Add bounded GLM wire and selected-source qualification harnesses"
+   },
+   "417": {
+    "state": "CLOSED",
+    "title": "Add bounded GLM native wire and source-authentication qualification harnesses"
+   },
+   "418": {
+    "state": "CLOSED",
+    "title": "Keep fitting campaign rows available and verify packed-stack page release"
+   },
+   "419": {
+    "state": "OPEN",
+    "title": "Re-assert a layer's prefetch before install instead of trusting a private set"
+   },
    "42": {
     "state": "CLOSED",
     "title": "Integrate audited PrismaQuant Gridbook producer stack"
+   },
+   "420": {
+    "state": "OPEN",
+    "title": "Implement recomputable full-engine fixed-resource producer admission for runtime v2"
+   },
+   "421": {
+    "state": "OPEN",
+    "title": "Refuse stale Tessera and serving metadata when frontier selection changes assignment"
+   },
+   "422": {
+    "state": "OPEN",
+    "title": "Expose closed GLM capture compatibility issuance through a bound plan"
+   },
+   "423": {
+    "state": "OPEN",
+    "title": "Add shared-capture issuance and preserve GLM recipe provenance"
+   },
+   "424": {
+    "state": "CLOSED",
+    "title": "Add closed CPU/meta issuance CLI for original GLM capture compatibility"
+   },
+   "425": {
+    "state": "OPEN",
+    "title": "Carry bounded canonical Hessian references through full-roster export"
    },
    "43": {
     "state": "CLOSED",
@@ -2946,8 +3150,28 @@
     "title": "Add research packed selected-expert MoE load/apply lifecycle"
    },
    "424": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Fuse research selected expert window decode without eager integer temporaries"
+   },
+   "425": {
+    "state": "CLOSED",
+    "title": "Fuse explicit research selected expert window decode"
+   },
+   "426": {
+    "state": "OPEN",
+    "title": "Add explicit research TP2 packed selected-expert ownership"
+   },
+   "427": {
+    "state": "CLOSED",
+    "title": "Add research TP2 packed MoE ownership with bounded native controls"
+   },
+   "428": {
+    "state": "OPEN",
+    "title": "Bound canonical Hessian export inputs without a full tensor union"
+   },
+   "429": {
+    "state": "OPEN",
+    "title": "Integrate bounded canonical Hessian inputs and research TP2 controls"
    },
    "43": {
     "state": "CLOSED",

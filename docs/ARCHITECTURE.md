@@ -5,6 +5,26 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-08 for the opt-in bounded canonical Hessian handoff.
+`ActivationSource.from_capture` accepts `*.references.json` with a closed
+`tessera.hessian_capture.references.v1` contract. It binds the exact complete
+canonical capture manifest and census, full-census counts, per-unit tensor
+commitments and each priced row's existing v1 capture seal. The aggregate seal
+uses the unchanged `tessera.hessian_capture.v1` grammar. Metadata intake verifies
+commitments; it does not claim unconsumed H payloads have been verified.
+Every H lookup, including cached-wire input identity, verifies the bounded
+original file and actual H bytes through a held descriptor before returning a
+detached H. The reader retains metadata and descriptors, never H/X tensors.
+The explicit load policy bounds each JSON, source file and H; one lookup may
+own one capped source mapping, an H copy and the existing H-sized hash staging,
+in addition to caller/encoder owners. Legacy `.pt` captures remain eager.
+The producer's closed `tessera.priced_export_inputs.v2` adds the canonical
+manifest/census binding; v1 cannot accept references with the same old seal.
+This changes producer source identity, so old encoded-wire identities are not
+reused under the new source hash. It does not change wire bytes, serving pins,
+format admission or device qualification. CPU contract tests establish input
+correctness only; no native throughput/residency measurement is claimed.
+
 Device BODY unpacking (2026-09-07, base `a29dbec6`) retains the shared
 `wire.unpack_body` length/padding checks. CUDA destinations reconstruct
 byte-sized fields directly from packed words through `kernel_wire` when the
@@ -16,6 +36,12 @@ execution and source identity, without changing wire bytes or serving gates.
 Re-stamped 2026-09-07 for the complete original-unit export intake (#401):
 `--cached-units` extends the existing closed bundle to dense and routed units;
 wire recipes, runtime contracts and serving gates are unchanged (§3.2).
+
+**Provenance:** Research packed TP2 role slicing and both-rank native runner
+controls re-stamped 2026-09-08 against `3ddb55c55820`; bounded Hessian FIFO
+refusal against `3e35660b01f0`. Explicit research construction only; no
+runtime-cell change. Native evidence is in
+`docs/measurements/glm-tp2-hessian-integration-20260908/`.
 
 **Provenance:** `v0.1.0` plus repository tooling updates (2026-09-07):
 CUPTI v1 argument-collector configuration validation against base `7e61578c`;
@@ -2065,6 +2091,36 @@ CPU and a device check that a shared replica answers within the bound of its
 independently planned twin over a nonconstant table.
 
 ### 4.4d The expert stack is a STRUCTURE, not a module
+
+**Research TP2 ownership.** `ResearchSelectedMoeConfig` defaults to
+`expected_tensor_parallel_size=1`; an explicit value of `2` must agree with
+the runtime's actual TP size. Each rank loads and validates every original
+full expert wire, then uses `plan_shard` and `shard_parsed_roles` to cut gate
+and up independently along their output rows and down along its input columns.
+The existing packed FP8/window owners retain those local roles and preserve
+nonzero row-cut initial states. There is no checkpoint rewrite or persistent
+full decoded expert stack. Global expert IDs and router weights are unchanged;
+the method returns the rank's partial output, leaving shared-expert combination
+and the final all-reduce to stock vLLM. EP, DP, PCP, SP, EPLB, runtime padding,
+deferred finalize, and disabled final reduction are refused. This remains
+eager research construction outside normal `TesseraConfig`; native two-rank
+execution and whole-engine fit require their own receipts. In particular,
+stock FP8 activation quantization after SwiGLU is rank-local, so the native
+comparator is stock TP2 on independent full-weight slices, not a bit-exact TP1
+FP8 output. See `docs/design/glm-packed-moe-tp2-research.md` for the source-bound
+slice and memory contracts. The native research harness distinguishes direct
+runner entry (one internal trained-gate call) from the pinned GLM wrapper
+entry (wrapper plus runner, two gate calls), observes the effective router
+logits, and retains failure diagnostics before checking counts. Native07 completed both ranks on unchanged stock vLLM: direct decode,
+controlled all-288-expert selection, clamp stress and empty inputs have exact
+selected tiles/scales and zero output difference against independent stock
+TP2. The nonempty trained-gate runner and GLM-wrapper controls each observed
+one method call, one shared-expert call and one final reduction; rank partial
+and combined outputs matched stock TP2 exactly. The expert-wire fixture
+repeats original projections, while the trained gate and shared expert come
+from layer 3; trained routing reached 8, 167 and 21 distinct experts. This
+does not establish diverse-expert full-model quality, whole-engine fit or
+throughput. See `docs/measurements/glm-tp2-hessian-integration-20260908/`.
 
 **Research selected decode.** `PreparedWindowBatch.decode` and
 `PreparedTesseraFp8Batch.decode` accept an explicit `backend="torch"|"triton"`.

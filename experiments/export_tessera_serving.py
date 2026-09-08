@@ -317,10 +317,13 @@ class PricedInputsSnapshot:
         except (ValueError, UnicodeError) as exc:
             raise SystemExit(f"--priced-inputs is not valid JSON: {exc}") from exc
         block = build.get("priced_inputs") if isinstance(build, dict) else None
-        if not isinstance(block, dict) or set(block) != {
-                "schema", "hessian_capture_sha256", "input_global_scales"}:
+        fields = {"schema", "hessian_capture_sha256", "input_global_scales"}
+        indexed = isinstance(block, dict) and block.get('schema') == 'tessera.priced_export_inputs.v2'
+        if indexed:
+            fields.add('hessian_reference_binding')
+        if not isinstance(block, dict) or set(block) != fields:
             raise SystemExit("--priced-inputs needs a closed priced_inputs block")
-        if block["schema"] != "tessera.priced_export_inputs.v1":
+        if block["schema"] not in {"tessera.priced_export_inputs.v1", "tessera.priced_export_inputs.v2"}:
             raise SystemExit("--priced-inputs has an unsupported priced_inputs schema")
         digest = block["hessian_capture_sha256"]
         if digest is not None and (not isinstance(digest, str) or
@@ -335,6 +338,16 @@ class PricedInputsSnapshot:
             raise SystemExit("--priced-inputs input_global_scales must map scale keys to positive finite scalars")
         self.capture_sha256 = digest
         self.scales = scales
+        self.reference_binding = None
+        if indexed:
+            from tessera.hessian_capture import normalize_reference_binding
+            from tessera.errors import GrammarError
+            try:
+                self.reference_binding = normalize_reference_binding(block['hessian_reference_binding'])
+            except GrammarError as error:
+                raise SystemExit(f'--priced-inputs: {error}') from error
+            if digest is None:
+                raise SystemExit('--priced-inputs reference handoff requires a Hessian capture seal')
 
     def require(self, activation, input_scales):
         # capture_sha256 seals this loaded owner; for_unit subsequently checks
@@ -343,6 +356,10 @@ class PricedInputsSnapshot:
         if actual != self.capture_sha256:
             raise SystemExit("--priced-inputs Hessian capture differs from the allocation: "
                              f"loaded={actual}, priced={self.capture_sha256}")
+        binding = (activation.reference_binding() if activation is not None and
+                   hasattr(activation, 'reference_binding') else None)
+        if binding != self.reference_binding:
+            raise SystemExit('--priced-inputs canonical Hessian reference differs from the allocation')
         for key, expected in self.scales.items():
             if input_scales.get(key) != expected:
                 raise SystemExit(f"--priced-inputs {key} differs from the allocation: "

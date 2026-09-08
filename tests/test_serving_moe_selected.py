@@ -133,7 +133,8 @@ def stub_runtime(monkeypatch):
 def _layer():
     layer = torch.nn.Module()
     layer.moe_config = types.SimpleNamespace(is_act_and_mul=True,
-        moe_parallel_config=types.SimpleNamespace(tp_size=1, ep_size=1, dp_size=1),
+        moe_parallel_config=types.SimpleNamespace(tp_size=1, tp_rank=0, ep_size=1, dp_size=1,
+            pcp_size=1, sp_size=1, use_ep=False, enable_eplb=False),
         experts_per_token=2)
     layer.activation = 'silu'
     layer.global_num_experts = EXPERTS

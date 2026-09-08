@@ -756,7 +756,7 @@ class ActivationSource:
 
     @classmethod
     def from_capture(cls, path, **settings) -> "ActivationSource":
-        """Load a ``capture_h_full.py`` payload and wrap it at ``settings``.
+        """Load a legacy H payload or bounded canonical references at ``settings``.
 
         Every driver that offers a ``--hessian`` flag comes through here, so
         the one thing they cannot disagree about is what a capture file means:
@@ -768,7 +768,12 @@ class ActivationSource:
         """
         import torch as _torch
 
-        payload = _torch.load(str(path), map_location="cpu", weights_only=False)
+        if str(path).endswith('.references.json'):
+            from .hessian_capture import ReferenceHessians
+            hessians = ReferenceHessians(path)
+            payload = {'H': hessians, 'provenance': hessians.provenance}
+        else:
+            payload = _torch.load(str(path), map_location="cpu", weights_only=False)
         if "H" not in payload:
             raise GrammarError(
                 f"{path} carries no 'H': a capture payload is "
@@ -821,13 +826,19 @@ class ActivationSource:
         from .cached_unit import tensor_identity
 
         identity = self._sealed_identity()
-        units = {name: tensor_identity(self.hessians[name])["sha256"]
-                 for name in sorted(self.hessians)}
+        from .hessian_capture import ReferenceHessians
+        if isinstance(self.hessians, ReferenceHessians):
+            self.hessians.require_provenance(self.provenance)
+        units = (self.hessians.committed_units()
+                 if isinstance(self.hessians, ReferenceHessians) else
+                 {name: tensor_identity(self.hessians[name])["sha256"]
+                  for name in sorted(self.hessians)})
         digest = hashlib.sha256()
         digest.update(json.dumps({"schema": "tessera.hessian_capture.v1",
                                   "identity": identity},
                                  sort_keys=True, default=str).encode())
-        for name, unit_sha256 in units.items():
+        for name in sorted(units):
+            unit_sha256 = units[name]
             digest.update(b"\0" + name.encode() + b"\0")
             digest.update(unit_sha256.encode())
         sealed = _CaptureSeal(digest.hexdigest(),
@@ -843,6 +854,9 @@ class ActivationSource:
         publication path can afford it per unit.  Content is NOT re-digested
         here: that is paid once per unit, where the unit is consumed.
         """
+        from .hessian_capture import ReferenceHessians
+        if isinstance(self.hessians, ReferenceHessians):
+            self.hessians.require_provenance(self.provenance)
         identity = self._sealed_identity()
         if identity != dict(seal.identity):
             moved = sorted(f for f in identity if identity[f] != seal.identity[f])
@@ -920,6 +934,11 @@ class ActivationSource:
         seal = self._seal()
         self._require_sealed_roster(seal)
         return seal.sha256
+
+    def reference_binding(self) -> "dict | None":
+        """The canonical source commitment for opt-in indexed H inputs."""
+        from .hessian_capture import ReferenceHessians
+        return self.hessians.binding() if isinstance(self.hessians, ReferenceHessians) else None
 
     def config_block(self) -> dict:
         """The ``activation_aware`` block the exported config records.

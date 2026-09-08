@@ -1,0 +1,171 @@
+{
+  "schema": "root.glm_native07_evidence_audit.v1",
+  "source_commit": "3ddb55c558208b63ae53bd18de45b14d9af3e145",
+  "packaging_exclusions": [
+    "_dev/__init__.py",
+    "_dev/source_dependencies.py",
+    "_dev/suite_deadline.py",
+    "_dev/suite_source.py",
+    "_dev/surface_publication.py"
+  ],
+  "packaged_source_files": 69,
+  "packaged_encoder_source_sha256": "f46cbabeee44bbca90118048c44a73eac9415c65b6dc0a37315386b5b29531b8",
+  "ranks": [
+    {
+      "rank": 0,
+      "receipt_sha256": "221a0652569838b86221533e45c00ce7e039cd40335de98b62f793e29ff7d54d",
+      "verified_final_artifact_count": 24,
+      "launcher_result": {
+        "started_epoch": 1788894395.2232428,
+        "finished_epoch": 1788894604.072888,
+        "returncode": 0,
+        "timed_out": false,
+        "timeout_seconds": 600,
+        "container_exit_code": 0,
+        "oom_killed": false,
+        "container_removed": true,
+        "controls_unchanged": true
+      },
+      "owner_resident_bytes": 943423488,
+      "cases": [
+        {
+          "case": {
+            "input_multiplier": 1.0,
+            "name": "decode",
+            "seed": 574,
+            "tokens": 1
+          },
+          "output_vs_independent_stock": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "all_selected_tiles_and_scales_exact": true
+        },
+        {
+          "case": {
+            "input_multiplier": 1.0,
+            "name": "all_experts",
+            "seed": 609,
+            "tokens": 36
+          },
+          "output_vs_independent_stock": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "all_selected_tiles_and_scales_exact": true
+        },
+        {
+          "case": {
+            "input_multiplier": 64.0,
+            "name": "clamp_stress",
+            "seed": 577,
+            "tokens": 4
+          },
+          "output_vs_independent_stock": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "all_selected_tiles_and_scales_exact": true
+        },
+        {
+          "case": {
+            "input_multiplier": 1.0,
+            "name": "empty",
+            "seed": 578,
+            "tokens": 0
+          },
+          "output_vs_independent_stock": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "all_selected_tiles_and_scales_exact": true
+        }
+      ]
+    },
+    {
+      "rank": 1,
+      "receipt_sha256": "3fc13b6d2889beeffa63be085880bf3f116987fd18487430ffd8dab97e6d90fe",
+      "verified_final_artifact_count": 24,
+      "launcher_result": {
+        "started_epoch": 1788894395.2068937,
+        "finished_epoch": 1788894604.0731783,
+        "returncode": 0,
+        "timed_out": false,
+        "timeout_seconds": 600,
+        "container_exit_code": 0,
+        "oom_killed": false,
+        "container_removed": true,
+        "controls_unchanged": true
+      },
+      "owner_resident_bytes": 943423488,
+      "cases": [
+        {
+          "case": {
+            "input_multiplier": 1.0,
+            "name": "decode",
+            "seed": 574,
+            "tokens": 1
+          },
+          "output_vs_independent_stock": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "all_selected_tiles_and_scales_exact": true
+        },
+        {
+          "case": {
+            "input_multiplier": 1.0,
+            "name": "all_experts",
+            "seed": 609,
+            "tokens": 36
+          },
+          "output_vs_independent_stock": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "all_selected_tiles_and_scales_exact": true
+        },
+        {
+          "case": {
+            "input_multiplier": 64.0,
+            "name": "clamp_stress",
+            "seed": 577,
+            "tokens": 4
+          },
+          "output_vs_independent_stock": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "all_selected_tiles_and_scales_exact": true
+        },
+        {
+          "case": {
+            "input_multiplier": 1.0,
+            "name": "empty",
+            "seed": 578,
+            "tokens": 0
+          },
+          "output_vs_independent_stock": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "all_selected_tiles_and_scales_exact": true
+        }
+      ]
+    }
+  ],
+  "limits": [
+    "Repeated expert wire fixture; trained gate and shared expert sourced from layer 3",
+    "Controlled direct case covers 288 experts; trained-gate cases cover 8,167,21",
+    "No full-model quality, throughput, fit, or runtime-cell promotion",
+    "Native run overlapped original capture final CPU file verification after all 45 GPU collections and flushes; TCP NCCL correctness only"
+  ]
+}

@@ -44,7 +44,7 @@ integrity gate: a length past its row, a length tensor that disagrees with the
 expert count, and -- the one that catches a mis-declared sidecar -- a stride
 that is not the maximum its lengths imply.
 
-WHAT IT REFUSES, AND WHY EACH IS A REFUSAL RATHER THAN A FALLBACK.  Expert
+WHAT THE PRODUCTION ROUTE REFUSES. Expert
 parallelism and tensor parallelism inside an expert (the stride invariant
 needs every expert's blob, and no expert slicer has been run); a residency
 mode other than ``resident`` (a per-forward expert decode is a different
@@ -53,6 +53,11 @@ kernel story with no measurement); a family with no expert route
 expert count, hidden size or intermediate size that disagrees with the
 sidecar; and a non-gated MoE, whose ``w13`` is one shard rather than the pair
 this route's groups describe.
+
+The explicit Python-only ``ResearchSelectedMoeConfig`` separately permits eager
+TP1 or TP2 selected decode. TP2 validates whole original wires, then invokes
+the existing role slicer before packing; it preserves global expert IDs and
+leaves output reduction to stock vLLM. It is not a qualified runtime cell.
 
 WHAT IS ATTESTED. The packaged contract publishes exactly two ``routed_moe`` cells:
 E4M3/q1024, resident/eager on sm_121, for decode and batch on the exact EUGR
@@ -116,10 +121,13 @@ class ResearchSelectedMoeConfig:
 
     max_experts_per_chunk: int
     decode_backend: str = "torch"
+    expected_tensor_parallel_size: int = 1
 
     def __post_init__(self):
         if type(self.max_experts_per_chunk) is not int or self.max_experts_per_chunk <= 0:
             raise ValueError("max_experts_per_chunk must be a positive integer")
+        if type(self.expected_tensor_parallel_size) is not int or self.expected_tensor_parallel_size not in (1, 2):
+            raise ValueError("expected_tensor_parallel_size must be exactly 1 or 2")
         if self.decode_backend not in ("torch", "triton"):
             raise ValueError(f"unknown selected window backend {self.decode_backend!r}")
 
@@ -275,21 +283,39 @@ def _require_expert_groups(blobs, declared, target):
                 f"{experts} experts; every expert must have its own row of projection containers")
 
 
-def prepare_tessera_packed_moe_experts(blobs, declared, target, device=None):
+def prepare_tessera_packed_moe_experts(blobs, declared, target, device=None, *, tp_rank=0, tp_size=1):
     """Research load: validate original containers into existing packed owners.
 
     Layout compatibility is checked by ``PreparedWindow.stack``. Per-expert
     bodies/scales/alphabets may differ; heterogeneous gather layouts refuse.
-    No full expert FP8 tile is materialized during this load.
+    TP2 validates each original full container before the existing dense shard
+    planner/slicer derives rank-local roles. Global expert IDs are unchanged.
+    Only a transient per-role FP8 reference is materialized during preparation.
     """
     from .fp8_route import PreparedTesseraFp8Module, prepare_tessera_fp8_module
+    from .sharding import plan_shard, shard_parsed_roles
 
+    if type(tp_size) is not int or tp_size not in (1, 2):
+        raise ValueError(f"{target}: research packed experts cover TP1 or TP2 only")
+    if type(tp_rank) is not int or not 0 <= tp_rank < tp_size:
+        raise ValueError(f"{target}: invalid research tensor-parallel rank")
+    hidden, inter = int(declared["hidden_size"]), int(declared["intermediate_size"])
+    if inter % tp_size:
+        raise ValueError(f"{target}: intermediate size must divide the tensor-parallel size")
+    local_inter = inter // tp_size
     device = torch.device("cuda" if device is None else device)
     _require_expert_groups(blobs, declared, target)
     prepared = {}
     for group in MOE_GROUPS:
-        modules = [prepare_tessera_fp8_module(roles, device=device)
-                   for roles in _parsed_experts(blobs[group], declared['groups'][group],
+        declaration = declared['groups'][group]
+        first = group == 'w13'
+        plan = plan_shard(f"{target}.{group}", roles=declaration['roles'],
+            columns=int(declaration['columns']),
+            out_partitions=[local_inter, local_inter] if first else [hidden],
+            in_size=hidden if first else local_inter, tp_rank=tp_rank, tp_size=tp_size,
+            input_size=hidden if first else inter, output_size=2 * inter if first else hidden)
+        modules = [prepare_tessera_fp8_module(shard_parsed_roles(roles, plan), device=device)
+                   for roles in _parsed_experts(blobs[group], declaration,
                                                 f"{target} {group}", device)]
         prepared[group] = PreparedTesseraFp8Module.stack(modules)
         del modules
@@ -360,9 +386,10 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
                 from vllm.config import get_current_vllm_config
                 if not get_current_vllm_config().model_config.enforce_eager:
                     raise ValueError(f"{prefix}: research selected experts require enforce_eager")
-                parallel = moe.moe_parallel_config
-                if any(getattr(parallel, field) != 1 for field in ('tp_size', 'ep_size', 'dp_size')):
-                    raise ValueError(f"{prefix}: research selected experts require TP1/EP1/DP1")
+                self._require_research_parallel_contract()
+            self._tp_size = (1 if research_selected is None
+                             else research_selected.expected_tensor_parallel_size)
+            self._tp_rank = (0 if research_selected is None else moe.moe_parallel_config.tp_rank)
             if not moe.is_act_and_mul:
                 raise ValueError(
                     f"tessera target {prefix!r}: this MoE is not gated (is_act_and_mul is "
@@ -378,6 +405,24 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
                 from vllm.model_executor.layers.fused_moe.oracle.fp8 import Fp8MoeBackend
                 if self.fp8_backend != Fp8MoeBackend.TRITON or self.experts_cls.is_monolithic():
                     raise ValueError(f"{prefix}: research selected expert mapping covers stock TRITON FP8 only")
+
+        def _require_research_parallel_contract(self):
+            parallel = self.moe.moe_parallel_config
+            expected_tp = research_selected.expected_tensor_parallel_size
+            if (type(parallel.tp_size) is not int or parallel.tp_size != expected_tp
+                    or any(type(getattr(parallel, field, None)) is not int
+                           or getattr(parallel, field) != 1
+                           for field in ('ep_size', 'dp_size', 'pcp_size', 'sp_size'))
+                    or type(getattr(parallel, 'tp_rank', None)) is not int
+                    or not 0 <= parallel.tp_rank < expected_tp
+                    or getattr(parallel, 'use_ep', None) is not False
+                    or getattr(parallel, 'enable_eplb', None) is not False):
+                raise ValueError(f"{prefix}: research selected experts require explicit "
+                                 f"TP{expected_tp}/EP1/DP1/PCP1/SP1, a valid rank, and no EP/EPLB")
+            if getattr(self.moe, 'defer_moe_finalize', False):
+                raise ValueError(f"{prefix}: research selected experts refuse deferred finalize")
+            if expected_tp > 1 and getattr(self.moe, 'skip_final_all_reduce', False):
+                raise ValueError(f"{prefix}: research selected TP2 requires stock final all-reduce")
 
         @property
         def supports_eplb(self) -> bool:
@@ -404,15 +449,16 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
                 raise ValueError(
                     f"tessera target {prefix!r}: vLLM builds hidden_size="
                     f"{hidden_size}, the sidecar declares {declared['hidden_size']}")
-            if int(intermediate_size_per_partition) != int(declared["intermediate_size"]):
+            full_intermediate = int(declared["intermediate_size"])
+            if (full_intermediate % self._tp_size
+                    or int(intermediate_size_per_partition) != full_intermediate // self._tp_size):
                 raise ValueError(
                     f"tessera target {prefix!r}: this rank's intermediate size is "
                     f"{intermediate_size_per_partition} and the sidecar declares "
-                    f"{declared['intermediate_size']}. A cut intermediate size is tensor "
-                    "parallelism inside an expert; the expert route has no unit slicer wired "
-                    "and refuses rather than decoding whole rows into a rank's slice.")
-            n_rows, k = int(groups["w13"]["rows"]), int(declared["hidden_size"])
-            n_cols = int(declared["intermediate_size"])
+                    f"{declared['intermediate_size']} at the explicit TP{self._tp_size}. "
+                    "Runtime padding or a cut outside that research contract is refused.")
+            n_cols = full_intermediate // self._tp_size
+            n_rows, k = 2 * n_cols, int(declared["hidden_size"])
 
             # The wires: one padded row per (expert, projection), the group's
             # declared stride wide, each with its own loader.
@@ -524,7 +570,8 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
                        else prepare_tessera_packed_moe_experts)
             prepared = prepare(
                 {"w13": w13_blobs, "w2": [[blob] for blob in w2_blobs]},
-                declared, prefix, device=device)
+                declared, prefix, device=device,
+                **({} if research_selected is None else {'tp_rank': self._tp_rank, 'tp_size': self._tp_size}))
             del layer.w13_wire, layer.w2_wire
             layer.tessera_w13_wire_len = None
             layer.tessera_w2_wire_len = None
@@ -610,6 +657,11 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
             return self._packed.resident_bytes()
 
         def _apply_selected(self, layer, x, weights, ids, shared_experts, shared_experts_input):
+            self._require_research_parallel_contract()
+            if self.moe.moe_parallel_config.tp_rank != self._tp_rank:
+                raise ValueError(f"{prefix}: research selected rank changed after construction")
+            if layer.expert_map is not None or int(layer.global_num_experts) != int(declared['experts']):
+                raise ValueError(f"{prefix}: research selected experts require unchanged global expert IDs")
             if self._research_phase != 'ready':
                 raise RuntimeError(f"{prefix}: research packed owner is not ready")
             if torch.compiler.is_compiling() or (x.is_cuda and torch.cuda.is_current_stream_capturing()):
