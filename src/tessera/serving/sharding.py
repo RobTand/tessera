@@ -129,10 +129,11 @@ dense methods are handed only ``LinearBase`` instances
 (``TesseraConfig.get_quant_method``), so a layer without the pair is refused by
 name rather than defaulted.
 
-MoE: expert parallelism assigns WHOLE units to ranks (no cut at all, the
-granularity is one expert), and tensor parallelism inside an expert is the same
-row/column cut as here -- ``w13`` on rows, ``w2`` on columns -- so a routed
-expert reaches this module through the same two functions.
+MoE can reuse these unit-level cuts: tensor parallelism inside each expert
+partitions gate/up rows independently and down columns; expert parallelism
+assigns whole experts instead. The current routed-expert builder refuses
+TP above one and does not call these slicing functions. The dense loader
+axes in this module are not an implemented MoE TP route.
 """
 from __future__ import annotations
 

@@ -63,11 +63,11 @@ tensor parallelism are unattested for this structure.  That is the
 ``loader_axes`` precedent: what the loader DOES is a different published
 fact from what has been served, and the cell names exactly the second.
 
-MoE AND PARALLELISM.  Expert parallelism needs no slicing at all: its
-granularity is one whole expert unit per rank, which is the case
-``_shard_unit_for_rank`` already serves (identity).  Tensor parallelism INSIDE
-an expert is the same row/column cut as a dense Linear's, on the same seam, so
-the expert route inherits it rather than restating it.
+MoE AND PARALLELISM. Expert parallelism assigns whole expert units; tensor
+parallelism inside an expert partitions gate/up rows and down columns. The
+existing dense unit slicer can express these cuts, but the current expert
+builder refuses TP/EP above one and does not call that slicer. Dense loader
+axes therefore do not establish an implemented routed-expert TP path.
 """
 from __future__ import annotations
 
