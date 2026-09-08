@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-08T08:15:18Z",
+ "generated": "2026-09-08T10:07:44Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -1187,9 +1187,41 @@
     "state": "CLOSED",
     "title": "Add checked phase admission for shared calibration capture"
    },
+   "366": {
+    "state": "CLOSED",
+    "title": "Bounded capture retains completed CPU memory in the producer allocator"
+   },
+   "367": {
+    "state": "CLOSED",
+    "title": "Use Tessera extents for payload-free GLM menu pricing"
+   },
+   "368": {
+    "state": "CLOSED",
+    "title": "Price Tessera menus without placeholder payloads"
+   },
+   "369": {
+    "state": "CLOSED",
+    "title": "Release completed CPU allocations during bounded capture"
+   },
    "37": {
     "state": "CLOSED",
     "title": "producer: make CB byte and artifact budgets exact"
+   },
+   "370": {
+    "state": "OPEN",
+    "title": "Enable selected-source Tessera anchors from complete canonical capture"
+   },
+   "371": {
+    "state": "OPEN",
+    "title": "Bind campaign container content across Docker image stores"
+   },
+   "372": {
+    "state": "OPEN",
+    "title": "Bind portable campaign images to executable content"
+   },
+   "373": {
+    "state": "OPEN",
+    "title": "Bound exact streamed AURA boundaries and rolling cotangents"
    },
    "38": {
     "state": "CLOSED",
@@ -2894,12 +2926,20 @@
     "title": "The window GEMV needs an A-side decision before it can be wired into a route"
    },
    "420": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "P2: sizing a GLM menu hashes zero payloads; add authoritative extent-only layout API"
    },
    "421": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Price Tessera layouts without materializing payloads"
+   },
+   "422": {
+    "state": "OPEN",
+    "title": "Research packed selected-expert MoE lifecycle on native GLM factory"
+   },
+   "423": {
+    "state": "OPEN",
+    "title": "Add research packed selected-expert MoE load/apply lifecycle"
    },
    "43": {
     "state": "CLOSED",
