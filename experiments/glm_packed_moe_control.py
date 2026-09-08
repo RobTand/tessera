@@ -264,12 +264,14 @@ def run(args, request, outer):
             assert parity['finite'] and parity['max_abs'] == 0, (name,parity)
             del got
             row = {'case':case,'output_vs_independent_stock':parity}
+            write(args.out,f'{name}-direct-parity.json',row)
             if tp_size == 2 and tokens:
                 from experiments.glm_packed_tp2_control import check_runner
                 stock_partial = lambda xx,ww,ii:apply_oracle(full_oracle,xx,first,second,ww,ii)
-                row['stock_runner_controlled_routing'] = check_runner(moe,config,x,ids,stock_partial)
+                row['stock_runner_biased_logit_stress'] = check_runner(moe,config,x,ids,stock_partial,
+                    diagnostic_path=args.out/f'{name}-biased-logit-routing.json')
                 row['stock_runner_trained_gate'] = check_runner(moe,config,x,ids,stock_partial,
-                                                                trained_router=True)
+                    diagnostic_path=args.out/f'{name}-trained-gate-routing.json',trained_router=True)
             if outer['arm'] == 'packed':
                 selected_ids = torch.unique(ids).flip(0)
                 decoded = method._packed.decode(selected_ids,max_experts_per_chunk=outer['max_experts_per_chunk'],
