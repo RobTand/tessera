@@ -25,6 +25,7 @@ def main():
     parser.add_argument('--control-request', type=Path)
     parser.add_argument('--producer-manifest', type=Path)
     parser.add_argument('--selected-request', type=Path)
+    parser.add_argument('--packed-request', type=Path)
     parser.add_argument('--role', choices=('gate_proj', 'up_proj', 'down_proj'))
     parser.add_argument('--q256', type=int)
     parser.add_argument('--cpus', type=int, default=4)
@@ -47,6 +48,9 @@ def main():
         'TRITON_CACHE_DIR': '/tmp/glm-triton', 'TORCH_EXTENSIONS_DIR': '/tmp/glm-extensions',
         'XDG_CACHE_HOME': '/tmp/glm-cache', 'VLLM_CONFIG_ROOT': '/tmp/glm-config',
         'VLLM_CACHE_ROOT': '/tmp/glm-vllm-cache', 'FLASHINFER_WORKSPACE_BASE': '/tmp/glm-flashinfer'}
+    if args.packed_request:
+        assert args.stage == 'control'
+        env['VLLM_DISABLE_SHARED_EXPERTS_STREAM'] = '1'
     if args.stage == 'encode':
         env['PRISMABUILD_CONTAINER_OWNER'] = os.environ['PRISMABUILD_CONTAINER_OWNER']
     command = ['docker', 'run', '--gpus', 'all', '--network', 'none',
@@ -59,12 +63,14 @@ def main():
         command += ['--env', key + '=' + value]
     entry = ('glm_native_construction.py' if args.stage in ('construction', 'resident', 'streamed')
              else 'glm_repeated_expert_control.py')
+    if args.packed_request:
+        entry = 'glm_packed_moe_control.py'
     command += ['--entrypoint', 'python3', inspected['Id'],
         '/work/experiments/' + entry, '--request', str(args.request),
         '--out', str(root), '--stage', args.stage]
     if args.construction:
         command += ['--construction', str(args.construction)]
-    for name in ('control_request', 'producer_manifest', 'selected_request', 'role', 'q256'):
+    for name in ('control_request', 'producer_manifest', 'selected_request', 'packed_request', 'role', 'q256'):
         value = getattr(args, name)
         if value is not None:
             command += ['--' + name.replace('_', '-'), str(value)]
@@ -74,6 +80,8 @@ def main():
         controls.append(Path('experiments') / entry)
     if args.selected_request:
         controls.append(Path('experiments/glm_selected_expert_control.py'))
+    if args.packed_request:
+        controls.append(args.packed_request)
     before = {str(p): digest(p) for p in controls}
     start = time.time()
     (root / 'launch.json').write_text(json.dumps({'command': command, 'environment': env,
