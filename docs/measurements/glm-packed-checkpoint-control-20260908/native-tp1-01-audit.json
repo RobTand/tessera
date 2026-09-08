@@ -1,0 +1,144 @@
+{
+  "schema": "tessera.glm_checkpoint_native_reconstruction_audit.v1",
+  "status": "verified_native_tp1_checkpoint_reconstruction",
+  "plan": {
+    "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/prepared-invocation-launch-01.json",
+    "sha256": "a4594a552c099a011a296b23d4ecdc1ed8f363bfbb0a815584c9006ad95af3a1",
+    "bytes": 10448
+  },
+  "request": {
+    "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/request-tp1-01.json",
+    "sha256": "c0649bced44c2d73c28c3600ab72166be1b06bd640affb567de74dedcb265464",
+    "bytes": 2132
+  },
+  "source_commit": "07ad344c3275bb2fa7ce2432f93d89945d66f4c2",
+  "harness_commit": "6c0e77e66e3d70d7dd81f854e4bfba4cf9fe024d",
+  "runtime_image": "vllm/vllm-openai@sha256:4e31c581716a5cb9ef31eddb0a425842b75cab07d5cd63fb9572e69ae8794c33",
+  "cpu_affinity": [
+    15,
+    16,
+    17,
+    18
+  ],
+  "loaded_projection_count": 864,
+  "installed_source_files_verified": 70,
+  "packaging_exclusions": {
+    "rules": [
+      "tessera._dev*"
+    ],
+    "files": {
+      "_dev/__init__.py": {
+        "sha256": "6dd12e77c8f26c850ce465dfc95353d565271b40dab1aa2a89fb879be70e2552",
+        "bytes": 959
+      },
+      "_dev/source_dependencies.py": {
+        "sha256": "946ecc826fee6dc533f093a179ff36b2b898c045895064a7bbf065ec75c621b1",
+        "bytes": 30286
+      },
+      "_dev/suite_deadline.py": {
+        "sha256": "140d31d331853536d8054d3cef562b8796ace5781af6566304ae42f1d0974931",
+        "bytes": 3915
+      },
+      "_dev/suite_source.py": {
+        "sha256": "b7abb650d9a1c46029621d4d0990b1e8d62c87713941f242ca1e652a06b3a37c",
+        "bytes": 14999
+      },
+      "_dev/surface_publication.py": {
+        "sha256": "138a742b27411bcace31d5936927cbcfede6d7fb2309a3588ac08e69da9525b0",
+        "bytes": 4096
+      }
+    }
+  },
+  "loaded_module_origins_verified": 47,
+  "installed_source_sha256": "7d1e3b011eaba8d3a779656e4e3cfda9d9c3db41b7cf7d35aedb3d8b094f99df",
+  "stock_core_files_verified": 4967,
+  "saved_input_tensors_identical": 6,
+  "scope": "Bounded one-owner JSON reconstruction; original repeated-expert wires; decode and empty exact against independent stock; no generation, fit, quality, TP2 or performance claim",
+  "artifacts": {
+    "case-progress.json": {
+      "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/native-tp1-01/case-progress.json",
+      "sha256": "68eaa8c0d10834a1941afa92f1ca938d32ba9d1557a82f2f06a7352efbcc44ae",
+      "bytes": 568
+    },
+    "checkpoint-reconstruction.json": {
+      "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/native-tp1-01/checkpoint-reconstruction.json",
+      "sha256": "44fd62809cf90eab97407008505d281d6db61171e0d42733cf6b6393b3e23a30",
+      "bytes": 595
+    },
+    "container-inspect.json": {
+      "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/native-tp1-01/container-inspect.json",
+      "sha256": "00871dfac2b2b1de2047ead847448544d8fa8444a3b8e4d509d9cb9de2e1b9bf",
+      "bytes": 15055
+    },
+    "container.cid": {
+      "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/native-tp1-01/container.cid",
+      "sha256": "23ff0a21366827c53db2592388b1538f140dbae4f883962b3ceb7ba403139978",
+      "bytes": 64
+    },
+    "container.log": {
+      "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/native-tp1-01/container.log",
+      "sha256": "2229796bedf1e9140b6f1b95c099f7de458e7f86462a03f130df957834a44739",
+      "bytes": 6950
+    },
+    "decode-direct-parity.json": {
+      "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/native-tp1-01/decode-direct-parity.json",
+      "sha256": "8c26290718f94589b1e215fecc151a67d3930a0e2e4d1cb66c1b0c97a1046ad0",
+      "bytes": 207
+    },
+    "empty-direct-parity.json": {
+      "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/native-tp1-01/empty-direct-parity.json",
+      "sha256": "144137a4b8cf09b6a1503fa165274d1df81191101979985cda5d8834458c624a",
+      "bytes": 206
+    },
+    "image-inspect.json": {
+      "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/native-tp1-01/image-inspect.json",
+      "sha256": "2b9546f87f5bbda88e669e5d99d452fdbb82982087ffb4e70770d76e28a275fe",
+      "bytes": 11666
+    },
+    "inputs.safetensors": {
+      "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/native-tp1-01/inputs.safetensors",
+      "sha256": "a48acc97ad76359bc31f1598496609544c656a70fa775450940349130cb0642d",
+      "bytes": 8680
+    },
+    "installation.json": {
+      "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/native-tp1-01/installation.json",
+      "sha256": "c4fb237856de0aaf2729eea285fb23716f8c62b48e5541477e177b075cd98d6d",
+      "bytes": 598
+    },
+    "launch.json": {
+      "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/native-tp1-01/launch.json",
+      "sha256": "d6fd5b4f836fcff3fcbf7c257d30a5b45a3069643b42703096bed871cbea710f",
+      "bytes": 3607
+    },
+    "launcher-result.json": {
+      "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/native-tp1-01/launcher-result.json",
+      "sha256": "b2173c6f32a730799e2a03eac770d337552f7f393380a13e4e52eeb20766ae82",
+      "bytes": 259
+    },
+    "load-progress.json": {
+      "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/native-tp1-01/load-progress.json",
+      "sha256": "ad8d3c30637fec537195f1fc93c02145f5c624e0ff45216030253b2b55b60489",
+      "bytes": 15146
+    },
+    "netdata.json": {
+      "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/native-tp1-01/netdata.json",
+      "sha256": "79c56eebe3f1115fc3b3827bc5166ff739eb6fc0675d3f448fb9871d8b956255",
+      "bytes": 71878
+    },
+    "package-identity.json": {
+      "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/native-tp1-01/package-identity.json",
+      "sha256": "cf55c36b7f82498f1e494a19e01d07bdf7ce2ee4a1c3f19e215eb23761fd90cd",
+      "bytes": 53960
+    },
+    "prepared-owner.json": {
+      "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/native-tp1-01/prepared-owner.json",
+      "sha256": "5f4367b8688d4c10325355c9d5d78a8db603cf4f8e89384fc2f47c95e5820d63",
+      "bytes": 1123
+    },
+    "receipt.json": {
+      "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/native-tp1-01/receipt.json",
+      "sha256": "5b3224b9ceb596d34227abec670ff28c9e9d5abdb0036d2d5077abf339217719",
+      "bytes": 4643
+    }
+  }
+}

@@ -112,3 +112,85 @@ tiles/scales against the independent stock fixture. Retain both-Spark Netdata
 for the actual launch interval and the harness's synchronized owner/load memory
 observations. No timing, work-per-joule, fit, generation, quality or production
 qualification claim follows from this proposed reconstruction control.
+
+## Completed native control — 2026-09-08, supersedes the preparation status above
+
+The coordinator reviewed the strict-carrier correction and froze the native
+runtime archive from exact `07ad344c3275bb2fa7ce2432f93d89945d66f4c2`.
+The control harness remained separately frozen at
+`6c0e77e66e3d70d7dd81f854e4bfba4cf9fe024d`; it was not folded into the producer
+source package used for pricing/export. Both archive member sets, file modes
+and bytes were independently compared with all 1,179 Git blobs in their
+respective commits. Native07's six installer-support files retained their
+original hashes. The final input and invocation are
+`request-tp1-01.json` and `prepared-invocation-launch-01.json`.
+
+Root corrected the provisional CPU choice: sparklina cores 0–3 are efficiency
+cores. Final execution used performance cores **15–18**, each reporting
+capacity 1017. A concurrent external validation container initially held cores
+15–16. The launch waited until its exact PB action `c40e2deac94e` terminated
+and completed resource cleanup; its failed validation is separate from this
+control. The final fresh host check found no containers or GPU compute apps
+and 0–1% per-core activity across the selected mask. The recorded `taskset`
+mask propagated to Docker's exact `15,16,17,18` cpuset. The original capture
+continued independently on sparky; no native workload was launched there.
+
+Sealed launch plan SHA256:
+`a4594a552c099a011a296b23d4ecdc1ed8f363bfbb0a815584c9006ad95af3a1`.
+Request SHA256:
+`c0649bced44c2d73c28c3600ab72166be1b06bd640affb567de74dedcb265464`.
+The exact SSH command was recorded in `launch-command-01.json` before start.
+The existing direct vLLM launcher used the reviewed stock ARM image, 48 GiB,
+no network and a 600-second deadline. No timing loop or follow-up GPU action
+was run.
+
+Actual remote, launcher and container exit codes are all **0**. No timeout or
+OOM occurred; the owned container was removed. The final native receipt is
+`native-tp1-01/receipt.json`, SHA256
+`5b3224b9ceb596d34227abec670ff28c9e9d5abdb0036d2d5077abf339217719`.
+It establishes:
+
+- The bound checkpoint JSON reconstructed the ordinary registered
+  `tessera.serving.config.TesseraConfig`, with Triton decoding, TP1 and chunk
+  bound 8. The actual stock GLM factory retained this ordinary config.
+- All 864 projections loaded. Stock loader return values name the destination
+  parameters, so the roster contains 576 `w13_wire` and 288 `w2_wire` entries;
+  complete per-expert/per-role coverage is enforced by native finalization.
+- Wire-only expert parameters transitioned through the guarded loading/ready
+  lifecycle to the packed owner. After preparation only the shared routing
+  bias remained as a parameter; the packed owner reported 1,853,603,840 tensor
+  bytes. No persistent full FP8 expert pool or stock kernel/config was retained.
+- Decode and empty-input output are finite and exactly equal to independent
+  stock FP8, with exact selected tiles/scales. All six output-file input
+  tensors are byte-identical to their original saved-input counterparts.
+- All 4,967 stock vLLM core files stayed unchanged. All 70 installed production
+  source files match the reviewed runtime archive, and all 47 loaded Tessera
+  modules' file/spec origins resolve to those exact bytes.
+
+The archive intentionally contains five `tessera._dev` source files that the
+archived `pyproject.toml` explicitly excludes from the installed package through
+`exclude = ["tessera._dev*"]`. The audit derives this packaging exclusion and
+records those five exact files. The installed wheel's independently recomputed
+source seal is
+`7d1e3b011eaba8d3a779656e4e3cfda9d9c3db41b7cf7d35aedb3d8b094f99df`.
+That is an installed serving-package identity, not a replacement for the raw
+producer checkout's source seal; no priced-wire receipt is relabelled.
+
+`native-tp1-01-audit.json` binds the complete native artifact roster and the
+checks above. The coordinator independently verified the source, inputs,
+checkpoint, owner, output checks and launcher roster in
+`root-native-tp1-artifact-source-audit.json`. Both-Spark Netdata CPU, RAM, swap-I/O
+and board-power series cover the actual launch interval, with 64 samples per
+chart and no missing context. `netdata.json` is supplemental post-launch
+telemetry, so its hash is bound separately from the launcher's 16 final
+artifacts. Synchronized in-process create/load/prepare allocator observations
+remain in the native receipt; no timing or performance delta is claimed.
+
+The result is the bounded JSON reconstruction gate described above. It does
+not establish automatic full-engine checkpoint discovery, complete checkpoint
+load, text generation, independently trained expert diversity, trained routing
+or shared-expert execution in this TP1 control, TP2 collectives/fit, whole-model
+quality, prefill performance or production qualification. Issue #430 remains
+open for those full-engine gates. The harness PR merges current master
+`396b944cb320c2458e22e870fef435e9d8ac6510`, retaining the reviewed test split and
+strict-carrier fixes; the measured native runtime archive remains exact 07ad.

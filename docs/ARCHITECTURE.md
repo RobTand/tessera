@@ -41,9 +41,14 @@ The bounded native lifecycle harness now accepts explicit
 It compares the JSON quantization declaration with the original wire fixture,
 resolves `tessera` through stock vLLM's registry, and requires the ordinary
 `TesseraConfig` through model construction. Existing Python control modes and
-load/finalization/stock-parity/TP2 runner guards are retained. This harness
-extension is prepared against `f3b6953f0c58` (2026-09-08); native execution is
-pending and does not establish a full-model generation or fit result.
+load/finalization/stock-parity/TP2 runner guards are retained. The bounded
+TP1 control passed on 2026-09-08 with ordinary JSON-selected config, all 864
+projection loads, and exact decode/empty stock parity on the original repeated-
+expert fixture. Installed runtime source `07ad344c3275` and the separate
+`6c0e77e66e3d` control harness are independently bound in
+`measurements/glm-packed-checkpoint-control-20260908/`. This does not establish
+whole-engine automatic checkpoint discovery, text generation, TP2 fit, quality
+or performance. No runtime cell is promoted.
 
 Producer/cache identity remains separate from serving implementation identity.
 `cached_unit.encoder_source_sha256` hashes producer code suffixes
