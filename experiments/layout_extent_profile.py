@@ -63,7 +63,7 @@ def main():
     with tempfile.TemporaryDirectory(prefix="tessera-extent-baseline-") as temp:
         base = Path(temp)
         archive = base / "source.tar"
-        subprocess.run(["git", "archive", "--format=tar", "--output", str(archive), baseline, "src"], cwd=source, check=True)
+        subprocess.run(["git", "archive", "--format=tar", "--output", str(archive), baseline, "src", "pyproject.toml"], cwd=source, check=True)
         with tarfile.open(archive) as tar:
             tar.extractall(base, filter="data")
         for index, label in enumerate(("before", "after", "after", "before")):
