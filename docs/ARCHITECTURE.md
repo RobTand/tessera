@@ -5,6 +5,54 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-08 for the explicit packed research checkpoint bridge
+(#430), against base `b9cda5b03efe`. The optional
+`quantization_config.research_selected_moe` object uses the closed
+`tessera.research_selected_moe.v1` schema and requires exactly `schema`,
+`max_experts_per_chunk` (positive integer), `decode_backend` (`torch|triton`)
+and `expected_tensor_parallel_size` (integer 1 or 2). `tessera.moe_execution`
+owns this grammar; `serving.moe_route.ResearchSelectedMoeConfig` remains an
+import-compatible re-export. Ordinary checkpoint reconstruction parses the
+object into the existing packed selected-expert builder. Omission preserves
+the ordinary materialized route and its compile identity. Explicit `null`,
+malformed fields, non-resident mode, no declared routed target, and routed
+targets outside TESSERA_FP8/E4M3 refuse. Existing eager, stock TRITON modular
+backend, TP/EP/DP/PCP/SP, finalization and reduction guards still apply.
+The execution digest joins the existing compile identity only when present;
+it does not qualify a runtime cell. Ignored source-precision expert stacks
+and dense routes retain their existing behavior.
+
+The producer's `--research-selected-moe-json` input is read once. Its exact
+UTF-8 bytes, SHA-256 and parsed object travel in the export manifest and sealed
+partition options; the parsed object travels in the checkpoint. Partition
+merge checks all three carriers against that same input before publishing
+the complete checkpoint. A part with no routed module may carry the global
+declaration, but the complete export must have a compatible routed target.
+Stock twins and requests that select no routed stack refuse before encoding.
+The declaration changes execution metadata, not wire bytes or encoder inputs;
+`quant_method=tessera` and the sole serving knob
+`TESSERA_SERVE_MODE=resident|streamed` remain unchanged. The packed research
+path requires `resident`. Whole-engine memory, generation, quality and
+performance still require actual measurements; the exporter's ordinary
+materialized-resident byte estimates do not certify a packed-engine fit.
+
+Producer/cache identity remains separate from serving implementation identity.
+`cached_unit.encoder_source_sha256` hashes producer code suffixes
+`.py/.cu/.cuh/.cpp/.h`, including serving code in that producer package, and
+cached reuse keeps that exact seal. The producer projection binds the source
+checkpoint and geometry, not a producer Git label. `runtime_contract.json`
+is excluded from that code seal, so a reviewed contract-only publication can
+retain cached encoded units. `serving_parts.export_identity` does include the
+contract JSON, so every part of a new export must agree on the newly reviewed
+export identity. Serving reads the standard exported wire/schema and execution
+declaration; it does not compare its source hash to the producer's. Keep a
+later serving-code fix in its serving checkout rather than replacing the
+frozen producer. PrismaQuant's export preflight additionally requires the
+installed contract and producer checkout's packaged contract to equal its
+reviewed pin; a contract-only publication and synchronized pin can satisfy
+that gate without rewriting cached-unit identities. Admission/qualification
+changes still require their own reviewed evidence.
+
 Re-stamped 2026-09-08 for the opt-in bounded canonical Hessian handoff.
 `ActivationSource.from_capture` accepts `*.references.json` with a closed
 `tessera.hessian_capture.references.v1` contract. It binds the exact complete
@@ -125,9 +173,10 @@ Re-stamped 2026-09-08 for the explicit research selected-window Triton backend
 against base `2083062de7`; production eligibility, pins and wire are unchanged.
 
 Re-stamped 2026-09-08 for the explicit packed selected-expert lifecycle
-against base `2083062d`. `build_tessera_moe_method` accepts a Python-only
-`ResearchSelectedMoeConfig`: the ordinary `TesseraConfig`, serving environment,
-packaged cells and release gates do not select it. It requires eager TP1/EP1/DP1
+against base `2083062d`. `build_tessera_moe_method` accepts an explicit
+`ResearchSelectedMoeConfig`, originally Python-only and now also reconstructed
+from the versioned checkpoint block described above. The serving environment,
+packaged cells and release gates do not select it. Its original TP1 path requires eager TP1/EP1/DP1
 and the stock Triton FP8 backend. The actual expert loader initially owns wire
 buffers only, then replaces them with `PreparedTesseraFp8Module.stack` packed
 owners; each apply decodes the requested experts in bounded chunks, constructs
@@ -2103,8 +2152,8 @@ full decoded expert stack. Global expert IDs and router weights are unchanged;
 the method returns the rank's partial output, leaving shared-expert combination
 and the final all-reduce to stock vLLM. EP, DP, PCP, SP, EPLB, runtime padding,
 deferred finalize, and disabled final reduction are refused. This remains
-eager research construction outside normal `TesseraConfig`; native two-rank
-execution and whole-engine fit require their own receipts. In particular,
+eager research construction, now selectable through the explicit checkpoint
+block in `TesseraConfig`; whole-engine fit requires its own receipt. In particular,
 stock FP8 activation quantization after SwiGLU is rank-local, so the native
 comparator is stock TP2 on independent full-weight slices, not a bit-exact TP1
 FP8 output. See `docs/design/glm-packed-moe-tp2-research.md` for the source-bound

@@ -28,6 +28,7 @@ encode is not a refusal, it is a bill.
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 from pathlib import Path
 
@@ -55,6 +56,101 @@ STACK = f"{LAYER}.mlp.experts"
 
 cuda = pytest.mark.skipif(not torch.cuda.is_available(),
                           reason="the encoder is a GPU job")
+
+
+def _research_input(tmp_path, tp=2):
+    block = {"schema": "tessera.research_selected_moe.v1", "max_experts_per_chunk": 3,
+             "decode_backend": "triton", "expected_tensor_parallel_size": tp}
+    path = tmp_path / "execution.json"
+    text = json.dumps(block, indent=2) + "\n"
+    path.write_text(text)
+    return path, block, text
+
+
+@pytest.mark.parametrize("partition", [False, True])
+def test_research_export_preserves_wires_and_snapshots_execution(tmp_path, monkeypatch, partition):
+    ordinary = tmp_path / "ordinary"
+    selected = tmp_path / "selected"
+    ordinary.mkdir()
+    selected.mkdir()
+    generator = torch.Generator().manual_seed(23)
+    tensors = {f"{STACK}.0.{projection}.weight": torch.randn(32, 32, generator=generator)
+               for projection in ("gate_proj", "up_proj", "down_proj")}
+    tensors["model.language_model.layers.0.norm.weight"] = torch.randn(32, generator=generator).bfloat16()
+    config = _config()
+    config["text_config"].update(n_routed_experts=1, hidden_size=32, moe_intermediate_size=32)
+    plan = {STACK: {"grid": "E4M3", "q256": 1024}}
+    before = _export(ordinary, monkeypatch, tensors, plan, "--device", "cpu", config=config)
+    path, block, text = _research_input(selected)
+    real_encode = export.encode_linear_planes
+    def replace(*args, **kwargs):
+        path.write_text("{}"); return real_encode(*args, **kwargs)
+    monkeypatch.setattr(export, "encode_linear_planes", replace)
+    extra = (["--partition", "0/1", "--partition-runtime-image", "test/image@sha256:" + "a" * 64]
+             if partition else [])
+    after = _export(selected, monkeypatch, tensors, plan, "--device", "cpu",
+                    "--research-selected-moe-json", str(path), *extra, config=config)
+    assert (before / "model.safetensors").read_bytes() == (after / "model.safetensors").read_bytes()
+    if partition:
+        from tessera.serving_parts import merge_serving_parts
+        part = after
+        after = selected / "merged"
+        merge_serving_parts([part], after, selected / "src")
+    qconfig = json.loads((after / "config.json").read_text())["quantization_config"]
+    assert qconfig["research_selected_moe"] == block
+    ordinary_config = json.loads((before / "config.json").read_text())["quantization_config"]
+    assert {k: v for k, v in qconfig.items() if k != "research_selected_moe"} == ordinary_config
+    manifest = json.loads((after / "tessera_serving_manifest.json").read_text())
+    assert manifest["research_selected_moe"] == {
+        "input_sha256": hashlib.sha256(text.encode()).hexdigest(),
+        "input_utf8": text, "config": block}
+    if partition:
+        assert manifest["export_identity"]["options"]["research_selected_moe"] == manifest["research_selected_moe"]
+        # Numeric equality must not accept JSON floats in an integer-only carrier.
+        part_config = part / "tessera_part_config.json"
+        part_manifest = part / "tessera_serving_manifest.json"
+        original_config = part_config.read_text()
+        original_manifest = part_manifest.read_text()
+        for carrier in ("config", "manifest", "identity"):
+            for field in ("expected_tensor_parallel_size", "max_experts_per_chunk"):
+                payload = json.loads(original_config if carrier == "config" else original_manifest)
+                if carrier == "config":
+                    carried = payload["quantization_config"]["research_selected_moe"]
+                elif carrier == "manifest":
+                    carried = payload["research_selected_moe"]["config"]
+                else:
+                    carried = payload["export_partition"]["identity"]["options"]["research_selected_moe"]["config"]
+                carried[field] = float(carried[field])
+                changed = part_config if carrier == "config" else part_manifest
+                changed.write_text(json.dumps(payload))
+                refused_out = selected / f"refused-{carrier}-{field}"
+                with pytest.raises(ValueError, match="research_selected_moe"):
+                    merge_serving_parts([part], refused_out, selected / "src")
+                assert not refused_out.exists()
+                part_config.write_text(original_config)
+                part_manifest.write_text(original_manifest)
+        # A valid but different dispatch in a part must not override its seal.
+        payload = json.loads(part_config.read_text())
+        payload["quantization_config"]["research_selected_moe"]["decode_backend"] = "torch"
+        part_config.write_text(json.dumps(payload))
+        refused_out = selected / "refused"
+        with pytest.raises(ValueError, match="research_selected_moe.*identity"):
+            merge_serving_parts([part], refused_out, selected / "src")
+        assert not refused_out.exists()
+
+
+@pytest.mark.parametrize("extra,plan,error", [
+    ([], {}, "routed"), (["--stock-twin", "unused-twin"], {}, "stock-twin"),
+])
+def test_research_export_refuses_inapplicable_request_before_encoding(tmp_path, monkeypatch, extra, plan, error):
+    path, _, _ = _research_input(tmp_path)
+    def forbidden(*args, **kwargs):
+        raise AssertionError("execution refusal arrived after encoding")
+    monkeypatch.setattr(export, "encode_linear_planes", forbidden)
+    with pytest.raises(SystemExit, match=error):
+        _export(tmp_path, monkeypatch, _checkpoint(), plan, "--device", "cpu",
+                "--research-selected-moe-json", str(path), *extra)
+    assert not (tmp_path / "out").exists()
 
 
 def _config():

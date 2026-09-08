@@ -528,9 +528,9 @@ def check_recipe(grid, q256: int, where: "str | None" = None, *,
                 "\"tessera\", so a wire the plugin cannot decode is refused HERE rather than "
                 "hours later at load. Pass --allow-unserveable to write it anyway as a research "
                 "artifact: the refusal is then stamped verbatim into the manifest's "
-                "serving_gate block, and the checkpoint still will not load under this "
-                "plugin build.") from exc
-        print(f"  --allow-unserveable: writing a wire this plugin build cannot decode. {exc}",
+                "serving_gate block. This does not establish loadability or qualification "
+                "under this plugin build.") from exc
+        print(f"  --allow-unserveable: writing a research wire that failed the export serving gate. {exc}",
               flush=True)
         if overrides is not None:
             overrides.append({"target": target, "grid": grid.name, "q256": int(q256),
@@ -1293,6 +1293,9 @@ def main():
                          "non-body tensors belong to index 0. Merge every part before serving.")
     ap.add_argument("--partition-runtime-image",
                     help="exact repository@sha256 image pinned by the part's dispatch command")
+    ap.add_argument("--research-selected-moe-json", type=Path,
+                    help="explicit versioned packed research execution input; snapshotted once "
+                         "and emitted in the checkpoint, without changing encoded wires")
     ap.add_argument("--hessian", type=Path, default=None,
                     help="capture_h_full.py payload: full input Hessians keyed by the tensor's module "
                          "name.  Enables the activation-aware encoder settings below; an encode that "
@@ -1356,6 +1359,15 @@ def main():
                          "serving_gate block. Admission depends on the selected recipe's "
                          "published runtime contract, including BF16 recipes.")
     args = ap.parse_args()
+    research_execution = None
+    if args.research_selected_moe_json is not None:
+        from tessera.moe_execution import ResearchSelectedMoeInput
+        try:
+            research_execution = ResearchSelectedMoeInput.read(args.research_selected_moe_json)
+        except (OSError, ValueError) as exc:
+            raise SystemExit(f"--research-selected-moe-json: {exc}") from exc
+        if args.stock_twin is not None:
+            raise SystemExit("research_selected_moe refuses --stock-twin")
     if (args.priced_inputs is None) != (args.priced_inputs_sha256 is None):
         ap.error("--priced-inputs and --priced-inputs-sha256 must be supplied together")
     priced_inputs = (PricedInputsSnapshot(args.priced_inputs, args.priced_inputs_sha256)
@@ -1554,6 +1566,14 @@ def main():
               f"({len(record['units'])} units, source_layout={source_layout})", flush=True)
     packed_plans = sorted(stack for stack in stack_plan
                           if stack_plan[stack]["source_layout"] != MOE_SOURCE_UNPACKED)
+    if research_execution is not None:
+        try:
+            research_execution.config.require_targets({
+                name: {"structure": "routed_moe", "family": record["family"],
+                       "grid": record["grid"].name}
+                for name, record in stack_plan.items()}, "resident")
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
     if activation is not None and packed_plans:
         raise SystemExit(
             f"--hessian was given with packed expert stack(s) {packed_plans}. Activation "
@@ -1847,7 +1867,10 @@ def main():
         options = {key: value for key, value in vars(args).items()
                    if key not in {"src", "out", "partition", "partition_runtime_image",
                                   "device", "stock_twin", "plan_json", "hessian", "input_scales",
-                                  "cached_expert_units", "cached_units", "priced_inputs", "priced_inputs_sha256"}}
+                                  "cached_expert_units", "cached_units", "priced_inputs", "priced_inputs_sha256",
+                                  "research_selected_moe_json"}}
+        if research_execution is not None:
+            options["research_selected_moe"] = research_execution.record()
         if priced_inputs is not None:
             options["priced_inputs_sha256"] = priced_inputs.sha256
         options["plan"] = plan_snapshot.published() if plan_snapshot is not None else None
@@ -2328,6 +2351,8 @@ def main():
         "schema_minor": SCHEMA_MINOR,
         "tp_agnostic": tp_agnostic_at_minor(SCHEMA_MINOR),
         "config_groups": config_groups, "ignore": ignore,
+        **({"research_selected_moe": research_execution.config.as_checkpoint()}
+           if research_execution is not None else {}),
     }
     tessera_fp4_predicate = vllm_fp4_predicate("tessera", MIXED_PRECISION)
     config_name = "tessera_part_config.json" if args.partition else "config.json"
@@ -2351,6 +2376,8 @@ def main():
     families = sorted({m["family"] for m in module_records.values()})
     manifest = {
         "source": str(args.src), "git": git_hash(), "written": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        **({"research_selected_moe": research_execution.record()}
+           if research_execution is not None else {}),
         **({cache_scope: {"manifest_sha256": cached_units.manifest_sha256,
                                     "manifest_encoding": "canonical_json.sorted_compact.v1",
                                     "planned_units": len(cache_unit_names)}}
