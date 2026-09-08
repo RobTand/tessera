@@ -37,8 +37,11 @@ Re-stamped 2026-09-07 for the complete original-unit export intake (#401):
 `--cached-units` extends the existing closed bundle to dense and routed units;
 wire recipes, runtime contracts and serving gates are unchanged (§3.2).
 
-**Provenance:** Research packed TP2 role slicing and runner observations re-stamped 2026-09-08 against
-base `98aa317a06`; explicit research construction only, no runtime-cell change.
+**Provenance:** Research packed TP2 role slicing and both-rank native runner
+controls re-stamped 2026-09-08 against `3ddb55c55820`; bounded Hessian FIFO
+refusal against `3e35660b01f0`. Explicit research construction only; no
+runtime-cell change. Native evidence is in
+`docs/measurements/glm-tp2-hessian-integration-20260908/`.
 
 **Provenance:** `v0.1.0` plus repository tooling updates (2026-09-07):
 CUPTI v1 argument-collector configuration validation against base `7e61578c`;
@@ -2108,10 +2111,16 @@ FP8 output. See `docs/design/glm-packed-moe-tp2-research.md` for the source-boun
 slice and memory contracts. The native research harness distinguishes direct
 runner entry (one internal trained-gate call) from the pinned GLM wrapper
 entry (wrapper plus runner, two gate calls), observes the effective router
-logits, and retains failure diagnostics before checking counts. A bounded
-layer load and single-token direct parity have receipts; full native runner
-and exhaustive-selection gates remain pending. See
-`docs/measurements/glm-packed-tp2-cpu-2026-09-08.md`.
+logits, and retains failure diagnostics before checking counts. Native07 completed both ranks on unchanged stock vLLM: direct decode,
+controlled all-288-expert selection, clamp stress and empty inputs have exact
+selected tiles/scales and zero output difference against independent stock
+TP2. The nonempty trained-gate runner and GLM-wrapper controls each observed
+one method call, one shared-expert call and one final reduction; rank partial
+and combined outputs matched stock TP2 exactly. The expert-wire fixture
+repeats original projections, while the trained gate and shared expert come
+from layer 3; trained routing reached 8, 167 and 21 distinct experts. This
+does not establish diverse-expert full-model quality, whole-engine fit or
+throughput. See `docs/measurements/glm-tp2-hessian-integration-20260908/`.
 
 **Research selected decode.** `PreparedWindowBatch.decode` and
 `PreparedTesseraFp8Batch.decode` accept an explicit `backend="torch"|"triton"`.

@@ -1,12 +1,15 @@
 # GLM packed MoE TP2 research design — 2026-09-08
 
-The existing slicer can supply exact TP2 rank-local packed experts from the
-unchanged original q512 GLM wires. The bounded next implementation should use
-`shard_parsed_roles` between full-wire validation and shared FP8 preparation.
-No new wire format, encoding, production serving lane, runtime pin or dispatcher
-is required for this research route. This is a design and CPU slice-oracle
-result; no TP2 native forward, collective, GPU peak, speed or quality result is
-claimed. The existing packed MoE builder still refuses TP2.
+The implemented research route uses `shard_parsed_roles` between full-wire
+validation and shared FP8 preparation. TP2 requires explicit research
+construction; no production serving lane or runtime cell is promoted.
+Native07 at `3ddb55c55820` completed both ranks, including trained-gate runner,
+shared-expert and final-reduction controls, with exact agreement against
+independent stock TP2 on the bounded repeated-expert fixture. Full-model
+quality, fit, communication cost and throughput remain unmeasured. See
+`../measurements/glm-tp2-hessian-integration-20260908/` for source hashes,
+per-rank receipts and limits. The design and initial CPU evidence below retain
+their original base attribution.
 
 Base: `1c5b82264c`, the merged TP1 lifecycle. Worktree:
 `/home/rob/tmp/tessera-glm-packed-tp2`, branch
@@ -201,10 +204,12 @@ an idle GPU or from aggregate memory across boxes.
   buffers and workspaces, before/after in-process profiles, both-Spark Netdata,
   board-energy work rate and unchanged stock core/package origins. Include
   the final full-engine owner roster and cap admission before a fit claim.
-- No two-box GPU launch while canonical capture is live; root owns clearance
-  and resource coordination. No production eligibility follows from these
-  research controls. TP2 native execution, communication cost and full-model
-  quality remain unmeasured.
+- Root owns clearance and resource coordination. Native07 was cleared after
+  all 45 capture model collections and flushes completed, with no prefetch
+  remaining and the capture profiler inside final CPU file verification.
+  Independent bounded native fixtures used disjoint CPU affinity and measured
+  available memory. This overlap establishes correctness only. Production
+  eligibility, communication cost and full-model quality remain unmeasured.
 
 ## Reproduction and dispositions
 

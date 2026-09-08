@@ -1,0 +1,45 @@
+{
+  "plan_sha256": "6f7236dc8a7b2c3fa8722bfb2b802f30cb6d8f0c4b6efd4a2cf0c4807c5aa9a1",
+  "started_unix": 1788894395.1190863,
+  "execution": "Explicit universal vLLM exemption; finite existing two-rank control",
+  "ranks": [
+    {
+      "rank": 0,
+      "returncode": 0,
+      "finished_unix": 1788894604.09087,
+      "command": [
+        "python3",
+        "experiments/run_glm_native_construction.py",
+        "--request",
+        "/mnt/shared/tessera-glm-native-20260907/request.json",
+        "--out",
+        "/mnt/shared/tessera-measurements/glm-tp2-plan-20260908/native-07-rank0",
+        "--stage",
+        "control",
+        "--packed-request",
+        "/mnt/shared/tessera-measurements/glm-tp2-plan-20260908/request-native-07-rank0.json",
+        "--cpus",
+        "4",
+        "--memory-gib",
+        "24",
+        "--timeout-seconds",
+        "600"
+      ]
+    },
+    {
+      "rank": 1,
+      "returncode": 0,
+      "finished_unix": 1788894604.092441,
+      "command": [
+        "ssh",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "ConnectTimeout=10",
+        "sparklina",
+        "cd /mnt/shared/tessera-measurements/glm-tp2-plan-20260908/harness-native-07 && exec python3 experiments/run_glm_native_construction.py --request /mnt/shared/tessera-glm-native-20260907/request.json --out /mnt/shared/tessera-measurements/glm-tp2-plan-20260908/native-07-rank1 --stage control --packed-request /mnt/shared/tessera-measurements/glm-tp2-plan-20260908/request-native-07-rank1.json --cpus 4 --memory-gib 24 --timeout-seconds 600"
+      ]
+    }
+  ],
+  "finished_unix": 1788894604.092596
+}

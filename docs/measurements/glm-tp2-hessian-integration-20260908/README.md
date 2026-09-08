@@ -15,3 +15,45 @@ Tracking: [Tessera #428](https://github.com/RobTand/tessera/issues/428), [TP2 re
 The first bytes-only CI run (34266161061) failed one offline issue-reference check because new issue #428 was absent from the snapshot; 1,576 tests passed and 98 skipped. `tools/refresh_issues.py` refreshed the existing snapshot after publication, and PB action `cbe60587c2f7` passed all 3 reference checks, zero skips/missing collection. Its actual source, receipt and output are independently verified in `root-issue-ref-cas-source-audit.json`. No runtime source changed.
 
 Native07 launch qualification was refined before execution: all 45 original model collections and layer flushes had completed, no prefetch remained, and live profiler samples were inside final CPU capture file verification. Source inspection of the frozen capture confirms no further model calls after that point. The native fixtures are independent of that capture. Both hosts were inspected: Sparky had 98.7 GB available and Sparklina had 124.6 GB available, with no other GPU process on Sparklina. The finite 24 GiB per-rank correctness controls use CPUs 0–3, disjoint from Sparky capture CPUs 5–9/15. Thus the native control may overlap only final CPU file verification; this overlap cannot support a capture speed or TP2 throughput claim. The original capture remains held for dependent issuance/pricing until its actual terminal/CAS completion. Exact inspection and revised invocation are preserved in `native-07-capture-finalization-audit.json` and `native-07-prepared-invocation.json` under the shared TP2 measurement root.
+
+## Native07 completed and audited
+
+Both ranks completed 2026-09-08 19:06:35–19:10:04 UTC with launcher and
+container return codes zero, no timeout or OOM, unchanged controls and removed
+containers. Root independently verified all 24 final artifacts per rank,
+receipt/input references, 69 installed source files against commit `3ddb55c55820`,
+and the unchanged 4,967-file stock vLLM core manifest. The wheel deliberately
+excludes five `tessera._dev` source files under `pyproject.toml`; its recomputed
+encoder source SHA is `f46cbabeee44bbca90118048c44a73eac9415c65b6dc0a37315386b5b29531b8`.
+A raw-tree deployment has a different source seal and cannot relabel these wires.
+
+Direct decode (1 token), controlled all-expert (36), clamp stress (4, multiplier
+64) and empty controls all had exact selected tiles/scales, finite outputs and
+zero max-absolute/relative-L2 difference from independent stock TP2. On each
+nonempty control, both the runner entry and GLM wrapper executed trained gating,
+one selected method call, one stock shared-expert call and one final reduction.
+Rank partial and combined outputs matched stock TP2 exactly. Effective trained
+routing covered 8, 167 and 21 experts; the direct controlled case covered all
+288. The fixture repeats encoded expert projections and is not a diverse
+full-model quality probe. Packed owner bytes were 943,423,488 per rank, with no
+persistent full FP8 stack. These are bounded owner observations, not engine fit.
+
+The invocation used four CPUs and a 24 GiB container cap per rank, explicit
+Triton decode, stock vLLM image `4e31c581716a` and TCP NCCL on the two Sparks.
+It overlapped final CPU capture verification as qualified above; no timing,
+network speed, full-engine fit or production-cell promotion is claimed.
+`native-07-root-artifact-source-audit.json` records the independent audit;
+per-rank receipts and the exact launch plan are alongside it. Full live logs
+and telemetry remain under `/mnt/shared/tessera-measurements/glm-tp2-plan-20260908/`.
+
+## Bounded-reader refusal follow-up
+
+The separately reviewed `3e35660b01f0` adds `O_NONBLOCK` to the existing held
+file open so a FIFO reaches the regular-file refusal instead of hanging.
+Two regression-first PB failures precede a three-test green result including
+real regular-file intake/access. `root-fifo-source-audit.json` verifies actual
+red/green source bundles and green output bytes; full logs and receipts are in
+`experiments/measurements/hessian-reference-fifo-20260908/`. This is the only
+runtime source change after the native07/full-CPU integration source. The native
+result remains attributed to `3ddb55c55820`; no native rerun is needed for this
+CPU file-open refusal. New producer pricing must use the final source seal.

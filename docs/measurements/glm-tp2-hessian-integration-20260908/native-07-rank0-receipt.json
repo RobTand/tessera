@@ -1,0 +1,384 @@
+{
+  "schema": "tessera.glm_packed_lifecycle_control.v1",
+  "packed_request_sha256": "771ef4a5c741d84226963cf29f8e8c74cc4ca46ae573fd5d9b367c62461c8038",
+  "installed_source_commit": "3ddb55c558208b63ae53bd18de45b14d9af3e145",
+  "status": "packed_lifecycle_control_passed",
+  "arm": "packed",
+  "fixture": "original",
+  "decode_backend": "triton",
+  "scheme": {
+    "family": "TESSERA_FP8",
+    "structure": "routed_moe",
+    "grid": "E4M3",
+    "body": "WINDOW",
+    "plane": "CHANNEL",
+    "experts": 288,
+    "groups": {
+      "w13": {
+        "rows": 4096,
+        "columns": 4096,
+        "q256": 512,
+        "wire_stride": 2118415,
+        "roles": [
+          [
+            "gate_proj",
+            2048
+          ],
+          [
+            "up_proj",
+            2048
+          ]
+        ]
+      },
+      "w2": {
+        "rows": 4096,
+        "columns": 2048,
+        "q256": 512,
+        "wire_stride": 2122464,
+        "roles": [
+          [
+            "down_proj",
+            4096
+          ]
+        ]
+      }
+    }
+  },
+  "source_input_receipts": {
+    "gate_proj": {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-512-gate_proj/receipt.json",
+      "sha256": "1a7804072334659cd75d427441a9283b9b5bdd87b866a7df2344b784493569c5"
+    },
+    "up_proj": {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-512-up_proj/receipt.json",
+      "sha256": "39ed2123197335a0ee030c3a5dd8e84eb98afdf0071f8242a722d8d9609dc9f2"
+    },
+    "down_proj": {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-512-down_proj-02/receipt.json",
+      "sha256": "baac4d0a5eba40487f6e4371fea9f9903391b41d2fe2340112748b738b951afe"
+    }
+  },
+  "owner_resident_bytes": 943423488,
+  "load_stages": {
+    "before_create": {
+      "allocated_bytes": 52428800,
+      "reserved_bytes": 54525952,
+      "peak_allocated_bytes": 52428800,
+      "peak_reserved_bytes": 54525952,
+      "epoch": 1788894453.129183
+    },
+    "after_create": {
+      "allocated_bytes": 1911774720,
+      "reserved_bytes": 1929379840,
+      "peak_allocated_bytes": 1911774720,
+      "peak_reserved_bytes": 1929379840,
+      "epoch": 1788894453.1829174
+    },
+    "after_wire_load": {
+      "allocated_bytes": 1911774720,
+      "reserved_bytes": 1929379840,
+      "peak_allocated_bytes": 1911774720,
+      "peak_reserved_bytes": 1929379840,
+      "epoch": 1788894453.5439937
+    },
+    "after_prepare": {
+      "allocated_bytes": 1023706624,
+      "reserved_bytes": 4594860032,
+      "peak_allocated_bytes": 3592044032,
+      "peak_reserved_bytes": 4594860032,
+      "epoch": 1788894590.8045456
+    }
+  },
+  "cases": [
+    {
+      "case": {
+        "input_multiplier": 1.0,
+        "name": "decode",
+        "seed": 574,
+        "tokens": 1
+      },
+      "output_vs_independent_stock": {
+        "finite": true,
+        "max_abs": 0.0,
+        "relative_l2": 0.0
+      },
+      "stock_runner_internal_gate": {
+        "stock_runner_class": "vllm.model_executor.layers.fused_moe.runner.moe_runner.MoERunner",
+        "entrypoint": "runner",
+        "trained_gate_executed": true,
+        "observed_gate_calls": 1,
+        "stock_shared_expert_executed": true,
+        "observed_method_calls": 1,
+        "observed_shared_calls": 1,
+        "observed_final_all_reduce_calls": 1,
+        "rank_partial_vs_stock_tp2": {
+          "finite": true,
+          "max_abs": 0.0,
+          "relative_l2": 0.0
+        },
+        "combined_vs_stock_tp2": {
+          "finite": true,
+          "max_abs": 0.0,
+          "relative_l2": 0.0
+        },
+        "routing_identical_across_ranks": true,
+        "selected_global_experts": 8,
+        "shared_partial_nonzero": true,
+        "oracle_collective_outside_observed_invocation": true,
+        "routing_diagnostic": {
+          "path": "/mnt/shared/tessera-measurements/glm-tp2-plan-20260908/native-07-rank0/decode-runner-routing.json",
+          "sha256": "66149578ca7b61ebc0d8ad993370fde82e5e9821efe6c45642ff28dd22ae18a9"
+        }
+      },
+      "stock_runner_trained_gate": {
+        "stock_runner_class": "vllm.model_executor.layers.fused_moe.runner.moe_runner.MoERunner",
+        "entrypoint": "glm",
+        "trained_gate_executed": true,
+        "observed_gate_calls": 2,
+        "stock_shared_expert_executed": true,
+        "observed_method_calls": 1,
+        "observed_shared_calls": 1,
+        "observed_final_all_reduce_calls": 1,
+        "rank_partial_vs_stock_tp2": {
+          "finite": true,
+          "max_abs": 0.0,
+          "relative_l2": 0.0
+        },
+        "combined_vs_stock_tp2": {
+          "finite": true,
+          "max_abs": 0.0,
+          "relative_l2": 0.0
+        },
+        "routing_identical_across_ranks": true,
+        "selected_global_experts": 8,
+        "shared_partial_nonzero": true,
+        "oracle_collective_outside_observed_invocation": true,
+        "routing_diagnostic": {
+          "path": "/mnt/shared/tessera-measurements/glm-tp2-plan-20260908/native-07-rank0/decode-trained-gate-routing.json",
+          "sha256": "c9a305da7c7ca8d25dd6a090e1e20398dabebaea02fba6bbdc4bdb4674f50588"
+        }
+      },
+      "all_selected_tiles_and_scales_exact": true
+    },
+    {
+      "case": {
+        "input_multiplier": 1.0,
+        "name": "all_experts",
+        "seed": 609,
+        "tokens": 36
+      },
+      "output_vs_independent_stock": {
+        "finite": true,
+        "max_abs": 0.0,
+        "relative_l2": 0.0
+      },
+      "stock_runner_internal_gate": {
+        "stock_runner_class": "vllm.model_executor.layers.fused_moe.runner.moe_runner.MoERunner",
+        "entrypoint": "runner",
+        "trained_gate_executed": true,
+        "observed_gate_calls": 1,
+        "stock_shared_expert_executed": true,
+        "observed_method_calls": 1,
+        "observed_shared_calls": 1,
+        "observed_final_all_reduce_calls": 1,
+        "rank_partial_vs_stock_tp2": {
+          "finite": true,
+          "max_abs": 0.0,
+          "relative_l2": 0.0
+        },
+        "combined_vs_stock_tp2": {
+          "finite": true,
+          "max_abs": 0.0,
+          "relative_l2": 0.0
+        },
+        "routing_identical_across_ranks": true,
+        "selected_global_experts": 167,
+        "shared_partial_nonzero": true,
+        "oracle_collective_outside_observed_invocation": true,
+        "routing_diagnostic": {
+          "path": "/mnt/shared/tessera-measurements/glm-tp2-plan-20260908/native-07-rank0/all_experts-runner-routing.json",
+          "sha256": "5225d06400e99db6f3b5cdc0cb1d32f166385981cbf41deb6e33f82ab5ca2371"
+        }
+      },
+      "stock_runner_trained_gate": {
+        "stock_runner_class": "vllm.model_executor.layers.fused_moe.runner.moe_runner.MoERunner",
+        "entrypoint": "glm",
+        "trained_gate_executed": true,
+        "observed_gate_calls": 2,
+        "stock_shared_expert_executed": true,
+        "observed_method_calls": 1,
+        "observed_shared_calls": 1,
+        "observed_final_all_reduce_calls": 1,
+        "rank_partial_vs_stock_tp2": {
+          "finite": true,
+          "max_abs": 0.0,
+          "relative_l2": 0.0
+        },
+        "combined_vs_stock_tp2": {
+          "finite": true,
+          "max_abs": 0.0,
+          "relative_l2": 0.0
+        },
+        "routing_identical_across_ranks": true,
+        "selected_global_experts": 167,
+        "shared_partial_nonzero": true,
+        "oracle_collective_outside_observed_invocation": true,
+        "routing_diagnostic": {
+          "path": "/mnt/shared/tessera-measurements/glm-tp2-plan-20260908/native-07-rank0/all_experts-trained-gate-routing.json",
+          "sha256": "7d5663fd3b2ed898c2802cb134fe63b02d0abb726c3463a6d517450099eec191"
+        }
+      },
+      "all_selected_tiles_and_scales_exact": true
+    },
+    {
+      "case": {
+        "input_multiplier": 64.0,
+        "name": "clamp_stress",
+        "seed": 577,
+        "tokens": 4
+      },
+      "output_vs_independent_stock": {
+        "finite": true,
+        "max_abs": 0.0,
+        "relative_l2": 0.0
+      },
+      "stock_runner_internal_gate": {
+        "stock_runner_class": "vllm.model_executor.layers.fused_moe.runner.moe_runner.MoERunner",
+        "entrypoint": "runner",
+        "trained_gate_executed": true,
+        "observed_gate_calls": 1,
+        "stock_shared_expert_executed": true,
+        "observed_method_calls": 1,
+        "observed_shared_calls": 1,
+        "observed_final_all_reduce_calls": 1,
+        "rank_partial_vs_stock_tp2": {
+          "finite": true,
+          "max_abs": 0.0,
+          "relative_l2": 0.0
+        },
+        "combined_vs_stock_tp2": {
+          "finite": true,
+          "max_abs": 0.0,
+          "relative_l2": 0.0
+        },
+        "routing_identical_across_ranks": true,
+        "selected_global_experts": 21,
+        "shared_partial_nonzero": true,
+        "oracle_collective_outside_observed_invocation": true,
+        "routing_diagnostic": {
+          "path": "/mnt/shared/tessera-measurements/glm-tp2-plan-20260908/native-07-rank0/clamp_stress-runner-routing.json",
+          "sha256": "c1f90e3382df220d17f73ea75b17d7c51ef712ce36bbb83ed417771708e5196e"
+        }
+      },
+      "stock_runner_trained_gate": {
+        "stock_runner_class": "vllm.model_executor.layers.fused_moe.runner.moe_runner.MoERunner",
+        "entrypoint": "glm",
+        "trained_gate_executed": true,
+        "observed_gate_calls": 2,
+        "stock_shared_expert_executed": true,
+        "observed_method_calls": 1,
+        "observed_shared_calls": 1,
+        "observed_final_all_reduce_calls": 1,
+        "rank_partial_vs_stock_tp2": {
+          "finite": true,
+          "max_abs": 0.0,
+          "relative_l2": 0.0
+        },
+        "combined_vs_stock_tp2": {
+          "finite": true,
+          "max_abs": 0.0,
+          "relative_l2": 0.0
+        },
+        "routing_identical_across_ranks": true,
+        "selected_global_experts": 21,
+        "shared_partial_nonzero": true,
+        "oracle_collective_outside_observed_invocation": true,
+        "routing_diagnostic": {
+          "path": "/mnt/shared/tessera-measurements/glm-tp2-plan-20260908/native-07-rank0/clamp_stress-trained-gate-routing.json",
+          "sha256": "32241fdb96d0644626c166434985db33eb1b390b6003db99d9a5eacd8d75c1ca"
+        }
+      },
+      "all_selected_tiles_and_scales_exact": true
+    },
+    {
+      "case": {
+        "input_multiplier": 1.0,
+        "name": "empty",
+        "seed": 578,
+        "tokens": 0
+      },
+      "output_vs_independent_stock": {
+        "finite": true,
+        "max_abs": 0.0,
+        "relative_l2": 0.0
+      },
+      "all_selected_tiles_and_scales_exact": true
+    }
+  ],
+  "input_file_sha256": "253031a63500afe6658b7cc501fd72dd135c86f924cba5154dc0b405db18f81c",
+  "backend": "TRITON",
+  "actual_moe_class": "vllm.models.glm5next.nvidia.model.Glm5NextMoE",
+  "actual_owner_class": "vllm.model_executor.layers.fused_moe.routed_experts.RoutedExperts",
+  "trained_diverse_experts": false,
+  "trained_router_executed": true,
+  "shared_experts_executed": true,
+  "shared_and_gate_source_records": [
+    {
+      "key": "model.language_model.layers.3.mlp.shared_experts.gate_proj.weight",
+      "file": "/mnt/shared/models/GLM-5.3-Flash-BF16/model-00059-of-00120.safetensors",
+      "shape": [
+        2048,
+        4096
+      ],
+      "dtype": "torch.bfloat16",
+      "tensor_sha256": "974b65d307b4cb9325aec23c3b02b8314690d31827de1e2ef2149910c0ebffb4"
+    },
+    {
+      "key": "model.language_model.layers.3.mlp.shared_experts.up_proj.weight",
+      "file": "/mnt/shared/models/GLM-5.3-Flash-BF16/model-00059-of-00120.safetensors",
+      "shape": [
+        2048,
+        4096
+      ],
+      "dtype": "torch.bfloat16",
+      "tensor_sha256": "ee794fb18f371941149dd45e264b6b7d6927f9700536a19133cd995f47a95850"
+    },
+    {
+      "key": "model.language_model.layers.3.mlp.shared_experts.down_proj.weight",
+      "file": "/mnt/shared/models/GLM-5.3-Flash-BF16/model-00059-of-00120.safetensors",
+      "shape": [
+        4096,
+        2048
+      ],
+      "dtype": "torch.bfloat16",
+      "tensor_sha256": "0d0c03dc17e81de5e1b0bff6f129962607b46a340181460d225bdc3023d76689"
+    },
+    {
+      "key": "model.language_model.layers.3.mlp.gate.weight",
+      "file": "/mnt/shared/models/GLM-5.3-Flash-BF16/model-00059-of-00120.safetensors",
+      "shape": [
+        288,
+        4096
+      ],
+      "dtype": "torch.bfloat16",
+      "tensor_sha256": "d9b073de20e23bca95c0110f8d131a655e27b8dd1ec9370943b78734b189e86e"
+    },
+    {
+      "key": "model.language_model.layers.3.mlp.gate.e_score_correction_bias",
+      "file": "/mnt/shared/models/GLM-5.3-Flash-BF16/model-00059-of-00120.safetensors",
+      "shape": [
+        288
+      ],
+      "dtype": "torch.float32",
+      "tensor_sha256": "cad2f175acdabf61327e2c60bc609df9df81b21f7a8bc166d367b57ca13b78e7"
+    }
+  ],
+  "tp_rank": 0,
+  "paired_request_sha256": "26e909c27f891f7c2b4edcb7ad0ab77659b0ded18cb807b9ce2b796d7a738101",
+  "model_quality_probe": false,
+  "runtime_cell_promoted": false,
+  "tp_size": 2,
+  "ep_size": 1,
+  "stock_core_unchanged": true,
+  "package_identity_sha256": "e5998921939b6770ab2d73b27c6828e23da448a0259d10ae776724d6a5a65779"
+}

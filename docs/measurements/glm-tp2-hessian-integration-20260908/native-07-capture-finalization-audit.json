@@ -1,0 +1,192 @@
+{
+  "status": "ALL_MODEL_WORK_AND_LAYER_FLUSHES_COMPLETE_FINAL_CPU_FILE_VERIFICATION_ACTIVE",
+  "capture_action": "8740a0b3456bb6cb334ae80b0e35fc3da31c62918abdda8c41ad226020c4e88a",
+  "capture_container": "809cc7a30104",
+  "last_layer": {
+    "layer": 44,
+    "units": 867,
+    "capture_policy": "shared-inputs-bounded-v1",
+    "completed_source_released": true,
+    "collect_seconds": 290.38725293500465,
+    "flush_seconds": 232.20196317500086,
+    "capture_tensor_bytes": 49119584256,
+    "settled_prefetch": [],
+    "physical_memory_guard": {
+      "scope": "/sys/fs/cgroup",
+      "budget_bytes": 111669149696,
+      "margin_bytes": 2147483648,
+      "host_floor_bytes": 8589934592,
+      "peak_conservative_bytes": 88789221376,
+      "min_host_available_bytes": 21992833024,
+      "last_checkpoint": {
+        "label": "after_capture_write:model.language_model.layers.44.mlp.shared_experts.up_proj",
+        "cgroup_current_bytes": 59201171456,
+        "cuda_reserved_bytes": 14789115904,
+        "conservative_cgroup_plus_cuda_reserved_bytes": 73990287360,
+        "host_mem_available_bytes": 48472846336,
+        "cap_bytes": 111669149696,
+        "future_allocation_bytes": 0,
+        "refusal_threshold_bytes": 109521666048
+      }
+    },
+    "released_capture_memory": {
+      "label": "after_capture_output_release",
+      "cgroup_current_bytes": 8814362624,
+      "cuda_reserved_bytes": 14789115904,
+      "conservative_cgroup_plus_cuda_reserved_bytes": 23603478528,
+      "host_mem_available_bytes": 98892038144,
+      "cap_bytes": 111669149696,
+      "future_allocation_bytes": 0,
+      "refusal_threshold_bytes": 109521666048
+    }
+  },
+  "samples": [
+    {
+      "time": 1788894346.013562,
+      "frames": [
+        {
+          "file": "<frozen runpy>",
+          "line": 198,
+          "function": "_run_module_as_main"
+        },
+        {
+          "file": "<frozen runpy>",
+          "line": 88,
+          "function": "_run_code"
+        },
+        {
+          "file": "/workspace/experiments/glm_full_capture_profile.py",
+          "line": 174,
+          "function": "<module>"
+        },
+        {
+          "file": "/workspace/experiments/glm_full_capture_profile.py",
+          "line": 168,
+          "function": "main"
+        },
+        {
+          "file": "/workspace/prismaquant/tessera_campaign.py",
+          "line": 3908,
+          "function": "main"
+        },
+        {
+          "file": "/workspace/prismaquant/tessera_campaign.py",
+          "line": 3554,
+          "function": "_run_streamed_calibration"
+        },
+        {
+          "file": "/workspace/prismaquant/tessera_calibration_cache.py",
+          "line": 283,
+          "function": "finish"
+        },
+        {
+          "file": "/workspace/prismaquant/tessera_calibration_cache.py",
+          "line": 174,
+          "function": "publish_capture"
+        },
+        {
+          "file": "/workspace/prismaquant/tessera_calibration_cache.py",
+          "line": 54,
+          "function": "sha256"
+        },
+        {
+          "file": "/usr/lib/python3.12/hashlib.py",
+          "line": 233,
+          "function": "file_digest"
+        }
+      ],
+      "process_io": "rchar: 3359409078389\nwchar: 1683904410366\nsyscr: 5442967\nsyscw: 306620\nread_bytes: 4044528807936\nwrite_bytes: 1684078829568\ncancelled_write_bytes: 4096\n"
+    },
+    {
+      "time": 1788894347.0138612,
+      "frames": [
+        {
+          "file": "<frozen runpy>",
+          "line": 198,
+          "function": "_run_module_as_main"
+        },
+        {
+          "file": "<frozen runpy>",
+          "line": 88,
+          "function": "_run_code"
+        },
+        {
+          "file": "/workspace/experiments/glm_full_capture_profile.py",
+          "line": 174,
+          "function": "<module>"
+        },
+        {
+          "file": "/workspace/experiments/glm_full_capture_profile.py",
+          "line": 168,
+          "function": "main"
+        },
+        {
+          "file": "/workspace/prismaquant/tessera_campaign.py",
+          "line": 3908,
+          "function": "main"
+        },
+        {
+          "file": "/workspace/prismaquant/tessera_campaign.py",
+          "line": 3554,
+          "function": "_run_streamed_calibration"
+        },
+        {
+          "file": "/workspace/prismaquant/tessera_calibration_cache.py",
+          "line": 283,
+          "function": "finish"
+        },
+        {
+          "file": "/workspace/prismaquant/tessera_calibration_cache.py",
+          "line": 174,
+          "function": "publish_capture"
+        },
+        {
+          "file": "/workspace/prismaquant/tessera_calibration_cache.py",
+          "line": 54,
+          "function": "sha256"
+        },
+        {
+          "file": "/usr/lib/python3.12/hashlib.py",
+          "line": 233,
+          "function": "file_digest"
+        }
+      ],
+      "process_io": "rchar: 3359943915611\nwchar: 1683904411451\nsyscr: 5443353\nsyscw: 306621\nread_bytes: 4044778389504\nwrite_bytes: 1684078829568\ncancelled_write_bytes: 4096\n"
+    }
+  ],
+  "mem": {
+    "MemTotal": 130596118528,
+    "MemAvailable": 98710921216
+  },
+  "root_affinity": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    6,
+    7,
+    8,
+    9,
+    10,
+    11,
+    12,
+    13,
+    14,
+    15,
+    16,
+    17,
+    18,
+    19
+  ],
+  "capture_affinity": [
+    5,
+    6,
+    7,
+    8,
+    9,
+    15
+  ],
+  "reason": "Native correctness fixtures have no dependency on original capture output. Final capture CPU file verification may overlap the24GiB-bounded vLLM control; no timing comparison or capture speed claim is made. Keep final compatibility/probe issuance gated on actual capture terminal/CAS completion."
+}

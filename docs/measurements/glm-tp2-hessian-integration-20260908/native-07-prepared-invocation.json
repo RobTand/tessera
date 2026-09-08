@@ -1,0 +1,95 @@
+{
+  "status": "REVIEWED_FOR_DIRECT_VLLM_CONTROL_DURING_CPU_CAPTURE_FINALIZATION",
+  "source_commit": "3ddb55c558208b63ae53bd18de45b14d9af3e145",
+  "source_archive": {
+    "path": "/mnt/shared/tessera-measurements/glm-tp2-plan-20260908/source-native-07.tar",
+    "sha256": "fc62de09e305188374639a99315dd4b81d9202a190db2a0f12ac34b2f4c83b33"
+  },
+  "harness": "/mnt/shared/tessera-measurements/glm-tp2-plan-20260908/harness-native-07",
+  "unchanged_support": {
+    "_pb_native_moe_measure/kv_capacity_diagnostic.py": "aaa3eefa10a1685a791288fc36582a12f2ff791bbaed5d0b1edefc9d0aef2f7d",
+    "_pb_native_moe_measure/launch.py": "7ef41c521f248ea6f97a5a72e3f9b71ef6861f87c808a89abb5f6cf62c4963df",
+    "_pb_native_moe_measure/native_quant_diagnostic.py": "46e56c33b84f927d26472b70235fe6c2494b2fd3ef8c97dff1f70d7ec18ed3e4",
+    "_pb_native_moe_measure/per_job_install.py": "7b981538b0b56ebac7b5c080175246ae3338d34167356e70c7faf60b3df63fa7",
+    "_pb_native_moe_measure/run_native.py": "4098e03c6711f32796c390fc3e8f81a414b038b3301f04600d1e1aee80bde73a",
+    "_pb_native_moe_measure/run_native_child.py": "342c030885538a5d9109689509fe3fd4c6dede375ab59f34ff67111ddff8b368"
+  },
+  "requests": [
+    {
+      "path": "/mnt/shared/tessera-measurements/glm-tp2-plan-20260908/request-native-07-rank0.json",
+      "sha256": "771ef4a5c741d84226963cf29f8e8c74cc4ca46ae573fd5d9b367c62461c8038"
+    },
+    {
+      "path": "/mnt/shared/tessera-measurements/glm-tp2-plan-20260908/request-native-07-rank1.json",
+      "sha256": "7e9151b3e6617f16b88771c7d8bf2a442654db2ba57970ab1af9c3206b3030db"
+    }
+  ],
+  "reference": "Native06 was prepared only and is superseded by reviewed integrated producer; controls/inputs unchanged.",
+  "execution": "direct existing vLLM launcher under explicit user exemption; no throughput claim",
+  "preparation_note": "No native06 action executed. Source now includes reviewed H reader615 and TP2control4ce; original wire/input bindings are retained.",
+  "prerequisites": [
+    "All45 original model collections and layer flushes complete; no pending prefetch; profiler samples inside final CPU file verification",
+    "Root integrated CPU suite3618passed/602skipped independently verified; no runtime source changes since3ddb55c5",
+    "Both-box external workload and physical memory inspected immediately before launch;24GiB per rank; CPUs0-3 avoid capture CPUs5-9,15 on sparky"
+  ],
+  "rank_launches": [
+    {
+      "rank": 0,
+      "host": "sparky",
+      "cwd": "/mnt/shared/tessera-measurements/glm-tp2-plan-20260908/harness-native-07",
+      "argv": [
+        "python3",
+        "experiments/run_glm_native_construction.py",
+        "--request",
+        "/mnt/shared/tessera-glm-native-20260907/request.json",
+        "--out",
+        "/mnt/shared/tessera-measurements/glm-tp2-plan-20260908/native-07-rank0",
+        "--stage",
+        "control",
+        "--packed-request",
+        "/mnt/shared/tessera-measurements/glm-tp2-plan-20260908/request-native-07-rank0.json",
+        "--cpus",
+        "4",
+        "--memory-gib",
+        "24",
+        "--timeout-seconds",
+        "600"
+      ],
+      "transport": "local_sparky"
+    },
+    {
+      "rank": 1,
+      "host": "sparklina",
+      "cwd": "/mnt/shared/tessera-measurements/glm-tp2-plan-20260908/harness-native-07",
+      "argv": [
+        "python3",
+        "experiments/run_glm_native_construction.py",
+        "--request",
+        "/mnt/shared/tessera-glm-native-20260907/request.json",
+        "--out",
+        "/mnt/shared/tessera-measurements/glm-tp2-plan-20260908/native-07-rank1",
+        "--stage",
+        "control",
+        "--packed-request",
+        "/mnt/shared/tessera-measurements/glm-tp2-plan-20260908/request-native-07-rank1.json",
+        "--cpus",
+        "4",
+        "--memory-gib",
+        "24",
+        "--timeout-seconds",
+        "600"
+      ],
+      "transport": "ssh_sparklina"
+    }
+  ],
+  "capture_overlap_audit": {
+    "path": "/mnt/shared/tessera-measurements/glm-tp2-plan-20260908/native-07-capture-finalization-audit.json",
+    "sha256": "d916b709643d12ad69f410540dcd719c3ddae62bb28ab785c52519b7527a265c"
+  },
+  "overlap_scope": "Final capture file verification only. Native fixtures are independent; no capture forward or TP2 timing measurement. Original capture terminal/CAS remains mandatory for dependent compatibility and pricing work.",
+  "sparklina_prelaunch": {
+    "docker_containers": [],
+    "compute_apps": [],
+    "mem_available_bytes": 124619378688
+  }
+}
