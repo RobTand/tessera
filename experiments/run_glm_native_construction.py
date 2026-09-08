@@ -59,6 +59,17 @@ def main():
     if network == 'host':
         assert args.timeout_seconds is not None and 1 <= args.timeout_seconds <= 600
         env['TORCH_NCCL_ASYNC_ERROR_HANDLING'] = '1'
+        fabric = packed['distributed'].get('ipv4_tcp_fabric')
+        if fabric is not None:
+            import ipaddress
+            assert len(fabric['rank_addresses']) == 2 and fabric['interface']
+            rank = packed['distributed']['rank']
+            addresses = [str(ipaddress.IPv4Address(value)) for value in fabric['rank_addresses']]
+            observed = json.loads(subprocess.check_output(['ip','-j','-4','address','show','dev',fabric['interface']]))
+            assert addresses[rank] in {row['local'] for dev in observed for row in dev['addr_info']}
+            env.update(GLOO_SOCKET_IFNAME=fabric['interface'],
+                NCCL_SOCKET_IFNAME='='+fabric['interface'],NCCL_SOCKET_FAMILY='AF_INET',
+                NCCL_IB_DISABLE='1',VLLM_HOST_IP=addresses[rank])
     command = ['docker', 'run', '--gpus', 'all', '--network', network,
         '--cpuset-cpus', ','.join(map(str, affinity)), '--memory', f'{args.memory_gib}g',
         '--memory-swap', f'{args.memory_gib}g', '--shm-size', '1g', '--cidfile', str(cidfile),
