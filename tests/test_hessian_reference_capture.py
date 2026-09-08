@@ -196,3 +196,30 @@ def test_legacy_pt_reader_still_loads_eagerly(reference,tmp_path,monkeypatch):
     source=ActivationSource.from_capture(path)
     assert len(calls)==1 and isinstance(source.hessians,dict)
     assert source.capture_sha256()==payload['capture_sha256']
+
+
+def test_unsorted_reference_json_preserves_existing_capture_seal(reference):
+    handoff,payload,H,*_=reference
+    payload['hessians']={name:payload['hessians'][name] for name in ('b','a')}
+    handoff.write_text(json.dumps(payload,sort_keys=False))
+    source=ActivationSource.from_capture(handoff)
+    assert source.capture_sha256()==ActivationSource(H,payload['provenance']).capture_sha256()
+    assert source.hessians.receipt()['loaded_entries']==0
+    source.hessians.close()
+
+
+def test_source_change_during_mapping_load_refuses_before_return(reference,monkeypatch):
+    handoff,_,_,canonical,_=reference
+    source=ActivationSource.from_capture(handoff);original=torch.load
+    def mutate_after_mapping(*args,**kwargs):
+        result=original(*args,**kwargs)
+        path=canonical.parent/'inputs/a.pt'
+        with path.open('r+b') as handle:
+            handle.seek(-1,2);value=handle.read(1);handle.seek(-1,2);handle.write(bytes([value[0]^1]))
+        return result
+    monkeypatch.setattr(torch,'load',mutate_after_mapping)
+    with pytest.raises(GrammarError,match='changed or was replaced'):
+        source.hessians['a']
+    assert source.hessians.receipt()['verified_units']==[]
+    assert source.hessians.receipt()['live_payloads']==0
+    source.hessians.close()

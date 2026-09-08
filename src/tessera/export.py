@@ -837,7 +837,8 @@ class ActivationSource:
         digest.update(json.dumps({"schema": "tessera.hessian_capture.v1",
                                   "identity": identity},
                                  sort_keys=True, default=str).encode())
-        for name, unit_sha256 in units.items():
+        for name in sorted(units):
+            unit_sha256 = units[name]
             digest.update(b"\0" + name.encode() + b"\0")
             digest.update(unit_sha256.encode())
         sealed = _CaptureSeal(digest.hexdigest(),
