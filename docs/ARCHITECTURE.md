@@ -17,7 +17,7 @@ Re-stamped 2026-09-07 for the complete original-unit export intake (#401):
 `--cached-units` extends the existing closed bundle to dense and routed units;
 wire recipes, runtime contracts and serving gates are unchanged (§3.2).
 
-**Provenance:** Research packed TP2 role slicing re-stamped 2026-09-08 against
+**Provenance:** Research packed TP2 role slicing and runner observations re-stamped 2026-09-08 against
 base `98aa317a06`; explicit research construction only, no runtime-cell change.
 
 **Provenance:** `v0.1.0` plus repository tooling updates (2026-09-07):
@@ -2085,7 +2085,13 @@ execution and whole-engine fit require their own receipts. In particular,
 stock FP8 activation quantization after SwiGLU is rank-local, so the native
 comparator is stock TP2 on independent full-weight slices, not a bit-exact TP1
 FP8 output. See `docs/design/glm-packed-moe-tp2-research.md` for the source-bound
-slice and memory contracts.
+slice and memory contracts. The native research harness distinguishes direct
+runner entry (one internal trained-gate call) from the pinned GLM wrapper
+entry (wrapper plus runner, two gate calls), observes the effective router
+logits, and retains failure diagnostics before checking counts. A bounded
+layer load and single-token direct parity have receipts; full native runner
+and exhaustive-selection gates remain pending. See
+`docs/measurements/glm-packed-tp2-cpu-2026-09-08.md`.
 
 **Research selected decode.** `PreparedWindowBatch.decode` and
 `PreparedTesseraFp8Batch.decode` accept an explicit `backend="torch"|"triton"`.

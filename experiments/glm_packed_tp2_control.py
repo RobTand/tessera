@@ -1,4 +1,4 @@
-"""Unexecuted-until-cleared native TP2 controls used by glm_packed_moe_control.
+"""Bounded research native TP2 controls used by glm_packed_moe_control.
 
 Each explicitly configured rank runs inside the same pinned stock vLLM image.
 This module supplies no scheduler and changes no stock source files. Its oracle
@@ -89,7 +89,7 @@ def load_shared_and_gate(moe, source_root, prefix, *, index_sha256):
     return records
 
 
-def check_runner(moe, config, x, desired_ids, oracle_partial, *, diagnostic_path, trained_router=False):
+def check_runner(moe, config, x, desired_ids, oracle_partial, *, diagnostic_path, entrypoint):
     """Observe actual stock execution; compare outside the observed invocation.
 
     Observation wrappers only count and copy results; the original functions
@@ -101,12 +101,15 @@ def check_runner(moe, config, x, desired_ids, oracle_partial, *, diagnostic_path
     import vllm.model_executor.layers.fused_moe.runner.moe_runner as runner_module
     from vllm.forward_context import set_forward_context
     from experiments.glm_packed_moe_control import compare
+    assert entrypoint in ('runner','glm')
     runner = moe.experts
+    router = runner.router
+    select = router.select_experts
     layer = runner.routed_experts
     method = layer.quant_method
     apply = method.apply
     reduce = runner_module.tensor_model_parallel_all_reduce
-    observed = {'apply':[],'shared':[],'reduce':[],'gate':[]}
+    observed = {'apply':[],'shared':[],'reduce':[],'gate':[],'routing':[]}
     def apply_observer(layer,x,topk_weights,topk_ids,shared_experts,shared_experts_input):
         out = apply(layer,x,topk_weights,topk_ids,shared_experts,shared_experts_input)
         observed['apply'].append((out.clone(),topk_weights.clone(),topk_ids.clone()))
@@ -114,48 +117,58 @@ def check_runner(moe, config, x, desired_ids, oracle_partial, *, diagnostic_path
     def reduce_observer(value):
         observed['reduce'].append(value.clone())
         return reduce(value)
+    def select_observer(*args, **kwargs):
+        observed['routing'].append(kwargs['router_logits'].clone())
+        return select(*args, **kwargs)
     hook = moe.shared_experts.register_forward_hook(
         lambda module,arguments,out:observed['shared'].append(out.clone()))
     gate_hook = moe.gate.register_forward_hook(
         lambda module,arguments,out:observed['gate'].append(out[0].clone()))
     method.apply = apply_observer
+    router.select_experts = select_observer
+    supplied_logits = None
     runner_module.tensor_model_parallel_all_reduce = reduce_observer
     try:
         with set_forward_context(None,config):
-            if trained_router:
+            if entrypoint == 'glm':
                 got = moe(x)
             else:
-                # This is biased-logit stress, with the original trained bias.
-                # Sigmoid bounds the score gap by one: these ID hints need not
-                # be the stock-selected set. Directapply separately covers all E.
-                logits = torch.full((x.shape[0],layer.global_num_experts),-100.,
-                                    device=x.device,dtype=torch.float32)
-                logits.scatter_(1,desired_ids.long(),100.)
-                got = runner(x,router_logits=logits)
+                # The stock runner's internal gate replaces this supplied input.
+                # Observe the effective router input instead of assuming that
+                # desired IDs force routing; trained correction bias is intact.
+                supplied_logits = torch.full((x.shape[0],layer.global_num_experts),-100.,
+                                             device=x.device,dtype=torch.float32)
+                supplied_logits.scatter_(1,desired_ids.long(),100.)
+                got = runner(x,router_logits=supplied_logits)
         torch.cuda.synchronize()
     finally:
         hook.remove()
         gate_hook.remove()
         method.apply = apply
+        router.select_experts = select
         runner_module.tensor_model_parallel_all_reduce = reduce
-    assert {key:len(value) for key,value in observed.items()} == {
-        'apply':1,'shared':1,'reduce':1,'gate':int(trained_router)}
-    partial,weights,ids = observed['apply'][0]
-    router = runner.router
-    assert router.num_expert_group == 1 and router.topk_group == 1
+    counts = {key:len(value) for key,value in observed.items()}
+    # Persist observations before assertions so a changed stock contract leaves
+    # an attributable failure diagnostic rather than only a stack trace.
     diagnostic = {
-        'case':'trained_gate' if trained_router else 'biased_logit_stress',
+        'entrypoint':entrypoint,
         'num_expert_group':router.num_expert_group,'topk_group':router.topk_group,
         'scoring_func':router.scoring_func,'renormalize':router.renormalize,
         'routed_scaling_factor':router.routed_scaling_factor,
-        'desired_id_hints':None if trained_router else desired_ids.cpu().tolist(),
-        'actual_topk_ids':ids.cpu().tolist(),'actual_topk_weights':weights.cpu().tolist(),
-        'router_logits':(observed['gate'][0] if trained_router else logits).cpu().tolist(),
+        'desired_id_hints':None if entrypoint == 'glm' else desired_ids.cpu().tolist(),
+        'supplied_router_logits':None if supplied_logits is None else supplied_logits.cpu().tolist(),
+        'effective_router_logits':[value.cpu().tolist() for value in observed['routing']],
+        'gate_logits':[value.cpu().tolist() for value in observed['gate']],
+        'actual_topk_ids':[value[2].cpu().tolist() for value in observed['apply']],
+        'actual_topk_weights':[value[1].cpu().tolist() for value in observed['apply']],
         'trained_correction_bias':moe.gate.e_score_correction_bias.cpu().tolist(),
-        'desired_set_selected':None if trained_router else bool(torch.equal(
-            ids.sort(-1).values,desired_ids.sort(-1).values)),
-        'counts':{key:len(value) for key,value in observed.items()}}
+        'counts':counts}
     diagnostic_path.write_text(json.dumps(diagnostic,indent=2)+'\n')
+    assert counts == {'apply':1,'shared':1,'reduce':1,
+                      'gate':2 if entrypoint == 'glm' else 1,'routing':1}, counts
+    assert router.num_expert_group == 1 and router.topk_group == 1
+    assert torch.equal(observed['routing'][0],observed['gate'][-1])
+    partial,weights,ids = observed['apply'][0]
     # Every rank must use exactly the same global routing choices and weights.
     from vllm.distributed import get_tp_group
     all_ids = get_tp_group().all_gather(ids,dim=0)
@@ -174,7 +187,7 @@ def check_runner(moe, config, x, desired_ids, oracle_partial, *, diagnostic_path
     assert total_error['max_abs'] == 0 and total_error['finite'],total_error
     assert bool(torch.count_nonzero(observed['shared'][0]))
     result = {'stock_runner_class':type(runner).__module__+'.'+type(runner).__qualname__,
-        'trained_gate_executed':trained_router,'stock_shared_expert_executed':True,
+        'entrypoint':entrypoint,'trained_gate_executed':True,'observed_gate_calls':counts['gate'],'stock_shared_expert_executed':True,
         'observed_method_calls':1,'observed_shared_calls':1,'observed_final_all_reduce_calls':1,
         'rank_partial_vs_stock_tp2':partial_error,'combined_vs_stock_tp2':total_error,
         'routing_identical_across_ranks':True,'selected_global_experts':torch.unique(ids).numel(),
