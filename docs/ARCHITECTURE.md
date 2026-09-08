@@ -36,6 +36,15 @@ path requires `resident`. Whole-engine memory, generation, quality and
 performance still require actual measurements; the exporter's ordinary
 materialized-resident byte estimates do not certify a packed-engine fit.
 
+The bounded native lifecycle harness now accepts explicit
+`configuration_source: checkpoint_json` with a byte-bound checkpoint config.
+It compares the JSON quantization declaration with the original wire fixture,
+resolves `tessera` through stock vLLM's registry, and requires the ordinary
+`TesseraConfig` through model construction. Existing Python control modes and
+load/finalization/stock-parity/TP2 runner guards are retained. This harness
+extension is prepared against `f3b6953f0c58` (2026-09-08); native execution is
+pending and does not establish a full-model generation or fit result.
+
 Producer/cache identity remains separate from serving implementation identity.
 `cached_unit.encoder_source_sha256` hashes producer code suffixes
 `.py/.cu/.cuh/.cpp/.h`, including serving code in that producer package, and
