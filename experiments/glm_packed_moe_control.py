@@ -101,6 +101,7 @@ def run(args, request, outer):
     e,h,n = text['n_routed_experts'],text['hidden_size'],text['moe_intermediate_size']
     assert (e,h,n,text['num_experts_per_tok']) == (288,4096,2048,8)
     templates, stock, input_receipts = {},{},{}
+    source_prefixes = set()
     for role,row in producer['projections'].items():
         root = Path(row['directory'])
         assert digest(root/'receipt.json') == row['receipt_sha256']
@@ -109,10 +110,15 @@ def run(args, request, outer):
         assert receipt['control_request_sha256'] == digest(control_path)
         assert digest(root/'projection.wire') == receipt['wire_sha256']
         assert digest(root/'independent-stock.safetensors') == receipt['stock_sha256']
+        source_name = receipt['source_tensor']['name']
+        assert source_name.endswith(f'.experts.0.{role}.weight')
+        source_prefixes.add(source_name.rsplit('.experts.',1)[0])
         templates[role] = (root/'projection.wire').read_bytes()
         stock[role] = load_file(root/'independent-stock.safetensors',device='cpu')
         input_receipts[role] = {'path':str(root/'receipt.json'),'sha256':digest(root/'receipt.json')}
 
+    assert len(source_prefixes) == 1
+    source_prefix = source_prefixes.pop()
     diagnostics = None
     diagnostic_rows = []
     if outer['fixture'] == 'diagnostic':
@@ -130,7 +136,7 @@ def run(args, request, outer):
         scheme['groups']['w2']['wire_stride'] = max(map(len,diagnostics.values()))
 
     quant_dict = {'quant_method':'tessera','format':'tessera',
-        'config_groups':{'glm_experts':{'format':'TESSERA','targets':['model.language_model.layers.3.mlp.experts'],'scheme':scheme}},
+        'config_groups':{'glm_experts':{'format':'TESSERA','targets':[source_prefix+'.experts'],'scheme':scheme}},
         'ignore':sorted({p for p,_ in baseline['offered_modules'] if p != target})}
     tp_size = outer.get('tp_size',1)
     assert type(tp_size) is int and tp_size in (1,2) and (tp_size == 1 or outer['arm'] == 'packed')
@@ -235,7 +241,7 @@ def run(args, request, outer):
         if tp_size == 2:
             from experiments.glm_packed_tp2_control import load_shared_and_gate
             dense_source_records = load_shared_and_gate(moe,request['source_model'],
-                target.removesuffix('.experts'),index_sha256=outer['source_index_sha256'])
+                source_prefix,index_sha256=outer['source_index_sha256'])
             write(args.out,'shared-and-gate-source.json',dense_source_records)
         saved_inputs = load_file(checked(outer['inputs']),device='cuda') if outer.get('inputs') else None
         generated_inputs = {}
