@@ -95,6 +95,9 @@ writers add the actual payload digests and retain their canonical serialization.
 `calculator.terminal_rate` uses these extents. Wire bytes, encoder recipes,
 serving defaults and release gates retain their existing contracts.
 
+Re-stamped 2026-09-08 for the explicit research selected-window Triton backend
+against base `2083062de7`; production eligibility, pins and wire are unchanged.
+
 Re-stamped 2026-09-08 for the explicit packed selected-expert lifecycle
 against base `2083062d`. `build_tessera_moe_method` accepts a Python-only
 `ResearchSelectedMoeConfig`: the ordinary `TesseraConfig`, serving environment,
@@ -2062,6 +2065,24 @@ CPU and a device check that a shared replica answers within the bound of its
 independently planned twin over a nonconstant table.
 
 ### 4.4d The expert stack is a STRUCTURE, not a module
+
+**Research selected decode.** `PreparedWindowBatch.decode` and
+`PreparedTesseraFp8Batch.decode` accept an explicit `backend="torch"|"triton"`.
+`ResearchSelectedMoeConfig.decode_backend` forwards that explicit choice through
+the research lifecycle; the prepared layer's research decoder label names
+that same explicit backend. The default remains the eager Torch reference. The CUDA-only Triton selection
+uses `kernel_window.decode_selected_windows` to read the owner's existing
+rate-group packed planes, gathers, shifts, column mapping and expert alphabets
+straight into one fresh `[selected, steps, columns]` output. The alphabet dtype,
+expert order/repeats and initial-state pad are preserved. The chunk bound limits
+launches; chunks do not retain separate output buffers. There is no alternate
+wire decoder owner, repack, or persistent decoded expert pool. Device IDs are
+checked asynchronously and kernel reads are masked independently against
+invalid experts. Scalar layout fields and tensor fingerprints are checked
+before backend import or launch; changed preparation metadata is refused.
+This is an eager research API, without a graph-capture claim
+or a new production-eligible runtime cell.
+
 
 A Tessera scheme carries `structure`, and it selects the vLLM method rather
 than decorating it. `dense` is one `tessera.fused` container per `LinearBase`.

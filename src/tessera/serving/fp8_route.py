@@ -172,8 +172,9 @@ class PreparedTesseraFp8Batch:
     def resident_bytes(self):
         return self.wire_bytes_resident() + self.__scales.numel() * self.__scales.element_size()
 
-    def decode(self, expert_ids, *, max_experts_per_chunk):
-        parts = [w.decode(expert_ids, max_experts_per_chunk=max_experts_per_chunk)
+    def decode(self, expert_ids, *, max_experts_per_chunk, backend="torch"):
+        parts = [w.decode(expert_ids, max_experts_per_chunk=max_experts_per_chunk,
+                          backend=backend)
                  for w in self.__windows]
         return parts[0] if len(parts) == 1 else torch.cat(parts, 1)
 

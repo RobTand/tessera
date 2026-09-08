@@ -115,10 +115,13 @@ class ResearchSelectedMoeConfig:
     """
 
     max_experts_per_chunk: int
+    decode_backend: str = "torch"
 
     def __post_init__(self):
         if type(self.max_experts_per_chunk) is not int or self.max_experts_per_chunk <= 0:
             raise ValueError("max_experts_per_chunk must be a positive integer")
+        if self.decode_backend not in ("torch", "triton"):
+            raise ValueError(f"unknown selected window backend {self.decode_backend!r}")
 
 
 def census_expected(*, compiled: bool = False) -> dict:
@@ -203,10 +206,10 @@ class PreparedTesseraPackedMoeExperts:
     def resident_bytes(self) -> int:
         return self.__first.resident_bytes() + self.__second.resident_bytes()
 
-    def decode(self, expert_ids, *, max_experts_per_chunk) -> PreparedTesseraMoeExperts:
+    def decode(self, expert_ids, *, max_experts_per_chunk, backend="torch") -> PreparedTesseraMoeExperts:
         return PreparedTesseraMoeExperts(
-            self.__first.decode(expert_ids, max_experts_per_chunk=max_experts_per_chunk).view(torch.float8_e4m3fn),
-            self.__second.decode(expert_ids, max_experts_per_chunk=max_experts_per_chunk).view(torch.float8_e4m3fn),
+            self.__first.decode(expert_ids, max_experts_per_chunk=max_experts_per_chunk, backend=backend).view(torch.float8_e4m3fn),
+            self.__second.decode(expert_ids, max_experts_per_chunk=max_experts_per_chunk, backend=backend).view(torch.float8_e4m3fn),
             self.__first.row_scale(expert_ids).unsqueeze(-1),
             self.__second.row_scale(expert_ids).unsqueeze(-1))
 
@@ -529,7 +532,7 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
                 self._w13_len = self._w2_len = self._wire_ids = None
                 self._packed = prepared
                 self._research_phase = 'ready'
-                layer.tessera_decoder = 'research_selected_torch_window'
+                layer.tessera_decoder = f'research_selected_{research_selected.decode_backend}_window'
                 layer.tessera_backend = str(getattr(self.fp8_backend, 'value', self.fp8_backend))
                 return
 
@@ -632,7 +635,8 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
                                     torch.arange(selected_ids.numel(), dtype=torch.int32, device=x.device))
             with torch.profiler.record_function('tessera_research_decode_selected_experts'):
                 selected = self._packed.decode(selected_ids,
-                    max_experts_per_chunk=research_selected.max_experts_per_chunk)
+                    max_experts_per_chunk=research_selected.max_experts_per_chunk,
+                    backend=research_selected.decode_backend)
             quant = make_fp8_moe_quant_config(
                 fp8_backend=self.fp8_backend,
                 w1_scale=selected.w13_weight_scale, w2_scale=selected.w2_weight_scale,

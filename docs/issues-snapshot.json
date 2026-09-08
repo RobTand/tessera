@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-08T10:07:44Z",
+ "generated": "2026-09-08T10:18:25Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -1212,16 +1212,20 @@
     "title": "Enable selected-source Tessera anchors from complete canonical capture"
    },
    "371": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Bind campaign container content across Docker image stores"
    },
    "372": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Bind portable campaign images to executable content"
    },
    "373": {
     "state": "OPEN",
     "title": "Bound exact streamed AURA boundaries and rolling cotangents"
+   },
+   "374": {
+    "state": "OPEN",
+    "title": "Bound joint probe candidate residency with transient operator statistics"
    },
    "38": {
     "state": "CLOSED",
@@ -2934,12 +2938,16 @@
     "title": "Price Tessera layouts without materializing payloads"
    },
    "422": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Research packed selected-expert MoE lifecycle on native GLM factory"
    },
    "423": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Add research packed selected-expert MoE load/apply lifecycle"
+   },
+   "424": {
+    "state": "OPEN",
+    "title": "Fuse research selected expert window decode without eager integer temporaries"
    },
    "43": {
     "state": "CLOSED",

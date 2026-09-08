@@ -1,0 +1,2056 @@
+[
+  {
+    "label": "backend_pre_fix",
+    "action_key": "c68bbd9bba9472ad5c43b0fcb3f8351ff3a00b944759357b916d455a35c65ef3",
+    "terminal_path": "/mnt/shared/prismabuild-fleet/pb-queue/failed/c68bbd9bba9472ad5c43b0fcb3f8351ff3a00b944759357b916d455a35c65ef3.json",
+    "terminal_sha256": "a8118950cb7b2660868009be20180096fdf202955bae8b76ae30fbfc7e1208ca",
+    "status": "failed",
+    "returncode": 1,
+    "worker": "dl380g10",
+    "snapshot": "c908af681cc24392e8288ce4d2d6db69f0b9920c",
+    "log_path": "/mnt/shared/tessera-measurements/glm-fused-selected-20260908/pb-backend_pre_fix.log",
+    "log_sha256": "17a3fb425495753d0d6272554520f56b0d37b41315360ec8902bda631b7288a7",
+    "resource_profile": {
+      "box_window": {
+        "cpu": {
+          "busy_percent_mean": 1.44378382,
+          "busy_percent_peak": 3.1602706,
+          "psi_some_avg10_max": 0.0,
+          "psi_some_avg10_samples": 2,
+          "samples": 5,
+          "source": "netdata"
+        },
+        "end_unix": 1788861758.8437786,
+        "errors": [
+          "no pqteld CSV for dl380g10 covering the window"
+        ],
+        "host": "dl380g10",
+        "schema": "prismabuild.box_window.v1",
+        "source": "netdata",
+        "start_unix": 1788861755.4725182
+      },
+      "finished_unix": 1788861758.8437786,
+      "host": "dl380g10",
+      "process_io": {
+        "processes_live": 0,
+        "processes_observed": 4,
+        "processes_unreadable": 0,
+        "rchar": 17710038,
+        "read_bytes": 0,
+        "source": "proc_io",
+        "syscr": 954,
+        "syscw": 11,
+        "wchar": 868,
+        "write_bytes": 472
+      },
+      "reaped_children": {
+        "involuntary_context_switches": 3,
+        "max_rss_bytes": null,
+        "max_rss_watermark_bytes": 128917504,
+        "scope": "this parent's launched child and the descendants it reaped",
+        "source": "getrusage_children",
+        "system_seconds": 0.020229000000000052,
+        "user_seconds": 0.10418100000000052,
+        "voluntary_context_switches": 3
+      },
+      "schema": "prismabuild.resource_profile.v1",
+      "scope": {
+        "cpu_seconds": 2.458998,
+        "cpu_system_seconds": 0.260787,
+        "cpu_user_seconds": 2.19821,
+        "memory_current_bytes": 4128768,
+        "memory_peak_bytes": 211988480,
+        "source": "cgroup"
+      },
+      "start_source": "claimed_unix",
+      "start_unix": 1788861755.4725182,
+      "wall_seconds": 3.371260404586792
+    },
+    "cas_payloads_verified": [],
+    "population": {
+      "path": "/mnt/shared/tessera-measurements/fused-selected-prefail.json",
+      "sha256": "64a61d1484e52437cdb197008ede87bf2cd7bb38c97d217acac56e61fe7223ec",
+      "counts": {
+        "passed": 0,
+        "failed": 1,
+        "error": 0,
+        "skipped": 0,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "device": "torch 2.10.0+cpu reports no CUDA device",
+      "skip_reasons": {},
+      "not_collected": [],
+      "strict_cuda": false,
+      "cuda_surface": {
+        "executed": 0,
+        "measured_by": "tests during whose call torch's CUDA allocator recorded a new allocation",
+        "is_a_floor": true,
+        "box_artifact_skips": {}
+      },
+      "source_identity": {
+        "schema": "tessera.suite_source.v1",
+        "sha256": "cf3eaa79b115856947b6bd4436eb1a411f4a5639fefaffde61ab42434a1afd9c"
+      }
+    }
+  },
+  {
+    "label": "window_and_fp8_cpu",
+    "action_key": "51e399eb4b586cb09416f1c0c3eadd602e7388dbea3107af263a9780e5c17e22",
+    "terminal_path": "/mnt/shared/prismabuild-fleet/pb-queue/done/51e399eb4b586cb09416f1c0c3eadd602e7388dbea3107af263a9780e5c17e22.json",
+    "terminal_sha256": "15acf74c5420734dea0162760e2d5fe5916da306b08cff60b173db8e1206e4db",
+    "status": "executed",
+    "returncode": 0,
+    "worker": "dl380g10",
+    "snapshot": "cebacd2c5bf1ee1741944b19db57d155714d6843",
+    "log_path": "/mnt/shared/tessera-measurements/glm-fused-selected-20260908/pb-window_and_fp8_cpu.log",
+    "log_sha256": "6900c4e013f29e47c30d4a85e204f2753f4ae7b0dc1b09a3d42812cb66216c29",
+    "resource_profile": {
+      "box_window": {
+        "cpu": {
+          "busy_percent_mean": 6.033471400000001,
+          "busy_percent_peak": 7.4348037,
+          "psi_some_avg10_max": 0.18,
+          "psi_some_avg10_samples": 4,
+          "samples": 9,
+          "source": "netdata"
+        },
+        "end_unix": 1788861890.2255094,
+        "errors": [
+          "no pqteld CSV for dl380g10 covering the window"
+        ],
+        "host": "dl380g10",
+        "schema": "prismabuild.box_window.v1",
+        "source": "netdata",
+        "start_unix": 1788861883.982971
+      },
+      "finished_unix": 1788861890.2255094,
+      "host": "dl380g10",
+      "process_io": {
+        "processes_live": 0,
+        "processes_observed": 8,
+        "processes_unreadable": 0,
+        "rchar": 22819779,
+        "read_bytes": 0,
+        "source": "proc_io",
+        "syscr": 1629,
+        "syscw": 11,
+        "wchar": 868,
+        "write_bytes": 472
+      },
+      "reaped_children": {
+        "involuntary_context_switches": 3,
+        "max_rss_bytes": null,
+        "max_rss_watermark_bytes": 123023360,
+        "scope": "this parent's launched child and the descendants it reaped",
+        "source": "getrusage_children",
+        "system_seconds": 0.01906399999999997,
+        "user_seconds": 0.10635399999999962,
+        "voluntary_context_switches": 3
+      },
+      "schema": "prismabuild.resource_profile.v1",
+      "scope": {
+        "cpu_seconds": 12.803753,
+        "cpu_system_seconds": 1.272876,
+        "cpu_user_seconds": 11.530877,
+        "memory_current_bytes": 47472640,
+        "memory_peak_bytes": 885538816,
+        "source": "cgroup"
+      },
+      "start_source": "claimed_unix",
+      "start_unix": 1788861883.982971,
+      "wall_seconds": 6.2425384521484375
+    },
+    "cas_payloads_verified": [
+      {
+        "receipt_sha256": "038c27f4a7823d01b8db2b9387f9511b4db4c246d4f695927136d483d15dfd1c",
+        "payload_path": "/mnt/shared/prismabuild-fleet/cas/blobs/28/28abf966bc7c557dbe8a1dfce8e4028573646aac92ad6898bce15ee31f6f6026",
+        "payload_sha256": "28abf966bc7c557dbe8a1dfce8e4028573646aac92ad6898bce15ee31f6f6026"
+      }
+    ],
+    "population": {
+      "path": "/mnt/shared/tessera-measurements/fused-selected-cpu.json",
+      "sha256": "48b7707a8aecc67c997dc37dcd1a1f4c1640736158170bad78f180415448ad23",
+      "counts": {
+        "passed": 25,
+        "failed": 0,
+        "error": 0,
+        "skipped": 12,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "device": "torch 2.10.0+cpu reports no CUDA device",
+      "skip_reasons": {
+        "needs a CUDA device": 12
+      },
+      "not_collected": [],
+      "strict_cuda": false,
+      "cuda_surface": {
+        "executed": 0,
+        "measured_by": "tests during whose call torch's CUDA allocator recorded a new allocation",
+        "is_a_floor": true,
+        "box_artifact_skips": {}
+      },
+      "source_identity": {
+        "schema": "tessera.suite_source.v1",
+        "sha256": "66cc3152b829adf739cdd769adc955e03571ddeb5f661056e8990d4c2a8565c6"
+      }
+    }
+  },
+  {
+    "label": "cuda_first_attempt",
+    "action_key": "05d44af4790e25487489dfc4ddecf305fdabd64de9e1cf6aadd63ca37af78eda",
+    "terminal_path": "/mnt/shared/prismabuild-fleet/pb-queue/failed/05d44af4790e25487489dfc4ddecf305fdabd64de9e1cf6aadd63ca37af78eda.json",
+    "terminal_sha256": "6031f088362edd008b9f08a270905e1b85d117a4543866dc91f7631faae5dc7e",
+    "status": "failed",
+    "returncode": 1,
+    "worker": "sparklina",
+    "snapshot": "777b71cbf55c30f2d87f3ebd73fd87c64bba9992",
+    "log_path": "/mnt/shared/tessera-measurements/glm-fused-selected-20260908/pb-cuda_first_attempt.log",
+    "log_sha256": "f35c431c3abebdda7d1465828dc6c88a531c56bdb2ca57f3285a3fb23655a4c9",
+    "resource_profile": {
+      "box_window": {
+        "cpu": {
+          "busy_percent_mean": 10.037431016129036,
+          "busy_percent_peak": 12.7127131,
+          "psi_some_avg10_max": 0.96,
+          "psi_some_avg10_samples": 15,
+          "samples": 31,
+          "source": "netdata"
+        },
+        "end_unix": 1788861927.5237432,
+        "errors": [
+          "no pqteld CSV for sparklina covering the window"
+        ],
+        "host": "sparklina",
+        "schema": "prismabuild.box_window.v1",
+        "source": "netdata",
+        "start_unix": 1788861898.9799047
+      },
+      "finished_unix": 1788861927.5237432,
+      "host": "sparklina",
+      "process_io": {
+        "processes_live": 0,
+        "processes_observed": 13,
+        "processes_unreadable": 0,
+        "rchar": 21960958,
+        "read_bytes": 4096,
+        "source": "proc_io",
+        "syscr": 1654,
+        "syscw": 16,
+        "wchar": 904,
+        "write_bytes": 12288
+      },
+      "reaped_children": {
+        "involuntary_context_switches": 16,
+        "max_rss_bytes": null,
+        "max_rss_watermark_bytes": 44769280,
+        "scope": "this parent's launched child and the descendants it reaped",
+        "source": "getrusage_children",
+        "system_seconds": 0.017282999999999993,
+        "user_seconds": 0.04473500000000008,
+        "voluntary_context_switches": 21
+      },
+      "schema": "prismabuild.resource_profile.v1",
+      "scope": {
+        "cpu_seconds": 49.843956,
+        "cpu_system_seconds": 7.325549,
+        "cpu_user_seconds": 42.518406,
+        "memory_current_bytes": 1095671808,
+        "memory_peak_bytes": 4931231744,
+        "source": "cgroup"
+      },
+      "start_source": "claimed_unix",
+      "start_unix": 1788861898.9799047,
+      "wall_seconds": 28.543838500976562
+    },
+    "cas_payloads_verified": [],
+    "population": {
+      "path": "/mnt/shared/tessera-measurements/fused-selected-gpu.json",
+      "sha256": "08f265c26224817af9fbb3fc9db2ef8b5b44641aeb7e1deb92b39d423b9f97f9",
+      "counts": {
+        "passed": 14,
+        "failed": 6,
+        "error": 0,
+        "skipped": 0,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "device": "torch 2.11.0+cu130, 1 CUDA device(s), device 0 = NVIDIA GB10",
+      "skip_reasons": {},
+      "not_collected": [],
+      "strict_cuda": true,
+      "cuda_surface": {
+        "executed": 17,
+        "measured_by": "tests during whose call torch's CUDA allocator recorded a new allocation",
+        "is_a_floor": true,
+        "box_artifact_skips": {}
+      },
+      "source_identity": {
+        "schema": "tessera.suite_source.v1",
+        "sha256": "66cc3152b829adf739cdd769adc955e03571ddeb5f661056e8990d4c2a8565c6"
+      }
+    }
+  },
+  {
+    "label": "cuda_numerics_19_pass_scratch_counter_failed",
+    "action_key": "a8ea15b11da9b72c2c3504c7974ac6c0a1fb6ecc0fa08d6c671b1d85e1ef8e17",
+    "terminal_path": "/mnt/shared/prismabuild-fleet/pb-queue/failed/a8ea15b11da9b72c2c3504c7974ac6c0a1fb6ecc0fa08d6c671b1d85e1ef8e17.json",
+    "terminal_sha256": "078501c1123c83d4778d45cfbbf06f9d06d78be2158bf4df04503bcdbd1336fc",
+    "status": "failed",
+    "returncode": 1,
+    "worker": "sparklina",
+    "snapshot": "06520a7894e4f2f9e1b322557a0b89c959d1a51d",
+    "log_path": "/mnt/shared/tessera-measurements/glm-fused-selected-20260908/pb-cuda_numerics_19_pass_scratch_counter_failed.log",
+    "log_sha256": "ba374010835b4486c4153734c337d02d91fbf7188f4783888fbf420409f1d84b",
+    "resource_profile": {
+      "box_window": {
+        "cpu": {
+          "busy_percent_mean": 9.7021829875,
+          "busy_percent_peak": 12.6753498,
+          "psi_some_avg10_max": 0.88,
+          "psi_some_avg10_samples": 11,
+          "samples": 24,
+          "source": "netdata"
+        },
+        "end_unix": 1788862004.8685634,
+        "errors": [
+          "no pqteld CSV for sparklina covering the window"
+        ],
+        "host": "sparklina",
+        "schema": "prismabuild.box_window.v1",
+        "source": "netdata",
+        "start_unix": 1788861982.831465
+      },
+      "finished_unix": 1788862004.8685634,
+      "host": "sparklina",
+      "process_io": {
+        "processes_live": 0,
+        "processes_observed": 11,
+        "processes_unreadable": 0,
+        "rchar": 21958366,
+        "read_bytes": 4096,
+        "source": "proc_io",
+        "syscr": 1654,
+        "syscw": 16,
+        "wchar": 904,
+        "write_bytes": 12288
+      },
+      "reaped_children": {
+        "involuntary_context_switches": 16,
+        "max_rss_bytes": null,
+        "max_rss_watermark_bytes": 94158848,
+        "scope": "this parent's launched child and the descendants it reaped",
+        "source": "getrusage_children",
+        "system_seconds": 0.02111200000000002,
+        "user_seconds": 0.04126299999999983,
+        "voluntary_context_switches": 21
+      },
+      "schema": "prismabuild.resource_profile.v1",
+      "scope": {
+        "cpu_seconds": 38.199343,
+        "cpu_system_seconds": 5.585998,
+        "cpu_user_seconds": 32.613345,
+        "memory_current_bytes": 78462976,
+        "memory_peak_bytes": 3223588864,
+        "source": "cgroup"
+      },
+      "start_source": "claimed_unix",
+      "start_unix": 1788861982.831465,
+      "wall_seconds": 22.03709840774536
+    },
+    "cas_payloads_verified": [],
+    "population": {
+      "path": "/mnt/shared/tessera-measurements/fused-selected-gpu-02.json",
+      "sha256": "1487cde3cb9cf656914710ef58a0b21ba4d665eb7fbffc8c4a50d122c65445bf",
+      "counts": {
+        "passed": 19,
+        "failed": 1,
+        "error": 0,
+        "skipped": 0,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "device": "torch 2.11.0+cu130, 1 CUDA device(s), device 0 = NVIDIA GB10",
+      "skip_reasons": {},
+      "not_collected": [],
+      "strict_cuda": true,
+      "cuda_surface": {
+        "executed": 17,
+        "measured_by": "tests during whose call torch's CUDA allocator recorded a new allocation",
+        "is_a_floor": true,
+        "box_artifact_skips": {}
+      },
+      "source_identity": {
+        "schema": "tessera.suite_source.v1",
+        "sha256": "65c575cb32a21c962600722cf581862582d29f8fbc17d914e47c2cc515af5651"
+      }
+    }
+  },
+  {
+    "label": "cuda_requested_scratch_pass",
+    "action_key": "051a602258a586bfadef9711de2d99a6ef6f25c110d7c720ac1d21cf6c6f2ff1",
+    "terminal_path": "/mnt/shared/prismabuild-fleet/pb-queue/done/051a602258a586bfadef9711de2d99a6ef6f25c110d7c720ac1d21cf6c6f2ff1.json",
+    "terminal_sha256": "3ce88dc81a4c68577076c1efc404a60f06c9cb1e68f148a5f0a13b4038fb8714",
+    "status": "executed",
+    "returncode": 0,
+    "worker": "sparklina",
+    "snapshot": "eb756f84821c510057797f829a051687a64cbda6",
+    "log_path": "/mnt/shared/tessera-measurements/glm-fused-selected-20260908/pb-cuda_requested_scratch_pass.log",
+    "log_sha256": "344091d91d6494fb724697658f72031024781f8086ae5ab583ec809b58e7affe",
+    "resource_profile": {
+      "box_window": {
+        "cpu": {
+          "busy_percent_mean": 4.192077220000001,
+          "busy_percent_peak": 7.676869,
+          "psi_some_avg10_max": 0.0,
+          "psi_some_avg10_samples": 2,
+          "samples": 5,
+          "source": "netdata"
+        },
+        "end_unix": 1788862051.253881,
+        "errors": [
+          "no pqteld CSV for sparklina covering the window"
+        ],
+        "host": "sparklina",
+        "schema": "prismabuild.box_window.v1",
+        "source": "netdata",
+        "start_unix": 1788862048.133765
+      },
+      "finished_unix": 1788862051.253881,
+      "host": "sparklina",
+      "process_io": {
+        "processes_live": 0,
+        "processes_observed": 4,
+        "processes_unreadable": 0,
+        "rchar": 21958425,
+        "read_bytes": 4096,
+        "source": "proc_io",
+        "syscr": 1655,
+        "syscw": 16,
+        "wchar": 904,
+        "write_bytes": 12288
+      },
+      "reaped_children": {
+        "involuntary_context_switches": 12,
+        "max_rss_bytes": null,
+        "max_rss_watermark_bytes": 45916160,
+        "scope": "this parent's launched child and the descendants it reaped",
+        "source": "getrusage_children",
+        "system_seconds": 0.012863000000000013,
+        "user_seconds": 0.04947699999999999,
+        "voluntary_context_switches": 21
+      },
+      "schema": "prismabuild.resource_profile.v1",
+      "scope": {
+        "cpu_seconds": 2.08411,
+        "cpu_system_seconds": 0.620841,
+        "cpu_user_seconds": 1.463268,
+        "memory_current_bytes": 495616,
+        "memory_peak_bytes": 944918528,
+        "source": "cgroup"
+      },
+      "start_source": "claimed_unix",
+      "start_unix": 1788862048.133765,
+      "wall_seconds": 3.1201159954071045
+    },
+    "cas_payloads_verified": [
+      {
+        "receipt_sha256": "74ad015abd51dfe82ff72ceae651dc08e9edc0d38cd0d9d9ca85c6b85fde0f1d",
+        "payload_path": "/mnt/shared/prismabuild-fleet/cas/blobs/f8/f84e2034682298453a79a8a9bfba33eba4a746e7ce1e76d67317b98f877d5705",
+        "payload_sha256": "f84e2034682298453a79a8a9bfba33eba4a746e7ce1e76d67317b98f877d5705"
+      }
+    ],
+    "population": {
+      "path": "/mnt/shared/tessera-measurements/fused-selected-scratch-03.json",
+      "sha256": "1ab734ef48ba96f5aa10e1de6652a4161a7d6c0c77cfac7550a40b050f396cc4",
+      "counts": {
+        "passed": 1,
+        "failed": 0,
+        "error": 0,
+        "skipped": 0,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "device": "torch 2.11.0+cu130, 1 CUDA device(s), device 0 = NVIDIA GB10",
+      "skip_reasons": {},
+      "not_collected": [],
+      "strict_cuda": true,
+      "cuda_surface": {
+        "executed": 1,
+        "measured_by": "tests during whose call torch's CUDA allocator recorded a new allocation",
+        "is_a_floor": true,
+        "box_artifact_skips": {}
+      },
+      "source_identity": {
+        "schema": "tessera.suite_source.v1",
+        "sha256": "ea9358c59ab7f3900743c7cbe96a5c174b014380c042335fd8f60c04f02e5a59"
+      }
+    }
+  },
+  {
+    "label": "config_pre_fix",
+    "action_key": "2cf23acab5d678fa67753a5f75f76bc0cb0c211ee4f7408c7b504a9d6fc0fa10",
+    "terminal_path": "/mnt/shared/prismabuild-fleet/pb-queue/failed/2cf23acab5d678fa67753a5f75f76bc0cb0c211ee4f7408c7b504a9d6fc0fa10.json",
+    "terminal_sha256": "66b5709fe6dd66a8712dbb10fadf422fc353e38faa8fd63c6529234a72e1cebf",
+    "status": "failed",
+    "returncode": 1,
+    "worker": "dl380g10",
+    "snapshot": "73098b515e55cd65ae998fb45e1e8919a9070980",
+    "log_path": "/mnt/shared/tessera-measurements/glm-fused-selected-20260908/pb-config_pre_fix.log",
+    "log_sha256": "b7add3b2f2beecd25c5546eef2e0808db4d44ab0d1d7bf2c969b1d7aa868cb36",
+    "resource_profile": {
+      "box_window": {
+        "cpu": {
+          "busy_percent_mean": 2.01474455,
+          "busy_percent_peak": 3.0306824,
+          "psi_some_avg10_max": 0.0,
+          "psi_some_avg10_samples": 14,
+          "samples": 32,
+          "source": "netdata"
+        },
+        "end_unix": 1788862202.271892,
+        "errors": [
+          "no pqteld CSV for dl380g10 covering the window"
+        ],
+        "host": "dl380g10",
+        "schema": "prismabuild.box_window.v1",
+        "source": "netdata",
+        "start_unix": 1788862172.8955286
+      },
+      "finished_unix": 1788862202.271892,
+      "host": "dl380g10",
+      "process_io": {
+        "processes_live": 0,
+        "processes_observed": 4,
+        "processes_unreadable": 0,
+        "rchar": 22851998,
+        "read_bytes": 0,
+        "source": "proc_io",
+        "syscr": 1631,
+        "syscw": 11,
+        "wchar": 868,
+        "write_bytes": 472
+      },
+      "reaped_children": {
+        "involuntary_context_switches": 2,
+        "max_rss_bytes": null,
+        "max_rss_watermark_bytes": 113827840,
+        "scope": "this parent's launched child and the descendants it reaped",
+        "source": "getrusage_children",
+        "system_seconds": 0.01789200000000002,
+        "user_seconds": 0.11132399999999976,
+        "voluntary_context_switches": 3
+      },
+      "schema": "prismabuild.resource_profile.v1",
+      "scope": {
+        "cpu_seconds": 28.389128,
+        "cpu_system_seconds": 1.65196,
+        "cpu_user_seconds": 26.737168,
+        "memory_current_bytes": 16109568,
+        "memory_peak_bytes": 378912768,
+        "source": "cgroup"
+      },
+      "start_source": "claimed_unix",
+      "start_unix": 1788862172.8955286,
+      "wall_seconds": 29.376363515853882
+    },
+    "cas_payloads_verified": [],
+    "population": {
+      "path": "/mnt/shared/tessera-measurements/fused-selected-config-prefail.json",
+      "sha256": "fc84fce851987ac2cb65930a4e423a0f56c100f407ea9c7be4e981a5ae38fbae",
+      "counts": {
+        "passed": 0,
+        "failed": 1,
+        "error": 0,
+        "skipped": 0,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "device": "torch 2.10.0+cpu reports no CUDA device",
+      "skip_reasons": {},
+      "not_collected": [],
+      "strict_cuda": false,
+      "cuda_surface": {
+        "executed": 0,
+        "measured_by": "tests during whose call torch's CUDA allocator recorded a new allocation",
+        "is_a_floor": true,
+        "box_artifact_skips": {}
+      },
+      "source_identity": {
+        "schema": "tessera.suite_source.v1",
+        "sha256": "492f661760921b35b7a17df5b9820ce58eab2efce9bfffb173de774c22e600f2"
+      }
+    }
+  },
+  {
+    "label": "config_cpu_pass",
+    "action_key": "85aea37d0bf16dc2f70bbed1bcd7bee2799bf5e96193a3937a904ac4ccaee497",
+    "terminal_path": "/mnt/shared/prismabuild-fleet/pb-queue/done/85aea37d0bf16dc2f70bbed1bcd7bee2799bf5e96193a3937a904ac4ccaee497.json",
+    "terminal_sha256": "bed8618a9f9033e2a18c581107a087ad1bc14bf8a949e2bcb326b841720516c6",
+    "status": "executed",
+    "returncode": 0,
+    "worker": "dl380g10",
+    "snapshot": "86fa3bf0293f07470931db3ee75454b3d6d03852",
+    "log_path": "/mnt/shared/tessera-measurements/glm-fused-selected-20260908/pb-config_cpu_pass.log",
+    "log_sha256": "f79f6d15211b3cd525175c5930a410f623279296f477a1ce6fdc1994cdb63706",
+    "resource_profile": {
+      "box_window": {
+        "cpu": {
+          "busy_percent_mean": 5.282392915000003,
+          "busy_percent_peak": 6.3040486,
+          "psi_some_avg10_max": 0.18,
+          "psi_some_avg10_samples": 19,
+          "samples": 40,
+          "source": "netdata"
+        },
+        "end_unix": 1788862264.6017587,
+        "errors": [
+          "no pqteld CSV for dl380g10 covering the window"
+        ],
+        "host": "dl380g10",
+        "schema": "prismabuild.box_window.v1",
+        "source": "netdata",
+        "start_unix": 1788862226.1797419
+      },
+      "finished_unix": 1788862264.6017587,
+      "host": "dl380g10",
+      "process_io": {
+        "processes_live": 0,
+        "processes_observed": 8,
+        "processes_unreadable": 0,
+        "rchar": 22863208,
+        "read_bytes": 0,
+        "source": "proc_io",
+        "syscr": 1632,
+        "syscw": 11,
+        "wchar": 868,
+        "write_bytes": 472
+      },
+      "reaped_children": {
+        "involuntary_context_switches": 1,
+        "max_rss_bytes": null,
+        "max_rss_watermark_bytes": 125648896,
+        "scope": "this parent's launched child and the descendants it reaped",
+        "source": "getrusage_children",
+        "system_seconds": 0.013014999999999999,
+        "user_seconds": 0.10612200000000094,
+        "voluntary_context_switches": 3
+      },
+      "schema": "prismabuild.resource_profile.v1",
+      "scope": {
+        "cpu_seconds": 140.657683,
+        "cpu_system_seconds": 6.89866,
+        "cpu_user_seconds": 133.759023,
+        "memory_current_bytes": 1224704,
+        "memory_peak_bytes": 1389932544,
+        "source": "cgroup"
+      },
+      "start_source": "claimed_unix",
+      "start_unix": 1788862226.1797419,
+      "wall_seconds": 38.422016859054565
+    },
+    "cas_payloads_verified": [
+      {
+        "receipt_sha256": "1873c155d5f8e18d84f4d0f5648fd8796c011e0c6ad13ff432197da20af80f59",
+        "payload_path": "/mnt/shared/prismabuild-fleet/cas/blobs/b6/b69c72c7cc07728c1df4a5a3a21e10d91ff6f07219ce24a6e76ddf7c2f94a569",
+        "payload_sha256": "b69c72c7cc07728c1df4a5a3a21e10d91ff6f07219ce24a6e76ddf7c2f94a569"
+      }
+    ],
+    "population": {
+      "path": "/mnt/shared/tessera-measurements/fused-selected-config-cpu.json",
+      "sha256": "d736a35691362cd81b3f041a00e3108e5a4fb77bcd38305db24cdd397a526fd3",
+      "counts": {
+        "passed": 15,
+        "failed": 0,
+        "error": 0,
+        "skipped": 0,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "device": "torch 2.10.0+cpu reports no CUDA device",
+      "skip_reasons": {},
+      "not_collected": [],
+      "strict_cuda": false,
+      "cuda_surface": {
+        "executed": 0,
+        "measured_by": "tests during whose call torch's CUDA allocator recorded a new allocation",
+        "is_a_floor": true,
+        "box_artifact_skips": {}
+      },
+      "source_identity": {
+        "schema": "tessera.suite_source.v1",
+        "sha256": "a3d13d8e72fbc0457322d15f29532a0e49c861b3166ac2d96a254f8d73458377"
+      }
+    }
+  },
+  {
+    "label": "missing_optional_triton_master",
+    "action_key": "7a5938156aad4d8cea7d734a8d44f68384ec47673fd31ef4ee6be5c4de9c9946",
+    "terminal_path": "/mnt/shared/prismabuild-fleet/pb-queue/failed/7a5938156aad4d8cea7d734a8d44f68384ec47673fd31ef4ee6be5c4de9c9946.json",
+    "terminal_sha256": "5a595c26f9232b8c226dfdf0b0a43857dc64bb21de9af16d5803d1b100f57a0c",
+    "status": "failed",
+    "returncode": 1,
+    "worker": "dl380g10",
+    "snapshot": "18eb3bd7c472ccc45663861ed6fd7e6a3c4e9056",
+    "log_path": "/mnt/shared/tessera-measurements/glm-fused-selected-20260908/pb-missing_optional_triton_master.log",
+    "log_sha256": "b7ea59d26d51d1cf3948e68a4c898a7f25f53347bab7b198f14633a0d80d7199",
+    "resource_profile": {
+      "box_window": {
+        "cpu": {
+          "busy_percent_mean": 2.4310642625000005,
+          "busy_percent_peak": 3.9854622,
+          "psi_some_avg10_max": 0.21,
+          "psi_some_avg10_samples": 3,
+          "samples": 8,
+          "source": "netdata"
+        },
+        "end_unix": 1788862750.1311605,
+        "errors": [
+          "no pqteld CSV for dl380g10 covering the window"
+        ],
+        "host": "dl380g10",
+        "schema": "prismabuild.box_window.v1",
+        "source": "netdata",
+        "start_unix": 1788862744.3434403
+      },
+      "finished_unix": 1788862750.1311605,
+      "host": "dl380g10",
+      "process_io": {
+        "processes_live": 0,
+        "processes_observed": 6,
+        "processes_unreadable": 0,
+        "rchar": 22843509,
+        "read_bytes": 0,
+        "source": "proc_io",
+        "syscr": 1630,
+        "syscw": 11,
+        "wchar": 868,
+        "write_bytes": 472
+      },
+      "reaped_children": {
+        "involuntary_context_switches": 2,
+        "max_rss_bytes": null,
+        "max_rss_watermark_bytes": 113131520,
+        "scope": "this parent's launched child and the descendants it reaped",
+        "source": "getrusage_children",
+        "system_seconds": 0.019135000000000013,
+        "user_seconds": 0.10776299999999939,
+        "voluntary_context_switches": 3
+      },
+      "schema": "prismabuild.resource_profile.v1",
+      "scope": {
+        "cpu_seconds": 7.29469,
+        "cpu_system_seconds": 0.670511,
+        "cpu_user_seconds": 6.624178,
+        "memory_current_bytes": 958464,
+        "memory_peak_bytes": 433631232,
+        "source": "cgroup"
+      },
+      "start_source": "claimed_unix",
+      "start_unix": 1788862744.3434403,
+      "wall_seconds": 5.787720203399658
+    },
+    "cas_payloads_verified": [],
+    "population": {
+      "path": "/mnt/shared/tessera-measurements/glm-fused-selected-20260908/missing-triton-master.json",
+      "sha256": "5ec84cda2133a520f7a117ad27ce9f62035bccaffc0925258e66964a7d637d41",
+      "counts": {
+        "passed": 11,
+        "failed": 3,
+        "error": 0,
+        "skipped": 30,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "device": "torch 2.10.0+cpu reports no CUDA device",
+      "skip_reasons": {
+        "the lane is a CUDA kernel": 23,
+        "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-reach-gridbook/model.safetensors is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 5,
+        "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-reach-stock-twin/model.safetensors is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 2
+      },
+      "not_collected": [],
+      "strict_cuda": false,
+      "cuda_surface": {
+        "executed": 0,
+        "measured_by": "tests during whose call torch's CUDA allocator recorded a new allocation",
+        "is_a_floor": true,
+        "box_artifact_skips": {
+          "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-reach-gridbook/model.safetensors is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 5,
+          "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-reach-stock-twin/model.safetensors is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 2
+        }
+      },
+      "source_identity": {
+        "schema": "tessera.suite_source.v1",
+        "sha256": "df073cf3ab72500bea654ff34cfc915c2359146e9a3120398611604daf80aa44"
+      }
+    }
+  },
+  {
+    "label": "optional_triton_and_issue_snapshot_fixed",
+    "action_key": "916d91219fc0366e531f00f2bdf090460162d9e17f1ae53bfa6094a3ea04ecd4",
+    "terminal_path": "/mnt/shared/prismabuild-fleet/pb-queue/done/916d91219fc0366e531f00f2bdf090460162d9e17f1ae53bfa6094a3ea04ecd4.json",
+    "terminal_sha256": "eeab11868703e0f7ddd94b015be1121dfb49c15d794bf9742287a3345911a4e5",
+    "status": "executed",
+    "returncode": 0,
+    "worker": "dl380g10",
+    "snapshot": "bb69f77d52cbddf4e0c5c1b5b3f492a14b6bb07a",
+    "log_path": "/mnt/shared/tessera-measurements/glm-fused-selected-20260908/pb-optional_triton_and_issue_snapshot_fixed.log",
+    "log_sha256": "9feb0a3c0a7785ebf9f3204faa975f4652e5aa5b5affd18813f4382c02d516bb",
+    "resource_profile": {
+      "box_window": {
+        "cpu": {
+          "busy_percent_mean": 3.128121093333334,
+          "busy_percent_peak": 6.7184757,
+          "psi_some_avg10_max": 0.18,
+          "psi_some_avg10_samples": 14,
+          "samples": 30,
+          "source": "netdata"
+        },
+        "end_unix": 1788862796.3943863,
+        "errors": [
+          "no pqteld CSV for dl380g10 covering the window"
+        ],
+        "host": "dl380g10",
+        "schema": "prismabuild.box_window.v1",
+        "source": "netdata",
+        "start_unix": 1788862768.1571684
+      },
+      "finished_unix": 1788862796.3943863,
+      "host": "dl380g10",
+      "process_io": {
+        "processes_live": 0,
+        "processes_observed": 10,
+        "processes_unreadable": 0,
+        "rchar": 22865593,
+        "read_bytes": 0,
+        "source": "proc_io",
+        "syscr": 1631,
+        "syscw": 11,
+        "wchar": 868,
+        "write_bytes": 472
+      },
+      "reaped_children": {
+        "involuntary_context_switches": 2,
+        "max_rss_bytes": null,
+        "max_rss_watermark_bytes": 132845568,
+        "scope": "this parent's launched child and the descendants it reaped",
+        "source": "getrusage_children",
+        "system_seconds": 0.021151000000000142,
+        "user_seconds": 0.1027319999999996,
+        "voluntary_context_switches": 3
+      },
+      "schema": "prismabuild.resource_profile.v1",
+      "scope": {
+        "cpu_seconds": 34.150635,
+        "cpu_system_seconds": 3.342138,
+        "cpu_user_seconds": 30.808496,
+        "memory_current_bytes": 200278016,
+        "memory_peak_bytes": 1825325056,
+        "source": "cgroup"
+      },
+      "start_source": "claimed_unix",
+      "start_unix": 1788862768.1571684,
+      "wall_seconds": 28.237217903137207
+    },
+    "cas_payloads_verified": [
+      {
+        "receipt_sha256": "3c65392d2791a43dd3292eba1b9cb8d4c4379a79fc04b3b30e6cd776e585efbb",
+        "payload_path": "/mnt/shared/prismabuild-fleet/cas/blobs/70/70d91fee684bea3baf3f93878e82dffd48b1f0fb627bfc853a6a55837bf22146",
+        "payload_sha256": "70d91fee684bea3baf3f93878e82dffd48b1f0fb627bfc853a6a55837bf22146"
+      }
+    ],
+    "population": {
+      "path": "/mnt/shared/tessera-measurements/glm-fused-selected-20260908/optional-deps-fixed.json",
+      "sha256": "b85e532522265f36d9e676bdc56e5504bb830db342da83bd9e688bcbf7c0c4f7",
+      "counts": {
+        "passed": 17,
+        "failed": 0,
+        "error": 0,
+        "skipped": 30,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "device": "torch 2.10.0+cpu reports no CUDA device",
+      "skip_reasons": {
+        "the lane is a CUDA kernel": 23,
+        "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-reach-gridbook/model.safetensors is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 5,
+        "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-reach-stock-twin/model.safetensors is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 2
+      },
+      "not_collected": [],
+      "strict_cuda": false,
+      "cuda_surface": {
+        "executed": 0,
+        "measured_by": "tests during whose call torch's CUDA allocator recorded a new allocation",
+        "is_a_floor": true,
+        "box_artifact_skips": {
+          "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-reach-gridbook/model.safetensors is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 5,
+          "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-reach-stock-twin/model.safetensors is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 2
+        }
+      },
+      "source_identity": {
+        "schema": "tessera.suite_source.v1",
+        "sha256": "b81004af80be4934df52415cfb887e10a6c9630b9186e4362d05590fc9b01262"
+      }
+    }
+  },
+  {
+    "label": "measurement_docs_pass",
+    "action_key": "253997a2b5848d86700a380195db6929db79587936ebe2674380d84db08d9ecf",
+    "terminal_path": "/mnt/shared/prismabuild-fleet/pb-queue/done/253997a2b5848d86700a380195db6929db79587936ebe2674380d84db08d9ecf.json",
+    "terminal_sha256": "0e7f5b4baf5cbf694db3409b138ba089a6102a3f7a11639d12e611793d8d36a4",
+    "status": "executed",
+    "returncode": 0,
+    "worker": "dl380g10",
+    "snapshot": "77b57e4c8b087a603976646b965e8beb3149ef74",
+    "log_path": "/mnt/shared/tessera-measurements/glm-fused-selected-20260908/pb-measurement_docs_pass.log",
+    "log_sha256": "4681cec12a99a80c4170a375627babb3c517ea9bb3b0df694f5791d62007aadd",
+    "resource_profile": {
+      "box_window": {
+        "cpu": {
+          "busy_percent_mean": 4.276286864705884,
+          "busy_percent_peak": 5.8927005,
+          "psi_some_avg10_max": 0.0,
+          "psi_some_avg10_samples": 8,
+          "samples": 17,
+          "source": "netdata"
+        },
+        "end_unix": 1788863759.7686627,
+        "errors": [
+          "no pqteld CSV for dl380g10 covering the window"
+        ],
+        "host": "dl380g10",
+        "schema": "prismabuild.box_window.v1",
+        "source": "netdata",
+        "start_unix": 1788863744.3100505
+      },
+      "finished_unix": 1788863759.7686627,
+      "host": "dl380g10",
+      "process_io": {
+        "processes_live": 0,
+        "processes_observed": 6,
+        "processes_unreadable": 0,
+        "rchar": 22925631,
+        "read_bytes": 0,
+        "source": "proc_io",
+        "syscr": 1635,
+        "syscw": 11,
+        "wchar": 868,
+        "write_bytes": 472
+      },
+      "reaped_children": {
+        "involuntary_context_switches": 2,
+        "max_rss_bytes": null,
+        "max_rss_watermark_bytes": 124944384,
+        "scope": "this parent's launched child and the descendants it reaped",
+        "source": "getrusage_children",
+        "system_seconds": 0.019087999999999994,
+        "user_seconds": 0.12156400000000289,
+        "voluntary_context_switches": 3
+      },
+      "schema": "prismabuild.resource_profile.v1",
+      "scope": {
+        "cpu_seconds": 22.790034,
+        "cpu_system_seconds": 0.746132,
+        "cpu_user_seconds": 22.043901,
+        "memory_current_bytes": 24731648,
+        "memory_peak_bytes": 459915264,
+        "source": "cgroup"
+      },
+      "start_source": "claimed_unix",
+      "start_unix": 1788863744.3100505,
+      "wall_seconds": 15.458612203598022
+    },
+    "cas_payloads_verified": [
+      {
+        "receipt_sha256": "0729089ebbf7e3dd620b68f6d0db98ec7ef4ca5f68c2670f20b7c30fcf761e0b",
+        "payload_path": "/mnt/shared/prismabuild-fleet/cas/blobs/9b/9b45ff3daaaf0d246610bdf4122a760a3a234313205b626624938870c876410c",
+        "payload_sha256": "9b45ff3daaaf0d246610bdf4122a760a3a234313205b626624938870c876410c"
+      }
+    ],
+    "population": {
+      "path": "/mnt/shared/tessera-measurements/glm-fused-selected-20260908/final-docs.json",
+      "sha256": "beb026887379b067a18069bb149828f19f5024d71e7fb0b079a08ed27c2baf05",
+      "counts": {
+        "passed": 13,
+        "failed": 0,
+        "error": 0,
+        "skipped": 0,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "device": "torch 2.10.0+cpu reports no CUDA device",
+      "skip_reasons": {},
+      "not_collected": [],
+      "strict_cuda": false,
+      "cuda_surface": {
+        "executed": 0,
+        "measured_by": "tests during whose call torch's CUDA allocator recorded a new allocation",
+        "is_a_floor": true,
+        "box_artifact_skips": {}
+      },
+      "source_identity": {
+        "schema": "tessera.suite_source.v1",
+        "sha256": "54ea0126e7980ea531140a429104d9f1937611e11ce4953a790d0bf0710b9b80"
+      }
+    }
+  },
+  {
+    "label": "review_fixes_pre_fail",
+    "action_key": "562de1b75a254e22d24b944c2319dc76e40850bd6f8dee978fbc8211fc4a516e",
+    "terminal_path": "/mnt/shared/prismabuild-fleet/pb-queue/failed/562de1b75a254e22d24b944c2319dc76e40850bd6f8dee978fbc8211fc4a516e.json",
+    "terminal_sha256": "d3303640f5332c1d18d65b3d597ae25ef1b6ba27c4386da85e906d20f1f5cc7a",
+    "status": "failed",
+    "returncode": 1,
+    "worker": "dl380g10",
+    "snapshot": "6f4c64eb16d55a9a34f448705634d6884c065380",
+    "log_path": "/mnt/shared/tessera-measurements/glm-fused-selected-20260908/pb-review_fixes_pre_fail.log",
+    "log_sha256": "16ea132bfb898a929249b1aa8bea784ccb7dbd3dc4a38d5c09398ab9db82211c",
+    "resource_profile": {
+      "box_window": {
+        "cpu": {
+          "busy_percent_mean": 2.14796666,
+          "busy_percent_peak": 3.3341694,
+          "psi_some_avg10_max": 0.0,
+          "psi_some_avg10_samples": 16,
+          "samples": 35,
+          "source": "netdata"
+        },
+        "end_unix": 1788863953.887219,
+        "errors": [
+          "no pqteld CSV for dl380g10 covering the window"
+        ],
+        "host": "dl380g10",
+        "schema": "prismabuild.box_window.v1",
+        "source": "netdata",
+        "start_unix": 1788863920.8665526
+      },
+      "finished_unix": 1788863953.887219,
+      "host": "dl380g10",
+      "process_io": {
+        "processes_live": 0,
+        "processes_observed": 6,
+        "processes_unreadable": 0,
+        "rchar": 22925757,
+        "read_bytes": 0,
+        "source": "proc_io",
+        "syscr": 1634,
+        "syscw": 11,
+        "wchar": 868,
+        "write_bytes": 472
+      },
+      "reaped_children": {
+        "involuntary_context_switches": 0,
+        "max_rss_bytes": null,
+        "max_rss_watermark_bytes": 124944384,
+        "scope": "this parent's launched child and the descendants it reaped",
+        "source": "getrusage_children",
+        "system_seconds": 0.019000999999999824,
+        "user_seconds": 0.1030099999999976,
+        "voluntary_context_switches": 3
+      },
+      "schema": "prismabuild.resource_profile.v1",
+      "scope": {
+        "cpu_seconds": 34.410627,
+        "cpu_system_seconds": 2.114424,
+        "cpu_user_seconds": 32.296203,
+        "memory_current_bytes": 17850368,
+        "memory_peak_bytes": 601526272,
+        "source": "cgroup"
+      },
+      "start_source": "claimed_unix",
+      "start_unix": 1788863920.8665526,
+      "wall_seconds": 33.0206663608551
+    },
+    "cas_payloads_verified": [],
+    "population": {
+      "path": "/mnt/shared/tessera-measurements/glm-fused-selected-20260908/review-fixes-prefail.json",
+      "sha256": "20da0eb2eabeb7d53fb0164bafa9084b7e9ee8c6e6fd99497f64f0f8401216a5",
+      "counts": {
+        "passed": 0,
+        "failed": 6,
+        "error": 0,
+        "skipped": 0,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "device": "torch 2.10.0+cpu reports no CUDA device",
+      "skip_reasons": {},
+      "not_collected": [],
+      "strict_cuda": false,
+      "cuda_surface": {
+        "executed": 0,
+        "measured_by": "tests during whose call torch's CUDA allocator recorded a new allocation",
+        "is_a_floor": true,
+        "box_artifact_skips": {}
+      },
+      "source_identity": {
+        "schema": "tessera.suite_source.v1",
+        "sha256": "a779201cf219c63bf657b430a9f585dcc118cb570dfcd14fd026b4483251bfa2"
+      }
+    }
+  },
+  {
+    "label": "review_fixes_green",
+    "action_key": "b109ec11a988a0ed677488afa32fdd412863cdc4d14241e909d1fe041ad701b4",
+    "terminal_path": "/mnt/shared/prismabuild-fleet/pb-queue/done/b109ec11a988a0ed677488afa32fdd412863cdc4d14241e909d1fe041ad701b4.json",
+    "terminal_sha256": "211a155f096af27ec6e628e6596b3044db9fb70f9d62a5a1dc44d8ab6a6da653",
+    "status": "executed",
+    "returncode": 0,
+    "worker": "dl380g10",
+    "snapshot": "a37fea79420e84c130def9b5049d291ce198faff",
+    "log_path": "/mnt/shared/tessera-measurements/glm-fused-selected-20260908/pb-review_fixes_green.log",
+    "log_sha256": "e05f84d6b168ccbc06905cdd43020d674b1f6e38a3356c402dd84108e314a7c8",
+    "resource_profile": {
+      "box_window": {
+        "cpu": {
+          "busy_percent_mean": 4.95025641509434,
+          "busy_percent_peak": 6.2515665,
+          "psi_some_avg10_max": 0.0,
+          "psi_some_avg10_samples": 26,
+          "samples": 53,
+          "source": "netdata"
+        },
+        "end_unix": 1788864045.6287394,
+        "errors": [
+          "no pqteld CSV for dl380g10 covering the window"
+        ],
+        "host": "dl380g10",
+        "schema": "prismabuild.box_window.v1",
+        "source": "netdata",
+        "start_unix": 1788863994.2100668
+      },
+      "finished_unix": 1788864045.6287394,
+      "host": "dl380g10",
+      "process_io": {
+        "processes_live": 0,
+        "processes_observed": 8,
+        "processes_unreadable": 0,
+        "rchar": 22926965,
+        "read_bytes": 0,
+        "source": "proc_io",
+        "syscr": 1633,
+        "syscw": 11,
+        "wchar": 868,
+        "write_bytes": 472
+      },
+      "reaped_children": {
+        "involuntary_context_switches": 1,
+        "max_rss_bytes": null,
+        "max_rss_watermark_bytes": 124944384,
+        "scope": "this parent's launched child and the descendants it reaped",
+        "source": "getrusage_children",
+        "system_seconds": 0.01594699999999971,
+        "user_seconds": 0.10863600000000062,
+        "voluntary_context_switches": 3
+      },
+      "schema": "prismabuild.resource_profile.v1",
+      "scope": {
+        "cpu_seconds": 168.369133,
+        "cpu_system_seconds": 7.252144,
+        "cpu_user_seconds": 161.116989,
+        "memory_current_bytes": 1789952,
+        "memory_peak_bytes": 1317244928,
+        "source": "cgroup"
+      },
+      "start_source": "claimed_unix",
+      "start_unix": 1788863994.2100668,
+      "wall_seconds": 51.41867256164551
+    },
+    "cas_payloads_verified": [
+      {
+        "receipt_sha256": "ba96b643a559578a9e5524c6e94cbf5b52c08648c5f5077900d1c3b6cd187ff1",
+        "payload_path": "/mnt/shared/prismabuild-fleet/cas/blobs/eb/eb1f0a3cbcb3841123e72dc77834306f503589b98cb059f1f867b0b45257bf6b",
+        "payload_sha256": "eb1f0a3cbcb3841123e72dc77834306f503589b98cb059f1f867b0b45257bf6b"
+      }
+    ],
+    "population": {
+      "path": "/mnt/shared/tessera-measurements/glm-fused-selected-20260908/review-fixes-green.json",
+      "sha256": "e5bef6034f218142923ee33ed59e318d366d8e04e18c296abc6b0fd97ee771cb",
+      "counts": {
+        "passed": 53,
+        "failed": 0,
+        "error": 0,
+        "skipped": 0,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "device": "torch 2.10.0+cpu reports no CUDA device",
+      "skip_reasons": {},
+      "not_collected": [],
+      "strict_cuda": false,
+      "cuda_surface": {
+        "executed": 0,
+        "measured_by": "tests during whose call torch's CUDA allocator recorded a new allocation",
+        "is_a_floor": true,
+        "box_artifact_skips": {}
+      },
+      "source_identity": {
+        "schema": "tessera.suite_source.v1",
+        "sha256": "9ad5f8ada2a270278c0be46b5984d96053866bcb48db93be8fedb8a84de9aa58"
+      }
+    }
+  },
+  {
+    "label": "impacted_cpu_0",
+    "action_key": "1651694e8f1718b1f30912a318aa0b06faa515897b8f4e928028311899b3c146",
+    "terminal_path": "/mnt/shared/prismabuild-fleet/pb-queue/done/1651694e8f1718b1f30912a318aa0b06faa515897b8f4e928028311899b3c146.json",
+    "terminal_sha256": "52e86a7587152e78e16563dd537ffede65bfa8747dff9cd6eece99bd4ac2b278",
+    "status": "executed",
+    "returncode": 0,
+    "worker": "dl380g10",
+    "snapshot": "e316864a64bd6f873f7f9f57506649e20df72ed7",
+    "log_path": "/mnt/shared/tessera-measurements/glm-fused-selected-20260908/pb-impacted_cpu_0.log",
+    "log_sha256": "38eccdb1e24691cd08db5967e2234c4d116930cfc677a510dc0917a30b8ec3e4",
+    "resource_profile": {
+      "box_window": {
+        "cpu": {
+          "busy_percent_mean": 27.844851482320443,
+          "busy_percent_peak": 56.271949600000006,
+          "psi_some_avg10_max": 3.98,
+          "psi_some_avg10_samples": 90,
+          "samples": 181,
+          "source": "netdata"
+        },
+        "end_unix": 1788862562.972464,
+        "errors": [
+          "no pqteld CSV for dl380g10 covering the window"
+        ],
+        "host": "dl380g10",
+        "schema": "prismabuild.box_window.v1",
+        "source": "netdata",
+        "start_unix": 1788862383.8514738
+      },
+      "finished_unix": 1788862562.972464,
+      "host": "dl380g10",
+      "process_io": {
+        "processes_live": 0,
+        "processes_observed": 85,
+        "processes_unreadable": 0,
+        "rchar": 22865634,
+        "read_bytes": 0,
+        "source": "proc_io",
+        "syscr": 1632,
+        "syscw": 11,
+        "wchar": 868,
+        "write_bytes": 472
+      },
+      "reaped_children": {
+        "involuntary_context_switches": 0,
+        "max_rss_bytes": null,
+        "max_rss_watermark_bytes": 49635328,
+        "scope": "this parent's launched child and the descendants it reaped",
+        "source": "getrusage_children",
+        "system_seconds": 0.017970999999999987,
+        "user_seconds": 0.1377830000000002,
+        "voluntary_context_switches": 3
+      },
+      "schema": "prismabuild.resource_profile.v1",
+      "scope": {
+        "cpu_seconds": 427.099454,
+        "cpu_system_seconds": 21.692565,
+        "cpu_user_seconds": 405.406888,
+        "memory_current_bytes": 271601664,
+        "memory_peak_bytes": 1722720256,
+        "source": "cgroup"
+      },
+      "start_source": "claimed_unix",
+      "start_unix": 1788862383.8514738,
+      "wall_seconds": 179.12099027633667
+    },
+    "cas_payloads_verified": [
+      {
+        "receipt_sha256": "139277382e5f20900526f3ec4da7fa079e5f50246470aa09d88108af9098bcf8",
+        "payload_path": "/mnt/shared/prismabuild-fleet/cas/blobs/18/1855500fcc4f9df46ffa0bce0734bd917b58c888142f1d8ce8368760eea27385",
+        "payload_sha256": "1855500fcc4f9df46ffa0bce0734bd917b58c888142f1d8ce8368760eea27385"
+      }
+    ],
+    "population": {
+      "path": "/mnt/shared/tessera-measurements/glm-fused-selected-20260908/impacted-0.json",
+      "sha256": "465080908e7df76af12cedc0ba880b029a2a07b7829530935000116fc3452875",
+      "counts": {
+        "passed": 349,
+        "failed": 0,
+        "error": 0,
+        "skipped": 59,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "device": "torch 2.10.0+cpu reports no CUDA device",
+      "skip_reasons": {
+        "the captured TCQ trellis is a CUDA path": 29,
+        "selected window kernel requires CUDA": 20,
+        "the encoder is a GPU job": 5,
+        "box artifact absent: the PrismaQuant worktree carrying the continuous-rate branch -- /home/rob/pq-wt/tessera-continuous/prismaquant/tessera_formats.py is not on this box (set TESSERA_PRISMAQUANT_WORKTREE; documented default /home/rob/pq-wt/tessera-continuous)": 2,
+        "could not import 'vllm': No module named 'vllm'": 2,
+        "could not import 'triton': No module named 'triton'": 1
+      },
+      "not_collected": [],
+      "strict_cuda": false,
+      "cuda_surface": {
+        "executed": 0,
+        "measured_by": "tests during whose call torch's CUDA allocator recorded a new allocation",
+        "is_a_floor": true,
+        "box_artifact_skips": {
+          "box artifact absent: the PrismaQuant worktree carrying the continuous-rate branch -- /home/rob/pq-wt/tessera-continuous/prismaquant/tessera_formats.py is not on this box (set TESSERA_PRISMAQUANT_WORKTREE; documented default /home/rob/pq-wt/tessera-continuous)": 2
+        }
+      },
+      "source_identity": {
+        "schema": "tessera.suite_source.v1",
+        "sha256": "a3d13d8e72fbc0457322d15f29532a0e49c861b3166ac2d96a254f8d73458377"
+      }
+    }
+  },
+  {
+    "label": "impacted_cpu_1",
+    "action_key": "50629a2c726a874289de423d7afb59307cc3babb306f1808ff9ee7adc8a74cea",
+    "terminal_path": "/mnt/shared/prismabuild-fleet/pb-queue/done/50629a2c726a874289de423d7afb59307cc3babb306f1808ff9ee7adc8a74cea.json",
+    "terminal_sha256": "3d13286d6cf4060654bcc17df6ab32ec15b7adbaf9e784c07916af919bbf62ce",
+    "status": "executed",
+    "returncode": 0,
+    "worker": "dl380g10",
+    "snapshot": "60383fa8d48658692d728e76354acbc6131a54e1",
+    "log_path": "/mnt/shared/tessera-measurements/glm-fused-selected-20260908/pb-impacted_cpu_1.log",
+    "log_sha256": "faf7f674086f4c0dccc9246eeb2705e283c6628f1a0decffb89a11e9cab11093",
+    "resource_profile": {
+      "box_window": {
+        "cpu": {
+          "busy_percent_mean": 38.008793536448586,
+          "busy_percent_peak": 56.271949600000006,
+          "psi_some_avg10_max": 3.98,
+          "psi_some_avg10_samples": 52,
+          "samples": 107,
+          "source": "netdata"
+        },
+        "end_unix": 1788862488.0059633,
+        "errors": [
+          "no pqteld CSV for dl380g10 covering the window"
+        ],
+        "host": "dl380g10",
+        "schema": "prismabuild.box_window.v1",
+        "source": "netdata",
+        "start_unix": 1788862383.953538
+      },
+      "finished_unix": 1788862488.0059633,
+      "host": "dl380g10",
+      "process_io": {
+        "processes_live": 0,
+        "processes_observed": 21,
+        "processes_unreadable": 0,
+        "rchar": 22864597,
+        "read_bytes": 0,
+        "source": "proc_io",
+        "syscr": 1631,
+        "syscw": 11,
+        "wchar": 868,
+        "write_bytes": 472
+      },
+      "reaped_children": {
+        "involuntary_context_switches": 1,
+        "max_rss_bytes": null,
+        "max_rss_watermark_bytes": 115150848,
+        "scope": "this parent's launched child and the descendants it reaped",
+        "source": "getrusage_children",
+        "system_seconds": 0.023031000000000024,
+        "user_seconds": 0.12717199999999984,
+        "voluntary_context_switches": 4
+      },
+      "schema": "prismabuild.resource_profile.v1",
+      "scope": {
+        "cpu_seconds": 351.027826,
+        "cpu_system_seconds": 16.594431,
+        "cpu_user_seconds": 334.433394,
+        "memory_current_bytes": 10342400,
+        "memory_peak_bytes": 1269358592,
+        "source": "cgroup"
+      },
+      "start_source": "claimed_unix",
+      "start_unix": 1788862383.953538,
+      "wall_seconds": 104.05242538452148
+    },
+    "cas_payloads_verified": [
+      {
+        "receipt_sha256": "9dcb73b9433379efc118a70865f71d027546cec9f04068786211875798735867",
+        "payload_path": "/mnt/shared/prismabuild-fleet/cas/blobs/ce/ce1c07576a3fcbedfbed0a4b9acbac41a6abc16652b0bc957d6bc6c764cdedbe",
+        "payload_sha256": "ce1c07576a3fcbedfbed0a4b9acbac41a6abc16652b0bc957d6bc6c764cdedbe"
+      }
+    ],
+    "population": {
+      "path": "/mnt/shared/tessera-measurements/glm-fused-selected-20260908/impacted-1.json",
+      "sha256": "5e18900db3d4d1361d74308896b07e1698714b69c4978d350ee0bd982bc5ff72",
+      "counts": {
+        "passed": 451,
+        "failed": 0,
+        "error": 0,
+        "skipped": 11,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "device": "torch 2.10.0+cpu reports no CUDA device",
+      "skip_reasons": {
+        "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/compile-dispatch/serve_qwen_dispatch_eager.log is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 6,
+        "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/stock/serve_qwen_stock_tessera-k2-graph.log is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 1,
+        "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/stock/serve_qwen_stock_tessera-k2.log is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 1,
+        "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/tsplugin/vllm-cache-fresh/torch_compile_cache/torch_aot_compile/15957ad9e7a72f1d7539f792e4d4cee6e704e2e99696f07e909c209f30f5ddec is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 1,
+        "box artifact absent: kl_tool.py and kl_estimator.py, the untracked served-KL instrument -- nothing set KL_TOOL_DIR and its default is not resolved for this root (set KL_TOOL_DIR; documented default /home/rob/dq-runs)": 1,
+        "the kernel lane is a CUDA path": 1
+      },
+      "not_collected": [],
+      "strict_cuda": false,
+      "cuda_surface": {
+        "executed": 0,
+        "measured_by": "tests during whose call torch's CUDA allocator recorded a new allocation",
+        "is_a_floor": true,
+        "box_artifact_skips": {
+          "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/compile-dispatch/serve_qwen_dispatch_eager.log is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 6,
+          "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/stock/serve_qwen_stock_tessera-k2-graph.log is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 1,
+          "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/stock/serve_qwen_stock_tessera-k2.log is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 1,
+          "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/tsplugin/vllm-cache-fresh/torch_compile_cache/torch_aot_compile/15957ad9e7a72f1d7539f792e4d4cee6e704e2e99696f07e909c209f30f5ddec is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 1,
+          "box artifact absent: kl_tool.py and kl_estimator.py, the untracked served-KL instrument -- nothing set KL_TOOL_DIR and its default is not resolved for this root (set KL_TOOL_DIR; documented default /home/rob/dq-runs)": 1
+        }
+      },
+      "source_identity": {
+        "schema": "tessera.suite_source.v1",
+        "sha256": "a3d13d8e72fbc0457322d15f29532a0e49c861b3166ac2d96a254f8d73458377"
+      }
+    }
+  },
+  {
+    "label": "impacted_cpu_2",
+    "action_key": "82978dc684dcf2c046e06b73c934e0786de506c29f73a533177d00c077f61857",
+    "terminal_path": "/mnt/shared/prismabuild-fleet/pb-queue/failed/82978dc684dcf2c046e06b73c934e0786de506c29f73a533177d00c077f61857.json",
+    "terminal_sha256": "dafad2048b525f208f90ededf640a947bdc0ffe4acdfefb48c1b9c3fa0695658",
+    "status": "failed",
+    "returncode": 1,
+    "worker": "dl380g10",
+    "snapshot": "9f680f72029446c514ead30e340c6f9a8b2c3568",
+    "log_path": "/mnt/shared/tessera-measurements/glm-fused-selected-20260908/pb-impacted_cpu_2.log",
+    "log_sha256": "131073f24868d3bb1cf35c4dcf8ac5fceb45cc65a09c3205c000be92524b535a",
+    "resource_profile": {
+      "box_window": {
+        "cpu": {
+          "busy_percent_mean": 20.850689087586208,
+          "busy_percent_peak": 56.271949600000006,
+          "psi_some_avg10_max": 3.98,
+          "psi_some_avg10_samples": 144,
+          "samples": 290,
+          "source": "netdata"
+        },
+        "end_unix": 1788862670.9950278,
+        "errors": [
+          "no pqteld CSV for dl380g10 covering the window"
+        ],
+        "host": "dl380g10",
+        "schema": "prismabuild.box_window.v1",
+        "source": "netdata",
+        "start_unix": 1788862382.4530828
+      },
+      "finished_unix": 1788862670.9950278,
+      "host": "dl380g10",
+      "process_io": {
+        "processes_live": 0,
+        "processes_observed": 29,
+        "processes_unreadable": 0,
+        "rchar": 15376855,
+        "read_bytes": 0,
+        "source": "proc_io",
+        "syscr": 715,
+        "syscw": 11,
+        "wchar": 868,
+        "write_bytes": 472
+      },
+      "reaped_children": {
+        "involuntary_context_switches": 2,
+        "max_rss_bytes": null,
+        "max_rss_watermark_bytes": 115814400,
+        "scope": "this parent's launched child and the descendants it reaped",
+        "source": "getrusage_children",
+        "system_seconds": 0.017059000000000157,
+        "user_seconds": 0.11239300000000085,
+        "voluntary_context_switches": 3
+      },
+      "schema": "prismabuild.resource_profile.v1",
+      "scope": {
+        "cpu_seconds": 894.177484,
+        "cpu_system_seconds": 12.568039,
+        "cpu_user_seconds": 881.609445,
+        "memory_current_bytes": 26103808,
+        "memory_peak_bytes": 1286070272,
+        "source": "cgroup"
+      },
+      "start_source": "claimed_unix",
+      "start_unix": 1788862382.4530828,
+      "wall_seconds": 288.54194498062134
+    },
+    "cas_payloads_verified": [],
+    "population": {
+      "path": "/mnt/shared/tessera-measurements/glm-fused-selected-20260908/impacted-2.json",
+      "sha256": "d2a4b94e1968e57ba88c34e255f22aa09c1bb2f6dcb0b1ed34cdf9c8a67a99d0",
+      "counts": {
+        "passed": 482,
+        "failed": 1,
+        "error": 0,
+        "skipped": 36,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "device": "torch 2.10.0+cpu reports no CUDA device",
+      "skip_reasons": {
+        "BODY device unpack requires CUDA": 22,
+        "the encoder is a GPU job": 13,
+        "the encoder is a CUDA path": 1
+      },
+      "not_collected": [],
+      "strict_cuda": false,
+      "cuda_surface": {
+        "executed": 0,
+        "measured_by": "tests during whose call torch's CUDA allocator recorded a new allocation",
+        "is_a_floor": true,
+        "box_artifact_skips": {}
+      },
+      "source_identity": {
+        "schema": "tessera.suite_source.v1",
+        "sha256": "a3d13d8e72fbc0457322d15f29532a0e49c861b3166ac2d96a254f8d73458377"
+      }
+    }
+  },
+  {
+    "label": "impacted_cpu_3",
+    "action_key": "74258f69da81ea631396c1b64f38b1612c77a4365f3f996c8b58e2d0dbf948c1",
+    "terminal_path": "/mnt/shared/prismabuild-fleet/pb-queue/done/74258f69da81ea631396c1b64f38b1612c77a4365f3f996c8b58e2d0dbf948c1.json",
+    "terminal_sha256": "b011aaf8a5f942e22a0b3c345098823cb64f7f89455ff34d0f8a321ea207b242",
+    "status": "executed",
+    "returncode": 0,
+    "worker": "dl380g10",
+    "snapshot": "841e907ff725f115f4907aba91c1fbbe6f59271c",
+    "log_path": "/mnt/shared/tessera-measurements/glm-fused-selected-20260908/pb-impacted_cpu_3.log",
+    "log_sha256": "06a694440ed3eae4c63386f2e85c3e447527abe195b3e23d78acd49a715013c5",
+    "resource_profile": {
+      "box_window": {
+        "cpu": {
+          "busy_percent_mean": 41.44203386896551,
+          "busy_percent_peak": 56.271949600000006,
+          "psi_some_avg10_max": 3.98,
+          "psi_some_avg10_samples": 43,
+          "samples": 87,
+          "source": "netdata"
+        },
+        "end_unix": 1788862468.1586342,
+        "errors": [
+          "no pqteld CSV for dl380g10 covering the window"
+        ],
+        "host": "dl380g10",
+        "schema": "prismabuild.box_window.v1",
+        "source": "netdata",
+        "start_unix": 1788862383.8914654
+      },
+      "finished_unix": 1788862468.1586342,
+      "host": "dl380g10",
+      "process_io": {
+        "processes_live": 0,
+        "processes_observed": 8,
+        "processes_unreadable": 0,
+        "rchar": 22864501,
+        "read_bytes": 0,
+        "source": "proc_io",
+        "syscr": 1631,
+        "syscw": 11,
+        "wchar": 868,
+        "write_bytes": 472
+      },
+      "reaped_children": {
+        "involuntary_context_switches": 1,
+        "max_rss_bytes": null,
+        "max_rss_watermark_bytes": 132845568,
+        "scope": "this parent's launched child and the descendants it reaped",
+        "source": "getrusage_children",
+        "system_seconds": 0.021924999999999972,
+        "user_seconds": 0.11361100000000057,
+        "voluntary_context_switches": 3
+      },
+      "schema": "prismabuild.resource_profile.v1",
+      "scope": {
+        "cpu_seconds": 262.977157,
+        "cpu_system_seconds": 19.865519,
+        "cpu_user_seconds": 243.111638,
+        "memory_current_bytes": 21114880,
+        "memory_peak_bytes": 1419436032,
+        "source": "cgroup"
+      },
+      "start_source": "claimed_unix",
+      "start_unix": 1788862383.8914654,
+      "wall_seconds": 84.26716876029968
+    },
+    "cas_payloads_verified": [
+      {
+        "receipt_sha256": "29705724b59ff35599dbfbc4686da4665f8901c2e38e7a01b53086932292ad09",
+        "payload_path": "/mnt/shared/prismabuild-fleet/cas/blobs/72/72eebf9733b2622a46d0714252b0bc1c5a4d377793da86ab9a87814236acb121",
+        "payload_sha256": "72eebf9733b2622a46d0714252b0bc1c5a4d377793da86ab9a87814236acb121"
+      }
+    ],
+    "population": {
+      "path": "/mnt/shared/tessera-measurements/glm-fused-selected-20260908/impacted-3.json",
+      "sha256": "b1de61336c3f2021aeecc6c9dcde8a18cb57b08c2fe21348a4741206c22e5539",
+      "counts": {
+        "passed": 392,
+        "failed": 0,
+        "error": 0,
+        "skipped": 78,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "device": "torch 2.10.0+cpu reports no CUDA device",
+      "skip_reasons": {
+        "the Viterbi is CUDA": 29,
+        "the kernel lane is a CUDA path": 28,
+        "the Tessera encoder is a CUDA path": 14,
+        "could not import 'triton': No module named 'triton'": 6,
+        "needs a CUDA device": 1
+      },
+      "not_collected": [],
+      "strict_cuda": false,
+      "cuda_surface": {
+        "executed": 0,
+        "measured_by": "tests during whose call torch's CUDA allocator recorded a new allocation",
+        "is_a_floor": true,
+        "box_artifact_skips": {}
+      },
+      "source_identity": {
+        "schema": "tessera.suite_source.v1",
+        "sha256": "a3d13d8e72fbc0457322d15f29532a0e49c861b3166ac2d96a254f8d73458377"
+      }
+    }
+  },
+  {
+    "label": "impacted_cpu_4",
+    "action_key": "d5cc1ec6c2c9a67dd99fc3fe87b70b7fb271108c42dae981df4f82680791f134",
+    "terminal_path": "/mnt/shared/prismabuild-fleet/pb-queue/done/d5cc1ec6c2c9a67dd99fc3fe87b70b7fb271108c42dae981df4f82680791f134.json",
+    "terminal_sha256": "30432c86954b15a55b7d64f9bf8ebbf9430e2ef1cf91ef4a9167b4f9414fd066",
+    "status": "executed",
+    "returncode": 0,
+    "worker": "dl380g10",
+    "snapshot": "7a197441ed827185e6b67275c9e6e6ba72930cc3",
+    "log_path": "/mnt/shared/tessera-measurements/glm-fused-selected-20260908/pb-impacted_cpu_4.log",
+    "log_sha256": "c114765aecfc61208af5a9c8b02649078c165eaba512cb6897455b1478c0f10b",
+    "resource_profile": {
+      "box_window": {
+        "cpu": {
+          "busy_percent_mean": 42.272541740476186,
+          "busy_percent_peak": 56.271949600000006,
+          "psi_some_avg10_max": 3.98,
+          "psi_some_avg10_samples": 41,
+          "samples": 84,
+          "source": "netdata"
+        },
+        "end_unix": 1788862466.3213823,
+        "errors": [
+          "no pqteld CSV for dl380g10 covering the window"
+        ],
+        "host": "dl380g10",
+        "schema": "prismabuild.box_window.v1",
+        "source": "netdata",
+        "start_unix": 1788862384.05925
+      },
+      "finished_unix": 1788862466.3213823,
+      "host": "dl380g10",
+      "process_io": {
+        "processes_live": 0,
+        "processes_observed": 8,
+        "processes_unreadable": 0,
+        "rchar": 22865560,
+        "read_bytes": 0,
+        "source": "proc_io",
+        "syscr": 1632,
+        "syscw": 11,
+        "wchar": 868,
+        "write_bytes": 472
+      },
+      "reaped_children": {
+        "involuntary_context_switches": 0,
+        "max_rss_bytes": null,
+        "max_rss_watermark_bytes": 122384384,
+        "scope": "this parent's launched child and the descendants it reaped",
+        "source": "getrusage_children",
+        "system_seconds": 0.01097400000000004,
+        "user_seconds": 0.12968899999999994,
+        "voluntary_context_switches": 3
+      },
+      "schema": "prismabuild.resource_profile.v1",
+      "scope": {
+        "cpu_seconds": 287.694437,
+        "cpu_system_seconds": 11.654936,
+        "cpu_user_seconds": 276.0395,
+        "memory_current_bytes": 1691648,
+        "memory_peak_bytes": 1405227008,
+        "source": "cgroup"
+      },
+      "start_source": "claimed_unix",
+      "start_unix": 1788862384.05925,
+      "wall_seconds": 82.26213216781616
+    },
+    "cas_payloads_verified": [
+      {
+        "receipt_sha256": "f3d442ebb4daf4c1ff19c4be3e5f106bc2d890068a4b8728a8c169ea9eef82c2",
+        "payload_path": "/mnt/shared/prismabuild-fleet/cas/blobs/5d/5dd4b333c31339c8e89c460e6a11df36f179a4739d6f5662a24ebfc09d4f00f7",
+        "payload_sha256": "5dd4b333c31339c8e89c460e6a11df36f179a4739d6f5662a24ebfc09d4f00f7"
+      }
+    ],
+    "population": {
+      "path": "/mnt/shared/tessera-measurements/glm-fused-selected-20260908/impacted-4.json",
+      "sha256": "c4c8f1c5164556c18c83303954d7e0ec3b4dc540efa82eb608a44657c37db369",
+      "counts": {
+        "passed": 381,
+        "failed": 0,
+        "error": 0,
+        "skipped": 17,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "device": "torch 2.10.0+cpu reports no CUDA device",
+      "skip_reasons": {
+        "the fused window Viterbi is CUDA": 8,
+        "box artifact absent: the PrismaQuant checkout whose pricing this suite is pinned against -- /home/rob/prismaquant/prismaquant/tessera_formats.py is not on this box (set TESSERA_PRISMAQUANT_DIR; documented default /home/rob/prismaquant)": 6,
+        "E2M1 publishes no reader range": 1,
+        "could not import 'vllm': No module named 'vllm'": 1,
+        "the encoder is a GPU job": 1
+      },
+      "not_collected": [],
+      "strict_cuda": false,
+      "cuda_surface": {
+        "executed": 0,
+        "measured_by": "tests during whose call torch's CUDA allocator recorded a new allocation",
+        "is_a_floor": true,
+        "box_artifact_skips": {
+          "box artifact absent: the PrismaQuant checkout whose pricing this suite is pinned against -- /home/rob/prismaquant/prismaquant/tessera_formats.py is not on this box (set TESSERA_PRISMAQUANT_DIR; documented default /home/rob/prismaquant)": 6
+        }
+      },
+      "source_identity": {
+        "schema": "tessera.suite_source.v1",
+        "sha256": "a3d13d8e72fbc0457322d15f29532a0e49c861b3166ac2d96a254f8d73458377"
+      }
+    }
+  },
+  {
+    "label": "impacted_cpu_5",
+    "action_key": "02d47664c5c512216e8526866192a71c4ec885a7078298132669e40b042c18cd",
+    "terminal_path": "/mnt/shared/prismabuild-fleet/pb-queue/failed/02d47664c5c512216e8526866192a71c4ec885a7078298132669e40b042c18cd.json",
+    "terminal_sha256": "f00176f0df9e332b1ffd14230e9960df02941a305bc9d7805c3caba4f3d9c407",
+    "status": "failed",
+    "returncode": 1,
+    "worker": "dl380g10",
+    "snapshot": "f68207232c97e140c16d3804afcd718c4d86fbbc",
+    "log_path": "/mnt/shared/tessera-measurements/glm-fused-selected-20260908/pb-impacted_cpu_5.log",
+    "log_sha256": "8baab135da3db499a37355492f796f6045a21b176722e3be5b81cf2aeb67235b",
+    "resource_profile": {
+      "box_window": {
+        "cpu": {
+          "busy_percent_mean": 32.60240722624113,
+          "busy_percent_peak": 56.271949600000006,
+          "psi_some_avg10_max": 3.98,
+          "psi_some_avg10_samples": 70,
+          "samples": 141,
+          "source": "netdata"
+        },
+        "end_unix": 1788862522.8191416,
+        "errors": [
+          "no pqteld CSV for dl380g10 covering the window"
+        ],
+        "host": "dl380g10",
+        "schema": "prismabuild.box_window.v1",
+        "source": "netdata",
+        "start_unix": 1788862383.9169497
+      },
+      "finished_unix": 1788862522.8191416,
+      "host": "dl380g10",
+      "process_io": {
+        "processes_live": 0,
+        "processes_observed": 36,
+        "processes_unreadable": 0,
+        "rchar": 22864503,
+        "read_bytes": 0,
+        "source": "proc_io",
+        "syscr": 1631,
+        "syscw": 11,
+        "wchar": 868,
+        "write_bytes": 472
+      },
+      "reaped_children": {
+        "involuntary_context_switches": 1,
+        "max_rss_bytes": null,
+        "max_rss_watermark_bytes": 49655808,
+        "scope": "this parent's launched child and the descendants it reaped",
+        "source": "getrusage_children",
+        "system_seconds": 0.019867999999999997,
+        "user_seconds": 0.12715799999999988,
+        "voluntary_context_switches": 3
+      },
+      "schema": "prismabuild.resource_profile.v1",
+      "scope": {
+        "cpu_seconds": 498.966275,
+        "cpu_system_seconds": 31.813403,
+        "cpu_user_seconds": 467.152871,
+        "memory_current_bytes": 26320896,
+        "memory_peak_bytes": 1557299200,
+        "source": "cgroup"
+      },
+      "start_source": "claimed_unix",
+      "start_unix": 1788862383.9169497,
+      "wall_seconds": 138.9021918773651
+    },
+    "cas_payloads_verified": [],
+    "population": {
+      "path": "/mnt/shared/tessera-measurements/glm-fused-selected-20260908/impacted-5.json",
+      "sha256": "af172814072eaf2b4ef70559f96a0277e7c29ce8f816986b11c5782e68c1015d",
+      "counts": {
+        "passed": 410,
+        "failed": 1,
+        "error": 0,
+        "skipped": 29,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "device": "torch 2.10.0+cpu reports no CUDA device",
+      "skip_reasons": {
+        "needs a CUDA device": 22,
+        "needs CUDA": 5,
+        "tessera.kernel imports Triton (CUDA-only)": 1,
+        "the kernel lane is a CUDA path": 1
+      },
+      "not_collected": [],
+      "strict_cuda": false,
+      "cuda_surface": {
+        "executed": 0,
+        "measured_by": "tests during whose call torch's CUDA allocator recorded a new allocation",
+        "is_a_floor": true,
+        "box_artifact_skips": {}
+      },
+      "source_identity": {
+        "schema": "tessera.suite_source.v1",
+        "sha256": "a3d13d8e72fbc0457322d15f29532a0e49c861b3166ac2d96a254f8d73458377"
+      }
+    }
+  },
+  {
+    "label": "impacted_cpu_6",
+    "action_key": "2f770538af59c1ab5b294eadfe6edc494704339f2b343ec6129f7e3c1dccb208",
+    "terminal_path": "/mnt/shared/prismabuild-fleet/pb-queue/failed/2f770538af59c1ab5b294eadfe6edc494704339f2b343ec6129f7e3c1dccb208.json",
+    "terminal_sha256": "28c0e970b321cb90f2f7edefac8d5c312572f97af08af80303275ca043489d4f",
+    "status": "failed",
+    "returncode": 1,
+    "worker": "dl380g10",
+    "snapshot": "53592189bbd2205524fa72bdd676441cc4f16d31",
+    "log_path": "/mnt/shared/tessera-measurements/glm-fused-selected-20260908/pb-impacted_cpu_6.log",
+    "log_sha256": "61a3be25bf5b7785deb1ef262997c826886a102db067be6f81b19ba0ec29ea66",
+    "resource_profile": {
+      "box_window": {
+        "cpu": {
+          "busy_percent_mean": 24.123108295964126,
+          "busy_percent_peak": 56.271949600000006,
+          "psi_some_avg10_max": 3.98,
+          "psi_some_avg10_samples": 111,
+          "samples": 223,
+          "source": "netdata"
+        },
+        "end_unix": 1788862604.832306,
+        "errors": [
+          "no pqteld CSV for dl380g10 covering the window"
+        ],
+        "host": "dl380g10",
+        "schema": "prismabuild.box_window.v1",
+        "source": "netdata",
+        "start_unix": 1788862383.816719
+      },
+      "finished_unix": 1788862604.832306,
+      "host": "dl380g10",
+      "process_io": {
+        "processes_live": 0,
+        "processes_observed": 8,
+        "processes_unreadable": 0,
+        "rchar": 22865484,
+        "read_bytes": 0,
+        "source": "proc_io",
+        "syscr": 1632,
+        "syscw": 11,
+        "wchar": 868,
+        "write_bytes": 472
+      },
+      "reaped_children": {
+        "involuntary_context_switches": 0,
+        "max_rss_bytes": null,
+        "max_rss_watermark_bytes": 128262144,
+        "scope": "this parent's launched child and the descendants it reaped",
+        "source": "getrusage_children",
+        "system_seconds": 0.01785900000000007,
+        "user_seconds": 0.14485499999999973,
+        "voluntary_context_switches": 3
+      },
+      "schema": "prismabuild.resource_profile.v1",
+      "scope": {
+        "cpu_seconds": 542.661726,
+        "cpu_system_seconds": 51.266004,
+        "cpu_user_seconds": 491.395722,
+        "memory_current_bytes": 27181056,
+        "memory_peak_bytes": 1591619584,
+        "source": "cgroup"
+      },
+      "start_source": "claimed_unix",
+      "start_unix": 1788862383.816719,
+      "wall_seconds": 221.01558685302734
+    },
+    "cas_payloads_verified": [],
+    "population": {
+      "path": "/mnt/shared/tessera-measurements/glm-fused-selected-20260908/impacted-6.json",
+      "sha256": "aff7777e93246c4a5ab9ea67eccc924045f4e60806c9f56021d7e75a4d65c973",
+      "counts": {
+        "passed": 419,
+        "failed": 2,
+        "error": 0,
+        "skipped": 135,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "device": "torch 2.10.0+cpu reports no CUDA device",
+      "skip_reasons": {
+        "needs a CUDA device": 47,
+        "encoder is a GPU job": 43,
+        "the lane is a CUDA kernel": 23,
+        "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-reach-gridbook/model.safetensors is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 8,
+        "the trellises are CUDA": 8,
+        "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-reach-stock-twin/model.safetensors is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 2,
+        "the encoder is a GPU job": 2,
+        "box artifact absent: kl_tool.py and kl_estimator.py, the untracked served-KL instrument -- nothing set KL_TOOL_DIR and its default is not resolved for this root (set KL_TOOL_DIR; documented default /home/rob/dq-runs)": 1,
+        "needs CUDA": 1
+      },
+      "not_collected": [],
+      "strict_cuda": false,
+      "cuda_surface": {
+        "executed": 0,
+        "measured_by": "tests during whose call torch's CUDA allocator recorded a new allocation",
+        "is_a_floor": true,
+        "box_artifact_skips": {
+          "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-reach-gridbook/model.safetensors is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 8,
+          "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-reach-stock-twin/model.safetensors is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 2,
+          "box artifact absent: kl_tool.py and kl_estimator.py, the untracked served-KL instrument -- nothing set KL_TOOL_DIR and its default is not resolved for this root (set KL_TOOL_DIR; documented default /home/rob/dq-runs)": 1
+        }
+      },
+      "source_identity": {
+        "schema": "tessera.suite_source.v1",
+        "sha256": "a3d13d8e72fbc0457322d15f29532a0e49c861b3166ac2d96a254f8d73458377"
+      }
+    }
+  },
+  {
+    "label": "impacted_cpu_7",
+    "action_key": "54ff243c8a902736838bede25f76aae97968ecce712b0c1adbbe68a38f61a093",
+    "terminal_path": "/mnt/shared/prismabuild-fleet/pb-queue/done/54ff243c8a902736838bede25f76aae97968ecce712b0c1adbbe68a38f61a093.json",
+    "terminal_sha256": "f63b208a3693c9be590bfdccb48e5210ed4cce8fb1edb1703517643bd730bdd4",
+    "status": "executed",
+    "returncode": 0,
+    "worker": "dl380g10",
+    "snapshot": "cfc7c42a761a329222d12d655ab66a0a0bee2a3a",
+    "log_path": "/mnt/shared/tessera-measurements/glm-fused-selected-20260908/pb-impacted_cpu_7.log",
+    "log_sha256": "b9b46e184045a6da38f331c0770d61ff1b8027ae47664de5c52fdebfec007ca4",
+    "resource_profile": {
+      "box_window": {
+        "cpu": {
+          "busy_percent_mean": 36.6608128189655,
+          "busy_percent_peak": 56.271949600000006,
+          "psi_some_avg10_max": 3.98,
+          "psi_some_avg10_samples": 57,
+          "samples": 116,
+          "source": "netdata"
+        },
+        "end_unix": 1788862498.3794644,
+        "errors": [
+          "no pqteld CSV for dl380g10 covering the window"
+        ],
+        "host": "dl380g10",
+        "schema": "prismabuild.box_window.v1",
+        "source": "netdata",
+        "start_unix": 1788862384.190409
+      },
+      "finished_unix": 1788862498.3794644,
+      "host": "dl380g10",
+      "process_io": {
+        "processes_live": 0,
+        "processes_observed": 28,
+        "processes_unreadable": 0,
+        "rchar": 22864426,
+        "read_bytes": 0,
+        "source": "proc_io",
+        "syscr": 1631,
+        "syscw": 11,
+        "wchar": 868,
+        "write_bytes": 472
+      },
+      "reaped_children": {
+        "involuntary_context_switches": 0,
+        "max_rss_bytes": null,
+        "max_rss_watermark_bytes": 121716736,
+        "scope": "this parent's launched child and the descendants it reaped",
+        "source": "getrusage_children",
+        "system_seconds": 0.016057999999999906,
+        "user_seconds": 0.11541499999999871,
+        "voluntary_context_switches": 3
+      },
+      "schema": "prismabuild.resource_profile.v1",
+      "scope": {
+        "cpu_seconds": 286.500129,
+        "cpu_system_seconds": 16.333836,
+        "cpu_user_seconds": 270.166293,
+        "memory_current_bytes": 82059264,
+        "memory_peak_bytes": 1535066112,
+        "source": "cgroup"
+      },
+      "start_source": "claimed_unix",
+      "start_unix": 1788862384.190409,
+      "wall_seconds": 114.18905544281006
+    },
+    "cas_payloads_verified": [
+      {
+        "receipt_sha256": "b99577d1d233da72b4d7780d622805321b3755ea794d6d596c185d9df7f04a50",
+        "payload_path": "/mnt/shared/prismabuild-fleet/cas/blobs/39/39f0708118def265918a94822bd9e7731a44bae63fca9543bd57cc3cf4453a3f",
+        "payload_sha256": "39f0708118def265918a94822bd9e7731a44bae63fca9543bd57cc3cf4453a3f"
+      }
+    ],
+    "population": {
+      "path": "/mnt/shared/tessera-measurements/glm-fused-selected-20260908/impacted-7.json",
+      "sha256": "49865b2556d279531c21316e8669d0da3ce978a27816e5db5840f9e2070dc4f2",
+      "counts": {
+        "passed": 651,
+        "failed": 0,
+        "error": 0,
+        "skipped": 187,
+        "xfailed": 0,
+        "xpassed": 0
+      },
+      "device": "torch 2.10.0+cpu reports no CUDA device",
+      "skip_reasons": {
+        "the encoder is a CUDA path": 81,
+        "the lane is a CUDA kernel": 53,
+        "the fused window Viterbi is a CUDA path and needs triton": 20,
+        "needs a CUDA device": 19,
+        "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-reach-gridbook/model.safetensors is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 5,
+        "the encoder is a GPU job": 5,
+        "needs two CUDA devices": 2,
+        "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-reach-gridbook is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 1,
+        "needs a CUDA device: the positive arm builds the extension": 1
+      },
+      "not_collected": [],
+      "strict_cuda": false,
+      "cuda_surface": {
+        "executed": 0,
+        "measured_by": "tests during whose call torch's CUDA allocator recorded a new allocation",
+        "is_a_floor": true,
+        "box_artifact_skips": {
+          "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-reach-gridbook is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 1,
+          "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-reach-gridbook/model.safetensors is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 5
+        }
+      },
+      "source_identity": {
+        "schema": "tessera.suite_source.v1",
+        "sha256": "a3d13d8e72fbc0457322d15f29532a0e49c861b3166ac2d96a254f8d73458377"
+      }
+    }
+  }
+]
