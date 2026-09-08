@@ -224,6 +224,7 @@ class PreparedWindowBatch:
         self.steps, self.cols = int(steps), int(cols)
         self.window_bits, self.device = int(window_bits), table.device
         self.experts = table.shape[0]
+        self.__layout = (self.steps, self.cols, self.window_bits, self.experts, self.device)
         self.__fingerprints = tuple(_fingerprint(t) for t in self.tensors())
 
     def tensors(self):
@@ -243,7 +244,8 @@ class PreparedWindowBatch:
         and bounds launches by chunk while allocating only the final output.
         Both consume these same packed planes and alphabet dtype.
         """
-        if tuple(_fingerprint(t) for t in self.tensors()) != self.__fingerprints:
+        if ((self.steps, self.cols, self.window_bits, self.experts, self.device) != self.__layout
+                or tuple(_fingerprint(t) for t in self.tensors()) != self.__fingerprints):
             raise RuntimeError("prepared Tessera window batch changed after preparation")
         require_expert_ids(expert_ids, self.device)
         if type(max_experts_per_chunk) is not int or max_experts_per_chunk <= 0:

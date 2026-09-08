@@ -2078,7 +2078,9 @@ expert order/repeats and initial-state pad are preserved. The chunk bound limits
 launches; chunks do not retain separate output buffers. There is no alternate
 wire decoder owner, repack, or persistent decoded expert pool. Device IDs are
 checked asynchronously and kernel reads are masked independently against
-invalid experts. This is an eager research API, without a graph-capture claim
+invalid experts. Scalar layout fields and tensor fingerprints are checked
+before backend import or launch; changed preparation metadata is refused.
+This is an eager research API, without a graph-capture claim
 or a new production-eligible runtime cell.
 
 
