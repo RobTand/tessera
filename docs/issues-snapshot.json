@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-08T10:18:25Z",
+ "generated": "2026-09-08T11:59:07Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -1208,7 +1208,7 @@
     "title": "producer: make CB byte and artifact budgets exact"
    },
    "370": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Enable selected-source Tessera anchors from complete canonical capture"
    },
    "371": {
@@ -1220,20 +1220,100 @@
     "title": "Bind portable campaign images to executable content"
    },
    "373": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Bound exact streamed AURA boundaries and rolling cotangents"
    },
    "374": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Bound joint probe candidate residency with transient operator statistics"
+   },
+   "375": {
+    "state": "CLOSED",
+    "title": "Bound streamed AURA exact boundary and cotangent residency"
+   },
+   "376": {
+    "state": "CLOSED",
+    "title": "Enable selected-source Tessera anchors from canonical capture"
+   },
+   "377": {
+    "state": "CLOSED",
+    "title": "Bound Hessian sidecar serialization without changing archive bytes"
+   },
+   "378": {
+    "state": "CLOSED",
+    "title": "Bound joint probe candidate residency with deferred operator contractions"
+   },
+   "379": {
+    "state": "CLOSED",
+    "title": "Bound Hessian sidecar pages without changing archive bytes"
    },
    "38": {
     "state": "CLOSED",
     "title": "release: bump Gridbook source to 0.4.0"
    },
+   "380": {
+    "state": "CLOSED",
+    "title": "Coalesce consumed source payloads before page release to bound file-cache retention"
+   },
+   "381": {
+    "state": "CLOSED",
+    "title": "Bound research candidate residency through existing ProductionWeightCache windows"
+   },
+   "382": {
+    "state": "CLOSED",
+    "title": "Coalesce consumed source spans to release retained file-cache folios"
+   },
+   "383": {
+    "state": "OPEN",
+    "title": "Bound joint anchor qualification by resident unit and candidate windows"
+   },
+   "384": {
+    "state": "CLOSED",
+    "title": "Bound research candidate residency through ProductionWeightCache windows"
+   },
+   "385": {
+    "state": "OPEN",
+    "title": "Plan bounded joint-statistics target windows from shared activation grouping"
+   },
+   "386": {
+    "state": "CLOSED",
+    "title": "Integrate bounded GLM probe memory primitives"
+   },
+   "387": {
+    "state": "OPEN",
+    "title": "Plan bounded joint-statistics windows using shared activation requirements"
+   },
+   "388": {
+    "state": "OPEN",
+    "title": "Selected-source anchor rows re-hash the whole source checkpoint per row: about 84.8 TB of NFS reads across the 132 GLM rows"
+   },
+   "389": {
+    "state": "OPEN",
+    "title": "Selected-anchor encoder memo holds --anchor-batch-size entries while pending order is rung-major, so every (unit, rung) pair refactorizes; no CLI test covers an s: stack group"
+   },
    "39": {
     "state": "CLOSED",
     "title": "policy: constrain native parity and production CB menu"
+   },
+   "390": {
+    "state": "OPEN",
+    "title": "autoscale.selected_anchor_resources uses chosen multipliers with no process baseline; native guard peak 2.61 GB against a 12.6 MB plan"
+   },
+   "391": {
+    "state": "OPEN",
+    "title": "dispatch_tessera_campaign refuses the whole campaign when the widest row does not fit, blocking the 90 admissible rows"
+   },
+   "392": {
+    "state": "OPEN",
+    "title": "Integrate bounded operator windows into streamed joint AURA"
+   },
+   "393": {
+    "state": "OPEN",
+    "title": "Release completed anchor and sidecar pages without hashing the bytes again"
+   },
+   "394": {
+    "state": "OPEN",
+    "title": "Amortize streamed AURA baseline source loads with exact layer-major capture"
    },
    "4": {
     "state": "CLOSED",
@@ -2946,8 +3026,16 @@
     "title": "Add research packed selected-expert MoE load/apply lifecycle"
    },
    "424": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Fuse research selected expert window decode without eager integer temporaries"
+   },
+   "425": {
+    "state": "CLOSED",
+    "title": "Fuse explicit research selected expert window decode"
+   },
+   "426": {
+    "state": "OPEN",
+    "title": "Add explicit research TP2 packed selected-expert ownership"
    },
    "43": {
     "state": "CLOSED",
