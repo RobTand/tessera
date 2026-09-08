@@ -60,7 +60,10 @@ class _HeldFile:
         if not self.path.is_absolute() or self.path.resolve() != self.path:
             raise GrammarError('Hessian reference paths must be absolute and nonsymlink')
         try:
-            self.fd = os.open(self.path, os.O_RDONLY | os.O_NOFOLLOW)
+            # A replaced FIFO must reach fstat rather than wait for a writer.
+            # O_NONBLOCK does not change regular-file reads; the same held
+            # descriptor must still pass the regular-file and size checks.
+            self.fd = os.open(self.path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
             self.stat = os.fstat(self.fd)
             if not stat.S_ISREG(self.stat.st_mode) or not 0 < self.stat.st_size <= cap:
                 raise GrammarError('Hessian reference file exceeds its regular-file byte bound')

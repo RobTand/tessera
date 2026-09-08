@@ -1,0 +1,211 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+_______ test_fifo_reference_refuses_within_bounded_subprocess[metadata] ________
+
+reference = (PosixPath('/home/rob/tmp/pytest-of-rob/pytest-3340/test_fifo_reference_refuses_wi0/hessian_capture.references.json'),...75227d'}, 'b': {'path': 'inputs/b.pt', 'sha256': '31e2fe19d0c2a9c575b0c2bc28908f1c3ab3ca149ea7d825c950807ff16aeeea'}}})
+intake = 'metadata'
+
+    @pytest.mark.parametrize('intake', ['metadata', 'hessian'])
+    def test_fifo_reference_refuses_within_bounded_subprocess(reference, intake):
+        handoff, _payload, _hessians, canonical, _manifest = reference
+        path = handoff if intake == 'metadata' else canonical.parent/'inputs/a.pt'
+        path.unlink()
+        os.mkfifo(path)
+        program = '''
+    import sys
+    from tessera.errors import GrammarError
+    from tessera.hessian_capture import ReferenceHessians
+    print("ENTERING_REFERENCE_INTAKE", flush=True)
+    try:
+        with ReferenceHessians(sys.argv[1]) as owner:
+            if sys.argv[2] == "hessian":
+                owner["a"]
+    except GrammarError as error:
+        if "regular-file byte bound" not in str(error):
+            raise
+        print("FIFO_REFUSED", flush=True)
+    else:
+        raise AssertionError("nonregular reference source was accepted")
+    '''
+        try:
+>           result = subprocess.run([sys.executable, '-c', program, str(handoff), intake],
+                capture_output=True, text=True, timeout=5)
+
+tests/test_hessian_reference_fifo.py:35:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+/usr/lib/python3.14/subprocess.py:557: in run
+    stdout, stderr = process.communicate(input, timeout=timeout)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.14/subprocess.py:1221: in communicate
+    stdout, stderr = self._communicate(input, endtime, timeout)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.14/subprocess.py:2154: in _communicate
+    self._check_timeout(endtime, orig_timeout, stdout, stderr)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <Popen: returncode: -9 args: ['/home/rob/venvs/pb-cpu/bin/python', '-c', '\n...>
+endtime = 169900.943639513, orig_timeout = 5
+stdout_seq = [b'ENTERING_REFERENCE_INTAKE\n'], stderr_seq = []
+skip_check_and_raise = False
+
+    def _check_timeout(self, endtime, orig_timeout, stdout_seq, stderr_seq,
+                       skip_check_and_raise=False):
+        """Convenience for checking if a timeout has expired."""
+        if endtime is None:
+            return
+        if skip_check_and_raise or _time() > endtime:
+>           raise TimeoutExpired(
+                    self.args, orig_timeout,
+                    output=b''.join(stdout_seq) if stdout_seq else None,
+                    stderr=b''.join(stderr_seq) if stderr_seq else None)
+E           subprocess.TimeoutExpired: Command '['/home/rob/venvs/pb-cpu/bin/python', '-c', '\nimport sys\nfrom tessera.errors import GrammarError\nfrom tessera.hessian_capture import ReferenceHessians\nprint("ENTERING_REFERENCE_INTAKE", flush=True)\ntry:\n    with ReferenceHessians(sys.argv[1]) as owner:\n        if sys.argv[2] == "hessian":\n            owner["a"]\nexcept GrammarError as error:\n    if "regular-file byte bound" not in str(error):\n        raise\n    print("FIFO_REFUSED", flush=True)\nelse:\n    raise AssertionError("nonregular reference source was accepted")\n', '/home/rob/tmp/pytest-of-rob/pytest-3340/test_fifo_reference_refuses_wi0/hessian_capture.references.json', 'metadata']' timed out after 5 seconds
+
+/usr/lib/python3.14/subprocess.py:1268: TimeoutExpired
+
+During handling of the above exception, another exception occurred:
+
+reference = (PosixPath('/home/rob/tmp/pytest-of-rob/pytest-3340/test_fifo_reference_refuses_wi0/hessian_capture.references.json'),...75227d'}, 'b': {'path': 'inputs/b.pt', 'sha256': '31e2fe19d0c2a9c575b0c2bc28908f1c3ab3ca149ea7d825c950807ff16aeeea'}}})
+intake = 'metadata'
+
+    @pytest.mark.parametrize('intake', ['metadata', 'hessian'])
+    def test_fifo_reference_refuses_within_bounded_subprocess(reference, intake):
+        handoff, _payload, _hessians, canonical, _manifest = reference
+        path = handoff if intake == 'metadata' else canonical.parent/'inputs/a.pt'
+        path.unlink()
+        os.mkfifo(path)
+        program = '''
+    import sys
+    from tessera.errors import GrammarError
+    from tessera.hessian_capture import ReferenceHessians
+    print("ENTERING_REFERENCE_INTAKE", flush=True)
+    try:
+        with ReferenceHessians(sys.argv[1]) as owner:
+            if sys.argv[2] == "hessian":
+                owner["a"]
+    except GrammarError as error:
+        if "regular-file byte bound" not in str(error):
+            raise
+        print("FIFO_REFUSED", flush=True)
+    else:
+        raise AssertionError("nonregular reference source was accepted")
+    '''
+        try:
+            result = subprocess.run([sys.executable, '-c', program, str(handoff), intake],
+                capture_output=True, text=True, timeout=5)
+        except subprocess.TimeoutExpired as error:
+            # run() kills and reaps this owned child before raising; no FIFO writer
+            # or helper process is needed to release an accidentally blocked open.
+            assert b'ENTERING_REFERENCE_INTAKE' in (error.stdout or b'')
+>           pytest.fail(f'{intake} FIFO blocked instead of refusing within 5 seconds')
+E           Failed: metadata FIFO blocked instead of refusing within 5 seconds
+
+tests/test_hessian_reference_fifo.py:41: Failed
+________ test_fifo_reference_refuses_within_bounded_subprocess[hessian] ________
+
+reference = (PosixPath('/home/rob/tmp/pytest-of-rob/pytest-3340/test_fifo_reference_refuses_wi1/hessian_capture.references.json'),...75227d'}, 'b': {'path': 'inputs/b.pt', 'sha256': '31e2fe19d0c2a9c575b0c2bc28908f1c3ab3ca149ea7d825c950807ff16aeeea'}}})
+intake = 'hessian'
+
+    @pytest.mark.parametrize('intake', ['metadata', 'hessian'])
+    def test_fifo_reference_refuses_within_bounded_subprocess(reference, intake):
+        handoff, _payload, _hessians, canonical, _manifest = reference
+        path = handoff if intake == 'metadata' else canonical.parent/'inputs/a.pt'
+        path.unlink()
+        os.mkfifo(path)
+        program = '''
+    import sys
+    from tessera.errors import GrammarError
+    from tessera.hessian_capture import ReferenceHessians
+    print("ENTERING_REFERENCE_INTAKE", flush=True)
+    try:
+        with ReferenceHessians(sys.argv[1]) as owner:
+            if sys.argv[2] == "hessian":
+                owner["a"]
+    except GrammarError as error:
+        if "regular-file byte bound" not in str(error):
+            raise
+        print("FIFO_REFUSED", flush=True)
+    else:
+        raise AssertionError("nonregular reference source was accepted")
+    '''
+        try:
+>           result = subprocess.run([sys.executable, '-c', program, str(handoff), intake],
+                capture_output=True, text=True, timeout=5)
+
+tests/test_hessian_reference_fifo.py:35:
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+/usr/lib/python3.14/subprocess.py:557: in run
+    stdout, stderr = process.communicate(input, timeout=timeout)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.14/subprocess.py:1221: in communicate
+    stdout, stderr = self._communicate(input, endtime, timeout)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+/usr/lib/python3.14/subprocess.py:2154: in _communicate
+    self._check_timeout(endtime, orig_timeout, stdout, stderr)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _
+
+self = <Popen: returncode: -9 args: ['/home/rob/venvs/pb-cpu/bin/python', '-c', '\n...>
+endtime = 169906.019404913, orig_timeout = 5
+stdout_seq = [b'ENTERING_REFERENCE_INTAKE\n'], stderr_seq = []
+skip_check_and_raise = False
+
+    def _check_timeout(self, endtime, orig_timeout, stdout_seq, stderr_seq,
+                       skip_check_and_raise=False):
+        """Convenience for checking if a timeout has expired."""
+        if endtime is None:
+            return
+        if skip_check_and_raise or _time() > endtime:
+>           raise TimeoutExpired(
+                    self.args, orig_timeout,
+                    output=b''.join(stdout_seq) if stdout_seq else None,
+                    stderr=b''.join(stderr_seq) if stderr_seq else None)
+E           subprocess.TimeoutExpired: Command '['/home/rob/venvs/pb-cpu/bin/python', '-c', '\nimport sys\nfrom tessera.errors import GrammarError\nfrom tessera.hessian_capture import ReferenceHessians\nprint("ENTERING_REFERENCE_INTAKE", flush=True)\ntry:\n    with ReferenceHessians(sys.argv[1]) as owner:\n        if sys.argv[2] == "hessian":\n            owner["a"]\nexcept GrammarError as error:\n    if "regular-file byte bound" not in str(error):\n        raise\n    print("FIFO_REFUSED", flush=True)\nelse:\n    raise AssertionError("nonregular reference source was accepted")\n', '/home/rob/tmp/pytest-of-rob/pytest-3340/test_fifo_reference_refuses_wi1/hessian_capture.references.json', 'hessian']' timed out after 5 seconds
+
+/usr/lib/python3.14/subprocess.py:1268: TimeoutExpired
+
+During handling of the above exception, another exception occurred:
+
+reference = (PosixPath('/home/rob/tmp/pytest-of-rob/pytest-3340/test_fifo_reference_refuses_wi1/hessian_capture.references.json'),...75227d'}, 'b': {'path': 'inputs/b.pt', 'sha256': '31e2fe19d0c2a9c575b0c2bc28908f1c3ab3ca149ea7d825c950807ff16aeeea'}}})
+intake = 'hessian'
+
+    @pytest.mark.parametrize('intake', ['metadata', 'hessian'])
+    def test_fifo_reference_refuses_within_bounded_subprocess(reference, intake):
+        handoff, _payload, _hessians, canonical, _manifest = reference
+        path = handoff if intake == 'metadata' else canonical.parent/'inputs/a.pt'
+        path.unlink()
+        os.mkfifo(path)
+        program = '''
+    import sys
+    from tessera.errors import GrammarError
+    from tessera.hessian_capture import ReferenceHessians
+    print("ENTERING_REFERENCE_INTAKE", flush=True)
+    try:
+        with ReferenceHessians(sys.argv[1]) as owner:
+            if sys.argv[2] == "hessian":
+                owner["a"]
+    except GrammarError as error:
+        if "regular-file byte bound" not in str(error):
+            raise
+        print("FIFO_REFUSED", flush=True)
+    else:
+        raise AssertionError("nonregular reference source was accepted")
+    '''
+        try:
+            result = subprocess.run([sys.executable, '-c', program, str(handoff), intake],
+                capture_output=True, text=True, timeout=5)
+        except subprocess.TimeoutExpired as error:
+            # run() kills and reaps this owned child before raising; no FIFO writer
+            # or helper process is needed to release an accidentally blocked open.
+            assert b'ENTERING_REFERENCE_INTAKE' in (error.stdout or b'')
+>           pytest.fail(f'{intake} FIFO blocked instead of refusing within 5 seconds')
+E           Failed: hessian FIFO blocked instead of refusing within 5 seconds
+
+tests/test_hessian_reference_fifo.py:41: Failed
+
+tessera surface: NO CUDA -- torch 2.11.0+cpu reports no CUDA device
+tessera surface: 0 test(s) skipped, 0 module(s) not collected
+tessera surface: this run did not exercise the CUDA-gated surface. Its pass count is not coverage of it.
+tessera surface: 0 test(s) allocated on the device
+=========================== short test summary info ============================
+FAILED tests/test_hessian_reference_fifo.py::test_fifo_reference_refuses_within_bounded_subprocess[metadata]
+FAILED tests/test_hessian_reference_fifo.py::test_fifo_reference_refuses_within_bounded_subprocess[hessian]
+2 failed in 11.67s
