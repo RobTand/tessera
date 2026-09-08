@@ -57,3 +57,12 @@ red/green source bundles and green output bytes; full logs and receipts are in
 runtime source change after the native07/full-CPU integration source. The native
 result remains attributed to `3ddb55c55820`; no native rerun is needed for this
 CPU file-open refusal. New producer pricing must use the final source seal.
+
+Final integrated follow-up at `9d2314819f02`: PB action
+`d767d708ab5f43f0d7625ba4f2f933b7621cc2aec289a1e7264a12de543799af`
+passed all 28 bounded-reader/FIFO/issue-reference tests, zero skips or missing
+collection, in 3.65 seconds (Torch 2.11.0+cpu, one CPU, 3 GiB, native threads
+one, x86 worker). Root verified terminal cleanup, canonical receipt, actual
+payload and the source bundle against that exact commit; only generated PB
+closure metadata differs. `root-final-fifo-cas-source-audit.json` carries the
+proof. This follow-up adds no native coverage.
