@@ -5,6 +5,26 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-08 for the opt-in bounded canonical Hessian handoff.
+`ActivationSource.from_capture` accepts `*.references.json` with a closed
+`tessera.hessian_capture.references.v1` contract. It binds the exact complete
+canonical capture manifest and census, full-census counts, per-unit tensor
+commitments and each priced row's existing v1 capture seal. The aggregate seal
+uses the unchanged `tessera.hessian_capture.v1` grammar. Metadata intake verifies
+commitments; it does not claim unconsumed H payloads have been verified.
+Every H lookup, including cached-wire input identity, verifies the bounded
+original file and actual H bytes through a held descriptor before returning a
+detached H. The reader retains metadata and descriptors, never H/X tensors.
+The explicit load policy bounds each JSON, source file and H; one lookup may
+own one capped source mapping, an H copy and the existing H-sized hash staging,
+in addition to caller/encoder owners. Legacy `.pt` captures remain eager.
+The producer's closed `tessera.priced_export_inputs.v2` adds the canonical
+manifest/census binding; v1 cannot accept references with the same old seal.
+This changes producer source identity, so old encoded-wire identities are not
+reused under the new source hash. It does not change wire bytes, serving pins,
+format admission or device qualification. CPU contract tests establish input
+correctness only; no native throughput/residency measurement is claimed.
+
 Device BODY unpacking (2026-09-07, base `a29dbec6`) retains the shared
 `wire.unpack_body` length/padding checks. CUDA destinations reconstruct
 byte-sized fields directly from packed words through `kernel_wire` when the
