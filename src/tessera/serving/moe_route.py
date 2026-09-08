@@ -73,6 +73,7 @@ not establish full-model LFM served quality or a compiled MoE forward.
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Mapping, Sequence
 
 import torch
@@ -91,14 +92,33 @@ __all__ = [
     "GEMM_SYMBOL",
     "SHARD_TO_GROUP",
     "PreparedTesseraMoeExperts",
+    "PreparedTesseraPackedMoeExperts",
+    "ResearchSelectedMoeConfig",
     "census_expected",
     "census_symbol_base",
     "prepare_tessera_moe_experts",
+    "prepare_tessera_packed_moe_experts",
     "build_tessera_moe_method",
 ]
 
 ACTIVATION_CONTRACT = ROUTES[TESSERA_FP8]["activation_contract"]
 GEMM_SYMBOL = MOE_GEMM_SYMBOL
+
+
+@dataclass(frozen=True)
+class ResearchSelectedMoeConfig:
+    """Explicit Python-only construction; no checkpoint or environment opt-in.
+
+    This does not name a production residency mode or a qualified runtime cell.
+    The normal ``TesseraConfig`` never supplies it. The bound limits decoder
+    temporaries, not the final selected FP8 stack or whole-engine workspace.
+    """
+
+    max_experts_per_chunk: int
+
+    def __post_init__(self):
+        if type(self.max_experts_per_chunk) is not int or self.max_experts_per_chunk <= 0:
+            raise ValueError("max_experts_per_chunk must be a positive integer")
 
 
 def census_expected(*, compiled: bool = False) -> dict:
@@ -173,6 +193,39 @@ class PreparedTesseraMoeExperts:
         return int(self.w13_weight.shape[0])
 
 
+class PreparedTesseraPackedMoeExperts:
+    """The shared FP8/window owners for both groups, without decoded weights."""
+
+    def __init__(self, first, second):
+        self.__first, self.__second = first, second
+        self.experts, self.device = first.experts, first.device
+
+    def resident_bytes(self) -> int:
+        return self.__first.resident_bytes() + self.__second.resident_bytes()
+
+    def decode(self, expert_ids, *, max_experts_per_chunk) -> PreparedTesseraMoeExperts:
+        return PreparedTesseraMoeExperts(
+            self.__first.decode(expert_ids, max_experts_per_chunk=max_experts_per_chunk).view(torch.float8_e4m3fn),
+            self.__second.decode(expert_ids, max_experts_per_chunk=max_experts_per_chunk).view(torch.float8_e4m3fn),
+            self.__first.row_scale(expert_ids).unsqueeze(-1),
+            self.__second.row_scale(expert_ids).unsqueeze(-1))
+
+
+def _parsed_experts(blobs, declared_group, target, device):
+    """One parsing/role-validation seam for resident and research owners."""
+    role_declarations = expert_role_declarations(declared_group)
+    for expert, expert_blobs in enumerate(blobs):
+        if len(expert_blobs) != len(role_declarations):
+            raise ValueError(
+                f"{target} expert {expert}: {len(expert_blobs)} container(s) for "
+                f"{len(role_declarations)} declared projection(s) "
+                f"{[r['roles'][0][0] for r in role_declarations]}")
+        roles = []
+        for blob, role in zip(expert_blobs, role_declarations):
+            roles.extend(parse_tessera_expert_blob(blob, role, f"{target} expert {expert}", device=device))
+        yield roles
+
+
 def _decode_group(blobs: Sequence[Sequence[bytes]], declared_group: Mapping, target: str,
                   device) -> "tuple[torch.Tensor, torch.Tensor]":
     """One group's E x P containers -> ``([E, rows, cols] uint8, [E, rows, 1] fp32)``.
@@ -192,18 +245,10 @@ def _decode_group(blobs: Sequence[Sequence[bytes]], declared_group: Mapping, tar
     from tessera.decode import materialize_fp8
 
     rows, columns = int(declared_group["rows"]), int(declared_group["columns"])
-    role_declarations = expert_role_declarations(declared_group)
     weights, scales = [], []
-    for expert, expert_blobs in enumerate(blobs):
-        if len(expert_blobs) != len(role_declarations):
-            raise ValueError(
-                f"{target} expert {expert}: {len(expert_blobs)} container(s) for "
-                f"{len(role_declarations)} declared projection(s) "
-                f"{[r['roles'][0][0] for r in role_declarations]}")
+    for expert, roles in enumerate(_parsed_experts(blobs, declared_group, target, device)):
         role_w, role_s = [], []
-        for blob, role in zip(expert_blobs, role_declarations):
-            (_name, parsed), = parse_tessera_expert_blob(
-                blob, role, f"{target} expert {expert}", device=device)
+        for _name, parsed in roles:
             tile, scale = materialize_fp8(parsed.unit, parsed.forests, parsed.code)
             role_w.append(tile.to(device))
             role_s.append(scale.to(device, torch.float32).reshape(-1))
@@ -218,6 +263,36 @@ def _decode_group(blobs: Sequence[Sequence[bytes]], declared_group: Mapping, tar
     return torch.stack(weights, 0), torch.stack(scales, 0).unsqueeze(-1)
 
 
+def _require_expert_groups(blobs, declared, target):
+    experts = int(declared["experts"])
+    for group in MOE_GROUPS:
+        if len(blobs[group]) != experts:
+            raise ValueError(
+                f"{target}: group {group!r} carries {len(blobs[group])} expert row(s) for "
+                f"{experts} experts; every expert must have its own row of projection containers")
+
+
+def prepare_tessera_packed_moe_experts(blobs, declared, target, device=None):
+    """Research load: validate original containers into existing packed owners.
+
+    Layout compatibility is checked by ``PreparedWindow.stack``. Per-expert
+    bodies/scales/alphabets may differ; heterogeneous gather layouts refuse.
+    No full expert FP8 tile is materialized during this load.
+    """
+    from .fp8_route import PreparedTesseraFp8Module, prepare_tessera_fp8_module
+
+    device = torch.device("cuda" if device is None else device)
+    _require_expert_groups(blobs, declared, target)
+    prepared = {}
+    for group in MOE_GROUPS:
+        modules = [prepare_tessera_fp8_module(roles, device=device)
+                   for roles in _parsed_experts(blobs[group], declared['groups'][group],
+                                                f"{target} {group}", device)]
+        prepared[group] = PreparedTesseraFp8Module.stack(modules)
+        del modules
+    return PreparedTesseraPackedMoeExperts(prepared['w13'], prepared['w2'])
+
+
 def prepare_tessera_moe_experts(blobs: Mapping[str, Sequence[Sequence[bytes]]],
                                 declared: Mapping, target: str,
                                 device=None) -> PreparedTesseraMoeExperts:
@@ -229,12 +304,7 @@ def prepare_tessera_moe_experts(blobs: Mapping[str, Sequence[Sequence[bytes]]],
     not what the sidecar promised is a refusal rather than a wrong tile.
     """
     device = torch.device("cuda" if device is None else device)
-    experts = int(declared["experts"])
-    for group in MOE_GROUPS:
-        if len(blobs[group]) != experts:
-            raise ValueError(
-                f"{target}: group {group!r} carries {len(blobs[group])} expert row(s) for "
-                f"{experts} experts; every expert must have its own row of projection containers")
+    _require_expert_groups(blobs, declared, target)
     w13, w13_scale = _decode_group(blobs["w13"], declared["groups"]["w13"], f"{target} w13", device)
     w2, w2_scale = _decode_group(blobs["w2"], declared["groups"]["w2"], f"{target} w2", device)
     return PreparedTesseraMoeExperts(
@@ -242,7 +312,8 @@ def prepare_tessera_moe_experts(blobs: Mapping[str, Sequence[Sequence[bytes]]],
         w13_weight_scale=w13_scale, w2_weight_scale=w2_scale)
 
 
-def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer):
+def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
+                             research_selected: ResearchSelectedMoeConfig | None = None):
     """Construct the vLLM fused-MoE method serving a Tessera expert stack.
 
     ``layer`` is the ``RoutedExperts`` being built: its ``moe_config`` is what
@@ -251,6 +322,8 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer):
     """
     if mode not in MODES:
         raise ValueError(f"unknown residency mode {mode!r}")
+    if research_selected is not None and not isinstance(research_selected, ResearchSelectedMoeConfig):
+        raise ValueError("research_selected requires an explicit ResearchSelectedMoeConfig")
     declared = validate_tessera_moe_scheme(scheme, prefix)
     family = declared["family"]
     from .scheme import refuse_a_family_with_no_expert_route
@@ -277,7 +350,16 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer):
 
         def __init__(self, moe) -> None:
             super().__init__(moe)
-            self._mode = mode
+            self._mode = mode if research_selected is None else 'research_selected'
+            self._research_phase = 'new'
+            self._packed = None
+            if research_selected is not None:
+                from vllm.config import get_current_vllm_config
+                if not get_current_vllm_config().model_config.enforce_eager:
+                    raise ValueError(f"{prefix}: research selected experts require enforce_eager")
+                parallel = moe.moe_parallel_config
+                if any(getattr(parallel, field) != 1 for field in ('tp_size', 'ep_size', 'dp_size')):
+                    raise ValueError(f"{prefix}: research selected experts require TP1/EP1/DP1")
             if not moe.is_act_and_mul:
                 raise ValueError(
                     f"tessera target {prefix!r}: this MoE is not gated (is_act_and_mul is "
@@ -289,6 +371,10 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer):
             self.fp8_backend, self.experts_cls = select_fp8_moe_backend(
                 config=self.moe, weight_key=kFp8StaticChannelSym,
                 activation_key=kFp8DynamicTokenSym, allow_vllm_cutlass=True)
+            if research_selected is not None:
+                from vllm.model_executor.layers.fused_moe.oracle.fp8 import Fp8MoeBackend
+                if self.fp8_backend != Fp8MoeBackend.TRITON or self.experts_cls.is_monolithic():
+                    raise ValueError(f"{prefix}: research selected expert mapping covers stock TRITON FP8 only")
 
         @property
         def supports_eplb(self) -> bool:
@@ -300,6 +386,8 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer):
         # -- load -------------------------------------------------------
         def create_weights(self, layer, num_experts, hidden_size,
                            intermediate_size_per_partition, params_dtype, **extra):
+            if research_selected is not None and self._research_phase != 'new':
+                raise RuntimeError(f"{prefix}: research owner is already constructed")
             experts = int(declared["experts"])
             global_experts = int(extra.get("global_num_experts", num_experts))
             if int(num_experts) != experts or global_experts != experts:
@@ -344,19 +432,21 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer):
             # length companions through the method that registered them.
             self._w13_len = layer.tessera_w13_wire_len
             self._w2_len = layer.tessera_w2_wire_len
+            self._wire_ids = {'w13': id(w13_wire), 'w2': id(w2_wire)}
 
             # The tile, allocated at create time exactly as the stock
             # per-channel method allocates it, so what the kernel sees is the
             # runtime's own parameter set and ``replace_parameter`` has
             # something to replace.
-            for name, shape in (("w13_weight", (experts, n_rows, k)),
-                                ("w2_weight", (experts, k, n_cols))):
-                layer.register_parameter(name, torch.nn.Parameter(
-                    torch.empty(*shape, dtype=torch.float8_e4m3fn), requires_grad=False))
-            for name, shape in (("w13_weight_scale", (experts, n_rows, 1)),
-                                ("w2_weight_scale", (experts, k, 1))):
-                layer.register_parameter(name, torch.nn.Parameter(
-                    torch.ones(*shape, dtype=torch.float32), requires_grad=False))
+            if research_selected is None:
+                for name, shape in (("w13_weight", (experts, n_rows, k)),
+                                    ("w2_weight", (experts, k, n_cols))):
+                    layer.register_parameter(name, torch.nn.Parameter(
+                        torch.empty(*shape, dtype=torch.float8_e4m3fn), requires_grad=False))
+                for name, shape in (("w13_weight_scale", (experts, n_rows, 1)),
+                                    ("w2_weight_scale", (experts, k, 1))):
+                    layer.register_parameter(name, torch.nn.Parameter(
+                        torch.ones(*shape, dtype=torch.float32), requires_grad=False))
             layer.w13_input_scale = None
             layer.w2_input_scale = None
             layer.tessera_mode = self._mode
@@ -365,6 +455,7 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer):
             layer.tessera_activation_contract = ACTIVATION_CONTRACT
             layer.tessera_rows = n_rows
             layer.tessera_columns = k
+            self._research_phase = 'loading'
 
         def _load_wire(self, param, loaded_weight, weight_name, shard_id, expert_id,
                        return_success: bool = False):
@@ -380,6 +471,16 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer):
                 raise ValueError(
                     f"tessera target {prefix!r}: shard_id {shard_id!r} is not one of the "
                     f"shards the expert groups hold ({sorted(SHARD_TO_GROUP)})")
+            if research_selected is not None:
+                if self._research_phase != 'loading':
+                    raise RuntimeError(f"{prefix}: research owner is not loading ({self._research_phase})")
+                if type(expert_id) is not int or not 0 <= expert_id < int(declared['experts']):
+                    raise ValueError(f"{prefix}: invalid global expert ID {expert_id!r}")
+                if id(param) != self._wire_ids[group]:
+                    raise ValueError(f"{prefix}: wire parameter does not belong to group {group}")
+                previous = self._w13_len[expert_id, index] if group == 'w13' else self._w2_len[expert_id]
+                if int(previous) != 0:
+                    raise ValueError(f"{prefix}: expert {expert_id} shard {shard_id} already loaded")
             blob = loaded_weight.reshape(-1)
             if blob.dtype != torch.uint8:
                 raise ValueError(
@@ -401,6 +502,10 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer):
             return True if return_success else None
 
         def process_weights_after_loading(self, layer) -> None:
+            if research_selected is not None:
+                if self._research_phase != 'loading':
+                    raise RuntimeError(f"{prefix}: research owner is not loading ({self._research_phase})")
+                self._research_phase = 'failed'  # any incomplete/invalid load stays unusable
             packed = MoePacked(
                 w13_wire=layer.w13_wire.data.cpu(), w13_wire_len=layer.tessera_w13_wire_len,
                 w2_wire=layer.w2_wire.data.cpu(), w2_wire_len=layer.tessera_w2_wire_len)
@@ -409,15 +514,24 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer):
             # lengths imply, which is the sidecar-vs-bytes disagreement no
             # other check sees.
             w13_blobs, w2_blobs = unpack_moe_wires(packed)
-            device = layer.w13_weight.device
+            device = layer.w13_wire.device
             if device.type != "cuda" and torch.cuda.is_available():
                 device = torch.device("cuda")
-            prepared = prepare_tessera_moe_experts(
+            prepare = (prepare_tessera_moe_experts if research_selected is None
+                       else prepare_tessera_packed_moe_experts)
+            prepared = prepare(
                 {"w13": w13_blobs, "w2": [[blob] for blob in w2_blobs]},
                 declared, prefix, device=device)
             del layer.w13_wire, layer.w2_wire
             layer.tessera_w13_wire_len = None
             layer.tessera_w2_wire_len = None
+            if research_selected is not None:
+                self._w13_len = self._w2_len = self._wire_ids = None
+                self._packed = prepared
+                self._research_phase = 'ready'
+                layer.tessera_decoder = 'research_selected_torch_window'
+                layer.tessera_backend = str(getattr(self.fp8_backend, 'value', self.fp8_backend))
+                return
 
             w13, w2, w13_scale, w2_scale = convert_to_fp8_moe_kernel_format(
                 fp8_backend=self.fp8_backend, layer=layer,
@@ -440,6 +554,11 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer):
             layer.tessera_backend = str(getattr(self.fp8_backend, "value", self.fp8_backend))
 
         def get_fused_moe_quant_config(self, layer):
+            # The compact scales/config and kernel are per invocation. The
+            # stock runner permits None here and keeps shared experts under
+            # its normal non-MK-overlap execution path.
+            if research_selected is not None:
+                return None
             return make_fp8_moe_quant_config(
                 fp8_backend=self.fp8_backend,
                 w1_scale=layer.w13_weight_scale, w2_scale=layer.w2_weight_scale,
@@ -453,6 +572,9 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer):
         # -- forward ----------------------------------------------------
         def apply(self, layer, x, topk_weights, topk_ids, shared_experts,
                   shared_experts_input):
+            if research_selected is not None:
+                return self._apply_selected(layer, x, topk_weights, topk_ids,
+                                            shared_experts, shared_experts_input)
             assert not self.is_monolithic
             assert self.moe_kernel is not None
             out = self.moe_kernel.apply(
@@ -465,6 +587,8 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer):
             return out
 
         def apply_monolithic(self, layer, x, router_logits, input_ids=None):
+            if research_selected is not None:
+                raise ValueError(f"{prefix}: research selected experts require external top-k routing")
             assert self.moe_kernel is not None
             out = self.moe_kernel.apply_monolithic(
                 x, layer.w13_weight, layer.w2_weight, router_logits,
@@ -476,6 +600,55 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer):
                 routed_scaling_factor=layer.routed_scaling_factor)
             self._record(layer, x)
             return out
+
+        def research_resident_bytes(self) -> int:
+            if research_selected is None or self._research_phase != 'ready':
+                raise RuntimeError(f"{prefix}: research packed owner is not ready")
+            return self._packed.resident_bytes()
+
+        def _apply_selected(self, layer, x, weights, ids, shared_experts, shared_experts_input):
+            if self._research_phase != 'ready':
+                raise RuntimeError(f"{prefix}: research packed owner is not ready")
+            if torch.compiler.is_compiling() or (x.is_cuda and torch.cuda.is_current_stream_capturing()):
+                raise ValueError(f"{prefix}: research selected experts require eager execution without capture")
+            if x.ndim != 2 or x.shape[1] != int(declared['hidden_size']):
+                raise ValueError(f"{prefix}: research input must be [tokens, hidden_size]")
+            expected_shape = (x.shape[0], self.moe.experts_per_token)
+            if tuple(ids.shape) != expected_shape or tuple(weights.shape) != expected_shape:
+                raise ValueError(f"{prefix}: research routing must be [tokens, top_k]")
+            if ids.dtype not in (torch.int32, torch.int64) or not weights.is_floating_point():
+                raise ValueError(f"{prefix}: research routing needs integer IDs and floating weights")
+            if any(t.device != self._packed.device for t in (x, ids, weights)):
+                raise ValueError(f"{prefix}: inputs and packed experts must share one device")
+            if x.shape[0] == 0:
+                # The stock runner owns any shared-expert output independently.
+                return x.new_empty((0, int(declared['hidden_size'])))
+            with torch.profiler.record_function('tessera_research_select_experts'):
+                selected_ids = torch.unique(ids)
+                if bool((selected_ids < 0).any()) or bool((selected_ids >= self._packed.experts).any()):
+                    raise ValueError(f"{prefix}: research routing contains an invalid global expert ID")
+                expert_map = torch.full((self._packed.experts,), -1, dtype=torch.int32, device=x.device)
+                expert_map.scatter_(0, selected_ids.long(),
+                                    torch.arange(selected_ids.numel(), dtype=torch.int32, device=x.device))
+            with torch.profiler.record_function('tessera_research_decode_selected_experts'):
+                selected = self._packed.decode(selected_ids,
+                    max_experts_per_chunk=research_selected.max_experts_per_chunk)
+            quant = make_fp8_moe_quant_config(
+                fp8_backend=self.fp8_backend,
+                w1_scale=selected.w13_weight_scale, w2_scale=selected.w2_weight_scale,
+                a1_scale=None, a2_scale=None, per_act_token_quant=True,
+                per_out_ch_quant=True, block_shape=None,
+                gemm1_alpha=getattr(layer,'swiglu_alpha',None),
+                gemm1_beta=getattr(layer,'swiglu_beta',None),
+                swiglu_limit=getattr(layer,'swiglu_limit',None), layer=layer)
+            kernel = make_fp8_moe_kernel(moe_quant_config=quant, moe_config=self.moe,
+                fp8_backend=self.fp8_backend, experts_cls=self.experts_cls,
+                routing_tables=layer._expert_routing_tables())
+            with torch.profiler.record_function('tessera_research_apply_selected_experts'):
+                return kernel.apply(x, selected.w13_weight, selected.w2_weight, weights, ids,
+                    activation=layer.activation, global_num_experts=layer.global_num_experts,
+                    expert_map=expert_map, apply_router_weight_on_input=layer.apply_router_weight_on_input,
+                    shared_experts=shared_experts, shared_experts_input=shared_experts_input)
 
         def _record(self, layer, x) -> None:
             try:

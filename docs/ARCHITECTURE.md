@@ -98,6 +98,19 @@ serving defaults and release gates retain their existing contracts.
 Re-stamped 2026-09-08 for the explicit research selected-window Triton backend
 against base `2083062de7`; production eligibility, pins and wire are unchanged.
 
+Re-stamped 2026-09-08 for the explicit packed selected-expert lifecycle
+against base `2083062d`. `build_tessera_moe_method` accepts a Python-only
+`ResearchSelectedMoeConfig`: the ordinary `TesseraConfig`, serving environment,
+packaged cells and release gates do not select it. It requires eager TP1/EP1/DP1
+and the stock Triton FP8 backend. The actual expert loader initially owns wire
+buffers only, then replaces them with `PreparedTesseraFp8Module.stack` packed
+owners; each apply decodes the requested experts in bounded chunks, constructs
+the stock global-to-compact map and uses a temporary stock kernel and scales.
+No persistent full FP8 pool or kernel scale references survive the call. Empty
+input returns an empty output. Missing/duplicate/late wires, invalid IDs and
+parallel or compiled configurations refuse. This research lifecycle does not
+establish full-model residency, trained-expert quality or production eligibility.
+
 ## 1. Scope
 
 Re-stamped 2026-09-07 for the selected-expert research control (#415):
