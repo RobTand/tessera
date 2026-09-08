@@ -40,6 +40,7 @@ __all__ = [
     "MoePacked",
     "pack_moe_wires",
     "unpack_moe_wires",
+    "validate_moe_wire_lengths",
 ]
 
 #: Projections fused into the w13 group: gate and up.  A mechanism count, not
@@ -171,18 +172,13 @@ def _check_lengths_shape(packed: MoePacked) -> int:
     return experts
 
 
-def unpack_moe_wires(packed: MoePacked) -> "tuple[list[list[bytes]], list[bytes]]":
-    """Recover one layer's expert wires byte-for-byte, sliced so ``parse_fused`` fits.
-
-    Each ``[e, p, :length]`` prefix is returned exactly -- no padding -- so the
-    slice handed to ``fused.parse_fused`` downstream ends where the packed blob
-    ended.  Refuses, each by name: a length past its row's declared stride, a
-    length tensor whose shape disagrees with the expert count or the projection
-    count, and a stride that is not the max its lengths imply.
-    """
-    experts = _check_lengths_shape(packed)
-    stride13, stride2 = packed.w13_wire.shape[2], packed.w2_wire.shape[1]
-
+def validate_moe_wire_lengths(w13_wire_len, w2_wire_len, *, experts, stride13, stride2):
+    """Validate complete original lengths without allocating their padded bank."""
+    if (not isinstance(w13_wire_len, torch.Tensor)
+            or not isinstance(w2_wire_len, torch.Tensor)
+            or tuple(w13_wire_len.shape) != (experts, W13_PROJECTIONS)
+            or tuple(w2_wire_len.shape) != (experts,) or experts <= 0):
+        raise GrammarError("moe wire length companions disagree with expert/projection geometry")
     def length(group: str, expert: int, proj: "int | None", value) -> int:
         where = f"expert {expert} projection {proj}" if proj is not None else f"expert {expert}"
         number = int(value)
@@ -192,9 +188,9 @@ def unpack_moe_wires(packed: MoePacked) -> "tuple[list[list[bytes]], list[bytes]
                 "nothing fused.parse_fused accepts, so it was never packable")
         return number
 
-    w13_lengths = [[length("w13", e, p, packed.w13_wire_len[e, p])
+    w13_lengths = [[length("w13", e, p, w13_wire_len[e, p])
                     for p in range(W13_PROJECTIONS)] for e in range(experts)]
-    w2_lengths = [length("w2", e, None, packed.w2_wire_len[e]) for e in range(experts)]
+    w2_lengths = [length("w2", e, None, w2_wire_len[e]) for e in range(experts)]
     for expert in range(experts):
         for proj in range(W13_PROJECTIONS):
             if w13_lengths[expert][proj] > stride13:
@@ -220,6 +216,25 @@ def unpack_moe_wires(packed: MoePacked) -> "tuple[list[list[bytes]], list[bytes]
             f"moe w2 stride {stride2} is not what its lengths imply ({implied2}): the stride "
             "is the max over the packed blobs, so a declared stride beside it is a wrong "
             "tensor, not room")
+
+    return w13_lengths, w2_lengths
+
+
+def unpack_moe_wires(packed: MoePacked) -> "tuple[list[list[bytes]], list[bytes]]":
+    """Recover one layer's expert wires byte-for-byte, sliced so ``parse_fused`` fits.
+
+    Each ``[e, p, :length]`` prefix is returned exactly -- no padding -- so the
+    slice handed to ``fused.parse_fused`` downstream ends where the packed blob
+    ended.  Refuses, each by name: a length past its row's declared stride, a
+    length tensor whose shape disagrees with the expert count or the projection
+    count, and a stride that is not the max its lengths imply.
+    """
+    experts = _check_lengths_shape(packed)
+    stride13, stride2 = packed.w13_wire.shape[2], packed.w2_wire.shape[1]
+
+    w13_lengths, w2_lengths = validate_moe_wire_lengths(
+        packed.w13_wire_len, packed.w2_wire_len, experts=experts,
+        stride13=stride13, stride2=stride2)
 
     back13 = [[_blob_bytes(packed.w13_wire[e, p, :w13_lengths[e][p]]) for p in range(W13_PROJECTIONS)]
               for e in range(experts)]

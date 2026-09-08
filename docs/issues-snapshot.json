@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-08T22:01:26Z",
+ "generated": "2026-09-08T23:10:02Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -1504,12 +1504,32 @@
     "title": "Bind explicit stock topology in offline gold instruments"
    },
    "437": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Streamed gold teacher lacks authenticated full-vocabulary companion and GLM source binding"
+   },
+   "438": {
+    "state": "CLOSED",
+    "title": "Support explicit model-bound offline WikiText evaluation inputs"
+   },
+   "439": {
+    "state": "CLOSED",
+    "title": "Add model-bound offline WikiText inputs and record GLM overlap"
    },
    "44": {
     "state": "CLOSED",
     "title": "Release PrismaQuant 0.5.1 with versioned NVFP4 activation contracts"
+   },
+   "440": {
+    "state": "CLOSED",
+    "title": "Add authenticated streamed gold final-row companion"
+   },
+   "441": {
+    "state": "OPEN",
+    "title": "Selected-anchor observer omits compatible batched encoding"
+   },
+   "442": {
+    "state": "OPEN",
+    "title": "Observe compatible batched anchors in the existing profiler"
    },
    "45": {
     "state": "CLOSED",
@@ -3238,12 +3258,16 @@
     "title": "Validate JSON checkpoint selection in the native GLM packed control"
    },
    "433": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Allow calibrated packed checkpoints through complete cached-unit export"
    },
    "434": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "fix(export): accept calibrated packed complete-cache intake"
+   },
+   "435": {
+    "state": "OPEN",
+    "title": "Research packed TP2 allocates full checkpoint wire banks before rank-local slicing"
    },
    "44": {
     "state": "CLOSED",

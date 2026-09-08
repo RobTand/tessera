@@ -5,6 +5,21 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-08 for rank-local research TP2 wire intake (#435),
+against base `2890976db`. Stock vLLM constructs all owners on its target
+CUDA device before loading any weights and finalizes modules only after the
+complete load. The explicit research TP2 path therefore registers zero-byte
+wire parameters carrying the existing custom loaders. Every callback validates
+its original full container, derives the existing rank-local role slice and
+retains only that packed role. Finalization checks original lengths against
+the declared maximum stride and stacks the prepared local roles. Transient
+source/parse/reference storage is bounded to the current projection; stacking
+can temporarily duplicate one owner's local packed group. TP1 and ordinary
+materialized intake keep their existing behavior. This removes the all-model
+full-wire staging allocation; actual CUDA peak memory, stock automatic loading
+and whole-engine fit still require native measurements. Producer bytes, the
+public wire ABI, research opt-in and qualification gates are unchanged.
+
 Re-stamped 2026-09-08 for calibrated packed complete-cache intake (#433),
 against base `f6faf7e59fa6`. The CLI accepts `--hessian` with a packed expert
 plan only under `--cached-units`; exact existing per-unit source/projection/H
@@ -2175,11 +2190,13 @@ independently planned twin over a nonconstant table.
 
 **Research TP2 ownership.** `ResearchSelectedMoeConfig` defaults to
 `expected_tensor_parallel_size=1`; an explicit value of `2` must agree with
-the runtime's actual TP size. Each rank loads and validates every original
-full expert wire, then uses `plan_shard` and `shard_parsed_roles` to cut gate
+the runtime's actual TP size. Each rank validates every original full expert
+wire during its loader callback, then uses `plan_shard` and `shard_parsed_roles` to cut gate
 and up independently along their output rows and down along its input columns.
 The existing packed FP8/window owners retain those local roles and preserve
-nonzero row-cut initial states. There is no checkpoint rewrite or persistent
+nonzero row-cut initial states. Construction allocates zero-byte wire loader
+anchors; finalization joins and stacks already local prepared roles and checks
+the complete original length/stride contract, without a full padded wire bank. There is no checkpoint rewrite or persistent
 full decoded expert stack. Global expert IDs and router weights are unchanged;
 the method returns the rank's partial output, leaving shared-expert combination
 and the final all-reduce to stock vLLM. EP, DP, PCP, SP, EPLB, runtime padding,
