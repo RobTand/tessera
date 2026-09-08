@@ -135,7 +135,8 @@ def run(args, request, outer):
     quant_cls = TesseraConfig
     if outer['arm'] == 'packed':
         from tessera.serving.moe_route import ResearchSelectedMoeConfig, build_tessera_moe_method
-        research = ResearchSelectedMoeConfig(max_experts_per_chunk=outer['max_experts_per_chunk'])
+        research = ResearchSelectedMoeConfig(max_experts_per_chunk=outer['max_experts_per_chunk'],
+                                             decode_backend=outer.get('decode_backend', 'torch'))
         class ResearchConfig(TesseraConfig):
             def get_quant_method(self,layer,prefix):
                 declaration = self.target_scheme.get(prefix)
@@ -236,7 +237,8 @@ def run(args, request, outer):
             row = {'case':case,'output_vs_independent_stock':parity}
             if outer['arm'] == 'packed':
                 selected_ids = torch.unique(ids).flip(0)
-                decoded = method._packed.decode(selected_ids,max_experts_per_chunk=outer['max_experts_per_chunk'])
+                decoded = method._packed.decode(selected_ids,max_experts_per_chunk=outer['max_experts_per_chunk'],
+                                                backend=outer.get('decode_backend', 'torch'))
                 assert torch.equal(decoded.w13_weight.view(torch.uint8),first.index_select(0,selected_ids.long()).view(torch.uint8))
                 assert torch.equal(decoded.w2_weight.view(torch.uint8),second.index_select(0,selected_ids.long()).view(torch.uint8))
                 assert torch.equal(decoded.w13_weight_scale,s13.index_select(0,selected_ids.long()))
@@ -299,6 +301,7 @@ def run(args, request, outer):
             write(args.out,'case-progress.json',results)
         save_file(generated_inputs,args.out/'inputs.safetensors')
         return {'status':'packed_lifecycle_control_passed','arm':outer['arm'],'fixture':outer['fixture'],
+            'decode_backend':outer.get('decode_backend', 'torch'),
             'scheme':scheme,'source_input_receipts':input_receipts,'owner_resident_bytes':resident_bytes,
             'load_stages':stages,'cases':results,'input_file_sha256':digest(args.out/'inputs.safetensors'),
             'backend':plain(method.fp8_backend),'actual_moe_class':type(moe).__module__+'.'+type(moe).__qualname__,

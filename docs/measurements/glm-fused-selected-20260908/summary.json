@@ -1,0 +1,707 @@
+{
+  "schema": "tessera.glm_fused_selected_abba.v2",
+  "order": [
+    "old-01",
+    "fused-01",
+    "fused-02",
+    "old-02",
+    "diagnostic-01"
+  ],
+  "arms": {
+    "old-01": {
+      "backend": "torch",
+      "owner_resident_bytes": 1853603840,
+      "load_stages": {
+        "before_create": {
+          "allocated_bytes": 52428800,
+          "reserved_bytes": 52428800,
+          "peak_allocated_bytes": 52428800,
+          "peak_reserved_bytes": 52428800,
+          "epoch": 1788862360.999837
+        },
+        "after_create": {
+          "allocated_bytes": 1936940544,
+          "reserved_bytes": 1941962752,
+          "peak_allocated_bytes": 1936940544,
+          "peak_reserved_bytes": 1941962752,
+          "epoch": 1788862361.0635872
+        },
+        "after_wire_load": {
+          "allocated_bytes": 1936940544,
+          "reserved_bytes": 1941962752,
+          "peak_allocated_bytes": 1936940544,
+          "peak_reserved_bytes": 1941962752,
+          "epoch": 1788862361.4412158
+        },
+        "after_prepare": {
+          "allocated_bytes": 1959380480,
+          "reserved_bytes": 6442450944,
+          "peak_allocated_bytes": 4471234048,
+          "peak_reserved_bytes": 6442450944,
+          "epoch": 1788862393.6495142
+        }
+      },
+      "cases": [
+        {
+          "case": "decode",
+          "median_ms": 150.24193572998047,
+          "samples": 100,
+          "wall_invocations_per_s": 6.64952954183417,
+          "board_power_mean_w": 28.27266666666667,
+          "power_source": "pqteld_2hz",
+          "power_samples": 30,
+          "netdata_interpolated_power_mean_w": 29.0,
+          "host_memory": {
+            "samples": 30,
+            "unified_available_bytes_min": 108678737920,
+            "unified_total_bytes": 130595991552,
+            "unified_used_bytes_peak": 21917253632,
+            "psi_mem_full_avg10_max": 0.0,
+            "psi_io_full_avg10_max": 4.79,
+            "source": "pqteld"
+          },
+          "host_cpu": {
+            "source": "netdata",
+            "samples": 17,
+            "busy_percent_mean": 8.690366211764706,
+            "busy_percent_peak": 12.4183001,
+            "psi_some_avg10_max": 0.18,
+            "psi_some_avg10_samples": 8
+          },
+          "estimated_invocations_per_board_joule": 0.23519286738077422,
+          "incremental_peak_bytes": 2365818880,
+          "retained_allocation_delta_bytes": 0,
+          "fused_kernel_events": [],
+          "trace_sha256": "e60f53898c2cbee20683c5a87f3bbb1f13498d85219e3f2d32f9097b279ca1d7"
+        },
+        {
+          "case": "all_experts",
+          "median_ms": 5452.3017578125,
+          "samples": 3,
+          "wall_invocations_per_s": 0.18341382287252106,
+          "board_power_mean_w": 29.78,
+          "power_source": "pqteld_2hz",
+          "power_samples": 32,
+          "netdata_interpolated_power_mean_w": 29.48,
+          "host_memory": {
+            "samples": 32,
+            "unified_available_bytes_min": 86351319040,
+            "unified_total_bytes": 130595991552,
+            "unified_used_bytes_peak": 44244672512,
+            "psi_mem_full_avg10_max": 0.0,
+            "psi_io_full_avg10_max": 3.36,
+            "source": "pqteld"
+          },
+          "host_cpu": {
+            "source": "netdata",
+            "samples": 18,
+            "busy_percent_mean": 8.338176994444444,
+            "busy_percent_peak": 9.5477382,
+            "psi_some_avg10_max": 0.09,
+            "psi_some_avg10_samples": 8
+          },
+          "estimated_invocations_per_board_joule": 0.006158959800957725,
+          "incremental_peak_bytes": 11358407680,
+          "retained_allocation_delta_bytes": 0,
+          "fused_kernel_events": [],
+          "trace_sha256": "2a46f4043664c47185e40194b868e7866189f6f9fe85d94040cd0c3747f75706"
+        },
+        {
+          "case": "clamp_stress",
+          "median_ms": 608.0308227539062,
+          "samples": 25,
+          "wall_invocations_per_s": 1.644265351424994,
+          "board_power_mean_w": 29.72290322580645,
+          "power_source": "pqteld_2hz",
+          "power_samples": 31,
+          "netdata_interpolated_power_mean_w": 22.571,
+          "host_memory": {
+            "samples": 31,
+            "unified_available_bytes_min": 86423285760,
+            "unified_total_bytes": 130595991552,
+            "unified_used_bytes_peak": 44172705792,
+            "psi_mem_full_avg10_max": 0.0,
+            "psi_io_full_avg10_max": 3.68,
+            "source": "pqteld"
+          },
+          "host_cpu": {
+            "source": "netdata",
+            "samples": 17,
+            "busy_percent_mean": 8.707045005882353,
+            "busy_percent_peak": 9.6530916,
+            "psi_some_avg10_max": 0.0,
+            "psi_some_avg10_samples": 8
+          },
+          "estimated_invocations_per_board_joule": 0.05531980974178142,
+          "incremental_peak_bytes": 3775105024,
+          "retained_allocation_delta_bytes": 0,
+          "fused_kernel_events": [],
+          "trace_sha256": "3c398fc98ff92589a251e17a98063b58961ba3fa88a086cdb5aae7b2ac9483ed"
+        }
+      ],
+      "receipt_sha256": "df179b54510d1798665b914614282ef8f3a26a4f88f19a6f15b87af39325059e",
+      "source_commit": "30c5d2ed43baa41b48404f9c16f9c6153f11607b",
+      "inputs_sha256": "253031a63500afe6658b7cc501fd72dd135c86f924cba5154dc0b405db18f81c",
+      "box_window_sha256": "e88f2b7320d066f1c2410638f277dbc4db2f3842be7c58f345f762125449e049",
+      "installed_source_files_verified": 68,
+      "netdata_sha256": "430d535067d89a6be6a5f513892e8689eae66461ccaabc8a09a0af52579cf961",
+      "launcher_sha256": "14749dee4dc03c96020f9de289d118ddf839342339e1f6e7bed74abb5f1cd8e0"
+    },
+    "fused-01": {
+      "backend": "triton",
+      "owner_resident_bytes": 1853603840,
+      "load_stages": {
+        "before_create": {
+          "allocated_bytes": 52428800,
+          "reserved_bytes": 52428800,
+          "peak_allocated_bytes": 52428800,
+          "peak_reserved_bytes": 52428800,
+          "epoch": 1788862534.1719916
+        },
+        "after_create": {
+          "allocated_bytes": 1936940544,
+          "reserved_bytes": 1941962752,
+          "peak_allocated_bytes": 1936940544,
+          "peak_reserved_bytes": 1941962752,
+          "epoch": 1788862534.2351854
+        },
+        "after_wire_load": {
+          "allocated_bytes": 1936940544,
+          "reserved_bytes": 1941962752,
+          "peak_allocated_bytes": 1936940544,
+          "peak_reserved_bytes": 1941962752,
+          "epoch": 1788862534.6077552
+        },
+        "after_prepare": {
+          "allocated_bytes": 1959380480,
+          "reserved_bytes": 6442450944,
+          "peak_allocated_bytes": 4471234048,
+          "peak_reserved_bytes": 6442450944,
+          "epoch": 1788862566.855878
+        }
+      },
+      "cases": [
+        {
+          "case": "decode",
+          "median_ms": 4.52953577041626,
+          "samples": 3283,
+          "wall_invocations_per_s": 218.86360189384988,
+          "board_power_mean_w": 46.679666666666655,
+          "power_source": "pqteld_2hz",
+          "power_samples": 30,
+          "netdata_interpolated_power_mean_w": 58.279,
+          "host_memory": {
+            "samples": 30,
+            "unified_available_bytes_min": 110547533824,
+            "unified_total_bytes": 130595991552,
+            "unified_used_bytes_peak": 20048457728,
+            "psi_mem_full_avg10_max": 0.0,
+            "psi_io_full_avg10_max": 3.2,
+            "source": "pqteld"
+          },
+          "host_cpu": {
+            "source": "netdata",
+            "samples": 17,
+            "busy_percent_mean": 7.25778908235294,
+            "busy_percent_peak": 7.981928,
+            "psi_some_avg10_max": 0.0,
+            "psi_some_avg10_samples": 8
+          },
+          "estimated_invocations_per_board_joule": 4.688628208438719,
+          "incremental_peak_bytes": 268437504,
+          "retained_allocation_delta_bytes": 0,
+          "fused_kernel_events": [
+            {
+              "key": "_decode_selected_kernel",
+              "calls": 3,
+              "cpu_time_us": 0,
+              "device_time_us": 1834.3170000000007,
+              "self_device_memory_bytes": 0
+            }
+          ],
+          "trace_sha256": "f1f0cfe345d93b96ce8818e481be445c9eaa6e579a90810052408c0c94f84987"
+        },
+        {
+          "case": "all_experts",
+          "median_ms": 144.20193481445312,
+          "samples": 104,
+          "wall_invocations_per_s": 6.926747509915858,
+          "board_power_mean_w": 63.263333333333335,
+          "power_source": "pqteld_2hz",
+          "power_samples": 30,
+          "netdata_interpolated_power_mean_w": 62.429,
+          "host_memory": {
+            "samples": 30,
+            "unified_available_bytes_min": 91464380416,
+            "unified_total_bytes": 130595991552,
+            "unified_used_bytes_peak": 39131611136,
+            "psi_mem_full_avg10_max": 0.0,
+            "psi_io_full_avg10_max": 2.47,
+            "source": "pqteld"
+          },
+          "host_cpu": {
+            "source": "netdata",
+            "samples": 17,
+            "busy_percent_mean": 7.447545482352942,
+            "busy_percent_peak": 8.547009,
+            "psi_some_avg10_max": 0.6846985,
+            "psi_some_avg10_samples": 8
+          },
+          "estimated_invocations_per_board_joule": 0.1094907135768353,
+          "incremental_peak_bytes": 9663679488,
+          "retained_allocation_delta_bytes": 0,
+          "fused_kernel_events": [
+            {
+              "key": "_decode_selected_kernel",
+              "calls": 108,
+              "cpu_time_us": 0,
+              "device_time_us": 66433.51200000009,
+              "self_device_memory_bytes": 0
+            }
+          ],
+          "trace_sha256": "f8958f557c1d09176a2fb8b5621395d33218da89d388c2189bb64ca92bfcd867"
+        },
+        {
+          "case": "clamp_stress",
+          "median_ms": 16.59119987487793,
+          "samples": 901,
+          "wall_invocations_per_s": 60.02659268465136,
+          "board_power_mean_w": 53.28133333333333,
+          "power_source": "pqteld_2hz",
+          "power_samples": 30,
+          "netdata_interpolated_power_mean_w": 42.886,
+          "host_memory": {
+            "samples": 30,
+            "unified_available_bytes_min": 91474116608,
+            "unified_total_bytes": 130595991552,
+            "unified_used_bytes_peak": 39121874944,
+            "psi_mem_full_avg10_max": 0.0,
+            "psi_io_full_avg10_max": 3.07,
+            "source": "pqteld"
+          },
+          "host_cpu": {
+            "source": "netdata",
+            "samples": 17,
+            "busy_percent_mean": 7.577277382352941,
+            "busy_percent_peak": 9.1000501,
+            "psi_some_avg10_max": 0.14,
+            "psi_some_avg10_samples": 8
+          },
+          "estimated_invocations_per_board_joule": 1.1265970449560452,
+          "incremental_peak_bytes": 1073743872,
+          "retained_allocation_delta_bytes": 0,
+          "fused_kernel_events": [
+            {
+              "key": "_decode_selected_kernel",
+              "calls": 12,
+              "cpu_time_us": 0,
+              "device_time_us": 7397.405000000002,
+              "self_device_memory_bytes": 0
+            }
+          ],
+          "trace_sha256": "3a2298c1c99ff6b200754d6a40bf9f5c97d488d0aadf488e111fc9942636b5f9"
+        }
+      ],
+      "receipt_sha256": "f831c18681c07c2823e442a915fe5b440b7eaf05ab16f416754ff40bda1cb002",
+      "source_commit": "30c5d2ed43baa41b48404f9c16f9c6153f11607b",
+      "inputs_sha256": "253031a63500afe6658b7cc501fd72dd135c86f924cba5154dc0b405db18f81c",
+      "box_window_sha256": "7a58920948544a1853834f322f95c9ca561d20bceacbe21c27b016e7f201021d",
+      "installed_source_files_verified": 68,
+      "netdata_sha256": "a9050bfe7452222f0fe1b6bf5675b3a023bc20b087e8aac4e2e8f539fc4ccd63",
+      "launcher_sha256": "99aa7ca083bafaf31225ce6ae991f6ae04fb4e5853434d6ce17386839fcb8176"
+    },
+    "fused-02": {
+      "backend": "triton",
+      "owner_resident_bytes": 1853603840,
+      "load_stages": {
+        "before_create": {
+          "allocated_bytes": 52428800,
+          "reserved_bytes": 52428800,
+          "peak_allocated_bytes": 52428800,
+          "peak_reserved_bytes": 52428800,
+          "epoch": 1788862673.3725448
+        },
+        "after_create": {
+          "allocated_bytes": 1936940544,
+          "reserved_bytes": 1941962752,
+          "peak_allocated_bytes": 1936940544,
+          "peak_reserved_bytes": 1941962752,
+          "epoch": 1788862673.436818
+        },
+        "after_wire_load": {
+          "allocated_bytes": 1936940544,
+          "reserved_bytes": 1941962752,
+          "peak_allocated_bytes": 1936940544,
+          "peak_reserved_bytes": 1941962752,
+          "epoch": 1788862673.818065
+        },
+        "after_prepare": {
+          "allocated_bytes": 1959380480,
+          "reserved_bytes": 6442450944,
+          "peak_allocated_bytes": 4471234048,
+          "peak_reserved_bytes": 6442450944,
+          "epoch": 1788862706.2140646
+        }
+      },
+      "cases": [
+        {
+          "case": "decode",
+          "median_ms": 4.609951972961426,
+          "samples": 3225,
+          "wall_invocations_per_s": 214.97047488095845,
+          "board_power_mean_w": 46.584666666666685,
+          "power_source": "pqteld_2hz",
+          "power_samples": 30,
+          "netdata_interpolated_power_mean_w": 58.114,
+          "host_memory": {
+            "samples": 30,
+            "unified_available_bytes_min": 110558412800,
+            "unified_total_bytes": 130595991552,
+            "unified_used_bytes_peak": 20037578752,
+            "psi_mem_full_avg10_max": 0.0,
+            "psi_io_full_avg10_max": 2.83,
+            "source": "pqteld"
+          },
+          "host_cpu": {
+            "source": "netdata",
+            "samples": 17,
+            "busy_percent_mean": 7.40308884117647,
+            "busy_percent_peak": 8.3961795,
+            "psi_some_avg10_max": 0.0,
+            "psi_some_avg10_samples": 8
+          },
+          "estimated_invocations_per_board_joule": 4.614618720343426,
+          "incremental_peak_bytes": 268437504,
+          "retained_allocation_delta_bytes": 0,
+          "fused_kernel_events": [
+            {
+              "key": "_decode_selected_kernel",
+              "calls": 3,
+              "cpu_time_us": 0,
+              "device_time_us": 1833.4339999999997,
+              "self_device_memory_bytes": 0
+            }
+          ],
+          "trace_sha256": "3f7801d4ba55b54d85bf039f04a97d39fb37d778160e9c177b9a8c7967dd79ce"
+        },
+        {
+          "case": "all_experts",
+          "median_ms": 144.48388671875,
+          "samples": 104,
+          "wall_invocations_per_s": 6.911267106414369,
+          "board_power_mean_w": 64.06666666666666,
+          "power_source": "pqteld_2hz",
+          "power_samples": 30,
+          "netdata_interpolated_power_mean_w": 55.786,
+          "host_memory": {
+            "samples": 30,
+            "unified_available_bytes_min": 91458793472,
+            "unified_total_bytes": 130595991552,
+            "unified_used_bytes_peak": 39137198080,
+            "psi_mem_full_avg10_max": 0.0,
+            "psi_io_full_avg10_max": 2.78,
+            "source": "pqteld"
+          },
+          "host_cpu": {
+            "source": "netdata",
+            "samples": 17,
+            "busy_percent_mean": 8.133836652941174,
+            "busy_percent_peak": 16.289592799999998,
+            "psi_some_avg10_max": 0.32,
+            "psi_some_avg10_samples": 8
+          },
+          "estimated_invocations_per_board_joule": 0.10787617751947508,
+          "incremental_peak_bytes": 9663679488,
+          "retained_allocation_delta_bytes": 0,
+          "fused_kernel_events": [
+            {
+              "key": "_decode_selected_kernel",
+              "calls": 108,
+              "cpu_time_us": 0,
+              "device_time_us": 66297.963,
+              "self_device_memory_bytes": 0
+            }
+          ],
+          "trace_sha256": "f91b733d2938c5a6bbd0467ca03ace65fd3bb4d87376b961dcfda0de4587e939"
+        },
+        {
+          "case": "clamp_stress",
+          "median_ms": 16.525407791137695,
+          "samples": 904,
+          "wall_invocations_per_s": 60.24288054473222,
+          "board_power_mean_w": 53.57741935483871,
+          "power_source": "pqteld_2hz",
+          "power_samples": 31,
+          "netdata_interpolated_power_mean_w": 12.2,
+          "host_memory": {
+            "samples": 31,
+            "unified_available_bytes_min": 91461656576,
+            "unified_total_bytes": 130595991552,
+            "unified_used_bytes_peak": 39134334976,
+            "psi_mem_full_avg10_max": 0.0,
+            "psi_io_full_avg10_max": 2.8,
+            "source": "pqteld"
+          },
+          "host_cpu": {
+            "source": "netdata",
+            "samples": 17,
+            "busy_percent_mean": 7.462598894117648,
+            "busy_percent_peak": 8.074222200000001,
+            "psi_some_avg10_max": 0.05,
+            "psi_some_avg10_samples": 8
+          },
+          "estimated_invocations_per_board_joule": 1.124408029915527,
+          "incremental_peak_bytes": 1073743872,
+          "retained_allocation_delta_bytes": 0,
+          "fused_kernel_events": [
+            {
+              "key": "_decode_selected_kernel",
+              "calls": 12,
+              "cpu_time_us": 0,
+              "device_time_us": 7325.376999999997,
+              "self_device_memory_bytes": 0
+            }
+          ],
+          "trace_sha256": "dfc19110a3be72c67a96c9bd89e90519b0face386ec3b1e8266161a1a12582ed"
+        }
+      ],
+      "receipt_sha256": "00729a47582e711ffa4a29604ba8ddc33b054f13c519e55b6bdf483d339f2a24",
+      "source_commit": "30c5d2ed43baa41b48404f9c16f9c6153f11607b",
+      "inputs_sha256": "253031a63500afe6658b7cc501fd72dd135c86f924cba5154dc0b405db18f81c",
+      "box_window_sha256": "6e8dfb66d35478a667a88fa0e2e65b2c0ef8c15f2cf285e36fd9170488e3ff13",
+      "installed_source_files_verified": 68,
+      "netdata_sha256": "ebc2ac830cf20204cfff045df0481f9f38d43f1c13a081c1512828de0fc1cd0c",
+      "launcher_sha256": "a7069f76befc441d0731b337995d48ff81c542c655202f99eb0db6d70eb91bb2"
+    },
+    "old-02": {
+      "backend": "torch",
+      "owner_resident_bytes": 1853603840,
+      "load_stages": {
+        "before_create": {
+          "allocated_bytes": 52428800,
+          "reserved_bytes": 52428800,
+          "peak_allocated_bytes": 52428800,
+          "peak_reserved_bytes": 52428800,
+          "epoch": 1788862812.7130418
+        },
+        "after_create": {
+          "allocated_bytes": 1936940544,
+          "reserved_bytes": 1941962752,
+          "peak_allocated_bytes": 1936940544,
+          "peak_reserved_bytes": 1941962752,
+          "epoch": 1788862812.7766657
+        },
+        "after_wire_load": {
+          "allocated_bytes": 1936940544,
+          "reserved_bytes": 1941962752,
+          "peak_allocated_bytes": 1936940544,
+          "peak_reserved_bytes": 1941962752,
+          "epoch": 1788862813.1843495
+        },
+        "after_prepare": {
+          "allocated_bytes": 1959380480,
+          "reserved_bytes": 6442450944,
+          "peak_allocated_bytes": 4471234048,
+          "peak_reserved_bytes": 6442450944,
+          "epoch": 1788862845.5960972
+        }
+      },
+      "cases": [
+        {
+          "case": "decode",
+          "median_ms": 150.7836685180664,
+          "samples": 100,
+          "wall_invocations_per_s": 6.62338355517586,
+          "board_power_mean_w": 29.0458064516129,
+          "power_source": "pqteld_2hz",
+          "power_samples": 31,
+          "netdata_interpolated_power_mean_w": 30.0,
+          "host_memory": {
+            "samples": 31,
+            "unified_available_bytes_min": 108047200256,
+            "unified_total_bytes": 130595991552,
+            "unified_used_bytes_peak": 22548791296,
+            "psi_mem_full_avg10_max": 0.0,
+            "psi_io_full_avg10_max": 2.2,
+            "source": "pqteld"
+          },
+          "host_cpu": {
+            "source": "netdata",
+            "samples": 17,
+            "busy_percent_mean": 8.966834805882355,
+            "busy_percent_peak": 14.0120971,
+            "psi_some_avg10_max": 0.0,
+            "psi_some_avg10_samples": 8
+          },
+          "estimated_invocations_per_board_joule": 0.2280323518029938,
+          "incremental_peak_bytes": 2365818880,
+          "retained_allocation_delta_bytes": 0,
+          "fused_kernel_events": [],
+          "trace_sha256": "5536c279c371418f7c258ecef3f23a3e7f12cff0ca3b46ce3ed643b351098468"
+        },
+        {
+          "case": "all_experts",
+          "median_ms": 5481.60498046875,
+          "samples": 3,
+          "wall_invocations_per_s": 0.18243265226020022,
+          "board_power_mean_w": 31.248749999999998,
+          "power_source": "pqteld_2hz",
+          "power_samples": 32,
+          "netdata_interpolated_power_mean_w": 30.98,
+          "host_memory": {
+            "samples": 32,
+            "unified_available_bytes_min": 85756829696,
+            "unified_total_bytes": 130595991552,
+            "unified_used_bytes_peak": 44839161856,
+            "psi_mem_full_avg10_max": 0.0,
+            "psi_io_full_avg10_max": 1.99,
+            "source": "pqteld"
+          },
+          "host_cpu": {
+            "source": "netdata",
+            "samples": 18,
+            "busy_percent_mean": 8.161941716666668,
+            "busy_percent_peak": 9.0497743,
+            "psi_some_avg10_max": 0.06,
+            "psi_some_avg10_samples": 8
+          },
+          "estimated_invocations_per_board_joule": 0.005838078395462226,
+          "incremental_peak_bytes": 11358407680,
+          "retained_allocation_delta_bytes": 0,
+          "fused_kernel_events": [],
+          "trace_sha256": "bed48735380b956d6bc9b41de94856b2e100ed6e5cd718d81f517612fd2e92a4"
+        },
+        {
+          "case": "clamp_stress",
+          "median_ms": 610.5484008789062,
+          "samples": 25,
+          "wall_invocations_per_s": 1.6380198258360474,
+          "board_power_mean_w": 31.55800000000001,
+          "power_source": "pqteld_2hz",
+          "power_samples": 30,
+          "netdata_interpolated_power_mean_w": 26.371,
+          "host_memory": {
+            "samples": 30,
+            "unified_available_bytes_min": 85801857024,
+            "unified_total_bytes": 130595991552,
+            "unified_used_bytes_peak": 44794134528,
+            "psi_mem_full_avg10_max": 0.0,
+            "psi_io_full_avg10_max": 2.24,
+            "source": "pqteld"
+          },
+          "host_cpu": {
+            "source": "netdata",
+            "samples": 17,
+            "busy_percent_mean": 8.274111152941177,
+            "busy_percent_peak": 9.7989947,
+            "psi_some_avg10_max": 0.0,
+            "psi_some_avg10_samples": 8
+          },
+          "estimated_invocations_per_board_joule": 0.0519050581733965,
+          "incremental_peak_bytes": 3775105024,
+          "retained_allocation_delta_bytes": 0,
+          "fused_kernel_events": [],
+          "trace_sha256": "26d9e5359576052c5c6472340df0a06ed23d8b711a3a8251bee11b13121b2ff9"
+        }
+      ],
+      "receipt_sha256": "3de922f827253671e7857e431003fa247e2bb34318d0e356481c42512e53d42c",
+      "source_commit": "30c5d2ed43baa41b48404f9c16f9c6153f11607b",
+      "inputs_sha256": "253031a63500afe6658b7cc501fd72dd135c86f924cba5154dc0b405db18f81c",
+      "box_window_sha256": "a19cf88e6aa2dff9e19c9b25b4098458edfb37c19a808a632bb7da77cd3faf6a",
+      "installed_source_files_verified": 68,
+      "netdata_sha256": "175a872cc952338a38c5b227d77b1a8370f1e8896c2fdb1639be1270876e5cd8",
+      "launcher_sha256": "928ca3ba843d8052a1adf4d56b95efd25a2b31c90009173810db5f2cb9b9ae8a"
+    },
+    "diagnostic-01": {
+      "backend": "triton",
+      "owner_resident_bytes": 1853603840,
+      "load_stages": {
+        "before_create": {
+          "allocated_bytes": 52428800,
+          "reserved_bytes": 52428800,
+          "peak_allocated_bytes": 52428800,
+          "peak_reserved_bytes": 52428800,
+          "epoch": 1788863046.0226367
+        },
+        "after_create": {
+          "allocated_bytes": 1936939008,
+          "reserved_bytes": 1941962752,
+          "peak_allocated_bytes": 1936939008,
+          "peak_reserved_bytes": 1941962752,
+          "epoch": 1788863046.085328
+        },
+        "after_wire_load": {
+          "allocated_bytes": 1936939008,
+          "reserved_bytes": 1941962752,
+          "peak_allocated_bytes": 1936939008,
+          "peak_reserved_bytes": 1941962752,
+          "epoch": 1788863046.472122
+        },
+        "after_prepare": {
+          "allocated_bytes": 1959380480,
+          "reserved_bytes": 6442450944,
+          "peak_allocated_bytes": 4471232512,
+          "peak_reserved_bytes": 6442450944,
+          "epoch": 1788863078.8448646
+        }
+      },
+      "cases": [],
+      "receipt_sha256": "1de85d5bd7213691566cd4f6f28573a7ae289b344506fca483287f7470fc2563",
+      "source_commit": "30c5d2ed43baa41b48404f9c16f9c6153f11607b",
+      "inputs_sha256": "253031a63500afe6658b7cc501fd72dd135c86f924cba5154dc0b405db18f81c",
+      "box_window_sha256": "e6f3f8b8a2a4996d6d87e92870613717f9a4a60da55e50c50036fb6acaaf7a5e",
+      "installed_source_files_verified": 68,
+      "netdata_sha256": "93c4175dd482be19af8de597ca1db785424f73e8cba9227c3ef352e4778fae82",
+      "launcher_sha256": "5d714133efff4a80f7873edb93858fabf940eabe8ccb892af61e8a5745486e0b",
+      "wrong_maps": [
+        {
+          "case": "decode",
+          "finite": true,
+          "max_abs": 0.1875,
+          "relative_l2": 0.012586398981511593
+        },
+        {
+          "case": "all_experts",
+          "finite": true,
+          "max_abs": 0.875,
+          "relative_l2": 0.005271108355373144
+        },
+        {
+          "case": "clamp_stress",
+          "finite": true,
+          "max_abs": 32.0,
+          "relative_l2": 0.011410213075578213
+        }
+      ]
+    }
+  },
+  "comparison": {
+    "decode": {
+      "mean_arm_median_ms": {
+        "old": 150.51280212402344,
+        "fused": 4.569743871688843
+      },
+      "old_over_fused_latency_ratio": 32.93681360491618,
+      "estimated_work_per_board_joule_ratio": 20.083636519563964
+    },
+    "all_experts": {
+      "mean_arm_median_ms": {
+        "old": 5466.953369140625,
+        "fused": 144.34291076660156
+      },
+      "old_over_fused_latency_ratio": 37.87476184390195,
+      "estimated_work_per_board_joule_ratio": 18.118379514801834
+    },
+    "clamp_stress": {
+      "mean_arm_median_ms": {
+        "old": 609.2896118164062,
+        "fused": 16.558303833007812
+      },
+      "old_over_fused_latency_ratio": 36.796619868867865,
+      "estimated_work_per_board_joule_ratio": 20.993311706872593
+    }
+  },
+  "energy_scope": "Approximate board energy from existing pqteld 2Hz samples within each exact timing interval; 30-32 samples per phase, no idle subtraction or whole-system energy claim.",
+  "netdata_power_lesson": "Netdata nvidia_smi source cadence is 10s. Its requested 1s view interpolates phase edges, reporting 12.2W/zero activity during a fused clamp interval whose 2Hz recorder measures53.577W. Netdata data are retained but excluded from energy calculations.",
+  "box_window_reader_sha256": "e6dc5117549d961854038e02524af799bb1e01a1cc83772a43fc518909c1f5b6"
+}
