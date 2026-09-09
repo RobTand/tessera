@@ -40,14 +40,19 @@ Two consequences for these two jobs.
 
 The GPU cap here is 32 GiB, three times the measured peak, not the 48 the
 profile declared. The headroom is wider than that ratio says, because the
-profile's batch is wider than this export's. `export_tessera_serving.py` reaches
-`export_checkpoint_streaming`, which loops over the names in each shard and
-calls `encode_linear` once per Linear (`src/tessera/export.py:2451`); the
-plural `encode_linears` has no caller under `src/tessera` at all, only
-`experiments/tessera385_bench.py:233`. So the 10.64 GiB is 32 units joined in
-one batch and the job being sized encodes one unit at a time. The cap is priced
-against the wider of the two on purpose, since a per-unit peak on this tree has
-never been recorded and the batch figure bounds it.
+profile's batch is wider than this job's. The launcher execs
+`experiments/full_model_research_selected_checkpoint.py`, which imports
+`export_tessera_serving` and runs it as a subprocess (`:20`, `:107`); that
+script encodes through `encode_linear_planes`, at two call sites, and both pass
+exactly one weight per call. The expert path slices one expert's one projection
+out of the packed shard tensor with `packed_expert_weight` and frees it after
+(`export_tessera_serving.py:2013`). The dense path passes a row slice of one
+Linear, narrower than a whole Linear when a unit is partitioned (`:2104`).
+Neither reaches the 32-unit joined batch the profile measured through
+`encode_linears`, which has no caller under `src/tessera` at all. So the
+10.64 GiB bounds this job's encoder peak rather than describing it, and the cap
+is priced against the bound because a per-unit peak on this tree has never been
+recorded.
 
 `mem_gb` stays 96, and now it is a sum of two measurements rather than a copied
 declaration. GB10 is unified memory, so a CUDA reservation is charged to the
