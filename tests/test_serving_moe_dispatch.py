@@ -155,15 +155,18 @@ def _routed_scheme(family=None, **over):
     from tessera.serving.scheme import TESSERA_FP8
     if family is None or family == TESSERA_FP8:
         route = {"family": TESSERA_FP8, "grid": "E4M3", "body": "WINDOW", "plane": "CHANNEL"}
+        q256 = 1024
     else:
-        # A different route that is a valid Tessera scheme, so the refusal below
-        # comes from require_targets and not from scheme validation.
+        # A different route that is a valid Tessera scheme at a rung this build's
+        # decoder reads, so the refusal below comes from require_targets rather
+        # than from scheme validation.
         route = {"family": family, "grid": "E2M1x2", "body": "TCQ", "plane": "LUT"}
+        q256 = 896
     return {**route, "structure": "routed_moe", "experts": 32,
             "groups": {
-                "w13": {"rows": 128, "columns": 128, "q256": 1024,
+                "w13": {"rows": 128, "columns": 128, "q256": q256,
                         "wire_stride": 10000, "roles": [["gate_proj", 64], ["up_proj", 64]]},
-                "w2": {"rows": 128, "columns": 64, "q256": 1024,
+                "w2": {"rows": 128, "columns": 64, "q256": q256,
                        "wire_stride": 10000, "roles": [["down_proj", 128]]}}, **over}
 
 
