@@ -71,3 +71,100 @@ It can establish the changed intake's native ownership and collective behavior,
 not diverse-expert quality or full-engine fit. The complete 45-layer artifact
 and its two-rank memory/KV/generation gate remain required. No runtime cell,
 producer pin, serving default or quality claim is promoted by these CPU results.
+
+
+## Native A/B completed, 2026-09-08 23:49 UTC
+
+This entry supersedes the pending native status above. Both arms completed on
+Sparky and Sparklina in the pinned stock vLLM image, before at 23:41:38–23:43:31
+UTC and after at 23:48:01–23:49:50 UTC. Every launcher and container exited zero,
+without timeout or OOM; the four owned containers were removed and their absence
+was independently checked. A first launch failed before Python/CUDA because
+Docker could not traverse the evidence directory under root-squashed NFS. The
+bounded retry changed traversal/read modes on owned inputs only; source and
+request bytes, CPU/memory limits and timeout remained identical. Both initial
+failure records and `retry-native-intake-ab-02.json` are retained.
+
+The same checkpoint-JSON-selected owner, three original projection containers
+repeated across 288 experts, 864 callbacks, trained router/shared expert and
+input-file hash were used on each rank. Memory counters cover construction,
+loading and finalization before allocating the independent stock oracle:
+
+| Quantity, bytes | Before rank 0 | After rank 0 | Before rank 1 | After rank 1 |
+| --- | ---: | ---: | ---: | ---: |
+| Construction wire banks | 1,831,476,672 | 0 | 1,831,476,672 | 0 |
+| Peak CUDA allocated | 3,592,044,032 | 1,876,871,680 | 3,610,852,864 | 1,895,746,048 |
+| Peak CUDA reserved | 4,594,860,032 | 2,696,937,472 | 4,611,637,248 | 2,715,811,840 |
+| Final packed owner | 943,423,488 | 943,423,488 | 943,423,488 | 943,423,488 |
+| Prepared projections after callbacks | 0 | 864 | 0 | 864 |
+
+Decode (one token), all-expert routing (36 tokens), clamp stress (four tokens)
+and empty input all produced finite direct outputs with maximum absolute error
+zero against the independent stock reference. Selected tiles/scales were exact.
+Every nonempty case also traversed both the stock runner and GLM wrapper, with
+one quant-method call, one shared-expert call and one actual final NCCL TP2
+all-reduce per entry point. Trained gate outputs and selected routing agreed
+between ranks, and their outputs agreed exactly with the stock TP2 oracle.
+
+All four Torch traces contain actual CUDA kernels and CPU operations. They
+cover construction and the first three callbacks; complete-intake allocator
+counters supply the memory comparison. Both-box Netdata retains raw CPU,
+power, memory and pressure series for each arm. Mean intake GPU power was
+18.26/14.04 W before and 16.64/13.28 W after on Sparky/Sparklina, far below the
+approximately 140 W envelope. This was one cold A/B measuring ownership and
+functional behavior; it does not qualify throughput or GPU saturation. No
+speed or work-per-joule ranking is claimed.
+
+The sealed plan mistakenly supplied raw 75-file source-tree hashes in fields
+named `expected_installed_package_source_sha256`. The sealed archives' own
+`pyproject.toml` excludes five `tessera._dev` files. The audit derived the exact
+70-file wheel projection and verified every installed byte and loaded origin
+on both ranks. Actual installed source hashes were
+`7d1e3b011eaba8d3a779656e4e3cfda9d9c3db41b7cf7d35aedb3d8b094f99df`
+before and
+`ea04dd407ac3c0b4eccc3b9d8ad0f05751bba63abe00387dc98bb1cbe30bf96c`
+after. The original plan and producer-tree seal remain unchanged; the correction
+is explicit in `native-package-projection-audit.json`.
+
+[Native measurement bindings](glm-rank-local-intake-native-20260908.json)
+retain the exact source/archive identities, rank receipt/profile hashes,
+functional results, allocator values, Netdata windows/statistics and hashes of
+the raw evidence. The native after-source is **fd17e7cfaa97**, not a later head.
+This remains one repeated-expert fixture, not diverse-expert quality, a complete
+45-layer engine load, KV-capacity proof or full-model generation. It promotes no
+runtime cell, producer pin or default.
+
+## Separate device-lifecycle correction
+
+Review found that capturing the construction device could prepare CPU owners
+when stock vLLM uses an explicit load device. Commit `0a3dff7e5` resolves the
+live loader anchor, preserves the ordinary finalizer's promotion to the current
+CUDA device, and refuses a device change after accepting the first projection.
+The regression stops at the parser's device handoff before any CUDA allocation.
+On prior code, PB action `982ad1822674` failed with
+`device(type='cpu') != device(type='cuda', index=1)`; the targeted corrected
+run `7b25b5953f14` passed 48 tests on dl380g10 with PyTorch `2.11.0+cpu`, zero
+skips, zero uncollected modules and zero device allocations. Its CAS payload was
+verified against receipt
+`02be32aa14dba977ed937eabe1b145870e8ec6d230d02b35716d31348339f959`.
+`device-regression-before.{json,log}` and `device-targeted-after.{json,log}`
+retain the exact action keys, snapshot bindings, outputs and exit statuses.
+The additional device-change guard is covered by a CPU refusal test. Native
+CPU/meta-to-CUDA loading was not measured. The canonical CUDA construction path
+used by the native A/B keeps the same parser, shard and packing calls; the
+later source is not relabeled as that native measurement.
+
+
+The device correction's refreshed import selector returned 210 files. All 20
+PB fanout actions exited zero: **3,715 passed, 602 skipped, zero uncollected**
+on dl380g10, PyTorch `2.11.0+cpu`, two pytest workers per shard under
+`--dist worksteal`, four GiB per shard, one native thread per worker and priority
+−10. No test allocated on CUDA. Skips include CUDA paths, absent box artifacts
+and optional packages (including Transformers); exact reasons are retained in
+`device-cpu-receipt-audit.json` and the `device-cpu-surface-*.json` populations.
+Every CAS payload and terminal result was checked, all worker/controller source
+identities agreed, and all 20 populations measured effective source
+`5e7f0aa8a92eed36e97e88ed610dd990ed6212be1f24cf89baebe961c59349de`
+with parent `0a3dff7e5`. `device-cpu-command.json` records the exact invocation;
+`device-cpu-suite.json` retains all shard commands/results and durations. Later
+edits in this report and architecture are documentation only.

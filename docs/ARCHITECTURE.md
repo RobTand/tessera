@@ -5,6 +5,15 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-08 after the bounded native TP2 intake A/B at
+`fd17e7cfaa97`: one repeated 288-expert owner on two GB10s allocated zero
+construction wire-bank bytes, reduced each rank's measured intake peak from
+about 3.6 GB to 1.9 GB, and retained exact checked outputs and stock final NCCL
+collectives. See [the append-only measurement](measurements/glm-rank-local-intake-20260908.md)
+for source identities, profiles, both-box telemetry and limits. This is a
+loader ownership result; full-engine memory/KV/generation and diverse-expert
+quality gates remain unmet by this fixture.
+
 Re-stamped 2026-09-08 for the research TP2 intake device-lifecycle correction
 on top of `383d2a40b`. Incremental intake resolves its device from the live wire
 loader anchor on each callback, preserving the ordinary finalizer's promotion
@@ -24,8 +33,9 @@ the declared maximum stride and stacks the prepared local roles. Transient
 source/parse/reference storage is bounded to the current projection; stacking
 can temporarily duplicate one owner's local packed group. TP1 and ordinary
 materialized intake keep their existing behavior. This removes the all-model
-full-wire staging allocation; actual CUDA peak memory, stock automatic loading
-and whole-engine fit still require native measurements. Producer bytes, the
+full-wire staging allocation. The bounded CUDA ownership result is recorded
+above; complete-model automatic loading and whole-engine fit still require
+native measurements. Producer bytes, the
 public wire ABI, research opt-in and qualification gates are unchanged.
 
 Re-stamped 2026-09-08 for calibrated packed complete-cache intake (#433),

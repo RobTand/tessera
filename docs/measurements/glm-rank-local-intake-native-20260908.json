@@ -1,0 +1,1869 @@
+{
+  "schema": "tessera.glm_rank_local_intake_measurement.v1",
+  "evidence_root": "/mnt/shared/tessera-measurements/glm-first-artifact-launch-plan-20260908",
+  "audit": {
+    "status": "verified",
+    "arms": {
+      "before": {
+        "ranks": [
+          {
+            "rank": 0,
+            "receipt_sha256": "bc9e11d1629ae4c183ec1815656421fb005fd333326ee5aa2e600da8c9f3e617",
+            "launcher": {
+              "started_epoch": 1788910898.98275,
+              "finished_epoch": 1788911011.7269533,
+              "returncode": 0,
+              "timed_out": false,
+              "timeout_seconds": 600,
+              "container_exit_code": 0,
+              "oom_killed": false,
+              "container_removed": true,
+              "controls_unchanged": true
+            },
+            "load_stages": {
+              "before_create": {
+                "allocated_bytes": 52428800,
+                "reserved_bytes": 54525952,
+                "peak_allocated_bytes": 52428800,
+                "peak_reserved_bytes": 54525952,
+                "epoch": 1788910932.495309
+              },
+              "after_create": {
+                "allocated_bytes": 1911774720,
+                "reserved_bytes": 1929379840,
+                "peak_allocated_bytes": 1911774720,
+                "peak_reserved_bytes": 1929379840,
+                "epoch": 1788910932.5542963
+              },
+              "after_wire_load": {
+                "allocated_bytes": 1911774720,
+                "reserved_bytes": 1929379840,
+                "peak_allocated_bytes": 1911774720,
+                "peak_reserved_bytes": 1929379840,
+                "epoch": 1788910932.7346427
+              },
+              "after_prepare": {
+                "allocated_bytes": 1023706624,
+                "reserved_bytes": 4594860032,
+                "peak_allocated_bytes": 3592044032,
+                "peak_reserved_bytes": 4594860032,
+                "epoch": 1788911004.5851314
+              }
+            },
+            "owner_resident_bytes": 943423488,
+            "construction_wire_bytes": 1831476672,
+            "load_ownership": {
+              "completed_loader_callbacks": 864,
+              "prepared_local_projections": 0,
+              "prepared_local_bytes": 0
+            },
+            "profile_sha256": "59e05d5e3b1169d4e45d34e89a8f2b14929effd86451235d3e0d06d8d53cb32b",
+            "profile_bytes": 66762,
+            "profile_categories": {
+              "": 60,
+              "cpu_op": 100,
+              "cpu_instant_event": 14,
+              "overhead": 3,
+              "cuda_runtime": 39,
+              "ac2g": 52,
+              "kernel": 4,
+              "gpu_memcpy": 9,
+              "Trace": 1
+            },
+            "owned_container_absent": true
+          },
+          {
+            "rank": 1,
+            "receipt_sha256": "5563e0b57128f9e0f972c9ca38d7f77a7a82a77ca14e5ff344f8fab35d09decb",
+            "launcher": {
+              "started_epoch": 1788910898.9142249,
+              "finished_epoch": 1788911011.651782,
+              "returncode": 0,
+              "timed_out": false,
+              "timeout_seconds": 600,
+              "container_exit_code": 0,
+              "oom_killed": false,
+              "container_removed": true,
+              "controls_unchanged": true
+            },
+            "load_stages": {
+              "before_create": {
+                "allocated_bytes": 52428800,
+                "reserved_bytes": 54525952,
+                "peak_allocated_bytes": 52428800,
+                "peak_reserved_bytes": 54525952,
+                "epoch": 1788910932.4974954
+              },
+              "after_create": {
+                "allocated_bytes": 1911774720,
+                "reserved_bytes": 1929379840,
+                "peak_allocated_bytes": 1911774720,
+                "peak_reserved_bytes": 1929379840,
+                "epoch": 1788910932.591993
+              },
+              "after_wire_load": {
+                "allocated_bytes": 1911774720,
+                "reserved_bytes": 1929379840,
+                "peak_allocated_bytes": 1911774720,
+                "peak_reserved_bytes": 1929379840,
+                "epoch": 1788910932.7707074
+              },
+              "after_prepare": {
+                "allocated_bytes": 1023706624,
+                "reserved_bytes": 4611637248,
+                "peak_allocated_bytes": 3610852864,
+                "peak_reserved_bytes": 4611637248,
+                "epoch": 1788911005.001359
+              }
+            },
+            "owner_resident_bytes": 943423488,
+            "construction_wire_bytes": 1831476672,
+            "load_ownership": {
+              "completed_loader_callbacks": 864,
+              "prepared_local_projections": 0,
+              "prepared_local_bytes": 0
+            },
+            "profile_sha256": "13bd9bbabf2cd2ac69ec01fdf3bbc5c55ace8cb8fce1fa7f39d6b9ca4d815b7c",
+            "profile_bytes": 66774,
+            "profile_categories": {
+              "": 60,
+              "cpu_op": 100,
+              "cpu_instant_event": 14,
+              "overhead": 3,
+              "cuda_runtime": 39,
+              "ac2g": 52,
+              "kernel": 4,
+              "gpu_memcpy": 9,
+              "Trace": 1
+            },
+            "owned_container_absent": true
+          }
+        ],
+        "paired_request_sha256": "595166ddeccc56a51b876d79b056c167c4a0fd6300c0d7334c45d7000341d728",
+        "netdata_sha256": "0b3d9bf207acaffd6de3cec371e11a354d9bf907391c4df2774c2fc99df461d5"
+      },
+      "after": {
+        "ranks": [
+          {
+            "rank": 0,
+            "receipt_sha256": "07780074cf47bf5c81a570e34e83353fe005d1dc860a0595ec504098d24e0f64",
+            "launcher": {
+              "started_epoch": 1788911281.3349495,
+              "finished_epoch": 1788911390.2637942,
+              "returncode": 0,
+              "timed_out": false,
+              "timeout_seconds": 600,
+              "container_exit_code": 0,
+              "oom_killed": false,
+              "container_removed": true,
+              "controls_unchanged": true
+            },
+            "load_stages": {
+              "before_create": {
+                "allocated_bytes": 52428800,
+                "reserved_bytes": 54525952,
+                "peak_allocated_bytes": 52428800,
+                "peak_reserved_bytes": 54525952,
+                "epoch": 1788911311.8823893
+              },
+              "after_create": {
+                "allocated_bytes": 79962624,
+                "reserved_bytes": 96468992,
+                "peak_allocated_bytes": 79962624,
+                "peak_reserved_bytes": 96468992,
+                "epoch": 1788911311.8922884
+              },
+              "after_wire_load": {
+                "allocated_bytes": 1243660800,
+                "reserved_bytes": 1772093440,
+                "peak_allocated_bytes": 1679917568,
+                "peak_reserved_bytes": 1772093440,
+                "epoch": 1788911383.0290334
+              },
+              "after_prepare": {
+                "allocated_bytes": 1025326592,
+                "reserved_bytes": 2696937472,
+                "peak_allocated_bytes": 1876871680,
+                "peak_reserved_bytes": 2696937472,
+                "epoch": 1788911383.1404917
+              }
+            },
+            "owner_resident_bytes": 943423488,
+            "construction_wire_bytes": 0,
+            "load_ownership": {
+              "completed_loader_callbacks": 864,
+              "prepared_local_projections": 864,
+              "prepared_local_bytes": 1028063232
+            },
+            "profile_sha256": "600d8571105d0a0a76b712bf9a8af5e11dccd3c040ca8dbdf335591dac6b67bd",
+            "profile_bytes": 2075958,
+            "profile_categories": {
+              "": 60,
+              "cpu_op": 2829,
+              "cpu_instant_event": 1280,
+              "overhead": 52,
+              "cuda_runtime": 757,
+              "ac2g": 1267,
+              "kernel": 354,
+              "gpu_memcpy": 147,
+              "cuda_driver": 6,
+              "gpu_memset": 3,
+              "Trace": 1
+            },
+            "owned_container_absent": true
+          },
+          {
+            "rank": 1,
+            "receipt_sha256": "c7492d43c3c209ba27d414aa7b782c0f18f9c6081ad1060df11dbc6e1f0424a6",
+            "launcher": {
+              "started_epoch": 1788911281.3241484,
+              "finished_epoch": 1788911390.1561913,
+              "returncode": 0,
+              "timed_out": false,
+              "timeout_seconds": 600,
+              "container_exit_code": 0,
+              "oom_killed": false,
+              "container_removed": true,
+              "controls_unchanged": true
+            },
+            "load_stages": {
+              "before_create": {
+                "allocated_bytes": 52428800,
+                "reserved_bytes": 54525952,
+                "peak_allocated_bytes": 52428800,
+                "peak_reserved_bytes": 54525952,
+                "epoch": 1788911311.8781059
+              },
+              "after_create": {
+                "allocated_bytes": 79962624,
+                "reserved_bytes": 96468992,
+                "peak_allocated_bytes": 79962624,
+                "peak_reserved_bytes": 96468992,
+                "epoch": 1788911311.888325
+              },
+              "after_wire_load": {
+                "allocated_bytes": 1262535168,
+                "reserved_bytes": 1790967808,
+                "peak_allocated_bytes": 1698791936,
+                "peak_reserved_bytes": 1790967808,
+                "epoch": 1788911383.5464225
+              },
+              "after_prepare": {
+                "allocated_bytes": 1025326592,
+                "reserved_bytes": 2715811840,
+                "peak_allocated_bytes": 1895746048,
+                "peak_reserved_bytes": 2715811840,
+                "epoch": 1788911383.6603713
+              }
+            },
+            "owner_resident_bytes": 943423488,
+            "construction_wire_bytes": 0,
+            "load_ownership": {
+              "completed_loader_callbacks": 864,
+              "prepared_local_projections": 864,
+              "prepared_local_bytes": 1046937600
+            },
+            "profile_sha256": "19406a5f23dbe1ab891f81c034e4bb1ec8d8c0b1036d0a0ad5a5389b21801b01",
+            "profile_bytes": 2840327,
+            "profile_categories": {
+              "": 60,
+              "cpu_op": 3635,
+              "cpu_instant_event": 1746,
+              "overhead": 53,
+              "cuda_runtime": 993,
+              "ac2g": 1709,
+              "kernel": 544,
+              "gpu_memcpy": 163,
+              "cuda_driver": 6,
+              "gpu_memset": 3,
+              "Trace": 1
+            },
+            "owned_container_absent": true
+          }
+        ],
+        "paired_request_sha256": "ce3e09770121dd4db1f12f60591a563fa5ed9ea3fbcb5988c6ac117869041ae5",
+        "netdata_sha256": "da659c6301cd725dc989273b86b2a89565ea9c25036efbfe34fc3bc05205eda7"
+      }
+    },
+    "input_file_sha256": "253031a63500afe6658b7cc501fd72dd135c86f924cba5154dc0b405db18f81c",
+    "peak_delta_by_rank": [
+      {
+        "rank": 0,
+        "before_peak_allocated_bytes": 3592044032,
+        "after_peak_allocated_bytes": 1876871680
+      },
+      {
+        "rank": 1,
+        "before_peak_allocated_bytes": 3610852864,
+        "after_peak_allocated_bytes": 1895746048
+      }
+    ]
+  },
+  "packages": {
+    "before": {
+      "source_commit": "07ad344c3275bb2fa7ce2432f93d89945d66f4c2",
+      "archive_sha256": "956bbafeab40fca1144672c3af35900daaeac693d777b0c3f243de73354d4c75",
+      "pyproject_sha256": "a98ba159a7d376f3fa931a3369cf02b209eea9f900bcc8abb2564bce66082e3a",
+      "packaging_excludes": [
+        "tessera._dev*"
+      ],
+      "installed_package_source_sha256": "7d1e3b011eaba8d3a779656e4e3cfda9d9c3db41b7cf7d35aedb3d8b094f99df",
+      "note": "The sealed plan supplied raw 75-file producer-tree hashes as installed hashes; stock wheel packaging excludes five _dev files. This derives the exact 70-file installed roster from the sealed archive and its packaging declaration."
+    },
+    "after": {
+      "source_commit": "fd17e7cfaa97a4bdbb91619a5bbd539693848610",
+      "archive_sha256": "00b7d899b9085ba23b4b5f194ec89e5b6dd2e83f6d7209f0c6c13ec3dae96a65",
+      "pyproject_sha256": "a98ba159a7d376f3fa931a3369cf02b209eea9f900bcc8abb2564bce66082e3a",
+      "packaging_excludes": [
+        "tessera._dev*"
+      ],
+      "installed_package_source_sha256": "ea04dd407ac3c0b4eccc3b9d8ad0f05751bba63abe00387dc98bb1cbe30bf96c",
+      "note": "The sealed plan supplied raw 75-file producer-tree hashes as installed hashes; stock wheel packaging excludes five _dev files. This derives the exact 70-file installed roster from the sealed archive and its packaging declaration."
+    }
+  },
+  "scope": {
+    "full_engine_fit": false,
+    "diverse_expert_quality": false,
+    "throughput_qualification": false,
+    "native_after_commit": "fd17e7cfaa97a4bdbb91619a5bbd539693848610",
+    "later_device_fix": "0a3dff7e5",
+    "later_device_fix_native_measured": false
+  },
+  "bindings": {
+    "audit_native_intake.py": {
+      "sha256": "3e74367b84716988130c47b6b4209fa5d159c63f6aa7af91f0c15e96b559501b",
+      "bytes": 5447
+    },
+    "native-intake-ab-audit.json": {
+      "sha256": "e0e59b30b4736fbdf37a4c2786da6eb93485cfa0ee68f5e1902729a2f46178bd",
+      "bytes": 10556
+    },
+    "native-package-projection-audit.json": {
+      "sha256": "c9a2d7843389341415348a221dba91b4e4505978b33bc3ad32d9c6b9a248d4dc",
+      "bytes": 21692
+    },
+    "prepared-native-intake-ab.json": {
+      "sha256": "f8c90842ab91182df106735f5fe63fbd81f399d3a887af7e71b1e09c780bbd07",
+      "bytes": 10187
+    },
+    "retry-native-intake-ab-02.json": {
+      "sha256": "ada8dd62ac14199a437cba5f7f0edff6a3a23b61e19383e1c9b21c3659297e41",
+      "bytes": 14870
+    },
+    "native-before-netdata.json": {
+      "sha256": "0b3d9bf207acaffd6de3cec371e11a354d9bf907391c4df2774c2fc99df461d5",
+      "bytes": 817071
+    },
+    "native-after-netdata.json": {
+      "sha256": "da659c6301cd725dc989273b86b2a89565ea9c25036efbfe34fc3bc05205eda7",
+      "bytes": 802757
+    },
+    "device-regression-before.json": {
+      "sha256": "e17372be0c540416efbcaca0fba1bdc4c30168d897888de5336c11dc30b553bf",
+      "bytes": 3097
+    },
+    "device-targeted-after.json": {
+      "sha256": "dfaa3484eee5bae16b4329af30fc1e885e25efcb61bfcc854755f1a44d53f91a",
+      "bytes": 4268
+    },
+    "native-intake-before-rank0-02/receipt.json": {
+      "sha256": "bc9e11d1629ae4c183ec1815656421fb005fd333326ee5aa2e600da8c9f3e617",
+      "bytes": 13999
+    },
+    "native-intake-before-rank1-02/receipt.json": {
+      "sha256": "5563e0b57128f9e0f972c9ca38d7f77a7a82a77ca14e5ff344f8fab35d09decb",
+      "bytes": 13998
+    },
+    "native-intake-after-rank0-02/receipt.json": {
+      "sha256": "07780074cf47bf5c81a570e34e83353fe005d1dc860a0595ec504098d24e0f64",
+      "bytes": 13986
+    },
+    "native-intake-after-rank1-02/receipt.json": {
+      "sha256": "c7492d43c3c209ba27d414aa7b782c0f18f9c6081ad1060df11dbc6e1f0424a6",
+      "bytes": 13985
+    },
+    "device-cpu-command.json": {
+      "sha256": "4269311fa5cacbc237a9c20799a088cf00ab8f5861cc7c45e106c173400809cb",
+      "bytes": 8411
+    },
+    "device-cpu-suite.json": {
+      "sha256": "1a66de6793de9cd8e28d4cb3f4977225ffa3e24355a2ad9b8238ec3b6166f0a1",
+      "bytes": 107642
+    },
+    "device-cpu-receipt-audit.json": {
+      "sha256": "f37a4d6183b7f9157d5cb58813fa6f04500163b3ff834e106d641cbd26648ae8",
+      "bytes": 13590
+    },
+    "device-impacted-tests.json": {
+      "sha256": "498fc82ea45f1aedc9497c0b8029a939ad43f222d3a36dfe059ee6ff8938701f",
+      "bytes": 13287
+    },
+    "audit_device_cpu.py": {
+      "sha256": "78eb5bb6315b22220b0897bf98fbc725920dfdf264a27fdb031fc5021a8273cc",
+      "bytes": 2863
+    }
+  },
+  "host_intake_stats": {
+    "before": {
+      "window": [
+        1788910932,
+        1788911006
+      ],
+      "hosts": {
+        "sparky": {
+          "nvidia_smi.gpu_power_draw": {
+            "power_draw": {
+              "points": 74,
+              "min": 15.4,
+              "max": 19,
+              "mean": 18.255,
+              "median": 18.4
+            }
+          },
+          "nvidia_smi.gpu_utilization": {
+            "gpu": {
+              "points": 74,
+              "min": 8.4,
+              "max": 21,
+              "mean": 16.35,
+              "median": 15.75
+            }
+          },
+          "system.load": {
+            "load1": {
+              "points": 74,
+              "min": 1.42,
+              "max": 1.76,
+              "mean": 1.561,
+              "median": 1.528
+            }
+          },
+          "system.cpu": {
+            "user": {
+              "points": 74,
+              "min": 2.861,
+              "max": 12.229,
+              "mean": 7.039,
+              "median": 6.104
+            },
+            "system": {
+              "points": 74,
+              "min": 0.452,
+              "max": 4.332,
+              "mean": 1.253,
+              "median": 0.903
+            },
+            "iowait": {
+              "points": 74,
+              "min": 0.05,
+              "max": 1.155,
+              "mean": 0.441,
+              "median": 0.402
+            }
+          },
+          "mem.swapio": {
+            "in": {
+              "points": 74,
+              "min": 0,
+              "max": 196.65,
+              "mean": 11.588,
+              "median": 0.0
+            },
+            "out": {
+              "points": 74,
+              "min": 0,
+              "max": 0,
+              "mean": 0.0,
+              "median": 0.0
+            }
+          },
+          "mem.available": {
+            "avail": {
+              "points": 74,
+              "min": 103022.66,
+              "max": 106573.47,
+              "mean": 103833.192,
+              "median": 103985.475
+            }
+          }
+        },
+        "sparklina": {
+          "nvidia_smi.gpu_power_draw": {
+            "power_draw": {
+              "points": 74,
+              "min": 9,
+              "max": 15,
+              "mean": 14.041,
+              "median": 14.4
+            }
+          },
+          "nvidia_smi.gpu_utilization": {
+            "gpu": {
+              "points": 74,
+              "min": 8,
+              "max": 22,
+              "mean": 15.412,
+              "median": 14.1
+            }
+          },
+          "system.load": {
+            "load1": {
+              "points": 74,
+              "min": 0.98,
+              "max": 1.43,
+              "mean": 1.142,
+              "median": 1.129
+            }
+          },
+          "system.cpu": {
+            "user": {
+              "points": 74,
+              "min": 1.806,
+              "max": 5.776,
+              "mean": 5.333,
+              "median": 5.422
+            },
+            "system": {
+              "points": 74,
+              "min": 0.551,
+              "max": 3.261,
+              "mean": 0.854,
+              "median": 0.752
+            },
+            "iowait": {
+              "points": 74,
+              "min": 0.301,
+              "max": 1.756,
+              "mean": 0.895,
+              "median": 0.828
+            }
+          },
+          "mem.swapio": {
+            "in": {
+              "points": 74,
+              "min": 0,
+              "max": 53.016,
+              "mean": 5.568,
+              "median": 0.0
+            },
+            "out": {
+              "points": 74,
+              "min": 0,
+              "max": 0,
+              "mean": 0.0,
+              "median": 0.0
+            }
+          },
+          "mem.available": {
+            "avail": {
+              "points": 74,
+              "min": 105874.43,
+              "max": 110222.21,
+              "mean": 106677.699,
+              "median": 106791.155
+            }
+          }
+        }
+      }
+    },
+    "after": {
+      "window": [
+        1788911311,
+        1788911384
+      ],
+      "hosts": {
+        "sparky": {
+          "nvidia_smi.gpu_power_draw": {
+            "power_draw": {
+              "points": 73,
+              "min": 14.8,
+              "max": 18,
+              "mean": 16.644,
+              "median": 16.7
+            }
+          },
+          "nvidia_smi.gpu_utilization": {
+            "gpu": {
+              "points": 73,
+              "min": 8.4,
+              "max": 19,
+              "mean": 15.555,
+              "median": 14.4
+            }
+          },
+          "system.load": {
+            "load1": {
+              "points": 73,
+              "min": 0.89,
+              "max": 1.56,
+              "mean": 1.234,
+              "median": 1.314
+            }
+          },
+          "system.cpu": {
+            "user": {
+              "points": 73,
+              "min": 4.315,
+              "max": 16.608,
+              "mean": 7.21,
+              "median": 5.823
+            },
+            "system": {
+              "points": 73,
+              "min": 0.502,
+              "max": 3.899,
+              "mean": 1.114,
+              "median": 0.754
+            },
+            "iowait": {
+              "points": 73,
+              "min": 0.05,
+              "max": 0.958,
+              "mean": 0.449,
+              "median": 0.552
+            }
+          },
+          "mem.swapio": {
+            "in": {
+              "points": 73,
+              "min": 0,
+              "max": 28.827,
+              "mean": 1.425,
+              "median": 0
+            },
+            "out": {
+              "points": 73,
+              "min": 0,
+              "max": 0,
+              "mean": 0.0,
+              "median": 0
+            }
+          },
+          "mem.available": {
+            "avail": {
+              "points": 73,
+              "min": 105355.48,
+              "max": 110359.18,
+              "mean": 109545.799,
+              "median": 109680.98
+            }
+          }
+        },
+        "sparklina": {
+          "nvidia_smi.gpu_power_draw": {
+            "power_draw": {
+              "points": 73,
+              "min": 9.2,
+              "max": 15,
+              "mean": 13.281,
+              "median": 13
+            }
+          },
+          "nvidia_smi.gpu_utilization": {
+            "gpu": {
+              "points": 73,
+              "min": 12,
+              "max": 20,
+              "mean": 15.281,
+              "median": 14.2
+            }
+          },
+          "system.load": {
+            "load1": {
+              "points": 73,
+              "min": 1.35,
+              "max": 1.61,
+              "mean": 1.463,
+              "median": 1.454
+            }
+          },
+          "system.cpu": {
+            "user": {
+              "points": 73,
+              "min": 3.962,
+              "max": 6.036,
+              "mean": 5.385,
+              "median": 5.414
+            },
+            "system": {
+              "points": 73,
+              "min": 0.552,
+              "max": 3.36,
+              "mean": 0.797,
+              "median": 0.703
+            },
+            "iowait": {
+              "points": 73,
+              "min": 0.1,
+              "max": 1.356,
+              "mean": 0.834,
+              "median": 0.802
+            }
+          },
+          "mem.swapio": {
+            "in": {
+              "points": 73,
+              "min": 0,
+              "max": 73.584,
+              "mean": 4.345,
+              "median": 0
+            },
+            "out": {
+              "points": 73,
+              "min": 0,
+              "max": 0,
+              "mean": 0.0,
+              "median": 0
+            }
+          },
+          "mem.available": {
+            "avail": {
+              "points": 73,
+              "min": 108860.45,
+              "max": 113499.8,
+              "mean": 112293.097,
+              "median": 112335.31
+            }
+          }
+        }
+      }
+    }
+  },
+  "functional_cases": {
+    "native-intake-before-rank0-02/receipt.json": [
+      {
+        "case": {
+          "input_multiplier": 1.0,
+          "name": "decode",
+          "seed": 574,
+          "tokens": 1
+        },
+        "output_vs_independent_stock": {
+          "finite": true,
+          "max_abs": 0.0,
+          "relative_l2": 0.0
+        },
+        "stock_runner_internal_gate": {
+          "stock_runner_class": "vllm.model_executor.layers.fused_moe.runner.moe_runner.MoERunner",
+          "entrypoint": "runner",
+          "trained_gate_executed": true,
+          "observed_gate_calls": 1,
+          "stock_shared_expert_executed": true,
+          "observed_method_calls": 1,
+          "observed_shared_calls": 1,
+          "observed_final_all_reduce_calls": 1,
+          "rank_partial_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "combined_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "routing_identical_across_ranks": true,
+          "selected_global_experts": 8,
+          "shared_partial_nonzero": true,
+          "oracle_collective_outside_observed_invocation": true,
+          "routing_diagnostic": {
+            "path": "/mnt/shared/tessera-measurements/glm-first-artifact-launch-plan-20260908/native-intake-before-rank0-02/decode-runner-routing.json",
+            "sha256": "66149578ca7b61ebc0d8ad993370fde82e5e9821efe6c45642ff28dd22ae18a9"
+          }
+        },
+        "stock_runner_trained_gate": {
+          "stock_runner_class": "vllm.model_executor.layers.fused_moe.runner.moe_runner.MoERunner",
+          "entrypoint": "glm",
+          "trained_gate_executed": true,
+          "observed_gate_calls": 2,
+          "stock_shared_expert_executed": true,
+          "observed_method_calls": 1,
+          "observed_shared_calls": 1,
+          "observed_final_all_reduce_calls": 1,
+          "rank_partial_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "combined_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "routing_identical_across_ranks": true,
+          "selected_global_experts": 8,
+          "shared_partial_nonzero": true,
+          "oracle_collective_outside_observed_invocation": true,
+          "routing_diagnostic": {
+            "path": "/mnt/shared/tessera-measurements/glm-first-artifact-launch-plan-20260908/native-intake-before-rank0-02/decode-trained-gate-routing.json",
+            "sha256": "c9a305da7c7ca8d25dd6a090e1e20398dabebaea02fba6bbdc4bdb4674f50588"
+          }
+        },
+        "all_selected_tiles_and_scales_exact": true
+      },
+      {
+        "case": {
+          "input_multiplier": 1.0,
+          "name": "all_experts",
+          "seed": 609,
+          "tokens": 36
+        },
+        "output_vs_independent_stock": {
+          "finite": true,
+          "max_abs": 0.0,
+          "relative_l2": 0.0
+        },
+        "stock_runner_internal_gate": {
+          "stock_runner_class": "vllm.model_executor.layers.fused_moe.runner.moe_runner.MoERunner",
+          "entrypoint": "runner",
+          "trained_gate_executed": true,
+          "observed_gate_calls": 1,
+          "stock_shared_expert_executed": true,
+          "observed_method_calls": 1,
+          "observed_shared_calls": 1,
+          "observed_final_all_reduce_calls": 1,
+          "rank_partial_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "combined_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "routing_identical_across_ranks": true,
+          "selected_global_experts": 167,
+          "shared_partial_nonzero": true,
+          "oracle_collective_outside_observed_invocation": true,
+          "routing_diagnostic": {
+            "path": "/mnt/shared/tessera-measurements/glm-first-artifact-launch-plan-20260908/native-intake-before-rank0-02/all_experts-runner-routing.json",
+            "sha256": "5225d06400e99db6f3b5cdc0cb1d32f166385981cbf41deb6e33f82ab5ca2371"
+          }
+        },
+        "stock_runner_trained_gate": {
+          "stock_runner_class": "vllm.model_executor.layers.fused_moe.runner.moe_runner.MoERunner",
+          "entrypoint": "glm",
+          "trained_gate_executed": true,
+          "observed_gate_calls": 2,
+          "stock_shared_expert_executed": true,
+          "observed_method_calls": 1,
+          "observed_shared_calls": 1,
+          "observed_final_all_reduce_calls": 1,
+          "rank_partial_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "combined_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "routing_identical_across_ranks": true,
+          "selected_global_experts": 167,
+          "shared_partial_nonzero": true,
+          "oracle_collective_outside_observed_invocation": true,
+          "routing_diagnostic": {
+            "path": "/mnt/shared/tessera-measurements/glm-first-artifact-launch-plan-20260908/native-intake-before-rank0-02/all_experts-trained-gate-routing.json",
+            "sha256": "7d5663fd3b2ed898c2802cb134fe63b02d0abb726c3463a6d517450099eec191"
+          }
+        },
+        "all_selected_tiles_and_scales_exact": true
+      },
+      {
+        "case": {
+          "input_multiplier": 64.0,
+          "name": "clamp_stress",
+          "seed": 577,
+          "tokens": 4
+        },
+        "output_vs_independent_stock": {
+          "finite": true,
+          "max_abs": 0.0,
+          "relative_l2": 0.0
+        },
+        "stock_runner_internal_gate": {
+          "stock_runner_class": "vllm.model_executor.layers.fused_moe.runner.moe_runner.MoERunner",
+          "entrypoint": "runner",
+          "trained_gate_executed": true,
+          "observed_gate_calls": 1,
+          "stock_shared_expert_executed": true,
+          "observed_method_calls": 1,
+          "observed_shared_calls": 1,
+          "observed_final_all_reduce_calls": 1,
+          "rank_partial_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "combined_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "routing_identical_across_ranks": true,
+          "selected_global_experts": 21,
+          "shared_partial_nonzero": true,
+          "oracle_collective_outside_observed_invocation": true,
+          "routing_diagnostic": {
+            "path": "/mnt/shared/tessera-measurements/glm-first-artifact-launch-plan-20260908/native-intake-before-rank0-02/clamp_stress-runner-routing.json",
+            "sha256": "c1f90e3382df220d17f73ea75b17d7c51ef712ce36bbb83ed417771708e5196e"
+          }
+        },
+        "stock_runner_trained_gate": {
+          "stock_runner_class": "vllm.model_executor.layers.fused_moe.runner.moe_runner.MoERunner",
+          "entrypoint": "glm",
+          "trained_gate_executed": true,
+          "observed_gate_calls": 2,
+          "stock_shared_expert_executed": true,
+          "observed_method_calls": 1,
+          "observed_shared_calls": 1,
+          "observed_final_all_reduce_calls": 1,
+          "rank_partial_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "combined_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "routing_identical_across_ranks": true,
+          "selected_global_experts": 21,
+          "shared_partial_nonzero": true,
+          "oracle_collective_outside_observed_invocation": true,
+          "routing_diagnostic": {
+            "path": "/mnt/shared/tessera-measurements/glm-first-artifact-launch-plan-20260908/native-intake-before-rank0-02/clamp_stress-trained-gate-routing.json",
+            "sha256": "32241fdb96d0644626c166434985db33eb1b390b6003db99d9a5eacd8d75c1ca"
+          }
+        },
+        "all_selected_tiles_and_scales_exact": true
+      },
+      {
+        "case": {
+          "input_multiplier": 1.0,
+          "name": "empty",
+          "seed": 578,
+          "tokens": 0
+        },
+        "output_vs_independent_stock": {
+          "finite": true,
+          "max_abs": 0.0,
+          "relative_l2": 0.0
+        },
+        "all_selected_tiles_and_scales_exact": true
+      }
+    ],
+    "native-intake-before-rank1-02/receipt.json": [
+      {
+        "case": {
+          "input_multiplier": 1.0,
+          "name": "decode",
+          "seed": 574,
+          "tokens": 1
+        },
+        "output_vs_independent_stock": {
+          "finite": true,
+          "max_abs": 0.0,
+          "relative_l2": 0.0
+        },
+        "stock_runner_internal_gate": {
+          "stock_runner_class": "vllm.model_executor.layers.fused_moe.runner.moe_runner.MoERunner",
+          "entrypoint": "runner",
+          "trained_gate_executed": true,
+          "observed_gate_calls": 1,
+          "stock_shared_expert_executed": true,
+          "observed_method_calls": 1,
+          "observed_shared_calls": 1,
+          "observed_final_all_reduce_calls": 1,
+          "rank_partial_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "combined_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "routing_identical_across_ranks": true,
+          "selected_global_experts": 8,
+          "shared_partial_nonzero": true,
+          "oracle_collective_outside_observed_invocation": true,
+          "routing_diagnostic": {
+            "path": "/mnt/shared/tessera-measurements/glm-first-artifact-launch-plan-20260908/native-intake-before-rank1-02/decode-runner-routing.json",
+            "sha256": "66149578ca7b61ebc0d8ad993370fde82e5e9821efe6c45642ff28dd22ae18a9"
+          }
+        },
+        "stock_runner_trained_gate": {
+          "stock_runner_class": "vllm.model_executor.layers.fused_moe.runner.moe_runner.MoERunner",
+          "entrypoint": "glm",
+          "trained_gate_executed": true,
+          "observed_gate_calls": 2,
+          "stock_shared_expert_executed": true,
+          "observed_method_calls": 1,
+          "observed_shared_calls": 1,
+          "observed_final_all_reduce_calls": 1,
+          "rank_partial_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "combined_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "routing_identical_across_ranks": true,
+          "selected_global_experts": 8,
+          "shared_partial_nonzero": true,
+          "oracle_collective_outside_observed_invocation": true,
+          "routing_diagnostic": {
+            "path": "/mnt/shared/tessera-measurements/glm-first-artifact-launch-plan-20260908/native-intake-before-rank1-02/decode-trained-gate-routing.json",
+            "sha256": "c9a305da7c7ca8d25dd6a090e1e20398dabebaea02fba6bbdc4bdb4674f50588"
+          }
+        },
+        "all_selected_tiles_and_scales_exact": true
+      },
+      {
+        "case": {
+          "input_multiplier": 1.0,
+          "name": "all_experts",
+          "seed": 609,
+          "tokens": 36
+        },
+        "output_vs_independent_stock": {
+          "finite": true,
+          "max_abs": 0.0,
+          "relative_l2": 0.0
+        },
+        "stock_runner_internal_gate": {
+          "stock_runner_class": "vllm.model_executor.layers.fused_moe.runner.moe_runner.MoERunner",
+          "entrypoint": "runner",
+          "trained_gate_executed": true,
+          "observed_gate_calls": 1,
+          "stock_shared_expert_executed": true,
+          "observed_method_calls": 1,
+          "observed_shared_calls": 1,
+          "observed_final_all_reduce_calls": 1,
+          "rank_partial_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "combined_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "routing_identical_across_ranks": true,
+          "selected_global_experts": 167,
+          "shared_partial_nonzero": true,
+          "oracle_collective_outside_observed_invocation": true,
+          "routing_diagnostic": {
+            "path": "/mnt/shared/tessera-measurements/glm-first-artifact-launch-plan-20260908/native-intake-before-rank1-02/all_experts-runner-routing.json",
+            "sha256": "5225d06400e99db6f3b5cdc0cb1d32f166385981cbf41deb6e33f82ab5ca2371"
+          }
+        },
+        "stock_runner_trained_gate": {
+          "stock_runner_class": "vllm.model_executor.layers.fused_moe.runner.moe_runner.MoERunner",
+          "entrypoint": "glm",
+          "trained_gate_executed": true,
+          "observed_gate_calls": 2,
+          "stock_shared_expert_executed": true,
+          "observed_method_calls": 1,
+          "observed_shared_calls": 1,
+          "observed_final_all_reduce_calls": 1,
+          "rank_partial_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "combined_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "routing_identical_across_ranks": true,
+          "selected_global_experts": 167,
+          "shared_partial_nonzero": true,
+          "oracle_collective_outside_observed_invocation": true,
+          "routing_diagnostic": {
+            "path": "/mnt/shared/tessera-measurements/glm-first-artifact-launch-plan-20260908/native-intake-before-rank1-02/all_experts-trained-gate-routing.json",
+            "sha256": "7d5663fd3b2ed898c2802cb134fe63b02d0abb726c3463a6d517450099eec191"
+          }
+        },
+        "all_selected_tiles_and_scales_exact": true
+      },
+      {
+        "case": {
+          "input_multiplier": 64.0,
+          "name": "clamp_stress",
+          "seed": 577,
+          "tokens": 4
+        },
+        "output_vs_independent_stock": {
+          "finite": true,
+          "max_abs": 0.0,
+          "relative_l2": 0.0
+        },
+        "stock_runner_internal_gate": {
+          "stock_runner_class": "vllm.model_executor.layers.fused_moe.runner.moe_runner.MoERunner",
+          "entrypoint": "runner",
+          "trained_gate_executed": true,
+          "observed_gate_calls": 1,
+          "stock_shared_expert_executed": true,
+          "observed_method_calls": 1,
+          "observed_shared_calls": 1,
+          "observed_final_all_reduce_calls": 1,
+          "rank_partial_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "combined_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "routing_identical_across_ranks": true,
+          "selected_global_experts": 21,
+          "shared_partial_nonzero": true,
+          "oracle_collective_outside_observed_invocation": true,
+          "routing_diagnostic": {
+            "path": "/mnt/shared/tessera-measurements/glm-first-artifact-launch-plan-20260908/native-intake-before-rank1-02/clamp_stress-runner-routing.json",
+            "sha256": "c1f90e3382df220d17f73ea75b17d7c51ef712ce36bbb83ed417771708e5196e"
+          }
+        },
+        "stock_runner_trained_gate": {
+          "stock_runner_class": "vllm.model_executor.layers.fused_moe.runner.moe_runner.MoERunner",
+          "entrypoint": "glm",
+          "trained_gate_executed": true,
+          "observed_gate_calls": 2,
+          "stock_shared_expert_executed": true,
+          "observed_method_calls": 1,
+          "observed_shared_calls": 1,
+          "observed_final_all_reduce_calls": 1,
+          "rank_partial_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "combined_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "routing_identical_across_ranks": true,
+          "selected_global_experts": 21,
+          "shared_partial_nonzero": true,
+          "oracle_collective_outside_observed_invocation": true,
+          "routing_diagnostic": {
+            "path": "/mnt/shared/tessera-measurements/glm-first-artifact-launch-plan-20260908/native-intake-before-rank1-02/clamp_stress-trained-gate-routing.json",
+            "sha256": "32241fdb96d0644626c166434985db33eb1b390b6003db99d9a5eacd8d75c1ca"
+          }
+        },
+        "all_selected_tiles_and_scales_exact": true
+      },
+      {
+        "case": {
+          "input_multiplier": 1.0,
+          "name": "empty",
+          "seed": 578,
+          "tokens": 0
+        },
+        "output_vs_independent_stock": {
+          "finite": true,
+          "max_abs": 0.0,
+          "relative_l2": 0.0
+        },
+        "all_selected_tiles_and_scales_exact": true
+      }
+    ],
+    "native-intake-after-rank0-02/receipt.json": [
+      {
+        "case": {
+          "input_multiplier": 1.0,
+          "name": "decode",
+          "seed": 574,
+          "tokens": 1
+        },
+        "output_vs_independent_stock": {
+          "finite": true,
+          "max_abs": 0.0,
+          "relative_l2": 0.0
+        },
+        "stock_runner_internal_gate": {
+          "stock_runner_class": "vllm.model_executor.layers.fused_moe.runner.moe_runner.MoERunner",
+          "entrypoint": "runner",
+          "trained_gate_executed": true,
+          "observed_gate_calls": 1,
+          "stock_shared_expert_executed": true,
+          "observed_method_calls": 1,
+          "observed_shared_calls": 1,
+          "observed_final_all_reduce_calls": 1,
+          "rank_partial_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "combined_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "routing_identical_across_ranks": true,
+          "selected_global_experts": 8,
+          "shared_partial_nonzero": true,
+          "oracle_collective_outside_observed_invocation": true,
+          "routing_diagnostic": {
+            "path": "/mnt/shared/tessera-measurements/glm-first-artifact-launch-plan-20260908/native-intake-after-rank0-02/decode-runner-routing.json",
+            "sha256": "66149578ca7b61ebc0d8ad993370fde82e5e9821efe6c45642ff28dd22ae18a9"
+          }
+        },
+        "stock_runner_trained_gate": {
+          "stock_runner_class": "vllm.model_executor.layers.fused_moe.runner.moe_runner.MoERunner",
+          "entrypoint": "glm",
+          "trained_gate_executed": true,
+          "observed_gate_calls": 2,
+          "stock_shared_expert_executed": true,
+          "observed_method_calls": 1,
+          "observed_shared_calls": 1,
+          "observed_final_all_reduce_calls": 1,
+          "rank_partial_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "combined_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "routing_identical_across_ranks": true,
+          "selected_global_experts": 8,
+          "shared_partial_nonzero": true,
+          "oracle_collective_outside_observed_invocation": true,
+          "routing_diagnostic": {
+            "path": "/mnt/shared/tessera-measurements/glm-first-artifact-launch-plan-20260908/native-intake-after-rank0-02/decode-trained-gate-routing.json",
+            "sha256": "c9a305da7c7ca8d25dd6a090e1e20398dabebaea02fba6bbdc4bdb4674f50588"
+          }
+        },
+        "all_selected_tiles_and_scales_exact": true
+      },
+      {
+        "case": {
+          "input_multiplier": 1.0,
+          "name": "all_experts",
+          "seed": 609,
+          "tokens": 36
+        },
+        "output_vs_independent_stock": {
+          "finite": true,
+          "max_abs": 0.0,
+          "relative_l2": 0.0
+        },
+        "stock_runner_internal_gate": {
+          "stock_runner_class": "vllm.model_executor.layers.fused_moe.runner.moe_runner.MoERunner",
+          "entrypoint": "runner",
+          "trained_gate_executed": true,
+          "observed_gate_calls": 1,
+          "stock_shared_expert_executed": true,
+          "observed_method_calls": 1,
+          "observed_shared_calls": 1,
+          "observed_final_all_reduce_calls": 1,
+          "rank_partial_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "combined_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "routing_identical_across_ranks": true,
+          "selected_global_experts": 167,
+          "shared_partial_nonzero": true,
+          "oracle_collective_outside_observed_invocation": true,
+          "routing_diagnostic": {
+            "path": "/mnt/shared/tessera-measurements/glm-first-artifact-launch-plan-20260908/native-intake-after-rank0-02/all_experts-runner-routing.json",
+            "sha256": "5225d06400e99db6f3b5cdc0cb1d32f166385981cbf41deb6e33f82ab5ca2371"
+          }
+        },
+        "stock_runner_trained_gate": {
+          "stock_runner_class": "vllm.model_executor.layers.fused_moe.runner.moe_runner.MoERunner",
+          "entrypoint": "glm",
+          "trained_gate_executed": true,
+          "observed_gate_calls": 2,
+          "stock_shared_expert_executed": true,
+          "observed_method_calls": 1,
+          "observed_shared_calls": 1,
+          "observed_final_all_reduce_calls": 1,
+          "rank_partial_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "combined_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "routing_identical_across_ranks": true,
+          "selected_global_experts": 167,
+          "shared_partial_nonzero": true,
+          "oracle_collective_outside_observed_invocation": true,
+          "routing_diagnostic": {
+            "path": "/mnt/shared/tessera-measurements/glm-first-artifact-launch-plan-20260908/native-intake-after-rank0-02/all_experts-trained-gate-routing.json",
+            "sha256": "7d5663fd3b2ed898c2802cb134fe63b02d0abb726c3463a6d517450099eec191"
+          }
+        },
+        "all_selected_tiles_and_scales_exact": true
+      },
+      {
+        "case": {
+          "input_multiplier": 64.0,
+          "name": "clamp_stress",
+          "seed": 577,
+          "tokens": 4
+        },
+        "output_vs_independent_stock": {
+          "finite": true,
+          "max_abs": 0.0,
+          "relative_l2": 0.0
+        },
+        "stock_runner_internal_gate": {
+          "stock_runner_class": "vllm.model_executor.layers.fused_moe.runner.moe_runner.MoERunner",
+          "entrypoint": "runner",
+          "trained_gate_executed": true,
+          "observed_gate_calls": 1,
+          "stock_shared_expert_executed": true,
+          "observed_method_calls": 1,
+          "observed_shared_calls": 1,
+          "observed_final_all_reduce_calls": 1,
+          "rank_partial_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "combined_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "routing_identical_across_ranks": true,
+          "selected_global_experts": 21,
+          "shared_partial_nonzero": true,
+          "oracle_collective_outside_observed_invocation": true,
+          "routing_diagnostic": {
+            "path": "/mnt/shared/tessera-measurements/glm-first-artifact-launch-plan-20260908/native-intake-after-rank0-02/clamp_stress-runner-routing.json",
+            "sha256": "c1f90e3382df220d17f73ea75b17d7c51ef712ce36bbb83ed417771708e5196e"
+          }
+        },
+        "stock_runner_trained_gate": {
+          "stock_runner_class": "vllm.model_executor.layers.fused_moe.runner.moe_runner.MoERunner",
+          "entrypoint": "glm",
+          "trained_gate_executed": true,
+          "observed_gate_calls": 2,
+          "stock_shared_expert_executed": true,
+          "observed_method_calls": 1,
+          "observed_shared_calls": 1,
+          "observed_final_all_reduce_calls": 1,
+          "rank_partial_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "combined_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "routing_identical_across_ranks": true,
+          "selected_global_experts": 21,
+          "shared_partial_nonzero": true,
+          "oracle_collective_outside_observed_invocation": true,
+          "routing_diagnostic": {
+            "path": "/mnt/shared/tessera-measurements/glm-first-artifact-launch-plan-20260908/native-intake-after-rank0-02/clamp_stress-trained-gate-routing.json",
+            "sha256": "32241fdb96d0644626c166434985db33eb1b390b6003db99d9a5eacd8d75c1ca"
+          }
+        },
+        "all_selected_tiles_and_scales_exact": true
+      },
+      {
+        "case": {
+          "input_multiplier": 1.0,
+          "name": "empty",
+          "seed": 578,
+          "tokens": 0
+        },
+        "output_vs_independent_stock": {
+          "finite": true,
+          "max_abs": 0.0,
+          "relative_l2": 0.0
+        },
+        "all_selected_tiles_and_scales_exact": true
+      }
+    ],
+    "native-intake-after-rank1-02/receipt.json": [
+      {
+        "case": {
+          "input_multiplier": 1.0,
+          "name": "decode",
+          "seed": 574,
+          "tokens": 1
+        },
+        "output_vs_independent_stock": {
+          "finite": true,
+          "max_abs": 0.0,
+          "relative_l2": 0.0
+        },
+        "stock_runner_internal_gate": {
+          "stock_runner_class": "vllm.model_executor.layers.fused_moe.runner.moe_runner.MoERunner",
+          "entrypoint": "runner",
+          "trained_gate_executed": true,
+          "observed_gate_calls": 1,
+          "stock_shared_expert_executed": true,
+          "observed_method_calls": 1,
+          "observed_shared_calls": 1,
+          "observed_final_all_reduce_calls": 1,
+          "rank_partial_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "combined_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "routing_identical_across_ranks": true,
+          "selected_global_experts": 8,
+          "shared_partial_nonzero": true,
+          "oracle_collective_outside_observed_invocation": true,
+          "routing_diagnostic": {
+            "path": "/mnt/shared/tessera-measurements/glm-first-artifact-launch-plan-20260908/native-intake-after-rank1-02/decode-runner-routing.json",
+            "sha256": "66149578ca7b61ebc0d8ad993370fde82e5e9821efe6c45642ff28dd22ae18a9"
+          }
+        },
+        "stock_runner_trained_gate": {
+          "stock_runner_class": "vllm.model_executor.layers.fused_moe.runner.moe_runner.MoERunner",
+          "entrypoint": "glm",
+          "trained_gate_executed": true,
+          "observed_gate_calls": 2,
+          "stock_shared_expert_executed": true,
+          "observed_method_calls": 1,
+          "observed_shared_calls": 1,
+          "observed_final_all_reduce_calls": 1,
+          "rank_partial_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "combined_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "routing_identical_across_ranks": true,
+          "selected_global_experts": 8,
+          "shared_partial_nonzero": true,
+          "oracle_collective_outside_observed_invocation": true,
+          "routing_diagnostic": {
+            "path": "/mnt/shared/tessera-measurements/glm-first-artifact-launch-plan-20260908/native-intake-after-rank1-02/decode-trained-gate-routing.json",
+            "sha256": "c9a305da7c7ca8d25dd6a090e1e20398dabebaea02fba6bbdc4bdb4674f50588"
+          }
+        },
+        "all_selected_tiles_and_scales_exact": true
+      },
+      {
+        "case": {
+          "input_multiplier": 1.0,
+          "name": "all_experts",
+          "seed": 609,
+          "tokens": 36
+        },
+        "output_vs_independent_stock": {
+          "finite": true,
+          "max_abs": 0.0,
+          "relative_l2": 0.0
+        },
+        "stock_runner_internal_gate": {
+          "stock_runner_class": "vllm.model_executor.layers.fused_moe.runner.moe_runner.MoERunner",
+          "entrypoint": "runner",
+          "trained_gate_executed": true,
+          "observed_gate_calls": 1,
+          "stock_shared_expert_executed": true,
+          "observed_method_calls": 1,
+          "observed_shared_calls": 1,
+          "observed_final_all_reduce_calls": 1,
+          "rank_partial_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "combined_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "routing_identical_across_ranks": true,
+          "selected_global_experts": 167,
+          "shared_partial_nonzero": true,
+          "oracle_collective_outside_observed_invocation": true,
+          "routing_diagnostic": {
+            "path": "/mnt/shared/tessera-measurements/glm-first-artifact-launch-plan-20260908/native-intake-after-rank1-02/all_experts-runner-routing.json",
+            "sha256": "5225d06400e99db6f3b5cdc0cb1d32f166385981cbf41deb6e33f82ab5ca2371"
+          }
+        },
+        "stock_runner_trained_gate": {
+          "stock_runner_class": "vllm.model_executor.layers.fused_moe.runner.moe_runner.MoERunner",
+          "entrypoint": "glm",
+          "trained_gate_executed": true,
+          "observed_gate_calls": 2,
+          "stock_shared_expert_executed": true,
+          "observed_method_calls": 1,
+          "observed_shared_calls": 1,
+          "observed_final_all_reduce_calls": 1,
+          "rank_partial_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "combined_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "routing_identical_across_ranks": true,
+          "selected_global_experts": 167,
+          "shared_partial_nonzero": true,
+          "oracle_collective_outside_observed_invocation": true,
+          "routing_diagnostic": {
+            "path": "/mnt/shared/tessera-measurements/glm-first-artifact-launch-plan-20260908/native-intake-after-rank1-02/all_experts-trained-gate-routing.json",
+            "sha256": "7d5663fd3b2ed898c2802cb134fe63b02d0abb726c3463a6d517450099eec191"
+          }
+        },
+        "all_selected_tiles_and_scales_exact": true
+      },
+      {
+        "case": {
+          "input_multiplier": 64.0,
+          "name": "clamp_stress",
+          "seed": 577,
+          "tokens": 4
+        },
+        "output_vs_independent_stock": {
+          "finite": true,
+          "max_abs": 0.0,
+          "relative_l2": 0.0
+        },
+        "stock_runner_internal_gate": {
+          "stock_runner_class": "vllm.model_executor.layers.fused_moe.runner.moe_runner.MoERunner",
+          "entrypoint": "runner",
+          "trained_gate_executed": true,
+          "observed_gate_calls": 1,
+          "stock_shared_expert_executed": true,
+          "observed_method_calls": 1,
+          "observed_shared_calls": 1,
+          "observed_final_all_reduce_calls": 1,
+          "rank_partial_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "combined_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "routing_identical_across_ranks": true,
+          "selected_global_experts": 21,
+          "shared_partial_nonzero": true,
+          "oracle_collective_outside_observed_invocation": true,
+          "routing_diagnostic": {
+            "path": "/mnt/shared/tessera-measurements/glm-first-artifact-launch-plan-20260908/native-intake-after-rank1-02/clamp_stress-runner-routing.json",
+            "sha256": "c1f90e3382df220d17f73ea75b17d7c51ef712ce36bbb83ed417771708e5196e"
+          }
+        },
+        "stock_runner_trained_gate": {
+          "stock_runner_class": "vllm.model_executor.layers.fused_moe.runner.moe_runner.MoERunner",
+          "entrypoint": "glm",
+          "trained_gate_executed": true,
+          "observed_gate_calls": 2,
+          "stock_shared_expert_executed": true,
+          "observed_method_calls": 1,
+          "observed_shared_calls": 1,
+          "observed_final_all_reduce_calls": 1,
+          "rank_partial_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "combined_vs_stock_tp2": {
+            "finite": true,
+            "max_abs": 0.0,
+            "relative_l2": 0.0
+          },
+          "routing_identical_across_ranks": true,
+          "selected_global_experts": 21,
+          "shared_partial_nonzero": true,
+          "oracle_collective_outside_observed_invocation": true,
+          "routing_diagnostic": {
+            "path": "/mnt/shared/tessera-measurements/glm-first-artifact-launch-plan-20260908/native-intake-after-rank1-02/clamp_stress-trained-gate-routing.json",
+            "sha256": "32241fdb96d0644626c166434985db33eb1b390b6003db99d9a5eacd8d75c1ca"
+          }
+        },
+        "all_selected_tiles_and_scales_exact": true
+      },
+      {
+        "case": {
+          "input_multiplier": 1.0,
+          "name": "empty",
+          "seed": 578,
+          "tokens": 0
+        },
+        "output_vs_independent_stock": {
+          "finite": true,
+          "max_abs": 0.0,
+          "relative_l2": 0.0
+        },
+        "all_selected_tiles_and_scales_exact": true
+      }
+    ]
+  },
+  "device_cpu_validation": {
+    "status": "verified",
+    "effective_source_sha256": "5e7f0aa8a92eed36e97e88ed610dd990ed6212be1f24cf89baebe961c59349de",
+    "source_commit": "0a3dff7e5bc73dcc7b1c27e122dbe5886365daec",
+    "counts": {
+      "passed": 3715,
+      "failed": 0,
+      "error": 0,
+      "skipped": 602,
+      "xfailed": 0,
+      "xpassed": 0
+    },
+    "not_collected": 0,
+    "cuda_allocating_tests": 0,
+    "skip_reasons": {
+      "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-reach-gridbook/model.safetensors is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 13,
+      "could not import 'transformers': No module named 'transformers'": 1,
+      "the encoder is a CUDA path": 82,
+      "E2M1 publishes no reader range": 1,
+      "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-reach-gridbook is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 1,
+      "the lane is a CUDA kernel": 76,
+      "needs a CUDA device": 89,
+      "box artifact absent: the PrismaQuant checkout whose pricing this suite is pinned against -- /home/rob/prismaquant/prismaquant/tessera_formats.py is not on this box (set TESSERA_PRISMAQUANT_DIR; documented default /home/rob/prismaquant)": 6,
+      "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/gbfam/qwen3-0.6b-tessera-e4m3-reach-stock-twin/model.safetensors is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 2,
+      "needs CUDA": 6,
+      "needs two CUDA devices": 2,
+      "the kernel lane is a CUDA path": 30,
+      "the encoder is a GPU job": 26,
+      "the fused window Viterbi is a CUDA path and needs triton": 20,
+      "box artifact absent: the PrismaQuant worktree carrying the continuous-rate branch -- /home/rob/pq-wt/tessera-continuous/prismaquant/tessera_formats.py is not on this box (set TESSERA_PRISMAQUANT_WORKTREE; documented default /home/rob/pq-wt/tessera-continuous)": 2,
+      "box artifact absent: kl_tool.py and kl_estimator.py, the untracked served-KL instrument -- nothing set KL_TOOL_DIR and its default is not resolved for this root (set KL_TOOL_DIR; documented default /home/rob/dq-runs)": 2,
+      "the fused window Viterbi is a CUDA path": 52,
+      "encoder is a GPU job": 43,
+      "the trellises are CUDA": 8,
+      "BODY device unpack requires CUDA": 22,
+      "selected window kernel requires CUDA": 20,
+      "the captured TCQ trellis is a CUDA path": 29,
+      "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/compile-dispatch/serve_qwen_dispatch_eager.log is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 6,
+      "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/stock/serve_qwen_stock_tessera-k2-graph.log is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 1,
+      "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/stock/serve_qwen_stock_tessera-k2.log is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 1,
+      "box artifact absent: checkpoints, served censuses and serve logs this box produced -- /home/rob/tessera-runs/tsplugin/vllm-cache-fresh/torch_compile_cache/torch_aot_compile/15957ad9e7a72f1d7539f792e4d4cee6e704e2e99696f07e909c209f30f5ddec is not on this box (set TESSERA_RUNS_DIR; documented default /home/rob/tessera-runs)": 1,
+      "could not import 'vllm': No module named 'vllm'": 3,
+      "needs a CUDA device: the positive arm builds the extension": 1,
+      "the Viterbi is CUDA": 29,
+      "the fused window Viterbi is CUDA": 8,
+      "the Tessera encoder is a CUDA path": 14,
+      "the kernel lane runs on CUDA": 5
+    },
+    "actions": [
+      {
+        "shard": 0,
+        "action_key": "bbdbe9db9fcec0c25229ed0719d7e3a8255a8c5486600bb19f7ed167dbbb9574",
+        "receipt_sha256": "13ca14bce90433044853e40ce19aab8438376f1634b534b8bacfd224e358d7e2",
+        "payload_sha256": "a3d9828c856c5486ef8a0c4bff8e4546307f992252cfd9418d60f4d947827716",
+        "terminal_sha256": "48bb85ed0e3391fb91548ab0cfe1fd0101db380114e38f1b4b7e95eb4f22588a",
+        "host": "dl380g10",
+        "summary": "155 passed, 4 skipped in 9.05s"
+      },
+      {
+        "shard": 1,
+        "action_key": "f44a4b50b43a2e4772967448115925eb38098a7df391504c240b22d65a5ae932",
+        "receipt_sha256": "8cf351343e63eca8a96c4060b62deaa543dd3600fae2bfea8e2e18c31a7a7a2f",
+        "payload_sha256": "49efb02ca05744261bbc7b55e3510f81b2d2b97e66f9ca1a06b96d5d5e9306c7",
+        "terminal_sha256": "b94d5e208bcb3b1c02f5e0088f470d91de484150bc3348d630862a1c6618805c",
+        "host": "dl380g10",
+        "summary": "241 passed, 83 skipped in 94.88s (0:01:34)"
+      },
+      {
+        "shard": 2,
+        "action_key": "72160460818d4080109b349aaf820a7f0317b7f9eead0947aa8d19d5d77f1a55",
+        "receipt_sha256": "a76c2a1ca96fdcf4e4eaa3f7487a89227abbe034005b211735875f709b3465fc",
+        "payload_sha256": "24b57f2854fe34f7a9edb195b3c53a87c0511ffc1cf75724b610ac91596a0d88",
+        "terminal_sha256": "54e55fa8c198a05c63fc969025b179610a4eaf5373847709d4a80b62d2d7fb43",
+        "host": "dl380g10",
+        "summary": "180 passed, 59 skipped in 273.90s (0:04:33)"
+      },
+      {
+        "shard": 3,
+        "action_key": "4a344f316a3c4ac9953f3932487b7c4afc979a669f36a49678e35b63eae4bda1",
+        "receipt_sha256": "6079691cad05c8ecd393760780d9a7b5623cfc1b1eb71fafc3f10d1e44ae0057",
+        "payload_sha256": "a8e45dd157fb35e49408dd7e10cb285f750d61f1959784674dde48dc1d9ec003",
+        "terminal_sha256": "4be2e863044451f37cd9e3b421d15bf24e5d694f67ef7f21386fe384b080a76b",
+        "host": "dl380g10",
+        "summary": "134 passed, 77 skipped in 73.63s (0:01:13)"
+      },
+      {
+        "shard": 4,
+        "action_key": "4d48fd5ef0c0d88607f1c744b84d541a4f781da98793063b1d7ba097edd33b5e",
+        "receipt_sha256": "b94a31af339e12f721dc785744c3b261a2ad1d26c4c04ed53bce394878563cf4",
+        "payload_sha256": "04817e851d53888059461d02cfbc9b0616c9bf81d9f7f37641c711134075f646",
+        "terminal_sha256": "d247a212ff4dfeaa4882a419d1b0eb1d13f09bbfc3b2146837803dc69e0d0ccf",
+        "host": "dl380g10",
+        "summary": "136 passed, 19 skipped in 41.52s"
+      },
+      {
+        "shard": 5,
+        "action_key": "87caa3c7c1006af7f0424b6b67e70d17f68629871027caa4b41a815242318e35",
+        "receipt_sha256": "d2333fd8d97fb9bea34dd85b1f3e7ba126cc9f4b1434933c860f750ce7a183a1",
+        "payload_sha256": "90dbf0e2fac9993e861d3aa00ecab22d5e89dcfadcce9a858ae4c4a5f4030fc1",
+        "terminal_sha256": "bc4a1ad59c2dda12548eb15804424382618a656c4dd7c9b34c0c6137b41b1bca",
+        "host": "dl380g10",
+        "summary": "158 passed, 23 skipped in 41.81s"
+      },
+      {
+        "shard": 6,
+        "action_key": "71d8a9541ae998c4901449c6820cb39d5ce1f028d8aae372f26474f6c72d6228",
+        "receipt_sha256": "eb2786a1190f65f31fb4d7a55453ce53f816ad37fa1c0667c1137f90a4002870",
+        "payload_sha256": "290d89307e24400864dc0a136b2b31b4b0536ee4ae46ce55619ebbbd6442ca21",
+        "terminal_sha256": "fec0113c93c258fb5f4beaaa2ccd884de00751ca77c422c5fd0e236498a160a9",
+        "host": "dl380g10",
+        "summary": "187 passed, 105 skipped in 269.33s (0:04:29)"
+      },
+      {
+        "shard": 7,
+        "action_key": "98b19ba86d43a5ca70832e0737846fc825cef1e3846fb8ac6fc3c7ea661c4d0f",
+        "receipt_sha256": "b0bba247bbb66c65273c73d0bb2247f5227cd6448b191796b8b67c2ef1eedb90",
+        "payload_sha256": "112a3fa59c191619c1effd74b27ad3bd22a90aa533acfe621cf55c8c83f953c9",
+        "terminal_sha256": "df538986cc2007de93612c5529fdd628e78ff5848e05d7c49322748d357036b3",
+        "host": "dl380g10",
+        "summary": "346 passed, 5 skipped, 14 warnings in 81.10s (0:01:21)"
+      },
+      {
+        "shard": 8,
+        "action_key": "b1c21f6cbd3f7b072905b02b5edd544d1896cbf51fbb77e356bea459e9e932d7",
+        "receipt_sha256": "2cf91d2ea6bea64006cfaed3b2244785ba3e7ed1c574f689fade23638e2f6405",
+        "payload_sha256": "10288a435e15e81a8ddd310bf1df21e878d973bef0abfced80392d707dd03086",
+        "terminal_sha256": "a5fede96f59142748513dd6dd34e4a8f4a315ae6b404629b843e11758df33cf0",
+        "host": "dl380g10",
+        "summary": "183 passed, 22 skipped in 93.53s (0:01:33)"
+      },
+      {
+        "shard": 9,
+        "action_key": "168e6cc3670b3e3a7d82846c59db7fa6f2ff01c49d0624e3db8aa8f725836ec1",
+        "receipt_sha256": "37e8722782938af5815f3bf994798c58a0fb6850d2167bc0e4d4f846911d83a0",
+        "payload_sha256": "a2f83d444d4e028c9564a5c80be7556a1f811cb9ebd907a1ca4255c917e661b1",
+        "terminal_sha256": "376c0d8e296b17aaf399247073e6526ff54e9b14b422425d634ab2a7c14fe255",
+        "host": "dl380g10",
+        "summary": "157 passed, 26 skipped in 83.49s (0:01:23)"
+      },
+      {
+        "shard": 10,
+        "action_key": "6dc500da401d23ea2ca967b45db8d4ab77b67eeb32132e34ab22f9d9a1491159",
+        "receipt_sha256": "e2c9a2424908774eb0c4cbf5520f16d9cb1564344f08e50d490ac257f03f390a",
+        "payload_sha256": "f1c66adcfc681a6123fc07a66bb51661a44a54ff43058eb6985c270c95ad0c74",
+        "terminal_sha256": "303f7da310a715f53b450b6010ea0db0dc709bc28e9439f8d432db124d39b07c",
+        "host": "dl380g10",
+        "summary": "177 passed, 40 skipped in 37.59s"
+      },
+      {
+        "shard": 11,
+        "action_key": "d7c8ab4734452ef8704058971a41b5b701f315a791553a62780985f6379ead38",
+        "receipt_sha256": "4a1793de361a8b2ffa16f1c44c7ac6cfdc24f992ddb8a6181bf985c88b90d5e5",
+        "payload_sha256": "0e11c680051f48d49ddc4b296ff92e71b36ee607028e840bb5f07c30cebb05fa",
+        "terminal_sha256": "51148368941b3fd97448cf0952d7a18357bd8f6bc1bef38dd5918548e9589144",
+        "host": "dl380g10",
+        "summary": "233 passed, 1 skipped in 66.34s (0:01:06)"
+      },
+      {
+        "shard": 12,
+        "action_key": "99fb554d141152143711f849a2aa7ddf03dde0749f4b888e68c087fc5ad579d9",
+        "receipt_sha256": "5ced158ad192293a641cb5b783b68e6c34f9bc33e6458fb7465d7a3c32cb99ec",
+        "payload_sha256": "84dcf24a81d88a21b0bd9290207538b4b29b585c6a973a7af1af1366f6aef9fc",
+        "terminal_sha256": "3fbfde0a426c728dfb57bb6d3bb22bc38c588fab78c7dfb93869659f642c60c9",
+        "host": "dl380g10",
+        "summary": "135 passed, 16 skipped in 34.67s"
+      },
+      {
+        "shard": 13,
+        "action_key": "69e5607ccebc7b57cc4ba7f3d80915f10bacc9cf2e8683fe17a7e501a13b8044",
+        "receipt_sha256": "706ea138be54ef724b44a08371479e292c3eecc58a6ded38fd4200194ae13854",
+        "payload_sha256": "a79a4fa396d6cfbfb3e15d46d5a7b81956cfb4e9ef0133db9783cb378984f1c1",
+        "terminal_sha256": "0b67fa584082a259dbeed20dea2f832e3e830e7bae751f7ec3bb6e7da7076727",
+        "host": "dl380g10",
+        "summary": "130 passed, 14 warnings in 62.56s (0:01:02)"
+      },
+      {
+        "shard": 14,
+        "action_key": "b87aa6ff87785109dffc23bd96747e84715fdffb826833f7b2a2575186994704",
+        "receipt_sha256": "e1a570050bfea121756ca068288715c84f26fd6c8860f5f4cc8e1ceb87e1a538",
+        "payload_sha256": "b68f58dd66bc817daba49bb7596787705d5f1270bd97075f7b892ed85d1b932d",
+        "terminal_sha256": "01d9e62c5b4a0ae384192eedf38c84675b6cd86edb094d0ce9b86424a91c7d42",
+        "host": "dl380g10",
+        "summary": "133 passed in 38.07s"
+      },
+      {
+        "shard": 15,
+        "action_key": "76960b61af0a445d1a7495456b71b985d7fc30a13d3b12815af45a1164d9a653",
+        "receipt_sha256": "f2edc36d46e9ea35a9dbeec779a19050501576b56c9e3fcc2fb01c9fbcf15a1a",
+        "payload_sha256": "9f104c103850f67f060d6570b483c7b5f9cbea8b8b9c222e14877c0dc8de8f00",
+        "terminal_sha256": "6f260db7e5bd58d3af5b69b226de32144f43c51acd6f4a1bdaaa753312970341",
+        "host": "dl380g10",
+        "summary": "357 passed, 48 skipped in 114.41s (0:01:54)"
+      },
+      {
+        "shard": 16,
+        "action_key": "27ccfbd294b0d74ec350ba22ae7581d25358c1bcc4304efcc9db481570cc8a23",
+        "receipt_sha256": "6e5664534c7f0dbdd8465aa42ffdcbc0136687924a416555055de94f02daef05",
+        "payload_sha256": "9d58b7ac4b31ba752f9c0e3b88f02b6b6419d38bfa99a8c3b5b61a50c3f20342",
+        "terminal_sha256": "76e4777fedc921ff7032ef281d268d4e10cbd9dc2734e615baaad29b2e7cd5da",
+        "host": "dl380g10",
+        "summary": "181 passed, 24 skipped in 142.69s (0:02:22)"
+      },
+      {
+        "shard": 17,
+        "action_key": "175f974a91d59ff8a6f8061359a53e55788b4d720fdebd454719ea77f7106897",
+        "receipt_sha256": "3ebfa66332c2e7f37bb79742e6837ee1167b067d3800ff03c2ca49f46a147f56",
+        "payload_sha256": "854fba775bc52c4ad9792a945206340ee7342e392af3f3109a463b26ec8f5adb",
+        "terminal_sha256": "dc119b620290869b9ece6f178ba1dfba23cc084e3ad2a96b1bdfbbc64848e11c",
+        "host": "dl380g10",
+        "summary": "195 passed, 16 skipped in 140.51s (0:02:20)"
+      },
+      {
+        "shard": 18,
+        "action_key": "cc072a1e69826c9a6931f3192c1b590a3c547477ee3ae937705e0773dd06eaf2",
+        "receipt_sha256": "843ca56094437f4d5472d708a8e445968440c13581a38b992ed37ab96ab436a3",
+        "payload_sha256": "40b55d9418a6c1e1da4800ec374c3e1658d7febd7a220b1133c0462a1d9d3655",
+        "terminal_sha256": "19046d55213fc6ad59966adb1bc05b15b48df5f1a350f5fdc8ca8565559f566d",
+        "host": "dl380g10",
+        "summary": "101 passed in 6.67s"
+      },
+      {
+        "shard": 19,
+        "action_key": "61faf1bec99fb407f647b955ded32ef223d1ed534da2f49edf64966a04f28f6c",
+        "receipt_sha256": "1aa60482d6a6690dd11d985b9eadffcbb6dea8ef0cb22b31a487588dcf28846e",
+        "payload_sha256": "5580b44a533dd6ed9c7f85682bd1455cfceb4fb60b9b78b55260538f51195329",
+        "terminal_sha256": "9681118d5baf7e0a4a959ad14b9b6a31eccd410af9a6ed250a7c39db06118d63",
+        "host": "dl380g10",
+        "summary": "196 passed, 34 skipped in 101.42s (0:01:41)"
+      }
+    ]
+  }
+}
