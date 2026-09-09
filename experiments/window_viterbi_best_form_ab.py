@@ -436,7 +436,7 @@ def main():
                                      if total_j else None),
                 work_per_joule=(round(total_work / total_j, 1) if total_j else None))
         f = rec["timing"]["front"]
-        for arm in ("best", "best@32"):
+        for arm in ("best", "best@w32"):
             t = rec["timing"][arm]
             rec[f"speedup_{arm}"] = round(
                 f["seconds_per_call_median"] / t["seconds_per_call_median"], 4)
