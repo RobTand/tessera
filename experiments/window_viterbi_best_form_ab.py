@@ -16,13 +16,15 @@ Three arms, because two would leave the mechanism unattributed:
 
   front     the current fused step.
   best      the candidate, at the width its smaller resident set earns.
-  best@32   the candidate held to the front form's width, so it runs the
-            SAME number of blocks over the same chain.  The difference
-            between this arm and ``front`` is the store and the front alone;
-            the difference between this arm and ``best`` is the width.  Its
-            ``sse`` accumulates over a different chunking and so is compared
-            only in states, which ``viterbi_window`` documents as exact at
-            every chunk size.
+  best@w32  the candidate held to the front form's INTERNAL width, by
+            narrowing the L2 budget for that arm alone.  The chunk stays the
+            production chunk, so the epilogue's min, its sse accumulation and
+            its traceback call count are identical to the other arms and the
+            only thing that moved is the width.  A first attempt held the
+            width by passing chunk=32 instead; that moved the outer loop too,
+            and its sse said so.  The difference between this arm and
+            ``front`` is the store and the front alone; the difference
+            between it and ``best`` is the width.
 
 Phases in ONE process, on ONE tensor, in this order:
 
@@ -46,8 +48,10 @@ Usage::
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
+import shutil
 import statistics
 import subprocess
 import sys
@@ -64,8 +68,13 @@ from tessera.alphabet import E4M3_GRID  # noqa: E402
 from tessera.encode import (grid_vector_table, viterbi_window,  # noqa: E402
                             window_table)
 
-# (arm, chunk) -- chunk None means the production default.
-ARMS = (("front", None), ("best", None), ("best@32", 32))
+# (arm, width_cap) -- width_cap None runs the width the arm's resident set
+# earns; a number holds the arm to that internal width by narrowing the L2
+# budget alone.  The chunk NEVER changes: chunk is the outer loop, and moving
+# it moves the epilogue's min, its sse accumulation and its traceback call
+# count as well as the plan's width, which is three changes in a control that
+# is supposed to isolate one.
+ARMS = (("front", None), ("best", None), ("best@w32", 32))
 
 # (name, window_bits, rate, arity, rows, cols) -- the production groups.
 CONFIGS = [
@@ -173,11 +182,33 @@ def _select(arm: str):
     os.environ[wv._GRAPH_ENV] = "1"
 
 
-def _call(arm, chunk, targets, vectors, window_bits, rate, weights):
+def _budget_for(arm, width_cap, window_bits, rate):
+    """The byte budget that makes ``_layout`` choose ``width_cap``.
+
+    ``_layout`` takes ``budget // (2 * resident * 4)``, so a budget of exactly
+    ``2 * resident * 4 * width_cap`` lands on that width.  ``_L2_BUDGET`` is
+    in the plan-cache key, so the two budgets coexist in one process, and the
+    module states outright that it is a measurement knob and never a
+    correctness one: every value returns the same bytes, sse included.  This
+    control therefore has to match the other arms on sse as well as states,
+    and the harness asserts it.
+    """
+    if width_cap is None:
+        return None
+    size = 1 << window_bits
+    resident = size if arm == "front" else (size >> rate)
+    return 2 * resident * 4 * width_cap
+
+
+def _call(arm, width_cap, targets, vectors, window_bits, rate, weights):
     _select(arm)
-    kw = {} if chunk is None else {"chunk": chunk}
-    return viterbi_window(targets, vectors, window_bits, rate,
-                          weights=weights, impl="fused", **kw)
+    saved = wv._L2_BUDGET
+    wv._L2_BUDGET = _budget_for(arm, width_cap, window_bits, rate) or saved
+    try:
+        return viterbi_window(targets, vectors, window_bits, rate,
+                              weights=weights, impl="fused")
+    finally:
+        wv._L2_BUDGET = saved
 
 
 class _Spy:
@@ -198,7 +229,7 @@ class _Spy:
         return call
 
 
-def _registers(arm, chunk, targets, vectors, window_bits, rate, weights):
+def _registers(arm, width_cap, targets, vectors, window_bits, rate, weights):
     ks = list(wv._kernels())
     slot = 0 if arm == "front" else 5              # _step / _step_best
     spy = _Spy(ks[slot])
@@ -208,7 +239,7 @@ def _registers(arm, chunk, targets, vectors, window_bits, rate, weights):
     wv._CACHE["k"] = tuple(held)
     wv.window_plan_cache_clear()
     try:
-        _call(arm, chunk, targets, vectors, window_bits, rate, weights)
+        _call(arm, width_cap, targets, vectors, window_bits, rate, weights)
     finally:
         wv._CACHE["k"] = saved
         wv.window_plan_cache_clear()
@@ -220,11 +251,17 @@ def _registers(arm, chunk, targets, vectors, window_bits, rate, weights):
                 shared=getattr(getattr(ck, "metadata", None), "shared", None))
 
 
-def _plan_shape(arm, chunk, window_bits, rate, cols, dev):
+def _plan_shape(arm, width_cap, window_bits, rate, cols, dev):
     size = 1 << window_bits
     resident = size if arm == "front" else (size >> rate)
-    _, width, descs = wv._layout(dev, size, cols, chunk or 512, resident)
-    return dict(resident=resident, width=width, batches=len(descs))
+    saved = wv._L2_BUDGET
+    wv._L2_BUDGET = _budget_for(arm, width_cap, window_bits, rate) or saved
+    try:
+        _, width, descs = wv._layout(dev, size, cols, 512, resident)
+    finally:
+        wv._L2_BUDGET = saved
+    return dict(resident=resident, width=width, batches=len(descs),
+                l2_budget_bytes=_budget_for(arm, width_cap, window_bits, rate))
 
 
 def main():
@@ -240,33 +277,34 @@ def main():
 
     dev = "cuda"
     records = []
-    for name, L, R, arity, rows, cols in CONFIGS:
-        if a.configs and name not in a.configs:
-            continue
+    want = [c for c in CONFIGS if not a.configs or c[0] in a.configs]
+    for name, L, R, arity, rows, cols in want:
         targets, vectors, weights = _inputs(L, R, arity, rows, cols, dev)
         rec = dict(config=name, window_bits=L, rate=R, arity=arity, rows=rows,
                    cols=cols, weighted=True, table="E4M3_GRID window_table "
                    "sigma=1.0 seed=0",
-                   plan={arm: _plan_shape(arm, chunk, L, R, cols, dev)
-                         for arm, chunk in ARMS})
+                   plan={arm: _plan_shape(arm, width_cap, L, R, cols, dev)
+                         for arm, width_cap in ARMS})
 
         # -- identity, before any clock --------------------------------------
         wv.window_plan_cache_clear()
         ref_states, ref_sse = viterbi_window(targets, vectors, L, R,
                                              weights=weights, impl="reference")
         rec["identity"] = {}
-        for arm, chunk in ARMS:
-            s, e = _call(arm, chunk, targets, vectors, L, R, weights)
+        for arm, width_cap in ARMS:
+            s, e = _call(arm, width_cap, targets, vectors, L, R, weights)
             rec["identity"][arm] = dict(
                 states_equal=bool(torch.equal(s, ref_states)),
                 sse=e.hex(),
-                # sse is accumulated one chunk at a time, so it is compared
-                # only where the chunking is the reference's.
-                sse_equal=(None if chunk is not None else e == ref_sse))
+                # Every arm runs the production chunk, so every arm's sse is
+                # summed in the reference's order and compared as bytes.  A
+                # control that could not be compared here was a control that
+                # had changed more than the one thing it names.
+                sse_equal=bool(e == ref_sse))
             del s
         del ref_states
         torch.cuda.empty_cache()
-        if not all(v["states_equal"] and v["sse_equal"] is not False
+        if not all(v["states_equal"] and v["sse_equal"]
                    for v in rec["identity"].values()):
             rec["verdict"] = "an arm does not return the reference's answer"
             records.append(rec)
@@ -284,21 +322,37 @@ def main():
                 raise SystemExit(
                     "pbprofile mode needs PRISMABUILD_PROFILE_TORCH_OUT; run "
                     "this under pbrun --profile torch")
-            for arm, chunk in ARMS:                      # capture, untraced
-                _call(arm, chunk, targets, vectors, L, R, weights)
+            for arm, width_cap in ARMS:                      # capture, untraced
+                _call(arm, width_cap, targets, vectors, L, R, weights)
             torch.cuda.synchronize()
             with profile(activities=[ProfilerActivity.CPU,
                                      ProfilerActivity.CUDA]) as prof:
-                for arm, chunk in ARMS:
+                for arm, width_cap in ARMS:
                     # Both candidate arms run _step_best, so the kernel name
                     # alone would not separate them; the marker does.
                     with record_function(f"arm:{arm}"):
-                        _call(arm, chunk, targets, vectors, L, R, weights)
+                        _call(arm, width_cap, targets, vectors, L, R, weights)
                         torch.cuda.synchronize()
+            # One action, one config, one trace.  The first version ran both
+            # configs and exported both to the SAME fleet path, so R4
+            # overwrote R3 and the receipt named a trace that was no longer
+            # the run it was filed for.  A profiled run is keyed on being
+            # profiled, so a trace that is silently the other config's is
+            # worse than none.
+            if len(want) != 1:
+                raise SystemExit(
+                    "pbprofile takes exactly one --configs entry: the fleet "
+                    f"names one path and {len(want)} configs would overwrite "
+                    "each other in it")
+            keep = Path(a.out).with_name(f"{name}.chrome-trace.json.gz")
+            keep.parent.mkdir(parents=True, exist_ok=True)
+            prof.export_chrome_trace(str(keep))
             Path(out).parent.mkdir(parents=True, exist_ok=True)
-            prof.export_chrome_trace(out)
-            rec["pb_profile"] = dict(trace=out, exists=Path(out).exists(),
-                                     bytes=Path(out).stat().st_size)
+            shutil.copyfile(keep, out)
+            rec["pb_profile"] = dict(
+                trace=out, retained=str(keep), exists=Path(out).exists(),
+                bytes=keep.stat().st_size,
+                sha256=hashlib.sha256(keep.read_bytes()).hexdigest())
             rec["kernels"] = {
                 ev.key[:56]: dict(us=round(ev.self_device_time_total, 1),
                                   calls=ev.count)
@@ -309,20 +363,20 @@ def main():
             records.append(rec)
             continue
 
-        rec["registers"] = {arm: _registers(arm, chunk, targets, vectors, L, R,
+        rec["registers"] = {arm: _registers(arm, width_cap, targets, vectors, L, R,
                                             weights)
-                            for arm, chunk in ARMS}
+                            for arm, width_cap in ARMS}
 
         # -- timing ----------------------------------------------------------
         # One clear, then every arm's plan is built and NOTHING clears again:
         # clearing per repeat would time a graph capture and call it a step.
         wv.window_plan_cache_clear()
         single = {}
-        for arm, chunk in ARMS:
-            _call(arm, chunk, targets, vectors, L, R, weights)   # capture
+        for arm, width_cap in ARMS:
+            _call(arm, width_cap, targets, vectors, L, R, weights)   # capture
             torch.cuda.synchronize()
             t0 = time.perf_counter()
-            _call(arm, chunk, targets, vectors, L, R, weights)
+            _call(arm, width_cap, targets, vectors, L, R, weights)
             torch.cuda.synchronize()
             single[arm] = time.perf_counter() - t0
         inner = {arm: max(1, int(a.min_block_s / single[arm]) + 1)
@@ -334,11 +388,11 @@ def main():
         blocks = {arm: [] for arm, _ in ARMS}
         try:
             for _ in range(a.blocks):
-                for arm, chunk in ARMS:
+                for arm, width_cap in ARMS:
                     torch.cuda.synchronize()
                     w0, t0 = time.time(), time.perf_counter()
                     for _ in range(inner[arm]):
-                        _call(arm, chunk, targets, vectors, L, R, weights)
+                        _call(arm, width_cap, targets, vectors, L, R, weights)
                     torch.cuda.synchronize()
                     dt, w1 = time.perf_counter() - t0, time.time()
                     blocks[arm].append(dict(seconds=dt, wall_start=w0,
