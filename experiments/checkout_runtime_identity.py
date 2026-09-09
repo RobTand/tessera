@@ -81,9 +81,11 @@ def main():
     core = Path(importlib.util.find_spec('vllm').origin).parent
     assert files(core) == stock['files'], 'Installed vLLM differs from the attested official image'
 
-    src = (args.checkout / 'src').resolve()
-    assert (src / 'tessera' / '__init__.py').is_file(), f'no Tessera checkout at {src}'
-    sys.path.insert(0, str(src))
+    # Both scans below read sys.path, so they run before the checkout joins it.
+    # What they mean is 'the image carries no Tessera', and only a pre-insert scan
+    # says that: a wheel build leaves src/tessera_quant.egg-info behind, and a
+    # snapshot carrying one would otherwise make this module refuse its own job
+    # for the opposite of the reason the message gives.
     from importlib import metadata
     try:
         installed = metadata.version(DISTRIBUTION)
@@ -93,16 +95,19 @@ def main():
         f'{DISTRIBUTION} {installed} is installed in this image. Two Tesseras are then '
         'importable and the receipt cannot say which one encoded. Run this job in the '
         'stock image, where the only Tessera is the checkout.')
-    import tessera
-    from tessera.cached_unit import encoder_source_sha256
-    from tessera.encoder_identity import encoder_fixture_id
-    assert Path(tessera.__file__).resolve().parent == src / 'tessera'
-
     entries = [{'name': e.name, 'value': e.value}
                for e in metadata.entry_points(group='vllm.general_plugins')]
     assert not [e for e in entries if e['name'] == 'tessera'], (
         'a Tessera vLLM plugin entry point is registered. This job encodes and does not '
         'serve; a registered plugin means an installed Tessera this receipt does not name.')
+
+    src = (args.checkout / 'src').resolve()
+    assert (src / 'tessera' / '__init__.py').is_file(), f'no Tessera checkout at {src}'
+    sys.path.insert(0, str(src))
+    import tessera
+    from tessera.cached_unit import encoder_source_sha256
+    from tessera.encoder_identity import encoder_fixture_id
+    assert Path(tessera.__file__).resolve().parent == src / 'tessera'
 
     record = {
         'launcher_image_inspect_sha256': digest(args.launcher_image_inspect),

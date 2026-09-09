@@ -29,10 +29,23 @@ assert BASE in inspected.get('RepoDigests', [])
 image_path = ROOT / 'launcher-image-inspect.json'
 image_path.write_text(json.dumps(inspected, indent=2))
 cidfile = ROOT / 'container.cid'
+# The recorder drops to uid 1000 before exec, and the stock image leaves HOME=/root.
+# Every JIT cache this encode fills expands a home-relative default: Triton writes
+# $TRITON_CACHE_DIR or $HOME/.triton, and kernel_window_gemv reads
+# $TORCH_EXTENSIONS_DIR or ~/tmp/torch-ext-gemv. Unset, the first kernel compile is
+# a mkdir denial under /root, which surfaces as a build failure rather than as a
+# permission message. These three point at job-owned directories the launcher makes
+# on the host, so they exist with the right owner before the container opens.
+caches = {name: ROOT / name for name in ('home', 'triton-cache', 'torch-extensions')}
+for path in caches.values():
+    path.mkdir()
 cmd = ['docker', 'run', '--gpus', 'all', '--ipc', 'host', '--cidfile', str(cidfile),
        '--name', 'tessera-research-selected-export-' + uuid.uuid4().hex, '--network', 'none',
        '--volume', f'{Path.cwd()}:/control:ro', '--volume', '/mnt/shared:/mnt/shared',
        '--env', 'OMP_NUM_THREADS', '--env', 'MKL_NUM_THREADS', '--env', 'OPENBLAS_NUM_THREADS',
+       '--env', f'HOME={caches["home"]}',
+       '--env', f'TRITON_CACHE_DIR={caches["triton-cache"]}',
+       '--env', f'TORCH_EXTENSIONS_DIR={caches["torch-extensions"]}',
        '--entrypoint', 'python3', inspected['Id'],
        IDENTITY, '--evidence-dir', str(ROOT / 'runtime-identity'), '--checkout', '/control',
        '--launcher-image-id', inspected['Id'], '--launcher-image-inspect', str(image_path),
@@ -40,7 +53,9 @@ cmd = ['docker', 'run', '--gpus', 'all', '--ipc', 'host', '--cidfile', str(cidfi
        '--out', str(ROOT / 'export'), '--execution-json', args.execution_json]
 if args.layers is not None:
     cmd += ['--layers', str(args.layers)]
-(ROOT / 'launch.json').write_text(json.dumps({'argv': cmd, 'affinity': sorted(os.sched_getaffinity(0))}, indent=2))
+(ROOT / 'launch.json').write_text(json.dumps(
+    {'argv': cmd, 'affinity': sorted(os.sched_getaffinity(0)),
+     'jit_cache_dirs': {name: str(path) for name, path in caches.items()}}, indent=2))
 run = subprocess.run(cmd)
 cid = cidfile.read_text().strip()
 container = json.loads(subprocess.check_output(['docker', 'inspect', cid]))[0]
