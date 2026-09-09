@@ -55,11 +55,17 @@ def bound_source(handoff, H, **settings):
     return ActivationSource.from_capture(handoff, resident_hessians=H, **settings)
 
 
-def encode_kwargs(source, unit='a.weight', columns=4):
-    """``for_unit`` as the existing reference tests call it on this fixture."""
+def encode_kwargs(source, unit='a.weight', columns=4, device='cpu'):
+    """``for_unit`` as the existing reference tests call it on this fixture.
+
+    The device is a parameter and not a constant, because ``for_unit`` moves H
+    to the device it is asked for: asking for 'cpu' against a CUDA resident
+    tensor stages a host copy, and the metric that comes back is then correctly
+    a different object from the one served.
+    """
     from tessera.manifest import ScalePlaneKind
 
-    return source.for_unit(unit, columns, 'cpu', scale_plane=ScalePlaneKind.CHANNEL)
+    return source.for_unit(unit, columns, device, scale_plane=ScalePlaneKind.CHANNEL)
 
 
 # --- the regression itself -------------------------------------------------
@@ -178,7 +184,7 @@ def test_a_resident_cuda_h_is_served_as_itself(resident):
     served = source.hessians['a']
     assert served is device['a']
     assert served.device.type == 'cuda'
-    kwargs = encode_kwargs(source)
+    kwargs = encode_kwargs(source, device='cuda')
     assert kwargs['refit_metric'] is served
     assert source.hessians.receipt()['loaded_entries'] == 0
     source.hessians.close()
