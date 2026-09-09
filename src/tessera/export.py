@@ -755,7 +755,8 @@ class ActivationSource:
         return kwargs
 
     @classmethod
-    def from_capture(cls, path, **settings) -> "ActivationSource":
+    def from_capture(cls, path, *, resident_hessians=None,
+                     **settings) -> "ActivationSource":
         """Load a legacy H payload or bounded canonical references at ``settings``.
 
         Every driver that offers a ``--hessian`` flag comes through here, so
@@ -765,13 +766,47 @@ class ActivationSource:
         file, not only which text), and the measured recipe filling in every
         setting the caller left out.  ``ldlq_sigma`` below zero is spelled by
         the CLIs as "LDLQ off" and lands here as ``None``.
+
+        ``resident_hessians`` binds a reference document's commitments to
+        tensors the caller already holds, so a producer that just wrote those
+        commitments neither re-digests the population to seal nor reads every
+        unit back to consume it (tessera#440).  The owner is closed here if
+        anything after opening it raises: a caller cannot register an owner it
+        was never handed, so this call is the only place that can.
         """
         import torch as _torch
 
+        owner = None
         if str(path).endswith('.references.json'):
             from .hessian_capture import ReferenceHessians
-            hessians = ReferenceHessians(path)
-            payload = {'H': hessians, 'provenance': hessians.provenance}
+            owner = ReferenceHessians(path)
+        elif resident_hessians is not None:
+            raise GrammarError(
+                f"{path} is not a reference capture, so resident_hessians has "
+                "nothing to bind to: it binds caller-owned tensors to the "
+                "commitments a '.references.json' document holds, and a legacy "
+                "payload carries the tensors themselves")
+        try:
+            return cls._from_capture_payload(path, owner, resident_hessians, settings)
+        except BaseException:
+            if owner is not None:
+                owner.close()
+            raise
+
+    @classmethod
+    def _from_capture_payload(cls, path, owner, resident_hessians,
+                              settings) -> "ActivationSource":
+        """Read the payload and build the source, once the owner exists.
+
+        Split out so ``from_capture`` has exactly one place that closes an
+        owner whose construction did not finish.
+        """
+        import torch as _torch
+
+        if owner is not None:
+            if resident_hessians is not None:
+                owner.bind_resident(resident_hessians)
+            payload = {'H': owner, 'provenance': owner.provenance}
         else:
             payload = _torch.load(str(path), map_location="cpu", weights_only=False)
         if "H" not in payload:

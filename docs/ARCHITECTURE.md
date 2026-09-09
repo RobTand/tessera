@@ -113,12 +113,51 @@ canonical capture manifest and census, full-census counts, per-unit tensor
 commitments and each priced row's existing v1 capture seal. The aggregate seal
 uses the unchanged `tessera.hessian_capture.v1` grammar. Metadata intake verifies
 commitments; it does not claim unconsumed H payloads have been verified.
-Every H lookup, including cached-wire input identity, verifies the bounded
-original file and actual H bytes through a held descriptor before returning a
-detached H. The reader retains metadata and descriptors, never H/X tensors.
+Unbound, every H lookup, including cached-wire input identity, verifies the
+bounded original file and actual H bytes through a held descriptor before
+returning a detached H. The reader retains metadata and descriptors, never H/X
+tensors.
 The explicit load policy bounds each JSON, source file and H; one lookup may
 own one capped source mapping, an H copy and the existing H-sized hash staging,
 in addition to caller/encoder owners. Legacy `.pt` captures remain eager.
+Re-stamped 2026-09-09 for resident binding (tessera#440).
+`ReferenceHessians.bind_resident(mapping)` makes one owner serve tensors the
+caller already holds, and `ActivationSource.from_capture(path,
+resident_hessians=...)` opens and binds one. It binds where the bytes come
+from, never what they must be: the commitments, census, provenance and held
+descriptors are unchanged, and the roster must equal the committed roster
+exactly. Binding is one-shot and irrevocable, ended by the owner's `close()`;
+`from_capture` closes an owner it opened if anything before its return raises,
+because a caller cannot register an owner it was never handed. The mapping is
+snapshotted, so a later replacement in the caller's dict does not retarget the
+owner, and nothing is copied.
+
+A bound lookup checks the current owner and the cheap facts a commitment
+describes -- a device in `RESIDENT_DEVICES` (`cpu` or `cuda`), float32,
+committed shape, contiguous, exact storage ownership -- plus finiteness on a
+unit's first lookup, and returns the caller's exact object. The population this
+serves is captured on CUDA on GB10 and is bound and served there, unstaged;
+what binding removes is the whole population's seal, not the per-unit host copy
+the consumption digest still takes. It does not re-digest. The authenticating comparison against the
+commitment is unmoved: `ActivationSource._require_sealed_unit` takes it at
+every unit the encoder consumes and `cached_unit.tensor_identity` on the
+identity path, so an H edited in place after binding is refused before it
+shapes a byte. Sealing a bound source reads `committed_units()` and digests
+nothing, which is the point: a producer that computed those commitments from
+tensors it still holds would otherwise pay the whole population twice.
+`receipt()` reports `resident_bound` and `resident_units_observed` separately
+from `verified_units`, because observed-after-checks and read-and-compared are
+two claims. `close()` drops the owner's references to the population as well as
+its descriptors, so its hold ends with its lifetime; `resident_bound` survives
+as the historical claim, and the caller's own mapping is not touched.
+
+A reference-backed source records `hessian_role` and `path` in the
+`activation_aware.hessian` block a plain-mapping source does not, and its
+`reference_binding()` is not null. The merge guard compares every field of that
+block, so parts encoded either side of such a switch do not merge; a producer
+switches at a fresh checkpoint. `capture_sha256` itself is unchanged, because
+`HESSIAN_IDENTITY` and `CAPTURE_CONTEXT` name neither field.
+
 The producer's closed `tessera.priced_export_inputs.v2` adds the canonical
 manifest/census binding; v1 cannot accept references with the same old seal.
 This changes producer source identity, so old encoded-wire identities are not
