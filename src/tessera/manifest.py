@@ -54,6 +54,8 @@ __all__ = [
     "BranchIdentity",
     "Geometry",
     "ScalePlaneKind",
+    "scale_plane_terminal_flags",
+    "scale_block_columns",
     "ScalePlane",
     "BodyKind",
     "WINDOW_BITS_MAX",
@@ -219,6 +221,49 @@ class ScalePlaneKind(IntEnum):
     #: grid this plane is both cheaper and the served layout
     #: (``scale_channel.py``).
     CHANNEL = 2
+
+
+def scale_plane_terminal_flags(kind: "ScalePlaneKind | int") -> "tuple[bool, bool, bool]":
+    """``(with_scale_base, with_scale_refine, with_row_scale)`` for a plane kind.
+
+    THE ONE HOME of which block planes a scale plane declares on a terminal.
+    The writer (``unit_artifact.build_unit_artifact``) and the byte-matched
+    control (``control.unit_wire_bits``) both spelled this triple out by hand,
+    and a plane kind added to one and not the other would price a terminal the
+    writer does not write.  A ``TerminalSpec`` reads these three fields and
+    nothing else about the plane, so this is the whole of what a kind decides
+    there.
+    """
+    kind = ScalePlaneKind(kind)
+    if kind is ScalePlaneKind.S6B:
+        return True, True, False
+    if kind is ScalePlaneKind.LUT:
+        return False, True, False
+    if kind is ScalePlaneKind.CHANNEL:
+        return False, False, True
+    raise ManifestError(f"scale plane {kind.name} declares no terminal flags")
+
+
+def scale_block_columns(kind: "ScalePlaneKind | int", group: int, half: int) -> "int | None":
+    """The column stride of a plane kind's block scale planes, or ``None``.
+
+    THE ONE HOME of the stride a column cut must land on.  A block plane is
+    indexed ``(row * cols + col) // block``: S6b carries a base word per
+    ``group`` and a refinement per ``half``, so its stride is the group; a LUT
+    plane carries the nibble alone, so its stride is the half; a CHANNEL plane
+    has no column structure at all and answers ``None``.  ``slicing`` read
+    this in three places (``_scale_columns_per_row``, ``_manifest_granularity``,
+    ``_slicing_facts``), and the shape of tessera#235 is exactly two of those
+    answering differently: ``can_shard`` says yes to a cut the cutter refuses.
+    """
+    kind = ScalePlaneKind(kind)
+    if kind is ScalePlaneKind.CHANNEL:
+        return None
+    if kind is ScalePlaneKind.S6B:
+        return int(group)
+    if kind is ScalePlaneKind.LUT:
+        return int(half)
+    raise ManifestError(f"scale plane {kind.name} declares no block stride")
 
 
 class BodyKind(IntEnum):

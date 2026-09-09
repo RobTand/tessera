@@ -55,6 +55,7 @@ from .manifest import (
     RotationState,
     ScalePlane,
     ScalePlaneKind,
+    scale_plane_terminal_flags,
 )
 from .planes import NORMATIVE_ELEMENT_BITS, PlaneKind, PlaneLayout
 from .scale_channel import default_channel_sigma
@@ -638,7 +639,7 @@ def build_unit_artifact(
         require_invertible_diagonals(unit.diagonals)
         payloads[PlaneKind.DIAG_SU] = pack_fp16(unit.diagonals.su)
         payloads[PlaneKind.DIAG_SV] = pack_fp16(unit.diagonals.sv)
-    row_scale = plane_kind is ScalePlaneKind.CHANNEL
+    with_base, with_refine, row_scale = scale_plane_terminal_flags(plane_kind)
     if row_scale:
         payloads[PlaneKind.DIAG_SV] = pack_fp16(unit.scale_rows)
     if state_bits:
@@ -659,9 +660,12 @@ def build_unit_artifact(
         released_positions=unit.released_positions,
         # A LUT plane has no base plane: its count is zero, exactly as a
         # T-po2 terminal omits the refinement.  The nibble plane stays.  A
-        # CHANNEL plane has neither block plane; its rows ride DIAG_SV.
-        with_scale_base=plane_kind is ScalePlaneKind.S6B,
-        with_scale_refine=not row_scale,
+        # CHANNEL plane has neither block plane; its rows ride DIAG_SV.  The
+        # triple comes from the plane kind's one home
+        # (``manifest.scale_plane_terminal_flags``), which the byte-matched
+        # control reads too, so the two cannot price different terminals.
+        with_scale_base=with_base,
+        with_scale_refine=with_refine,
         with_diagonals=has_diagonals,
         with_row_scale=row_scale,
         state_bits=state_bits,
