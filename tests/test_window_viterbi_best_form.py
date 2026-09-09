@@ -30,6 +30,7 @@ SHAPES = [
     (12, 4, 2, 64, 130),     # a width the batch loop must split
     (14, 3, 1, 64, 48),      # the production rate
     (14, 4, 1, 64, 48),      # the other production rate
+    (14, 5, 1, 64, 48),      # E4-R1088's other rate at the production width
     (8, 5, 1, 32, 33),       # R > L - R: the shift is not a class stride
 ]
 
@@ -90,7 +91,7 @@ def test_the_best_form_returns_the_reference_bytes(monkeypatch, window_bits,
     assert got_sse.hex() == want_sse.hex()
 
 
-@pytest.mark.parametrize("window_bits,rate", [(12, 3), (14, 3), (14, 4)])
+@pytest.mark.parametrize("window_bits,rate", [(12, 3), (14, 3), (14, 4), (14, 5)])
 def test_the_best_form_holds_more_columns_in_the_same_budget(monkeypatch,
                                                              window_bits, rate):
     """The width is the lever, so the width is what the test asserts.
