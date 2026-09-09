@@ -110,12 +110,28 @@ class Power:
         self._t.join(timeout=3)
 
     def energy(self, t0: float, t1: float):
-        """Trapezoidal joules over ``[t0, t1]``, and the samples that carried it."""
-        pts = [(t, w) for t, w in self.samples if t0 - 1.5 <= t <= t1 + 1.5]
-        if len(pts) < 2:
-            return None, pts
+        """Trapezoidal joules over ``[t0, t1]``, refused unless the interval is bracketed.
+
+        Integrating between the samples that happen to fall inside an
+        interval covers less than the interval whenever the first sample is
+        after ``t0`` or the last is before ``t1`` -- and the work denominator
+        does not shrink with it, so a partially covered block reports a work
+        per joule that is too GOOD.  A block with no sample at or before
+        ``t0`` and none at or after ``t1`` therefore returns no energy at all
+        rather than a flattering one.  ``covered`` reports the fraction
+        anyway, so a marginal block is visible instead of silently dropped.
+        """
+        pts = sorted((t, w) for t, w in self.samples if t0 - 5.0 <= t <= t1 + 5.0)
+        before = [p for p in pts if p[0] <= t0]
+        after = [p for p in pts if p[0] >= t1]
+        inside = [p for p in pts if t0 <= p[0] <= t1]
+        use = ([before[-1]] if before else []) + inside + ([after[0]] if after else [])
+        bracketed = bool(before and after)
+        if len(use) < 2:
+            return None, dict(bracketed=False, covered=0.0, samples=[])
         j = 0.0
-        for (ta, wa), (tb, wb) in zip(pts, pts[1:]):
+        covered = 0.0
+        for (ta, wa), (tb, wb) in zip(use, use[1:]):
             a, b = max(ta, t0), min(tb, t1)
             if b <= a:
                 continue
@@ -123,7 +139,13 @@ class Power:
             wl = wa + (wb - wa) * ((a - ta) / (tb - ta)) if tb > ta else wa
             wr = wa + (wb - wa) * ((b - ta) / (tb - ta)) if tb > ta else wb
             j += 0.5 * (wl + wr) * (b - a)
-        return j, pts
+            covered += b - a
+        span = max(t1 - t0, 1e-9)
+        meta = dict(bracketed=bracketed, covered=round(covered / span, 4),
+                    samples=[[round(t, 3), w] for t, w in use])
+        if not bracketed:
+            return None, meta
+        return j, meta
 
 
 def _inputs(window_bits, rate, arity, rows, cols, dev):
@@ -331,17 +353,20 @@ def main():
         for arm, _ in ARMS:
             bs = blocks[arm]
             for b in bs:
-                j, pts = power.energy(b["wall_start"], b["wall_end"])
+                j, meta = power.energy(b["wall_start"], b["wall_end"])
                 b["joules"] = round(j, 2) if j else None
-                b["power_samples"] = len(pts)
+                b["power"] = meta
                 b["power_w_mean"] = (round(j / b["seconds"], 2)
                                      if j and b["seconds"] else None)
                 b["seconds_per_call"] = round(b["seconds"] / b["calls"], 5)
             secs = [b["seconds"] for b in bs]
             calls = sum(b["calls"] for b in bs)
-            js = [b["joules"] for b in bs if b["joules"]]
-            total_j = sum(js) if js else None
-            total_work = work_per_call * calls
+            # Only blocks whose energy was measured over their whole interval
+            # go into work per joule, and their work is the only work counted.
+            paid = [b for b in bs if b["joules"]]
+            total_j = sum(b["joules"] for b in paid) if paid else None
+            total_work = work_per_call * sum(b["calls"] for b in paid)
+            energy_seconds = sum(b["seconds"] for b in paid)
             rec["timing"][arm] = dict(
                 blocks=[{k: (round(v, 5) if isinstance(v, float) else v)
                          for k, v in b.items()} for b in bs],
@@ -349,9 +374,11 @@ def main():
                 seconds_per_call_mean=round(statistics.fmean(secs) / bs[0]["calls"], 5),
                 seconds_per_call_median=round(statistics.median(secs) / bs[0]["calls"], 5),
                 total_calls=calls, total_seconds=round(sum(secs), 4),
+                energy_blocks=len(paid), energy_seconds=round(energy_seconds, 4),
                 total_joules=round(total_j, 1) if total_j else None,
-                power_w_mean=round(total_j / sum(secs), 2) if total_j else None,
-                power_envelope_frac=(round(total_j / sum(secs) / ENVELOPE_W, 3)
+                power_w_mean=(round(total_j / energy_seconds, 2)
+                              if total_j else None),
+                power_envelope_frac=(round(total_j / energy_seconds / ENVELOPE_W, 3)
                                      if total_j else None),
                 work_per_joule=(round(total_work / total_j, 1) if total_j else None))
         f = rec["timing"]["front"]
