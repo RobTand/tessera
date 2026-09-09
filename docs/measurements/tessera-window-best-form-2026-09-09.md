@@ -92,8 +92,12 @@ Correctness, PrismaBuild GPU on gb10, no skips:
 | `test_audit_doc_claims.py` | 10 | `e12d64f0421f` |
 | `test_e4m3_ladder.py` | 6 | `1fa92fa73e0b` |
 
-Those five existing modules are every test in the tree that reaches
-`window_viterbi`. The 75 cover both production rates and R5 at L14, `R > L-R`,
+Those five existing modules are every test that names `window_viterbi`
+or `viterbi_window` directly. They are not every test that reaches it: the
+encoder does, through `encode_unit` to `encode_units` to `_drive_in_step` to
+`_run_joined`, and 55 modules call the encoder. Those 55 exercise the front
+form, which this branch does not change, and are listed with their receipt
+below. The 75 cover both production rates and R5 at L14, `R > L-R`,
 eager and captured, weighted and not, duplicated table rows that force two
 predecessors to carry the identical float, a coarse table whose distinct rows
 produce sums that ROUND to the same float, an assertion that the tie family
