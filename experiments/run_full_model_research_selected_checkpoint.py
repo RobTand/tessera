@@ -7,12 +7,19 @@ import subprocess
 import uuid
 
 BASE = 'vllm/vllm-openai@sha256:4e31c581716a5cb9ef31eddb0a425842b75cab07d5cd63fb9572e69ae8794c33'
-INSTALLER = '/mnt/shared/tessera-clean-runtime-20260907/control-854e672/per_job_install.py'
+# The 09-07 launcher ran the frozen per-job installer, which pip-installs Tessera
+# from an archive pinned at 382a1a97 -- a tree with no tessera.moe_execution, so
+# this branch's exporter cannot import under it. This job installs nothing and
+# imports the checkout instead; checkout_runtime_identity records that identity
+# and refuses if an installed distribution could shadow it.
+IDENTITY = '/control/experiments/checkout_runtime_identity.py'
 
 ap = argparse.ArgumentParser(description=__doc__)
 ap.add_argument('--out', type=Path, required=True)
 ap.add_argument('--execution-json', required=True,
                 help='path under /control, e.g. /control/experiments/research_selected_moe_lfm_tp1.json')
+ap.add_argument('--layers', type=int, default=None,
+                help='forwarded to the driver: plan only the first N body layers (smoke)')
 args = ap.parse_args()
 
 ROOT = args.out.resolve()
@@ -27,10 +34,12 @@ cmd = ['docker', 'run', '--gpus', 'all', '--ipc', 'host', '--cidfile', str(cidfi
        '--volume', f'{Path.cwd()}:/control:ro', '--volume', '/mnt/shared:/mnt/shared',
        '--env', 'OMP_NUM_THREADS', '--env', 'MKL_NUM_THREADS', '--env', 'OPENBLAS_NUM_THREADS',
        '--entrypoint', 'python3', inspected['Id'],
-       INSTALLER, '--evidence-dir', str(ROOT / 'plugin-install'),
+       IDENTITY, '--evidence-dir', str(ROOT / 'runtime-identity'), '--checkout', '/control',
        '--launcher-image-id', inspected['Id'], '--launcher-image-inspect', str(image_path),
        '--', 'python3', '/control/experiments/full_model_research_selected_checkpoint.py',
        '--out', str(ROOT / 'export'), '--execution-json', args.execution_json]
+if args.layers is not None:
+    cmd += ['--layers', str(args.layers)]
 (ROOT / 'launch.json').write_text(json.dumps({'argv': cmd, 'affinity': sorted(os.sched_getaffinity(0))}, indent=2))
 run = subprocess.run(cmd)
 cid = cidfile.read_text().strip()

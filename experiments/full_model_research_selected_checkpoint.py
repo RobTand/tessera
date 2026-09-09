@@ -40,6 +40,10 @@ def main(argv=None):
     ap.add_argument('--execution-json', type=Path, required=True,
                     help='sealed tessera.research_selected_moe.v1 declaration')
     ap.add_argument('--device', default='cuda')
+    ap.add_argument('--layers', type=int, default=None,
+                    help='plan only the first N body layers. The proof below is then over the '
+                         'trimmed plan and says so: it is a smoke of the fresh expert encode, '
+                         'not the full-model artifact.')
     args = ap.parse_args(argv)
     started = time.time()
     torch.set_num_threads(4)
@@ -57,18 +61,35 @@ def main(argv=None):
         raise SystemExit(f'producer freeze moved: {observed} is not {ENCODER_SOURCE_SHA256}')
     assert sha256_file(CENSUS) == CENSUS_SHA
     census = json.loads(CENSUS.read_text())
-    expected = set(census['dense_targets']) | set(census['expert_targets'])
-    assert len(expected) == 2142 and len(census['dense_targets']) == 30
-    stacks = census['expert_projection']['stacks']
-    assert len(stacks) == 22
-    assert {name for units in stacks.values() for name in units} == set(census['expert_targets'])
+    assert len(set(census['dense_targets']) | set(census['expert_targets'])) == 2142
+    assert len(census['dense_targets']) == 30
+    all_stacks = census['expert_projection']['stacks']
+    assert len(all_stacks) == 22
+    assert {name for units in all_stacks.values() for name in units} == set(census['expert_targets'])
+
+    # A smoke plans a prefix of the body.  Both sides are trimmed by the same
+    # rule the exporter enforces, because a plan that names a stack past
+    # ``--layers`` is refused there rather than quietly skipped.
+    if args.layers is None:
+        dense_targets, stacks = list(census['dense_targets']), dict(all_stacks)
+    else:
+        dense_targets = [name for name in census['dense_targets']
+                         if exporter.body_layer(name) < args.layers]
+        stacks = {stack: units for stack, units in all_stacks.items()
+                  if exporter.body_layer(stack) < args.layers}
+        if not dense_targets or not stacks:
+            raise SystemExit(
+                f'--layers {args.layers} plans {len(dense_targets)} dense target(s) and '
+                f'{len(stacks)} expert stack(s). A smoke that reaches only one of the two '
+                'proves only one of the two encode paths, which is not what the device is for.')
+    expected = set(dense_targets) | {name for units in stacks.values() for name in units}
 
     execution = ResearchSelectedMoeInput.read(args.execution_json)
     write('execution-input.json', execution.record())
 
     _, dense, _, _ = exporter.quantizable(SRC)
     plan = {name: 'PASSTHROUGH' for name in dense if not exporter.MOE_ROUTER.match(name)}
-    for name in census['dense_targets']:
+    for name in dense_targets:
         plan[name + '.weight'] = {'grid': 'E4M3', 'q256': 1024}
     for stack in sorted(stacks):
         plan[stack] = {'grid': 'E4M3', 'q256': 1024, 'source_layout': 'unpacked_per_expert'}
@@ -87,6 +108,8 @@ def main(argv=None):
            '--grid', 'E4M3', '--q256', '1024', '--device', args.device,
            '--plan-json', str(root / 'plan.json'), '--hessian', str(hessian),
            '--research-selected-moe-json', str(args.execution_json.resolve())]
+    if args.layers is not None:
+        cmd += ['--layers', str(args.layers)]
     write('export-command.json', {'argv': cmd, 'encoder_source_sha256': observed})
     exporter_started = time.time()
     import subprocess
@@ -105,7 +128,7 @@ def main(argv=None):
 
     routed = {name: group for name, group in qconfig['config_groups'].items()
               if group['scheme']['structure'] == 'routed_moe'}
-    assert len(routed) == 22
+    assert len(routed) == len(stacks)
     declared_stacks = {target for group in routed.values() for target in group['targets']}
     assert declared_stacks == set(stacks)
     for group in routed.values():
@@ -156,11 +179,16 @@ def main(argv=None):
 
     write('export-proof.json', {
         'schema': 'tessera.full_model_research_selected_checkpoint.v1', 'status': 'passed',
-        'scope': 'Uniform E4M3/R1024 research checkpoint encoded on one named producer freeze, '
-                 'declaring research selected MoE execution. All 2142 planned units freshly '
-                 'encoded; every other tensor bit-exact source precision. Not a reuse of the '
-                 'priced campaign blobs, not allocator-derived, and not a production default. '
-                 'It establishes no serving result on its own.',
+        'layers': args.layers,
+        'scope': ('Uniform E4M3/R1024 research checkpoint encoded on one named producer freeze, '
+                  f'declaring research selected MoE execution. All {len(expected)} planned units '
+                  'freshly encoded; every other tensor bit-exact source precision. '
+                  + ('Full model: every census target is planned. '
+                     if args.layers is None else
+                     f'SMOKE: only the first {args.layers} body layer(s) are planned, so this is '
+                     f'{len(stacks)} of 22 expert stacks and is not the full-model artifact. ')
+                  + 'Not a reuse of the priced campaign blobs, not allocator-derived, and not a '
+                    'production default. It establishes no serving result on its own.'),
         'encoder_source_sha256': observed,
         'execution': execution.record(),
         'census_sha256': CENSUS_SHA,
