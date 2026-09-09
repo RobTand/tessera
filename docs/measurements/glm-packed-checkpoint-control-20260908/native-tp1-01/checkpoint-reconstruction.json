@@ -1,0 +1,15 @@
+{
+  "checkpoint_config": {
+    "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/checkpoint-config-tp1.json",
+    "sha256": "2e860568c5a5a664291c554d1185e250c1f792273126146306931274169e8fca"
+  },
+  "config_class": "tessera.serving.config.TesseraConfig",
+  "registry_key": "tessera",
+  "research_selected_moe": {
+    "decode_backend": "triton",
+    "expected_tensor_parallel_size": 1,
+    "max_experts_per_chunk": 8,
+    "schema": "tessera.research_selected_moe.v1"
+  },
+  "quantization_sha256": "a9f74fff3d8717e2f519fbdbbb1b935cef1b37845954efeac9af925dd323d9e1"
+}

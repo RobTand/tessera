@@ -1,0 +1,15 @@
+{
+  "host": "sparklina",
+  "argv": [
+    "ssh",
+    "sparklina",
+    "cd /mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/harness-01 && taskset --cpu-list 15-18 python3 experiments/run_glm_native_construction.py --request /mnt/shared/tessera-glm-native-20260907/request.json --packed-request /mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/request-tp1-01.json --out /mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/native-tp1-01 --stage control --cpus 4 --memory-gib 48 --timeout-seconds 600"
+  ],
+  "cwd": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/harness-01",
+  "plan": {
+    "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/prepared-invocation-launch-01.json",
+    "sha256": "a4594a552c099a011a296b23d4ecdc1ed8f363bfbb0a815584c9006ad95af3a1",
+    "bytes": 10448
+  },
+  "recorded_epoch": 1788899398.3592927
+}

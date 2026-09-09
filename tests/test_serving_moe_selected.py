@@ -71,6 +71,8 @@ def test_research_construction_needs_an_explicit_positive_chunk_bound(chunk):
 
 @pytest.fixture
 def stub_runtime(monkeypatch):
+    # This seam is explicitly CPU arithmetic even on a CUDA test worker.
+    monkeypatch.setattr(torch.cuda, 'is_available', lambda: False)
     names = ('vllm', 'vllm.config', 'vllm.model_executor', 'vllm.model_executor.layers',
              'vllm.model_executor.layers.fused_moe',
              'vllm.model_executor.layers.fused_moe.fused_moe_method_base',

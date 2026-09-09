@@ -1,0 +1,200 @@
+{
+  "status": "AUTHORIZED_TP1_FUNCTIONAL_CONTROL",
+  "harness_commit": "6c0e77e66e3d70d7dd81f854e4bfba4cf9fe024d",
+  "source_base": "f3b6953f0c5821ab2108b6db9942f9a2e0179e91",
+  "pending": [],
+  "host": "sparklina",
+  "runtime_image": "vllm/vllm-openai@sha256:4e31c581716a5cb9ef31eddb0a425842b75cab07d5cd63fb9572e69ae8794c33",
+  "cpus": 4,
+  "memory_gib": 48,
+  "timeout_seconds": 600,
+  "network": "none",
+  "request": {
+    "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/request-tp1-01.json",
+    "sha256": "c0649bced44c2d73c28c3600ab72166be1b06bd640affb567de74dedcb265464",
+    "bytes": 2132
+  },
+  "checkpoint_config": {
+    "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/checkpoint-config-tp1.json",
+    "sha256": "2e860568c5a5a664291c554d1185e250c1f792273126146306931274169e8fca"
+  },
+  "harness": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/harness-01",
+  "out": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/native-tp1-01",
+  "argv": [
+    "taskset",
+    "--cpu-list",
+    "15-18",
+    "python3",
+    "experiments/run_glm_native_construction.py",
+    "--request",
+    "/mnt/shared/tessera-glm-native-20260907/request.json",
+    "--packed-request",
+    "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/request-tp1-01.json",
+    "--out",
+    "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/native-tp1-01",
+    "--stage",
+    "control",
+    "--cpus",
+    "4",
+    "--memory-gib",
+    "48",
+    "--timeout-seconds",
+    "600"
+  ],
+  "control_scope": "One actual 288-expert GLM owner; original q512 role wires repeated over 288 experts; 864 projection loads; saved decode and empty inputs; no encoding or timing loop.",
+  "telemetry": {
+    "required_for_performance_claim": false,
+    "performance_claim": false,
+    "host_observation": "Both Spark Netdata CPU, available memory, swap IO and board power over actual launch interval; retain fetch failures explicitly.",
+    "in_process": "Existing synchronized owner/load CUDA memory observations; no runtime or work-per-joule comparison without paired profiler evidence."
+  },
+  "predicates": [
+    "Exact source archive install and unchanged complete stock core before/after",
+    "checkpoint-reconstruction.json binds exact JSON SHA and ordinary tessera.serving.config.TesseraConfig resolved from stock registry",
+    "stock initialize_model retains ordinary TesseraConfig and exact parsed research object",
+    "native owner starts with wire buffers and research_selected/loading; complete load finalizes ready with routing bias only and packed owner",
+    "864 original projection loads; no persistent full FP8 expert parameters; no retained stock moe kernel/config",
+    "decode and empty exact output versus independent stock plus exact selected tiles/scales",
+    "no native TP2 execution, no trained router/shared-expert or final reduction claim for TP1 direct method control",
+    "launcher and container exit zero, no OOM/timeout, immutable controls and removed owned container"
+  ],
+  "limits": [
+    "No complete checkpoint weight export or full engine automatic sidecar discovery is claimed: this control parses the checkpoint quantization JSON and passes the registered config into the existing stock constructor.",
+    "No six full models, full-model fit, text generation, model quality, trained expert diversity, TP2 collectives, throughput or production cell promotion."
+  ],
+  "source_commit": "07ad344c3275bb2fa7ce2432f93d89945d66f4c2",
+  "source_archive": {
+    "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/source-runtime-07ad344c.tar",
+    "sha256": "956bbafeab40fca1144672c3af35900daaeac693d777b0c3f243de73354d4c75",
+    "bytes": 18411520
+  },
+  "harness_archive": {
+    "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/harness-6c0e77e6.tar",
+    "sha256": "b387628e6990d4ca86c2eba080448a78d848ee8986102df74d4d461085a2b99d",
+    "bytes": 18411520
+  },
+  "controls": {
+    "experiments/glm_packed_moe_control.py": {
+      "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/harness-01/experiments/glm_packed_moe_control.py",
+      "sha256": "a130cc8f7b8756ae5f67b8a3736d597e66cf3a23aae0bb81467c3d2bb504b160",
+      "bytes": 26206
+    },
+    "experiments/glm_packed_tp2_control.py": {
+      "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/harness-01/experiments/glm_packed_tp2_control.py",
+      "sha256": "bc8f466f91c0389ed10e0e3a00f8ea0e9b06afadd87f9ca1678f441c74b56a35",
+      "bytes": 10797
+    },
+    "experiments/glm_native_construction.py": {
+      "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/harness-01/experiments/glm_native_construction.py",
+      "sha256": "86c85e99328a5f21aacac51004d899d309b63aa27f5f06800f4215de11f88612",
+      "bytes": 11598
+    },
+    "experiments/glm_repeated_expert_control.py": {
+      "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/harness-01/experiments/glm_repeated_expert_control.py",
+      "sha256": "35ac1006dfdd8554e61c89353643ad3b66bfa78fd9ae2b8717b229cf237fd355",
+      "bytes": 16979
+    },
+    "experiments/run_glm_native_construction.py": {
+      "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/harness-01/experiments/run_glm_native_construction.py",
+      "sha256": "90f39f7128fe258b5b98f122d7e408074bf8f24c1da545c941991a0bda3e3901",
+      "bytes": 8539
+    },
+    "experiments/original_wire_generation.py": {
+      "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/harness-01/experiments/original_wire_generation.py",
+      "sha256": "48163d53b3e341176bb34f05aacdf315a97008028caa6f7a09b03df812725358",
+      "bytes": 10226
+    },
+    "tools/tessera_construction_census.py": {
+      "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/harness-01/tools/tessera_construction_census.py",
+      "sha256": "6848a7ef91a29a756eb42f278bb856f254103fca195234334af5db6d1b46c785",
+      "bytes": 19315
+    }
+  },
+  "unchanged_support": {
+    "_pb_native_moe_measure/kv_capacity_diagnostic.py": {
+      "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/harness-01/_pb_native_moe_measure/kv_capacity_diagnostic.py",
+      "sha256": "aaa3eefa10a1685a791288fc36582a12f2ff791bbaed5d0b1edefc9d0aef2f7d",
+      "bytes": 5848
+    },
+    "_pb_native_moe_measure/launch.py": {
+      "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/harness-01/_pb_native_moe_measure/launch.py",
+      "sha256": "7ef41c521f248ea6f97a5a72e3f9b71ef6861f87c808a89abb5f6cf62c4963df",
+      "bytes": 7012
+    },
+    "_pb_native_moe_measure/native_quant_diagnostic.py": {
+      "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/harness-01/_pb_native_moe_measure/native_quant_diagnostic.py",
+      "sha256": "46e56c33b84f927d26472b70235fe6c2494b2fd3ef8c97dff1f70d7ec18ed3e4",
+      "bytes": 3341
+    },
+    "_pb_native_moe_measure/per_job_install.py": {
+      "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/harness-01/_pb_native_moe_measure/per_job_install.py",
+      "sha256": "7b981538b0b56ebac7b5c080175246ae3338d34167356e70c7faf60b3df63fa7",
+      "bytes": 5017
+    },
+    "_pb_native_moe_measure/run_native.py": {
+      "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/harness-01/_pb_native_moe_measure/run_native.py",
+      "sha256": "4098e03c6711f32796c390fc3e8f81a414b038b3301f04600d1e1aee80bde73a",
+      "bytes": 1386
+    },
+    "_pb_native_moe_measure/run_native_child.py": {
+      "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/harness-01/_pb_native_moe_measure/run_native_child.py",
+      "sha256": "342c030885538a5d9109689509fe3fd4c6dede375ab59f34ff67111ddff8b368",
+      "bytes": 3269
+    }
+  },
+  "cpu_audit": {
+    "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/cpu-audit.json",
+    "sha256": "46ba1a8302f9284533e0340710d87a31df7c9284177268a3a83227726ae5fb15",
+    "bytes": 251597
+  },
+  "archive_source_audit": [
+    {
+      "archive": {
+        "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/source-runtime-07ad344c.tar",
+        "sha256": "956bbafeab40fca1144672c3af35900daaeac693d777b0c3f243de73354d4c75",
+        "bytes": 18411520
+      },
+      "commit": "07ad344c3275bb2fa7ce2432f93d89945d66f4c2",
+      "git_blob_files_verified": 1179,
+      "all_tracked_paths_and_modes_match": true
+    },
+    {
+      "archive": {
+        "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/harness-6c0e77e6.tar",
+        "sha256": "b387628e6990d4ca86c2eba080448a78d848ee8986102df74d4d461085a2b99d",
+        "bytes": 18411520
+      },
+      "commit": "6c0e77e66e3d70d7dd81f854e4bfba4cf9fe024d",
+      "git_blob_files_verified": 1179,
+      "all_tracked_paths_and_modes_match": true
+    }
+  ],
+  "runtime_cpu_audit": {
+    "path": "/mnt/shared/tessera-measurements/glm-delivery-readiness-20260908/typed-carrier-after-audit.json",
+    "sha256": "337ac5c819762111cdedc54caef70de71649e63ff38d7780cecb7922dcfb1103",
+    "bytes": 28099
+  },
+  "host_facts": {
+    "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/host-facts-launch-05.json",
+    "sha256": "f8215436886e7332a6837d8869f2b6cbb9c6283cb447fece48e455111a398c84",
+    "bytes": 2672
+  },
+  "proposed_cpu_affinity": [
+    15,
+    16,
+    17,
+    18
+  ],
+  "observed_runtime_image": {
+    "host": "sparklina",
+    "id": "sha256:b6801f819d2566b099a4e73801dc70eae9c8f5989a223f30064b3cc8dee428cc",
+    "repo_digest": "vllm/vllm-openai@sha256:4e31c581716a5cb9ef31eddb0a425842b75cab07d5cd63fb9572e69ae8794c33",
+    "architecture": "arm64"
+  },
+  "external_action_disposition": {
+    "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/external-action-disposition.json",
+    "sha256": "f316f3bdc4cc28fedcdc2ddbd786e9ac8117e24e540f8e88d5303103bf3929e0",
+    "bytes": 609
+  },
+  "authorization": "Root reviewed exact source/harness/request and authorized only TP1 decode+empty,4CPU48GiB600s with fresh host check and free performance-core affinity correction; no timing or additional GPU follow-up."
+}
