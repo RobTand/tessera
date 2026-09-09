@@ -680,6 +680,48 @@ def _tile_best(low: int, n: int):
     return bl, bc, warps
 
 
+#: An explicit ``BL,BC,WARPS`` for the best-form step, so its tile can be
+#: screened instead of assumed.  ``_tile_best``'s rule caps ``bl`` at 128 and
+#: then admits only ``bc = 2``, because its budget test is ``bl * bc < 256``;
+#: both production shapes therefore land on the same 128x2 at 4 warps, a point
+#: chosen before ``_layout`` began admitting ``FAN`` times as many columns.
+#: Whether that point is still right in the wider column shape is a
+#: measurement, and this is the knob that takes it.
+#:
+#: Read per call and carried in the plan-cache key, like the other two window
+#: knobs, so one process can put several tiles on one tensor.  Every tile
+#: writes identical bytes: ``_step_best`` masks both axes (``li < low``,
+#: ``ci < m``), so an oversized tile wastes lanes and changes nothing else.
+#: A screen that cannot show identical states and an identical ``sse`` for
+#: every configuration has measured something other than this tile.
+_BEST_TILE_ENV = "TESSERA_WINDOW_BEST_TILE"
+
+
+def _resolve_tile_best(low: int, n: int):
+    raw = os.environ.get(_BEST_TILE_ENV)
+    if raw is None or raw == "":
+        return _tile_best(low, n)
+    parts = raw.split(",")
+    if len(parts) != 3:
+        raise ValueError(
+            f"{_BEST_TILE_ENV}={raw!r} is not BL,BC,WARPS")
+    try:
+        bl, bc, warps = (int(x) for x in parts)
+    except ValueError as exc:
+        raise ValueError(
+            f"{_BEST_TILE_ENV}={raw!r} is not three integers") from exc
+    for name, v, hi in (("BL", bl, 1 << 16), ("BC", bc, 1 << 16),
+                        ("WARPS", warps, 32)):
+        # Triton takes powers of two for a block size and for a warp count,
+        # and rejects them late and obscurely.  Refuse here, where the name of
+        # the setting is still in hand.
+        if v < 1 or v > hi or (v & (v - 1)):
+            raise ValueError(
+                f"{_BEST_TILE_ENV}={raw!r}: {name}={v} is not a power of two "
+                f"in [1, {hi}]")
+    return bl, bc, warps
+
+
 def _layout(device, size: int, cols: int, chunk: int, resident: int = 0):
     """``(nmax, width, descs)`` for one shape: how the columns are batched.
 
@@ -767,7 +809,7 @@ class _WindowPlan:
         self.nxt = torch.empty(width, resident, dtype=torch.float32, device=device)
 
         self.bl, self.bc, self.warps = _tile(fan, low, width)
-        self.bbl, self.bbc, self.bwarps = _tile_best(low, width)
+        self.bbl, self.bbc, self.bwarps = _resolve_tile_best(low, width)
         self.bscan = _resolve_scan_unroll(fan, self.bbl, self.bbc, self.bwarps)
         self.scan_unroll = _resolve_scan_unroll(fan, self.bl, self.bc, self.warps)
         self.grid = (triton.cdiv(low, self.bl), triton.cdiv(width, self.bc))
@@ -978,7 +1020,8 @@ def _plan_for_call(*, device, rows, cols, arity, size, rate, chunk, has_weights)
     # ``width`` they admit: a cached plan built under the other spelling would
     # replay the wrong graph, and an A/B flips this knob inside one process.
     key = (device, rows, cols, arity, size, rate, chunk, has_weights,
-           _L2_BUDGET, os.environ.get(_SCAN_UNROLL_ENV, ""), best_form)
+           _L2_BUDGET, os.environ.get(_SCAN_UNROLL_ENV, ""), best_form,
+           os.environ.get(_BEST_TILE_ENV, ""))
 
     def fresh(owns):
         return _WindowPlan(device=device, rows=rows, cols=cols, arity=arity,
