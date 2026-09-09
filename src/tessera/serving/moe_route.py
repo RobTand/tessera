@@ -318,16 +318,21 @@ class _RankLocalPackedIntake:
 
     def __init__(self, declared, target, device, tp_rank, tp_size):
         self.declared, self.target, self.device = declared, target, device
+        self._has_loaded = False
         self.plans = {g: _packed_group_shard_plan(declared, g, target, tp_rank, tp_size)
                       for g in MOE_GROUPS}
         self.roles = {g: expert_role_declarations(declared['groups'][g]) for g in MOE_GROUPS}
         self.prepared = {g: [[None] * len(self.roles[g]) for _ in range(declared['experts'])]
                          for g in MOE_GROUPS}
 
-    def load(self, group, index, expert, wire):
+    def load(self, group, index, expert, wire, *, device):
         from .fp8_route import prepare_tessera_fp8_module
         from .sharding import shard_parsed_roles
 
+        device = torch.device(device)
+        if self._has_loaded and device != self.device:
+            raise ValueError(f'{self.target}: packed intake cannot change device after loading starts')
+        self.device = device
         # Parse the FULL incoming container before slicing; the common parser
         # validates its digest, geometry, role and recipe against the sidecar.
         blob = wire.detach().cpu().contiguous().numpy().tobytes()
@@ -336,6 +341,7 @@ class _RankLocalPackedIntake:
         local = shard_parsed_roles(parsed, self.plans[group])
         prepared = prepare_tessera_fp8_module(local, device=self.device)
         self.prepared[group][expert][index] = prepared
+        self._has_loaded = True
 
     def finish(self, w13_lengths, w2_lengths):
         from .fp8_route import PreparedTesseraFp8Module
@@ -588,7 +594,13 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
             if self._rank_local_intake is not None:
                 try:
                     self._require_research_parallel_contract()
-                    self._rank_local_intake.load(group, index, expert_id, blob)
+                    # Resolve from the live loader anchor, not construction:
+                    # stock can use a different explicit load device. Preserve
+                    # the ordinary finalizer's CUDA promotion before packing.
+                    device = param.device
+                    if device.type != 'cuda' and torch.cuda.is_available():
+                        device = torch.device('cuda', torch.cuda.current_device())
+                    self._rank_local_intake.load(group, index, expert_id, blob, device=device)
                 except Exception:
                     self._research_phase = 'failed'
                     self._rank_local_intake = None

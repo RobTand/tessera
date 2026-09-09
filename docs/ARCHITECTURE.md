@@ -5,6 +5,14 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-08 for the research TP2 intake device-lifecycle correction
+on top of `383d2a40b`. Incremental intake resolves its device from the live wire
+loader anchor on each callback, preserving the ordinary finalizer's promotion
+to the current CUDA device when staging was constructed elsewhere. The first
+accepted projection fixes ownership to that device; a later device change
+refuses before mixing packed owners. The native A/B used CUDA construction
+throughout and does not claim a CPU/meta-to-CUDA native measurement.
+
 Re-stamped 2026-09-08 for rank-local research TP2 wire intake (#435),
 against base `2890976db`. Stock vLLM constructs all owners on its target
 CUDA device before loading any weights and finalizes modules only after the

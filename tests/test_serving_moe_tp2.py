@@ -248,3 +248,37 @@ def test_tp2_incremental_intake_refuses_duplicate_wrong_parameter_and_late_wires
     method._research_phase = 'ready'
     with pytest.raises(RuntimeError, match='not loading'):
         layer.w13_wire.weight_loader(layer.w13_wire, blob, 'wire', 'w1', 0)
+
+
+def test_cpu_created_tp2_intake_uses_current_cuda_device_before_first_parse(wires, stub_runtime, monkeypatch):
+    # Stock permits an explicit load device, and the ordinary finalizer already
+    # promotes non-CUDA staging to the current CUDA device. Incremental intake
+    # must resolve the same target before it owns its first packed projection.
+    layer = layer_for(0)
+    method = method_for(wires, layer)
+    method.create_weights(layer, E, H, N // 2, torch.bfloat16)
+    assert layer.w13_wire.device.type == 'cpu'
+    monkeypatch.setattr(torch.cuda, 'is_available', lambda: True)
+    monkeypatch.setattr(torch.cuda, 'current_device', lambda: 1)
+    observed = []
+    class StopBeforeDeviceWork(Exception):
+        pass
+    def observe(blob, declared, target, device):
+        observed.append(device)
+        raise StopBeforeDeviceWork
+    monkeypatch.setattr(moe_route, 'parse_tessera_expert_blob', observe)
+    with pytest.raises(StopBeforeDeviceWork):
+        layer.w13_wire.weight_loader(layer.w13_wire,
+            torch.frombuffer(bytearray(wires[0][0][0]), dtype=torch.uint8), 'wire', 'w1', 0)
+    assert observed == [torch.device('cuda', 1)]
+
+
+def test_tp2_intake_refuses_device_change_after_first_packed_projection(wires):
+    declared = validate_tessera_moe_scheme(wires[2], 'm')
+    intake = moe_route._RankLocalPackedIntake(declared, 'm', torch.device('cpu'), 0, 2)
+    wire = torch.frombuffer(bytearray(wires[0][0][0]), dtype=torch.uint8)
+    intake.load('w13', 0, 0, wire, device=torch.device('cpu'))
+    with pytest.raises(ValueError, match='cannot change device'):
+        intake.load('w13', 0, 1, wire, device=torch.device('meta'))
+    assert intake.device == torch.device('cpu')
+    assert intake.prepared['w13'][1][0] is None
