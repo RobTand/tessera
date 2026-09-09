@@ -251,9 +251,39 @@ def main():
             continue
 
         if a.mode == "pbprofile":
-            for arm, chunk in ARMS:
+            # PrismaBuild's torch mode is a contract, not a wrapper: the
+            # profiler is in-process by construction, so the action exports
+            # its own Chrome trace to the path the fleet names.  An action
+            # that asks for the mode and writes nothing fails, and rightly:
+            # a receipt filed for a profile-less run poisons the key.
+            from torch.profiler import ProfilerActivity, profile, record_function
+            out = os.environ.get("PRISMABUILD_PROFILE_TORCH_OUT")
+            if not out:
+                raise SystemExit(
+                    "pbprofile mode needs PRISMABUILD_PROFILE_TORCH_OUT; run "
+                    "this under pbrun --profile torch")
+            for arm, chunk in ARMS:                      # capture, untraced
                 _call(arm, chunk, targets, vectors, L, R, weights)
-                torch.cuda.synchronize()
+            torch.cuda.synchronize()
+            with profile(activities=[ProfilerActivity.CPU,
+                                     ProfilerActivity.CUDA]) as prof:
+                for arm, chunk in ARMS:
+                    # Both candidate arms run _step_best, so the kernel name
+                    # alone would not separate them; the marker does.
+                    with record_function(f"arm:{arm}"):
+                        _call(arm, chunk, targets, vectors, L, R, weights)
+                        torch.cuda.synchronize()
+            Path(out).parent.mkdir(parents=True, exist_ok=True)
+            prof.export_chrome_trace(out)
+            rec["pb_profile"] = dict(trace=out, exists=Path(out).exists(),
+                                     bytes=Path(out).stat().st_size)
+            rec["kernels"] = {
+                ev.key[:56]: dict(us=round(ev.self_device_time_total, 1),
+                                  calls=ev.count)
+                for ev in sorted(prof.key_averages(),
+                                 key=lambda e: -e.self_device_time_total)[:10]
+                if ev.self_device_time_total > 0}
+            print(json.dumps(rec), flush=True)
             records.append(rec)
             continue
 
