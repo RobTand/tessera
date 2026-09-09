@@ -20,6 +20,8 @@ ap.add_argument('--execution-json', required=True,
                 help='path under /control, e.g. /control/experiments/research_selected_moe_lfm_tp1.json')
 ap.add_argument('--layers', type=int, default=None,
                 help='forwarded to the driver: plan only the first N body layers (smoke)')
+ap.add_argument('--jit-root', type=Path, default=Path.home() / 'tessera-runs' / 'jit',
+                help='box-local parent for this job JIT caches; must not be on the shared mount')
 args = ap.parse_args()
 
 ROOT = args.out.resolve()
@@ -32,16 +34,28 @@ cidfile = ROOT / 'container.cid'
 # The recorder drops to uid 1000 before exec, and the stock image leaves HOME=/root.
 # Every JIT cache this encode fills expands a home-relative default: Triton writes
 # $TRITON_CACHE_DIR or $HOME/.triton, and kernel_window_gemv reads
-# $TORCH_EXTENSIONS_DIR or ~/tmp/torch-ext-gemv. Unset, the first kernel compile is
-# a mkdir denial under /root, which surfaces as a build failure rather than as a
-# permission message. These three point at job-owned directories the launcher makes
-# on the host, so they exist with the right owner before the container opens.
-caches = {name: ROOT / name for name in ('home', 'triton-cache', 'torch-extensions')}
+# $TORCH_EXTENSIONS_DIR or ~/tmp/torch-ext-gemv (never /tmp, which its docstring
+# states). Unset, the first kernel compile is a mkdir denial under /root, which
+# surfaces as a build failure rather than as a permission message.
+#
+# They are box-local and not under --out, which is the shared mount. A JIT cache on
+# NFS is a separate recorded failure: a compile that takes a file-lock baton there
+# can hang, and the denial it reports reads as an inspection failure rather than as
+# a cache problem. Weights are shared; caches are local. The assertion is the check,
+# because the natural thing to write is ROOT / name and that is the wrong answer.
+jit_run = args.jit_root.resolve() / ('research-selected-' + uuid.uuid4().hex)
+assert not str(jit_run).startswith('/mnt/shared'), (
+    f'{jit_run} is on the shared mount. Pass --jit-root a box-local directory: a JIT '
+    'cache on NFS can wedge on a build baton, and the kernels it holds are valid only '
+    'for the box that compiled them.')
+jit_run.mkdir(parents=True)
+caches = {name: jit_run / name for name in ('home', 'triton-cache', 'torch-extensions')}
 for path in caches.values():
     path.mkdir()
 cmd = ['docker', 'run', '--gpus', 'all', '--ipc', 'host', '--cidfile', str(cidfile),
        '--name', 'tessera-research-selected-export-' + uuid.uuid4().hex, '--network', 'none',
        '--volume', f'{Path.cwd()}:/control:ro', '--volume', '/mnt/shared:/mnt/shared',
+       '--volume', f'{jit_run}:{jit_run}',
        '--env', 'OMP_NUM_THREADS', '--env', 'MKL_NUM_THREADS', '--env', 'OPENBLAS_NUM_THREADS',
        '--env', f'HOME={caches["home"]}',
        '--env', f'TRITON_CACHE_DIR={caches["triton-cache"]}',
@@ -55,7 +69,8 @@ if args.layers is not None:
     cmd += ['--layers', str(args.layers)]
 (ROOT / 'launch.json').write_text(json.dumps(
     {'argv': cmd, 'affinity': sorted(os.sched_getaffinity(0)),
-     'jit_cache_dirs': {name: str(path) for name, path in caches.items()}}, indent=2))
+     'jit_cache_dirs': {name: str(path) for name, path in caches.items()},
+     'jit_root': str(args.jit_root.resolve())}, indent=2))
 run = subprocess.run(cmd)
 cid = cidfile.read_text().strip()
 container = json.loads(subprocess.check_output(['docker', 'inspect', cid]))[0]

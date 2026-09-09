@@ -13,6 +13,8 @@ exporter, on `sparklina` under tag `gb10`.
 
 - `detail.resource_telemetry.memory_peak_bytes` 74346086400, so 69.2 GiB peak
   against a declared `resources.mem_gb` 96 on a box whose cap is 104.
+- `resource_scope.memory_max_bytes` 103079215104, which is 96 GiB exactly. The
+  declaration is a kernel ceiling, not a hint: the job is killed at it.
 - `resources` cpu 4, gpu 1; `gpu_admission.gpu_memory_budget_bytes` 17179869184.
 - `detail.elapsed_s` 202.17, `execution_timeout_ceiling_s` 7200 at the time.
 
@@ -24,10 +26,29 @@ resident cost is the same whether the plan holds 2142 units or 11. A `--layers`
 smoke is cheaper in time, not in memory.
 
 What the 09-07 run did **not** do is enter the encoder, so its 16 GiB GPU budget
-is not a measurement of one. The encoder-profile job on the same tree declared
-`gpu_memory_gib` 48 against `total_memory_gib` 50
-(`encoder-profile-original382/profile-submit.jsonl`), and that is the number
-carried here.
+is not a measurement of one. The encoder-profile job is, and it measured a peak
+rather than only declaring a cap. Its encoder phase records
+`after.cuda_peak_reserved` 11423186944, so 10.64 GiB reserved
+(`encoder-profile-original382/profile-01/joined_campaign_batch.json`; the input
+preparation phase before it reached 400556032, so 0.37 GiB). Scope, from that
+run's own README: one joined batch of all 32 layer-9 `w2` projections at
+E4M3/q896, through `_measure_anchor_batch` into `encode_linears`, on the frozen
+`382a1a97` producer. Its PB row declared `gpu_memory_gib` 48, which is 4.5x what
+it used.
+
+Two consequences for these two jobs.
+
+The GPU cap here is 32 GiB, three times the measured peak, not the 48 the
+profile declared. 32 units in one batch is the widest encoder batch any run on
+this model has measured, and a narrower declaration is also easier to admit
+while the pricing campaign holds the box.
+
+`mem_gb` stays 96, and now it is a sum of two measurements rather than a copied
+declaration. GB10 is unified memory, so a CUDA reservation is charged to the
+same cgroup as the host allocation: 69.2 GiB of cached intake and whole-file
+Hessian, plus 10.64 GiB of encoder reserve, is roughly 80 GiB against a 96 GiB
+ceiling. The headroom is about 16 GiB. Declaring 104 would take the whole box
+for a margin the measurements do not ask for.
 
 Encode time comes from the anchors run, `native-moe-wires-r1024/complete.json`:
 96 units in 222.7 s wall, so 2.32 s per unit end to end. 2142 units is roughly
@@ -47,7 +68,7 @@ Smoke, roughly 10 minutes:
 
 ```
 python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py \
-  --demand gpu=1,mem_gb=96 --gpu-memory-gb 48 --cpus 4 \
+  --demand gpu=1,mem_gb=96 --gpu-memory-gb 32 --cpus 4 \
   --tag gb10 --priority -10 --timeout-s 1800 \
   -- python3 experiments/run_full_model_research_selected_checkpoint.py \
      --out /mnt/shared/tessera-measurements/research-selected-20260909/smoke-layers3 \
@@ -60,7 +81,7 @@ Full encode, roughly 85 minutes, submitted only after the smoke's
 
 ```
 python3 /mnt/shared/prismabuild-fleet/repo/tools/pbrun.py \
-  --demand gpu=1,mem_gb=96 --gpu-memory-gb 48 --cpus 4 \
+  --demand gpu=1,mem_gb=96 --gpu-memory-gb 32 --cpus 4 \
   --tag gb10 --priority -10 --timeout-s 7200 \
   -- python3 experiments/run_full_model_research_selected_checkpoint.py \
      --out /mnt/shared/tessera-measurements/research-selected-20260909/full-tp1 \
@@ -79,9 +100,17 @@ or `$HOME/.triton`, and `src/tessera/kernel_window_gemv.py:196` reads
 `$TORCH_EXTENSIONS_DIR` or `~/tmp/torch-ext-gemv`. Unset, the first kernel
 compile is a `mkdir` denial under `/root` that surfaces as a build failure
 rather than as a permission message. The launcher creates `home`,
-`triton-cache` and `torch-extensions` under `--out` on the host, so they exist
-with the right owner before the container opens, and records the three paths in
-`launch.json`.
+`triton-cache` and `torch-extensions` on the host, so they exist with the right
+owner before the container opens, binds their parent into the container, and
+records all four paths in `launch.json`.
+
+They are **not** under `--out`. `--out` is on the shared mount, and a JIT cache
+there is its own recorded failure: a build that takes a file lock on NFS can
+hang on the baton, and the kernels it holds are valid only for the box that
+compiled them. `--jit-root` defaults to `~/tessera-runs/jit` on the worker and
+the launcher refuses a root under `/mnt/shared`, because the natural thing to
+write is `ROOT / name` and that is the wrong answer. Each job gets its own
+subdirectory, so no run inherits another tree's compiled kernels.
 
 The encoder takes the fused Triton path whenever CUDA and triton are both
 present (`src/tessera/window_viterbi.py:206`), so this is on the path of every
@@ -90,6 +119,10 @@ both 09-07 exports were cached intake.
 
 ## Limits
 
-Nothing here is measured. The two commands are sized from an ancestor run and a
-profile job, and the smoke exists because the sizing could be wrong in the one
-direction sizing cannot cover, which is whether the fresh encode runs at all.
+Every number above was measured, and none of them was measured on this job. The
+69.2 GiB is a cached intake on this model; the 10.64 GiB is a 32-unit encoder
+batch at a different rung on the frozen producer tree; the 2.32 s per unit is
+the anchors run. Their sum is an estimate of a combination nothing has run. The
+smoke exists because that is the one direction sizing cannot cover, which is
+whether the fresh encode runs at all, and its own telemetry replaces both
+borrowed numbers before the full encode is submitted.
