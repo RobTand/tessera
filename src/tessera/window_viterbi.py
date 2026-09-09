@@ -381,15 +381,15 @@ def _build():
         The scan therefore compares the *same sums* ``_step`` stores and then
         scans, in the same order, under the same strict ``<``, built from the
         same ``_mul`` and the same ``(d*d) * w`` association.  The tie rule and
-        the rounding are unchanged; what is gone is a store and a load of
-        ``FAN`` times as many floats.
+        the rounding are unchanged. The carried state is class-wide, and
+        its store writes one float per class.
 
         Loads are unchanged too: ``FAN`` best loads and ``FAN * ARITY`` table
         loads, where ``_step`` does ``FAN`` front loads and the same
         ``FAN * ARITY``.  Stores drop from ``BL * BC * FAN`` to ``BL * BC``,
         and the ``[BC, BL, FAN]`` intermediate ``_step`` holds for its store is
-        never formed -- so this is *less* register pressure than the step it
-        replaces, not more.
+        never formed. This reduces the logical intermediate, but compiled
+        register pressure still requires measurement.
         """
         goff = tl.load(ctl + 0)
         loff = tl.load(ctl + 1)
@@ -637,9 +637,10 @@ def _tile(fan: int, low: int, n: int):
 #: Whether the step loop carries the class minimum instead of the front.
 #: The recurrence closes in ``best`` alone -- see ``_step_best`` -- so the
 #: ``2^L`` front the reference writes every step exists only to be minimised
-#: away by the next one.  Carrying ``best`` moves ``2*LOW*4 + LOW`` bytes a
-#: step where the front form moves ``2*SIZE*4 + LOW``, and lets ``_layout``
-#: fit ``FAN`` times as many columns in the same L2 budget.
+#: away by the next one. The two resident buffers use ``2*LOW*4`` bytes per
+#: column instead of ``2*SIZE*4``, letting ``_layout`` fit up to ``FAN`` times
+#: as many columns in the same L2 budget. These are buffer sizes, not a
+#: measurement of physical cache or DRAM traffic.
 #:
 #: A candidate, so it is off by default and read per CALL, not at import:
 #: an A/B must be able to put both spellings on one tensor seconds apart in
@@ -665,9 +666,8 @@ def _tile_best(low: int, n: int):
     output is one float per class with the ``FAN`` in a loop, so the same rule
     would leave a program ``FAN`` times too small.  Size it by the lanes
     instead -- about 256 class-column elements a program, never wider than the
-    problem -- which lands on the same ``(cdiv(low, bl), cdiv(width, bc))``
-    grid the front-form step runs, so an A/B moves the bytes and not the
-    geometry.
+    problem. The grid is ``(cdiv(low, bl), cdiv(width, bc))``; its overall
+    dimensions also change when ``_layout`` admits a wider column batch.
     """
     bl = 1
     while bl < low and bl < 128:
