@@ -22,6 +22,13 @@ from .grammar import GrammarError
 REFERENCE_SCHEMA = 'tessera.hessian_capture.references.v1'
 LOAD_SCHEMA = 'tessera.hessian_reference_load.v1'
 BINDING_SCHEMA = 'tessera.canonical_hessian_binding.v1'
+#: Where a resident Hessian may live.  The producer that computes these
+#: commitments holds its population wherever it captured it -- on GB10 that
+#: is CUDA -- and binding exists to serve it from there.  A device outside
+#: this set is refused rather than staged: ``meta`` has no bytes to check,
+#: and an unlisted backend has not been shown to satisfy the ownership and
+#: contiguity facts the checks below read.
+RESIDENT_DEVICES = frozenset({'cpu', 'cuda'})
 CANONICAL_SCHEMA = 'prismaquant.tessera_calibration_cache.v2'
 CANONICAL_SOURCE = 'tessera_campaign_prefix_f32_v1'
 # The first JSON cannot declare the bound under which it is first parsed.
@@ -156,6 +163,7 @@ class ReferenceHessians(Mapping):
         self._lock = threading.RLock()
         self._verified = set()
         self._resident = None
+        self._resident_was_bound = False
         self._resident_observed = set()
         self._resident_finite = set()
         self._reads = self._read_bytes = self._peak_file = self._peak_h = 0
@@ -310,7 +318,15 @@ class ReferenceHessians(Mapping):
 
         One shot and irrevocable, ended by ``close()`` with the rest of the
         owner.  There is no unbind: one document with two answers about what it
-        serves is the defect this removes, not a feature.
+        serves is the defect this removes, not a feature.  ``close()`` drops the
+        owner's references as well as its descriptors, so the owner's hold on
+        the population ends when its lifetime does; the receipt still records
+        that a binding happened.
+
+        CPU and CUDA tensors are both served as they are.  Nothing is staged at
+        bind or at lookup -- the consumption digest copies the unit it is about
+        to check, as it always did, and that per-unit copy is not what this
+        removes.
 
         The mapping is snapshotted, so replacing an entry in the caller's dict
         afterwards cannot retarget the owner; it keeps serving the object it was
@@ -319,7 +335,7 @@ class ReferenceHessians(Mapping):
         """
         with self._lock:
             self.require_current()
-            if self._resident is not None:
+            if self._resident_was_bound:
                 raise GrammarError(
                     'Hessian reference owner is already bound to resident tensors: '
                     'rebinding would leave one document with two answers about what '
@@ -341,6 +357,7 @@ class ReferenceHessians(Mapping):
                 self._require_resident_shape(name, resident[name], committed[name],
                                              'offered for binding')
             self._resident = resident
+            self._resident_was_bound = True
 
     def _require_resident_shape(self, name, H, expected, when):
         """Everything about a resident H that costs no element read.
@@ -353,12 +370,11 @@ class ReferenceHessians(Mapping):
 
         if not isinstance(H, torch.Tensor):
             raise GrammarError(f'{name}: resident Hessian is not a tensor ({when})')
-        if H.device.type != 'cpu':
+        if H.device.type not in RESIDENT_DEVICES:
             raise GrammarError(
-                f'{name}: resident Hessian must be CPU ({when}). Every consumption '
-                f'digest copies to host anyway, so a device tensor would stage the '
-                f'copy this binding exists to avoid and pin device memory for the '
-                f"owner's whole life")
+                f'{name}: a resident Hessian lives on {H.device.type} ({when}), and '
+                f'this owner serves {sorted(RESIDENT_DEVICES)}. A fake or unbacked '
+                f'device has no bytes to check and none to encode')
         if (H.dtype != torch.float32 or list(H.shape) != expected['shape'] or
                 not H.is_contiguous()):
             raise GrammarError(
@@ -377,9 +393,12 @@ class ReferenceHessians(Mapping):
         is where it has always been.  Every consumer of this value digests it --
         ``_require_sealed_unit`` before the encoder sees a byte, and
         ``tensor_identity`` on the identity path -- so an H edited in place
-        after binding is refused before it shapes anything.  Digesting here as
-        well would pay the population's cost back one unit at a time, which is
-        the cost this exists to remove.
+        after binding is refused before it shapes anything.  On a device tensor
+        that digest still stages the unit to host, by design: what binding
+        removes is the *whole population's* seal, paid once over every resident
+        unit before a single one is consumed.  Digesting here as well would pay
+        that population cost back one unit at a time, which is the cost this
+        exists to remove.
 
         Finiteness is the one property no commitment covers, so it is checked
         on a unit's first lookup and memoised.  A later edit to nonfinite
@@ -492,11 +511,12 @@ class ReferenceHessians(Mapping):
             loaded_entries=self._reads, source_read_bytes=self._read_bytes,
             peak_file_bytes=self._peak_file, peak_hessian_bytes=self._peak_h,
             live_payloads=self._live_payloads, closed=self._closed,
-            resident_bound=self._resident is not None,
+            resident_bound=self._resident_was_bound,
             resident_units_observed=sorted(self._resident_observed))
 
     def close(self):
         self._closed = True
+        self._resident = None
         for held in self._held:
             held.close()
 

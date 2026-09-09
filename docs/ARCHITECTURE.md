@@ -133,9 +133,12 @@ snapshotted, so a later replacement in the caller's dict does not retarget the
 owner, and nothing is copied.
 
 A bound lookup checks the current owner and the cheap facts a commitment
-describes -- CPU, float32, committed shape, contiguous, exact storage ownership
--- plus finiteness on a unit's first lookup, and returns the caller's exact
-object. It does not re-digest. The authenticating comparison against the
+describes -- a device in `RESIDENT_DEVICES` (`cpu` or `cuda`), float32,
+committed shape, contiguous, exact storage ownership -- plus finiteness on a
+unit's first lookup, and returns the caller's exact object. The population this
+serves is captured on CUDA on GB10 and is bound and served there, unstaged;
+what binding removes is the whole population's seal, not the per-unit host copy
+the consumption digest still takes. It does not re-digest. The authenticating comparison against the
 commitment is unmoved: `ActivationSource._require_sealed_unit` takes it at
 every unit the encoder consumes and `cached_unit.tensor_identity` on the
 identity path, so an H edited in place after binding is refused before it
@@ -144,7 +147,9 @@ nothing, which is the point: a producer that computed those commitments from
 tensors it still holds would otherwise pay the whole population twice.
 `receipt()` reports `resident_bound` and `resident_units_observed` separately
 from `verified_units`, because observed-after-checks and read-and-compared are
-two claims.
+two claims. `close()` drops the owner's references to the population as well as
+its descriptors, so its hold ends with its lifetime; `resident_bound` survives
+as the historical claim, and the caller's own mapping is not touched.
 
 A reference-backed source records `hessian_role` and `path` in the
 `activation_aware.hessian` block a plain-mapping source does not, and its

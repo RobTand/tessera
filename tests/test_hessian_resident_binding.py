@@ -166,12 +166,96 @@ def test_bind_refuses_a_view_that_does_not_own_its_storage(resident):
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason='needs a device')
-def test_bind_refuses_a_device_tensor(resident):
+def test_a_resident_cuda_h_is_served_as_itself(resident):
+    """The population this exists for is on CUDA, and it is not staged to bind.
+
+    A CPU-only pass cannot certify this; the skip is the honest answer on the
+    CPU fleet, and root's native harness runs it.
+    """
+    handoff, _, H = resident
+    device = {name: value.cuda() for name, value in H.items()}
+    source = bound_source(handoff, device)
+    served = source.hessians['a']
+    assert served is device['a']
+    assert served.device.type == 'cuda'
+    kwargs = encode_kwargs(source)
+    assert kwargs['refit_metric'] is served
+    assert source.hessians.receipt()['loaded_entries'] == 0
+    source.hessians.close()
+
+
+def test_bind_refuses_a_device_with_no_bytes(resident):
     handoff, _, H = resident
     owner = ReferenceHessians(handoff)
-    with pytest.raises(GrammarError, match='resident Hessian must be CPU'):
-        owner.bind_resident(dict(H, a=H['a'].cuda()))
+    with pytest.raises(GrammarError, match='lives on meta'):
+        owner.bind_resident(dict(H, a=torch.eye(4, device='meta')*3))
     owner.close()
+
+
+def test_close_releases_the_owners_hold_on_the_population(resident):
+    """The owner promises its memory lifetime ends at ``close()``.
+
+    A held descriptor and a held tensor are the same promise.  The caller's own
+    reference is its business; what is proved here is that nothing survives on
+    the owner's side once the caller lets go.
+    """
+    import gc
+    import weakref
+
+    handoff, _, H = resident
+    owner = ReferenceHessians(handoff)
+    caller = dict(H)
+    owner.bind_resident(caller)
+    watch = weakref.ref(caller['a'])
+    assert owner['a'] is not None
+
+    owner.close()
+    caller.clear()
+    del H
+    gc.collect()
+    assert watch() is None
+    assert owner.receipt()['resident_bound'] is True
+
+
+def test_closing_does_not_reach_into_the_callers_mapping(resident):
+    handoff, _, H = resident
+    owner = ReferenceHessians(handoff)
+    caller = dict(H)
+    owner.bind_resident(caller)
+    owner.close()
+    assert set(caller) == set(H)
+    assert caller['a'] is H['a']
+
+
+def test_consuming_a_bound_unit_twice_leaves_the_callers_bytes_alone(resident):
+    """The file path handed out a clone, so nothing downstream could touch it.
+
+    A bound owner hands out the caller's own object, and ``H.to('cpu', float32)``
+    on a CPU float32 tensor is that same object again.  If any step of a unit's
+    encode wrote through it, the caller's H would be corrupt and the NEXT
+    consumption of that unit would refuse against its own commitment.  So the
+    second consumption is the check: it exercises the metric, the LDL factor and
+    the rotated diagonals, and the digest is what decides.
+    """
+    from tessera.manifest import ScalePlaneKind
+
+    handoff, _, H = resident
+    before = tensor_identity(H['a'])['sha256']
+
+    # The LDL leg regularises and factorises; the diagonals leg transports the
+    # metric through Du.  Both take the served object as their input.
+    arms = [dict(ldlq_sigma=0.025, ldlq_block=2), dict(ldlq_sigma=None)]
+    for settings in arms:
+        source = ActivationSource.from_capture(handoff, resident_hessians=H, **settings)
+        for _ in range(2):
+            kwargs = source.for_unit('a.weight', 4, 'cpu',
+                                     scale_plane=ScalePlaneKind.CHANNEL,
+                                     with_diagonals=settings['ldlq_sigma'] is None,
+                                     weight=(None if settings['ldlq_sigma'] is not None
+                                             else torch.randn(8, 4)))
+            assert kwargs['refit_metric'] is not None
+            assert tensor_identity(H['a'])['sha256'] == before
+        source.hessians.close()
 
 
 def test_bind_is_one_shot_and_ends_with_the_owner(resident):
