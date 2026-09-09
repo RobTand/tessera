@@ -40,8 +40,12 @@ run more arms than the cache holds -- refusing rather than detecting, because a
 counter can only say a block was spoiled after the box has spent it -- and
 counts `_WindowPlan` constructions either side of every timed block, refusing
 to report any block that built one. Both runs below report **zero** plans built
-inside any timed block, and each arm's block median now agrees with its own hot
-single call to within 0.1%, which is the thing the first run could not show.
+inside any timed block, and the gap between an arm's block median and its own
+hot single call has changed sign. In the withdrawn run every arm ran slow
+against its own warm call, by 1.6 to 4.6% at R3 and 0.4 to 1.5% at R4. Here it
+is at most 1.2% at R3 and it runs the other way at R4, where all four medians
+sit 0.4 to 0.9% below the single call. That is what the first run could not
+show.
 
 The plan cache itself was not touched. A plan's traceback is
 `nmax * steps * low` bytes and the bound of eight is there for that; raising it
@@ -137,7 +141,10 @@ timed arms say 2.607 and 2.926, and 1.662x and 1.708x at R4 against a timed
 
 Energy is integrated over each block's own interval and every block here was
 fully bracketed, `covered` 1.0 throughout, with a two second lead in and out.
-Block to block spread is 0.3% at R3 and 0.1% at R4.
+Block to block spread within an arm is 0.06 to 0.16% at R4. At R3 it is 0.11%
+on the front and 1.0 to 2.2% on the three tiled arms, whose blocks run a third
+as long; the per call spans of those three do not overlap each other, so the
+seconds ordering at R3 does not depend on which block is read.
 
 ## What this does not establish
 
