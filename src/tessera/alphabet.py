@@ -89,6 +89,7 @@ __all__ = [
     "tuple_grid",
     "lloyd_max_grid",
     "require_hardware_byte_grid",
+    "require_mx_grid",
     "require_forest_grid",
     "grid_digest",
     "SERIALISABLE_GRIDS",
@@ -419,6 +420,30 @@ def require_hardware_byte_grid(
         raise error(
             f"{purpose} needs a scalar 256-code hardware grid; "
             f"{grid.name} " + ", ".join(failures)
+        )
+    return grid
+
+
+def require_mx_grid(grid, *, purpose: str, error: "type[Exception]" = GrammarError):
+    """``grid`` back, or a refusal: the MX scale plane is E4M3 and nothing else.
+
+    ONE HOME for the grid an MX plane (``manifest.ScalePlaneKind.MX``,
+    tessera#443) is defined over.  OCP MXFP8 is E4M3 elements under E8M0/K32
+    scales, and the plane's whole reason to exist is the tile a block-scaled
+    tensor core consumes, so it is defined on the hardware byte grid whose
+    values are E4M3's -- ``E4M3_GRID`` or a grid carrying its values and its
+    native map.  An E2M1 unit under it would be MXFP4 with the wrong K (OCP
+    MXFP4 is K32 too, but that is a different tile, a different kernel and a
+    different measurement, none of which this tree has); a BF16 unit has no
+    byte tile at all.  The encoder, the writer, the reader and the
+    materialiser all refuse from here, so the four cannot disagree.
+    """
+    require_hardware_byte_grid(grid, purpose=purpose, error=error)
+    if tuple(grid.values) != E4M3_VALUES or tuple(grid.native) != tuple(E4M3_GRID.native):
+        raise error(
+            f"{purpose} is defined on the E4M3 grid (OCP MXFP8: E4M3 elements "
+            f"under E8M0/K32 scales); {grid.name} carries other values or "
+            "another native byte map"
         )
     return grid
 

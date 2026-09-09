@@ -42,6 +42,7 @@ __all__ = [
     "scales_from_planes",
     "scales_from_lut",
     "nvfp4_scale_bytes",
+    "mx_scales_from_plane",
     "nvfp4_scale_bytes_lut",
     "field_widths",
 ]
@@ -397,6 +398,32 @@ def scales_from_planes(
     return torch.exp2(per_half + delta.to(torch.float32)) * (
         1.0 + mantissa.to(torch.float32) / 8.0
     )
+
+
+def mx_scales_from_plane(scale_base: torch.Tensor) -> torch.Tensor:
+    """An MX plane's per-block scales, ``2^(E-127)`` exactly, as fp32.
+
+    THE decoder's route to an MX scale (``manifest.ScalePlaneKind.MX``,
+    tessera#443): one E8M0 byte per 32-weight block, no refinement, no global.
+    Built from the exponent bits rather than through ``exp2`` so the value is
+    the representable power of two by construction: biased exponent ``E >= 1``
+    is the fp32 pattern ``E << 23`` (mantissa zero), and ``E == 0`` is
+    ``2^-127``, which fp32 holds only as the subnormal pattern ``1 << 22``.
+    Every legal byte therefore decodes to a finite, exact fp32 -- ``2^-127``
+    through ``2^127`` -- and a served kernel that reads the byte as an
+    exponent reads the same number.  The reserved word ``0xFF`` is refused by
+    name (``require_legal_scale_base``) before it can become ``inf``.
+
+    Returns ``[blocks]`` fp32 on the plane's device.  The caller lays it along
+    the row (``decode.unit_scale_field``): block ``b`` scales positions
+    ``32 b .. 32 b + 31`` of the flattened ``[rows, cols]`` weight, and blocks
+    never straddle rows because every home refuses a width that is not a
+    whole number of blocks (``grammar.require_scale_groups``).
+    """
+    require_legal_scale_base(scale_base, "MX SCALE_BASE plane")
+    exponent = scale_base.to(torch.int32)
+    bits = torch.where(exponent == 0, torch.full_like(exponent, 1 << 22), exponent << 23)
+    return bits.view(torch.float32)
 
 
 def nvfp4_scale_bytes(

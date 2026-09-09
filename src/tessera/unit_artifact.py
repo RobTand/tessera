@@ -59,6 +59,7 @@ from .manifest import (
 )
 from .planes import NORMATIVE_ELEMENT_BITS, PlaneKind, PlaneLayout
 from .scale_channel import default_channel_sigma
+from .scale_codec import GROUP_WEIGHTS
 from .trellis import (
     ConvCode,
     _ODS_GENERATORS,
@@ -497,7 +498,7 @@ def build_unit_artifact(
     # the wire's, and a 48-column S6b unit wrote, parsed and decoded while
     # ``slicing._slice_block_plane`` refused every cut of it including the
     # identity slice (tessera#260).  Same function, same words, one rule.
-    if plane_kind is ScalePlaneKind.S6B:
+    if plane_kind in (ScalePlaneKind.S6B, ScalePlaneKind.MX):
         require_scale_groups(cols, int(unit.group))
     if plane_kind is ScalePlaneKind.LUT:
         if unit.scale_lut is None:
@@ -515,6 +516,33 @@ def build_unit_artifact(
         if unit.scale_base.numel() or unit.scale_refine.numel():
             raise GrammarError("a CHANNEL scale plane carries no block-scale words")
         scale_plane = ScalePlane.channel(unit.scale_global)
+    elif plane_kind is ScalePlaneKind.MX:
+        # OCP MXFP8 (tessera#443): the E8M0 plane is the whole scale, so the
+        # refinement plane, the rank-1 pair and the global are all refused
+        # here, where the bytes are decided, and the grid is E4M3 by the one
+        # rule every MX home reads.
+        from .alphabet import require_mx_grid
+
+        require_mx_grid(grid, purpose="writing an MX scale plane")
+        if int(unit.group) != GROUP_WEIGHTS:
+            raise GrammarError(
+                f"an MX scale plane is one E8M0 word per {GROUP_WEIGHTS} weights "
+                f"(OCP K32); the unit declares group {int(unit.group)}"
+            )
+        if unit.diagonals is not None:
+            raise GrammarError("an MX scale plane cannot carry segment 2a diagonals")
+        if unit.scale_refine.numel():
+            raise GrammarError(
+                "an MX scale plane carries no SCALE_REFINE words: the E8M0 base is the whole scale"
+            )
+        if unit.scale_base.numel() != rows * cols // int(unit.group):
+            raise GrammarError(
+                f"an MX scale plane holds one E8M0 word per {int(unit.group)} weights: "
+                f"{unit.scale_base.numel()} words for a {rows}x{cols} unit"
+            )
+        if float(unit.scale_global) != 1.0:
+            raise GrammarError("an MX scale plane carries no global scale")
+        scale_plane = ScalePlane.mx()
     else:
         scale_plane = ScalePlane.s6b()
     # The depth the encoder *used*, not the depth the rate leaves room for.
@@ -826,7 +854,7 @@ def parse_unit_artifact(blob: bytes, device="cpu") -> ParsedUnit:
     # per-half plane, so the rule is vacuous there exactly as at write.
     if manifest.scale_plane.kind is not ScalePlaneKind.CHANNEL:
         require_column_groups(cols, geometry.half_weights)
-    if manifest.scale_plane.kind is ScalePlaneKind.S6B:
+    if manifest.scale_plane.kind in (ScalePlaneKind.S6B, ScalePlaneKind.MX):
         require_scale_groups(cols, geometry.group_weights)
 
     chunks = {}
@@ -868,6 +896,7 @@ def parse_unit_artifact(blob: bytes, device="cpu") -> ParsedUnit:
                 "grid is outside SERIALISABLE_GRIDS. Refusing to decode "
                 "against an assumed grid."
             )
+        _require_plane_grid(plane.kind, grid)
         return _read_window_unit(art, grid, device)
     for candidate in replayable_codes():
         for known in SERIALISABLE_GRIDS.values():
@@ -895,6 +924,7 @@ def parse_unit_artifact(blob: bytes, device="cpu") -> ParsedUnit:
             "prevent."
         )
 
+    _require_plane_grid(plane.kind, grid)
     # The manifest deferred the rate ceiling because it had no grid; there is
     # one now, so apply it before a single code becomes a weight.
     validate_rate_schedule(rates, manifest.branch.root, grid.rate_cap)
@@ -1005,6 +1035,21 @@ def parse_unit_artifact(blob: bytes, device="cpu") -> ParsedUnit:
     return ParsedUnit(unit=unit, forests=forests, code=code, grid=grid, manifest=manifest)
 
 
+def _require_plane_grid(kind: ScalePlaneKind, grid: PayloadGrid) -> None:
+    """The reader's half of a plane kind's grid rule, after the grid resolves.
+
+    The profile id binds the grid and the plane kind jointly, so an artifact
+    from a nonconforming encoder can be byte-self-consistent over a pair no
+    reader should accept -- an MX plane over E2M1, say, which would decode to
+    a tile no block-scaled kernel reads.  Same rule, same home as the
+    encoder's and the writer's (``alphabet.require_mx_grid``).
+    """
+    if kind is ScalePlaneKind.MX:
+        from .alphabet import require_mx_grid
+
+        require_mx_grid(grid, purpose="reading an MX scale plane")
+
+
 def _read_scale_planes(plane, chunks, terminal, geometry, device, order) -> dict:
     """Segment 2b off the wire, for every plane kind: the unit's scale fields.
 
@@ -1039,6 +1084,32 @@ def _read_scale_planes(plane, chunks, terminal, geometry, device, order) -> dict
             scale_base=empty, scale_refine=empty, scale_plane=plane.kind,
             scale_lut=None, scale_global=float(plane.global_scale),
             scale_rows=unpack_fp16(chunks[PlaneKind.DIAG_SV], rows, device),
+        )
+    if plane.kind is ScalePlaneKind.MX:
+        if n_refine:
+            raise GrammarError(
+                "an MX scale plane carries no SCALE_REFINE plane; the terminal "
+                f"declares {n_refine} refinement elements"
+            )
+        if elements(PlaneKind.DIAG_SU) or elements(PlaneKind.DIAG_SV):
+            raise GrammarError(
+                "an MX scale plane carries no DIAG_SU/DIAG_SV planes; the terminal "
+                f"declares {elements(PlaneKind.DIAG_SU)}/{elements(PlaneKind.DIAG_SV)}"
+            )
+        want = geometry.positions // geometry.group_weights
+        if n_base != want:
+            raise GrammarError(
+                f"an MX scale plane holds one E8M0 word per {geometry.group_weights} "
+                f"weights: the terminal declares {n_base} for {want} blocks"
+            )
+        scale_base = unpack_uniform(
+            chunks[PlaneKind.SCALE_BASE], n_base,
+            NORMATIVE_ELEMENT_BITS[PlaneKind.SCALE_BASE], device,
+        )
+        require_legal_scale_base(scale_base, "artifact SCALE_BASE plane")
+        return dict(
+            scale_base=scale_base, scale_refine=empty, scale_plane=plane.kind,
+            scale_lut=None, scale_global=1.0, scale_rows=None,
         )
     if plane.kind is ScalePlaneKind.LUT:
         if n_base:

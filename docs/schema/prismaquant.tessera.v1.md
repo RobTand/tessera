@@ -647,6 +647,97 @@ the exporter writes a ladder is a separate decision, and on today's recipe
 table (every default rung at `completion=0`) a ladder has no rung to shorten.
 Nothing here claims truncation is worth bytes anywhere.
 
+### 1i. Schema minor 8 (2026-09-09): the OCP MX scale plane
+
+Minor 8 adds **no manifest field**. Like minor 3 it is a value of the minor-1
+`scale_plane.kind` record that an earlier reader cannot resolve: `3` = MX,
+the OCP microscaling block plane (tessera#443, bullets 1 and 2). A manifest
+carrying it declares minor 8; every other manifest keeps the minor it had,
+and because no recipe in `export.wire_recipe` selects the plane, every
+artifact the exporter writes is still minor 7 byte for byte
+(`container.SCHEMA_MINOR` stays 7; `container.MX_SCHEMA_MINOR` is 8 and
+`SCHEMA_MINORS_READ` reaches it).
+
+| Field | Encoding | Meaning |
+|---|---|---|
+| `scale_plane.kind` | uint | `3` = MX: one E8M0 scale per 32 consecutive weights of one output row. No `table`, no `global_scale`. |
+
+**Planes under an MX plane.** SCALE_BASE holds exactly `rows * columns / 32`
+E8M0 bytes, indexed `(row * columns + col) // 32`, and it is the whole
+scale: SCALE_REFINE, DIAG_SU and DIAG_SV hold no elements. A weight is
+`grid_value(code) * 2^(E - 127)` in fp32, with the power of two built from
+the exponent bits (`wire.mx_scales_from_plane`: `E >= 1` is the fp32
+pattern `E << 23`, `E = 0` is the subnormal `2^-127`), so every legal byte
+`0x00..0xFE` decodes to an exact finite fp32 and the reserved word `0xFF`
+is refused by name at write and at read (`wire.require_legal_scale_base`).
+The geometry's `group_weights` must be 32 (`scale_codec.GROUP_WEIGHTS`);
+`Manifest.__post_init__` refuses any other value, so K32 is bound at read
+as well as at write. The width must be a whole number of blocks
+(`grammar.require_scale_groups`), which is what keeps a block inside one
+output row; the encoder, the writer and the reader all raise from that one
+function.
+
+**Grid.** E4M3 alone (`alphabet.require_mx_grid`): OCP MXFP8 is E4M3
+elements under E8M0/K32 scales, and that pair is the tile a block-scaled
+tensor core consumes. The encoder, the writer, the reader (after the
+profile id resolves the grid) and the materialiser all refuse another grid
+from that one rule.
+
+**Encoder.** `encode_unit(scale_plane=ScalePlaneKind.MX)`. The initial word
+per block is one of two candidates, `ceil(log2(amax / reach))` and one
+binade lower, chosen per block by the measured round-to-nearest squared
+error onto the values the body can reconstruct (the window table's entries
+at the plane's own 32-weight block, or the forest anchors under TCQ); a
+rule would be a heuristic, and neither `floor` nor `ceil` reproduces the
+measured plane. An all-zero block takes byte `0x00`, so whatever codes the
+body's shared history leaves there reconstruct to at most `448 * 2^-127` in
+magnitude, finite. The refit
+(`encode._refit_scales_mx`) is the least-squares step landed on the two
+powers of two bracketing `B / A`, kept only where strictly lower, so the
+step is monotone; a 1-D per-column metric is accepted, a 2-D one is refused
+(no coupled po2 search exists). Refused by name at encode: any grid but
+E4M3, segment 2a diagonals, nonfinite weights, a group other than 32.
+Measured while writing this: on Gaussian E4M3 units the least-squares
+optimum after a trellis pass sits within a few percent of the power of two
+the pass used, so the refit rarely moves a word and `scale_refit` is close
+to a no-op on this plane. No row scale survives anywhere: the plane is fit
+against the values the body reconstructs, never by rounding a CHANNEL row
+scale into block words.
+
+**Reading.** A minor-8 reader takes the kind off the record and, before any
+scale is derived, refuses a terminal that declares SCALE_REFINE, DIAG_SU or
+DIAG_SV elements or whose SCALE_BASE count is not `positions / 32`
+(`unit_artifact._read_scale_planes`). A header below minor 8 carrying kind
+`3` is refused at the manifest. SCALE_BASE is whole or nothing
+(`_refuse_partial_planes`); there is no prefix rung of this plane.
+
+**Materialising.** `decode.materialize_mxfp8` returns `(tile uint8 [rows,
+cols], scales uint8 [rows, cols / 32])`, the E4M3 bytes through the grid's
+`native` map and the E8M0 plane reshaped per row; `decode.mxfp8_dequantize`
+of that pair equals `reconstruct_unit` bit for bit. That pair is the
+reference a native kernel is held to. It is **not** a served route:
+`serving.scheme.ROUTES` has no MX row (a config naming plane `MX` is refused
+with "has no FP8 tile"), `stock.materialize_stock`, the kernel lane and the
+checkpoint config (`export._plane_name`) refuse the plane by name, and
+`export_checkpoint` refuses before writing a byte. `encode_linear` writes
+the unit; the kernel, the contract cells, the config spelling and the
+served A/B are #443 bullets 3-7.
+
+**Slicing.** Column granularity 32, row granularity 1 under the window body
+(`manifest.scale_block_columns`, the one home the three slicing readers
+share). A shard is a whole minor-8 artifact and reads back from bytes.
+
+**Accounting.** 8 bits per 32 weights on SCALE_BASE, inline: exactly
+`0.25` bpp over quantizable parameters before alignment padding, which is
+the `body_po2` figure `calculator.terminal_rate(with_scale_base=True,
+with_scale_refine=False)` has priced since before the plane existed.
+`footprint.plane_byte_report` itemises every plane's content, padding and
+total bytes with the side bytes and reports `scale_bpp`, `payload_bpp`,
+`wire_bpp` and `total_bytes`; `tests/test_mx_plane.py` pins that the
+declared `exact_bpp`, the accountant's rate, the physical plane region and
+the served pair's byte count are one number across rates, shapes and
+padding.
+
 ## 2. Decisions this schema makes
 
 The design document leaves these open. Deciding them *is* item 1a.
@@ -733,7 +824,7 @@ any width and two conforming decoders would disagree on bytes — finding F3.)
 |---|---|---|
 | ALPHABET / DESCENDANT | grid code | 8 (byte count; a two-byte grid code is two elements -- §1e) |
 | BODY | bit | 1 (count = Σ_col R·rows) |
-| SCALE_BASE | 32-weight group | 8 (E8M0) |
+| SCALE_BASE | 32-weight group | 8 (E8M0; under an MX plane the whole scale, §1i) |
 | COMPLETION | bit | 1 (count = Σ_col c·rows; level-major since minor 7, §1h) |
 | DIAG_SU / DIAG_SV | channel | 16 |
 | SCALE_REFINE | 16-weight half | 4 |

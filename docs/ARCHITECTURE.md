@@ -5,6 +5,13 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-09 for the OCP MX scale plane (#443, bullets 1 and 2):
+schema minor 8, `ScalePlaneKind.MX`, one E8M0 per 32 weights on SCALE_BASE
+over the E4M3 grid, priced at exactly a quarter bit per weight and
+materialised as the MXFP8 pair the reference decode equals bit for bit. A
+research plane, unrouted: no `ROUTES` row, no kernel, no contract cell, no
+recipe selects it, and every exporter and lane refuses it by name. See §3.9.
+
 Re-stamped 2026-09-08 after the bounded native TP2 intake A/B at
 `fd17e7cfaa97`: one repeated 288-expert owner on two GB10s allocated zero
 construction wire-bank bytes, reduced each rank's measured intake peak from
@@ -1867,6 +1874,84 @@ this section: it declares `schema_minor` and a derived `tp_agnostic`, and the
 loader gates on them. That declaration is about the bytes and is
 derived from them, so it is exactly the kind of statement this paragraph
 declines to make about vLLM's replication rule, which is neither.)
+
+### 3.9 The MX scale plane is priced, written and decoded, and served by nothing
+
+Schema minor 8 (2026-09-09, #443 bullets 1 and 2) adds `ScalePlaneKind.MX`
+to the scale-plane record: one E8M0 byte per 32 consecutive weights of one
+output row on SCALE_BASE and no other scale plane, over the E4M3 grid alone.
+A weight is `e4m3(code) * 2^(E - 127)` in fp32, exactly, which is the OCP
+MXFP8 tile a block-scaled tensor core consumes. The normative statement is
+`docs/schema/prismaquant.tessera.v1.md` §1i; this section says where it sits
+in the plan-to-serve chain and what it deliberately does not do.
+
+**What is one home.** The terminal flags a plane kind declares
+(`manifest.scale_plane_terminal_flags`) and the column stride a cut must
+land on (`manifest.scale_block_columns`) were each spelled in two or three
+places before this plane; both now have one home beside `ScalePlaneKind`,
+read by the writer, the byte-matched control and all three slicing readers.
+The grid rule is `alphabet.require_mx_grid`, read by the encoder, the
+writer, the reader and the materialiser. The block-width rule is the
+existing `grammar.require_scale_groups`, which the encoder, the writer and
+the reader already shared for S6b.
+
+**What is priced.** `calculator.terminal_rate(with_scale_base=True,
+with_scale_refine=False)`: the T-po2 terminal, a quarter bit per weight
+over the body before padding. `footprint.plane_byte_report` now itemises
+every plane's content, padding and total bytes beside the side bytes and
+reports `scale_bpp`, `payload_bpp`, `wire_bpp` and `total_bytes`, so "the
+actual total" is a number the accountant states rather than one a reader
+adds up. `tests/test_mx_plane.py` pins `priced == written == served` across
+rates, shapes and alignment padding: the declared `exact_bpp`, the
+accountant's rate, the physical plane region, the artifact length and the
+materialised pair's byte count are one number.
+
+**What is decoded.** `decode.materialize_mxfp8` gives `(tile uint8 [rows,
+cols], scales uint8 [rows, cols / 32])` and `decode.mxfp8_dequantize` of it
+equals `reconstruct_unit` bit for bit, with nonuniform per-block scales,
+boundary blocks at row edges, expert selection through `fused` and
+`moe_layout`, and rank slicing on both axes (column granularity 32). That
+pair is the reference a native kernel is held to, in the sense §3.3 gives
+the FP8 route.
+
+**What is refused, and where.** At encode: any grid but E4M3, segment 2a
+diagonals, nonfinite weights, a group other than 32, a 2-D refit metric. At
+write: a refinement plane, a global, a wrong-length base plane, the reserved
+E8M0 word, an off-block width. At read: a header below minor 8, a terminal
+whose counts disagree with the kind, a geometry whose group is not 32, a
+resolved grid that is not E4M3. At every consumer that would otherwise fall
+through to another plane's layout: `stock.materialize_stock`,
+`lane_planes._pack_window_unit`, `decode.materialize_fp8`,
+`decode.unit_half_scales`, `export._plane_name` (so `WireRecipe.to_config`,
+`ActivationSource` and `_write_config`), and `export_checkpoint` before a
+byte is written. `serving.scheme.ROUTES` has no MX row, so a sidecar naming
+the plane is refused with "has no FP8 tile" by the existing route check.
+
+**What the encoder learned.** The initial word per block is chosen by
+measured round-to-nearest error between the two candidate binades, against
+the values the body can reconstruct; on the window table both binades win
+on different blocks, and on the bare E4M3 grid the measured choice
+coincides with `ceil` because a float grid has the same relative precision
+in every binade. The refit is the exact least-squares step landed on the two
+bracketing powers of two, monotone by construction, and on Gaussian E4M3
+units it is close to a no-op: the least-squares optimum after a trellis pass
+sits within a few percent of the power of two the pass used (0 of 128
+blocks outside `[1/sqrt 2, sqrt 2]` at 16x256). An all-zero block takes
+the floor word `0x00` and does not reconstruct to exactly zero under a
+window body: the trellis's shared history leaves codes there, and the floor
+word bounds them at `448 * 2^-127`, finite. Both are recorded as negative
+results, not asserted as contracts.
+
+**What is owed (#443 bullets 3-7), none of it here.** A native block-scaled
+decode and kernel (`csrc/` is untouched); a `runtime_contract.json` cell,
+family, lane-eligibility and attested rung for the plane (untouched); a
+`ROUTES` row and a plugin route that materialises the pair on load (the
+MoE and FP8 routes remain CHANNEL-only); a checkpoint config spelling, a
+recipe-table entry and a `DEFAULT_REFIT_OBJECTIVE` row; a served quality
+A/B against the CHANNEL plane at matched bytes and a residency measurement;
+the window-table source model at a power-of-two block scale, which today
+reuses the amax-bounded source at the 32-weight block. Nothing in this tree
+changes a production default: every recipe still writes minor 7.
 
 ## 4. Allocation and the uniform gate
 
