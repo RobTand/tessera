@@ -131,24 +131,52 @@ Registers off the launched `CompiledKernel`: front 40 regs, 0 spills, 2048
 shared; best 40/0/1024 at R3 and 37/0/1024 at R4. The candidate is not paying
 for its speed in occupancy.
 
+## The GLM shape, measured by root, not here
+
+Root has since run the candidate on the real GLM expert shape, in its own
+pricing producer, and that run is the qualification the last section of this
+doc named as owed. Recording it here because it settles that question, and
+recording it as root's measurement rather than this branch's: 16 real layer 4
+`down` experts, 4096x2048, artifact rung `R832`, fixed batch `B8`, against the
+original 864 sequence capture, ABBA. The rung is not the recurrence rate; the
+actual recurrence over that rung mixes `R3` and `R4`, so nothing here is an
+`R = 8` measurement and the two must not be read as one number.
+
+| arm | s/call | J | W | vs front |
+|---|---:|---:|---:|---:|
+| front | 77.409474 | 4516.04582 | 58.33970 | — |
+| **best** | **37.395534** | **3078.12257** | **82.31257** | **2.070019x / 1.467143x** |
+
+Those are the means of two ABBA pairs each: front 77.4026 and 77.4164, best
+37.3149 and 37.4762. Candidate power peaks 91.44 W and 91.52 W. **All six arms
+are exact on wire SHA and `dloss`**, and exact against the older `07ad` batch
+screen as well. Action
+`569ee819458cb3cf1c91a687ff66f1edbcd51a87a4f31813e36dc9fb2c572c2b`; root's
+audit is `performance-best-form-ab-01/root-real-wall-energy-parity-audit.json`.
+
+**Where the work per joule comes from matters, because the first four CUDA
+traces did not survive.** Root rejected both front traces on physical checks,
+after torch 2.13 dynamic collection reported impossible durations across four
+fresh contexts. The ratio above never depended on them: it integrates the
+continuous `pqteld` series between wall clock endpoints, which measures the box
+rather than a kernel timeline. Root then re-captured, complete call and with no
+dynamic toggling, and those profiles pass (PB `c86c6920`, CPU audit
+`15a5ba58`). On the `R3` residual shape, 4096x192 weighted at `L14`: the front
+takes 6 graph launches over 24576 steps for 98496.575 us of kernel in a
+103884.535 us span; the candidate takes 1 launch over 4095 steps for 34566.569
+us in a 37479.674 us span, with traceback 2159.72 us against 2159.758 us. Mean
+step is 4.00784 us front against 8.44116 us candidate at six times the width,
+and `best_step` is 93.55% of candidate kernel time. So the per step cost
+roughly doubles and the step count falls sixfold, which is the width lever the
+verdict above names, now visible in the kernel timeline and not only in the
+wall clock.
+
+The tree root measured is not this branch's head. It is `61da`, which is
+`af1497c4b5` plus an identical prose fix, and precedes the empty input guard
+added here; that guard is inert on positive input. The default stays off
+regardless.
+
 ## What this does not establish
-
-### The GLM shape, measured by root, not here
-
-Root has since run the candidate on the real GLM expert shape at R = 8, in its
-own pricing producer, and that run is the qualification this section says is
-owed. Recording what it established and what it did not, since it is root's
-measurement and not this branch's: 16 real layer-4 `down` experts against the
-original 864-sequence capture, fixed B8, ABBA, front 77.4026 s and 77.4164 s
-against best 37.3149 s and 37.4762 s, with **all six arms exact on wire SHA
-and `dloss`**. Action `569ee819458cb3cf1c91a687ff66f1edbcd51a87a4f31813e36dc9fb2c572c2b`.
-
-So the seconds and the byte identity hold on the shape that matters. **The
-energy half does not follow from it.** Root rejected all four of that run's
-CUDA traces, because torch 2.13 dynamic collection reported physically
-impossible durations even across four fresh contexts, and owns a replacement
-capture. No work-per-joule figure on the GLM shape is claimed here or there
-until that lands, and the default stays off regardless.
 
 ### What is still open
 
@@ -158,5 +186,7 @@ and the width lever varies with it. `E4-R1088` includes R4 and R5, and dense
 BF16/E2M1 use other `L` and arity; nothing here speaks for them. At arity above
 1 the candidate still reads its trailing coordinates inside the `f` loop, so an
 arity 2 timing would carry a load asymmetry these arity 1 numbers do not. The
-GLM expert shape at R = 8 is the qualification that matters next, and the
-default stays off until a real encode arm and a review say otherwise.
+GLM expert shape above closes the qualification this section used to name as
+next; what it leaves open is the paired kernel attribution root is
+re-capturing. The default stays off until a real encode arm and a review say
+otherwise.
