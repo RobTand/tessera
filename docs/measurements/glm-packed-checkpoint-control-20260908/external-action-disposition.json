@@ -1,0 +1,21 @@
+{
+  "action_key": "c40e2deac94e164239fff839a891a05b3f2616e4b2e63481e903552d8b7a5c4f",
+  "terminal": {
+    "path": "/mnt/shared/prismabuild-fleet/pb-queue/failed/c40e2deac94e164239fff839a891a05b3f2616e4b2e63481e903552d8b7a5c4f.json",
+    "sha256": "75fa0f9a67fda9fa3b306f8da1be79de71e168017794cf88f32fd22e991ea8fa"
+  },
+  "status": "failed",
+  "returncode": 1,
+  "finished_unix": 1788899229.106948,
+  "cleanup_complete": true,
+  "demand": {
+    "cpu": 6,
+    "mem_gb": 24
+  },
+  "placement": {
+    "required_tags": [
+      "sparklina"
+    ]
+  },
+  "source_parent": "0da7dff6f39c670f1b1ece0e9fd994ea228da947"
+}

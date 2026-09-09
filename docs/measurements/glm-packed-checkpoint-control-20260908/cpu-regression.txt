@@ -1,0 +1,171 @@
+bringing up nodes...
+bringing up nodes...
+
+FFFFFFFFFF                                                               [100%]
+=================================== FAILURES ===================================
+______ test_native_checkpoint_control_uses_registered_ordinary_config[1] _______
+[gw0] linux -- Python 3.12.11 /home/rob/venvs/pq-cpu312/bin/python
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7c68ab7a5e80>
+tmp_path = PosixPath('/home/rob/tmp/pytest-of-rob/pytest-3524/popen-gw0/test_native_checkpoint_control0')
+tp = 1
+
+    @pytest.mark.parametrize('tp', [1, 2])
+    def test_native_checkpoint_control_uses_registered_ordinary_config(monkeypatch, tmp_path, tp):
+>       from experiments.glm_packed_moe_control import checkpoint_quant_config
+E       ImportError: cannot import name 'checkpoint_quant_config' from 'experiments.glm_packed_moe_control' (/home/rob/tmp/prismabuild-checkouts/fb8100df8dc3.a62yg8qa/checkout/experiments/glm_packed_moe_control.py)
+
+tests/test_serving_moe_dispatch.py:361: ImportError
+_____ test_native_checkpoint_control_refuses_before_runtime_lookup[chunk] ______
+[gw3] linux -- Python 3.12.11 /home/rob/venvs/pq-cpu312/bin/python
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7e86097f4da0>
+tmp_path = PosixPath('/home/rob/tmp/pytest-of-rob/pytest-3524/popen-gw3/test_native_checkpoint_control0')
+mutation = 'chunk'
+
+    @pytest.mark.parametrize('mutation', ['hash', 'missing', 'null', 'tp', 'backend', 'chunk', 'target', 'scheme'])
+    def test_native_checkpoint_control_refuses_before_runtime_lookup(monkeypatch, tmp_path, mutation):
+        import copy
+>       from experiments.glm_packed_moe_control import checkpoint_quant_config
+E       ImportError: cannot import name 'checkpoint_quant_config' from 'experiments.glm_packed_moe_control' (/home/rob/tmp/prismabuild-checkouts/fb8100df8dc3.a62yg8qa/checkout/experiments/glm_packed_moe_control.py)
+
+tests/test_serving_moe_dispatch.py:388: ImportError
+______ test_native_checkpoint_control_refuses_before_runtime_lookup[hash] ______
+[gw1] linux -- Python 3.12.11 /home/rob/venvs/pq-cpu312/bin/python
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x715bd78510a0>
+tmp_path = PosixPath('/home/rob/tmp/pytest-of-rob/pytest-3524/popen-gw1/test_native_checkpoint_control0')
+mutation = 'hash'
+
+    @pytest.mark.parametrize('mutation', ['hash', 'missing', 'null', 'tp', 'backend', 'chunk', 'target', 'scheme'])
+    def test_native_checkpoint_control_refuses_before_runtime_lookup(monkeypatch, tmp_path, mutation):
+        import copy
+>       from experiments.glm_packed_moe_control import checkpoint_quant_config
+E       ImportError: cannot import name 'checkpoint_quant_config' from 'experiments.glm_packed_moe_control' (/home/rob/tmp/prismabuild-checkouts/fb8100df8dc3.a62yg8qa/checkout/experiments/glm_packed_moe_control.py)
+
+tests/test_serving_moe_dispatch.py:388: ImportError
+______ test_native_checkpoint_control_refuses_before_runtime_lookup[null] ______
+[gw2] linux -- Python 3.12.11 /home/rob/venvs/pq-cpu312/bin/python
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x76bff6bc6960>
+tmp_path = PosixPath('/home/rob/tmp/pytest-of-rob/pytest-3524/popen-gw2/test_native_checkpoint_control0')
+mutation = 'null'
+
+    @pytest.mark.parametrize('mutation', ['hash', 'missing', 'null', 'tp', 'backend', 'chunk', 'target', 'scheme'])
+    def test_native_checkpoint_control_refuses_before_runtime_lookup(monkeypatch, tmp_path, mutation):
+        import copy
+>       from experiments.glm_packed_moe_control import checkpoint_quant_config
+E       ImportError: cannot import name 'checkpoint_quant_config' from 'experiments.glm_packed_moe_control' (/home/rob/tmp/prismabuild-checkouts/fb8100df8dc3.a62yg8qa/checkout/experiments/glm_packed_moe_control.py)
+
+tests/test_serving_moe_dispatch.py:388: ImportError
+_______ test_native_checkpoint_control_refuses_before_runtime_lookup[tp] _______
+[gw2] linux -- Python 3.12.11 /home/rob/venvs/pq-cpu312/bin/python
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x76bff6a0a0f0>
+tmp_path = PosixPath('/home/rob/tmp/pytest-of-rob/pytest-3524/popen-gw2/test_native_checkpoint_control1')
+mutation = 'tp'
+
+    @pytest.mark.parametrize('mutation', ['hash', 'missing', 'null', 'tp', 'backend', 'chunk', 'target', 'scheme'])
+    def test_native_checkpoint_control_refuses_before_runtime_lookup(monkeypatch, tmp_path, mutation):
+        import copy
+>       from experiments.glm_packed_moe_control import checkpoint_quant_config
+E       ImportError: cannot import name 'checkpoint_quant_config' from 'experiments.glm_packed_moe_control' (/home/rob/tmp/prismabuild-checkouts/fb8100df8dc3.a62yg8qa/checkout/experiments/glm_packed_moe_control.py)
+
+tests/test_serving_moe_dispatch.py:388: ImportError
+_____ test_native_checkpoint_control_refuses_before_runtime_lookup[target] _____
+[gw3] linux -- Python 3.12.11 /home/rob/venvs/pq-cpu312/bin/python
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7e86097f7950>
+tmp_path = PosixPath('/home/rob/tmp/pytest-of-rob/pytest-3524/popen-gw3/test_native_checkpoint_control1')
+mutation = 'target'
+
+    @pytest.mark.parametrize('mutation', ['hash', 'missing', 'null', 'tp', 'backend', 'chunk', 'target', 'scheme'])
+    def test_native_checkpoint_control_refuses_before_runtime_lookup(monkeypatch, tmp_path, mutation):
+        import copy
+>       from experiments.glm_packed_moe_control import checkpoint_quant_config
+E       ImportError: cannot import name 'checkpoint_quant_config' from 'experiments.glm_packed_moe_control' (/home/rob/tmp/prismabuild-checkouts/fb8100df8dc3.a62yg8qa/checkout/experiments/glm_packed_moe_control.py)
+
+tests/test_serving_moe_dispatch.py:388: ImportError
+______ test_native_checkpoint_control_uses_registered_ordinary_config[2] _______
+[gw0] linux -- Python 3.12.11 /home/rob/venvs/pq-cpu312/bin/python
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7c68ab7c73b0>
+tmp_path = PosixPath('/home/rob/tmp/pytest-of-rob/pytest-3524/popen-gw0/test_native_checkpoint_control1')
+tp = 2
+
+    @pytest.mark.parametrize('tp', [1, 2])
+    def test_native_checkpoint_control_uses_registered_ordinary_config(monkeypatch, tmp_path, tp):
+>       from experiments.glm_packed_moe_control import checkpoint_quant_config
+E       ImportError: cannot import name 'checkpoint_quant_config' from 'experiments.glm_packed_moe_control' (/home/rob/tmp/prismabuild-checkouts/fb8100df8dc3.a62yg8qa/checkout/experiments/glm_packed_moe_control.py)
+
+tests/test_serving_moe_dispatch.py:361: ImportError
+____ test_native_checkpoint_control_refuses_before_runtime_lookup[missing] _____
+[gw1] linux -- Python 3.12.11 /home/rob/venvs/pq-cpu312/bin/python
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x715bb96dbec0>
+tmp_path = PosixPath('/home/rob/tmp/pytest-of-rob/pytest-3524/popen-gw1/test_native_checkpoint_control1')
+mutation = 'missing'
+
+    @pytest.mark.parametrize('mutation', ['hash', 'missing', 'null', 'tp', 'backend', 'chunk', 'target', 'scheme'])
+    def test_native_checkpoint_control_refuses_before_runtime_lookup(monkeypatch, tmp_path, mutation):
+        import copy
+>       from experiments.glm_packed_moe_control import checkpoint_quant_config
+E       ImportError: cannot import name 'checkpoint_quant_config' from 'experiments.glm_packed_moe_control' (/home/rob/tmp/prismabuild-checkouts/fb8100df8dc3.a62yg8qa/checkout/experiments/glm_packed_moe_control.py)
+
+tests/test_serving_moe_dispatch.py:388: ImportError
+_____ test_native_checkpoint_control_refuses_before_runtime_lookup[scheme] _____
+[gw3] linux -- Python 3.12.11 /home/rob/venvs/pq-cpu312/bin/python
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x7e8609615400>
+tmp_path = PosixPath('/home/rob/tmp/pytest-of-rob/pytest-3524/popen-gw3/test_native_checkpoint_control2')
+mutation = 'scheme'
+
+    @pytest.mark.parametrize('mutation', ['hash', 'missing', 'null', 'tp', 'backend', 'chunk', 'target', 'scheme'])
+    def test_native_checkpoint_control_refuses_before_runtime_lookup(monkeypatch, tmp_path, mutation):
+        import copy
+>       from experiments.glm_packed_moe_control import checkpoint_quant_config
+E       ImportError: cannot import name 'checkpoint_quant_config' from 'experiments.glm_packed_moe_control' (/home/rob/tmp/prismabuild-checkouts/fb8100df8dc3.a62yg8qa/checkout/experiments/glm_packed_moe_control.py)
+
+tests/test_serving_moe_dispatch.py:388: ImportError
+____ test_native_checkpoint_control_refuses_before_runtime_lookup[backend] _____
+[gw2] linux -- Python 3.12.11 /home/rob/venvs/pq-cpu312/bin/python
+
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x76bff6a0a5a0>
+tmp_path = PosixPath('/home/rob/tmp/pytest-of-rob/pytest-3524/popen-gw2/test_native_checkpoint_control2')
+mutation = 'backend'
+
+    @pytest.mark.parametrize('mutation', ['hash', 'missing', 'null', 'tp', 'backend', 'chunk', 'target', 'scheme'])
+    def test_native_checkpoint_control_refuses_before_runtime_lookup(monkeypatch, tmp_path, mutation):
+        import copy
+>       from experiments.glm_packed_moe_control import checkpoint_quant_config
+E       ImportError: cannot import name 'checkpoint_quant_config' from 'experiments.glm_packed_moe_control' (/home/rob/tmp/prismabuild-checkouts/fb8100df8dc3.a62yg8qa/checkout/experiments/glm_packed_moe_control.py)
+
+tests/test_serving_moe_dispatch.py:388: ImportError
+
+tessera surface: NO CUDA -- torch 2.10.0+cpu reports no CUDA device
+tessera surface: 0 test(s) skipped, 0 module(s) not collected
+tessera surface: this run did not exercise the CUDA-gated surface. Its pass count is not coverage of it.
+tessera surface: 0 test(s) allocated on the device
+============================= slowest 10 durations =============================
+0.02s call     tests/test_serving_moe_dispatch.py::test_native_checkpoint_control_refuses_before_runtime_lookup[null]
+0.02s call     tests/test_serving_moe_dispatch.py::test_native_checkpoint_control_refuses_before_runtime_lookup[chunk]
+0.02s call     tests/test_serving_moe_dispatch.py::test_native_checkpoint_control_refuses_before_runtime_lookup[hash]
+0.02s setup    tests/test_serving_moe_dispatch.py::test_native_checkpoint_control_refuses_before_runtime_lookup[null]
+0.02s setup    tests/test_serving_moe_dispatch.py::test_native_checkpoint_control_refuses_before_runtime_lookup[chunk]
+0.02s call     tests/test_serving_moe_dispatch.py::test_native_checkpoint_control_uses_registered_ordinary_config[1]
+0.01s setup    tests/test_serving_moe_dispatch.py::test_native_checkpoint_control_uses_registered_ordinary_config[1]
+0.01s setup    tests/test_serving_moe_dispatch.py::test_native_checkpoint_control_refuses_before_runtime_lookup[hash]
+
+(2 durations < 0.005s hidden.  Use -vv to show these durations.)
+=========================== short test summary info ============================
+FAILED tests/test_serving_moe_dispatch.py::test_native_checkpoint_control_uses_registered_ordinary_config[1]
+FAILED tests/test_serving_moe_dispatch.py::test_native_checkpoint_control_refuses_before_runtime_lookup[chunk]
+FAILED tests/test_serving_moe_dispatch.py::test_native_checkpoint_control_refuses_before_runtime_lookup[hash]
+FAILED tests/test_serving_moe_dispatch.py::test_native_checkpoint_control_refuses_before_runtime_lookup[null]
+FAILED tests/test_serving_moe_dispatch.py::test_native_checkpoint_control_refuses_before_runtime_lookup[tp]
+FAILED tests/test_serving_moe_dispatch.py::test_native_checkpoint_control_refuses_before_runtime_lookup[target]
+FAILED tests/test_serving_moe_dispatch.py::test_native_checkpoint_control_uses_registered_ordinary_config[2]
+FAILED tests/test_serving_moe_dispatch.py::test_native_checkpoint_control_refuses_before_runtime_lookup[missing]
+FAILED tests/test_serving_moe_dispatch.py::test_native_checkpoint_control_refuses_before_runtime_lookup[scheme]
+FAILED tests/test_serving_moe_dispatch.py::test_native_checkpoint_control_refuses_before_runtime_lookup[backend]
+10 failed in 4.52s

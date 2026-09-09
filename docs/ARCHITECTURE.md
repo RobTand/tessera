@@ -5,6 +5,45 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-08 after the bounded native TP2 intake A/B at
+`fd17e7cfaa97`: one repeated 288-expert owner on two GB10s allocated zero
+construction wire-bank bytes, reduced each rank's measured intake peak from
+about 3.6 GB to 1.9 GB, and retained exact checked outputs and stock final NCCL
+collectives. See [the append-only measurement](measurements/glm-rank-local-intake-20260908.md)
+for source identities, profiles, both-box telemetry and limits. This is a
+loader ownership result; full-engine memory/KV/generation and diverse-expert
+quality gates remain unmet by this fixture.
+
+Re-stamped 2026-09-08 for the research TP2 intake device-lifecycle correction
+on top of `383d2a40b`. Incremental intake resolves its device from the live wire
+loader anchor on each callback, preserving the ordinary finalizer's promotion
+to the current CUDA device when staging was constructed elsewhere. The first
+accepted projection fixes ownership to that device; a later device change
+refuses before mixing packed owners. The native A/B used CUDA construction
+throughout and does not claim a CPU/meta-to-CUDA native measurement.
+
+Re-stamped 2026-09-08 for rank-local research TP2 wire intake (#435),
+against base `2890976db`. Stock vLLM constructs all owners on its target
+CUDA device before loading any weights and finalizes modules only after the
+complete load. The explicit research TP2 path therefore registers zero-byte
+wire parameters carrying the existing custom loaders. Every callback validates
+its original full container, derives the existing rank-local role slice and
+retains only that packed role. Finalization checks original lengths against
+the declared maximum stride and stacks the prepared local roles. Transient
+source/parse/reference storage is bounded to the current projection; stacking
+can temporarily duplicate one owner's local packed group. TP1 and ordinary
+materialized intake keep their existing behavior. This removes the all-model
+full-wire staging allocation. The bounded CUDA ownership result is recorded
+above; complete-model automatic loading and whole-engine fit still require
+native measurements. Producer bytes, the
+public wire ABI, research opt-in and qualification gates are unchanged.
+
+Re-stamped 2026-09-08 for calibrated packed complete-cache intake (#433),
+against base `f6faf7e59fa6`. The CLI accepts `--hessian` with a packed expert
+plan only under `--cached-units`; exact existing per-unit source/projection/H
+receipt checks govern intake (§3.2). Encoder package bytes, wire recipes and
+serving qualification are unchanged.
+
 Re-stamped 2026-09-08 for the explicit packed research checkpoint bridge
 (#430), against base `b9cda5b03efe`. The optional
 `quantization_config.research_selected_moe` object uses the closed
@@ -35,6 +74,20 @@ The declaration changes execution metadata, not wire bytes or encoder inputs;
 path requires `resident`. Whole-engine memory, generation, quality and
 performance still require actual measurements; the exporter's ordinary
 materialized-resident byte estimates do not certify a packed-engine fit.
+
+The bounded native lifecycle harness now accepts explicit
+`configuration_source: checkpoint_json` with a byte-bound checkpoint config.
+It compares the JSON quantization declaration with the original wire fixture,
+resolves `tessera` through stock vLLM's registry, and requires the ordinary
+`TesseraConfig` through model construction. Existing Python control modes and
+load/finalization/stock-parity/TP2 runner guards are retained. The bounded
+TP1 control passed on 2026-09-08 with ordinary JSON-selected config, all 864
+projection loads, and exact decode/empty stock parity on the original repeated-
+expert fixture. Installed runtime source `07ad344c3275` and the separate
+`6c0e77e66e3d` control harness are independently bound in
+`measurements/glm-packed-checkpoint-control-20260908/`. This does not establish
+whole-engine automatic checkpoint discovery, text generation, TP2 fit, quality
+or performance. No runtime cell is promoted.
 
 Producer/cache identity remains separate from serving implementation identity.
 `cached_unit.encoder_source_sha256` hashes producer code suffixes
@@ -1349,6 +1402,18 @@ unit cannot stand for a different source slice. The two cache flags are mutually
 exclusive; the expert-only flag preserves its prior scope. The cache mode requires a fresh output
 directory and records each accepted blob's SHA in the export manifest.
 
+For packed expert plans, `--hessian` is accepted only with complete
+`--cached-units` intake. The existing producer projection supplies each logical
+expert tensor and source slice; its exact logical H key, column geometry,
+actual source/H bytes and full calibration settings must match the cached
+receipt. The physical stack key is never an H fallback. Bounded canonical
+references use `ActivationSource.from_capture` and authenticate one source
+payload per logical H lookup without retaining earlier H tensors. Legacy
+`.pt` captures retain their eager reader. A missing dense or expert cache entry
+refuses complete coverage; no unit is re-encoded. Packed-H exports without
+`--cached-units`, including expert-only cache mode, continue to refuse before
+encoding. This CLI exception changes no producer package source seal.
+
 These are producer evidence and tests only. They do not promote a recipe,
 open an eligibility cell, or replace the source-matched served measurements
 required for the PrismaQuant campaign bridge.
@@ -2143,11 +2208,13 @@ independently planned twin over a nonconstant table.
 
 **Research TP2 ownership.** `ResearchSelectedMoeConfig` defaults to
 `expected_tensor_parallel_size=1`; an explicit value of `2` must agree with
-the runtime's actual TP size. Each rank loads and validates every original
-full expert wire, then uses `plan_shard` and `shard_parsed_roles` to cut gate
+the runtime's actual TP size. Each rank validates every original full expert
+wire during its loader callback, then uses `plan_shard` and `shard_parsed_roles` to cut gate
 and up independently along their output rows and down along its input columns.
 The existing packed FP8/window owners retain those local roles and preserve
-nonzero row-cut initial states. There is no checkpoint rewrite or persistent
+nonzero row-cut initial states. Construction allocates zero-byte wire loader
+anchors; finalization joins and stacks already local prepared roles and checks
+the complete original length/stride contract, without a full padded wire bank. There is no checkpoint rewrite or persistent
 full decoded expert stack. Global expert IDs and router weights are unchanged;
 the method returns the rank's partial output, leaving shared-expert combination
 and the final all-reduce to stock vLLM. EP, DP, PCP, SP, EPLB, runtime padding,

@@ -352,3 +352,66 @@ def test_an_ignored_moe_looking_layer_is_declared_bf16(monkeypatch):
     config = _resolved(monkeypatch, ignore=("model.layers.0.mlp.experts",))
     assert config.get_quant_method(
         object.__new__(cls), "model.layers.0.mlp.experts") is None
+
+
+def _bound_checkpoint(tmp_path, quantization):
+    import hashlib
+    path = tmp_path / 'checkpoint-config.json'
+    raw = (json.dumps({'quantization_config': quantization}, sort_keys=True) + '\n').encode()
+    path.write_bytes(raw)
+    return {'path': str(path), 'sha256': hashlib.sha256(raw).hexdigest()}
+
+
+@pytest.mark.parametrize('tp', [1, 2])
+def test_native_checkpoint_control_uses_registered_ordinary_config(monkeypatch, tmp_path, tp):
+    from experiments.glm_packed_moe_control import checkpoint_quant_config
+    import vllm.model_executor.layers.quantization as registry
+    from tessera.serving import config as config_module, moe_route
+    import vllm.model_executor.layers.fused_moe as moe
+    monkeypatch.setenv(TESSERA_MODE_ENV, 'resident')
+    registered = {}
+    monkeypatch.setattr(registry, 'register_quantization_config',
+        lambda name: lambda cls: registered.setdefault(name, cls), raising=False)
+    monkeypatch.setattr(registry, 'get_quantization_config', lambda name: registered[name], raising=False)
+    expected = _expert_config(_research_checkpoint(tp))
+    binding = _bound_checkpoint(tmp_path, expected)
+    quant, evidence = checkpoint_quant_config(binding, expected)
+    assert type(quant) is TesseraConfig
+    assert registered == {'tessera': TesseraConfig}
+    assert evidence['checkpoint_config'] == binding
+    assert evidence['research_selected_moe'] == expected['research_selected_moe']
+    assert evidence['config_class'] == 'tessera.serving.config.TesseraConfig'
+    calls = []
+    monkeypatch.setattr(config_module, 'declare_compile_identity', lambda **kw: None)
+    monkeypatch.setattr(moe_route, 'build_tessera_moe_method', lambda *a, **kw: calls.append(kw))
+    quant.get_quant_method(moe.RoutedExperts(), 'model.layers.1.mlp.experts')
+    assert calls[0]['research_selected'].as_checkpoint() == expected['research_selected_moe']
+
+
+@pytest.mark.parametrize('mutation', ['hash', 'missing', 'null', 'tp', 'backend', 'chunk', 'target', 'scheme'])
+def test_native_checkpoint_control_refuses_before_runtime_lookup(monkeypatch, tmp_path, mutation):
+    import copy
+    from experiments.glm_packed_moe_control import checkpoint_quant_config
+    import vllm.model_executor.layers.quantization as registry
+    expected = _expert_config(_research_checkpoint())
+    altered = copy.deepcopy(expected)
+    if mutation == 'missing':
+        del altered['research_selected_moe']
+    elif mutation == 'null':
+        altered['research_selected_moe'] = None
+    elif mutation in ('tp', 'backend', 'chunk'):
+        field, value = {'tp': ('expected_tensor_parallel_size', 2),
+            'backend': ('decode_backend', 'torch'), 'chunk': ('max_experts_per_chunk', 4)}[mutation]
+        altered['research_selected_moe'][field] = value
+    elif mutation == 'target':
+        altered['config_groups']['expert']['targets'] = ['wrong.experts']
+    elif mutation == 'scheme':
+        altered['config_groups']['expert']['scheme']['groups']['w2']['wire_stride'] += 1
+    binding = _bound_checkpoint(tmp_path, altered)
+    if mutation == 'hash':
+        binding['sha256'] = '0' * 64
+    def forbidden(*a, **kw):
+        pytest.fail('invalid checkpoint reached runtime registration')
+    monkeypatch.setattr(registry, 'register_quantization_config', forbidden, raising=False)
+    with pytest.raises(ValueError, match='checkpoint'):
+        checkpoint_quant_config(binding, expected)

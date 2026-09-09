@@ -1,0 +1,54 @@
+{
+  "arm": "packed",
+  "cases": [
+    {
+      "input_multiplier": 1.0,
+      "name": "decode",
+      "seed": 574,
+      "tokens": 1
+    },
+    {
+      "input_multiplier": 1.0,
+      "name": "empty",
+      "seed": 578,
+      "tokens": 0
+    }
+  ],
+  "checkpoint_config": {
+    "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/checkpoint-config-tp1.json",
+    "sha256": "2e860568c5a5a664291c554d1185e250c1f792273126146306931274169e8fca"
+  },
+  "configuration_source": "checkpoint_json",
+  "construction": {
+    "path": "/mnt/shared/tessera-glm-native-20260907/construction-02/receipt.json",
+    "sha256": "55bde513451a402bcba2feb4a1c10836621dbf0e8e69f6331efe224306ba3fd2"
+  },
+  "control_request": {
+    "path": "/mnt/shared/tessera-glm-native-20260907/control-request-q512.json",
+    "sha256": "4e745c2c609a8d9b0cd4b79f12185bea64db79579d818fb4be6dad0286c23589"
+  },
+  "decode_backend": "triton",
+  "fixture": "original",
+  "inputs": {
+    "path": "/mnt/shared/tessera-measurements/glm-packed-lifecycle-20260908/resident-01/inputs.safetensors",
+    "sha256": "253031a63500afe6658b7cc501fd72dd135c86f924cba5154dc0b405db18f81c"
+  },
+  "max_experts_per_chunk": 8,
+  "max_timing_samples": 100000,
+  "measure": false,
+  "min_timing_seconds": 15,
+  "original_request": {
+    "path": "/mnt/shared/tessera-glm-native-20260907/request.json",
+    "sha256": "96915ace44fe757381c87b996fb926551a3dd5dd29d21d10a2d087e45dcf44ea"
+  },
+  "producer_manifest": {
+    "path": "/mnt/shared/tessera-glm-native-20260907/producer-manifest-q512.json",
+    "sha256": "c9fcc8c57694e7b351b575074851b08595fe98e127fb73370990718203f7e611"
+  },
+  "q256": 512,
+  "schema": "tessera.glm_packed_lifecycle_request.v1",
+  "source_archive": null,
+  "source_commit": null,
+  "source_index_sha256": "e6007bd58fb7e07f9fe69544257ee2713f252ef5855bbf685b48c991d524ef0f",
+  "tp_size": 1
+}

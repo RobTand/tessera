@@ -128,6 +128,26 @@ class PreparedTesseraFp8Module:
         return torch.cat([r.window.decode() for r in self.__roles], 0)
 
     @classmethod
+    def concatenate(cls, modules: Sequence[PreparedTesseraFp8Module]) -> PreparedTesseraFp8Module:
+        """Join already prepared roles without copying their packed windows."""
+        modules = tuple(modules)
+        if not modules:
+            raise ValueError("concatenating needs at least one prepared FP8 module")
+        first = modules[0]
+        if any((m.columns, m.device) != (first.columns, first.device) for m in modules):
+            raise ValueError("concatenated FP8 roles must share columns and device")
+        roles, offset, names = [], 0, set()
+        for module in modules:
+            for role in module.__roles:
+                if role.name in names:
+                    raise ValueError("concatenated FP8 roles must have distinct names")
+                names.add(role.name)
+                roles.append(_Fp8Role(role.name, offset + role.row_offset, role.rows, role.window))
+            offset += module.rows
+        return cls(roles, rows=offset, columns=first.columns,
+                   scale=torch.cat([m.__scale for m in modules]), device=first.device)
+
+    @classmethod
     def stack(cls, modules: Sequence[PreparedTesseraFp8Module]) -> PreparedTesseraFp8Batch:
         """Own packed expert windows for an explicit research selection path."""
         modules = tuple(modules)

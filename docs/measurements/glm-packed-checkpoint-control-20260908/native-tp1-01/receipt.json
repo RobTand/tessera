@@ -1,0 +1,154 @@
+{
+  "schema": "tessera.glm_packed_lifecycle_control.v1",
+  "packed_request_sha256": "c0649bced44c2d73c28c3600ab72166be1b06bd640affb567de74dedcb265464",
+  "installed_source_commit": "07ad344c3275bb2fa7ce2432f93d89945d66f4c2",
+  "status": "packed_lifecycle_control_passed",
+  "arm": "packed",
+  "fixture": "original",
+  "decode_backend": "triton",
+  "configuration_source": "checkpoint_json",
+  "checkpoint_reconstruction": {
+    "checkpoint_config": {
+      "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/checkpoint-config-tp1.json",
+      "sha256": "2e860568c5a5a664291c554d1185e250c1f792273126146306931274169e8fca"
+    },
+    "config_class": "tessera.serving.config.TesseraConfig",
+    "registry_key": "tessera",
+    "research_selected_moe": {
+      "decode_backend": "triton",
+      "expected_tensor_parallel_size": 1,
+      "max_experts_per_chunk": 8,
+      "schema": "tessera.research_selected_moe.v1"
+    },
+    "quantization_sha256": "a9f74fff3d8717e2f519fbdbbb1b935cef1b37845954efeac9af925dd323d9e1"
+  },
+  "scheme": {
+    "family": "TESSERA_FP8",
+    "structure": "routed_moe",
+    "grid": "E4M3",
+    "body": "WINDOW",
+    "plane": "CHANNEL",
+    "experts": 288,
+    "groups": {
+      "w13": {
+        "rows": 4096,
+        "columns": 4096,
+        "q256": 512,
+        "wire_stride": 2118415,
+        "roles": [
+          [
+            "gate_proj",
+            2048
+          ],
+          [
+            "up_proj",
+            2048
+          ]
+        ]
+      },
+      "w2": {
+        "rows": 4096,
+        "columns": 2048,
+        "q256": 512,
+        "wire_stride": 2122464,
+        "roles": [
+          [
+            "down_proj",
+            4096
+          ]
+        ]
+      }
+    }
+  },
+  "source_input_receipts": {
+    "gate_proj": {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-512-gate_proj/receipt.json",
+      "sha256": "1a7804072334659cd75d427441a9283b9b5bdd87b866a7df2344b784493569c5"
+    },
+    "up_proj": {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-512-up_proj/receipt.json",
+      "sha256": "39ed2123197335a0ee030c3a5dd8e84eb98afdf0071f8242a722d8d9609dc9f2"
+    },
+    "down_proj": {
+      "path": "/mnt/shared/tessera-glm-native-20260907/encode-512-down_proj-02/receipt.json",
+      "sha256": "baac4d0a5eba40487f6e4371fea9f9903391b41d2fe2340112748b738b951afe"
+    }
+  },
+  "owner_resident_bytes": 1853603840,
+  "load_stages": {
+    "before_create": {
+      "allocated_bytes": 52428800,
+      "reserved_bytes": 52428800,
+      "peak_allocated_bytes": 52428800,
+      "peak_reserved_bytes": 52428800,
+      "epoch": 1788899450.2535148
+    },
+    "after_create": {
+      "allocated_bytes": 1936940544,
+      "reserved_bytes": 1941962752,
+      "peak_allocated_bytes": 1936940544,
+      "peak_reserved_bytes": 1941962752,
+      "epoch": 1788899450.3079057
+    },
+    "after_wire_load": {
+      "allocated_bytes": 1936940544,
+      "reserved_bytes": 1941962752,
+      "peak_allocated_bytes": 1936940544,
+      "peak_reserved_bytes": 1941962752,
+      "epoch": 1788899450.4692862
+    },
+    "after_prepare": {
+      "allocated_bytes": 1959380480,
+      "reserved_bytes": 6442450944,
+      "peak_allocated_bytes": 4471234048,
+      "peak_reserved_bytes": 6442450944,
+      "epoch": 1788899477.6046457
+    }
+  },
+  "cases": [
+    {
+      "case": {
+        "input_multiplier": 1.0,
+        "name": "decode",
+        "seed": 574,
+        "tokens": 1
+      },
+      "output_vs_independent_stock": {
+        "finite": true,
+        "max_abs": 0.0,
+        "relative_l2": 0.0
+      },
+      "all_selected_tiles_and_scales_exact": true
+    },
+    {
+      "case": {
+        "input_multiplier": 1.0,
+        "name": "empty",
+        "seed": 578,
+        "tokens": 0
+      },
+      "output_vs_independent_stock": {
+        "finite": true,
+        "max_abs": 0.0,
+        "relative_l2": 0.0
+      },
+      "all_selected_tiles_and_scales_exact": true
+    }
+  ],
+  "input_file_sha256": "a48acc97ad76359bc31f1598496609544c656a70fa775450940349130cb0642d",
+  "backend": "TRITON",
+  "actual_moe_class": "vllm.models.glm5next.nvidia.model.Glm5NextMoE",
+  "actual_owner_class": "vllm.model_executor.layers.fused_moe.routed_experts.RoutedExperts",
+  "trained_diverse_experts": false,
+  "trained_router_executed": false,
+  "shared_experts_executed": false,
+  "shared_and_gate_source_records": null,
+  "tp_rank": 0,
+  "paired_request_sha256": null,
+  "model_quality_probe": false,
+  "runtime_cell_promoted": false,
+  "tp_size": 1,
+  "ep_size": 1,
+  "stock_core_unchanged": true,
+  "package_identity_sha256": "cf55c36b7f82498f1e494a19e01d07bdf7ce2ee4a1c3f19e215eb23761fd90cd"
+}
