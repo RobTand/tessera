@@ -1,0 +1,82 @@
+{
+  "host": "sparklina",
+  "started_epoch": 1788899397.3188581,
+  "finished_epoch": 1788899398.319137,
+  "selected_cpu_affinity": [
+    15,
+    16,
+    17,
+    18
+  ],
+  "cpu_capacities": {
+    "15": 1017,
+    "16": 1017,
+    "17": 1017,
+    "18": 1017
+  },
+  "cpu_activity": {
+    "cpu15": {
+      "ticks": [
+        0,
+        0,
+        0,
+        99,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "busy_fraction": 0.0
+    },
+    "cpu16": {
+      "ticks": [
+        1,
+        0,
+        0,
+        99,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "busy_fraction": 0.01
+    },
+    "cpu17": {
+      "ticks": [
+        0,
+        0,
+        0,
+        99,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "busy_fraction": 0.0
+    },
+    "cpu18": {
+      "ticks": [
+        0,
+        0,
+        0,
+        99,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "busy_fraction": 0.0
+    }
+  },
+  "meminfo": "MemTotal:       127535148 kB\nMemFree:        61818544 kB\nMemAvailable:   121680096 kB\nBuffers:          974052 kB\nCached:         58553628 kB\nSwapCached:       169208 kB\nActive:          6668732 kB\nInactive:       53607912 kB\nActive(anon):     698560 kB\nInactive(anon):    74472 kB\nActive(file):    5970172 kB\nInactive(file): 53533440 kB\nUnevictable:       32496 kB\nMlocked:           24396 kB\nSwapTotal:      16777212 kB\nSwapFree:       15990272 kB\nZswap:                 0 kB\nZswapped:              0 kB\nDirty:               104 kB\nWriteback:             0 kB\nAnonPages:        774796 kB\nMapped:           403316 kB\nShmem:             18464 kB\nKReclaimable:    1499092 kB\nSlab:            2250128 kB\nSReclaimable:    1499092 kB\nSUnreclaim:       751036 kB\nKernelStack:       21776 kB\nShadowCallStack:    5728 kB\nPageTables:        33680 kB\nSecPageTables:     13076 kB\nNFS_Unstable:          0 kB\nBounce:                0 kB\nWritebackTmp:          0 kB\nCommitLimit:    80544784 kB\nCommitted_AS:    9220304 kB\nVmallocTotal:   135288315904 kB\nVmallocUsed:      232796 kB\nVmallocChunk:          0 kB\nPercpu:            50080 kB\nHardwareCorrupted:     0 kB\nAnonHugePages:         0 kB\nShmemHugePages:        0 kB\nShmemPmdMapped:        0 kB\nFileHugePages:   9547776 kB\nFilePmdMapped:      4096 kB\nCmaTotal:         131072 kB\nCmaFree:           69320 kB\nBalloon:               0 kB\nHugePages_Total:       0\nHugePages_Free:        0\nHugePages_Rsvd:        0\nHugePages_Surp:        0\nHugepagesize:       2048 kB\nHugetlb:               0 kB\n",
+  "compute_apps": "",
+  "containers": ""
+}

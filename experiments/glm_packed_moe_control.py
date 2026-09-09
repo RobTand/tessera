@@ -28,6 +28,35 @@ def checked(row):
     return path
 
 
+
+def checkpoint_quant_config(binding, expected_quantization):
+    """Reconstruct the ordinary registered plugin from byte-bound JSON only."""
+    path = Path(binding['path'])
+    raw = path.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != binding['sha256']:
+        raise ValueError(f'checkpoint config identity mismatch: {path}')
+    checkpoint = json.loads(raw)
+    quantization = checkpoint.get('quantization_config')
+    if quantization != expected_quantization or 'research_selected_moe' not in quantization:
+        raise ValueError('checkpoint quantization differs from the bound control fixture')
+    from tessera.serving import register
+    from tessera.serving.config import TesseraConfig
+    from vllm.model_executor.layers.quantization import get_quantization_config
+    register()
+    registered = get_quantization_config(quantization['quant_method'])
+    if registered is not TesseraConfig:
+        raise ValueError('checkpoint dispatch did not resolve ordinary TesseraConfig')
+    quant = registered.from_config(quantization)
+    assert type(quant) is TesseraConfig
+    assert quant._research_selected_moe.as_checkpoint() == quantization['research_selected_moe']
+    return quant, {'checkpoint_config': binding,
+        'config_class': type(quant).__module__ + '.' + type(quant).__qualname__,
+        'registry_key': quantization['quant_method'],
+        'research_selected_moe': quantization['research_selected_moe'],
+        'quantization_sha256': hashlib.sha256(json.dumps(quantization,
+            sort_keys=True,separators=(',',':')).encode()).hexdigest()}
+
+
 def compare(got, expected):
     if got.numel() == expected.numel() == 0:
         assert got.shape == expected.shape and got.dtype == expected.dtype
@@ -142,19 +171,32 @@ def run(args, request, outer):
     assert type(tp_size) is int and tp_size in (1,2) and (tp_size == 1 or outer['arm'] == 'packed')
     tp_rank = 0 if tp_size == 1 else outer['distributed']['rank']
     quant_cls = TesseraConfig
+    config_source = outer.get('configuration_source', 'python_control')
+    if config_source not in ('python_control', 'checkpoint_json'):
+        raise ValueError('unknown packed control configuration_source')
+    if config_source == 'checkpoint_json' and outer['arm'] != 'packed':
+        raise ValueError('checkpoint_json control requires the packed arm')
+    checkpoint_evidence = None
     if outer['arm'] == 'packed':
         from tessera.serving.moe_route import ResearchSelectedMoeConfig, build_tessera_moe_method
         research = ResearchSelectedMoeConfig(max_experts_per_chunk=outer['max_experts_per_chunk'],
             decode_backend=outer.get('decode_backend', 'torch'),
             expected_tensor_parallel_size=tp_size)
-        class ResearchConfig(TesseraConfig):
-            def get_quant_method(self,layer,prefix):
-                declaration = self.target_scheme.get(prefix)
-                if declaration is not None and declaration.get('structure') == 'routed_moe':
-                    return build_tessera_moe_method(declaration,prefix,self._mode,layer,research_selected=research)
-                return super().get_quant_method(layer,prefix)
-        quant_cls = ResearchConfig
-    quant = quant_cls.from_config(quant_dict)
+        if config_source == 'checkpoint_json':
+            quant_dict['research_selected_moe'] = research.as_checkpoint()
+        else:
+            class ResearchConfig(TesseraConfig):
+                def get_quant_method(self,layer,prefix):
+                    declaration = self.target_scheme.get(prefix)
+                    if declaration is not None and declaration.get('structure') == 'routed_moe':
+                        return build_tessera_moe_method(declaration,prefix,self._mode,layer,research_selected=research)
+                    return super().get_quant_method(layer,prefix)
+            quant_cls = ResearchConfig
+    if config_source == 'checkpoint_json':
+        quant, checkpoint_evidence = checkpoint_quant_config(outer['checkpoint_config'], quant_dict)
+        write(args.out, 'checkpoint-reconstruction.json', checkpoint_evidence)
+    else:
+        quant = quant_cls.from_config(quant_dict)
     if tp_size == 1:
         model,mapped,config = census.build_model(request['bounded_config'],'meta',512,quant_config=quant)
     else:
@@ -166,6 +208,9 @@ def run(args, request, outer):
         from experiments.glm_packed_tp2_control import verify_common_request
         paired_request_sha256 = verify_common_request(outer)
     assert target in mapped.target_scheme and config.model_config.enforce_eager
+    if checkpoint_evidence is not None:
+        assert type(mapped) is TesseraConfig and config.quant_config is mapped
+        assert mapped._research_selected_moe.as_checkpoint() == checkpoint_evidence['research_selected_moe']
     owner_name = baseline['owners'][0]['name']
     moe_type = type(model.get_submodule(owner_name.rsplit('.experts.',1)[0]))
     meta_owner = model.get_submodule(owner_name)
@@ -175,41 +220,50 @@ def run(args, request, outer):
     del registered,meta_owner,model
     gc.collect()
 
+    from experiments.glm_packed_intake_observer import IntakeObservation
+
     with set_current_vllm_config(config,check_compile=False), torch.no_grad():
         init_workspace_manager(torch.device('cuda'))
         torch.cuda.reset_peak_memory_stats()
         stages = {'before_create':memory()}
-        with census._set_default_torch_dtype()(torch.bfloat16),torch.device('cuda'):
-            moe = moe_type(config.model_config.hf_text_config,config.parallel_config,mapped,
-                           prefix=target.removesuffix('.experts'))
-        layer,method = moe.experts.routed_experts,moe.experts.routed_experts.quant_method
-        stages['after_create'] = memory()
-        initial_parameters = {name:plain(value) for name,value in layer.named_parameters(recurse=False)}
-        if outer['arm'] == 'packed':
-            assert set(initial_parameters) == {'e_score_correction_bias','w13_wire','w2_wire'}
-            assert layer.tessera_mode == 'research_selected'
-        def weights():
-            for expert in range(e):
-                for role,template in templates.items():
-                    blob = diagnostics[expert] if diagnostics is not None and role == 'down_proj' else template
-                    yield f'{expert}.{role}.wire',torch.frombuffer(bytearray(blob),dtype=torch.uint8)
-        loaded = sorted(layer.load_weights(weights()))
-        stages['after_wire_load'] = memory()
-        write(args.out,'load-progress.json',{'loaded_names':loaded,'supplied_projections':e*3,
-            'meta_parameters':meta_parameters,'initial_parameters':initial_parameters,'stages':stages})
-        with torch.profiler.record_function('tessera_control_prepare_owner'):
-            method.process_weights_after_loading(layer)
-        stages['after_prepare'] = memory()
-        parameters = dict(layer.named_parameters(recurse=False))
-        if outer['arm'] == 'packed':
-            assert set(parameters) == {'e_score_correction_bias'}
-            assert method.moe_kernel is None and method.moe_quant_config is None
-            resident_bytes = method.research_resident_bytes()
-        else:
-            resident_bytes = sum(p.numel()*p.element_size() for p in parameters.values())
-        write(args.out,'prepared-owner.json',{'stages':stages,'owner_resident_bytes':resident_bytes,
-            'parameters':{name:plain(p) for name,p in parameters.items()},
-            'no_persistent_full_fp8':outer['arm']=='packed'})
+        with IntakeObservation(args.out, outer.get('intake_observation')) as intake_observer:
+            with census._set_default_torch_dtype()(torch.bfloat16),torch.device('cuda'):
+                moe = moe_type(config.model_config.hf_text_config,config.parallel_config,mapped,
+                               prefix=target.removesuffix('.experts'))
+            layer,method = moe.experts.routed_experts,moe.experts.routed_experts.quant_method
+            stages['after_create'] = memory()
+            intake_observer.after_create(layer, method)
+            initial_parameters = {name:plain(value) for name,value in layer.named_parameters(recurse=False)}
+            if outer['arm'] == 'packed':
+                assert set(initial_parameters) == {'e_score_correction_bias','w13_wire','w2_wire'}
+                assert layer.tessera_mode == 'research_selected'
+                assert method._research_phase == 'loading'
+            def weights():
+                for expert in range(e):
+                    for role,template in templates.items():
+                        blob = diagnostics[expert] if diagnostics is not None and role == 'down_proj' else template
+                        yield f'{expert}.{role}.wire',torch.frombuffer(bytearray(blob),dtype=torch.uint8)
+                        intake_observer.after_callback(method)
+            loaded = sorted(layer.load_weights(weights()))
+            stages['after_wire_load'] = memory()
+            intake_observer.after_load(method, e * 3)
+            write(args.out,'load-progress.json',{'loaded_names':loaded,'supplied_projections':e*3,
+                'meta_parameters':meta_parameters,'initial_parameters':initial_parameters,'stages':stages})
+            with torch.profiler.record_function('tessera_control_prepare_owner'):
+                method.process_weights_after_loading(layer)
+            stages['after_prepare'] = memory()
+            parameters = dict(layer.named_parameters(recurse=False))
+            if outer['arm'] == 'packed':
+                assert set(parameters) == {'e_score_correction_bias'}
+                assert method._research_phase == 'ready'
+                assert method.moe_kernel is None and method.moe_quant_config is None
+                resident_bytes = method.research_resident_bytes()
+                intake_observer.after_finalize(method)
+            else:
+                resident_bytes = sum(p.numel()*p.element_size() for p in parameters.values())
+            write(args.out,'prepared-owner.json',{'stages':stages,'owner_resident_bytes':resident_bytes,
+                'parameters':{name:plain(p) for name,p in parameters.items()},
+                'no_persistent_full_fp8':outer['arm']=='packed'})
 
         # Allocate the independent stock oracle only after measuring the load.
         # Stock TP2 slices each role of the full independent source; local
@@ -339,6 +393,7 @@ def run(args, request, outer):
         save_file(generated_inputs,args.out/'inputs.safetensors')
         return {'status':'packed_lifecycle_control_passed','arm':outer['arm'],'fixture':outer['fixture'],
             'decode_backend':outer.get('decode_backend', 'torch'),
+            'configuration_source':config_source,'checkpoint_reconstruction':checkpoint_evidence,
             'scheme':scheme,'source_input_receipts':input_receipts,'owner_resident_bytes':resident_bytes,
             'load_stages':stages,'cases':results,'input_file_sha256':digest(args.out/'inputs.safetensors'),
             'backend':plain(method.fp8_backend),'actual_moe_class':type(moe).__module__+'.'+type(moe).__qualname__,

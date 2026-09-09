@@ -1,0 +1,11 @@
+{
+  "started_epoch": 1788899421.7823632,
+  "finished_epoch": 1788899481.1039293,
+  "returncode": 0,
+  "timed_out": false,
+  "timeout_seconds": 600,
+  "container_exit_code": 0,
+  "oom_killed": false,
+  "container_removed": true,
+  "controls_unchanged": true
+}

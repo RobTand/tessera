@@ -99,6 +99,7 @@ def main():
         controls.append(Path('experiments/glm_selected_expert_control.py'))
     if args.packed_request:
         controls.append(args.packed_request)
+        controls.append(Path('experiments/glm_packed_intake_observer.py'))
         if packed.get('tp_size',1) == 2:
             controls.append(Path('experiments/glm_packed_tp2_control.py'))
     before = {str(p): digest(p) for p in controls}

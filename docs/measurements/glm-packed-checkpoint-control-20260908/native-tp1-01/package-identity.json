@@ -1,0 +1,1291 @@
+{
+  "tessera_file": "/usr/local/lib/python3.12/dist-packages/tessera/__init__.py",
+  "cached_unit_file": "/usr/local/lib/python3.12/dist-packages/tessera/cached_unit.py",
+  "sys_path": [
+    "/work/experiments",
+    "/usr/local/lib/python3.12/dist-packages/nvidia_cutlass_dsl/dsl_packages",
+    "/work",
+    "/usr/lib/python312.zip",
+    "/usr/lib/python3.12",
+    "/usr/lib/python3.12/lib-dynload",
+    "/usr/local/lib/python3.12/dist-packages",
+    "/usr/lib/python3/dist-packages",
+    "/usr/local/lib/python3.12/dist-packages/setuptools/_vendor",
+    "/usr/local/lib/python3.12/dist-packages/nvidia_cutlass_dsl/dsl_packages/cutlass/base_dsl"
+  ],
+  "loaded_tessera_modules": {
+    "tessera": {
+      "file": "/usr/local/lib/python3.12/dist-packages/tessera/__init__.py",
+      "spec_origin": "/usr/local/lib/python3.12/dist-packages/tessera/__init__.py",
+      "origin_checks": {
+        "file": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/__init__.py",
+          "package_relative_path": "__init__.py",
+          "sha256": "9e681d73db412b0c437af4fc5e247170a068ab05709a88a51da2e5d292104a69",
+          "bytes": 3177
+        },
+        "spec_origin": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/__init__.py",
+          "package_relative_path": "__init__.py",
+          "sha256": "9e681d73db412b0c437af4fc5e247170a068ab05709a88a51da2e5d292104a69",
+          "bytes": 3177
+        }
+      },
+      "canonical_source": true
+    },
+    "tessera.alphabet": {
+      "file": "/usr/local/lib/python3.12/dist-packages/tessera/alphabet.py",
+      "spec_origin": "/usr/local/lib/python3.12/dist-packages/tessera/alphabet.py",
+      "origin_checks": {
+        "file": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/alphabet.py",
+          "package_relative_path": "alphabet.py",
+          "sha256": "0277721a687c03939989764677a9a4570d1c9970dd718476b361ec96f314dc6a",
+          "bytes": 64540
+        },
+        "spec_origin": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/alphabet.py",
+          "package_relative_path": "alphabet.py",
+          "sha256": "0277721a687c03939989764677a9a4570d1c9970dd718476b361ec96f314dc6a",
+          "bytes": 64540
+        }
+      },
+      "canonical_source": true
+    },
+    "tessera.cached_unit": {
+      "file": "/usr/local/lib/python3.12/dist-packages/tessera/cached_unit.py",
+      "spec_origin": "/usr/local/lib/python3.12/dist-packages/tessera/cached_unit.py",
+      "origin_checks": {
+        "file": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/cached_unit.py",
+          "package_relative_path": "cached_unit.py",
+          "sha256": "846159df0cdda5944ddbddc7894770fd3204bf870c4043b20026276400978f08",
+          "bytes": 14290
+        },
+        "spec_origin": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/cached_unit.py",
+          "package_relative_path": "cached_unit.py",
+          "sha256": "846159df0cdda5944ddbddc7894770fd3204bf870c4043b20026276400978f08",
+          "bytes": 14290
+        }
+      },
+      "canonical_source": true
+    },
+    "tessera.canonical": {
+      "file": "/usr/local/lib/python3.12/dist-packages/tessera/canonical.py",
+      "spec_origin": "/usr/local/lib/python3.12/dist-packages/tessera/canonical.py",
+      "origin_checks": {
+        "file": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/canonical.py",
+          "package_relative_path": "canonical.py",
+          "sha256": "fb2776b4be5b2717b6c921ff1fd88e44ec8d80d05a09b5dfb753595e0a5bff3c",
+          "bytes": 9890
+        },
+        "spec_origin": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/canonical.py",
+          "package_relative_path": "canonical.py",
+          "sha256": "fb2776b4be5b2717b6c921ff1fd88e44ec8d80d05a09b5dfb753595e0a5bff3c",
+          "bytes": 9890
+        }
+      },
+      "canonical_source": true
+    },
+    "tessera.container": {
+      "file": "/usr/local/lib/python3.12/dist-packages/tessera/container.py",
+      "spec_origin": "/usr/local/lib/python3.12/dist-packages/tessera/container.py",
+      "origin_checks": {
+        "file": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/container.py",
+          "package_relative_path": "container.py",
+          "sha256": "a4c4ee39bc80aa286d8858b70489efaa7b912006cb6c14d0d1159d7dfabb39bd",
+          "bytes": 15315
+        },
+        "spec_origin": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/container.py",
+          "package_relative_path": "container.py",
+          "sha256": "a4c4ee39bc80aa286d8858b70489efaa7b912006cb6c14d0d1159d7dfabb39bd",
+          "bytes": 15315
+        }
+      },
+      "canonical_source": true
+    },
+    "tessera.decode": {
+      "file": "/usr/local/lib/python3.12/dist-packages/tessera/decode.py",
+      "spec_origin": "/usr/local/lib/python3.12/dist-packages/tessera/decode.py",
+      "origin_checks": {
+        "file": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/decode.py",
+          "package_relative_path": "decode.py",
+          "sha256": "5d1a3d697ced8ad5bccbb23b3f82ae58f5dce6b8d4d07dac1b9806717d5a2a54",
+          "bytes": 48625
+        },
+        "spec_origin": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/decode.py",
+          "package_relative_path": "decode.py",
+          "sha256": "5d1a3d697ced8ad5bccbb23b3f82ae58f5dce6b8d4d07dac1b9806717d5a2a54",
+          "bytes": 48625
+        }
+      },
+      "canonical_source": true
+    },
+    "tessera.diagonals": {
+      "file": "/usr/local/lib/python3.12/dist-packages/tessera/diagonals.py",
+      "spec_origin": "/usr/local/lib/python3.12/dist-packages/tessera/diagonals.py",
+      "origin_checks": {
+        "file": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/diagonals.py",
+          "package_relative_path": "diagonals.py",
+          "sha256": "08732e87d54b2107dfb1e52374a811d78ffcb58485b0edc3c273d92008c71785",
+          "bytes": 18498
+        },
+        "spec_origin": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/diagonals.py",
+          "package_relative_path": "diagonals.py",
+          "sha256": "08732e87d54b2107dfb1e52374a811d78ffcb58485b0edc3c273d92008c71785",
+          "bytes": 18498
+        }
+      },
+      "canonical_source": true
+    },
+    "tessera.encode": {
+      "file": "/usr/local/lib/python3.12/dist-packages/tessera/encode.py",
+      "spec_origin": "/usr/local/lib/python3.12/dist-packages/tessera/encode.py",
+      "origin_checks": {
+        "file": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/encode.py",
+          "package_relative_path": "encode.py",
+          "sha256": "19f81803a10482fc4613586386e7592c0fd0adf0c01d2ba5d0eadd97db8d1f2e",
+          "bytes": 176408
+        },
+        "spec_origin": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/encode.py",
+          "package_relative_path": "encode.py",
+          "sha256": "19f81803a10482fc4613586386e7592c0fd0adf0c01d2ba5d0eadd97db8d1f2e",
+          "bytes": 176408
+        }
+      },
+      "canonical_source": true
+    },
+    "tessera.encoder_identity": {
+      "file": "/usr/local/lib/python3.12/dist-packages/tessera/encoder_identity.py",
+      "spec_origin": "/usr/local/lib/python3.12/dist-packages/tessera/encoder_identity.py",
+      "origin_checks": {
+        "file": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/encoder_identity.py",
+          "package_relative_path": "encoder_identity.py",
+          "sha256": "8e1bc02b86ba5be960a7a9aff0aa231917670aba201756dfb283f55509249fa6",
+          "bytes": 41734
+        },
+        "spec_origin": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/encoder_identity.py",
+          "package_relative_path": "encoder_identity.py",
+          "sha256": "8e1bc02b86ba5be960a7a9aff0aa231917670aba201756dfb283f55509249fa6",
+          "bytes": 41734
+        }
+      },
+      "canonical_source": true
+    },
+    "tessera.errors": {
+      "file": "/usr/local/lib/python3.12/dist-packages/tessera/errors.py",
+      "spec_origin": "/usr/local/lib/python3.12/dist-packages/tessera/errors.py",
+      "origin_checks": {
+        "file": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/errors.py",
+          "package_relative_path": "errors.py",
+          "sha256": "765894f6b69c94eea19ac42913275fe423da0fb03dfff08ccd56291206f1fcf0",
+          "bytes": 4323
+        },
+        "spec_origin": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/errors.py",
+          "package_relative_path": "errors.py",
+          "sha256": "765894f6b69c94eea19ac42913275fe423da0fb03dfff08ccd56291206f1fcf0",
+          "bytes": 4323
+        }
+      },
+      "canonical_source": true
+    },
+    "tessera.exact": {
+      "file": "/usr/local/lib/python3.12/dist-packages/tessera/exact.py",
+      "spec_origin": "/usr/local/lib/python3.12/dist-packages/tessera/exact.py",
+      "origin_checks": {
+        "file": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/exact.py",
+          "package_relative_path": "exact.py",
+          "sha256": "ffa9fce2d2f1caa0550f5b9979720a476bb39943e301d1a85d4b5d221198e526",
+          "bytes": 4368
+        },
+        "spec_origin": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/exact.py",
+          "package_relative_path": "exact.py",
+          "sha256": "ffa9fce2d2f1caa0550f5b9979720a476bb39943e301d1a85d4b5d221198e526",
+          "bytes": 4368
+        }
+      },
+      "canonical_source": true
+    },
+    "tessera.export": {
+      "file": "/usr/local/lib/python3.12/dist-packages/tessera/export.py",
+      "spec_origin": "/usr/local/lib/python3.12/dist-packages/tessera/export.py",
+      "origin_checks": {
+        "file": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/export.py",
+          "package_relative_path": "export.py",
+          "sha256": "b5a90de7fec30aaa145effb14a1640b9bab64db13e9e9c8cc469ed76fc38abb9",
+          "bytes": 134861
+        },
+        "spec_origin": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/export.py",
+          "package_relative_path": "export.py",
+          "sha256": "b5a90de7fec30aaa145effb14a1640b9bab64db13e9e9c8cc469ed76fc38abb9",
+          "bytes": 134861
+        }
+      },
+      "canonical_source": true
+    },
+    "tessera.footprint": {
+      "file": "/usr/local/lib/python3.12/dist-packages/tessera/footprint.py",
+      "spec_origin": "/usr/local/lib/python3.12/dist-packages/tessera/footprint.py",
+      "origin_checks": {
+        "file": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/footprint.py",
+          "package_relative_path": "footprint.py",
+          "sha256": "df78c2b8258bde12d79e2a0087b735b691ffe10aa61a6a7394aef71c04ab8d0e",
+          "bytes": 6617
+        },
+        "spec_origin": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/footprint.py",
+          "package_relative_path": "footprint.py",
+          "sha256": "df78c2b8258bde12d79e2a0087b735b691ffe10aa61a6a7394aef71c04ab8d0e",
+          "bytes": 6617
+        }
+      },
+      "canonical_source": true
+    },
+    "tessera.fp8": {
+      "file": "/usr/local/lib/python3.12/dist-packages/tessera/fp8.py",
+      "spec_origin": "/usr/local/lib/python3.12/dist-packages/tessera/fp8.py",
+      "origin_checks": {
+        "file": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/fp8.py",
+          "package_relative_path": "fp8.py",
+          "sha256": "b961c588744f0301fb2c293460a7e0e3d6c753f2554b5d51ea63d276dd5fa3c5",
+          "bytes": 6647
+        },
+        "spec_origin": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/fp8.py",
+          "package_relative_path": "fp8.py",
+          "sha256": "b961c588744f0301fb2c293460a7e0e3d6c753f2554b5d51ea63d276dd5fa3c5",
+          "bytes": 6647
+        }
+      },
+      "canonical_source": true
+    },
+    "tessera.fused": {
+      "file": "/usr/local/lib/python3.12/dist-packages/tessera/fused.py",
+      "spec_origin": "/usr/local/lib/python3.12/dist-packages/tessera/fused.py",
+      "origin_checks": {
+        "file": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/fused.py",
+          "package_relative_path": "fused.py",
+          "sha256": "c2f62b95b4a2e8e66df21a1379f01f1fe8265a8d124b79d53fe82760f66816d3",
+          "bytes": 15084
+        },
+        "spec_origin": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/fused.py",
+          "package_relative_path": "fused.py",
+          "sha256": "c2f62b95b4a2e8e66df21a1379f01f1fe8265a8d124b79d53fe82760f66816d3",
+          "bytes": 15084
+        }
+      },
+      "canonical_source": true
+    },
+    "tessera.grammar": {
+      "file": "/usr/local/lib/python3.12/dist-packages/tessera/grammar.py",
+      "spec_origin": "/usr/local/lib/python3.12/dist-packages/tessera/grammar.py",
+      "origin_checks": {
+        "file": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/grammar.py",
+          "package_relative_path": "grammar.py",
+          "sha256": "f2545274c8e03534d040c64fb4fd1a02085de7b5eb106f80e8fb31b05454fac8",
+          "bytes": 32653
+        },
+        "spec_origin": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/grammar.py",
+          "package_relative_path": "grammar.py",
+          "sha256": "f2545274c8e03534d040c64fb4fd1a02085de7b5eb106f80e8fb31b05454fac8",
+          "bytes": 32653
+        }
+      },
+      "canonical_source": true
+    },
+    "tessera.kernel_bits": {
+      "file": "/usr/local/lib/python3.12/dist-packages/tessera/kernel_bits.py",
+      "spec_origin": "/usr/local/lib/python3.12/dist-packages/tessera/kernel_bits.py",
+      "origin_checks": {
+        "file": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/kernel_bits.py",
+          "package_relative_path": "kernel_bits.py",
+          "sha256": "3d0ceb44ad9ed7b7c46357ba40c61118950b930c3196effb4acb83e2dd1196a4",
+          "bytes": 2418
+        },
+        "spec_origin": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/kernel_bits.py",
+          "package_relative_path": "kernel_bits.py",
+          "sha256": "3d0ceb44ad9ed7b7c46357ba40c61118950b930c3196effb4acb83e2dd1196a4",
+          "bytes": 2418
+        }
+      },
+      "canonical_source": true
+    },
+    "tessera.kernel_roster": {
+      "file": "/usr/local/lib/python3.12/dist-packages/tessera/kernel_roster.py",
+      "spec_origin": "/usr/local/lib/python3.12/dist-packages/tessera/kernel_roster.py",
+      "origin_checks": {
+        "file": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/kernel_roster.py",
+          "package_relative_path": "kernel_roster.py",
+          "sha256": "473d4b9dce99a48cf963fdb3e6bf552cb714c9be469b6aadaa399fa36bc5f88b",
+          "bytes": 7126
+        },
+        "spec_origin": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/kernel_roster.py",
+          "package_relative_path": "kernel_roster.py",
+          "sha256": "473d4b9dce99a48cf963fdb3e6bf552cb714c9be469b6aadaa399fa36bc5f88b",
+          "bytes": 7126
+        }
+      },
+      "canonical_source": true
+    },
+    "tessera.kernel_window": {
+      "file": "/usr/local/lib/python3.12/dist-packages/tessera/kernel_window.py",
+      "spec_origin": "/usr/local/lib/python3.12/dist-packages/tessera/kernel_window.py",
+      "origin_checks": {
+        "file": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/kernel_window.py",
+          "package_relative_path": "kernel_window.py",
+          "sha256": "349e23d8d9e78bd00cb39b2674bdd3b88d975a2fcb9cfb0c48921d4f63bf416d",
+          "bytes": 50286
+        },
+        "spec_origin": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/kernel_window.py",
+          "package_relative_path": "kernel_window.py",
+          "sha256": "349e23d8d9e78bd00cb39b2674bdd3b88d975a2fcb9cfb0c48921d4f63bf416d",
+          "bytes": 50286
+        }
+      },
+      "canonical_source": true
+    },
+    "tessera.kernel_window_gemv": {
+      "file": "/usr/local/lib/python3.12/dist-packages/tessera/kernel_window_gemv.py",
+      "spec_origin": "/usr/local/lib/python3.12/dist-packages/tessera/kernel_window_gemv.py",
+      "origin_checks": {
+        "file": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/kernel_window_gemv.py",
+          "package_relative_path": "kernel_window_gemv.py",
+          "sha256": "d074ad641ecab0aa717273dba7fe08922cb98b368cda623a6796aa374e8f7233",
+          "bytes": 41489
+        },
+        "spec_origin": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/kernel_window_gemv.py",
+          "package_relative_path": "kernel_window_gemv.py",
+          "sha256": "d074ad641ecab0aa717273dba7fe08922cb98b368cda623a6796aa374e8f7233",
+          "bytes": 41489
+        }
+      },
+      "canonical_source": true
+    },
+    "tessera.kernel_wire": {
+      "file": "/usr/local/lib/python3.12/dist-packages/tessera/kernel_wire.py",
+      "spec_origin": "/usr/local/lib/python3.12/dist-packages/tessera/kernel_wire.py",
+      "origin_checks": {
+        "file": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/kernel_wire.py",
+          "package_relative_path": "kernel_wire.py",
+          "sha256": "6301dc9768818c3bc87041a56bdcaaede6dc0ead9ed3bfb5827f70834c77f47c",
+          "bytes": 2248
+        },
+        "spec_origin": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/kernel_wire.py",
+          "package_relative_path": "kernel_wire.py",
+          "sha256": "6301dc9768818c3bc87041a56bdcaaede6dc0ead9ed3bfb5827f70834c77f47c",
+          "bytes": 2248
+        }
+      },
+      "canonical_source": true
+    },
+    "tessera.lane_planes": {
+      "file": "/usr/local/lib/python3.12/dist-packages/tessera/lane_planes.py",
+      "spec_origin": "/usr/local/lib/python3.12/dist-packages/tessera/lane_planes.py",
+      "origin_checks": {
+        "file": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/lane_planes.py",
+          "package_relative_path": "lane_planes.py",
+          "sha256": "af66c06e2d72d9c921446d4bcf1cc04bdec783e035bc8211b7c8136585676e44",
+          "bytes": 31645
+        },
+        "spec_origin": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/lane_planes.py",
+          "package_relative_path": "lane_planes.py",
+          "sha256": "af66c06e2d72d9c921446d4bcf1cc04bdec783e035bc8211b7c8136585676e44",
+          "bytes": 31645
+        }
+      },
+      "canonical_source": true
+    },
+    "tessera.layout": {
+      "file": "/usr/local/lib/python3.12/dist-packages/tessera/layout.py",
+      "spec_origin": "/usr/local/lib/python3.12/dist-packages/tessera/layout.py",
+      "origin_checks": {
+        "file": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/layout.py",
+          "package_relative_path": "layout.py",
+          "sha256": "d1f459d19b97e1b912136011ba9b2e7a6d90440f44ebe220b312684f2fcdffcf",
+          "bytes": 29127
+        },
+        "spec_origin": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/layout.py",
+          "package_relative_path": "layout.py",
+          "sha256": "d1f459d19b97e1b912136011ba9b2e7a6d90440f44ebe220b312684f2fcdffcf",
+          "bytes": 29127
+        }
+      },
+      "canonical_source": true
+    },
+    "tessera.manifest": {
+      "file": "/usr/local/lib/python3.12/dist-packages/tessera/manifest.py",
+      "spec_origin": "/usr/local/lib/python3.12/dist-packages/tessera/manifest.py",
+      "origin_checks": {
+        "file": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/manifest.py",
+          "package_relative_path": "manifest.py",
+          "sha256": "13236f95b124a4e237ad9eada1b460ff6b8f25bdf6cdceaf639f915cb4d85f8f",
+          "bytes": 55506
+        },
+        "spec_origin": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/manifest.py",
+          "package_relative_path": "manifest.py",
+          "sha256": "13236f95b124a4e237ad9eada1b460ff6b8f25bdf6cdceaf639f915cb4d85f8f",
+          "bytes": 55506
+        }
+      },
+      "canonical_source": true
+    },
+    "tessera.moe_execution": {
+      "file": "/usr/local/lib/python3.12/dist-packages/tessera/moe_execution.py",
+      "spec_origin": "/usr/local/lib/python3.12/dist-packages/tessera/moe_execution.py",
+      "origin_checks": {
+        "file": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/moe_execution.py",
+          "package_relative_path": "moe_execution.py",
+          "sha256": "e8e748fefcf6a67edbe1b5994a91cdc930380cbb65b22976e4ff7d4004ac9534",
+          "bytes": 5683
+        },
+        "spec_origin": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/moe_execution.py",
+          "package_relative_path": "moe_execution.py",
+          "sha256": "e8e748fefcf6a67edbe1b5994a91cdc930380cbb65b22976e4ff7d4004ac9534",
+          "bytes": 5683
+        }
+      },
+      "canonical_source": true
+    },
+    "tessera.moe_layout": {
+      "file": "/usr/local/lib/python3.12/dist-packages/tessera/moe_layout.py",
+      "spec_origin": "/usr/local/lib/python3.12/dist-packages/tessera/moe_layout.py",
+      "origin_checks": {
+        "file": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/moe_layout.py",
+          "package_relative_path": "moe_layout.py",
+          "sha256": "b8440de6f29ed6edd2078381d7508f0f8ef10a8fe70e0e9eeee1ddb19c9cc5b3",
+          "bytes": 11941
+        },
+        "spec_origin": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/moe_layout.py",
+          "package_relative_path": "moe_layout.py",
+          "sha256": "b8440de6f29ed6edd2078381d7508f0f8ef10a8fe70e0e9eeee1ddb19c9cc5b3",
+          "bytes": 11941
+        }
+      },
+      "canonical_source": true
+    },
+    "tessera.planes": {
+      "file": "/usr/local/lib/python3.12/dist-packages/tessera/planes.py",
+      "spec_origin": "/usr/local/lib/python3.12/dist-packages/tessera/planes.py",
+      "origin_checks": {
+        "file": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/planes.py",
+          "package_relative_path": "planes.py",
+          "sha256": "f5fd5b8385664b7fad9fd4541101b1f31570ad8385aad30f8e9cb6647f00f9fa",
+          "bytes": 20291
+        },
+        "spec_origin": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/planes.py",
+          "package_relative_path": "planes.py",
+          "sha256": "f5fd5b8385664b7fad9fd4541101b1f31570ad8385aad30f8e9cb6647f00f9fa",
+          "bytes": 20291
+        }
+      },
+      "canonical_source": true
+    },
+    "tessera.scale_channel": {
+      "file": "/usr/local/lib/python3.12/dist-packages/tessera/scale_channel.py",
+      "spec_origin": "/usr/local/lib/python3.12/dist-packages/tessera/scale_channel.py",
+      "origin_checks": {
+        "file": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/scale_channel.py",
+          "package_relative_path": "scale_channel.py",
+          "sha256": "f391a7313f0fd91c660eadccca606988d90b462c71f02a2201966f1a394a714a",
+          "bytes": 22516
+        },
+        "spec_origin": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/scale_channel.py",
+          "package_relative_path": "scale_channel.py",
+          "sha256": "f391a7313f0fd91c660eadccca606988d90b462c71f02a2201966f1a394a714a",
+          "bytes": 22516
+        }
+      },
+      "canonical_source": true
+    },
+    "tessera.serving": {
+      "file": "/usr/local/lib/python3.12/dist-packages/tessera/serving/__init__.py",
+      "spec_origin": "/usr/local/lib/python3.12/dist-packages/tessera/serving/__init__.py",
+      "origin_checks": {
+        "file": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/serving/__init__.py",
+          "package_relative_path": "serving/__init__.py",
+          "sha256": "c705ebdb72a86636c010b1625651fa12e2d6a26f67d40c0ed35b686fa6b70150",
+          "bytes": 3110
+        },
+        "spec_origin": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/serving/__init__.py",
+          "package_relative_path": "serving/__init__.py",
+          "sha256": "c705ebdb72a86636c010b1625651fa12e2d6a26f67d40c0ed35b686fa6b70150",
+          "bytes": 3110
+        }
+      },
+      "canonical_source": true
+    },
+    "tessera.serving.compile_identity": {
+      "file": "/usr/local/lib/python3.12/dist-packages/tessera/serving/compile_identity.py",
+      "spec_origin": "/usr/local/lib/python3.12/dist-packages/tessera/serving/compile_identity.py",
+      "origin_checks": {
+        "file": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/serving/compile_identity.py",
+          "package_relative_path": "serving/compile_identity.py",
+          "sha256": "7a1e3b3337b288ec987caef0cab31435c984fb7e47745893326115387d011cac",
+          "bytes": 11472
+        },
+        "spec_origin": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/serving/compile_identity.py",
+          "package_relative_path": "serving/compile_identity.py",
+          "sha256": "7a1e3b3337b288ec987caef0cab31435c984fb7e47745893326115387d011cac",
+          "bytes": 11472
+        }
+      },
+      "canonical_source": true
+    },
+    "tessera.serving.config": {
+      "file": "/usr/local/lib/python3.12/dist-packages/tessera/serving/config.py",
+      "spec_origin": "/usr/local/lib/python3.12/dist-packages/tessera/serving/config.py",
+      "origin_checks": {
+        "file": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/serving/config.py",
+          "package_relative_path": "serving/config.py",
+          "sha256": "ffda67baa2d486f4aa5703192a0d4905efac5e3b9cb1b7f44ca793f83ff80d20",
+          "bytes": 23563
+        },
+        "spec_origin": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/serving/config.py",
+          "package_relative_path": "serving/config.py",
+          "sha256": "ffda67baa2d486f4aa5703192a0d4905efac5e3b9cb1b7f44ca793f83ff80d20",
+          "bytes": 23563
+        }
+      },
+      "canonical_source": true
+    },
+    "tessera.serving.contract": {
+      "file": "/usr/local/lib/python3.12/dist-packages/tessera/serving/contract.py",
+      "spec_origin": "/usr/local/lib/python3.12/dist-packages/tessera/serving/contract.py",
+      "origin_checks": {
+        "file": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/serving/contract.py",
+          "package_relative_path": "serving/contract.py",
+          "sha256": "d6b99c074e8294d5690aefdd759f6d8887ddb02d3cdbe667e97c9bd0e9b31c78",
+          "bytes": 132473
+        },
+        "spec_origin": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/serving/contract.py",
+          "package_relative_path": "serving/contract.py",
+          "sha256": "d6b99c074e8294d5690aefdd759f6d8887ddb02d3cdbe667e97c9bd0e9b31c78",
+          "bytes": 132473
+        }
+      },
+      "canonical_source": true
+    },
+    "tessera.serving.ext": {
+      "file": "/usr/local/lib/python3.12/dist-packages/tessera/serving/ext.py",
+      "spec_origin": "/usr/local/lib/python3.12/dist-packages/tessera/serving/ext.py",
+      "origin_checks": {
+        "file": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/serving/ext.py",
+          "package_relative_path": "serving/ext.py",
+          "sha256": "78ab5256453ded6f5ea8507fc414366afff8f36d4e5aff0aaa8ce1d6bf9948ca",
+          "bytes": 40349
+        },
+        "spec_origin": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/serving/ext.py",
+          "package_relative_path": "serving/ext.py",
+          "sha256": "78ab5256453ded6f5ea8507fc414366afff8f36d4e5aff0aaa8ce1d6bf9948ca",
+          "bytes": 40349
+        }
+      },
+      "canonical_source": true
+    },
+    "tessera.serving.flags": {
+      "file": "/usr/local/lib/python3.12/dist-packages/tessera/serving/flags.py",
+      "spec_origin": "/usr/local/lib/python3.12/dist-packages/tessera/serving/flags.py",
+      "origin_checks": {
+        "file": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/serving/flags.py",
+          "package_relative_path": "serving/flags.py",
+          "sha256": "01acf622336a5d503b0edce509b4759ea64aa2943b50d7196755672aa9505ced",
+          "bytes": 4124
+        },
+        "spec_origin": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/serving/flags.py",
+          "package_relative_path": "serving/flags.py",
+          "sha256": "01acf622336a5d503b0edce509b4759ea64aa2943b50d7196755672aa9505ced",
+          "bytes": 4124
+        }
+      },
+      "canonical_source": true
+    },
+    "tessera.serving.fp8_gemv": {
+      "file": "/usr/local/lib/python3.12/dist-packages/tessera/serving/fp8_gemv.py",
+      "spec_origin": "/usr/local/lib/python3.12/dist-packages/tessera/serving/fp8_gemv.py",
+      "origin_checks": {
+        "file": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/serving/fp8_gemv.py",
+          "package_relative_path": "serving/fp8_gemv.py",
+          "sha256": "9bc21f63bc5fb5e3a538494434f4bbf995df0aa98e8f73cef9b4266caa4fb40c",
+          "bytes": 22078
+        },
+        "spec_origin": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/serving/fp8_gemv.py",
+          "package_relative_path": "serving/fp8_gemv.py",
+          "sha256": "9bc21f63bc5fb5e3a538494434f4bbf995df0aa98e8f73cef9b4266caa4fb40c",
+          "bytes": 22078
+        }
+      },
+      "canonical_source": true
+    },
+    "tessera.serving.fp8_route": {
+      "file": "/usr/local/lib/python3.12/dist-packages/tessera/serving/fp8_route.py",
+      "spec_origin": "/usr/local/lib/python3.12/dist-packages/tessera/serving/fp8_route.py",
+      "origin_checks": {
+        "file": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/serving/fp8_route.py",
+          "package_relative_path": "serving/fp8_route.py",
+          "sha256": "7a4d6e0f3e22d5920cf6e91ca1479324a9d05af23484f952c41422e0c1fca5ae",
+          "bytes": 25454
+        },
+        "spec_origin": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/serving/fp8_route.py",
+          "package_relative_path": "serving/fp8_route.py",
+          "sha256": "7a4d6e0f3e22d5920cf6e91ca1479324a9d05af23484f952c41422e0c1fca5ae",
+          "bytes": 25454
+        }
+      },
+      "canonical_source": true
+    },
+    "tessera.serving.lane": {
+      "file": "/usr/local/lib/python3.12/dist-packages/tessera/serving/lane.py",
+      "spec_origin": "/usr/local/lib/python3.12/dist-packages/tessera/serving/lane.py",
+      "origin_checks": {
+        "file": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/serving/lane.py",
+          "package_relative_path": "serving/lane.py",
+          "sha256": "332b407446f3ea53fbe593ca7a0dc01a379e1571ad3687de8115d73601717dd4",
+          "bytes": 4312
+        },
+        "spec_origin": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/serving/lane.py",
+          "package_relative_path": "serving/lane.py",
+          "sha256": "332b407446f3ea53fbe593ca7a0dc01a379e1571ad3687de8115d73601717dd4",
+          "bytes": 4312
+        }
+      },
+      "canonical_source": true
+    },
+    "tessera.serving.moe_route": {
+      "file": "/usr/local/lib/python3.12/dist-packages/tessera/serving/moe_route.py",
+      "spec_origin": "/usr/local/lib/python3.12/dist-packages/tessera/serving/moe_route.py",
+      "origin_checks": {
+        "file": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/serving/moe_route.py",
+          "package_relative_path": "serving/moe_route.py",
+          "sha256": "ad5cb83ae5b967203f778073ecd1e9dfef3ec25b1f9a539d8263fb8de7f66e42",
+          "bytes": 41090
+        },
+        "spec_origin": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/serving/moe_route.py",
+          "package_relative_path": "serving/moe_route.py",
+          "sha256": "ad5cb83ae5b967203f778073ecd1e9dfef3ec25b1f9a539d8263fb8de7f66e42",
+          "bytes": 41090
+        }
+      },
+      "canonical_source": true
+    },
+    "tessera.serving.runtime_image": {
+      "file": "/usr/local/lib/python3.12/dist-packages/tessera/serving/runtime_image.py",
+      "spec_origin": "/usr/local/lib/python3.12/dist-packages/tessera/serving/runtime_image.py",
+      "origin_checks": {
+        "file": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/serving/runtime_image.py",
+          "package_relative_path": "serving/runtime_image.py",
+          "sha256": "c5b28196cd248f8821edcd334e89c5831a53be01739419ec708e3107a54d7777",
+          "bytes": 22528
+        },
+        "spec_origin": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/serving/runtime_image.py",
+          "package_relative_path": "serving/runtime_image.py",
+          "sha256": "c5b28196cd248f8821edcd334e89c5831a53be01739419ec708e3107a54d7777",
+          "bytes": 22528
+        }
+      },
+      "canonical_source": true
+    },
+    "tessera.serving.scheme": {
+      "file": "/usr/local/lib/python3.12/dist-packages/tessera/serving/scheme.py",
+      "spec_origin": "/usr/local/lib/python3.12/dist-packages/tessera/serving/scheme.py",
+      "origin_checks": {
+        "file": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/serving/scheme.py",
+          "package_relative_path": "serving/scheme.py",
+          "sha256": "f9915edcc47a46d130bd1ea10b8ced850237c36f757cd313289ec5ff6854f41d",
+          "bytes": 83430
+        },
+        "spec_origin": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/serving/scheme.py",
+          "package_relative_path": "serving/scheme.py",
+          "sha256": "f9915edcc47a46d130bd1ea10b8ced850237c36f757cd313289ec5ff6854f41d",
+          "bytes": 83430
+        }
+      },
+      "canonical_source": true
+    },
+    "tessera.serving.sharding": {
+      "file": "/usr/local/lib/python3.12/dist-packages/tessera/serving/sharding.py",
+      "spec_origin": "/usr/local/lib/python3.12/dist-packages/tessera/serving/sharding.py",
+      "origin_checks": {
+        "file": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/serving/sharding.py",
+          "package_relative_path": "serving/sharding.py",
+          "sha256": "bde254b1b32051b7e3374fb7f88b11deff03aed0c23e4d4e2af6c918ecfa6786",
+          "bytes": 62348
+        },
+        "spec_origin": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/serving/sharding.py",
+          "package_relative_path": "serving/sharding.py",
+          "sha256": "bde254b1b32051b7e3374fb7f88b11deff03aed0c23e4d4e2af6c918ecfa6786",
+          "bytes": 62348
+        }
+      },
+      "canonical_source": true
+    },
+    "tessera.serving.telemetry": {
+      "file": "/usr/local/lib/python3.12/dist-packages/tessera/serving/telemetry.py",
+      "spec_origin": "/usr/local/lib/python3.12/dist-packages/tessera/serving/telemetry.py",
+      "origin_checks": {
+        "file": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/serving/telemetry.py",
+          "package_relative_path": "serving/telemetry.py",
+          "sha256": "a916ded1bbf856725e489fcbd0a6ff6cf38ec0ed59e346186aad1020a8b972fd",
+          "bytes": 18724
+        },
+        "spec_origin": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/serving/telemetry.py",
+          "package_relative_path": "serving/telemetry.py",
+          "sha256": "a916ded1bbf856725e489fcbd0a6ff6cf38ec0ed59e346186aad1020a8b972fd",
+          "bytes": 18724
+        }
+      },
+      "canonical_source": true
+    },
+    "tessera.serving.window": {
+      "file": "/usr/local/lib/python3.12/dist-packages/tessera/serving/window.py",
+      "spec_origin": "/usr/local/lib/python3.12/dist-packages/tessera/serving/window.py",
+      "origin_checks": {
+        "file": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/serving/window.py",
+          "package_relative_path": "serving/window.py",
+          "sha256": "bf22c55cbdbebc53737630a52c0c6b6cfa2476cc360b9aab7329091f81359214",
+          "bytes": 20070
+        },
+        "spec_origin": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/serving/window.py",
+          "package_relative_path": "serving/window.py",
+          "sha256": "bf22c55cbdbebc53737630a52c0c6b6cfa2476cc360b9aab7329091f81359214",
+          "bytes": 20070
+        }
+      },
+      "canonical_source": true
+    },
+    "tessera.slicing": {
+      "file": "/usr/local/lib/python3.12/dist-packages/tessera/slicing.py",
+      "spec_origin": "/usr/local/lib/python3.12/dist-packages/tessera/slicing.py",
+      "origin_checks": {
+        "file": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/slicing.py",
+          "package_relative_path": "slicing.py",
+          "sha256": "9416f20cef5e9f6f035f5ecd2f52461a8fb93c5e57c9118c4a9d36fafb7395cd",
+          "bytes": 42881
+        },
+        "spec_origin": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/slicing.py",
+          "package_relative_path": "slicing.py",
+          "sha256": "9416f20cef5e9f6f035f5ecd2f52461a8fb93c5e57c9118c4a9d36fafb7395cd",
+          "bytes": 42881
+        }
+      },
+      "canonical_source": true
+    },
+    "tessera.trellis": {
+      "file": "/usr/local/lib/python3.12/dist-packages/tessera/trellis.py",
+      "spec_origin": "/usr/local/lib/python3.12/dist-packages/tessera/trellis.py",
+      "origin_checks": {
+        "file": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/trellis.py",
+          "package_relative_path": "trellis.py",
+          "sha256": "0d23f903b564b26bdaa8656c2ef7647fea6f740038b83f87afa80acf5324fbec",
+          "bytes": 22711
+        },
+        "spec_origin": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/trellis.py",
+          "package_relative_path": "trellis.py",
+          "sha256": "0d23f903b564b26bdaa8656c2ef7647fea6f740038b83f87afa80acf5324fbec",
+          "bytes": 22711
+        }
+      },
+      "canonical_source": true
+    },
+    "tessera.unit_artifact": {
+      "file": "/usr/local/lib/python3.12/dist-packages/tessera/unit_artifact.py",
+      "spec_origin": "/usr/local/lib/python3.12/dist-packages/tessera/unit_artifact.py",
+      "origin_checks": {
+        "file": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/unit_artifact.py",
+          "package_relative_path": "unit_artifact.py",
+          "sha256": "5f1dff5153a96eb3952c5b84057b74b39c888e436a9d6939ad007581431892bd",
+          "bytes": 73912
+        },
+        "spec_origin": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/unit_artifact.py",
+          "package_relative_path": "unit_artifact.py",
+          "sha256": "5f1dff5153a96eb3952c5b84057b74b39c888e436a9d6939ad007581431892bd",
+          "bytes": 73912
+        }
+      },
+      "canonical_source": true
+    },
+    "tessera.wire": {
+      "file": "/usr/local/lib/python3.12/dist-packages/tessera/wire.py",
+      "spec_origin": "/usr/local/lib/python3.12/dist-packages/tessera/wire.py",
+      "origin_checks": {
+        "file": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/wire.py",
+          "package_relative_path": "wire.py",
+          "sha256": "26249833e59648318f30eb94aa4110152c1d59bcf5c31e00c91eacc607ee5e68",
+          "bytes": 22550
+        },
+        "spec_origin": {
+          "canonical_source": true,
+          "resolved_path": "/usr/local/lib/python3.12/dist-packages/tessera/wire.py",
+          "package_relative_path": "wire.py",
+          "sha256": "26249833e59648318f30eb94aa4110152c1d59bcf5c31e00c91eacc607ee5e68",
+          "bytes": 22550
+        }
+      },
+      "canonical_source": true
+    }
+  },
+  "package_source_files": {
+    "__init__.py": {
+      "sha256": "9e681d73db412b0c437af4fc5e247170a068ab05709a88a51da2e5d292104a69",
+      "bytes": 3177
+    },
+    "alphabet.py": {
+      "sha256": "0277721a687c03939989764677a9a4570d1c9970dd718476b361ec96f314dc6a",
+      "bytes": 64540
+    },
+    "bf16_route.py": {
+      "sha256": "169505e1e16759f965db36125de2633e45838ebee15489883a0801e2e7049e60",
+      "bytes": 15876
+    },
+    "cached_unit.py": {
+      "sha256": "846159df0cdda5944ddbddc7894770fd3204bf870c4043b20026276400978f08",
+      "bytes": 14290
+    },
+    "calculator.py": {
+      "sha256": "f381c824b70829ae029ab9028748d53a245b1b5b5a0dcf1fa01b784b9fa4897a",
+      "bytes": 14287
+    },
+    "canonical.py": {
+      "sha256": "fb2776b4be5b2717b6c921ff1fd88e44ec8d80d05a09b5dfb753595e0a5bff3c",
+      "bytes": 9890
+    },
+    "codebook.py": {
+      "sha256": "3752391e4eeb1c2745e864cc296c50d7d80c18e3a26e80ee6077b0db6a442dd3",
+      "bytes": 10875
+    },
+    "compensate.py": {
+      "sha256": "fee7eaa277873accb27fff15d715d61d2434e39a3ee48fed055b365366ddcd87",
+      "bytes": 16067
+    },
+    "container.py": {
+      "sha256": "a4c4ee39bc80aa286d8858b70489efaa7b912006cb6c14d0d1159d7dfabb39bd",
+      "bytes": 15315
+    },
+    "control.py": {
+      "sha256": "2f85b29e58b685db80ce1b48e3f16ad22a1c6baaf3d5202f074652c877faef3b",
+      "bytes": 78118
+    },
+    "decode.py": {
+      "sha256": "5d1a3d697ced8ad5bccbb23b3f82ae58f5dce6b8d4d07dac1b9806717d5a2a54",
+      "bytes": 48625
+    },
+    "diagonals.py": {
+      "sha256": "08732e87d54b2107dfb1e52374a811d78ffcb58485b0edc3c273d92008c71785",
+      "bytes": 18498
+    },
+    "encode.py": {
+      "sha256": "19f81803a10482fc4613586386e7592c0fd0adf0c01d2ba5d0eadd97db8d1f2e",
+      "bytes": 176408
+    },
+    "encoder_identity.py": {
+      "sha256": "8e1bc02b86ba5be960a7a9aff0aa231917670aba201756dfb283f55509249fa6",
+      "bytes": 41734
+    },
+    "errors.py": {
+      "sha256": "765894f6b69c94eea19ac42913275fe423da0fb03dfff08ccd56291206f1fcf0",
+      "bytes": 4323
+    },
+    "exact.py": {
+      "sha256": "ffa9fce2d2f1caa0550f5b9979720a476bb39943e301d1a85d4b5d221198e526",
+      "bytes": 4368
+    },
+    "export.py": {
+      "sha256": "b5a90de7fec30aaa145effb14a1640b9bab64db13e9e9c8cc469ed76fc38abb9",
+      "bytes": 134861
+    },
+    "footprint.py": {
+      "sha256": "df78c2b8258bde12d79e2a0087b735b691ffe10aa61a6a7394aef71c04ab8d0e",
+      "bytes": 6617
+    },
+    "fp8.py": {
+      "sha256": "b961c588744f0301fb2c293460a7e0e3d6c753f2554b5d51ea63d276dd5fa3c5",
+      "bytes": 6647
+    },
+    "fused.py": {
+      "sha256": "c2f62b95b4a2e8e66df21a1379f01f1fe8265a8d124b79d53fe82760f66816d3",
+      "bytes": 15084
+    },
+    "grammar.py": {
+      "sha256": "f2545274c8e03534d040c64fb4fd1a02085de7b5eb106f80e8fb31b05454fac8",
+      "bytes": 32653
+    },
+    "hessian_capture.py": {
+      "sha256": "02681fdf2209c8f739eb0d3007f058dfcf84cecf89be3c140387b32af4210d34",
+      "bytes": 19269
+    },
+    "identity.py": {
+      "sha256": "7e4688bc5327462e647f04ac8353968af031c22b34c595a5bc6be2e6b1f1d6ac",
+      "bytes": 5769
+    },
+    "kernel.py": {
+      "sha256": "96dbaf65be9f3cecf1ac26a0b4506586f62ce034ca2df9356a6b225acc5518f2",
+      "bytes": 72410
+    },
+    "kernel_bits.py": {
+      "sha256": "3d0ceb44ad9ed7b7c46357ba40c61118950b930c3196effb4acb83e2dd1196a4",
+      "bytes": 2418
+    },
+    "kernel_roster.py": {
+      "sha256": "473d4b9dce99a48cf963fdb3e6bf552cb714c9be469b6aadaa399fa36bc5f88b",
+      "bytes": 7126
+    },
+    "kernel_window.py": {
+      "sha256": "349e23d8d9e78bd00cb39b2674bdd3b88d975a2fcb9cfb0c48921d4f63bf416d",
+      "bytes": 50286
+    },
+    "kernel_window_gemv.py": {
+      "sha256": "d074ad641ecab0aa717273dba7fe08922cb98b368cda623a6796aa374e8f7233",
+      "bytes": 41489
+    },
+    "kernel_wire.py": {
+      "sha256": "6301dc9768818c3bc87041a56bdcaaede6dc0ead9ed3bfb5827f70834c77f47c",
+      "bytes": 2248
+    },
+    "lane_planes.py": {
+      "sha256": "af66c06e2d72d9c921446d4bcf1cc04bdec783e035bc8211b7c8136585676e44",
+      "bytes": 31645
+    },
+    "layout.py": {
+      "sha256": "d1f459d19b97e1b912136011ba9b2e7a6d90440f44ebe220b312684f2fcdffcf",
+      "bytes": 29127
+    },
+    "manifest.py": {
+      "sha256": "13236f95b124a4e237ad9eada1b460ff6b8f25bdf6cdceaf639f915cb4d85f8f",
+      "bytes": 55506
+    },
+    "moe_execution.py": {
+      "sha256": "e8e748fefcf6a67edbe1b5994a91cdc930380cbb65b22976e4ff7d4004ac9534",
+      "bytes": 5683
+    },
+    "moe_layout.py": {
+      "sha256": "b8440de6f29ed6edd2078381d7508f0f8ef10a8fe70e0e9eeee1ddb19c9cc5b3",
+      "bytes": 11941
+    },
+    "planes.py": {
+      "sha256": "f5fd5b8385664b7fad9fd4541101b1f31570ad8385aad30f8e9cb6647f00f9fa",
+      "bytes": 20291
+    },
+    "provenance.py": {
+      "sha256": "373581447d6f653644be91c94aa5c2052d4a6e672ae5ae3983ff01d0d5c5e3ac",
+      "bytes": 7256
+    },
+    "scale_channel.py": {
+      "sha256": "f391a7313f0fd91c660eadccca606988d90b462c71f02a2201966f1a394a714a",
+      "bytes": 22516
+    },
+    "scale_codec.py": {
+      "sha256": "592dc7078fb532b21e106ffdf142adf5811b8454c99f11e969b21025cb0e67dc",
+      "bytes": 11470
+    },
+    "serving/__init__.py": {
+      "sha256": "c705ebdb72a86636c010b1625651fa12e2d6a26f67d40c0ed35b686fa6b70150",
+      "bytes": 3110
+    },
+    "serving/bf16_route.py": {
+      "sha256": "b7d29ee166072e62643f39bf4859ac9440631a7d49cf1ca4d613f1226bf1b0cf",
+      "bytes": 44221
+    },
+    "serving/build_identity.py": {
+      "sha256": "16bc38e8c3f3d6c15d7b21466974a11f5dd8d1579d5ef3572d4a714583632746",
+      "bytes": 38353
+    },
+    "serving/census.py": {
+      "sha256": "5d728a09e4ffa0f433b5e5a727bdc7b38a2fa5f65bbe1745784c190724fa09b5",
+      "bytes": 17770
+    },
+    "serving/compile_identity.py": {
+      "sha256": "7a1e3b3337b288ec987caef0cab31435c984fb7e47745893326115387d011cac",
+      "bytes": 11472
+    },
+    "serving/config.py": {
+      "sha256": "ffda67baa2d486f4aa5703192a0d4905efac5e3b9cb1b7f44ca793f83ff80d20",
+      "bytes": 23563
+    },
+    "serving/contract.py": {
+      "sha256": "d6b99c074e8294d5690aefdd759f6d8887ddb02d3cdbe667e97c9bd0e9b31c78",
+      "bytes": 132473
+    },
+    "serving/csrc/tessera_nvfp4.cu": {
+      "sha256": "28202c81a9a7d7523630b2dc09b716d02e99eb496ace1fbea4fbb0718bf4a430",
+      "bytes": 17401
+    },
+    "serving/csrc/window_gemv.cu": {
+      "sha256": "8fba5ed9090fcb6967eb6734707b1165cf5f3f2d9154c5cb3105e3def790dfc2",
+      "bytes": 31275
+    },
+    "serving/dense_ownership.py": {
+      "sha256": "dd3cc5ec26962d93dbca7df71079b0f0f220e1d7da29edf5209140ae1a633f75",
+      "bytes": 6737
+    },
+    "serving/ext.py": {
+      "sha256": "78ab5256453ded6f5ea8507fc414366afff8f36d4e5aff0aaa8ce1d6bf9948ca",
+      "bytes": 40349
+    },
+    "serving/flags.py": {
+      "sha256": "01acf622336a5d503b0edce509b4759ea64aa2943b50d7196755672aa9505ced",
+      "bytes": 4124
+    },
+    "serving/fp8_gemv.py": {
+      "sha256": "9bc21f63bc5fb5e3a538494434f4bbf995df0aa98e8f73cef9b4266caa4fb40c",
+      "bytes": 22078
+    },
+    "serving/fp8_route.py": {
+      "sha256": "7a4d6e0f3e22d5920cf6e91ca1479324a9d05af23484f952c41422e0c1fca5ae",
+      "bytes": 25454
+    },
+    "serving/lane.py": {
+      "sha256": "332b407446f3ea53fbe593ca7a0dc01a379e1571ad3687de8115d73601717dd4",
+      "bytes": 4312
+    },
+    "serving/moe_route.py": {
+      "sha256": "ad5cb83ae5b967203f778073ecd1e9dfef3ec25b1f9a539d8263fb8de7f66e42",
+      "bytes": 41090
+    },
+    "serving/native_ops.py": {
+      "sha256": "b14fbc86fd57c5db3f78893a467b23ff50a1ac724497a4a5bc7ed723338fb3d7",
+      "bytes": 4754
+    },
+    "serving/nvfp4_route.py": {
+      "sha256": "f9598dac61a0c32405f729e1363592fb8b37ff636754ae8d9778e116be6a63ef",
+      "bytes": 14095
+    },
+    "serving/ops.py": {
+      "sha256": "638781c1dd4e328796091c0b26afd97bdb6d3ac87c5855fdac51dcc310bdd459",
+      "bytes": 24791
+    },
+    "serving/runtime_image.py": {
+      "sha256": "c5b28196cd248f8821edcd334e89c5831a53be01739419ec708e3107a54d7777",
+      "bytes": 22528
+    },
+    "serving/scheme.py": {
+      "sha256": "f9915edcc47a46d130bd1ea10b8ced850237c36f757cd313289ec5ff6854f41d",
+      "bytes": 83430
+    },
+    "serving/sharding.py": {
+      "sha256": "bde254b1b32051b7e3374fb7f88b11deff03aed0c23e4d4e2af6c918ecfa6786",
+      "bytes": 62348
+    },
+    "serving/telemetry.py": {
+      "sha256": "a916ded1bbf856725e489fcbd0a6ff6cf38ec0ed59e346186aad1020a8b972fd",
+      "bytes": 18724
+    },
+    "serving/weights_mapper.py": {
+      "sha256": "d73240a24aabdc47b45c7744fcd867ec4b95625e14303d85330dfee2fb3189c0",
+      "bytes": 640
+    },
+    "serving/window.py": {
+      "sha256": "bf22c55cbdbebc53737630a52c0c6b6cfa2476cc360b9aab7329091f81359214",
+      "bytes": 20070
+    },
+    "serving_parts.py": {
+      "sha256": "7e7e9c90d928459efdf1fdc44e5e3798251a4899a70b2b8fa05181e6ab81e5ac",
+      "bytes": 31136
+    },
+    "slicing.py": {
+      "sha256": "9416f20cef5e9f6f035f5ecd2f52461a8fb93c5e57c9118c4a9d36fafb7395cd",
+      "bytes": 42881
+    },
+    "stock.py": {
+      "sha256": "664aceb4daa258e050fb78df411f65350aeb1a15c177bf5943545fd7eed68832",
+      "bytes": 23662
+    },
+    "trellis.py": {
+      "sha256": "0d23f903b564b26bdaa8656c2ef7647fea6f740038b83f87afa80acf5324fbec",
+      "bytes": 22711
+    },
+    "unit_artifact.py": {
+      "sha256": "5f1dff5153a96eb3952c5b84057b74b39c888e436a9d6939ad007581431892bd",
+      "bytes": 73912
+    },
+    "window_viterbi.py": {
+      "sha256": "ef3ca87d9b17b7f2a71a0f337b0ce37c8b318d4179e8b9368b5debe6706f12bb",
+      "bytes": 38414
+    },
+    "wire.py": {
+      "sha256": "26249833e59648318f30eb94aa4110152c1d59bcf5c31e00c91eacc607ee5e68",
+      "bytes": 22550
+    }
+  },
+  "loaded_module_origins_verified": true,
+  "native_or_foreign_module_origin_exceptions": [],
+  "fresh_encoder_source_sha256": "7d1e3b011eaba8d3a779656e4e3cfda9d9c3db41b7cf7d35aedb3d8b094f99df",
+  "independently_recomputed_source_sha256": "7d1e3b011eaba8d3a779656e4e3cfda9d9c3db41b7cf7d35aedb3d8b094f99df"
+}

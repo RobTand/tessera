@@ -1,0 +1,15 @@
+{
+  "source_commit": "07ad344c3275bb2fa7ce2432f93d89945d66f4c2",
+  "source_archive": {
+    "bytes": 18411520,
+    "path": "/mnt/shared/tessera-measurements/glm-packed-checkpoint-control-20260908/source-runtime-07ad344c.tar",
+    "sha256": "956bbafeab40fca1144672c3af35900daaeac693d777b0c3f243de73354d4c75"
+  },
+  "core_manifest": {
+    "path": "/mnt/shared/tessera-clean-runtime-20260907/official-primary/runtime-inventory.json",
+    "sha256": "d4aa04edf388da29679585f4688a2b62d879bcc65349866ba37ed96b7b1e467e",
+    "bytes": 923329
+  },
+  "stock_core_files": 4967,
+  "stock_core_unchanged": true
+}

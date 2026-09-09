@@ -1574,12 +1574,15 @@ def main():
                 for name, record in stack_plan.items()}, "resident")
         except ValueError as exc:
             raise SystemExit(str(exc)) from exc
-    if activation is not None and packed_plans:
+    # Complete cached intake verifies each logical source slice and its exact H
+    # against the original wire receipt below; it never calls the encoder.
+    # Keep the packed-H encode path closed, including expert-only cache mode.
+    if activation is not None and packed_plans and args.cached_units is None:
         raise SystemExit(
-            f"--hessian was given with packed expert stack(s) {packed_plans}. Activation "
-            "captures are keyed by logical per-expert modules, while this checkpoint carries "
-            "two physical stack tensors; their Hessian ownership and slicing have not been "
-            "attested. Refusing rather than silently encoding those experts weights-only.")
+            f"--hessian was given with packed expert stack(s) {packed_plans}. Only complete "
+            "--cached-units intake accepts logical per-expert Hessians with authenticated "
+            "source slices and original-wire receipts. Packed-H encoding is not attested; "
+            "refusing rather than silently encoding those experts weights-only.")
     if stack_plan and args.stock_twin is not None:
         raise SystemExit(
             f"--stock-twin was given and {len(stack_plan)} routed-MoE stack(s) are planned. The "
