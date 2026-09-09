@@ -40,9 +40,13 @@ more blocks over an unchanged serial chain.
 
 `best@w32` is the attribution control: the candidate held to the front form's
 **internal** width by narrowing `_L2_BUDGET` for that arm alone, which the
-plan-cache key already binds. So the store and the front alone are worth
-**1.48x at R = 3 and nothing at R = 4** (0.99x), and the width carries the
-rest -- 1.77x and 1.73x respectively.
+plan-cache key already binds. Holding the width fixed leaves everything else
+the candidate changes, which is not the store alone: it is the rewritten
+recurrence together with materialising the front once at the end instead of
+every step. Those two combined are worth **1.48x at R = 3 and nothing at
+R = 4** (0.99x), and the width carries the rest -- 1.77x and 1.73x
+respectively. The control separates width from the rest; it does not separate
+the rest into its parts, and this doc does not claim a number for the store.
 
 A first version of that control held the width by passing `chunk=32` instead.
 That was wrong and its own record said so: `chunk` is the OUTER loop, so it
@@ -97,7 +101,16 @@ The 54 modules that reach the trellis through the encoder, six shards on
 sparklina, 1453 passed, 5 skipped, 1 xfailed, nothing failed:
 `49e5e1610a6b`, `d0093945785e`, `bd404e128a59`, `883df5d02b81`,
 `8f21727b8f85`, `60ef250585fc`. Those six commands set no
-`TESSERA_WINDOW_BEST_FORM`, so they ran the default, which is `0`.
+`TESSERA_WINDOW_BEST_FORM`, so they ran the default, which is `0`. They also
+ran a tree that precedes the empty-input guard below, differing from this head
+by that guard and by prose; the guard is inert on positive input, which is the
+only kind those 54 modules feed it, so they were not re-run. Root's own audit
+of the same question is `root-post-empty-fix-tests-cas-source-audit.json`, and
+it re-ran the six native modules on the post-guard tree: 209 passed, 156 of
+them allocating CUDA, no skips, with the CPU reference module at 68 passed and
+no CUDA. The five skips in the broad run are real and named: one because E2M1
+publishes no reader range, two because a shape cannot be cut four ways, two
+because it cannot be cut eight.
 
 The empty-problem defect root found while reading call coverage, demonstrated
 in an action of its own because before the fix it takes the CUDA context down:
