@@ -402,6 +402,20 @@ def _build():
         base = ci[:, None] * low                                 # [BC, 1]
         xoff = step * (ARITY * cols) + goff + ci
 
+        # The target and its weight do not depend on ``f``.  ``_step`` reads
+        # them once, because its branch cost is built after its scan; the scan
+        # here IS the branch cost, so left inside the loop the same ``[BC]``
+        # run would be re-read ``FAN`` times and the two arms would differ in
+        # loads as well as in algebra.  Triton's frontend takes neither a list
+        # nor ``append``, so the hoist is written as plain locals and covers
+        # coordinate 0 -- which is every coordinate at ARITY 1, the production
+        # arity and the arity the A/B runs.  At ARITY > 1 the trailing
+        # coordinates are still read inside the loop; both spellings stay
+        # exact, and an ARITY > 1 timing would carry that asymmetry.
+        x0 = tl.load(xptr + xoff, mask=mask_c, other=0.0)[:, None]
+        if HAS_W:
+            w0 = tl.load(wptr + xoff, mask=mask_c, other=0.0)[:, None]
+
         # ``inf`` and a strict ``<`` from f = 0 is exactly the reference's
         # "seed with f = 0, then improve strictly": a finite first candidate
         # beats ``inf`` and lands at predecessor 0, an all-``inf`` class never
@@ -414,14 +428,14 @@ def _build():
                 state = f * low + li                             # [BL]
                 prev = tl.load(best_in + base + (state >> RATE)[None, :],
                                mask=m2, other=float("inf"))
-                d = tl.load(xptr + xoff, mask=mask_c, other=0.0)[:, None] \
-                    - tl.load(table + state * ARITY, mask=mask_l, other=0.0)[None, :]
+                d = x0 - tl.load(table + state * ARITY, mask=mask_l,
+                                 other=0.0)[None, :]
                 cost = _mul(d, d)
                 if HAS_W:
-                    cost = _mul(cost, tl.load(wptr + xoff, mask=mask_c,
-                                              other=0.0)[:, None])
+                    cost = _mul(cost, w0)
                 for k in tl.static_range(1, ARITY):
-                    d = tl.load(xptr + xoff + k * cols, mask=mask_c, other=0.0)[:, None] \
+                    d = tl.load(xptr + xoff + k * cols, mask=mask_c,
+                                other=0.0)[:, None] \
                         - tl.load(table + state * ARITY + k, mask=mask_l,
                                   other=0.0)[None, :]
                     e = _mul(d, d)
@@ -438,14 +452,14 @@ def _build():
                 state = f * low + li
                 prev = tl.load(best_in + base + (state >> RATE)[None, :],
                                mask=m2, other=float("inf"))
-                d = tl.load(xptr + xoff, mask=mask_c, other=0.0)[:, None] \
-                    - tl.load(table + state * ARITY, mask=mask_l, other=0.0)[None, :]
+                d = x0 - tl.load(table + state * ARITY, mask=mask_l,
+                                 other=0.0)[None, :]
                 cost = _mul(d, d)
                 if HAS_W:
-                    cost = _mul(cost, tl.load(wptr + xoff, mask=mask_c,
-                                              other=0.0)[:, None])
+                    cost = _mul(cost, w0)
                 for k in tl.static_range(1, ARITY):
-                    d = tl.load(xptr + xoff + k * cols, mask=mask_c, other=0.0)[:, None] \
+                    d = tl.load(xptr + xoff + k * cols, mask=mask_c,
+                                other=0.0)[:, None] \
                         - tl.load(table + state * ARITY + k, mask=mask_l,
                                   other=0.0)[None, :]
                     e = _mul(d, d)
