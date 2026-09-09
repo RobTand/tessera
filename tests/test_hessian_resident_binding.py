@@ -218,6 +218,12 @@ def test_close_releases_the_owners_hold_on_the_population(resident):
     assert owner['a'] is not None
 
     owner.close()
+    # Dropping the population at close changes which branch a later lookup
+    # would take, so pin that no lookup reaches one: ``require_current`` runs
+    # before the resident dispatch, so a closed owner refuses rather than
+    # falling through to the disk path it no longer has an open file for.
+    with pytest.raises(GrammarError):
+        owner['a']
     caller.clear()
     gc.collect()
     assert watch() is None
