@@ -98,19 +98,20 @@ Correctness, PrismaBuild GPU on gb10, no skips:
 | `test_window_viterbi_two_step.py` | 68 | `f7bebb11c5f1` |
 
 The 54 modules that reach the trellis through the encoder, six shards on
-sparklina, 1453 passed, 5 skipped, 1 xfailed, nothing failed:
-`49e5e1610a6b`, `d0093945785e`, `bd404e128a59`, `883df5d02b81`,
-`8f21727b8f85`, `60ef250585fc`. Those six commands set no
-`TESSERA_WINDOW_BEST_FORM`, so they ran the default, which is `0`. They also
-ran a tree that precedes the empty-input guard below, differing from this head
-by that guard and by prose; the guard is inert on positive input, which is the
-only kind those 54 modules feed it, so they were not re-run. Root's own audit
-of the same question is `root-post-empty-fix-tests-cas-source-audit.json`, and
-it re-ran the six native modules on the post-guard tree: 209 passed, 156 of
-them allocating CUDA, no skips, with the CPU reference module at 68 passed and
-no CUDA. The five skips in the broad run are real and named: one because E2M1
-publishes no reader range, two because a shape cannot be cut four ways, two
-because it cannot be cut eight.
+sparklina, 1453 passed, 5 skipped, 1 xfailed, nothing failed: `49e5e1610a6b`,
+`d0093945785e`, `bd404e128a59`, `883df5d02b81`, `8f21727b8f85`,
+`60ef250585fc`. Those six commands set no `TESSERA_WINDOW_BEST_FORM`, so they
+ran the default, which is `0`. They also ran a tree that precedes the
+empty-input guard below, differing from this head by that guard and by prose;
+the guard is inert on positive input, which is the only kind those 54 modules
+feed it, so they were not re-run. Root audited that question rather than
+taking the claim, reading the CAS source behind all 13 receipts above
+(`root-post-empty-fix-tests-cas-source-audit.json`): the six native modules on
+the post-guard tree come to 209 passed with 156 of them allocating CUDA and no
+skips, and the CPU reference module to 68 passed with no CUDA. Those are the
+runs already in the table, verified, not run again. The five skips in the
+broad run are real and named: one because E2M1 publishes no reader range, two
+because a shape cannot be cut four ways, two because it cannot be cut eight.
 
 The empty-problem defect root found while reading call coverage, demonstrated
 in an action of its own because before the fix it takes the CUDA context down:
@@ -150,10 +151,11 @@ Root has since run the candidate on the real GLM expert shape, in its own
 pricing producer, and that run is the qualification the last section of this
 doc named as owed. Recording it here because it settles that question, and
 recording it as root's measurement rather than this branch's: 16 real layer 4
-`down` experts, 4096x2048, artifact rung `R832`, fixed batch `B8`, against the
-original 864 sequence capture, ABBA. The rung is not the recurrence rate; the
-actual recurrence over that rung mixes `R3` and `R4`, so nothing here is an
-`R = 8` measurement and the two must not be read as one number.
+`down` experts, 4096x2048, artifact rung `R832`, fixed batch `B8`, against 864
+prefetched entries from the original capture, ABBA. The rung is not the
+recurrence rate; the actual recurrence over that rung mixes `R3` and `R4`, so
+nothing here is an `R = 8` measurement and the two must not be read as one
+number.
 
 | arm | s/call | J | W | vs front |
 |---|---:|---:|---:|---:|
@@ -200,6 +202,8 @@ BF16/E2M1 use other `L` and arity; nothing here speaks for them. At arity above
 1 the candidate still reads its trailing coordinates inside the `f` loop, so an
 arity 2 timing would carry a load asymmetry these arity 1 numbers do not. The
 GLM expert shape above closes the qualification this section used to name as
-next; what it leaves open is the paired kernel attribution root is
-re-capturing. The default stays off until a real encode arm and a review say
-otherwise.
+next, on both halves: root's re-captured complete-call profiles supply the
+paired kernel attribution the first four traces could not. What is still owed
+is breadth, not a real encode -- the upper `R1088` endpoint, which root is
+staging, and the dense shapes. The default stays off until those and a review
+say otherwise.
