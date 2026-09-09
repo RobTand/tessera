@@ -189,3 +189,38 @@ def test_the_best_form_holds_on_a_batch_the_chunk_does_not_divide(monkeypatch,
                                window_bits, rate, weights, chunk, True)
     assert torch.equal(got_states, want_states)
     assert got_sse.hex() == want_sse.hex()
+
+
+@pytest.mark.parametrize("rows,cols", [(0, 8), (0, 513), (64, 0), (0, 0)])
+@pytest.mark.parametrize("best_form", [False, True])
+@pytest.mark.parametrize("graph", [False, True])
+def test_an_empty_problem_answers_like_the_reference_without_launching(
+    monkeypatch, rows, cols, best_form, graph
+):
+    """Zero rows with positive columns is legal input, and it faulted.
+
+    ``encode.viterbi_window`` accepts it -- ``rows % arity`` is 0 and the
+    reference's loops are simply empty -- so it reached the fused machine,
+    where ``_init_best`` stored back step 0 into a back of shape
+    ``[nmax, 0, LOW]`` and ``_final_best`` would have read step -1.  That is
+    an illegal access, not a wrong number: it takes the CUDA context down
+    for the process.  The front form survived the same input by luck.
+
+    ``cols == 0`` is here for the same reason from the other side: the batch
+    descriptor list is empty, so a forced-graph call had nothing to replay.
+    """
+    targets = torch.zeros(rows, cols).cuda()
+    vectors = torch.randn(1 << 12, 1, generator=torch.Generator()
+                          .manual_seed(0)).cuda()
+    weights = torch.ones(rows, cols).cuda()
+
+    ref_states, ref_sse = viterbi_window(targets, vectors, 12, 3,
+                                         weights=weights, impl="reference")
+    states, sse = _run(monkeypatch, best_form, targets, vectors, 12, 3,
+                       weights, 512, graph)
+
+    assert states.shape == ref_states.shape == (rows, cols)
+    assert states.dtype == ref_states.dtype
+    assert states.device == ref_states.device
+    assert sse == ref_sse == 0.0
+    assert torch.equal(states, ref_states)

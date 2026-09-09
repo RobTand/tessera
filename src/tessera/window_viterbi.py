@@ -1035,6 +1035,20 @@ def viterbi_window_fused(targets, vectors, window_bits: int, rate: int,
     steps = rows // arity
     low = size >> rate
 
+    if steps == 0 or cols == 0:
+        # An empty problem, and the reference answers it without a trellis:
+        # both its loops are over an empty range, so it returns an empty
+        # states and an sse of exactly 0.0.  Return the same and launch
+        # nothing.  The front form survived reaching the machine here by
+        # luck -- its init writes a front the step loop then skips -- but
+        # ``_init_best`` stores back step 0 into a back of shape
+        # ``[nmax, 0, LOW]``, and ``_final_best`` would read step -1, which
+        # is an illegal access and not a wrong number.  Answering above the
+        # plan covers both spellings and both graph modes, and touches no
+        # call that has work to do.
+        return (torch.empty(steps, cols, dtype=torch.long, device=device),
+                0.0)
+
     plan, wants_graph = _plan_for_call(
         device=device, rows=rows, cols=cols, arity=arity, size=size, rate=rate,
         chunk=chunk, has_weights=weights is not None)
