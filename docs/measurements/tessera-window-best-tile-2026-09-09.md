@@ -143,9 +143,13 @@ timed arms say 2.607 and 2.926, and 1.662x and 1.708x at R4 against a timed
 Energy is integrated over each block's own interval and every block here was
 fully bracketed, `covered` 1.0 throughout, with a two second lead in and out.
 Block to block spread within an arm is 0.06 to 0.16% at R4. At R3 it is 0.11%
-on the front and 1.0 to 2.2% on the three tiled arms, whose blocks run a third
-as long; the per call spans of those three do not overlap each other, so the
-seconds ordering at R3 does not depend on which block is read.
+on the front and 1.0 to 2.2% on the three tiled arms, whose calls are a third
+as long, so a block holds around three times as many of them. Blocks are
+budgeted by time, not by count, and every block on this page ran about five
+seconds: root read all forty retained blocks and they span 4.95520 s (R4
+`128x4w8`, first block) to 5.13596 s (R3 incumbent, last block). The per call
+spans of those three arms do not overlap each other, so the seconds ordering at
+R3 does not depend on which block is read.
 
 ## What this does not establish
 
