@@ -39,9 +39,15 @@ it used.
 Two consequences for these two jobs.
 
 The GPU cap here is 32 GiB, three times the measured peak, not the 48 the
-profile declared. 32 units in one batch is the widest encoder batch any run on
-this model has measured, and a narrower declaration is also easier to admit
-while the pricing campaign holds the box.
+profile declared. The headroom is wider than that ratio says, because the
+profile's batch is wider than this export's. `export_tessera_serving.py` reaches
+`export_checkpoint_streaming`, which loops over the names in each shard and
+calls `encode_linear` once per Linear (`src/tessera/export.py:2451`); the
+plural `encode_linears` has no caller under `src/tessera` at all, only
+`experiments/tessera385_bench.py:233`. So the 10.64 GiB is 32 units joined in
+one batch and the job being sized encodes one unit at a time. The cap is priced
+against the wider of the two on purpose, since a per-unit peak on this tree has
+never been recorded and the batch figure bounds it.
 
 `mem_gb` stays 96, and now it is a sum of two measurements rather than a copied
 declaration. GB10 is unified memory, so a CUDA reservation is charged to the
@@ -94,7 +100,13 @@ checkout are the only two the launcher mounts.
 ## What the launcher hands the container
 
 `experiments/checkout_runtime_identity.py` drops to uid 1000 before it execs the
-driver, and the stock vLLM image leaves `HOME=/root`. Every JIT cache this
+driver, and the stock vLLM image leaves `HOME=/root`. The launcher's own
+`mkdir` runs as that same uid, so the directories it creates are writable after
+the drop: every host file the 09-07 launcher wrote under
+`full-model-original-r1024` is owned 1000:1000, `launch.json` and
+`export-command.json` and `export-proof.json` among them. That is the half of
+the HOME fix that is easy to get wrong, because a root-owned cache directory
+denies the same way an unset HOME does. Every JIT cache this
 encode fills expands a home relative default: Triton writes `$TRITON_CACHE_DIR`
 or `$HOME/.triton`, and `src/tessera/kernel_window_gemv.py:196` reads
 `$TORCH_EXTENSIONS_DIR` or `~/tmp/torch-ext-gemv`. Unset, the first kernel
@@ -121,8 +133,8 @@ both 09-07 exports were cached intake.
 
 Every number above was measured, and none of them was measured on this job. The
 69.2 GiB is a cached intake on this model; the 10.64 GiB is a 32-unit encoder
-batch at a different rung on the frozen producer tree; the 2.32 s per unit is
-the anchors run. Their sum is an estimate of a combination nothing has run. The
+batch at a different rung on the frozen producer tree, so it bounds a per-unit
+export loop rather than describing one; the 2.32 s per unit is the anchors run. Their sum is an estimate of a combination nothing has run. The
 smoke exists because that is the one direction sizing cannot cover, which is
 whether the fresh encode runs at all, and its own telemetry replaces both
 borrowed numbers before the full encode is submitted.
