@@ -204,14 +204,15 @@ def test_close_releases_the_owners_hold_on_the_population(resident):
 
     handoff, _, H = resident
     owner = ReferenceHessians(handoff)
-    caller = dict(H)
+    # Clones, so the only strong references are this test's and the owner's --
+    # the fixture keeps its own H alive in its frame and would mask the leak.
+    caller = {name: value.clone() for name, value in H.items()}
     owner.bind_resident(caller)
     watch = weakref.ref(caller['a'])
     assert owner['a'] is not None
 
     owner.close()
     caller.clear()
-    del H
     gc.collect()
     assert watch() is None
     assert owner.receipt()['resident_bound'] is True
