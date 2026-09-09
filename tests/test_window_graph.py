@@ -207,7 +207,7 @@ def test_a_cache_hit_on_a_second_stream_orders_behind_the_first_calls_traceback(
     torch.cuda.synchronize()
 
     real = wv._kernels()
-    step_k, tb_k, init_k, copy_k = real
+    step_k, tb_k, init_k, copy_k = real[:4]
 
     class _HeldTraceback:
         """The first traceback launch waits on the flag; later ones run bare."""
@@ -238,7 +238,7 @@ def test_a_cache_hit_on_a_second_stream_orders_behind_the_first_calls_traceback(
             flag.fill_(1)
 
     keeper = threading.Thread(target=watchdog)
-    wv._CACHE["k"] = (step_k, _HeldTraceback(), init_k, copy_k)
+    wv._CACHE["k"] = (step_k, _HeldTraceback(), init_k, copy_k) + tuple(real[4:])
     keeper.start()
     try:
         with torch.cuda.stream(s1):

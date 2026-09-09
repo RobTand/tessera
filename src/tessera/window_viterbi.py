@@ -339,6 +339,175 @@ def _build():
         tl.store(front_out + base[:, :, None] + state, cost, mask=mc3 & ml3)
 
     @triton.jit
+    def _init_best(best, back, ctl, steps, LOW: tl.constexpr,
+                   BACK_U8: tl.constexpr, BS: tl.constexpr, BC: tl.constexpr):
+        """The pinned start, already reduced to its class minimum.
+
+        Step 0's scan reads the front ``_init`` writes -- 0 at state 0 and
+        ``inf`` everywhere else -- so its answer is closed form: class 0 takes
+        the 0, every other class ties at ``inf``, and ``inf < inf`` is false,
+        so the predecessor is 0 for every class.  That is asserted against the
+        reference's step 0 in the tests, not argued here.
+        """
+        loff = tl.load(ctl + 1)
+        m = tl.load(ctl + 2)
+        ci = tl.program_id(1) * BC + tl.arange(0, BC)
+        si = tl.program_id(0) * BS + tl.arange(0, BS)
+        mask = (ci < m)[:, None] & (si < LOW)[None, :]
+        val = tl.broadcast_to(tl.where(si[None, :] == 0, 0.0, float("inf")), (BC, BS))
+        tl.store(best + ci[:, None] * LOW + si[None, :], val, mask=mask)
+        slot = back + (loff + ci)[:, None].to(tl.int64) * (steps * LOW) + si[None, :]
+        if BACK_U8:
+            tl.store(slot, tl.zeros([BC, BS], dtype=tl.uint8), mask=mask)
+        else:
+            tl.store(slot, tl.zeros([BC, BS], dtype=tl.int32), mask=mask)
+
+    @triton.jit(do_not_specialize=["step", "back_step"])
+    def _step_best(best_in, best_out, back, xptr, wptr, table, ctl,
+                   cols, steps, step, back_step, low,
+                   ARITY: tl.constexpr, FAN: tl.constexpr, RATE: tl.constexpr,
+                   HAS_W: tl.constexpr, BACK_U8: tl.constexpr,
+                   BL: tl.constexpr, BC: tl.constexpr,
+                   SCAN_UNROLL: tl.constexpr):
+        """One trellis step carrying the class minimum, never the front.
+
+        Substituting ``cost_s[f*LOW + c] = best_(s-1)[(f*LOW + c) >> R] +
+        B_(s-1)(f*LOW + c)`` into the class minimum removes the front from the
+        recurrence:
+
+            best_s[c]  = min over f of that sum        (first minimal f)
+            back[s][c] = that argmin
+
+        The scan therefore compares the *same sums* ``_step`` stores and then
+        scans, in the same order, under the same strict ``<``, built from the
+        same ``_mul`` and the same ``(d*d) * w`` association.  The tie rule and
+        the rounding are unchanged; what is gone is a store and a load of
+        ``FAN`` times as many floats.
+
+        Loads are unchanged too: ``FAN`` best loads and ``FAN * ARITY`` table
+        loads, where ``_step`` does ``FAN`` front loads and the same
+        ``FAN * ARITY``.  Stores drop from ``BL * BC * FAN`` to ``BL * BC``,
+        and the ``[BC, BL, FAN]`` intermediate ``_step`` holds for its store is
+        never formed -- so this is *less* register pressure than the step it
+        replaces, not more.
+        """
+        goff = tl.load(ctl + 0)
+        loff = tl.load(ctl + 1)
+        m = tl.load(ctl + 2)
+        li = tl.program_id(0) * BL + tl.arange(0, BL)            # classes c
+        ci = tl.program_id(1) * BC + tl.arange(0, BC)            # columns
+        mask_l = li < low
+        mask_c = ci < m
+        m2 = mask_c[:, None] & mask_l[None, :]
+        base = ci[:, None] * low                                 # [BC, 1]
+        xoff = step * (ARITY * cols) + goff + ci
+
+        # ``inf`` and a strict ``<`` from f = 0 is exactly the reference's
+        # "seed with f = 0, then improve strictly": a finite first candidate
+        # beats ``inf`` and lands at predecessor 0, an all-``inf`` class never
+        # improves and stays at predecessor 0.  Written this way so the loop
+        # body has no ``f == 0`` special case to broadcast against the tile.
+        best = tl.full([BC, BL], float("inf"), tl.float32)
+        pred = tl.zeros([BC, BL], dtype=tl.int32)
+        if SCAN_UNROLL <= 0:
+            for f in tl.static_range(0, FAN):
+                state = f * low + li                             # [BL]
+                prev = tl.load(best_in + base + (state >> RATE)[None, :],
+                               mask=m2, other=float("inf"))
+                d = tl.load(xptr + xoff, mask=mask_c, other=0.0)[:, None] \
+                    - tl.load(table + state * ARITY, mask=mask_l, other=0.0)[None, :]
+                cost = _mul(d, d)
+                if HAS_W:
+                    cost = _mul(cost, tl.load(wptr + xoff, mask=mask_c,
+                                              other=0.0)[:, None])
+                for k in tl.static_range(1, ARITY):
+                    d = tl.load(xptr + xoff + k * cols, mask=mask_c, other=0.0)[:, None] \
+                        - tl.load(table + state * ARITY + k, mask=mask_l,
+                                  other=0.0)[None, :]
+                    e = _mul(d, d)
+                    if HAS_W:
+                        e = _mul(e, tl.load(wptr + xoff + k * cols, mask=mask_c,
+                                            other=0.0)[:, None])
+                    cost = cost + e
+                cand = prev + cost
+                take = cand < best
+                best = tl.where(take, cand, best)
+                pred = tl.where(take, f, pred)
+        else:
+            for f in tl.range(0, FAN, loop_unroll_factor=SCAN_UNROLL):
+                state = f * low + li
+                prev = tl.load(best_in + base + (state >> RATE)[None, :],
+                               mask=m2, other=float("inf"))
+                d = tl.load(xptr + xoff, mask=mask_c, other=0.0)[:, None] \
+                    - tl.load(table + state * ARITY, mask=mask_l, other=0.0)[None, :]
+                cost = _mul(d, d)
+                if HAS_W:
+                    cost = _mul(cost, tl.load(wptr + xoff, mask=mask_c,
+                                              other=0.0)[:, None])
+                for k in tl.static_range(1, ARITY):
+                    d = tl.load(xptr + xoff + k * cols, mask=mask_c, other=0.0)[:, None] \
+                        - tl.load(table + state * ARITY + k, mask=mask_l,
+                                  other=0.0)[None, :]
+                    e = _mul(d, d)
+                    if HAS_W:
+                        e = _mul(e, tl.load(wptr + xoff + k * cols, mask=mask_c,
+                                            other=0.0)[:, None])
+                    cost = cost + e
+                cand = prev + cost
+                take = cand < best
+                best = tl.where(take, cand, best)
+                pred = tl.where(take, f, pred)
+
+        tl.store(best_out + base + li[None, :], best, mask=m2)
+        slot = back + (loff + ci)[:, None].to(tl.int64) * (steps * low) \
+            + back_step * low + li[None, :]
+        if BACK_U8:
+            tl.store(slot, pred.to(tl.uint8), mask=m2)
+        else:
+            tl.store(slot, pred, mask=m2)
+
+    @triton.jit(do_not_specialize=["step"])
+    def _final_best(best_in, dst, xptr, wptr, table, ctl, cols, step, low,
+                    ARITY: tl.constexpr, FAN: tl.constexpr, SIZE: tl.constexpr,
+                    HAS_W: tl.constexpr, BL: tl.constexpr, BC: tl.constexpr):
+        """The last step, written as a front, so the epilogue sees the reference's tensor.
+
+        ``front[s] = best[s >> R] + B(s)`` is exactly ``_step``'s closing line
+        (``best.repeat_interleave(FAN) + branch``), so the ``min`` and the
+        ``float(final.sum())`` downstream sum the reference's floats in the
+        reference's order.
+        """
+        goff = tl.load(ctl + 0)
+        loff = tl.load(ctl + 1)
+        m = tl.load(ctl + 2)
+        li = tl.program_id(0) * BL + tl.arange(0, BL)
+        ci = tl.program_id(1) * BC + tl.arange(0, BC)
+        mask_l = li < low
+        mask_c = ci < m
+        best = tl.load(best_in + ci[:, None] * low + li[None, :],
+                       mask=mask_c[:, None] & mask_l[None, :], other=float("inf"))
+        state = li[None, :, None] * FAN + tl.arange(0, FAN)[None, None, :]
+        ml3 = mask_l[None, :, None]
+        mc3 = mask_c[:, None, None]
+        xoff = step * (ARITY * cols) + goff + ci
+        d = tl.load(xptr + xoff, mask=mask_c, other=0.0)[:, None, None] \
+            - tl.load(table + state * ARITY, mask=ml3, other=0.0)
+        cost = _mul(d, d)
+        if HAS_W:
+            cost = _mul(cost, tl.load(wptr + xoff, mask=mask_c, other=0.0)[:, None, None])
+        for k in tl.static_range(1, ARITY):
+            d = tl.load(xptr + xoff + k * cols, mask=mask_c, other=0.0)[:, None, None] \
+                - tl.load(table + state * ARITY + k, mask=ml3, other=0.0)
+            e = _mul(d, d)
+            if HAS_W:
+                e = _mul(e, tl.load(wptr + xoff + k * cols, mask=mask_c,
+                                    other=0.0)[:, None, None])
+            cost = cost + e
+        cost = best[:, :, None] + cost
+        tl.store(dst + (loff + ci)[:, None, None].to(tl.int64) * SIZE
+                 + state, cost, mask=mc3 & ml3)
+
+    @triton.jit
     def _traceback(back, final_state, states, n, cols, steps, low, col0,
                    RATE: tl.constexpr, SHIFT: tl.constexpr, BC: tl.constexpr):
         """The shift register run backwards: ``s = (pred << (L-R)) | (s >> R)``."""
@@ -353,7 +522,8 @@ def _build():
             p = tl.load(back + cbase + t * low + lowbits, mask=mask, other=0).to(tl.int32)
             s = (p << SHIFT) | lowbits
 
-    return _step, _traceback, _init, _copy_front
+    return (_step, _traceback, _init, _copy_front,
+            _init_best, _step_best, _final_best)
 
 
 _CACHE: dict = {}
@@ -450,18 +620,73 @@ def _tile(fan: int, low: int, n: int):
     return bl, bc, warps
 
 
-def _layout(device, size: int, cols: int, chunk: int):
+#: Whether the step loop carries the class minimum instead of the front.
+#: The recurrence closes in ``best`` alone -- see ``_step_best`` -- so the
+#: ``2^L`` front the reference writes every step exists only to be minimised
+#: away by the next one.  Carrying ``best`` moves ``2*LOW*4 + LOW`` bytes a
+#: step where the front form moves ``2*SIZE*4 + LOW``, and lets ``_layout``
+#: fit ``FAN`` times as many columns in the same L2 budget.
+#:
+#: A candidate, so it is off by default and read per CALL, not at import:
+#: an A/B must be able to put both spellings on one tensor seconds apart in
+#: one process, which is the only way to measure either of them on a shared
+#: box.  It is a machine knob and never the answer -- both spellings return
+#: identical states and the identical ``sse`` float, which the tests pin.
+_BEST_FORM_ENV = "TESSERA_WINDOW_BEST_FORM"
+
+
+def _resolve_best_form() -> bool:
+    raw = os.environ.get(_BEST_FORM_ENV)
+    if raw is None or raw == "":
+        return False
+    if raw not in ("0", "1"):
+        raise ValueError(f"{_BEST_FORM_ENV}={raw!r} is not 0 or 1")
+    return raw == "1"
+
+
+def _tile_best(low: int, n: int):
+    """Class/column tile for the best-form step.
+
+    ``_tile`` sizes a program by its ``FAN``-wide *output*; the best-form's
+    output is one float per class with the ``FAN`` in a loop, so the same rule
+    would leave a program ``FAN`` times too small.  Size it by the lanes
+    instead -- about 256 class-column elements a program, never wider than the
+    problem -- which lands on the same ``(cdiv(low, bl), cdiv(width, bc))``
+    grid the front-form step runs, so an A/B moves the bytes and not the
+    geometry.
+    """
+    bl = 1
+    while bl < low and bl < 128:
+        bl *= 2
+    bl = min(bl, low)
+    bc = 1
+    while bc < n and bl * bc < 256:
+        bc *= 2
+    warps = max(1, min(8, (bl * bc) // 64))
+    return bl, bc, warps
+
+
+def _layout(device, size: int, cols: int, chunk: int, resident: int = 0):
     """``(nmax, width, descs)`` for one shape: how the columns are batched.
 
-    ``width`` is set so both fronts stay in L2 across the step loop, which is
-    what turns the front traffic from DRAM into cache; ``descs`` is one triple
-    per batch -- its first column in the tensor, its first column inside the
-    chunk, and its width -- which the kernels read from the device so that one
-    captured graph replays for every batch.
+    ``width`` is set so both of the step loop's buffers stay in L2 across the
+    loop, which is what turns their traffic from DRAM into cache; ``descs`` is
+    one triple per batch -- its first column in the tensor, its first column
+    inside the chunk, and its width -- which the kernels read from the device
+    so that one captured graph replays for every batch.
+
+    ``resident`` is the per-column float count of one buffer, ``size`` under
+    the reference spelling and ``2^(L-R)`` under the best-form; it defaults to
+    ``size`` so the front-form call site reads as it always did.
     """
+    resident = resident or size
     budget = _l2_budget(device)
     nmax = min(chunk, cols)
-    width = max(1, min(budget // (2 * size * 4), nmax))
+    # ``resident`` is the per-column float count of EACH of the two buffers
+    # the step loop alternates between: a front under the reference spelling,
+    # a class minimum under the best-form.  The budget is unchanged; what
+    # changes is how many columns it holds.
+    width = max(1, min(budget // (2 * resident * 4), nmax))
     descs = []
     for start in range(0, cols, chunk):
         n = min(chunk, cols - start)
@@ -499,10 +724,10 @@ class _WindowPlan:
                  "bl", "bc", "warps", "scan_unroll", "grid", "cgrid", "bs",
                  "cbc", "owns_input", "tuples", "wrows", "table", "front_all",
                  "back", "cur", "nxt", "ctl", "desc", "batches", "graph",
-                 "done")
+                 "done", "best_form", "bbl", "bbc", "bwarps", "bgrid", "bscan")
 
     def __init__(self, *, device, rows, cols, arity, size, rate, chunk,
-                 has_weights, owns_input):
+                 has_weights, owns_input, best_form=False):
         import triton
 
         self.device, self.rows, self.cols = device, rows, cols
@@ -513,22 +738,29 @@ class _WindowPlan:
         self.low = low = size >> rate
         self.back_u8 = back_u8 = fan <= 256
 
-        nmax, width, descs = _layout(device, size, cols, chunk)
+        self.best_form = best_form
+        # The best-form's two buffers are class-wide, so the same L2 budget
+        # holds FAN times as many columns.
+        resident = low if best_form else size
+        nmax, width, descs = _layout(device, size, cols, chunk, resident)
         self.nmax, self.width = nmax, width
 
         self.front_all = torch.empty(nmax, size, dtype=torch.float32, device=device)
         self.back = torch.empty(nmax, steps, low,
                                 dtype=torch.uint8 if back_u8 else torch.int32,
                                 device=device)
-        self.cur = torch.empty(width, size, dtype=torch.float32, device=device)
-        self.nxt = torch.empty(width, size, dtype=torch.float32, device=device)
+        self.cur = torch.empty(width, resident, dtype=torch.float32, device=device)
+        self.nxt = torch.empty(width, resident, dtype=torch.float32, device=device)
 
         self.bl, self.bc, self.warps = _tile(fan, low, width)
+        self.bbl, self.bbc, self.bwarps = _tile_best(low, width)
+        self.bscan = _resolve_scan_unroll(fan, self.bbl, self.bbc, self.bwarps)
         self.scan_unroll = _resolve_scan_unroll(fan, self.bl, self.bc, self.warps)
         self.grid = (triton.cdiv(low, self.bl), triton.cdiv(width, self.bc))
-        self.bs = bs = min(size, 1024)
+        self.bgrid = (triton.cdiv(low, self.bbl), triton.cdiv(width, self.bbc))
+        self.bs = bs = min(resident, 1024)
         self.cbc = cbc = max(1, 2048 // bs)
-        self.cgrid = (triton.cdiv(size, bs), triton.cdiv(width, cbc))
+        self.cgrid = (triton.cdiv(resident, bs), triton.cdiv(width, cbc))
 
         # A persistent plan ships the descriptors to the device once instead
         # of once per call: ``torch.tensor(descs, device=...)`` is a host
@@ -609,8 +841,10 @@ class _WindowPlan:
             self.table = vectors.float().to(self.device).contiguous()
 
     def one_batch(self):
-        """The exact batch: init the front, run the step loop, keep the last front."""
-        step_kernel, _, init_kernel, copy_kernel = _kernels()
+        """The exact batch: init, run the step loop, keep the last front."""
+        if self.best_form:
+            return self.one_batch_best()
+        step_kernel, _, init_kernel, copy_kernel = _kernels()[:4]
         init_kernel[self.cgrid](self.cur, self.ctl, SIZE=self.size, BS=self.bs,
                                 BC=self.cbc, num_warps=4)
         a, b = self.cur, self.nxt
@@ -627,6 +861,40 @@ class _WindowPlan:
             a, b = b, a
         copy_kernel[self.cgrid](a, self.front_all, self.ctl, SIZE=self.size,
                                 BS=self.bs, BC=self.cbc, num_warps=4)
+
+    def one_batch_best(self):
+        """The same batch with the front substituted out of the recurrence.
+
+        ``steps + 1`` launches against the front form's ``steps + 2``: the
+        pinned start needs no scan (its class minimum is closed form), the
+        middle steps carry ``best``, and the last one writes the front the
+        epilogue is defined on -- straight into ``front_all``, so there is no
+        copy kernel either.
+        """
+        _, _, _, _, init_best, step_best, final_best = _kernels()
+        init_best[self.cgrid](self.cur, self.back, self.ctl, self.steps,
+                              LOW=self.low, BACK_U8=self.back_u8,
+                              BS=self.bs, BC=self.cbc, num_warps=4)
+        a, b = self.cur, self.nxt
+        for step in range(self.steps - 1):
+            step_best[self.bgrid](
+                a, b, self.back, self.tuples,
+                self.tuples if self.wrows is None else self.wrows, self.table,
+                self.ctl, self.cols, self.steps, step, step + 1, self.low,
+                ARITY=self.arity, FAN=self.fan, RATE=self.rate,
+                HAS_W=self.wrows is not None, BACK_U8=self.back_u8,
+                BL=self.bbl, BC=self.bbc, SCAN_UNROLL=self.bscan,
+                num_warps=self.bwarps, enable_fp_fusion=False,
+            )
+            a, b = b, a
+        final_best[self.grid](
+            a, self.front_all, self.tuples,
+            self.tuples if self.wrows is None else self.wrows, self.table,
+            self.ctl, self.cols, self.steps - 1, self.low,
+            ARITY=self.arity, FAN=self.fan, SIZE=self.size,
+            HAS_W=self.wrows is not None, BL=self.bl, BC=self.bc,
+            num_warps=self.warps, enable_fp_fusion=False,
+        )
 
     def capture(self):
         """Warm on a side stream, then capture ``one_batch`` as one graph.
@@ -690,14 +958,19 @@ def _plan_for_call(*, device, rows, cols, arity, size, rate, chunk, has_weights)
     that rule went.
     """
     forced = _resolve_graph()
+    best_form = _resolve_best_form()
     plans, seen = _window_maps()
+    # ``best_form`` is in the key because it changes the buffer shapes and the
+    # ``width`` they admit: a cached plan built under the other spelling would
+    # replay the wrong graph, and an A/B flips this knob inside one process.
     key = (device, rows, cols, arity, size, rate, chunk, has_weights,
-           _L2_BUDGET, os.environ.get(_SCAN_UNROLL_ENV, ""))
+           _L2_BUDGET, os.environ.get(_SCAN_UNROLL_ENV, ""), best_form)
 
     def fresh(owns):
         return _WindowPlan(device=device, rows=rows, cols=cols, arity=arity,
                            size=size, rate=rate, chunk=chunk,
-                           has_weights=has_weights, owns_input=owns)
+                           has_weights=has_weights, owns_input=owns,
+                           best_form=best_form)
 
     if forced is False:
         # Ahead of the lookup on purpose: ``0`` is the eager control, and a
@@ -741,7 +1014,7 @@ def viterbi_window_fused(targets, vectors, window_bits: int, rate: int,
     """
     import triton
 
-    _, traceback_kernel, _, _ = _kernels()
+    traceback_kernel = _kernels()[1]
     device = targets.device
     rows, cols = targets.shape
     size, arity = vectors.shape

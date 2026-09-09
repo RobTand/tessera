@@ -415,7 +415,7 @@ def _compiled_step(L, rate, arity=1):
     torch.manual_seed(0)
     targets = torch.randn(64, 64, device="cuda")
     vectors = torch.randn(1 << L, arity, device="cuda")
-    step, tb, init, copy = window_viterbi._kernels()
+    step, tb, init, copy = window_viterbi._kernels()[:4]
     spy = _Spy(step)
     window_viterbi._CACHE["k"] = (spy, tb, init, copy)
     try:
