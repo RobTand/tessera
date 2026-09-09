@@ -72,15 +72,26 @@ def _inputs(window_bits, rate, arity, rows, cols, dev):
     return targets, vectors, weights
 
 
-def _select(arm: str):
-    """Pick the spelling.  The plan cache is keyed on it, so nothing is stale."""
+def _select(arm: str, clear: bool = False):
+    """Pick the spelling.
+
+    The plan cache is keyed on the knob, so both plans coexist and switching
+    arms is one environment write.  ``clear`` is for the phases that want a
+    cold plan; the timing loop must NOT use it.  The first run of this A/B
+    cleared per repetition, so every timed rep re-planned and re-captured its
+    graphs -- and the front form, at six batches to the best form's one, paid
+    six captures to its one.  That is a real cost of the front form, but it is
+    a per-call cost only on a cold cache, and the encoder's cache is not cold.
+    Clearing per rep timed the capture and called it the step.
+    """
     os.environ[wv._BEST_FORM_ENV] = "1" if arm == "best" else "0"
     os.environ[wv._GRAPH_ENV] = "1"
-    wv.window_plan_cache_clear()
+    if clear:
+        wv.window_plan_cache_clear()
 
 
 def _run(arm, targets, vectors, window_bits, rate, weights):
-    _select(arm)
+    _select(arm, clear=True)
     return viterbi_window(targets, vectors, window_bits, rate,
                           weights=weights, impl="fused")
 
@@ -178,8 +189,12 @@ def main():
                             for arm in ARMS}
 
         # -- timing, unprofiled, interleaved ------------------------------
-        for arm in ARMS:                                  # warm the compile
+        # Warm both plans, then never clear again: the timed reps replay the
+        # captured graphs the encoder replays, not a fresh capture.
+        for arm in ARMS:
             _run(arm, targets, vectors, L, R, weights)
+            _select(arm)
+            viterbi_window(targets, vectors, L, R, weights=weights, impl="fused")
         torch.cuda.synchronize()
         timing = {arm: [] for arm in ARMS}
         power = {arm: [] for arm in ARMS}
