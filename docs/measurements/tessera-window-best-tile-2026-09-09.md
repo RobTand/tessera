@@ -1,6 +1,29 @@
 # The best-form step's tile was never measured.  Measured, it loses
 
-## Verdict
+> **RETRACTED, 2026-09-09, and being re-measured.** Every timed number below
+> came from a nine-arm cycle against a plan cache that holds
+> `_WINDOW_PLAN_CACHE = 8`. Nine distinct plan keys cycled in a fixed order is
+> the pathological case for an LRU: the entry evicted is always the one about
+> to be asked for, so every arm rebuilt its plan and re-captured its graph at
+> the head of every block, inside the clock and inside the energy bracket.
+> Root read that off the source; this file's own data confirms it, because
+> each arm's block median exceeds the hot single call it recorded for the
+> same arm by 0.02 to 0.23 s a block, and the amount differs per arm, so it
+> does not cancel in a ratio. **No seconds, watt or work-per-joule figure
+> below is a result, and none of them should be cited**, including the
+> 90 to 93 W band.
+>
+> What survives, because it was not timed: every arm returned the reference's
+> states and the identical `sse`, the launch geometry and the register and
+> spill counts, and the separate three-arm profile actions, which fit the
+> cache. The re-measurement runs four arms an action.
+>
+> *One clear and one warm call per arm establishes that an arm was warm once,
+> not that it was warm when it was measured. The screen now counts plans built
+> either side of every block and refuses to report a block that built one, and
+> refuses at startup to run more arms than the cache holds.*
+
+## Verdict (RETRACTED, see the banner)
 
 **`_tile_best` returns `128x2` at 4 warps for both production shapes, and it is
 not the right point in either.** `BL=64, BC=4, 2 warps` beats it on seconds and
@@ -20,7 +43,7 @@ point. That rule was written against the column counts `_layout` admitted
 width lever the best form buys is exactly what moved the tile's optimum, and
 nothing re-derived it.
 
-## R3: more programs, not fatter ones
+## R3: more programs, not fatter ones (timing RETRACTED)
 
 | arm | grid | programs | elem/thread | regs | spills | s/call | W | work/J vs inc | s vs inc |
 |---|---|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -38,7 +61,7 @@ Both arms that cut the program count to 384, and the one that put 8 elements on
 a thread, went backwards. At this shape the step wants blocks, and the two arms
 that keep 1536 of them are the two fastest.
 
-## R4: the same tile wins for the opposite reason
+## R4: the same tile wins for the opposite reason (timing RETRACTED)
 
 | arm | grid | programs | elem/thread | regs | s/call | W | work/J vs inc | s vs inc |
 |---|---|---:|---:|---:|---:|---:|---:|---:|

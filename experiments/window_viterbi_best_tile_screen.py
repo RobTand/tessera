@@ -87,6 +87,47 @@ ARMS = (
 )
 
 
+#: Every plan built while a clock is running, counted.
+#:
+#: The first version of this screen ran nine arms against a plan cache that
+#: holds ``_WINDOW_PLAN_CACHE = 8``.  Nine distinct keys cycled in a fixed
+#: order is the pathological case for an LRU: the entry evicted is always the
+#: one about to be asked for, so every arm rebuilt its plan and re-captured its
+#: graph at the head of every block, INSIDE the clock and inside the energy
+#: bracket.  The cost was 0.02 to 0.23 s a block and did not cancel between
+#: arms, so the ratios it produced were not comparisons of steps.
+#:
+#: One clear followed by one warm call per arm does not establish a warm
+#: measurement; it establishes that the arm was warm once.  What establishes it
+#: is this counter reading the same value either side of every timed block.
+_PLANS_BUILT = [0]
+_REAL_PLAN = wv._WindowPlan
+
+
+def _counting_plan(**kw):
+    _PLANS_BUILT[0] += 1
+    return _REAL_PLAN(**kw)
+
+
+wv._WindowPlan = _counting_plan
+
+
+def _refuse_wider_than_the_cache(arms):
+    """A screen wider than the plan cache cannot be a warm screen.
+
+    Refused here rather than detected later, because the counter below can only
+    tell you a block was spoiled after the box has already spent it.  Raising
+    the cache instead would be a memory-budget change wearing a screen's
+    clothes: a plan's traceback is ``nmax * steps * low`` bytes and the bound
+    is there for that reason.
+    """
+    if len(arms) > wv._WINDOW_PLAN_CACHE:
+        raise SystemExit(
+            f"{len(arms)} arms against a {wv._WINDOW_PLAN_CACHE}-entry plan "
+            "cache: every arm would rebuild its plan at the head of every "
+            "block, inside the clock. Screen fewer arms per action.")
+
+
 def _select(tile):
     """One environment write per arm; the plan cache is keyed on both."""
     os.environ[wv._BEST_FORM_ENV] = "0" if tile is None else "1"
@@ -166,6 +207,7 @@ def main():
     arms = [x for x in ARMS if not a.arms or x[0] in a.arms]
     if len(arms) < 2:
         raise SystemExit("a screen needs at least two arms")
+    _refuse_wider_than_the_cache(arms)
     dev = "cuda"
     records = []
     want = [c for c in CONFIGS if not a.configs or c[0] in a.configs]
@@ -266,13 +308,20 @@ def main():
             for _ in range(a.blocks):
                 for arm, tile in arms:
                     torch.cuda.synchronize()
+                    built0 = _PLANS_BUILT[0]
                     w0, t0 = time.time(), time.perf_counter()
                     for _ in range(inner[arm]):
                         _call(tile, targets, vectors, L, R, weights)
                     torch.cuda.synchronize()
                     dt, w1 = time.perf_counter() - t0, time.time()
+                    # Read either side of the clock, not once at the end: a
+                    # block that built a plan timed a graph capture as though
+                    # it were steps, and no amount of repeats averages that
+                    # out because it lands once per block on every arm.
+                    built = _PLANS_BUILT[0] - built0
                     blocks[arm].append(dict(seconds=dt, wall_start=w0,
-                                            wall_end=w1, calls=inner[arm]))
+                                            wall_end=w1, calls=inner[arm],
+                                            plans_built=built))
         finally:
             time.sleep(2.0)             # lead out, so the last block is too
             power.stop()
@@ -280,6 +329,15 @@ def main():
         steps = rows // arity
         work_per_call = steps * cols * (1 << L)
         rec["work_per_call"] = work_per_call
+        spoiled = {arm: sum(b["plans_built"] for b in blocks[arm])
+                   for arm, _ in arms}
+        rec["plans_built_inside_timed_blocks"] = spoiled
+        if any(spoiled.values()):
+            rec["verdict"] = ("a plan was built inside a timed block; these "
+                              "are not warm measurements")
+            records.append(rec)
+            print(json.dumps(rec), flush=True)
+            continue
         rec["timing"] = {}
         for arm, _ in arms:
             bs = blocks[arm]
