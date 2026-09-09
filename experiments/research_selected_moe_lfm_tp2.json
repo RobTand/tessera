@@ -1,0 +1,6 @@
+{
+  "schema": "tessera.research_selected_moe.v1",
+  "max_experts_per_chunk": 8,
+  "decode_backend": "triton",
+  "expected_tensor_parallel_size": 2
+}
