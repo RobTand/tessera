@@ -31,8 +31,10 @@ from tessera.encode import viterbi_window  # noqa: E402
 from experiments.window_viterbi_two_step import (  # noqa: E402
     branch_costs,
     pair_is_applicable,
+    step_best_form,
     step_pair_nested,
     step_sequential,
+    viterbi_window_best_form,
     viterbi_window_paired,
 )
 
@@ -163,3 +165,75 @@ def test_duplicated_table_rows_really_do_tie():
     classes = front.view(fan, low, 7)
     ties = (classes == classes.min(dim=0, keepdim=True).values).sum(dim=0) > 1
     assert bool(ties.any()), "the duplicated table produced no ties to resolve"
+
+
+@pytest.mark.parametrize("window_bits,rate,arity,rows,cols", SHAPES)
+@pytest.mark.parametrize("table_mode", ["random", "duplicated"])
+@pytest.mark.parametrize("weighted", [False, True])
+def test_the_best_form_returns_the_reference_bytes(window_bits, rate, arity,
+                                                   rows, cols, table_mode,
+                                                   weighted):
+    """Carrying the class minimum instead of the front changes no byte.
+
+    This arm needs no new tie argument: its scan compares the same sums the
+    reference's scan compares, in the same order, under the same strict
+    ``<``.  The test is here to hold that claim to bytes anyway.
+    """
+    targets, vectors, weights = _case(window_bits, rate, arity, rows, cols,
+                                      seed=window_bits * 100 + rate,
+                                      table_mode=table_mode)
+    w = weights if weighted else None
+    want_states, want_sse = viterbi_window(targets, vectors, window_bits, rate,
+                                           weights=w, chunk=512,
+                                           impl="reference")
+    got_states, got_sse = viterbi_window_best_form(targets, vectors,
+                                                   window_bits, rate,
+                                                   weights=w, chunk=512)
+    assert torch.equal(got_states, want_states)
+    assert got_sse.hex() == want_sse.hex()
+
+
+@pytest.mark.parametrize("window_bits,rate,arity,rows,cols", SHAPES)
+def test_the_best_form_reproduces_the_pinned_start_in_closed_form(
+        window_bits, rate, arity, rows, cols):
+    """``best_0`` is asserted, not assumed.
+
+    The best-form skips step 0's scan and writes ``best_0 = [0, inf, ...]``
+    with ``back[0]`` all zeros from the closed form.  That is a claim about
+    what the reference's step 0 produces, so it is checked against it rather
+    than reasoned about in a comment.
+    """
+    targets, vectors, _ = _case(window_bits, rate, arity, rows, cols, seed=11)
+    size, _ = vectors.shape
+    fan, low = 1 << rate, size >> rate
+    n = cols
+    pinned = torch.full((size, n), float("inf"))
+    pinned[0] = 0.0
+    best_ref, pred_ref = pinned.view(fan, low, n).min(dim=0)
+    best_closed = torch.full((low, n), float("inf"))
+    best_closed[0] = 0.0
+    assert torch.equal(_bits(best_closed), _bits(best_ref))
+    assert torch.equal(pred_ref, torch.zeros_like(pred_ref))
+
+
+@pytest.mark.parametrize("window_bits,rate,arity,rows,cols", SHAPES)
+def test_the_best_form_carries_only_a_class_wide_state(window_bits, rate,
+                                                       arity, rows, cols):
+    """The saving is a shape, so the shape is what the test asserts.
+
+    A byte claim that only lives in a docstring is a byte claim nothing
+    checks.  The step returns ``[2^(L-R), n]``, not ``[2^L, n]``, and that
+    ratio is the whole of the lever.
+    """
+    targets, vectors, _ = _case(window_bits, rate, arity, rows, cols, seed=13)
+    size, _ = vectors.shape
+    fan, low = 1 << rate, size >> rate
+    steps = rows // arity
+    x = targets.float().reshape(steps, arity, cols)
+    best = torch.full((low, cols), float("inf"))
+    best[0] = 0.0
+    b = branch_costs(x[0], vectors.float(), None)
+    out, pred = step_best_form(best, b, fan, low, size)
+    assert out.shape == (low, cols)
+    assert pred.shape == (low, cols)
+    assert low * fan == size

@@ -178,3 +178,109 @@ def viterbi_window_paired(targets, vectors, window_bits, rate,
             state = (pred << (window_bits - rate)) | lowbits
         states[:, start : start + chunk] = column
     return states, sse
+
+
+# ---------------------------------------------------------------------------
+# The larger lever on the same axis: carry the class minimum, not the front.
+# ---------------------------------------------------------------------------
+#
+# The recurrence closes in ``best`` alone.  The reference writes a full
+# ``[2^L, n]`` front every step only so the next step can minimise it away
+# again, and the fused kernel inherits that: one front in, one front out.  But
+# substituting ``cost_s[f*LOW + c] = best_{s-1}[(f*LOW + c) >> R] +
+# B_{s-1}(f*LOW + c)`` into the class minimum removes the front entirely:
+#
+#     best_s[c]  = min over f of ( best_{s-1}[(f*LOW + c) >> R]
+#                                  + B_{s-1}(f*LOW + c) )    (first argmin)
+#     back[s][c] = that argmin
+#
+# The scan now compares sums rather than raw fronts -- but those sums are the
+# *same floats* the reference stores to ``cost_s`` and then scans, in the same
+# order, under the same strict ``<``.  Nothing about the tie rule moves, which
+# is why this needs no new exactness argument at all; the pair above needed
+# one only because it moved a minimum across an addition.
+#
+# Resident state per column falls from ``2^L`` floats to ``2^(L-R)``, and the
+# stores fall by the same factor: at L=14, R=3 that is 18,432 B a step against
+# 133,120 B.  The last step is left in the front-producing form so the epilogue
+# min and the ``sse`` sum see the reference's tensor.
+#
+# This module is still arithmetic, not a kernel.  The byte counts above are
+# what the recurrence permits; what a kernel achieves is a kernel A/B's answer.
+
+
+def step_best_form(best_prev, branch, fan, low, size):
+    """``best_{s}`` and its argmin straight from ``best_{s-1}``, no front.
+
+    Written as the scan a kernel would run: one ``[low, n]`` candidate live
+    at a time, never the ``[size, n]`` front.
+    """
+    device = best_prev.device
+    c = torch.arange(low, device=device)
+    best = None
+    pred = None
+    for f in range(fan):
+        states = f * low + c                                  # [low]
+        cand = best_prev[states // fan] + branch[states]       # [low, n]
+        if f == 0:
+            best = cand
+            pred = torch.zeros(low, best_prev.shape[1], dtype=torch.long,
+                               device=device)
+            continue
+        take = cand < best
+        best = torch.where(take, cand, best)
+        pred = torch.where(take, f, pred)
+    return best, pred
+
+
+def front_from_best(best, branch, fan):
+    """The reference's ``best.repeat_interleave(fan) + branch``."""
+    return best.repeat_interleave(fan, dim=0) + branch
+
+
+def viterbi_window_best_form(targets, vectors, window_bits, rate,
+                             weights=None, chunk=512):
+    """``encode.viterbi_window``'s reference loop carrying ``best``."""
+    device = targets.device
+    rows, cols = targets.shape
+    size, arity = vectors.shape
+    steps = rows // arity
+    fan = 1 << rate
+    low = size >> rate
+
+    tuples = targets.float().reshape(steps, arity, cols)
+    wrows = None if weights is None else weights.float().reshape(steps, arity, cols)
+    table = vectors.float().to(device)
+    states = torch.empty(steps, cols, dtype=torch.long, device=device)
+    sse = 0.0
+    for start in range(0, cols, chunk):
+        x = tuples[:, :, start : start + chunk]
+        n = x.shape[2]
+        w = None if wrows is None else wrows[:, :, start : start + chunk]
+        back = torch.empty(steps, low, n,
+                           dtype=torch.uint8 if fan <= 256 else torch.int32,
+                           device=device)
+        # Step 0 reads the pinned front, whose class minimum is closed form:
+        # state 0 is the only finite entry, so class 0 takes 0.0 and every
+        # other class ties at inf -- both resolving to predecessor 0.
+        best = torch.full((low, n), float("inf"), device=device)
+        best[0] = 0.0
+        back[0] = 0
+        for step in range(steps - 1):
+            b = branch_costs(x[step], table, None if w is None else w[step])
+            best, pred = step_best_form(best, b, fan, low, size)
+            back[step + 1] = pred.to(back.dtype)
+        # The last step materialises the front the epilogue is defined on.
+        b = branch_costs(x[steps - 1], table,
+                         None if w is None else w[steps - 1])
+        cost = front_from_best(best, b, fan)
+        final, state = cost.min(dim=0)
+        sse += float(final.sum())
+        column = torch.empty(steps, n, dtype=torch.long, device=device)
+        for s in range(steps - 1, -1, -1):
+            column[s] = state
+            lowbits = state >> rate
+            pred = back[s].gather(0, lowbits.unsqueeze(0)).squeeze(0).long()
+            state = (pred << (window_bits - rate)) | lowbits
+        states[:, start : start + chunk] = column
+    return states, sse
