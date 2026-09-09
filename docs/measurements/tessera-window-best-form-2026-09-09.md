@@ -133,6 +133,25 @@ for its speed in occupancy.
 
 ## What this does not establish
 
+### The GLM shape, measured by root, not here
+
+Root has since run the candidate on the real GLM expert shape at R = 8, in its
+own pricing producer, and that run is the qualification this section says is
+owed. Recording what it established and what it did not, since it is root's
+measurement and not this branch's: 16 real layer-4 `down` experts against the
+original 864-sequence capture, fixed B8, ABBA, front 77.4026 s and 77.4164 s
+against best 37.3149 s and 37.4762 s, with **all six arms exact on wire SHA
+and `dloss`**. Action `569ee819458cb3cf1c91a687ff66f1edbcd51a87a4f31813e36dc9fb2c572c2b`.
+
+So the seconds and the byte identity hold on the shape that matters. **The
+energy half does not follow from it.** Root rejected all four of that run's
+CUDA traces, because torch 2.13 dynamic collection reported physically
+impossible durations even across four fresh contexts, and owns a replacement
+capture. No work-per-joule figure on the GLM shape is claimed here or there
+until that lands, and the default stays off regardless.
+
+### What is still open
+
 One shape family, one box, `viterbi_window` alone. The encoder reaches it
 through `_run_joined`, so a real column count varies with how many units join
 and the width lever varies with it. `E4-R1088` includes R4 and R5, and dense
