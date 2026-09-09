@@ -286,6 +286,68 @@ Measured in `docs/measurements/tessera-tp-slicing-2026-09-02.md`. In summary:
   shard-sized parse. Nothing is duplicated on disk: there is still one artifact
   per unit, and every rank reads the same one.
 
+## Routed MoE topologies: what the research owner accepts, and what it refuses
+
+Everything above is the dense Linear story. A routed expert stack is a different
+object: its wire stride is the maximum over every expert's blob, so a rank that
+holds a subset of experts cannot check it. That single fact decides most of the
+table below.
+
+Read at `src/tessera/serving/moe_route.py` on master.
+
+**The ordinary expert route is single-rank by construction.** Without a
+`research_selected_moe` declaration the method pins `_tp_size = 1` and
+`_tp_rank = 0` (`moe_route.py:430`), expands the stack to native FP8 at load and
+never consults `moe_parallel_config`. There is no TP story to document for it.
+
+**The research selected owner declares its own degree, and the checkpoint seals
+it.** `expected_tensor_parallel_size` is a `research_selected_moe` field
+restricted to exactly 1 or 2 (`moe_execution.py:33`), and
+`_require_research_parallel_contract` refuses a live `tp_size` that disagrees
+(`moe_route.py:449`). A TP1 checkpoint therefore cannot be served at TP2, and a
+TP2 checkpoint cannot be served at TP1. Both are the same encoded bytes with a
+different declaration, so covering both degrees costs two exports. That is a
+deliberate property of a sealed declaration, not an oversight.
+
+### Refused, with the reason
+
+| Topology or setting | Where it is refused | Why |
+|---|---|---|
+| `tp_size != expected_tensor_parallel_size` | `_require_research_parallel_contract` | The declaration is the contract; a rank cut the export did not plan is not served. |
+| `expected_tensor_parallel_size` outside {1, 2} | `ResearchSelectedMoeConfig.__post_init__` | Only these two degrees have a slicer path. |
+| Expert parallelism, `ep_size != 1` or `use_ep` not `False` | `_require_research_parallel_contract`, and again in `create_weights` when a rank holds fewer experts than the sidecar declares | The wire stride is the maximum over every expert's blob, so a rank holding a subset cannot check the invariant. Expert parallelism needs its own contract and its own evidence, not a relaxation of this one. |
+| EPLB, `enable_eplb` not `False` | `_require_research_parallel_contract`, and `supports_eplb` returns `False` | EPLB adds redundant physical experts, so the parameter holds more rows than the sidecar declares and the stride has no expert to check. |
+| `dp_size`, `pcp_size` or `sp_size` other than 1 | `_require_research_parallel_contract` | No measured path; the guard takes exact integers, so a float or bool that compares equal is refused too. |
+| `tp_rank` outside `[0, expected_tp)` | `_require_research_parallel_contract` | A rank index the export did not plan. |
+| Deferred finalize, `defer_moe_finalize` | `_require_research_parallel_contract` | The combination is unmeasured. |
+| At TP2, `skip_final_all_reduce` | `_require_research_parallel_contract` | A column-cut stack needs exactly the stock final reduction to reassemble the single-rank output. |
+| An intermediate size that does not divide by the declared degree, or runtime padding | `create_weights` | The sidecar's geometry is the contract; a padded or off-contract cut is refused rather than loaded. |
+| Streamed mode | `build_tessera_moe_method` | A streamed expert stack would decode E x 2 containers inside every forward. That is a different kernel story with no measurement behind it. |
+| CUDA graphs, anything but `enforce_eager` | the `enforce_eager` check at construction | The research owner has eager evidence only. |
+| A non-gated MoE, `is_act_and_mul` false | the gated check at construction | Its `w13` is one shard rather than the gate and up pair the sidecar's groups describe. |
+| Any FP8 MoE backend other than stock TRITON, or a monolithic experts class | the backend check at construction | The selected expert mapping covers stock TRITON FP8 only. |
+
+### What "attested" means here, and what it does not
+
+`runtime_contract.json` at contract 22 publishes `max_world_size` 1 for all three
+declared units, `TESSERA_E2M1_K2`, `TESSERA_E4M3_K1` and `TESSERA_BF16_K1`. The
+contract says in its own `units_note` that this is an attestation bound, the
+largest world size a served receipt covers, and that a serve above it is
+unattested rather than refused. So a TP2 serve of the E4M3 window route is
+allowed to be attempted by the loader and is not covered by any receipt, which
+is the honest reading of both halves.
+
+Two consequences worth stating plainly:
+
+* A TP2 serve of a routed checkpoint is also the first multi-rank serve of that
+  checkpoint's dense E4M3 Linears. Their `loader_axes` are `sharded` on both
+  axes, so the loader will attempt the cut, but nothing in the contract attests
+  a multi-rank serve of them either.
+* `TESSERA_E2M1_K2` has `row` status `refused`, so that family cannot be row
+  sharded on any rank. Combined with the absence of a `routed_moe` lane cell for
+  it, an E2M1 expert stack has no TP2 path at all today, whatever the
+  declaration says.
+
 ## What remains
 
 * ~~**The serving plugin's per-rank loader**~~ — **built 2026-09-02.**
