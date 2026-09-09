@@ -384,7 +384,12 @@ def main():
         rec["inner_repeats"] = inner
         rec["single_call_s"] = {k: round(v, 5) for k, v in single.items()}
 
+        # Lead in and out, so the FIRST block has a sample at or before its
+        # start and the last has one at or after its end.  Without them the
+        # bracketing rule -- correctly -- refuses those two blocks, and the
+        # ratio rests on fewer blocks than were run.
         power = Power().start()
+        time.sleep(2.0)
         blocks = {arm: [] for arm, _ in ARMS}
         try:
             for _ in range(a.blocks):
@@ -398,6 +403,7 @@ def main():
                     blocks[arm].append(dict(seconds=dt, wall_start=w0,
                                             wall_end=w1, calls=inner[arm]))
         finally:
+            time.sleep(2.0)
             power.stop()
 
         steps = rows // arity
