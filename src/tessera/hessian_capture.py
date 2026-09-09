@@ -155,6 +155,9 @@ class ReferenceHessians(Mapping):
         self._closed = False
         self._lock = threading.RLock()
         self._verified = set()
+        self._resident = None
+        self._resident_observed = set()
+        self._resident_finite = set()
         self._reads = self._read_bytes = self._peak_file = self._peak_h = 0
         self._live_payloads = 0
         try:
@@ -292,6 +295,109 @@ class ReferenceHessians(Mapping):
                     canonical_capture_sha256=self._document['canonical_capture']['sha256'],
                     census_sha256=self._document['census']['sha256'])
 
+    def bind_resident(self, mapping):
+        """Serve the caller's own resident H instead of reading the canonical files.
+
+        What this binds is WHERE the bytes come from, never WHAT they must be.
+        The commitments, the census, the provenance and the held descriptors are
+        untouched, and the digest that decides the bytes stays exactly where it
+        already was: ``ActivationSource._require_sealed_unit`` at each unit the
+        encoder consumes, and ``tensor_identity`` on the checkpoint identity
+        path.  A producer that computed these very commitments from tensors it
+        still holds would otherwise seal by digesting the whole population a
+        second time, or read every unit back off disk to consume it
+        (tessera#440).
+
+        One shot and irrevocable, ended by ``close()`` with the rest of the
+        owner.  There is no unbind: one document with two answers about what it
+        serves is the defect this removes, not a feature.
+
+        The mapping is snapshotted, so replacing an entry in the caller's dict
+        afterwards cannot retarget the owner; it keeps serving the object it was
+        handed, and an in-place edit of that object is refused at consumption.
+        Nothing is copied -- the tensors are shared, which is the point.
+        """
+        with self._lock:
+            self.require_current()
+            if self._resident is not None:
+                raise GrammarError(
+                    'Hessian reference owner is already bound to resident tensors: '
+                    'rebinding would leave one document with two answers about what '
+                    'it serves. Build a fresh owner over the reference')
+            if not isinstance(mapping, Mapping):
+                raise GrammarError(
+                    'resident Hessians must be a mapping of unit name to tensor')
+            committed = self._document['hessians']
+            resident = dict(mapping)
+            if set(resident) != set(committed):
+                gained = sorted(set(resident) - set(committed))
+                lost = sorted(set(committed) - set(resident))
+                raise GrammarError(
+                    f'resident Hessians do not name the committed roster: gained '
+                    f'{gained}, lost {lost}. An owner serves exactly the units its '
+                    f'document commits, so a roster that differs would either price '
+                    f'a unit nothing covers or leave a committed one unservable')
+            for name in sorted(resident):
+                self._require_resident_shape(name, resident[name], committed[name],
+                                             'offered for binding')
+            self._resident = resident
+
+    def _require_resident_shape(self, name, H, expected, when):
+        """Everything about a resident H that costs no element read.
+
+        Checked at bind over the whole roster, and again at every lookup: the
+        owner holds the caller's object rather than a private copy, so the
+        cheap facts are re-established where the value is handed out.
+        """
+        import torch
+
+        if not isinstance(H, torch.Tensor):
+            raise GrammarError(f'{name}: resident Hessian is not a tensor ({when})')
+        if H.device.type != 'cpu':
+            raise GrammarError(
+                f'{name}: resident Hessian must be CPU ({when}). Every consumption '
+                f'digest copies to host anyway, so a device tensor would stage the '
+                f'copy this binding exists to avoid and pin device memory for the '
+                f"owner's whole life")
+        if (H.dtype != torch.float32 or list(H.shape) != expected['shape'] or
+                not H.is_contiguous()):
+            raise GrammarError(
+                f'{name}: resident Hessian geometry or precision is not what its '
+                f'commitment describes ({when})')
+        if H.storage_offset() != 0 or 4*H.numel() != H.untyped_storage().nbytes():
+            raise GrammarError(
+                f'{name}: resident Hessian must own its storage exactly ({when}): a '
+                f"view pins a buffer wider than the unit, and the owner's declared "
+                f'byte bound would then understate what the run holds')
+
+    def _resident_unit(self, name, expected):
+        """Hand back the caller's own tensor, checked but not re-digested.
+
+        The authenticated comparison against the commitment is not skipped; it
+        is where it has always been.  Every consumer of this value digests it --
+        ``_require_sealed_unit`` before the encoder sees a byte, and
+        ``tensor_identity`` on the identity path -- so an H edited in place
+        after binding is refused before it shapes anything.  Digesting here as
+        well would pay the population's cost back one unit at a time, which is
+        the cost this exists to remove.
+
+        Finiteness is the one property no commitment covers, so it is checked
+        on a unit's first lookup and memoised.  A later edit to nonfinite
+        changes the bytes and is caught by that consumption digest.
+        """
+        import torch
+
+        H = self._resident[name]
+        self._require_resident_shape(name, H, expected, 'served')
+        if name not in self._resident_finite:
+            low, high = torch.aminmax(H)
+            if not (math.isfinite(float(low)) and math.isfinite(float(high))):
+                raise GrammarError(f'{name}: resident Hessian is nonfinite')
+            self._resident_finite.add(name)
+        self.require_current()
+        self._resident_observed.add(name)
+        return H
+
     def committed_units(self):
         self.require_current()
         return {name:item['sha256'] for name,item in self._document['hessians'].items()}
@@ -319,6 +425,8 @@ class ReferenceHessians(Mapping):
         with self._lock:
             self.require_current()
             expected = self._document['hessians'][name]
+            if self._resident is not None:
+                return self._resident_unit(name, expected)
             entry = self._canonical['entries'][name]
             path = Path(self._document['canonical_capture']['path']).parent/entry['path']
             held = _HeldFile(path, cap=self._policy['max_file_bytes'])
@@ -371,11 +479,21 @@ class ReferenceHessians(Mapping):
                 held.close()
 
     def receipt(self):
+        """What this owner actually did, in terms that do not overclaim.
+
+        ``verified_units`` are units whose bytes this owner read and compared
+        against their commitment.  ``resident_units_observed`` are units it
+        handed out from a resident binding after the owner and geometry checks:
+        looked at, not authenticated here, because the authenticating digest for
+        those is taken by the consumer.  Two names because they are two claims.
+        """
         return dict(schema='tessera.hessian_reference_consumption.v1',
             committed_units=len(self._document['hessians']), verified_units=sorted(self._verified),
             loaded_entries=self._reads, source_read_bytes=self._read_bytes,
             peak_file_bytes=self._peak_file, peak_hessian_bytes=self._peak_h,
-            live_payloads=self._live_payloads, closed=self._closed)
+            live_payloads=self._live_payloads, closed=self._closed,
+            resident_bound=self._resident is not None,
+            resident_units_observed=sorted(self._resident_observed))
 
     def close(self):
         self._closed = True
