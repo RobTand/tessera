@@ -5,6 +5,39 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-08 after the bounded native TP2 intake A/B at
+`fd17e7cfaa97`: one repeated 288-expert owner on two GB10s allocated zero
+construction wire-bank bytes, reduced each rank's measured intake peak from
+about 3.6 GB to 1.9 GB, and retained exact checked outputs and stock final NCCL
+collectives. See [the append-only measurement](measurements/glm-rank-local-intake-20260908.md)
+for source identities, profiles, both-box telemetry and limits. This is a
+loader ownership result; full-engine memory/KV/generation and diverse-expert
+quality gates remain unmet by this fixture.
+
+Re-stamped 2026-09-08 for the research TP2 intake device-lifecycle correction
+on top of `383d2a40b`. Incremental intake resolves its device from the live wire
+loader anchor on each callback, preserving the ordinary finalizer's promotion
+to the current CUDA device when staging was constructed elsewhere. The first
+accepted projection fixes ownership to that device; a later device change
+refuses before mixing packed owners. The native A/B used CUDA construction
+throughout and does not claim a CPU/meta-to-CUDA native measurement.
+
+Re-stamped 2026-09-08 for rank-local research TP2 wire intake (#435),
+against base `2890976db`. Stock vLLM constructs all owners on its target
+CUDA device before loading any weights and finalizes modules only after the
+complete load. The explicit research TP2 path therefore registers zero-byte
+wire parameters carrying the existing custom loaders. Every callback validates
+its original full container, derives the existing rank-local role slice and
+retains only that packed role. Finalization checks original lengths against
+the declared maximum stride and stacks the prepared local roles. Transient
+source/parse/reference storage is bounded to the current projection; stacking
+can temporarily duplicate one owner's local packed group. TP1 and ordinary
+materialized intake keep their existing behavior. This removes the all-model
+full-wire staging allocation. The bounded CUDA ownership result is recorded
+above; complete-model automatic loading and whole-engine fit still require
+native measurements. Producer bytes, the
+public wire ABI, research opt-in and qualification gates are unchanged.
+
 Re-stamped 2026-09-08 for calibrated packed complete-cache intake (#433),
 against base `f6faf7e59fa6`. The CLI accepts `--hessian` with a packed expert
 plan only under `--cached-units`; exact existing per-unit source/projection/H
@@ -2175,11 +2208,13 @@ independently planned twin over a nonconstant table.
 
 **Research TP2 ownership.** `ResearchSelectedMoeConfig` defaults to
 `expected_tensor_parallel_size=1`; an explicit value of `2` must agree with
-the runtime's actual TP size. Each rank loads and validates every original
-full expert wire, then uses `plan_shard` and `shard_parsed_roles` to cut gate
+the runtime's actual TP size. Each rank validates every original full expert
+wire during its loader callback, then uses `plan_shard` and `shard_parsed_roles` to cut gate
 and up independently along their output rows and down along its input columns.
 The existing packed FP8/window owners retain those local roles and preserve
-nonzero row-cut initial states. There is no checkpoint rewrite or persistent
+nonzero row-cut initial states. Construction allocates zero-byte wire loader
+anchors; finalization joins and stacks already local prepared roles and checks
+the complete original length/stride contract, without a full padded wire bank. There is no checkpoint rewrite or persistent
 full decoded expert stack. Global expert IDs and router weights are unchanged;
 the method returns the rank's partial output, leaving shared-expert combination
 and the final all-reduce to stock vLLM. EP, DP, PCP, SP, EPLB, runtime padding,

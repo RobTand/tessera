@@ -35,7 +35,7 @@ routes to the ``w13_wire`` parameter with ``shard_id="w1"`` -- but its own
 parameter carrying its own loader is the mechanism, and this route registers
 one.
 
-THE ROWS ARE PADDED AND THE LENGTHS RIDE BESIDE THEM.  A checkpoint stores one
+THE ORDINARY ROWS ARE PADDED AND THE LENGTHS RIDE BESIDE THEM.  A checkpoint stores one
 tensor per expert projection at that blob's exact length; the PARAMETER is
 rectangular, so ``create_weights`` allocates the group's declared
 ``wire_stride`` and the loader records each blob's true length.  What comes
@@ -55,8 +55,9 @@ sidecar; and a non-gated MoE, whose ``w13`` is one shard rather than the pair
 this route's groups describe.
 
 The explicit ``ResearchSelectedMoeConfig`` separately permits eager
-TP1 or TP2 selected decode. TP2 validates whole original wires, then invokes
-the existing role slicer before packing; it preserves global expert IDs and
+TP1 or TP2 selected decode. TP2 constructs zero-byte loader parameters and
+validates each whole original wire during its load callback, then invokes
+the existing role slicer and retains only local packed roles; it preserves global expert IDs and
 leaves output reduction to stock vLLM. It is not a qualified runtime cell.
 
 WHAT IS ATTESTED. The packaged contract publishes exactly two ``routed_moe`` cells:
@@ -84,7 +85,8 @@ from typing import Mapping, Sequence
 import torch
 
 from ..moe_execution import ResearchSelectedMoeConfig
-from ..moe_layout import W13_PROJECTIONS, MoePacked, unpack_moe_wires
+from ..moe_layout import (W13_PROJECTIONS, MoePacked, unpack_moe_wires,
+                          validate_moe_wire_lengths)
 from .lane import MODE_RESIDENT, MODES
 from .scheme import (MOE_GEMM_SYMBOL, MOE_GROUP_SHARDS, MOE_GROUPS, ROUTES,
                      STRUCTURE_ROUTED_MOE, TESSERA_FP8, launch_pairs, route_launches,
@@ -264,6 +266,20 @@ def _require_expert_groups(blobs, declared, target):
                 f"{experts} experts; every expert must have its own row of projection containers")
 
 
+def _packed_group_shard_plan(declared, group, target, tp_rank, tp_size):
+    from .sharding import plan_shard
+
+    hidden, inter = int(declared['hidden_size']), int(declared['intermediate_size'])
+    local_inter = inter // tp_size
+    declaration = declared['groups'][group]
+    first = group == 'w13'
+    return plan_shard(f"{target}.{group}", roles=declaration['roles'],
+            columns=int(declaration['columns']),
+            out_partitions=[local_inter, local_inter] if first else [hidden],
+            in_size=hidden if first else local_inter, tp_rank=tp_rank, tp_size=tp_size,
+            input_size=hidden if first else inter, output_size=2 * inter if first else hidden)
+
+
 def prepare_tessera_packed_moe_experts(blobs, declared, target, device=None, *, tp_rank=0, tp_size=1):
     """Research load: validate original containers into existing packed owners.
 
@@ -274,33 +290,75 @@ def prepare_tessera_packed_moe_experts(blobs, declared, target, device=None, *, 
     Only a transient per-role FP8 reference is materialized during preparation.
     """
     from .fp8_route import PreparedTesseraFp8Module, prepare_tessera_fp8_module
-    from .sharding import plan_shard, shard_parsed_roles
+    from .sharding import shard_parsed_roles
 
     if type(tp_size) is not int or tp_size not in (1, 2):
         raise ValueError(f"{target}: research packed experts cover TP1 or TP2 only")
     if type(tp_rank) is not int or not 0 <= tp_rank < tp_size:
         raise ValueError(f"{target}: invalid research tensor-parallel rank")
-    hidden, inter = int(declared["hidden_size"]), int(declared["intermediate_size"])
+    inter = int(declared["intermediate_size"])
     if inter % tp_size:
         raise ValueError(f"{target}: intermediate size must divide the tensor-parallel size")
-    local_inter = inter // tp_size
     device = torch.device("cuda" if device is None else device)
     _require_expert_groups(blobs, declared, target)
     prepared = {}
     for group in MOE_GROUPS:
         declaration = declared['groups'][group]
-        first = group == 'w13'
-        plan = plan_shard(f"{target}.{group}", roles=declaration['roles'],
-            columns=int(declaration['columns']),
-            out_partitions=[local_inter, local_inter] if first else [hidden],
-            in_size=hidden if first else local_inter, tp_rank=tp_rank, tp_size=tp_size,
-            input_size=hidden if first else inter, output_size=2 * inter if first else hidden)
+        plan = _packed_group_shard_plan(declared, group, target, tp_rank, tp_size)
         modules = [prepare_tessera_fp8_module(shard_parsed_roles(roles, plan), device=device)
                    for roles in _parsed_experts(blobs[group], declaration,
                                                 f"{target} {group}", device)]
         prepared[group] = PreparedTesseraFp8Module.stack(modules)
         del modules
     return PreparedTesseraPackedMoeExperts(prepared['w13'], prepared['w2'])
+
+
+class _RankLocalPackedIntake:
+    """TP2 loader ownership: one validated original becomes one local packed role."""
+
+    def __init__(self, declared, target, device, tp_rank, tp_size):
+        self.declared, self.target, self.device = declared, target, device
+        self._has_loaded = False
+        self.plans = {g: _packed_group_shard_plan(declared, g, target, tp_rank, tp_size)
+                      for g in MOE_GROUPS}
+        self.roles = {g: expert_role_declarations(declared['groups'][g]) for g in MOE_GROUPS}
+        self.prepared = {g: [[None] * len(self.roles[g]) for _ in range(declared['experts'])]
+                         for g in MOE_GROUPS}
+
+    def load(self, group, index, expert, wire, *, device):
+        from .fp8_route import prepare_tessera_fp8_module
+        from .sharding import shard_parsed_roles
+
+        device = torch.device(device)
+        if self._has_loaded and device != self.device:
+            raise ValueError(f'{self.target}: packed intake cannot change device after loading starts')
+        self.device = device
+        # Parse the FULL incoming container before slicing; the common parser
+        # validates its digest, geometry, role and recipe against the sidecar.
+        blob = wire.detach().cpu().contiguous().numpy().tobytes()
+        parsed = parse_tessera_expert_blob(blob, self.roles[group][index],
+            f'{self.target} {group} expert {expert}', device=self.device)
+        local = shard_parsed_roles(parsed, self.plans[group])
+        prepared = prepare_tessera_fp8_module(local, device=self.device)
+        self.prepared[group][expert][index] = prepared
+        self._has_loaded = True
+
+    def finish(self, w13_lengths, w2_lengths):
+        from .fp8_route import PreparedTesseraFp8Module
+
+        validate_moe_wire_lengths(w13_lengths, w2_lengths,
+            experts=self.declared['experts'],
+            stride13=self.declared['groups']['w13']['wire_stride'],
+            stride2=self.declared['groups']['w2']['wire_stride'])
+        groups = {}
+        for group in MOE_GROUPS:
+            modules = [PreparedTesseraFp8Module.concatenate(roles)
+                       for roles in self.prepared[group]]
+            groups[group] = PreparedTesseraFp8Module.stack(modules)
+            # Release this group's per-expert owners before stacking the next.
+            self.prepared[group] = None
+            del modules
+        return PreparedTesseraPackedMoeExperts(groups['w13'], groups['w2'])
 
 
 def prepare_tessera_moe_experts(blobs: Mapping[str, Sequence[Sequence[bytes]]],
@@ -363,6 +421,7 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
             self._mode = mode if research_selected is None else 'research_selected'
             self._research_phase = 'new'
             self._packed = None
+            self._rank_local_intake = None
             if research_selected is not None:
                 from vllm.config import get_current_vllm_config
                 if not get_current_vllm_config().model_config.enforce_eager:
@@ -443,12 +502,21 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
 
             # The wires: one padded row per (expert, projection), the group's
             # declared stride wide, each with its own loader.
-            w13_wire = torch.nn.Parameter(
-                torch.zeros(experts, W13_PROJECTIONS, int(groups["w13"]["wire_stride"]),
-                            dtype=torch.uint8), requires_grad=False)
-            w2_wire = torch.nn.Parameter(
-                torch.zeros(experts, int(groups["w2"]["wire_stride"]), dtype=torch.uint8),
-                requires_grad=False)
+            incremental = research_selected is not None and self._tp_size == 2
+            if incremental:
+                # Stock constructs every owner before loading any weight. Keep
+                # loader names/device anchors, without full-checkpoint staging.
+                w13_wire = torch.nn.Parameter(torch.empty(0, dtype=torch.uint8), requires_grad=False)
+                w2_wire = torch.nn.Parameter(torch.empty(0, dtype=torch.uint8), requires_grad=False)
+                self._rank_local_intake = _RankLocalPackedIntake(
+                    declared, prefix, w13_wire.device, self._tp_rank, self._tp_size)
+            else:
+                w13_wire = torch.nn.Parameter(
+                    torch.zeros(experts, W13_PROJECTIONS, int(groups["w13"]["wire_stride"]),
+                                dtype=torch.uint8), requires_grad=False)
+                w2_wire = torch.nn.Parameter(
+                    torch.zeros(experts, int(groups["w2"]["wire_stride"]), dtype=torch.uint8),
+                    requires_grad=False)
             layer.register_parameter("w13_wire", w13_wire)
             layer.register_parameter("w2_wire", w2_wire)
             set_weight_attrs(w13_wire, {"weight_loader": self._load_wire})
@@ -489,7 +557,7 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
 
         def _load_wire(self, param, loaded_weight, weight_name, shard_id, expert_id,
                        return_success: bool = False):
-            """Copy one expert projection's blob into its padded row.
+            """Validate and retain one projection, slicing TP2 during intake.
 
             ``RoutedExperts.load_weights`` calls ``param.weight_loader`` with
             these keywords; the stack's own ``weight_loader`` would return
@@ -517,17 +585,33 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
                     f"tessera target {prefix!r} expert {expert_id} {shard_id}: a Tessera wire "
                     f"is uint8 bytes, the checkpoint holds {blob.dtype}")
             length = int(blob.numel())
-            stride = int(param.data.shape[-1])
+            stride = int(groups[group]["wire_stride"])
             if length == 0 or length > stride:
                 raise ValueError(
                     f"tessera target {prefix!r} expert {expert_id} {shard_id}: a {length}-byte "
                     f"wire does not fit the group's declared wire_stride={stride}; the sidecar "
                     "and the bytes disagree about the row width")
-            if group == "w13":
+            if self._rank_local_intake is not None:
+                try:
+                    self._require_research_parallel_contract()
+                    # Resolve from the live loader anchor, not construction:
+                    # stock can use a different explicit load device. Preserve
+                    # the ordinary finalizer's CUDA promotion before packing.
+                    device = param.device
+                    if device.type != 'cuda' and torch.cuda.is_available():
+                        device = torch.device('cuda', torch.cuda.current_device())
+                    self._rank_local_intake.load(group, index, expert_id, blob, device=device)
+                except Exception:
+                    self._research_phase = 'failed'
+                    self._rank_local_intake = None
+                    raise
+            elif group == "w13":
                 param.data[int(expert_id), index, :length] = blob
-                self._w13_len[int(expert_id), index] = length
             else:
                 param.data[int(expert_id), :length] = blob
+            if group == "w13":
+                self._w13_len[int(expert_id), index] = length
+            else:
                 self._w2_len[int(expert_id)] = length
             return True if return_success else None
 
@@ -536,23 +620,27 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
                 if self._research_phase != 'loading':
                     raise RuntimeError(f"{prefix}: research owner is not loading ({self._research_phase})")
                 self._research_phase = 'failed'  # any incomplete/invalid load stays unusable
-            packed = MoePacked(
-                w13_wire=layer.w13_wire.data.cpu(), w13_wire_len=layer.tessera_w13_wire_len,
-                w2_wire=layer.w2_wire.data.cpu(), w2_wire_len=layer.tessera_w2_wire_len)
-            # Every refusal of ``moe_layout`` fires here on real bytes -- in
-            # particular a declared stride that is not the maximum the loaded
-            # lengths imply, which is the sidecar-vs-bytes disagreement no
-            # other check sees.
-            w13_blobs, w2_blobs = unpack_moe_wires(packed)
-            device = layer.w13_wire.device
-            if device.type != "cuda" and torch.cuda.is_available():
-                device = torch.device("cuda")
-            prepare = (prepare_tessera_moe_experts if research_selected is None
-                       else prepare_tessera_packed_moe_experts)
-            prepared = prepare(
-                {"w13": w13_blobs, "w2": [[blob] for blob in w2_blobs]},
-                declared, prefix, device=device,
-                **({} if research_selected is None else {'tp_rank': self._tp_rank, 'tp_size': self._tp_size}))
+            if self._rank_local_intake is not None:
+                intake, self._rank_local_intake = self._rank_local_intake, None
+                prepared = intake.finish(self._w13_len, self._w2_len)
+            else:
+                packed = MoePacked(
+                    w13_wire=layer.w13_wire.data.cpu(), w13_wire_len=layer.tessera_w13_wire_len,
+                    w2_wire=layer.w2_wire.data.cpu(), w2_wire_len=layer.tessera_w2_wire_len)
+                # Every refusal of ``moe_layout`` fires here on real bytes -- in
+                # particular a declared stride that is not the maximum the loaded
+                # lengths imply, which is the sidecar-vs-bytes disagreement no
+                # other check sees.
+                w13_blobs, w2_blobs = unpack_moe_wires(packed)
+                device = layer.w13_wire.device
+                if device.type != "cuda" and torch.cuda.is_available():
+                    device = torch.device("cuda")
+                prepare = (prepare_tessera_moe_experts if research_selected is None
+                           else prepare_tessera_packed_moe_experts)
+                prepared = prepare(
+                    {"w13": w13_blobs, "w2": [[blob] for blob in w2_blobs]},
+                    declared, prefix, device=device,
+                    **({} if research_selected is None else {'tp_rank': self._tp_rank, 'tp_size': self._tp_size}))
             del layer.w13_wire, layer.w2_wire
             layer.tessera_w13_wire_len = None
             layer.tessera_w2_wire_len = None

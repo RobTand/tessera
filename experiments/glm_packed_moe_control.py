@@ -220,43 +220,50 @@ def run(args, request, outer):
     del registered,meta_owner,model
     gc.collect()
 
+    from experiments.glm_packed_intake_observer import IntakeObservation
+
     with set_current_vllm_config(config,check_compile=False), torch.no_grad():
         init_workspace_manager(torch.device('cuda'))
         torch.cuda.reset_peak_memory_stats()
         stages = {'before_create':memory()}
-        with census._set_default_torch_dtype()(torch.bfloat16),torch.device('cuda'):
-            moe = moe_type(config.model_config.hf_text_config,config.parallel_config,mapped,
-                           prefix=target.removesuffix('.experts'))
-        layer,method = moe.experts.routed_experts,moe.experts.routed_experts.quant_method
-        stages['after_create'] = memory()
-        initial_parameters = {name:plain(value) for name,value in layer.named_parameters(recurse=False)}
-        if outer['arm'] == 'packed':
-            assert set(initial_parameters) == {'e_score_correction_bias','w13_wire','w2_wire'}
-            assert layer.tessera_mode == 'research_selected'
-            assert method._research_phase == 'loading'
-        def weights():
-            for expert in range(e):
-                for role,template in templates.items():
-                    blob = diagnostics[expert] if diagnostics is not None and role == 'down_proj' else template
-                    yield f'{expert}.{role}.wire',torch.frombuffer(bytearray(blob),dtype=torch.uint8)
-        loaded = sorted(layer.load_weights(weights()))
-        stages['after_wire_load'] = memory()
-        write(args.out,'load-progress.json',{'loaded_names':loaded,'supplied_projections':e*3,
-            'meta_parameters':meta_parameters,'initial_parameters':initial_parameters,'stages':stages})
-        with torch.profiler.record_function('tessera_control_prepare_owner'):
-            method.process_weights_after_loading(layer)
-        stages['after_prepare'] = memory()
-        parameters = dict(layer.named_parameters(recurse=False))
-        if outer['arm'] == 'packed':
-            assert set(parameters) == {'e_score_correction_bias'}
-            assert method._research_phase == 'ready'
-            assert method.moe_kernel is None and method.moe_quant_config is None
-            resident_bytes = method.research_resident_bytes()
-        else:
-            resident_bytes = sum(p.numel()*p.element_size() for p in parameters.values())
-        write(args.out,'prepared-owner.json',{'stages':stages,'owner_resident_bytes':resident_bytes,
-            'parameters':{name:plain(p) for name,p in parameters.items()},
-            'no_persistent_full_fp8':outer['arm']=='packed'})
+        with IntakeObservation(args.out, outer.get('intake_observation')) as intake_observer:
+            with census._set_default_torch_dtype()(torch.bfloat16),torch.device('cuda'):
+                moe = moe_type(config.model_config.hf_text_config,config.parallel_config,mapped,
+                               prefix=target.removesuffix('.experts'))
+            layer,method = moe.experts.routed_experts,moe.experts.routed_experts.quant_method
+            stages['after_create'] = memory()
+            intake_observer.after_create(layer, method)
+            initial_parameters = {name:plain(value) for name,value in layer.named_parameters(recurse=False)}
+            if outer['arm'] == 'packed':
+                assert set(initial_parameters) == {'e_score_correction_bias','w13_wire','w2_wire'}
+                assert layer.tessera_mode == 'research_selected'
+                assert method._research_phase == 'loading'
+            def weights():
+                for expert in range(e):
+                    for role,template in templates.items():
+                        blob = diagnostics[expert] if diagnostics is not None and role == 'down_proj' else template
+                        yield f'{expert}.{role}.wire',torch.frombuffer(bytearray(blob),dtype=torch.uint8)
+                        intake_observer.after_callback(method)
+            loaded = sorted(layer.load_weights(weights()))
+            stages['after_wire_load'] = memory()
+            intake_observer.after_load(method, e * 3)
+            write(args.out,'load-progress.json',{'loaded_names':loaded,'supplied_projections':e*3,
+                'meta_parameters':meta_parameters,'initial_parameters':initial_parameters,'stages':stages})
+            with torch.profiler.record_function('tessera_control_prepare_owner'):
+                method.process_weights_after_loading(layer)
+            stages['after_prepare'] = memory()
+            parameters = dict(layer.named_parameters(recurse=False))
+            if outer['arm'] == 'packed':
+                assert set(parameters) == {'e_score_correction_bias'}
+                assert method._research_phase == 'ready'
+                assert method.moe_kernel is None and method.moe_quant_config is None
+                resident_bytes = method.research_resident_bytes()
+                intake_observer.after_finalize(method)
+            else:
+                resident_bytes = sum(p.numel()*p.element_size() for p in parameters.values())
+            write(args.out,'prepared-owner.json',{'stages':stages,'owner_resident_bytes':resident_bytes,
+                'parameters':{name:plain(p) for name,p in parameters.items()},
+                'no_persistent_full_fp8':outer['arm']=='packed'})
 
         # Allocate the independent stock oracle only after measuring the load.
         # Stock TP2 slices each role of the full independent source; local

@@ -138,6 +138,21 @@ def test_selected_expert_modules_refuse_mixed_role_order_and_empty_stack():
         route.PreparedTesseraFp8Module.stack([_selected_module(0), _selected_module(1, ('up', 'gate'))])
 
 
+def test_concatenated_roles_share_packed_windows_and_preserve_scale_order():
+    modules = [_selected_module(0, ('gate',)), _selected_module(1, ('up',))]
+    combined = route.PreparedTesseraFp8Module.concatenate(modules)
+    assert torch.equal(combined.decode(), torch.cat([m.decode() for m in modules]))
+    assert torch.equal(combined.row_scale(), torch.cat([m.row_scale() for m in modules]))
+    actual = combined._PreparedTesseraFp8Module__roles
+    assert all(a.window is m._PreparedTesseraFp8Module__roles[0].window
+               for a, m in zip(actual, modules))
+    assert [r.row_offset for r in actual] == [0, 16]
+    with pytest.raises(ValueError, match='at least one'):
+        route.PreparedTesseraFp8Module.concatenate([])
+    with pytest.raises(ValueError, match='distinct names'):
+        route.PreparedTesseraFp8Module.concatenate([modules[0], modules[0]])
+
+
 # --- the numerics ------------------------------------------------------------
 
 def _install_vllm_stubs(monkeypatch):
