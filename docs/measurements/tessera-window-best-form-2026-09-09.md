@@ -91,11 +91,13 @@ Correctness, PrismaBuild GPU on gb10, no skips:
 | `test_window_body.py` | 30 | `71298a18e364` |
 | `test_audit_doc_claims.py` | 10 | `3c6e5da63af2` |
 | `test_e4m3_ladder.py` | 6 | `b2f99d50a71e` |
+| `test_window_viterbi_two_step.py` | 68 | `f7bebb11c5f1` |
 
 The 54 modules that reach the trellis through the encoder, six shards on
 sparklina, 1453 passed, 5 skipped, 1 xfailed, nothing failed:
 `49e5e1610a6b`, `d0093945785e`, `bd404e128a59`, `883df5d02b81`,
-`8f21727b8f85`, `60ef250585fc`.
+`8f21727b8f85`, `60ef250585fc`. Those six commands set no
+`TESSERA_WINDOW_BEST_FORM`, so they ran the default, which is `0`.
 
 The empty-problem defect root found while reading call coverage, demonstrated
 in an action of its own because before the fix it takes the CUDA context down:
@@ -103,18 +105,20 @@ pre-fix `52cb04a22264` (illegal memory access, raised from `_init_best`),
 post-fix `e0872d56cd35` (the reference's answer). `experiments/
 window_viterbi_zero_row_repro.py` is that action's script.
 
-Those five existing modules are every test that names `window_viterbi`
-or `viterbi_window` directly. They are not every test that reaches it: the
+Those seven modules are every test that names `window_viterbi` or
+`viterbi_window` directly. They are not every test that reaches it: the
 encoder does, through `encode_unit` to `encode_units` to `_drive_in_step` to
-`_run_joined`, and 55 modules call the encoder. Those 55 exercise the front
-form, which this branch does not change, and are listed with their receipt
-below. The 91 cover both production rates and R5 at L14, `R > L-R`,
-eager and captured, weighted and not, duplicated table rows that force two
-predecessors to carry the identical float, a coarse table whose distinct rows
-produce sums that ROUND to the same float, an assertion that the tie family
-actually ties, and `cols=205` against chunks 40, 96 and 130 so both
-`cols % chunk` and `m % BC` are non-zero, and zero rows against positive
-columns in both graph modes and both spellings.
+`_run_joined`, and 54 modules call the encoder. Because those 54 ran on the
+default `TESSERA_WINDOW_BEST_FORM=0`, what they cover is the front form, whose
+positive-input path this branch does not change. They are a non-regression
+receipt for the default and are not offered as best-form coverage; the best
+form's coverage is the 91 above, which run both settings. The 91 cover both
+production rates and R5 at L14, `R > L-R`, eager and captured, weighted and
+not, duplicated table rows that force two predecessors to carry the identical
+float, a coarse table whose distinct rows produce sums that ROUND to the same
+float, an assertion that the tie family actually ties, and `cols=205` against
+chunks 40, 96 and 130 so both `cols % chunk` and `m % BC` are non-zero, and
+zero rows against positive columns in both graph modes and both spellings.
 
 Timing `63eae68972d2` (sparklina, measurement, exclusive). Torch profiles, one
 config per action so neither overwrites the other's trace: R3
