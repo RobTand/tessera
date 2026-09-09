@@ -78,9 +78,10 @@ the incumbent's 88.7 W and the front form's 58.3 W.
 | **`64x4w2`** | 16x16 | 256 | 4 | 40 | 0.02190 | **54.30** | **1.105** | 1.029 |
 | `128x4w8` | 8x16 | 128 | 2 | 33 | **0.02156** | 59.45 | 1.025 | **1.046** |
 
-At R4 the winner launches the **same 256 programs** as the incumbent. Nothing
-about parallelism changed; only the shape of a program did, from 128 classes by
-2 columns on 128 threads to 64 by 4 on 64 threads. Half the threads, 2.9% less
+At R4 the winner launches the **same 256 programs** as the incumbent, so
+between those two arms nothing about parallelism changed; only the shape of a
+program did, from 128 classes by 2 columns on 128 threads to 64 by 4 on 64
+threads. The grid is not constant across the screen: `128x4w8` runs 128. Half the threads, 2.9% less
 time, 6.8% less power and 10.5% more work per joule: the incumbent is
 over-threaded for the work this rate has, and that costs energy rather than
 seconds.
@@ -155,11 +156,15 @@ tailwind; at R4 the blocks are tight enough that it does not signify. The 1.2%
 work-per-joule gap between the two R3 candidates is inside that, and is not
 claimed.
 
-**R4 cannot be brought into the 90 to 100 W band by tiling.** Its highest arm
-draws 59.5 W. With 64 columns and `low = 1024` the whole problem is 256
-programs however it is cut, so the power that shape can reach is a property of
-the shape, not of the tile. Reading that as a tile failure would be reading it
-backwards.
+**No tile screened here brings R4 into the 90 to 100 W band.** Its highest arm
+draws 59.5 W, against 93.5 W for the same winner at R3. That is a statement
+about the eight configurations screened, not a ceiling: an earlier draft said
+the problem was 256 programs however it is cut, and the table on this page
+refutes it, because `128x4w8` launches 128. What the arms have in common is
+the 64 columns this call is given, and root's reading is that widening the
+best-form batch itself -- the earlier batch-width screen moved the front only
+-- is an independent way at the same power, untested here. Reading these eight
+arms as a shape ceiling would be reading them backwards.
 
 Two shapes, one rate family, one box, `viterbi_window` alone rather than a real
 encode. `E4-R1088` includes R5, and the dense shapes use other `L`. Nothing
