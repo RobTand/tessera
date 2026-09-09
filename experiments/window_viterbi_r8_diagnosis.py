@@ -146,7 +146,7 @@ def main() -> int:
     print("-" * len(head))
     rows = []
     for rate in rates:
-        step, tb, init, copy = wv._kernels()
+        step, tb, init, copy = wv._kernels()[:4]
         spy = _Spy(step)
         wv._CACHE["k"] = (spy, tb, init, copy)
         try:

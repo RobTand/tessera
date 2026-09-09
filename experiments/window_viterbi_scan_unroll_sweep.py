@@ -46,7 +46,7 @@ def compiled(targets, vectors, L, rate, warm):
     """``(n_regs, n_spills)`` of the ``_step`` kernel this configuration runs."""
     from window_viterbi_r8_diagnosis import _Spy
 
-    step, tb, init, copy = wv._kernels()
+    step, tb, init, copy = wv._kernels()[:4]
     spy = _Spy(step)
     wv._CACHE["k"] = (spy, tb, init, copy)
     try:
