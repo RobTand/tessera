@@ -28,6 +28,19 @@ import sys
 
 import pytest
 
+# The driver imports torch at module level (``:18``), so on an interpreter
+# without it ``--help`` exits 1 and this file reports a failure where it should
+# report an absence -- which is what it did on the GitHub runner, whose
+# environment installs no torch.  Both tests below run the driver, so the guard
+# belongs at module scope here: there is nothing in this file that a
+# torch-free box could still check.
+#
+# The guard is also the honest scope statement.  This file asks whether the
+# driver's module graph resolves against a checkout, and the graph includes
+# torch; a box that cannot import torch cannot answer the question, and
+# claiming a pass there would be claiming coverage the run does not have.
+pytest.importorskip("torch", reason="the export driver imports torch at module level")
+
 ROOT = Path(__file__).resolve().parents[1]
 DRIVERS = [
     "full_model_research_selected_checkpoint.py",

@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-08T23:26:49Z",
+ "generated": "2026-09-10T01:53:17Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -821,7 +821,7 @@
    },
    "283": {
     "state": "OPEN",
-    "title": "Tessera campaign encode loop runs at 16 W of 140 W (96% util): profile it before the next campaign"
+    "title": "GLM campaign: remaining CPU and serialization pauses after publication overlap A/B"
    },
    "284": {
     "state": "CLOSED",
@@ -1296,7 +1296,7 @@
     "title": "policy: constrain native parity and production CB menu"
    },
    "390": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "autoscale.selected_anchor_resources uses chosen multipliers with no process baseline; native guard peak 2.61 GB against a 12.6 MB plan"
    },
    "391": {
@@ -1356,7 +1356,7 @@
     "title": "Bound streamed joint probing with exact target and candidate windows"
    },
    "403": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Exact layer-major visitor cannot re-prefetch a layer evicted between schedule and install"
    },
    "404": {
@@ -1424,7 +1424,7 @@
     "title": "Keep fitting campaign rows available and verify packed-stack page release"
    },
    "419": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Re-assert a layer's prefetch before install instead of trusting a private set"
    },
    "42": {
@@ -1456,7 +1456,7 @@
     "title": "Carry bounded canonical Hessian references through full-roster export"
    },
    "426": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Derive the selected-anchor plan terms and measure the row's process floor"
    },
    "427": {
@@ -1476,11 +1476,11 @@
     "title": "Release PrismaQuant 0.5.0"
    },
    "430": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "tessera_campaign_container attaches the GPU by default, so a row that reserved none still gets the device"
    },
    "431": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Let the GPU grant decide the container attachment, not a remembered flag"
    },
    "432": {
@@ -1496,7 +1496,7 @@
     "title": "Gold runners cannot express stock TP2 multi-node topology"
    },
    "435": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Routed-expert family allow-list duplicates the pinned contract's routed_moe cells instead of deriving from them"
    },
    "436": {
@@ -1524,24 +1524,168 @@
     "title": "Add authenticated streamed gold final-row companion"
    },
    "441": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Selected-anchor observer omits compatible batched encoding"
    },
    "442": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Observe compatible batched anchors in the existing profiler"
+   },
+   "443": {
+    "state": "CLOSED",
+    "title": "Selected-anchor full-call CUDA traces exceed qualification evidence limits"
+   },
+   "444": {
+    "state": "CLOSED",
+    "title": "Bound selected-anchor CUDA collection with an explicit time window"
+   },
+   "445": {
+    "state": "CLOSED",
+    "title": "Full-suite flake: tessera_joint_aura.execute leaves PRISMAQUANT_PROD_ACT_SCALES=0 in the process"
+   },
+   "446": {
+    "state": "CLOSED",
+    "title": "Give back the activation-scale environment execute borrows"
+   },
+   "447": {
+    "state": "CLOSED",
+    "title": "Selected capture reuse cannot select the existing verified loader"
+   },
+   "448": {
+    "state": "CLOSED",
+    "title": "Wire verified capture loading into selected streaming reuse"
+   },
+   "449": {
+    "state": "CLOSED",
+    "title": "Allow explicit Tessera pricing families by dense or routed structure"
    },
    "45": {
     "state": "CLOSED",
     "title": "release: prismaquant 0.5.2"
    },
+   "450": {
+    "state": "CLOSED",
+    "title": "Allow explicit Tessera pricing families by unit structure"
+   },
+   "451": {
+    "state": "CLOSED",
+    "title": "Decorator docstring overstates who reads PRISMAQUANT_PROD_ACT_SCALES"
+   },
+   "452": {
+    "state": "CLOSED",
+    "title": "Say what the restored variable actually means"
+   },
+   "453": {
+    "state": "CLOSED",
+    "title": "Integrate selected-anchor pricing, verified capture reuse and bounded profiling"
+   },
+   "454": {
+    "state": "CLOSED",
+    "title": "Assert the routed allow-list still equals the contract it was copied from"
+   },
+   "455": {
+    "state": "CLOSED",
+    "title": "PrismaBuild's PQ interpreter carries an answer-equivalent but byte-different Tessera, so only the byte-identity assertions cannot pass in the fleet"
+   },
+   "456": {
+    "state": "CLOSED",
+    "title": "Track experimental GLM TR3 full-panel teacher and native scoring instrument"
+   },
+   "457": {
+    "state": "CLOSED",
+    "title": "Add sealed GLM TR3 full-vocabulary teacher and native vLLM scorer"
+   },
+   "458": {
+    "state": "CLOSED",
+    "title": "Preserve later Netdata samples after an individual sampling failure"
+   },
+   "459": {
+    "state": "CLOSED",
+    "title": "fix: preserve observer sampling and concurrent progress serialization"
+   },
    "46": {
     "state": "CLOSED",
     "title": "Ultraplan P5: activation-fair pricing, serving-lane metadata, constrained Pareto solver, D0.3 harness, K0.2 stage attestation"
    },
+   "460": {
+    "state": "CLOSED",
+    "title": "Observer threads insert dict keys while the main thread runs json.dumps(indent=2), so a completed anchor can surface as an encoder failure"
+   },
+   "461": {
+    "state": "CLOSED",
+    "title": "Install the Tessera the pin names, on the fleet too"
+   },
+   "462": {
+    "state": "CLOSED",
+    "title": "Pin reviewed best-form Tessera producer for GLM pricing"
+   },
+   "463": {
+    "state": "CLOSED",
+    "title": "Integrate the reviewed GLM best-form Tessera source dependency"
+   },
+   "464": {
+    "state": "CLOSED",
+    "title": "Tessera campaign stalls the next encode on the previous batch's publication, receipt read-back and journal write"
+   },
+   "465": {
+    "state": "CLOSED",
+    "title": "Let the next batch encode while the last one is written"
+   },
+   "466": {
+    "state": "CLOSED",
+    "title": "Reuse published Hessian commitments for resident campaign sealing"
+   },
+   "467": {
+    "state": "CLOSED",
+    "title": "Reuse published Hessian commitments for resident campaign sealing"
+   },
+   "468": {
+    "state": "OPEN",
+    "title": "Resolve EXL3 first-window KL divergence across matched scoring runs"
+   },
+   "469": {
+    "state": "CLOSED",
+    "title": "Row demand does not reserve the process floor the row is admitted against"
+   },
    "47": {
     "state": "CLOSED",
     "title": "Release PrismaQuant 0.6.0"
+   },
+   "470": {
+    "state": "CLOSED",
+    "title": "Reserve the declared process baseline outside the phase deltas"
+   },
+   "471": {
+    "state": "CLOSED",
+    "title": "Offline launcher leaves its paired worker running, and the layer-3 divergence has no discriminator"
+   },
+   "472": {
+    "state": "CLOSED",
+    "title": "Stop the paired worker on every path, and repeat the call that diverges"
+   },
+   "473": {
+    "state": "CLOSED",
+    "title": "Load authenticated selected source weights and preserve compatible anchor work"
+   },
+   "474": {
+    "state": "CLOSED",
+    "title": "Avoid unrelated source materialization in selected capture-reuse pricing"
+   },
+   "475": {
+    "state": "CLOSED",
+    "title": "Record bounded server-cache warm-up and GLM loading-gap evidence"
+   },
+   "476": {
+    "state": "CLOSED",
+    "title": "Record bounded server cache warming and GLM startup-gap measurements"
+   },
+   "477": {
+    "state": "CLOSED",
+    "title": "Fix streamed Qwen rotary positions with Transformers 5.17"
+   },
+   "478": {
+    "state": "CLOSED",
+    "title": "Fix streamed Qwen rotary positions for Transformers 5.17"
    },
    "48": {
     "state": "CLOSED",
@@ -3266,16 +3410,60 @@
     "title": "fix(export): accept calibrated packed complete-cache intake"
    },
    "435": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Research packed TP2 allocates full checkpoint wire banks before rank-local slicing"
    },
    "436": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Keep research TP2 expert intake rank-local on stock vLLM"
+   },
+   "437": {
+    "state": "CLOSED",
+    "title": "Carry the class minimum, not the front: 2.63x on the R3 window step, exact"
+   },
+   "438": {
+    "state": "CLOSED",
+    "title": "Measure the best-form step's tile: 64x4w2 retires the 128x2 incumbent at both production rates"
+   },
+   "439": {
+    "state": "CLOSED",
+    "title": "Tile page: the blocks are the same length, the calls are a third as long"
    },
    "44": {
     "state": "CLOSED",
     "title": "Load cost over a trailing partial superblock has never been measured"
+   },
+   "440": {
+    "state": "CLOSED",
+    "title": "ReferenceHessians cannot serve resident H: a producer holding the tensors pays the population digest twice"
+   },
+   "441": {
+    "state": "CLOSED",
+    "title": "Let one owner serve the H the caller already holds"
+   },
+   "442": {
+    "state": "OPEN",
+    "title": "Qualify compressed MoE serving: full-model integration, TP2, scale fidelity and measured efficiency"
+   },
+   "443": {
+    "state": "OPEN",
+    "title": "Add MXFP8 trellis encoding and native block-scaled serving support"
+   },
+   "444": {
+    "state": "OPEN",
+    "title": "Qualify compressed MoE serving: multi-stack controls, topology record, and the bullet-1 encode driver"
+   },
+   "445": {
+    "state": "OPEN",
+    "title": "Add the OCP MX scale plane: E8M0 per 32 over E4M3, priced, written and decoded (#443 bullets 1 and 2)"
+   },
+   "446": {
+    "state": "OPEN",
+    "title": "Two test modules import kernel_window without guarding its module-level triton import"
+   },
+   "447": {
+    "state": "OPEN",
+    "title": "Skip the two Triton-importing tests instead of erroring the shard (#446)"
    },
    "45": {
     "state": "CLOSED",
