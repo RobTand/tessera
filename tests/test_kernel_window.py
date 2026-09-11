@@ -39,6 +39,23 @@ stock_twin = box_artifacts.require("runs", *_TWIN, "model.safetensors")
 
 
 def _kw():
+    # ``kernel_window`` imports Triton at module scope (``:45``), and so does
+    # the ``kernel_bits`` it reads planes through, because both carry
+    # ``@triton.jit`` kernels whose decorators run at import.  On a CPU
+    # interpreter that import is an *absence*, not a failure, but raised here
+    # it is an ERROR, and an errored test takes its whole shard's PB receipt
+    # with it.  Skip so the shard still publishes (tessera#446).
+    #
+    # This is a narrower disposition than the file deserves.  Two tests below
+    # -- the two ``prepare_from_parsed`` ones -- are deliberate CPU tests:
+    # they pass ``device="cpu"`` throughout and carry no ``cuda`` mark,
+    # because ``prepare_from_parsed`` is pure-torch preparation and refusal
+    # logic that needs no kernel.  The guard turns them from errors into
+    # skips; it does not give them back.  Reaching that logic without Triton
+    # means the module's four jitted kernels move behind a lazy factory,
+    # which is a kernel-module change and its own issue.
+    pytest.importorskip(
+        "triton", reason="tessera.kernel_window imports Triton (CUDA-only)")
     from tessera import kernel_window
 
     return kernel_window
