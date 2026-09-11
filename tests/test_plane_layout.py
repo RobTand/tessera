@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 from conftest import ALPHABET_BLOB, DESCENDANT_BLOB, make_artifact
-from tessera.container import SCHEMA_MINOR, SCHEMA_MINORS_READ, parse, serialize
+from tessera.container import MX_SCHEMA_MINOR, SCHEMA_MINOR, SCHEMA_MINORS_READ, parse, serialize
 from tessera.errors import GrammarError, ManifestError, PlaneLayoutError, TesseraError
 from tessera.grammar import (
     bresenham_rate_schedule,
@@ -367,7 +367,9 @@ def test_the_header_minor_is_the_layout():
     manifest, region, blob = make_artifact()
     assert manifest.layout is PlaneLayout.LADDER
     assert manifest.schema_minor == SCHEMA_MINOR == 7
-    assert blob[10] == 7 and tuple(SCHEMA_MINORS_READ) == tuple(range(8))
+    # Minor 8 is the MX scale plane over this same LADDER layout, so the
+    # readable range runs one past the minor every recipe writes.
+    assert blob[10] == 7 and tuple(SCHEMA_MINORS_READ) == tuple(range(MX_SCHEMA_MINOR + 1))
     assert parse(blob).manifest.layout is PlaneLayout.LADDER
     assert parse(blob).manifest.plane_order is CANONICAL_PLANE_ORDER
     with pytest.raises(ManifestError, match="LADDER plane layout; needs minor 7"):

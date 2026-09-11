@@ -40,7 +40,7 @@ import torch
 from .encode import EncodedUnit
 from .errors import GrammarError
 from .grammar import superblock_count
-from .manifest import BodyKind, RotationState, ScalePlaneKind
+from .manifest import BodyKind, RotationState, ScalePlaneKind, scale_block_columns
 from .planes import PlaneKind
 
 __all__ = [
@@ -128,9 +128,7 @@ def _lcm(a: int, b: int) -> int:
 def _scale_columns_per_row(unit) -> "int | None":
     """The column stride of the block scale planes, or ``None`` if there are none."""
     kind = ScalePlaneKind(getattr(unit, "scale_plane", ScalePlaneKind.S6B))
-    if kind is ScalePlaneKind.CHANNEL:
-        return None
-    return unit.group if kind is ScalePlaneKind.S6B else unit.half
+    return scale_block_columns(kind, unit.group, unit.half)
 
 
 def _block_straddles_rows(block: "int | None", columns: int) -> bool:
@@ -264,14 +262,11 @@ def shard_granularity(unit, superblock: int = 256, arity: int = 1):
 
 def _manifest_granularity(manifest):
     """``shard_granularity`` for a manifest -- what a reader holding bytes has."""
-    from .manifest import BodyKind, ScalePlaneKind as _Kind
+    from .manifest import BodyKind
 
     geometry = manifest.geometry
-    kind = manifest.scale_plane.kind
-    block = (
-        None
-        if kind is _Kind.CHANNEL
-        else geometry.group_weights if kind is _Kind.S6B else geometry.half_weights
+    block = scale_block_columns(
+        manifest.scale_plane.kind, geometry.group_weights, geometry.half_weights
     )
     arity = geometry.rows * geometry.columns // (geometry.columns * _steps_of(manifest))
     row = arity * (manifest.span if manifest.body is BodyKind.TCQ else 1)
@@ -411,18 +406,15 @@ def _slicing_facts(unit, superblock: int, arity: int):
     unit: the two used to be one function, and a second copy of this stanza
     beside the other is how a predicate and a reason drift apart.
     """
-    from .manifest import Manifest, ScalePlaneKind as _Kind
+    from .manifest import Manifest
 
     if isinstance(unit, Manifest):
         rows, cols = unit.geometry.rows, unit.geometry.columns
         superblock = unit.geometry.superblock_columns
-        kind = unit.scale_plane.kind
-        block = (
-            None
-            if kind is _Kind.CHANNEL
-            else unit.geometry.group_weights
-            if kind is _Kind.S6B
-            else unit.geometry.half_weights
+        block = scale_block_columns(
+            unit.scale_plane.kind,
+            unit.geometry.group_weights,
+            unit.geometry.half_weights,
         )
         rotation = unit.branch.rotation
     else:

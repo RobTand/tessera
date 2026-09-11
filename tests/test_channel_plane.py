@@ -181,7 +181,7 @@ def test_the_profile_id_binds_the_plane_kind():
         kind: encoder_profile_id(None, rates, E4M3_GRID, 1, kind, WINDOW, 8)
         for kind in ScalePlaneKind
     }
-    assert len(set(ids.values())) == 3
+    assert len(set(ids.values())) == len(ScalePlaneKind)
 
 
 def test_a_channel_plane_refuses_segment_2a_and_block_words():

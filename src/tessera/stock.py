@@ -140,6 +140,13 @@ def materialize_stock(unit, forest, code) -> dict[str, torch.Tensor]:
         from .decode import materialize_bf16_folded
 
         return {"weight": materialize_bf16_folded(unit, forest, code).contiguous()}
+    if plane is ScalePlaneKind.MX:
+        raise GrammarError(
+            "an MX unit has no stock compressed-tensors tensor in this tree: its "
+            "(E4M3 tile, E8M0 block plane) pair is decode.materialize_mxfp8, and "
+            "the checkpoint spelling and served route are tessera#443 bullets 3 "
+            "and 6"
+        )
     if plane is ScalePlaneKind.CHANNEL:
         native, scale = materialize_fp8(unit, forest, code)
         return {

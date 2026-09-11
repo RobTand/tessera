@@ -494,6 +494,17 @@ def _pack_window_unit(unit, grid) -> dict:
         row_scale = channel_scale_field(
             unit.scale_rows.to(device), unit.scale_global, rows, 1
         )[:, 0].contiguous()
+    elif unit.scale_plane is ScalePlaneKind.MX:
+        # Not a kernel-lane plane: the lane's mainloop reads a per-16 E4M3
+        # block scale times a global, and an E8M0-per-32 plane is neither.
+        # Refused by name rather than relabelled through nvfp4_scale_bytes
+        # (which would die inside the reshape); the block-scaled kernel is
+        # tessera#443 bullet 3.
+        raise GrammarError(
+            "the kernel lane packs LUT and CHANNEL planes; this unit carries the "
+            "MX plane (one E8M0 per 32), whose block-scaled kernel is not in "
+            "this tree (tessera#443)"
+        )
     else:
         e4m3, global_scale = nvfp4_scale_bytes(
             unit.scale_base, unit.scale_refine, unit.group, unit.half

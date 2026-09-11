@@ -85,7 +85,7 @@ from .errors import (
     TesseraError,
 )
 from .export import rung_ceiling, wire_recipe
-from .manifest import BodyKind, ScalePlaneKind
+from .manifest import BodyKind, ScalePlaneKind, scale_plane_terminal_flags
 
 __all__ = [
     "BF16",
@@ -433,13 +433,14 @@ def unit_wire_bits(grid: "str | PayloadGrid", q256: int, rows: int, columns: int
     # the coset trellis spends one bit of it on the code.  The same dispatch
     # ``export.plan_for`` makes when it builds the schedule the encoder runs.
     cap = payload.payload_bits if body is BodyKind.WINDOW else payload.rate_cap
+    with_base, with_refine, with_rows = scale_plane_terminal_flags(plane)
     rate = terminal_rate(
         q256 * payload.arity,
         rows,
         columns,
-        with_scale_base=plane is ScalePlaneKind.S6B,
-        with_scale_refine=plane in (ScalePlaneKind.S6B, ScalePlaneKind.LUT),
-        with_row_scale=plane is ScalePlaneKind.CHANNEL,
+        with_scale_base=with_base,
+        with_scale_refine=with_refine,
+        with_row_scale=with_rows,
         with_diagonals=False,
         completion=0,
         cap=cap,
