@@ -10,6 +10,7 @@ import struct
 import warnings
 from unittest import mock
 
+import numpy as np
 import pytest
 import torch
 
@@ -38,6 +39,7 @@ from tessera.unit_artifact import (
     read_unit_artifact,
 )
 from tessera.wire import (
+    field_widths,
     nvfp4_scale_bytes,
     pack_body,
     pack_fp16,
@@ -878,3 +880,73 @@ def test_every_grid_the_fused_decode_reaches_still_fits_its_bytes():
                     and 1 << rate <= 1 << 8
                     and 1 << level <= 1 << 8
                 ), (grid.name, rate, memory, verdict)
+
+
+# --------------------------------------------------- pack_body, whole-plane
+
+
+def _body_by_column(body, rates, span):
+    """``pack_body``'s definition: one ``_column_to_bits`` stream per column,
+    column-major.  The packer became one expression over the plane on
+    2026-09-11 so the encode thread stops spending ~1 s per batch here with
+    the device idle; this is what it must still equal, bit for bit."""
+    from tessera.wire import _column_to_bits
+
+    array = body.numpy()
+    chunks = [_column_to_bits(array[:, j], rates[j], span) for j in range(len(rates))]
+    return np.packbits(
+        np.concatenate(chunks) if chunks else np.zeros(0, np.uint8), bitorder="big"
+    ).tobytes()
+
+
+@pytest.mark.parametrize("device", ["cpu", "cuda"])
+@pytest.mark.parametrize("span", [1, 2, 4])
+@pytest.mark.parametrize("q256", [640, 832, 1088, 1600, 2304])
+def test_the_body_packer_equals_its_per_column_definition(span, q256, device):
+    """On the device the plane lives on: the census packs a CUDA plane, the
+    definition is host numpy, and the bytes must not know which."""
+    if device == "cuda" and not torch.cuda.is_available():
+        pytest.skip("no CUDA device")
+    torch.manual_seed(q256 * 7 + span)
+    cols, rows = 96, 24
+    rates = bresenham_rate_schedule(root_from_q256(q256), cols, cap=None)
+    widths = [tuple(field_widths(r, span)) for r in rates]
+    body = torch.stack([
+        torch.stack(
+            [torch.randint(0, 1 << w, (rows // span,)) for w in widths[j]], dim=1
+        ).reshape(-1)
+        for j in range(cols)
+    ], dim=1)
+    assert body.shape == (rows, cols)
+    blob = pack_body(body.to(device), rates, span)
+    assert blob == _body_by_column(body, rates, span)
+    assert torch.equal(unpack_body(blob, rates, rows, span=span), body)
+
+
+def test_the_body_packer_holds_wide_words_and_ragged_rates():
+    """Field widths past a byte, rates that differ column to column with no
+    schedule, and an all-zero-width plane -- the cube's dtype and mask, not
+    only the common two-rate case."""
+    torch.manual_seed(3)
+    rates = (0, 3, 11, 1, 17, 0, 9, 9, 2)
+    rows = 12
+    body = torch.stack([torch.randint(0, 1 << r, (rows,)) for r in rates], dim=1)
+    assert pack_body(body, rates) == _body_by_column(body, rates, 1)
+    assert torch.equal(unpack_body(pack_body(body, rates), rates, rows), body)
+    assert pack_body(torch.zeros(rows, 3, dtype=torch.long), (0, 0, 0)) == b""
+    assert pack_body(torch.zeros(0, 3, dtype=torch.long), (4, 5, 4)) == b""
+    assert pack_body(torch.zeros(4, 0, dtype=torch.long), ()) == b""
+
+
+def test_the_body_packer_refuses_a_word_its_column_cannot_hold():
+    body = torch.zeros(6, 4, dtype=torch.long)
+    body[2, 1] = 8
+    with pytest.raises(GrammarError, match="out of range.*column 1"):
+        pack_body(body, (4, 3, 4, 4))
+    body[2, 1] = -1
+    with pytest.raises(GrammarError, match="out of range"):
+        pack_body(body, (4, 3, 4, 4))
+    with pytest.raises(GrammarError, match="zero-width|out of range"):
+        pack_body(torch.ones(6, 1, dtype=torch.long), (0,))
+    with pytest.raises(GrammarError, match="negative"):
+        pack_body(body, (4, -1, 4, 4))

@@ -185,11 +185,68 @@ def pack_body(
         raise GrammarError(
             f"{rows} positions is not a whole number of span-{span} super-symbols"
         )
-    array = body_bits.detach().cpu().numpy()
-    chunks = [_column_to_bits(array[:, j], rates[j], span) for j in range(cols)]
-    return np.packbits(
-        np.concatenate(chunks) if chunks else np.zeros(0, np.uint8), bitorder="big"
-    ).tobytes()
+    # One expression over the plane, on the device the plane lives on, not
+    # one ``_column_to_bits`` per column on the host.  The per-column loop
+    # cost the encode thread ~0.8 s per eight-unit census batch after the
+    # last Viterbi chunk with the device idle behind it, and a whole-plane
+    # numpy cube cost more (1.1 s: the same bytes through ten host passes
+    # instead of two thousand cached ones -- measured 2026-09-11, both on
+    # the pqteld recorder and the main-thread sampler).  ``_column_to_bits``
+    # stays as the definition and the test holds this to it bit for bit:
+    # per column, per position, the position's field width most
+    # significant first, so a (cols, rows, max width) bit cube read in C
+    # order through a mask that keeps the low ``width`` bits of every
+    # position is that stream, column-major, in the same order; the only
+    # host copy is the packed bytes.
+    widths = _position_widths(rates, rows, span)  # (rows, cols) numpy
+    values = body_bits.detach()
+    if values.dtype != torch.int64:
+        values = values.to(torch.int64)
+    device = values.device
+    width = torch.from_numpy(widths).to(device)
+    if values.numel():
+        bound = torch.bitwise_left_shift(torch.ones((), dtype=torch.int64, device=device), width)
+        bad = (values < 0) | (values >= bound)
+        if bool(bad.any()):
+            j = int(bad.any(dim=0).nonzero()[0])
+            column = values[:, j]
+            raise GrammarError(
+                f"value out of range for a {int(widths[:, j].min())}-bit field "
+                f"in column {j}: [{int(column.min())}, {int(column.max())}]"
+            )
+    top = int(widths.max()) if widths.size else 0
+    if top == 0:
+        return b""
+    cube_dtype = torch.uint8 if top <= 8 else torch.int16 if top <= 15 else torch.int64
+    plane = values.T.contiguous().to(cube_dtype)  # (cols, rows)
+    shifts = torch.arange(top - 1, -1, -1, dtype=cube_dtype, device=device)
+    cube = (plane[:, :, None] >> shifts) & 1  # (cols, rows, top)
+    keep = torch.arange(top, device=device)[None, None, :] >= (top - width.T)[:, :, None]
+    bits = cube[keep].to(torch.int32)  # the stream, one element per bit
+    pad = (-bits.numel()) % 8
+    if pad:
+        bits = torch.cat([bits, bits.new_zeros(pad)])
+    weight = torch.tensor([128, 64, 32, 16, 8, 4, 2, 1], dtype=torch.int32, device=device)
+    packed = (bits.view(-1, 8) * weight).sum(dim=1).to(torch.uint8)
+    return packed.cpu().numpy().tobytes()
+
+
+def _position_widths(
+    rates: "tuple[int, ...]", rows: int, span: int
+) -> np.ndarray:
+    """The ``(rows, cols)`` field width of every body position:
+    ``field_widths(rates[j], span)`` cycled down column ``j`` (``pack_body``
+    has already refused ``rows % span``)."""
+    rate_row = np.asarray(rates, dtype=np.int64)
+    if rate_row.size and rate_row.min() < 0:
+        raise GrammarError(f"negative field width: {int(rate_row.min())}")
+    if span == 1:
+        return np.broadcast_to(rate_row[None, :], (rows, rate_row.size)).copy()
+    per_field = np.asarray(
+        [field_widths(int(r), span) for r in rate_row.tolist()], dtype=np.int64
+    ).reshape(rate_row.size, span)  # (cols, span)
+    position = np.arange(rows, dtype=np.int64) % span
+    return per_field[:, position].T  # (rows, cols)
 
 
 def unpack_body(
