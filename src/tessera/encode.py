@@ -972,12 +972,17 @@ def viterbi_window(
     weights: "torch.Tensor | None" = None,
     chunk: int = 512,
     impl: str = "auto",
-) -> "tuple[torch.Tensor, float]":
+    want_sse: bool = True,
+) -> "tuple[torch.Tensor, float | None]":
     """Exact Viterbi over the bitshift trellis, down every column at once.
 
     ``targets`` is ``[rows, cols]`` already divided by its scale; ``vectors``
     is ``[2^window_bits, arity]`` -- the table's reconstruction per state.
     Returns ``(state[steps, cols] int64, sse)``, ``steps = rows // arity``.
+    ``want_sse=False`` returns ``(state, None)``: the states are the same
+    tensor, and the fused path then makes no host round trip at all --
+    reading the float is the one sync a Viterbi call has, and the encoder's
+    batch driver, which discards the cost, is what asks for this.
 
     The trellis: ``state_t = ((state_{t-1} << R) | bits_t) mod 2^L`` from
     ``state_{-1} = 0``, so a state's ``2^R`` predecessors share its low
@@ -1038,7 +1043,8 @@ def viterbi_window(
         wanted = impl == "fused" or rate <= _fused_max_rate()
         if targets.is_cuda and fused_available() and wanted:
             return viterbi_window_fused(targets, vectors, window_bits, rate,
-                                        weights=weights, chunk=chunk)
+                                        weights=weights, chunk=chunk,
+                                        want_sse=want_sse)
         if impl == "fused":
             raise GrammarError(
                 "the fused window Viterbi is a CUDA path and needs triton; "
@@ -1079,7 +1085,7 @@ def viterbi_window(
             pred = back[step].gather(0, lowbits.unsqueeze(0)).squeeze(0).long()
             state = (pred << (window_bits - rate)) | lowbits
         states[:, start : start + chunk] = column
-    return states, sse
+    return states, (sse if want_sse else None)
 
 
 def _pack_scales(
@@ -2995,10 +3001,20 @@ def _encode_unit_steps(
         key = (lo, hi, present)
         found = column_index.get(key)
         if found is None:
-            found = torch.tensor(
+            picked = torch.tensor(
                 [i for i in range(lo, hi) if rates[i] == present],
-                dtype=torch.long, device=device,
+                dtype=torch.long,
             )
+            if device.type == "cuda":
+                # Through pinned memory, so the upload is enqueued and the
+                # host moves on.  A pageable host tensor copied to the device
+                # ends in a stream sync (the buffer must outlive the copy),
+                # and this is called at every LDLQ block of every unit: with
+                # the Viterbi no longer waiting per chunk, that sync would be
+                # where the pass stalled instead.  Same indices either way.
+                found = picked.pin_memory().to(device, non_blocking=True)
+            else:
+                found = picked.to(device)
             column_index[key] = found
         return found
 
@@ -3556,8 +3572,13 @@ def _run_joined(calls: "list[_TrellisCall]"):
         joined_w = (None if lead.weights is None
                     else torch.cat([c.weights for c in calls], dim=1))
     if lead.body is BodyKind.WINDOW:
+        # ``want_sse=False``: the cost is discarded (the unit's ``sse`` is
+        # computed once at the end from its codes), and not reading it is
+        # what lets the host queue the next block's Viterbi, and the next
+        # unit's, behind this one instead of waiting for it.
         state, _ = viterbi_window(
             joined, lead.window_vectors, lead.window_bits, lead.rate, weights=joined_w,
+            want_sse=False,
         )
         if len(calls) == 1:
             return [state]

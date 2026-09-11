@@ -16,6 +16,7 @@ import os
 from pathlib import Path, PurePosixPath
 import stat
 import threading
+from types import MappingProxyType
 
 from .grammar import GrammarError
 
@@ -324,9 +325,14 @@ class ReferenceHessians(Mapping):
         that a binding happened.
 
         CPU and CUDA tensors are both served as they are.  Nothing is staged at
-        bind or at lookup -- the consumption digest copies the unit it is about
-        to check, as it always did, and that per-unit copy is not what this
-        removes.
+        bind or at lookup by this owner.  The per-unit consumption digest is
+        still paid before the encoder sees a byte, but no longer necessarily
+        on the encoder's thread: ``ActivationSource`` digests the population
+        ahead of time on a helper (``resident_mapping`` is the read it walks)
+        and at consumption re-reads the unit through an exact device
+        fingerprint against what it digested, falling back to digesting
+        inline whenever that does not match.  Either way the bytes the
+        encoder consumes were compared against this document's commitment.
 
         The mapping is snapshotted, so replacing an entry in the caller's dict
         afterwards cannot retarget the owner; it keeps serving the object it was
@@ -420,6 +426,21 @@ class ReferenceHessians(Mapping):
     def committed_units(self):
         self.require_current()
         return {name:item['sha256'] for name,item in self._document['hessians'].items()}
+
+    def resident_mapping(self):
+        """The bound resident tensors as bound, or ``None`` when nothing is.
+
+        A read that is NOT a consumption: it observes no unit, memoises no
+        finiteness, and serves nothing the receipt would count as served.
+        ``ActivationSource``'s seal prefetch walks this to digest the
+        population ahead of the encoder; the encoder still consumes through
+        ``__getitem__``.  ``None`` after ``close()`` as well, which is how the
+        prefetch learns the owner's hold on the population has ended.
+        """
+        with self._lock:
+            if self._closed or self._resident is None:
+                return None
+            return MappingProxyType(self._resident)
 
     def require_provenance(self, provenance):
         self.require_current()

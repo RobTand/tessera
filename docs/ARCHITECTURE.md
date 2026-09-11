@@ -5,6 +5,20 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-11 for the encoder's boundary feed (PrismaQuant
+boundary-feed measurement on the GLM census, sparky, `b81c038ea327`): the
+window Viterbi's chunk loop no longer waits on the device -- the reference's
+per-chunk `float(final.sum())` is accumulated in float64 on the device in the
+same order and read once, or not at all under `want_sse=False`, which is what
+the batch driver asks for -- the per-(block, rate) column index is uploaded
+through pinned memory without a stream sync, and the capture seal's per-unit
+digest is taken ahead of consumption (a plain mapping while sealing, a bound
+`ReferenceHessians` on a helper thread) and accepted at consumption only for
+the same tensor whose bytes re-read to the same exact fingerprint
+(`TESSERA_SEAL_PREFETCH=0` is the inline control). Wire bytes are unchanged
+by construction; `tests/test_encode_host_sync_contract.py` and
+`tests/test_seal_prefetch.py` pin the contracts. See §3.1 and §2.2.
+
 Re-stamped 2026-09-09 for the OCP MX scale plane (#443, bullets 1 and 2):
 schema minor 8, `ScalePlaneKind.MX`, one E8M0 per 32 weights on SCALE_BASE
 over the E4M3 grid, priced at exactly a quarter bit per weight and
@@ -149,9 +163,19 @@ the consumption digest still takes. It does not re-digest. The authenticating co
 commitment is unmoved: `ActivationSource._require_sealed_unit` takes it at
 every unit the encoder consumes and `cached_unit.tensor_identity` on the
 identity path, so an H edited in place after binding is refused before it
-shapes a byte. Sealing a bound source reads `committed_units()` and digests
-nothing, which is the point: a producer that computed those commitments from
-tensors it still holds would otherwise pay the whole population twice.
+shapes a byte. Since 2026-09-11 that per-unit digest need not run on the
+encode thread at consumption: sealing a bound source starts a daemon helper
+that walks `resident_mapping()` (a read that observes nothing) in roster
+order, stages each CUDA unit through a pinned buffer on its own stream and
+digests it, keeping the digest beside the tensor's signature and an exact
+integer fingerprint of the bytes hashed. At consumption the unit's bytes are
+re-read on the device (`export.device_fingerprint`, one pass and one round
+trip) and the memo is accepted only when signature and fingerprint both
+match; otherwise the unit is digested inline as before. Either way the
+comparison against the commitment is the same comparison. Sealing a bound
+source reads `committed_units()` and digests nothing on the sealing thread,
+which is the point: a producer that computed those commitments from tensors
+it still holds would otherwise pay the whole population twice.
 `receipt()` reports `resident_bound` and `resident_units_observed` separately
 from `verified_units`, because observed-after-checks and read-and-compared are
 two claims. `close()` drops the owner's references to the population as well as
@@ -816,9 +840,14 @@ at consumption**, not a cached claim (tessera#302). It is taken on the first
 read by either path -- `capture_sha256` or `for_unit`, whichever comes first
 -- and kept with the identity fields it covered and one content digest per
 unit. Every H `for_unit` hands the encoder is then digested (that unit only,
-the same `tensor_identity` the cache intake pays for it) and refused by name
-when it is not the H the seal covered -- an in-place edit, or an entry swapped
-in the mapping. The publication path re-checks only what is cheap: the
+the same `tensor_identity` construction the cache intake pays for it) and
+refused by name when it is not the H the seal covered -- an in-place edit, or
+an entry swapped in the mapping. The digest may be one the seal already took:
+a plain mapping keeps, per unit, the digest it computed while sealing beside
+the tensor's signature and an exact fingerprint of its bytes, and a unit whose
+bytes fingerprint the same at consumption is served without a second stage
+and hash (`tests/test_seal_prefetch.py`; `TESSERA_SEAL_PREFETCH=0` keeps the
+inline digest). The publication path re-checks only what is cheap: the
 identity fields and the unit roster; a `seqlen` edited after the seal, or a
 unit added or dropped, refuses `config_block` rather than stamping a seal
 beside fields it does not describe. The capture is never re-digested whole,
@@ -1414,6 +1443,20 @@ old six-batch rule every batched LDLQ block would have captured a fresh graph
 has two rules now: eager under `TESSERA_WINDOW_GRAPH=0`, otherwise a
 persistent plan on the second call of a shape (`_WINDOW_GRAPH_MIN_CALLS`),
 bounded at `_WINDOW_PLAN_CACHE` plans per thread.
+
+The pass never waits on the device between chunks (2026-09-11). On the GLM
+census the joined call ended every chunk in `float(final.sum())` and every
+unit began its next LDLQ block with a pageable index upload, each a stream
+sync: the host sat in `cudaStreamSynchronize` 80-85 % of a pass while the GPU
+ran 87-90 % busy and every batch started from an empty queue. Now
+`viterbi_window_fused` adds each chunk's fp32 `final.sum()` into a float64
+device scalar in chunk order -- the reference's float, bit for bit, read once
+-- and `want_sse=False` (what `_run_joined` passes) reads nothing; `columns_of`
+uploads through pinned memory. The blocks' launches queue behind each other
+and the host runs ahead until the pass's refit reads its floats.
+`tests/test_encode_host_sync_contract.py` pins it: a Viterbi call that
+discards its cost makes no host sync, one that reads it makes one, and an
+LDLQ encode makes the same number of syncs at eight blocks as at two.
 
 ### 3.2 Exact campaign unit intake (explicit, not a serving qualification)
 

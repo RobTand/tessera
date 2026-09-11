@@ -285,6 +285,128 @@ class _CaptureSeal(NamedTuple):
     units: "Mapping[str, str]"
 
 
+_SEAL_PREFETCH_ENV = "TESSERA_SEAL_PREFETCH"
+
+
+class _UnitDigest(NamedTuple):
+    """One unit's content digest, taken ahead of its consumption.
+
+    ``signature`` is the tensor as it was digested -- device, dtype, shape,
+    strides, storage pointer and byte bound, version counter -- and
+    ``fingerprint`` is ``cached_unit.host_fingerprint`` of the bytes that
+    went into ``sha256``.  ``_require_sealed_unit`` accepts the digest only
+    for a tensor with the same signature whose bytes, re-read on the device
+    at consumption, fingerprint to the same integer; anything else is
+    digested inline as before.
+
+    The fingerprint is an exact sum of the tensor's int32 words, not a
+    hash: it catches every edit that changes the sum -- a value written in
+    place, a plane replaced, a row zeroed -- and is blind to an edit that
+    preserves it (two words swapped, a delta moved between words).  The
+    signature's version counter catches in-place edits made through torch;
+    what neither sees is an out-of-band write that keeps the word sum and
+    the version, and that is the trade the memo makes for one reduction
+    instead of a 64 MiB host copy and a sha256 per unit per call.
+    ``TESSERA_SEAL_PREFETCH=0`` restores the inline digest.
+    """
+
+    signature: tuple
+    fingerprint: int
+    sha256: str
+
+
+def _resolve_seal_prefetch() -> bool:
+    """``TESSERA_SEAL_PREFETCH``: ``1`` (unset) digests ahead, ``0`` inline."""
+    import os
+
+    raw = os.environ.get(_SEAL_PREFETCH_ENV)
+    if raw is None or raw == "1":
+        return True
+    if raw == "0":
+        return False
+    raise GrammarError(f"{_SEAL_PREFETCH_ENV}={raw!r} is not 0 or 1")
+
+
+def _tensor_signature(H: "torch.Tensor") -> tuple:
+    try:
+        version = H._version
+    except RuntimeError:            # an inference tensor tracks no version
+        version = None
+    storage = H.untyped_storage()
+    return (H.device.type, H.device.index, str(H.dtype), tuple(H.shape),
+            tuple(H.stride()), H.storage_offset(), storage.data_ptr(),
+            storage.nbytes(), version)
+
+
+def device_fingerprint(H: "torch.Tensor") -> int:
+    """``cached_unit.host_fingerprint`` of ``H``'s bytes, read where ``H`` lives.
+
+    The consumer's half of the seal memo: the same exact integer sum over
+    the same bytes, computed on the tensor about to be encoded, so a unit
+    edited after it was digested -- in place, through ``.data``, from another
+    stream -- does not fingerprint to what the digest covered.  One read of
+    the tensor and one host round trip, against a full stage-and-hash.
+    """
+    flat = H.detach().contiguous().reshape(-1)
+    raw = flat.view(torch.uint8)
+    if raw.numel() % 4 == 0:
+        return int(raw.view(torch.int32).sum(dtype=torch.int64))
+    return int(raw.sum(dtype=torch.int64))
+
+
+def _prefetch_seal_digests(read_units, roster, memo: dict, lock, stop) -> None:
+    """Digest ``roster`` in order on a helper thread, into ``memo``.
+
+    ``read_units()`` returns the mapping to read, or ``None`` when its owner
+    has closed, and it is called per unit so the helper never holds the
+    population itself.  A CUDA unit is staged through one pinned buffer per
+    shape on this thread's own stream -- a stream-level sync, which the
+    capture contract in ``window_viterbi`` permits beside an open capture on
+    the encoder's thread -- and hashed with the GIL released; a CPU unit is
+    hashed where it is.  The digest is ``cached_unit.digest_host_tensor`` of
+    the staged bytes: what ``tensor_identity`` would have returned, bit for
+    bit, since ``copy_`` into a same-dtype contiguous buffer is what
+    ``.cpu().contiguous()`` does.
+    """
+    from .cached_unit import digest_host_tensor, host_fingerprint
+
+    stream = None
+    pinned: dict = {}
+    for name in roster:
+        if stop.is_set():
+            return
+        with lock:
+            if name in memo:
+                continue
+        units = read_units()
+        if units is None:
+            return
+        H = units.get(name)
+        if not isinstance(H, torch.Tensor):
+            continue
+        signature = _tensor_signature(H)
+        source = H.detach()
+        if source.is_cuda:
+            key = (source.dtype, tuple(source.shape))
+            buffer = pinned.get(key)
+            if buffer is None:
+                buffer = pinned[key] = torch.empty(
+                    source.shape, dtype=source.dtype, pin_memory=True)
+                if len(pinned) > 4:
+                    pinned.pop(next(iter(pinned)))
+            if stream is None:
+                stream = torch.cuda.Stream(device=source.device)
+            with torch.cuda.stream(stream):
+                buffer.copy_(source, non_blocking=True)
+            stream.synchronize()
+            value = buffer
+        else:
+            value = source.cpu().contiguous()
+        entry = _UnitDigest(signature, host_fingerprint(value), digest_host_tensor(value))
+        with lock:
+            memo.setdefault(name, entry)
+
+
 def _check_refit_objective(obj: str) -> None:
     """One refit objective spelling, checked where every path can reach it."""
     if not isinstance(obj, str):
@@ -888,10 +1010,25 @@ class ActivationSource:
         from .hessian_capture import ReferenceHessians
         if isinstance(self.hessians, ReferenceHessians):
             self.hessians.require_provenance(self.provenance)
-        units = (self.hessians.committed_units()
-                 if isinstance(self.hessians, ReferenceHessians) else
-                 {name: tensor_identity(self.hessians[name])["sha256"]
-                  for name in sorted(self.hessians)})
+        prefetch = _resolve_seal_prefetch()
+        memo: dict = {}
+        if isinstance(self.hessians, ReferenceHessians):
+            units = self.hessians.committed_units()
+        else:
+            # The plain mapping digests every unit here anyway; the digest
+            # is kept beside the tensor's signature and fingerprint so the
+            # consumer need not stage and hash it a second time.
+            from .cached_unit import host_fingerprint
+
+            units = {}
+            for name in sorted(self.hessians):
+                H = self.hessians[name]
+                value = H.detach().cpu().contiguous()
+                sha256 = tensor_identity(value)["sha256"]
+                units[name] = sha256
+                if prefetch:
+                    memo[name] = _UnitDigest(_tensor_signature(H),
+                                             host_fingerprint(value), sha256)
         digest = hashlib.sha256()
         digest.update(json.dumps({"schema": "tessera.hessian_capture.v1",
                                   "identity": identity},
@@ -904,7 +1041,96 @@ class ActivationSource:
                               MappingProxyType(copy.deepcopy(identity)),
                               MappingProxyType(units))
         object.__setattr__(self, "_capture_seal", sealed)
+        if prefetch:
+            self._start_seal_prefetch(memo, sorted(units))
         return sealed
+
+    def _start_seal_prefetch(self, memo: dict, roster: list) -> None:
+        """Keep ``memo`` and, over a resident population, fill it ahead.
+
+        The seal names what the encoder may consume; this is what lets the
+        encoder consume it without stopping.  ``tensor_identity`` of a 64 MiB
+        H is a stage to host and a sha256 -- most of a second on the encode
+        thread with the GPU idle behind it, once per unit, at the head of
+        every batch (the campaign's memo makes it once, not once per rate).
+        A plain mapping was digested by ``_seal`` already and ``memo``
+        arrives full.  A ``ReferenceHessians`` sealed from its commitments
+        and holds resident tensors (``bind_resident``): those are digested
+        here on a daemon thread, in roster order, which is the order a
+        campaign consumes them.  Off disk, nothing is prefetched: each
+        consumption loads its own payload and digests that.
+        ``TESSERA_SEAL_PREFETCH=0`` keeps the inline digest, which is the
+        control an A/B measures against.
+        """
+        import weakref
+
+        from .hessian_capture import ReferenceHessians
+
+        lock = threading.Lock()
+        stop = threading.Event()
+        object.__setattr__(self, "_seal_memo", memo)
+        object.__setattr__(self, "_seal_memo_lock", lock)
+        object.__setattr__(self, "_seal_prefetch_stop", stop)
+        object.__setattr__(self, "_seal_prefetch_thread", None)
+        if not isinstance(self.hessians, ReferenceHessians):
+            return
+        owner = weakref.ref(self.hessians)
+        if self.hessians.resident_mapping() is None:
+            return
+
+        def read_units():
+            held = owner()
+            return None if held is None else held.resident_mapping()
+
+        thread = threading.Thread(
+            target=_prefetch_seal_digests,
+            args=(read_units, roster, memo, lock, stop),
+            name="tessera-seal-prefetch", daemon=True)
+        object.__setattr__(self, "_seal_prefetch_thread", thread)
+        thread.start()
+
+    def wait_seal_prefetch(self, timeout: "float | None" = None) -> None:
+        """Wait for the helper, if one runs, to finish its roster."""
+        thread = getattr(self, "_seal_prefetch_thread", None)
+        if thread is not None:
+            thread.join(timeout)
+
+    def stop_seal_prefetch(self) -> None:
+        """Stop the helper, if one runs, and wait for it; the memo stays."""
+        stop = getattr(self, "_seal_prefetch_stop", None)
+        thread = getattr(self, "_seal_prefetch_thread", None)
+        if stop is not None:
+            stop.set()
+        if thread is not None:
+            thread.join()
+
+    def _unit_digest(self, key: str, H) -> str:
+        """The content digest of ``H`` as it is about to be consumed.
+
+        From the seal memo when ``H`` is the tensor the memo digested -- same
+        signature, and its bytes re-read on the device fingerprint to what
+        was hashed -- otherwise ``tensor_identity`` inline, as before, and
+        the answer is memoised for the next consumption of the same tensor.
+        """
+        from .cached_unit import tensor_identity
+
+        memo = getattr(self, "_seal_memo", None)
+        if memo is None:
+            return tensor_identity(H)["sha256"]
+        lock = self._seal_memo_lock
+        signature = _tensor_signature(H)
+        with lock:
+            entry = memo.get(key)
+        if entry is not None and entry.signature == signature:
+            if device_fingerprint(H) == entry.fingerprint:
+                return entry.sha256
+        value = H.detach().cpu().contiguous()
+        from .cached_unit import host_fingerprint
+
+        sha256 = tensor_identity(value)["sha256"]
+        with lock:
+            memo[key] = _UnitDigest(signature, host_fingerprint(value), sha256)
+        return sha256
 
     def _require_sealed_roster(self, seal: _CaptureSeal) -> None:
         """Refuse to publish a seal whose identity fields or unit roster moved.
@@ -945,9 +1171,14 @@ class ActivationSource:
         so this is where a stale seal is refused (rule 5): an H edited in
         place or swapped in the mapping after the seal would otherwise shape
         bytes under a config that names the capture it was not.
-        """
-        from .cached_unit import tensor_identity
 
+        The digest need not be taken on this thread, or now: ``_unit_digest``
+        serves the one the seal prefetch took over the same tensor, provided
+        the tensor's bytes, re-read here, fingerprint to what was hashed.
+        An edit between the two reads changes the fingerprint and the unit
+        is digested inline; the comparison against the seal is the same
+        either way.
+        """
         expected = seal.units.get(key)
         if expected is None:
             raise GrammarError(
@@ -956,7 +1187,7 @@ class ActivationSource:
                 f"taken, so bytes shaped by it would ship under a seal that "
                 f"never covered it. Build a fresh ActivationSource over the "
                 f"mapping as it now is")
-        actual = tensor_identity(H)["sha256"]
+        actual = self._unit_digest(key, H)
         if actual != expected:
             raise GrammarError(
                 f"{key!r}: the Hessian about to shape this unit digests to "
