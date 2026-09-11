@@ -327,6 +327,13 @@ def _layout_cases():
         # its bytes and the harness reported "0 changed".
         LayoutCase("s6b-e2m1-256-512c", E2M1_GRID, 256, 32, 512,
                    MappingProxyType({"scale_plane": ScalePlaneKind.S6B})),
+        # SCALE_BASE as the OCP MX plane (schema minor 8, tessera#443): one
+        # E8M0 per 32 and no other scale plane, over the E4M3 window body.
+        # Same caller-facing override as the S6b row, and the same reason:
+        # ``_read_scale_planes`` accepts what it writes, and a change to the
+        # po2 pack or refit moves its bytes.
+        LayoutCase("mx-e4m3-1536-512c", E4M3_GRID, 1536, 32, 512,
+                   MappingProxyType({"scale_plane": ScalePlaneKind.MX})),
         # DIAG_SU and DIAG_SV as segment 2a: the rank-1 channel diagonals, fitted
         # and packed.  The CHANNEL rows above fill DIAG_SV with a row scale,
         # which is a different producer of the same plane and does not cover

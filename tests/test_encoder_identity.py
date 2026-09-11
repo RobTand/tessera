@@ -631,10 +631,15 @@ def test_the_identity_round_trips_through_the_container():
 
 def test_the_identity_minor_is_readable_and_the_current_one_carries_it():
     # Minor 6 is the identity-bearing envelope; minor 7 (the LADDER layout,
-    # tessera#144) is current and carries the same field.
-    assert SCHEMA_MINOR == 7
+    # tessera#144) is what every recipe writes and carries the same field.
+    # Minor 8 (the MX scale plane, tessera#443) is readable and is declared
+    # only by an opt-in MX unit, so the recipe minor stays 7 and the read
+    # range runs one past it (``container.MX_SCHEMA_MINOR``).
+    from tessera.container import MX_SCHEMA_MINOR
+
+    assert SCHEMA_MINOR == 7 and MX_SCHEMA_MINOR == 8
     assert 6 in SCHEMA_MINORS_READ and 7 in SCHEMA_MINORS_READ
-    assert tuple(SCHEMA_MINORS_READ) == tuple(range(SCHEMA_MINOR + 1))
+    assert tuple(SCHEMA_MINORS_READ) == tuple(range(MX_SCHEMA_MINOR + 1))
 
 
 def test_a_malformed_identity_is_refused():

@@ -28,6 +28,7 @@ from .canonical import DIGEST_BYTES, Reader, Writer, digest, fits_uint
 from .errors import ManifestError
 from .exact import Fraction as _Fraction  # re-export guard
 from .exact import bits_to_bytes
+from .scale_codec import GROUP_WEIGHTS
 from .grammar import (
     RateSchedule,
     bresenham_rate_schedule,
@@ -54,6 +55,8 @@ __all__ = [
     "BranchIdentity",
     "Geometry",
     "ScalePlaneKind",
+    "scale_plane_terminal_flags",
+    "scale_block_columns",
     "ScalePlane",
     "BodyKind",
     "WINDOW_BITS_MAX",
@@ -219,6 +222,67 @@ class ScalePlaneKind(IntEnum):
     #: grid this plane is both cheaper and the served layout
     #: (``scale_channel.py``).
     CHANNEL = 2
+    #: The OCP microscaling block plane (schema minor 8, tessera#443): one
+    #: E8M0 byte per ``scale_codec.GROUP_WEIGHTS`` (32) consecutive columns of
+    #: one output row on SCALE_BASE, and nothing else -- no SCALE_REFINE, no
+    #: DIAG_SU/DIAG_SV, no table, no global.  A weight is ``grid_value(code)
+    #: * 2^(E-127)`` in fp32, exactly, which is the MXFP8 tile (E4M3 values
+    #: under E8M0/K32 scales) a block-scaled tensor core consumes.  Defined
+    #: on the E4M3 grid alone (``alphabet.require_mx_grid``); the geometry's
+    #: ``group_weights`` must be 32.  Not a served route in this tree: no
+    #: ``serving.scheme.ROUTES`` row names it, ``export`` refuses to spell
+    #: it, and the owed kernel, contract cells and A/B are #443 bullets 3-7.
+    MX = 3
+
+
+def scale_plane_terminal_flags(kind: "ScalePlaneKind | int") -> "tuple[bool, bool, bool]":
+    """``(with_scale_base, with_scale_refine, with_row_scale)`` for a plane kind.
+
+    THE ONE HOME of which block planes a scale plane declares on a terminal.
+    The writer (``unit_artifact.build_unit_artifact``) and the byte-matched
+    control (``control.unit_wire_bits``) both spelled this triple out by hand,
+    and a plane kind added to one and not the other would price a terminal the
+    writer does not write.  A ``TerminalSpec`` reads these three fields and
+    nothing else about the plane, so this is the whole of what a kind decides
+    there.
+    """
+    kind = ScalePlaneKind(kind)
+    if kind is ScalePlaneKind.S6B:
+        return True, True, False
+    if kind is ScalePlaneKind.LUT:
+        return False, True, False
+    if kind is ScalePlaneKind.CHANNEL:
+        return False, False, True
+    if kind is ScalePlaneKind.MX:
+        # The base plane alone: the E8M0 word is the whole scale.  T-po2's
+        # terminal shape, which ``calculator.terminal_rate`` has priced at
+        # exactly a quarter bit per weight since before the plane existed.
+        return True, False, False
+    raise ManifestError(f"scale plane {kind.name} declares no terminal flags")
+
+
+def scale_block_columns(kind: "ScalePlaneKind | int", group: int, half: int) -> "int | None":
+    """The column stride of a plane kind's block scale planes, or ``None``.
+
+    THE ONE HOME of the stride a column cut must land on.  A block plane is
+    indexed ``(row * cols + col) // block``: S6b carries a base word per
+    ``group`` and a refinement per ``half``, so its stride is the group; a LUT
+    plane carries the nibble alone, so its stride is the half; a CHANNEL plane
+    has no column structure at all and answers ``None``.  ``slicing`` read
+    this in three places (``_scale_columns_per_row``, ``_manifest_granularity``,
+    ``_slicing_facts``), and the shape of tessera#235 is exactly two of those
+    answering differently: ``can_shard`` says yes to a cut the cutter refuses.
+    """
+    kind = ScalePlaneKind(kind)
+    if kind is ScalePlaneKind.CHANNEL:
+        return None
+    if kind is ScalePlaneKind.S6B:
+        return int(group)
+    if kind is ScalePlaneKind.LUT:
+        return int(half)
+    if kind is ScalePlaneKind.MX:
+        return int(group)
+    raise ManifestError(f"scale plane {kind.name} declares no block stride")
 
 
 class BodyKind(IntEnum):
@@ -307,6 +371,13 @@ class ScalePlane:
                 raise ManifestError("the CHANNEL global scale must be exactly representable as a float")
             _require_wire_ratio("CHANNEL global scale", self.global_scale)
             return
+        if self.kind is ScalePlaneKind.MX:
+            if self.table or self.global_scale != 1:
+                raise ManifestError(
+                    "an MX scale plane carries no table or global: the E8M0 "
+                    "word on SCALE_BASE is the whole scale"
+                )
+            return
         if not 2 <= len(self.table) <= 16:
             raise ManifestError(
                 f"a LUT scale plane holds 2..16 entries, got {len(self.table)}"
@@ -343,6 +414,10 @@ class ScalePlane:
     def channel(cls, global_scale: float) -> "ScalePlane":
         return cls(ScalePlaneKind.CHANNEL, b"", Fraction(float(global_scale)))
 
+    @classmethod
+    def mx(cls) -> "ScalePlane":
+        return cls(ScalePlaneKind.MX)
+
     def encode(self, writer: Writer) -> None:
         writer.uint(int(self.kind))
         if self.kind is ScalePlaneKind.LUT:
@@ -353,7 +428,7 @@ class ScalePlane:
     @classmethod
     def decode(cls, reader: Reader) -> "ScalePlane":
         kind = reader.enum(ScalePlaneKind)
-        if kind is ScalePlaneKind.S6B:
+        if kind is ScalePlaneKind.S6B or kind is ScalePlaneKind.MX:
             return cls(kind)
         if kind is ScalePlaneKind.CHANNEL:
             return cls(kind, b"", reader.ratio())
@@ -733,8 +808,13 @@ class Manifest:
         no field either: it is the ``LADDER`` layout -- COMPLETION after the
         scale planes and cut by depth level -- which an earlier reader would
         index by the wrong order, so every manifest in that layout declares
-        the minor that can read it.
+        the minor that can read it.  Minor 8 (2026-09-09, tessera#443) adds
+        no field: it is the ``MX`` value of the scale-plane record, which a
+        minor-7 reader cannot resolve, so a manifest carrying it declares
+        the minor that can; every other manifest keeps the minor it had.
         """
+        if self.scale_plane.kind is ScalePlaneKind.MX:
+            return 8
         if self.layout is PlaneLayout.LADDER:
             return 7
         if self.encoder_fixture_id is not None:
@@ -787,6 +867,17 @@ class Manifest:
             raise ManifestError("malformed payload_digest")
         if not self.terminals:
             raise ManifestError("a manifest declares at least one terminal")
+        # K32 is the plane, not a parameter of it: the E8M0 word scales the
+        # 32 weights OCP MXFP8 names, and a reader that accepted another
+        # group would decode a tile no block-scaled kernel reads.  Bound at
+        # read as well as at write, because a manifest is bytes.
+        if (self.scale_plane.kind is ScalePlaneKind.MX
+                and self.geometry.group_weights != GROUP_WEIGHTS):
+            raise ManifestError(
+                f"an MX scale plane is one E8M0 word per {GROUP_WEIGHTS} "
+                f"weights (OCP K32); this geometry declares group_weights "
+                f"{self.geometry.group_weights}"
+            )
 
         kinds = [plane.kind for plane in self.planes]
         if len(set(kinds)) != len(kinds):
@@ -1158,6 +1249,10 @@ class Manifest:
             if scale_plane.kind is ScalePlaneKind.CHANNEL and schema_minor < 3:
                 raise ManifestError(
                     f"a CHANNEL scale plane needs schema minor 3; the header says {schema_minor}"
+                )
+            if scale_plane.kind is ScalePlaneKind.MX and schema_minor < 8:
+                raise ManifestError(
+                    f"an MX scale plane needs schema minor 8; the header says {schema_minor}"
                 )
         if schema_minor >= 2:
             body = reader.enum(BodyKind)

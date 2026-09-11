@@ -25,7 +25,9 @@ from enum import Enum
 from fractions import Fraction
 
 from .errors import FootprintDisagreementError
-from .manifest import Manifest, TerminalRecord
+from .exact import bits_to_bytes
+from .manifest import Manifest, TerminalRecord, scale_plane_terminal_flags
+from .planes import PlaneKind
 
 __all__ = [
     "ByteQuantity",
@@ -34,6 +36,9 @@ __all__ = [
     "terminal_payload_bpp",
     "account_terminal",
     "BppClaim",
+    "PlaneBytes",
+    "ByteReport",
+    "plane_byte_report",
 ]
 
 
@@ -135,6 +140,105 @@ class FootprintReport:
         if self.declared_bytes != self.recomputed_bytes:
             return False
         return self.physical_bytes in (None, self.recomputed_bytes)
+
+
+@dataclass(frozen=True)
+class PlaneBytes:
+    """One plane's exact bytes on one terminal, content and padding apart."""
+
+    kind: PlaneKind
+    elements: int
+    element_bits: int
+    content_bytes: int
+    padding_bytes: int
+    total_bytes: int
+    bpp: Fraction
+
+
+@dataclass(frozen=True)
+class ByteReport:
+    """Where every byte of a terminal went, and what each part costs per weight.
+
+    ``planes`` is one row per plane in wire order.  ``scale_bytes`` is the
+    bytes of the planes the manifest's scale-plane kind declares as its scale
+    (``manifest.scale_plane_terminal_flags``: SCALE_BASE, SCALE_REFINE, and
+    DIAG_SV when it is the row scale), padding included, and ``scale_bpp`` is
+    that charge per quantizable parameter -- under the MX plane exactly one
+    byte per 32 weights, a quarter bit, before padding.  ``side_bytes`` is
+    header plus manifest, as ``account_terminal`` takes it.  ``total_bytes``
+    is the whole artifact this terminal is a prefix of: plane region plus
+    side bytes.  Every figure is an exact integer or an exact ``Fraction``.
+    """
+
+    slot_id: str
+    planes: tuple[PlaneBytes, ...]
+    plane_region_bytes: int
+    padding_bytes: int
+    scale_bytes: int
+    side_bytes: int
+    total_bytes: int
+    quantizable_params: int
+    payload_bpp: Fraction
+    scale_bpp: Fraction
+    wire_bpp: Fraction
+
+
+def plane_byte_report(
+    manifest: Manifest, terminal: TerminalRecord, side_bytes: int
+) -> ByteReport:
+    """Itemise a terminal's bytes per plane, with padding and side bytes.
+
+    The same descriptors ``plane_region_bytes`` sums, so the report's total
+    IS that function's answer -- asserted, not assumed -- and therefore the
+    terminal's declared ``exact_bytes`` after ``account_terminal`` has held.
+    Nothing here is a rate times a count: every row is the descriptor's own
+    ``byte_length`` at the terminal's element count.
+    """
+    order = {kind: index for index, kind in enumerate(manifest.plane_order)}
+    params = manifest.geometry.quantizable_params
+    with_base, with_refine, with_rows = scale_plane_terminal_flags(manifest.scale_plane.kind)
+    scale_kinds = set()
+    if with_base:
+        scale_kinds.add(PlaneKind.SCALE_BASE)
+    if with_refine:
+        scale_kinds.add(PlaneKind.SCALE_REFINE)
+    if with_rows:
+        scale_kinds.add(PlaneKind.DIAG_SV)
+    rows = []
+    for descriptor in manifest.planes:
+        count = terminal.plane_elements[order[descriptor.kind]]
+        total = descriptor.byte_length(count)
+        content = bits_to_bytes(count * descriptor.element_bits)
+        rows.append(PlaneBytes(
+            kind=descriptor.kind,
+            elements=count,
+            element_bits=descriptor.element_bits,
+            content_bytes=content,
+            padding_bytes=total - content,
+            total_bytes=total,
+            bpp=Fraction(8 * total, params),
+        ))
+    region = sum(row.total_bytes for row in rows)
+    recomputed = plane_region_bytes(manifest, terminal)
+    if region != recomputed:
+        raise FootprintDisagreementError(
+            f"terminal {terminal.slot_id!r}: the per-plane report sums to "
+            f"{region} bytes, the accountant computes {recomputed}"
+        )
+    scale_bytes = sum(row.total_bytes for row in rows if row.kind in scale_kinds)
+    return ByteReport(
+        slot_id=terminal.slot_id,
+        planes=tuple(rows),
+        plane_region_bytes=region,
+        padding_bytes=sum(row.padding_bytes for row in rows),
+        scale_bytes=scale_bytes,
+        side_bytes=int(side_bytes),
+        total_bytes=region + int(side_bytes),
+        quantizable_params=params,
+        payload_bpp=Fraction(8 * region, params),
+        scale_bpp=Fraction(8 * scale_bytes, params),
+        wire_bpp=Fraction(8 * (region + int(side_bytes)), params),
+    )
 
 
 def account_terminal(

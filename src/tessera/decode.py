@@ -701,6 +701,11 @@ def unit_half_scales(unit: "EncodedUnit") -> torch.Tensor:
             "a CHANNEL scale plane has no per-half scales: one word per output "
             "row; use unit_scale_field"
         )
+    if kind is ScalePlaneKind.MX:
+        raise GrammarError(
+            "an MX scale plane has no per-half scales: one E8M0 word per "
+            "32-weight block; use unit_scale_field or wire.mx_scales_from_plane"
+        )
     if kind is ScalePlaneKind.LUT:
         if unit.scale_lut is None:
             raise GrammarError("a LUT scale plane needs the unit's table")
@@ -722,6 +727,18 @@ def unit_scale_field(unit: "EncodedUnit", rows: int, cols: int) -> torch.Tensor:
         if unit.scale_rows is None:
             raise GrammarError("a CHANNEL scale plane needs the unit's row words")
         return channel_scale_field(unit.scale_rows, unit.scale_global, rows, cols)
+    if getattr(unit, "scale_plane", ScalePlaneKind.S6B) is ScalePlaneKind.MX:
+        from .wire import mx_scales_from_plane
+
+        # One E8M0 per block of ``group`` consecutive columns of one row, laid
+        # along the row: block ``b`` covers flat positions ``[32 b, 32 b + 32)``.
+        blocks = mx_scales_from_plane(unit.scale_base)
+        if blocks.numel() * unit.group != rows * cols:
+            raise GrammarError(
+                f"an MX plane holds one word per {unit.group} weights: "
+                f"{blocks.numel()} words for a {rows}x{cols} unit"
+            )
+        return torch.repeat_interleave(blocks, unit.group).reshape(rows, cols)
     return torch.repeat_interleave(unit_half_scales(unit), unit.half).reshape(rows, cols)
 
 
@@ -793,6 +810,74 @@ def materialize_fp8(
         native[codes.long()].to(torch.uint8),
         (unit.scale_rows.to(codes.device).float() * float(unit.scale_global)).reshape(rows),
     )
+
+
+def materialize_mxfp8(
+    unit: "EncodedUnit",
+    forest: "AnchorForest | dict[int, AnchorForest] | PayloadGrid",
+    code: "ConvCode | None",
+) -> "tuple[torch.Tensor, torch.Tensor]":
+    """An E4M3 unit over the MX plane as the OCP MXFP8 block-scaled pair.
+
+    Returns ``(tile uint8 [rows, cols], scales uint8 [rows, cols // 32])``:
+    E4M3FN bytes through the grid's ``native`` map (so the two former-NaN
+    slots land on their legal neighbour, exactly as ``materialize_fp8``) and
+    the E8M0 plane reshaped so ``scales[r, b]`` scales ``tile[r, 32 b : 32 b +
+    32]``.  That is the layout an MXFP8 block-scaled GEMM consumes, before
+    any device-specific swizzle: the swizzle, the kernel and the served route
+    are #443 bullets 3 and 6 and are not in this tree; nothing here dispatches.
+
+    The pair is the reference decoder's own bytes, not a re-quantisation:
+    :func:`mxfp8_dequantize` of it equals :func:`reconstruct_unit` bit for
+    bit, and the tests pin that.
+    """
+    from .alphabet import require_mx_grid
+
+    grid, forests = _grid_and_forests(forest)
+    require_mx_grid(grid, purpose="materialize_mxfp8")
+    if getattr(unit, "scale_plane", ScalePlaneKind.S6B) is not ScalePlaneKind.MX:
+        raise GrammarError(
+            "an MXFP8 pair takes one E8M0 scale per 32-weight block: the unit "
+            f"carries a {unit.scale_plane.name} plane"
+        )
+    require_untransformed(unit, "materialize_mxfp8")
+    codes = decode_codes_mixed(unit, forest, code)
+    rows, cols = codes.shape
+    blocks = unit.scale_base
+    if blocks.numel() * unit.group != rows * cols or cols % unit.group:
+        raise GrammarError(
+            f"an MX plane holds one word per {unit.group} weights of one row: "
+            f"{blocks.numel()} words for a {rows}x{cols} unit"
+        )
+    native = torch.tensor(grid.native, dtype=torch.long, device=codes.device)
+    return (
+        native[codes.long()].to(torch.uint8),
+        blocks.to(device=codes.device, dtype=torch.uint8).reshape(rows, cols // unit.group),
+    )
+
+
+def mxfp8_dequantize(tile: torch.Tensor, scales: torch.Tensor) -> torch.Tensor:
+    """The reference reconstruction of an MXFP8 pair: ``e4m3(tile) * 2^(E-127)``.
+
+    fp32 throughout, the E4M3 byte decoded exactly by the dtype and the E8M0
+    byte by :func:`wire.mx_scales_from_plane`, so the product is the same
+    fp32 :func:`reconstruct_unit` computes from the grid's value table and
+    the unit's scale field.  This is the number a native kernel is held to.
+    """
+    from .wire import mx_scales_from_plane
+
+    rows, cols = tile.shape
+    blocks = scales.shape[1]
+    if blocks == 0 or cols % blocks:
+        raise GrammarError(f"a {rows}x{cols} tile does not divide into {blocks} scale blocks per row")
+    group = cols // blocks
+    if scales.shape[0] != rows:
+        raise GrammarError(f"scales hold {scales.shape[0]} rows for a {rows}-row tile")
+    values = tile.to(torch.uint8).view(torch.float8_e4m3fn).to(torch.float32)
+    field = torch.repeat_interleave(
+        mx_scales_from_plane(scales.reshape(-1)), group
+    ).reshape(rows, cols)
+    return values * field
 
 
 def materialize_bf16(

@@ -54,6 +54,7 @@ __all__ = [
     "HEADER_BYTES",
     "SCHEMA_MAJOR",
     "SCHEMA_MINOR",
+    "MX_SCHEMA_MINOR",
     "SCHEMA_MINORS_READ",
     "serialize",
     "parse",
@@ -112,8 +113,19 @@ SCHEMA_MAJOR = 1
 #: moves with them.  The plane *region* of a unit today's recipe table writes
 #: is byte-identical (its COMPLETION plane is empty).  Minors 0-6 read exactly
 #: as before through ``PlaneLayout.LEGACY``.
+#: Minor 8 (2026-09-09, tessera#443) adds no manifest field: it is the ``MX``
+#: value of the minor-1 scale-plane record -- one E8M0 word per 32 weights on
+#: SCALE_BASE and no other scale plane, the OCP MXFP8 block layout -- which a
+#: minor-7 reader cannot resolve, so a manifest carrying it declares the minor
+#: that can.  Unlike minor 7 it moves no writer: no recipe in
+#: ``export.wire_recipe`` selects the plane, so every artifact the exporter
+#: writes stays minor 7 byte for byte, and ``SCHEMA_MINOR`` -- the minor a
+#: fresh artifact of this tree's recipes declares, and the number the
+#: checkpoint config records -- stays 7.  ``MX_SCHEMA_MINOR`` names the minor
+#: an opt-in MX unit declares, and ``SCHEMA_MINORS_READ`` reaches it.
 SCHEMA_MINOR = 7
-SCHEMA_MINORS_READ = (0, 1, 2, 3, 4, 5, 6, 7)
+MX_SCHEMA_MINOR = 8
+SCHEMA_MINORS_READ = (0, 1, 2, 3, 4, 5, 6, 7, 8)
 
 _HEADER = struct.Struct("<8sHHIII")
 

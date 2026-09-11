@@ -194,6 +194,30 @@ DEFAULT_LDLQ_BLOCK = 32
 _PLANE_NAMES = {ScalePlaneKind.S6B: "s6b", ScalePlaneKind.LUT: "lut16",
                 ScalePlaneKind.CHANNEL: "channel"}
 
+
+def _plane_name(scale_plane: "ScalePlaneKind | int") -> str:
+    """The config's spelling of a plane, refusing one the config cannot spell.
+
+    ``ScalePlaneKind.MX`` (tessera#443) is a wire the unit artifact carries
+    and the reader decodes, and it is deliberately NOT in ``_PLANE_NAMES``: a
+    checkpoint config that named it would describe an artifact no route in
+    ``serving.scheme.ROUTES`` serves, and the config spelling, the refit
+    objective row and the served route are #443 bullet 6.  So the plane is
+    encodable through ``encode_linear`` -- the unit blob is self-describing
+    and byte-proved -- and refused here, by name, wherever a config would be
+    written or read.
+    """
+    kind = ScalePlaneKind(scale_plane)
+    name = _PLANE_NAMES.get(kind)
+    if name is None:
+        raise GrammarError(
+            f"the checkpoint config has no spelling for the {kind.name} scale "
+            "plane: no serving route decodes it and no refit objective is "
+            "measured for it (tessera#443 bullet 6). encode_linear writes the "
+            "unit; export_checkpoint does not"
+        )
+    return name
+
 #: The refit objective is per **scale plane**, and that is a measurement, not a
 #: taste.  What decides it is not which objective is more faithful but which one
 #: the plane's refit can *solve*:
@@ -519,7 +543,7 @@ class ActivationSource:
                 "override the encode honoured and this call did not would price a "
                 "different artifact than it ships"
             )
-        return _PLANE_NAMES[ScalePlaneKind(scale_plane)]
+        return _plane_name(scale_plane)
 
     @staticmethod
     def _objective_for_plane(obj, scale_plane: "ScalePlaneKind | None") -> str:
@@ -1065,7 +1089,7 @@ class WireRecipe:
         return {
             "body": _BODY_NAMES[BodyKind(self.body)],
             "span": int(self.span),
-            "plane": _PLANE_NAMES[ScalePlaneKind(self.scale_plane)],
+            "plane": _plane_name(self.scale_plane),
             "window_bits": int(self.window_bits),
             "seed": int(self.window_seed),
             "sigma": None if self.window_sigma is None else float(self.window_sigma),
@@ -1917,6 +1941,7 @@ def export_checkpoint(
         channel_sigma,
     )
     table = recipe_table(grid, lambda _grid, q: resolve(q))
+    _require_config_spellable(table)
 
     payload: "dict[str, torch.Tensor]" = {}
     units: "list[ExportedUnit]" = []
@@ -1960,6 +1985,17 @@ def export_checkpoint(
                   report, plan, extra_config, scale_refit, trellis_weighting, table,
                   activation)
     return report
+
+
+def _require_config_spellable(table: "tuple[RecipeRange, ...]") -> None:
+    """Refuse, before a byte is written, a table the config could not record.
+
+    Both exporters call this right after the recipe table resolves: a plane
+    the config cannot spell (``_plane_name``) would otherwise be found by
+    ``_write_config`` after the safetensors file is on disk.
+    """
+    for row in table:
+        _plane_name(row.recipe.scale_plane)
 
 
 def _resolve_recipe(grid, span, scale_plane, body, window_bits, window_seed,
@@ -2147,7 +2183,7 @@ def _write_config(out: Path, grid, code, group, half, rotation, with_diagonals,
         table = recipe_table(grid)
     used = _used_recipes(table, plan.values())
     span = _projected(used, lambda r: int(r.span), mixed=None)
-    plane = _projected(used, lambda r: _PLANE_NAMES[ScalePlaneKind(r.scale_plane)])
+    plane = _projected(used, lambda r: _plane_name(r.scale_plane))
     body = _projected(used, lambda r: _BODY_NAMES[BodyKind(r.body)])
     window_bits = _projected(used, lambda r: int(r.window_bits), mixed=None)
     window_seed = _projected(used, lambda r: int(r.window_seed), mixed=None)
@@ -2436,6 +2472,7 @@ def export_checkpoint_streaming(
         channel_sigma,
     )
     table = recipe_table(grid, lambda _grid, q: resolve(q))
+    _require_config_spellable(table)
 
     units: "list[ExportedUnit]" = []
     passthrough_bytes = 0

@@ -136,6 +136,14 @@ def test_materialize_fp8_refuses_a_non_hardware_byte_grid():
 
 def test_the_window_code_table_refuses_a_non_hardware_byte_grid():
     torch = pytest.importorskip("torch")
+    # ``window_code_table`` is pure torch, but its module imports Triton at
+    # module scope for the jitted kernels below it, so a CPU interpreter
+    # cannot reach the refusal this test pins.  An error here aborts the
+    # shard's receipt; a skip records the absence (tessera#446).  The other
+    # tests in this file stay runnable, which is why the guard is here and
+    # not at module scope.
+    pytest.importorskip(
+        "triton", reason="tessera.kernel_window imports Triton (CUDA-only)")
 
     from tessera.kernel_window import window_code_table
 

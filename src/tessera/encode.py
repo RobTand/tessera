@@ -52,6 +52,7 @@ from .diagonals import (
 from .manifest import WINDOW_BITS_MAX, BodyKind, RotationState, ScalePlaneKind
 from .errors import GrammarError
 from .grammar import release_quota, require_release_defined, require_scale_groups
+from .scale_codec import GROUP_WEIGHTS
 from .trellis import SUBSET_COUNT, ConvCode, TCQ
 
 __all__ = [
@@ -1536,6 +1537,163 @@ def _lut_values(table_bytes: torch.Tensor, global_scale: float) -> torch.Tensor:
     return table_bytes.view(torch.float8_e4m3fn).float() * global_scale
 
 
+def _mx_po2_field(exponent: torch.Tensor) -> torch.Tensor:
+    """``2^E`` exactly, for integer-valued fp32 ``E`` in ``[-127, 127]``.
+
+    The encoder's copy of the decoder's arithmetic: the same bit construction
+    ``wire.mx_scales_from_plane`` uses, so the plane the trellis quantised
+    against and the plane the reader derives are the same fp32 numbers.
+    """
+    biased = (exponent + 127.0).to(torch.int32)
+    bits = torch.where(biased == 0, torch.full_like(biased, 1 << 22), biased << 23)
+    return bits.view(torch.float32)
+
+
+def _rtn_sse(groups: torch.Tensor, scale: torch.Tensor, emit: torch.Tensor) -> torch.Tensor:
+    """Per-group squared error of round-to-nearest onto ``emit`` at ``scale``.
+
+    ``groups`` is ``[G, group]``, ``scale`` ``[G]``, ``emit`` the sorted
+    distinct values the body can reconstruct (in grid units).  The nearest
+    value is found by search on the sorted set rather than by a table over
+    codes, because the set is what matters here: two codes that decode to one
+    value are one candidate.
+    """
+    target = groups / scale[:, None]
+    hi = torch.searchsorted(emit, target.reshape(-1)).clamp(0, emit.numel() - 1)
+    lo = (hi - 1).clamp_min(0)
+    pick_lo = (target.reshape(-1) - emit[lo]).abs() <= (emit[hi] - target.reshape(-1)).abs()
+    nearest = torch.where(pick_lo, emit[lo], emit[hi]).reshape_as(groups)
+    return ((groups - nearest * scale[:, None]) ** 2).sum(dim=1)
+
+
+def _pack_scales_mx(
+    weights: torch.Tensor, group: int, emit: torch.Tensor,
+) -> "tuple[torch.Tensor, torch.Tensor]":
+    """The MX plane's initial words: one E8M0 per 32-weight block (tessera#443).
+
+    A block's scale is a bare power of two, so there is no mantissa to land
+    on and only one question per block: which binade.  The candidates are the
+    two the block's amax and the body's reach leave open -- ``E_hi =
+    ceil(log2(amax / reach))``, the lowest binade at which the loudest weight
+    is still inside what the body can emit, and ``E_hi - 1``, which codes
+    everything else one binade finer and clips the loudest weight by at most
+    2x.  Which is better is a property of the block's distribution and the
+    grid (the S6b pack's own comment says so and takes ``floor`` anyway), so
+    it is decided by measuring: round-to-nearest squared error onto the
+    values the body can reconstruct, per block, and the lower one wins.  A
+    rule would be a heuristic; this is the objective.
+
+    A block whose weights are all zero has no amax to place and takes byte
+    0x00 (``2^-127``): every code then decodes to at most ``448 * 2^-127``
+    in magnitude, finite and below fp32's normal range.  The block does not
+    reconstruct to exactly zero under a window body, because the trellis's
+    shared history can leave nonzero codes where the target was zero, and the
+    floor word is what makes those codes negligible rather than a rule that
+    pretends they are absent.  Not 0xFF, which is E8M0's NaN and is refused
+    everywhere.  Nonfinite weights are
+    refused by the caller before this runs: an E8M0 word has no way to say
+    "this block held a NaN", and neither has an E4M3 tile.
+
+    ``reach`` -- the largest magnitude the body can emit -- is
+    ``emit.abs().max()``: the window table's outermost entry under a WINDOW
+    body, the largest anchor under TCQ.  The plane is fit against what the
+    trellis reconstructs, never against the grid's nominal peak and never by
+    rounding a row scale into a block scale.
+
+    Returns ``(base_byte [G] uint8, effective [G] fp32)``.
+    """
+    if weights.ndim != 2:
+        raise GrammarError(f"expected a 2-D weight, got shape {tuple(weights.shape)}")
+    rows, cols = weights.shape
+    require_scale_groups(cols, group)
+    groups = weights.float().reshape(rows, -1, group).reshape(-1, group)
+    amax = groups.abs().amax(dim=1)
+    reach = float(emit.abs().max())
+    nonzero = amax > 0
+    # ``clamp_min`` keeps log2 finite on an all-zero block; its exponent is
+    # overwritten below, so the value never reaches the wire.
+    e_hi = torch.ceil(torch.log2(amax.clamp_min(1e-30) / reach)).clamp(-127.0, 127.0)
+    e_lo = (e_hi - 1.0).clamp(-127.0, 127.0)
+    cost_hi = _rtn_sse(groups, _mx_po2_field(e_hi), emit)
+    cost_lo = _rtn_sse(groups, _mx_po2_field(e_lo), emit)
+    exponent = torch.where(cost_lo < cost_hi, e_lo, e_hi)
+    exponent = torch.where(nonzero, exponent, torch.full_like(exponent, -127.0))
+    base_byte = (exponent + 127.0).to(torch.uint8)
+    return base_byte, _mx_po2_field(exponent)
+
+
+def _refit_scales_mx(
+    work: torch.Tensor,
+    units: torch.Tensor,
+    group: int,
+    base_byte: torch.Tensor,
+    effective: torch.Tensor,
+    metric: "torch.Tensor | None" = None,
+) -> "tuple[torch.Tensor, torch.Tensor]":
+    """One least-squares step on the MX plane, landed on E8M0 words.
+
+    With the codes fixed a block's error is ``A s^2 - 2 B s + C`` in its
+    scale, ``A = <u, u>`` and ``B = <w, u>`` over the block's unscaled grid
+    values ``u``.  The wire holds a power of two, and a convex parabola's
+    minimum over the powers of two is one of the two bracketing ``B / A``, so
+    both are costed exactly and the block keeps the word it had unless one of
+    them is strictly lower: no block ends worse than it began and the *step*
+    is monotone in squared error.  The same hold the CHANNEL and S6b refits
+    carry: a block with ``A <= 0`` or ``B <= 0`` has no positive minimiser and
+    keeps its word.
+
+    ``metric`` is ``None`` (the plain squared error) or a 1-D ``[cols]``
+    per-input-column weight, under which ``A`` and ``B`` are the weighted
+    sums.  A 2-D metric couples the blocks of a row and is refused by
+    ``encode_unit`` before this runs: the coupled po2 search is not written,
+    and a flag that ran the separable solve under a coupled metric would name
+    an arm that did something else.
+
+    Blocks are cut per output row, as the pack cut them, from the same
+    ``grammar.require_scale_groups``.
+    """
+    if work.ndim != 2 or units.ndim != 2:
+        raise GrammarError(
+            f"expected 2-D work and units, got {tuple(work.shape)} and {tuple(units.shape)}"
+        )
+    rows, cols = work.shape
+    require_scale_groups(cols, group)
+    W = work.float()
+    U = units.float()
+    if metric is None:
+        weighted = U
+    else:
+        from .scale_channel import check_refit_metric
+
+        check_refit_metric(metric, cols)
+        if metric.ndim != 1:
+            raise GrammarError(
+                "the MX plane's refit is written for a 1-D per-column metric; a "
+                f"{tuple(metric.shape)} metric couples the blocks and has no po2 "
+                "search here"
+            )
+        weighted = U * metric.to(W.dtype).to(W.device).reshape(1, -1)
+    A = (weighted * U).reshape(rows, -1, group).sum(dim=2).reshape(-1)
+    B = (weighted * W).reshape(rows, -1, group).sum(dim=2).reshape(-1)
+    valid = (A > 0) & (B > 0)
+    star = torch.where(valid, B / A.clamp_min(1e-30), effective)
+    e_lo = torch.floor(torch.log2(star.clamp_min(1e-38))).clamp(-127.0, 127.0)
+    e_hi = (e_lo + 1.0).clamp(-127.0, 127.0)
+    old_e = base_byte.to(torch.float32) - 127.0
+
+    def cost(exponent):
+        s = _mx_po2_field(exponent)
+        return A * s * s - 2.0 * B * s
+
+    best_e, best_cost = old_e, cost(old_e)
+    for candidate in (e_lo, e_hi):
+        c = cost(candidate)
+        better = valid & (c < best_cost)
+        best_e = torch.where(better, candidate, best_e)
+        best_cost = torch.where(better, c, best_cost)
+    return (best_e + 127.0).to(torch.uint8), _mx_po2_field(best_e)
+
+
 def _pack_scales_lut(
     weights: torch.Tensor, half: int, peak: float = 6.0, headroom: float = 1.0,
     entries: int = LUT_ENTRIES,
@@ -2712,6 +2870,59 @@ def _encode_unit_steps(
             work, half, peak=peak, headroom=scale_headroom,
         )
         base_byte = torch.zeros(0, dtype=torch.uint8, device=device)
+    elif scale_plane is ScalePlaneKind.MX:
+        from .alphabet import require_mx_grid
+
+        # The OCP MXFP8 plane (tessera#443): E4M3 elements under one E8M0
+        # per 32.  Each refusal is where the bytes are decided, by name.
+        require_mx_grid(grid, purpose="the MX scale plane")
+        if group != GROUP_WEIGHTS:
+            raise GrammarError(
+                f"the MX scale plane is one E8M0 word per {GROUP_WEIGHTS} weights "
+                f"(OCP K32); got group={group}"
+            )
+        if fitted is not None:
+            raise GrammarError(
+                "the MX scale plane carries no DIAG_SU/DIAG_SV planes: an MXFP8 "
+                "tile is codes times block scales and nothing after, so "
+                "segment 2a diagonals cannot be fitted under it"
+            )
+        if not bool(torch.isfinite(work).all()):
+            raise GrammarError(
+                "the MX scale plane refuses nonfinite weights: an E8M0 word has "
+                "no way to say a block held NaN or inf, and an E4M3 tile has no "
+                "code for one either; clean the weight before encoding"
+            )
+        require_scale_groups(cols, group)
+        # What the body can reconstruct, in grid units: the plane is fit
+        # against these values, never against the grid's nominal peak.
+        if body is BodyKind.WINDOW:
+            # The table is built at the plane's own block: ``sigma=None``
+            # models a Gaussian normalised by its block's amax, and under
+            # this plane the block is 32 weights, not the S6b half.  A
+            # power-of-two scale lands the block's amax somewhere in
+            # [reach/2, reach] rather than on it, which no stored source
+            # models; the trellis fits what the table gives it, and the
+            # better model is a measurement #443's bullet 5 owes.
+            mx_codes = window_table(
+                grid, window_bits, sigma=window_sigma, seed=window_seed,
+                half=group, device=device,
+            )
+            emit = grid_vector_table(grid, device)[mx_codes.long()].reshape(-1)
+            table_reach = window_table_reach(
+                grid, window_bits, sigma=window_sigma, seed=window_seed, half=group,
+            )
+        else:
+            emit = torch.cat([
+                grid_vector_table(grid, device)[
+                    torch.as_tensor(f.blocks, device=device, dtype=torch.long)
+                ].reshape(-1)
+                for f in forests.values()
+            ])
+        emit = emit.float().unique()
+        body_reach = float(emit.abs().max())
+        base_byte, effective = _pack_scales_mx(work, group, emit)
+        refine = torch.zeros(0, dtype=torch.uint8, device=device)
     else:
         base_byte, refine, effective = _pack_scales(
             work, group, half, peak=peak, headroom=scale_headroom,
@@ -2743,8 +2954,11 @@ def _encode_unit_steps(
         table_sigma = window_sigma
         if table_sigma is None and scale_plane is ScalePlaneKind.CHANNEL:
             table_sigma = channel_sigma
+        # The MX plane's block is the group, and its branch above already
+        # built (and cached) this exact table.
+        table_half = group if scale_plane is ScalePlaneKind.MX else half
         window_codes = window_table(
-            grid, window_bits, sigma=table_sigma, seed=window_seed, half=half, device=device,
+            grid, window_bits, sigma=table_sigma, seed=window_seed, half=table_half, device=device,
         )
         window_vectors = vectors[window_codes.long()]           # [2^L, arity]
         # Under a block plane the CHANNEL branch above never ran, so this is
@@ -2753,7 +2967,7 @@ def _encode_unit_steps(
         # row start: the clamp is a property of the table (#84).
         if table_reach is None:
             table_reach = window_table_reach(
-                grid, window_bits, sigma=table_sigma, seed=window_seed, half=half,
+                grid, window_bits, sigma=table_sigma, seed=window_seed, half=table_half,
             )
 
     def current_scale() -> torch.Tensor:
@@ -2764,6 +2978,8 @@ def _encode_unit_steps(
             from .scale_channel import channel_scale_field
 
             return channel_scale_field(channel_rows, global_scale, rows, cols)
+        if scale_plane is ScalePlaneKind.MX:
+            return torch.repeat_interleave(effective, group).reshape(rows, cols)
         return torch.repeat_interleave(effective, half).reshape(rows, cols)
 
     # The columns each (range, rate) pair owns, computed once from the
@@ -2873,6 +3089,20 @@ def _encode_unit_steps(
             "the LUT plane's per-half block scale; S6b's grouped (base, refine) "
             "words have no metric-aware refit, so this would be silently ignored"
         )
+    if scale_plane is ScalePlaneKind.MX:
+        # The MX refit is the separable po2 search (``_refit_scales_mx``): a
+        # 1-D metric weights columns and keeps the blocks independent; a 2-D
+        # one couples a row's blocks and has no coupled po2 search here, so
+        # it is refused rather than solved as if it were diagonal.
+        for name, m in (("refit_metric", refit_metric),
+                        ("refit_metric_trailing", refit_metric_trailing)):
+            if m is not None and m.ndim != 1:
+                raise GrammarError(
+                    f"{name} of shape {tuple(m.shape)} couples the MX plane's "
+                    "blocks; only a 1-D per-column metric has a po2 refit here, "
+                    "and running the separable step under a coupled metric "
+                    "would name an arm that did something else"
+                )
     if refit_reach_floor and scale_plane is not ScalePlaneKind.CHANNEL:
         raise GrammarError(
             "refit_reach_floor is a CHANNEL-plane mechanism: it raises a ROW's "
@@ -3164,6 +3394,10 @@ def _encode_unit_steps(
                     refit_coupled_landing == "every"
                     or (refit_coupled_landing == "trailing" and last)
                 ),
+            )
+        elif scale_plane is ScalePlaneKind.MX:
+            base_byte, effective = _refit_scales_mx(
+                work, units, group, base_byte, effective, metric=metric_now,
             )
         else:
             base_byte, refine, effective = _refit_scales(
