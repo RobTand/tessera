@@ -51,13 +51,16 @@ DRIVERS = [
 def test_driver_module_graph_resolves_from_the_checkout(name):
     driver = ROOT / "experiments" / name
     assert driver.is_file(), driver
+    # The shape checkout_runtime_identity builds (``:150-151``): the checkout's
+    # src on PYTHONPATH and nothing installed.  The container sets no PYTHONPATH
+    # of its own, so the prepend there resolves to src alone -- and this drops
+    # any inherited one for the same reason a runner's environment must not be
+    # what satisfies the import.  The test harness exports PYTHONPATH=src:
+    # experiments (``pbtest.py:450``); inheriting it would let the harness, not
+    # the checkout, answer the question this file asks.
     env = dict(os.environ)
-    # The shape checkout_runtime_identity builds: the checkout's src prepended,
-    # nothing installed.  PYTHONPATH is prepended rather than replaced there too.
-    existing = env.get("PYTHONPATH")
-    src = str(ROOT / "src")
-    env["PYTHONPATH"] = src if not existing else f"{src}{os.pathsep}{existing}"
-    proc = subprocess.run([sys.executable, str(driver), "--help"],
+    env["PYTHONPATH"] = str(ROOT / "src")
+    proc = subprocess.run([sys.executable, str(driver), "--help"], env=env,
                           capture_output=True, text=True, timeout=300)
     assert proc.returncode == 0, (
         f"{name} --help exited {proc.returncode}. Its module-level imports do not "
