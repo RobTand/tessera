@@ -877,12 +877,18 @@ def test_a_provenance_edit_after_the_seal_refuses_to_publish():
         source.config_block()
 
 
-def test_an_unchanged_source_keeps_its_cached_seal_and_hashes_one_unit_per_unit(monkeypatch):
+@pytest.mark.parametrize("prefetch,per_unit", [("1", 0), ("0", 1)])
+def test_an_unchanged_source_keeps_its_cached_seal_and_hashes_one_unit_per_unit(
+        monkeypatch, prefetch, per_unit):
     """The efficiency the memo exists for: the capture is digested once, and
-    proving a unit costs that unit's H, never the capture again."""
+    proving a unit costs at most that unit's H, never the capture again --
+    and since the seal keeps what it digested (``tests/test_seal_prefetch``),
+    proving an unchanged unit costs no digest at all; the inline digest is
+    the ``TESSERA_SEAL_PREFETCH=0`` control."""
     import tessera.cached_unit as cached_unit
     import tessera.export as export_module
 
+    monkeypatch.setenv("TESSERA_SEAL_PREFETCH", prefetch)
     calls = []
     real = cached_unit.tensor_identity
 
@@ -903,7 +909,7 @@ def test_an_unchanged_source_keeps_its_cached_seal_and_hashes_one_unit_per_unit(
     from tessera.manifest import ScalePlaneKind
 
     source.for_unit("b.weight", 8, scale_plane=ScalePlaneKind.CHANNEL)
-    assert len(calls) == len(names) + 1, "proving one unit rehashed the capture"
+    assert len(calls) == len(names) + per_unit, "proving one unit rehashed the capture"
     assert export_module.ActivationSource is ActivationSource
 
 

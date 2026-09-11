@@ -32,19 +32,57 @@ def _json_copy(value):
     return json.loads(json.dumps(value, sort_keys=True, allow_nan=False))
 
 
-def tensor_identity(tensor) -> dict:
-    """Hash actual contiguous values, dtype and shape; never a filename."""
+def digest_host_tensor(value) -> str:
+    """The ``sha256.dtype_shape_contiguous.v1`` digest of a contiguous host tensor.
+
+    The construction ``tensor_identity`` stamps on every cached unit and every
+    sealed capture, in one place: dtype and shape as JSON, a NUL, then the
+    bytes.  ``value`` must already be a contiguous CPU tensor -- a pinned
+    staging buffer the seal prefetch filled counts, which is why this is
+    split out -- and the bytes are fed to the hash through the buffer
+    protocol rather than ``tobytes()``: the digest is the same, the 64 MiB
+    copy under the GIL is not made.
+    """
     import torch
 
-    value = tensor.detach().cpu().contiguous()
-    shape = list(value.shape)
-    dtype = str(value.dtype)
+    if value.device.type != "cpu" or not value.is_contiguous():
+        raise ValueError("digest_host_tensor needs a contiguous CPU tensor")
     digest = hashlib.sha256()
-    digest.update(json.dumps({"dtype": dtype, "shape": shape}, sort_keys=True).encode())
+    digest.update(json.dumps({"dtype": str(value.dtype), "shape": list(value.shape)},
+                             sort_keys=True).encode())
     digest.update(b"\0")
-    digest.update(value.view(torch.uint8).numpy().tobytes())
-    return {"algorithm": "sha256.dtype_shape_contiguous.v1", "dtype": dtype,
-            "shape": shape, "sha256": digest.hexdigest()}
+    digest.update(memoryview(value.view(torch.uint8).numpy()))
+    return digest.hexdigest()
+
+
+def host_fingerprint(value) -> int:
+    """An exact, order-free integer over a contiguous host tensor's bytes.
+
+    The sum of the bytes read as int32 words (int64 accumulator, so it is
+    exact and independent of reduction order), or of the raw bytes when the
+    length is not a whole number of words.  ``export.device_fingerprint``
+    computes the same integer from a device tensor without staging it: the
+    seal prefetch takes this one from the bytes it digested, the consumer
+    takes that one from the tensor it is about to encode, and they agree
+    exactly when the bytes do.  It is a change detector for the seal's memo,
+    not a digest -- the digest is the sha256 beside it.
+    """
+    import numpy as np
+    import torch
+
+    if value.device.type != "cpu" or not value.is_contiguous():
+        raise ValueError("host_fingerprint needs a contiguous CPU tensor")
+    raw = value.view(torch.uint8).numpy()
+    if raw.nbytes % 4 == 0:
+        return int(raw.view(np.int32).sum(dtype=np.int64))
+    return int(raw.sum(dtype=np.int64))
+
+
+def tensor_identity(tensor) -> dict:
+    """Hash actual contiguous values, dtype and shape; never a filename."""
+    value = tensor.detach().cpu().contiguous()
+    return {"algorithm": "sha256.dtype_shape_contiguous.v1", "dtype": str(value.dtype),
+            "shape": list(value.shape), "sha256": digest_host_tensor(value)}
 
 
 @lru_cache(maxsize=1)
