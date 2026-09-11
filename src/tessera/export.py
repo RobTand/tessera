@@ -298,6 +298,16 @@ class _UnitDigest(NamedTuple):
     for a tensor with the same signature whose bytes, re-read on the device
     at consumption, fingerprint to the same integer; anything else is
     digested inline as before.
+
+    The fingerprint is an exact sum of the tensor's int32 words, not a
+    hash: it catches every edit that changes the sum -- a value written in
+    place, a plane replaced, a row zeroed -- and is blind to an edit that
+    preserves it (two words swapped, a delta moved between words).  The
+    signature's version counter catches in-place edits made through torch;
+    what neither sees is an out-of-band write that keeps the word sum and
+    the version, and that is the trade the memo makes for one reduction
+    instead of a 64 MiB host copy and a sha256 per unit per call.
+    ``TESSERA_SEAL_PREFETCH=0`` restores the inline digest.
     """
 
     signature: tuple
