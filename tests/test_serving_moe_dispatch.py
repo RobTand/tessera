@@ -147,6 +147,78 @@ def test_checkpoint_execution_identity_distinguishes_every_execution_choice(monk
     assert hashes[0] == hashes[-1]
 
 
+# Every routed stack a real LFM2.5-8B-A1B MoE checkpoint declares: layers 2..23.
+_LFM_STACKS = tuple(f"model.layers.{layer}.feed_forward.experts" for layer in range(2, 24))
+
+
+def _routed_scheme(family=None, **over):
+    from tessera.serving.scheme import TESSERA_FP8
+    if family is None or family == TESSERA_FP8:
+        route = {"family": TESSERA_FP8, "grid": "E4M3", "body": "WINDOW", "plane": "CHANNEL"}
+        q256 = 1024
+    else:
+        # A different route that is a valid Tessera scheme at a rung this build's
+        # decoder reads, so the refusal below comes from require_targets rather
+        # than from scheme validation.
+        route = {"family": family, "grid": "E2M1x2", "body": "TCQ", "plane": "LUT"}
+        q256 = 896
+    return {**route, "structure": "routed_moe", "experts": 32,
+            "groups": {
+                "w13": {"rows": 128, "columns": 128, "q256": q256,
+                        "wire_stride": 10000, "roles": [["gate_proj", 64], ["up_proj", 64]]},
+                "w2": {"rows": 128, "columns": 64, "q256": q256,
+                       "wire_stride": 10000, "roles": [["down_proj", 128]]}}, **over}
+
+
+def _multi_stack_config(block, *, off_route=None):
+    """One declaration over all 22 routed stacks, optionally breaking one of them.
+
+    The single-stack fixture above cannot separate "checks the first routed
+    target" from "checks every routed target"; a real checkpoint declares 22.
+    """
+    from tessera.serving.scheme import TESSERA_NVFP4
+    groups = {}
+    for index, stack in enumerate(_LFM_STACKS):
+        family = TESSERA_NVFP4 if index == off_route else None
+        groups[f"experts_{index}"] = {"format": "TESSERA", "targets": [stack],
+                                      "scheme": _routed_scheme(family)}
+    return {"quant_method": "tessera", "config_groups": groups, "ignore": [],
+            "research_selected_moe": block}
+
+
+def test_every_declared_stack_selects_the_packed_owner(monkeypatch):
+    from tessera.serving import config as config_module, moe_route
+    import vllm.model_executor.layers.fused_moe as moe
+
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    block = _research_checkpoint(tp=2, backend="triton")
+    payload = json.loads(json.dumps(_multi_stack_config(block)))
+    config = TesseraConfig.from_config(payload)
+    facts, calls = [], []
+    monkeypatch.setattr(config_module, "declare_compile_identity", lambda **kw: facts.append(kw))
+    monkeypatch.setattr(moe_route, "build_tessera_moe_method",
+                        lambda *a, **kw: calls.append((a, kw)) or object())
+    layer = moe.RoutedExperts()
+    for stack in _LFM_STACKS:
+        assert config.get_quant_method(layer, stack) is not None
+    assert len(calls) == len(_LFM_STACKS) == 22
+    selected = {id(kwargs["research_selected"]) for _, kwargs in calls}
+    assert len(selected) == 1, "each stack rebuilt its own execution object"
+    only = calls[0][1]["research_selected"]
+    assert only.expected_tensor_parallel_size == 2 and only.decode_backend == "triton"
+    # The execution declaration is a checkpoint fact, so every stack reports one
+    # identity, not one per layer.
+    assert facts and len({fact["research_selected_moe"] for fact in facts}) == 1
+
+
+@pytest.mark.parametrize("off_route", [0, 11, 21])
+def test_one_off_route_stack_among_many_refuses_before_loading(monkeypatch, off_route):
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    payload = _multi_stack_config(_research_checkpoint(), off_route=off_route)
+    with pytest.raises(ValueError, match="research_selected_moe.*TESSERA_FP8/E4M3"):
+        TesseraConfig.from_config(payload)
+
+
 def _module(name):
     value = types.ModuleType(name)
     sys.modules[name] = value

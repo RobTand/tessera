@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-09T22:40:19Z",
+ "generated": "2026-09-11T01:10:23Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -840,7 +840,7 @@
     "title": "Add a contract-readable Tessera menu mode so the campaign stops pricing rungs no reader decodes"
    },
    "288": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Tessera campaign writes a zero-row cost table and exits 0 when the resolved menu is empty"
    },
    "289": {
@@ -856,7 +856,7 @@
     "title": "Tessera lane cannot allocate routed experts: probe rows are packed stacks, the campaign prices projected per-expert units, and the serving scope has no vocabulary for a projected slice"
    },
    "291": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "tessera_campaign exits 0 with an empty cost table when every unit's menu is empty (attested/readable narrowing) \u2014 must refuse"
    },
    "292": {
@@ -1284,7 +1284,7 @@
     "title": "Plan bounded joint-statistics windows using shared activation requirements"
    },
    "388": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Selected-source anchor rows re-hash the whole source checkpoint per row: about 84.8 TB of NFS reads across the 132 GLM rows"
    },
    "389": {
@@ -1687,9 +1687,17 @@
     "state": "CLOSED",
     "title": "Fix streamed Qwen rotary positions for Transformers 5.17"
    },
+   "479": {
+    "state": "CLOSED",
+    "title": "Price a row until it stops committing anchors, not until a clock runs out"
+   },
    "48": {
     "state": "CLOSED",
     "title": "Add the cross-repo attestation interop test to the pinned-contract job"
+   },
+   "480": {
+    "state": "CLOSED",
+    "title": "[P2] Use PrismaBuild\u2019s bounded progress-watchdog contract for Tessera pricing rows"
    },
    "49": {
     "state": "CLOSED",
@@ -3452,6 +3460,18 @@
    "444": {
     "state": "OPEN",
     "title": "Qualify compressed MoE serving: multi-stack controls, topology record, and the bullet-1 encode driver"
+   },
+   "445": {
+    "state": "CLOSED",
+    "title": "Add the OCP MX scale plane: E8M0 per 32 over E4M3, priced, written and decoded (#443 bullets 1 and 2)"
+   },
+   "446": {
+    "state": "CLOSED",
+    "title": "Two test modules import kernel_window without guarding its module-level triton import"
+   },
+   "447": {
+    "state": "CLOSED",
+    "title": "Skip the two Triton-importing tests instead of erroring the shard (#446)"
    },
    "45": {
     "state": "CLOSED",
