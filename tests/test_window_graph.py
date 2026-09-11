@@ -343,3 +343,23 @@ def test_an_ldlq_encode_ships_the_same_bytes_under_every_lever(lever, monkeypatc
     else:
         monkeypatch.setenv("TESSERA_WINDOW_GRAPH", lever)
     assert run("fused") == reference
+
+
+def test_a_call_that_discards_the_cost_returns_the_same_states_and_no_float():
+    """``want_sse=False`` is the encoder's spelling: identical states, ``None``
+    for the cost, and (see ``test_encode_host_sync_contract``) no host round
+    trip.  The float a caller does read is still the reference's, summed on
+    the device in the reference's order and read once."""
+    targets, vectors, weights = _case(14, 4, 1, 128, 1100, True, seed=7)   # 3 chunks
+    ref, sse_ref = viterbi_window(targets, vectors, 14, 4, weights=weights,
+                                  impl="reference")
+    window_plan_cache_clear()
+    for _ in range(3):
+        got, sse = viterbi_window(targets, vectors, 14, 4, weights=weights,
+                                  impl="fused", want_sse=False)
+        assert torch.equal(got, ref) and sse is None
+    got, sse = viterbi_window(targets, vectors, 14, 4, weights=weights, impl="fused")
+    assert torch.equal(got, ref) and sse == sse_ref
+    _, none = viterbi_window(targets, vectors, 14, 4, weights=weights,
+                             impl="reference", want_sse=False)
+    assert none is None

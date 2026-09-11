@@ -840,9 +840,8 @@ class _WindowPlan:
             self.tuples = self.wrows = self.table = None
         self.graph = None
         # The fence a cache hit waits on before touching this plan's scratch:
-        # recorded after the LAST reader of ``back`` (the traceback launch),
-        # which the epilogue's ``float(final.sum())`` does NOT cover -- that
-        # sync happens before the traceback is launched, not after.
+        # recorded after the LAST reader of ``back`` (the traceback launch).
+        # No host sync covers it: the chunk loop never waits on the device.
         self.done = None
 
     def wait_previous(self):
@@ -1055,7 +1054,7 @@ def _plan_for_call(*, device, rows, cols, arity, size, rate, chunk, has_weights)
 
 
 def viterbi_window_fused(targets, vectors, window_bits: int, rate: int,
-                         weights=None, chunk: int = 512):
+                         weights=None, chunk: int = 512, want_sse: bool = True):
     """The fused CUDA path behind ``encode.viterbi_window``.
 
     Same arguments, same returns, identical states and identical sse.
@@ -1065,9 +1064,22 @@ def viterbi_window_fused(targets, vectors, window_bits: int, rate: int,
     The machine is picked by ``_plan_for_call`` and is never the answer: a
     per-call plan and a persistent one run the same ``one_batch`` over the same
     values in the same order, and the epilogue below -- the final ``min`` over
-    states, ``sse += float(final.sum())`` and the traceback -- runs on the host
+    states, the per-chunk ``final.sum()`` and the traceback -- runs on the host
     stream either way, so the ``sse`` float is summed in the reference's order
     whichever plan produced the front.
+
+    **The chunk loop never waits on the device.**  The reference accumulates
+    ``sse += float(final.sum())`` per chunk, and ``float()`` is a host sync:
+    the encoder's whole pass used to stop at every chunk for one round trip,
+    which left the GPU idle for the trip and the host's next launches, ~10 %
+    of a batched pass, and every call started from an empty queue.  Here the
+    same fp32 ``final.sum()`` is added into a float64 device scalar in chunk
+    order -- ``float(x)`` converts an fp32 exactly, and a float64 ``add_`` is
+    the same IEEE addition the host loop did -- so the value read once at the
+    end is the reference's float, bit for bit, and the host runs ahead of the
+    device through the pass.  ``want_sse=False`` skips that one read too and
+    returns ``None``: the encoder's batch driver discards the cost, and a
+    caller that discards it should not pay a sync for it.
     """
     import triton
 
@@ -1090,7 +1102,7 @@ def viterbi_window_fused(targets, vectors, window_bits: int, rate: int,
         # plan covers both spellings and both graph modes, and touches no
         # call that has work to do.
         return (torch.empty(steps, cols, dtype=torch.long, device=device),
-                0.0)
+                0.0 if want_sse else None)
 
     plan, wants_graph = _plan_for_call(
         device=device, rows=rows, cols=cols, arity=arity, size=size, rate=rate,
@@ -1101,7 +1113,9 @@ def viterbi_window_fused(targets, vectors, window_bits: int, rate: int,
         plan.capture()
 
     states = torch.empty(steps, cols, dtype=torch.long, device=device)
-    sse = 0.0
+    # The reference's ``sse = 0.0; sse += float(final.sum())``, kept on the
+    # device: a float64 zero, plus each chunk's fp32 sum in the same order.
+    sse_acc = torch.zeros((), dtype=torch.float64, device=device)
     b = 0
     for start in range(0, cols, chunk):
         n = min(chunk, cols - start)
@@ -1112,7 +1126,7 @@ def viterbi_window_fused(targets, vectors, window_bits: int, rate: int,
 
         cost = plan.front_all[:n].t().contiguous()            # [size, n]
         final, state = cost.min(dim=0)                        # [n]
-        sse += float(final.sum())
+        sse_acc.add_(final.sum().to(torch.float64))
         tb = 128
         traceback_kernel[(triton.cdiv(n, tb),)](
             plan.back, state.to(torch.int32), states, n, cols, steps, low, start,
@@ -1120,9 +1134,9 @@ def viterbi_window_fused(targets, vectors, window_bits: int, rate: int,
             num_warps=4, enable_fp_fusion=False,
         )
     if plan.owns_input:
-        # A persistent plan outlives this call and the traceback above is
-        # launched AFTER the last host sync, so it is still reading
-        # ``plan.back`` when this returns; the event is what the next cache
-        # hit (possibly on another stream) orders itself behind.
+        # A persistent plan outlives this call and nothing above waited on
+        # the device, so the last traceback is still reading ``plan.back``
+        # when this returns; the event is what the next cache hit (possibly
+        # on another stream) orders itself behind.
         plan.record_done()
-    return states, sse
+    return states, (float(sse_acc) if want_sse else None)
