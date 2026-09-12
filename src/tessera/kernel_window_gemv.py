@@ -489,6 +489,15 @@ def default_plan(rows: int, cols: int, M: int = 1, *, sm_count: "int | None" = N
     * The **fp32 table is refused** on any 64 KiB device, naming the budget:
       its table alone is the whole 65,536 B.
 
+    The 65,536 B is a ceiling and not a rung of a ladder, measured rather than
+    read off a spec: ``hipFuncSetAttribute(MaxDynamicSharedMemorySize, n)``
+    returns ``hipSuccess`` for n up to and including 65,536 and
+    ``hipErrorInvalidValue`` at 65,537 and above, and a launch asking 66,048 B
+    fails the same way -- so a HIP launch cannot climb past it the way
+    ``cudaFuncSetAttribute`` climbs sm_121's 49,152 -> 101,376 opt-in ladder
+    (receipt ``t454-lds-plan/receipts/06_gfx1201_hip_attribute_ceiling.txt``;
+    scope: gfx1201 under WSL2).
+
     **The 128-column M=8 plan is admitted after a gfx1201 launch receipt** --
     and that receipt needs a kernel change first, because ``window_gemv.cu``
     sizes its x tile from ``constexpr MAX_COLS = max_item_cols(MT)``, not from
@@ -512,7 +521,9 @@ def default_plan(rows: int, cols: int, M: int = 1, *, sm_count: "int | None" = N
     ``sm_count`` is ``multi_processor_count``.  On ROCm that counts **WGPs,
     not CUs**: torch reports 32 for the RX 9070 XT whose ``rocminfo`` reports
     64 compute units (receipts ``01_gfx1201_device_properties.txt`` and
-    ``rdna35-port-spike/receipts/20_rocminfo.txt``) -- an RDNA workgroup
+    ``rdna35-port-spike/receipts/20_rocminfo.txt``).  It is not a torch
+    artifact: HIP itself reports ``hipDeviceProp_t.multiProcessorCount = 32``
+    on the same part (receipt ``06_gfx1201_hip_attribute_ceiling.txt``) -- an RDNA workgroup
     processor is two CUs, and a 512-thread workgroup is placed on one of them.
     ``blocks = sm_count * per_sm`` is therefore 32 grid slots per resident
     wave on that part, not 64.  How many workgroups a *WGP* holds at this LDS
