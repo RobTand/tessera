@@ -25,7 +25,7 @@ anything.
 | Receipt | Proves | Does not prove |
 |---|---|---|
 | `hipcc --offload-arch=gfx1151 compile of the port (wsl-gpu)` | the kernel source is valid for RDNA3.5; LDS/VGPR budgets per instantiation | anything about gfx1151 execution, numerics or speed |
-| `gfx1201 execution on wsl-gpu` | the HIP code path (loader, shims, plan, window_decode+torch.mm prefill, BF16 route) executes and matches the CUDA/CPU reference bit-for-bit where the contract says it must | gfx1151 numerics or perf; any perf at all (no PMCs, WSL2, and wall-clock on a desktop RDNA4 part says nothing about an APU) |
+| `gfx1201 execution on wsl-gpu` | the HIP code path (loader, shims, plan, window_decode+torch.mm prefill, BF16 route) executes and matches the CUDA/CPU reference bit-for-bit where the contract says it must | gfx1151 numerics or perf; any perf (no PMCs, WSL2, and wall-clock on a desktop RDNA4 says nothing about an APU) |
 | `Strix Halo tester run` | gfx1151 device_qualified: correctness, KL-vs-BF16, decode/prefill tok/s, power | another platform's numbers; a rung outside the reference set |
 
 Only the third row mints a `device_qualified` cell for gfx1151. The harness

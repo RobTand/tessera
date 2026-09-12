@@ -112,8 +112,8 @@ SCOPES = {
         "proves": ("the HIP code path (loader, shims, plan, window_decode+torch.mm prefill, "
                    "BF16 route) executes and matches the CUDA/CPU reference bit-for-bit "
                    "where the contract says it must"),
-        "does_not_prove": ("gfx1151 numerics or perf; any perf at all (no PMCs, WSL2, and "
-                           "wall-clock on a desktop RDNA4 part says nothing about an APU)"),
+        "does_not_prove": ("gfx1151 numerics or perf; any perf (no PMCs, WSL2, and wall-clock "
+                           "on a desktop RDNA4 says nothing about an APU)"),
         "perf_claim": False,
     },
     SCOPE_DEVICE_STRIX_HALO: {
