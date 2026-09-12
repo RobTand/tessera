@@ -90,6 +90,10 @@ __all__ = [
     "Plan",
     "Repacked",
     "max_item_cols",
+    "RED_STRIDE",
+    "plan_smem_bytes",
+    "device_shared_mem_per_block",
+    "item_cols_for_budget",
     "items_for",
     "default_plan",
     "WindowGemvUnit",
@@ -121,6 +125,121 @@ def max_item_cols(mt: int) -> int:
     """Columns a block reduces at once: 1024 at M<=2, 256 above (the x tile in
     shared memory is ``cols * MT`` fp32, double-buffered)."""
     return 1024 if mt <= 2 else 256
+
+
+# --------------------------------------------------------------------------
+# shared memory: the budget the launch has to fit in
+# --------------------------------------------------------------------------
+
+#: The reduction rows' padded stride, mirrored from ``window_gemv.cu``'s
+#: ``constexpr int RED_STRIDE = 33``.  Mirrored, like :func:`max_item_cols`
+#: above it, because the plan has to price a launch without compiling one;
+#: ``tests/test_kernel_window_gemv.py`` reads both constants back off the
+#: kernel source so a change there fails a test here (the drift issue #145
+#: filed for the rate roster, in the one place a roster cannot cover).
+RED_STRIDE = 33
+
+
+def plan_smem_bytes(mt: int, *, table_dtype: torch.dtype = torch.bfloat16,
+                    window_bits: "int | None" = None,
+                    item_cols: "int | None" = None) -> int:
+    """Bytes of dynamic shared memory a launch at this M tile asks for.
+
+    The mirror of ``window_gemv.cu``'s one expression::
+
+        smem = tbl_bytes + mt * 16 * RED_STRIDE * 4 + 2 * max_item_cols(mt) * mt * 4
+
+    -- a ``2^window_bits`` table, ``[MT][16*33]`` fp32 reduction rows, and the
+    double-buffered x tile.
+
+    ``item_cols`` is the x tile's width.  It defaults to
+    :func:`max_item_cols`, which is what the kernel uses **today**: the tile
+    is laid out from a ``constexpr int MAX_COLS = max_item_cols(MT)`` and the
+    second buffer starts at ``xs0 + MAX_COLS * MT``, so a narrower item does
+    not make the launch ask for less.  Passing ``item_cols`` prices the tile a
+    kernel that sized it from the item cap would ask for -- the 128-column
+    M=8 plan below is exactly that, and the gap between the two numbers is
+    what a ``.cu`` change has to close before the plan can be launched
+    (RobTand/tessera#453 owns that file; #454 records the arithmetic).
+    """
+    if window_bits is None:
+        window_bits = WINDOW_BITS_SUPPORTED[0]
+    tbl_bytes = (1 << int(window_bits)) * torch.empty(0, dtype=table_dtype).element_size()
+    cols = max_item_cols(mt) if item_cols is None else int(item_cols)
+    return tbl_bytes + mt * 16 * RED_STRIDE * 4 + 2 * cols * mt * 4
+
+
+def device_shared_mem_per_block(device: "int | None" = None) -> "int | None":
+    """The shared memory a block may be **granted** on this device, or ``None``
+    when no ceiling binds the plan.
+
+    Two platforms, two answers, and the difference is the whole of #454:
+
+    * **CUDA** publishes a small static per-block limit (49,152 B on sm_121)
+      and an opt-in ceiling above it (``sharedMemPerBlockOptin``, 101,376 B on
+      sm_121, per-SM 102,400 B -- ``experiments/results/kernel-window/trace_kernel_window.json``).
+      ``launch_typed`` climbs that ladder with ``cudaFuncSetAttribute`` before
+      every launch that needs it, and the ceiling holds every plan this module
+      produces, so no ceiling binds: this returns ``None`` and the plan is the
+      one the 2026-09-02 sweep measured.  Reading the *static* limit here
+      instead would not refuse anything -- it would quietly halve the grid at
+      M=2 and M=8 and price an x tile the kernel does not allocate, on a device
+      that serves both today.
+    * **ROCm/HIP** has no ladder at all: ``shared_memory_per_block_optin`` is
+      not even an attribute of ``get_device_properties`` on torch 2.11+rocm7.2
+      (receipt: ``t454-lds-plan/receipts/01_gfx1201_device_properties.txt``),
+      ``shared_memory_per_block`` is 65,536 B, and ``hipFuncSetAttribute``
+      cannot raise it.  So the device limit **is** the budget and it binds.
+
+    The discriminator is therefore the presence of a ladder, read off the
+    properties object, never a backend name: a platform that grows one gets
+    the CUDA answer without a new branch here.
+    """
+    if not torch.cuda.is_available():
+        return None
+    props = torch.cuda.get_device_properties(0 if device is None else device)
+    per_block = getattr(props, "shared_memory_per_block", None)
+    if per_block is None:
+        return None
+    optin = getattr(props, "shared_memory_per_block_optin", None)
+    if optin is not None and optin > per_block:
+        return None        # a ladder the launch climbs; the static limit is not a budget
+    return int(per_block)
+
+
+def item_cols_for_budget(mt: int, budget: int, *, table_dtype: torch.dtype = torch.bfloat16,
+                         window_bits: "int | None" = None) -> int:
+    """The widest x tile an ``mt`` launch can hold in ``budget`` bytes.
+
+    Solved, not chosen: the table and the reduction rows are fixed costs, so
+    the columns left over are ``(budget - fixed) // (2 * mt * 4)``.  The answer
+    is then rounded down to the kernel's own ladder of tile widths, which is a
+    power of two (``max_item_cols`` returns 1024 or 256): the plan proposes a
+    rung of that ladder rather than inventing a width the ``constexpr`` menu
+    has no case for.  On a 65,536 B device with the bf16 table that is 1024 at
+    M<=2, 256 at M=4 (neither binds -- both are already the kernel's cap) and
+    **128 at M=8**, where the raw bound is 248.
+
+    Refuses, naming the budget, when not even one column fits -- which is the
+    fp32 table on any 64 KiB device: its 65,536 B of table is the whole budget
+    before a single reduction row is counted.
+    """
+    floor_bytes = plan_smem_bytes(mt, table_dtype=table_dtype, window_bits=window_bits,
+                                  item_cols=1)
+    if floor_bytes > budget:
+        fixed = plan_smem_bytes(mt, table_dtype=table_dtype, window_bits=window_bits,
+                                item_cols=0)
+        raise GrammarError(
+            f"a {table_dtype} table needs {floor_bytes} B of shared memory per block at "
+            f"M={mt} -- {fixed} B before the x tile holds a single column -- and this device "
+            f"grants {budget} B per block with no opt-in ladder to raise it; the bf16 table "
+            f"needs {plan_smem_bytes(mt, table_dtype=torch.bfloat16, window_bits=window_bits)} B "
+            f"at the same M tile, and the materialised path serves what neither can"
+        )
+    fixed = plan_smem_bytes(mt, table_dtype=table_dtype, window_bits=window_bits, item_cols=0)
+    raw = (budget - fixed) // (2 * mt * 4)
+    rung = 1 << (int(raw).bit_length() - 1)          # the ladder rung at or below the bound
+    return min(rung, max_item_cols(mt))
 
 
 # --------------------------------------------------------------------------
@@ -419,15 +538,94 @@ class Plan:
 
 
 def default_plan(rows: int, cols: int, M: int = 1, *, sm_count: "int | None" = None,
-                 table_dtype: torch.dtype = torch.bfloat16, warps: int = 16) -> Plan:
+                 table_dtype: torch.dtype = torch.bfloat16, warps: int = 16,
+                 shared_mem_per_block: "int | None" = None,
+                 window_bits: "int | None" = None) -> Plan:
+    """The launch shape for this unit and M, inside the device's LDS budget.
+
+    ``shared_mem_per_block`` is the shared memory a block may be granted.
+    ``None`` asks the device through :func:`device_shared_mem_per_block`,
+    which answers ``None`` again wherever no ceiling binds -- every CUDA
+    device, because ``launch_typed`` climbs the opt-in ladder.  There the plan
+    below is byte-identical to the one the 2026-09-02 sweep measured, and
+    ``tests/test_kernel_window_gemv.py`` pins it.
+
+    A budget that **does** bind is a 64 KiB AMD workgroup (gfx1150/gfx1151/
+    gfx1201; measured 65,536 B, and 65,537 B refused by the compiler on all
+    three -- ``rdna35-port-spike/receipts/14_lds_ceiling_probe.txt``).  With
+    the bf16 table it changes two things and refuses one:
+
+    * ``cols_per_item`` is capped by :func:`item_cols_for_budget`.  M <= 4 is
+      untouched (43,072 / 53,376 / 49,408 B all fit); **M in 5..8 is capped to
+      128 columns**, 57,856 B against 66,048 B at the kernel's 256.
+    * ``per_sm`` -- the resident blocks the grid is sized for -- is
+      ``budget // smem`` rather than the table dtype's 2, because at 43-58 KiB
+      per block only one workgroup fits a 64 KiB CU.  (``__launch_bounds__(512, 2)``
+      asks for the same two and means *min waves per EU* on HIP, which cannot
+      be honoured at this LDS size either; recorded, not changed.)
+    * The **fp32 table is refused** on any 64 KiB device, naming the budget:
+      its table alone is the whole 65,536 B.
+
+    The 65,536 B is a ceiling and not a rung of a ladder, measured rather than
+    read off a spec: ``hipFuncSetAttribute(MaxDynamicSharedMemorySize, n)``
+    returns ``hipSuccess`` for n up to and including 65,536 and
+    ``hipErrorInvalidValue`` at 65,537 and above, and a launch asking 66,048 B
+    fails the same way -- so a HIP launch cannot climb past it the way
+    ``cudaFuncSetAttribute`` climbs sm_121's 49,152 -> 101,376 opt-in ladder
+    (receipt ``t454-lds-plan/receipts/06_gfx1201_hip_attribute_ceiling.txt``;
+    scope: gfx1201 under WSL2).
+
+    **The 128-column M=8 plan is admitted after a gfx1201 launch receipt** --
+    and that receipt needs a kernel change first, because ``window_gemv.cu``
+    sizes its x tile from ``constexpr MAX_COLS = max_item_cols(MT)``, not from
+    the item cap, so a launch under this plan still asks for 66,048 B.
+    Measured on gfx1201, not predicted: M = 1, 2 and 4 launch and land inside
+    the fp32 accumulation bound at 43,072 / 53,376 / 49,408 B, and M = 8 is
+    refused with ``hipErrorInvalidValue`` at 66,048 B under a 128-column plan
+    and a 256-column one alike -- the plan's item width does not change what
+    the launch asks for, which is the whole of it (receipts
+    ``t454-lds-plan/receipts/02_gfx1201_lds_plan_launch.txt`` and
+    ``03_gfx1201_m8_refusal.txt``; scope: gfx1201 under WSL2, code path, no
+    performance claim).  :func:`plan_smem_bytes` prices both numbers on
+    purpose.  Until the ``.cu`` sizes the tile from the cap and a gfx1201
+    launch confirms it, M in 5..8 on a 64 KiB device belongs to the M=4 plan
+    run twice or to the materialised path -- and **nothing routes it there
+    yet**: ``_gemv_concrete`` maps M to its tile and launches, so such a call
+    fails at the launch rather than at a named refusal.  No consumer reaches
+    it tonight (the plugin gates a HIP platform before any kernel is touched),
+    and the dispatch is not this function's to change.
+
+    ``sm_count`` is ``multi_processor_count``.  On ROCm that counts **WGPs,
+    not CUs**: torch reports 32 for the RX 9070 XT whose ``rocminfo`` reports
+    64 compute units (receipts ``01_gfx1201_device_properties.txt`` and
+    ``rdna35-port-spike/receipts/20_rocminfo.txt``).  It is not a torch
+    artifact: HIP itself reports ``hipDeviceProp_t.multiProcessorCount = 32``
+    on the same part (receipt ``06_gfx1201_hip_attribute_ceiling.txt``) -- an RDNA workgroup
+    processor is two CUs, and a 512-thread workgroup is placed on one of them.
+    ``blocks = sm_count * per_sm`` is therefore 32 grid slots per resident
+    wave on that part, not 64.  How many workgroups a *WGP* holds at this LDS
+    size is a separate question this does not answer: ``per_sm`` here is the
+    per-block ceiling's answer, and WGP-level residency is a receipt not taken.
+    """
     if sm_count is None:
         sm_count = torch.cuda.get_device_properties(0).multi_processor_count if torch.cuda.is_available() else 48
+    if shared_mem_per_block is None:
+        shared_mem_per_block = device_shared_mem_per_block()
     rpl = 16 if M <= 2 else 8
-    per_sm = 2 if table_dtype == torch.bfloat16 else 1
+    mt = _m_tile(M)
     # 256-column items measured 3-5% faster than 1024-column ones on the
     # 9728-row/col shapes and level elsewhere (plan sweep 2026-09-02): two
     # items per block let the second item's setup overlap the first's tail.
-    return Plan(rpl=rpl, warps=warps, blocks=sm_count * per_sm, cols_per_item=min(256, max_item_cols(_m_tile(M))),
+    cols_per_item = min(256, max_item_cols(mt))
+    per_sm = 2 if table_dtype == torch.bfloat16 else 1
+    if shared_mem_per_block is not None:
+        cap = item_cols_for_budget(mt, int(shared_mem_per_block), table_dtype=table_dtype,
+                                   window_bits=window_bits)   # refuses the fp32 table here
+        cols_per_item = min(cols_per_item, cap)
+        smem = plan_smem_bytes(mt, table_dtype=table_dtype, window_bits=window_bits,
+                               item_cols=min(cap, max_item_cols(mt)))
+        per_sm = max(1, int(shared_mem_per_block) // smem)
+    return Plan(rpl=rpl, warps=warps, blocks=sm_count * per_sm, cols_per_item=cols_per_item,
                 table_dtype=table_dtype)
 
 
@@ -680,7 +878,8 @@ def prepare_from_parsed(parsed, *, plan: "Plan | None" = None, M: int = 1,
     if scale.numel() != rep.rows:
         raise GrammarError(f"{scale.numel()} row scales for {rep.rows} rows")
     if plan is None:
-        plan = default_plan(rep.rows, rep.cols, M, table_dtype=table_dtype)
+        plan = default_plan(rep.rows, rep.cols, M, table_dtype=table_dtype,
+                            window_bits=int(unit.window_bits))
     _ext()   # built (or found) at load, never on the first call -- see the module docstring
     return WindowGemvUnit(
         rep=rep, table=table, scale=scale, window_bits=int(unit.window_bits), plan=plan,
@@ -714,7 +913,8 @@ def prepare_value_unit(body_bits: torch.Tensor, rates: "tuple[int, ...]", window
         scale = torch.ones(rep.rows, dtype=torch.float32, device=device)
     scale = scale.to(device=device, dtype=torch.float32).reshape(-1).contiguous()
     if plan is None:
-        plan = default_plan(rep.rows, rep.cols, M, table_dtype=table_dtype)
+        plan = default_plan(rep.rows, rep.cols, M, table_dtype=table_dtype,
+                            window_bits=int(window_bits))
     _ext()   # at load, as prepare_from_parsed
     return WindowGemvUnit(
         rep=rep, table=table, scale=scale, window_bits=int(window_bits), plan=plan, family="value",
