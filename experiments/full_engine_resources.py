@@ -36,6 +36,14 @@ IDENTITY_HASHES = ("model_sha256", "configuration_sha256", "runtime_manifest_sha
                    "assignment_sha256", "canonical_units_sha256", "workload_sha256")
 OWNER_CATEGORIES = {"fixed", "candidate", "kv", "shared", "unknown"}
 
+# The six qualification gaps, in the order ``full_engine_resource_partition``
+# states them as domains. The legacy prose spellings are kept as the ledger's
+# own ``qualification_gaps`` so an existing reader is unchanged; the derivation
+# consumes the domain names.
+QUALIFICATION_GAPS = ("worker startup integration", "qualified Torch/CUPTI history join",
+                      "external/context/host closure", "runtime provenance admission",
+                      "cache capacity policy", "full-engine timing partition")
+
 
 def _json_bytes(value):
     return json.dumps(value, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()
@@ -629,14 +637,15 @@ def analyze_engine_resource_ledger(raw):
               "external_native_peak_bytes": None,
               "issues": [], "torch_allocations": [], "checkpoints": [],
               "escaping_allocation_ids": [], "unattributed_external_records": [],
-              "qualification_gaps": ["worker startup integration", "qualified Torch/CUPTI history join",
-                                     "external/context/host closure", "runtime provenance admission",
-                                     "cache capacity policy", "full-engine timing partition"]}
+              "fixture_provenance": None,
+              "qualification_gaps": list(QUALIFICATION_GAPS)}
     issues = result["issues"]
     try:
         raw = expand_capture(raw)
         if raw["schema"] != CAPTURE_SCHEMA:
             raise ValueError("unsupported full-engine capture schema")
+        # A capture that says on its face that it is synthetic keeps saying so.
+        result["fixture_provenance"] = raw.get("fixture_provenance")
         identity = _identity(raw["identity"])
         result["identity"] = identity
         result["capture_sha256"] = canonical_snapshot_digest(raw)

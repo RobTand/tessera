@@ -1196,6 +1196,112 @@ observer overhead qualification or a fixed timing price. Complete collection,
 overhead, runtime/assignment admission and full memory ownership remain explicit
 qualification gaps; `timings` stays null and admission remains unimplemented.
 
+`experiments/full_engine_resource_partition.py` derives the resource partition
+from that raw ledger without relaxing any of its gates. It restates the ledger's
+six `qualification_gaps` as six named **domains** — `worker_startup`,
+`history_join`, `external_closure`, `provenance_admission`, `cache_capacity`,
+`timing_partition` — each carrying `closed`, `open` or `refused` with its own
+evidence or its own reason. `refused` means the evidence exists and contradicts
+the model; `open` means it was never observed. Both block.
+
+Only two domains have an implemented closure check — `history_join` reads
+`unattributed_external_records` and `external_closure` reads
+`external_native_peak_bytes`, and both go `refused` on unresolved ledger
+`issues`. The other four state that no check exists rather than closing.
+`qualify_domains` takes the ledger and nothing else, so no caller can close a
+domain by supplying an artifact nobody reads; a domain that closed because an
+argument was truthy would be `qualified: true` under another name.
+`worker_startup` is the subtle case: the replay refuses a capture whose recorder
+attached after CUDA initialization, which proves that half, but nothing yet
+proves the recorder ran inside the engine's own worker process.
+
+Every composition term names the domains it depends on, and a term whose domains
+are not all closed is null and listed in `scope.unavailable_terms`. Nothing is
+filled: no whole-engine residual, no independent-median subtraction and no
+tolerance becomes a fixed charge. Transient maxima come from a simultaneous
+allocation/free sweep over the declared interval — a sum of per-allocation
+maxima is not a peak, and neither is a difference of two independent peaks. An
+allocation whose observed category is `shared`, `unknown`, absent or plural is
+unclassified and named in `unclassified_allocations`; ownership is never
+inferred from a pointer or from what is left over. **One unclassified
+allocation nulls every term**, whatever the domains say — such a row has neither
+owner nor lifetime, so it could belong to any term. An allocation freed with no
+unit interval containing either end is unclassified for that reason: charging it
+needs a declared step boundary the capture does not yet emit, and both available
+guesses (once per step, or never again) would be fills. That missing input is
+recorded in the schema document, and it is why a real capture will derive
+nothing until the capture emits it. The scalar scope stays TP1,
+one device, resident, eager, GPU allocations only, and one complete assignment
+with one row per unit.
+
+`compose_scalar_budget` applies the consumer's conservative composition
+`fixed_resident + sum(candidate_resident) + fixed_activation +
+max(candidate_activation) + fixed_scratch + max(candidate_scratch) + fixed_KV`,
+and returns null while any term is unavailable. That composition can exceed the
+measured instantaneous peak because independent maxima need not coincide; that
+is disclosed conservatism, not permission to charge one extent twice. The frozen
+producer schema is `docs/design/full_engine_resource_report.md`; the consumer
+that must independently recompute it is PrismaQuant's, per its
+`docs/design/runtime_fixed_resource_admission.md`.
+**The four unclosable domains are v1's largest gap, and the envelope says so.**
+`worker_startup`, `provenance_admission`, `cache_capacity` and `timing_partition`
+carry a state but v1 emits no observation a consumer can read them out of, so a
+consumer that independently recomputes holds all four open whatever the report
+claims — and `fixed_resident`, `candidate_resident`, `fixed_activation`,
+`candidate_activation` and `fixed_KV` can never become numbers. The scalar
+composition cannot complete at v1 even on a perfect capture; only
+`fixed_scratch` and `candidate_scratch` are reachable. `observations` therefore
+names each owed member and sets it to null — `worker_startup_records`,
+`runtime_provenance_relation`, `kv_observations`, `timing_captures`,
+`owner_views`, `observer_qualification` — named and null rather than absent, so
+a consumer can tell "not observed" from "not carried". Every id in a domain's
+`evidence` must name a member `observations` carries, and assembly refuses
+otherwise; `derived` does not restate `partition`'s `domains`.
+
+`derive_partition` takes the ledger and nothing else. It once accepted a
+caller-supplied `domains` mapping so the arithmetic was testable, recording
+which it used in `partition["domains_source"]`; recording was not enough,
+because the object that escaped was the fully populated partition and the only
+refusal lived in an assembler that path never reached. The parameter is gone and
+`_compose_terms` carries the arithmetic, returning values rather than an
+artifact. `domains_source` stays, always `derived`, as the assertion the
+consumer reads and refuses any other spelling of.
+
+**A composition below the observed simultaneous live peak raises.** With nothing
+unclassified and nothing uncharged, every observed byte sits in some term, so
+the composed budget must cover `torch_observed_live_peak_bytes`; below it is an
+undercount, not conservatism. **An allocation is charged to the outermost unit
+on its scope stack** — the same interval the replay read `unit_invocation` and
+`lifetime_scope` from. Unit intervals may nest (only *crossing* is refused), so
+charging the innermost put simultaneously live rows in two per-unit buckets that
+the composition's `max` then chose between; outermost intervals cannot overlap.
+A reader refuses a non-positive or boolean size, and a free ordered before its
+own allocation, **before** any arithmetic: that sweep would drive the running
+sum negative and return a peak that hides live bytes.
+
+**A classified allocation that no term charges also nulls every term.** The
+classifier produces nine `(owner, lifetime)` cells and the composition charges
+seven, so a KV backing with a transient lifetime, or a candidate allocation with
+no unit, is classified and billed to nothing — a silent undercount. An overcount
+wastes headroom; an undercount hands a serving gate a budget smaller than the
+engine needs, which on unified memory is an OOM. Such rows are named in
+`partition.uncharged_allocations` and counted in `scope.uncharged_allocation_count`.
+
+`assemble_full_engine_resource_report` builds that seven-member envelope,
+deriving `identity`, `observations`, `partition` and `derived` from the ledger
+and refusing `reference`, `workload` and `execution` by name rather than
+defaulting them. Each is also checked against this schema's field set, a member
+whose every field is null is refused (a dict of nulls is truthy, so emptiness
+was never the test), and a declared execution coordinate other than
+`{graph_mode: eager, residency: resident, topology: tp1}` is **refused rather
+than projected over** — the partition stamps one composite topology, and a
+report whose scope contradicts its own declaration is what that stamp used to
+produce. `fixture_provenance` is carried from the capture through the
+ledger into `identity`, so an artifact derived from a synthetic fixture cannot
+read as a measurement. Admission stays closed: on the only ledger fixture that
+exists, every composition term is null and the scalar budget is null, and no
+serving gate reads this partition.
+
 ### 2.5 Whole routed receipts preserve the actual expert owner
 
 `experiments/bench_native_moe_operator.py` prepares the complete 32-expert
