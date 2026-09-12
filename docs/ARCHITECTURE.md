@@ -3275,11 +3275,20 @@ entry carries no `executes` key at all, which is every contract written
 before the platform axis exists. **`unstated` refuses nothing.** A null entry
 is an attestation: somebody looked and the route is not there. A silence is
 not, and refusing on one would turn it into a claim about a runtime nobody
-read. `contract_version` 22 publishes `platforms` entries with no `executes`
-key, so on the shipped document every family on every platform reads
-`unstated` and this module behaves exactly as it did before
-(`tests/test_serving_native_ops_presence.py::test_the_packaged_contract_refuses_nothing_today`).
-The platform axis itself arrives in contract v23 (#456).
+read. `contract_version` 22 published `platforms` entries with no `executes`
+key at all, so while that document was the shipped one every family on every
+platform read `unstated` and this module refused nothing it had not refused
+before. The axis itself arrives in contract v23 (#456, §4.5f), and the
+shipped v23 document is read the same way: `sm_121` names a contract for all
+three families, so nothing on an NVIDIA box refuses here; `gfx1151` and
+`gfx1201` publish `null` for `TESSERA_E2M1_K2` and `TESSERA_E4M3_K1`, so on
+those two the quantized routes refuse with the contract's own word, ahead of
+the ABI probe, and the BF16 route does not
+(`tests/test_serving_native_ops_presence.py::test_the_packaged_contract_refuses_only_where_it_attests_an_absence`).
+A platform the document does not name still reads `unstated`
+(`::test_an_undeclared_platform_is_unstated_against_the_shipped_document`).
+That refusal has been run on the hardware, not only in a fixture:
+`docs/measurements/platform-refusal-gfx1201-2026-09-12.md`.
 
 The BF16 route reaches none of this. It is W16A16: it quantizes nothing, so
 it calls no quantizer, and the plugin can therefore load and serve
@@ -3398,7 +3407,7 @@ re-serialization that could normalize away a real edit.
 | `tests/test_contract_versions_block.py` `VERSIONS_KEYS` | closed set of three | unchanged — platform images live under `lane_eligibility.platforms`, not `versions` |
 | `kernel_roster.py` | two `#define`s | unchanged |
 
-The plugin's own reader is the tri-state of §4.5c: `backed`, `unbacked`,
+The plugin's own reader is the tri-state of §4.5e: `backed`, `unbacked`,
 `unstated`. An unlisted platform is `unstated` on the plugin side and refuses
 nothing; `null` is `unbacked` and refuses. PrismaQuant, by contrast, refuses
 the whole document by schema name until its reader is widened — two different
