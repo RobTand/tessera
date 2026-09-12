@@ -36,6 +36,15 @@ TERM_DOMAINS = {
     "fixed_kv": ("cache_capacity",),
 }
 
+# The off-step transient peak is not one of the seven terms and does not share
+# their gate. It needs the ownership join and the external closure, exactly as
+# a scratch term does, and nothing else: ``cache_capacity`` prices KV and has no
+# bearing on it. ``worker_startup`` does bear on it -- an unobserved startup
+# prefix can only hide off-step bytes -- but it bounds the number from below
+# rather than invalidating it, so the peak is published as a floor and says so
+# in ``non_step_transient_peak_scope`` instead of going null.
+NON_STEP_PEAK_DOMAINS = ("history_join", "external_closure")
+
 # An allocation's owner class must be exactly one of these. ``shared`` and
 # ``unknown`` supply neither a classification nor an invariance, so a row
 # carrying either is unclassified and blocks the partition rather than
@@ -51,9 +60,13 @@ CHARGED_CELLS = (("fixed", "resident"), ("candidate", "resident"),
                  ("fixed", "scratch"), ("candidate", "scratch"),
                  ("kv", "resident"))
 
-# Lifetime classes, derived from the replay's own ``lifetime_scope`` plus
-# whether the allocation was ever freed inside the captured interval.
-LIFETIME_CLASSES = ("resident", "activation", "scratch")
+# Lifetime classes, derived from the replay's own ``lifetime_scope``, whether
+# the allocation was ever freed inside the captured interval, and -- for a row
+# outside every unit -- where its lifetime sits relative to the declared engine
+# steps. ``non_step`` is the one class no composition term charges: a row live
+# during no declared step is outside the scope of a per-step budget, which is
+# what the seven terms compose.
+LIFETIME_CLASSES = ("resident", "activation", "scratch", "non_step")
 
 # The two domains whose closure check is implemented here. The other four are
 # stated as what is missing, never closed by the presence of an argument: a
@@ -113,22 +126,53 @@ def _owner_class(row):
     return category if category in OWNER_CLASSES else None
 
 
-def _lifetime_class(row):
-    """Persistent, carried across a unit boundary, or invocation-local."""
+def _declared_steps(ledger):
+    """The engine steps this classification may rely on, or ``None``.
+
+    Index pairs come back only when the capture declared a step interval for
+    **every** engine step it executed. Partial coverage is not simply a smaller
+    set of steps: an allocation from an undeclared step is live during a step
+    nobody declared, so "live during no declared step" stops being a proof and
+    becomes a guess. Partial and unobserved therefore behave identically, which
+    is how this module behaved before any step could be declared at all.
+
+    This reads the ledger and nothing else. A caller cannot supply a step table
+    for the same reason it cannot supply a domain table.
+    """
+    intervals, coverage = ledger.get("step_intervals"), ledger.get("step_coverage")
+    if not intervals or type(coverage) is not dict or coverage.get("state") != "complete":
+        return None
+    return [(row["begin_index"], row["end_index"]) for row in intervals]
+
+
+def _lifetime_class(row, steps):
+    """Persistent, carried across a boundary, invocation-local, or off-step."""
     if row["free_completed_index"] is None:
         return "resident"
     if row["lifetime_scope"] == "escapes_unit":
         return "activation"
     if row["lifetime_scope"] == "inside_unit":
         return "scratch"
-    # Allocated and freed with no unit interval containing either end. It is a
-    # real transient — on a live engine attention, norms, routing, sampling and
-    # every startup transient land here — but charging it needs a declared step
-    # boundary saying how often it recurs, and the capture emits unit intervals
-    # only. Calling it fixed scratch would assume once per step; calling it
-    # startup would assume never again. Both are fills, so it stays
-    # unclassified and named. See the report schema's missing-input list.
-    return None
+    # No unit interval contains this allocation. On a live engine attention,
+    # norms, routing, sampling and every startup transient land here. Charging
+    # one needs a declared step boundary saying how often it recurs: as scratch
+    # it would be assumed once per step, as startup never again, and without a
+    # boundary both are fills. So without one it stays unclassified and named.
+    if steps is None:
+        return None
+    # With one, the question is answered by liveness rather than by the
+    # allocation index alone. A buffer allocated before a step and freed inside
+    # it is live during that step and has to be charged; a buffer whose whole
+    # lifetime sits between steps is live during none of them.
+    begin, end = row["allocate_index"], row["free_completed_index"]
+    if any(step_begin <= begin and end <= step_end for step_begin, step_end in steps):
+        return "scratch"
+    if any(step_begin < end and begin < step_end for step_begin, step_end in steps):
+        # Live across a step boundary: carried, exactly as a row that outlives
+        # its unit is carried. ``fixed_activation`` and ``fixed_scratch`` are
+        # separate additive terms, so this neither double-counts nor drops it.
+        return "activation"
+    return "non_step"
 
 
 def _simultaneous_peak(rows, terminal_index):
@@ -203,30 +247,38 @@ def _checked_allocation_rows(ledger):
 def classify_allocations(ledger):
     """Split every replayed allocation into (owner class, lifetime class).
 
-    Returns ``(classified, unclassified)``. ``unclassified`` rows are the reason
-    a domain stays open; they are named, never dropped and never bucketed.
+    Returns ``(classified, unclassified, non_step)``. ``unclassified`` rows are
+    the reason a domain stays open; they are named, never dropped and never
+    bucketed. ``non_step`` rows are classified and deliberately outside the
+    composition: each one is proven, from the capture's own declared step
+    intervals, to be live during no engine step, and the seven terms compose a
+    per-step budget. They are named too, and priced separately, because an
+    engine still has to fit its startup peak even when no step ever reaches it.
     """
-    classified, unclassified = [], []
+    steps = _declared_steps(ledger)
+    classified, unclassified, non_step = [], [], []
     for row in _checked_allocation_rows(ledger):
-        owner, lifetime = _owner_class(row), _lifetime_class(row)
+        owner, lifetime = _owner_class(row), _lifetime_class(row, steps)
         if owner is None or lifetime is None:
             unclassified.append({
                 "allocation_id": row["allocation_id"], "bytes": row["bytes"],
                 "observed_categories": row["observed_categories"],
                 "lifetime_scope": row["lifetime_scope"],
                 "reason": ("no single supported owner category" if owner is None
-                           else "freed outside every unit interval; charging it "
-                                "needs a declared step boundary the capture does "
-                                "not emit"),
+                           else "freed outside every unit interval, and no complete "
+                                "declared step boundary covers this capture, so "
+                                "charging it would assume either once per step or "
+                                "never again"),
             })
             continue
-        classified.append({
+        entry = {
             "allocation_id": row["allocation_id"], "bytes": row["bytes"],
             "owner_class": owner, "lifetime_class": lifetime,
             "unit": _unit_of(row), "allocate_index": row["allocate_index"],
             "free_completed_index": row["free_completed_index"],
-        })
-    return classified, unclassified
+        }
+        (non_step if lifetime == "non_step" else classified).append(entry)
+    return classified, unclassified, non_step
 
 
 def uncharged_allocations(classified):
@@ -369,6 +421,12 @@ def derive_partition(ledger):
     charged by no term -- such a row could belong to any term, and no term can
     be complete while one exists.
 
+    A row live during no declared engine step is split out instead: the terms
+    compose one step, so no term charges it, and it is named, counted and priced
+    separately rather than nulling anything. That exemption is a proof from the
+    capture's own declared step intervals, not a cell the composition forgot, and
+    it holds only while ``step_coverage`` is complete.
+
     There is no way to hand this function a domain table. Four domains can never
     close from a real ledger, so the arithmetic is exercised through
     :func:`_compose_terms`, which returns values and never an artifact.
@@ -381,15 +439,23 @@ def derive_partition(ledger):
     if ledger["schema"] != "tessera.full_engine_raw_resource_ledger.v1":
         raise ValueError("unsupported raw ledger schema")
     domains = qualify_domains(ledger)
-    classified, unclassified = classify_allocations(ledger)
+    classified, unclassified, non_step = classify_allocations(ledger)
     terminal = 1 + max((row["allocate_index"] for row in ledger["torch_allocations"]),
                        default=0)
     units = sorted({row["unit"] for row in classified if row["unit"] is not None})
     uncharged = uncharged_allocations(classified)
     raw_terms = _compose_terms(classified, units, terminal)
+    # Priced by the same sweep as every other transient maximum, and never
+    # folded into a term: the seven terms compose one engine step, and these
+    # bytes are live during none of them. The placement obligation is
+    # max(scalar_budget_bytes, non_step_transient_peak_bytes), which is the
+    # consumer's to apply -- hiding this number inside a term would invent a
+    # rule the composition does not have, and dropping it would let a startup
+    # peak above the per-step budget pass a gate that never saw it.
+    non_step_peak = _simultaneous_peak(non_step, terminal)
 
     if not unclassified and not uncharged:
-        # Every observed byte is now inside some term, so the composition has to
+        # Every charged byte is now inside some term, so the composition has to
         # cover the largest simultaneous live sum the replay actually saw. Below
         # it is not disclosed conservatism -- it is a contradiction, and the
         # error direction that kills a job: an undercount hands a serving gate a
@@ -403,11 +469,32 @@ def derive_partition(ledger):
         # because a composition that contradicts its own observations is a
         # defect in this code, not a property of the capture.
         observed_peak = ledger.get("torch_observed_live_peak_bytes")
+        # The floor is the peak over the rows the terms actually charge. When
+        # nothing was excluded as off-step that is the whole capture, so the
+        # ledger's own number is used and the two are then required to agree --
+        # a disagreement means the two modules replayed different rows, which is
+        # a defect in one of them rather than a property of the capture.
+        charged_peak = _simultaneous_peak(classified, terminal)
+        floor = observed_peak if (not non_step and observed_peak is not None) else charged_peak
         composed = _compose(raw_terms)
-        if observed_peak is not None and composed < observed_peak:
+        if composed < floor:
             raise ValueError(
                 f"composed budget {composed} is below the observed simultaneous "
-                f"live peak {observed_peak}; the composition omits live bytes")
+                f"live peak {floor}; the composition omits live bytes")
+        if not non_step and observed_peak is not None and observed_peak != charged_peak:
+            raise ValueError(
+                f"the ledger's observed live peak {observed_peak} and this "
+                f"partition's sweep over the same allocations {charged_peak} "
+                f"disagree; one of the two replayed different rows")
+
+    peak_available = (not unclassified and not uncharged
+                      and all(domains[name]["state"] == "closed"
+                              for name in NON_STEP_PEAK_DOMAINS))
+    peak_scope = ("off-step transient bytes observed in this capture"
+                  if domains["worker_startup"]["state"] == "closed" else
+                  "off-step transient bytes observed in this capture; a floor rather "
+                  "than the startup peak, because worker_startup is open and the "
+                  "prefix before the recorder attached is unobserved")
 
     terms, unavailable = {}, []
     for name, value in raw_terms.items():
@@ -430,6 +517,12 @@ def derive_partition(ledger):
         "membership": classified,
         "unclassified_allocations": unclassified,
         "uncharged_allocations": uncharged,
+        # Named in full, always, whether or not its price is expressible. A
+        # consumer reproduces this split from observations.step_intervals and
+        # observations.step_coverage without running this code.
+        "non_step_allocations": non_step,
+        "non_step_transient_peak_bytes": non_step_peak if peak_available else None,
+        "non_step_transient_peak_scope": peak_scope,
         "units": units,
         "terms": terms,
         "scope": {
@@ -439,6 +532,10 @@ def derive_partition(ledger):
             "expressible": not unavailable,
             "unclassified_allocation_count": len(unclassified),
             "uncharged_allocation_count": len(uncharged),
+            # A count, not a charge: it stays readable even when every term is
+            # null, so a reader can see the hazard before there is a price on it.
+            "non_step_allocation_count": len(non_step),
+            "step_coverage": (ledger.get("step_coverage") or {}).get("state"),
             "invariance": "one complete assignment, one row per unit",
         },
     }
@@ -550,6 +647,12 @@ def assemble_full_engine_resource_report(ledger, *, reference, workload,
             "external_native_peak_bytes": ledger.get("external_native_peak_bytes"),
             "torch_observed_live_peak_bytes": ledger.get("torch_observed_live_peak_bytes"),
             "torch_observed_live_peak_scope": ledger.get("torch_observed_live_peak_scope"),
+            # The declared engine steps and the coverage claim over them. These
+            # are what a consumer reads to reproduce the off-step filter; without
+            # them in the envelope the filter would be a producer rule nobody
+            # else could check, which is the shape this schema exists to refuse.
+            "step_intervals": ledger.get("step_intervals"),
+            "step_coverage": ledger.get("step_coverage"),
             "issues": ledger["issues"],
             # Named and null, never absent. A consumer must be able to tell
             # "this capture did not observe it" from "the producer forgot to
@@ -574,6 +677,13 @@ def assemble_full_engine_resource_report(ledger, *, reference, workload,
         "derived": {
             "terms": partition["terms"],
             "scalar_budget_bytes": compose_scalar_budget(partition),
+            # First-class, beside the budget it does not belong to. The seven
+            # terms price one engine step; this prices what the engine still
+            # holds when no step is running. A reader who takes the budget alone
+            # takes the smaller of two numbers the box has to satisfy.
+            "non_step_transient_peak_bytes": partition["non_step_transient_peak_bytes"],
+            "non_step_transient_peak_scope": partition["non_step_transient_peak_scope"],
+            "placement_obligation": "max(scalar_budget_bytes, non_step_transient_peak_bytes)",
             "scope": partition["scope"],
         },
     }

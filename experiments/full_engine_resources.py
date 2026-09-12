@@ -282,6 +282,7 @@ class FullEngineResourceRecorder:
         self._thread = threading.get_ident()
         self._closed = False
         self._errors, self._checkpoints, self._intervals, self._stack = [], [], [], []
+        self._steps = []
         self._last_snapshot = None
         self._frame_pool = SnapshotFramePool()
         self._history_prefix = CanonicalHistoryPrefix(self._frame_pool)
@@ -388,7 +389,40 @@ class FullEngineResourceRecorder:
             finally:
                 self._stack.pop()
 
-    def finish(self, directory, *, owners=(), native_ownership_evidence=(), measured_runtime_sha256=None):
+    def declare_step_interval(self, step_id, *, begin, end):
+        """Declare one engine step by the two checkpoints that already bound it.
+
+        The worker snapshots ``execute:N:begin`` on entry and ``sample:N:end``
+        once the sampler returns, so a step's extent is already observed; what
+        was missing was a structured declaration of it. Naming the two labels
+        costs no additional synchronize-and-snapshot, and it keeps the replay
+        from parsing a label convention -- a boundary the replay inferred from a
+        string is a boundary nobody declared.
+
+        The interval spans the sampler deliberately. ``execute_model`` and
+        ``sample_tokens`` are separate worker calls, and a step ending at
+        ``execute:N:end`` would leave the sampler's allocations outside every
+        step, which is the direction that silently drops per-step bytes.
+        """
+        self._open()
+        _text(step_id, "step_id")
+        if any(step["step_id"] == step_id for step in self._steps):
+            raise ValueError("duplicate step interval")
+        indices = {checkpoint["label"]: index
+                   for index, checkpoint in enumerate(self._checkpoints)}
+        for label in (begin, end):
+            if _text(label, "step checkpoint label") not in indices:
+                raise ValueError("step interval names a checkpoint this capture never took: " + label)
+        if indices[begin] >= indices[end]:
+            raise ValueError("step interval is reversed or empty")
+        if self._steps and indices[begin] < indices[self._steps[-1]["end_checkpoint"]]:
+            raise ValueError("step interval overlaps the step declared before it")
+        self._steps.append({"step_id": step_id, "begin_checkpoint": begin,
+                            "end_checkpoint": end})
+        return self._steps[-1]
+
+    def finish(self, directory, *, owners=(), native_ownership_evidence=(), measured_runtime_sha256=None,
+               executed_steps=None):
         self._open()
         if self._stack:
             raise RuntimeError("cannot finish inside an open unit scope")
@@ -417,7 +451,16 @@ class FullEngineResourceRecorder:
                "observer_cost": {"scope": "synchronized_resource_observer_host_wall_time",
                                  "gpu_timing_eligible": False, "snapshot_attempts": self._observer_cost},
                "torch_snapshot": self._last_snapshot, "checkpoints": self._checkpoints,
-               "unit_intervals": self._intervals, "cupti_trace": cupti,
+               "unit_intervals": self._intervals, "step_intervals": self._steps,
+               # ``executed`` is the caller's count of engine steps it actually
+               # ran while armed. Declared-equals-executed is what licenses the
+               # replay to read "live during no declared step" as a fact rather
+               # than as an absence of observation, so the two travel together
+               # and the replay refuses a count that disagrees with the list.
+               "step_coverage": {"declared": len(self._steps), "executed": executed_steps,
+                                 "scope": "engine execute_model invocations made while "
+                                          "the observation workload was armed"},
+               "cupti_trace": cupti,
                "native_ownership_evidence": list(native_ownership_evidence),
                "measured_runtime_sha256": measured_runtime_sha256}
         finalization_started = perf_counter_ns()
@@ -638,6 +681,7 @@ def analyze_engine_resource_ledger(raw):
               "issues": [], "torch_allocations": [], "checkpoints": [],
               "escaping_allocation_ids": [], "unattributed_external_records": [],
               "fixture_provenance": None,
+              "step_intervals": None, "step_coverage": None,
               "qualification_gaps": list(QUALIFICATION_GAPS)}
     issues = result["issues"]
     try:
@@ -695,6 +739,55 @@ def analyze_engine_resource_ledger(raw):
         for index, (begin, end, _, _) in enumerate(intervals):
             if any(begin < other_begin < end < other_end for other_begin, other_end, _, _ in intervals[index + 1:]):
                 raise ValueError("unit intervals cross instead of nesting")
+        declared_steps, coverage = raw.get("step_intervals"), raw.get("step_coverage")
+        steps = []
+        if declared_steps is None:
+            result["step_coverage"] = {
+                "state": "unobserved", "declared": None, "executed": None,
+                "reason": "this capture declared no engine step intervals"}
+        else:
+            step_ids = set()
+            for interval in declared_steps:
+                step_id = _text(interval["step_id"], "step_id")
+                if step_id in step_ids:
+                    raise ValueError("duplicate step interval")
+                step_ids.add(step_id)
+                for label in (interval["begin_checkpoint"], interval["end_checkpoint"]):
+                    if label not in by_label:
+                        raise ValueError("step interval names a checkpoint outside this capture")
+                begin = by_label[interval["begin_checkpoint"]]
+                end = by_label[interval["end_checkpoint"]]
+                if begin >= end:
+                    raise ValueError("step interval is reversed or unclosed")
+                steps.append((begin, end, step_id))
+            steps.sort()
+            for (_, first_end, _), (second_begin, _, _) in zip(steps, steps[1:]):
+                if second_begin < first_end:
+                    raise ValueError("step intervals overlap")
+            # A unit runs inside one engine step. One that overlaps a step
+            # boundary without being contained contradicts both declarations,
+            # exactly as a crossing unit interval does. Ordering is vLLM's, not
+            # ours to assert: this refusal is the guard.
+            for unit_begin, unit_end, _, _ in intervals:
+                for step_begin, step_end, _ in steps:
+                    if (step_begin < unit_end and unit_begin < step_end
+                            and not (step_begin <= unit_begin and unit_end <= step_end)):
+                        raise ValueError("unit interval crosses a step boundary")
+            executed = coverage.get("executed") if type(coverage) is dict else None
+            if type(coverage) is dict and coverage.get("declared") != len(steps):
+                raise ValueError("declared step count disagrees with the step intervals carried")
+            complete = (type(executed) is int and executed == len(steps) and len(steps) >= 1)
+            result["step_intervals"] = [{"step_id": step_id, "begin_index": begin,
+                                         "end_index": end} for begin, end, step_id in steps]
+            result["step_coverage"] = {
+                "state": "complete" if complete else "partial",
+                "declared": len(steps), "executed": executed,
+                "scope": "engine execute_model invocations made while the observation "
+                         "workload was armed",
+                "reason": None if complete else
+                          "a step interval was declared for only some of the engine steps "
+                          "this capture executed, so an allocation live during no declared "
+                          "step may still be live during an undeclared one"}
         domains = analyze_memory_api_arguments(raw["cupti_trace"])
         live, generations, segments = {}, {}, {}
         rows, segment_operations, checkpoint_live = [], [], set()

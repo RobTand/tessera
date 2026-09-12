@@ -332,3 +332,129 @@ def test_recorder_publishes_hash_bound_raw_inputs_and_keeps_unknowns(capture, mo
     assert raw["observer_cost"]["gpu_timing_eligible"] is False
     with pytest.raises(RuntimeError, match="closed"):
         recorder.snapshot("late")
+
+
+# --- the declared step boundary ---------------------------------------------
+
+
+def _bare_recorder(checkpoint_labels):
+    """A recorder with checkpoints but no torch, for the declaration alone."""
+    import os
+    import threading
+
+    from experiments.full_engine_resources import FullEngineResourceRecorder
+    recorder = object.__new__(FullEngineResourceRecorder)
+    recorder._closed = False
+    recorder.process_id = os.getpid()
+    recorder._thread = threading.get_ident()
+    recorder._checkpoints = [{"label": label} for label in checkpoint_labels]
+    recorder._steps = []
+    return recorder
+
+
+def test_a_declared_step_names_two_checkpoints_the_capture_already_took():
+    # The whole point of naming labels rather than snapshotting again: the
+    # extent is already observed, and declaring it costs no synchronize.
+    recorder = _bare_recorder(["execute:1:begin", "execute:1:end", "sample:1:end"])
+    assert recorder.declare_step_interval("step:1", begin="execute:1:begin",
+                                          end="sample:1:end") == {
+        "step_id": "step:1", "begin_checkpoint": "execute:1:begin",
+        "end_checkpoint": "sample:1:end"}
+    assert len(recorder._checkpoints) == 3
+
+
+@pytest.mark.parametrize("defect,message", [
+    ("unknown_label", "never took"),
+    ("reversed", "reversed or empty"),
+    ("duplicate_id", "duplicate step interval"),
+    ("overlapping", "overlaps the step declared before it"),
+])
+def test_a_step_interval_that_cannot_bound_a_step_refuses(defect, message):
+    labels = ["execute:1:begin", "sample:1:end", "execute:2:begin", "sample:2:end"]
+    recorder = _bare_recorder(labels)
+    recorder.declare_step_interval("step:1", begin=labels[0], end=labels[1])
+    arguments = {
+        "unknown_label": ("step:2", labels[2], "sample:9:end"),
+        "reversed": ("step:2", labels[3], labels[2]),
+        "duplicate_id": ("step:1", labels[2], labels[3]),
+        "overlapping": ("step:2", labels[0], labels[3]),
+    }[defect]
+    with pytest.raises(ValueError, match=message):
+        recorder.declare_step_interval(arguments[0], begin=arguments[1], end=arguments[2])
+
+
+def _stepped_capture(steps, executed=None):
+    """The banked synthetic capture with declared step intervals added.
+
+    The banked file is not edited. It says on its face that it is a synthetic
+    CPU parser fixture, and everything derived from it keeps saying so.
+    """
+    import copy
+    import json
+    from pathlib import Path as _Path
+    raw = copy.deepcopy(json.loads(
+        (_Path(__file__).parent / "fixtures/full_engine_resource_ledger.json").read_text()))
+    raw["step_intervals"] = [{"step_id": step_id, "begin_checkpoint": begin,
+                              "end_checkpoint": end} for step_id, begin, end in steps]
+    raw["step_coverage"] = {"declared": len(steps),
+                            "executed": len(steps) if executed is None else executed}
+    return raw
+
+
+def test_a_capture_with_no_declared_step_says_unobserved_rather_than_none():
+    # A consumer must be able to tell "this capture did not observe it" from
+    # "the producer forgot to carry it", and a missing key says neither.
+    from experiments.full_engine_resources import analyze_engine_resource_ledger
+    import json
+    from pathlib import Path as _Path
+    raw = json.loads((_Path(__file__).parent
+                      / "fixtures/full_engine_resource_ledger.json").read_text())
+    ledger = analyze_engine_resource_ledger(raw)
+    assert ledger["issues"] == []
+    assert ledger["step_intervals"] is None
+    assert ledger["step_coverage"]["state"] == "unobserved"
+
+
+def test_a_declared_step_is_resolved_to_history_indices_and_a_coverage_state():
+    from experiments.full_engine_resources import analyze_engine_resource_ledger
+    ledger = analyze_engine_resource_ledger(
+        _stepped_capture([("step:1", "startup", "capture_end")]))
+    assert ledger["issues"] == []
+    interval, = ledger["step_intervals"]
+    assert interval["step_id"] == "step:1"
+    assert interval["begin_index"] < interval["end_index"]
+    assert ledger["step_coverage"]["state"] == "complete"
+    assert ledger["step_coverage"] == {
+        "state": "complete", "declared": 1, "executed": 1,
+        "scope": "engine execute_model invocations made while the observation "
+                 "workload was armed",
+        "reason": None}
+
+
+def test_a_step_declared_for_only_some_executed_steps_is_partial():
+    from experiments.full_engine_resources import analyze_engine_resource_ledger
+    ledger = analyze_engine_resource_ledger(
+        _stepped_capture([("step:1", "startup", "capture_end")], executed=3))
+    assert ledger["step_coverage"]["state"] == "partial"
+    assert "undeclared one" in ledger["step_coverage"]["reason"]
+
+
+def test_a_unit_that_crosses_a_step_boundary_refuses():
+    # Ordering inside the engine is vLLM's, not ours to assert. This refusal is
+    # the guard: a unit half in one step is a contradiction between two
+    # declarations, exactly as a crossing unit interval is. Adjacent is not
+    # crossing -- both interval kinds are half-open -- so the unit is widened
+    # past the step's end to make one that genuinely straddles it.
+    from experiments.full_engine_resources import analyze_engine_resource_ledger
+    raw = _stepped_capture([("step:1", "startup", "unit_end")])
+    raw["unit_intervals"][0]["end_checkpoint"] = "capture_end"
+    ledger = analyze_engine_resource_ledger(raw)
+    assert any("crosses a step boundary" in issue for issue in ledger["issues"]), ledger["issues"]
+
+
+def test_a_step_count_that_disagrees_with_the_intervals_carried_refuses():
+    from experiments.full_engine_resources import analyze_engine_resource_ledger
+    raw = _stepped_capture([("step:1", "startup", "capture_end")])
+    raw["step_coverage"]["declared"] = 2
+    ledger = analyze_engine_resource_ledger(raw)
+    assert any("declared step count disagrees" in issue for issue in ledger["issues"])

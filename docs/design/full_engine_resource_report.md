@@ -1,6 +1,7 @@
 # Full-engine resource report: the frozen producer schema
 
-Status: producer contract for #399, 2026-09-12. **Admission stays closed until a
+Status: producer contract for #399, 2026-09-12; step-boundary derivation added
+the same day. **Admission stays closed until a
 consumer recomputes this report and agrees with it.** This document freezes the
 schema; it does not claim a measurement. No GPU, served, latency, quality or
 capacity measurement was run for this document.
@@ -159,18 +160,144 @@ an unclassified row does. Charging it somewhere would be inventing a rule the
 composition does not have, and the composition is the consumer's to reproduce
 rather than the producer's to extend.
 
-### A missing input: the declared step boundary
+### The declared step boundary
 
 An allocation that is freed with no unit interval containing either end is a
 real transient — on a live engine attention, norms, routing, sampling and every
-startup transient land there — but the capture cannot yet say how often it
-recurs. Charging it as fixed scratch would assume once per step; treating it as
-startup would assume never again. Both are fills, so such a row stays
-**unclassified** and, by the rule above, nulls every term.
+startup transient land there. Charging it as fixed scratch assumes once per
+step; treating it as startup assumes never again. Both are fills, so with no
+boundary to read, such a row stays **unclassified** and, by the rule above,
+nulls every term.
 
-This is the single largest reason a real capture will derive nothing until the
-capture emits a declared step boundary alongside `unit_intervals`. It is
-recorded as an owed input rather than papered over with a default.
+The boundary was already observed and never declared. The worker snapshots
+`execute:N:begin` on entry to a step and `sample:N:end` once the sampler
+returns, so the extent of an engine step is in `checkpoints` with a resolved
+`trace_index` on each end. What was missing was a structured statement that
+those two labels bound one step. The replay could not recover it by reading the
+label text: a boundary inferred from a naming convention is a boundary nobody
+declared, and one stray checkpoint named `execute:3:begin` would become a step.
+
+So `unit_intervals` gains a sibling. `step_intervals` carries
+`{step_id, begin_checkpoint, end_checkpoint}` per step, written by
+`declare_step_interval`, which refuses a label the capture never snapshotted, a
+reversed interval, a duplicate id and an overlap with the step before it.
+**Declaring a step costs no additional synchronize-and-snapshot**; both
+checkpoints already existed, and `max_checkpoints` already budgeted three per
+execute call.
+
+The interval spans the sampler on purpose. `execute_model` and `sample_tokens`
+are separate worker calls, and a step ending at `execute:N:end` would leave the
+sampler's allocations outside every step — the direction that silently drops
+per-step bytes. There is no fallback to that label: a step whose sampler never
+ran stays undeclared, which fails the coverage claim closed rather than
+publishing half a step.
+
+Engine ordering is vLLM's and is never asserted here. Two guards stand in for
+that claim: `step_intervals` that overlap refuse, and a unit interval that
+overlaps a step boundary without being contained in it refuses, exactly as a
+crossing unit interval already does.
+
+### What a declared boundary licenses, and what licenses the boundary
+
+With complete coverage, a row outside every unit interval is classified by
+**liveness**, not by its allocation index alone:
+
+| Where the lifetime sits | Class | Charged to |
+| --- | --- | --- |
+| Contained in one declared step | `scratch` | `fixed_scratch` / `candidate_scratch` |
+| Overlaps a step without being contained | `activation` | `fixed_activation` / `candidate_activation` |
+| Overlaps no declared step | `non_step` | nothing — see below |
+
+A buffer allocated before a step and freed inside it is live while that step
+runs and has to be charged, which an allocation-index test would miss. A buffer
+live across a step boundary is carried, the same reading already given to a row
+that outlives its unit; `fixed_activation` and `fixed_scratch` are separate
+additive terms, so calling it carried neither double-counts it nor drops it.
+
+**Coverage is what licenses the inference, and it is declared and checked, not
+assumed.** The capture carries `step_coverage` with `declared` — which must
+equal the number of intervals carried, or the replay refuses — and `executed`,
+the worker's own count of engine steps it ran while armed. The state is
+`complete` only when the two agree and at least one step exists; otherwise it is
+`partial`, and a capture that declared no steps at all is `unobserved`. Partial
+and unobserved behave identically and identically to before: every row outside
+every unit interval is unclassified and nulls every term. An allocation from an
+engine step nobody declared is live during a step that is not in the list, so
+"live during no declared step" would stop being a proof and become a guess.
+
+### A row live during no declared step
+
+The seven terms compose **one engine step**. A row proven live during none of
+them is outside that scope, so no term charges it — and unlike an uncharged row,
+this is a proof from a declared boundary rather than a cell the composition
+forgot. It does not null the terms.
+
+That exemption is only safe while it is visible, because the excluded population
+is exactly the startup peak: model-load staging, the profile run, graph capture
+scratch. An engine still has to fit those bytes, and a gate handed only the
+per-step budget would admit a body that OOMs before it serves a token. So:
+
+* `partition.non_step_allocations` names every such row.
+* `derived.scope.non_step_allocation_count` counts them, and stays readable even
+  when every term is null, so the hazard is visible before there is a price on it.
+* `derived.non_step_transient_peak_bytes` prices them, by the same simultaneous
+  sweep as every other transient maximum. It is **not** one of the seven terms
+  and does not share their gate: it needs `history_join` and `external_closure`,
+  exactly as a scratch term does, and `cache_capacity` has no bearing on it.
+* `derived.non_step_transient_peak_scope` says what the number is. While
+  `worker_startup` is open the prefix before the recorder attached is
+  unobserved, and unobserved off-step bytes can only be missing ones — so the
+  peak is published as a **floor** and labelled one, rather than going null. A
+  floor is disclosed understatement, and it is only ever readable in the regime
+  where `scalar_budget_bytes` is null and nothing is admitted anyway.
+* `derived.placement_obligation` states the rule in the artifact:
+  **`max(scalar_budget_bytes, non_step_transient_peak_bytes)`**. The budget alone
+  is the smaller of two numbers the box has to satisfy.
+
+**The consumer must apply the same filter.** `observations.step_intervals` and
+`observations.step_coverage` are carried so it can: a filter that removes rows
+from every term and that only the producer can compute is a producer rule nobody
+else can check, which is the shape this schema exists to refuse. Until
+PrismaQuant #420 carries the matching rule, its independent recomputation will
+disagree with `derived` and refuse — which is the safety property working, and it
+means the report admits nothing until the consumer catches up. This is a
+producer **and** consumer change.
+
+### The second blocker on the same rows: ownership
+
+Removing the lifetime blocker does not make a real capture derive a scratch
+term, because the same rows have a second, independent gap and it is not this
+one. `observed_categories` is populated in `_checkpoint_owners`, which walks the
+allocations that are **live at a checkpoint**. A row allocated and freed strictly
+between two checkpoints is never in that set, carries no category, and is
+unclassified for want of an owner whatever its lifetime says.
+
+That is not a hypothetical. The banked fixture's own intra-unit allocation
+(`0:4608:1`, 512 bytes, `inside_unit`) carries `observed_categories: []` and is
+unclassified today for a reason that has nothing to do with step boundaries. On
+a live engine every genuine scratch row — unit-local and step-local alike — is in
+that position, so `fixed_scratch` and `candidate_scratch` stay null even with
+complete step coverage.
+
+What a declared boundary does unblock is the population that **spans** a
+checkpoint while sitting outside every unit: a buffer live at `execute:N:begin`,
+at a unit boundary, or at `sample:N:end` has an observed owner and, until now,
+no lifetime. Those rows stop being unclassified — and because an unclassified row
+nulls every term, removing them is what lets any term carry a number at all.
+
+Note where those rows land. A buffer spanning a checkpoint necessarily spans a
+step or unit boundary too, so it classifies as `activation`, and both activation
+terms depend on `worker_startup`. So this population stops **blocking** the
+scratch terms without itself becoming expressible at v1. That is the honest
+shape of the change: it removes a blocker, it does not close a domain.
+
+Closing the rest needs an owner for a row that no checkpoint sees. Torch's
+history already carries per-allocation `frames`, and
+`full_engine_native_owners.checkpoint_site_owners` already matches a validated
+rule against them — but it walks `live` at a checkpoint and assigns `shared`,
+which is not an owner class. Extending allocation-site attribution to every row,
+with a rule that can name `fixed` or `candidate`, is the owed input. It is a
+separate issue with its own evidence requirements and it is **not** solved here.
 
 The composition can exceed the measured instantaneous peak, because independent
 maxima need not coincide. That is disclosed conservatism. It is not permission to
@@ -234,6 +361,10 @@ Three of the consumer design's negative tests are unreachable for the same
 reason — altered cache capacity, missing timing tail, overlapping streams — and
 `derived.terms.fixed_kv` is a declared term with nothing to recompute it from.
 
+`step_intervals` and `step_coverage` are carried the same way and for the same
+reason: a capture that declared no step says `unobserved` rather than carrying
+nothing, because a missing key cannot be told from a forgotten one.
+
 So `observations` names each owed member explicitly and sets it to null:
 `worker_startup_records`, `runtime_provenance_relation`, `kv_observations`,
 `timing_captures`, `owner_views`, `observer_qualification`. **Named and null,
@@ -256,7 +387,9 @@ that could claim otherwise, and the consumer refuses that spelling.
 
 **A composition below the observed simultaneous peak is a contradiction, and it
 raises.** When no allocation is unclassified and none is uncharged, every
-observed byte is inside some term, so the composed budget has to cover
+charged byte is inside some term, so the composed budget has to cover the
+simultaneous peak over the rows the terms charge. With nothing excluded as
+off-step that is the whole capture, so the ledger's own
 `torch_observed_live_peak_bytes` — the same quantity, requested allocation bytes
 excluding allocator rounding, as the observation's own scope field says. Below
 it is not disclosed conservatism; it is an undercount, and an undercount hands a
@@ -266,7 +399,10 @@ composition that contradicts its own observations is a defect in the producer,
 not a property of the capture. Each of this module's three silent undercounts —
 a cell no term charged, a candidate row carrying no unit, and a per-unit maximum
 taken over units that can be live at once — would have been caught by this one
-comparison.
+comparison. When nothing was excluded as off-step, the ledger's peak and this
+module's own sweep over the same rows are required to be **equal**, and a
+disagreement raises naming both: it means the two modules replayed different
+rows, which is a defect in one of them rather than a property of the capture.
 
 **An allocation is charged to the outermost unit on its scope stack.** Three
 things have to name one interval. The replay reads `unit_invocation` from the
@@ -325,7 +461,10 @@ derived from a synthetic fixture can read as a measurement.
 
 ## Delivery boundary
 
-This document freezes the schema. It does not implement the derivation, close any
-domain, or admit anything. #399 and PrismaQuant #420 both remain open until a
-report with closed domains is recomputed and accepted by a consumer that never
-ran producer code.
+This document freezes the schema. The step-boundary derivation above is
+implemented; it closes no domain and admits nothing. #399 and PrismaQuant #420
+both remain open until a report with closed domains is recomputed and accepted by
+a consumer that never ran producer code. Three things are owed before a real
+capture derives a number: allocation-site ownership for a row no checkpoint sees,
+the four unclosable domains' observation members, and the consumer's matching
+off-step filter.

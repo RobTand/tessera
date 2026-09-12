@@ -228,6 +228,7 @@ class ResourceCaptureWorker(Worker):
         self._resource_armed = False
         self._resource_startup_calls = 0
         self._resource_scheduler_steps = []
+        self._resource_open_step = None
         self._resource_active = False
         self._resource_hooks = []
         self._resource_invocations = {}
@@ -266,9 +267,17 @@ class ResourceCaptureWorker(Worker):
                     "existing runtime state/workspace reference; candidate and workload dependence unresolved")
 
     def _resource_checkpoint(self, name):
+        """Take one checkpoint; report whether it was actually taken.
+
+        The bounded first-native prefix closes the observer mid-step, and every
+        later checkpoint is a no-op. A step interval naming a label that was
+        never snapshotted would be a boundary over unobserved execution, so the
+        caller needs the answer, not just the attempt.
+        """
         if self._resource_prefix_closed:
-            return
+            return False
         self._resource_recorder.snapshot(name, owners=self._resource_owners())
+        return True
 
     def init_device(self):
         result = super().init_device()
@@ -397,7 +406,9 @@ class ResourceCaptureWorker(Worker):
                                  for request in scheduler_output.scheduled_new_reqs],
                 "cached_requests": {"req_ids": scheduler_output.scheduled_cached_reqs.req_ids,
                     "num_computed_tokens": scheduler_output.scheduled_cached_reqs.num_computed_tokens}})
-            self._resource_checkpoint(f"execute:{self._resource_calls}:begin")
+            begin = f"execute:{self._resource_calls}:begin"
+            if self._resource_checkpoint(begin):
+                self._resource_open_step = (self._resource_calls, begin)
         try:
             return super().execute_model(scheduler_output)
         finally:
@@ -408,7 +419,27 @@ class ResourceCaptureWorker(Worker):
     def sample_tokens(self, grammar_output):
         result = super().sample_tokens(grammar_output)
         if self._resource_armed and self._resource_calls <= self._resource_plan["max_execute_calls"]:
-            self._resource_checkpoint(f"sample:{self._resource_calls}:end")
+            end = f"sample:{self._resource_calls}:end"
+            taken = self._resource_checkpoint(end)
+            open_step = self._resource_open_step
+            if taken and open_step is not None:
+                self._resource_open_step = None
+                if open_step[0] != self._resource_calls:
+                    # The sampler that closed is not the execute call that
+                    # opened. Rather than pair two halves of different steps,
+                    # drop the declaration and say so: the unmatched step leaves
+                    # declared below executed, which holds the whole coverage
+                    # claim open instead of publishing a wrong interval.
+                    self._resource_recorder._errors.append(
+                        f"engine step {open_step[0]} was never closed by its own sampler")
+                else:
+                    # The step spans the sampler: sampling is per-step work, and
+                    # a step ending at execute:N:end would place the sampler's
+                    # allocations outside every step. There is no fallback to
+                    # that label -- a step whose sampler never ran stays
+                    # undeclared and fails the coverage claim closed.
+                    self._resource_recorder.declare_step_interval(
+                        f"step:{open_step[0]}", begin=open_step[1], end=end)
         return result
 
     def resource_capture_arm(self):
@@ -463,6 +494,7 @@ class ResourceCaptureWorker(Worker):
             native_evidence.append(evidence)
         result = self._resource_recorder.finish(directory, owners=self._resource_owners(),
                                                 native_ownership_evidence=native_evidence,
+                                                executed_steps=self._resource_calls,
                                                 measured_runtime_sha256=hashlib.sha256(json.dumps(runtime,
                                                     sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest())
         (directory / "post-native-package.json").write_text(json.dumps(runtime["loaded_package"], sort_keys=True, indent=2) + "\n")
