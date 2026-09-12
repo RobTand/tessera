@@ -17,6 +17,14 @@ sm_120 both report `(12, 0)`. No AMD serving claim follows: nothing in the
 contract changes here, and `platform_backs` answers `False` for every AMD
 token. See §5.3.1.
 
+Re-stamped 2026-09-12 for the AMD certification harness (#459):
+`tools/tessera_attest.py` and `docs/strix-halo-tester-protocol.md` define how
+a receipt from hardware this project does not own may become a
+`lane_eligibility` cell -- identity from torch's `gcnArchName`, the scope rule
+as a value on the receipt, and `device_qualified` withheld for any platform
+the run did not measure. Tooling and protocol only: no contract version, no
+cell, no default moves, and no AMD cell exists. See §4.5d.
+
 Re-stamped 2026-09-11 for the encoder's boundary feed (PrismaQuant
 boundary-feed measurement on the GLM census, sparky, `b81c038ea327`): the
 window Viterbi's chunk loop no longer waits on the device -- the reference's
@@ -3453,6 +3461,45 @@ re-stamp it needs. Tightening the rule therefore does not need a schema bump --
 rule reads honestly as incomplete instead of certifying on a verdict nobody
 would issue today.
 
+### 4.5d Certifying a platform nobody here owns
+
+A cell says a route status was observed on a platform. Every platform in the
+packaged contract today is `sm_121`, a box this project runs on. The AMD lane
+is not: Strix Halo (`gfx1151`) hardware exists nowhere in this fleet, and the
+gfx12 part that is reachable (`gfx1201`, under WSL2) executes gfx12 code
+without saying anything about an APU's numerics or its speed.
+
+So the evidence for an AMD cell has to arrive from somebody else's machine,
+and what it is allowed to claim has to be readable off the file rather than
+remembered by whoever mails it. `tools/tessera_attest.py` is that file's
+writer: it reads the device's identity from torch's `gcnArchName` -- never
+`amdsmi`, `rocm-smi` or vLLM's ROCm platform helpers, none of which can
+answer under WSL2 -- stamps the scope rule as a value
+(`header.scope`, `header.scope_sentence`, `header.perf_claim`), and withholds
+`device_qualified` whenever the platform the receipt claims is not the
+platform the run measured. The reference set is `TESSERA_BF16_K1` at rungs
+896 and 1024, and an artifact outside it is refused rather than measured.
+
+The harness owns the steps that are local to the device -- the loader-path
+extension build, the packed decoder against the `torch_window` reference
+through `bf16_route.prepare_tessera_bf16_module`, the GEMV against the
+decoded tile, package power through `amd-smi` when a driver exists. It does
+not recompute a census or a KL: those belong to
+`tools/tessera_route_census.py` and the KL harness, and the receipt ingests
+theirs by path and SHA-256 so the evidence travels with the claim.
+`docs/strix-halo-tester-protocol.md` is what a tester is sent;
+`tests/test_attest_receipt.py` holds the scope rule, the refusal and the
+receipt schema on CPU, with a stubbed device.
+
+The first receipt it wrote is in the tree at
+`docs/measurements/attest-gfx1201-wsl2-2026-09-12.json`: a gfx1201 run under
+WSL2, `qualification` null, `perf_claim` false. It occupies the middle row of
+the scope rule, which is to say it proves the identity and header path works
+on real AMD hardware and nothing else.
+
+No AMD cell exists yet. The harness is how one could be written, not evidence
+that one may be.
+
 ### 4.6 The stock twin isolates the wire from the kernel
 
 `--stock-twin` writes the same wires materialised for vanilla vLLM, so a
@@ -3897,9 +3944,15 @@ it meant, and nothing here is a second serving code path.
   `vllm.platforms.rocm.get_device_name()`/`get_device_uuid()`, which need
   `amdsmi` and raise wherever it has no driver; identity comes from torch.
 - `offload_flags(token)` is the unchanged `-gencode` pair on CUDA and one
-  explicit `--offload-arch=<token>` on HIP. Explicit, because torch's default
-  is every architecture in the ROCm wheel. `-lineinfo` and `-Xptxas` stay on
-  the CUDA branch.
+  explicit `--offload-arch=<token>` on HIP -- explicit, because torch's
+  default is every architecture in the ROCm wheel. `-lineinfo` and `-Xptxas`
+  stay on the CUDA branch. `-gencode` is not a flag hipcc ignores: the #459
+  certification run on gfx1201 (WSL2, 2026-09-12) drove the old loader and got
+  `clang++: error: unknown argument: '-gencode'` before the build reached a
+  kernel question at all, which is this section's first measurement rather
+  than its first report
+  (`docs/measurements/attest-gfx1201-wsl2-2026-09-12.md`, step
+  `extension_build`).
 - `pin_build_arch(token)` sets `PYTORCH_ROCM_ARCH` to that same token on HIP.
   Measured on wsl-gpu (torch 2.11.0+rocm7.2.4, HIP 7.14): an explicit
   `--offload-arch` in `extra_cuda_cflags` does **not** displace the one torch
@@ -3917,6 +3970,12 @@ it meant, and nothing here is a second serving code path.
 - `toolchain_report()` is the existing `nvcc` resolver on CUDA and its
   `ROCM_HOME`/`hipcc` twin on HIP, both reporting `backend`, `compiler`,
   `platform_token` and `complete`.
+- The certification harness reads the same function. `platform_token_of` in
+  `tools/tessera_attest.py` is `backend.gcn_arch_token`, and its
+  `cuda_platform_token` is `backend.capability_token`: a receipt claims a cell
+  for a platform string and the build keys a directory on one, so two parsers
+  for one identity is how a receipt comes to certify a platform the build
+  never targeted.
 - `platform_backs(family, token)` reads the packaged contract -- the
   per-platform `executes` table when one is published, else a non-`unbacked`
   cell for that `(platform, family)` -- and is `False` for a token the

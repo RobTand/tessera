@@ -80,6 +80,12 @@ PLATFORM_TOKEN_ENV = "TESSERA_PLATFORM_TOKEN"
 #: by :func:`gcn_arch_token` before it is ever used as a key.
 _TOKEN = re.compile(r"\A(?:sm_[0-9]+|gfx[0-9a-f]+)\Z")
 
+#: The AMD half of the same vocabulary.  ``gcn_arch_token`` matches against
+#: this and not against ``_TOKEN``: an ``sm_`` spelling arriving where a
+#: ``gcnArchName`` was expected is a caller that read the wrong property, and
+#: passing it through would mint a platform key for the wrong vendor.
+_GFX_TOKEN = re.compile(r"\Agfx[0-9a-f]+\Z")
+
 _ROCM_HOME_ENV = ("ROCM_HOME", "ROCM_PATH")
 _ROCM_DEFAULT = "/opt/rocm"
 
@@ -132,17 +138,25 @@ def gcn_arch_token(gcn_arch_name: str) -> str:
     ROCm reports a device's architecture with its optional target features
     appended after colons.  Those features change the code object, not the
     platform, and ``--offload-arch`` takes the bare architecture; the contract
-    keys on the bare architecture too.
+    keys on the bare architecture too.  Two boxes holding the same silicon
+    report different suffixes depending on how the runtime was configured, so
+    a key carrying them would join to no contract platform entry.
+
+    An arch name that is not a ``gfx`` token is an error here rather than a
+    silently truncated key: this is the only identity the build and the
+    certification harness (``tools/tessera_attest.py``) read, and a guess is
+    worse than a refusal.
     """
     if not isinstance(gcn_arch_name, str):
         raise PlatformTokenError(
             f"gcnArchName must be a string, got {type(gcn_arch_name).__name__}; "
             "the platform key is the architecture ROCm names, never a capability tuple")
     token = gcn_arch_name.split(":", 1)[0].strip()
-    if not _TOKEN.match(token):
+    if not _GFX_TOKEN.match(token):
         raise PlatformTokenError(
-            f"{gcn_arch_name!r} does not name a platform this build can target "
-            f"(parsed {token!r}); expected a gfx architecture such as 'gfx1201'")
+            f"{gcn_arch_name!r} is not an AMD arch name (parsed {token!r}); a platform "
+            "token is read from torch's gcnArchName and never guessed from anything "
+            "else -- expected a gfx architecture such as 'gfx1201'")
     return token
 
 

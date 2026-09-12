@@ -9,10 +9,12 @@ failure -- ``get_device_capability()`` answered ``(12, 0)`` for gfx1201, the
 SAME tuple NVIDIA's sm_120 answers with.  A build directory, a build identity
 or a contract lookup keyed on that tuple is a key two platforms share.
 
-These tests are torch-free: every one of them drives a stub ``torch`` whose
+The backend questions are answered against a stub ``torch`` whose
 ``version.hip``, ``get_device_properties`` and ``get_device_capability`` say
-what a real ROCm or CUDA wheel would say.  The HIP stubs' capability probe
-RAISES, so a test passes only if the HIP path never asks for one.
+what a real ROCm or CUDA wheel would say -- so an AMD build decision is tested
+on a box with no AMD device.  The HIP stubs' capability probe RAISES, so a
+test passes only if the HIP path never asks for one.  The handful that drive a
+loader end to end ``importorskip`` the real torch and say so.
 """
 from __future__ import annotations
 
@@ -540,3 +542,39 @@ def test_the_build_identity_is_keyed_on_the_platform_not_the_capability():
     assert "capability" not in payload
     assert amd != nvidia
     assert json.dumps(payload, sort_keys=True)   # the payload still serialises
+
+
+# --------------------------------------------------------------------------
+# one home for the platform token
+# --------------------------------------------------------------------------
+
+def test_the_certification_harness_reads_its_platform_token_from_this_module():
+    """``tools/tessera_attest.py`` minted its own token before #452.
+
+    A receipt claims a cell for a platform string and the build keys its
+    directory on one; two implementations of "what platform is this" is how a
+    receipt comes to certify a platform the build never targeted.  The
+    harness keeps its own vocabulary (``platform_token_of``) and this module
+    keeps the answer.
+    """
+    import importlib.util
+
+    path = ROOT / "tools" / "tessera_attest.py"
+    spec = importlib.util.spec_from_file_location("tessera_attest_for_backend_test", path)
+    attest = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(attest)
+
+    assert attest.platform_token_of is backend_module.gcn_arch_token
+    assert attest.cuda_platform_token(12, 1) == backend_module.capability_token((12, 1))
+    body = path.read_text(encoding="utf-8")
+    assert "re.compile" not in body, (
+        "the harness parses no platform token of its own; backend.gcn_arch_token is "
+        "the one parser")
+
+
+def test_an_arch_name_that_is_not_a_gfx_token_is_refused():
+    """An ``sm_`` spelling arriving here read the wrong device property."""
+    with pytest.raises(backend_module.PlatformTokenError, match="gcnArchName"):
+        backend_module.gcn_arch_token("NVIDIA GB10")
+    with pytest.raises(backend_module.PlatformTokenError, match="gcnArchName"):
+        backend_module.gcn_arch_token("sm_121")
