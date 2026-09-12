@@ -42,6 +42,15 @@ TERM_DOMAINS = {
 # defaulting anywhere.
 OWNER_CLASSES = ("fixed", "candidate", "kv")
 
+# The (owner, lifetime) cells the seven composition terms actually charge. The
+# classifier can produce nine; these are seven. A KV backing with a transient
+# lifetime is therefore classified and billed to nothing, and so is a candidate
+# allocation carrying no unit, because every candidate term is keyed by unit.
+CHARGED_CELLS = (("fixed", "resident"), ("candidate", "resident"),
+                 ("fixed", "activation"), ("candidate", "activation"),
+                 ("fixed", "scratch"), ("candidate", "scratch"),
+                 ("kv", "resident"))
+
 # Lifetime classes, derived from the replay's own ``lifetime_scope`` plus
 # whether the allocation was ever freed inside the captured interval.
 LIFETIME_CLASSES = ("resident", "activation", "scratch")
@@ -162,6 +171,37 @@ def classify_allocations(ledger):
     return classified, unclassified
 
 
+def uncharged_allocations(classified):
+    """Classified rows that no composition term charges.
+
+    This is the one error direction that must never happen silently. An
+    overcount wastes headroom; an undercount hands a serving gate a budget
+    smaller than the engine needs, and on a unified-memory box that is an OOM
+    that kills the job. Two rows fall through the seven terms: a KV backing
+    whose lifetime is transient rather than resident, and a candidate
+    allocation with no unit in its scope stack.
+
+    They are named and they null every term, exactly like an unclassified row.
+    Charging them somewhere would be inventing a rule the composition does not
+    have, and the composition is the consumer's to reproduce, not ours to
+    extend.
+    """
+    uncharged = []
+    for row in classified:
+        cell = (row["owner_class"], row["lifetime_class"])
+        if cell not in CHARGED_CELLS:
+            reason = f"no composition term charges a {cell[0]} {cell[1]} allocation"
+        elif row["owner_class"] == "candidate" and row["unit"] is None:
+            reason = "a candidate allocation carrying no unit is charged by no per-unit term"
+        else:
+            continue
+        uncharged.append({"allocation_id": row["allocation_id"],
+                          "bytes": row["bytes"], "owner_class": row["owner_class"],
+                          "lifetime_class": row["lifetime_class"],
+                          "unit": row["unit"], "reason": reason})
+    return uncharged
+
+
 def qualify_domains(ledger):
     """State each of the six domains from the evidence actually present.
 
@@ -254,8 +294,10 @@ def derive_partition(ledger, domains=None):
     units = sorted({row["unit"] for row in classified if row["unit"] is not None})
     terms, unavailable = {}, []
 
+    uncharged = uncharged_allocations(classified)
+
     def emit(name, value):
-        if not unclassified and _term_available(name, domains):
+        if not unclassified and not uncharged and _term_available(name, domains):
             terms[name] = value
         else:
             terms[name] = None
@@ -286,6 +328,7 @@ def derive_partition(ledger, domains=None):
         "domains_source": domains_source,
         "membership": classified,
         "unclassified_allocations": unclassified,
+        "uncharged_allocations": uncharged,
         "units": units,
         "terms": terms,
         "scope": {
@@ -294,6 +337,7 @@ def derive_partition(ledger, domains=None):
             "unavailable_terms": sorted(unavailable),
             "expressible": not unavailable,
             "unclassified_allocation_count": len(unclassified),
+            "uncharged_allocation_count": len(uncharged),
             "invariance": "one complete assignment, one row per unit",
         },
     }

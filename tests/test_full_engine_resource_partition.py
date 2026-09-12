@@ -10,7 +10,8 @@ from pathlib import Path
 import pytest
 
 from experiments.full_engine_resource_partition import (
-    DOMAIN_NAMES, IMPLEMENTED_DOMAINS, OWNER_CLASSES, REPORT_MEMBERS,
+    CHARGED_CELLS, DOMAIN_NAMES, IMPLEMENTED_DOMAINS, OWNER_CLASSES, REPORT_MEMBERS,
+    uncharged_allocations,
     TERM_DOMAINS, assemble_full_engine_resource_report, classify_allocations,
     compose_scalar_budget, derive_partition, qualify_domains, _simultaneous_peak,
 )
@@ -264,3 +265,55 @@ def test_a_report_is_never_assembled_from_supplied_domains(ledger, monkeypatch):
     with pytest.raises(ValueError, match="never assembled from supplied domains"):
         module.assemble_full_engine_resource_report(
             ledger, reference={"a": 1}, workload={"b": 2}, execution={"c": 3})
+
+
+def _classified(**overrides):
+    row = {"allocation_id": "a", "bytes": 100, "owner_class": "kv",
+           "lifetime_class": "scratch", "unit": None,
+           "allocate_index": 0, "free_completed_index": 2}
+    row.update(overrides)
+    return row
+
+
+def test_a_kv_backing_with_a_transient_lifetime_is_charged_by_no_term():
+    # The classifier produces nine (owner, lifetime) cells; the composition
+    # charges seven. A KV backing freed inside a unit falls through all of them.
+    uncharged = uncharged_allocations([_classified(lifetime_class="scratch"),
+                                       _classified(allocation_id="b",
+                                                   lifetime_class="activation")])
+    assert {row["allocation_id"] for row in uncharged} == {"a", "b"}
+    assert all("no composition term charges" in row["reason"] for row in uncharged)
+
+
+def test_a_candidate_allocation_with_no_unit_is_charged_by_no_term():
+    uncharged = uncharged_allocations([_classified(owner_class="candidate",
+                                                   lifetime_class="resident",
+                                                   free_completed_index=None,
+                                                   unit=None)])
+    assert len(uncharged) == 1
+    assert "carrying no unit" in uncharged[0]["reason"]
+
+
+def test_every_charged_cell_is_charged():
+    for owner, lifetime in CHARGED_CELLS:
+        unit = "u0" if owner == "candidate" else None
+        assert uncharged_allocations([_classified(owner_class=owner,
+                                                  lifetime_class=lifetime,
+                                                  unit=unit)]) == []
+
+
+def test_an_uncharged_allocation_nulls_every_term_because_undercounting_ooms(ledger):
+    # An overcount wastes headroom; an undercount hands a serving gate a budget
+    # smaller than the engine needs. Only one of those kills the box.
+    row = dict(ledger["torch_allocations"][0])
+    row.update(allocation_id="kv-transient", lifetime_scope="inside_unit",
+               free_completed_index=row["allocate_index"] + 1,
+               observed_categories=["kv"], scope_stack=["u0"])
+    ledger["torch_allocations"] = [row]
+    all_closed = {name: {"state": "closed", "evidence": ["declared by the test"],
+                         "reason": None} for name in DOMAIN_NAMES}
+    partition = derive_partition(ledger, domains=all_closed)
+    assert partition["scope"]["uncharged_allocation_count"] == 1
+    assert partition["unclassified_allocations"] == []
+    assert all(term is None for term in partition["terms"].values())
+    assert compose_scalar_budget(partition) is None

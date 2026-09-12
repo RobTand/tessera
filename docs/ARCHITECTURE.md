@@ -1263,6 +1263,14 @@ arithmetic is testable at all, and records which it used in
 `partition["domains_source"]`; the report assembler refuses a supplied-domains
 partition, so the seam is machine-readable rather than a convention.
 
+**A classified allocation that no term charges also nulls every term.** The
+classifier produces nine `(owner, lifetime)` cells and the composition charges
+seven, so a KV backing with a transient lifetime, or a candidate allocation with
+no unit, is classified and billed to nothing — a silent undercount. An overcount
+wastes headroom; an undercount hands a serving gate a budget smaller than the
+engine needs, which on unified memory is an OOM. Such rows are named in
+`partition.uncharged_allocations` and counted in `scope.uncharged_allocation_count`.
+
 `assemble_full_engine_resource_report` builds that seven-member envelope,
 deriving `identity`, `observations`, `partition` and `derived` from the ledger
 and refusing `reference`, `workload` and `execution` by name rather than

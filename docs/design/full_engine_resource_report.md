@@ -142,6 +142,23 @@ has neither an owner nor a lifetime — so it could belong to any term, and no
 term is complete while one exists. `derived.scope.unclassified_allocation_count`
 carries the count and `partition.unclassified_allocations` names every row.
 
+### A classified allocation that no term charges
+
+The classifier produces nine `(owner, lifetime)` cells and the composition
+charges **seven**. Two fall through: a KV backing whose lifetime is transient
+rather than resident, and a candidate allocation with no unit in its scope
+stack, because every candidate term is keyed by unit. Such a row is classified
+and billed to nothing, which makes the composition **silently short**.
+
+That is the one error direction this schema must never take. An overcount
+wastes headroom; an undercount hands a serving gate a budget smaller than the
+engine needs, and on a unified-memory box that is an OOM that kills the job. So
+an uncharged row is named in `partition.uncharged_allocations`, counted in
+`derived.scope.uncharged_allocation_count`, and **nulls every term** exactly as
+an unclassified row does. Charging it somewhere would be inventing a rule the
+composition does not have, and the composition is the consumer's to reproduce
+rather than the producer's to extend.
+
 ### A missing input: the declared step boundary
 
 An allocation that is freed with no unit interval containing either end is a
