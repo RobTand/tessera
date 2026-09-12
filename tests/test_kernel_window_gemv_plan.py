@@ -188,13 +188,20 @@ def test_a_64_kib_device_keeps_the_small_plans_and_caps_m_8(m, cols, tile, smem)
 
 
 @pytest.mark.parametrize("m", [1, 2, 4, 8])
-def test_per_sm_comes_from_the_budget_not_the_table_dtype(m):
+def test_per_sm_comes_from_the_budget_not_the_table_dtype(monkeypatch, m):
     """43-58 KiB per block leaves room for one workgroup in a 64 KiB CU, not the
     two the bf16 table used to assume (and that ``__launch_bounds__(512, 2)``
     asks for -- on HIP its second argument is min waves per EU and cannot be
-    honoured at this LDS size either; recorded, not changed)."""
+    honoured at this LDS size either; recorded, not changed).
+
+    The second arm pins the device away first.  ``shared_mem_per_block=None``
+    means *ask the device*, and there is no spelling for "no budget", so on a
+    box that IS a 64 KiB device -- which is where this file most wants to run --
+    an unpinned call would read 65,536 and the arm would be testing the first
+    line over again."""
     plan = kg.default_plan(9728, 9728, m, sm_count=32, shared_mem_per_block=RDNA_LDS)
     assert plan.blocks == 32          # 32 WGPs * one resident block
+    _no_device(monkeypatch)
     assert kg.default_plan(9728, 9728, m, sm_count=32).blocks == 64   # no budget: the old 2
 
 
@@ -226,9 +233,10 @@ def _repacked(cols: int, rate: int = 4, n_tiles: int = 2) -> kg.Repacked:
                        perm=torch.arange(cols, dtype=torch.int32), runs=runs, rates=(rate,))
 
 
-def test_items_for_honours_the_plan_cap():
+def test_items_for_honours_the_plan_cap(monkeypatch):
     """``items_for`` cuts at ``min(plan.cols_per_item, max_item_cols(mt))`` -- the
     path an M=8 launch takes to the 128-column plan."""
+    _no_device(monkeypatch)          # the ``wide`` arm below asks the device for its budget
     rep = _repacked(2048)
     plan = kg.default_plan(1024, 2048, 8, sm_count=32, shared_mem_per_block=RDNA_LDS)
     assert plan.cols_per_item == 128

@@ -183,7 +183,9 @@ def device_shared_mem_per_block(device: "int | None" = None) -> "int | None":
       every launch that needs it, and the ceiling holds every plan this module
       produces, so no ceiling binds: this returns ``None`` and the plan is the
       one the 2026-09-02 sweep measured.  Reading the *static* limit here
-      instead would refuse M=2 (53,376 B) on a device that serves it today.
+      instead would not refuse anything -- it would quietly halve the grid at
+      M=2 and M=8 and price an x tile the kernel does not allocate, on a device
+      that serves both today.
     * **ROCm/HIP** has no ladder at all: ``shared_memory_per_block_optin`` is
       not even an attribute of ``get_device_properties`` on torch 2.11+rocm7.2
       (receipt: ``t454-lds-plan/receipts/01_gfx1201_device_properties.txt``),
@@ -501,7 +503,11 @@ def default_plan(rows: int, cols: int, M: int = 1, *, sm_count: "int | None" = N
     performance claim).  :func:`plan_smem_bytes` prices both numbers on
     purpose.  Until the ``.cu`` sizes the tile from the cap and a gfx1201
     launch confirms it, M in 5..8 on a 64 KiB device belongs to the M=4 plan
-    run twice or to the materialised path.
+    run twice or to the materialised path -- and **nothing routes it there
+    yet**: ``_gemv_concrete`` maps M to its tile and launches, so such a call
+    fails at the launch rather than at a named refusal.  No consumer reaches
+    it tonight (the plugin gates a HIP platform before any kernel is touched),
+    and the dispatch is not this function's to change.
 
     ``sm_count`` is ``multi_processor_count``.  On ROCm that counts **WGPs,
     not CUs**: torch reports 32 for the RX 9070 XT whose ``rocminfo`` reports
