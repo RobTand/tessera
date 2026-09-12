@@ -1,6 +1,6 @@
 {
   "schema": "tessera.runtime-contract.v1",
- "contract_version": 22,
+ "contract_version": 23,
  "quant_method": {
   "canonical": "tessera",
   "accepted": [
@@ -194,13 +194,44 @@
   }
  ],
  "lane_eligibility": {
-  "schema": "tessera.lane-eligibility.v9",
+  "schema": "tessera.lane-eligibility.v10",
   "platforms": {
    "sm_121": {
+    "backend": "cuda",
     "compute_capability": [
      12,
      1
-    ]
+    ],
+    "serve_image": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+    "executes": {
+     "TESSERA_E2M1_K2": "e2m1_group16_ue4m3_static",
+     "TESSERA_E4M3_K1": "fp8_per_token_dynamic",
+     "TESSERA_BF16_K1": "bf16_unquantized"
+    }
+   },
+   "gfx1151": {
+    "backend": "hip",
+    "gcn_arch": "gfx1151",
+    "wavefront": 32,
+    "lds_bytes": 65536,
+    "serve_image": null,
+    "executes": {
+     "TESSERA_E2M1_K2": null,
+     "TESSERA_E4M3_K1": null,
+     "TESSERA_BF16_K1": "bf16_unquantized"
+    }
+   },
+   "gfx1201": {
+    "backend": "hip",
+    "gcn_arch": "gfx1201",
+    "wavefront": 32,
+    "lds_bytes": 65536,
+    "serve_image": null,
+    "executes": {
+     "TESSERA_E2M1_K2": null,
+     "TESSERA_E4M3_K1": null,
+     "TESSERA_BF16_K1": "bf16_unquantized"
+    }
    }
   },
   "regimes": [
@@ -1163,6 +1194,11 @@
   ]
  },
  "changelog": [
+ {
+   "contract_version": 23,
+   "date": "2026-09-12",
+   "change": "Lane-eligibility schema v10 (#456): the table gains a PLATFORM AXIS, so the document can say what a platform executes before any cell on it exists. WHAT WAS MISSING: platforms was a set of KEYS -- the only thing read of it was whether a cell's platform was declared -- and a cell is a RECEIPT, so the only way to say anything about a platform was to have served on it. There is no way in v9 to publish the fact that a family has no native route on a device, which is precisely what an RDNA3.5 or RDNA4 box needs said about E2M1 and E4M3 before a model load reaches a kernel. Silence had to stand in for it, and silence is not an attestation. WHAT THE FIELD IS: every platforms[key] now carries backend (cuda | hip), exactly one of compute_capability / gcn_arch, a serve_image that is a digest iff the platform has at least one cell and null otherwise, and executes -- a map over every family in formats[] whose value is that family's OWN route contract or null. Non-null is checked against scheme.ROUTES, never transcribed: a platform cannot claim a contract the dispatch does not run. null means unbacked, and it is a claim somebody looked. A platform key the table does not carry means nothing at all, which is a third state and not a synonym for null -- the plugin reads the three as backed / unbacked / unstated (contract.platform_execution_contract, #455) and refuses only on unbacked. WHAT SHIPS: sm_121 gains backend, serve_image and executes with its three existing contracts; gfx1151 and gfx1201 arrive as entries with serve_image null, no cells, BF16 backed and E4M3/E2M1 null. Tessera-16 (TESSERA_BF16_K1, W16A16) is the AMD lane; the quantized families are unbacked there because the pinned runtime has no native route for those bytes on those devices, not because a kernel is unwritten. gfx1150 is compiled for and gets no entry until someone intends to serve on it. NO AMD CELL: a cell is a device receipt and none has been taken, so v23 publishes none. The gfx1151 entry exists with no cell precisely because nobody here owns the hardware; what a Strix Halo receipt must contain and the scope line it carries are in docs/strix-halo-tester-protocol.md (#459), and a receipt arriving turns that entry into cells at v24 without editing the entry. THREE RULES ADDED. A cell on a null executes entry is refused -- an unbacked platform states the fact in executes, it does not mint cells. qualification compile_only is incompatible with route_status backed or backed_with_serve_flag: a compile receipt proves a toolchain fact and a backed claim needs a device. This moves no existing cell (v22 carries zero compile_only cells; all ten are backed_with_serve_flag and device_qualified), and the ten sm_121 cells are byte-identical under v23 -- tests/fixtures/lane_eligibility_cells_v22.json holds the v22 array and tests/test_contract_platform_axis.py compares it. And a platform's serve_image must be an image at least one of its OWN cells attests, with versions.default_serve_image equal to some platform's serve_image. THAT LAST RULE IS WEAKER THAN THE DESIGN ASKED FOR, DELIBERATELY: the design said every cell's runtime.image equals its platform's serve_image, and the shipped document falsifies it -- sm_121 already carries TWO attested images, the eight dense cells on the vanilla pin and the two routed_moe cells on a second build. Taken literally the rule would refuse the contract that is in this file. Measured, not softened: the per-structure statement is what test_the_default_serve_image_is_the_dense_cells_image now says, per platform. NOT ADDITIVE, and the schema string says so: a v9 reader must not read a v10 document, because a platform entry is now an object with meaning rather than a key, and a reader that went on treating platforms as a key set would read an unbacked platform as an ordinary one. A closed reader refuses v10 by name, which is the designed fail-closed and the whole reason the schema is versioned. No rung, route, activation contract, launch, grade, KL entry, qualification, TP/EP bound or served byte moved."
+  },
   {
    "contract_version": 22,
    "date": "2026-09-05",
