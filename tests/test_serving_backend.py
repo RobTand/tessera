@@ -413,24 +413,58 @@ def _contract():
     return load_serving_contract()
 
 
-def test_the_packaged_contract_answers_for_the_platform_it_publishes():
-    contract = _contract()
-    assert backend_module.platform_backs("TESSERA_BF16_K1", "sm_121", contract) is True
-    assert backend_module.platform_backs("TESSERA_E4M3_K1", "sm_121", contract) is True
-    assert backend_module.platform_backs("TESSERA_E2M1_K2", "sm_121", contract) is True
+def test_the_packaged_contract_states_nothing_about_any_platform_yet():
+    """``contract_version`` 22 has no platform axis -- not even for sm_121.
 
+    Recorded rather than asserted around: the table arrives with #456, and
+    until it does the attestation question is ``False`` everywhere, including
+    the platform this project runs on.  That is what "attested, never
+    asserted" costs before the attestation exists.
+    """
+    from tessera.serving import contract as contract_module
 
-def test_a_platform_the_contract_has_never_heard_of_backs_nothing():
-    """Not a default, a signal: an allocator that wants an unbacked route is
-    reporting a serving gap, and silence would hide it."""
     contract = _contract()
     for family in ("TESSERA_BF16_K1", "TESSERA_E4M3_K1", "TESSERA_E2M1_K2"):
-        assert backend_module.platform_backs(family, "gfx1151", contract) is False
-        assert backend_module.platform_backs(family, "gfx1201", contract) is False
+        assert contract_module.platform_execution_contract(
+            family, "sm_121", contract)[0] == contract_module.PLATFORM_UNSTATED
+        assert backend_module.platform_attests(family, "sm_121", contract) is False
+        assert backend_module.platform_backs(family, "sm_121", contract) is True
 
 
-def test_a_family_the_contract_does_not_publish_is_not_backed():
-    assert backend_module.platform_backs("TESSERA_MADE_UP", "sm_121", _contract()) is False
+def test_the_two_questions_are_one_reader_and_two_answers():
+    """``platform_backs`` is ``contract.platform_backs`` -- the same function.
+
+    They differ only on ``unstated``, and that difference is the point: the
+    refusal question answers True for a platform the document has not reached
+    (a silence is not a refusal), the attestation question answers False (a
+    producer never asserts a serving fact it did not read).  One reader
+    underneath, so the build and the serve cannot disagree about the platform
+    axis.
+    """
+    from tessera.serving import contract as contract_module
+
+    contract = _contract()
+    for family in ("TESSERA_BF16_K1", "TESSERA_E4M3_K1", "TESSERA_E2M1_K2"):
+        for token in ("gfx1151", "gfx1201"):
+            assert contract_module.platform_execution_contract(
+                family, token, contract)[0] == contract_module.PLATFORM_UNSTATED
+            assert backend_module.platform_backs(family, token, contract) is True
+            assert backend_module.platform_attests(family, token, contract) is False
+
+
+def test_no_amd_token_is_attested_by_the_packaged_contract():
+    """The whole AMD claim this branch makes: none."""
+    contract = _contract()
+    for family in ("TESSERA_BF16_K1", "TESSERA_E4M3_K1", "TESSERA_E2M1_K2"):
+        assert backend_module.platform_attests(family, "gfx1151", contract) is False
+        assert backend_module.platform_attests(family, "gfx1201", contract) is False
+
+
+def test_a_family_the_contract_does_not_publish_is_refused_by_name():
+    """``contract.platform_execution_contract`` raises on an unknown family
+    rather than answering it, and both wrappers inherit that."""
+    with pytest.raises(KeyError, match="TESSERA_MADE_UP"):
+        backend_module.platform_attests("TESSERA_MADE_UP", "sm_121", _contract())
 
 
 def test_the_per_platform_table_is_read_when_the_contract_carries_one():
@@ -445,17 +479,10 @@ def test_the_per_platform_table_is_read_when_the_contract_carries_one():
             "TESSERA_BF16_K1": "w16a16-bf16-channel",
             "TESSERA_E4M3_K1": None,
             "TESSERA_E2M1_K2": None}}}, "cells": []}}
-    assert backend_module.platform_backs("TESSERA_BF16_K1", "gfx1151", contract) is True
+    assert backend_module.platform_attests("TESSERA_BF16_K1", "gfx1151", contract) is True
+    assert backend_module.platform_attests("TESSERA_E4M3_K1", "gfx1151", contract) is False
     assert backend_module.platform_backs("TESSERA_E4M3_K1", "gfx1151", contract) is False
-    assert backend_module.platform_backs("TESSERA_E2M1_K2", "gfx1151", contract) is False
-
-
-def test_an_unbacked_cell_does_not_back_its_family():
-    contract = {"lane_eligibility": {"platforms": {"gfx1201": {"backend": "hip"}}, "cells": [
-        {"platform": "gfx1201", "family": "TESSERA_E2M1_K2", "route_status": "unbacked"},
-        {"platform": "gfx1201", "family": "TESSERA_BF16_K1", "route_status": "backed"}]}}
-    assert backend_module.platform_backs("TESSERA_E2M1_K2", "gfx1201", contract) is False
-    assert backend_module.platform_backs("TESSERA_BF16_K1", "gfx1201", contract) is True
+    assert backend_module.platform_attests("TESSERA_E2M1_K2", "gfx1151", contract) is False
 
 
 # --------------------------------------------------------------------------

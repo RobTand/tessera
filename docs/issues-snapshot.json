@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-12T23:38:00Z",
+ "generated": "2026-09-12T23:57:50Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -3686,11 +3686,11 @@
     "title": "AMD/HIP port, step 2 of 9: land the three HIP shims in `window_gemv.cu` (spike branch `rdna35/window-gemv-hip-spike` @ 6055c11)"
    },
    "454": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "AMD/HIP port, step 3 of 9: LDS-aware launch plan (64 KB per workgroup)"
    },
    "455": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "AMD/HIP port, step 4 of 9: `native_ops` per-op presence instead of the `cutlass_scaled_mm` sentinel"
    },
    "456": {
@@ -3722,12 +3722,16 @@
     "title": "Certification tooling: the attest harness and the Strix Halo tester protocol (#459)"
    },
    "462": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Plan the window GEMV inside the device's shared-memory budget"
    },
    "463": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "native_ops: ask per operator, and let the contract refuse before the ABI does"
+   },
+   "464": {
+    "state": "OPEN",
+    "title": "Give the contract a platform axis, so it can say what was never servable (#456)"
    },
    "47": {
     "state": "CLOSED",
