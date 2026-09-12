@@ -81,6 +81,39 @@ constexpr int X_PREFETCH = 8;
 constexpr int PF = WINDOW_GEMV_PF;
 static_assert(PF == 1 || PF == 2, "WINDOW_GEMV_PF is 1 or 2");
 
+// ---------------------------------------------------------------------------
+// ONE SOURCE, TWO TOOLCHAINS.
+//
+// The kernel is written for CUDA and that is what nvcc compiles.  A ROCm build
+// reaches it through ``torch.utils.cpp_extension``, which hipifies the torch
+// and runtime spellings (``cudaStream_t``, ``c10::cuda::CUDAGuard``,
+// ``C10_CUDA_CHECK``, the launch syntax) but leaves device intrinsics alone.
+// The constructs below are the ones that then differ, and each is spelled per
+// platform here so the CUDA path is unchanged.
+// ---------------------------------------------------------------------------
+constexpr int WARP_LANES = 32;   // the lane ownership below is warp-32 throughout
+// RDNA (gfx10/11/12) runs wave32; CDNA runs wave64.  ``lane = tid & 31`` and
+// the shuffle-by-one history own rows by lane, so on a wave64 target a lane
+// would read another lane's word and the decode would be silently wrong.
+// nvcc's warp is 32 by definition; HIP publishes no wavefront-size macro at
+// all (ROCm 7.14 defines neither ``__AMDGCN_WAVEFRONT_SIZE__`` nor a
+// constant-expression builtin), so the width cannot be a static_assert there
+// and is checked per device at the entry points instead
+// (``require_warp_lanes`` below).
+
+// The previous lane's word.  CUDA takes a 32-bit full-warp participation
+// mask; HIP 7 requires a 64-bit mask on ``__shfl_up_sync`` (its wavefront may
+// be 64 wide), and ``__shfl_up`` is the same operation on a wavefront that has
+// no independent thread scheduling to synchronise.  Lane 0's result is never
+// read: both callers replace it with the word before the chunk.
+__device__ __forceinline__ uint32_t shfl_up_one(uint32_t v) {
+#if defined(__HIP_PLATFORM_AMD__)
+    return __shfl_up(v, 1, WARP_LANES);
+#else
+    return __shfl_up_sync(0xffffffffu, v, 1);
+#endif
+}
+
 struct __align__(16) Item {
     int tile;    // 512-row tile index
     int rate;    // bits per code for every column of the item
@@ -225,7 +258,7 @@ __device__ __forceinline__ void run_item(
             p0 = (NB == 16) ? (w & 0xffffu) : w;
         }
         // Other lanes take the previous lane's last word (or halfword).
-        uint32_t up = __shfl_up_sync(0xffffffffu, lo, 1);
+        uint32_t up = shfl_up_one(lo);
         pv = (lane == 0) ? p0 : up;
     };
 
@@ -402,7 +435,7 @@ __global__ void window_decode_kernel(
         else if (tile > 0) p0 = words[base - tile_words + CHUNK_WORDS - 1];
         if (NB == 16) p0 &= 0xffffu;
     }
-    uint32_t up = __shfl_up_sync(0xffffffffu, lo, 1);
+    uint32_t up = shfl_up_one(lo);
     const uint32_t prev = (lane == 0) ? p0 : up;
     const int col = perm[col0 + jj];
 #pragma unroll
@@ -453,6 +486,29 @@ void decode_typed(const uint32_t* w, long tile_words, int n_tiles, torch::Tensor
 // request can never shrink the attribute back under a larger granted one.
 constexpr int MAX_OPT_IN_DEVICES = 64;
 
+#if defined(__HIP_PLATFORM_AMD__)
+// The wave32 the lane ownership depends on, asked of the device once and
+// remembered per device -- the same shape as the shared-memory opt-in above,
+// and for the same reason: the answer is a property of a device, not of the
+// process.  CUDA needs no such call; its warp is 32 by definition.
+void require_warp_lanes(int device) {
+    TORCH_CHECK(device >= 0 && device < MAX_OPT_IN_DEVICES,
+                "device index ", device, " exceeds the wavefront-width table (",
+                MAX_OPT_IN_DEVICES, " devices)");
+    static std::array<std::atomic<int>, MAX_OPT_IN_DEVICES> lanes{};
+    if (lanes[device].load(std::memory_order_acquire) == WARP_LANES) return;
+    int width = 0;
+    C10_CUDA_CHECK(cudaDeviceGetAttribute(&width, cudaDevAttrWarpSize, device));
+    TORCH_CHECK(width == WARP_LANES,
+                "window_gemv owns tile rows by lane in a warp of ", WARP_LANES,
+                "; device ", device, " runs ", width, " lanes per wavefront");
+    lanes[device].store(width, std::memory_order_release);
+}
+#define TESSERA_REQUIRE_WARP_LANES(dev) require_warp_lanes((int)(dev))
+#else
+#define TESSERA_REQUIRE_WARP_LANES(dev) ((void)0)
+#endif
+
 template <int L, int RPL, int MT, typename TBL, bool AG, bool AL, bool AF>
 void launch_typed(const Params& p, int blocks, int threads, size_t smem, cudaStream_t stream) {
     auto k = window_gemv_kernel<L, RPL, MT, TBL, AG, AL, AF>;
@@ -466,8 +522,16 @@ void launch_typed(const Params& p, int blocks, int threads, size_t smem, cudaStr
     if (smem > granted[device].load(std::memory_order_acquire)) {
         std::lock_guard<std::mutex> hold(grow_lock);
         if (smem > granted[device].load(std::memory_order_relaxed)) {
+#if defined(__HIP_PLATFORM_AMD__)
+            // ``hipFuncSetAttribute`` has only the C spelling: the typed
+            // overload nvcc resolves a kernel pointer through does not exist.
+            C10_CUDA_CHECK(cudaFuncSetAttribute(
+                reinterpret_cast<const void*>(k),
+                cudaFuncAttributeMaxDynamicSharedMemorySize, (int)smem));
+#else
             C10_CUDA_CHECK(cudaFuncSetAttribute(
                 k, cudaFuncAttributeMaxDynamicSharedMemorySize, (int)smem));
+#endif
             granted[device].store(smem, std::memory_order_release);
         }
     }
@@ -532,6 +596,7 @@ void window_gemv(
                 scale.device(), "/", table.device(), "/",
                 (perm.numel() ? perm.device().str() : std::string("<empty>")));
     const c10::cuda::CUDAGuard guard(device);
+    TESSERA_REQUIRE_WARP_LANES(device.index());
     TORCH_CHECK(window_bits == TESSERA_GEMV_WINDOW_BITS,
                 "this build instantiates L=", TESSERA_GEMV_WINDOW_BITS, " only");
     const int M = (int)x.size(0), K = (int)x.size(1), rows = (int)out.size(1);
@@ -589,6 +654,7 @@ void window_decode(
                 " but out/of_state/perm are on ", out.device(), "/",
                 of_state.device(), "/", perm.device());
     const c10::cuda::CUDAGuard guard(device);
+    TESSERA_REQUIRE_WARP_LANES(device.index());
     auto runs_cpu = runs.to(torch::kCPU).contiguous();
     const int rows = (int)out.size(0), cols = (int)out.size(1);
     auto stream = at::cuda::getCurrentCUDAStream();
