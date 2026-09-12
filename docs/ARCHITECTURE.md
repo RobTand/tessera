@@ -3386,11 +3386,17 @@ Strix Halo receipt has to contain, and the scope line it carries, is §4.5d and
 into cells without touching the entry itself.
 
 **Byte-identity.** A schema bump may add a sentence; it may not edit a
-receipt. `tests/fixtures/lane_eligibility_cells_v22.json` holds the v22
-`cells` array lifted out by exact offsets, and
+receipt. `tests/fixtures/lane_eligibility_cells_v22.json` records the
+SHA-256, byte length and cell count of the v22 `cells` array lifted out by
+exact offsets, and
 `tests/test_contract_platform_axis.py::test_the_ten_sm121_cells_are_byte_identical_to_v22`
-compares bytes — whitespace and key order included — rather than a
-re-serialization that could normalize away a real edit.
+hashes the same span of the shipped file — whitespace and key order included
+— rather than a re-serialization that could normalize away a real edit. It
+is a digest and not a copy of the array for a reason that is itself a rule
+here: the array holds the runtime image pin, and
+`tests/test_runtime_image_pin.py::test_the_pin_is_the_contract_field_and_nothing_else_holds_it`
+refuses a second copy of that digest in any file that acts. A hash pins the
+same bytes without holding the pin.
 
 #### What every existing reader keeps reading
 

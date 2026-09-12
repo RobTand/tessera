@@ -14,6 +14,7 @@ attested.
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 from pathlib import Path
 
@@ -112,16 +113,27 @@ def test_the_amd_platforms_carry_no_cells_and_no_serve_image(contract):
 def test_the_ten_sm121_cells_are_byte_identical_to_v22():
     """A schema bump may add a sentence; it may not edit a receipt.
 
-    The fixture is the ``cells`` array lifted out of the v22 document by
-    exact offsets, so this compares BYTES -- whitespace, key order and all --
-    not a re-serialization that could normalize away a real edit.
+    The fixture records the SHA-256 of the ``cells`` array as it was lifted
+    out of the v22 document by exact offsets, so this compares BYTES --
+    whitespace, key order and all -- not a re-serialization that could
+    normalize away a real edit.  It is a digest and not a copy of the array
+    on purpose: the array holds the runtime image pin, and
+    ``tests/test_runtime_image_pin.py`` refuses a second copy of that digest
+    in any file that acts.  A hash pins the same bytes without holding the
+    pin, which is the whole argument that test is making.
     """
     raw = CONTRACT.read_text(encoding="utf-8")
     marker = '"cells": ['
     start = raw.index(marker) + len(marker) - 1
     value, end = json.JSONDecoder().raw_decode(raw, start)
-    assert len(value) == 10
-    assert raw[start:end] == FIXTURE.read_text(encoding="utf-8").rstrip("\n")
+    lifted = raw[start:end].encode("utf-8")
+    recorded = json.loads(FIXTURE.read_text(encoding="utf-8"))
+    assert len(value) == recorded["cells"] == 10
+    assert len(lifted) == recorded["bytes"], (
+        "the v22 cells array changed length; a schema bump must not edit a receipt")
+    assert hashlib.sha256(lifted).hexdigest() == recorded["sha256"], (
+        "the v22 cells array changed bytes at the same length; regenerate the "
+        "fixture only if a receipt was deliberately re-measured")
 
 
 def test_no_shipped_cell_is_compile_only(contract):
