@@ -1196,6 +1196,37 @@ observer overhead qualification or a fixed timing price. Complete collection,
 overhead, runtime/assignment admission and full memory ownership remain explicit
 qualification gaps; `timings` stays null and admission remains unimplemented.
 
+`experiments/full_engine_resource_partition.py` derives the resource partition
+from that raw ledger without relaxing any of its gates. It restates the ledger's
+six `qualification_gaps` as six named **domains** — `worker_startup`,
+`history_join`, `external_closure`, `provenance_admission`, `cache_capacity`,
+`timing_partition` — each carrying `closed`, `open` or `refused` with its own
+evidence or its own reason. `refused` means the evidence exists and contradicts
+the model; `open` means it was never observed. Both block.
+
+Every composition term names the domains it depends on, and a term whose domains
+are not all closed is null and listed in `scope.unavailable_terms`. Nothing is
+filled: no whole-engine residual, no independent-median subtraction and no
+tolerance becomes a fixed charge. Transient maxima come from a simultaneous
+allocation/free sweep over the declared interval — a sum of per-allocation
+maxima is not a peak, and neither is a difference of two independent peaks. An
+allocation whose observed category is `shared`, `unknown`, absent or plural is
+unclassified and named in `unclassified_allocations`; ownership is never
+inferred from a pointer or from what is left over. The scalar scope stays TP1,
+one device, resident, eager, GPU allocations only, and one complete assignment
+with one row per unit.
+
+`compose_scalar_budget` applies the consumer's conservative composition
+`fixed_resident + sum(candidate_resident) + fixed_activation +
+max(candidate_activation) + fixed_scratch + max(candidate_scratch) + fixed_KV`,
+and returns null while any term is unavailable. That composition can exceed the
+measured instantaneous peak because independent maxima need not coincide; that
+is disclosed conservatism, not permission to charge one extent twice. The frozen
+producer schema is `docs/design/full_engine_resource_report.md`; the consumer
+that must independently recompute it is PrismaQuant's, per its
+`docs/design/runtime_fixed_resource_admission.md`. Admission stays closed: no
+domain is closed today, and no serving gate reads this partition.
+
 ### 2.5 Whole routed receipts preserve the actual expert owner
 
 `experiments/bench_native_moe_operator.py` prepares the complete 32-expert
