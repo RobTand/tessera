@@ -1,0 +1,195 @@
+{
+  "schema": "tessera.attest/1",
+  "header": {
+    "platform": "gfx1201",
+    "measured_platform": "gfx1201",
+    "image": null,
+    "versions": {
+      "torch": "2.11.0+rocm7.2.4.git5fbd98f3",
+      "vllm": null,
+      "hip": "7.2.53211",
+      "cuda": null,
+      "tessera": "0.1.0",
+      "python": "3.12.14"
+    },
+    "qualification": null,
+    "scope": "execute_gfx1201",
+    "scope_sentence": "scope: gfx1201 execution on wsl-gpu -- proves the HIP code path (loader, shims, plan, window_decode+torch.mm prefill, BF16 route) executes and matches the CUDA/CPU reference bit-for-bit where the contract says it must; does not prove gfx1151 numerics or perf; any perf (no PMCs, WSL2, and wall-clock on a desktop RDNA4 says nothing about an APU)",
+    "proves": "the HIP code path (loader, shims, plan, window_decode+torch.mm prefill, BF16 route) executes and matches the CUDA/CPU reference bit-for-bit where the contract says it must",
+    "does_not_prove": "gfx1151 numerics or perf; any perf (no PMCs, WSL2, and wall-clock on a desktop RDNA4 says nothing about an APU)",
+    "perf_claim": false,
+    "generated": "2026-09-12T23:21:47.125994+00:00",
+    "host": {
+      "node": "DESKTOP-P5UOGNJ",
+      "kernel": "6.18.35.2-microsoft-standard-WSL2",
+      "wsl2": true,
+      "machine": "x86_64",
+      "python": "3.12.14"
+    }
+  },
+  "device": {
+    "backend": "hip",
+    "platform": "gfx1201",
+    "gcn_arch_name": "gfx1201",
+    "device_name": "AMD Radeon RX 9070 XT",
+    "device_count": 1,
+    "warp_size": 32,
+    "multi_processor_count": 32,
+    "total_memory_bytes": 16974905344,
+    "shared_memory_per_block": 65536,
+    "source": "torch.cuda.get_device_properties(0).gcnArchName",
+    "torch": "2.11.0+rocm7.2.4.git5fbd98f3",
+    "hip": "7.2.53211",
+    "cuda": null,
+    "available": true,
+    "reason": null
+  },
+  "reference_set": {
+    "family": "TESSERA_BF16_K1",
+    "rungs_q256": [],
+    "reference_rungs_q256": [
+      896,
+      1024
+    ]
+  },
+  "power": {
+    "tool": "amd-smi",
+    "available": false,
+    "reason": "amd-smi exited 255: ERROR:root:Drivers not loaded (amdgpu, amd_hsmp, ionic, bnxt_en drivers not found in modules)",
+    "interval_s": 1.0,
+    "samples": 0,
+    "mean_watts": null,
+    "max_watts": null
+  },
+  "steps": {
+    "device_identity": {
+      "status": "ran",
+      "reason": null,
+      "platform": "gfx1201",
+      "source": "torch.cuda.get_device_properties(0).gcnArchName"
+    },
+    "extension_build": {
+      "status": "failed",
+      "reason": "RuntimeError: ...ffload-arch=gfx1030 --offload-arch=gfx1100 --offload-arch=gfx1101 --offload-arch=gfx1200 --offload-arch=gfx1201 --offload-arch=gfx950 --offload-arch=gfx1151 --offload-arch=gfx1150 -fno-gpu-rdc -O3 -lineinfo -std=c++17 -DWINDOW_GEMV_PF=1 -gencode arch=compute_120,code=sm_120 -c /home/rob/agents/t459/tessera/src/tessera/serving/csrc/window_gemv.hip -o window_gemv.cuda.o \nclang++: error: unknown argument: '-gencode'\nclang++: error: no such file or directory: 'arch=compute_120,code=sm_120'\nclang++: warning: -lineinfo: 'linker' input unused [-Wunused-command-line-argument]\nfailed to execute:/opt/rocm/core-7.14/lib/llvm/bin/clang++  --offload-arch=gfx908 --offload-arch=gfx90a --offload-arch=gfx942 --offload-arch=gfx1030 --offload-arch=gfx1100 --offload-arch=gfx1101 --offload-arch=gfx1200 --offload-arch=gfx1201 --offload-arch=gfx950 --offload-arch=gfx1151 --offload-arch=gfx1150  -DWITH_HIP -DTORCH_EXTENSION_NAME=tessera_window_gemv -DTORCH_API_INCLUDE_EXTENSION_H -isystem /home/rob/ml-venvs/torch-rocm7/lib/python3.12/site-packages/torch/include -isystem /home/rob/ml-venvs/torch-rocm7/lib/python3.12/site-packages/torch/include/torch/csrc/api/include -isystem /home/rob/ml-venvs/torch-rocm7/lib/python3.12/site-packages/torch/include/THH -isystem /opt/rocm/core-7.14/include -isystem /home/rob/.local/share/uv/python/cpython-3.12.14-linux-x86_64-gnu/include/python3.12 -D__HIP_PLATFORM_AMD__=1 -DUSE_ROCM=1 -DHIPBLAS_V2 -fPIC -DCUDA_HAS_FP16=1 -D__HIP_NO_HALF_OPERATORS__=1 -D__HIP_NO_HALF_CONVERSIONS__=1 -DHIP_ENABLE_WARP_SYNC_BUILTINS=1 -std=c++17 -fno-gpu-rdc -O3 -lineinfo -std=c++17 -DWINDOW_GEMV_PF=1 -gencode arch=compute_120,code=sm_120 -c -x hip /home/rob/agents/t459/tessera/src/tessera/serving/csrc/window_gemv.hip -o \"window_gemv.cuda.o\"\nninja: build stopped: subcommand failed.",
+      "platform": "gfx1201",
+      "seconds": 0.22
+    },
+    "decoder_bit_exact": {
+      "status": "not_run",
+      "reason": "no --artifact was given"
+    },
+    "gemv_tolerance": {
+      "status": "not_run",
+      "reason": "no --artifact was given"
+    },
+    "decode_tok_s": {
+      "status": "not_run",
+      "reason": "no --endpoint was given"
+    },
+    "prefill_tok_s": {
+      "status": "not_run",
+      "reason": "no --endpoint was given"
+    },
+    "route_census": {
+      "status": "not_run",
+      "reason": "no --census-receipt was given"
+    },
+    "served_kl": {
+      "status": "not_run",
+      "reason": "no --kl-receipt was given"
+    },
+    "serve_eager_and_graph": {
+      "status": "not_run",
+      "reason": "no --execution-modes were reported"
+    },
+    "package_power": {
+      "status": "not_run",
+      "reason": "amd-smi exited 255: ERROR:root:Drivers not loaded (amdgpu, amd_hsmp, ionic, bnxt_en drivers not found in modules)"
+    }
+  },
+  "sections": {
+    "8.2": {
+      "1": {
+        "refers_to": [
+          "extension_build"
+        ],
+        "status": "failed"
+      },
+      "2": {
+        "refers_to": [
+          "decoder_bit_exact"
+        ],
+        "status": "not_run"
+      },
+      "3": {
+        "refers_to": [
+          "gemv_tolerance"
+        ],
+        "status": "not_run"
+      },
+      "4": {
+        "refers_to": [
+          "route_census"
+        ],
+        "status": "not_run"
+      },
+      "5": {
+        "refers_to": [
+          "served_kl"
+        ],
+        "status": "not_run"
+      }
+    },
+    "8.3": {
+      "1": {
+        "refers_to": [
+          "device_identity"
+        ],
+        "status": "ran"
+      },
+      "2": {
+        "refers_to": [
+          "extension_build"
+        ],
+        "status": "failed"
+      },
+      "3": {
+        "refers_to": [
+          "decoder_bit_exact",
+          "gemv_tolerance",
+          "route_census"
+        ],
+        "status": "not_run"
+      },
+      "4": {
+        "refers_to": [
+          "serve_eager_and_graph"
+        ],
+        "status": "not_run"
+      },
+      "5": {
+        "refers_to": [
+          "served_kl",
+          "decode_tok_s",
+          "prefill_tok_s",
+          "package_power"
+        ],
+        "status": "not_run"
+      },
+      "6": {
+        "refers_to": [],
+        "status": "ran",
+        "note": "this receipt"
+      }
+    }
+  },
+  "problems": [
+    "steps failed: ['extension_build']",
+    "device_qualified withheld; steps that did not run: ['extension_build', 'decoder_bit_exact', 'gemv_tolerance', 'route_census', 'served_kl']"
+  ],
+  "limitations": [
+    "package power unavailable (amd-smi exited 255: ERROR:root:Drivers not loaded (amdgpu, amd_hsmp, ionic, bnxt_en drivers not found in modules)); a work-per-joule ranking cannot be read off this receipt",
+    "no runtime image digest: a lane_eligibility cell needs one, so this receipt informs a cell but cannot complete it",
+    "this \u00a78.1 row admits no performance number; any tok/s or power field here is a code-path observation, never a claim about the hardware"
+  ]
+}
