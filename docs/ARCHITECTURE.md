@@ -3228,6 +3228,68 @@ Schema v8 (contract v19, #198) requires `evidence.artifact` (§3.1a).
 Pre-release readers must accept that scope explicitly; older closed readers
 refuse the new schema rather than silently discarding it.
 
+### 4.5c Per-operator presence, and the two reasons a quantized route refuses
+
+`native_ops.py` binds the two quantized routes to vLLM's own registered CUDA
+quantization operators. Until #455 it asked one question -- is
+`cutlass_scaled_mm` registered? -- and answered three with it. That reading is
+wrong on any build that compiles a subset of them, which is every ROCm build:
+the FP8 quantizer can be present while CUTLASS is absent, and the sentinel
+reported the FP8 quantizer missing. Tessera calls no operator
+`cutlass_scaled_mm` names -- both quantized routes multiply through
+`torch._scaled_mm` -- so the sentinel was reading an unrelated kernel's
+presence as evidence about the two it does call.
+
+There are now three predicates, one per operator: `has_fp8_quant()`,
+`has_fp4_quant()`, `has_cutlass_mm()`. `_load_native_ops` treats the presence
+of **any** of the three as "the operator library is registered", which is the
+only honest reading of what that guard is for -- the import exists to register
+the namespace, and a namespace with operators in it has been registered
+whatever subset a build compiled.
+
+Above the ABI probe sits a different refusal, and the order matters:
+
+- **The contract's refusal.** `lane_eligibility.platforms[<key>].executes`
+  says, per payload family, what this platform executes -- an activation
+  contract, or `null` for "this family has no native route here". A `null`
+  entry refuses **before** the ABI probe, because on a HIP box the FP8
+  operator may well be registered and an ABI message would then be about a
+  kernel that exists. The message names the backend, the platform key, the
+  family and the contract word `unbacked`.
+- **The ABI probe.** Unchanged: the pinned vLLM build must register the one
+  operator this route calls.
+
+The read is a tri-state, not a boolean, and the third state is the one that
+keeps this honest. `contract.platform_execution_contract(family, platform)`
+returns `backed` (the entry names a contract), `unbacked` (the entry is
+present and `null`) or `unstated` -- the platform is not declared, or its
+entry carries no `executes` key at all, which is every contract written
+before the platform axis exists. **`unstated` refuses nothing.** A null entry
+is an attestation: somebody looked and the route is not there. A silence is
+not, and refusing on one would turn it into a claim about a runtime nobody
+read. `contract_version` 22 publishes `platforms` entries with no `executes`
+key, so on the shipped document every family on every platform reads
+`unstated` and this module behaves exactly as it did before
+(`tests/test_serving_native_ops_presence.py::test_the_packaged_contract_refuses_nothing_today`).
+The platform axis itself arrives in contract v23 (#456).
+
+The BF16 route reaches none of this. It is W16A16: it quantizes nothing, so
+it calls no quantizer, and the plugin can therefore load and serve
+`TESSERA_BF16_K1` on a vLLM build that registers no quantization operators at
+all. That is a static property of the source, pinned by
+`test_the_bf16_route_never_reaches_native_ops`, which walks the imports the
+files actually write. It is deliberately a narrower walk than
+`tools/impacted_tests.py`'s graph: that one must never under-select, so it
+adds every reading an import could carry -- the bare package prefix of a
+relative import included -- and through that prefix every module in
+`tessera.serving` reaches every other one, because importing any of them runs
+the package initializer. A generous graph is the right instrument for
+choosing which tests to run and the wrong one for a negative claim. Being in
+the same process is not a call: `native_ops` is imported on a BF16-only serve
+through that initializer, and what makes it harmless is that its module scope
+imports only `ext` and reads `torch.ops` nowhere -- both pinned by
+`test_importing_native_ops_touches_no_native_operator`.
+
 ### 4.5a A served KL names which FORWARD it scored
 
 `kl_tool.py dump` has two regimes and they are two metrics. `--regime
