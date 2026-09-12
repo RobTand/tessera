@@ -149,8 +149,10 @@ def test_invalid_native_owner_identity_retains_raw_capture_and_refusal(
 
 
 def test_worker_bounds_execute_capture_but_preserves_stock_outputs(monkeypatch, worker_module):
-    seen = []
-    recorder = SimpleNamespace(snapshot=lambda label, **kwargs: seen.append(label))
+    seen, steps = [], []
+    recorder = SimpleNamespace(
+        snapshot=lambda label, **kwargs: seen.append(label),
+        declare_step_interval=lambda step_id, *, begin, end: steps.append((step_id, begin, end)))
     plan = {"max_execute_calls": 2}
     monkeypatch.setattr(worker_module, "claim", lambda: (recorder, plan))
     worker = worker_module.ResourceCaptureWorker()
@@ -163,6 +165,13 @@ def test_worker_bounds_execute_capture_but_preserves_stock_outputs(monkeypatch, 
         assert worker.sample_tokens(index) == index
     assert seen == ["device_initialized", "ready_for_workload", "execute:1:begin", "execute:1:end", "sample:1:end",
                     "execute:2:begin", "execute:2:end", "sample:2:end"]
+    # The step boundary costs no additional synchronize-and-snapshot: the two
+    # checkpoints it names are the ones this worker already took. Declaring
+    # them is what turns an observed extent into one the replay can read, and
+    # the interval spans the sampler because sampling is per-step work.
+    assert steps == [("step:1", "execute:1:begin", "sample:1:end"),
+                     ("step:2", "execute:2:begin", "sample:2:end")]
+    assert worker._resource_open_step is None
     assert worker._resource_active is False
     assert len(worker._resource_scheduler_steps) == 2
     with pytest.raises(RuntimeError, match="already armed"):
@@ -171,7 +180,8 @@ def test_worker_bounds_execute_capture_but_preserves_stock_outputs(monkeypatch, 
 
 def test_stock_warmup_cannot_consume_the_workload_capture_budget(monkeypatch, worker_module):
     seen = []
-    recorder = SimpleNamespace(snapshot=lambda label, **kwargs: seen.append(label))
+    recorder = SimpleNamespace(snapshot=lambda label, **kwargs: seen.append(label),
+                               declare_step_interval=lambda *a, **k: seen.append("step"))
     monkeypatch.setattr(worker_module, "claim", lambda: (recorder, {"max_execute_calls": 2}))
     worker = worker_module.ResourceCaptureWorker()
     assert worker.execute_model("stock warmup") == "stock warmup"
@@ -189,7 +199,10 @@ def test_first_native_prefix_closes_observer_and_preserves_remaining_stock_execu
         yield
         checkpoints.append((unit, "end"))
     recorder = SimpleNamespace(_errors=[], unit_scope=scope,
-                               snapshot=lambda label, **kwargs: checkpoints.append(label))
+                               snapshot=lambda label, **kwargs: checkpoints.append(label),
+                               declare_step_interval=lambda *a, **k: pytest.fail(
+                                   "a closed prefix declares no step: its execute:N:end "
+                                   "and sample:N:end were never snapshotted"))
     roster = [{"unit_id": "g:fixture", "module": "fixture"}]
     plan = {"max_execute_calls": 2, "max_invocations_per_unit": 2,
             "output_directory": str(tmp_path),
@@ -240,8 +253,10 @@ def test_prefix_qualification_refuses_ambiguous_or_full_capture_claims(monkeypat
 
 
 def test_failed_stock_execute_still_records_boundary_and_disarms(monkeypatch, worker_module):
-    seen = []
-    recorder = SimpleNamespace(snapshot=lambda label, **kwargs: seen.append(label))
+    seen, steps = [], []
+    recorder = SimpleNamespace(
+        snapshot=lambda label, **kwargs: seen.append(label),
+        declare_step_interval=lambda step_id, *, begin, end: steps.append(step_id))
     monkeypatch.setattr(worker_module, "claim", lambda: (recorder, {"max_execute_calls": 1}))
     def fail(*args):
         raise RuntimeError("stock fixture failed")
@@ -253,6 +268,14 @@ def test_failed_stock_execute_still_records_boundary_and_disarms(monkeypatch, wo
     with pytest.raises(RuntimeError, match="stock fixture"):
         worker.execute_model(step)
     assert seen == ["ready_for_workload", "execute:1:begin", "execute:1:end"]
+    # The sampler never ran, so this step is never declared. There is no
+    # fallback to execute:1:end: a step ending there would leave the sampler's
+    # allocations outside every step, and this step had no sampler at all.
+    # Leaving it undeclared drops declared below executed and holds the whole
+    # coverage claim open, which is the direction that refuses rather than
+    # publishes.
+    assert steps == []
+    assert worker._resource_open_step == (1, "execute:1:begin")
     assert worker._resource_active is False
 
 

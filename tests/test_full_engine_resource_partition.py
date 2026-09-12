@@ -69,12 +69,12 @@ def test_an_open_domain_names_why_and_carries_no_evidence(ledger):
 
 
 def test_a_shared_or_unknown_owner_is_unclassified_and_never_bucketed(ledger):
-    _, unclassified = classify_allocations(ledger)
+    _, unclassified, _ = classify_allocations(ledger)
     for row in unclassified:
         assert row["reason"]
         assert not (set(row["observed_categories"]) & set(OWNER_CLASSES)) or \
             len(row["observed_categories"]) != 1
-    classified, _ = classify_allocations(ledger)
+    classified, _, _ = classify_allocations(ledger)
     assert all(row["owner_class"] in OWNER_CLASSES for row in classified)
 
 
@@ -182,14 +182,17 @@ def test_worker_startup_stays_open_on_a_capture_from_no_engine_worker(ledger):
 def test_an_allocation_freed_outside_every_unit_interval_is_unclassified(ledger):
     # On a live engine attention, norms, routing, sampling and every startup
     # transient land here. Charging one needs a declared step boundary saying
-    # how often it recurs, and the capture emits unit intervals only.
+    # how often it recurs, and THIS capture declares none -- it is the banked
+    # fixture, which predates step intervals entirely.
+    assert ledger["step_intervals"] is None
+    assert ledger["step_coverage"]["state"] == "unobserved"
     row = dict(ledger["torch_allocations"][0])
     row.update(allocation_id="freed-outside", lifetime_scope="outside_units",
                free_completed_index=row["allocate_index"] + 1,
                observed_categories=["fixed"], scope_stack=[])
     ledger["torch_allocations"] = [row]
-    classified, unclassified = classify_allocations(ledger)
-    assert classified == []
+    classified, unclassified, non_step = classify_allocations(ledger)
+    assert classified == [] and non_step == []
     assert len(unclassified) == 1
     assert "declared step boundary" in unclassified[0]["reason"]
 
@@ -206,6 +209,7 @@ def test_one_unclassified_allocation_nulls_every_term():
     good = _raw("a", 6, 2, 9, ["candidate"], "inside_unit", ["u"])
     baseline = derive_partition(_synthetic_ledger(6, [good]))
     assert baseline["terms"]["candidate_scratch"] == {"u": 6}
+    assert baseline["scope"]["step_coverage"] is None
 
     stray = _raw("b", 6, 3, 8, ["candidate"], "outside_units", [])
     partition = derive_partition(_synthetic_ledger(12, [good, stray]))
@@ -324,17 +328,32 @@ def test_an_uncharged_allocation_nulls_every_term_because_undercounting_ooms():
     assert compose_scalar_budget(partition) is None
 
 
-def _synthetic_ledger(peak, rows):
+def _synthetic_ledger(peak, rows, steps=None, executed=None):
     """A minimal raw ledger, for the arithmetic the fixture cannot reach.
 
-    The banked fixture carries an allocation freed outside every unit interval,
-    which is unclassified by design, and an unclassified row nulls every term.
-    So the fixture can never exercise the row-to-term selection at all. These
-    rows can.
+    The banked fixture's only intra-unit allocation carries no owner, which is
+    unclassified by design, and an unclassified row nulls every term. So the
+    fixture can never exercise the row-to-term selection at all. These rows can.
+
+    ``steps`` are ``(begin_index, end_index)`` pairs; ``executed`` defaults to
+    the number declared, which is the complete-coverage case. A larger
+    ``executed`` is the partial-coverage case, where some engine step ran with
+    no interval declared over it.
     """
-    return {"schema": "tessera.full_engine_raw_resource_ledger.v1", "issues": [],
-            "unattributed_external_records": [], "external_native_peak_bytes": 0,
-            "torch_observed_live_peak_bytes": peak, "torch_allocations": rows}
+    ledger = {"schema": "tessera.full_engine_raw_resource_ledger.v1", "issues": [],
+              "unattributed_external_records": [], "external_native_peak_bytes": 0,
+              "torch_observed_live_peak_bytes": peak, "torch_allocations": rows,
+              "step_intervals": None, "step_coverage": None}
+    if steps is not None:
+        declared = len(steps)
+        executed = declared if executed is None else executed
+        ledger["step_intervals"] = [
+            {"step_id": f"step:{index}", "begin_index": begin, "end_index": end}
+            for index, (begin, end) in enumerate(steps, start=1)]
+        ledger["step_coverage"] = {
+            "state": "complete" if executed == declared and declared >= 1 else "partial",
+            "declared": declared, "executed": executed}
+    return ledger
 
 
 def _raw(allocation_id, size, start, end, categories, scope, stack):
@@ -443,3 +462,136 @@ def test_an_execution_coordinate_outside_the_scope_refuses_instead_of_being_proj
         outside = dict(SUPPORTED_EXECUTION, **{field: value})
         with pytest.raises(ValueError, match="outside this schema's scope"):
             assemble_full_engine_resource_report(led, **_members(execution=outside))
+
+
+# --- the declared step boundary ---------------------------------------------
+#
+# Without one, an allocation outside every unit interval has no lifetime class:
+# charging it as scratch assumes once per step and calling it startup assumes
+# never again. The capture already snapshots execute:N:begin and sample:N:end;
+# declaring that pair as an interval is what turns the assumption into a read.
+
+
+def test_an_outside_unit_transient_inside_a_declared_step_is_step_scratch():
+    # The row the banked fixture cannot classify at all. Contained in one
+    # declared step, it is that step's scratch -- and the term carries a swept
+    # value rather than going null.
+    stray = _raw("attn-workspace", 6, 3, 8, ["fixed"], "outside_units", [])
+    partition = derive_partition(_synthetic_ledger(6, [stray], steps=[(2, 9)]))
+    assert partition["unclassified_allocations"] == []
+    assert partition["non_step_allocations"] == []
+    assert partition["scope"]["step_coverage"] == "complete"
+    assert partition["terms"]["fixed_scratch"] == 6
+    assert partition["membership"][0]["lifetime_class"] == "scratch"
+
+
+def test_a_transient_live_across_a_step_boundary_is_carried_not_scratch():
+    # Allocated in one step and freed in the next. It is live while the second
+    # step runs, so it cannot be that step's own invocation-local scratch;
+    # fixed_activation and fixed_scratch are separate additive terms, so
+    # charging it as carried neither double-counts it nor drops it.
+    carried = _raw("carried", 6, 3, 12, ["fixed"], "outside_units", [])
+    partition = derive_partition(
+        _synthetic_ledger(6, [carried], steps=[(2, 9), (10, 15)]))
+    assert partition["non_step_allocations"] == []
+    assert partition["membership"][0]["lifetime_class"] == "activation"
+    assert partition["terms"]["fixed_scratch"] == 0
+    # fixed_activation carries no number on any ledger, because it depends on
+    # worker_startup and nothing closes that at v1. The classification is what
+    # this test can show; the price is what v1 still cannot express.
+    assert partition["terms"]["fixed_activation"] is None
+
+
+def test_a_transient_allocated_before_a_step_and_freed_inside_it_is_charged():
+    # Liveness, not the allocation index alone. This row starts before the step
+    # opens, so an index test would place it outside every step and drop bytes
+    # that are live while the step runs.
+    early = _raw("early", 6, 0, 5, ["fixed"], "outside_units", [])
+    partition = derive_partition(_synthetic_ledger(6, [early], steps=[(2, 9)]))
+    assert partition["non_step_allocations"] == []
+    assert partition["membership"][0]["lifetime_class"] == "activation"
+
+
+def test_a_transient_live_during_no_declared_step_is_priced_but_never_charged():
+    # A startup transient: allocated and freed before the first step opens. It
+    # is proven live during no step, and the seven terms compose one step, so no
+    # term charges it. It is named, counted and priced beside the budget -- the
+    # obligation is the maximum of the two, and an engine whose startup peak
+    # exceeds its per-step budget still has to fit.
+    startup = _raw("load-staging", 900, 0, 1, ["fixed"], "outside_units", [])
+    step_row = _raw("in-step", 6, 3, 8, ["fixed"], "outside_units", [])
+    partition = derive_partition(
+        _synthetic_ledger(906, [startup, step_row], steps=[(2, 9)]))
+    assert partition["unclassified_allocations"] == []
+    assert partition["uncharged_allocations"] == []
+    assert [row["allocation_id"] for row in partition["non_step_allocations"]] == ["load-staging"]
+    assert partition["scope"]["non_step_allocation_count"] == 1
+    assert partition["terms"]["fixed_scratch"] == 6
+    assert partition["non_step_transient_peak_bytes"] == 900
+    # 900 dwarfs the 6-byte per-step budget, which is the whole point: a gate
+    # handed only the budget would admit a body that cannot finish starting.
+    assert "floor" in partition["non_step_transient_peak_scope"]
+    # The budget itself is null for the unrelated four-domain reason, so there
+    # is nothing yet to take a maximum against.
+    assert compose_scalar_budget(partition) is None
+
+
+def test_partial_step_coverage_leaves_the_same_row_unclassified():
+    # The inference is licensed by coverage, not by the presence of a step. An
+    # allocation from an engine step nobody declared is live during a step that
+    # is not in the list, so "live during no declared step" would stop being a
+    # proof. Partial behaves exactly as unobserved does.
+    stray = _raw("attn-workspace", 6, 3, 8, ["fixed"], "outside_units", [])
+    partition = derive_partition(
+        _synthetic_ledger(6, [stray], steps=[(2, 9)], executed=4))
+    assert partition["scope"]["step_coverage"] == "partial"
+    assert partition["scope"]["unclassified_allocation_count"] == 1
+    assert "declared step boundary" in partition["unclassified_allocations"][0]["reason"]
+    assert all(term is None for term in partition["terms"].values())
+    assert partition["non_step_transient_peak_bytes"] is None
+
+
+def test_an_unclassified_row_nulls_the_off_step_price_but_not_its_count():
+    # A row with no owner could be an off-step transient too, so the peak over
+    # the ones that are identified is not the peak. The count stays readable
+    # regardless, so the hazard is visible before there is a price on it.
+    startup = _raw("load-staging", 900, 0, 1, ["fixed"], "outside_units", [])
+    blocker = _raw("no-owner", 6, 3, 8, [], "outside_units", [])
+    partition = derive_partition(
+        _synthetic_ledger(906, [startup, blocker], steps=[(2, 9)]))
+    assert partition["scope"]["unclassified_allocation_count"] == 1
+    assert partition["scope"]["non_step_allocation_count"] == 1
+    assert partition["non_step_transient_peak_bytes"] is None
+
+
+def test_an_off_step_price_needs_the_same_join_a_scratch_term_needs():
+    # It is not one of the seven terms and does not share their gate: it needs
+    # the ownership join and the external closure, and cache_capacity has no
+    # bearing on it. An unresolved issue refuses both and takes the price away.
+    startup = _raw("load-staging", 900, 0, 1, ["fixed"], "outside_units", [])
+    ledger = _synthetic_ledger(900, [startup], steps=[(2, 9)])
+    assert derive_partition(ledger)["non_step_transient_peak_bytes"] == 900
+    ledger["issues"] = ["dropped CUPTI buffer"]
+    assert derive_partition(ledger)["non_step_transient_peak_bytes"] is None
+
+
+def test_the_report_carries_the_steps_a_consumer_reproduces_the_filter_from(ledger):
+    # The off-step filter removes rows from every term. A consumer that cannot
+    # read the same step intervals cannot reproduce that removal, and a producer
+    # rule nobody else can check is the shape this schema exists to refuse.
+    report = assemble_full_engine_resource_report(ledger, **_members())
+    assert "step_intervals" in report["observations"]
+    assert "step_coverage" in report["observations"]
+    assert report["observations"]["step_coverage"]["state"] == "unobserved"
+    assert report["derived"]["placement_obligation"] == \
+        "max(scalar_budget_bytes, non_step_transient_peak_bytes)"
+    assert report["derived"]["non_step_transient_peak_bytes"] is None
+    assert "floor" in report["derived"]["non_step_transient_peak_scope"]
+
+
+def test_no_caller_can_hand_the_classifier_a_table_of_steps():
+    # The step table is read from the ledger for the same reason the domain
+    # table is: a classification that closes on a caller's argument is
+    # ``qualified: true`` spelled a third way.
+    import inspect
+    assert list(inspect.signature(classify_allocations).parameters) == ["ledger"]
