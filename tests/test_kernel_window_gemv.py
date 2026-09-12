@@ -35,7 +35,7 @@ L = 14
 
 
 def _require_toolchain() -> None:
-    """Skip only when this host holds no ``nvcc`` ANYWHERE.
+    """Skip only when this host holds no COMPILER for this backend anywhere.
 
     An absent toolchain is not a failing kernel, so it skips.  But the search
     has to be the same one the module itself performs, or the skip lies: the
@@ -44,12 +44,21 @@ def _require_toolchain() -> None:
     and so skipped 50 tests on a box where the kernel builds and all 51 pass.
     A toolkit that IS found and then fails to compile is a real failure and is
     left to raise.
-    """
-    from tessera.kernel_window_gemv import cuda_home_with_nvcc
 
-    if cuda_home_with_nvcc():
+    It asks ``backend.toolchain_report`` rather than for an ``nvcc`` by name,
+    for the same reason: on a ROCm torch the compiler is ``hipcc``, and a
+    guard that can only see one of them skips the whole kernel surface on a
+    box that builds and runs it -- a skip that reads exactly like a pass.
+    """
+    from tessera.serving.backend import toolchain_report
+
+    found = toolchain_report()
+    if found["compiler"]:
         return
-    pytest.skip("no nvcc under CUDA_HOME, PATH or any /usr/local/cuda-* root; "
+    compiler = "hipcc" if found["backend"] == "hip" else "nvcc"
+    root = "ROCM_HOME/ROCM_PATH, PATH or /opt/rocm" if found["backend"] == "hip" \
+        else "CUDA_HOME, PATH or any /usr/local/cuda-* root"
+    pytest.skip(f"no {compiler} under {root}; "
                 "the window GEMV extension cannot be built here")
 
 
@@ -564,6 +573,10 @@ def test_the_toolchain_repair_runs_even_when_an_nvcc_is_already_on_path(tmp_path
         monkeypatch.delenv(var)
     monkeypatch.setattr(cpp_extension, "CUDA_HOME", str(incomplete))
 
+    if getattr(torch.version, "hip", None):
+        pytest.skip("the nvcc/CUDA_HOME repair is the CUDA branch of "
+                    "backend.ensure_toolchain_on_path; this torch is a ROCm build, whose "
+                    "twin adopts ROCM_HOME instead")
     kg._ensure_toolchain_on_path()
     assert cpp_extension.CUDA_HOME == str(complete), (
         "an nvcc on PATH must not skip repairing torch's cached CUDA_HOME -- "

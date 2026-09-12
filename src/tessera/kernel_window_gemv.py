@@ -74,7 +74,6 @@ from __future__ import annotations
 import dataclasses
 import functools
 import os
-import sys
 
 import torch
 
@@ -145,8 +144,8 @@ def cuda_home_with_nvcc() -> "str | None":
 
 
 def _ensure_toolchain_on_path() -> None:
-    """``cpp_extension.load`` shells out to ninja and nvcc; a venv keeps ninja
-    in its bin and the CUDA toolkit may be under a versioned root -- put both
+    """``cpp_extension.load`` shells out to ninja and a compiler; a venv keeps
+    ninja in its bin and the toolkit may be under a versioned root -- put both
     on PATH.
 
     The toolkit root is resolved UNCONDITIONALLY, because the resolver is not
@@ -161,20 +160,37 @@ def _ensure_toolchain_on_path() -> None:
     environment still wins: the resolver adopts it into that same global --
     whether or not it holds a compiler -- and returns it, or refuses it
     (issue #298); it never falls back to the toolkit the operator displaced.
+
+    On a ROCm torch the same reasoning names ``ROCM_HOME``/``ROCM_PATH`` and
+    ``hipcc``.  The whole of it lives in
+    :func:`tessera.serving.backend.ensure_toolchain_on_path`, which this is
+    now the one-line spelling of, so the two loaders cannot drift.
     """
-    import shutil
-    extra = []
-    if shutil.which("ninja") is None:
-        try:
-            import ninja  # type: ignore
-            extra.append(ninja.BIN_DIR)
-        except Exception:
-            extra.append(os.path.join(sys.prefix, "bin"))
-    root = cuda_home_with_nvcc()   # always: repairs torch's cached CUDA_HOME
-    if root and shutil.which("nvcc") is None:
-        extra.append(os.path.join(root, "bin"))
-    if extra:
-        os.environ["PATH"] = os.pathsep.join(extra + [os.environ.get("PATH", "")])
+    from .serving.backend import ensure_toolchain_on_path
+
+    ensure_toolchain_on_path(torch)
+
+
+def _window_gemv_cflags(backend: str, token: str, pf: int, verbose: bool) -> list:
+    """The compile flags for one platform, in the order nvcc has always seen.
+
+    ``-lineinfo`` and ``-Xptxas`` are nvcc's alone -- hipcc rejects the first
+    and has no ptxas -- so they are the CUDA branch, and the CUDA list is
+    byte-for-byte what it was before this function existed
+    (``tests/test_serving_backend.py`` pins it).  HIP's verbose twin is
+    ``-Rpass-analysis=kernel-resource-usage``, which is where its register and
+    spill counts come from.
+    """
+    from .serving.backend import offload_flags
+
+    cuda = backend == "cuda"
+    return [
+        "-O3", *(["-lineinfo"] if cuda else []), "-std=c++17",
+        *(["-Xptxas", "-v"] if cuda and verbose else []),
+        *(["-Rpass-analysis=kernel-resource-usage"] if not cuda and verbose else []),
+        f"-DWINDOW_GEMV_PF={pf}",
+        *offload_flags(token),
+    ]
 
 
 @functools.lru_cache(maxsize=None)
@@ -182,6 +198,14 @@ def _ext():
     from torch.utils.cpp_extension import load
 
     from tessera.serving import ext as serving_ext
+    from tessera.serving.backend import (
+        PLATFORM_TOKEN_ENV,
+        PlatformMismatchError,
+        backend as detect_backend,
+        pin_build_arch,
+        platform_token,
+        probed_platform_token,
+    )
 
     _ensure_toolchain_on_path()
     # The one source, resolved from the contract's native-extension table: the
@@ -195,23 +219,76 @@ def _ext():
             f"kernel roster reads {WINDOW_GEMV_SOURCE}; one file, one path")
     root = os.environ.get("TORCH_EXTENSIONS_DIR") or os.path.expanduser("~/tmp/torch-ext-gemv")
     pf = int(os.environ.get("TESSERA_WINDOW_GEMV_PF", "1"))   # column chunks in flight per warp (1 or 2)
-    build = os.path.join(root, "tessera_window_gemv")
+    backend = detect_backend(torch)
+    # The platform the build TARGETS, which is the probed device unless
+    # TESSERA_PLATFORM_TOKEN names another -- and the build directory carries
+    # it, so a gfx1151 build and a gfx1201 build never share a ninja
+    # workspace, and neither shares one with sm_121.  (gfx1201 and sm_120
+    # report the same compute capability, so the capability was never a key
+    # that could tell them apart.)
+    token = platform_token(torch=torch)
+    build = os.path.join(root, f"tessera_window_gemv_{token}")
     if pf != 1:
         build = build + f"_pf{pf}"
     os.makedirs(build, exist_ok=True)
-    major, minor = torch.cuda.get_device_capability()
-    return load(
-        name="tessera_window_gemv",  # literal: the contract reader reads it statically
-        sources=[WINDOW_GEMV_SOURCE],  # the same file, by the check above; the roster test reads this line
-        build_directory=build,
-        extra_cuda_cflags=[
-            "-O3", "-lineinfo", "-std=c++17",
-            *(["-Xptxas", "-v"] if os.environ.get("TESSERA_WINDOW_GEMV_VERBOSE") else []),
-            f"-DWINDOW_GEMV_PF={pf}",
-            "-gencode", f"arch=compute_{major}{minor},code=sm_{major}{minor}",
-        ],
-        verbose=bool(os.environ.get("TESSERA_WINDOW_GEMV_VERBOSE")),
-    )
+    pin_build_arch(token, torch)   # torch writes its own --offload-arch; one token, not two
+    verbose = bool(os.environ.get("TESSERA_WINDOW_GEMV_VERBOSE"))
+    try:
+        module = load(
+            name="tessera_window_gemv",  # literal: the contract reader reads it statically
+            sources=[WINDOW_GEMV_SOURCE],  # the same file, by the check above; the roster test reads this line
+            build_directory=build,
+            extra_cuda_cflags=_window_gemv_cflags(backend, token, pf, verbose),
+            verbose=verbose,
+            # On HIP torch hipifies the source before compiling it and writes
+            # the .hip beside the .cu; asking it not to keep the intermediate
+            # removes that file from the checkout after the build.  (The
+            # .gitignore entry is the belt: a build killed mid-flight leaves
+            # one behind.)  Nothing is generated on the CUDA path, where the
+            # flag would be a no-op.
+            **({"keep_intermediates": False} if backend == "hip" else {}),
+        )
+    except Exception as exc:
+        probed = _probed_or_none(probed_platform_token)
+        if token == probed or not _built_library(build):
+            raise
+        raise PlatformMismatchError(
+            f"the window GEMV extension compiled for {token} ({PLATFORM_TOKEN_ENV}) into "
+            f"{build}, and this process's device is {probed}: the library cannot be loaded "
+            f"here ({type(exc).__name__}: {exc}). A build for an absent device is a compile "
+            "gate, never a serving path.") from exc
+    probed = _probed_or_none(probed_platform_token)
+    if token != probed:
+        raise PlatformMismatchError(
+            f"the window GEMV extension was built for {token} ({PLATFORM_TOKEN_ENV}) and this "
+            f"process's device is {probed}; the library under {build} is a compile-gate "
+            "artifact and is refused as a serving path.")
+    return module
+
+
+def _probed_or_none(probe):
+    """The device's own token, or ``None`` when no device answers.
+
+    A refusal must be able to name what it refused even on a box whose only
+    fact is that it has no GPU.
+    """
+    try:
+        return probe(torch=torch)
+    except Exception:  # noqa: BLE001 -- the refusal is the message, not this probe
+        return None
+
+
+def _built_library(build: str) -> "str | None":
+    """The shared object ninja actually produced in ``build``, if any.
+
+    torch renames a rebuilt module ``<name>_v<n>``, so the check is a glob and
+    not a fixed path.  It is what separates "compiled, and refused for this
+    device" from "did not compile", which must never read the same.
+    """
+    import glob
+
+    found = sorted(glob.glob(os.path.join(build, "tessera_window_gemv*.so")))
+    return found[0] if found else None
 
 
 # --------------------------------------------------------------------------

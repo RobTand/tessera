@@ -39,3 +39,10 @@ pbrun_result.*.txt
 # version of a campaign write-up goes to docs/reports/.
 report.md
 
+
+# Torch hipifies a .cu in place on ROCm: `cpp_extension.load` writes the
+# hipified twin beside the source it was handed, so a HIP build leaves a
+# `window_gemv.hip` in the checkout.  The loaders ask torch not to keep it
+# (`keep_intermediates=False`); this is the belt for a build that died before
+# the cleanup ran.  It is a build intermediate, never a tree artifact.
+src/tessera/serving/csrc/*.hip
