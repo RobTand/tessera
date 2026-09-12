@@ -777,6 +777,26 @@ def analyze_engine_resource_ledger(raw):
             if type(coverage) is dict and coverage.get("declared") != len(steps):
                 raise ValueError("declared step count disagrees with the step intervals carried")
             complete = (type(executed) is int and executed == len(steps) and len(steps) >= 1)
+            # Three distinct ways to fall short of complete coverage, and the
+            # consumer reads this sentence. Naming them apart is not cosmetic:
+            # "declared for only some of the steps this capture executed" is
+            # false when the executed count is absent, and a capture that
+            # forgot to report it is a different defect from one that declared
+            # a subset. All three block the classification identically.
+            if complete:
+                reason = None
+            elif not steps:
+                reason = ("this capture carried a step interval list and declared "
+                          "no step in it")
+            elif type(executed) is not int:
+                reason = ("the capture did not say how many engine steps it executed, "
+                          "so a declared step cannot be shown to cover all of them and "
+                          "an allocation live during no declared step may still be live "
+                          "during an undeclared one")
+            else:
+                reason = ("a step interval was declared for only some of the engine steps "
+                          "this capture executed, so an allocation live during no declared "
+                          "step may still be live during an undeclared one")
             result["step_intervals"] = [{"step_id": step_id, "begin_index": begin,
                                          "end_index": end} for begin, end, step_id in steps]
             result["step_coverage"] = {
@@ -784,10 +804,7 @@ def analyze_engine_resource_ledger(raw):
                 "declared": len(steps), "executed": executed,
                 "scope": "engine execute_model invocations made while the observation "
                          "workload was armed",
-                "reason": None if complete else
-                          "a step interval was declared for only some of the engine steps "
-                          "this capture executed, so an allocation live during no declared "
-                          "step may still be live during an undeclared one"}
+                "reason": reason}
         domains = analyze_memory_api_arguments(raw["cupti_trace"])
         live, generations, segments = {}, {}, {}
         rows, segment_operations, checkpoint_live = [], [], set()

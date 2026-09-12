@@ -439,6 +439,31 @@ def test_a_step_declared_for_only_some_executed_steps_is_partial():
     assert "undeclared one" in ledger["step_coverage"]["reason"]
 
 
+def test_a_capture_that_did_not_count_its_executed_steps_says_that():
+    # qualify_full_engine_observers calls finish() without executed_steps, so
+    # this is a real caller, not a hypothetical. It blocks exactly as a subset
+    # declaration does, but "declared for only some of the steps this capture
+    # executed" would be a claim about a number nobody reported.
+    from experiments.full_engine_resources import analyze_engine_resource_ledger
+    raw = _stepped_capture([("step:1", "startup", "capture_end")])
+    raw["step_coverage"]["executed"] = None
+    ledger = analyze_engine_resource_ledger(raw)
+    assert ledger["step_coverage"]["state"] == "partial"
+    assert ledger["step_coverage"]["executed"] is None
+    assert "did not say how many" in ledger["step_coverage"]["reason"]
+    assert "only some" not in ledger["step_coverage"]["reason"]
+
+
+def test_a_carried_step_list_with_no_step_in_it_says_that():
+    from experiments.full_engine_resources import analyze_engine_resource_ledger
+    raw = _stepped_capture([])
+    raw["step_coverage"]["executed"] = None
+    ledger = analyze_engine_resource_ledger(raw)
+    assert ledger["step_intervals"] == []
+    assert ledger["step_coverage"]["state"] == "partial"
+    assert "no step in it" in ledger["step_coverage"]["reason"]
+
+
 def test_a_unit_that_crosses_a_step_boundary_refuses():
     # Ordering inside the engine is vLLM's, not ours to assert. This refusal is
     # the guard: a unit half in one step is a contradiction between two
