@@ -1243,6 +1243,21 @@ is disclosed conservatism, not permission to charge one extent twice. The frozen
 producer schema is `docs/design/full_engine_resource_report.md`; the consumer
 that must independently recompute it is PrismaQuant's, per its
 `docs/design/runtime_fixed_resource_admission.md`.
+**The four unclosable domains are v1's largest gap, and the envelope says so.**
+`worker_startup`, `provenance_admission`, `cache_capacity` and `timing_partition`
+carry a state but v1 emits no observation a consumer can read them out of, so a
+consumer that independently recomputes holds all four open whatever the report
+claims — and `fixed_resident`, `candidate_resident`, `fixed_activation`,
+`candidate_activation` and `fixed_KV` can never become numbers. The scalar
+composition cannot complete at v1 even on a perfect capture; only
+`fixed_scratch` and `candidate_scratch` are reachable. `observations` therefore
+names each owed member and sets it to null — `worker_startup_records`,
+`runtime_provenance_relation`, `kv_observations`, `timing_captures`,
+`owner_views`, `observer_qualification` — named and null rather than absent, so
+a consumer can tell "not observed" from "not carried". Every id in a domain's
+`evidence` must name a member `observations` carries, and assembly refuses
+otherwise; `derived` does not restate `partition`'s `domains`.
+
 `assemble_full_engine_resource_report` builds that seven-member envelope,
 deriving `identity`, `observations`, `partition` and `derived` from the ledger
 and refusing `reference`, `workload` and `execution` by name rather than

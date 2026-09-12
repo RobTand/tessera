@@ -188,7 +188,7 @@ def qualify_domains(ledger):
             refused=True)
     else:
         domains["history_join"] = _domain(
-            True, ["unattributed_external_records", "history_join"], None)
+            True, ["unattributed_external_records", "checkpoints"], None)
 
     # External/context/host closure: the one quantity that closes this domain is
     # a disjoint observed charge, never a residual.
@@ -370,15 +370,39 @@ def assemble_full_engine_resource_report(ledger, *, reference, workload,
             "torch_observed_live_peak_bytes": ledger.get("torch_observed_live_peak_bytes"),
             "torch_observed_live_peak_scope": ledger.get("torch_observed_live_peak_scope"),
             "issues": ledger["issues"],
+            # Named and null, never absent. A consumer must be able to tell
+            # "this capture did not observe it" from "the producer forgot to
+            # carry it", and a missing key says neither. Each member below is
+            # what its domain would close on, and #399 owes every one of them:
+            # without them the four unclosable domains are unclosable *from the
+            # artifact* too, so the scalar composition cannot complete even on a
+            # perfect capture. That is the gap, stated where a reader sees it.
+            "worker_startup_records": ledger.get("worker_startup_records"),
+            "runtime_provenance_relation": ledger.get("runtime_provenance_relation"),
+            "kv_observations": ledger.get("kv_observations"),
+            "timing_captures": ledger.get("timing_captures"),
+            "owner_views": ledger.get("owner_views"),
+            "observer_qualification": ledger.get("observer_qualification"),
             "artifacts": list(artifacts),
         },
         "partition": partition,
+        # ``derived`` carries the recomputed numbers and their scope. It does
+        # not restate ``partition["domains"]``: two copies of one claim invite
+        # drift, and the consumer would have to compare them to find out which
+        # is authoritative.
         "derived": {
             "terms": partition["terms"],
             "scalar_budget_bytes": compose_scalar_budget(partition),
             "scope": partition["scope"],
-            "domains": partition["domains"],
         },
     }
     assert set(report) == set(REPORT_MEMBERS) | {"schema"}
+    # Evidence that points at nothing cannot be checked. Every id a closed
+    # domain cites has to name an observation this envelope carries.
+    for name, domain in partition["domains"].items():
+        for observation in domain["evidence"]:
+            if observation not in report["observations"]:
+                raise ValueError(
+                    f"domain {name} cites an observation the report does not "
+                    f"carry: {observation}")
     return report

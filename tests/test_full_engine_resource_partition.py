@@ -209,3 +209,36 @@ def test_the_report_keeps_the_seven_members_and_the_synthetic_marker(ledger):
     # Nothing is admitted today: derived is a claim, and it claims nothing.
     assert report["derived"]["scalar_budget_bytes"] is None
     assert all(term is None for term in report["derived"]["terms"].values())
+
+
+def test_every_evidence_id_names_an_observation_the_report_carries(ledger):
+    # Evidence that points at nothing cannot be checked by the consumer.
+    report = assemble_full_engine_resource_report(
+        ledger, reference={"census": "synthetic"},
+        workload={"tokens": "synthetic"}, execution={"graph_mode": "eager"})
+    for name, domain in report["partition"]["domains"].items():
+        for observation in domain["evidence"]:
+            assert observation in report["observations"], (name, observation)
+
+
+def test_the_report_names_every_observation_class_a_domain_closes_on(ledger):
+    # Named and null, never absent: a consumer must be able to tell "this
+    # capture did not observe it" from "the producer forgot to carry it".
+    # Each is what its domain would close on, and #399 owes every one.
+    report = assemble_full_engine_resource_report(
+        ledger, reference={"census": "synthetic"},
+        workload={"tokens": "synthetic"}, execution={"graph_mode": "eager"})
+    for owed in ("worker_startup_records", "runtime_provenance_relation",
+                 "kv_observations", "timing_captures", "owner_views",
+                 "observer_qualification"):
+        assert owed in report["observations"], owed
+        assert report["observations"][owed] is None, owed
+
+
+def test_derived_does_not_restate_the_partition_domains(ledger):
+    # Two copies of one claim invite drift; the partition owns the domains.
+    report = assemble_full_engine_resource_report(
+        ledger, reference={"census": "synthetic"},
+        workload={"tokens": "synthetic"}, execution={"graph_mode": "eager"})
+    assert "domains" not in report["derived"]
+    assert set(report["partition"]["domains"]) == set(DOMAIN_NAMES)

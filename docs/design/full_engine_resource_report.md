@@ -200,6 +200,37 @@ its face — `"synthetic CPU-only parser fixture, not a GPU measurement"` — an
 report built from it carries that scope. A positive *real* report additionally
 needs the qualified original measurements on the named hardware.
 
+### The four unclosable domains, and what v1 does not observe
+
+This is the largest known gap in v1 and it is stated here rather than left for a
+consumer to discover. `worker_startup`, `provenance_admission`, `cache_capacity`
+and `timing_partition` carry a state, but v1 emits **no observation a consumer
+can read them out of** — no worker-startup record, no runtime provenance
+relation, no KV or pool observation, no timing capture, no stream or launch
+record. A consumer that independently recomputes therefore holds all four open
+whatever the report claims, and `fixed_resident`, `candidate_resident`,
+`fixed_activation`, `candidate_activation` and `fixed_KV` can never become
+numbers. **The scalar composition cannot complete at v1 even on a perfect
+capture**; only `fixed_scratch` and `candidate_scratch` are reachable.
+
+Three of the consumer design's negative tests are unreachable for the same
+reason — altered cache capacity, missing timing tail, overlapping streams — and
+`derived.terms.fixed_kv` is a declared term with nothing to recompute it from.
+
+So `observations` names each owed member explicitly and sets it to null:
+`worker_startup_records`, `runtime_provenance_relation`, `kv_observations`,
+`timing_captures`, `owner_views`, `observer_qualification`. **Named and null,
+never absent** — a consumer must be able to tell "this capture did not observe
+it" from "the producer forgot to carry it", and a missing key says neither.
+Closing any of those four domains means first emitting its member here.
+
+Two smaller rules follow from the same principle. Every id in a domain's
+`evidence` must name a member `observations` actually carries, and assembly
+refuses otherwise: evidence that points at nothing cannot be checked. And
+`derived` does **not** restate `partition`'s `domains` — two copies of one claim
+invite drift, and a consumer would have to compare them to learn which is
+authoritative.
+
 ## Assembling the envelope
 
 `assemble_full_engine_resource_report(ledger, *, reference, workload,
