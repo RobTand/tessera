@@ -221,6 +221,14 @@ def _term_available(term, domains):
 
 
 def derive_partition(ledger, domains=None):
+    # ``domains`` exists so a test can declare all-closed and exercise the
+    # arithmetic, because four domains can never close from a real ledger and
+    # the composition would otherwise be untestable. It is a hole if it is
+    # silent: a caller passing every domain closed gets every term emitted with
+    # nothing checked, which is the `qualified: true` failure this module
+    # exists to prevent. So the partition records which it was, and the report
+    # assembler refuses to build an envelope from supplied domains -- the fact
+    # is machine-readable rather than a convention nobody may break.
     """Build the partition and the composition terms from one replayed ledger.
 
     Every number is derived from the ledger's own classified event lifetimes.
@@ -231,6 +239,7 @@ def derive_partition(ledger, domains=None):
     """
     if ledger["schema"] != "tessera.full_engine_raw_resource_ledger.v1":
         raise ValueError("unsupported raw ledger schema")
+    domains_source = "derived" if domains is None else "supplied"
     if domains is None:
         domains = qualify_domains(ledger)
     classified, unclassified = classify_allocations(ledger)
@@ -274,6 +283,7 @@ def derive_partition(ledger, domains=None):
         "identity": ledger.get("identity"),
         "capture_sha256": ledger.get("capture_sha256"),
         "domains": domains,
+        "domains_source": domains_source,
         "membership": classified,
         "unclassified_allocations": unclassified,
         "units": units,
@@ -348,6 +358,8 @@ def assemble_full_engine_resource_report(ledger, *, reference, workload,
             raise ValueError(f"report member is missing and is never defaulted: {name}")
 
     partition = derive_partition(ledger)
+    if partition["domains_source"] != "derived":
+        raise ValueError("a report is never assembled from supplied domains")
     report = {
         "schema": REPORT_SCHEMA,
         "identity": {

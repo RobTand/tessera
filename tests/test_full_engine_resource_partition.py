@@ -242,3 +242,25 @@ def test_derived_does_not_restate_the_partition_domains(ledger):
         workload={"tokens": "synthetic"}, execution={"graph_mode": "eager"})
     assert "domains" not in report["derived"]
     assert set(report["partition"]["domains"]) == set(DOMAIN_NAMES)
+
+
+def test_a_partition_records_whether_its_domains_were_derived_or_supplied(ledger):
+    # The test seam that lets the arithmetic be exercised is a hole if it is
+    # silent. It is not silent.
+    assert derive_partition(ledger)["domains_source"] == "derived"
+    all_closed = {name: {"state": "closed", "evidence": ["declared by the test"],
+                         "reason": None} for name in DOMAIN_NAMES}
+    assert derive_partition(ledger, domains=all_closed)["domains_source"] == "supplied"
+
+
+def test_a_report_is_never_assembled_from_supplied_domains(ledger, monkeypatch):
+    # Defense in depth: the public assembler always derives, so this guard is
+    # unreachable through it. It exists so that it stays unreachable.
+    import experiments.full_engine_resource_partition as module
+    all_closed = {name: {"state": "closed", "evidence": ["declared by the test"],
+                         "reason": None} for name in DOMAIN_NAMES}
+    supplied = module.derive_partition(ledger, domains=all_closed)
+    monkeypatch.setattr(module, "derive_partition", lambda led: supplied)
+    with pytest.raises(ValueError, match="never assembled from supplied domains"):
+        module.assemble_full_engine_resource_report(
+            ledger, reference={"a": 1}, workload={"b": 2}, execution={"c": 3})

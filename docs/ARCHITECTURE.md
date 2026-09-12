@@ -1258,6 +1258,11 @@ a consumer can tell "not observed" from "not carried". Every id in a domain's
 `evidence` must name a member `observations` carries, and assembly refuses
 otherwise; `derived` does not restate `partition`'s `domains`.
 
+`derive_partition` accepts a caller-supplied `domains` mapping so the
+arithmetic is testable at all, and records which it used in
+`partition["domains_source"]`; the report assembler refuses a supplied-domains
+partition, so the seam is machine-readable rather than a convention.
+
 `assemble_full_engine_resource_report` builds that seven-member envelope,
 deriving `identity`, `observations`, `partition` and `derived` from the ledger
 and refusing `reference`, `workload` and `execution` by name rather than

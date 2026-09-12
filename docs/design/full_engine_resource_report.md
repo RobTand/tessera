@@ -224,6 +224,15 @@ never absent** — a consumer must be able to tell "this capture did not observe
 it" from "the producer forgot to carry it", and a missing key says neither.
 Closing any of those four domains means first emitting its member here.
 
+**The test seam is recorded, not trusted.** `derive_partition` accepts a
+caller-supplied `domains` mapping, because four domains can never close from a
+real ledger and the composition would otherwise be untestable. Silently, that is
+a hole: a caller passing every domain closed gets every term emitted with
+nothing checked, which is the `qualified: true` failure in one line. So the
+partition carries `domains_source`, either `derived` or `supplied`, and the
+report assembler refuses to build an envelope from a supplied-domains partition.
+The fact is machine-readable rather than a convention nobody may break.
+
 Two smaller rules follow from the same principle. Every id in a domain's
 `evidence` must name a member `observations` actually carries, and assembly
 refuses otherwise: evidence that points at nothing cannot be checked. And
