@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-11T01:10:23Z",
+ "generated": "2026-09-12T23:09:26Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -1288,7 +1288,7 @@
     "title": "Selected-source anchor rows re-hash the whole source checkpoint per row: about 84.8 TB of NFS reads across the 132 GLM rows"
    },
    "389": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Selected-anchor encoder memo holds --anchor-batch-size entries while pending order is rung-major, so every (unit, rung) pair refactorizes; no CLI test covers an s: stack group"
    },
    "39": {
@@ -1699,9 +1699,85 @@
     "state": "CLOSED",
     "title": "[P2] Use PrismaBuild\u2019s bounded progress-watchdog contract for Tessera pricing rows"
    },
+   "481": {
+    "state": "CLOSED",
+    "title": "Load the verified capture set on N readers, consume in name order (#283)"
+   },
+   "482": {
+    "state": "CLOSED",
+    "title": "Study: routed-stack anchor schedules for the GLM Tessera census (regret-gated sampling)"
+   },
+   "483": {
+    "state": "CLOSED",
+    "title": "#283: pipeline the anchor-batch boundary \u2014 identity on the writer, sized hold, bind memo; #389 unit-major batches"
+   },
+   "484": {
+    "state": "CLOSED",
+    "title": "GLM census warm manifests and the rigs that priced the tiers"
+   },
+   "485": {
+    "state": "CLOSED",
+    "title": "Tessera campaign rows should emit PrismaBuild progress commits so the resume can use cyclic progress phases instead of an 86400 s ceiling"
+   },
+   "486": {
+    "state": "CLOSED",
+    "title": "Re-seal completed census rows to an amended source pair under proof (#283)"
+   },
+   "487": {
+    "state": "CLOSED",
+    "title": "merge_checkpoint refuses dense + expert rows in one merge: family_restriction.structure_by_unit is per-unit"
+   },
+   "488": {
+    "state": "CLOSED",
+    "title": "Publication A/B harness: repeat chosen arms, plan-selectable profiler window, GB10 NVML meter step-response probe"
+   },
+   "489": {
+    "state": "CLOSED",
+    "title": "Campaign resume verifies the journal on one thread over NFS: 6\u201313 min GPU-idle head per journaled row"
+   },
    "49": {
     "state": "CLOSED",
     "title": "Docs-truth batch: post-0.6.0 corpus review fixes"
+   },
+   "490": {
+    "state": "CLOSED",
+    "title": "campaign: streaming residency knobs leave the checkpoint identity; reseal tool drops them"
+   },
+   "491": {
+    "state": "CLOSED",
+    "title": "experiments: publication A/B prepare can price and run its arms at a chosen streamed headroom"
+   },
+   "492": {
+    "state": "CLOSED",
+    "title": "Build the campaign row head on threads: identity hold, capture seal, H commitments, resumed wire"
+   },
+   "493": {
+    "state": "CLOSED",
+    "title": "Merge the GLM head/boundary performance line (#481\u2013#483) into main"
+   },
+   "494": {
+    "state": "CLOSED",
+    "title": "main and the GLM performance line have diverged: neither branch contains the other"
+   },
+   "495": {
+    "state": "OPEN",
+    "title": "Land the probe-reduction schedule: sample routed stacks, predict 832/1088 by transfer law, encode only the allocated winners"
+   },
+   "496": {
+    "state": "CLOSED",
+    "title": "Reconcile family_restriction in the campaign checkpoint merge (#487)"
+   },
+   "497": {
+    "state": "CLOSED",
+    "title": "Compare the reseal proof against the identity migrate will write"
+   },
+   "498": {
+    "state": "CLOSED",
+    "title": "Reseal proof arm compares against an identity the migration will not write: drop_settings are never dropped"
+   },
+   "499": {
+    "state": "CLOSED",
+    "title": "Routed-stack probe reduction: a size source, a transfer law, and provenance that does not lie (#495 parts 1-3)"
    },
    "5": {
     "state": "CLOSED",
@@ -1711,13 +1787,121 @@
     "state": "CLOSED",
     "title": "DSV4-Flash 92 GB production pipeline: port, calibration machinery, encoder 2.18x"
    },
+   "500": {
+    "state": "CLOSED",
+    "title": "Stack transfer law, sample-size control and the interpolated cost row (#495 parts 1-3)"
+   },
+   "501": {
+    "state": "CLOSED",
+    "title": "Record the /mnt/shared transport fix and the measured prefetch reader count"
+   },
+   "502": {
+    "state": "CLOSED",
+    "title": "Record what actually bound /mnt/shared, and the reader count it changes"
+   },
+   "503": {
+    "state": "OPEN",
+    "title": "Add opt-in sparse-rate research and prospective family-transfer audits"
+   },
+   "504": {
+    "state": "OPEN",
+    "title": "Evaluate and implement opt-in endpoint-conditioned sparse rate curves"
+   },
+   "505": {
+    "state": "CLOSED",
+    "title": "Specify full-domain Tessera quality\u2013prefill experiment and Claude handoff"
+   },
+   "506": {
+    "state": "CLOSED",
+    "title": "Specify full-domain Tessera quality\u2013prefill experiment"
+   },
+   "507": {
+    "state": "CLOSED",
+    "title": "Tessera quality-prefill milestone 1: the legal domain, the schemas, and what blocks the rest"
+   },
+   "508": {
+    "state": "CLOSED",
+    "title": "Tessera quality-prefill milestone 1: legal domain, frozen schemas, deterministic selection, PB adapter"
+   },
+   "509": {
+    "state": "CLOSED",
+    "title": "Recompute the full-engine resource partition instead of trusting it (#420)"
+   },
    "51": {
     "state": "CLOSED",
     "title": "Release PrismaQuant 0.7.0"
    },
+   "510": {
+    "state": "CLOSED",
+    "title": "Quality-prefill milestones 2, 5.2 and 5.4: the knee search, the screen, the coverage gate"
+   },
+   "511": {
+    "state": "CLOSED",
+    "title": "One RateDomain, and the reason the two strict readers stay apart"
+   },
+   "512": {
+    "state": "CLOSED",
+    "title": "Recompute the full-engine resource partition from the producer's raw observations"
+   },
+   "513": {
+    "state": "CLOSED",
+    "title": "Quality-prefill milestones: the knee search, the \u00a75.4 screen and the \u00a75.2 coverage gate"
+   },
+   "514": {
+    "state": "CLOSED",
+    "title": "Converge the duplicated RateDomain, and record why the two strict readers stay apart"
+   },
+   "515": {
+    "state": "CLOSED",
+    "title": "Synthesize the missing PWC render for adopted rungs, and record that it was synthesized"
+   },
+   "516": {
+    "state": "CLOSED",
+    "title": "Synthesize an adopted rung's missing render, and record that it was synthesized"
+   },
+   "517": {
+    "state": "CLOSED",
+    "title": "Recompute the full-engine partition before admitting a fixed charge (#420)"
+   },
+   "518": {
+    "state": "OPEN",
+    "title": "Generate the PrismaBuild data manifest for every campaign row at submit time; refuse a row without one"
+   },
+   "519": {
+    "state": "OPEN",
+    "title": "Campaign container launcher: python -m with cwd=sealed checkout shadows the pinned PYTHONPATH tree"
+   },
    "52": {
     "state": "CLOSED",
     "title": "DSV4 export bridge: naming, packed stacking, K0.2 attestation (items A-F)"
+   },
+   "520": {
+    "state": "OPEN",
+    "title": "Align the #420 fixed-resource consumer with Tessera #451's step-coverage schema"
+   },
+   "521": {
+    "state": "CLOSED",
+    "title": "admit_fixed_resources: recompute the full-engine partition and admit only on agreement (consumer half of #420)"
+   },
+   "522": {
+    "state": "OPEN",
+    "title": "dispatch: derive the PB mem_gb demand from the checked phase plan (publication overlap added 2 GiB; 3 rows refused at 8\u201313 MB slack)"
+   },
+   "523": {
+    "state": "OPEN",
+    "title": "Import the pinned tree the campaign container was given"
+   },
+   "524": {
+    "state": "OPEN",
+    "title": "Derive every campaign row's read set at submit, and refuse a row without one"
+   },
+   "525": {
+    "state": "OPEN",
+    "title": "Align the recomputed partition with step-scoped ownership (#520)"
+   },
+   "526": {
+    "state": "OPEN",
+    "title": "Derive the campaign row's memory demand from the plan it checks itself against"
    },
    "53": {
     "state": "CLOSED",
@@ -3454,11 +3638,11 @@
     "title": "Qualify compressed MoE serving: full-model integration, TP2, scale fidelity and measured efficiency"
    },
    "443": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Add MXFP8 trellis encoding and native block-scaled serving support"
    },
    "444": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Qualify compressed MoE serving: multi-stack controls, topology record, and the bullet-1 encode driver"
    },
    "445": {
@@ -3473,13 +3657,65 @@
     "state": "CLOSED",
     "title": "Skip the two Triton-importing tests instead of erroring the shard (#446)"
    },
+   "448": {
+    "state": "CLOSED",
+    "title": "Encoder starves the GPU at every batch boundary and waits on it at every chunk (census: 2.8 s below 45 W per call, host 83% in cudaStreamSynchronize)"
+   },
+   "449": {
+    "state": "CLOSED",
+    "title": "Feed the encoder across unit and batch boundaries: no per-chunk sync, seal digest off the encode thread, one-expression body packer"
+   },
    "45": {
     "state": "CLOSED",
     "title": "The fold the BF16 route exists to avoid is below served resolution at R=7"
    },
+   "450": {
+    "state": "CLOSED",
+    "title": "Derive the full-engine resource partition, and assemble its report envelope"
+   },
+   "451": {
+    "state": "CLOSED",
+    "title": "Derive step-scoped resource ownership and price non-step transients (#399)"
+   },
+   "452": {
+    "state": "OPEN",
+    "title": "AMD/HIP port, step 1 of 9: backend discovery and the platform token"
+   },
+   "453": {
+    "state": "OPEN",
+    "title": "AMD/HIP port, step 2 of 9: land the three HIP shims in `window_gemv.cu` (spike branch `rdna35/window-gemv-hip-spike` @ 6055c11)"
+   },
+   "454": {
+    "state": "OPEN",
+    "title": "AMD/HIP port, step 3 of 9: LDS-aware launch plan (64 KB per workgroup)"
+   },
+   "455": {
+    "state": "OPEN",
+    "title": "AMD/HIP port, step 4 of 9: `native_ops` per-op presence instead of the `cutlass_scaled_mm` sentinel"
+   },
+   "456": {
+    "state": "OPEN",
+    "title": "AMD/HIP port, step 5 of 9: runtime contract v23 / lane-eligibility schema v10 \u2014 platform axis, no variant axis, no AMD cells"
+   },
+   "457": {
+    "state": "OPEN",
+    "title": "AMD/HIP port, step 6 of 9: platform gating in the plugin + `platform` telemetry stamp (re-scoped from \"FP8 `wna16` variant\")"
+   },
+   "458": {
+    "state": "OPEN",
+    "title": "AMD/HIP port, step 7 of 9: V4 receipt \u2014 `torch.mm(bf16, bf16, out_dtype=float32)` on ROCm (re-scoped: fp8 `_scaled_mm` out of scope unless free)"
+   },
+   "459": {
+    "state": "OPEN",
+    "title": "AMD/HIP port, step 8 of 9: certification tooling \u2014 `tools/tessera_attest.py` and the Strix Halo tester protocol"
+   },
    "46": {
     "state": "CLOSED",
     "title": "Menu caches are sized 4096 against a 6764-rung menu, so a repeat pass over one shape recomputes everything"
+   },
+   "460": {
+    "state": "OPEN",
+    "title": "AMD/HIP port, step 9 of 9: contract v24 \u2014 gfx1201 `TESSERA_BF16_K1` cells minted from device receipts"
    },
    "47": {
     "state": "CLOSED",
