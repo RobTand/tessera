@@ -12,8 +12,10 @@ import pytest
 from experiments.full_engine_resource_partition import (
     CHARGED_CELLS, DOMAIN_NAMES, IMPLEMENTED_DOMAINS, OWNER_CLASSES, REPORT_MEMBERS,
     uncharged_allocations,
-    TERM_DOMAINS, assemble_full_engine_resource_report, classify_allocations,
-    compose_scalar_budget, derive_partition, qualify_domains, _simultaneous_peak,
+    TERM_DOMAINS, DECLARED_MEMBER_FIELDS, SUPPORTED_EXECUTION,
+    assemble_full_engine_resource_report, classify_allocations,
+    compose_scalar_budget, derive_partition, qualify_domains, _compose_terms,
+    _simultaneous_peak, _unit_of,
 )
 from experiments.full_engine_resources import analyze_engine_resource_ledger
 
@@ -23,6 +25,19 @@ def ledger():
     raw = json.loads((Path(__file__).parent
                       / "fixtures/full_engine_resource_ledger.json").read_text())
     return analyze_engine_resource_ledger(raw)
+
+
+def _members(**overrides):
+    """Declared members whose field sets are this schema's, for the assembler."""
+    members = {
+        "reference": {"canonical_census": "synthetic", "runtime_binding": "synthetic",
+                      "selected_rows": ["synthetic"]},
+        "workload": {"calibration": "synthetic", "prompt_ids": ["synthetic"],
+                     "sampling": "synthetic"},
+        "execution": dict(SUPPORTED_EXECUTION),
+    }
+    members.update(overrides)
+    return members
 
 
 def _row(allocation_id, size, start, end, **overrides):
@@ -179,12 +194,21 @@ def test_an_allocation_freed_outside_every_unit_interval_is_unclassified(ledger)
     assert "declared step boundary" in unclassified[0]["reason"]
 
 
-def test_one_unclassified_allocation_nulls_every_term(ledger):
+def test_one_unclassified_allocation_nulls_every_term():
     # An unclassified row has neither owner nor lifetime, so it could belong to
-    # any term. No term is complete while one exists, whatever the domains say.
-    all_closed = {name: {"state": "closed", "evidence": ["declared by the test"],
-                         "reason": None} for name in DOMAIN_NAMES}
-    partition = derive_partition(ledger, domains=all_closed)
+    # any term. No term is complete while one exists.
+    #
+    # The banked fixture cannot show this. It closes history_join but not
+    # external_closure, so no term's domains are all closed on it and every term
+    # is null for a reason that has nothing to do with the unclassified row. On
+    # a ledger where both implemented domains DO close, the two scratch terms
+    # carry values -- and adding one unclassified row takes them away.
+    good = _raw("a", 6, 2, 9, ["candidate"], "inside_unit", ["u"])
+    baseline = derive_partition(_synthetic_ledger(6, [good]))
+    assert baseline["terms"]["candidate_scratch"] == {"u": 6}
+
+    stray = _raw("b", 6, 3, 8, ["candidate"], "outside_units", [])
+    partition = derive_partition(_synthetic_ledger(12, [good, stray]))
     assert partition["scope"]["unclassified_allocation_count"] == 1
     assert all(term is None for term in partition["terms"].values())
     assert compose_scalar_budget(partition) is None
@@ -192,17 +216,13 @@ def test_one_unclassified_allocation_nulls_every_term(ledger):
 
 def test_the_report_refuses_a_member_it_cannot_derive(ledger):
     for absent in ("reference", "workload", "execution"):
-        members = {"reference": {"census": "x"}, "workload": {"tokens": "x"},
-                   "execution": {"graph_mode": "eager"}}
-        members[absent] = {}
         with pytest.raises(ValueError, match=f"never defaulted: {absent}"):
-            assemble_full_engine_resource_report(ledger, **members)
+            assemble_full_engine_resource_report(ledger, **_members(**{absent: None}))
 
 
 def test_the_report_keeps_the_seven_members_and_the_synthetic_marker(ledger):
     report = assemble_full_engine_resource_report(
-        ledger, reference={"census": "synthetic"},
-        workload={"tokens": "synthetic"}, execution={"graph_mode": "eager"})
+        ledger, **_members())
     assert set(report) == set(REPORT_MEMBERS) | {"schema"}
     assert report["schema"] == "tessera.full_engine_resource_report.v1"
     # A synthetic capture is never laundered into an artifact that looks measured.
@@ -215,8 +235,7 @@ def test_the_report_keeps_the_seven_members_and_the_synthetic_marker(ledger):
 def test_every_evidence_id_names_an_observation_the_report_carries(ledger):
     # Evidence that points at nothing cannot be checked by the consumer.
     report = assemble_full_engine_resource_report(
-        ledger, reference={"census": "synthetic"},
-        workload={"tokens": "synthetic"}, execution={"graph_mode": "eager"})
+        ledger, **_members())
     for name, domain in report["partition"]["domains"].items():
         for observation in domain["evidence"]:
             assert observation in report["observations"], (name, observation)
@@ -227,8 +246,7 @@ def test_the_report_names_every_observation_class_a_domain_closes_on(ledger):
     # capture did not observe it" from "the producer forgot to carry it".
     # Each is what its domain would close on, and #399 owes every one.
     report = assemble_full_engine_resource_report(
-        ledger, reference={"census": "synthetic"},
-        workload={"tokens": "synthetic"}, execution={"graph_mode": "eager"})
+        ledger, **_members())
     for owed in ("worker_startup_records", "runtime_provenance_relation",
                  "kv_observations", "timing_captures", "owner_views",
                  "observer_qualification"):
@@ -239,32 +257,20 @@ def test_the_report_names_every_observation_class_a_domain_closes_on(ledger):
 def test_derived_does_not_restate_the_partition_domains(ledger):
     # Two copies of one claim invite drift; the partition owns the domains.
     report = assemble_full_engine_resource_report(
-        ledger, reference={"census": "synthetic"},
-        workload={"tokens": "synthetic"}, execution={"graph_mode": "eager"})
+        ledger, **_members())
     assert "domains" not in report["derived"]
     assert set(report["partition"]["domains"]) == set(DOMAIN_NAMES)
 
 
-def test_a_partition_records_whether_its_domains_were_derived_or_supplied(ledger):
-    # The test seam that lets the arithmetic be exercised is a hole if it is
-    # silent. It is not silent.
+def test_no_caller_can_hand_the_partition_a_table_of_closed_domains(ledger):
+    # Recording that a caller supplied one was not enough. The object that
+    # escaped was the partition: it is public, it returns every term filled, and
+    # the only refusal lived in an assembler that path never reached. The
+    # parameter is gone, and the arithmetic is exercised through
+    # ``_compose_terms``, which returns values and never an artifact.
+    import inspect
+    assert list(inspect.signature(derive_partition).parameters) == ["ledger"]
     assert derive_partition(ledger)["domains_source"] == "derived"
-    all_closed = {name: {"state": "closed", "evidence": ["declared by the test"],
-                         "reason": None} for name in DOMAIN_NAMES}
-    assert derive_partition(ledger, domains=all_closed)["domains_source"] == "supplied"
-
-
-def test_a_report_is_never_assembled_from_supplied_domains(ledger, monkeypatch):
-    # Defense in depth: the public assembler always derives, so this guard is
-    # unreachable through it. It exists so that it stays unreachable.
-    import experiments.full_engine_resource_partition as module
-    all_closed = {name: {"state": "closed", "evidence": ["declared by the test"],
-                         "reason": None} for name in DOMAIN_NAMES}
-    supplied = module.derive_partition(ledger, domains=all_closed)
-    monkeypatch.setattr(module, "derive_partition", lambda led: supplied)
-    with pytest.raises(ValueError, match="never assembled from supplied domains"):
-        module.assemble_full_engine_resource_report(
-            ledger, reference={"a": 1}, workload={"b": 2}, execution={"c": 3})
 
 
 def _classified(**overrides):
@@ -302,18 +308,138 @@ def test_every_charged_cell_is_charged():
                                                   unit=unit)]) == []
 
 
-def test_an_uncharged_allocation_nulls_every_term_because_undercounting_ooms(ledger):
+def test_an_uncharged_allocation_nulls_every_term_because_undercounting_ooms():
     # An overcount wastes headroom; an undercount hands a serving gate a budget
-    # smaller than the engine needs. Only one of those kills the box.
-    row = dict(ledger["torch_allocations"][0])
-    row.update(allocation_id="kv-transient", lifetime_scope="inside_unit",
-               free_completed_index=row["allocate_index"] + 1,
-               observed_categories=["kv"], scope_stack=["u0"])
-    ledger["torch_allocations"] = [row]
-    all_closed = {name: {"state": "closed", "evidence": ["declared by the test"],
-                         "reason": None} for name in DOMAIN_NAMES}
-    partition = derive_partition(ledger, domains=all_closed)
+    # smaller than the engine needs. Only one of those kills the box. Shown on a
+    # ledger whose scratch terms would otherwise carry values, so that losing
+    # them is the uncharged row's doing and not an open domain's.
+    good = _raw("a", 6, 2, 9, ["candidate"], "inside_unit", ["u"])
+    assert derive_partition(_synthetic_ledger(6, [good]))["terms"]["candidate_scratch"]
+
+    kv_transient = _raw("kv-transient", 6, 3, 8, ["kv"], "inside_unit", ["u"])
+    partition = derive_partition(_synthetic_ledger(12, [good, kv_transient]))
     assert partition["scope"]["uncharged_allocation_count"] == 1
     assert partition["unclassified_allocations"] == []
     assert all(term is None for term in partition["terms"].values())
     assert compose_scalar_budget(partition) is None
+
+
+def _synthetic_ledger(peak, rows):
+    """A minimal raw ledger, for the arithmetic the fixture cannot reach.
+
+    The banked fixture carries an allocation freed outside every unit interval,
+    which is unclassified by design, and an unclassified row nulls every term.
+    So the fixture can never exercise the row-to-term selection at all. These
+    rows can.
+    """
+    return {"schema": "tessera.full_engine_raw_resource_ledger.v1", "issues": [],
+            "unattributed_external_records": [], "external_native_peak_bytes": 0,
+            "torch_observed_live_peak_bytes": peak, "torch_allocations": rows}
+
+
+def _raw(allocation_id, size, start, end, categories, scope, stack):
+    return {"allocation_id": allocation_id, "bytes": size, "allocate_index": start,
+            "free_completed_index": end, "observed_categories": categories,
+            "lifetime_scope": scope, "scope_stack": stack}
+
+
+def test_a_scratch_term_carries_a_swept_value_once_nothing_blocks_it():
+    # The gap that let the maximum-over-units defect through: no test asserted a
+    # non-null term value out of derive_partition on any ledger, so the row-to-
+    # term selection had never executed under test. Two overlapping rows in one
+    # unit sweep to 12, not to 6 and not to 12 by addition of maxima.
+    rows = [_raw("a", 6, 2, 9, ["candidate"], "inside_unit", ["u"]),
+            _raw("b", 6, 3, 8, ["candidate"], "inside_unit", ["u"])]
+    partition = derive_partition(_synthetic_ledger(12, rows))
+    assert partition["unclassified_allocations"] == []
+    assert partition["uncharged_allocations"] == []
+    assert partition["terms"]["candidate_scratch"] == {"u": 12}
+    assert partition["terms"]["fixed_scratch"] == 0
+
+
+def test_an_allocation_is_charged_to_the_unit_its_lifetime_was_decided_against():
+    # The replay reads unit_invocation from the OUTERMOST containing interval and
+    # decides lifetime_scope against that same interval. Charging the innermost
+    # split a row's lifetime basis from its charge.
+    assert _unit_of({"scope_stack": ["outer", "inner"]}) == "outer"
+    assert _unit_of({"scope_stack": []}) is None
+
+
+def test_two_units_that_can_be_live_at_once_are_never_alternatives_in_a_maximum():
+    # Unit intervals may nest; only crossing is refused. Two sibling inner units
+    # therefore hold rows that are simultaneously live, and a maximum over them
+    # returns one of the two. Charged to the outermost unit, which cannot
+    # overlap another outermost unit, the sweep sums them instead.
+    rows = [_raw("a", 6, 2, 9, ["candidate"], "inside_unit", ["outer", "attn"]),
+            _raw("b", 6, 3, 8, ["candidate"], "inside_unit", ["outer", "mlp"])]
+    partition = derive_partition(_synthetic_ledger(12, rows))
+    assert partition["units"] == ["outer"]
+    assert partition["terms"]["candidate_scratch"] == {"outer": 12}
+
+
+def test_a_composition_below_the_observed_simultaneous_peak_refuses():
+    # When every allocation is classified and charged, every observed byte is
+    # inside some term, so a composition under the peak the replay actually saw
+    # is a contradiction rather than conservatism -- and it is the error
+    # direction that OOMs a box instead of wasting headroom on it.
+    rows = [_raw("a", 6, 2, 9, ["candidate"], "inside_unit", ["u"]),
+            _raw("b", 6, 3, 8, ["candidate"], "inside_unit", ["u"])]
+    assert derive_partition(_synthetic_ledger(12, rows))["terms"]["candidate_scratch"]
+    with pytest.raises(ValueError, match="below the observed simultaneous live peak"):
+        derive_partition(_synthetic_ledger(13, rows))
+
+
+def test_a_free_ordered_before_its_allocation_refuses_before_any_arithmetic(ledger):
+    # The sweep would settle that free first, drive the running sum negative and
+    # return a peak that hides live bytes rather than inflating them.
+    ledger["torch_allocations"][-1]["free_completed_index"] = 0
+    with pytest.raises(ValueError, match="freed before it is allocated"):
+        derive_partition(ledger)
+
+
+@pytest.mark.parametrize("size", [-40, 0, True])
+def test_a_size_that_cannot_bound_a_lifetime_refuses_before_any_arithmetic(ledger, size):
+    ledger["torch_allocations"][-1]["bytes"] = size
+    with pytest.raises(ValueError, match="no positive integer size"):
+        derive_partition(ledger)
+
+
+def test_history_join_stays_open_when_no_record_join_was_observed(ledger):
+    # Absent and null are "never observed", exactly as they are for
+    # external_closure. Only an empty list is the observation that closes it.
+    assert qualify_domains(ledger)["history_join"]["state"] == "closed"
+    for absent in ({}, {"unattributed_external_records": None}):
+        probe = dict(ledger)
+        probe.pop("unattributed_external_records", None)
+        probe.update(absent)
+        domain = qualify_domains(probe)["history_join"]
+        assert domain["state"] == "open", domain
+        assert domain["evidence"] == []
+
+
+def test_the_report_refuses_a_declared_member_whose_fields_are_not_this_schemas(ledger):
+    for name in DECLARED_MEMBER_FIELDS:
+        with pytest.raises(ValueError, match=f"report member {name} declares"):
+            assemble_full_engine_resource_report(
+                ledger, **_members(**{name: {"invented": "field"}}))
+
+
+def test_the_report_refuses_a_declared_member_whose_every_field_is_null(ledger):
+    # A dict of nulls is truthy, so "is it empty" was never the question.
+    for name, fields in DECLARED_MEMBER_FIELDS.items():
+        nulls = {field: None for field in fields}
+        with pytest.raises(ValueError, match=f"declares every field null: {name}"):
+            assemble_full_engine_resource_report(ledger, **_members(**{name: nulls}))
+
+
+def test_an_execution_coordinate_outside_the_scope_refuses_instead_of_being_projected_over():
+    # The partition stamps one composite topology. A caller declaring another
+    # one used to get a report whose scope contradicted its own declaration.
+    raw = json.loads((Path(__file__).parent
+                      / "fixtures/full_engine_resource_ledger.json").read_text())
+    led = analyze_engine_resource_ledger(raw)
+    for field, value in (("topology", "tp2"), ("graph_mode", "cudagraph"),
+                         ("residency", "offloaded")):
+        outside = dict(SUPPORTED_EXECUTION, **{field: value})
+        with pytest.raises(ValueError, match="outside this schema's scope"):
+            assemble_full_engine_resource_report(led, **_members(execution=outside))

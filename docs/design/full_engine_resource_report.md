@@ -241,14 +241,50 @@ never absent** — a consumer must be able to tell "this capture did not observe
 it" from "the producer forgot to carry it", and a missing key says neither.
 Closing any of those four domains means first emitting its member here.
 
-**The test seam is recorded, not trusted.** `derive_partition` accepts a
+**The test seam is gone, not merely recorded.** `derive_partition` once took a
 caller-supplied `domains` mapping, because four domains can never close from a
-real ledger and the composition would otherwise be untestable. Silently, that is
-a hole: a caller passing every domain closed gets every term emitted with
-nothing checked, which is the `qualified: true` failure in one line. So the
-partition carries `domains_source`, either `derived` or `supplied`, and the
-report assembler refuses to build an envelope from a supplied-domains partition.
-The fact is machine-readable rather than a convention nobody may break.
+real ledger and the composition would otherwise be untestable; the partition
+then carried `domains_source` to say which it was. Recording it was not enough.
+The object that escaped was the **partition**: it is public, it returned every
+term filled, and the only refusal lived in an assembler that path never reached,
+so the guard was reachable only by a monkeypatch. A seam that produces a
+shippable artifact is not a seam. The parameter is removed; the arithmetic is
+exercised through `_compose_terms`, which returns values and never an artifact.
+`domains_source` stays, always `derived`, because it is the assertion that
+crosses the repository boundary — a hand-written artifact is now the only thing
+that could claim otherwise, and the consumer refuses that spelling.
+
+**A composition below the observed simultaneous peak is a contradiction, and it
+raises.** When no allocation is unclassified and none is uncharged, every
+observed byte is inside some term, so the composed budget has to cover
+`torch_observed_live_peak_bytes` — the same quantity, requested allocation bytes
+excluding allocator rounding, as the observation's own scope field says. Below
+it is not disclosed conservatism; it is an undercount, and an undercount hands a
+serving gate a budget smaller than the engine needs, which on unified memory is
+an OOM rather than a spill. It raises rather than nulling a term, because a
+composition that contradicts its own observations is a defect in the producer,
+not a property of the capture. Each of this module's three silent undercounts —
+a cell no term charged, a candidate row carrying no unit, and a per-unit maximum
+taken over units that can be live at once — would have been caught by this one
+comparison.
+
+**An allocation is charged to the outermost unit on its scope stack.** Three
+things have to name one interval. The replay reads `unit_invocation` from the
+outermost containing interval and decides `lifetime_scope` against that same
+interval; charging the innermost split a row's lifetime basis from its charge.
+It also broke the composition: unit intervals may **nest** — the replay refuses
+only *crossing* — so two sibling inner units hold rows that are simultaneously
+live, and `max(candidate_scratch)` returned one of the two. Outermost intervals
+cannot overlap each other, so a maximum over them is a maximum over genuine
+alternatives, which is what the composition assumes.
+
+**A reader refuses before any arithmetic runs.** `derive_partition` is a public
+entry point taking a dict, so it checks each row's numbers first: a positive
+integer size that is not a boolean, a non-negative history index, and a free
+index that is not before its own allocation. The analyzer cannot emit any of
+these. The last one matters most: the sweep would settle that free first, drive
+the running sum negative, and return a peak that **hides** live bytes rather
+than inflating them.
 
 Two smaller rules follow from the same principle. Every id in a domain's
 `evidence` must name a member `observations` actually carries, and assembly
@@ -266,6 +302,22 @@ the ledger. The other three are coordinates the raw ledger does not carry, and
 each is **refused by name** when absent rather than defaulted — a report that
 invents its own reference row or workload digest is exactly the failure the
 consumer's independent recomputation exists to catch.
+
+Absent is not the only way a declared member can be empty. Each is checked
+against this schema's field set (`reference`: `canonical_census`,
+`runtime_binding`, `selected_rows`; `workload`: `calibration`, `prompt_ids`,
+`sampling`; `execution`: `graph_mode`, `residency`, `topology`), and a member
+every one of whose fields is null is refused too — a dict of nulls is truthy, so
+"is it empty" was never the question.
+
+The **execution coordinate is refused, never projected over**. `partition.scope`
+stamps one composite topology, `tp1_single_device_resident_eager`. A caller
+declaring `tp2`, `cudagraph` or `offloaded` used to get a report whose scope
+contradicted its own declaration inside one envelope, with nothing comparing the
+two. The supported coordinate is `{graph_mode: eager, residency: resident,
+topology: tp1}` and anything else refuses, because this schema says a report
+outside its scope refuses rather than projecting, and a stamped constant is
+exactly the projection it forbids.
 
 A capture that declares itself synthetic keeps saying so: `fixture_provenance`
 is carried from the capture through the ledger into `identity`, so no artifact

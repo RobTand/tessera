@@ -1258,10 +1258,26 @@ a consumer can tell "not observed" from "not carried". Every id in a domain's
 `evidence` must name a member `observations` carries, and assembly refuses
 otherwise; `derived` does not restate `partition`'s `domains`.
 
-`derive_partition` accepts a caller-supplied `domains` mapping so the
-arithmetic is testable at all, and records which it used in
-`partition["domains_source"]`; the report assembler refuses a supplied-domains
-partition, so the seam is machine-readable rather than a convention.
+`derive_partition` takes the ledger and nothing else. It once accepted a
+caller-supplied `domains` mapping so the arithmetic was testable, recording
+which it used in `partition["domains_source"]`; recording was not enough,
+because the object that escaped was the fully populated partition and the only
+refusal lived in an assembler that path never reached. The parameter is gone and
+`_compose_terms` carries the arithmetic, returning values rather than an
+artifact. `domains_source` stays, always `derived`, as the assertion the
+consumer reads and refuses any other spelling of.
+
+**A composition below the observed simultaneous live peak raises.** With nothing
+unclassified and nothing uncharged, every observed byte sits in some term, so
+the composed budget must cover `torch_observed_live_peak_bytes`; below it is an
+undercount, not conservatism. **An allocation is charged to the outermost unit
+on its scope stack** — the same interval the replay read `unit_invocation` and
+`lifetime_scope` from. Unit intervals may nest (only *crossing* is refused), so
+charging the innermost put simultaneously live rows in two per-unit buckets that
+the composition's `max` then chose between; outermost intervals cannot overlap.
+A reader refuses a non-positive or boolean size, and a free ordered before its
+own allocation, **before** any arithmetic: that sweep would drive the running
+sum negative and return a peak that hides live bytes.
 
 **A classified allocation that no term charges also nulls every term.** The
 classifier produces nine `(owner, lifetime)` cells and the composition charges
@@ -1274,7 +1290,13 @@ engine needs, which on unified memory is an OOM. Such rows are named in
 `assemble_full_engine_resource_report` builds that seven-member envelope,
 deriving `identity`, `observations`, `partition` and `derived` from the ledger
 and refusing `reference`, `workload` and `execution` by name rather than
-defaulting them; `fixture_provenance` is carried from the capture through the
+defaulting them. Each is also checked against this schema's field set, a member
+whose every field is null is refused (a dict of nulls is truthy, so emptiness
+was never the test), and a declared execution coordinate other than
+`{graph_mode: eager, residency: resident, topology: tp1}` is **refused rather
+than projected over** — the partition stamps one composite topology, and a
+report whose scope contradicts its own declaration is what that stamp used to
+produce. `fixture_provenance` is carried from the capture through the
 ledger into `identity`, so an artifact derived from a synthetic fixture cannot
 read as a measurement. Admission stays closed: on the only ledger fixture that
 exists, every composition term is null and the scalar budget is null, and no

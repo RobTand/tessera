@@ -80,6 +80,23 @@ _UNIMPLEMENTED_DOMAINS = {
 
 _ISSUES_REASON = "the raw ledger carries unresolved issues"
 
+# The fields each declared member carries, and the one execution coordinate this
+# producer can stamp a partition scope for. Restated here rather than imported:
+# the consumer is another repository and this module may not depend on it. Two
+# copies of one contract drift, which is exactly what the consumer's independent
+# recomputation exists to catch -- so they are stated, not inferred.
+DECLARED_MEMBER_FIELDS = {
+    "reference": ("canonical_census", "runtime_binding", "selected_rows"),
+    "workload": ("calibration", "prompt_ids", "sampling"),
+    "execution": ("graph_mode", "residency", "topology"),
+}
+SUPPORTED_EXECUTION = {"graph_mode": "eager", "residency": "resident", "topology": "tp1"}
+
+# The scope every partition declares. It is the composite spelling of
+# SUPPORTED_EXECUTION, and the report assembler refuses an execution coordinate
+# that does not match it rather than stamping this string over the caller's.
+SCOPE_TOPOLOGY = "tp1_single_device_resident_eager"
+
 
 def _owner_class(row):
     """The one owner class this allocation carries, or ``None``.
@@ -137,9 +154,50 @@ def _simultaneous_peak(rows, terminal_index):
 
 
 def _unit_of(row):
-    """The candidate unit this allocation is charged to, if any."""
+    """The candidate unit this allocation is charged to, if any.
+
+    The **outermost** unit on the scope stack, not the innermost. Three things
+    have to name one interval or the composition is wrong. The replay reads
+    ``unit_invocation`` from the outermost containing interval, and it decides
+    ``lifetime_scope`` against that same interval. Charging the innermost splits
+    a row's lifetime basis from its charge -- and because unit intervals may
+    nest, with only *crossing* refused, it puts rows that are simultaneously
+    live into two per-unit buckets that ``compose_scalar_budget`` then takes a
+    maximum between. Outermost intervals cannot overlap each other, so a maximum
+    over them is a maximum over genuine alternatives.
+    """
     stack = row["scope_stack"]
-    return stack[-1] if stack else None
+    return stack[0] if stack else None
+
+
+def _checked_allocation_rows(ledger):
+    """The replayed allocations, or a refusal, before any arithmetic runs.
+
+    ``analyze_engine_resource_ledger`` cannot emit any of these: it builds every
+    size through ``_int(..., minimum=1)`` and a free always follows its own
+    allocation. But ``derive_partition`` is a public entry point that takes a
+    dict, and the report schema requires a reader that refuses nonfinite values,
+    negative sizes and booleans where an integer is declared *before* arithmetic
+    rather than after. A free ordered before its allocation is the one that
+    matters most: the sweep in :func:`_simultaneous_peak` would settle that free
+    first, drive the running sum negative, and return a peak that hides real
+    bytes instead of inflating them.
+    """
+    rows = ledger["torch_allocations"]
+    for row in rows:
+        where = row["allocation_id"]
+        size, begin, end = row["bytes"], row["allocate_index"], row["free_completed_index"]
+        if isinstance(size, bool) or not isinstance(size, int) or size < 1:
+            raise ValueError(f"allocation carries no positive integer size: {where}")
+        if isinstance(begin, bool) or not isinstance(begin, int) or begin < 0:
+            raise ValueError(f"allocation carries no history index: {where}")
+        if end is None:
+            continue
+        if isinstance(end, bool) or not isinstance(end, int):
+            raise ValueError(f"allocation carries a non-integer free index: {where}")
+        if end < begin:
+            raise ValueError(f"allocation is freed before it is allocated: {where}")
+    return rows
 
 
 def classify_allocations(ledger):
@@ -149,7 +207,7 @@ def classify_allocations(ledger):
     a domain stays open; they are named, never dropped and never bucketed.
     """
     classified, unclassified = [], []
-    for row in ledger["torch_allocations"]:
+    for row in _checked_allocation_rows(ledger):
         owner, lifetime = _owner_class(row), _lifetime_class(row)
         if owner is None or lifetime is None:
             unclassified.append({
@@ -222,6 +280,14 @@ def qualify_domains(ledger):
     unattributed = ledger.get("unattributed_external_records")
     if issues:
         domains["history_join"] = _domain(False, [], _ISSUES_REASON, refused=True)
+    elif unattributed is None:
+        # Absent and null are "never observed", exactly as they are eleven lines
+        # below for external_closure. An empty list is the observation that
+        # closes this domain; no list at all is no observation, and a domain
+        # that closes on evidence it did not read cites evidence that is not
+        # there.
+        domains["history_join"] = _domain(
+            False, [], "no external CUDA memory record join was observed")
     elif unattributed:
         domains["history_join"] = _domain(
             False, [], "unattributed external CUDA memory records remain",
@@ -260,79 +326,114 @@ def _term_available(term, domains):
     return all(domains[name]["state"] == "closed" for name in TERM_DOMAINS[term])
 
 
-def derive_partition(ledger, domains=None):
-    # ``domains`` exists so a test can declare all-closed and exercise the
-    # arithmetic, because four domains can never close from a real ledger and
-    # the composition would otherwise be untestable. It is a hole if it is
-    # silent: a caller passing every domain closed gets every term emitted with
-    # nothing checked, which is the `qualified: true` failure this module
-    # exists to prevent. So the partition records which it was, and the report
-    # assembler refuses to build an envelope from supplied domains -- the fact
-    # is machine-readable rather than a convention nobody may break.
-    """Build the partition and the composition terms from one replayed ledger.
+def _compose_terms(classified, units, terminal):
+    """The seven composition terms' values, before any availability check.
 
-    Every number is derived from the ledger's own classified event lifetimes.
-    A term is ``None``, and named in ``scope.unavailable_terms``, when a domain
-    it depends on is not closed *or* when any allocation is unclassified — an
-    unclassified row has neither owner nor lifetime, so it could belong to any
-    term, and no term can be complete while one exists.
+    Factored out so the arithmetic stays testable without a caller being able to
+    hand :func:`derive_partition` a table of closed domains. Recording that a
+    caller supplied one was not enough: the populated partition was the object
+    that escaped, and the only refusal lived in an assembler that path never
+    reached. A test seam that produces a shippable artifact is not a seam.
     """
-    if ledger["schema"] != "tessera.full_engine_raw_resource_ledger.v1":
-        raise ValueError("unsupported raw ledger schema")
-    domains_source = "derived" if domains is None else "supplied"
-    if domains is None:
-        domains = qualify_domains(ledger)
-    classified, unclassified = classify_allocations(ledger)
-    terminal = 1 + max((row["allocate_index"] for row in ledger["torch_allocations"]),
-                       default=0)
-
     def select(owner, lifetime, unit=None):
         return [row for row in classified
                 if row["owner_class"] == owner and row["lifetime_class"] == lifetime
                 and (unit is None or row["unit"] == unit)]
 
+    return {
+        # Resident bytes add; they are live at the terminal boundary by definition.
+        "fixed_resident": sum(row["bytes"] for row in select("fixed", "resident")),
+        "candidate_resident":
+            {unit: sum(row["bytes"] for row in select("candidate", "resident", unit))
+             for unit in units},
+        # Transient maxima come from the simultaneous sweep, never from a sum of
+        # per-allocation maxima and never from a difference of peaks.
+        "fixed_activation": _simultaneous_peak(select("fixed", "activation"), terminal),
+        "candidate_activation":
+            {unit: _simultaneous_peak(select("candidate", "activation", unit), terminal)
+             for unit in units},
+        "fixed_scratch": _simultaneous_peak(select("fixed", "scratch"), terminal),
+        "candidate_scratch":
+            {unit: _simultaneous_peak(select("candidate", "scratch", unit), terminal)
+             for unit in units},
+        "fixed_kv": sum(row["bytes"] for row in select("kv", "resident")),
+    }
+
+
+def derive_partition(ledger):
+    """Build the partition and the composition terms from one replayed ledger.
+
+    Every number is derived from the ledger's own classified event lifetimes.
+    A term is ``None``, and named in ``scope.unavailable_terms``, when a domain
+    it depends on is not closed *or* when any allocation is unclassified or
+    charged by no term -- such a row could belong to any term, and no term can
+    be complete while one exists.
+
+    There is no way to hand this function a domain table. Four domains can never
+    close from a real ledger, so the arithmetic is exercised through
+    :func:`_compose_terms`, which returns values and never an artifact.
+
+    ``scope.topology`` states the execution coordinate this partition is valid
+    in. The raw ledger does not carry one, so this function cannot check it;
+    :func:`assemble_full_engine_resource_report` refuses a declared coordinate
+    that disagrees rather than stamping this one over it.
+    """
+    if ledger["schema"] != "tessera.full_engine_raw_resource_ledger.v1":
+        raise ValueError("unsupported raw ledger schema")
+    domains = qualify_domains(ledger)
+    classified, unclassified = classify_allocations(ledger)
+    terminal = 1 + max((row["allocate_index"] for row in ledger["torch_allocations"]),
+                       default=0)
     units = sorted({row["unit"] for row in classified if row["unit"] is not None})
-    terms, unavailable = {}, []
-
     uncharged = uncharged_allocations(classified)
+    raw_terms = _compose_terms(classified, units, terminal)
 
-    def emit(name, value):
+    if not unclassified and not uncharged:
+        # Every observed byte is now inside some term, so the composition has to
+        # cover the largest simultaneous live sum the replay actually saw. Below
+        # it is not disclosed conservatism -- it is a contradiction, and the
+        # error direction that kills a job: an undercount hands a serving gate a
+        # budget smaller than the engine needs, and on unified memory that is an
+        # OOM rather than a spill. Both sides are the same quantity, requested
+        # allocation bytes excluding allocator rounding, which is what the
+        # observation's own scope field says. Each of this module's three silent
+        # undercounts -- a cell no term charged, a candidate row with no unit,
+        # and a per-unit maximum taken over units that can be live at once --
+        # would have been caught here. It raises rather than nulling a term,
+        # because a composition that contradicts its own observations is a
+        # defect in this code, not a property of the capture.
+        observed_peak = ledger.get("torch_observed_live_peak_bytes")
+        composed = _compose(raw_terms)
+        if observed_peak is not None and composed < observed_peak:
+            raise ValueError(
+                f"composed budget {composed} is below the observed simultaneous "
+                f"live peak {observed_peak}; the composition omits live bytes")
+
+    terms, unavailable = {}, []
+    for name, value in raw_terms.items():
         if not unclassified and not uncharged and _term_available(name, domains):
             terms[name] = value
         else:
             terms[name] = None
             unavailable.append(name)
 
-    # Resident bytes add; they are live at the terminal boundary by definition.
-    emit("fixed_resident", sum(row["bytes"] for row in select("fixed", "resident")))
-    emit("candidate_resident",
-         {unit: sum(row["bytes"] for row in select("candidate", "resident", unit))
-          for unit in units})
-    # Transient maxima come from the simultaneous sweep, never from a sum of
-    # per-allocation maxima and never from a difference of peaks.
-    emit("fixed_activation", _simultaneous_peak(select("fixed", "activation"), terminal))
-    emit("candidate_activation",
-         {unit: _simultaneous_peak(select("candidate", "activation", unit), terminal)
-          for unit in units})
-    emit("fixed_scratch", _simultaneous_peak(select("fixed", "scratch"), terminal))
-    emit("candidate_scratch",
-         {unit: _simultaneous_peak(select("candidate", "scratch", unit), terminal)
-          for unit in units})
-    emit("fixed_kv", sum(row["bytes"] for row in select("kv", "resident")))
-
     return {
         "schema": PARTITION_SCHEMA,
         "identity": ledger.get("identity"),
         "capture_sha256": ledger.get("capture_sha256"),
         "domains": domains,
-        "domains_source": domains_source,
+        # Always "derived", because there is no other way to reach this function.
+        # The field stays because the consumer reads it and refuses anything
+        # else: it is the assertion that crosses the repository boundary, where
+        # a hand-written artifact is the only thing that could claim otherwise.
+        "domains_source": "derived",
         "membership": classified,
         "unclassified_allocations": unclassified,
         "uncharged_allocations": uncharged,
         "units": units,
         "terms": terms,
         "scope": {
-            "topology": "tp1_single_device_resident_eager",
+            "topology": SCOPE_TOPOLOGY,
             "allocation_scope": "gpu_allocations_only",
             "unavailable_terms": sorted(unavailable),
             "expressible": not unavailable,
@@ -341,6 +442,17 @@ def derive_partition(ledger, domains=None):
             "invariance": "one complete assignment, one row per unit",
         },
     }
+
+
+def _compose(terms):
+    """The scalar composition over term values that are all present."""
+    return (terms["fixed_resident"]
+            + sum(terms["candidate_resident"].values())
+            + terms["fixed_activation"]
+            + max(terms["candidate_activation"].values(), default=0)
+            + terms["fixed_scratch"]
+            + max(terms["candidate_scratch"].values(), default=0)
+            + terms["fixed_kv"])
 
 
 def compose_scalar_budget(partition):
@@ -358,13 +470,7 @@ def compose_scalar_budget(partition):
     terms = partition["terms"]
     if any(value is None for value in terms.values()):
         return None
-    return (terms["fixed_resident"]
-            + sum(terms["candidate_resident"].values())
-            + terms["fixed_activation"]
-            + max(terms["candidate_activation"].values(), default=0)
-            + terms["fixed_scratch"]
-            + max(terms["candidate_scratch"].values(), default=0)
-            + terms["fixed_kv"])
+    return _compose(terms)
 
 
 REPORT_SCHEMA = "tessera.full_engine_resource_report.v1"
@@ -398,12 +504,31 @@ def assemble_full_engine_resource_report(ledger, *, reference, workload,
     declared = {"reference": reference, "workload": workload, "execution": execution}
     for name in _DECLARED_MEMBERS:
         value = declared[name]
-        if not isinstance(value, dict) or not value:
+        if not isinstance(value, dict):
             raise ValueError(f"report member is missing and is never defaulted: {name}")
+        fields = DECLARED_MEMBER_FIELDS[name]
+        if set(value) != set(fields):
+            raise ValueError(
+                f"report member {name} declares {sorted(value)}; this schema's "
+                f"fields are {sorted(fields)}")
+        # A dict of nulls is truthy, so "is it empty" was never the question. A
+        # member every one of whose fields is null declares nothing, and a
+        # report that carries it says it has a reference row when it has none.
+        if all(field_value is None for field_value in value.values()):
+            raise ValueError(f"report member declares every field null: {name}")
+
+    # The scope this producer stamps is the composite spelling of one execution
+    # coordinate. A caller declaring another one gets a refusal, not a partition
+    # whose scope contradicts the declaration inside the same envelope: the
+    # schema says a report outside that scope refuses rather than projecting,
+    # and a stamped constant is exactly the projection it forbids.
+    if execution != SUPPORTED_EXECUTION:
+        raise ValueError(
+            f"execution coordinate {sorted(execution.items())} is outside this "
+            f"schema's scope {sorted(SUPPORTED_EXECUTION.items())}, and the "
+            f"scope is never projected over it")
 
     partition = derive_partition(ledger)
-    if partition["domains_source"] != "derived":
-        raise ValueError("a report is never assembled from supplied domains")
     report = {
         "schema": REPORT_SCHEMA,
         "identity": {
