@@ -536,8 +536,11 @@ def build_extension_step(platform_token: str) -> dict:
 
         module = kg._ext()
     except Exception as exc:
+        # The TAIL, not the head: ninja echoes the whole compile command before
+        # the diagnostic, so a head-truncated build error is the flags without
+        # the reason they failed.
         return step(STATUS_FAILED,
-                    f"{type(exc).__name__}: {str(exc).strip()[:1500]}",
+                    f"{type(exc).__name__}: ...{str(exc).strip()[-1800:]}",
                     platform=platform_token, seconds=round(time.time() - started, 3))
     return step(STATUS_RAN, None, platform=platform_token,
                 module=getattr(module, "__name__", None),
