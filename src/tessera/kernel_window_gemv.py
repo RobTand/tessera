@@ -490,9 +490,16 @@ def default_plan(rows: int, cols: int, M: int = 1, *, sm_count: "int | None" = N
     **The 128-column M=8 plan is admitted after a gfx1201 launch receipt** --
     and that receipt needs a kernel change first, because ``window_gemv.cu``
     sizes its x tile from ``constexpr MAX_COLS = max_item_cols(MT)``, not from
-    the item cap, so a launch under this plan still asks for 66,048 B and is
-    refused by a 64 KiB device.  :func:`plan_smem_bytes` prices both numbers
-    on purpose.  Until the ``.cu`` sizes the tile from the cap and a gfx1201
+    the item cap, so a launch under this plan still asks for 66,048 B.
+    Measured on gfx1201, not predicted: M = 1, 2 and 4 launch and land inside
+    the fp32 accumulation bound at 43,072 / 53,376 / 49,408 B, and M = 8 is
+    refused with ``hipErrorInvalidValue`` at 66,048 B under a 128-column plan
+    and a 256-column one alike -- the plan's item width does not change what
+    the launch asks for, which is the whole of it (receipts
+    ``t454-lds-plan/receipts/02_gfx1201_lds_plan_launch.txt`` and
+    ``03_gfx1201_m8_refusal.txt``; scope: gfx1201 under WSL2, code path, no
+    performance claim).  :func:`plan_smem_bytes` prices both numbers on
+    purpose.  Until the ``.cu`` sizes the tile from the cap and a gfx1201
     launch confirms it, M in 5..8 on a 64 KiB device belongs to the M=4 plan
     run twice or to the materialised path.
 
