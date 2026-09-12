@@ -3479,6 +3479,12 @@ theirs by path and SHA-256 so the evidence travels with the claim.
 `tests/test_attest_receipt.py` holds the scope rule, the refusal and the
 receipt schema on CPU, with a stubbed device.
 
+The first receipt it wrote is in the tree at
+`docs/measurements/attest-gfx1201-wsl2-2026-09-12.json`: a gfx1201 run under
+WSL2, `qualification` null, `perf_claim` false. It occupies the middle row of
+the scope rule, which is to say it proves the identity and header path works
+on real AMD hardware and nothing else.
+
 No AMD cell exists yet. The harness is how one could be written, not evidence
 that one may be.
 
