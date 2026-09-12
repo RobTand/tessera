@@ -742,9 +742,12 @@ def versions_block(identity: dict) -> dict:
     except Exception:
         vllm_version = None
     try:
-        from importlib.metadata import version as _version
+        # ``tessera.__version__`` is the one home (ARCHITECTURE §5.5): it reads
+        # pyproject from a checkout and distribution metadata from a wheel, so a
+        # receipt produced from a clone is not stamped ``null``.
+        import tessera
 
-        tessera_version = _version("tessera-quant")
+        tessera_version = str(tessera.__version__) or None
     except Exception:
         tessera_version = None
     return {"torch": identity.get("torch"), "vllm": vllm_version, "hip": identity.get("hip"),
