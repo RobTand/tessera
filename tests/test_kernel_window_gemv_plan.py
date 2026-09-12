@@ -173,13 +173,17 @@ def test_a_host_with_no_device_plans_exactly_as_sm_121_does(monkeypatch, m):
     assert (_as.rpl, _as.blocks, _as.cols_per_item) == (rpl, blocks, cols)
 
 
-@pytest.mark.parametrize("m,cols,smem", [(1, 256, 43072), (2, 256, 53376),
-                                         (4, 256, 49408), (8, 128, 57856)])
-def test_a_64_kib_device_keeps_the_small_plans_and_caps_m_8(m, cols, smem):
+@pytest.mark.parametrize("m,cols,tile,smem", [(1, 256, 1024, 43072), (2, 256, 1024, 53376),
+                                             (4, 256, 256, 49408), (8, 128, 128, 57856)])
+def test_a_64_kib_device_keeps_the_small_plans_and_caps_m_8(m, cols, tile, smem):
+    """``cols_per_item`` is how wide an ITEM is; the x tile the launch allocates
+    is the cap the budget allows, which is why M<=2 still prices 1024 columns
+    while cutting 256-column items (the sweep's shape, unchanged)."""
+    mt = kg._m_tile(m)
     plan = kg.default_plan(9728, 9728, m, sm_count=32, shared_mem_per_block=RDNA_LDS)
     assert plan.cols_per_item == cols
-    assert kg.plan_smem_bytes(kg._m_tile(m), table_dtype=BF16,
-                              item_cols=plan.cols_per_item) == smem
+    assert kg.item_cols_for_budget(mt, RDNA_LDS, table_dtype=BF16) == tile
+    assert kg.plan_smem_bytes(mt, table_dtype=BF16, item_cols=tile) == smem
     assert smem <= RDNA_LDS
 
 
