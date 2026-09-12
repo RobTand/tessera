@@ -46,6 +46,31 @@ OWNER_CLASSES = ("fixed", "candidate", "kv")
 # whether the allocation was ever freed inside the captured interval.
 LIFETIME_CLASSES = ("resident", "activation", "scratch")
 
+# The two domains whose closure check is implemented here. The other four are
+# stated as what is missing, never closed by the presence of an argument: a
+# domain that closes because a caller passed a truthy object is ``qualified:
+# true`` spelled differently, and this schema does not have that field.
+IMPLEMENTED_DOMAINS = ("history_join", "external_closure")
+
+_UNIMPLEMENTED_DOMAINS = {
+    "worker_startup":
+        "the recorder is proven to attach before CUDA initialization (the replay "
+        "refuses a capture that did not), but no capture yet runs inside the "
+        "engine's own worker process, so startup is not covered end to end",
+    "provenance_admission":
+        "no check here recomputes the runtime provenance relation; the "
+        "consumer's admission is what closes this domain, and it refuses today",
+    "cache_capacity":
+        "no check here recomputes pool sizes and resolved limits from the raw "
+        "worker records with views deduplicated by physical backing generation",
+    "timing_partition":
+        "no check here recomposes the measured step from ordered native apply "
+        "intervals, and it needs a device with no other work on it, which no "
+        "capture has had",
+}
+
+_ISSUES_REASON = "the raw ledger carries unresolved issues"
+
 
 def _owner_class(row):
     """The one owner class this allocation carries, or ``None``.
@@ -70,8 +95,13 @@ def _lifetime_class(row):
         return "activation"
     if row["lifetime_scope"] == "inside_unit":
         return "scratch"
-    # Freed, but outside every unit interval: it is neither carried across a
-    # candidate boundary nor local to one. It has no supported transient class.
+    # Allocated and freed with no unit interval containing either end. It is a
+    # real transient — on a live engine attention, norms, routing, sampling and
+    # every startup transient land here — but charging it needs a declared step
+    # boundary saying how often it recurs, and the capture emits unit intervals
+    # only. Calling it fixed scratch would assume once per step; calling it
+    # startup would assume never again. Both are fills, so it stays
+    # unclassified and named. See the report schema's missing-input list.
     return None
 
 
@@ -118,7 +148,9 @@ def classify_allocations(ledger):
                 "observed_categories": row["observed_categories"],
                 "lifetime_scope": row["lifetime_scope"],
                 "reason": ("no single supported owner category" if owner is None
-                           else "freed outside every unit interval"),
+                           else "freed outside every unit interval; charging it "
+                                "needs a declared step boundary the capture does "
+                                "not emit"),
             })
             continue
         classified.append({
@@ -130,72 +162,51 @@ def classify_allocations(ledger):
     return classified, unclassified
 
 
-def qualify_domains(ledger, relation=None, timings=None, cache_records=None):
+def qualify_domains(ledger):
     """State each of the six domains from the evidence actually present.
 
     ``closed`` means the evidence is present and consistent. ``refused`` means
     the evidence is present and contradicts the model. ``open`` means it was
-    never observed. The gate blocks on ``refused`` and ``open`` alike; the
-    distinction is for the person reading the report.
-    """
-    capture = ledger.get("capture_qualification") or {}
-    _, unclassified = classify_allocations(ledger)
-    domains = {}
+    never observed, or no check that could close it exists yet. The gate blocks
+    on ``refused`` and ``open`` alike; the distinction is for the person reading
+    the report.
 
-    # Worker startup: the replay already raises unless the recorder attached
-    # before CUDA initialization, so reaching a parsed ledger at all is the
-    # evidence. A ledger that carries its own issues has not established it.
-    domains["worker_startup"] = _domain(
-        closed=bool(ledger.get("history_join")) and not ledger["issues"],
-        evidence=["history_join"],
-        reason=None if not ledger["issues"] else "raw ledger carries unresolved issues")
+    This function takes the ledger and nothing else. Four of the six domains
+    have no implemented closure check, and they say so rather than closing when
+    a caller supplies an artifact — an unread argument is not evidence.
+    """
+    issues = ledger["issues"]
+    domains = {}
 
     # History join: every Torch event has its reciprocal CUPTI record and back.
     unattributed = ledger.get("unattributed_external_records")
-    domains["history_join"] = _domain(
-        closed=unattributed == [] and not unclassified,
-        evidence=["unattributed_external_records", "torch_allocations"],
-        reason=("unattributed external CUDA memory records remain" if unattributed
-                else f"{len(unclassified)} allocations carry no single owner class"
-                if unclassified else None),
-        refused=bool(unattributed))
+    if issues:
+        domains["history_join"] = _domain(False, [], _ISSUES_REASON, refused=True)
+    elif unattributed:
+        domains["history_join"] = _domain(
+            False, [], "unattributed external CUDA memory records remain",
+            refused=True)
+    else:
+        domains["history_join"] = _domain(
+            True, ["unattributed_external_records", "history_join"], None)
 
-    # External/context/host closure: the one quantity that makes this domain
-    # closed is a disjoint observed charge, never a residual.
+    # External/context/host closure: the one quantity that closes this domain is
+    # a disjoint observed charge, never a residual.
     external = ledger.get("external_native_peak_bytes")
-    domains["external_closure"] = _domain(
-        closed=external is not None,
-        evidence=["external_native_peak_bytes", "cuda_argument_domains"],
-        reason=None if external is not None else
-               "external/static/context backings carry no disjoint observed charge")
+    if issues:
+        domains["external_closure"] = _domain(False, [], _ISSUES_REASON, refused=True)
+    elif external is None:
+        domains["external_closure"] = _domain(
+            False, [],
+            "external/static/context backings carry no disjoint observed charge")
+    else:
+        domains["external_closure"] = _domain(
+            True, ["external_native_peak_bytes", "cuda_argument_domains"], None)
 
-    # Runtime provenance admission is the consumer's relation check; the
-    # producer can only report whether the relation artifact was supplied.
-    domains["provenance_admission"] = _domain(
-        closed=bool(relation),
-        evidence=["runtime_provenance_relation"] if relation else [],
-        reason=None if relation else "no runtime provenance relation supplied")
+    for name, reason in _UNIMPLEMENTED_DOMAINS.items():
+        domains[name] = _domain(False, [], reason)
 
-    # Cache capacity: pool sizes and resolved limits recomputed from raw worker
-    # records, with views deduplicated by physical backing generation.
-    domains["cache_capacity"] = _domain(
-        closed=bool(cache_records),
-        evidence=["kv_observations"] if cache_records else [],
-        reason=None if cache_records else "no observed KV/recurrent backing records")
-
-    # Timing partition needs an isolated GPU; a timing chain measured beside
-    # other work on the same device is not a measurement.
-    domains["timing_partition"] = _domain(
-        closed=bool(timings),
-        evidence=["timing_captures"] if timings else [],
-        reason=None if timings else "no same-run timing partition supplied")
-
-    if capture.get("errors"):
-        for name in domains:
-            if domains[name]["state"] == "closed":
-                domains[name] = _domain(False, [], "capture reported collection errors",
-                                        refused=True)
-    return domains
+    return {name: domains[name] for name in DOMAIN_NAMES}
 
 
 def _domain(closed, evidence, reason, refused=False):
@@ -209,18 +220,19 @@ def _term_available(term, domains):
     return all(domains[name]["state"] == "closed" for name in TERM_DOMAINS[term])
 
 
-def derive_partition(ledger, domains=None, relation=None, timings=None,
-                     cache_records=None):
+def derive_partition(ledger, domains=None):
     """Build the partition and the composition terms from one replayed ledger.
 
     Every number is derived from the ledger's own classified event lifetimes.
-    Terms whose domains are not all closed are ``None`` and are named in
-    ``scope.unavailable_terms`` rather than being filled.
+    A term is ``None``, and named in ``scope.unavailable_terms``, when a domain
+    it depends on is not closed *or* when any allocation is unclassified — an
+    unclassified row has neither owner nor lifetime, so it could belong to any
+    term, and no term can be complete while one exists.
     """
     if ledger["schema"] != "tessera.full_engine_raw_resource_ledger.v1":
         raise ValueError("unsupported raw ledger schema")
     if domains is None:
-        domains = qualify_domains(ledger, relation, timings, cache_records)
+        domains = qualify_domains(ledger)
     classified, unclassified = classify_allocations(ledger)
     terminal = 1 + max((row["allocate_index"] for row in ledger["torch_allocations"]),
                        default=0)
@@ -234,7 +246,7 @@ def derive_partition(ledger, domains=None, relation=None, timings=None,
     terms, unavailable = {}, []
 
     def emit(name, value):
-        if _term_available(name, domains):
+        if not unclassified and _term_available(name, domains):
             terms[name] = value
         else:
             terms[name] = None
@@ -271,6 +283,7 @@ def derive_partition(ledger, domains=None, relation=None, timings=None,
             "allocation_scope": "gpu_allocations_only",
             "unavailable_terms": sorted(unavailable),
             "expressible": not unavailable,
+            "unclassified_allocation_count": len(unclassified),
             "invariance": "one complete assignment, one row per unit",
         },
     }
@@ -298,3 +311,74 @@ def compose_scalar_budget(partition):
             + terms["fixed_scratch"]
             + max(terms["candidate_scratch"].values(), default=0)
             + terms["fixed_kv"])
+
+
+REPORT_SCHEMA = "tessera.full_engine_resource_report.v1"
+
+# The seven envelope members, in the frozen order.
+REPORT_MEMBERS = ("identity", "reference", "workload", "execution",
+                  "observations", "partition", "derived")
+
+# The three the raw ledger cannot supply. The producer refuses each by name
+# rather than defaulting it: a report that invents its own reference row or its
+# own workload digest is exactly the failure the consumer's independent
+# recomputation exists to catch.
+_DECLARED_MEMBERS = ("reference", "workload", "execution")
+
+
+def assemble_full_engine_resource_report(ledger, *, reference, workload,
+                                         execution, artifacts=()):
+    """Assemble the frozen seven-member report envelope for one capture.
+
+    ``identity``, ``observations``, ``partition`` and ``derived`` are read or
+    derived from the ledger. ``reference``, ``workload`` and ``execution`` are
+    the caller's declarations of coordinates the raw ledger does not carry —
+    the census and assignment, the workload and its token rows, and the
+    execution coordinate — and each is refused when absent.
+
+    ``derived`` is a claim, never an input. The consumer recomputes every
+    number in it from ``partition`` and ``observations`` and admits nothing on
+    disagreement, so nothing here is authoritative because the producer said
+    it.
+    """
+    declared = {"reference": reference, "workload": workload, "execution": execution}
+    for name in _DECLARED_MEMBERS:
+        value = declared[name]
+        if not isinstance(value, dict) or not value:
+            raise ValueError(f"report member is missing and is never defaulted: {name}")
+
+    partition = derive_partition(ledger)
+    report = {
+        "schema": REPORT_SCHEMA,
+        "identity": {
+            "run": ledger.get("identity"),
+            "capture_sha256": ledger.get("capture_sha256"),
+            # Carried, not dropped: a capture that says on its face that it is
+            # synthetic must keep saying so in every artifact derived from it.
+            "fixture_provenance": ledger.get("fixture_provenance"),
+        },
+        "reference": reference,
+        "workload": workload,
+        "execution": execution,
+        "observations": {
+            "capture_sha256": ledger.get("capture_sha256"),
+            "torch_allocations": ledger["torch_allocations"],
+            "checkpoints": ledger.get("checkpoints"),
+            "cuda_argument_domains": ledger.get("cuda_argument_domains"),
+            "unattributed_external_records": ledger.get("unattributed_external_records"),
+            "external_native_peak_bytes": ledger.get("external_native_peak_bytes"),
+            "torch_observed_live_peak_bytes": ledger.get("torch_observed_live_peak_bytes"),
+            "torch_observed_live_peak_scope": ledger.get("torch_observed_live_peak_scope"),
+            "issues": ledger["issues"],
+            "artifacts": list(artifacts),
+        },
+        "partition": partition,
+        "derived": {
+            "terms": partition["terms"],
+            "scalar_budget_bytes": compose_scalar_budget(partition),
+            "scope": partition["scope"],
+            "domains": partition["domains"],
+        },
+    }
+    assert set(report) == set(REPORT_MEMBERS) | {"schema"}
+    return report

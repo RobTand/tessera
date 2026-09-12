@@ -10,8 +10,9 @@ from pathlib import Path
 import pytest
 
 from experiments.full_engine_resource_partition import (
-    OWNER_CLASSES, TERM_DOMAINS, classify_allocations, compose_scalar_budget,
-    derive_partition, qualify_domains, _simultaneous_peak,
+    DOMAIN_NAMES, IMPLEMENTED_DOMAINS, OWNER_CLASSES, REPORT_MEMBERS,
+    TERM_DOMAINS, assemble_full_engine_resource_report, classify_allocations,
+    compose_scalar_budget, derive_partition, qualify_domains, _simultaneous_peak,
 )
 from experiments.full_engine_resources import analyze_engine_resource_ledger
 
@@ -33,8 +34,7 @@ def _row(allocation_id, size, start, end, **overrides):
 
 def test_every_term_is_null_while_its_domains_are_open(ledger):
     partition = derive_partition(ledger)
-    assert set(partition["domains"]) == set(TERM_DOMAINS["fixed_resident"]) | {
-        "provenance_admission", "cache_capacity", "timing_partition"}
+    assert set(partition["domains"]) == set(DOMAIN_NAMES)
     assert all(term is None for term in partition["terms"].values()), partition["terms"]
     assert partition["scope"]["unavailable_terms"] == sorted(TERM_DOMAINS)
     assert partition["scope"]["expressible"] is False
@@ -50,7 +50,6 @@ def test_an_open_domain_names_why_and_carries_no_evidence(ledger):
             assert domain["reason"], name
     assert domains["external_closure"]["state"] == "open"
     assert "disjoint observed charge" in domains["external_closure"]["reason"]
-    assert domains["timing_partition"]["reason"] == "no same-run timing partition supplied"
 
 
 def test_a_shared_or_unknown_owner_is_unclassified_and_never_bucketed(ledger):
@@ -126,8 +125,87 @@ def test_the_scope_stays_tp1_single_device(ledger):
     assert scope["invariance"] == "one complete assignment, one row per unit"
 
 
-def test_a_capture_collection_error_refuses_every_closed_domain(ledger):
-    ledger["capture_qualification"] = {"errors": ["dropped CUPTI buffer"]}
+def test_a_capture_collection_error_refuses_the_domains_it_touches(ledger):
+    # The analyzer folds the capture's own collection errors into ``issues``;
+    # that is the key it emits, so that is the key this reads.
+    assert qualify_domains(ledger)["history_join"]["state"] == "closed"
+    ledger["issues"] = ["dropped CUPTI buffer"]
     domains = qualify_domains(ledger)
     assert all(domain["state"] != "closed" for domain in domains.values())
-    assert any(domain["state"] == "refused" for domain in domains.values())
+    for name in IMPLEMENTED_DOMAINS:
+        assert domains[name]["state"] == "refused", name
+
+
+def test_no_domain_closes_because_an_argument_was_supplied(ledger):
+    # A domain that closes on the presence of a caller-supplied object is
+    # ``qualified: true`` spelled differently. Four of the six have no
+    # implemented closure check, and no signature lets a caller assert one.
+    import inspect
+
+    assert list(inspect.signature(qualify_domains).parameters) == ["ledger"]
+    domains = qualify_domains(ledger)
+    for name in set(DOMAIN_NAMES) - set(IMPLEMENTED_DOMAINS):
+        assert domains[name]["state"] == "open", name
+        assert domains[name]["evidence"] == []
+        assert "no check here" in domains[name]["reason"] or "not covered" in \
+            domains[name]["reason"] or "worker process" in domains[name]["reason"]
+
+
+def test_worker_startup_stays_open_on_a_capture_from_no_engine_worker(ledger):
+    # The replay refuses a capture whose recorder attached after CUDA
+    # initialization, so reaching a parsed ledger proves that half. It does not
+    # prove the recorder ran inside the engine's own worker process, and this
+    # fixture says on its face that it is a synthetic CPU parser fixture.
+    assert ledger["fixture_provenance"] == \
+        "synthetic CPU-only parser fixture, not a GPU measurement"
+    domain = qualify_domains(ledger)["worker_startup"]
+    assert domain["state"] == "open"
+    assert "worker process" in domain["reason"]
+
+
+def test_an_allocation_freed_outside_every_unit_interval_is_unclassified(ledger):
+    # On a live engine attention, norms, routing, sampling and every startup
+    # transient land here. Charging one needs a declared step boundary saying
+    # how often it recurs, and the capture emits unit intervals only.
+    row = dict(ledger["torch_allocations"][0])
+    row.update(allocation_id="freed-outside", lifetime_scope="outside_units",
+               free_completed_index=row["allocate_index"] + 1,
+               observed_categories=["fixed"], scope_stack=[])
+    ledger["torch_allocations"] = [row]
+    classified, unclassified = classify_allocations(ledger)
+    assert classified == []
+    assert len(unclassified) == 1
+    assert "declared step boundary" in unclassified[0]["reason"]
+
+
+def test_one_unclassified_allocation_nulls_every_term(ledger):
+    # An unclassified row has neither owner nor lifetime, so it could belong to
+    # any term. No term is complete while one exists, whatever the domains say.
+    all_closed = {name: {"state": "closed", "evidence": ["declared by the test"],
+                         "reason": None} for name in DOMAIN_NAMES}
+    partition = derive_partition(ledger, domains=all_closed)
+    assert partition["scope"]["unclassified_allocation_count"] == 1
+    assert all(term is None for term in partition["terms"].values())
+    assert compose_scalar_budget(partition) is None
+
+
+def test_the_report_refuses_a_member_it_cannot_derive(ledger):
+    for absent in ("reference", "workload", "execution"):
+        members = {"reference": {"census": "x"}, "workload": {"tokens": "x"},
+                   "execution": {"graph_mode": "eager"}}
+        members[absent] = {}
+        with pytest.raises(ValueError, match=f"never defaulted: {absent}"):
+            assemble_full_engine_resource_report(ledger, **members)
+
+
+def test_the_report_keeps_the_seven_members_and_the_synthetic_marker(ledger):
+    report = assemble_full_engine_resource_report(
+        ledger, reference={"census": "synthetic"},
+        workload={"tokens": "synthetic"}, execution={"graph_mode": "eager"})
+    assert set(report) == set(REPORT_MEMBERS) | {"schema"}
+    assert report["schema"] == "tessera.full_engine_resource_report.v1"
+    # A synthetic capture is never laundered into an artifact that looks measured.
+    assert report["identity"]["fixture_provenance"] == ledger["fixture_provenance"]
+    # Nothing is admitted today: derived is a claim, and it claims nothing.
+    assert report["derived"]["scalar_budget_bytes"] is None
+    assert all(term is None for term in report["derived"]["terms"].values())

@@ -637,12 +637,15 @@ def analyze_engine_resource_ledger(raw):
               "external_native_peak_bytes": None,
               "issues": [], "torch_allocations": [], "checkpoints": [],
               "escaping_allocation_ids": [], "unattributed_external_records": [],
+              "fixture_provenance": None,
               "qualification_gaps": list(QUALIFICATION_GAPS)}
     issues = result["issues"]
     try:
         raw = expand_capture(raw)
         if raw["schema"] != CAPTURE_SCHEMA:
             raise ValueError("unsupported full-engine capture schema")
+        # A capture that says on its face that it is synthetic keeps saying so.
+        result["fixture_provenance"] = raw.get("fixture_provenance")
         identity = _identity(raw["identity"])
         result["identity"] = identity
         result["capture_sha256"] = canonical_snapshot_digest(raw)

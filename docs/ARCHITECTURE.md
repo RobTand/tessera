@@ -1204,6 +1204,17 @@ six `qualification_gaps` as six named **domains** — `worker_startup`,
 evidence or its own reason. `refused` means the evidence exists and contradicts
 the model; `open` means it was never observed. Both block.
 
+Only two domains have an implemented closure check — `history_join` reads
+`unattributed_external_records` and `external_closure` reads
+`external_native_peak_bytes`, and both go `refused` on unresolved ledger
+`issues`. The other four state that no check exists rather than closing.
+`qualify_domains` takes the ledger and nothing else, so no caller can close a
+domain by supplying an artifact nobody reads; a domain that closed because an
+argument was truthy would be `qualified: true` under another name.
+`worker_startup` is the subtle case: the replay refuses a capture whose recorder
+attached after CUDA initialization, which proves that half, but nothing yet
+proves the recorder ran inside the engine's own worker process.
+
 Every composition term names the domains it depends on, and a term whose domains
 are not all closed is null and listed in `scope.unavailable_terms`. Nothing is
 filled: no whole-engine residual, no independent-median subtraction and no
@@ -1212,7 +1223,14 @@ allocation/free sweep over the declared interval — a sum of per-allocation
 maxima is not a peak, and neither is a difference of two independent peaks. An
 allocation whose observed category is `shared`, `unknown`, absent or plural is
 unclassified and named in `unclassified_allocations`; ownership is never
-inferred from a pointer or from what is left over. The scalar scope stays TP1,
+inferred from a pointer or from what is left over. **One unclassified
+allocation nulls every term**, whatever the domains say — such a row has neither
+owner nor lifetime, so it could belong to any term. An allocation freed with no
+unit interval containing either end is unclassified for that reason: charging it
+needs a declared step boundary the capture does not yet emit, and both available
+guesses (once per step, or never again) would be fills. That missing input is
+recorded in the schema document, and it is why a real capture will derive
+nothing until the capture emits it. The scalar scope stays TP1,
 one device, resident, eager, GPU allocations only, and one complete assignment
 with one row per unit.
 
@@ -1224,8 +1242,15 @@ measured instantaneous peak because independent maxima need not coincide; that
 is disclosed conservatism, not permission to charge one extent twice. The frozen
 producer schema is `docs/design/full_engine_resource_report.md`; the consumer
 that must independently recompute it is PrismaQuant's, per its
-`docs/design/runtime_fixed_resource_admission.md`. Admission stays closed: no
-domain is closed today, and no serving gate reads this partition.
+`docs/design/runtime_fixed_resource_admission.md`.
+`assemble_full_engine_resource_report` builds that seven-member envelope,
+deriving `identity`, `observations`, `partition` and `derived` from the ledger
+and refusing `reference`, `workload` and `execution` by name rather than
+defaulting them; `fixture_provenance` is carried from the capture through the
+ledger into `identity`, so an artifact derived from a synthetic fixture cannot
+read as a measurement. Admission stays closed: on the only ledger fixture that
+exists, every composition term is null and the scalar budget is null, and no
+serving gate reads this partition.
 
 ### 2.5 Whole routed receipts preserve the actual expert owner
 

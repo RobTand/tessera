@@ -86,6 +86,26 @@ establish rather than what is absent:
 | `cache_capacity` | KV and recurrent views are deduplicated by physical backing generation, pool sizes and resolved limits are recomputed from raw worker records, and the selected capacity policy is bound. |
 | `timing_partition` | Ordered native apply intervals and directly measured adjacent gaps recompose the whole measured step within documented event rounding, with every launch bound to its CPU scope, correlation, stream and device. |
 
+### What is checked today, and what only states its absence
+
+Two of the six have an implemented closure check: `history_join` reads
+`unattributed_external_records`, and `external_closure` reads
+`external_native_peak_bytes`. Both also go `refused` when the ledger carries
+unresolved `issues`.
+
+The other four — `worker_startup`, `provenance_admission`, `cache_capacity`,
+`timing_partition` — have **no implemented check**, and `qualify_domains` states
+that as their reason rather than closing them. It takes the ledger and nothing
+else, so no caller can close a domain by supplying an artifact nobody reads. A
+domain that closes because an argument was truthy is `qualified: true` spelled
+differently, and this schema does not have that field.
+
+`worker_startup` is the subtle one. The replay refuses outright a capture whose
+recorder attached after CUDA initialization, so reaching a parsed ledger does
+prove that half. It does **not** prove the recorder ran inside the engine's own
+worker process, which is the other half of what this domain must establish and
+is the work #399 still owes.
+
 A domain is `refused`, not `open`, when the evidence exists and contradicts the
 model — overlapping candidate execution, a physical extent claimed twice, a
 foreign device in the trace. `open` means unobserved; `refused` means observed
@@ -115,6 +135,25 @@ Each term is emitted only when every domain it depends on is `closed`:
 Any term whose dependencies are not all closed is `null`, and `derived.scope`
 names which terms are expressible. A partially expressible `derived` is a valid
 report; a `derived` that fills a gap is not.
+
+**An unclassified allocation nulls every term, whatever the domains say.** A row
+with no single supported owner category, or with no supported lifetime class,
+has neither an owner nor a lifetime — so it could belong to any term, and no
+term is complete while one exists. `derived.scope.unclassified_allocation_count`
+carries the count and `partition.unclassified_allocations` names every row.
+
+### A missing input: the declared step boundary
+
+An allocation that is freed with no unit interval containing either end is a
+real transient — on a live engine attention, norms, routing, sampling and every
+startup transient land there — but the capture cannot yet say how often it
+recurs. Charging it as fixed scratch would assume once per step; treating it as
+startup would assume never again. Both are fills, so such a row stays
+**unclassified** and, by the rule above, nulls every term.
+
+This is the single largest reason a real capture will derive nothing until the
+capture emits a declared step boundary alongside `unit_intervals`. It is
+recorded as an owed input rather than papered over with a default.
 
 The composition can exceed the measured instantaneous peak, because independent
 maxima need not coincide. That is disclosed conservatism. It is not permission to
@@ -160,6 +199,20 @@ only. The fixture at `tests/fixtures/full_engine_resource_ledger.json` says so o
 its face — `"synthetic CPU-only parser fixture, not a GPU measurement"` — and a
 report built from it carries that scope. A positive *real* report additionally
 needs the qualified original measurements on the named hardware.
+
+## Assembling the envelope
+
+`assemble_full_engine_resource_report(ledger, *, reference, workload,
+execution, artifacts=())` builds the seven members.
+`identity`, `observations`, `partition` and `derived` are read or derived from
+the ledger. The other three are coordinates the raw ledger does not carry, and
+each is **refused by name** when absent rather than defaulted — a report that
+invents its own reference row or workload digest is exactly the failure the
+consumer's independent recomputation exists to catch.
+
+A capture that declares itself synthetic keeps saying so: `fixture_provenance`
+is carried from the capture through the ledger into `identity`, so no artifact
+derived from a synthetic fixture can read as a measurement.
 
 ## Delivery boundary
 
