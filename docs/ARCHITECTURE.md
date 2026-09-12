@@ -5,6 +5,14 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-12 for the AMD certification harness (#459):
+`tools/tessera_attest.py` and `docs/strix-halo-tester-protocol.md` define how
+a receipt from hardware this project does not own may become a
+`lane_eligibility` cell -- identity from torch's `gcnArchName`, the scope rule
+as a value on the receipt, and `device_qualified` withheld for any platform
+the run did not measure. Tooling and protocol only: no contract version, no
+cell, no default moves, and no AMD cell exists. See §4.5d.
+
 Re-stamped 2026-09-11 for the encoder's boundary feed (PrismaQuant
 boundary-feed measurement on the GLM census, sparky, `b81c038ea327`): the
 window Viterbi's chunk loop no longer waits on the device -- the reference's
@@ -3228,7 +3236,7 @@ Schema v8 (contract v19, #198) requires `evidence.artifact` (§3.1a).
 Pre-release readers must accept that scope explicitly; older closed readers
 refuse the new schema rather than silently discarding it.
 
-### 4.5c Per-operator presence, and the two reasons a quantized route refuses
+### 4.5e Per-operator presence, and the two reasons a quantized route refuses
 
 `native_ops.py` binds the two quantized routes to vLLM's own registered CUDA
 quantization operators. Until #455 it asked one question -- is
@@ -3502,6 +3510,45 @@ re-stamp it needs. Tightening the rule therefore does not need a schema bump --
 `tessera.serve_build_identity/2` stands -- and a record stamped under an older
 rule reads honestly as incomplete instead of certifying on a verdict nobody
 would issue today.
+
+### 4.5d Certifying a platform nobody here owns
+
+A cell says a route status was observed on a platform. Every platform in the
+packaged contract today is `sm_121`, a box this project runs on. The AMD lane
+is not: Strix Halo (`gfx1151`) hardware exists nowhere in this fleet, and the
+gfx12 part that is reachable (`gfx1201`, under WSL2) executes gfx12 code
+without saying anything about an APU's numerics or its speed.
+
+So the evidence for an AMD cell has to arrive from somebody else's machine,
+and what it is allowed to claim has to be readable off the file rather than
+remembered by whoever mails it. `tools/tessera_attest.py` is that file's
+writer: it reads the device's identity from torch's `gcnArchName` -- never
+`amdsmi`, `rocm-smi` or vLLM's ROCm platform helpers, none of which can
+answer under WSL2 -- stamps the scope rule as a value
+(`header.scope`, `header.scope_sentence`, `header.perf_claim`), and withholds
+`device_qualified` whenever the platform the receipt claims is not the
+platform the run measured. The reference set is `TESSERA_BF16_K1` at rungs
+896 and 1024, and an artifact outside it is refused rather than measured.
+
+The harness owns the steps that are local to the device -- the loader-path
+extension build, the packed decoder against the `torch_window` reference
+through `bf16_route.prepare_tessera_bf16_module`, the GEMV against the
+decoded tile, package power through `amd-smi` when a driver exists. It does
+not recompute a census or a KL: those belong to
+`tools/tessera_route_census.py` and the KL harness, and the receipt ingests
+theirs by path and SHA-256 so the evidence travels with the claim.
+`docs/strix-halo-tester-protocol.md` is what a tester is sent;
+`tests/test_attest_receipt.py` holds the scope rule, the refusal and the
+receipt schema on CPU, with a stubbed device.
+
+The first receipt it wrote is in the tree at
+`docs/measurements/attest-gfx1201-wsl2-2026-09-12.json`: a gfx1201 run under
+WSL2, `qualification` null, `perf_claim` false. It occupies the middle row of
+the scope rule, which is to say it proves the identity and header path works
+on real AMD hardware and nothing else.
+
+No AMD cell exists yet. The harness is how one could be written, not evidence
+that one may be.
 
 ### 4.6 The stock twin isolates the wire from the kernel
 
