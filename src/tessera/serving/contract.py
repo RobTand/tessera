@@ -93,6 +93,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from functools import lru_cache
 from types import MappingProxyType
 from typing import Any, Mapping
 
@@ -358,6 +359,21 @@ def load_serving_contract() -> dict[str, Any]:
     contract = json.loads(raw)
     validate_serving_contract(contract)
     return contract
+
+
+@lru_cache(maxsize=1)
+def cached_serving_contract() -> Mapping[str, Any]:
+    """:func:`load_serving_contract`, parsed and validated ONCE per process.
+
+    The packaged document is a build artifact: within one process it cannot
+    change, and re-validating two thousand lines of it per Linear is a cost
+    with no reading behind it.  Callers on a model-load path (``native_ops``
+    asks this per quantized Linear) take this one; anything that may be handed
+    a DIFFERENT document keeps taking ``load_serving_contract`` or its own
+    parse.  Returned read-only so a caller cannot edit the copy every other
+    caller will be handed.
+    """
+    return MappingProxyType(load_serving_contract())
 
 
 def _require_keys(payload: Mapping[str, Any], where: str, required: set[str],
@@ -1866,6 +1882,82 @@ _FAMILY_TO_ROUTE = {
 PAYLOAD_FAMILY_BY_ROUTE = {route: family for family, route in _FAMILY_TO_ROUTE.items()}
 assert len(PAYLOAD_FAMILY_BY_ROUTE) == len(_FAMILY_TO_ROUTE), (
     "two payload families share a route, so route -> family is no longer a join")
+
+#: What this document says about one ``(platform, family)`` pair, as three
+#: states a caller can branch on rather than a boolean it must interpret.
+#:
+#: The distinction that matters is between a document that SAYS a platform
+#: does not execute a family and a document that says nothing about it at all.
+#: A null ``executes`` entry is an attestation -- somebody looked and the
+#: route is not there -- and a refusal is the correct answer.  A platform the
+#: table does not mention, or a contract written before the platform axis
+#: existed, has attested nothing; refusing there would turn a silence into a
+#: claim about a runtime nobody read, which is the opposite of principle "a
+#: claim about another runtime is attested, never asserted".  So ``unstated``
+#: is NOT a refusal, and every caller must spell that out for itself.
+PLATFORM_BACKED = "backed"
+PLATFORM_UNBACKED = "unbacked"
+PLATFORM_UNSTATED = "unstated"
+PLATFORM_BACKING_STATES = (PLATFORM_BACKED, PLATFORM_UNBACKED, PLATFORM_UNSTATED)
+
+
+def platform_execution_contract(family: str, platform: str,
+                                contract: Mapping[str, Any] | None = None
+                                ) -> tuple[str, str | None]:
+    """What ``platform`` executes for ``family``: a state and its contract.
+
+    Returns ``(state, activation_contract)`` where ``state`` is one of
+    :data:`PLATFORM_BACKING_STATES`:
+
+    * ``backed`` -- the platform's ``executes`` entry names an activation
+      contract, and it is that route's own constant.  The contract string is
+      returned beside it so a caller can stamp what it was told rather than
+      re-derive it.
+    * ``unbacked`` -- the entry is present and null.  The platform is declared
+      and this family is attested as having no native route on it.
+    * ``unstated`` -- the platform is not declared, or the platform entry
+      carries no ``executes`` key (every contract before the platform axis,
+      i.e. ``contract_version`` 22 and earlier).  Nothing is attested either
+      way; the contract is ``None``.
+
+    The read is deliberately tolerant of a malformed table: this is consulted
+    on a model-load hot path, and the document's SHAPE is validated once, by
+    ``validate_serving_contract``, not again on every Linear.  A table that
+    cannot be read the way this expects yields ``unstated`` -- the state that
+    changes no behaviour -- and the validator is what refuses it.
+    """
+    if family not in _FAMILY_TO_ROUTE:
+        raise KeyError(
+            f"{family!r} is not a payload family this contract publishes; "
+            f"known: {sorted(_FAMILY_TO_ROUTE)}")
+    if contract is None:
+        contract = cached_serving_contract()
+    platforms = contract.get("lane_eligibility", {}).get("platforms", {})
+    if not isinstance(platforms, Mapping):
+        return PLATFORM_UNSTATED, None
+    entry = platforms.get(platform)
+    if not isinstance(entry, Mapping) or "executes" not in entry:
+        return PLATFORM_UNSTATED, None
+    executes = entry["executes"]
+    if not isinstance(executes, Mapping) or family not in executes:
+        return PLATFORM_UNSTATED, None
+    value = executes[family]
+    if value is None:
+        return PLATFORM_UNBACKED, None
+    return PLATFORM_BACKED, value
+
+
+def platform_backs(family: str, platform: str,
+                   contract: Mapping[str, Any] | None = None) -> bool:
+    """Whether this document REFUSES ``family`` on ``platform``.
+
+    ``False`` only for the attested ``unbacked``.  ``unstated`` is ``True``:
+    a silence is not a refusal, and a caller that collapsed it to ``False``
+    would refuse every platform the table has not reached yet -- which on
+    ``contract_version`` 22 is every platform there is.
+    """
+    state, _ = platform_execution_contract(family, platform, contract)
+    return state != PLATFORM_UNBACKED
 
 #: The checkpoint's spelling of a body/plane beside the route's spelling of
 #: the same fact.  ``attested_wire`` speaks ``wire.recipes`` -- the

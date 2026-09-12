@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-12T23:09:26Z",
+ "generated": "2026-09-12T23:33:47Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -1864,7 +1864,7 @@
     "title": "Recompute the full-engine partition before admitting a fixed charge (#420)"
    },
    "518": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Generate the PrismaBuild data manifest for every campaign row at submit time; refuse a row without one"
    },
    "519": {
@@ -1884,7 +1884,7 @@
     "title": "admit_fixed_resources: recompute the full-engine partition and admit only on agreement (consumer half of #420)"
    },
    "522": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "dispatch: derive the PB mem_gb demand from the checked phase plan (publication overlap added 2 GiB; 3 rows refused at 8\u201313 MB slack)"
    },
    "523": {
@@ -1892,7 +1892,7 @@
     "title": "Import the pinned tree the campaign container was given"
    },
    "524": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Derive every campaign row's read set at submit, and refuse a row without one"
    },
    "525": {
@@ -1900,7 +1900,7 @@
     "title": "Align the recomputed partition with step-scoped ownership (#520)"
    },
    "526": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Derive the campaign row's memory demand from the plan it checks itself against"
    },
    "53": {
@@ -3702,11 +3702,11 @@
     "title": "AMD/HIP port, step 6 of 9: platform gating in the plugin + `platform` telemetry stamp (re-scoped from \"FP8 `wna16` variant\")"
    },
    "458": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "AMD/HIP port, step 7 of 9: V4 receipt \u2014 `torch.mm(bf16, bf16, out_dtype=float32)` on ROCm (re-scoped: fp8 `_scaled_mm` out of scope unless free)"
    },
    "459": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "AMD/HIP port, step 8 of 9: certification tooling \u2014 `tools/tessera_attest.py` and the Strix Halo tester protocol"
    },
    "46": {
@@ -3716,6 +3716,18 @@
    "460": {
     "state": "OPEN",
     "title": "AMD/HIP port, step 9 of 9: contract v24 \u2014 gfx1201 `TESSERA_BF16_K1` cells minted from device receipts"
+   },
+   "461": {
+    "state": "CLOSED",
+    "title": "Certification tooling: the attest harness and the Strix Halo tester protocol (#459)"
+   },
+   "462": {
+    "state": "OPEN",
+    "title": "Plan the window GEMV inside the device's shared-memory budget"
+   },
+   "463": {
+    "state": "OPEN",
+    "title": "native_ops: ask per operator, and let the contract refuse before the ABI does"
    },
    "47": {
     "state": "CLOSED",
