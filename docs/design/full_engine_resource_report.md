@@ -225,6 +225,22 @@ every unit interval is unclassified and nulls every term. An allocation from an
 engine step nobody declared is live during a step that is not in the list, so
 "live during no declared step" would stop being a proof and become a guess.
 
+**The coverage gate has no headroom, and that is the first thing a real capture
+will answer.** `executed` is `FullEngineResourceWorker._resource_calls`, which
+counts *every* `execute_model` call the worker makes while the recorder is
+armed, including calls past `max_execute_calls` that take no checkpoint and
+therefore declare no step. The capture driver sets `max_execute_calls: 2`
+against `max_tokens: 2` — one prefill, one decode. If the pinned vLLM makes any
+further armed call, a finish-request step or a scheduler pass carrying no
+tokens, then `executed` is 3, `declared` is 2, coverage is `partial`, and every
+row outside every unit interval is unclassified again. That is the gate working:
+it fails closed, exactly as it should, on a capture whose step list is not known
+to be complete. But it means a real capture may derive nothing for a reason
+nobody planned, and the fix is driver-side headroom in `max_execute_calls` —
+declaring every armed step the engine actually runs — not a looser classifier.
+Nothing here asserts what the pinned engine does; the count is observed, and
+this paragraph says what to look at when a real capture comes back `partial`.
+
 ### A row live during no declared step
 
 The seven terms compose **one engine step**. A row proven live during none of
