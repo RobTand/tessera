@@ -243,3 +243,158 @@ def test_items_for_honours_the_plan_cap(monkeypatch):
     assert int(kg.items_for(rep, plan, 8)[:, 3].max()) <= 128
     wide = kg.default_plan(1024, 2048, 8, sm_count=32)
     assert int(kg.items_for(rep, wide, 8)[:, 3].max()) <= 256
+
+
+# --------------------------------------------------------------------------
+# the dispatch: the tile a launch actually runs on
+# --------------------------------------------------------------------------
+#
+# RobTand/tessera#468.  #454 gave the PLAN a budget; the DISPATCH still read
+# ``_m_tile`` alone, so on a 64 KiB part M in 5..8 launched the MT=8 tile,
+# asked for 66,048 B and aborted with ``hipErrorInvalidValue`` -- 13 tests on
+# a real gfx1201 (receipt ``t452-453-backend-shims/receipts/wsl-gpu/
+# tests-20260912T235011Z.txt``).  The launch is the only thing between here
+# and the device, and everything above it is device-agnostic Python, so
+# replacing ``_ext()`` with a recorder asks the whole question on a CPU box:
+# WHICH launches does the dispatch make, and does each one fit the budget the
+# device published?
+
+#: The window bits every plan above is priced at (``WINDOW_BITS_SUPPORTED[0]``).
+L14 = 14
+
+
+class _Launches:
+    """``_ext()`` as a recorder of ``window_gemv.cu``'s entry arguments."""
+
+    def __init__(self):
+        self.calls = []
+
+    def window_gemv(self, words, items, tile_words, perm, table, scale, x, out,
+                    window_bits, rpl, warps, blocks, max_cols, ablation):
+        self.calls.append(dict(rows=int(x.shape[0]), table_dtype=table.dtype,
+                               window_bits=int(window_bits), rpl=int(rpl),
+                               x_ptr=x.data_ptr(), out_ptr=out.data_ptr(),
+                               out_rows=int(out.shape[0])))
+
+    @property
+    def tiles(self) -> list:
+        """The M tile of every launch, in order."""
+        return [call["rows"] for call in self.calls]
+
+
+_COLS = 64
+_ROWS = 1024
+
+
+def _dispatch(monkeypatch, M, *, table_dtype=BF16, rate_one=False, rpl=16, out=None):
+    """``_gemv_concrete`` -- the one launch site -- with the extension recorded."""
+    recorded = _Launches()
+    monkeypatch.setattr(kg, "_ext", lambda: recorded)
+    words = torch.zeros(1, dtype=torch.int32)
+    items = torch.zeros(1, 8, dtype=torch.int32)
+    kg._gemv_concrete(
+        torch.zeros(M, _COLS, dtype=torch.bfloat16), words, items, items,
+        torch.arange(_COLS, dtype=torch.int32), torch.zeros(1, dtype=table_dtype),
+        torch.ones(_ROWS), 0, _ROWS, L14, rpl, 16, 32, 1024, 256, rate_one, True, 0,
+        out=out,
+    )
+    return recorded
+
+
+#: The tiles the dispatch launches for M = 1..8.  On a CUDA part no ceiling
+#: binds and the mapping is ``_m_tile`` exactly -- the pre-#468 behaviour, byte
+#: for byte.  On a 64 KiB part the MT=8 launch does not fit, so M in 5..8 runs
+#: the MT=4 launch twice: §4.2 of the RDNA3.5 design ("M in 5..8 takes the
+#: MT=4 plan twice or the materialised path -- the plan decides, priced by the
+#: bytes it moves, not by a ban").
+SM_121_TILES = {1: [1], 2: [2], 3: [4], 4: [4], 5: [8], 6: [8], 7: [8], 8: [8]}
+GFX1201_TILES = {1: [1], 2: [2], 3: [4], 4: [4], 5: [4, 4], 6: [4, 4], 7: [4, 4], 8: [4, 4]}
+
+
+@pytest.mark.parametrize("m", [1, 2, 3, 4, 5, 6, 7, 8])
+def test_a_cuda_dispatch_launches_the_tile_m_asks_for(monkeypatch, m):
+    """No budget binds, so nothing moves: this is the sm_121 dispatch as #454
+    left it, and it is what the CUDA suite has to keep proving."""
+    _as_device(monkeypatch, SM_121)
+    assert _dispatch(monkeypatch, m).tiles == SM_121_TILES[m]
+
+
+@pytest.mark.parametrize("m", [1, 2, 3, 4, 5, 6, 7, 8])
+def test_a_64_kib_dispatch_launches_only_tiles_that_fit(monkeypatch, m):
+    """Every launch the dispatch makes fits the budget the device published,
+    and together they cover M without launching a row past the pad."""
+    _as_device(monkeypatch, GFX1201)
+    recorded = _dispatch(monkeypatch, m)
+    assert recorded.tiles == GFX1201_TILES[m]
+    for tile in recorded.tiles:
+        assert kg.plan_smem_bytes(tile, table_dtype=BF16, window_bits=L14) <= RDNA_LDS
+    assert sum(recorded.tiles) >= m
+    assert sum(recorded.tiles) == kg._m_tile(m)
+
+
+def test_the_split_launches_cover_the_caller_s_rows_and_buffer(monkeypatch):
+    """Split, not dropped.  The two MT=4 launches read rows 0..3 and 4..7 of
+    one padded ``x`` and accumulate into the matching halves of the caller's
+    ``out``: no reallocation (the ``out=`` instrument owns that buffer) and no
+    row left unlaunched."""
+    _as_device(monkeypatch, GFX1201)
+    scratch = torch.zeros(8, _ROWS)
+    recorded = _dispatch(monkeypatch, 5, out=scratch)
+    first, second = recorded.calls
+    assert (first["out_rows"], second["out_rows"]) == (4, 4)
+    assert first["out_ptr"] == scratch.data_ptr()
+    assert second["out_ptr"] - first["out_ptr"] == 4 * _ROWS * scratch.element_size()
+    assert second["x_ptr"] - first["x_ptr"] == 4 * _COLS * 2        # 4 bf16 rows on
+
+
+@pytest.mark.parametrize("m", [1, 2, 4, 8])
+def test_an_explicit_fp32_table_plan_is_refused_where_no_tile_fits(monkeypatch, m):
+    """The table dtype is a fixed cost the CALLER chose, so there is no smaller
+    tile to route to -- 75,840 B at MT=1 is already over a 64 KiB budget.  §4.2:
+    "the fp32-table variant is unreachable on any 64 KB device and is refused by
+    the plan with a message naming the budget, never attempted".  The dispatch
+    says the same at the launch, which is where a hand-built plan
+    (``unit.with_plan(Plan(table_dtype=torch.float32))``) arrives."""
+    _as_device(monkeypatch, GFX1201)
+    with pytest.raises(GrammarError) as raised:
+        _dispatch(monkeypatch, m, table_dtype=FP32)
+    said = str(raised.value)
+    assert str(RDNA_LDS) in said and str(kg.plan_smem_bytes(1, table_dtype=FP32)) in said
+
+
+@pytest.mark.parametrize("m", [1, 2, 4, 8])
+def test_a_cuda_device_still_launches_the_fp32_table(monkeypatch, m):
+    """The refusal is the 64 KiB budget's, not the table dtype's."""
+    _as_device(monkeypatch, SM_121)
+    assert _dispatch(monkeypatch, m, table_dtype=FP32).tiles == SM_121_TILES[m]
+
+
+def test_a_dropped_tile_does_not_smuggle_a_rate_one_column_into_an_eight_row_lane(monkeypatch):
+    """MT=8 -> MT=4 keeps ``rpl = 8``, so the #240 gate still refuses by name:
+    routing around a budget must not route around a correctness gate."""
+    _as_device(monkeypatch, GFX1201)
+    with pytest.raises(GrammarError, match="rate-1 column"):
+        _dispatch(monkeypatch, 8, rate_one=True)
+
+
+@pytest.mark.parametrize("budget,tile", [(None, 8), (RDNA_LDS, 4), (66048, 8), (66047, 4),
+                                         (53376, 4), (49407, 1)])
+def test_the_tile_a_budget_admits(budget, tile):
+    """The selector reads the ladder downwards against the bytes the LAUNCH
+    asks for -- ``plan_smem_bytes`` at the kernel's own ``max_item_cols`` -- not
+    the bytes a 128-column plan was designed for.  The cost is not monotone in
+    the tile (MT=2 asks 53,376 B where MT=4 asks 49,408), so "the largest tile
+    that fits" is read off the arithmetic, never assumed."""
+    assert kg.tile_for_budget(8, budget, table_dtype=BF16, window_bits=L14) == tile
+
+
+@pytest.mark.parametrize("want", [1, 2, 4])
+def test_a_budget_never_raises_the_tile_m_asked_for(want):
+    assert kg.tile_for_budget(want, RDNA_LDS, table_dtype=BF16, window_bits=L14) == want
+
+
+def test_no_tile_fits_and_the_refusal_names_the_budget():
+    with pytest.raises(GrammarError) as raised:
+        kg.tile_for_budget(8, 43071, table_dtype=BF16, window_bits=L14)
+    said = str(raised.value)
+    assert "43071" in said and str(kg.plan_smem_bytes(1, table_dtype=BF16)) in said
