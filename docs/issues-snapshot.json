@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-12T23:57:50Z",
+ "generated": "2026-09-13T00:08:16Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -1876,7 +1876,7 @@
     "title": "DSV4 export bridge: naming, packed stacking, K0.2 attestation (items A-F)"
    },
    "520": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Align the #420 fixed-resource consumer with Tessera #451's step-coverage schema"
    },
    "521": {
@@ -1896,7 +1896,7 @@
     "title": "Derive every campaign row's read set at submit, and refuse a row without one"
    },
    "525": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Align the recomputed partition with step-scoped ownership (#520)"
    },
    "526": {
@@ -3694,7 +3694,7 @@
     "title": "AMD/HIP port, step 4 of 9: `native_ops` per-op presence instead of the `cutlass_scaled_mm` sentinel"
    },
    "456": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "AMD/HIP port, step 5 of 9: runtime contract v23 / lane-eligibility schema v10 \u2014 platform axis, no variant axis, no AMD cells"
    },
    "457": {
@@ -3730,7 +3730,7 @@
     "title": "native_ops: ask per operator, and let the contract refuse before the ABI does"
    },
    "464": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Give the contract a platform axis, so it can say what was never servable (#456)"
    },
    "47": {

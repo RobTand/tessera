@@ -414,9 +414,10 @@ def platform_attests(family: str, token: str,
     says nothing, and a producer never asserts a serving fact it did not read
     (principle 14).
 
-    **It is ``False`` for every AMD token today**, and the two reasons differ:
-    ``sm_121`` is ``backed``, ``gfx1151`` and ``gfx1201`` are ``unstated``.
-    Nothing in this branch changes that.
+    On the packaged ``contract_version`` 23 (#456) this answers ``True`` for
+    ``TESSERA_BF16_K1`` on ``gfx1151`` and ``gfx1201`` and ``False`` for the
+    other two families there -- the AMD lane is Tessera-16 WnA16 only.  That is
+    the document's claim, read; this module mints no eligibility of its own.
     """
     from .contract import PLATFORM_BACKED, platform_execution_contract
 

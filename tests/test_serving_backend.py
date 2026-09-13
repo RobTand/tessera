@@ -413,22 +413,34 @@ def _contract():
     return load_serving_contract()
 
 
-def test_the_packaged_contract_states_nothing_about_any_platform_yet():
-    """``contract_version`` 22 has no platform axis -- not even for sm_121.
+def test_the_packaged_contract_answers_for_every_platform_it_publishes():
+    """Read off the packaged ``runtime_contract.json`` (v23), not a fixture.
 
-    Recorded rather than asserted around: the table arrives with #456, and
-    until it does the attestation question is ``False`` everywhere, including
-    the platform this project runs on.  That is what "attested, never
-    asserted" costs before the attestation exists.
+    The platform axis exists now (#456), so this is the real table: sm_121
+    executes all three families, and both AMD platforms execute
+    ``TESSERA_BF16_K1`` and are attested ``unbacked`` for the other two.  The
+    build's job is to read that, never to decide it.
     """
-    from tessera.serving import contract as contract_module
-
     contract = _contract()
+    assert contract["contract_version"] >= 23
     for family in ("TESSERA_BF16_K1", "TESSERA_E4M3_K1", "TESSERA_E2M1_K2"):
-        assert contract_module.platform_execution_contract(
-            family, "sm_121", contract)[0] == contract_module.PLATFORM_UNSTATED
-        assert backend_module.platform_attests(family, "sm_121", contract) is False
-        assert backend_module.platform_backs(family, "sm_121", contract) is True
+        assert backend_module.platform_attests(family, "sm_121", contract) is True
+    for token in ("gfx1151", "gfx1201"):
+        assert backend_module.platform_attests("TESSERA_BF16_K1", token, contract) is True
+        assert backend_module.platform_attests("TESSERA_E4M3_K1", token, contract) is False
+        assert backend_module.platform_attests("TESSERA_E2M1_K2", token, contract) is False
+
+
+def test_the_amd_lane_is_tessera_16_and_the_contract_is_what_says_so():
+    """Rob's ruling -- WnA16 only on RDNA3.5, nothing fp8/fp4 on AMD -- is a
+    value in the document, not a rule in this module.  ``platform_backs`` and
+    ``platform_attests`` agree on an ``unbacked`` entry; they differ only on a
+    silence, and after #456 there is no silence left for these tokens."""
+    contract = _contract()
+    for token in ("gfx1151", "gfx1201"):
+        for family in ("TESSERA_E4M3_K1", "TESSERA_E2M1_K2"):
+            assert backend_module.platform_backs(family, token, contract) is False
+            assert backend_module.platform_attests(family, token, contract) is False
 
 
 def test_the_two_questions_are_one_reader_and_two_answers():
@@ -444,20 +456,12 @@ def test_the_two_questions_are_one_reader_and_two_answers():
     from tessera.serving import contract as contract_module
 
     contract = _contract()
+    unknown = "gfx9999"
     for family in ("TESSERA_BF16_K1", "TESSERA_E4M3_K1", "TESSERA_E2M1_K2"):
-        for token in ("gfx1151", "gfx1201"):
-            assert contract_module.platform_execution_contract(
-                family, token, contract)[0] == contract_module.PLATFORM_UNSTATED
-            assert backend_module.platform_backs(family, token, contract) is True
-            assert backend_module.platform_attests(family, token, contract) is False
-
-
-def test_no_amd_token_is_attested_by_the_packaged_contract():
-    """The whole AMD claim this branch makes: none."""
-    contract = _contract()
-    for family in ("TESSERA_BF16_K1", "TESSERA_E4M3_K1", "TESSERA_E2M1_K2"):
-        assert backend_module.platform_attests(family, "gfx1151", contract) is False
-        assert backend_module.platform_attests(family, "gfx1201", contract) is False
+        assert contract_module.platform_execution_contract(
+            family, unknown, contract)[0] == contract_module.PLATFORM_UNSTATED
+        assert backend_module.platform_backs(family, unknown, contract) is True
+        assert backend_module.platform_attests(family, unknown, contract) is False
 
 
 def test_a_family_the_contract_does_not_publish_is_refused_by_name():
@@ -467,22 +471,19 @@ def test_a_family_the_contract_does_not_publish_is_refused_by_name():
         backend_module.platform_attests("TESSERA_MADE_UP", "sm_121", _contract())
 
 
-def test_the_per_platform_table_is_read_when_the_contract_carries_one():
-    """The shape the platform axis arrives in: ``platforms[token].executes``.
+def test_the_token_the_build_mints_is_the_key_the_contract_publishes():
+    """The join #452 exists to make possible: one string, both sides.
 
-    Read from a fixture rather than the packaged file, because the packaged
-    contract does not carry the table yet -- and when it does, this test is
-    what says the reader was ready.
+    ``gcn_arch_token`` parses what torch reports; the contract's platform axis
+    is keyed on the same spelling and echoes it back in ``gcn_arch``.  If the
+    two ever diverged, a build would compile for a platform no cell could be
+    looked up by.
     """
-    contract = {"lane_eligibility": {"platforms": {
-        "gfx1151": {"backend": "hip", "gcn_arch": "gfx1151", "executes": {
-            "TESSERA_BF16_K1": "w16a16-bf16-channel",
-            "TESSERA_E4M3_K1": None,
-            "TESSERA_E2M1_K2": None}}}, "cells": []}}
-    assert backend_module.platform_attests("TESSERA_BF16_K1", "gfx1151", contract) is True
-    assert backend_module.platform_attests("TESSERA_E4M3_K1", "gfx1151", contract) is False
-    assert backend_module.platform_backs("TESSERA_E4M3_K1", "gfx1151", contract) is False
-    assert backend_module.platform_attests("TESSERA_E2M1_K2", "gfx1151", contract) is False
+    platforms = _contract()["lane_eligibility"]["platforms"]
+    for name in ("gfx1151:sramecc+:xnack-", "gfx1201:sramecc+:xnack-"):
+        token = backend_module.gcn_arch_token(name)
+        assert token in platforms
+        assert platforms[token]["gcn_arch"] == token
 
 
 # --------------------------------------------------------------------------

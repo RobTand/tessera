@@ -13,9 +13,9 @@ loaders no longer ask `torch.cuda.get_device_capability()` what to compile for.
 each loader the flags its compiler takes -- the unchanged `-gencode` on nvcc,
 one explicit `--offload-arch` on hipcc. The token, never the capability, keys
 the build directory and the NVFP4 build identity, because gfx1201 and NVIDIA
-sm_120 both report `(12, 0)`. No AMD serving claim follows: nothing in the
-contract changes here, and `platform_backs` answers `False` for every AMD
-token. See §5.3.1.
+sm_120 both report `(12, 0)`. No AMD serving claim originates here: this
+branch changes no contract value, and the platform axis it reads is #456's.
+See §5.3.1.
 
 Re-stamped 2026-09-12 for the AMD certification harness (#459):
 `tools/tessera_attest.py` and `docs/strix-halo-tester-protocol.md` define how
@@ -4166,9 +4166,11 @@ it meant, and nothing here is a second serving code path.
   an attested `unbacked`, and `True` for a platform the document has not
   reached, because a silence is not a refusal. `platform_attests(family,
   token)` is the affirmative one -- `True` only for the contract's `backed`
-  state -- and it is the one the AMD lane needs. **It is `False` for every AMD
-  token today**, and on `contract_version` 22 it is `False` for `sm_121` too:
-  the packaged document has no platform axis yet, and that arrives with #456.
+  state -- and it is the one a producer-side claim must ask. On the packaged
+  `contract_version` 23 (#456) it answers `True` for `TESSERA_BF16_K1` on
+  `gfx1151` and `gfx1201` and `False` for the other two families there: the
+  AMD lane is Tessera-16 WnA16 only, and **the document is what says so**, not
+  this module.
 
 On HIP torch writes the hipified `.hip` beside the `.cu` it was handed, inside
 the checkout. Both loaders pass `keep_intermediates=False` so torch removes it
