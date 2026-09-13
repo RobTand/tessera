@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-13T19:31:00Z",
+ "generated": "2026-09-13T19:50:44Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -2076,7 +2076,7 @@
     "title": "Two admission gates, the obligation the gate demands, an emitter that reports both, and a route field that names its class"
    },
    "566": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "A route's own JIT kernel extension is inside runtime identity, so no mixed-route native table can be emitted (debt D39, leg a)"
    },
    "567": {
@@ -2120,7 +2120,7 @@
     "title": "Principle 14's serve-side leg is unenforced: validate_native_export has no emit_route check since the Gridbook lane retired"
    },
    "576": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "A route's own kernel extension is not a coordinate of the box (#566)"
    },
    "577": {
@@ -4030,12 +4030,24 @@
     "title": "Window Viterbi front residency: BF16_K1@1792 sits at 64% of the GB10 envelope and gained 1.01x from batching"
    },
    "484": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Publish what the fp4 activation quantizer actually emits: a generated attestation table in runtime_contract.json"
    },
    "485": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Publish what the fp4 activation quantizer emits (contract v25)"
+   },
+   "486": {
+    "state": "OPEN",
+    "title": "TCQ/LUT encoder is still launch-bound at 27% of the 140 W envelope: fuse the refit reduction and the LUT/coset gather"
+   },
+   "487": {
+    "state": "OPEN",
+    "title": "Two #385/#392 measurement records on master are out of step with the measurements"
+   },
+   "488": {
+    "state": "OPEN",
+    "title": "Harvest the #385 box-2 results and recover the #392 host-sync report"
    },
    "49": {
     "state": "CLOSED",
