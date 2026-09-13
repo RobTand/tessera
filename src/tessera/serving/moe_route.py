@@ -115,7 +115,7 @@ GEMM_SYMBOL = MOE_GEMM_SYMBOL
 
 
 
-def census_expected(*, compiled: bool = False) -> dict:
+def census_expected(*, compiled: bool = False, platform=None) -> dict:
     """The ``(symbol, decoder)`` pairs an expert stack may report, by regime.
 
     Owned here for the same reason ``fp8_gemv.census_expected`` is owned there:
@@ -154,9 +154,17 @@ def census_expected(*, compiled: bool = False) -> dict:
     launches = route_launches(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE,
                               mode=MODE_RESIDENT)
     regimes = {regime for launch in launches for regime in launch["regimes"]}
-    return {regime: launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE,
-                                 regime=regime, mode=MODE_RESIDENT)
-            for regime in regimes}
+    pairs = {regime: launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE,
+                                  regime=regime, mode=MODE_RESIDENT)
+             for regime in regimes}
+    # PER ``(platform, family)`` (#457).  The expert stack's family is the
+    # dense FP8 route's -- same wire, same activation contract -- so a
+    # platform that executes no E4M3 route executes none for the experts
+    # either, and ``build_tessera_moe_method`` refuses such a stack at
+    # construction.  ``platform=None`` is unchanged.
+    from .census import platform_expectation
+
+    return platform_expectation("TESSERA_E4M3_K1", platform, pairs)
 
 
 #: The runtime's shard name -> (group, row block).  DERIVED from
@@ -396,6 +404,21 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
     family = declared["family"]
     from .scheme import refuse_a_family_with_no_expert_route
     refuse_a_family_with_no_expert_route(family, prefix)
+    # THE PLATFORM GATE FOR THE EXPERT ROUTE (#457), asked here rather than in
+    # ``config.get_quant_method`` so that both builders -- dense and expert --
+    # are gated at their own front door and neither can be reached past it.
+    # It sits AFTER the no-expert-route refusal because that one is the
+    # narrower and more useful message (a 16-bit expert stack has no builder
+    # on ANY platform), and BEFORE the vLLM fused-MoE imports below, which is
+    # what "before any HIP kernel is touched" means on this path.
+    from .backend import require_platform_backs
+    from .contract import PAYLOAD_FAMILY_BY_ROUTE
+    from .telemetry import record_platform
+
+    payload_family = PAYLOAD_FAMILY_BY_ROUTE.get(family)
+    if payload_family is not None:
+        require_platform_backs(payload_family, f"tessera target {prefix!r}")
+    record_platform()   # latched eagerly: see lane.build_tessera_method
     if mode != MODE_RESIDENT:
         raise ValueError(
             f"tessera target {prefix!r}: the expert route serves {MODE_RESIDENT!r} only. A "

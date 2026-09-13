@@ -125,6 +125,33 @@ def runtime_modules():
 
 
 @pytest.fixture(autouse=True)
+def _the_platform_these_tests_are_about(monkeypatch):
+    """Dispatch is what this file tests; WHICH platform executes it is not.
+
+    Since #457 a quantized route refuses on a platform the runtime contract
+    publishes as executing none of its family, and the contract publishes
+    exactly that for ``gfx1151`` and ``gfx1201``.  Run on a real AMD device --
+    which this suite now is, on wsl-gpu -- every FP8 and NVFP4 dispatch here
+    refused, correctly, and said nothing about dispatch.  So the platform is
+    pinned to the one these cases describe.  The gate itself is exercised
+    against both answers in ``test_serving_platform_gate.py``; pinning it here
+    is the opposite of hiding it.
+
+    ``probed_platform_token`` and not ``platform_token``: the build override
+    must not be the thing a test reaches for, or a stray
+    ``TESSERA_PLATFORM_TOKEN`` in an operator's shell would decide what the
+    suite exercises.
+    """
+    from tessera.serving import backend, telemetry
+
+    monkeypatch.setattr(backend, "probed_platform_token",
+                        lambda device=0, torch=None: "sm_121")
+    telemetry.reset_platform_for_tests()
+    yield
+    telemetry.reset_platform_for_tests()
+
+
+@pytest.fixture(autouse=True)
 def _fresh_mode(monkeypatch):
     """A process that has never read the residency, per test.
 
