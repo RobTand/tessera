@@ -94,6 +94,8 @@ __all__ = [
     "plan_smem_bytes",
     "device_shared_mem_per_block",
     "item_cols_for_budget",
+    "M_TILES",
+    "tile_for_budget",
     "items_for",
     "default_plan",
     "WindowGemvUnit",
@@ -119,6 +121,12 @@ TILE_ROWS = 512
 # stay unreachable here, or dropped from it and stay advertised, with nothing
 # failing.
 GEMV_MAX_M = 8
+
+#: The M tiles ``window_gemv.cu`` is instantiated for, ascending.  One home for
+#: the ladder: ``_m_tile`` reads it upwards (the tile an M asks for) and
+#: :func:`tile_for_budget` reads it downwards (the tile a budget admits), so a
+#: rung cannot be added to one and missed by the other.
+M_TILES = (1, 2, 4, 8)
 
 
 def max_item_cols(mt: int) -> int:
@@ -240,6 +248,52 @@ def item_cols_for_budget(mt: int, budget: int, *, table_dtype: torch.dtype = tor
     raw = (budget - fixed) // (2 * mt * 4)
     rung = 1 << (int(raw).bit_length() - 1)          # the ladder rung at or below the bound
     return min(rung, max_item_cols(mt))
+
+
+def tile_for_budget(mt: int, budget: "int | None", *, table_dtype: torch.dtype = torch.bfloat16,
+                    window_bits: "int | None" = None) -> int:
+    """The M tile a launch asked for at ``mt`` can actually run on, in ``budget``.
+
+    ``budget`` is what :func:`device_shared_mem_per_block` reads off the device.
+    ``None`` -- every CUDA part, where ``launch_typed`` climbs the opt-in ladder
+    -- returns ``mt`` unchanged, so this function moves no CUDA launch by a byte.
+
+    Where a budget does bind it is read against **what the launch asks for**,
+    not what the plan was designed for: ``window_gemv.cu`` lays its x tile out
+    from ``constexpr MAX_COLS = max_item_cols(MT)``, so an MT=8 launch asks
+    66,048 B whatever the plan's item width, and 66,048 B does not fit a 64 KiB
+    workgroup (RobTand/tessera#468; the 128-column 57,856 B plan is the number
+    a ``.cu`` change would earn, priced by :func:`plan_smem_bytes` on purpose).
+    The ladder is therefore walked **downwards** from ``mt`` and each rung is
+    priced, because the cost is not monotone in the tile -- MT=2 asks 53,376 B
+    where MT=4 asks 49,408 -- so "the largest tile that fits" is arithmetic,
+    never an assumption.
+
+    This is the dispatch's half of the budget and it routes; the table dtype is
+    a fixed cost the CALLER chose, and when no rung holds it there is nothing
+    to route to and this refuses, naming the budget.  That is §4.2 of the
+    RDNA3.5 design read straight: "M in 5..8 takes the MT=4 plan twice or the
+    materialised path -- the plan decides, priced by the bytes it moves, not by
+    a ban", and "the fp32-table variant is unreachable on any 64 KB device and
+    is refused by the plan with a message naming the budget, never attempted".
+    """
+    if budget is None:
+        return mt
+    for rung in sorted(M_TILES, reverse=True):
+        if rung <= mt and plan_smem_bytes(rung, table_dtype=table_dtype,
+                                          window_bits=window_bits) <= budget:
+            return rung
+    smallest = min(M_TILES)
+    raise GrammarError(
+        f"a window-GEMV launch at M={mt} asks "
+        f"{plan_smem_bytes(mt, table_dtype=table_dtype, window_bits=window_bits)} B of shared "
+        f"memory per block with a {table_dtype} table, and no smaller M tile fits either "
+        f"({plan_smem_bytes(smallest, table_dtype=table_dtype, window_bits=window_bits)} B at "
+        f"M={smallest}); this device grants {budget} B per block with no opt-in ladder to "
+        f"raise it. A bf16 table asks "
+        f"{plan_smem_bytes(smallest, table_dtype=torch.bfloat16, window_bits=window_bits)} B at "
+        f"the same tile, and the materialised path serves what neither can"
+    )
 
 
 # --------------------------------------------------------------------------
@@ -589,11 +643,12 @@ def default_plan(rows: int, cols: int, M: int = 1, *, sm_count: "int | None" = N
     performance claim).  :func:`plan_smem_bytes` prices both numbers on
     purpose.  Until the ``.cu`` sizes the tile from the cap and a gfx1201
     launch confirms it, M in 5..8 on a 64 KiB device belongs to the M=4 plan
-    run twice or to the materialised path -- and **nothing routes it there
-    yet**: ``_gemv_concrete`` maps M to its tile and launches, so such a call
-    fails at the launch rather than at a named refusal.  No consumer reaches
-    it tonight (the plugin gates a HIP platform before any kernel is touched),
-    and the dispatch is not this function's to change.
+    run twice -- and **that is now where it goes**: ``_gemv_concrete`` puts the
+    tile ``_m_tile`` asks for through :func:`tile_for_budget` and runs the
+    largest one the device grants as many times as the rows need
+    (RobTand/tessera#468).  What this function decides is still the plan's
+    ``cols_per_item`` and ``blocks``; which tile a launch runs on is the
+    dispatch's, and the two read one budget.
 
     ``sm_count`` is ``multi_processor_count``.  On ROCm that counts **WGPs,
     not CUs**: torch reports 32 for the RX 9070 XT whose ``rocminfo`` reports
@@ -926,14 +981,12 @@ def prepare_value_unit(body_bits: torch.Tensor, rates: "tuple[int, ...]", window
 # --------------------------------------------------------------------------
 
 def _m_tile(M: int) -> int:
-    if M <= 1:
-        return 1
-    if M <= 2:
-        return 2
-    if M <= 4:
-        return 4
-    if M <= 8:
-        return 8
+    """The M tile this batch asks for: the smallest rung of :data:`M_TILES`
+    that holds it.  What it GETS is :func:`tile_for_budget`'s answer, which is
+    the same rung wherever no shared-memory ceiling binds."""
+    for tile in M_TILES:
+        if M <= tile:
+            return tile
     raise GrammarError(f"M={M} exceeds the GEMV's {GEMV_MAX_M}; the materialised path serves prefill")
 
 
@@ -948,9 +1001,28 @@ def _gemv_concrete(x: torch.Tensor, words: torch.Tensor, items_1: torch.Tensor, 
     pad, the ``[:M]`` slice -- and here it is a Python integer: the custom op
     below runs this at call time, outside the trace, and the ``out=``
     instrument path calls it eagerly.
+
+    The tile is also the only place the device's shared-memory ceiling can be
+    honoured, because this is the only place a launch happens
+    (RobTand/tessera#468).  ``_m_tile`` says which tile the batch asks for;
+    :func:`tile_for_budget` says which one the device will grant, reading the
+    budget :func:`device_shared_mem_per_block` probes.  Where no ceiling binds
+    -- every CUDA part -- the two are the same rung and this is the pre-#468
+    dispatch, launch for launch.  Where one does, a smaller tile is run as many
+    times as it takes to cover the rows: on a 64 KiB workgroup the MT=8 launch
+    asks 66,048 B and is not granted, so M in 5..8 runs the MT=4 launch twice,
+    which is §4.2 of the RDNA3.5 design.  The rows are split, never dropped:
+    ``x`` is padded to a whole number of tiles once and each launch reads its
+    own slice of it into the matching slice of one output.
+
+    The budget is probed per call rather than cached.  Both halves of the probe
+    (``torch.cuda.is_available``, ``get_device_properties``) are already cached
+    inside torch, and a cache here would have to be invalidated -- and would
+    read a device that is no longer the one in front of it.
     """
     M, K = x.shape
-    mt = _m_tile(M)
+    mt = tile_for_budget(_m_tile(M), device_shared_mem_per_block(x.device.index),
+                         table_dtype=table.dtype, window_bits=window_bits)
     if mt <= 2:
         items, max_cols = items_1, max_cols_1
     else:
@@ -969,17 +1041,22 @@ def _gemv_concrete(x: torch.Tensor, words: torch.Tensor, items_1: torch.Tensor, 
             "history is too short for L=14); serve rate-1 columns on a 16-row "
             "plan (rpl=16) or through the materialised path"
         )
-    if mt != M:
-        x = torch.cat([x, torch.zeros(mt - M, K, dtype=x.dtype, device=x.device)], 0)
+    launches = -(-M // mt)                 # tiles it takes to cover the rows
+    padded = launches * mt                 # <= _m_tile(M), so a caller's out= still holds it
+    if padded != M:
+        x = torch.cat([x, torch.zeros(padded - M, K, dtype=x.dtype, device=x.device)], 0)
     x = x.contiguous()
     if out is None:
-        out = torch.zeros(mt, rows, dtype=torch.float32, device=x.device)
-    _ext().window_gemv(
-        words, items, int(tile_words), perm if not uniform else perm[:0],   # identity: no gather
-        table, scale, x, out, int(window_bits), int(rpl), int(warps),
-        int(blocks), int(max_cols), int(ablation),
-    )
-    return out if mt == M else out[:M]
+        out = torch.zeros(padded, rows, dtype=torch.float32, device=x.device)
+    ext = _ext()
+    for first in range(0, padded, mt):
+        ext.window_gemv(
+            words, items, int(tile_words), perm if not uniform else perm[:0],   # identity: no gather
+            table, scale, x[first:first + mt], out[first:first + mt],
+            int(window_bits), int(rpl), int(warps),
+            int(blocks), int(max_cols), int(ablation),
+        )
+    return out if padded == M else out[:M]
 
 
 # The serving shape (``serving/ops.py`` and ``kernel_window.py`` say why at
