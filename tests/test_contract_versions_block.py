@@ -58,14 +58,37 @@ def test_the_pin_is_the_default_serve_image_and_is_an_attested_cell_image(contra
 
 
 def test_the_default_serve_image_is_the_dense_cells_image(contract):
-    """What the pin denotes did not move: it is the vanilla vLLM image the
-    eight dense cells were measured on, and no MoE cell shares it."""
-    by_structure = {}
-    for cell in contract["lane_eligibility"]["cells"]:
-        by_structure.setdefault(cell["structure"], set()).add(cell["runtime"]["image"])
+    """What the pin denotes did not move, said PER PLATFORM (schema v10).
+
+    It was one sentence about the whole table, which worked while one
+    platform had cells. With a platform axis the same claim has to name the
+    platform it is about, or the day a second platform publishes cells the
+    dense set is a union and the assertion means nothing.
+
+    The claim, per platform that has cells: its dense cells were all measured
+    on that platform's ``serve_image``, no ``routed_moe`` cell shares it, and
+    the pin is some platform's serve image. Two images on one platform is the
+    shipped fact this is written around -- ``sm_121``'s eight dense cells are
+    on the vanilla pin and its two MoE cells on a second build -- which is why
+    the validator's rule is "attested by one of its own cells" rather than
+    "every cell's image".
+    """
+    block = contract["lane_eligibility"]
     pin = contract["versions"]["default_serve_image"]
-    assert by_structure["dense"] == {pin}
-    assert pin not in by_structure["routed_moe"]
+    by_platform = {}
+    for cell in block["cells"]:
+        by_platform.setdefault(cell["platform"], {}).setdefault(
+            cell["structure"], set()).add(cell["runtime"]["image"])
+    assert by_platform, "no platform has cells; the premise moved"
+    for platform, by_structure in by_platform.items():
+        serve_image = block["platforms"][platform]["serve_image"]
+        assert by_structure["dense"] == {serve_image}, platform
+        assert serve_image not in by_structure.get("routed_moe", set()), platform
+    assert pin in {block["platforms"][p]["serve_image"] for p in by_platform}
+    for platform, entry in block["platforms"].items():
+        if platform not in by_platform:
+            assert entry["serve_image"] is None, (
+                f"{platform} names a serve image with no cell to have measured it")
 
 
 def test_the_entry_point_is_the_one_the_package_registers(contract):

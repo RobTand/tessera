@@ -31,6 +31,14 @@ def _scoped_contract():
     for cell in contract["lane_eligibility"]["cells"]:
         cell["runtime"] = copy.deepcopy(RUNTIME)
     contract["versions"]["default_serve_image"] = IMAGE
+    # Lane schema v10 (#456): a platform's ``serve_image`` must be an image one
+    # of its OWN cells attests.  This helper rewrites every cell's runtime, so
+    # the platform entries move with them; leaving them behind would build a
+    # document the validator refuses for a reason these tests are not about --
+    # a platform pointing at an image none of its receipts names.
+    for entry in contract["lane_eligibility"]["platforms"].values():
+        if entry.get("serve_image") is not None:
+            entry["serve_image"] = IMAGE
     return contract
 
 
