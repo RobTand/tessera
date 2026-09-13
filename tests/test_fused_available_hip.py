@@ -62,8 +62,9 @@ def test_the_encoder_falls_to_the_reference_on_hip_rather_than_aborting(monkeypa
     monkeypatch.setattr("tessera.window_viterbi.viterbi_window_fused", _refuse)
 
     torch.manual_seed(472)
+    # vectors is [2 ** window_bits, arity]: one reconstruction per state.
     targets = torch.randn(4, 8)
-    vectors = torch.tensor([-1.0, -0.5, 0.5, 1.0])
+    vectors = torch.linspace(-1.0, 1.0, 16).unsqueeze(1)
     states, sse = enc.viterbi_window(targets, vectors, 4, 1, chunk=8)
     assert states.shape == (4, 8)
     assert sse >= 0.0
@@ -88,6 +89,6 @@ def test_the_cuda_selection_is_unchanged_by_the_hip_guard(monkeypatch):
     monkeypatch.setattr("tessera.window_viterbi.viterbi_window_fused", _record)
 
     targets = torch.zeros(4, 8)
-    vectors = torch.tensor([-1.0, -0.5, 0.5, 1.0])
+    vectors = torch.linspace(-1.0, 1.0, 16).unsqueeze(1)
     enc.viterbi_window(targets, vectors, 4, 1, chunk=8)
     assert reached == [1], "the CUDA answer must not change"
