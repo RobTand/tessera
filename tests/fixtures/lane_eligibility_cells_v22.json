@@ -1,0 +1,9 @@
+{
+  "what": "The lane_eligibility.cells array of contract_version 22, recorded as a digest.",
+  "why_not_the_bytes": "A copy of the array would repeat the runtime image pin, and tests/test_runtime_image_pin.py refuses a second copy of that digest in any file that acts. A hash pins the same bytes without holding the pin.",
+  "source": "src/tessera/serving/runtime_contract.json at contract_version 22 (origin/master 3ec01f26)",
+  "lifted_by": "json.JSONDecoder().raw_decode at the offset of the 'cells' key, then .rstrip('\\n')",
+  "cells": 10,
+  "bytes": 19127,
+  "sha256": "c75c845e5b3d9508491e56c4b9ff8525c681adb12b8ab2dfcfcea79294826886"
+}

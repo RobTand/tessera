@@ -3287,11 +3287,20 @@ entry carries no `executes` key at all, which is every contract written
 before the platform axis exists. **`unstated` refuses nothing.** A null entry
 is an attestation: somebody looked and the route is not there. A silence is
 not, and refusing on one would turn it into a claim about a runtime nobody
-read. `contract_version` 22 publishes `platforms` entries with no `executes`
-key, so on the shipped document every family on every platform reads
-`unstated` and this module behaves exactly as it did before
-(`tests/test_serving_native_ops_presence.py::test_the_packaged_contract_refuses_nothing_today`).
-The platform axis itself arrives in contract v23 (#456).
+read. `contract_version` 22 published `platforms` entries with no `executes`
+key at all, so while that document was the shipped one every family on every
+platform read `unstated` and this module refused nothing it had not refused
+before. The axis itself arrives in contract v23 (#456, §4.5f), and the
+shipped v23 document is read the same way: `sm_121` names a contract for all
+three families, so nothing on an NVIDIA box refuses here; `gfx1151` and
+`gfx1201` publish `null` for `TESSERA_E2M1_K2` and `TESSERA_E4M3_K1`, so on
+those two the quantized routes refuse with the contract's own word, ahead of
+the ABI probe, and the BF16 route does not
+(`tests/test_serving_native_ops_presence.py::test_the_packaged_contract_refuses_only_where_it_attests_an_absence`).
+A platform the document does not name still reads `unstated`
+(`::test_an_undeclared_platform_is_unstated_against_the_shipped_document`).
+That refusal has been run on the hardware, not only in a fixture:
+`docs/measurements/platform-refusal-gfx1201-2026-09-12.md`.
 
 The BF16 route reaches none of this. It is W16A16: it quantizes nothing, so
 it calls no quantizer, and the plugin can therefore load and serve
@@ -3309,6 +3318,118 @@ the same process is not a call: `native_ops` is imported on a BF16-only serve
 through that initializer, and what makes it harmless is that its module scope
 imports only `ext` and reads `torch.ops` nowhere -- both pinned by
 `test_importing_native_ops_touches_no_native_operator`.
+
+### 4.5f The platform axis (lane-eligibility schema v10, contract v23)
+
+Until schema v10 `lane_eligibility.platforms` was a set of **keys**, and the
+only thing read of it was whether a cell's platform was declared
+(`contract.py`'s `cell["platform"] not in block["platforms"]`). A cell is a
+**receipt**, so that made "has this been served here" the only sentence the
+table could form. There is no way in v9 to say the sentence an RDNA3.5 or
+RDNA4 box needs said — *this family has no native route on this device* —
+because saying it would have required a serve that by construction cannot
+happen. Silence had to stand in for it, and a silence is not an attestation.
+
+A v10 entry says it, per family:
+
+```
+"platforms": {
+  "sm_121":  {"backend": "cuda", "compute_capability": [12, 1],
+              "serve_image": "vllm/vllm-openai@sha256:61fc8a…",
+              "executes": {"TESSERA_E2M1_K2": "e2m1_group16_ue4m3_static",
+                           "TESSERA_E4M3_K1": "fp8_per_token_dynamic",
+                           "TESSERA_BF16_K1": "bf16_unquantized"}},
+  "gfx1151": {"backend": "hip", "gcn_arch": "gfx1151",
+              "wavefront": 32, "lds_bytes": 65536, "serve_image": null,
+              "executes": {"TESSERA_E2M1_K2": null, "TESSERA_E4M3_K1": null,
+                           "TESSERA_BF16_K1": "bf16_unquantized"}},
+  "gfx1201": { … the same, gcn_arch gfx1201 … }
+}
+```
+
+**Tessera-16 is the AMD lane.** `TESSERA_BF16_K1` (W16A16) is what RDNA3.5 and
+RDNA4 serve; E4M3 and E2M1 are `null` on both because the pinned runtime has
+no native route for those bytes on those devices. `gfx1150` is compiled for
+and gets no entry until someone intends to serve on it — adding one later is a
+one-entry change.
+
+The rules, all of them derived rather than transcribed:
+
+- **`backend` is `cuda` or `hip`, and exactly one architecture key follows
+  from it** — `compute_capability` for CUDA, `gcn_arch` for HIP. The device
+  *type* cannot answer this: ROCm's torch reports `device.type == "cuda"` for
+  an AMD device. A `gcn_arch` carries no feature suffix: `gfx1201:xnack-` is a
+  build target's decoration, not a second platform.
+- **`executes` names every family in `formats[]`.** A family left out is not
+  "unbacked" — it is a question the document declined to answer about a
+  platform it declares, and a consumer cannot tell the two apart. `null` is
+  how unbacked is said. A non-null value must equal that family's own route
+  contract from `scheme.ROUTES`: a platform entry does not get to name a
+  contract the dispatch does not run.
+- **A cell on a `null` entry is refused.** An unbacked platform states the
+  fact in `executes`; it does not mint cells. The two together would be the
+  document contradicting itself, and it could not say which half was wrong.
+- **`qualification: compile_only` may only carry `route_status: unbacked`.** A
+  compile receipt proves a toolchain fact; a backed route needs a device.
+  This moves nothing shipped: every v22 cell is `device_qualified` and
+  `backed_with_serve_flag`.
+- **A platform's `serve_image` is one of its own receipts** — an image at
+  least one of *its* cells attests, and `null` exactly when it has no cells.
+  `versions.default_serve_image` must be some platform's `serve_image`.
+
+That last rule is deliberately **weaker than the design asked for**, and the
+reason is measured rather than a preference. The design said every cell's
+`runtime.image` equals its platform's `serve_image`; the shipped document
+falsifies it, because `sm_121` already carries two attested images — the eight
+dense cells on the vanilla pin and the two `routed_moe` cells on a second
+build. Taken literally the stronger rule refuses the contract in this
+repository. `test_the_default_serve_image_is_the_dense_cells_image` is the
+per-platform form of the same claim, and
+`test_the_serve_image_rule_is_the_weaker_one_the_data_supports` records the
+measurement so nobody re-tightens it from the design text.
+
+**v23 ships no AMD cell.** A cell is a device receipt and none has been taken,
+so the AMD entries carry `serve_image: null` and nothing depends on a ROCm
+image digest. The gfx1201 cells arrive at v24, with their own image, their own
+`runtime.torch` (a `+rocm` build), and their own evidence. A gfx1151 entry
+exists with no cell precisely because nobody here owns the hardware: what a
+Strix Halo receipt has to contain, and the scope line it carries, is §4.5d and
+`docs/strix-halo-tester-protocol.md`, and a receipt arriving turns that entry
+into cells without touching the entry itself.
+
+**Byte-identity.** A schema bump may add a sentence; it may not edit a
+receipt. `tests/fixtures/lane_eligibility_cells_v22.json` records the
+SHA-256, byte length and cell count of the v22 `cells` array lifted out by
+exact offsets, and
+`tests/test_contract_platform_axis.py::test_the_ten_sm121_cells_are_byte_identical_to_v22`
+hashes the same span of the shipped file — whitespace and key order included
+— rather than a re-serialization that could normalize away a real edit. It
+is a digest and not a copy of the array for a reason that is itself a rule
+here: the array holds the runtime image pin, and
+`tests/test_runtime_image_pin.py::test_the_pin_is_the_contract_field_and_nothing_else_holds_it`
+refuses a second copy of that digest in any file that acts. A hash pins the
+same bytes without holding the pin.
+
+#### What every existing reader keeps reading
+
+| Reader | v22 field | v23 |
+|---|---|---|
+| PrismaQuant's serve-image pin (`PIN_CONTRACT_FIELD`) | `versions.default_serve_image` | unchanged value — the sm_121 image; a pin bump is commit + contract sha only |
+| PQ `lane_specs/tessera.json` `served_activation_quantization.executes`, and the test deriving it from the packaged contract | derived per family from `formats[]` | unchanged for sm_121; a per-platform derivation from `platforms[*].executes` is the producer-side addition |
+| PQ `tessera_export_lane.require_executes_derived_from_contract` | `formats[]` | unchanged |
+| PQ `serving_profiles.route_status_for(fmt, platform)` | filters cells by platform | unchanged code. A platform key with **no cells** returns `unattested` / `no_cell` — it returns, it does not raise. Two preconditions the v23 entries satisfy: the key must exist in `platforms`, and the v9 platforms parser reads **keys only**, so `backend` / `executes` / `serve_image` under an entry are invisible to it |
+| PQ's lane-schema pin (a closed set of accepted schema names) | `…lane-eligibility.v9` | **PQ refuses v23 by schema name until its reader admits v10.** This is the designed fail-closed, not a compatibility break: the schema set exists so that a grammar change cannot be read by the old grammar. `contract_version` itself is not part of PQ's pinned answer, so the version bump alone would not have refused — the schema name is what does, and that is the point |
+| PQ `lane_eligibility.ServingContext` / `cell_matches_serving_context` | platform, structure, residency, image digest, mode | unchanged |
+| PQ `tessera_menu.route_admission` → activation agreement | compares a priced route's `(act_bits, act_group_size)` to the cell's contract projection | unchanged. With no AMD cells in v23 the check returns on agreement-by-absence and admission is decided by `route_status_for` — fail-closed |
+| `contract.cell_runtime_scope` / `cell_runtime_versions` | `runtime {image, execution_modes, vllm, torch}` | unchanged shape; `torch` reads a `+rocm` build on the v24 HIP cells |
+| `tests/test_contract_versions_block.py` `VERSIONS_KEYS` | closed set of three | unchanged — platform images live under `lane_eligibility.platforms`, not `versions` |
+| `kernel_roster.py` | two `#define`s | unchanged |
+
+The plugin's own reader is the tri-state of §4.5e: `backed`, `unbacked`,
+`unstated`. An unlisted platform is `unstated` on the plugin side and refuses
+nothing; `null` is `unbacked` and refuses. PrismaQuant, by contrast, refuses
+the whole document by schema name until its reader is widened — two different
+fail-closed behaviours, both deliberate, and neither one a silent pass.
 
 ### 4.5a A served KL names which FORWARD it scored
 

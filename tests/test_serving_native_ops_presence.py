@@ -175,22 +175,44 @@ def test_an_unlisted_platform_refuses_nothing(monkeypatch):
     native_ops.require_native_fp8_quant("ctx")
 
 
-def test_the_packaged_contract_refuses_nothing_today(monkeypatch):
-    """CUDA behaviour is unchanged BY CONSTRUCTION on the shipped document.
+def test_the_packaged_contract_refuses_only_where_it_attests_an_absence():
+    """What the shipped document makes this module do, said out loud.
 
-    ``contract_version`` 22 publishes platform entries with no ``executes``
-    key at all, so every family on every platform reads ``unstated`` and this
-    module behaves exactly as it did before the platform axis existed.  The
-    day a released contract publishes a null entry, this test is the one that
-    says so out loud.
+    At ``contract_version`` 22 this test read the other way: no platform
+    entry carried an ``executes`` key, every family on every platform was
+    ``unstated``, and the answer was "refuses nothing". v23 is exactly the
+    release it was written to catch -- the platform axis lands and two
+    platforms publish a null. So the assertion is now per platform, and the
+    half that matters for the CUDA path is unchanged: ``sm_121`` is backed
+    for all three families, so nothing on an NVIDIA box refuses here.
     """
     shipped = contract_module.cached_serving_contract()
-    for platform in shipped["lane_eligibility"]["platforms"]:
-        for family in ("TESSERA_E4M3_K1", "TESSERA_E2M1_K2", "TESSERA_BF16_K1"):
-            state, _ = contract_module.platform_execution_contract(
-                family, platform, shipped)
-            assert state != contract_module.PLATFORM_UNBACKED, (platform, family)
-            assert contract_module.platform_backs(family, platform, shipped)
+    families = ("TESSERA_E2M1_K2", "TESSERA_E4M3_K1", "TESSERA_BF16_K1")
+    states = {
+        (platform, family): contract_module.platform_execution_contract(
+            family, platform, shipped)[0]
+        for platform in shipped["lane_eligibility"]["platforms"]
+        for family in families
+    }
+    for family in families:
+        assert states[("sm_121", family)] == contract_module.PLATFORM_BACKED, family
+        assert contract_module.platform_backs(family, "sm_121", shipped)
+    for platform in ("gfx1151", "gfx1201"):
+        assert states[(platform, "TESSERA_BF16_K1")] == contract_module.PLATFORM_BACKED
+        for family in ("TESSERA_E2M1_K2", "TESSERA_E4M3_K1"):
+            assert states[(platform, family)] == contract_module.PLATFORM_UNBACKED
+            assert not contract_module.platform_backs(family, platform, shipped)
+
+
+def test_an_undeclared_platform_is_unstated_against_the_shipped_document():
+    """The third state survives the axis: a box the table does not name is
+    not refused, because nothing was attested about it."""
+    shipped = contract_module.cached_serving_contract()
+    state, contract_name = contract_module.platform_execution_contract(
+        "TESSERA_E4M3_K1", "sm_90", shipped)
+    assert state == contract_module.PLATFORM_UNSTATED
+    assert contract_name is None
+    assert contract_module.platform_backs("TESSERA_E4M3_K1", "sm_90", shipped)
 
 
 def test_the_reader_refuses_a_family_the_contract_does_not_publish():
