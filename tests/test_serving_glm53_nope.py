@@ -5,16 +5,18 @@ import pytest
 pytest.importorskip("vllm")
 
 from tessera.serving.glm53_nope import _config_reason, TesseraGLM53NoPEBackend
+from vllm.config.compilation import CompilationMode, CUDAGraphMode
 
 
 def config():
     return SimpleNamespace(
-        model_config=SimpleNamespace(hf_text_config=SimpleNamespace(
+        model_config=SimpleNamespace(enforce_eager=True, hf_text_config=SimpleNamespace(
             model_type="glm5_next_text", kv_lora_rank=512, qk_nope_head_dim=256,
             qk_rope_head_dim=0, index_topk=2048, index_kpool=4)),
         parallel_config=SimpleNamespace(decode_context_parallel_size=1,
                                         prefill_context_parallel_size=1),
         kernel_config=SimpleNamespace(enable_flashinfer_autotune=False),
+        compilation_config=SimpleNamespace(mode=CompilationMode.NONE, cudagraph_mode=CUDAGraphMode.NONE),
     )
 
 
@@ -63,3 +65,12 @@ def test_registration_opt_in_preserves_stock_and_refuses_custom_collision(monkey
         Backend.CUSTOM.clear_override()
         if previous:
             register_backend(Backend.CUSTOM, previous)
+
+
+@pytest.mark.parametrize("field,value", [("enforce_eager", False),
+    ("mode", 1), ("cudagraph_mode", 1)])
+def test_whole_engine_graph_and_compile_modes_are_not_admitted(field, value):
+    candidate = config()
+    owner = candidate.model_config if field == "enforce_eager" else candidate.compilation_config
+    setattr(owner, field, value)
+    assert "eager-only" in _config_reason(candidate)

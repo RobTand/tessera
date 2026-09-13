@@ -1,6 +1,7 @@
 # GLM5-next NoPE CUSTOM backend correctness, 2026-09-13
 
-Tessera #489; implementation base `76cc9d6c2`. This is a correctness gate
+Tessera #489; implementation base `76cc9d6c2`, measured implementation
+`254bdeab01314a92a05cab1f402fbe2d193f16d6` (see the raw receipt for the exact commit). This is a correctness gate
 for an explicit research attention backend, not a runtime-contract promotion
 or a performance measurement.
 
@@ -69,7 +70,7 @@ prompt produced 16 tokens with finite log probabilities. All returned HTTP 200.
 There were no platform, PDL or warmup source patches; the stock public kernel
 configuration disabled FlashInfer autotune.
 
-Eight guard/registration tests passed with pytest 8.4.2, pytest-xdist 3.8.0,
+Eight initial guard/registration tests passed with pytest 8.4.2, pytest-xdist 3.8.0,
 `-n 2 --dist worksteal --durations=5`, zero skips. These exercise runtime guards
 and registry behavior; the four native checks are the separate GPU population.
 All these runs execute vLLM and use Rob's universal vLLM exemption from PB.
@@ -82,6 +83,54 @@ Receipts: `/home/rob/dq-runs/glm-campaign-takeover-20260913/serving/`:
 The exact launch and request scripts are retained beside those receipts.
 
 The four-layer slice cannot establish full-model quality, TP2 collectives,
-routed compressed experts, or full-model memory fit. Whole-model compiled/eager
-agreement is not established by isolated attention graph equality. No runtime
+routed compressed experts, or full-model memory fit. Whole-model graph/eager agreement failed as recorded below. No runtime
 cell or production ship gate is changed, and no throughput claim is made.
+
+
+## Whole-engine graph comparison and eager-only policy
+
+The graph arm removed only `--enforce-eager` from the launch, retaining image,
+plugin source, checkpoint/tokenizer, seed 0, greedy sampling, KV format and
+memory settings. It also reached READY and passed the same three HTTP requests
+with finite logprobs and exact internal repeatability. Stock hashes remained
+unchanged after serving in this arm too.
+
+The short completion's 32 generated tokens match the eager completion, but the
+maximum same-token/same-prefix logprob difference is **0.6725289822 nats**;
+its first-token difference is **0.0240168571 nats**. The long request diverges
+on the first generated token (`estas` versus `isi`), so subsequent logprobs
+are not compared across different prefixes.
+
+Both engine configurations explicitly record `CompilationMode.NONE`, identical
+fusion flags and seed 0. The graph arm has `FULL_AND_PIECEWISE` graph mode and
+capture sizes `[1,2,4,8,16]`; eager has graph mode NONE. Therefore the older
+report's possible global torch.compile confound is **not observed in this
+pair**. Whole-engine graph execution/padding remains a numerical discrepancy;
+the kernel-only graph tests do not identify its cause or qualify it.
+
+Normal backend selection now requires `--enforce-eager` and NONE global
+compilation/graph modes. Three new policy cases failed before the guard
+(`enforce_eager=False`, compilation mode 1, graph mode 1; 3 failed / 8 passed),
+then all eleven runtime guard tests passed after it. The direct native harness
+can still exercise isolated graph capture for future diagnosis; it deliberately
+does not admit a model through the normal constructor. This records the known
+PrismaQuant #543 graph question under Tessera #489 rather than opening another
+generic ticket. Resolving the whole-engine numerical discrepancy is outside
+this bounded attention wiring fix.
+
+PB pure checks separately passed: 14 packaging and 29 construction tests,
+2 shards with 2 workers each, x86 CPU, 0 skips and 0 uncollected modules. The
+CAS payload bytes were independently read and their SHA256 checked:
+`84506caecc75a21c330bccb3e7db796b3459c1ae7397a01d93e107d4a42242a3` and
+`3da95a88cc9e7d0531d0c2d33098a4f0a1efc7d92d431ac943848ddb7d774c7d`.
+These CPU checks do not cover the CUDA surface.
+
+[Raw attributable receipts](glm53_stock_backend_20260913.json) include native
+oracle outputs, both arms' actual completion tokens/logprobs, runtime identities,
+stock manifest digests and after-serve checks, prompt/token IDs, comparison
+arithmetic and the independently verified PB CAS payloads. `/tokenize` was
+queried from the unchanged graph-arm tokenizer after both requests; the same
+prompt strings/tokenizer were used in both arms (5 and 3,649 prompt tokens).
+
+Both owned serving containers were stopped and removed after receipts were
+collected. Sparklina had no compute processes and 115 GiB available afterward.

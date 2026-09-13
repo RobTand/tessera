@@ -4287,8 +4287,12 @@ package on a box that has none; `tests/test_packaging.py` holds it to that.
 
 `TESSERA_RESEARCH_GLM53_NOPE=1` asks the same entry point to register
 `TesseraGLM53NoPEBackend` as vLLM's public `AttentionBackendEnum.CUSTOM`.
-Selection additionally requires `--attention-backend CUSTOM
+Selection additionally requires `--enforce-eager --attention-backend CUSTOM
 --kv-cache-dtype fp8_ds_mla --kernel-config '{"enable_flashinfer_autotune":false}'`.
+Normal selection is eager-only and refuses non-NONE compilation or CUDA graph
+modes. The four-layer whole-engine graph arm differed by 0.67253 logprob nats
+from eager despite global compile mode NONE in both arms; isolated attention
+graph equality does not qualify the model graph path.
 This experimental attention extension is separate from checkpoint quantization
 selection and changes no stock backend registration. Another plugin's CUSTOM
 registration is refused. Without the environment setting, normal plugin loading

@@ -11,6 +11,7 @@ from pathlib import Path
 
 import torch
 from vllm.config import get_current_vllm_config
+from vllm.config.compilation import CompilationMode, CUDAGraphMode
 from vllm.platforms import current_platform
 from vllm.v1.attention.backends.mla.flashinfer_mla_sparse import (
     FlashInferMLASparseSM120Backend,
@@ -49,6 +50,12 @@ def require_stock_runtime() -> None:
 
 
 def _config_reason(config) -> str | None:
+    # Isolated attention graph equality does not qualify the hybrid model's
+    # whole-engine graph path: the matched stub differs by 0.67253 logprob nats.
+    if (not config.model_config.enforce_eager
+            or config.compilation_config.mode != CompilationMode.NONE
+            or config.compilation_config.cudagraph_mode != CUDAGraphMode.NONE):
+        return "Tessera GLM53 NoPE is eager-only; require --enforce-eager with compilation and CUDA graphs disabled"
     hf = config.model_config.hf_text_config
     expected = dict(model_type="glm5_next_text", kv_lora_rank=512,
                     qk_nope_head_dim=256, qk_rope_head_dim=0,
@@ -132,7 +139,7 @@ class TesseraGLM53NoPEImpl(FlashInferMLASparseSM120Impl):
         native_cache = cache_rows.view(-1, 64, 656)
         # Stock non-power-of-two compaction races column tiles via atomic_add.
         # Pad with invalid entries to its supported single-program row path,
-        # then retain the original2176-wide kernel capacity. This keeps stable
+        # then retain the original 2176-wide kernel capacity. This keeps stable
         # candidate order across repeats and CUDA graph replay.
         padded_width = 1 << (topk.shape[1] - 1).bit_length()
         padded_topk = torch.nn.functional.pad(topk, (0, padded_width - topk.shape[1]), value=-1)
