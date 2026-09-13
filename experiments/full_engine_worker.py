@@ -21,13 +21,35 @@ from experiments.full_engine_kv import kv_config_value, kv_configuration_observa
 from experiments.full_engine_timing_boundaries import resolve_apply_boundaries, observe_apply_boundaries
 
 
-def parameter_category(name, canonical_modules):
-    # This launcher accepts source BF16 only. Canonical weight tensors are
-    # candidates; router state can also be registered beneath an experts module
-    # and remains fixed even when both module paths alias the same Parameter.
-    return "candidate" if (name.rsplit(".", 1)[-1] in {"weight", "w13_weight", "w2_weight"}
-                           and any(name.startswith(module + ".")
-                                   for module in canonical_modules)) else "fixed"
+SOURCE_WEIGHT_DTYPES = ("torch.bfloat16", "torch.float16", "torch.float32")
+
+
+def parameter_category(name, canonical_modules, dtype=None):
+    """Name-based fallback owner rule, valid only on an unquantized checkpoint.
+
+    reference_candidate_tensor_ids is the production rule; this one runs only
+    when no native apply boundary is resolved, because it names a fixed set of
+    leaves. A quantized checkpoint carries weight_scale, input_scale and
+    weight_global_scale beside each weight, and those are format-sized -- NVFP4
+    carries group-16 FP8 scales, FP8 dynamic carries scalars, BF16 carries none
+    -- so this rule would charge them to fixed_resident, where they move with
+    the assignment and are not a fixed price. The precondition used to be a
+    comment; refuse on it instead. The candidate weight's own storage dtype is
+    the discriminator: if it is a source float dtype there are no companion
+    scale tensors to misclassify.
+
+    Router state can also be registered beneath an experts module and remains
+    fixed even when both module paths alias the same Parameter.
+    """
+    under_canonical = any(name.startswith(module + ".") for module in canonical_modules)
+    is_candidate = name.rsplit(".", 1)[-1] in {"weight", "w13_weight", "w2_weight"} and under_canonical
+    if is_candidate and dtype is not None and str(dtype) not in SOURCE_WEIGHT_DTYPES:
+        raise RuntimeError(
+            "the name-based owner rule cannot classify a quantized checkpoint: "
+            f"{name} is stored as {dtype}, so this unit also carries format-sized scale "
+            "tensors that this rule would charge to fixed_resident. Resolve native apply "
+            "boundaries so reference_candidate_tensor_ids owns the classification.")
+    return "candidate" if is_candidate else "fixed"
 
 
 def reference_candidate_tensor_ids(model, boundaries):
@@ -250,19 +272,22 @@ class ResourceCaptureWorker(Worker):
         runner = getattr(self, "model_runner", None)
         model = getattr(runner, "model", None)
         if model is not None:
-            checkpointed = (self._resource_plan.get("reference_checkpoint")
-                            or self._resource_plan.get("artifact_checkpoint"))
+            # The id-based rule is unconditional wherever the native apply
+            # boundaries are resolved. It used to be gated on a checkpoint key
+            # in the plan, which decided nothing about whether the rule is
+            # correct and silently handed a quantized checkpoint to the
+            # name-based rule below.
             reference_ids = (reference_candidate_tensor_ids(model, self._resource_native_boundaries)
-                             if checkpointed and self._resource_native_boundaries is not None else None)
+                             if self._resource_native_boundaries is not None else None)
             for kind, tensors in (("parameter", model.named_parameters(remove_duplicate=False)),
                                   ("buffer", model.named_buffers(remove_duplicate=False))):
                 for name, tensor in tensors:
                     if tensor.device.type == "cuda":
                         category = ("candidate" if id(tensor) in reference_ids else "fixed") if reference_ids is not None else parameter_category(
-                            name, self._resource_plan["canonical_modules"])
+                            name, self._resource_plan["canonical_modules"], tensor.dtype)
                         yield TensorOwner(f"model:{kind}:{name}", category, tensor,
                             "canonical native owner tensor with external aliases fixed" if reference_ids is not None
-                            else "source BF16 canonical weight tensors; other named state fixed")
+                            else "unquantized canonical weight tensors; other named state fixed")
         if runner is not None:
             for name, tensor in tensor_leaves(getattr(runner, "kv_caches", []), "kv_cache"):
                 yield TensorOwner(name, "kv", tensor,

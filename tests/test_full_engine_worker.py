@@ -535,3 +535,31 @@ def test_reference_owner_parameters_include_scales_but_exclude_external_router_a
                                                                ("router.bias", router)],
                             named_buffers=lambda **kwargs: [("dense.scale_b", scale)])
     assert worker_module.reference_candidate_tensor_ids(model, [{"owner": owner, "boundary": "dense.quant_method.apply"}]) == {id(weight), id(scale)}
+
+
+def test_name_rule_refuses_a_quantized_checkpoint_instead_of_charging_its_scales(worker_module):
+    # Regression: the name-based rule names only weight/w13_weight/w2_weight as
+    # candidates, so on a quantized checkpoint weight_scale, input_scale and
+    # weight_global_scale fall to "fixed" -- a format-sized term charged as a
+    # fixed price, which is exactly what disqualifies fixed_resident. The rule
+    # stated "source BF16 only" in a comment and enforced it nowhere.
+    classify = worker_module.parameter_category
+    units = ["model.layers.0.mlp.gate_up_proj"]
+    assert classify("model.layers.0.mlp.gate_up_proj.weight_scale", units) == "fixed"
+    with pytest.raises(RuntimeError, match="quantized checkpoint"):
+        classify("model.layers.0.mlp.gate_up_proj.weight", units, dtype="torch.float8_e4m3fn")
+    assert classify("model.layers.0.mlp.gate_up_proj.weight", units, dtype="torch.bfloat16") == "candidate"
+    # An unquantized source keeps its previous behaviour exactly.
+    assert classify("model.layers.0.mlp.down_proj.weight", units, dtype="torch.bfloat16") == "fixed"
+
+
+def test_reference_owner_rule_runs_without_a_checkpoint_key_in_the_plan(worker_module):
+    # Regression: reference_candidate_tensor_ids used to be gated on
+    # plan["reference_checkpoint"] or plan["artifact_checkpoint"], neither of
+    # which decides whether the id-based rule is correct. With the boundaries
+    # resolved the id rule owns the classification regardless of the plan keys.
+    import inspect
+    source = inspect.getsource(worker_module.ResourceCaptureWorker._resource_owners)
+    assert "reference_checkpoint" not in source
+    assert "artifact_checkpoint" not in source
+    assert "reference_candidate_tensor_ids(model, self._resource_native_boundaries)" in source
