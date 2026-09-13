@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-13T19:50:44Z",
+ "generated": "2026-09-13T23:44:16Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -2084,11 +2084,11 @@
     "title": "The fp4 render and the fp4 execution are different objects: decide which side is authoritative before any fp4 number is published"
    },
    "568": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Price the fp4 route where it could win: sweep M until the device is loaded"
    },
    "569": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Let the prefill frontier sweep run on a table whose fixed charge is refused, by reading none of the refused terms"
    },
    "57": {
@@ -2100,7 +2100,7 @@
     "title": "An fp4 table's native runs bind to full-engine bytes a single-artifact engine run cannot have (debt D39, leg b)"
    },
    "571": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Let the prefill sweep run on a table whose fixed charge is refused, by reading none of the refused terms"
    },
    "572": {
@@ -2108,7 +2108,7 @@
     "title": "Past D37 the allocator menu gate refuses every rung the only real runtime table prices: 0 of 16 attested by the pinned Tessera runtime"
    },
    "573": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Report where the fp4 route crosses fp8, with the device actually loaded"
    },
    "574": {
@@ -2138,6 +2138,22 @@
    "58": {
     "state": "CLOSED",
     "title": "Declare the block-FP8 floor instead of dropping its scale planes"
+   },
+   "580": {
+    "state": "CLOSED",
+    "title": "[P2] GLM postcampaign waiter mistakes an older publication failure for the new live preparation run"
+   },
+   "581": {
+    "state": "OPEN",
+    "title": "Bridge the full legal Tessera rate domain to measured scalar-price coverage without extrapolation"
+   },
+   "582": {
+    "state": "OPEN",
+    "title": "Keep the full Tessera rate domain reachable through bounded adaptive acquisition"
+   },
+   "583": {
+    "state": "OPEN",
+    "title": "Allow research-only exact-member campaign endpoint measurement"
    },
    "59": {
     "state": "CLOSED",
@@ -4042,16 +4058,24 @@
     "title": "TCQ/LUT encoder is still launch-bound at 27% of the 140 W envelope: fuse the refit reduction and the LUT/coset gather"
    },
    "487": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Two #385/#392 measurement records on master are out of step with the measurements"
    },
    "488": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Harvest the #385 box-2 results and recover the #392 host-sync report"
+   },
+   "489": {
+    "state": "OPEN",
+    "title": "Support GLM5-next NoPE MLA through a guarded stock-vLLM custom backend"
    },
    "49": {
     "state": "CLOSED",
     "title": "check_wire_against_plan reports an unpriced unit as a mispriced one, and the totals are asymmetric about it"
+   },
+   "490": {
+    "state": "OPEN",
+    "title": "Add research GLM5-next NoPE attention via stock vLLM CUSTOM backend"
    },
    "5": {
     "state": "CLOSED",

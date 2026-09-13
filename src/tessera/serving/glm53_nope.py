@@ -12,7 +12,6 @@ from pathlib import Path
 import torch
 from vllm.config import get_current_vllm_config
 from vllm.config.compilation import CompilationMode, CUDAGraphMode
-from vllm.platforms import current_platform
 from vllm.v1.attention.backends.mla.flashinfer_mla_sparse import (
     FlashInferMLASparseSM120Backend,
     _get_workspace_buffer,
@@ -24,6 +23,8 @@ from vllm.v1.attention.backends.mla.sparse_utils import (
     flat_kv_row_view,
     triton_convert_req_index_to_global_index,
 )
+
+from .backend import probed_platform_token
 
 # Compatibility guards, not device qualification. These are the unmodified
 # sources from eugr/spark-vllm@sha256:0afec8d4f79f44685a1ddf758659d33aef3b0f3ec9068e5a7cd1108d30e5581c.
@@ -102,8 +103,7 @@ class TesseraGLM53NoPEBackend(FlashInferMLASparseSM120Backend):
 class TesseraGLM53NoPEImpl(FlashInferMLASparseSM120Impl):
     def __init__(self, *args, **kwargs):
         require_stock_runtime()
-        capability = current_platform.get_device_capability()
-        if capability is None or (capability.major, capability.minor) != (12, 1):
+        if probed_platform_token(device=torch.cuda.current_device(), torch=torch) != "sm_121":
             raise RuntimeError("Tessera GLM53 NoPE requires SM121")
         reason = _config_reason(get_current_vllm_config())
         if reason:

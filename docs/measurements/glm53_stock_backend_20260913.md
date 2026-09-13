@@ -114,7 +114,7 @@ compilation/graph modes. Three new policy cases failed before the guard
 then all eleven runtime guard tests passed after it. The direct native harness
 can still exercise isolated graph capture for future diagnosis; it deliberately
 does not admit a model through the normal constructor. This records the known
-PrismaQuant #543 graph question under Tessera #489 rather than opening another
+[RobTand/prismaquant#543](https://github.com/RobTand/prismaquant/issues/543) graph question under Tessera #489 rather than opening another
 generic ticket. Resolving the whole-engine numerical discrepancy is outside
 this bounded attention wiring fix.
 
@@ -134,3 +134,26 @@ prompt strings/tokenizer were used in both arms (5 and 3,649 prompt tokens).
 
 Both owned serving containers were stopped and removed after receipts were
 collected. Sparklina had no compute processes and 115 GiB available afterward.
+
+
+## CI follow-up
+
+The initial PR check caught a direct vLLM platform-helper dependency and stale
+issue references. The SM121 guard now reuses
+`tessera.serving.backend.probed_platform_token` on torch's current device; it
+ignores build-target overrides and preserves the existing ROCm/CUDA distinction.
+The cross-repository issue reference is explicitly linked, and
+`tools/refresh_issues.py` regenerated the real issue snapshot.
+
+Targeted PB checks passed: 42 platform-policy, 3 issue-reference and 5 refresher
+tests, with independently verified CAS payloads in `ci-fix-pure-verified.json`
+beside the original receipts. Eleven actual-runtime guard tests passed, the
+physical platform probe returned `sm_121`, and the small native check retained
+max error 0.0055804 with exact repeat/isolated graph replay. The full stub was
+not rerun for this platform-probe correction.
+
+The final runtime-check container existed from 23:44:49.364125 through
+23:45:08.628833 UTC on 2026-09-13 and overlapped the start of another campaign
+action. Its own results are correctness checks, not measurements of performance.
+The coordinator received these Docker-event bounds so the other action can
+identify the overlap; no subsequent direct GPU checks were run.
