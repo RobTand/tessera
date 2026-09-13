@@ -50,18 +50,56 @@ def audit_core(manifest_path):
             "unchanged_files": len(actual), "scope": "all installed non-pycache core files"}
 
 
+CALIBRATION_WIDTH = 512
+
+
+def read_calibration_prompt(path, expected_sha256):
+    """Return the canonical first calibration row and its fixture identity.
+
+    The fixture is ``int64[n, 512]`` ``calibration_ids`` for any ``n >= 1``: the
+    first-model fixture carries 512 rows and the artifact fixtures carry the
+    eight rows of the serving KL contract, and the observer reads row 0 of
+    either. The row count is recorded so the workload digest names the fixture
+    shape and not only its bytes.
+    """
+    if digest(path) != expected_sha256:
+        raise ValueError("calibration bytes differ from the declared immutable fixture")
+    from safetensors import safe_open
+    with safe_open(str(path), framework="np") as fixture:
+        token_ids = fixture.get_tensor("calibration_ids")
+    if (token_ids.ndim != 2 or token_ids.shape[0] < 1 or token_ids.shape[1] != CALIBRATION_WIDTH
+            or str(token_ids.dtype) != "int64"):
+        raise ValueError(f"resource calibration requires int64[n>=1,{CALIBRATION_WIDTH}] calibration_ids")
+    return {"prompt_token_ids": token_ids[0].tolist(),
+            "calibration": {"path": str(Path(path).resolve()), "sha256": expected_sha256,
+                            "key": "calibration_ids", "row": 0, "rows": int(token_ids.shape[0])}}
+
+
 def prepare(args):
     if "torch" in sys.modules or "vllm" in sys.modules:
         raise RuntimeError("prepare process imported Torch/vLLM before bootstrap")
     config = json.loads(args.config.read_text())
-    census = json.loads(args.census.read_text())
-    source = census["expert_projection"]["producer"]["source"]
-    expected = {**source["files"], **source["auxiliary_sha256"]}
-    for name, expected_sha in expected.items():
-        if digest(args.model / name) != expected_sha:
-            raise ValueError(f"model input differs from canonical census: {name}")
-    if json.loads((args.model / "config.json").read_text()).get("quantization_config"):
-        raise ValueError("this observer launcher is restricted to source BF16")
+    artifact = None
+    if args.artifact:
+        # A served Tessera artifact carries its own roster and assignment in
+        # tessera_serving_manifest.json; the census-derived source-BF16 roster
+        # and its BF16-only refusal do not apply to it.
+        from experiments.full_engine_artifact import read_tessera_artifact
+        source, roster, assignment = read_tessera_artifact(args.model)
+        artifact = {"schema": "tessera.artifact_observer_checkpoint.v1",
+                    "path": str(args.model.resolve()), "source_sha256": canonical_hash(source),
+                    "manifest_sha256": source["files"]["tessera_serving_manifest.json"],
+                    "families": sorted({row["family"] for row in roster}),
+                    "candidate_rule": "actual native owner parameters and buffers of each manifest module; external aliases fixed"}
+    else:
+        census = json.loads(args.census.read_text())
+        source = census["expert_projection"]["producer"]["source"]
+        expected = {**source["files"], **source["auxiliary_sha256"]}
+        for name, expected_sha in expected.items():
+            if digest(args.model / name) != expected_sha:
+                raise ValueError(f"model input differs from canonical census: {name}")
+        if json.loads((args.model / "config.json").read_text()).get("quantization_config"):
+            raise ValueError("this observer launcher is restricted to source BF16")
     if config["engine_args"]["dtype"] != "bfloat16":
         raise ValueError("source baseline configuration must select BF16")
     runtime = json.loads(args.runtime_evidence.read_text())
@@ -71,7 +109,8 @@ def prepare(args):
         raise ValueError("installed runtime core identity does not match selected configuration")
     if runtime["core_manifest_sha256"] != digest(args.core_manifest):
         raise ValueError("runtime manifest differs from per-job installation evidence")
-    roster = canonical_roster(census)
+    if artifact is None:
+        roster = canonical_roster(census)
     by_id = {row["unit_id"]: row for row in roster}
     mode = getattr(args, "observation_mode", "resources")
     prefix_only = getattr(args, "qualify_first_native_prefix", False)
@@ -80,28 +119,24 @@ def prepare(args):
     units = roster if getattr(args, "all_units", False) else [by_id[name] for name in args.unit]
     if len(units) != len({row["unit_id"] for row in units}):
         raise ValueError("duplicate observed unit")
-    assignment = {"schema": "tessera.source_bf16_observer_assignment.v1",
-                  "source_sha256": canonical_hash(source),
-                  "units": {row["unit_id"]: "source_bf16" for row in roster}}
+    if artifact is None:
+        assignment = {"schema": "tessera.source_bf16_observer_assignment.v1",
+                      "source_sha256": canonical_hash(source),
+                      "units": {row["unit_id"]: "source_bf16" for row in roster}}
+    elif not args.all_units or args.unit or mode != "resources" or prefix_only:
+        raise ValueError("artifact observation requires the complete manifest roster (--all-units) in resource mode")
     reference = None
     if getattr(args, "reference_proof", None) is not None:
+        if artifact is not None:
+            raise ValueError("an artifact is its own reference checkpoint; --reference-proof applies to source BF16 only")
         if not args.all_units or args.unit:
             raise ValueError("original-wire reference observation requires --all-units without partial selection")
         from experiments.full_engine_reference import verify_reference_checkpoint
         reference = verify_reference_checkpoint(args.reference_proof, source, roster, digest(args.census))
         assignment = reference["assignment"]
     if args.calibration is not None:
-        if digest(args.calibration) != args.calibration_sha256:
-            raise ValueError("calibration bytes differ from the declared immutable fixture")
-        from safetensors import safe_open
-        with safe_open(str(args.calibration), framework="np") as fixture:
-            token_ids = fixture.get_tensor("calibration_ids")
-        if token_ids.shape != (512, 512) or str(token_ids.dtype) != "int64":
-            raise ValueError("resource calibration requires int64[512,512] calibration_ids")
-        workload = {"prompt_token_ids": token_ids[0].tolist(),
-                    "calibration": {"path": str(args.calibration.resolve()),
-                        "sha256": args.calibration_sha256, "key": "calibration_ids", "row": 0},
-                    "scope": "canonical first 512-token sequence unchanged; actual generated-token decode, distinct from native boundary decode proxy"}
+        workload = read_calibration_prompt(args.calibration, args.calibration_sha256)
+        workload["scope"] = "canonical first 512-token sequence unchanged; actual generated-token decode, distinct from native boundary decode proxy"
     else:
         workload = {"messages": [{"role": "user", "content": "Return exactly the word blue."}],
                     "scope": "two scheduled steps for raw allocation observation; no quality claim"}
@@ -151,6 +186,9 @@ def prepare(args):
     if prefix_only:
         plan["qualification_prefix"] = workload["resource_qualification"]
         plan["scope"] = "bounded first-native resource prefix qualification; incomplete engine capture, no admission"
+    if artifact is not None:
+        plan["artifact_checkpoint"] = artifact
+        plan["scope"] = "intrusive raw resource capture of a served Tessera artifact; no timing, fixed-resource or release admission"
     if reference is not None:
         plan["reference_checkpoint"] = reference
         plan["model"] = reference["checkpoint"]
@@ -282,13 +320,16 @@ def main():
     parser.add_argument("--timing-samples", type=int, default=1)
     parser.add_argument("--reference-proof", type=Path)
     parser.add_argument("--qualify-first-native-prefix", action="store_true")
+    parser.add_argument("--artifact", action="store_true",
+                        help="observe a served Tessera artifact; roster and assignment come from its serving manifest")
     args = parser.parse_args()
     if args.run_plan:
         run(args.run_plan)
     else:
-        if any(getattr(args, name) is None for name in
-               ("config", "census", "model", "collector", "core_manifest", "runtime_evidence", "output")):
-            parser.error("prepare requires all input, runtime, collector and output paths")
+        required = ("config", "model", "collector", "core_manifest", "runtime_evidence", "output")
+        if any(getattr(args, name) is None for name in required) or (args.census is None) != args.artifact:
+            parser.error("prepare requires all input, runtime, collector and output paths, and a census "
+                         "unless --artifact selects the manifest roster")
         if not args.unit and not args.all_units:
             parser.error("select at least one canonical --unit")
         prepare(args)

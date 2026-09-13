@@ -252,11 +252,15 @@ def _owner_row(owner):
     if any(s < 0 for s in stride):
         raise ValueError("negative-stride ownership is unsupported")
     extent = 0 if 0 in shape else (1 + sum((n - 1) * s for n, s in zip(shape, stride))) * itemsize
+    # Whether a host tensor's backing is page-locked decides which observer can
+    # see it: pinned host memory is a CUDA allocation the argument domain
+    # records, pageable host memory is outside gpu_allocations_only altogether.
+    pinned = bool(tensor.is_pinned()) if tensor.device.type == "cpu" and storage.nbytes() else False
     return {"owner_id": owner.owner_id, "category": owner.category,
             "provenance": owner.provenance, "device_type": tensor.device.type,
             "device_id": tensor.device.index, "address": storage.data_ptr(),
             "bytes": storage.nbytes(), "storage_offset_bytes": tensor.storage_offset() * itemsize,
-            "view_extent_bytes": extent, "element_size": itemsize,
+            "view_extent_bytes": extent, "element_size": itemsize, "pinned": pinned,
             "shape": shape, "stride": stride, "dtype": str(tensor.dtype)}
 
 
@@ -532,7 +536,7 @@ def _checkpoint_blocks(checkpoint, live, segments, device):
 
 
 def _checkpoint_owners(checkpoint, live, device, issues, domains=None):
-    storages, host_storages, owner_ids, unmatched = {}, {}, set(), []
+    storages, host_storages, owner_ids, unmatched, pageable = {}, {}, set(), [], []
     for owner in checkpoint["owners"]:
         owner_id = _text(owner["owner_id"], "owner_id")
         _text(owner["provenance"], "owner provenance")
@@ -565,6 +569,14 @@ def _checkpoint_owners(checkpoint, live, device, issues, domains=None):
             entry["views"].append(owner)
             continue
         if not torch_match:
+            # A host tensor whose row says it is pageable was never a CUDA
+            # allocation, so no join was owed and none is missing: it is scoped
+            # out of gpu_allocations_only and counted, never reported as a gap.
+            # A row that does not say (an older capture) or says pinned stays
+            # a join gap.
+            if owner["device_type"] == "cpu" and owner.get("pinned") is False:
+                pageable.append(owner)
+                continue
             issues.append(f"owner {owner_id}: no matching live Torch or pinned-host backing allocation")
             unmatched.append(owner)
             continue
@@ -584,12 +596,18 @@ def _checkpoint_owners(checkpoint, live, device, issues, domains=None):
         allocation["observed_categories"].add(category)
     for entry in storages.values():
         entry["owners"].sort()
+    # owner_count is the number of owners bound to a live device storage at
+    # this checkpoint -- the count a consumer recomputes from the storages it
+    # is handed. Pinned-host and pageable-host observations are carried
+    # separately and are not in it.
     return {"label": checkpoint["label"], "trace_index": checkpoint["trace_index"],
-            "owner_count": len(owner_ids), "unique_owned_storage_bytes": sum(r["bytes"] for r in storages.values()),
+            "owner_count": sum(len(entry["owners"]) for entry in storages.values()),
+            "unique_owned_storage_bytes": sum(r["bytes"] for r in storages.values()),
             "unmatched_storage_observations": unmatched,
             "pinned_host_storages": [host_storages[k] for k in sorted(host_storages)],
             "unique_pinned_host_backing_bytes": sum(row["bytes"] for row in host_storages.values()),
-            "storages": [storages[k] for k in sorted(storages)]}
+            "storages": [storages[k] for k in sorted(storages)],
+            "pageable_host_observations": pageable}
 
 
 def _cupti_coverage(raw, segment_operations, issues):

@@ -583,6 +583,33 @@ REPORT_MEMBERS = ("identity", "reference", "workload", "execution",
 _DECLARED_MEMBERS = ("reference", "workload", "execution")
 
 
+PAGEABLE_HOST_ARTIFACT = "tessera.pageable_host_observations.v1"
+
+
+def _split_pageable_host_observations(checkpoints):
+    """Return ``(checkpoint rows without the member, one artifact carrying it)``.
+
+    A pageable host tensor is outside ``gpu_allocations_only``: it was never a
+    CUDA allocation, so no join was owed. The ledger still records that it was
+    observed, per checkpoint, so a reader can count what the scope excludes.
+    """
+    if checkpoints is None:
+        return None, None
+    rows, carried = [], []
+    for checkpoint in checkpoints:
+        row = dict(checkpoint)
+        observed = row.pop("pageable_host_observations", None)
+        rows.append(row)
+        if observed is not None:
+            carried.append({"label": checkpoint["label"], "trace_index": checkpoint["trace_index"],
+                            "count": len(observed), "bytes": sum(item["bytes"] for item in observed),
+                            "owner_ids": sorted(item["owner_id"] for item in observed)})
+    if not carried:
+        return rows, None
+    return rows, {"schema": PAGEABLE_HOST_ARTIFACT, "scope": "host tensors whose backing is not page-locked; "
+                  "outside gpu_allocations_only, observed but never charged", "checkpoints": carried}
+
+
 def assemble_full_engine_resource_report(ledger, *, reference, workload,
                                          execution, artifacts=()):
     """Assemble the frozen seven-member report envelope for one capture.
@@ -626,6 +653,14 @@ def assemble_full_engine_resource_report(ledger, *, reference, workload,
             f"scope is never projected over it")
 
     partition = derive_partition(ledger)
+    # Checkpoint rows carry one member the consumer's schema does not name:
+    # the pageable-host owner observations scoped out of gpu_allocations_only.
+    # They are carried beside the checkpoints as a named artifact rather than
+    # inside rows whose field set is frozen on both sides.
+    checkpoints, pageable = _split_pageable_host_observations(ledger.get("checkpoints"))
+    artifacts = list(artifacts)
+    if pageable is not None:
+        artifacts.append(pageable)
     report = {
         "schema": REPORT_SCHEMA,
         "identity": {
@@ -641,7 +676,7 @@ def assemble_full_engine_resource_report(ledger, *, reference, workload,
         "observations": {
             "capture_sha256": ledger.get("capture_sha256"),
             "torch_allocations": ledger["torch_allocations"],
-            "checkpoints": ledger.get("checkpoints"),
+            "checkpoints": checkpoints,
             "cuda_argument_domains": ledger.get("cuda_argument_domains"),
             "unattributed_external_records": ledger.get("unattributed_external_records"),
             "external_native_peak_bytes": ledger.get("external_native_peak_bytes"),
@@ -667,7 +702,7 @@ def assemble_full_engine_resource_report(ledger, *, reference, workload,
             "timing_captures": ledger.get("timing_captures"),
             "owner_views": ledger.get("owner_views"),
             "observer_qualification": ledger.get("observer_qualification"),
-            "artifacts": list(artifacts),
+            "artifacts": artifacts,
         },
         "partition": partition,
         # ``derived`` carries the recomputed numbers and their scope. It does

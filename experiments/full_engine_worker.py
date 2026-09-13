@@ -246,8 +246,10 @@ class ResourceCaptureWorker(Worker):
         runner = getattr(self, "model_runner", None)
         model = getattr(runner, "model", None)
         if model is not None:
+            checkpointed = (self._resource_plan.get("reference_checkpoint")
+                            or self._resource_plan.get("artifact_checkpoint"))
             reference_ids = (reference_candidate_tensor_ids(model, self._resource_native_boundaries)
-                             if self._resource_plan.get("reference_checkpoint") and self._resource_native_boundaries is not None else None)
+                             if checkpointed and self._resource_native_boundaries is not None else None)
             for kind, tensors in (("parameter", model.named_parameters(remove_duplicate=False)),
                                   ("buffer", model.named_buffers(remove_duplicate=False))):
                 for name, tensor in tensors:

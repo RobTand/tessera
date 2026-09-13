@@ -484,3 +484,65 @@ a consumer that never ran producer code. Three things are owed before a real
 capture derives a number: allocation-site ownership for a row no checkpoint sees,
 the four unclosable domains' observation members, and the consumer's matching
 off-step filter.
+
+## Observing a served Tessera artifact
+
+The source-BF16 launcher derives its roster from a canonical census and refuses
+any checkpoint that carries a `quantization_config`. A served artifact carries
+its own roster: `tessera_serving_manifest.json` names every quantized module by
+its vLLM module path and every HF tensor the module fuses. `experiments/
+capture_full_engine_resources.py --artifact --all-units` reads that manifest
+through `experiments/full_engine_artifact.py`, and the observer plan carries an
+`artifact_checkpoint` member in place of a census-derived
+`reference_checkpoint`:
+
+* **Roster.** One row per manifest module, `g:` for a fused module with several
+  HF roles and `l:` for a single-role module, sorted by unit id like the census
+  roster. `identity.canonical_units_sha256` digests it.
+* **Assignment.** Each unit maps to the family the manifest serves it in
+  (`tessera.artifact_observer_assignment.v1`); the report's
+  `reference.selected_rows` carries `{unit, format}` with that family as the
+  format.
+* **Identity.** `identity.model_sha256` digests the bytes the engine loads —
+  `config.json`, the manifest and every weight file — never the directory name.
+* **Candidate rule.** Artifact parameters are not named `.weight`
+  (`wire_bytes`, `trellis_input_global_scale`, ...), so the source-BF16 suffix
+  rule would charge every quantized weight as *fixed*. Artifact mode requires
+  the native-apply boundary (`--all-units`) and classifies exactly the
+  parameters and buffers each boundary module owns as candidate, with a tensor
+  also registered outside every owner staying fixed
+  (`reference_candidate_tensor_ids`, the same rule the original-wire reference
+  proof uses).
+* **Calibration.** The fixture is `int64[n, 512]` `calibration_ids` for any
+  `n >= 1`; the observer reads row 0 and records `rows` in the workload so the
+  digest names the shape as well as the bytes.
+* **Runtime.** The plugin is installed from a frozen source tree into the
+  serving lane's pinned image through `experiments/full_engine_plugin_install.py`,
+  which records the same evidence the stock installer does (image identity,
+  vLLM core manifest unchanged before and after, plugin files and entry point)
+  and reports `upstream_commit` as the installed vLLM reports itself; the plan
+  compares it with the selected configuration.
+
+`experiments/report_full_engine_resources.py --capture-dir <observer output>`
+replays the ledger and assembles the report, reading `reference`, `workload`
+and `execution` from the plan and the selected configuration.
+
+### Host owners that were never CUDA allocations
+
+A checkpoint's owner census walks the runner's persistent state and yields CPU
+tensors too. A pinned host tensor is a CUDA allocation the argument domain
+records, so a pinned owner with no host allocation to join is a `history_join`
+gap. A **pageable** host tensor was never a CUDA allocation: no join was owed,
+and reporting it as unmatched charged the scope with a gap it does not have.
+Owner rows now carry `pinned`, and `_checkpoint_owners` scopes a row that says
+`pinned: false` out of `gpu_allocations_only` into
+`pageable_host_observations` — observed and counted, never charged and never an
+issue. A row that says pinned, or an older row that does not say, stays a join
+gap. The consumer's checkpoint field set is frozen, so the report carries these
+beside the checkpoints as one artifact
+(`tessera.pageable_host_observations.v1`) rather than inside the rows.
+
+`owner_count` is the number of owners bound to a live device storage at the
+checkpoint — the count a consumer recomputes from the storages it is handed.
+Pinned-host and pageable-host observations are carried separately and are not
+in it.
