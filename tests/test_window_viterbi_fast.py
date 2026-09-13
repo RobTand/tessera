@@ -25,12 +25,17 @@ import pytest
 import torch
 
 pytest.importorskip("triton")
-pytestmark = pytest.mark.skipif(not torch.cuda.is_available(),
-                                reason="the fused window Viterbi is a CUDA path")
+from tessera.window_viterbi import fused_available            # noqa: E402
+
+# ``torch.cuda.is_available()`` is not the question: a ROCm build answers yes
+# and cannot run this kernel, whose ``_mul`` is NVPTX inline asm (tessera#472).
+# Gating on the predicate the encoder itself selects on means a gfx1201 box
+# skips this module rather than failing every case in it.
+pytestmark = pytest.mark.skipif(not fused_available(),
+                                reason="the fused window Viterbi is an NVPTX path")
 
 from tessera.encode import viterbi_window                     # noqa: E402
 from tessera.errors import GrammarError                       # noqa: E402
-from tessera.window_viterbi import fused_available            # noqa: E402
 
 E2M1 = [-6., -4., -3., -2., -1.5, -1., -0.5, 0., 0.5, 1., 1.5, 2., 3., 4., 6., 0.]
 

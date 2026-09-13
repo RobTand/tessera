@@ -204,8 +204,22 @@ def _device_l2_budget(device) -> int:
 
 
 def fused_available() -> bool:
-    """Whether the fused CUDA path can run at all."""
+    """Whether the fused CUDA path can run at all.
+
+    ``torch.cuda`` is also how a ROCm build spells HIP, and ``import triton``
+    succeeds there too, so those two questions alone answer "yes" on an AMD
+    board that cannot run this kernel: :func:`_build` emits NVPTX inline asm
+    (``mul.f32``), and the Triton JIT aborts on gfx1201 with ``couldn't
+    allocate output register for constraint 'f'`` -- a backend fatal, not a
+    Python exception, so a caller cannot catch it and fall back.  Measured on
+    an RX 9070 XT, ROCm 7.2.4 / Triton 3.7.0 (tessera#472).  A HIP build of
+    ``_mul`` is the lane work, tracked in #460; until one exists this reports
+    the honest answer and the reference Viterbi runs, which on that board is
+    byte-identical to the wire GB10 ships for a weights-only encode.
+    """
     if not torch.cuda.is_available():
+        return False
+    if getattr(torch.version, "hip", None):
         return False
     try:
         import triton  # noqa: F401
