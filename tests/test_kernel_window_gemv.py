@@ -336,6 +336,17 @@ def test_gemv_plans_agree(rpl, warps, cpi, balanced, table_dtype):
     tile, scale = kg.decode_fp8(unit)
     w = tile.view(torch.float8_e4m3fn).float()
     x = torch.randn(2, cols, device="cuda").bfloat16()
+    budget = kg.device_shared_mem_per_block()
+    if budget is not None and kg.plan_smem_bytes(
+            1, table_dtype=table_dtype, window_bits=unit.window_bits) > budget:
+        # A 64 KiB part (RobTand/tessera#468).  The table dtype is a fixed cost
+        # this test chose by hand, and an fp32 table is over the budget at every
+        # M tile, so there is no smaller tile to route to: the launch refuses by
+        # name instead of aborting inside the driver.  On CUDA no budget binds
+        # and the GEMV below is the arm that runs.
+        with pytest.raises(GrammarError, match=str(budget)):
+            kg.window_gemv(unit, x)
+        return
     y = kg.window_gemv(unit, x)
     ref = (w * scale[:, None]).double() @ x.double().t()
     assert bool(((y.double() - ref.t()).abs() <= _bound(w, scale, x)).all())
