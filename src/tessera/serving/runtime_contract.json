@@ -1,6 +1,6 @@
 {
   "schema": "tessera.runtime-contract.v1",
- "contract_version": 23,
+ "contract_version": 24,
  "quant_method": {
   "canonical": "tessera",
   "accepted": [
@@ -226,7 +226,7 @@
     "gcn_arch": "gfx1201",
     "wavefront": 32,
     "lds_bytes": 65536,
-    "serve_image": null,
+    "serve_image": "192.168.1.107/prismaquant/vllm-rocm@sha256:0461258dfe253a3e0baca9c62804a4b41a21ab445b2624b6fca0d51711e14000",
     "executes": {
      "TESSERA_E2M1_K2": null,
      "TESSERA_E4M3_K1": null,
@@ -787,6 +787,146 @@
       }
      }
     }
+   },
+   {
+    "id": "tessera_bf16_k1_dense_gfx1201_decode",
+    "runtime": {
+     "image": "192.168.1.107/prismaquant/vllm-rocm@sha256:0461258dfe253a3e0baca9c62804a4b41a21ab445b2624b6fca0d51711e14000",
+     "execution_modes": ["eager", "compiled"],
+     "vllm": "0.30.0.dev0",
+     "torch": "2.11.0+rocm7.2.4.git5fbd98f3"
+    },
+    "platform": "gfx1201",
+    "family": "TESSERA_BF16_K1",
+    "structure": "dense",
+    "regime": "decode",
+    "rungs_q256": [
+     1792
+    ],
+    "activation_contract": "bf16_unquantized",
+    "executes": [
+     {
+      "symbol": "torch.mm",
+      "decoder": "torch_window"
+     }
+    ],
+    "route_status": "backed_with_serve_flag",
+    "qualification": "device_qualified",
+    "requires_plugin": "tessera",
+    "requires_serve_flags": [
+     "TESSERA_SERVE_MODE=resident|streamed"
+    ],
+    "predicates": [],
+    "evidence": {
+     "artifact": null,
+     "grade": "kl_lower_bound",
+     "kl": [
+      {
+       "kind": "topk_intersection_lower_bound",
+       "top_k": 1024,
+       "regime": "decode",
+       "execution_modes": ["eager"],
+       "receipt": "docs/measurements/tessera-gfx1201-bf16-k1-served-2026-09-13.md"
+      }
+     ],
+     "smoke": {
+      "status": "recorded",
+      "receipt": "docs/measurements/tessera-gfx1201-bf16-k1-served-2026-09-13.md",
+      "attribution": "unattributed",
+      "control": null,
+      "record": {
+       "instrument": "experiments/moe_greedy_smoke.py",
+       "rule": "repetitive iff the completion ends in a cycle: some period p with 2p <= L has a p-periodic suffix holding >= 2 full periods (s >= 2p), whatever its share of the completion; not_recorded iff the completion is empty (L = 0), which is no completion for a verdict to be true of; recorded otherwise; tokens are the artifact tokenizer's canonical encoding of the returned text",
+       "reference": "bf16_source",
+       "rows": [
+        {"prompt": "P0", "form": "campaign", "interface": "raw_completion", "status": "recorded", "reference_status": "recorded"},
+        {"prompt": "P1", "form": "campaign", "interface": "raw_completion", "status": "recorded", "reference_status": "repetitive"},
+        {"prompt": "P2", "form": "campaign", "interface": "raw_completion", "status": "recorded", "reference_status": "recorded"},
+        {"prompt": "P3", "form": "campaign", "interface": "raw_completion", "status": "recorded", "reference_status": "recorded"},
+        {"prompt": "P4", "form": "campaign", "interface": "chat_template", "status": "recorded", "reference_status": "recorded"},
+        {"prompt": "P5", "form": "campaign", "interface": "chat_template", "status": "recorded", "reference_status": "recorded"},
+        {"prompt": "P6", "form": "campaign", "interface": "chat_template", "status": "recorded", "reference_status": "recorded"},
+        {"prompt": "P0", "form": "pure_greedy", "interface": "raw_completion", "status": "recorded", "reference_status": "recorded"},
+        {"prompt": "P1", "form": "pure_greedy", "interface": "raw_completion", "status": "recorded", "reference_status": "repetitive"},
+        {"prompt": "P2", "form": "pure_greedy", "interface": "raw_completion", "status": "recorded", "reference_status": "recorded"},
+        {"prompt": "P3", "form": "pure_greedy", "interface": "raw_completion", "status": "recorded", "reference_status": "recorded"},
+        {"prompt": "P4", "form": "pure_greedy", "interface": "chat_template", "status": "recorded", "reference_status": "recorded"},
+        {"prompt": "P5", "form": "pure_greedy", "interface": "chat_template", "status": "recorded", "reference_status": "recorded"},
+        {"prompt": "P6", "form": "pure_greedy", "interface": "chat_template", "status": "recorded", "reference_status": "recorded"}
+       ]
+      }
+     }
+    }
+   },
+   {
+    "id": "tessera_bf16_k1_dense_gfx1201_batch",
+    "runtime": {
+     "image": "192.168.1.107/prismaquant/vllm-rocm@sha256:0461258dfe253a3e0baca9c62804a4b41a21ab445b2624b6fca0d51711e14000",
+     "execution_modes": ["eager", "compiled"],
+     "vllm": "0.30.0.dev0",
+     "torch": "2.11.0+rocm7.2.4.git5fbd98f3"
+    },
+    "platform": "gfx1201",
+    "family": "TESSERA_BF16_K1",
+    "structure": "dense",
+    "regime": "batch",
+    "rungs_q256": [
+     1792
+    ],
+    "activation_contract": "bf16_unquantized",
+    "executes": [
+     {
+      "symbol": "torch.mm",
+      "decoder": "torch_window"
+     }
+    ],
+    "route_status": "backed_with_serve_flag",
+    "qualification": "device_qualified",
+    "requires_plugin": "tessera",
+    "requires_serve_flags": [
+     "TESSERA_SERVE_MODE=resident|streamed"
+    ],
+    "predicates": [],
+    "evidence": {
+     "artifact": null,
+     "grade": "kl_lower_bound",
+     "kl": [
+      {
+       "kind": "topk_intersection_lower_bound",
+       "top_k": 1024,
+       "regime": "batch",
+       "execution_modes": ["eager"],
+       "receipt": "docs/measurements/tessera-gfx1201-bf16-k1-served-2026-09-13.md"
+      }
+     ],
+     "smoke": {
+      "status": "recorded",
+      "receipt": "docs/measurements/tessera-gfx1201-bf16-k1-served-2026-09-13.md",
+      "attribution": "unattributed",
+      "control": null,
+      "record": {
+       "instrument": "experiments/moe_greedy_smoke.py",
+       "rule": "repetitive iff the completion ends in a cycle: some period p with 2p <= L has a p-periodic suffix holding >= 2 full periods (s >= 2p), whatever its share of the completion; not_recorded iff the completion is empty (L = 0), which is no completion for a verdict to be true of; recorded otherwise; tokens are the artifact tokenizer's canonical encoding of the returned text",
+       "reference": "bf16_source",
+       "rows": [
+        {"prompt": "P0", "form": "campaign", "interface": "raw_completion", "status": "recorded", "reference_status": "recorded"},
+        {"prompt": "P1", "form": "campaign", "interface": "raw_completion", "status": "recorded", "reference_status": "repetitive"},
+        {"prompt": "P2", "form": "campaign", "interface": "raw_completion", "status": "recorded", "reference_status": "recorded"},
+        {"prompt": "P3", "form": "campaign", "interface": "raw_completion", "status": "recorded", "reference_status": "recorded"},
+        {"prompt": "P4", "form": "campaign", "interface": "chat_template", "status": "recorded", "reference_status": "recorded"},
+        {"prompt": "P5", "form": "campaign", "interface": "chat_template", "status": "recorded", "reference_status": "recorded"},
+        {"prompt": "P6", "form": "campaign", "interface": "chat_template", "status": "recorded", "reference_status": "recorded"},
+        {"prompt": "P0", "form": "pure_greedy", "interface": "raw_completion", "status": "recorded", "reference_status": "recorded"},
+        {"prompt": "P1", "form": "pure_greedy", "interface": "raw_completion", "status": "recorded", "reference_status": "repetitive"},
+        {"prompt": "P2", "form": "pure_greedy", "interface": "raw_completion", "status": "recorded", "reference_status": "recorded"},
+        {"prompt": "P3", "form": "pure_greedy", "interface": "raw_completion", "status": "recorded", "reference_status": "recorded"},
+        {"prompt": "P4", "form": "pure_greedy", "interface": "chat_template", "status": "recorded", "reference_status": "recorded"},
+        {"prompt": "P5", "form": "pure_greedy", "interface": "chat_template", "status": "recorded", "reference_status": "recorded"},
+        {"prompt": "P6", "form": "pure_greedy", "interface": "chat_template", "status": "recorded", "reference_status": "recorded"}
+       ]
+      }
+     }
+    }
    }
   ]
  },
@@ -1194,6 +1334,11 @@
   ]
  },
  "changelog": [
+ {
+  "contract_version": 24,
+  "date": "2026-09-13",
+  "change": "The first AMD cells (#460): gfx1201 gains two TESSERA_BF16_K1 dense cells, decode and batch, at rung q256 = 1792, and platforms.gfx1201.serve_image stops being null. v23 said a receipt arriving turns that entry into cells at v24 without editing the entry, and that is exactly what this is: the platform entry's backend, gcn_arch, wavefront, lds_bytes and executes map are unchanged, and the only field that moves is serve_image, which v10 requires to be an image one of the platform's OWN cells attests. ADDITIVE FOR A v10 READER, and the lane schema string does not move. Every field these cells carry is a field v10 already defines; nothing is added to the grammar, no existing key changes meaning, and a reader that resolves cells by (platform, family, structure, regime, residency, rung) resolves these with the code it already has. A reader that knows nothing of gfx1201 reads the platform exactly as it did at v23 -- the entry was already there, already backend hip, already BF16 backed with E4M3 and E2M1 null. That is the rule this bump establishes for the ones after it: a contract_version bump that only adds cells, or only fills a serve_image a cell now attests, is additive and leaves lane_eligibility.schema alone; a bump that changes what a field MEANS moves the schema string and fails a v10 reader closed, as v10 itself did to v9. WHAT THE CELLS ATTEST. Both name executes [{torch.mm, torch_window}] and nothing else, derived from scheme.ROUTE_LAUNCHES: rung 1792 is rate 7, the window-GEMV lane serves rates (1, 2, 4), so at this rung it refuses in BOTH residencies and the route's launch is the torch window in both regimes. One cell per regime rather than one per (regime, residency), which is the sm_121 dense BF16 precedent: per-residency KL was measured here in both regimes and came back bit-identical, so the residency is not an axis these receipts distinguish, and a four-cell split would publish a distinction the measurement refuses. EVIDENCE. grade kl_lower_bound on both, each from a top-1024 teacher-student intersection bound scored in the CELL'S OWN regime against the unquantized model served on the same image: KL >= 0.004906 over 4088 prefill-scored positions for batch, KL >= 0.004804 over 256 M=1 positions for decode. A full-vocabulary KL is NOT claimed, and the reason is measured rather than conceded: no instrument in this repository produces one (docs/measurements/moe-evidence-debt-2026-09-04.md section 4). qualification device_qualified, and the receipt carries the scope line it is qualified under: gfx1201 under WSL2 proves the HIP code path; it says nothing about gfx1151 numerics and nothing about performance on any part. No gfx1151 cell: nobody here owns that hardware, and docs/strix-halo-tester-protocol.md is still what a Strix Halo receipt must satisfy. No routed-MoE cell on gfx1201: the BF16 MoE builder path was not exercised on HIP in this work, so there is no receipt to mint one from. THE RUNTIME IS A SECOND IMAGE ON A SECOND BACKEND. runtime.image is a private-registry digest reference, port-less, which is what runtime_image._DIGEST_REFERENCE accepts (a repository component may not carry a colon, so host:5000/... is unpinnable by this grammar); docker's own RepoDigests for the pulled image carries the port-less spelling, so the pin is the daemon's answer and not a re-spelling of it. runtime.vllm and runtime.torch are transcribed from the in-container banner of the serves the receipts were taken through. versions.default_serve_image does not move: it is still the sm_121 dense image, and v10 only requires it to equal SOME platform's serve_image. No rung, route, activation contract, launch, grade, KL entry, qualification, TP/EP bound or served byte on any sm_121 cell moved: the ten sm_121 elements are byte-identical, and tests/fixtures/lane_eligibility_cells_v22.json now records that ten-element span rather than the whole array, because the array is no longer only those ten."
+ },
  {
    "contract_version": 23,
    "date": "2026-09-12",

@@ -5,6 +5,28 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-13 for the first AMD cells (#460): contract v24 publishes
+two `TESSERA_BF16_K1` dense cells on `gfx1201`, decode and batch at rung
+`q256 1792`, and `platforms.gfx1201.serve_image` stops being null. The lane
+schema does not move -- adding cells is additive for a v10 reader, and that is
+now the stated rule for a version bump. Both cells grade `kl_lower_bound` from
+a bound scored in their own regime against the unquantized model on the same
+ROCm image, both name the one launch the rate grammar leaves at this rung
+(`torch.mm` / `torch_window`), and both carry a smoke word derived from a
+fourteen-row record with a BF16 reference arm. `gfx1151` still has no cell.
+Receipt: `docs/measurements/tessera-gfx1201-bf16-k1-served-2026-09-13.md`.
+See §4.5f.
+
+Re-stamped 2026-09-13 for the census's world (#470): `tools/tessera_route_census.py`
+takes the topology it is run at (`src/tessera/serving/topology.py`), runs its
+per-module checks on every rank instead of `apply_model(...)[0]`, and sums the
+ranks into the histogram the attestation reads
+(`census.join_rank_histograms`). Above one rank the receipt gains an additive
+`topology` block and a `ranks` list of `tessera.rank-census/1` records; at one
+rank it is byte for byte what it was, and the blocks' absence is what says
+world size 1. `experiments/tessera_plugin_served_tp.sh` is the two-box driver.
+No contract version, cell or default moves. See §4.5g.
+
 Re-stamped 2026-09-12 for the build's backend layer (#452): the two JIT
 loaders no longer ask `torch.cuda.get_device_capability()` what to compile for.
 `src/tessera/serving/backend.py` answers `cuda` or `hip` from
@@ -2799,10 +2821,16 @@ decode cell is refused -- the confusion #133 is about), and `grade` is
 derived from the entries and checked, like `executes`: `route_only` when
 nothing attests quality in the cell's regime, else `kl_lower_bound`, else
 `kl_full_vocab`. On the shipped table every batch cell is `kl_lower_bound`,
-every decode cell is `route_only` except `tessera_e4m3_k1_dense_sm121_decode_streamed` (the only route a decode-regime KL was scored against:
-`tessera-decode-regime-kl-2026-09-03.md` eager, `tessera-compiled-decode-kl-r6-2026-09-04.md` compiled), the BF16 cells record a greedy smoke, and
-so -- since contract v21 -- do the `routed_moe` cells. `qualification` is not
-overloaded with the grade.
+and every decode cell is `route_only` except the two a decode-regime KL was
+actually scored against: `tessera_e4m3_k1_dense_sm121_decode_streamed`
+(`tessera-decode-regime-kl-2026-09-03.md` eager,
+`tessera-compiled-decode-kl-r6-2026-09-04.md` compiled) and, since contract v24,
+`tessera_bf16_k1_dense_gfx1201_decode`
+(`tessera-gfx1201-bf16-k1-served-2026-09-13.md`, eager). The BF16 cells record a
+greedy smoke, and so -- since contract v21 -- do the `routed_moe` cells; the two
+gfx1201 cells are the first dense cells whose smoke word is **derived** from a
+`record` rather than asserted beside one. `qualification` is not overloaded with
+the grade.
 
 A smoke can also name the **control** it was compared against (schema v7,
 contract v18, #195), because `status` alone was deciding admission and could
@@ -3155,6 +3183,72 @@ current contract. This is a
 population/dispatch receipt gate, not a wire audit or the separate served-KL
 quality gate, and publishes no cells itself.
 
+### 4.5g One rank is not a world
+
+`LLM.apply_model` returns one result per worker and the census read element
+`[0]`, so every census described rank 0 and its receipt read identically at
+world size 1 and at world size 8. No Tessera artifact therefore has a per-rank
+route histogram, and no `lane_eligibility` cell can name a world size from a
+receipt (#470).
+
+Three values close that, and none of them changes a single-rank receipt.
+
+`src/tessera/serving/topology.py` declares the topology arguments
+(`--tensor-parallel-size`, `--distributed-executor-backend {mp,ray}`,
+`--nnodes`, `--node-rank`, `--master-addr`, `--master-port`), the same group
+PrismaQuant's gold coordinator exposes, and validates them into engine kwargs
+BEFORE the first model load: a census is two loads of 85-160 s, so a topology
+mistake found after them is a mistake found at the cost of the run. An unset
+argument is absent from the kwargs rather than defaulted, so a command line
+written before the group existed reaches `LLM(...)` with the kwargs it always
+did. The census runs at node rank 0 (it is the process that holds the model and
+reads every worker back), `nnodes` must divide `tensor_parallel_size` (pipeline,
+data and context parallel stay 1 here), and a multi-node census names its
+backend, plus the master address and port unless it is `ray`, which takes the
+rendezvous from the cluster the driver joined. The world the census OBSERVES is
+counted from the ranks that answered and must equal the world it requested.
+
+`census.phase_histogram` and `census.join_rank_histograms` are how the ranks
+become one receipt. Every rank builds a module for every declared target and
+names it identically, so a union would report one served module as one module
+however many ranks served it: the counts ADD, per phase and per route key, and
+the shapes are a set union because a column-parallel shard's `N` is its own.
+The join refuses ranks that drove different phases or one phase at two regimes,
+and refuses a phase whose routes do not add up to its module count. At one rank
+the join is the identity.
+
+`census.rank_census_record` is the missing half of a route record: a route
+record says what a module executed, never which rank's shard executed it, on
+which node, on which platform token, in which image. `tessera.rank-census/1` is
+`{schema, rank, local_rank, world_size, node, device, platform_token,
+runtime_image, histogram, lane_refusals, records}`; the platform token and
+image are per rank because a two-box serve can straddle two of either, and a
+receipt carrying only the head's would name a scope half the world never had.
+
+The receipt keys are ADDITIVE WITHIN `tessera.serving.route_census/2`, not a
+schema bump, and that is deliberate: the acceptance rule for this change is a
+TP1 census byte-identical to the one the tool wrote before it, and a bumped
+schema string would change every single-rank receipt. So `topology` (what was
+asked for, beside `observed_world_size`) and `ranks` (one record per rank)
+appear exactly when the world has more than one rank. Their absence is the
+discriminator and it means world size 1. Above one rank every problem string is
+prefixed with the rank that wrote it, and module names are namespaced
+`rank{r}/{name}` where engagement and agreement counts would otherwise collapse
+across ranks; `--expect-modules` is checked per rank, since every rank builds a
+module for every declared target.
+
+`experiments/tessera_plugin_served_tp.sh` drives two boxes: a ray head here, a
+ray worker over ssh on the other, one engine at tensor parallel 2. It refuses
+before it starts anything if the other box holds no checkout at the same
+absolute path or holds a different commit -- ray ships no code, so rank 1
+imports the plugin from that box's own disk -- and each box resolves the pinned
+image against its own daemon, so each rank records the image its own box
+declared. The fabric is named rather than guessed (`NCCL_SOCKET_IFNAME`,
+`NCCL_IB_HCA`), ray's memory monitor is off because on unified memory it reads
+the GPU's allocation as host pressure and reaps the worker mid-load, and the
+containers run on the host network with `/dev/infiniband` passed through. Both
+boxes' serve locks are held for the run.
+
 ### 4.5b What the contract says a serve EXECUTES, and the join that checks it
 
 A `lane_eligibility` cell says: on this platform, for this payload family and
@@ -3415,19 +3509,51 @@ per-platform form of the same claim, and
 `test_the_serve_image_rule_is_the_weaker_one_the_data_supports` records the
 measurement so nobody re-tightens it from the design text.
 
-**v23 ships no AMD cell.** A cell is a device receipt and none has been taken,
-so the AMD entries carry `serve_image: null` and nothing depends on a ROCm
-image digest. The gfx1201 cells arrive at v24, with their own image, their own
-`runtime.torch` (a `+rocm` build), and their own evidence. A gfx1151 entry
-exists with no cell precisely because nobody here owns the hardware: what a
-Strix Halo receipt has to contain, and the scope line it carries, is §4.5d and
+**v23 shipped no AMD cell; v24 ships two, on gfx1201.** A cell is a device
+receipt, so the two AMD entries differ by who ran. `gfx1201` receipts were taken
+on a Radeon RX 9070 XT under WSL2 (#460), so that platform now carries two
+`TESSERA_BF16_K1` dense cells -- decode and batch, rung `q256 1792` -- with
+their own image (a private-registry ROCm vLLM digest), their own
+`runtime.torch` (a `+rocm` build), and their own evidence, and its
+`serve_image` is one of those cells' own image as v10 requires. Nothing about
+the entry itself moved, which is what v23 said would happen. `gfx1151` still
+carries no cell precisely because nobody here owns the hardware: what a Strix
+Halo receipt has to contain, and the scope line it carries, is §4.5d and
 `docs/strix-halo-tester-protocol.md`, and a receipt arriving turns that entry
 into cells without touching the entry itself.
 
-**Byte-identity.** A schema bump may add a sentence; it may not edit a
+**What the gfx1201 cells attest, and what they do not.** Both name
+`executes [{torch.mm, torch_window}]` and nothing else, derived from
+`scheme.ROUTE_LAUNCHES`: rung 1792 is rate 7 and the window-GEMV lane reads
+rates `(1, 2, 4)`, so it refuses in both residencies and the route's
+materialised path serves. One cell per regime rather than one per
+`(regime, residency)` -- the sm_121 dense BF16 precedent -- because
+per-residency KL was measured in both regimes and came back bit-identical, so
+the residency is not an axis these receipts distinguish. Both grade
+`kl_lower_bound` from a top-1024 teacher/student-intersection bound scored in
+the cell's own regime. `kl_full_vocab` is **not** claimed and the reason is
+measured: no instrument in this repository produces a full-vocabulary KL
+(`moe-evidence-debt-2026-09-04.md` §4). `qualification: device_qualified` is
+qualified under the receipt's own scope line -- gfx1201 under WSL2 proves the
+HIP code path, says nothing about gfx1151 numerics, and makes no performance
+claim. No routed-MoE cell: the BF16 MoE builder path was not exercised on HIP.
+
+**A second image, and why it is spelled without a port.**
+`runtime_image._DIGEST_REFERENCE` accepts `repository@sha256:<64 hex>`, and a
+repository component may not carry a colon, so a private registry reached as
+`host:5000/...` is unpinnable by this grammar. Docker's own `RepoDigests` for
+the pulled image carries the port-less spelling beside the ported one, so the
+contract records the daemon's answer rather than a re-spelling of it and the
+grammar is left alone. `versions.default_serve_image` does not move: v10 only
+requires it to equal **some** platform's `serve_image`, and it is still
+sm_121's.
+
+**Byte-identity.** A version bump may add a cell; it may not edit a
 receipt. `tests/fixtures/lane_eligibility_cells_v22.json` records the
-SHA-256, byte length and cell count of the v22 `cells` array lifted out by
-exact offsets, and
+SHA-256, byte length and cell count of the **ten sm_121 elements** lifted out by
+exact offsets -- the whole `cells` array until v24 appended two on gfx1201, and
+re-spanned there without re-measuring any cell, because hashing the array would
+make every later platform's arrival read as an edit to sm_121's receipts. And
 `tests/test_contract_platform_axis.py::test_the_ten_sm121_cells_are_byte_identical_to_v22`
 hashes the same span of the shipped file — whitespace and key order included
 — rather than a re-serialization that could normalize away a real edit. It

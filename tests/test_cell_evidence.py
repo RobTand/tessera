@@ -66,6 +66,7 @@ BF16 = "docs/measurements/tessera-bf16-route-served-2026-09-02.md"
 LFM = "docs/measurements/tessera-lfm-campaign-2026-09-04.md"
 MOE_DEBT = "docs/measurements/moe-evidence-debt-2026-09-04.md"
 MOE_SMOKE = "docs/measurements/moe-smoke-recorded-2026-09-05.md"
+GFX1201 = "docs/measurements/tessera-gfx1201-bf16-k1-served-2026-09-13.md"
 
 
 def _bound(regime, modes, receipt):
@@ -108,6 +109,31 @@ _MOE_SMOKE_TABLE = {
 }
 _RAW_PROMPTS = ("P0", "P1", "P2", "P3")
 
+#: Section 4.3 of ``tessera-gfx1201-bf16-k1-served-2026-09-13.md``, the same
+#: instrument on the same fourteen (prompt, form) pairs, against the same BF16
+#: reference served on the gfx1201 image.  Nothing on the route's arm cycles;
+#: the reference cycles on P1 in both forms, which is why the derived
+#: attribution is ``unattributed`` and not ``not_shared_with_reference``: the
+#: attribution is about a symptom on THIS arm, and there is none.  That the
+#: route did not reproduce the reference's P1 cycle is not a quality claim --
+#: it is one prompt on a 0.6B model and the receipt says so.
+_GFX1201_SMOKE_TABLE = {
+    (prompt, form): ("recorded", "repetitive" if prompt == "P1" else "recorded")
+    for form in ("campaign", "pure_greedy")
+    for prompt in ("P0", "P1", "P2", "P3", "P4", "P5", "P6")
+}
+
+
+def _smoke_record(table):
+    """An ``evidence.smoke.record`` from a (prompt, form) -> (arm, reference)
+    table.  ``rule`` is the instrument's own string, not a copy."""
+    return {"instrument": INSTRUMENT, "rule": instrument.RULE, "reference": "bf16_source",
+            "rows": [{"prompt": prompt, "form": form,
+                      "interface": ("raw_completion" if prompt in _RAW_PROMPTS
+                                    else "chat_template"),
+                      "status": arm, "reference_status": reference}
+                     for (prompt, form), (arm, reference) in table.items()]}
+
 
 def _moe_smoke_record():
     """The ``evidence.smoke.record`` the two routed-MoE cells carry.
@@ -116,12 +142,7 @@ def _moe_smoke_record():
     would pass on the day the two disagree, which is the whole reason the
     contract quotes it rather than paraphrasing it.
     """
-    return {"instrument": INSTRUMENT, "rule": instrument.RULE, "reference": "bf16_source",
-            "rows": [{"prompt": prompt, "form": form,
-                      "interface": ("raw_completion" if prompt in _RAW_PROMPTS
-                                    else "chat_template"),
-                      "status": arm, "reference_status": reference}
-                     for (prompt, form), (arm, reference) in _MOE_SMOKE_TABLE.items()]}
+    return _smoke_record(_MOE_SMOKE_TABLE)
 
 
 def _recorded_against_reference(receipt, record):
@@ -173,6 +194,20 @@ _EVIDENCE = {
         "grade": "kl_lower_bound",
         "kl": [_bound("batch", ["eager", "compiled"], WINDOW_GEMV)],
         "smoke": _NO_SMOKE},
+    # gfx1201 (#460, contract v24): the first AMD cells.  Same family, same
+    # rung, a second platform and a second runtime image.  Both regimes carry a
+    # bound scored in their OWN regime -- the decode one from an M = 1 dump,
+    # which is why the decode cell is not ``route_only`` the way its sm_121
+    # twin is -- and both carry the same fourteen-row derived smoke record.
+    # One cell per regime, covering both residencies: the per-residency KL came
+    # back bit-identical in both regimes, so there is nothing for a four-cell
+    # split to publish.
+    "tessera_bf16_k1_dense_gfx1201_decode": {
+        "grade": "kl_lower_bound", "kl": [_bound("decode", ["eager"], GFX1201)],
+        "smoke": _recorded_against_reference(GFX1201, _smoke_record(_GFX1201_SMOKE_TABLE))},
+    "tessera_bf16_k1_dense_gfx1201_batch": {
+        "grade": "kl_lower_bound", "kl": [_bound("batch", ["eager"], GFX1201)],
+        "smoke": _recorded_against_reference(GFX1201, _smoke_record(_GFX1201_SMOKE_TABLE))},
     # BF16 (q1792): prefill KL under an ``--enforce-eager`` serve, both
     # residencies; the receipt records an identical greedy continuation from
     # all four census arms and does not grade it.
@@ -466,14 +501,27 @@ def test_the_routed_moe_cells_are_distinguishable_from_the_bf16_cells_that_never
     assert [s["attribution"] for s in moe] != [s["attribution"] for s in bf16]
 
 
-def test_only_the_streamed_e4m3_decode_cell_has_a_decode_regime_bound(contract):
-    """Regime coverage is the axis that separates the decode cells, and the
-    honest count is one: the window-GEMV lane is the only route a decode-regime
-    KL was ever scored against (eager 2026-09-03, compiled r6)."""
+def test_which_decode_cells_carry_a_decode_regime_bound(contract):
+    """Regime coverage is the axis that separates the decode cells.
+
+    A decode cell carries a KL only where a decode-regime dump was scored
+    against that route.  Two were: the sm_121 window-GEMV lane (eager
+    2026-09-03, compiled r6) and the gfx1201 ``torch_window`` lane (#460,
+    2026-09-13).  Every other decode cell is ``route_only``, and a prefill
+    bound may not stand in for one -- the validator refuses a ``batch``
+    kl entry on a ``decode`` cell, which is the rule re-read below.
+
+    This was ``test_only_the_streamed_e4m3_decode_cell_has_a_decode_regime_bound``
+    until #460 scored the second one; the count was never the claim.
+    """
     with_decode_kl = sorted(
         cell["id"] for cell in contract["lane_eligibility"]["cells"]
         if cell["regime"] == "decode" and cell["evidence"]["kl"])
-    assert with_decode_kl == ["tessera_e4m3_k1_dense_sm121_decode_streamed"]
+    assert with_decode_kl == ["tessera_bf16_k1_dense_gfx1201_decode",
+                              "tessera_e4m3_k1_dense_sm121_decode_streamed"]
+    for cell in contract["lane_eligibility"]["cells"]:
+        for entry in cell["evidence"]["kl"]:
+            assert entry["regime"] == cell["regime"], cell["id"]
 
 
 def test_every_named_receipt_is_in_the_tree(contract):

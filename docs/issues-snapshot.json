@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-13T00:08:16Z",
+ "generated": "2026-09-13T04:20:49Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -1868,7 +1868,7 @@
     "title": "Generate the PrismaBuild data manifest for every campaign row at submit time; refuse a row without one"
    },
    "519": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Campaign container launcher: python -m with cwd=sealed checkout shadows the pinned PYTHONPATH tree"
    },
    "52": {
@@ -1888,7 +1888,7 @@
     "title": "dispatch: derive the PB mem_gb demand from the checked phase plan (publication overlap added 2 GiB; 3 rows refused at 8\u201313 MB slack)"
    },
    "523": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Import the pinned tree the campaign container was given"
    },
    "524": {
@@ -1903,9 +1903,57 @@
     "state": "CLOSED",
     "title": "Derive the campaign row's memory demand from the plan it checks itself against"
    },
+   "527": {
+    "state": "CLOSED",
+    "title": "Admit lane-eligibility schema v10 and pin Tessera at the v23 contract"
+   },
+   "528": {
+    "state": "CLOSED",
+    "title": "Platform-aware tessera_serving_route: derive backing from the contract, not from an SM number"
+   },
+   "529": {
+    "state": "CLOSED",
+    "title": "Derive the Tessera lane spec's executes per platform, and refuse on drift"
+   },
    "53": {
     "state": "CLOSED",
     "title": "Source-passthrough format family: MXFP4/FP8-block experts+body, measured route verdicts, exporter lane"
+   },
+   "530": {
+    "state": "CLOSED",
+    "title": "Serving profiles for gfx1151 (Strix Halo) and gfx1201, with the menu derived from the contract"
+   },
+   "531": {
+    "state": "CLOSED",
+    "title": "Admit lane schema v10 and pin Tessera at contract v23 (#527)"
+   },
+   "532": {
+    "state": "CLOSED",
+    "title": "Ask the contract which platform backs a family (#528)"
+   },
+   "533": {
+    "state": "CLOSED",
+    "title": "Derive the lane spec's executed contracts per platform (#529)"
+   },
+   "534": {
+    "state": "CLOSED",
+    "title": "Take the AMD Tessera profiles from the contract, not from a cancellation (#530)"
+   },
+   "535": {
+    "state": "CLOSED",
+    "title": "Ask the contract which platform backs a family (#528)"
+   },
+   "536": {
+    "state": "OPEN",
+    "title": "Read loader_axes from the pinned Tessera contract, refuse the refused TP axis in tessera_tp_legal, and ship a read-only tessera_tp_audit CLI"
+   },
+   "537": {
+    "state": "OPEN",
+    "title": "ServingLaneSpec.route_status_for answers serving_runtime_contract::absent for every lane in production"
+   },
+   "538": {
+    "state": "OPEN",
+    "title": "Read the contract's loader_axes, refuse the cut it refuses (#536)"
    },
    "54": {
     "state": "CLOSED",
@@ -3678,11 +3726,11 @@
     "title": "Derive step-scoped resource ownership and price non-step transients (#399)"
    },
    "452": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "AMD/HIP port, step 1 of 9: backend discovery and the platform token"
    },
    "453": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "AMD/HIP port, step 2 of 9: land the three HIP shims in `window_gemv.cu` (spike branch `rdna35/window-gemv-hip-spike` @ 6055c11)"
    },
    "454": {
@@ -3698,7 +3746,7 @@
     "title": "AMD/HIP port, step 5 of 9: runtime contract v23 / lane-eligibility schema v10 \u2014 platform axis, no variant axis, no AMD cells"
    },
    "457": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "AMD/HIP port, step 6 of 9: platform gating in the plugin + `platform` telemetry stamp (re-scoped from \"FP8 `wna16` variant\")"
    },
    "458": {
@@ -3733,9 +3781,37 @@
     "state": "CLOSED",
     "title": "Give the contract a platform axis, so it can say what was never servable (#456)"
    },
+   "465": {
+    "state": "CLOSED",
+    "title": "Refuse at the load what the platform does not execute, and stamp where it ran (#457)"
+   },
+   "466": {
+    "state": "CLOSED",
+    "title": "Key the native build on the platform, not the compute capability (#452)"
+   },
+   "467": {
+    "state": "CLOSED",
+    "title": "Spell the window GEMV's three CUDA-only constructs per platform (#453)"
+   },
+   "468": {
+    "state": "CLOSED",
+    "title": "Window-GEMV dispatch routes M\u22085..8 to an over-LDS MT=8 plan on a 64 KiB part (gfx1201)"
+   },
+   "469": {
+    "state": "CLOSED",
+    "title": "Launch the window GEMV on the tile the device grants (#468)"
+   },
    "47": {
     "state": "CLOSED",
     "title": "The BF16 route decodes in pure torch; the window GEMV's value family is the fast path it never calls"
+   },
+   "470": {
+    "state": "OPEN",
+    "title": "Census tool: topology flags, per-rank census records, and a two-node driver (TP2 attestation vehicle)"
+   },
+   "471": {
+    "state": "OPEN",
+    "title": "Census tool: topology flags, per-rank census records, and a two-node driver"
    },
    "48": {
     "state": "CLOSED",
