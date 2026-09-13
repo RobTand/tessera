@@ -128,8 +128,16 @@ def _require_platform_backs(family: str, context: str) -> None:
     """
     from .backend import require_platform_backs
 
+    platform = _platform_token()
+    if platform is None:
+        # ASKED HERE, NOT DELEGATED.  Passing ``platform=None`` through would
+        # be read as "the caller did not say" and the gate would probe the
+        # device itself -- which is exactly the answer this module has just
+        # decided it does not have.  A box that cannot name a platform has
+        # attested nothing, and the ABI probe below is the whole check.
+        return
     require_platform_backs(family, context, torch=torch,
-                           platform=_platform_token(), backend_name=_backend())
+                           platform=platform, backend_name=_backend())
 
 
 def _load_native_ops(context: str) -> None:
