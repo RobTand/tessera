@@ -42,7 +42,7 @@ def run(args):
     raw = json.loads((args.output / "capture/capture.json").read_text())
     assert "cuda_argument_domains" in receipt, receipt["issues"]
     domains = receipt["cuda_argument_domains"]
-    assert domains["status"] == "observed_argument_domains", domains
+    assert domains["status"] == "observed", domains
     assert domains["null_device_frees"]
     allocations = [row for row in domains["host_allocations"] if row["address"] == host.value and row["bytes"] == 128]
     assert len(allocations) == 1 and allocations[0]["freed_ns"] is not None

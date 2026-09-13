@@ -599,7 +599,7 @@ def _cupti_coverage(raw, segment_operations, issues):
         raise ValueError("CUPTI capture belongs to another process")
     argument_domains = analyze_memory_api_arguments(trace)
     issues.extend(argument_domains["issues"])
-    handled_arguments = {tuple(key) for key in argument_domains["handled_api_keys"]}
+    handled_arguments = {tuple(int(part) for part in key.split(":")) for key in argument_domains["handled_api_keys"]}
     device, context = raw["identity"]["device_id"], raw["context_id"]
     begin, end = _int(trace["start_ns"], "CUPTI start", 1), _int(trace["end_ns"], "CUPTI end", 1)
     markers = {}

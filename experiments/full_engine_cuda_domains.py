@@ -159,8 +159,14 @@ def analyze_memory_api_arguments(trace):
                 "device_id": allocation["device_id"], "context_id": allocation["context_id"],
                 "correlation_id": ident[1]})
             handled.add(ident)
-    result["handled_api_keys"] = [list(ident) for ident in sorted(handled)]
-    result["status"] = "incomplete" if issues else "observed_argument_domains"
+    # Each handled key names one (process, correlation) API identity as one
+    # string, and the status vocabulary is the consumer's: PrismaQuant's report
+    # reader accepts ``unavailable`` or ``observed`` and a list of strings here,
+    # and the schema document defines neither, so the producer emits what the
+    # only consumer reads. Incompleteness travels in ``issues``, never in a
+    # third status word.
+    result["handled_api_keys"] = [f"{process}:{correlation}" for process, correlation in sorted(handled)]
+    result["status"] = "observed"
     return result
 
 
