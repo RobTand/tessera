@@ -107,9 +107,13 @@ def runtime_tensor_leaves(value, prefix, *, max_nodes=20000):
 def persistent_runtime_roots(runner):
     """References only: observe the stock managers' already allocated storage."""
     if runner is not None:
+        # execute_model_state is the per-step batch descriptor the runner
+        # rebuilds every step, not persistent state: naming its tensors by path
+        # binds one owner id to a new backing each step, which the consumer
+        # refuses as a duplicate alias. Its allocations stay unowned instead.
         for name in ("req_states", "input_buffers", "sampler", "model_state", "block_tables",
                      "structured_outputs_worker", "prompt_logprobs_worker", "kv_block_zeroer",
-                     "attn_groups", "execute_model_state", "intermediate_tensors", "draft_tokens_handler"):
+                     "attn_groups", "intermediate_tensors", "draft_tokens_handler"):
             if name in vars(runner):
                 yield "runner:" + name, vars(runner)[name]
     workspace = sys.modules.get("vllm.v1.worker.workspace")

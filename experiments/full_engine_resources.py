@@ -594,6 +594,7 @@ def _checkpoint_owners(checkpoint, live, device, issues, domains=None):
         entry["owner_categories"][owner_id] = category
         allocation["observed_owners"].add(owner_id)
         allocation["observed_categories"].add(category)
+        allocation["_owner_categories"][owner_id] = category
     for entry in storages.values():
         entry["owners"].sort()
     # owner_count is the number of owners bound to a live device storage at
@@ -608,6 +609,37 @@ def _checkpoint_owners(checkpoint, live, device, issues, domains=None):
             "unique_pinned_host_backing_bytes": sum(row["bytes"] for row in host_storages.values()),
             "storages": [storages[k] for k in sorted(storages)],
             "pageable_host_observations": pageable}
+
+
+def _project_checkpoints(checkpoints, rows):
+    """Restate each checkpoint's owned storages over the whole capture's ownership.
+
+    Ownership is a property of an allocation: a storage a checkpoint census
+    bound to a named owner is that owner's backing for its whole lifetime, not
+    only at the checkpoint whose census happened to yield it. A consumer
+    recomputes a checkpoint's storages as the allocations live at its index
+    that carry any observed owner, so the ledger states exactly that, and
+    keeps the census the checkpoint itself took as ``census_owner_count`` and
+    ``census_storage_count`` beside it.
+    """
+    for checkpoint in checkpoints:
+        index = checkpoint["trace_index"]
+        storages = []
+        for row in rows:
+            if (row["allocate_index"] <= index and row["observed_owners"]
+                    and (row["free_completed_index"] is None or index < row["free_completed_index"])):
+                categories = row["observed_categories"]
+                storages.append({"allocation_id": row["allocation_id"], "address": row["address"],
+                                 "bytes": row["bytes"],
+                                 "category": categories[0] if len(categories) == 1 else "unknown",
+                                 "owners": list(row["observed_owners"]),
+                                 "owner_categories": dict(sorted(row["_owner_categories"].items()))})
+        storages.sort(key=lambda entry: entry["allocation_id"])
+        checkpoint["census_owner_count"] = checkpoint["owner_count"]
+        checkpoint["census_storage_count"] = len(checkpoint["storages"])
+        checkpoint["storages"] = storages
+        checkpoint["owner_count"] = sum(len(entry["owners"]) for entry in storages)
+        checkpoint["unique_owned_storage_bytes"] = sum(entry["bytes"] for entry in storages)
 
 
 def _cupti_coverage(raw, segment_operations, issues):
@@ -858,7 +890,8 @@ def analyze_engine_resource_ledger(raw):
                        "unit_invocation": scopes[0][2] if scopes else None,
                        "scope_stack": [r[3] for r in scopes],
                        "allocator_block_bytes_observed": set(),
-                       "observed_owners": set(), "observed_categories": set()}
+                       "observed_owners": set(), "observed_categories": set(),
+                       "_owner_categories": {}}
                 live[address] = row
                 rows.append(row)
                 peak = max(peak, sum(r["bytes"] for r in live.values()))
@@ -900,6 +933,9 @@ def analyze_engine_resource_ledger(raw):
             row["observed_owners"] = sorted(row["observed_owners"])
             row["observed_categories"] = sorted(row["observed_categories"])
             row["allocator_block_bytes_observed"] = sorted(row["allocator_block_bytes_observed"])
+        _project_checkpoints(result["checkpoints"], rows)
+        for row in rows:
+            del row["_owner_categories"]
         result["torch_allocations"] = rows
         result["torch_observed_live_peak_bytes"] = peak
         result["torch_observed_live_peak_scope"] = "requested_allocation_bytes_excluding_allocator_rounding"

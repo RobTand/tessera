@@ -542,7 +542,26 @@ gap. The consumer's checkpoint field set is frozen, so the report carries these
 beside the checkpoints as one artifact
 (`tessera.pageable_host_observations.v1`) rather than inside the rows.
 
-`owner_count` is the number of owners bound to a live device storage at the
-checkpoint — the count a consumer recomputes from the storages it is handed.
-Pinned-host and pageable-host observations are carried separately and are not
-in it.
+### A checkpoint's storages are the capture's ownership, not one census
+
+Ownership is a property of an allocation. A storage one checkpoint's census
+bound to a named owner is that owner's backing for its whole lifetime, and the
+consumer recomputes every checkpoint that way: the storages live at its index
+that carry any observed owner. A checkpoint that listed only what its own
+census yielded at that moment disagreed with that on every unit boundary of a
+real capture — a native boundary tensor observed as `native:<unit>:input` is
+still live, and still owned, at the next unit's checkpoint — so the ledger
+restates `storages`, `owner_count` and `unique_owned_storage_bytes` over the
+whole capture's ownership after the replay (`_project_checkpoints`), and keeps
+the census the checkpoint itself took as `census_owner_count` and
+`census_storage_count`. `owner_count` is therefore the number of owners bound
+to a live device storage at the checkpoint; pinned-host and pageable-host
+observations are carried separately and are not in it. The census counts and
+the pageable-host observations travel in one artifact,
+`tessera.checkpoint_census.v1`, because the consumer's checkpoint field set is
+frozen.
+
+The per-step batch descriptor (`GPUModelRunner.execute_model_state`) is not a
+persistent runtime root: the runner rebuilds it every step, so naming its
+tensors by path bound one owner id to a new backing each step, which the
+consumer refuses as a duplicate alias. Its allocations stay unowned.

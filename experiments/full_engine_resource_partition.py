@@ -583,31 +583,42 @@ REPORT_MEMBERS = ("identity", "reference", "workload", "execution",
 _DECLARED_MEMBERS = ("reference", "workload", "execution")
 
 
-PAGEABLE_HOST_ARTIFACT = "tessera.pageable_host_observations.v1"
+CHECKPOINT_CENSUS_ARTIFACT = "tessera.checkpoint_census.v1"
+_CENSUS_FIELDS = ("census_owner_count", "census_storage_count", "pageable_host_observations")
 
 
-def _split_pageable_host_observations(checkpoints):
-    """Return ``(checkpoint rows without the member, one artifact carrying it)``.
+def _split_checkpoint_census(checkpoints):
+    """Return ``(checkpoint rows in the consumer's field set, one census artifact)``.
 
-    A pageable host tensor is outside ``gpu_allocations_only``: it was never a
-    CUDA allocation, so no join was owed. The ledger still records that it was
-    observed, per checkpoint, so a reader can count what the scope excludes.
+    A checkpoint row carries three members the consumer's schema does not
+    name: the owner and storage counts of the census the checkpoint itself
+    took (its ``storages`` are restated over the whole capture's ownership),
+    and the pageable host tensors scoped out of ``gpu_allocations_only`` --
+    never CUDA allocations, so no join was owed. They are carried beside the
+    checkpoints as one artifact rather than inside rows whose field set is
+    frozen on both sides.
     """
     if checkpoints is None:
         return None, None
     rows, carried = [], []
     for checkpoint in checkpoints:
         row = dict(checkpoint)
-        observed = row.pop("pageable_host_observations", None)
+        census = {name: row.pop(name) for name in _CENSUS_FIELDS if name in row}
         rows.append(row)
-        if observed is not None:
+        if census:
+            pageable = census.get("pageable_host_observations") or []
             carried.append({"label": checkpoint["label"], "trace_index": checkpoint["trace_index"],
-                            "count": len(observed), "bytes": sum(item["bytes"] for item in observed),
-                            "owner_ids": sorted(item["owner_id"] for item in observed)})
+                            "census_owner_count": census.get("census_owner_count"),
+                            "census_storage_count": census.get("census_storage_count"),
+                            "pageable_host": {"count": len(pageable),
+                                              "bytes": sum(item["bytes"] for item in pageable),
+                                              "owner_ids": sorted(item["owner_id"] for item in pageable)}})
     if not carried:
         return rows, None
-    return rows, {"schema": PAGEABLE_HOST_ARTIFACT, "scope": "host tensors whose backing is not page-locked; "
-                  "outside gpu_allocations_only, observed but never charged", "checkpoints": carried}
+    return rows, {"schema": CHECKPOINT_CENSUS_ARTIFACT,
+                  "scope": "per-checkpoint census counts, and host tensors whose backing is not "
+                           "page-locked: outside gpu_allocations_only, observed but never charged",
+                  "checkpoints": carried}
 
 
 def assemble_full_engine_resource_report(ledger, *, reference, workload,
@@ -653,14 +664,14 @@ def assemble_full_engine_resource_report(ledger, *, reference, workload,
             f"scope is never projected over it")
 
     partition = derive_partition(ledger)
-    # Checkpoint rows carry one member the consumer's schema does not name:
-    # the pageable-host owner observations scoped out of gpu_allocations_only.
-    # They are carried beside the checkpoints as a named artifact rather than
-    # inside rows whose field set is frozen on both sides.
-    checkpoints, pageable = _split_pageable_host_observations(ledger.get("checkpoints"))
+    # Checkpoint rows carry members the consumer's schema does not name (the
+    # checkpoint's own census counts and the pageable-host observations). They
+    # are carried beside the checkpoints as a named artifact rather than inside
+    # rows whose field set is frozen on both sides.
+    checkpoints, census = _split_checkpoint_census(ledger.get("checkpoints"))
     artifacts = list(artifacts)
-    if pageable is not None:
-        artifacts.append(pageable)
+    if census is not None:
+        artifacts.append(census)
     report = {
         "schema": REPORT_SCHEMA,
         "identity": {

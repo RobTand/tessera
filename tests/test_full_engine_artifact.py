@@ -11,7 +11,7 @@ from safetensors.numpy import save_file
 from experiments.capture_full_engine_resources import read_calibration_prompt
 from experiments.full_engine_artifact import read_tessera_artifact, ASSIGNMENT_SCHEMA
 from experiments.full_engine_resource_partition import (
-    PAGEABLE_HOST_ARTIFACT, SUPPORTED_EXECUTION, assemble_full_engine_resource_report)
+    CHECKPOINT_CENSUS_ARTIFACT, SUPPORTED_EXECUTION, assemble_full_engine_resource_report)
 from experiments.full_engine_resources import analyze_engine_resource_ledger
 
 
@@ -120,7 +120,7 @@ def test_a_pageable_host_owner_is_scoped_out_and_a_pinned_or_unstated_one_is_a_j
         assert [row["owner_id"] for row in first["unmatched_storage_observations"]] == ["runner:req_states.prompt_len.cpu"]
 
 
-def test_the_report_carries_pageable_host_observations_as_an_artifact_not_a_checkpoint_field(capture):
+def test_the_report_carries_the_checkpoint_census_as_an_artifact_not_a_checkpoint_field(capture):
     raw = copy.deepcopy(capture)
     raw["checkpoints"][0]["owners"].append(_host_owner(False))
     ledger = analyze_engine_resource_ledger(raw)
@@ -129,8 +129,27 @@ def test_the_report_carries_pageable_host_observations_as_an_artifact_not_a_chec
                "workload": {"calibration": "synthetic", "prompt_ids": ["synthetic"], "sampling": "synthetic"},
                "execution": dict(SUPPORTED_EXECUTION)}
     report = assemble_full_engine_resource_report(ledger, **members)
-    assert all("pageable_host_observations" not in row for row in report["observations"]["checkpoints"])
-    carried = [item for item in report["observations"]["artifacts"] if item.get("schema") == PAGEABLE_HOST_ARTIFACT]
+    frozen = {"label", "owner_count", "pinned_host_storages", "storages", "trace_index",
+              "unique_owned_storage_bytes", "unique_pinned_host_backing_bytes", "unmatched_storage_observations"}
+    assert all(set(row) == frozen for row in report["observations"]["checkpoints"])
+    carried = [item for item in report["observations"]["artifacts"] if item.get("schema") == CHECKPOINT_CENSUS_ARTIFACT]
     assert len(carried) == 1
-    assert carried[0]["checkpoints"][0] == {"label": "startup", "trace_index": 3, "count": 1, "bytes": 64,
-                                            "owner_ids": ["runner:req_states.prompt_len.cpu"]}
+    assert carried[0]["checkpoints"][0] == {
+        "label": "startup", "trace_index": 3, "census_owner_count": 2, "census_storage_count": 1,
+        "pageable_host": {"count": 1, "bytes": 64, "owner_ids": ["runner:req_states.prompt_len.cpu"]}}
+
+
+def test_a_checkpoint_states_every_live_storage_the_capture_ever_bound_to_an_owner(capture):
+    # An owner bound at a later checkpoint owns the same storage while it is
+    # live at an earlier one; the consumer recomputes checkpoints that way.
+    ledger = analyze_engine_resource_ledger(capture)
+    rows = {row["allocation_id"]: row for row in ledger["torch_allocations"]}
+    for checkpoint in ledger["checkpoints"]:
+        index = checkpoint["trace_index"]
+        live = sorted(identity for identity, row in rows.items()
+                      if row["allocate_index"] <= index and row["observed_owners"]
+                      and (row["free_completed_index"] is None or index < row["free_completed_index"]))
+        assert [entry["allocation_id"] for entry in checkpoint["storages"]] == live
+        assert checkpoint["owner_count"] == sum(len(rows[identity]["observed_owners"]) for identity in live)
+        assert checkpoint["unique_owned_storage_bytes"] == sum(rows[identity]["bytes"] for identity in live)
+        assert checkpoint["census_owner_count"] >= 0 and checkpoint["census_storage_count"] >= 0
