@@ -35,10 +35,14 @@ WHERE THE IDENTITY DOES *NOT* COME FROM.  Not
 another.  Identity comes from torch; ``amdsmi`` is for power telemetry.  And
 nothing from vLLM is imported here or vendored anywhere.
 
-BUILDING FOR A DEVICE THAT IS NOT PRESENT.  :func:`offload_flags` always
-passes an explicit ``--offload-arch``, and torch skips ``PYTORCH_ROCM_ARCH``
-whenever an offload-arch flag is present, so that environment variable alone
-cannot reach a loader.  ``TESSERA_PLATFORM_TOKEN`` is the override that can:
+BUILDING FOR A DEVICE THAT IS NOT PRESENT.  ``TESSERA_PLATFORM_TOKEN`` is the
+override, and ``PYTORCH_ROCM_ARCH`` alone is not, for a reason worth stating
+because #452 and #453 both state its opposite: an explicit ``--offload-arch``
+in ``extra_cuda_cflags`` does NOT make torch skip ``PYTORCH_ROCM_ARCH``.
+MEASURED on wsl-gpu (torch 2.11.0+rocm7.2.4, HIP 7.14, 2026-09-12): the two are
+additive, and a stale ``PYTORCH_ROCM_ARCH=gfx1201`` put gfx1201 and gfx1151 on
+one compile line.  :func:`pin_build_arch` states the one token in both places.
+The override:
 it replaces the probed token for BUILD purposes -- the compile flags, the
 build-directory key and :func:`toolchain_report` -- and never for telemetry,
 which always carries the probed token.  A loader that built under an override
@@ -65,6 +69,7 @@ __all__ = [
     "offload_flags",
     "pin_build_arch",
     "platform_backs",
+    "platform_attests",
     "platform_of_this_process",
     "platform_token",
     "probed_platform_token",
@@ -379,36 +384,47 @@ def ensure_toolchain_on_path(torch=None) -> None:
         os.environ["PATH"] = os.pathsep.join(extra + [os.environ.get("PATH", "")])
 
 
-def platform_backs(family: str, token: str, contract: "Mapping[str, Any] | None" = None) -> bool:
-    """Whether the packaged contract says ``token`` executes ``family``.
+def platform_backs(family: str, token: str,
+                   contract: "Mapping[str, Any] | None" = None) -> bool:
+    """Whether the packaged contract REFUSES ``family`` on ``token``.
 
-    The contract is the authority on what a runtime does (principle 14): a
-    producer never asserts a serving fact it did not read.  Two shapes are
-    read, because the platform axis arrives with the contract that carries it:
+    This is ``contract.platform_backs`` and nothing else -- one document, one
+    reader (``contract.platform_execution_contract``), so the build and the
+    serve cannot answer the platform axis differently.  Note what the name
+    means there: ``False`` only for the attested ``unbacked``; a platform the
+    document has not reached is ``unstated``, and a silence is not a refusal,
+    so it answers ``True``.
 
-    * ``lane_eligibility.platforms[token].executes[family]`` non-null -- the
-      per-platform table, once the contract publishes one.
-    * otherwise, a published cell for that ``(platform, family)`` whose
-      ``route_status`` is not ``unbacked``.  A cell IS the receipt that the
-      pair executes, so a contract with cells and no table still answers.
-
-    An unknown token is ``False``, never a default: a platform the contract
-    has never heard of backs nothing, and saying so is the signal.
+    For the affirmative question -- *has this platform been attested to
+    execute this family?* -- ask :func:`platform_attests`.  #452's acceptance
+    criterion names ``platform_backs``; the AMD lane needs the other one,
+    because on an ``unstated`` platform the two differ.
     """
-    if contract is None:
-        from .contract import load_serving_contract
+    from .contract import platform_backs as _platform_backs
 
-        contract = load_serving_contract()
-    eligibility = contract.get("lane_eligibility") or {}
-    entry = (eligibility.get("platforms") or {}).get(token)
-    if entry is None:
-        return False
-    executes = entry.get("executes") if isinstance(entry, Mapping) else None
-    if executes is not None:
-        return executes.get(family) is not None
-    return any(cell.get("platform") == token and cell.get("family") == family
-               and cell.get("route_status") != "unbacked"
-               for cell in eligibility.get("cells") or [])
+    return _platform_backs(family, token, contract)
+
+
+def platform_attests(family: str, token: str,
+                     contract: "Mapping[str, Any] | None" = None) -> bool:
+    """Whether the contract ATTESTS that ``token`` executes ``family``.
+
+    ``True`` only for the contract's own ``backed`` state: the platform is
+    declared and its ``executes`` entry names an activation contract.  An
+    ``unbacked`` entry and an ``unstated`` platform are both ``False`` -- the
+    first because the document refuses it, the second because the document
+    says nothing, and a producer never asserts a serving fact it did not read
+    (principle 14).
+
+    On the packaged ``contract_version`` 23 (#456) this answers ``True`` for
+    ``TESSERA_BF16_K1`` on ``gfx1151`` and ``gfx1201`` and ``False`` for the
+    other two families there -- the AMD lane is Tessera-16 WnA16 only.  That is
+    the document's claim, read; this module mints no eligibility of its own.
+    """
+    from .contract import PLATFORM_BACKED, platform_execution_contract
+
+    state, _ = platform_execution_contract(family, token, contract)
+    return state == PLATFORM_BACKED
 
 
 # -- the load-time platform gate ---------------------------------------------
