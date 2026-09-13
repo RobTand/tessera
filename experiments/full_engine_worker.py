@@ -107,9 +107,13 @@ def runtime_tensor_leaves(value, prefix, *, max_nodes=20000):
 def persistent_runtime_roots(runner):
     """References only: observe the stock managers' already allocated storage."""
     if runner is not None:
+        # execute_model_state is the per-step batch descriptor the runner
+        # rebuilds every step, not persistent state: naming its tensors by path
+        # binds one owner id to a new backing each step, which the consumer
+        # refuses as a duplicate alias. Its allocations stay unowned instead.
         for name in ("req_states", "input_buffers", "sampler", "model_state", "block_tables",
                      "structured_outputs_worker", "prompt_logprobs_worker", "kv_block_zeroer",
-                     "attn_groups", "execute_model_state", "intermediate_tensors", "draft_tokens_handler"):
+                     "attn_groups", "intermediate_tensors", "draft_tokens_handler"):
             if name in vars(runner):
                 yield "runner:" + name, vars(runner)[name]
     workspace = sys.modules.get("vllm.v1.worker.workspace")
@@ -246,8 +250,10 @@ class ResourceCaptureWorker(Worker):
         runner = getattr(self, "model_runner", None)
         model = getattr(runner, "model", None)
         if model is not None:
+            checkpointed = (self._resource_plan.get("reference_checkpoint")
+                            or self._resource_plan.get("artifact_checkpoint"))
             reference_ids = (reference_candidate_tensor_ids(model, self._resource_native_boundaries)
-                             if self._resource_plan.get("reference_checkpoint") and self._resource_native_boundaries is not None else None)
+                             if checkpointed and self._resource_native_boundaries is not None else None)
             for kind, tensors in (("parameter", model.named_parameters(remove_duplicate=False)),
                                   ("buffer", model.named_buffers(remove_duplicate=False))):
                 for name, tensor in tensors:
@@ -395,9 +401,11 @@ class ResourceCaptureWorker(Worker):
         self._resource_calls += 1
         self._resource_active = (not self._resource_prefix_closed
                                  and self._resource_calls <= self._resource_plan["max_execute_calls"])
-        if self._resource_active:
-            self._resource_scheduler_steps.append({
-                "execute_call": self._resource_calls,
+        # Every armed call is recorded, declared or not: a step the engine
+        # executes beyond the declared budget is exactly what a partial
+        # coverage claim needs to name.
+        self._resource_scheduler_steps.append({
+                "execute_call": self._resource_calls, "declared": self._resource_active,
                 "total_num_scheduled_tokens": scheduler_output.total_num_scheduled_tokens,
                 "num_scheduled_tokens": scheduler_output.num_scheduled_tokens,
                 "new_requests": [{"req_id": request.req_id,
@@ -406,6 +414,7 @@ class ResourceCaptureWorker(Worker):
                                  for request in scheduler_output.scheduled_new_reqs],
                 "cached_requests": {"req_ids": scheduler_output.scheduled_cached_reqs.req_ids,
                     "num_computed_tokens": scheduler_output.scheduled_cached_reqs.num_computed_tokens}})
+        if self._resource_active:
             begin = f"execute:{self._resource_calls}:begin"
             if self._resource_checkpoint(begin):
                 self._resource_open_step = (self._resource_calls, begin)
@@ -413,7 +422,23 @@ class ResourceCaptureWorker(Worker):
             return super().execute_model(scheduler_output)
         finally:
             if self._resource_active:
-                self._resource_checkpoint(f"execute:{self._resource_calls}:end")
+                end = f"execute:{self._resource_calls}:end"
+                taken = self._resource_checkpoint(end)
+                open_step = self._resource_open_step
+                if (taken and open_step is not None and open_step[0] == self._resource_calls
+                        and scheduler_output.total_num_scheduled_tokens == 0):
+                    # A step that schedules no token runs no forward and is
+                    # never sampled: the engine core takes the runner's empty
+                    # output as the step's result and skips sample_tokens
+                    # (vllm/v1/engine/core.py, step()). Such a step is the
+                    # request-retirement pass after the last generated token,
+                    # and its whole extent is this execute call. Closing it
+                    # here is not the sampler fallback the comment in
+                    # sample_tokens refuses -- there is no sampler to wait for,
+                    # and the recorded scheduler output says so.
+                    self._resource_open_step = None
+                    self._resource_recorder.declare_step_interval(
+                        f"step:{open_step[0]}", begin=open_step[1], end=end)
             self._resource_active = False
 
     def sample_tokens(self, grammar_output):
@@ -436,8 +461,11 @@ class ResourceCaptureWorker(Worker):
                     # The step spans the sampler: sampling is per-step work, and
                     # a step ending at execute:N:end would place the sampler's
                     # allocations outside every step. There is no fallback to
-                    # that label -- a step whose sampler never ran stays
-                    # undeclared and fails the coverage claim closed.
+                    # that label -- a step that scheduled tokens and whose
+                    # sampler never ran stays undeclared and fails the coverage
+                    # claim closed. The one step with no sampler by
+                    # construction, the zero-token retirement pass, is closed
+                    # in execute_model from its own recorded scheduler output.
                     self._resource_recorder.declare_step_interval(
                         f"step:{open_step[0]}", begin=open_step[1], end=end)
         return result

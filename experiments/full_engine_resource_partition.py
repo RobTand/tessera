@@ -583,6 +583,44 @@ REPORT_MEMBERS = ("identity", "reference", "workload", "execution",
 _DECLARED_MEMBERS = ("reference", "workload", "execution")
 
 
+CHECKPOINT_CENSUS_ARTIFACT = "tessera.checkpoint_census.v1"
+_CENSUS_FIELDS = ("census_owner_count", "census_storage_count", "pageable_host_observations")
+
+
+def _split_checkpoint_census(checkpoints):
+    """Return ``(checkpoint rows in the consumer's field set, one census artifact)``.
+
+    A checkpoint row carries three members the consumer's schema does not
+    name: the owner and storage counts of the census the checkpoint itself
+    took (its ``storages`` are restated over the whole capture's ownership),
+    and the pageable host tensors scoped out of ``gpu_allocations_only`` --
+    never CUDA allocations, so no join was owed. They are carried beside the
+    checkpoints as one artifact rather than inside rows whose field set is
+    frozen on both sides.
+    """
+    if checkpoints is None:
+        return None, None
+    rows, carried = [], []
+    for checkpoint in checkpoints:
+        row = dict(checkpoint)
+        census = {name: row.pop(name) for name in _CENSUS_FIELDS if name in row}
+        rows.append(row)
+        if census:
+            pageable = census.get("pageable_host_observations") or []
+            carried.append({"label": checkpoint["label"], "trace_index": checkpoint["trace_index"],
+                            "census_owner_count": census.get("census_owner_count"),
+                            "census_storage_count": census.get("census_storage_count"),
+                            "pageable_host": {"count": len(pageable),
+                                              "bytes": sum(item["bytes"] for item in pageable),
+                                              "owner_ids": sorted(item["owner_id"] for item in pageable)}})
+    if not carried:
+        return rows, None
+    return rows, {"schema": CHECKPOINT_CENSUS_ARTIFACT,
+                  "scope": "per-checkpoint census counts, and host tensors whose backing is not "
+                           "page-locked: outside gpu_allocations_only, observed but never charged",
+                  "checkpoints": carried}
+
+
 def assemble_full_engine_resource_report(ledger, *, reference, workload,
                                          execution, artifacts=()):
     """Assemble the frozen seven-member report envelope for one capture.
@@ -626,6 +664,14 @@ def assemble_full_engine_resource_report(ledger, *, reference, workload,
             f"scope is never projected over it")
 
     partition = derive_partition(ledger)
+    # Checkpoint rows carry members the consumer's schema does not name (the
+    # checkpoint's own census counts and the pageable-host observations). They
+    # are carried beside the checkpoints as a named artifact rather than inside
+    # rows whose field set is frozen on both sides.
+    checkpoints, census = _split_checkpoint_census(ledger.get("checkpoints"))
+    artifacts = list(artifacts)
+    if census is not None:
+        artifacts.append(census)
     report = {
         "schema": REPORT_SCHEMA,
         "identity": {
@@ -641,7 +687,7 @@ def assemble_full_engine_resource_report(ledger, *, reference, workload,
         "observations": {
             "capture_sha256": ledger.get("capture_sha256"),
             "torch_allocations": ledger["torch_allocations"],
-            "checkpoints": ledger.get("checkpoints"),
+            "checkpoints": checkpoints,
             "cuda_argument_domains": ledger.get("cuda_argument_domains"),
             "unattributed_external_records": ledger.get("unattributed_external_records"),
             "external_native_peak_bytes": ledger.get("external_native_peak_bytes"),
@@ -667,7 +713,7 @@ def assemble_full_engine_resource_report(ledger, *, reference, workload,
             "timing_captures": ledger.get("timing_captures"),
             "owner_views": ledger.get("owner_views"),
             "observer_qualification": ledger.get("observer_qualification"),
-            "artifacts": list(artifacts),
+            "artifacts": artifacts,
         },
         "partition": partition,
         # ``derived`` carries the recomputed numbers and their scope. It does

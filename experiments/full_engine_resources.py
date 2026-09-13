@@ -252,11 +252,15 @@ def _owner_row(owner):
     if any(s < 0 for s in stride):
         raise ValueError("negative-stride ownership is unsupported")
     extent = 0 if 0 in shape else (1 + sum((n - 1) * s for n, s in zip(shape, stride))) * itemsize
+    # Whether a host tensor's backing is page-locked decides which observer can
+    # see it: pinned host memory is a CUDA allocation the argument domain
+    # records, pageable host memory is outside gpu_allocations_only altogether.
+    pinned = bool(tensor.is_pinned()) if tensor.device.type == "cpu" and storage.nbytes() else False
     return {"owner_id": owner.owner_id, "category": owner.category,
             "provenance": owner.provenance, "device_type": tensor.device.type,
             "device_id": tensor.device.index, "address": storage.data_ptr(),
             "bytes": storage.nbytes(), "storage_offset_bytes": tensor.storage_offset() * itemsize,
-            "view_extent_bytes": extent, "element_size": itemsize,
+            "view_extent_bytes": extent, "element_size": itemsize, "pinned": pinned,
             "shape": shape, "stride": stride, "dtype": str(tensor.dtype)}
 
 
@@ -532,7 +536,7 @@ def _checkpoint_blocks(checkpoint, live, segments, device):
 
 
 def _checkpoint_owners(checkpoint, live, device, issues, domains=None):
-    storages, host_storages, owner_ids, unmatched = {}, {}, set(), []
+    storages, host_storages, owner_ids, unmatched, pageable = {}, {}, set(), [], []
     for owner in checkpoint["owners"]:
         owner_id = _text(owner["owner_id"], "owner_id")
         _text(owner["provenance"], "owner provenance")
@@ -565,6 +569,14 @@ def _checkpoint_owners(checkpoint, live, device, issues, domains=None):
             entry["views"].append(owner)
             continue
         if not torch_match:
+            # A host tensor whose row says it is pageable was never a CUDA
+            # allocation, so no join was owed and none is missing: it is scoped
+            # out of gpu_allocations_only and counted, never reported as a gap.
+            # A row that does not say (an older capture) or says pinned stays
+            # a join gap.
+            if owner["device_type"] == "cpu" and owner.get("pinned") is False:
+                pageable.append(owner)
+                continue
             issues.append(f"owner {owner_id}: no matching live Torch or pinned-host backing allocation")
             unmatched.append(owner)
             continue
@@ -582,14 +594,59 @@ def _checkpoint_owners(checkpoint, live, device, issues, domains=None):
         entry["owner_categories"][owner_id] = category
         allocation["observed_owners"].add(owner_id)
         allocation["observed_categories"].add(category)
+        allocation["_owner_categories"][owner_id] = category
     for entry in storages.values():
         entry["owners"].sort()
+    # owner_count is the number of owners bound to a live device storage at
+    # this checkpoint -- the count a consumer recomputes from the storages it
+    # is handed. Pinned-host and pageable-host observations are carried
+    # separately and are not in it.
     return {"label": checkpoint["label"], "trace_index": checkpoint["trace_index"],
-            "owner_count": len(owner_ids), "unique_owned_storage_bytes": sum(r["bytes"] for r in storages.values()),
+            "owner_count": sum(len(entry["owners"]) for entry in storages.values()),
+            "unique_owned_storage_bytes": sum(r["bytes"] for r in storages.values()),
             "unmatched_storage_observations": unmatched,
             "pinned_host_storages": [host_storages[k] for k in sorted(host_storages)],
             "unique_pinned_host_backing_bytes": sum(row["bytes"] for row in host_storages.values()),
-            "storages": [storages[k] for k in sorted(storages)]}
+            "storages": [storages[k] for k in sorted(storages)],
+            "pageable_host_observations": pageable}
+
+
+def _project_checkpoints(checkpoints, rows):
+    """Restate each checkpoint's owned storages over the whole capture's ownership.
+
+    Ownership is a property of an allocation: a storage a checkpoint census
+    bound to a named owner is that owner's backing for its whole lifetime, not
+    only at the checkpoint whose census happened to yield it. A consumer
+    recomputes a checkpoint's storages as the allocations live at its index
+    that carry any observed owner, so the ledger states exactly that, and
+    keeps the census the checkpoint itself took as ``census_owner_count`` and
+    ``census_storage_count`` beside it.
+    """
+    for checkpoint in checkpoints:
+        index = checkpoint["trace_index"]
+        # The category this checkpoint's own census gave an owner wins over
+        # the one another checkpoint gave it: a category that changed between
+        # checkpoints is reported at the checkpoint where it was seen.
+        census = {entry["allocation_id"]: entry["owner_categories"] for entry in checkpoint["storages"]}
+        storages = []
+        for row in rows:
+            if (row["allocate_index"] <= index and row["observed_owners"]
+                    and (row["free_completed_index"] is None or index < row["free_completed_index"])):
+                categories = row["observed_categories"]
+                owner_categories = {**row["_owner_categories"], **census.get(row["allocation_id"], {})}
+                storages.append({"allocation_id": row["allocation_id"], "address": row["address"],
+                                 "bytes": row["bytes"],
+                                 "category": categories[0] if len(categories) == 1 else "unknown",
+                                 "owners": list(row["observed_owners"]),
+                                 "owner_categories": dict(sorted(owner_categories.items()))})
+        storages.sort(key=lambda entry: entry["allocation_id"])
+        checkpoint["census_owner_count"] = checkpoint["owner_count"]
+        checkpoint["census_storage_count"] = len(checkpoint["storages"])
+        checkpoint["storages"] = storages
+        # A set, as the consumer counts it: an owner on two backings is one
+        # owner and one duplicate-alias refusal, not two owners.
+        checkpoint["owner_count"] = len({owner for entry in storages for owner in entry["owners"]})
+        checkpoint["unique_owned_storage_bytes"] = sum(entry["bytes"] for entry in storages)
 
 
 def _cupti_coverage(raw, segment_operations, issues):
@@ -599,7 +656,7 @@ def _cupti_coverage(raw, segment_operations, issues):
         raise ValueError("CUPTI capture belongs to another process")
     argument_domains = analyze_memory_api_arguments(trace)
     issues.extend(argument_domains["issues"])
-    handled_arguments = {tuple(key) for key in argument_domains["handled_api_keys"]}
+    handled_arguments = {tuple(int(part) for part in key.split(":")) for key in argument_domains["handled_api_keys"]}
     device, context = raw["identity"]["device_id"], raw["context_id"]
     begin, end = _int(trace["start_ns"], "CUPTI start", 1), _int(trace["end_ns"], "CUPTI end", 1)
     markers = {}
@@ -840,7 +897,8 @@ def analyze_engine_resource_ledger(raw):
                        "unit_invocation": scopes[0][2] if scopes else None,
                        "scope_stack": [r[3] for r in scopes],
                        "allocator_block_bytes_observed": set(),
-                       "observed_owners": set(), "observed_categories": set()}
+                       "observed_owners": set(), "observed_categories": set(),
+                       "_owner_categories": {}}
                 live[address] = row
                 rows.append(row)
                 peak = max(peak, sum(r["bytes"] for r in live.values()))
@@ -882,6 +940,9 @@ def analyze_engine_resource_ledger(raw):
             row["observed_owners"] = sorted(row["observed_owners"])
             row["observed_categories"] = sorted(row["observed_categories"])
             row["allocator_block_bytes_observed"] = sorted(row["allocator_block_bytes_observed"])
+        _project_checkpoints(result["checkpoints"], rows)
+        for row in rows:
+            del row["_owner_categories"]
         result["torch_allocations"] = rows
         result["torch_observed_live_peak_bytes"] = peak
         result["torch_observed_live_peak_scope"] = "requested_allocation_bytes_excluding_allocator_rounding"

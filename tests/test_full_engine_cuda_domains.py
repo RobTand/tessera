@@ -33,8 +33,8 @@ def trace():
 
 def test_pointer_arguments_bind_pinned_lifetime_mapping_and_null_free(trace):
     result = analyze_memory_api_arguments(trace)
-    assert result["status"] == "observed_argument_domains", result
-    assert result["handled_api_keys"] == [[10, 1], [10, 2], [10, 3], [10, 4]]
+    assert result["status"] == "observed", result
+    assert result["handled_api_keys"] == ["10:1", "10:2", "10:3", "10:4"]
     assert result["host_allocations"][0]["freed_ns"] == 75
     mapping = result["host_mappings"][0]
     assert (mapping["host_address"], mapping["device_address"], mapping["bytes_from_queried_offset"]) == (4112, 8208, 48)
@@ -61,7 +61,7 @@ def test_missing_or_conflicting_ownership_is_not_exempted(trace, defect):
         trace["api_events"][1].update(start_ns=80, end_ns=85)
         trace["api_argument_events"][1]["timestamp_ns"] = 86
     result = analyze_memory_api_arguments(trace)
-    assert result["status"] == "incomplete"
+    assert result["status"] == "observed" and result["issues"]
     assert result["issues"]
     assert len(result["handled_api_keys"]) < 4
 

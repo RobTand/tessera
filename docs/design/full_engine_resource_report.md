@@ -484,3 +484,106 @@ a consumer that never ran producer code. Three things are owed before a real
 capture derives a number: allocation-site ownership for a row no checkpoint sees,
 the four unclosable domains' observation members, and the consumer's matching
 off-step filter.
+
+## Observing a served Tessera artifact
+
+The source-BF16 launcher derives its roster from a canonical census and refuses
+any checkpoint that carries a `quantization_config`. A served artifact carries
+its own roster: `tessera_serving_manifest.json` names every quantized module by
+its vLLM module path and every HF tensor the module fuses. `experiments/
+capture_full_engine_resources.py --artifact --all-units` reads that manifest
+through `experiments/full_engine_artifact.py`, and the observer plan carries an
+`artifact_checkpoint` member in place of a census-derived
+`reference_checkpoint`:
+
+* **Roster.** One row per manifest module, `g:` for a fused module with several
+  HF roles and `l:` for a single-role module, sorted by unit id like the census
+  roster. `identity.canonical_units_sha256` digests it.
+* **Assignment.** Each unit maps to the family the manifest serves it in
+  (`tessera.artifact_observer_assignment.v1`); the report's
+  `reference.selected_rows` carries `{unit, format}` with that family as the
+  format.
+* **Identity.** `identity.model_sha256` digests the bytes the engine loads —
+  `config.json`, the manifest and every weight file — never the directory name.
+* **Candidate rule.** Artifact parameters are not named `.weight`
+  (`wire_bytes`, `trellis_input_global_scale`, ...), so the source-BF16 suffix
+  rule would charge every quantized weight as *fixed*. Artifact mode requires
+  the native-apply boundary (`--all-units`) and classifies exactly the
+  parameters and buffers each boundary module owns as candidate, with a tensor
+  also registered outside every owner staying fixed
+  (`reference_candidate_tensor_ids`, the same rule the original-wire reference
+  proof uses).
+* **Calibration.** The fixture is `int64[n, 512]` `calibration_ids` for any
+  `n >= 1`; the observer reads row 0 and records `rows` in the workload so the
+  digest names the shape as well as the bytes.
+* **Runtime.** The plugin is installed from a frozen source tree into the
+  serving lane's pinned image through `experiments/full_engine_plugin_install.py`,
+  which records the same evidence the stock installer does (image identity,
+  vLLM core manifest unchanged before and after, plugin files and entry point)
+  and reports `upstream_commit` as the installed vLLM reports itself; the plan
+  compares it with the selected configuration.
+
+`experiments/report_full_engine_resources.py --capture-dir <observer output>`
+replays the ledger and assembles the report, reading `reference`, `workload`
+and `execution` from the plan and the selected configuration.
+
+### Host owners that were never CUDA allocations
+
+A checkpoint's owner census walks the runner's persistent state and yields CPU
+tensors too. A pinned host tensor is a CUDA allocation the argument domain
+records, so a pinned owner with no host allocation to join is a `history_join`
+gap. A **pageable** host tensor was never a CUDA allocation: no join was owed,
+and reporting it as unmatched charged the scope with a gap it does not have.
+Owner rows now carry `pinned`, and `_checkpoint_owners` scopes a row that says
+`pinned: false` out of `gpu_allocations_only` into
+`pageable_host_observations` — observed and counted, never charged and never an
+issue. A row that says pinned, or an older row that does not say, stays a join
+gap. The consumer's checkpoint field set is frozen, so the report carries these
+beside the checkpoints as one artifact
+(`tessera.pageable_host_observations.v1`) rather than inside the rows.
+
+### A checkpoint's storages are the capture's ownership, not one census
+
+Ownership is a property of an allocation. A storage one checkpoint's census
+bound to a named owner is that owner's backing for its whole lifetime, and the
+consumer recomputes every checkpoint that way: the storages live at its index
+that carry any observed owner. A checkpoint that listed only what its own
+census yielded at that moment disagreed with that on every unit boundary of a
+real capture — a native boundary tensor observed as `native:<unit>:input` is
+still live, and still owned, at the next unit's checkpoint — so the ledger
+restates `storages`, `owner_count` and `unique_owned_storage_bytes` over the
+whole capture's ownership after the replay (`_project_checkpoints`), and keeps
+the census the checkpoint itself took as `census_owner_count` and
+`census_storage_count`. `owner_count` is therefore the number of owners bound
+to a live device storage at the checkpoint; pinned-host and pageable-host
+observations are carried separately and are not in it. The census counts and
+the pageable-host observations travel in one artifact,
+`tessera.checkpoint_census.v1`, because the consumer's checkpoint field set is
+frozen.
+
+The per-step batch descriptor (`GPUModelRunner.execute_model_state`) is not a
+persistent runtime root: the runner rebuilds it every step, so naming its
+tensors by path bound one owner id to a new backing each step, which the
+consumer refuses as a duplicate alias. Its allocations stay unowned.
+
+## The engine step after the last token
+
+The pinned engine core (`vllm/v1/engine/core.py`, `step()`) keeps stepping while
+the scheduler still holds a request, and the request that just produced its
+last token is still held for one more step: `execute_model` is called with a
+`SchedulerOutput` that schedules no token, the runner returns its empty output
+without a forward, and `sample_tokens` is never called. Measured on the first
+served-artifact captures: a `max_tokens=2` request executes three armed calls,
+the third with `total_num_scheduled_tokens == 0` and no `sample:3:end`
+checkpoint (capture a4 of receipts `399-qwen3-0.6b-20260913`).
+
+Two consequences are wired in. The plan declares `generated_tokens + 1`
+execute calls (`declared_steps`) and records every armed call, declared or
+not, with its scheduler output, so a capture that executes beyond its budget
+names the step it missed. And a declared step that scheduled no token is
+closed at its own `execute:N:end`: that is the step's whole extent, not a
+sampler fallback -- a step that scheduled tokens and was never sampled still
+stays undeclared and holds the coverage claim open. Measured on capture a5 of
+the same receipts: `step_coverage` declared 3, executed 3, state `complete`,
+with `step:3` spanning `execute:3:begin` to `execute:3:end`, and PrismaQuant's
+`step coverage is 'partial'` refusal gone while every other refusal kind stayed.

@@ -173,9 +173,41 @@ def test_worker_bounds_execute_capture_but_preserves_stock_outputs(monkeypatch, 
                      ("step:2", "execute:2:begin", "sample:2:end")]
     assert worker._resource_open_step is None
     assert worker._resource_active is False
-    assert len(worker._resource_scheduler_steps) == 2
+    # Every armed call is recorded; only the budgeted ones are declared, so a
+    # third engine step shows up as the undeclared call a coverage claim names.
+    assert [(row["execute_call"], row["declared"]) for row in worker._resource_scheduler_steps] == [
+        (1, True), (2, True), (3, False)]
     with pytest.raises(RuntimeError, match="already armed"):
         worker.resource_capture_arm()
+
+
+def test_zero_token_engine_step_closes_at_its_own_execute_end(monkeypatch, worker_module):
+    # The pinned engine core retires a finished request with one more
+    # execute_model call that schedules no token and is never sampled
+    # (measured: capture a4, execute_call 3, total_num_scheduled_tokens 0, no
+    # sample:3:end). A sampler-closed rule alone leaves that step undeclared
+    # and coverage partial forever; the step's extent is its execute call.
+    seen, steps = [], []
+    recorder = SimpleNamespace(
+        snapshot=lambda label, **kwargs: seen.append(label),
+        declare_step_interval=lambda step_id, *, begin, end: steps.append((step_id, begin, end)))
+    monkeypatch.setattr(worker_module, "claim", lambda: (recorder, {"max_execute_calls": 3}))
+    worker = worker_module.ResourceCaptureWorker()
+    worker.init_device()
+    worker.resource_capture_arm()
+    def step(tokens):
+        return SimpleNamespace(total_num_scheduled_tokens=tokens, num_scheduled_tokens={},
+            scheduled_new_reqs=[], scheduled_cached_reqs=SimpleNamespace(req_ids=[], num_computed_tokens=[]))
+    worker.execute_model(step(512)); worker.sample_tokens(None)
+    worker.execute_model(step(1)); worker.sample_tokens(None)
+    worker.execute_model(step(0))
+    assert steps == [("step:1", "execute:1:begin", "sample:1:end"),
+                     ("step:2", "execute:2:begin", "sample:2:end"),
+                     ("step:3", "execute:3:begin", "execute:3:end")]
+    assert worker._resource_open_step is None
+    # A sampled step is never closed early: the execute end of a step that
+    # scheduled tokens leaves the step open for its sampler.
+    assert seen[-1] == "execute:3:end" and "sample:3:end" not in seen
 
 
 def test_stock_warmup_cannot_consume_the_workload_capture_budget(monkeypatch, worker_module):
@@ -224,9 +256,12 @@ def test_first_native_prefix_closes_observer_and_preserves_remaining_stock_execu
     assert finished == [{"prefix_only": True}]
     assert worker._resource_prefix_closed and not worker._resource_active
     assert "unobserved" in recorder._errors[0]
-    step = SimpleNamespace(total_num_scheduled_tokens=1)
+    step = SimpleNamespace(total_num_scheduled_tokens=1, num_scheduled_tokens={"fixture": 1},
+        scheduled_new_reqs=[], scheduled_cached_reqs=SimpleNamespace(req_ids=[], num_computed_tokens=[]))
     assert worker.execute_model(step) is step
     assert worker.sample_tokens("stock result") == "stock result"
+    # The call after a closed prefix is still recorded, and recorded as undeclared.
+    assert [row["declared"] for row in worker._resource_scheduler_steps] == [False]
     assert worker.resource_capture_finish()["receipt"]["fixed_resources"] is None
     assert len(checkpoints) == 2 and len(finished) == 1
     assert list(tmp_path.glob("prefix-observer-worker-*.pstats"))
