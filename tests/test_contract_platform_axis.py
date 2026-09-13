@@ -51,17 +51,24 @@ def _mutated(contract, mutate):
 # What the packaged document says
 
 
-def test_the_packaged_contract_validates_at_v24(contract):
-    """v24 adds cells; it does not move the lane schema.
+def test_the_packaged_contract_validates_at_v25(contract):
+    """v25 adds a top-level block; it does not move the lane schema.
 
-    The rule the v24 changelog entry states, pinned here so the next bump has
-    to decide the same question out loud: a contract_version bump that only
-    ADDS cells -- or fills a ``serve_image`` a cell now attests -- is additive
-    for a v10 reader and leaves ``lane_eligibility.schema`` alone.  A bump that
-    changes what a field MEANS moves the schema string and fails a v10 reader
-    closed, exactly as v10 did to v9.
+    The rule the v24 changelog entry states, pinned here so each bump has to
+    decide the same question out loud: a contract_version bump that only ADDS
+    -- cells at v24, a whole ``activation_quantizers`` table at v25 -- is
+    additive for a v10 reader and leaves ``lane_eligibility.schema`` alone.  A
+    bump that changes what a field MEANS moves the schema string and fails a
+    v10 reader closed, exactly as v10 did to v9.
+
+    v25 is the second kind of additive and the harder one to judge, so it is
+    said here rather than only in the changelog: the new block is keyed by
+    platform and validated against the CELLS, and it changes no value any
+    existing field carries.  A v10 reader that has never heard of it resolves
+    every cell with the code it already has.
     """
-    assert int(contract["contract_version"]) == 24
+    assert int(contract["contract_version"]) == 25
+    assert "activation_quantizers" in contract
     assert contract["lane_eligibility"]["schema"] == LANE_ELIGIBILITY_SCHEMA
     assert LANE_ELIGIBILITY_SCHEMA.endswith(".v10")
 

@@ -97,6 +97,8 @@ from functools import lru_cache
 from types import MappingProxyType
 from typing import Any, Mapping
 
+from .activation_attestation import validate_activation_quantizers
+
 __all__ = [
     "CENSUS_PHASE_REGIMES",
     "CELL_PREDICATE_FACTS",
@@ -117,6 +119,7 @@ __all__ = [
     "RUNTIME_SCOPE_KEYS",
     "RUNTIME_VERSION_KEYS",
     "VERSIONS_KEYS",
+    "validate_activation_quantizers",
     "cell_evidence",
     "cell_runtime_versions",
     "derive_evidence_grade",
@@ -871,7 +874,7 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
                   required={"schema", "contract_version", "quant_method", "versions",
                             "native_extensions", "formats", "lane_eligibility",
                             "tensor_parallel", "expert_parallel", "fused_module",
-                            "construction"},
+                            "construction", "activation_quantizers"},
                   # History, not a gate input: a consumer reads the version, and
                   # the changelog says what the version changed for a person.
                   optional={"changelog"})
@@ -1269,6 +1272,20 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
             "runtime_contract.expert_parallel.units must be empty: no served measurement covers "
             "expert-parallel execution, so the contract makes no expert-parallel claim")
     _validate_fused_module(contract["fused_module"], "runtime_contract.fused_module")
+    # What the activation quantizer EMITS, read from the kernel rather than
+    # modelled (#484).  ``activation_contract`` is a name, and a name says the
+    # grid, the group and the scale dtype -- not how a value becomes a code.
+    # The route hands the static global to vLLM's ``scaled_fp4_quant``, so the
+    # rounding is the runtime's; a consumer that re-implements it is asserting
+    # a runtime behaviour.  The table is validated against the CELLS, because
+    # an attestation for a contract nothing on that platform executes would be
+    # a claim about a runtime that does not serve here.
+    served: dict[str, set] = {}
+    for cell in block["cells"]:
+        served.setdefault(cell["platform"], set()).add(cell["activation_contract"])
+    validate_activation_quantizers(
+        contract["activation_quantizers"], platforms=block["platforms"],
+        cell_contracts=served, require_image=require_runtime_image)
 
 
 def _reader_rate(entry: Mapping[str, Any], where: str) -> tuple[int, int, int]:
