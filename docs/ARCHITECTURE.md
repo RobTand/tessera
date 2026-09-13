@@ -1606,6 +1606,27 @@ and the host runs ahead until the pass's refit reads its floats.
 discards its cost makes no host sync, one that reads it makes one, and an
 LDLQ encode makes the same number of syncs at eight blocks as at two.
 
+**The fused window body is an NVPTX path, and a ROCm build takes the
+reference (2026-09-13, #472).** `window_viterbi._build`'s `_mul` is
+`tl.inline_asm_elementwise("mul.f32 …")`, written that way so the NVPTX
+backend cannot contract the multiply into the add that consumes it; the
+Triton JIT has no register class for the `"f"` constraint on AMDGPU and
+aborts the process with `couldn't allocate output register for constraint
+'f'`. That is a backend fatal, not a Python exception, so a caller cannot
+catch it. `fused_available()` therefore answers `False` whenever
+`torch.version.hip` is set -- the device *type* cannot answer this, because a
+ROCm build spells HIP as `torch.cuda`, the same reason the platform table
+above keys on `backend` rather than `device.type`. The encoder then runs the
+reference Viterbi with no environment variable in the decision. Measured on
+gfx1201 (RX 9070 XT, ROCm 7.2.4 / Triton 3.7.0) against GB10 on one
+`TESSERA_BF16_K1_R1792` unit: the weights-only wire is byte-identical across
+the two ISAs, at 3.5x the wall time of the GB10 fused path. A Hessian-aware
+wire is **not** byte-identical across them, and the reason is upstream of the
+encoder: see `docs/measurements/tessera-gfx1201-hessian-divergence-2026-09-13.md`.
+A HIP `_mul` is lane work under #460, and porting it requires re-running the
+fused-vs-reference bit-identity check *on* gfx1201 rather than inheriting the
+GB10 result.
+
 ### 3.2 Exact campaign unit intake (explicit, not a serving qualification)
 
 `experiments/tessera_producer_plan.py` reads source headers and an explicit

@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-13T04:20:49Z",
+ "generated": "2026-09-13T11:00:14Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -748,7 +748,7 @@
     "title": "Preserve static activation scales in transient Tessera anchors"
    },
    "267": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Validate native operator receipts against joint runtime expectations"
    },
    "268": {
@@ -820,7 +820,7 @@
     "title": "Tessera campaign is one monolithic GPU action; fan it out per (unit, family) surface through pbcampaign so both boxes take rows"
    },
    "283": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "GLM campaign: remaining CPU and serialization pauses after publication overlap A/B"
    },
    "284": {
@@ -1432,7 +1432,7 @@
     "title": "Integrate audited PrismaQuant Gridbook producer stack"
    },
    "420": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Implement recomputable full-engine fixed-resource producer admission for runtime v2"
    },
    "421": {
@@ -1640,7 +1640,7 @@
     "title": "Reuse published Hessian commitments for resident campaign sealing"
    },
    "468": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Resolve EXL3 first-window KL divergence across matched scoring runs"
    },
    "469": {
@@ -1804,7 +1804,7 @@
     "title": "Add opt-in sparse-rate research and prospective family-transfer audits"
    },
    "504": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Evaluate and implement opt-in endpoint-conditioned sparse rate curves"
    },
    "505": {
@@ -1944,24 +1944,88 @@
     "title": "Ask the contract which platform backs a family (#528)"
    },
    "536": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Read loader_axes from the pinned Tessera contract, refuse the refused TP axis in tessera_tp_legal, and ship a read-only tessera_tp_audit CLI"
    },
    "537": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "ServingLaneSpec.route_status_for answers serving_runtime_contract::absent for every lane in production"
    },
    "538": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Read the contract's loader_axes, refuse the cut it refuses (#536)"
+   },
+   "539": {
+    "state": "CLOSED",
+    "title": "Retain the 2026-09-11 sparse-rate interpolation study as a measured negative (docs only)"
    },
    "54": {
     "state": "CLOSED",
     "title": "MXFP8_UE8M0_G32 menu format: W8A8 per-32 UE8M0, wire-matched to the gridbook lane"
    },
+   "540": {
+    "state": "CLOSED",
+    "title": "Prefill-vs-accuracy frontier sweep over a measured runtime table"
+   },
+   "541": {
+    "state": "CLOSED",
+    "title": "Sweep the prefill SLO into a frontier, one single solve per point"
+   },
+   "542": {
+    "state": "OPEN",
+    "title": "Dispatcher: ROCm row class for wsl-gpu (tag routing, memory bound, image/venv)"
+   },
+   "543": {
+    "state": "OPEN",
+    "title": "Pin the MLA NoPE patch set for GLM-5.3 serving (the pinned image needs 5 edits, not the MiaAI 576-pad overlay)"
+   },
+   "544": {
+    "state": "CLOSED",
+    "title": "Read the pinned Tessera contract in route_status_for, so `absent` means one thing"
+   },
+   "545": {
+    "state": "OPEN",
+    "title": "Bump the Tessera serving-runtime pin to contract v24 (the platform axis and the first gfx1201 cells)"
+   },
+   "546": {
+    "state": "CLOSED",
+    "title": "Consume a real native dense receipt and name what a v2 row still owes (#267)"
+   },
+   "547": {
+    "state": "CLOSED",
+    "title": "The joint pass, allocation and export submissions carry no read set, and the joint pass reads 5.20 TB"
+   },
+   "548": {
+    "state": "CLOSED",
+    "title": "Derive the post-campaign passes' read set at submit, and refuse an oversized one"
+   },
+   "549": {
+    "state": "OPEN",
+    "title": "tessera_joint_aura prepare synthesizes missing renders serially on the CPU inside the GPU action"
+   },
    "55": {
     "state": "CLOSED",
     "title": "Stage the dual-variant DP drivers for the mid-rung and body-route questions"
+   },
+   "550": {
+    "state": "CLOSED",
+    "title": "lane_specs/tessera.json names a census flag the pinned tool does not have"
+   },
+   "551": {
+    "state": "CLOSED",
+    "title": "Name the census tool's real interface in the Tessera lane spec"
+   },
+   "552": {
+    "state": "OPEN",
+    "title": "Take the joint pass's render synthesis off the GPU's critical path"
+   },
+   "553": {
+    "state": "OPEN",
+    "title": "Joint prepare runs the projection-backend identity gate after the multi-hour head phase, and the qualification names the wrong image"
+   },
+   "554": {
+    "state": "OPEN",
+    "title": "Move the Tessera pin to contract v24, and let one AMD device be attested"
    },
    "56": {
     "state": "CLOSED",
@@ -3386,7 +3450,7 @@
     "title": "Smoke pair wrapper needs owned-container cleanup on failure and explicit container thread bounds"
    },
    "376": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Research: native dense operator receipts for PQ runtime pricing"
    },
    "377": {
@@ -3762,7 +3826,7 @@
     "title": "Menu caches are sized 4096 against a 6764-rung menu, so a repeat pass over one shape recomputes everything"
    },
    "460": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "AMD/HIP port, step 9 of 9: contract v24 \u2014 gfx1201 `TESSERA_BF16_K1` cells minted from device receipts"
    },
    "461": {
@@ -3806,12 +3870,32 @@
     "title": "The BF16 route decodes in pure torch; the window GEMV's value family is the fast path it never calls"
    },
    "470": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Census tool: topology flags, per-rank census records, and a two-node driver (TP2 attestation vehicle)"
    },
    "471": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Census tool: topology flags, per-rank census records, and a two-node driver"
+   },
+   "472": {
+    "state": "OPEN",
+    "title": "Tessera-16 encoder on gfx1201 (wsl-gpu) for campaign quanta"
+   },
+   "473": {
+    "state": "CLOSED",
+    "title": "Qualify the dense receipt producer on real artifact bytes (#376)"
+   },
+   "474": {
+    "state": "CLOSED",
+    "title": "Contract v24: the first AMD cells, minted from gfx1201 receipts"
+   },
+   "475": {
+    "state": "CLOSED",
+    "title": "Full-engine observers admit a served Tessera artifact, and the first real resource report (#399)"
+   },
+   "476": {
+    "state": "OPEN",
+    "title": "Do not offer a ROCm build the NVPTX fused Viterbi, and separate the gfx1201 Hessian divergence"
    },
    "48": {
     "state": "CLOSED",
