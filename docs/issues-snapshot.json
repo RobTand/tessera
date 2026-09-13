@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-13T11:00:14Z",
+ "generated": "2026-09-13T18:47:49Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -1972,7 +1972,7 @@
     "title": "Sweep the prefill SLO into a frontier, one single solve per point"
    },
    "542": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Dispatcher: ROCm row class for wsl-gpu (tag routing, memory bound, image/venv)"
    },
    "543": {
@@ -1984,7 +1984,7 @@
     "title": "Read the pinned Tessera contract in route_status_for, so `absent` means one thing"
    },
    "545": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Bump the Tessera serving-runtime pin to contract v24 (the platform axis and the first gfx1201 cells)"
    },
    "546": {
@@ -2000,7 +2000,7 @@
     "title": "Derive the post-campaign passes' read set at submit, and refuse an oversized one"
    },
    "549": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "tessera_joint_aura prepare synthesizes missing renders serially on the CPU inside the GPU action"
    },
    "55": {
@@ -2016,20 +2016,72 @@
     "title": "Name the census tool's real interface in the Tessera lane spec"
    },
    "552": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Take the joint pass's render synthesis off the GPU's critical path"
    },
    "553": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Joint prepare runs the projection-backend identity gate after the multi-hour head phase, and the qualification names the wrong image"
    },
    "554": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Move the Tessera pin to contract v24, and let one AMD device be attested"
+   },
+   "555": {
+    "state": "CLOSED",
+    "title": "Run the joint identity gates before the head phase, and name the image the qualification was produced in"
+   },
+   "556": {
+    "state": "CLOSED",
+    "title": "Row classes: give wsl-gpu a telemetry source and the dispatcher a ROCm class"
+   },
+   "557": {
+    "state": "CLOSED",
+    "title": "Measure the first prefill x accuracy curve on real Tessera receipts, and publish what it refuses"
+   },
+   "558": {
+    "state": "CLOSED",
+    "title": "Emit the first real prismaquant.measured_runtime_prices.v2 table from native receipts, and make admit_native_rows admit a row"
+   },
+   "559": {
+    "state": "CLOSED",
+    "title": "Price the fp4 route class: the prefill curve measured only fp8 and bf16"
    },
    "56": {
     "state": "CLOSED",
     "title": "release 0.8.0"
+   },
+   "560": {
+    "state": "OPEN",
+    "title": "Three defects in the fixed-resource admission consumer: a discarded attestation, a dropped placement obligation, and an unattested v1 path"
+   },
+   "561": {
+    "state": "OPEN",
+    "title": "Two gates two flags, an emitter that reports both, and a binding that names its route class (#565)"
+   },
+   "562": {
+    "state": "CLOSED",
+    "title": "Pin the GLM-5.3 MLA patch set where a gate can read it, with its scope on its face"
+   },
+   "563": {
+    "state": "CLOSED",
+    "title": "Price the fp4 route class, and publish the two gates that refuse it"
+   },
+   "564": {
+    "state": "CLOSED",
+    "title": "Pin the GLM-5.3 MLA NoPE patch set in the repo, with its qualification scope attached"
+   },
+   "565": {
+    "state": "OPEN",
+    "title": "Two admission gates, the obligation the gate demands, an emitter that reports both, and a route field that names its class"
+   },
+   "566": {
+    "state": "OPEN",
+    "title": "A route's own JIT kernel extension is inside runtime identity, so no mixed-route native table can be emitted (debt D39, leg a)"
+   },
+   "567": {
+    "state": "OPEN",
+    "title": "The fp4 render and the fp4 execution are different objects: decide which side is authoritative before any fp4 number is published"
    },
    "57": {
     "state": "CLOSED",
@@ -3878,7 +3930,7 @@
     "title": "Census tool: topology flags, per-rank census records, and a two-node driver"
    },
    "472": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Tessera-16 encoder on gfx1201 (wsl-gpu) for campaign quanta"
    },
    "473": {
@@ -3894,12 +3946,36 @@
     "title": "Full-engine observers admit a served Tessera artifact, and the first real resource report (#399)"
    },
    "476": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Do not offer a ROCm build the NVPTX fused Viterbi, and separate the gfx1201 Hessian divergence"
+   },
+   "477": {
+    "state": "OPEN",
+    "title": "E2M1 K1 is encodable, priceable and unreadable: no reader range can be published for it"
+   },
+   "478": {
+    "state": "OPEN",
+    "title": "Owner classification nulls every full-engine term: \"shared\" boundary tensors and two disagreeing owner rules"
+   },
+   "479": {
+    "state": "CLOSED",
+    "title": "Record the #385 after-profile setup and the before-evidence it must beat"
    },
    "48": {
     "state": "CLOSED",
     "title": "BF16 wire cannot express reach: window_sigma is pinned to the channel scale, and the pinned ratio is 19% off at 8 bpp"
+   },
+   "480": {
+    "state": "CLOSED",
+    "title": "Refuse the name-based owner rule on a quantized checkpoint, and correct what the shared label costs"
+   },
+   "481": {
+    "state": "OPEN",
+    "title": "HIP `_mul` for the fused window Viterbi: gfx1201 runs the reference path at 9.6x the wall time"
+   },
+   "482": {
+    "state": "OPEN",
+    "title": "Qualify the gfx1201 weights-only encode on one commit, and give the HIP kernel its own issue"
    },
    "49": {
     "state": "CLOSED",
