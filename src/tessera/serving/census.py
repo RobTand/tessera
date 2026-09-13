@@ -37,11 +37,15 @@ from typing import Any, Mapping
 __all__ = [
     "CELL_AGREEMENT_SCHEMA",
     "LANE_ENGAGEMENT_SCHEMA",
+    "RANK_CENSUS_SCHEMA",
     "STRUCTURE_BY_RECORD_KIND",
     "cell_launch_agreement",
     "decoder_histogram",
+    "join_rank_histograms",
     "lane_engagement",
+    "phase_histogram",
     "platform_expectation",
+    "rank_census_record",
 ]
 
 #: Bumped when the block's shape changes.  A consumer keys on it.
@@ -381,3 +385,148 @@ def platform_expectation(family: str, platform, pairs: Mapping[str, Any]) -> dic
     if state != PLATFORM_UNBACKED:
         return dict(pairs)
     return {regime: set() for regime in pairs}
+
+
+#: Bumped when a per-rank record's shape changes.  A consumer keys on it.
+RANK_CENSUS_SCHEMA = "tessera.rank-census/1"
+
+#: The histogram keys a route is counted under.  One tuple, written once, so
+#: the per-rank histogram and the joined one cannot count different things.
+_ROUTE_KEY_FIELDS = ("policy", "symbol", "contract", "state", "kind", "decoder")
+
+
+def phase_histogram(records: Mapping[str, Mapping[str, Any]], *, regime: str,
+                    other_route_modules: int = 0) -> dict:
+    """One phase's Tessera route records as the histogram a receipt publishes.
+
+    ``records`` are the phase's TESSERA records only -- the census filters them
+    by policy before it gets here, because a record from another quant method's
+    route is observed and counted, never used as evidence for a Tessera regime.
+    ``other_route_modules`` is that count, carried through so the two halves of
+    one phase stay in one value.
+
+    ``regime`` is the contract's word for the shape the phase drove
+    (``contract.CENSUS_PHASE_REGIMES``), stamped here so a per-(family, regime)
+    expectation can join the receipt to a cell without either side guessing the
+    other's vocabulary.
+    """
+    counts = collections.Counter(
+        tuple(r.get(field) for field in _ROUTE_KEY_FIELDS) for r in records.values())
+    families = collections.Counter(str(r["policy"]).split(":")[0] for r in records.values())
+    return {
+        "regime": regime,
+        "tessera_modules": len(records),
+        "tessera_modules_by_family": dict(sorted(families.items())),
+        "other_route_modules": int(other_route_modules),
+        "routes": [dict(zip(_ROUTE_KEY_FIELDS, key), modules=n)
+                   for key, n in sorted(counts.items(), key=lambda kv: tuple(map(str, kv[0])))],
+        "shapes": sorted({str(r.get("shape")) for r in records.values()}),
+    }
+
+
+def join_rank_histograms(per_rank: "list[Mapping[str, Mapping[str, Any]]]") -> dict:
+    """The joined histogram a receipt attests: the SUM over ranks, per phase.
+
+    Each element of ``per_rank`` is one rank's ``{phase: histogram}``.  Every
+    rank runs the same forward over its own shard of every module, so the ranks
+    share module NAMES and share nothing else: a union of their records would
+    report one served module as one module no matter how many ranks served it,
+    and a receipt built that way would read identically at world size 1 and at
+    world size 8.  The counts add; the shapes are a set union, because a
+    column-parallel shard's N is its own.
+
+    At one rank the result is that rank's histogram unchanged -- which is why a
+    single-rank census still writes exactly the bytes it wrote before this
+    function existed.
+
+    Raises ``ValueError`` when the ranks disagree about which phases were
+    driven or about a phase's regime: ranks that drove different shapes are not
+    one observation, and summing them would publish a world size for a forward
+    only some of it ran.
+    """
+    if not per_rank:
+        raise ValueError("a census joins at least one rank; zero ranks answered")
+    phases = list(per_rank[0])
+    for rank, histograms in enumerate(per_rank[1:], start=1):
+        if set(histograms) != set(phases):
+            raise ValueError(
+                f"rank {rank} drove phases {sorted(histograms)}, rank 0 drove {sorted(phases)}; "
+                "ranks that drove different shapes are not one observation")
+    joined = {}
+    for phase in phases:
+        regimes = {str(histograms[phase]["regime"]) for histograms in per_rank}
+        if len(regimes) != 1:
+            raise ValueError(f"phase {phase!r} was driven at regimes {sorted(regimes)} across "
+                             "ranks; one phase is one regime")
+        counts: "collections.Counter[tuple]" = collections.Counter()
+        families: "collections.Counter[str]" = collections.Counter()
+        shapes: set = set()
+        modules = other = 0
+        for histograms in per_rank:
+            h = histograms[phase]
+            modules += int(h["tessera_modules"])
+            other += int(h.get("other_route_modules", 0))
+            families.update({str(k): int(v) for k, v in h["tessera_modules_by_family"].items()})
+            shapes.update(str(s) for s in h.get("shapes", ()))
+            for route in h["routes"]:
+                counts[tuple(route.get(field) for field in _ROUTE_KEY_FIELDS)] += int(
+                    route["modules"])
+        joined[phase] = {
+            "regime": regimes.pop(),
+            "tessera_modules": modules,
+            "tessera_modules_by_family": dict(sorted(families.items())),
+            "other_route_modules": other,
+            "routes": [dict(zip(_ROUTE_KEY_FIELDS, key), modules=n)
+                       for key, n in sorted(counts.items(), key=lambda kv: tuple(map(str, kv[0])))],
+            "shapes": sorted(shapes),
+        }
+        total = sum(route["modules"] for route in joined[phase]["routes"])
+        if total != modules:
+            raise ValueError(
+                f"phase {phase!r}: the joined routes count {total} modules and the ranks counted "
+                f"{modules}; the joined histogram must be the sum over ranks")
+    return joined
+
+
+def rank_census_record(*, rank: int, world_size: int, node: str, platform_token: str,
+                       runtime_image: "str | None", histogram: Mapping[str, Any],
+                       device: "str | None" = None, local_rank: "int | None" = None,
+                       lane_refusals: "Mapping[str, str] | None" = None,
+                       records: "Mapping[str, Any] | None" = None) -> dict:
+    """One rank's census record: who observed these routes, and where.
+
+    A route record says what a module executed.  It does not say which rank's
+    shard of that module executed it, which box that rank ran on, or how many
+    ranks there were -- so at any world size above one, a receipt of route
+    records alone cannot say what world it describes.  This is the missing
+    half, and it is a value rather than a log line because the contract's
+    world-size attestation reads it.
+
+    ``platform_token`` and ``runtime_image`` are per rank on purpose: a two-box
+    serve can straddle two platforms or two images, and a receipt that carried
+    only the head's would name a scope half the world never had.
+    """
+    if type(rank) is not int or rank < 0:
+        raise ValueError("rank must be a non-negative integer")
+    if type(world_size) is not int or world_size <= 0:
+        raise ValueError("world_size must be a positive integer")
+    if rank >= world_size:
+        raise ValueError(f"rank {rank} is outside a world of {world_size}")
+    if not str(node).strip():
+        raise ValueError("a rank record names the node it ran on")
+    if not str(platform_token).strip():
+        raise ValueError("a rank record names the platform token it served on; a census "
+                         "without one is a receipt about nothing")
+    return {
+        "schema": RANK_CENSUS_SCHEMA,
+        "rank": rank,
+        "local_rank": local_rank,
+        "world_size": world_size,
+        "node": str(node),
+        "device": device,
+        "platform_token": str(platform_token),
+        "runtime_image": runtime_image,
+        "histogram": dict(histogram),
+        "lane_refusals": dict(lane_refusals or {}),
+        "records": dict(records or {}),
+    }

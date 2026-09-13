@@ -5,6 +5,16 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-13 for the census's world (#470): `tools/tessera_route_census.py`
+takes the topology it is run at (`src/tessera/serving/topology.py`), runs its
+per-module checks on every rank instead of `apply_model(...)[0]`, and sums the
+ranks into the histogram the attestation reads
+(`census.join_rank_histograms`). Above one rank the receipt gains an additive
+`topology` block and a `ranks` list of `tessera.rank-census/1` records; at one
+rank it is byte for byte what it was, and the blocks' absence is what says
+world size 1. `experiments/tessera_plugin_served_tp.sh` is the two-box driver.
+No contract version, cell or default moves. See §4.5g.
+
 Re-stamped 2026-09-12 for the build's backend layer (#452): the two JIT
 loaders no longer ask `torch.cuda.get_device_capability()` what to compile for.
 `src/tessera/serving/backend.py` answers `cuda` or `hip` from
@@ -3154,6 +3164,72 @@ new cell is published by this gate. The result fingerprints its inputs and
 current contract. This is a
 population/dispatch receipt gate, not a wire audit or the separate served-KL
 quality gate, and publishes no cells itself.
+
+### 4.5g One rank is not a world
+
+`LLM.apply_model` returns one result per worker and the census read element
+`[0]`, so every census described rank 0 and its receipt read identically at
+world size 1 and at world size 8. No Tessera artifact therefore has a per-rank
+route histogram, and no `lane_eligibility` cell can name a world size from a
+receipt (#470).
+
+Three values close that, and none of them changes a single-rank receipt.
+
+`src/tessera/serving/topology.py` declares the topology arguments
+(`--tensor-parallel-size`, `--distributed-executor-backend {mp,ray}`,
+`--nnodes`, `--node-rank`, `--master-addr`, `--master-port`), the same group
+PrismaQuant's gold coordinator exposes, and validates them into engine kwargs
+BEFORE the first model load: a census is two loads of 85-160 s, so a topology
+mistake found after them is a mistake found at the cost of the run. An unset
+argument is absent from the kwargs rather than defaulted, so a command line
+written before the group existed reaches `LLM(...)` with the kwargs it always
+did. The census runs at node rank 0 (it is the process that holds the model and
+reads every worker back), `nnodes` must divide `tensor_parallel_size` (pipeline,
+data and context parallel stay 1 here), and a multi-node census names its
+backend, plus the master address and port unless it is `ray`, which takes the
+rendezvous from the cluster the driver joined. The world the census OBSERVES is
+counted from the ranks that answered and must equal the world it requested.
+
+`census.phase_histogram` and `census.join_rank_histograms` are how the ranks
+become one receipt. Every rank builds a module for every declared target and
+names it identically, so a union would report one served module as one module
+however many ranks served it: the counts ADD, per phase and per route key, and
+the shapes are a set union because a column-parallel shard's `N` is its own.
+The join refuses ranks that drove different phases or one phase at two regimes,
+and refuses a phase whose routes do not add up to its module count. At one rank
+the join is the identity.
+
+`census.rank_census_record` is the missing half of a route record: a route
+record says what a module executed, never which rank's shard executed it, on
+which node, on which platform token, in which image. `tessera.rank-census/1` is
+`{schema, rank, local_rank, world_size, node, device, platform_token,
+runtime_image, histogram, lane_refusals, records}`; the platform token and
+image are per rank because a two-box serve can straddle two of either, and a
+receipt carrying only the head's would name a scope half the world never had.
+
+The receipt keys are ADDITIVE WITHIN `tessera.serving.route_census/2`, not a
+schema bump, and that is deliberate: the acceptance rule for this change is a
+TP1 census byte-identical to the one the tool wrote before it, and a bumped
+schema string would change every single-rank receipt. So `topology` (what was
+asked for, beside `observed_world_size`) and `ranks` (one record per rank)
+appear exactly when the world has more than one rank. Their absence is the
+discriminator and it means world size 1. Above one rank every problem string is
+prefixed with the rank that wrote it, and module names are namespaced
+`rank{r}/{name}` where engagement and agreement counts would otherwise collapse
+across ranks; `--expect-modules` is checked per rank, since every rank builds a
+module for every declared target.
+
+`experiments/tessera_plugin_served_tp.sh` drives two boxes: a ray head here, a
+ray worker over ssh on the other, one engine at tensor parallel 2. It refuses
+before it starts anything if the other box holds no checkout at the same
+absolute path or holds a different commit -- ray ships no code, so rank 1
+imports the plugin from that box's own disk -- and each box resolves the pinned
+image against its own daemon, so each rank records the image its own box
+declared. The fabric is named rather than guessed (`NCCL_SOCKET_IFNAME`,
+`NCCL_IB_HCA`), ray's memory monitor is off because on unified memory it reads
+the GPU's allocation as host pressure and reaps the worker mid-load, and the
+containers run on the host network with `/dev/infiniband` passed through. Both
+boxes' serve locks are held for the run.
 
 ### 4.5b What the contract says a serve EXECUTES, and the join that checks it
 
