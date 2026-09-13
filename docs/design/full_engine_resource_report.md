@@ -512,7 +512,12 @@ through `experiments/full_engine_artifact.py`, and the observer plan carries an
   parameters and buffers each boundary module owns as candidate, with a tensor
   also registered outside every owner staying fixed
   (`reference_candidate_tensor_ids`, the same rule the original-wire reference
-  proof uses).
+  proof uses). That rule runs wherever the native-apply boundaries resolve; it
+  is not gated on which checkpoint member the plan carries. The suffix rule
+  (`parameter_category`) is the fallback for a run with no resolved boundary,
+  and it now refuses when a candidate weight is not stored in a source float
+  dtype, rather than silently charging that unit's format-sized scales to
+  `fixed_resident`.
 * **Calibration.** The fixture is `int64[n, 512]` `calibration_ids` for any
   `n >= 1`; the observer reads row 0 and records `rows` in the workload so the
   digest names the shape as well as the bytes.
