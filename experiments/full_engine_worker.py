@@ -401,9 +401,11 @@ class ResourceCaptureWorker(Worker):
         self._resource_calls += 1
         self._resource_active = (not self._resource_prefix_closed
                                  and self._resource_calls <= self._resource_plan["max_execute_calls"])
-        if self._resource_active:
-            self._resource_scheduler_steps.append({
-                "execute_call": self._resource_calls,
+        # Every armed call is recorded, declared or not: a step the engine
+        # executes beyond the declared budget is exactly what a partial
+        # coverage claim needs to name.
+        self._resource_scheduler_steps.append({
+                "execute_call": self._resource_calls, "declared": self._resource_active,
                 "total_num_scheduled_tokens": scheduler_output.total_num_scheduled_tokens,
                 "num_scheduled_tokens": scheduler_output.num_scheduled_tokens,
                 "new_requests": [{"req_id": request.req_id,
@@ -412,6 +414,7 @@ class ResourceCaptureWorker(Worker):
                                  for request in scheduler_output.scheduled_new_reqs],
                 "cached_requests": {"req_ids": scheduler_output.scheduled_cached_reqs.req_ids,
                     "num_computed_tokens": scheduler_output.scheduled_cached_reqs.num_computed_tokens}})
+        if self._resource_active:
             begin = f"execute:{self._resource_calls}:begin"
             if self._resource_checkpoint(begin):
                 self._resource_open_step = (self._resource_calls, begin)

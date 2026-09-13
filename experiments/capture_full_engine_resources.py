@@ -155,6 +155,10 @@ def prepare(args):
             "arms": ["control", "partition"], "cache_state": "reset_prefix_cache before every request",
             "warmup": "one identical request before the interleaved profiled arm pairs",
             "scope": "observer qualification; no admitted timing price"}
+    # One model forward per generated token invokes every unit once; the
+    # engine may execute one more step that runs no forward.
+    generated_tokens = workload["sampling"]["max_tokens"]
+    declared_steps = generated_tokens + 1
     uuid = subprocess.check_output(["nvidia-smi", "--query-gpu=uuid", "--format=csv,noheader"],
                                    text=True).strip().splitlines()
     if len(uuid) != 1:
@@ -175,9 +179,10 @@ def prepare(args):
             "core_manifest": str(args.core_manifest.resolve()), "assignment": assignment,
             "canonical_roster": roster, "canonical_modules": [row["module"] for row in roster],
             "observed_units": units, "workload": workload,
-            "max_history_entries": 1_000_000, "max_execute_calls": 2,
-            "max_invocations_per_unit": 2,
-            "max_checkpoints": 7 + 2 * 3 + 2 * 2 * len(units),
+            "max_history_entries": 1_000_000, "max_execute_calls": declared_steps,
+            "max_invocations_per_unit": generated_tokens,
+            "max_checkpoints": 7 + 3 * declared_steps + 2 * generated_tokens * len(units),
+            "declared_steps_scope": "one engine step per generated token, plus one: the engine may execute a step it scheduled before it observed the request finish, and a step executed but undeclared leaves coverage partial",
             "observer_engine_args": {"worker_cls": "experiments.full_engine_worker.ResourceCaptureWorker"},
             "observer_environment": {"VLLM_WORKER_MULTIPROC_METHOD": "spawn"},
             "scope": "intrusive raw resource capture; no timing, fixed-resource or release admission"}

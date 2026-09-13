@@ -624,16 +624,21 @@ def _project_checkpoints(checkpoints, rows):
     """
     for checkpoint in checkpoints:
         index = checkpoint["trace_index"]
+        # The category this checkpoint's own census gave an owner wins over
+        # the one another checkpoint gave it: a category that changed between
+        # checkpoints is reported at the checkpoint where it was seen.
+        census = {entry["allocation_id"]: entry["owner_categories"] for entry in checkpoint["storages"]}
         storages = []
         for row in rows:
             if (row["allocate_index"] <= index and row["observed_owners"]
                     and (row["free_completed_index"] is None or index < row["free_completed_index"])):
                 categories = row["observed_categories"]
+                owner_categories = {**row["_owner_categories"], **census.get(row["allocation_id"], {})}
                 storages.append({"allocation_id": row["allocation_id"], "address": row["address"],
                                  "bytes": row["bytes"],
                                  "category": categories[0] if len(categories) == 1 else "unknown",
                                  "owners": list(row["observed_owners"]),
-                                 "owner_categories": dict(sorted(row["_owner_categories"].items()))})
+                                 "owner_categories": dict(sorted(owner_categories.items()))})
         storages.sort(key=lambda entry: entry["allocation_id"])
         checkpoint["census_owner_count"] = checkpoint["owner_count"]
         checkpoint["census_storage_count"] = len(checkpoint["storages"])
