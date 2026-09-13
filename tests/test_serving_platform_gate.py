@@ -32,6 +32,15 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+# The autouse ``_unlatched_platform`` fixture below imports ``tessera.serving.
+# telemetry`` for every test, and that module imports ``torch`` at load (as it
+# has since 1c9b128f, on master too). So this whole file needs torch in the
+# process; declare it the way every other torch-needing test module does
+# (e.g. test_route_trace.py) so the bytes-only CI lane SKIPS it instead of
+# erroring at fixture setup. The gate itself is exercised with torch present on
+# the PrismaBuild suite and on a real gfx1201.
+pytest.importorskip("torch")
+
 from tessera.serving import backend as backend_module  # noqa: E402
 from tessera.serving import census as census_module  # noqa: E402
 from tessera.serving import contract as contract_module  # noqa: E402
