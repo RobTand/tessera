@@ -54,11 +54,36 @@ so a gate can tell "nothing was required" from "everything required was
 engaged".  ``lane_refusals`` carries what the load path recorded when a lane
 could not prepare, so the receipt says WHY it took nothing.
 
+AND ONE RANK IS NOT A WORLD.  ``LLM.apply_model`` returns one result per
+worker and this tool read ``[0]``, so a census could only ever describe rank 0
+-- and a receipt of rank 0 alone reads identically at world size 1 and at world
+size 8, which is why no Tessera artifact has a per-rank route histogram and no
+contract cell can name a world size from a receipt.  The topology arguments
+(``--tensor-parallel-size``, ``--distributed-executor-backend {mp,ray}``,
+``--nnodes``, ``--node-rank``, ``--master-addr``, ``--master-port``) are
+declared by ``tessera.serving.topology``, validated before the first model load
+and passed to ``LLM(...)`` unchanged; the per-module checks then run on EVERY
+rank, and ``census.join_rank_histograms`` sums the ranks into the ``histogram``
+the attestation reads.  Above one rank the receipt gains two blocks -- a
+``topology`` block holding what was asked for beside the world that answered,
+and a ``ranks`` list of ``tessera.rank-census/1`` records naming each rank's id,
+world size, node, device, platform token and runtime image.  Both are ADDITIVE
+and appear only when the world has more than one rank: at one rank the joined
+record IS the receipt, byte for byte what this tool wrote before the arguments
+existed, and the blocks' absence is what says world size 1.
+
 usage::
 
     tessera_route_census.py <checkpoint-dir> <out.json> \
         --runtime-image <repository@sha256:digest> \
-        [--expect-modules N] [--prompt-tokens 64] [--gpu-memory-utilization 0.3]
+        [--expect-modules N] [--prompt-tokens 64] [--gpu-memory-utilization 0.3] \
+        [--tensor-parallel-size N] [--distributed-executor-backend {mp,ray}] \
+        [--nnodes N] [--node-rank 0] [--master-addr HOST] [--master-port PORT]
+
+Above one box, ``experiments/tessera_plugin_served_tp.sh`` is the driver: it
+starts a ray head here and a ray worker on the other box, checks both hold the
+same checkout and the same pinned image, and runs this tool at ``--tensor-
+parallel-size 2 --distributed-executor-backend ray``.
 
 The two forwards it drives are the two regimes ``lane_eligibility`` declares.
 The census calls them by the shape it drove (``prefill``, ``decode``) because
@@ -130,6 +155,58 @@ def census(model):
         if rec is not None:
             out[name] = rec
     return out
+
+
+def rank_identity(model):
+    """Runs inside the worker: which rank read the records beside this, and where.
+
+    A route record says what a module executed; it never says which rank's
+    shard of that module executed it, on which box, in which image.  At one
+    rank that omission is invisible -- there is one of everything -- and above
+    one rank it is the whole question, so the identity is read in the worker
+    process rather than assumed by the driver.
+
+    The rank and the world size come from vLLM's own world group, which is the
+    table the engine itself dispatches on; ``torch.distributed`` is the
+    fallback for a build that exposes no group.  The image is the launcher's
+    declaration as THIS rank's environment carries it (issue #132): a two-box
+    serve can straddle two images, and the head's copy is evidence about the
+    head alone.
+    """
+    import os
+    import socket
+
+    import torch
+    from tessera.serving.backend import platform_of_this_process
+    from tessera.serving.runtime_image import CENSUS_IMAGE_ENV
+
+    rank = local_rank = None
+    world_size = None
+    try:
+        from vllm.distributed.parallel_state import get_world_group
+        group = get_world_group()
+        rank, world_size = int(group.rank), int(group.world_size)
+        local_rank = int(getattr(group, "local_rank", 0))
+    except Exception:  # noqa: BLE001 -- the fallback below is the same question
+        try:
+            import torch.distributed as dist
+            if dist.is_available() and dist.is_initialized():
+                rank, world_size = int(dist.get_rank()), int(dist.get_world_size())
+        except Exception:  # noqa: BLE001
+            pass
+    if rank is None or world_size is None:
+        rank, world_size = 0, 1
+    if local_rank is None:
+        local_rank = int(os.environ.get("LOCAL_RANK", rank))
+    return {
+        "rank": rank,
+        "local_rank": local_rank,
+        "world_size": world_size,
+        "node": socket.gethostname(),
+        "device": torch.cuda.get_device_name(0) if torch.cuda.is_available() else None,
+        "platform_token": platform_of_this_process(torch),
+        "runtime_image": os.environ.get(CENSUS_IMAGE_ENV),
+    }
 
 
 def declared_in_module_space(model, targets):
@@ -366,6 +443,7 @@ def _git_head(path):
 
 def parse_args(argv=None, env=None):
     """Resolve the explicit runtime context before importing a serving runtime."""
+    from tessera.serving.topology import add_topology_arguments, validate_topology_arguments
     ap = argparse.ArgumentParser(description=__doc__.split("\n\n")[0])
     ap.add_argument("model")
     ap.add_argument("out")
@@ -406,11 +484,16 @@ def parse_args(argv=None, env=None):
                          "by default an artifact that DECLARES which lane it was built for is "
                          "believed, so the requirement travels with the bytes rather than with a "
                          "shell history")
+    add_topology_arguments(ap)
     ap.add_argument("--tessera-commit", default=None,
                     help="the host's `git rev-parse HEAD` for the Tessera checkout under test; "
                          "inside a container a worktree's .git pointer resolves nowhere and the "
                          "receipt would carry None")
     args = ap.parse_args(argv)
+    # BEFORE the first model load, like every other check in this function: a
+    # topology mistake found after two 85-160 s loads is one found at the cost
+    # of the run.
+    validate_topology_arguments(ap, args)
     from tessera.serving.contract import require_runtime_image
     from tessera.serving.runtime_image import RuntimeImageError, declared_reference
 
@@ -449,7 +532,8 @@ def main() -> int:
     import tessera
     import tessera.serving as serving
     from tessera.serving import bf16_route, fp8_gemv, fp8_route, moe_route, nvfp4_route
-    from tessera.serving.census import lane_engagement
+    from tessera.serving.census import (
+        join_rank_histograms, lane_engagement, phase_histogram, rank_census_record)
     from tessera.serving.contract import (
         CENSUS_PHASE_REGIMES, PAYLOAD_FAMILY_BY_ROUTE, load_serving_contract)
     from tessera.serving.lane import TESSERA_MODE_ENV
@@ -457,6 +541,7 @@ def main() -> int:
         ROUTES, TESSERA_BF16, TESSERA_FAMILIES, TESSERA_FP8, TESSERA_NVFP4)
     from tessera.serving.telemetry import DECODER_NATIVE_SPAN2, DECODER_TORCH_WINDOW
     from tessera.serving.backend import platform_of_this_process
+    from tessera.serving.topology import topology_kwargs, topology_record
 
     # THE PLATFORM THIS SERVE RAN ON, read the one honest way (#452/#457).
     # This used to be spelt ``f"sm_{capability[0]}{capability[1]}"`` at the
@@ -603,8 +688,13 @@ def main() -> int:
 
     problems = []
     t0 = time.time()
+    # THE TOPOLOGY REACHES THE ENGINE UNCHANGED.  At the default single-process
+    # topology these kwargs are ``tensor_parallel_size=1`` and nothing else --
+    # the engine's own default -- so a command line written before the topology
+    # group existed builds the same engine it always did.
     llm = LLM(model=args.model, enforce_eager=not args.compiled, max_model_len=args.max_model_len,
-              gpu_memory_utilization=args.gpu_memory_utilization, seed=0)
+              gpu_memory_utilization=args.gpu_memory_utilization, seed=0,
+              **topology_kwargs(args))
 
     # CHECKPOINT NAMES ARE NOT MODULE NAMES, and this join is made in module
     # space.  ``config_groups`` targets are written in the CHECKPOINT's
@@ -636,93 +726,150 @@ def main() -> int:
     ids = tok.encode(text, add_special_tokens=False)[: args.prompt_tokens]
     prompt = {"prompt_token_ids": ids}
 
-    phases = {}
+    # EVERY RANK, NOT THE HEAD.  ``apply_model`` returns one result per worker
+    # and this tool took ``[0]``, so a census could only ever describe rank 0 --
+    # and a receipt of rank 0 alone reads identically at world size 1 and at
+    # world size 8.  The list is kept whole from here down; the head's element
+    # is still what the single-rank receipt publishes, byte for byte.
+    phases_by_rank = {}
     # One forward over M = len(ids) rows, sample one token, stop.
     outs = llm.generate([prompt], SamplingParams(max_tokens=1, temperature=0.0))
-    phases[batch_phase] = llm.apply_model(census)[0]
+    phases_by_rank[batch_phase] = llm.apply_model(census)
     # Decode steps follow; the last forward is one row wide.
     outs = llm.generate([prompt], SamplingParams(max_tokens=8, temperature=0.0))
-    phases[decode_phase] = llm.apply_model(census)[0]
+    phases_by_rank[decode_phase] = llm.apply_model(census)
     generated = outs[0].outputs[0].text
     # Load facts, so once and after the forwards: which modules' lane refused
     # to prepare, and why.  Same for every phase by construction.
-    refusals = llm.apply_model(lane_refusals)[0]
+    refusals_by_rank = llm.apply_model(lane_refusals)
+    identities = llm.apply_model(rank_identity)
+    world_size = len(identities)
+    ranks_seen = sorted(int(identity["rank"]) for identity in identities)
+    if ranks_seen != list(range(world_size)):
+        raise SystemExit(
+            f"{world_size} worker(s) answered and they call themselves {ranks_seen}; a joined "
+            "census must cover each rank of the world exactly once")
+    declared_world = {int(identity["world_size"]) for identity in identities}
+    if declared_world != {world_size}:
+        raise SystemExit(
+            f"{world_size} worker(s) answered but they report world size(s) {sorted(declared_world)}; "
+            "a receipt must not name a world only part of it served")
+    requested_world = topology_kwargs(args)["tensor_parallel_size"]
+    if world_size != requested_world:
+        raise SystemExit(
+            f"--tensor-parallel-size {requested_world} was asked for and {world_size} worker(s) "
+            "answered; pipeline, data and context parallel stay 1 here, so the world this census "
+            "observed must be the world it requested")
+    # Ordered by rank, never by the order the executor happened to answer in.
+    order = sorted(range(world_size), key=lambda i: int(identities[i]["rank"]))
+    identities = [identities[i] for i in order]
+    refusals_by_rank = [refusals_by_rank[i] for i in order]
+    phases_by_rank = {phase: [per_rank[i] for i in order]
+                      for phase, per_rank in phases_by_rank.items()}
+    phases = {phase: per_rank[0] for phase, per_rank in phases_by_rank.items()}
+    refusals = refusals_by_rank[0]
 
     mode = os.environ.get(TESSERA_MODE_ENV, "")
     prefixes = tuple(f"{family}:" for family in TESSERA_FAMILIES)
-    histogram = {}
-    record_owner = {}
-    for phase, recs in phases.items():
-        tess = {n: r for n, r in recs.items() if str(r.get("policy", "")).startswith(prefixes)}
-        other = {n: r for n, r in recs.items() if n not in tess}
-        h = collections.Counter(
-            (r["policy"], r["symbol"], r["contract"], r["state"], r.get("kind"), r.get("decoder"))
-            for r in tess.values())
-        by_family = collections.Counter(str(r["policy"]).split(":")[0] for r in tess.values())
-        histogram[phase] = {
-            # The contract's word for the shape this phase drove, so a
-            # per-(family, regime) expectation joins the receipt to a cell
-            # without either side guessing the other's vocabulary.
-            "regime": CENSUS_PHASE_REGIMES[phase],
-            "tessera_modules": len(tess),
-            "tessera_modules_by_family": dict(sorted(by_family.items())),
-            "other_route_modules": len(other),
-            "routes": [dict(policy=k[0], symbol=k[1], contract=k[2], state=k[3], kind=k[4],
-                            decoder=k[5], modules=v)
-                       for k, v in sorted(h.items(), key=lambda kv: tuple(map(str, kv[0])))],
-            "shapes": sorted({str(r.get("shape")) for r in tess.values()}),
-        }
-        if not tess:
-            problems.append(f"{phase}: no module reports a Tessera route")
-        owner, join_problems = join_records_to_declared(tess, declared)
-        record_owner[phase] = owner
-        problems.extend(f"{phase}: {m}" for m in join_problems)
-        for name, r in tess.items():
-            family = declared.get(owner.get(name, name))
-            if family is None:
+    # THE PER-MODULE CHECKS RUN ON EVERY RANK.  Each rank serves its own shard
+    # of every module and writes its own route record, so a check run on the
+    # head alone would pass a world in which rank 1 fell back on every unit.
+    # At one rank the loop below runs once and every problem string it can
+    # write is the string it wrote before -- the rank tag appears only above
+    # one rank, because a receipt that is the same observation must be the
+    # same bytes.
+    histogram_by_rank = []
+    record_owner_by_rank = []
+    tessera_by_rank = []
+    for rank in range(world_size):
+        tag = "" if world_size == 1 else f"rank {rank} "
+        rank_histogram = {}
+        rank_owner = {}
+        rank_tessera = {}
+        for phase, per_rank in phases_by_rank.items():
+            recs = per_rank[rank]
+            tess = {n: r for n, r in recs.items() if str(r.get("policy", "")).startswith(prefixes)}
+            other = {n: r for n, r in recs.items() if n not in tess}
+            rank_tessera[phase] = tess
+            rank_histogram[phase] = phase_histogram(
+                tess, regime=CENSUS_PHASE_REGIMES[phase], other_route_modules=len(other))
+            if not tess:
+                problems.append(f"{tag}{phase}: no module reports a Tessera route")
+            owner, join_problems = join_records_to_declared(tess, declared)
+            rank_owner[phase] = owner
+            problems.extend(f"{tag}{phase}: {m}" for m in join_problems)
+            for name, r in tess.items():
+                family = declared.get(owner.get(name, name))
+                if family is None:
+                    problems.append(
+                        f"{tag}{phase}: {name} took a Tessera route but the checkpoint declares none for it")
+                    continue
+                if r["state"] != "served":
+                    problems.append(f"{tag}{phase}: {name} state={r['state']!r} reason={r.get('reason')!r}")
+                if r["contract"] != contract_for[family]:
+                    problems.append(f"{tag}{phase}: {name} contract={r['contract']!r} != {contract_for[family]!r}")
+                if r["policy"] != f"{family}:{mode}":
+                    problems.append(f"{tag}{phase}: {name} policy={r['policy']!r} != declared {family}:{mode}")
+                # The (symbol, decoder) pair, not each half alone: the streamed FP8
+                # route reports the GEMV pair wherever the lane prepared and the
+                # kernel-decoded tile under the stock GEMM above the lane's max M
+                # (``fp8_gemv.census_expected`` owns the sets), and a half-wise
+                # comparison would read either half as a refusal on every module
+                # that legitimately took the other launch.
+                want = _expected(family, CENSUS_PHASE_REGIMES[phase], r.get("kind"))
+                # The expert route's symbol carries the backend the RUNTIME picked
+                # (``...modular_kernel:TRITON``), which no expectation of ours may
+                # pin; the entry point is what this compares and the histogram
+                # above keeps every exact string, backend and all.
+                got_symbol = (moe_route.census_symbol_base(r["symbol"])
+                              if r.get("kind") == "moe" else r["symbol"])
+                if ((got_symbol, r.get("decoder")) not in want
+                        and not (args.allow_fallback_decoder and r["symbol"] == symbol_for[family])):
+                    problems.append(
+                        f"{tag}{phase}: {name} (symbol, decoder)={(r['symbol'], r.get('decoder'))!r} "
+                        f"not in {sorted(want)!r}; without --allow-fallback-decoder a serve must "
+                        "report a pair its route owns")
+            missing = sorted(set(declared) - set(owner.values()))
+            if missing:
                 problems.append(
-                    f"{phase}: {name} took a Tessera route but the checkpoint declares none for it")
-                continue
-            if r["state"] != "served":
-                problems.append(f"{phase}: {name} state={r['state']!r} reason={r.get('reason')!r}")
-            if r["contract"] != contract_for[family]:
-                problems.append(f"{phase}: {name} contract={r['contract']!r} != {contract_for[family]!r}")
-            if r["policy"] != f"{family}:{mode}":
-                problems.append(f"{phase}: {name} policy={r['policy']!r} != declared {family}:{mode}")
-            # The (symbol, decoder) pair, not each half alone: the streamed FP8
-            # route reports the GEMV pair wherever the lane prepared and the
-            # kernel-decoded tile under the stock GEMM above the lane's max M
-            # (``fp8_gemv.census_expected`` owns the sets), and a half-wise
-            # comparison would read either half as a refusal on every module
-            # that legitimately took the other launch.
-            want = _expected(family, CENSUS_PHASE_REGIMES[phase], r.get("kind"))
-            # The expert route's symbol carries the backend the RUNTIME picked
-            # (``...modular_kernel:TRITON``), which no expectation of ours may
-            # pin; the entry point is what this compares and the histogram
-            # above keeps every exact string, backend and all.
-            got_symbol = (moe_route.census_symbol_base(r["symbol"])
-                          if r.get("kind") == "moe" else r["symbol"])
-            if ((got_symbol, r.get("decoder")) not in want
-                    and not (args.allow_fallback_decoder and r["symbol"] == symbol_for[family])):
+                    f"{tag}{phase}: {len(missing)} declared Tessera modules report no route, e.g. {missing[:3]}")
+            # PER RANK, NOT OVER THE WORLD.  ``--expect-modules`` names what the
+            # CHECKPOINT declares, and every rank builds a module for every
+            # declared target -- it holds a shard of it.  Comparing the joined
+            # count would refuse a correct two-rank serve for serving twice.
+            if args.expect_modules is not None and len(tess) != args.expect_modules:
                 problems.append(
-                    f"{phase}: {name} (symbol, decoder)={(r['symbol'], r.get('decoder'))!r} "
-                    f"not in {sorted(want)!r}; without --allow-fallback-decoder a serve must "
-                    "report a pair its route owns")
-        missing = sorted(set(declared) - set(owner.values()))
-        if missing:
-            problems.append(
-                f"{phase}: {len(missing)} declared Tessera modules report no route, e.g. {missing[:3]}")
-        if args.expect_modules is not None and len(tess) != args.expect_modules:
-            problems.append(
-                f"{phase}: {len(tess)} Tessera modules, the checkpoint declares {args.expect_modules}")
+                    f"{tag}{phase}: {len(tess)} Tessera modules, the checkpoint declares {args.expect_modules}")
+        histogram_by_rank.append(rank_histogram)
+        record_owner_by_rank.append(rank_owner)
+        tessera_by_rank.append(rank_tessera)
+    # THE JOINED HISTOGRAM IS THE SUM OVER RANKS, and it is what the
+    # attestation reads.  At one rank it is that rank's histogram unchanged.
+    histogram = join_rank_histograms(histogram_by_rank)
+    record_owner = record_owner_by_rank[0]
     # THE TESSERA RECORDS ARE WHAT THIS RECEIPT ATTESTS, so they are what the
     # shape and agreement checks below read: a record from another quant
     # method's route is observed and counted, never used as evidence for a
     # Tessera regime.
+    # ONE NAMESPACE OVER THE WHOLE WORLD.  Every rank names its modules the
+    # same, so merging the ranks' records under their own names would count one
+    # module once however many ranks served it -- the engagement and agreement
+    # blocks would then read identically at every world size.  Above one rank
+    # the name carries the rank that observed it; at one rank it is the module
+    # name it always was, and the blocks below are the bytes they always were.
+    def _qualified(rank, name):
+        return name if world_size == 1 else f"rank{rank}/{name}"
+
     tessera_by_phase = {
-        phase: {n: r for n, r in recs.items()
-                if str(r.get("policy", "")).startswith(prefixes)}
-        for phase, recs in phases.items()}
+        phase: {_qualified(rank, n): r
+                for rank, by_phase in enumerate(tessera_by_rank)
+                for n, r in by_phase[phase].items()}
+        for phase in phases_by_rank}
+    record_owner_world = {
+        phase: {_qualified(rank, n): owner
+                for rank, by_phase in enumerate(record_owner_by_rank)
+                for n, owner in by_phase[phase].items()}
+        for phase in phases_by_rank}
     problems.extend(phase_shape_problems(
         tessera_by_phase, phase_regimes=CENSUS_PHASE_REGIMES, compiled=args.compiled))
 
@@ -733,9 +880,12 @@ def main() -> int:
     # lane this arm requested take any units at all (issue #104)?  Emitted
     # unconditionally so a receipt written without --require-lane still carries
     # the decoder counts a gate would need.
+    refusals_world = {_qualified(rank, name): reason
+                      for rank, by_module in enumerate(refusals_by_rank)
+                      for name, reason in by_module.items()}
     engagement, engagement_problems = lane_engagement(
         tessera_by_phase, required_lanes=required_lanes, lane_decoders=lane_decoders or None,
-        refusals_by_phase={phase: refusals for phase in phases})
+        refusals_by_phase={phase: refusals_world for phase in phases})
     engagement["declared_by_artifact"] = manifest_lanes
     problems.extend(engagement_problems)
 
@@ -750,7 +900,7 @@ def main() -> int:
         tessera_by_phase, cells=load_serving_contract()["lane_eligibility"]["cells"],
         phase_regimes=CENSUS_PHASE_REGIMES,
         platform=served_platform,
-        declared_rungs=declared_rungs, record_owners=record_owner,
+        declared_rungs=declared_rungs, record_owners=record_owner_world,
         families_by_route=PAYLOAD_FAMILY_BY_ROUTE,
         runtime_image=args.runtime_image, execution_mode=args.execution_mode)
     problems.extend(agreement_problems)
@@ -807,6 +957,28 @@ def main() -> int:
         "problems": problems,
         "verdict": "served" if not problems else "REFUSED",
     }
+    # THE WORLD, WRITTEN ONLY WHERE THERE IS ONE.  At a single rank the joined
+    # record IS the receipt: a ``ranks`` list would restate it once and a
+    # ``topology`` block would state the engine's own default, and both would
+    # change the bytes of every single-rank receipt this tool has ever written
+    # -- receipts that are quoted, diffed and re-read.  So the blocks appear
+    # exactly when they carry something the joined record cannot: more than one
+    # rank.  Their ABSENCE is the discriminator, and it means world size 1.
+    if world_size > 1:
+        topology = topology_record(args)
+        topology["observed_world_size"] = world_size
+        receipt["topology"] = topology
+        receipt["ranks"] = [
+            rank_census_record(
+                rank=int(identity["rank"]), world_size=world_size,
+                node=identity["node"], platform_token=identity["platform_token"],
+                runtime_image=identity.get("runtime_image"), device=identity.get("device"),
+                local_rank=identity.get("local_rank"),
+                histogram=histogram_by_rank[index],
+                lane_refusals=refusals_by_rank[index],
+                records={phase: per_rank[index] for phase, per_rank in phases_by_rank.items()})
+            for index, identity in enumerate(identities)]
+
     with open(args.out, "w") as fh:
         json.dump(receipt, fh, indent=1, sort_keys=True)
     print(json.dumps({k: receipt[k] for k in ("verdict", "histogram", "lane_engagement",
