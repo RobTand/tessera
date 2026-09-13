@@ -2,14 +2,17 @@
 
 A ``lane_eligibility`` cell in ``runtime_contract.json`` states which route a
 module *executes*.  This module is the serve-side observation behind such a
-cell: every ``apply()`` writes twelve Python scalars onto its layer naming the
-kernel it invoked, the activation contract that ran, the problem shape and
-whether the launch returned.  ``tools/tessera_route_census.py`` reads them back
+cell: every ``apply()`` writes one Python scalar per ``ROUTE_FIELDS`` entry
+onto its layer, naming the kernel it invoked, the activation contract that
+ran, the platform it ran on, the problem shape and whether the launch
+returned.  ``tools/tessera_route_census.py`` reads them back
 from inside the worker, so a receipt is the record the serve wrote and not a
 log line someone parsed.
 
-Twelve ``setattr``s of Python scalars -- no tensor is touched, so this sits on
-the hot path without a synchronisation and cannot perturb what executed.
+One ``setattr`` of a Python scalar per field -- no tensor is touched, so this
+sits on the hot path without a synchronisation and cannot perturb what
+executed.  The platform is a process constant resolved once, never probed
+per call (see ``record_platform``).
 
 ``TESSERA_ROUTE_TRACE=<abs path>`` additionally keeps a counting histogram of
 what the serve executed, keyed by route AND problem shape -- the question a
@@ -58,6 +61,8 @@ __all__ = [
     "FP8_ACTIVATION_CONTRACT",
     "BF16_ACTIVATION_CONTRACT",
     "emit_route",
+    "record_platform",
+    "reset_platform_for_tests",
     "read_route",
     "note_lane_refusal",
     "read_lane_refusal",
@@ -118,7 +123,56 @@ ROUTE_FIELDS = (
     "state",      # from ROUTE_STATES
     "reason",     # exact refusal reason; None when served
     "decoder",    # from DECODERS: which decoder produced the weight tile
+    "platform",   # the device's own token: "sm_121", "gfx1201"; "" if none
 )
+
+
+#: The platform token every record on this process carries, resolved once.
+#:
+#: WHY THE RECORD NEEDS IT (#457).  A cell in ``lane_eligibility`` is keyed by
+#: ``(platform, family, structure, regime, residency, rung)``, and until this
+#: field existed the record it is compared against carried every one of those
+#: except the first: a gfx1151 serve and an sm_121 serve of the SAME artifact
+#: wrote byte-identical records, so a census could join either one to the
+#: sm_121 cell and report agreement.  The platform is the coordinate that
+#: tells them apart, and it belongs on the observation rather than on the
+#: tool's command line, where it is whatever the operator typed.
+#:
+#: WHY IT IS RESOLVED ONCE, LAZILY, AND NEVER INSIDE ``apply()``.
+#: ``emit_route`` runs on the forward -- under ``torch.compile`` it runs
+#: inside the traced body -- and that surface has broken a serve before
+#: (``LANE_REFUSAL_ATTR`` above records why a load fact is not a route field).
+#: A device probe there would be a CUDA/HIP call per module per forward on a
+#: path whose whole premise is that it touches no tensor.  So it is a process
+#: constant: one process serves one device, and the value is the PROBED token
+#: (never ``TESSERA_PLATFORM_TOKEN``, which is a build-only override -- a
+#: receipt that could be moved by an environment variable is not a receipt).
+#: A box that cannot name a platform stamps ``""``, which a census reads as
+#: "this record does not say" rather than as a claim about a platform.
+_PLATFORM: "str | None" = None
+
+
+def record_platform() -> str:
+    """This process's platform token for the route record; ``""`` if unknown.
+
+    Cached after the first call.  Never raises: telemetry that can break a
+    serve is not telemetry.
+    """
+    global _PLATFORM
+    if _PLATFORM is None:
+        try:
+            from .backend import platform_of_this_process
+
+            _PLATFORM = platform_of_this_process(torch) or ""
+        except Exception:  # noqa: BLE001 -- a record with no platform is honest
+            _PLATFORM = ""
+    return _PLATFORM
+
+
+def reset_platform_for_tests() -> None:
+    """Forget the cached token (tests only)."""
+    global _PLATFORM
+    _PLATFORM = None
 
 
 #: Where a load-time lane refusal is parked on a layer.  A SEPARATE attribute
@@ -178,7 +232,7 @@ def route_shape(x2, rows, cols) -> str:
 
 def emit_route(layer, *, kind: str, policy: str, symbol: str, tile_m: int = 0,
                shape: str = "", contract: str = "", state: str = "served",
-               reason=None, decoder: str = "") -> None:
+               reason=None, decoder: str = "", platform: "str | None" = None) -> None:
     """Record the latest dispatch route on ``layer``.  Never raises.
 
     TWO-PHASE USE.  Write ``state="error"`` with a reason before a launch and
@@ -196,6 +250,11 @@ def emit_route(layer, *, kind: str, policy: str, symbol: str, tile_m: int = 0,
             "tile_m": int(tile_m), "shape": str(shape), "contract": str(contract),
             "state": str(state), "reason": None if reason is None else str(reason),
             "decoder": str(decoder),
+            # NOT a caller's fact.  Every route module stamps the same value,
+            # so it is read here rather than threaded through nine call sites
+            # that would each have to remember it; the keyword exists for a
+            # test that wants to write a record for another platform.
+            "platform": record_platform() if platform is None else str(platform),
         }
         for field in ROUTE_FIELDS:
             setattr(layer, f"{ATTR_PREFIX}{field}", values[field])
@@ -228,7 +287,7 @@ class _RouteTrace:
     trace that could not tell them apart would be one lane wearing two names.
 
     OFF BY DEFAULT, and absent means absent: with no ``TESSERA_ROUTE_TRACE``
-    the counter object does not exist and ``emit_route`` does the same twelve
+    the counter object does not exist and ``emit_route`` does the same
     ``setattr``s it always did.  Enabled, it costs one dict lookup and one set
     insert per module per forward, under a lock -- no tensor is touched and no
     synchronisation happens, so it cannot perturb what executed.

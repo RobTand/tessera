@@ -84,40 +84,28 @@ def has_cutlass_mm() -> bool:
 def _backend() -> str:
     """``"hip"`` on a ROCm torch, else ``"cuda"``.
 
-    ROCm's torch reports ``device.type == "cuda"`` for an AMD device, so the
-    device type cannot answer this; ``torch.version.hip`` can.
-
-    REBASE SEAM (RobTand/tessera#452): ``tessera.serving.backend`` will own
-    this and ``_platform_token`` below.  When it lands, both become one-line
-    delegations; the contract read underneath them does not move -- it lives
-    in ``contract.py`` because the grammar of the platform axis has one home.
+    One line, because ``tessera.serving.backend`` owns the question now
+    (RobTand/tessera#452 landed the module this file's REBASE SEAM named).
+    Kept as a name here only because this module's messages read better for
+    it; there is no second implementation behind it.
     """
-    return "hip" if getattr(torch.version, "hip", None) else "cuda"
+    from .backend import backend as _detect
+
+    return _detect(torch)
 
 
-def _platform_token() -> str | None:
+def _platform_token() -> "str | None":
     """The key this device is published under in the contract's platform axis.
 
-    On HIP that is ``gcnArchName`` with its feature suffixes stripped
-    (``gfx1201:xnack-`` is one platform, not two); on CUDA it is
-    ``sm_<major><minor>``.  ``None`` when no device is visible -- which is not
-    a platform the contract could have attested anything about, so it reads
-    through as ``unstated`` and refuses nothing.
-
-    ``get_device_capability()`` is deliberately NOT used on HIP: a ROCm torch
-    answers ``(12, 0)`` for gfx1201, which would collide with NVIDIA sm_120 --
-    two different vendors' hardware under one contract key.
+    ``backend.platform_of_this_process`` -- the PROBED token, which on HIP is
+    ``gcnArchName`` with its feature suffixes stripped and on CUDA is
+    ``sm_<major><minor>``, and ``None`` where no device answers.
+    ``get_device_capability()`` is never consulted on HIP: a ROCm torch
+    answers ``(12, 0)`` for gfx1201, which would collide with NVIDIA sm_120.
     """
-    try:
-        if not torch.cuda.is_available():
-            return None
-        if _backend() == "hip":
-            arch = torch.cuda.get_device_properties(0).gcnArchName
-            return str(arch).split(":", 1)[0]
-        major, minor = torch.cuda.get_device_capability(0)
-        return f"sm_{major}{minor}"
-    except Exception:  # noqa: BLE001 -- a device that cannot be described is unstated
-        return None
+    from .backend import platform_of_this_process
+
+    return platform_of_this_process(torch)
 
 
 def _require_platform_backs(family: str, context: str) -> None:
@@ -130,20 +118,17 @@ def _require_platform_backs(family: str, context: str) -> None:
     contract states nothing (an unlisted platform, or any contract written
     before the platform axis existed) this does nothing at all and the ABI
     probe below is the whole check, exactly as before.
-    """
-    from .contract import PLATFORM_UNBACKED, platform_execution_contract
 
-    platform = _platform_token()
-    if platform is None:
-        return
-    state, _ = platform_execution_contract(family, platform)
-    if state != PLATFORM_UNBACKED:
-        return
-    raise NativeKernelUnavailableError(
-        f"{context}: the pinned runtime contract publishes {family} as unbacked on "
-        f"platform {platform!r} (backend {_backend()!r}): its lane_eligibility platform "
-        "entry executes null for this family, so there is no native route for these bytes "
-        "on this device. This is an attested absence, not a missing build artifact.")
+    The refusal itself is ``backend.require_platform_backs``
+    (RobTand/tessera#457), which the LOAD path asks first: a quantised route
+    is refused at ``TesseraConfig.get_quant_method``, before a weight exists,
+    and this is the same question asked again where a caller could have
+    reached the ABI without passing that seam.  One message, one reader of
+    the platform table.
+    """
+    from .backend import require_platform_backs
+
+    require_platform_backs(family, context, torch=torch)
 
 
 def _load_native_ops(context: str) -> None:

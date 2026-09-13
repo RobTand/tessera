@@ -420,13 +420,41 @@ def test_the_packaged_contract_answers_for_the_platform_it_publishes():
     assert backend_module.platform_backs("TESSERA_E2M1_K2", "sm_121", contract) is True
 
 
+def test_the_packaged_contract_now_names_the_amd_platforms_and_what_they_execute():
+    """Rewritten when #464 merged, and the rewrite is the news.
+
+    This test was written against ``contract_version`` 22, where the document
+    had no platform axis and every AMD token was a platform it had never heard
+    of -- so the reader answered ``False`` for all three families, which was
+    the honest answer to "is this attested".  v23 (#456) publishes the table:
+    both AMD platforms execute ``TESSERA_BF16_K1`` and are attested to execute
+    NEITHER quantized family.  The signal this test carries is unchanged --
+    an artifact that wants a route the platform does not execute is reporting
+    a serving gap -- but the document now says so per family instead of by
+    silence, and the assertion follows the document.
+    """
+    contract = _contract()
+    for platform in ("gfx1151", "gfx1201"):
+        assert backend_module.platform_backs("TESSERA_BF16_K1", platform, contract) is True
+        for family in ("TESSERA_E4M3_K1", "TESSERA_E2M1_K2"):
+            assert backend_module.platform_backs(family, platform, contract) is False
+
+
 def test_a_platform_the_contract_has_never_heard_of_backs_nothing():
-    """Not a default, a signal: an allocator that wants an unbacked route is
-    reporting a serving gap, and silence would hide it."""
+    """Still the reader's answer for a token outside the table.
+
+    ``sm_90`` is a real platform this document attests nothing about, and this
+    reader answers ``False`` there.  Note that ``contract.platform_backs``
+    answers ``True`` for the same pair: the two are different questions and
+    each says which in its docstring -- this one is "did the document attest
+    it", the other is "does the document REFUSE it", and ``unstated`` is the
+    state that separates them.  A caller must pick deliberately;
+    ``backend.require_platform_backs`` (#457) picks the second, because a
+    silence must not refuse a load.
+    """
     contract = _contract()
     for family in ("TESSERA_BF16_K1", "TESSERA_E4M3_K1", "TESSERA_E2M1_K2"):
-        assert backend_module.platform_backs(family, "gfx1151", contract) is False
-        assert backend_module.platform_backs(family, "gfx1201", contract) is False
+        assert backend_module.platform_backs(family, "sm_90", contract) is False
 
 
 def test_a_family_the_contract_does_not_publish_is_not_backed():

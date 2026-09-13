@@ -87,5 +87,20 @@ def build_tessera_method(scheme: Mapping, prefix: str = "<tessera>", mode: str |
     # import time.  Imported lazily so a producer reading the contract on a
     # box with no torch never pulls a route in.
     module_name, builder_name = route["builder"]
+    # THE PLATFORM GATE, ASKED BEFORE THE ROUTE MODULE IS IMPORTED (#457).
+    # This is the earliest seam a dense Tessera module passes through --
+    # ``TesseraConfig.get_quant_method`` calls straight into here -- so an
+    # artifact whose family the pinned contract publishes as unbacked on this
+    # device is refused with the contract's own word before a weight is
+    # created, before ``process_weights_after_loading``, and before the route
+    # module has imported a kernel or a vLLM quantizer.  The alternative is a
+    # HIP failure three layers down describing a missing operator, which is a
+    # true statement about the wrong thing: the absence is attested, not
+    # accidental.  ``unstated`` refuses nothing, so sm_121 and every contract
+    # written before the platform axis are byte-for-byte unchanged.
+    from .backend import require_platform_backs
+    from .contract import PAYLOAD_FAMILY_BY_ROUTE
+
+    require_platform_backs(PAYLOAD_FAMILY_BY_ROUTE[family], f"tessera target {prefix!r}")
     from importlib import import_module
     return getattr(import_module(module_name), builder_name)(scheme, prefix, resolved)

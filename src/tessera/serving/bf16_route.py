@@ -642,7 +642,7 @@ def holder_decode(holder: PreparedBf16Gemv):
     return torch.cat(tile_parts, 0), torch.cat(scale_parts, 0)
 
 
-def census_expected(*, compiled: bool):
+def census_expected(*, compiled: bool, platform=None):
     """The ``(symbol, decoder)`` pairs a BF16 module may report, by regime.
 
     Owned here -- the dispatch lives here -- and read by the route census, so
@@ -660,8 +660,12 @@ def census_expected(*, compiled: bool):
     batch = launch_pairs(TESSERA_BF16, regime="batch")
     if compiled:
         combined = {(COMPILED_SYMBOL, COMPILED_DECODER)}
-        return {"decode": combined | batch, "batch": combined | batch}
-    return {"decode": decode, "batch": batch}
+        pairs = {"decode": combined | batch, "batch": combined | batch}
+    else:
+        pairs = {"decode": decode, "batch": batch}
+    from .census import platform_expectation
+
+    return platform_expectation("TESSERA_BF16_K1", platform, pairs)
 
 
 def build_tessera_bf16_method(scheme, prefix: str, mode: str):
