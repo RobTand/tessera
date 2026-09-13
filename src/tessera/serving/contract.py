@@ -157,7 +157,7 @@ __all__ = [
 
 CONTRACT_FILENAME = "runtime_contract.json"
 CONTRACT_SCHEMA = "tessera.runtime-contract.v1"
-LANE_ELIGIBILITY_SCHEMA = "tessera.lane-eligibility.v9"
+LANE_ELIGIBILITY_SCHEMA = "tessera.lane-eligibility.v10"
 #: Execution is a separate axis from token-count regime and residency. These
 #: are the two modes selected by a serving invocation's enforce_eager flag.
 EXECUTION_MODES = ("eager", "compiled")
@@ -340,6 +340,101 @@ EVIDENCE_SMOKE_FORMS = ("campaign", "pure_greedy")
 EVIDENCE_SMOKE_RECORD_KEYS = frozenset({"instrument", "rule", "reference", "rows"})
 EVIDENCE_SMOKE_ROW_KEYS = frozenset(
     {"prompt", "form", "interface", "status", "reference_status"})
+
+
+#: The backends a platform entry may declare.  ``cuda`` and ``hip`` are the
+#: two torch builds this plugin has been read on; the device TYPE cannot tell
+#: them apart, because ROCm's torch reports ``"cuda"`` for an AMD device.
+PLATFORM_BACKENDS = frozenset({"cuda", "hip"})
+
+#: The key that names the hardware, one per backend.  Exactly one is present:
+#: a CUDA platform is a compute capability and a HIP platform is a gcnArchName,
+#: and an entry carrying both would be two devices under one key.
+PLATFORM_ARCH_KEYS = {"cuda": "compute_capability", "hip": "gcn_arch"}
+
+#: Keys a platform entry may carry beyond the required ones.  They describe
+#: the machine rather than what it executes, and nothing in this module reads
+#: them; the launch planner does (#454).
+_PLATFORM_OPTIONAL_KEYS = frozenset({"wavefront", "lds_bytes"})
+
+
+def _validate_platform_entries(block: Mapping[str, Any],
+                               contracts_by_family: Mapping[str, str]) -> None:
+    """Every ``lane_eligibility.platforms`` entry, as v10 requires it.
+
+    ``serve_image`` is checked against the cells in the second pass below --
+    it is a statement about receipts and cannot be judged before they are
+    read.
+    """
+    platforms = block["platforms"]
+    if not isinstance(platforms, Mapping) or not platforms:
+        raise ValueError(
+            "runtime_contract.lane_eligibility.platforms must be a non-empty object "
+            f"keyed by platform, got {platforms!r}")
+    for key, entry in platforms.items():
+        where = f"runtime_contract.lane_eligibility.platforms[{key!r}]"
+        if not isinstance(entry, Mapping):
+            raise ValueError(
+                f"{where} must be a JSON object. Before schema v10 a platform was a bare "
+                "KEY, and a reader that goes on treating it as one cannot see that a "
+                "family is published unbacked here -- which is the whole point of the "
+                "axis, and why v10 is not additive.")
+        backend = entry.get("backend")
+        if backend not in PLATFORM_BACKENDS:
+            raise ValueError(
+                f"{where}.backend must be one of {sorted(PLATFORM_BACKENDS)}, got "
+                f"{backend!r}. The device type cannot answer this: a ROCm torch reports "
+                'device.type "cuda" for an AMD device.')
+        arch_key = PLATFORM_ARCH_KEYS[backend]
+        other = {v for v in PLATFORM_ARCH_KEYS.values()} - {arch_key}
+        if arch_key not in entry:
+            raise ValueError(f"{where} declares backend {backend!r} and must carry {arch_key!r}")
+        present = sorted(other & set(entry))
+        if present:
+            raise ValueError(
+                f"{where} declares backend {backend!r} and also carries {present}; a "
+                "platform key names one device, and two architecture spellings under one "
+                "key is two devices sharing an identity")
+        _require_keys(entry, where,
+                      required={"backend", arch_key, "serve_image", "executes"},
+                      optional=_PLATFORM_OPTIONAL_KEYS)
+        if backend == "cuda":
+            capability = entry[arch_key]
+            if (not isinstance(capability, list) or len(capability) != 2
+                    or any(not isinstance(v, int) for v in capability)):
+                raise ValueError(f"{where}.compute_capability must be [major, minor], "
+                                 f"got {capability!r}")
+        else:
+            arch = entry[arch_key]
+            if not isinstance(arch, str) or not arch or ":" in arch:
+                raise ValueError(
+                    f"{where}.gcn_arch must be a bare architecture name, got {arch!r}. "
+                    "The feature suffixes torch reports (gfx1201:xnack-) are a build "
+                    "target's decoration, not a second platform.")
+        for optional in sorted(_PLATFORM_OPTIONAL_KEYS & set(entry)):
+            value = entry[optional]
+            if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+                raise ValueError(f"{where}.{optional} must be a positive integer, got {value!r}")
+        executes = entry["executes"]
+        if not isinstance(executes, Mapping) or set(executes) != set(contracts_by_family):
+            raise ValueError(
+                f"{where}.executes must name every family in formats[] "
+                f"({sorted(contracts_by_family)}), got "
+                f"{sorted(executes) if isinstance(executes, Mapping) else executes!r}. A family "
+                "left out is not 'unbacked' -- it is a question this document declined to "
+                "answer about a platform it declares, and a consumer cannot tell the two "
+                "apart. null is the way to say unbacked.")
+        for family, value in executes.items():
+            if value is None:
+                continue
+            expected = contracts_by_family[family]
+            if value != expected:
+                raise ValueError(
+                    f"{where}.executes[{family!r}] is {value!r}, but the route this family "
+                    f"is served by executes {expected!r} (scheme.ROUTES). A platform entry "
+                    "does not get to name a contract the dispatch does not run: the value "
+                    "is DERIVED from the route or it is a claim about a runtime nobody "
+                    "read. Publish null to say the route is unbacked here.")
 
 
 def contract_path():
@@ -923,6 +1018,15 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
         family: route["activation_contract"] for family, route in (
             (f, ROUTES[fam]) for f, fam in _FAMILY_TO_ROUTE.items())
     }
+
+    # THE PLATFORM AXIS (v10, #456).  Before this, ``platforms`` was a set of
+    # KEYS and the only thing read of it was whether a cell's platform was
+    # declared.  A cell is a RECEIPT, so that made "has this been served here"
+    # the only sentence the table could form -- and there is no way to say the
+    # sentence an AMD box needs said: this family has NO native route on this
+    # device.  Silence had to stand in for it, and a silence is not an
+    # attestation.  An entry says it now, per family, in ``executes``.
+    _validate_platform_entries(block, contracts_by_family)
     _cell_scope: dict = {}
     cell_ids: set[str] = set()
     cell_structures: list[str] = []
@@ -964,6 +1068,30 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
             raise ValueError(f"{where}.route_status {cell['route_status']!r} is not a status")
         if cell["qualification"] not in _QUALIFICATIONS:
             raise ValueError(f"{where}.qualification {cell['qualification']!r} is not one")
+        # A CELL IS A RECEIPT FROM A BACKED PLATFORM (v10, #456).  The entry
+        # is the platform's statement about the family; a cell is a serve that
+        # happened.  A cell sitting on a null entry is the document
+        # contradicting itself -- an unbacked platform says so in ``executes``,
+        # it does not mint cells.
+        if block["platforms"][cell["platform"]]["executes"][cell["family"]] is None:
+            raise ValueError(
+                f"{where} publishes a cell for {cell['family']!r} on platform "
+                f"{cell['platform']!r}, whose executes entry for that family is null. "
+                "null means the pinned runtime has no native route for these bytes on "
+                "this device; a receipt saying it served there is the opposite claim. "
+                "One of the two is wrong, and this document cannot say which.")
+        # A COMPILE RECEIPT CANNOT BACK A ROUTE (v10, #456).  compile_only
+        # says a toolchain accepted the code; backed says a device ran it.
+        # They are different measurements and the weaker one cannot carry the
+        # stronger claim. Touches nothing shipped: every v22 cell is
+        # device_qualified.
+        if (cell["qualification"] == "compile_only"
+                and cell["route_status"] != "unbacked"):
+            raise ValueError(
+                f"{where} is qualification 'compile_only' with route_status "
+                f"{cell['route_status']!r}. A compile receipt proves a toolchain fact and "
+                "a backed route needs a device: the only route_status a compile_only cell "
+                "may carry is 'unbacked'.")
         if cell["requires_plugin"] != REQUIRES_PLUGIN:
             raise ValueError(
                 f"{where}.requires_plugin must be {REQUIRES_PLUGIN!r}: stock vLLM has no reader "
@@ -1039,15 +1167,65 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
                         "claiming one of them would make the answer depend on table order.")
                 _cell_scope[key] = cell["id"]
 
+    # A PLATFORM'S SERVE IMAGE IS ONE OF ITS OWN (v10, #456).
+    #
+    # The design asked for the stronger rule -- every cell's ``runtime.image``
+    # equals its platform's ``serve_image`` -- and the shipped document
+    # falsifies it: ``sm_121`` already carries TWO attested images, the eight
+    # dense cells on the vanilla pin and the two ``routed_moe`` cells on a
+    # second build. Taken literally that rule refuses the contract in this
+    # file. So the rule is the one the data supports: an image somebody
+    # actually served on THIS platform, and null exactly when nobody has.
+    # Measured, not softened.
+    images_by_platform: dict[str, set[str]] = {}
+    for cell in block["cells"]:
+        images_by_platform.setdefault(cell["platform"], set()).add(cell["runtime"]["image"])
+    serve_images: set[str] = set()
+    for key, entry in block["platforms"].items():
+        where = f"runtime_contract.lane_eligibility.platforms[{key!r}]"
+        attested = images_by_platform.get(key, set())
+        serve_image = entry["serve_image"]
+        if not attested:
+            if serve_image is not None:
+                raise ValueError(
+                    f"{where}.serve_image is {serve_image!r} but no cell on this platform "
+                    "attests any image. A serve image is the runtime a receipt was taken "
+                    "under; a platform with no receipts names null.")
+            continue
+        if serve_image is None:
+            raise ValueError(
+                f"{where}.serve_image is null but {len(attested)} cell(s) on this platform "
+                f"attest {sorted(attested)}. null means nobody has served here.")
+        require_runtime_image(serve_image, f"{where}.serve_image")
+        if serve_image not in attested:
+            raise ValueError(
+                f"{where}.serve_image is {serve_image!r}, which no cell on this platform "
+                f"attests (its cells attest {sorted(attested)}). A platform's serve image "
+                "is one of its own receipts, never another platform's.")
+        serve_images.add(serve_image)
+
     # THE PIN IS AN ATTESTED IMAGE (v6, #131).  ``default_serve_image`` is the
     # one digest every harness reads; a default no cell was measured on would
-    # be a pin to a runtime nothing here says anything about.
+    # be a pin to a runtime nothing here says anything about.  Since v10 it is
+    # also some platform's ``serve_image``: the pin names a place to serve,
+    # and a digest no platform points at names a runtime with no home.
     if default_serve_image not in toolchains_by_image:
         raise ValueError(
             f"runtime_contract.versions.default_serve_image is {default_serve_image!r}, but no "
             f"lane_eligibility cell attests that image (cells attest "
             f"{sorted(toolchains_by_image)}). The default serve image is the pin harnesses "
             "read; it must be a runtime some receipt covers.")
+    # ... and since v10 it belongs to a PLATFORM.  The older rule above says
+    # some receipt covers the digest; this one says some platform points at
+    # it, which is the sentence a consumer asking "where do I serve this"
+    # actually needs.  It runs second so the historical diagnosis still wins
+    # for a digest nothing attests at all -- the weaker fault gets the more
+    # specific message.
+    if serve_images and default_serve_image not in serve_images:
+        raise ValueError(
+            f"runtime_contract.versions.default_serve_image is {default_serve_image!r}, "
+            f"which is no platform's serve_image (platforms name {sorted(serve_images)}). "
+            "The pin is the default place to serve; it belongs to a platform.")
 
     # The structure axis is a projection of the receipt-bearing cells, never
     # of the dispatch roster.  This is intentionally positive authority: when
