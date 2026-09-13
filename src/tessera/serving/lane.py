@@ -87,5 +87,33 @@ def build_tessera_method(scheme: Mapping, prefix: str = "<tessera>", mode: str |
     # import time.  Imported lazily so a producer reading the contract on a
     # box with no torch never pulls a route in.
     module_name, builder_name = route["builder"]
+    # THE PLATFORM GATE, ASKED BEFORE THE ROUTE MODULE IS IMPORTED (#457).
+    # This is the earliest seam a dense Tessera module passes through --
+    # ``TesseraConfig.get_quant_method`` calls straight into here -- so an
+    # artifact whose family the pinned contract publishes as unbacked on this
+    # device is refused with the contract's own word before a weight is
+    # created, before ``process_weights_after_loading``, and before the route
+    # module has imported a kernel or a vLLM quantizer.  The alternative is a
+    # HIP failure three layers down describing a missing operator, which is a
+    # true statement about the wrong thing: the absence is attested, not
+    # accidental.  ``unstated`` refuses nothing, so sm_121 and every contract
+    # written before the platform axis are byte-for-byte unchanged.
+    from .backend import require_platform_backs
+    from .contract import PAYLOAD_FAMILY_BY_ROUTE
+    from .telemetry import record_platform
+
+    # ``.get``, not ``[]``: a route this contract publishes no payload family
+    # for is a route the platform table cannot have attested anything about,
+    # so it reads through as ``unstated`` and refuses nothing.  That keeps
+    # "a new family needs only a ROUTES entry" true, which is a property
+    # ``test_serving_dispatch`` pins with a synthetic route.
+    payload_family = PAYLOAD_FAMILY_BY_ROUTE.get(family)
+    if payload_family is not None:
+        require_platform_backs(payload_family, f"tessera target {prefix!r}")
+    # LATCH THE PLATFORM HERE, where it is cheap and eager.  ``emit_route``
+    # stamps a process constant, and resolving it for the first time inside a
+    # traced forward would put a device probe in the FX graph; this runs once
+    # per module at build, long before any forward.
+    record_platform()
     from importlib import import_module
     return getattr(import_module(module_name), builder_name)(scheme, prefix, resolved)

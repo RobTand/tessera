@@ -3209,7 +3209,23 @@ The following are rules rather than measured values:
   agrees with the code; only a serve proves the code agrees with the machine.
   `census.cell_launch_agreement` joins every served route record to the cell
   covering its `(platform, family, structure, regime, residency, rung)` under
-  the measured image and execution mode. Missing or mismatched runtime context
+  the measured image and execution mode. Since #457 the **record itself**
+  carries the platform: `telemetry.ROUTE_FIELDS` gains `platform`,
+  `emit_route` stamps the probed token (`backend.platform_of_this_process`,
+  resolved once per process -- never `TESSERA_PLATFORM_TOKEN`, which is a
+  build-only override), and a record whose platform differs from the block's
+  is a disagreement rather than a match. Before that field the platform was
+  the tool's own argument, read off the box it ran on, and a `gfx1151` serve
+  wrote byte-identical records to an `sm_121` serve of the same artifact --
+  so either could be joined to the `sm_121` cell and reported as agreement.
+  A record written before the stamp carries no `platform` and is joined as it
+  always was; absence is not disagreement. The census tool's platform key is
+  now `backend.platform_of_this_process()` as well: it used to be
+  `f"sm_{capability[0]}{capability[1]}"`, which on gfx1201 mints `sm_120` --
+  a real NVIDIA platform. The routes' `census_expected(..., platform=...)`
+  narrows to the empty set for a family the platform executes nothing of
+  (`census.platform_expectation`), because nothing of that family can load
+  there. Missing or mismatched runtime context
   is unattested; a covered launch disagreement refuses. The route census writes
   that context with the block. Compiled dense agreement remains unsupported
   because its trace combines launches as `a+b`; a compiled routed single-launch
@@ -3269,6 +3285,17 @@ whatever subset a build compiled.
 
 Above the ABI probe sits a different refusal, and the order matters:
 
+- **The load's refusal (#457).** Earlier still than the two below, and on a
+  path the quantized routes cannot skip: `lane.build_tessera_method` and
+  `moe_route.build_tessera_moe_method` call
+  `backend.require_platform_backs(family, context)` before they import the
+  route module or vLLM's fused-MoE helpers. Those two builders are what
+  `TesseraConfig.get_quant_method` calls, so an `TESSERA_E4M3_K1` or
+  `TESSERA_E2M1_K2` artifact on `gfx1151`/`gfx1201` is refused before a
+  weight is created, before `process_weights_after_loading`, and before any
+  HIP kernel is touched. It is the same function and the same message
+  `native_ops` raises -- one reader of the platform table, so the two cannot
+  word one refusal differently.
 - **The contract's refusal.** `lane_eligibility.platforms[<key>].executes`
   says, per payload family, what this platform executes -- an activation
   contract, or `null` for "this family has no native route here". A `null`

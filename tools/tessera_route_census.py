@@ -274,6 +274,21 @@ def phase_shape_problems(records_by_phase, *, phase_regimes, compiled=False,
     return problems
 
 
+def _capability_or_none(torch):
+    """The device's compute capability, or ``[]`` where it has none.
+
+    A DIAGNOSTIC, not a key.  On HIP ``get_device_capability`` answers with
+    the GCN major/minor -- gfx1201 answers ``(12, 0)``, the tuple NVIDIA's
+    sm_120 answers with -- so this value can never again be the thing a cell
+    is joined on.  It stays in the receipt because it is what an NVIDIA
+    reader has always looked at, and it is allowed to be absent.
+    """
+    try:
+        return list(torch.cuda.get_device_capability(0))
+    except Exception:  # noqa: BLE001 -- a receipt field never breaks a receipt
+        return []
+
+
 def all_structure_agreement(records_by_phase, *, cells, phase_regimes, platform,
                             declared_rungs, record_owners, families_by_route,
                             runtime_image=None, execution_mode=None):
@@ -441,6 +456,26 @@ def main() -> int:
     from tessera.serving.scheme import (
         ROUTES, TESSERA_BF16, TESSERA_FAMILIES, TESSERA_FP8, TESSERA_NVFP4)
     from tessera.serving.telemetry import DECODER_NATIVE_SPAN2, DECODER_TORCH_WINDOW
+    from tessera.serving.backend import platform_of_this_process
+
+    # THE PLATFORM THIS SERVE RAN ON, read the one honest way (#452/#457).
+    # This used to be spelt ``f"sm_{capability[0]}{capability[1]}"`` at the
+    # join below.  On a ROCm torch ``get_device_capability`` answers with the
+    # GCN major/minor, and gfx1201 answers ``(12, 0)`` -- so an AMD census
+    # would have minted ``sm_120``, joined every record to whatever an NVIDIA
+    # sm_120 cell published, and reported agreement or disagreement about a
+    # platform the serve was not on.  ``gcnArchName`` is the key
+    # ``lane_eligibility.platforms`` is written in, and the module that reads
+    # it is the module the build and the certification harness read it from.
+    # Resolved BEFORE the first model load: it is a join key of every cell
+    # this receipt resolves, and a receipt tool must not fail at a per-module
+    # lookup with two loaded models behind it.
+    served_platform = platform_of_this_process(torch)
+    if served_platform is None:
+        raise SystemExit(
+            "this box names no platform token (no CUDA/HIP device answered), so no "
+            "lane_eligibility cell can be joined to what it serves. A census without a "
+            "platform key is a receipt about nothing.")
 
     # The executed A-side contract each route stamps on its layers: the value a
     # cell publishes, compared here against what the serve recorded.
@@ -468,8 +503,13 @@ def main() -> int:
     # each regime may report live where the dispatch lives
     # (``fp8_gemv.census_expected``, ``bf16_route.census_expected``), not in a
     # second spelling here; every other family reports one pair.
-    fp8_expected = fp8_gemv.census_expected(compiled=args.compiled)
-    bf16_expected = bf16_route.census_expected(compiled=args.compiled)
+    # PER ``(platform, family)``: on a platform whose contract entry executes
+    # null for a family, nothing of that family loads, so the expectation is
+    # the empty set and any record is a disagreement (``census.platform_
+    # expectation``).  On sm_121 and on any platform the contract has not
+    # reached, these are the sets they always were.
+    fp8_expected = fp8_gemv.census_expected(compiled=args.compiled, platform=served_platform)
+    bf16_expected = bf16_route.census_expected(compiled=args.compiled, platform=served_platform)
     # A ROUTED EXPERT STACK IS NOT ITS FAMILY'S DENSE ROUTE.  The stack serves
     # under the same family (``TESSERA_FP8``, same wire, same activation
     # contract) and a different dispatch: one materialised launch through
@@ -479,7 +519,7 @@ def main() -> int:
     # owns the dispatch -- ``moe_route.census_expected``, which also says why
     # its symbol is compared without the runtime's backend suffix and why no
     # contract cell publishes it yet.
-    moe_expected = moe_route.census_expected(compiled=args.compiled)
+    moe_expected = moe_route.census_expected(compiled=args.compiled, platform=served_platform)
 
     def _expected(family, regime, kind):
         if kind == "moe":
@@ -709,8 +749,7 @@ def main() -> int:
     agreement, agreement_problems = all_structure_agreement(
         tessera_by_phase, cells=load_serving_contract()["lane_eligibility"]["cells"],
         phase_regimes=CENSUS_PHASE_REGIMES,
-        platform=f"sm_{torch.cuda.get_device_capability(0)[0]}"
-                 f"{torch.cuda.get_device_capability(0)[1]}",
+        platform=served_platform,
         declared_rungs=declared_rungs, record_owners=record_owner,
         families_by_route=PAYLOAD_FAMILY_BY_ROUTE,
         runtime_image=args.runtime_image, execution_mode=args.execution_mode)
@@ -749,8 +788,12 @@ def main() -> int:
                              os.path.abspath(tessera.__file__))))),
                      "python": platform.python_version()},
         "cell_launch_agreement": agreement,
+        # The token is the KEY; the capability is kept beside it as a
+        # diagnostic and is no longer the key, because on HIP it is not one
+        # (gfx1201 and sm_120 both answer (12, 0)).
         "device": {"name": torch.cuda.get_device_name(0),
-                   "capability": list(torch.cuda.get_device_capability(0))},
+                   "platform_token": served_platform,
+                   "capability": list(_capability_or_none(torch))},
         "elapsed_s": round(time.time() - t0, 1),
         "histogram": histogram,
         "lane_engagement": engagement,

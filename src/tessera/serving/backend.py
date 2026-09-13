@@ -70,8 +70,10 @@ __all__ = [
     "pin_build_arch",
     "platform_backs",
     "platform_attests",
+    "platform_of_this_process",
     "platform_token",
     "probed_platform_token",
+    "require_platform_backs",
     "toolchain_report",
 ]
 
@@ -423,3 +425,87 @@ def platform_attests(family: str, token: str,
 
     state, _ = platform_execution_contract(family, token, contract)
     return state == PLATFORM_BACKED
+
+
+# -- the load-time platform gate ---------------------------------------------
+#
+# ONE REFUSAL, ASKED WHERE THE LOAD BEGINS.  ``contract.platform_execution_
+# contract`` is the grammar of the platform axis and it answers three ways;
+# this is the one place that turns the ``unbacked`` answer into a refusal, and
+# every caller that must refuse calls it rather than restating its message.
+# Two callers exist: the route builders (``lane.build_tessera_method`` and
+# ``moe_route.build_tessera_moe_method``), which run at
+# ``TesseraConfig.get_quant_method`` -- before a weight is created, before
+# ``process_weights_after_loading``, and before any route module has imported
+# a kernel -- and ``native_ops.require_native_*``, which asks again at the
+# ABI, where a serve that reached a quantised route without passing here would
+# otherwise get a message about a missing operator instead of about an
+# attested absence.
+#
+# WHY ``unstated`` REFUSES NOTHING.  A contract written before the platform
+# axis (``contract_version`` 22 and earlier), a platform the table does not
+# list, and a process with no visible device all read ``unstated``, and a
+# silence is not a refusal: collapsing it would refuse every sm_121 serve the
+# day this lands.  That is principle 14 read in the direction it is usually
+# read backwards -- a producer never asserts a serving fact it did not read,
+# and "this platform does not execute this family" is such a fact.
+
+
+def platform_of_this_process(torch=None) -> "str | None":
+    """The probed token, or ``None`` where no device can answer for one.
+
+    The PROBED token, never :func:`platform_token`: ``TESSERA_PLATFORM_TOKEN``
+    is a build-only override (it decides what a compiler targets), and a gate
+    or a telemetry field that read it would let an environment variable
+    decide what a serve is allowed to load and what a receipt says it ran on.
+    Both are questions about the silicon in the box.
+
+    ``None`` rather than an exception, because both callers are on a load or
+    telemetry path where the absence of a device is not this function's news
+    to break: it reads through as ``unstated`` and changes nothing.
+    """
+    try:
+        return probed_platform_token(torch=torch)
+    except Exception:  # noqa: BLE001 -- a box that cannot name a platform has none
+        return None
+
+
+def require_platform_backs(family: str, context: str, *, torch=None,
+                           contract: "Mapping[str, Any] | None" = None,
+                           platform: "str | None" = None,
+                           backend_name: "str | None" = None) -> None:
+    """Refuse ``family`` where the pinned contract attests no route for it.
+
+    ``family`` is a PAYLOAD family (``TESSERA_E4M3_K1``), the vocabulary the
+    contract's platform table is keyed in and the one the refusal must name --
+    a message about ``TESSERA_FP8`` would name the route and leave the reader
+    to map it back to the bytes in the checkpoint.  Callers holding a route
+    convert through ``contract.PAYLOAD_FAMILY_BY_ROUTE``.
+
+    Raises ``ext.NativeKernelUnavailableError`` -- the same class the ABI
+    probe raises, because it is the same refusal reached earlier: there is no
+    native route for these bytes on this device.
+
+    ``platform`` and ``backend_name`` let a caller supply the identity it
+    already holds instead of re-probing.  ``native_ops`` passes its own two
+    accessors, so the module keeps the seams its tests stub while the
+    DECISION and the MESSAGE stay here -- one reader of the platform table,
+    and no two spellings of one refusal.
+    """
+    from .contract import PLATFORM_UNBACKED, platform_execution_contract
+    from .ext import NativeKernelUnavailableError
+
+    if platform is None:
+        platform = platform_of_this_process(torch)
+    if platform is None:
+        return
+    state, _ = platform_execution_contract(family, platform, contract)
+    if state != PLATFORM_UNBACKED:
+        return
+    if backend_name is None:
+        backend_name = backend(torch)
+    raise NativeKernelUnavailableError(
+        f"{context}: the pinned runtime contract publishes {family} as unbacked on "
+        f"platform {platform!r} (backend {backend_name!r}): its lane_eligibility platform "
+        "entry executes null for this family, so there is no native route for these bytes "
+        "on this device. This is an attested absence, not a missing build artifact.")

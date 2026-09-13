@@ -41,6 +41,7 @@ __all__ = [
     "cell_launch_agreement",
     "decoder_histogram",
     "lane_engagement",
+    "platform_expectation",
 ]
 
 #: Bumped when the block's shape changes.  A consumer keys on it.
@@ -284,6 +285,26 @@ def cell_launch_agreement(records_by_phase, *, cells, phase_regimes, platform,
                         "the record's shape is what the machine ran, and only the second "
                         "attests a regime.")
                     continue
+            # THE RECORD'S OWN PLATFORM, AGAINST THE BLOCK'S (#457).  A cell
+            # is keyed by platform and every cell in this block was selected
+            # by ``platform`` above -- but until the route record carried one,
+            # the only statement of which platform SERVED was the caller's
+            # argument, read off the box the tool happened to run on.  A
+            # gfx1151 serve and an sm_121 serve of the same artifact wrote
+            # byte-identical records, so either could be joined to the sm_121
+            # cell and reported as agreement.  A record that names a different
+            # platform is a disagreement about what ran, not a launch to
+            # check.  A record with no ``platform`` field predates the stamp
+            # and says nothing; it is joined as before.
+            served_on = record.get("platform")
+            if served_on not in (None, "", platform):
+                unattested += 1
+                problems.append(
+                    f"{phase}: {name} was served on platform {served_on!r} and is being "
+                    f"checked against cells published for {platform!r}. A cell is keyed by "
+                    "platform; joining a record across that key would attest a launch on "
+                    "hardware no cell in this contract covers.")
+                continue
             covered += 1
             allowed = {(str(e["symbol"]), str(e["decoder"])) for e in cell["executes"]}
             counts[cell["id"]] += 1
@@ -328,3 +349,35 @@ def _cell_modes(cell):
         if str(flag).startswith(head):
             return tuple(str(flag)[len(head):].split("|"))
     return ()
+
+
+def platform_expectation(family: str, platform, pairs: Mapping[str, Any]) -> dict:
+    """``pairs``, or empty sets on a platform the contract publishes as unbacked.
+
+    THE EXPECTATION IS PER ``(platform, family)`` (#457).  A route's
+    ``census_expected`` names the ``(symbol, decoder)`` launches a module of
+    its family MAY report.  That set was written when one platform existed;
+    on a platform whose ``lane_eligibility`` entry executes null for the
+    family, a module of it cannot load at all
+    (``backend.require_platform_backs`` refuses at ``get_quant_method``), so
+    the honest expectation is that NOTHING is reported -- and a record that
+    turns up anyway is a disagreement a census must raise rather than quietly
+    match against the sm_121 pairs.
+
+    ``platform=None`` is the caller that did not say, and it gets exactly
+    today's answer: this is a narrowing, never a widening, and a census run
+    without a platform is unchanged.  ``unstated`` -- a contract with no
+    platform axis, or a platform the table has not reached -- is unchanged for
+    the same reason the gate does nothing there: a silence is not a refusal.
+
+    Lives here rather than in each route module because it is one rule three
+    routes state, and the second copy is where the two would drift.
+    """
+    if platform is None:
+        return dict(pairs)
+    from .contract import PLATFORM_UNBACKED, platform_execution_contract
+
+    state, _ = platform_execution_contract(family, platform)
+    if state != PLATFORM_UNBACKED:
+        return dict(pairs)
+    return {regime: set() for regime in pairs}
