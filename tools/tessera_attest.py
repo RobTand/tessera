@@ -64,7 +64,6 @@ import hashlib
 import json
 import os
 import platform as platform_module
-import re
 import shutil
 import subprocess
 import sys
@@ -74,6 +73,8 @@ import urllib.request
 from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src"))
+
+from tessera.serving.backend import capability_token, gcn_arch_token  # noqa: E402
 
 #: Bumped when the receipt's shape changes.  A consumer keys on it, and #460
 #: mints cells from receipts that carry it.
@@ -181,32 +182,20 @@ REQUIRED_CODE_PATH_STEPS = (
 )
 REQUIRED_DEVICE_PERF_STEPS = (STEP_SERVE_MODES, STEP_DECODE_TOK_S, STEP_PREFILL_TOK_S)
 
-_GFX = re.compile(r"^gfx[0-9a-f]+$")
-
-
 # --- identity, scope, qualification: pure, and testable with a stub --------
 
-def platform_token_of(gcn_arch_name: str) -> str:
-    """``gfx1201:sramecc+:xnack-`` -> ``gfx1201``.
-
-    The feature suffixes are a property of the BUILD, not of the part: two
-    boxes with the same silicon report different suffixes depending on how the
-    runtime was configured, and a receipt keyed on the full string would not
-    join to a contract platform entry.  An arch name that is not a ``gfx``
-    token at all is an error here rather than a silently truncated key --
-    ``platform`` is what a cell is looked up by.
-    """
-    token = str(gcn_arch_name).split(":")[0].strip()
-    if not _GFX.match(token):
-        raise ValueError(
-            f"{gcn_arch_name!r} is not an AMD arch name; this harness identifies a device "
-            "by torch's gcnArchName and refuses to guess a platform token from anything else")
-    return token
+#: Identity is #452's, not this harness's.  ``tessera.serving.backend`` is
+#: where the platform token is minted -- the build keys its directory on the
+#: same string this receipt claims a cell for, and two spellings of one
+#: identity is how a receipt comes to name a platform the build never
+#: targeted.  These two names stay as the harness's vocabulary; the answers
+#: come from there.
+platform_token_of = gcn_arch_token
 
 
 def cuda_platform_token(major: int, minor: int) -> str:
     """``(12, 1)`` -> ``sm_121``, the spelling the packaged contract uses."""
-    return f"sm_{int(major)}{int(minor)}"
+    return capability_token((int(major), int(minor)))
 
 
 def probe_identity(torch_module=None) -> dict:

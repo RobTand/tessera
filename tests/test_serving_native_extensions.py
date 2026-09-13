@@ -513,26 +513,26 @@ def test_the_identity_hashes_the_compiler_the_build_will_invoke(tmp_path, monkey
     a = _fake_toolkit(tmp_path, "cuda-a", "A")
     b = _fake_toolkit(tmp_path, "cuda-b", "B")
     source = ext.native_source_path(ext.NVFP4_MODULE_PREFIX)
-    cc = (12, 1)
+    platform = "sm_121"
 
     monkeypatch.delenv("PYTORCH_NVCC", raising=False)
     monkeypatch.setenv("NVCC", str(b / "bin" / "nvcc"))      # NOT torch's selector
     monkeypatch.setattr(cpp_extension, "CUDA_HOME", str(a))  # torch's selector
 
-    ident_a, payload_a = ext._build_identity(torch, source=source, capability=cc)
+    ident_a, payload_a = ext._build_identity(torch, source=source, platform=platform)
     assert payload_a["nvcc"]["path"] == os.path.realpath(str(a / "bin" / "nvcc")), (
         "the identity must hash the compiler torch's loader selects "
         "(cpp_extension.CUDA_HOME/bin/nvcc), not $NVCC or PATH")
 
     # a CUDA_HOME change IS a compiler change and must move the identity ...
     monkeypatch.setattr(cpp_extension, "CUDA_HOME", str(b))
-    ident_b, payload_b = ext._build_identity(torch, source=source, capability=cc)
+    ident_b, payload_b = ext._build_identity(torch, source=source, platform=platform)
     assert payload_b["nvcc"]["path"] == os.path.realpath(str(b / "bin" / "nvcc"))
     assert ident_a != ident_b
 
     # ... and PYTORCH_NVCC is the loader's first choice, over CUDA_HOME
     monkeypatch.setenv("PYTORCH_NVCC", str(a / "bin" / "nvcc"))
-    _, payload_p = ext._build_identity(torch, source=source, capability=cc)
+    _, payload_p = ext._build_identity(torch, source=source, platform=platform)
     assert payload_p["nvcc"]["path"] == os.path.realpath(str(a / "bin" / "nvcc"))
 
 
@@ -550,9 +550,9 @@ def test_an_nvcc_only_environment_change_does_not_rename_the_build(tmp_path, mon
     monkeypatch.setattr(cpp_extension, "CUDA_HOME", str(a))
 
     monkeypatch.setenv("NVCC", str(a / "bin" / "nvcc"))
-    one, _ = ext._build_identity(torch, source=source, capability=(12, 1))
+    one, _ = ext._build_identity(torch, source=source, platform="sm_121")
     monkeypatch.setenv("NVCC", str(b / "bin" / "nvcc"))
-    two, _ = ext._build_identity(torch, source=source, capability=(12, 1))
+    two, _ = ext._build_identity(torch, source=source, platform="sm_121")
     assert one == two
 
 

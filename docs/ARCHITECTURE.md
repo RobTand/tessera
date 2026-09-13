@@ -5,6 +5,18 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-12 for the build's backend layer (#452): the two JIT
+loaders no longer ask `torch.cuda.get_device_capability()` what to compile for.
+`src/tessera/serving/backend.py` answers `cuda` or `hip` from
+`torch.version.hip`, mints the platform token (`sm_121` from a capability,
+`gfx1201` from `gcnArchName` with its feature suffixes stripped), and hands
+each loader the flags its compiler takes -- the unchanged `-gencode` on nvcc,
+one explicit `--offload-arch` on hipcc. The token, never the capability, keys
+the build directory and the NVFP4 build identity, because gfx1201 and NVIDIA
+sm_120 both report `(12, 0)`. No AMD serving claim originates here: this
+branch changes no contract value, and the platform axis it reads is #456's.
+See §5.3.1.
+
 Re-stamped 2026-09-12 for the AMD certification harness (#459):
 `tools/tessera_attest.py` and `docs/strix-halo-tester-protocol.md` define how
 a receipt from hardware this project does not own may become a
@@ -4092,6 +4104,86 @@ root reports "no toolkit" (fail-closed, `complete: false`) and any build that
 proceeds anyway fails under the root the operator named, rather than
 succeeding under the toolkit that choice displaced; displacing a usable
 toolkit that way is said on stderr, by name.
+
+#### 5.3.1 Two toolchains, one source, and the platform token
+
+A ROCm torch reaches the same packaged `.cu` files through the same
+`cpp_extension.load`, which hipifies the runtime and torch spellings and
+leaves the rest alone. What does not translate is the build's own vocabulary,
+and `src/tessera/serving/backend.py` is the one place that speaks both
+dialects. It is a build and discovery concern only: `device.type` is still
+`"cuda"` on ROCm, so every `!= "cuda"` refusal in the tree keeps meaning what
+it meant, and nothing here is a second serving code path.
+
+- `backend()` is `"hip"` iff `torch.version.hip` is set -- the same fact
+  torch's own `IS_HIP_EXTENSION` keys on, so the two cannot disagree.
+- `platform_token()` is `sm_121` from the compute capability on CUDA and
+  `gfx1201`/`gfx1151` from `get_device_properties(d).gcnArchName` on HIP, with
+  the `:sramecc+`/`:xnack-` feature suffixes stripped. **The capability is
+  never the key on HIP**: gfx1201 reports `(12, 0)`, which is NVIDIA sm_120's
+  tuple, so a build directory, a build identity or a contract lookup keyed on
+  it would be a key two platforms share. The token is also the key
+  `lane_eligibility.platforms` already uses. It never comes from
+  `vllm.platforms.rocm.get_device_name()`/`get_device_uuid()`, which need
+  `amdsmi` and raise wherever it has no driver; identity comes from torch.
+- `offload_flags(token)` is the unchanged `-gencode` pair on CUDA and one
+  explicit `--offload-arch=<token>` on HIP -- explicit, because torch's
+  default is every architecture in the ROCm wheel. `-lineinfo` and `-Xptxas`
+  stay on the CUDA branch. `-gencode` is not a flag hipcc ignores: the #459
+  certification run on gfx1201 (WSL2, 2026-09-12) drove the old loader and got
+  `clang++: error: unknown argument: '-gencode'` before the build reached a
+  kernel question at all, which is this section's first measurement rather
+  than its first report
+  (`docs/measurements/attest-gfx1201-wsl2-2026-09-12.md`, step
+  `extension_build`).
+- `pin_build_arch(token)` sets `PYTORCH_ROCM_ARCH` to that same token on HIP.
+  Measured on wsl-gpu (torch 2.11.0+rocm7.2.4, HIP 7.14): an explicit
+  `--offload-arch` in `extra_cuda_cflags` does **not** displace the one torch
+  writes into the ninja file's `cuda_cflags` from that variable, so a stale
+  `PYTORCH_ROCM_ARCH=gfx1201` put gfx1201 and gfx1151 on the same compile
+  line, and unsetting it falls back to the wheel's whole architecture list.
+  One token, stated twice, is the only arrangement in which the two cannot
+  disagree.
+- `TESSERA_PLATFORM_TOKEN` overrides the probed token for **build** purposes:
+  the flags, the build directory and `toolchain_report()`. It is how a gfx1201
+  box compiles for gfx1151, which is the RDNA3.5 build gate. A loader that
+  built under it **refuses to hand the module to a caller**, naming both
+  tokens: the build is the gate, the library is not servable there. Telemetry
+  always carries the probed token.
+- `toolchain_report()` is the existing `nvcc` resolver on CUDA and its
+  `ROCM_HOME`/`hipcc` twin on HIP, both reporting `backend`, `compiler`,
+  `platform_token` and `complete`.
+- The certification harness reads the same function. `platform_token_of` in
+  `tools/tessera_attest.py` is `backend.gcn_arch_token`, and its
+  `cuda_platform_token` is `backend.capability_token`: a receipt claims a cell
+  for a platform string and the build keys a directory on one, so two parsers
+  for one identity is how a receipt comes to certify a platform the build
+  never targeted.
+- The contract is read **once, by one reader**. `platform_backs(family,
+  token)` is `serving/contract.py`'s own `platform_backs` (#455 put the
+  platform axis's grammar there), so the build and the serve cannot answer it
+  differently. That function answers the *refusal* question: `False` only for
+  an attested `unbacked`, and `True` for a platform the document has not
+  reached, because a silence is not a refusal. `platform_attests(family,
+  token)` is the affirmative one -- `True` only for the contract's `backed`
+  state -- and it is the one a producer-side claim must ask. On the packaged
+  `contract_version` 23 (#456) it answers `True` for `TESSERA_BF16_K1` on
+  `gfx1151` and `gfx1201` and `False` for the other two families there: the
+  AMD lane is Tessera-16 WnA16 only, and **the document is what says so**, not
+  this module.
+
+On HIP torch writes the hipified `.hip` beside the `.cu` it was handed, inside
+the checkout. Both loaders pass `keep_intermediates=False` so torch removes it
+after the build, and `.gitignore` carries
+`src/tessera/serving/csrc/*.hip` for the build that died before the cleanup
+ran. It is a build intermediate and never a tree artifact.
+
+What this does **not** establish: that any Tessera family serves on any AMD
+device. The backend layer makes the build honest about which compiler and
+which architecture; whether a route is backed is decided by the contract
+(principle 9), and every AMD receipt states its own scope -- a gfx1151 build
+on a gfx1201 box is a compile gate, and a gfx1201 run under WSL2 proves the
+code path, never gfx1151 numerics or any performance number.
 
 When a build is unavailable the outcome is per extension
 and per residency, and it is a value the route record stamps, never a

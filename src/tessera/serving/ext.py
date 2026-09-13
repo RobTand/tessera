@@ -67,6 +67,7 @@ import sys
 import sysconfig
 import threading
 
+from . import backend as backend_module
 from ..kernel_roster import SUPPORTED_RATES, WINDOW_BITS_SUPPORTED
 
 __all__ = [
@@ -670,28 +671,46 @@ def _sha256_file(path: str) -> str:
     return digest.hexdigest()
 
 
-def _target_capability(module: str) -> tuple[int, int]:
+def _target_platform(module: str) -> str:
+    """The platform token this build is pinned to -- ``sm_121`` or ``gfx1201``.
+
+    The token, not the compute capability: on ROCm torch
+    ``get_device_capability()`` answers with the GCN major/minor, and gfx1201
+    answers ``(12, 0)`` -- NVIDIA sm_120's tuple.  A build keyed on that
+    tuple would be shared by two platforms, so
+    :func:`tessera.serving.backend.platform_token` is the only spelling here
+    (it reads ``gcnArchName`` on HIP and the capability on CUDA).
+
+    ``TESSERA_PLATFORM_TOKEN`` overrides it for a build that targets a device
+    this box does not have; :func:`_load_locked` then refuses to hand the
+    module to a caller.
+    """
     import torch
 
+    from .backend import platform_token
+
     try:
-        major, minor = torch.cuda.get_device_capability()
+        return platform_token(torch=torch)
     except Exception as exc:  # noqa: BLE001 -- one diagnosis for every cause
         raise RuntimeError(
-            f"cannot determine which CUDA architecture to compile {module} for "
+            f"cannot determine which architecture to compile {module} for "
             f"({type(exc).__name__}: {exc}); the build targets the live device instead of "
-            "inheriting TORCH_CUDA_ARCH_LIST, so a visible GPU is required at build time") from exc
-    return int(major), int(minor)
+            "inheriting TORCH_CUDA_ARCH_LIST, so a visible GPU is required at build time "
+            "unless TESSERA_PLATFORM_TOKEN names the target") from exc
 
 
-def _gencode_flag(capability: tuple[int, int]) -> str:
-    """The one ``-gencode`` nvcc flag that pins a build to a single target.
+def _offload_flags(token: str) -> list[str]:
+    """The flags that pin this build to a single target.
 
-    Architecture-GENERIC (no ``a`` suffix): the decoder uses no
-    architecture-conditional tensor-core instruction, and an ``a`` binary
-    refuses to load on any other capability at all.
+    On CUDA one ``-gencode``, architecture-GENERIC (no ``a`` suffix): the
+    decoder uses no architecture-conditional tensor-core instruction, and an
+    ``a`` binary refuses to load on any other capability at all.  On HIP one
+    ``--offload-arch``, which is also what stops torch fanning the build out
+    over every architecture in the ROCm wheel.
     """
-    major, minor = capability
-    return f"-gencode=arch=compute_{major}{minor},code=sm_{major}{minor}"
+    from .backend import offload_flags
+
+    return offload_flags(token, joined=True)
 
 
 def _nvcc_for_build() -> "str | None":
@@ -734,14 +753,20 @@ def _compiler_identity(command: str | None) -> dict[str, object]:
     return {"argv": argv, "path": os.path.realpath(resolved), "version": version}
 
 
-def _build_identity(torch, *, source: str, capability: tuple[int, int],
+def _build_identity(torch, *, source: str, platform: str,
                     extra_includes: list[str] | None = None):
-    """Source/toolchain identity for this module's JIT build."""
+    """Source/toolchain identity for this module's JIT build.
+
+    Keyed on the PLATFORM TOKEN, never on the compute capability: gfx1201 and
+    sm_120 both report ``(12, 0)``, so a capability-keyed identity would give
+    an AMD build and an NVIDIA build the same module name and the same build
+    directory.
+    """
     payload = {
         "extra_includes": list(extra_includes or []),
         "abi_schema": TESSERA_NVFP4_ABI_SCHEMA,
         "source_sha256": _sha256_file(source),
-        "capability": list(capability),
+        "platform": platform,
         "torch": getattr(torch, "__version__", None),
         "torch_cuda": getattr(getattr(torch, "version", None), "cuda", None),
         "python_soabi": sysconfig.get_config_var("SOABI"),
@@ -753,6 +778,28 @@ def _build_identity(torch, *, source: str, capability: tuple[int, int],
     }
     raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
     return hashlib.sha256(raw).hexdigest(), payload
+
+
+def _require_probed_platform(torch, token: str, what: str, build_dir: "str | None") -> None:
+    """Refuse a module built for a platform this process is not running.
+
+    ``TESSERA_PLATFORM_TOKEN`` exists so a box can COMPILE for a device it
+    does not have -- gfx1151 on a gfx1201 box is the RDNA3.5 build gate.  The
+    build is the point; the library is not servable here, and returning it
+    would be a claim about arithmetic made from a fact about a compiler.  The
+    refusal names both tokens and where the library landed, so the gate can
+    cite it.
+    """
+    from .backend import PlatformMismatchError, probed_platform_token
+
+    probed = probed_platform_token(torch=torch)
+    if probed == token:
+        return
+    raise PlatformMismatchError(
+        f"{what} was built for {token} ({backend_module.PLATFORM_TOKEN_ENV}) but this "
+        f"process's device is {probed}; a build for an absent device is a compile gate, "
+        f"never a serving path"
+        + (f" (library under {build_dir})" if build_dir else ""))
 
 
 def get_tessera_ext():
@@ -795,8 +842,8 @@ def _load_locked():
         _resolve_ninja()
         extra_includes = _repair_include_path(cuda_home)
         source = native_source_path(NVFP4_MODULE_PREFIX)
-        cc = _target_capability("the Tessera NVFP4 decoder (tessera_nvfp4.cu)")
-        identity, _payload = _build_identity(torch, source=source, capability=cc,
+        token = _target_platform("the Tessera NVFP4 decoder (tessera_nvfp4.cu)")
+        identity, _payload = _build_identity(torch, source=source, platform=token,
                                              extra_includes=extra_includes)
         module_name = f"{NVFP4_MODULE_PREFIX}{identity}"
         root = os.environ.get("TESSERA_EXT_DIR")
@@ -807,8 +854,15 @@ def _load_locked():
             kwargs["build_directory"] = build_dir
         if extra_includes:
             kwargs["extra_include_paths"] = extra_includes
+        backend_module.pin_build_arch(token, torch)   # one token, not two (see backend.py)
+        if backend_module.backend(torch) == "hip":
+            # Torch hipifies the .cu before compiling it and writes the .hip
+            # beside the source it was handed -- inside the checkout.  Asking
+            # it not to keep the intermediate removes that file once the build
+            # is done; .gitignore is the belt for a build that died first.
+            kwargs["keep_intermediates"] = False
         mod = load(name=module_name, sources=[source],
-                   extra_cuda_cflags=["-O3", _gencode_flag(cc)], verbose=False, **kwargs)
+                   extra_cuda_cflags=["-O3", *_offload_flags(token)], verbose=False, **kwargs)
         missing = [s for s in _SYMBOLS if not hasattr(mod, s)]
         if missing:
             raise StaleExtensionError(
@@ -821,20 +875,26 @@ def _load_locked():
                 f"{mod.tessera_nvfp4_abi_schema()}, this build needs {TESSERA_NVFP4_ABI_SCHEMA}; "
                 "clear its build directory and restart.")
         mod.__tessera_jit_identity__ = identity
-        mod.__tessera_jit_capability__ = tuple(cc)
+        mod.__tessera_jit_platform__ = token
         mod.__tessera_jit_abi_schema__ = TESSERA_NVFP4_ABI_SCHEMA
+        _require_probed_platform(torch, token, "tessera_nvfp4.cu", build_dir)
         _ext = mod
     except StaleExtensionError as exc:
         print(f"[tessera-serving] ERROR: incompatible NVFP4 decode extension -- {exc}",
+              file=sys.stderr, flush=True)
+        _ext = None
+    except backend_module.PlatformMismatchError as exc:
+        print(f"[tessera-serving] ERROR: NVFP4 decode extension not for this device -- {exc}",
               file=sys.stderr, flush=True)
         _ext = None
     except IncompleteInstallError as exc:
         print(f"[tessera-serving] ERROR: broken tessera install -- {exc}", file=sys.stderr, flush=True)
         _ext = None
     except Exception as exc:  # noqa: BLE001 -- the probe itself is soft
-        found = toolchain_report()
+        found = backend_module.toolchain_report()
         print(f"[tessera-serving] WARNING: NVFP4 decode extension unavailable "
-              f"({type(exc).__name__}: {exc}). Toolchain found: nvcc={found['nvcc']} "
+              f"({type(exc).__name__}: {exc}). Toolchain found: "
+              f"{found['backend']} compiler={found['compiler']} "
               f"ninja={found['ninja']}. To build it: {_NVCC_HINT}.",
               file=sys.stderr, flush=True)
         _ext = None
