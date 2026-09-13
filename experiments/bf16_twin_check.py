@@ -61,7 +61,22 @@ def main() -> None:
     ap.add_argument("--out", default="")
     args = ap.parse_args()
 
-    manifest = json.loads((args.wire / "tessera_gridbook_manifest.json").read_text())
+    # The exporter writes ``tessera_serving_manifest.json``; this reader was
+    # the last one left asking for the retired Gridbook lane's spelling
+    # (2026-09-02), so every check against a current export died on a missing
+    # file rather than on anything it was written to catch. The old name is
+    # still accepted because the 2026-09-02 BF16 artifacts carry it and they
+    # are still the ones a historical comparison reads.
+    for name in ("tessera_serving_manifest.json", "tessera_gridbook_manifest.json"):
+        candidate = args.wire / name
+        if candidate.is_file():
+            manifest = json.loads(candidate.read_text())
+            break
+    else:
+        raise SystemExit(
+            f"{args.wire}: no tessera_serving_manifest.json (nor the retired "
+            "tessera_gridbook_manifest.json); the twin check reads the roles the "
+            "export WROTE, so there is nothing here to check against")
     _wh, wire_index = open_all(args.wire)
     _th, twin_index = open_all(args.twin)
     twin_config = json.loads((args.twin / "config.json").read_text())

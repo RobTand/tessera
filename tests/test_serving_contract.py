@@ -53,10 +53,36 @@ def _dense_runtime_image() -> str:
     return found[0]
 
 
+#: The same placeholder for the gfx1201 image.  A second serve image entered
+#: the document with the first AMD cells (#460): the ROCm build is a different
+#: runtime from the packaged sm_121 pin, and the LAWS table reads it from the
+#: receipt that records it for the same reason the dense one does.
+_GFX1201_IMAGE_FROM_RECEIPT = "<the image the gfx1201 receipt records>"
+
+
+def _gfx1201_runtime_image() -> str:
+    """The ROCm vLLM image the two gfx1201 cells were measured on.
+
+    Read from ``docs/measurements/tessera-gfx1201-bf16-k1-served-2026-09-13.md``
+    rather than copied here.  The reference is spelled without a registry port
+    because ``runtime_image._DIGEST_REFERENCE``'s repository charset has no
+    ``:`` in it, so ``host:5000/...`` is a reference the gate cannot pin; the
+    receipt says so at length.
+    """
+    receipt = ROOT / "docs/measurements/tessera-gfx1201-bf16-k1-served-2026-09-13.md"
+    found = sorted(set(re.findall(
+        r"192\.168\.1\.107/prismaquant/vllm-rocm@sha256:[0-9a-f]{64}",
+        receipt.read_text())))
+    assert len(found) == 1, found
+    return found[0]
+
+
 def _resolved(laws: dict[str, object]) -> dict[str, object]:
     runtime = laws["runtime"]
     if runtime["image"] is _DENSE_IMAGE_FROM_RECEIPT:
         laws = {**laws, "runtime": {**runtime, "image": _dense_runtime_image()}}
+    elif runtime["image"] is _GFX1201_IMAGE_FROM_RECEIPT:
+        laws = {**laws, "runtime": {**runtime, "image": _gfx1201_runtime_image()}}
     return laws
 
 
@@ -212,6 +238,35 @@ for _regime in ("decode", "batch"):
             # docs/measurements/census/lfm25-8b-a1b-served-r4.json ``versions``;
             # tests/test_lfm_measured_cells.py ties the cells to that receipt.
             "vllm": "0.28.1rc1.dev397+gfd4a15126.d20260904", "torch": "2.13.0+cu130"}}
+
+#: The toolchain the gfx1201 receipt records, verbatim: vLLM 0.30.0.dev0 and
+#: torch 2.11.0+rocm7.2.4.git5fbd98f3, transcribed from the census receipt
+#: header rather than from a summary -- two reports of this run disagreed
+#: about whether the vLLM string carried a ``+rocm714`` suffix, and the one
+#: the container printed is the one that counts.
+_GFX1201_RUNTIME = {"image": _GFX1201_IMAGE_FROM_RECEIPT,
+                    "execution_modes": ["eager", "compiled"],
+                    "vllm": "0.30.0.dev0", "torch": "2.11.0+rocm7.2.4.git5fbd98f3"}
+
+# The first cells this document carries on a platform that is not sm_121
+# (#460).  Qwen3-0.6B on the BF16 window wire (q256 = 1792) on an RX 9070 XT
+# under WSL2, every dense Linear, eager and compiled.  Two cells and not four:
+# the measured KL is bit-identical per residency in both regimes, so residency
+# decides nothing here and one cell per regime covers ``resident|streamed``,
+# exactly as the sm_121 BF16 pair does.  The launch is the torch decode in
+# every arm, because rung 1792 is root 7 and the window-GEMV lane publishes
+# rates 1, 2 and 4 -- the same refusal that keeps the sm_121 BF16 cells on
+# ``torch.mm``, reached on a second device.
+for _regime in ("decode", "batch"):
+    _CELL_LAWS[f"tessera_bf16_k1_dense_gfx1201_{_regime}"] = {
+        "platform": "gfx1201", "family": "TESSERA_BF16_K1", "structure": "dense",
+        "regime": _regime, "rungs_q256": [1792],
+        "activation_contract": "bf16_unquantized",
+        "executes": [{"symbol": "torch.mm", "decoder": "torch_window"}],
+        "route_status": "backed_with_serve_flag", "qualification": "device_qualified",
+        "requires_plugin": "tessera",
+        "requires_serve_flags": ["TESSERA_SERVE_MODE=resident|streamed"],
+        "predicates": [], "runtime": _GFX1201_RUNTIME}
 
 
 @pytest.fixture(scope="module")

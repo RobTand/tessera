@@ -67,7 +67,9 @@ def test_one_image_carries_one_toolchain():
         by_image.setdefault(cell["runtime"]["image"], set()).add(
             runtime_contract.cell_runtime_versions(cell))
     assert all(len(versions) == 1 for versions in by_image.values()), by_image
-    assert len(by_image) == 2, "the dense pin and the EUGR MoE image, nothing else"
+    assert len(by_image) == 3, (
+        "the dense pin, the EUGR MoE image and the gfx1201 ROCm image, "
+        "nothing else")
 
 
 @pytest.mark.parametrize("image", [None, 1, "", "example/runtime:latest",
