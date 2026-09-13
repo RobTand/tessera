@@ -213,7 +213,7 @@ def fused_available() -> bool:
     allocate output register for constraint 'f'`` -- a backend fatal, not a
     Python exception, so a caller cannot catch it and fall back.  Measured on
     an RX 9070 XT, ROCm 7.2.4 / Triton 3.7.0 (tessera#472).  A HIP build of
-    ``_mul`` is the lane work, tracked in #460; until one exists this reports
+    ``_mul`` is the lane work, tracked in #481; until one exists this reports
     the honest answer and the reference Viterbi runs, which on that board is
     byte-identical to the wire GB10 ships for a weights-only encode.
     """

@@ -1620,12 +1620,25 @@ above keys on `backend` rather than `device.type`. The encoder then runs the
 reference Viterbi with no environment variable in the decision. Measured on
 gfx1201 (RX 9070 XT, ROCm 7.2.4 / Triton 3.7.0) against GB10 on one
 `TESSERA_BF16_K1_R1792` unit: the weights-only wire is byte-identical across
-the two ISAs, at 3.5x the wall time of the GB10 fused path. A Hessian-aware
+the two ISAs. Re-measured 2026-09-13 with **both boxes on this same commit**,
+each taking its own default path (#472's disposition, PrismaBuild
+`1b83796224a4` on wsl-gpu and `03754b58a001` on sparklina): blob
+`873af26a17ebcec669295a2d...`, 2 788 066 bytes, `cmp`-identical, and
+`encoder_fixture_id()` `03bbc5b1c56d55e1...` on both. The reference path costs
+wall clock and nothing else: 30.1 s warm on gfx1201 against 3.14 s warm on an
+otherwise idle GB10 -- **9.6x**, or 104 k against 1.00 M parameters per second
+on a 3 145 728-parameter unit. The 3.5x first recorded here came from sparky,
+whose PrismaBuild box window read 79.9 W mean GPU power during that encode
+against 37.3 W on the idle sparklina for the same unit -- that box was carrying
+other GPU work, and the idle figure is the one to plan with. Receipts, and why
+no power reading exists on the AMD box:
+`docs/measurements/tessera-gfx1201-master-pair-2026-09-13.md`. A Hessian-aware
 wire is **not** byte-identical across them, and the reason is upstream of the
 encoder: see `docs/measurements/tessera-gfx1201-hessian-divergence-2026-09-13.md`.
-A HIP `_mul` is lane work under #460, and porting it requires re-running the
+A HIP `_mul` is lane work under #481, and porting it requires re-running the
 fused-vs-reference bit-identity check *on* gfx1201 rather than inheriting the
-GB10 result.
+GB10 result. (#460 minted contract v24's AMD cells and closed with #474; the
+kernel port was never part of it, so it carries its own issue.)
 
 ### 3.2 Exact campaign unit intake (explicit, not a serving qualification)
 
