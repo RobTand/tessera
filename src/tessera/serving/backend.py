@@ -416,10 +416,13 @@ def platform_attests(family: str, token: str,
     says nothing, and a producer never asserts a serving fact it did not read
     (principle 14).
 
-    On the packaged ``contract_version`` 23 (#456) this answers ``True`` for
-    ``TESSERA_BF16_K1`` on ``gfx1151`` and ``gfx1201`` and ``False`` for the
-    other two families there -- the AMD lane is Tessera-16 WnA16 only.  That is
-    the document's claim, read; this module mints no eligibility of its own.
+    On the packaged ``contract_version`` 24 (#456 for the axis, #460 for the
+    first AMD cells) this answers ``True`` for ``TESSERA_BF16_K1`` on
+    ``gfx1151`` and ``gfx1201`` and ``False`` for the other two families there
+    -- the AMD lane is Tessera-16 WnA16 only.  The answer is unchanged by v24:
+    what v24 adds is CELLS on ``gfx1201``, and this predicate reads
+    ``platforms[*].executes``, which did not move.  That is the document's
+    claim, read; this module mints no eligibility of its own.
     """
     from .contract import PLATFORM_BACKED, platform_execution_contract
 

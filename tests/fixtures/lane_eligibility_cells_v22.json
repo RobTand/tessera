@@ -1,9 +1,9 @@
 {
-  "what": "The lane_eligibility.cells array of contract_version 22, recorded as a digest.",
+  "what": "The TEN sm_121 cells of contract_version 22, recorded as a digest. They are the first ten elements of lane_eligibility.cells and were the whole array until v24 appended cells on gfx1201.",
   "why_not_the_bytes": "A copy of the array would repeat the runtime image pin, and tests/test_runtime_image_pin.py refuses a second copy of that digest in any file that acts. A hash pins the same bytes without holding the pin.",
-  "source": "src/tessera/serving/runtime_contract.json at contract_version 22 (origin/master 3ec01f26)",
-  "lifted_by": "json.JSONDecoder().raw_decode at the offset of the 'cells' key, then .rstrip('\\n')",
+  "source": "src/tessera/serving/runtime_contract.json at contract_version 22 (origin/master 3ec01f26); re-spanned at contract_version 24 (#460) without re-measuring any cell",
+  "lifted_by": "json.JSONDecoder().raw_decode ten times from the byte after the 'cells' array's opening bracket; the span is the bytes those ten elements occupy, separators and whitespace included, with no trailing comma",
   "cells": 10,
-  "bytes": 19127,
-  "sha256": "c75c845e5b3d9508491e56c4b9ff8525c681adb12b8ab2dfcfcea79294826886"
+  "bytes": 19122,
+  "sha256": "dc1473800af8e265817505215c6afa3e5586ac1162bb14027346ce2a1b70e3b3"
 }
