@@ -128,7 +128,8 @@ def _require_platform_backs(family: str, context: str) -> None:
     """
     from .backend import require_platform_backs
 
-    require_platform_backs(family, context, torch=torch)
+    require_platform_backs(family, context, torch=torch,
+                           platform=_platform_token(), backend_name=_backend())
 
 
 def _load_native_ops(context: str) -> None:

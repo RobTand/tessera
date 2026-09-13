@@ -413,8 +413,12 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
     # what "before any HIP kernel is touched" means on this path.
     from .backend import require_platform_backs
     from .contract import PAYLOAD_FAMILY_BY_ROUTE
+    from .telemetry import record_platform
 
-    require_platform_backs(PAYLOAD_FAMILY_BY_ROUTE[family], f"tessera target {prefix!r}")
+    payload_family = PAYLOAD_FAMILY_BY_ROUTE.get(family)
+    if payload_family is not None:
+        require_platform_backs(payload_family, f"tessera target {prefix!r}")
+    record_platform()   # latched eagerly: see lane.build_tessera_method
     if mode != MODE_RESIDENT:
         raise ValueError(
             f"tessera target {prefix!r}: the expert route serves {MODE_RESIDENT!r} only. A "

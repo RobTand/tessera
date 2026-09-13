@@ -159,13 +159,25 @@ def record_platform() -> str:
     serve is not telemetry.
     """
     global _PLATFORM
-    if _PLATFORM is None:
-        try:
-            from .backend import platform_of_this_process
+    if _PLATFORM is not None:
+        return _PLATFORM
+    # NEVER PROBE A DEVICE INSIDE A TRACED BODY (#113 is the precedent).
+    # ``emit_route`` is called from ``apply()``, which vLLM captures with
+    # ``aot_compile_fullgraph``; ``torch.cuda.get_device_capability`` then
+    # becomes an FX node over fake tensors and Dynamo raises while COMPILING
+    # -- where ``emit_route``'s ``except Exception`` cannot reach it, so the
+    # engine core never initialises.  ``is_compiling()`` is constant-folded,
+    # so under compile this is a literal "" and the probe is dead code.  In a
+    # real serve it is never reached: ``lane.build_tessera_method`` latches
+    # the token at model build, eagerly, before any forward is traced.
+    if torch.compiler.is_compiling():
+        return ""
+    try:
+        from .backend import platform_of_this_process
 
-            _PLATFORM = platform_of_this_process(torch) or ""
-        except Exception:  # noqa: BLE001 -- a record with no platform is honest
-            _PLATFORM = ""
+        _PLATFORM = platform_of_this_process(torch) or ""
+    except Exception:  # noqa: BLE001 -- a record with no platform is honest
+        _PLATFORM = ""
     return _PLATFORM
 
 

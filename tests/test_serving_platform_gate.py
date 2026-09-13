@@ -46,6 +46,18 @@ AMD_PLATFORMS = ("gfx1151", "gfx1201")
 QUANTIZED = ("TESSERA_E4M3_K1", "TESSERA_E2M1_K2")
 
 
+@pytest.fixture(autouse=True)
+def _unlatched_platform():
+    """The telemetry stamp is a PROCESS constant, so a stub must not outlive
+    its test: every load seam latches it, and a cached ``gfx1201`` would
+    follow the stub into whatever ran next."""
+    from tessera.serving import telemetry
+
+    telemetry.reset_platform_for_tests()
+    yield
+    telemetry.reset_platform_for_tests()
+
+
 def _stub_platform(monkeypatch, token, hip=True):
     """Make every reader of "which platform is this" answer ``token``.
 

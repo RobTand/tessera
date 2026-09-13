@@ -455,7 +455,9 @@ def platform_of_this_process(torch=None) -> "str | None":
 
 
 def require_platform_backs(family: str, context: str, *, torch=None,
-                           contract: "Mapping[str, Any] | None" = None) -> None:
+                           contract: "Mapping[str, Any] | None" = None,
+                           platform: "str | None" = None,
+                           backend_name: "str | None" = None) -> None:
     """Refuse ``family`` where the pinned contract attests no route for it.
 
     ``family`` is a PAYLOAD family (``TESSERA_E4M3_K1``), the vocabulary the
@@ -467,18 +469,27 @@ def require_platform_backs(family: str, context: str, *, torch=None,
     Raises ``ext.NativeKernelUnavailableError`` -- the same class the ABI
     probe raises, because it is the same refusal reached earlier: there is no
     native route for these bytes on this device.
+
+    ``platform`` and ``backend_name`` let a caller supply the identity it
+    already holds instead of re-probing.  ``native_ops`` passes its own two
+    accessors, so the module keeps the seams its tests stub while the
+    DECISION and the MESSAGE stay here -- one reader of the platform table,
+    and no two spellings of one refusal.
     """
     from .contract import PLATFORM_UNBACKED, platform_execution_contract
     from .ext import NativeKernelUnavailableError
 
-    platform = platform_of_this_process(torch)
+    if platform is None:
+        platform = platform_of_this_process(torch)
     if platform is None:
         return
     state, _ = platform_execution_contract(family, platform, contract)
     if state != PLATFORM_UNBACKED:
         return
+    if backend_name is None:
+        backend_name = backend(torch)
     raise NativeKernelUnavailableError(
         f"{context}: the pinned runtime contract publishes {family} as unbacked on "
-        f"platform {platform!r} (backend {backend(torch)!r}): its lane_eligibility platform "
+        f"platform {platform!r} (backend {backend_name!r}): its lane_eligibility platform "
         "entry executes null for this family, so there is no native route for these bytes "
         "on this device. This is an attested absence, not a missing build artifact.")
