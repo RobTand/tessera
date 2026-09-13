@@ -150,6 +150,6 @@ def test_a_checkpoint_states_every_live_storage_the_capture_ever_bound_to_an_own
                       if row["allocate_index"] <= index and row["observed_owners"]
                       and (row["free_completed_index"] is None or index < row["free_completed_index"]))
         assert [entry["allocation_id"] for entry in checkpoint["storages"]] == live
-        assert checkpoint["owner_count"] == sum(len(rows[identity]["observed_owners"]) for identity in live)
+        assert checkpoint["owner_count"] == len({owner for identity in live for owner in rows[identity]["observed_owners"]})
         assert checkpoint["unique_owned_storage_bytes"] == sum(rows[identity]["bytes"] for identity in live)
         assert checkpoint["census_owner_count"] >= 0 and checkpoint["census_storage_count"] >= 0

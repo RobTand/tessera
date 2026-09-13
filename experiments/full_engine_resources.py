@@ -643,7 +643,9 @@ def _project_checkpoints(checkpoints, rows):
         checkpoint["census_owner_count"] = checkpoint["owner_count"]
         checkpoint["census_storage_count"] = len(checkpoint["storages"])
         checkpoint["storages"] = storages
-        checkpoint["owner_count"] = sum(len(entry["owners"]) for entry in storages)
+        # A set, as the consumer counts it: an owner on two backings is one
+        # owner and one duplicate-alias refusal, not two owners.
+        checkpoint["owner_count"] = len({owner for entry in storages for owner in entry["owners"]})
         checkpoint["unique_owned_storage_bytes"] = sum(entry["bytes"] for entry in storages)
 
 
