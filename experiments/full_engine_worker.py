@@ -422,7 +422,23 @@ class ResourceCaptureWorker(Worker):
             return super().execute_model(scheduler_output)
         finally:
             if self._resource_active:
-                self._resource_checkpoint(f"execute:{self._resource_calls}:end")
+                end = f"execute:{self._resource_calls}:end"
+                taken = self._resource_checkpoint(end)
+                open_step = self._resource_open_step
+                if (taken and open_step is not None and open_step[0] == self._resource_calls
+                        and scheduler_output.total_num_scheduled_tokens == 0):
+                    # A step that schedules no token runs no forward and is
+                    # never sampled: the engine core takes the runner's empty
+                    # output as the step's result and skips sample_tokens
+                    # (vllm/v1/engine/core.py, step()). Such a step is the
+                    # request-retirement pass after the last generated token,
+                    # and its whole extent is this execute call. Closing it
+                    # here is not the sampler fallback the comment in
+                    # sample_tokens refuses -- there is no sampler to wait for,
+                    # and the recorded scheduler output says so.
+                    self._resource_open_step = None
+                    self._resource_recorder.declare_step_interval(
+                        f"step:{open_step[0]}", begin=open_step[1], end=end)
             self._resource_active = False
 
     def sample_tokens(self, grammar_output):
@@ -445,8 +461,11 @@ class ResourceCaptureWorker(Worker):
                     # The step spans the sampler: sampling is per-step work, and
                     # a step ending at execute:N:end would place the sampler's
                     # allocations outside every step. There is no fallback to
-                    # that label -- a step whose sampler never ran stays
-                    # undeclared and fails the coverage claim closed.
+                    # that label -- a step that scheduled tokens and whose
+                    # sampler never ran stays undeclared and fails the coverage
+                    # claim closed. The one step with no sampler by
+                    # construction, the zero-token retirement pass, is closed
+                    # in execute_model from its own recorded scheduler output.
                     self._resource_recorder.declare_step_interval(
                         f"step:{open_step[0]}", begin=open_step[1], end=end)
         return result

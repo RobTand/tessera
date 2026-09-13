@@ -565,3 +565,22 @@ The per-step batch descriptor (`GPUModelRunner.execute_model_state`) is not a
 persistent runtime root: the runner rebuilds it every step, so naming its
 tensors by path bound one owner id to a new backing each step, which the
 consumer refuses as a duplicate alias. Its allocations stay unowned.
+
+## The engine step after the last token
+
+The pinned engine core (`vllm/v1/engine/core.py`, `step()`) keeps stepping while
+the scheduler still holds a request, and the request that just produced its
+last token is still held for one more step: `execute_model` is called with a
+`SchedulerOutput` that schedules no token, the runner returns its empty output
+without a forward, and `sample_tokens` is never called. Measured on the first
+served-artifact captures: a `max_tokens=2` request executes three armed calls,
+the third with `total_num_scheduled_tokens == 0` and no `sample:3:end`
+checkpoint (capture a4 of receipts `399-qwen3-0.6b-20260913`).
+
+Two consequences are wired in. The plan declares `generated_tokens + 1`
+execute calls (`declared_steps`) and records every armed call, declared or
+not, with its scheduler output, so a capture that executes beyond its budget
+names the step it missed. And a declared step that scheduled no token is
+closed at its own `execute:N:end`: that is the step's whole extent, not a
+sampler fallback -- a step that scheduled tokens and was never sampled still
+stays undeclared and holds the coverage claim open.
