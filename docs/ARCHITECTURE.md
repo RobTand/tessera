@@ -362,6 +362,9 @@ input returns an empty output. Missing/duplicate/late wires, invalid IDs and
 parallel or compiled configurations refuse. This research lifecycle does not
 establish full-model residency, trained-expert quality or production eligibility.
 
+Re-stamped 2026-09-13 for the opt-in GLM5-next stock-vLLM CUSTOM attention
+backend (Tessera #489, §5.1.1); no runtime cell is promoted.
+
 ## 1. Scope
 
 Re-stamped 2026-09-07 for the selected-expert research control (#415):
@@ -4275,10 +4278,53 @@ group, `tessera = tessera.serving:register`. vLLM loads every plugin in that
 group at start-up; `register` imports vLLM lazily and registers
 `quant_method="tessera"` (`src/tessera/serving/__init__.py`). Nothing the
 operator passes selects the plugin: the checkpoint's `quantization_config`
-names the method, and the only operator knob is `TESSERA_SERVE_MODE`
+names the method, and the residency knob is `TESSERA_SERVE_MODE`
 (`resident` or `streamed`, `src/tessera/serving/lane.py`). The entry point
 has to resolve without vLLM present, because the producer imports the same
 package on a box that has none; `tests/test_packaging.py` holds it to that.
+
+### 5.1.1 Research GLM5-next NoPE attention on stock SM121
+
+`TESSERA_RESEARCH_GLM53_NOPE=1` asks the same entry point to register
+`TesseraGLM53NoPEBackend` as vLLM's public `AttentionBackendEnum.CUSTOM`.
+Selection additionally requires `--enforce-eager --attention-backend CUSTOM
+--kv-cache-dtype fp8_ds_mla --kernel-config '{"enable_flashinfer_autotune":false}'`.
+Normal selection is eager-only and refuses non-NONE compilation or CUDA graph
+modes. The four-layer whole-engine graph arm differed by 0.67253 logprob nats
+from eager despite global compile mode NONE in both arms; isolated attention
+graph equality does not qualify the model graph path.
+This experimental attention extension is separate from checkpoint quantization
+selection and changes no stock backend registration. Another plugin's CUSTOM
+registration is refused. Without the environment setting, normal plugin loading
+is unchanged.
+
+The extension requires SM121 and GLM5-next text geometry: latent rank512,
+NoPE256, RoPE0, index_topk2048 and index_kpool4. Context parallelism is refused.
+It pins vLLM `0.28.1rc1.dev397+gfd4a15126.d20260904`, FlashInfer0.6.18 and the
+SHA256 of the reused stock source files from image
+`eugr/spark-vllm@sha256:0afec8d4f79f44685a1ddf758659d33aef3b0f3ec9068e5a7cd1108d30e5581c`.
+Runtime source guards are compatibility checks, not device qualification.
+
+Stock vLLM still constructs metadata, maps sparse indices, writes the packed
+656-byte FP8 KV records, and loads the model. Tessera supplies the writer's
+required zero64-wide RoPE field, which the native FlashInfer NoPE reader ignores.
+Its forward path preserves physical cache page strides through a zero-copy
+64-token native page view, supplies compacted valid counts and actual kpool
+capacity, and explicitly zeroes empty-query outputs. Padding invalid indices to
+4096 before stock compaction selects its deterministic single-program row path;
+truncating the compacted output back to2176 retains every valid candidate.
+The underlying FlashInfer kernel remains stock. Both autotune paths are disabled
+through stock `kernel_config`, without warmup or platform source edits.
+
+`experiments/glm53_nope_check.py --stock` reproduces the original cache-write
+refusal. The default arm compares native attention against FP32 softmax over identically
+decoded FP8 cache and query values, including empty, sparse-hole,2048 and
+expanded2049 candidate rows, and checks repeat/capture equality. Stock split-K
+and MG query quantization uses power-of-two scales; SWAPAB prefill uses arbitrary
+FP32 scales. The check records the selected variant and separately reports
+deviation from unquantized BF16 queries. `--heads 32 --repeat 13 --padded` covers
+the TP2-shaped prefill kernel and hybrid page strides. This does not
+measure full-model quality or qualify routed MoE, TP2, or a runtime contract cell.
 
 ### 5.2 What the wheel ships besides Python
 

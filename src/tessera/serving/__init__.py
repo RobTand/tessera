@@ -62,3 +62,16 @@ def register() -> None:
     except ValueError:
         # Already registered.
         pass
+
+    # Separate, explicit research attention extension. It does not change the
+    # quantization contract or replace a stock attention enum implementation.
+    import os
+
+    if os.environ.get("TESSERA_RESEARCH_GLM53_NOPE") == "1":
+        from vllm.v1.attention.backends.registry import AttentionBackendEnum, register_backend
+
+        backend = AttentionBackendEnum.CUSTOM
+        path = "tessera.serving.glm53_nope.TesseraGLM53NoPEBackend"
+        if backend.is_overridden() and backend.get_path() != path:
+            raise RuntimeError("Tessera GLM53 NoPE refuses to replace another CUSTOM backend")
+        register_backend(backend, path)
