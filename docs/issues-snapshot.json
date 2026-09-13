@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-13T18:47:49Z",
+ "generated": "2026-09-13T19:31:00Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -2056,7 +2056,7 @@
     "title": "Three defects in the fixed-resource admission consumer: a discarded attestation, a dropped placement obligation, and an unattested v1 path"
    },
    "561": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Two gates two flags, an emitter that reports both, and a binding that names its route class (#565)"
    },
    "562": {
@@ -2072,7 +2072,7 @@
     "title": "Pin the GLM-5.3 MLA NoPE patch set in the repo, with its qualification scope attached"
    },
    "565": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Two admission gates, the obligation the gate demands, an emitter that reports both, and a route field that names its class"
    },
    "566": {
@@ -2083,9 +2083,57 @@
     "state": "OPEN",
     "title": "The fp4 render and the fp4 execution are different objects: decide which side is authoritative before any fp4 number is published"
    },
+   "568": {
+    "state": "OPEN",
+    "title": "Price the fp4 route where it could win: sweep M until the device is loaded"
+   },
+   "569": {
+    "state": "OPEN",
+    "title": "Let the prefill frontier sweep run on a table whose fixed charge is refused, by reading none of the refused terms"
+   },
    "57": {
     "state": "CLOSED",
     "title": "Add the exact MXFP4 -> MXFP8 widening transcode"
+   },
+   "570": {
+    "state": "OPEN",
+    "title": "An fp4 table's native runs bind to full-engine bytes a single-artifact engine run cannot have (debt D39, leg b)"
+   },
+   "571": {
+    "state": "OPEN",
+    "title": "Let the prefill sweep run on a table whose fixed charge is refused, by reading none of the refused terms"
+   },
+   "572": {
+    "state": "OPEN",
+    "title": "Past D37 the allocator menu gate refuses every rung the only real runtime table prices: 0 of 16 attested by the pinned Tessera runtime"
+   },
+   "573": {
+    "state": "OPEN",
+    "title": "Report where the fp4 route crosses fp8, with the device actually loaded"
+   },
+   "574": {
+    "state": "OPEN",
+    "title": "Read the runtime's quantizer attestation, gate the activation representation on codes, and delete the tolerance derived from nothing"
+   },
+   "575": {
+    "state": "OPEN",
+    "title": "Principle 14's serve-side leg is unenforced: validate_native_export has no emit_route check since the Gridbook lane retired"
+   },
+   "576": {
+    "state": "OPEN",
+    "title": "A route's own kernel extension is not a coordinate of the box (#566)"
+   },
+   "577": {
+    "state": "OPEN",
+    "title": "The NVFP4 route spends more time scaling its output than computing it: a full M x N read-modify-write to apply one scalar"
+   },
+   "578": {
+    "state": "OPEN",
+    "title": "BF16 gate_proj/up_proj dispatch an sm80 CUTLASS schedule on sm_121, and nothing refuses it"
+   },
+   "579": {
+    "state": "OPEN",
+    "title": "Read the runtime's quantiser table, gate the activation on codes, and derive the tolerance"
    },
    "58": {
     "state": "CLOSED",
@@ -3542,7 +3590,7 @@
     "title": "After #374, one refusal test is 57% of the E4M3 file: is the encode reached before the grammar check?"
    },
    "385": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Encoder: batch many same-shape units (and rungs) into one LDLQ trellis call \u2014 the campaign runs at 16 W of 140 W because each Viterbi launch is 32 columns wide"
    },
    "386": {
@@ -3974,8 +4022,20 @@
     "title": "HIP `_mul` for the fused window Viterbi: gfx1201 runs the reference path at 9.6x the wall time"
    },
    "482": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Qualify the gfx1201 weights-only encode on one commit, and give the HIP kernel its own issue"
+   },
+   "483": {
+    "state": "OPEN",
+    "title": "Window Viterbi front residency: BF16_K1@1792 sits at 64% of the GB10 envelope and gained 1.01x from batching"
+   },
+   "484": {
+    "state": "OPEN",
+    "title": "Publish what the fp4 activation quantizer actually emits: a generated attestation table in runtime_contract.json"
+   },
+   "485": {
+    "state": "OPEN",
+    "title": "Publish what the fp4 activation quantizer emits (contract v25)"
    },
    "49": {
     "state": "CLOSED",
