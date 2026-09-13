@@ -583,4 +583,7 @@ not, with its scheduler output, so a capture that executes beyond its budget
 names the step it missed. And a declared step that scheduled no token is
 closed at its own `execute:N:end`: that is the step's whole extent, not a
 sampler fallback -- a step that scheduled tokens and was never sampled still
-stays undeclared and holds the coverage claim open.
+stays undeclared and holds the coverage claim open. Measured on capture a5 of
+the same receipts: `step_coverage` declared 3, executed 3, state `complete`,
+with `step:3` spanning `execute:3:begin` to `execute:3:end`, and PrismaQuant's
+`step coverage is 'partial'` refusal gone while every other refusal kind stayed.
