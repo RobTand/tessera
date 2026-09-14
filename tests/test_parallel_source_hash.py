@@ -94,6 +94,9 @@ def test_unreadable_shard_refuses_with_the_serial_exception(tmp_path, monkeypatc
 
 
 def test_encoder_fixture_id_built_on_a_helper_thread_is_the_same_id(monkeypatch):
+    # The fixture id encodes through tessera.export, which imports torch; the
+    # rest of this module is bytes-only and stays in the pure lane.
+    pytest.importorskip("torch")
     first = ei.encoder_fixture_id()
     monkeypatch.setattr(ei, "_MEMO", [])
     seen = []
