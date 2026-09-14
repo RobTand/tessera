@@ -49,8 +49,11 @@ trap serve_lock_release EXIT
 # "architecture failed to be inspected".
 CACHE=${CACHE:-$TMPDIR/nvfp4_moe_route_load_probe/cache}
 mkdir -p "$WORK" "$CACHE" "$(dirname "$OUT")"
+# pyproject.toml rides beside src: ``tessera.__init__`` refuses to guess its
+# version (a compile-cache key and a receipt field) without it.
 docker run --rm --gpus all --ipc=host \
   -v "$TS/src":/work/src:ro -v "$TS/experiments":/work/experiments:ro \
+  -v "$TS/pyproject.toml":/work/pyproject.toml:ro \
   -v "$WORK":/work/run -v "$CACHE":/work/cache -w /work \
   -e TMPDIR=/work/run -e TESSERA_SERVE_MODE=resident \
   -e FLASHINFER_WORKSPACE_BASE=/work/cache -e TORCH_EXTENSIONS_DIR=/work/cache/torch_extensions \

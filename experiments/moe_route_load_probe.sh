@@ -36,8 +36,11 @@ serve_lock_acquire || exit $?
 trap serve_lock_release EXIT
 
 mkdir -p "$WORK" "$(dirname "$OUT")"
+# pyproject.toml rides beside src: ``tessera.__init__`` refuses to guess its
+# version (a compile-cache key and a receipt field) without it.
 docker run --rm --gpus all --ipc=host \
   -v "$TS/src":/work/src:ro -v "$TS/experiments":/work/experiments:ro \
+  -v "$TS/pyproject.toml":/work/pyproject.toml:ro \
   -v "$WORK":/work/run -w /work \
   -e TMPDIR=/work/run -e TESSERA_SERVE_MODE=resident \
   --entrypoint python3 "$IMAGE" \
