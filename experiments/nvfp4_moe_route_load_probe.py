@@ -240,7 +240,10 @@ def build_stack_from_export(device, workdir, seed=0, q256=Q256, x_scale=1.0):
                 member, = parse_fused(bytes(blob.tolist()))
                 parsed = parse_unit_artifact(member.blob, device=str(device))
                 stock[(expert, name)] = materialize_stock(parsed.unit, parsed.forests, DEFAULT_CODE)
-    if read_scales != scales:
+    # The exporter writes each scale as a float32 tensor, so compare at float32:
+    # the Python floats in ``scales`` carry bits the wire cannot.
+    given = {key: float(torch.tensor(value, dtype=torch.float32)) for key, value in scales.items()}
+    if read_scales != given:
         raise RuntimeError("the exporter wrote different input_global_scale values than it was given")
     return wires, scheme, source, stock, read_scales, manifest
 
