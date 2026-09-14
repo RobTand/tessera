@@ -1175,9 +1175,10 @@ def shard_parsed_roles(parsed_roles, plan: ShardPlan):
     function looks it up by name and cuts; it computes no offsets of its own.
     On the column axis there is one range and every role gets it.
 
-    What comes back is a list of ``ParsedUnit``s again -- re-derived from the
-    shard's own bytes -- because that is what every route's ``prepare_*_module``
-    consume, and because a shard's planes are its own.  A role this rank holds
+    What comes back is a list of ``ParsedUnit``s again -- the cut unit, whose
+    manifest is written and read back only if something asks for it (see
+    ``_reparse_shard``) -- because that is what every route's
+    ``prepare_*_module`` consume, and because a shard's planes are its own.  A role this rank holds
     entire is passed through as THE SAME OBJECT, so a replicated k costs no
     round trip.
     """
