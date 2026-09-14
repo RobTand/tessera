@@ -194,15 +194,15 @@ MOE_SOURCE_LAYOUTS = (
 #: absent from it is refused by name rather than served through another
 #: family's decode.
 #:
-#: Only ``TESSERA_FP8`` is here, and the absences are measured rather than
-#: preferred.  ``TESSERA_NVFP4``: the pinned build's fused-MoE oracle resolves
-#: an NVFP4 expert arm only under a ``swiglu_limit`` clamp
-#: (``docs/measurements/nvfp4-moe-oracle-2026-09-02.md``), which changes the
-#: arithmetic the experts execute, so there is no NVFP4 expert tile to decode
-#: to that is the same object the dense NVFP4 route serves.  ``TESSERA_BF16``:
-#: a 16-bit expert stack is the passthrough vLLM already serves through
-#: ``ignore``, and a route that decoded a wire to it would spend the wire's
-#: bytes to arrive where no wire is needed.
+#: Only ``TESSERA_FP8`` is here. ``TESSERA_NVFP4`` has no Tessera expert
+#: builder or served qualification. The pinned vLLM oracle *does* resolve a
+#: clamp-capable NVFP4 fused-MoE backend on sm121; that constructed-config
+#: result is not a Tessera load, generation, or quality receipt
+#: (``docs/measurements/nvfp4-moe-oracle-2026-09-02.md``). ``TESSERA_BF16``
+#: is a compressed BF16-alphabet wire with a per-row scale; this build has no
+#: expert builder for it. Its dense route keeps that scale for the output
+#: epilogue, whereas a separately declared research route could fold it into
+#: BF16 weights. Plain source BF16 passthrough uses ``ignore``.
 MOE_BUILDERS: dict[str, tuple[str, str]] = {
     TESSERA_FP8: ("tessera.serving.moe_route", "build_tessera_moe_method"),
 }
@@ -740,11 +740,13 @@ def refuse_a_family_with_no_expert_route(route: str, target: str) -> None:
         return
     raise ValueError(
         f"tessera target {target!r}: {route} has no expert route in this build "
-        f"(scheme.MOE_BUILDERS names {sorted(MOE_BUILDERS)}). The absences are measured, "
-        "not preferred: on this build the fused-MoE oracle resolves an NVFP4 expert arm "
-        "only under a swiglu_limit clamp that changes the arithmetic the experts execute "
-        "(docs/measurements/nvfp4-moe-oracle-2026-09-02.md), and a 16-bit expert stack is "
-        "the passthrough quantization_config.ignore already gives. An expert stack is "
+        f"(scheme.MOE_BUILDERS names {sorted(MOE_BUILDERS)}). The NVFP4 oracle "
+        "resolves a clamp-capable backend on sm121, but Tessera has no NVFP4 "
+        "expert builder or served qualification "
+        "(docs/measurements/nvfp4-moe-oracle-2026-09-02.md); the compressed "
+        "TESSERA_BF16 expert wire has no expert builder in this build. Plain "
+        "source BF16 passthrough is separate and uses "
+        "quantization_config.ignore. An expert stack is "
         "refused rather than decoded through another family's tile: plan it on a family "
         "with a route, or leave it out to pass it through as BF16.")
 
