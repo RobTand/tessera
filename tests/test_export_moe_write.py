@@ -145,6 +145,9 @@ def test_research_export_preserves_wires_and_snapshots_execution(tmp_path, monke
     assert manifest["research_selected_moe"] == {
         "input_sha256": hashlib.sha256(text.encode()).hexdigest(),
         "input_utf8": text, "config": block}
+    assert manifest["serving_gate"]["research_selected_decoder_only"] == [
+        {"target": STACK, "family": "TESSERA_FP8", "grid": "E4M3",
+         "q256": 1024, "qualification": "research_decoder_only"}]
     if partition:
         assert manifest["export_identity"]["options"]["research_selected_moe"] == manifest["research_selected_moe"]
         # Numeric equality must not accept JSON floats in an integer-only carrier.

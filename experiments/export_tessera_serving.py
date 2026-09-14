@@ -2426,8 +2426,9 @@ def main():
         # What the SERVING gate decided, in the artifact rather than in a shell
         # history: which contract version bounded it, whether the run carried
         # the override, and the verbatim refusal for every wire written anyway.
-        # An empty list is the shippable state; a non-empty one says this
-        # checkpoint will not load under the plugin build named here.
+        # A production cell is not implied by empty `unserveable_overrides`:
+        # research-selected routed targets are recorded separately as
+        # decoder-only, with device qualification still absent.
         "serving_gate": {
             "contract": "tessera/serving/runtime_contract.json",
             "contract_version": load_serving_contract()["contract_version"],
