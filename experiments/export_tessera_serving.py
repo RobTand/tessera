@@ -1932,14 +1932,17 @@ def main():
             options[key + "_sha256"] = sha256_file(path) if path else None
         if cache_path is not None:
             options[cache_scope + "_sha256"] = sha256_file(cache_path)
-        identity = export_identity(args.src, options, args.partition_runtime_image,
-                                   Path(__file__).resolve().parents[1])
-        from tessera.encoder_identity import encoder_fixture_id
-        identity["encoder_fixture_id"] = encoder_fixture_id().hex()
         owns = lambda name: partition_owner(name, count) == index
         selected = sorted(name for names in shards.values() for name in names if owns(name))
         if not selected:
             raise SystemExit(f"partition {index}/{count} owns no source tensors")
+        # Stamp only the shards this part reads tensors from (tessera#495): the
+        # merge proves each stamp against its one pass over the whole source.
+        read_shards = sorted(shard for shard, names in shards.items() if any(map(owns, names)))
+        identity = export_identity(args.src, options, args.partition_runtime_image,
+                                   Path(__file__).resolve().parents[1], shards=read_shards)
+        from tessera.encoder_identity import encoder_fixture_id
+        identity["encoder_fixture_id"] = encoder_fixture_id().hex()
         partition_record = {"schema": PART_SCHEMA, "index": index, "count": count,
                             "identity": identity, "source_tensors": selected}
         shards = {shard: [name for name in names if owns(name)] for shard, names in shards.items()}

@@ -101,7 +101,16 @@ def source_identity(source: Path) -> dict:
             "tensors": tensors}
 
 
-def export_identity(source: Path, options: dict, runtime_image: str, root: Path) -> dict:
+def export_identity(source: Path, options: dict, runtime_image: str, root: Path,
+                    shards=None) -> dict:
+    """What every serving part of one export must agree on, plus its own input.
+
+    ``source`` is :func:`source_part_identity` over ``shards`` -- the shards
+    this part reads encoded tensors from, every shard when ``None`` -- so a
+    part costs one pass over its own input rather than over the whole
+    checkpoint (tessera#495). :func:`merge_serving_parts` takes the whole
+    source once and proves every part's stamp against that pass.
+    """
     if not re.fullmatch(r"[^\s]+@sha256:[0-9a-f]{64}", runtime_image or ""):
         raise ValueError("partition runtime image must be an exact repository@sha256 digest")
     digest = hashlib.sha256()
@@ -113,7 +122,7 @@ def export_identity(source: Path, options: dict, runtime_image: str, root: Path)
         digest.update(str(path.relative_to(root)).encode() + b"\0")
         digest.update(path.read_bytes())
         digest.update(b"\0")
-    return {"source": source_identity(source), "code_sha256": digest.hexdigest(),
+    return {"source": source_part_identity(source, shards), "code_sha256": digest.hexdigest(),
             # The dispatch command pins this image. Its observed runtime identity
             # belongs to the PrismaBuild receipt, not a self-attestation here.
             "runtime_image": runtime_image, "options": options}
@@ -302,9 +311,13 @@ def merge_serving_parts(paths, out: Path, source: Path, *, move=False) -> dict:
             [r[0] for r in loaded] != list(range(count)) or
             any(r[2]["count"] != count for r in loaded)):
         raise ValueError("partition coverage must contain each INDEX in 0..COUNT-1 exactly once")
+    # Each part stamps only the shards it read, so ``source`` differs between
+    # honest parts; it is proved against --source below, and everything else
+    # in the identity must be equal.
+    shared = lambda ident: {k: v for k, v in ident.items() if k != "source"}
     identity = loaded[0][2]["identity"]
-    if any(row[2]["identity"] != identity for row in loaded[1:]):
-        raise ValueError("serving partition identity mismatch (source, plan, encoder or runtime)")
+    if any(shared(row[2]["identity"]) != shared(identity) for row in loaded[1:]):
+        raise ValueError("serving partition identity mismatch (plan, encoder or runtime)")
     research_execution = None
     if "research_selected_moe" in identity["options"]:
         research_execution = ResearchSelectedMoeInput.from_record(
@@ -313,9 +326,11 @@ def merge_serving_parts(paths, out: Path, source: Path, *, move=False) -> dict:
                         if research_execution is not None else {})
     execution_record = ({"research_selected_moe": research_execution.record()}
                         if research_execution is not None else {})
-    if source_identity(source) != identity["source"]:
-        raise ValueError("source identity changed since partition export")
-    expected_source = set(identity["source"]["tensors"])
+    # The one pass over the whole source; every part's stamp is held to it.
+    whole = source_part_identity(source)
+    for rank, path, part, *_ in loaded:
+        prove_source_part(part["identity"].get("source"), whole, f"partition {rank}")
+    expected_source = set(whole["tensors"])
     source_config = json.loads((source / "config.json").read_text())
     source_config.pop("quantization_config", None)
     base_format = loaded[0][4]["quantization_config"]["format"]
@@ -336,6 +351,13 @@ def merge_serving_parts(paths, out: Path, source: Path, *, move=False) -> dict:
         expected = {n for n in expected_source if partition_owner(n, count) == rank}
         if owned != expected or len(owned) != len(part["source_tensors"]) or covered & owned:
             raise ValueError(f"partition {rank}: source tensor coverage disagrees with ownership")
+        # A part that stamped fewer shards than its tensors live in left bytes
+        # it read unproved; one that stamped more claims input it did not use.
+        read = {whole["tensors"][name] for name in owned}
+        if read != set(part["identity"]["source"]["files"]):
+            raise ValueError(f"partition {rank}: source stamp coverage disagrees with the shards "
+                             f"its source tensors live in: stamped "
+                             f"{sorted(part['identity']['source']['files'])[:5]}, read {sorted(read)[:5]}")
         covered.update(owned)
         qconfig = config["quantization_config"]
         # Validate every carrier before equality: JSON floats and booleans can
@@ -413,7 +435,9 @@ def merge_serving_parts(paths, out: Path, source: Path, *, move=False) -> dict:
     manifest["modules"] = modules
     manifest["merged_from"] = [{"index": r[0], "path": str(r[1]),
                                  "output_sha256": r[2]["output_sha256"]} for r in loaded]
-    manifest["export_identity"] = identity
+    # The published artifact records the whole source this merge proved, not
+    # part 0's subset.
+    manifest["export_identity"] = {**identity, "source": whole}
     moe = manifest["routed_moe"]
     for field in ("modules", "quantized_stacks"):
         moe[field] = sorted({name for row in loaded for name in row[3]["routed_moe"][field]})
@@ -446,11 +470,12 @@ def merge_serving_parts(paths, out: Path, source: Path, *, move=False) -> dict:
 
 #: The block a shard-split part stamps for the checkpoint it was cut from
 #: (``tessera_config.json`` ``source``, written by
-#: ``tessera.export.export_checkpoint_streaming``; tessera#300).  The same
-#: binding ``source_identity`` gives a serving part, restricted to the shards
-#: the part read, so the legacy merge (``experiments/merge_tessera_parts.py``)
-#: proves its parts against ``--source`` the way ``merge_serving_parts`` does
-#: rather than comparing shard filenames.
+#: ``tessera.export.export_checkpoint_streaming``; tessera#300), and the
+#: ``source`` a serving part stamps in ``export_partition.identity``
+#: (tessera#495): ``source_identity``'s binding restricted to the shards the
+#: part read, so both merges (``experiments/merge_tessera_parts.py`` and
+#: ``merge_serving_parts``) prove their parts against one pass over
+#: ``--source`` rather than every part re-hashing the whole checkpoint.
 SOURCE_PART_SCHEMA = "tessera.source-part.v1"
 
 
@@ -530,6 +555,45 @@ def source_part_identity(source: Path, shards=None) -> dict:
             "auxiliary_sha256": {p.name: sha256_file(p) for p in auxiliary},
             "files": {name: sha256_file(source / name) for name in chosen},
             "tensors": tensors}
+
+
+def prove_source_part(stamp, whole: dict, who: str) -> None:
+    """Hold one part's source stamp to one pass over the whole source.
+
+    ``whole`` is a whole-checkpoint identity: :func:`source_part_identity`
+    with no filter, or the schema-less :func:`source_identity` a cached-unit
+    manifest carries; only the fields both share are read. The stamp must be
+    a ``tessera.source-part.v1`` block, its ``config_sha256``,
+    ``auxiliary_sha256`` and ``tensors`` must equal the source's, and every
+    shard it read must be a shard of the source with the same sha256. A
+    shard of the source the stamp does not name is not this part's to prove.
+    Raises ``ValueError`` naming ``who`` and the field or shard at fault.
+    """
+    if not isinstance(stamp, dict) or stamp.get("schema") != SOURCE_PART_SCHEMA:
+        found = stamp.get("schema") if isinstance(stamp, dict) else type(stamp).__name__
+        raise ValueError(f"{who}: source identity is not a {SOURCE_PART_SCHEMA} stamp "
+                         f"({found!r}); it was written before tessera#495, re-export it")
+    for field in ("config_sha256", "auxiliary_sha256"):
+        if stamp.get(field) != whole.get(field):
+            raise ValueError(f"{who}: source identity changed since partition export: "
+                             f"stamped {field} {stamp.get(field)!r}, source {whole.get(field)!r}")
+    if stamp.get("tensors") != whole.get("tensors"):
+        mine, theirs = stamp.get("tensors") or {}, whole.get("tensors") or {}
+        moved = sorted(t for t in set(mine) & set(theirs) if mine[t] != theirs[t])
+        raise ValueError(f"{who}: source identity changed since partition export: tensor "
+                         f"inventory differs: only stamped {sorted(set(mine) - set(theirs))[:3]}, "
+                         f"only in source {sorted(set(theirs) - set(mine))[:3]}, "
+                         f"in another shard {moved[:3]}")
+    files = stamp.get("files")
+    if not isinstance(files, dict) or not files:
+        raise ValueError(f"{who}: source identity stamps no shards")
+    for shard, digest in sorted(files.items()):
+        if shard not in whole["files"]:
+            raise ValueError(f"{who}: source identity names shard {shard}, "
+                             f"which the source does not hold")
+        if digest != whole["files"][shard]:
+            raise ValueError(f"{who}: source identity changed since partition export: "
+                             f"{shard} read sha256 {digest}, the source's is {whole['files'][shard]}")
 
 
 #: The block an exporter stamps for the shards it WROTE (``tessera_config.json``

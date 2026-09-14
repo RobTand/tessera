@@ -275,7 +275,18 @@ class CachedUnitBundle:
     def __init__(self, manifest: dict, directory: Path, expected_units: set[str], source: dict):
         if set(manifest) != {"schema", "source", "units"} or manifest["schema"] != CACHE_SCHEMA:
             raise ValueError("cached unit bundle has an unsupported schema or fields")
-        if manifest["source"] != source:
+        from .serving_parts import SOURCE_PART_SCHEMA, prove_source_part
+        if isinstance(source, dict) and source.get("schema") == SOURCE_PART_SCHEMA:
+            # A serving part hashed only the shards it reads (tessera#495);
+            # the bundle's whole-checkpoint identity must vouch for each.
+            whole = manifest["source"]
+            if (not isinstance(whole, dict)
+                    or set(whole) != {"config_sha256", "auxiliary_sha256", "files", "tensors"}
+                    or not isinstance(whole["files"], dict) or not isinstance(whole["tensors"], dict)
+                    or set(whole["files"]) != set(whole["tensors"].values())):
+                raise ValueError("cached unit bundle source is not a whole-checkpoint identity")
+            prove_source_part(source, whole, "cached unit bundle")
+        elif manifest["source"] != source:
             raise ValueError("cached unit bundle source checkpoint identity mismatch")
         units = manifest["units"]
         if not isinstance(units, dict) or set(units) != set(expected_units):
