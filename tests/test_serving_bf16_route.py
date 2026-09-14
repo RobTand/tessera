@@ -166,6 +166,33 @@ def test_selected_bf16_windows_refuse_incompatible_layouts():
             _selected_bf16_module(0), _selected_bf16_module(1, rate=3)])
 
 
+def test_selected_bf16_fold_bounds_raw_and_fp32_temporaries_by_chunk(monkeypatch):
+    batch = route.PreparedTesseraBf16Module.stack([
+        _selected_bf16_module(expert) for expert in range(4)])
+    real_decode, real_scale = batch.decode, batch.row_scale
+    seen = []
+
+    def bounded_decode(ids, **kwargs):
+        seen.append(int(ids.numel()))
+        assert ids.numel() <= 2, "fold decoded an unbounded raw selected stack"
+        return real_decode(ids, **kwargs)
+
+    def bounded_scale(ids):
+        assert ids.numel() <= 2, "fold expanded unbounded fp32 row scales"
+        return real_scale(ids)
+
+    monkeypatch.setattr(batch, "decode", bounded_decode)
+    monkeypatch.setattr(batch, "row_scale", bounded_scale)
+    ids = torch.tensor([3, 0, 1, 2, 3], dtype=torch.int32)
+    actual = batch.decode_folded(ids, max_experts_per_chunk=2)
+    expected = torch.stack([
+        (module.decode().float() * module.row_scale()[:, None]).to(torch.bfloat16)
+        for module in (_selected_bf16_module(expert) for expert in range(4))
+    ]).index_select(0, ids.long())
+    assert torch.equal(actual, expected)
+    assert seen == [2, 2, 1]
+
+
 def test_selected_bf16_folded_tile_matches_the_joint_screens_wire_reader():
     fused, export, _decode, alphabet = _tessera()
     from tessera.serving.scheme import parse_tessera_blob_for_scheme

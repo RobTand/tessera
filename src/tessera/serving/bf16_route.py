@@ -280,10 +280,24 @@ class PreparedTesseraBf16Batch:
         native dense BF16 serving route instead applies the scale after GEMM;
         this explicit method must only back a separately named research route.
         """
-        values = self.decode(expert_ids, max_experts_per_chunk=max_experts_per_chunk,
-                             backend=backend)
-        scale = self.row_scale(expert_ids)
-        return (values.float() * scale[:, :, None]).to(torch.bfloat16)
+        require_expert_ids(expert_ids, self.device)
+        if type(max_experts_per_chunk) is not int or max_experts_per_chunk <= 0:
+            raise ValueError("max_experts_per_chunk must be a positive integer")
+        if backend not in ("torch", "triton"):
+            raise ValueError(f"unknown selected window backend {backend!r}")
+        # The final selected BF16 stack is unavoidable. Keep raw decoded tiles
+        # and their fp32 folding intermediates bounded by the declared chunk;
+        # a whole-selection float copy would dominate TP2 prefill memory.
+        folded = torch.empty((expert_ids.numel(), self.rows, self.columns),
+                             dtype=torch.bfloat16, device=self.device)
+        for start in range(0, expert_ids.numel(), max_experts_per_chunk):
+            stop = min(start + max_experts_per_chunk, expert_ids.numel())
+            chunk_ids = expert_ids[start:stop]
+            values = self.decode(chunk_ids, max_experts_per_chunk=max_experts_per_chunk,
+                                 backend=backend)
+            scale = self.row_scale(chunk_ids)
+            folded[start:stop] = (values.float() * scale[:, :, None]).to(torch.bfloat16)
+        return folded
 
 
 def prepare_tessera_bf16_module(parsed_roles, device=None) -> PreparedTesseraBf16Module:

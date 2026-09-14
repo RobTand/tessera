@@ -116,7 +116,7 @@ def compare(actual, expected):
             "exact": bool(torch.equal(actual, expected))}
 
 
-def run():
+def run(trace_path: Path | None = None):
     from vllm.config import VllmConfig, set_current_vllm_config
     from vllm.distributed import (ensure_model_parallel_initialized,
                                   init_distributed_environment)
@@ -159,8 +159,21 @@ def run():
         x = (torch.randn(5, H, generator=torch.Generator(device="cuda").manual_seed(17),
                          device="cuda", dtype=torch.bfloat16) * 32).contiguous()
         expected = stock_layer.quant_method.apply(stock_layer, x, weights, ids, None, None)
-        got = method.apply(selected_layer, x, weights, ids, None, None)
         torch.cuda.synchronize()
+        allocated_before = torch.cuda.memory_allocated()
+        torch.cuda.reset_peak_memory_stats()
+        if trace_path is None:
+            got = method.apply(selected_layer, x, weights, ids, None, None)
+            torch.cuda.synchronize()
+        else:
+            with torch.profiler.profile(
+                    activities=[torch.profiler.ProfilerActivity.CPU,
+                                torch.profiler.ProfilerActivity.CUDA],
+                    record_shapes=True, profile_memory=True) as profiler:
+                got = method.apply(selected_layer, x, weights, ids, None, None)
+                torch.cuda.synchronize()
+            profiler.export_chrome_trace(str(trace_path))
+        selected_apply_peak = torch.cuda.max_memory_allocated()
         parity = compare(got, expected)
         assert parity["exact"], parity
 
@@ -232,6 +245,10 @@ def run():
                 "backend": str(getattr(method.bf16_backend, "value", method.bf16_backend)),
                 "experts_cls": method.experts_cls.__name__,
                 "resident_packed_bytes": method.research_resident_bytes(),
+                "selected_apply_allocated_before_bytes": allocated_before,
+                "selected_apply_peak_allocated_bytes": selected_apply_peak,
+                "selected_apply_incremental_peak_bytes": selected_apply_peak - allocated_before,
+                "selected_apply_trace": None if trace_path is None else str(trace_path),
                 "selected_vs_full_stock_unquantized": parity,
                 "deliberately_wrong_map": wrong_delta,
                 "native_vs_fp32_clamped": clamp_reference,
@@ -245,9 +262,11 @@ def run():
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--out", type=Path, required=True)
+    parser.add_argument("--profile", action="store_true")
     args = parser.parse_args()
-    result = run()
     args.out.parent.mkdir(parents=True, exist_ok=True)
+    trace_path = args.out.with_name(args.out.stem + ".trace.json") if args.profile else None
+    result = run(trace_path)
     args.out.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
     print(json.dumps({"result": str(args.out), "parity": result["selected_vs_full_stock_unquantized"]}))
 

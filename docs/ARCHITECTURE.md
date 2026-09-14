@@ -19,7 +19,11 @@ routed-cell attestation, `MOE_BUILDERS`, runtime contract cells, release pin and
 ship gate remain unchanged. Exact TP2 GLM numerical, memory and latency serves
 are still required before claiming qualification. The bounded TP1 native
 stock-kernel and shared-runner control is in
-`docs/measurements/bf16_selected_moe_native_2026-09-13.md`.
+`docs/measurements/bf16_selected_moe_native_2026-09-13.md`. The selected BF16
+fold keeps raw and FP32 intermediates bounded by `max_experts_per_chunk`; the
+final selected BF16 tile remains a required output. Its one-box before/after
+allocator-peak measurement is in
+`docs/measurements/bf16_selected_moe_chunk_memory_2026-09-13.md`.
 
 Re-stamped 2026-09-13 for what the fp4 activation quantizer EMITS (#484):
 contract v25 adds a top-level `activation_quantizers` block publishing, per
