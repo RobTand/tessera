@@ -275,13 +275,18 @@ def test_partitioned_expert_wires_equal_one_process_export(tmp_path, monkeypatch
     assert json.loads((merged / "config.json").read_text()) == json.loads((whole / "config.json").read_text())
 
 
-def _count_hashes(monkeypatch):
-    """Record every path ``serving_parts`` digests (the source-stamp hash)."""
+def _count_hashes(monkeypatch, source):
+    """Names of the ``source`` files ``serving_parts`` digests, once per digest.
+
+    Part outputs carry the source shard filenames, so only files whose parent
+    is the source directory count.
+    """
     hashed = []
     original = parts.sha256_file
 
     def counting(path):
-        hashed.append(Path(path).name)
+        if Path(path).resolve().parent == Path(source).resolve():
+            hashed.append(Path(path).name)
         return original(path)
 
     monkeypatch.setattr(parts, "sha256_file", counting)
@@ -309,7 +314,7 @@ def test_a_partition_part_stamps_only_the_shards_it_reads(tmp_path, monkeypatch)
     (source / "config.json").write_text(json.dumps({"architectures": ["Example"]}))
     paths = []
     for rank, reads in ((0, SHARD_A), (1, SHARD_B)):
-        hashed = _count_hashes(monkeypatch)
+        hashed = _count_hashes(monkeypatch, source)
         out = tmp_path / f"export{rank}"
         monkeypatch.setattr("sys.argv", ["export", str(source), str(out), "--grid", "E4M3",
             "--q256", "1024", "--layers", "0", "--device", "cpu", "--partition", f"{rank}/2",
@@ -324,9 +329,9 @@ def test_a_partition_part_stamps_only_the_shards_it_reads(tmp_path, monkeypatch)
         assert reads in hashed and other not in hashed, hashed
         monkeypatch.undo()
         paths.append(out)
-    hashed = _count_hashes(monkeypatch)
+    hashed = _count_hashes(monkeypatch, source)
     manifest = parts.merge_serving_parts(paths, tmp_path / "merged", source)
-    assert sorted(n for n in hashed if n in layout) == [SHARD_A, SHARD_B]
+    assert sorted(n for n in hashed if n in layout) == [SHARD_A, SHARD_B], hashed
     assert set(manifest["export_identity"]["source"]["files"]) == {SHARD_A, SHARD_B}
 
 
@@ -335,9 +340,9 @@ def test_the_merge_accepts_parts_with_one_pass_over_the_source(tmp_path, monkeyp
     stamps = [json.loads((p / "tessera_serving_manifest.json").read_text())[
         "export_partition"]["identity"]["source"] for p in paths]
     assert [set(s["files"]) for s in stamps] == [{SHARD_A}, {SHARD_B}]
-    hashed = _count_hashes(monkeypatch)
+    hashed = _count_hashes(monkeypatch, source)
     manifest = parts.merge_serving_parts(paths, tmp_path / "merged", source)
-    assert sorted(n for n in hashed if n.startswith("model-")) == [SHARD_A, SHARD_B]
+    assert sorted(n for n in hashed if n.startswith("model-")) == [SHARD_A, SHARD_B], hashed
     assert manifest["export_identity"]["source"] == parts.source_part_identity(source)
 
 
