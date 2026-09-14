@@ -631,12 +631,21 @@ def main():
     ap.add_argument("--source", default="/mnt/shared/models/GLM-5.3-Flash-BF16")
     ap.add_argument("--move", action="store_true",
                     help="move shard files instead of copying (needs one filesystem)")
+    ap.add_argument("--source-digest-cache", type=Path, default=None,
+                    help="serving parts only: reuse stat-bound source shard digests for the "
+                         "whole-source pass (tessera#499); the merged manifest records "
+                         "source_proof. Without it every source shard is hashed.")
     args = ap.parse_args()
 
     if any((Path(p) / "tessera_part_config.json").exists() for p in args.parts):
         from tessera.serving_parts import merge_serving_parts
         try:
-            manifest = merge_serving_parts(args.parts, Path(args.out), Path(args.source), move=args.move)
+            cache = None
+            if args.source_digest_cache is not None:
+                from tessera.source_digest_cache import SourceDigestCache
+                cache = SourceDigestCache(args.source_digest_cache, source=args.source)
+            manifest = merge_serving_parts(args.parts, Path(args.out), Path(args.source), move=args.move,
+                                           source_digest_cache=cache)
         except (ValueError, OSError, KeyError) as exc:
             raise SystemExit(f"serving-part merge refused: {exc}") from exc
         print(f"merged {len(args.parts)} serving parts -> {args.out}: "

@@ -52,7 +52,7 @@ def _affinity_cpus() -> int:
         return max(1, os.cpu_count() or 1)
 
 
-def sha256_files(paths, workers=None) -> list:
+def sha256_files(paths, workers=None, hash_file=None) -> list:
     """:func:`sha256_file` of each path, in the order given.
 
     Runs one file per thread, at most ``workers`` at a time (the CPUs this
@@ -61,14 +61,16 @@ def sha256_files(paths, workers=None) -> list:
     (tessera#499). The result is what the serial loop returns, and a refusal
     is the one the serial loop would raise first: results are collected in
     ``paths`` order, so an earlier file's exception surfaces before a later
-    file's. ``workers=1`` is the serial loop itself.
+    file's. ``workers=1`` is the serial loop itself. ``hash_file`` replaces
+    :func:`sha256_file` per path, e.g. a source digest cache's lookup.
     """
     paths = list(paths)
+    hash_file = hash_file or sha256_file
     workers = min(len(paths), workers if workers is not None else _affinity_cpus())
     if workers <= 1:
-        return [sha256_file(path) for path in paths]
+        return [hash_file(path) for path in paths]
     with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="source-sha256") as pool:
-        futures = [pool.submit(sha256_file, path) for path in paths]
+        futures = [pool.submit(hash_file, path) for path in paths]
         try:
             return [future.result() for future in futures]
         finally:
@@ -181,7 +183,7 @@ def source_identity(source: Path) -> dict:
 
 
 def export_identity(source: Path, options: dict, runtime_image: str, root: Path,
-                    shards=None) -> dict:
+                    shards=None, *, digest_cache=None) -> dict:
     """What every serving part of one export must agree on, plus its own input.
 
     ``source`` is :func:`source_part_identity` over ``shards`` -- the shards
@@ -201,7 +203,8 @@ def export_identity(source: Path, options: dict, runtime_image: str, root: Path,
         digest.update(str(path.relative_to(root)).encode() + b"\0")
         digest.update(path.read_bytes())
         digest.update(b"\0")
-    return {"source": source_part_identity(source, shards), "code_sha256": digest.hexdigest(),
+    return {"source": source_part_identity(source, shards, digest_cache=digest_cache),
+            "code_sha256": digest.hexdigest(),
             # The dispatch command pins this image. Its observed runtime identity
             # belongs to the PrismaBuild receipt, not a self-attestation here.
             "runtime_image": runtime_image, "options": options}
@@ -366,8 +369,17 @@ def validate_explicit_plan(plan, modules: dict, config_groups: dict, *, source_t
                 raise ValueError(f"explicit plan {name}: emitted role grid/rung differs from plan")
 
 
-def merge_serving_parts(paths, out: Path, source: Path, *, move=False) -> dict:
-    """Prove identities, ownership and written tensor coverage before publishing."""
+def merge_serving_parts(paths, out: Path, source: Path, *, move=False,
+                        source_digest_cache=None) -> dict:
+    """Prove identities, ownership and written tensor coverage before publishing.
+
+    ``source_digest_cache`` (a :class:`tessera.source_digest_cache.SourceDigestCache`)
+    lets the whole-source pass reuse stat-bound shard digests instead of
+    re-reading every shard; the merged manifest then records ``source_proof``
+    with the receipt, whose ``mode`` is ``stat-bound`` when any digest was
+    reused. Without it the pass hashes every shard and no ``source_proof`` is
+    written. Output shards are always hashed.
+    """
     from .moe_execution import ResearchSelectedMoeConfig, ResearchSelectedMoeInput
 
     out, source = Path(out), Path(source)
@@ -406,7 +418,7 @@ def merge_serving_parts(paths, out: Path, source: Path, *, move=False) -> dict:
     execution_record = ({"research_selected_moe": research_execution.record()}
                         if research_execution is not None else {})
     # The one pass over the whole source; every part's stamp is held to it.
-    whole = source_part_identity(source)
+    whole = source_part_identity(source, digest_cache=source_digest_cache)
     for rank, path, part, *_ in loaded:
         prove_source_part(part["identity"].get("source"), whole, f"partition {rank}")
     expected_source = set(whole["tensors"])
@@ -521,6 +533,8 @@ def merge_serving_parts(paths, out: Path, source: Path, *, move=False) -> dict:
     # The published artifact records the whole source this merge proved, not
     # part 0's subset.
     manifest["export_identity"] = {**identity, "source": whole}
+    if source_digest_cache is not None:
+        manifest["source_proof"] = source_digest_cache.receipt()
     moe = manifest["routed_moe"]
     for field in ("modules", "quantized_stacks"):
         moe[field] = sorted({name for row in loaded for name in row[3]["routed_moe"][field]})
@@ -600,7 +614,7 @@ def source_inventory(source: Path) -> dict:
     return tensors
 
 
-def source_part_identity(source: Path, shards=None, *, workers=None) -> dict:
+def source_part_identity(source: Path, shards=None, *, workers=None, digest_cache=None) -> dict:
     """``source_identity`` for a part that read only ``shards``.
 
     The same binding under the same field names -- ``config_sha256``,
@@ -620,7 +634,10 @@ def source_part_identity(source: Path, shards=None, *, workers=None) -> dict:
 
     The chosen shards are hashed concurrently by :func:`sha256_files`
     (``workers`` as there); the document and the order of its refusals are
-    the serial pass's.
+    the serial pass's. ``digest_cache`` (a
+    :class:`tessera.source_digest_cache.SourceDigestCache`) serves the shard
+    digests only -- never config or auxiliary files -- and the document is the
+    same as a fresh pass's; the caller records the cache's receipt.
     """
     source = Path(source)
     tensors = source_inventory(source)
@@ -641,7 +658,8 @@ def source_part_identity(source: Path, shards=None, *, workers=None) -> dict:
     # refusals still precede any shard's.
     config_sha256 = sha256_file(config_path) if config_path.exists() else None
     auxiliary_sha256 = {p.name: sha256_file(p) for p in auxiliary}
-    digests = sha256_files([source / name for name in chosen], workers)
+    digests = sha256_files([source / name for name in chosen], workers,
+                           digest_cache.sha256 if digest_cache is not None else None)
     return {"schema": SOURCE_PART_SCHEMA,
             "config_sha256": config_sha256,
             "auxiliary_sha256": auxiliary_sha256,
