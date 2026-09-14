@@ -353,48 +353,65 @@ def test_a_routed_moe_refusal_recommends_no_moe_backend_flag(monkeypatch, build)
 
 
 @pytest.mark.parametrize("build", ["real", "named"])
-def test_a_routed_moe_refusal_points_at_the_measured_oracle_receipt(monkeypatch, build):
-    """Issue #6: the clamp refusal is recorded, not asserted.
+def test_a_routed_nvfp4_stack_dispatches_to_its_own_builder(monkeypatch, build):
+    """tessera#492: FAMILY = BUILDER for an expert stack, read off
+    ``scheme.MOE_BUILDERS`` the way a Linear's route is read off ``ROUTES``.
 
-    On a clamped config the pinned build's own oracle refuses the explicit
-    backend and resolves ``auto`` somewhere an operator cannot guess, so the
-    refusal points at the receipt that measured it
-    (``docs/measurements/nvfp4-moe-oracle-2026-09-02.md``) instead of naming a
-    backend.  A pointer at a missing receipt is as bad as an asserted flag, so
-    this resolves it: the file must exist, and its companion result JSON must
-    record both the refusal and the resolution.
-
-    The refusal MOVED when the FP8 expert route landed: an undeclared stack is
-    now refused for being undeclared, and the family question is asked of a
-    stack that IS declared -- with the family whose expert arm the receipt is
-    about.  Same fact, same receipt, at the gate that now owns it
-    (``scheme.MOE_BUILDERS``).
+    Issue #6's clamp finding (``docs/measurements/nvfp4-moe-oracle-2026-09-02.md``:
+    the pinned oracle refuses an explicit non-clamp backend under
+    ``swiglu_limit`` and resolves ``auto`` to a clamp-capable one) is still
+    recorded and still what the NVFP4 builder relies on -- it asks the
+    runtime's ``select_nvfp4_moe_backend`` rather than naming a backend.  What
+    moved is that the stack now REACHES that builder instead of being refused
+    for having none.
     """
+    from tessera.serving import nvfp4_moe_route
+
     monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
     if build == "real":
         from vllm.model_executor.layers.fused_moe import RoutedExperts
         layer = object.__new__(RoutedExperts)
     else:
         layer = object.__new__(type("RoutedExperts", (), {}))
-    config = _resolved(_config(_moe_scheme(family=TESSERA_NVFP4, grid="E2M1x2", body="TCQ",
-                                           plane="LUT", q256=896),
-                               targets=(MOE_TARGET,)))
-    with pytest.raises(ValueError, match="no expert route") as excinfo:
-        config.get_quant_method(layer, MOE_TARGET)
-    message = str(excinfo.value)
-    match = re.search(r"docs/measurements/[\w.\-]+\.md", message)
-    assert match is not None, f"the refusal points at no measurement receipt: {message!r}"
+    scheme = _moe_scheme(family=TESSERA_NVFP4, grid="E2M1x2", body="TCQ", plane="LUT", q256=896)
+    config = _resolved(_config(scheme, targets=(MOE_TARGET,)))
+    calls = []
+    monkeypatch.setattr(nvfp4_moe_route, "build_tessera_nvfp4_moe_method",
+                        lambda *a, **kw: calls.append((a, kw)) or object())
+    assert config.get_quant_method(layer, MOE_TARGET) is not None
+    (got_scheme, prefix, mode, built), kwargs = calls[0]
+    assert (prefix, mode, built, kwargs) == (MOE_TARGET, "resident", layer, {})
+    assert got_scheme["family"] == TESSERA_NVFP4
     root = Path(__file__).resolve().parent.parent
-    receipt = root / match.group(0)
-    assert receipt.is_file(), f"the refusal points at a missing receipt: {match.group(0)}"
-    assert "swiglu_limit" in receipt.read_text(), \
-        f"{receipt.name} does not record the clamp finding the refusal points at"
-    # The result JSON lives beside the probe, not the receipt: the receipt's §5
-    # scope note is what ties them, so this names the probe output directly.
+    receipt = root / "docs/measurements/nvfp4-moe-oracle-2026-09-02.md"
+    assert receipt.is_file() and "swiglu_limit" in receipt.read_text()
     results = json.loads(
         (root / "experiments/results/nvfp4_moe_oracle_probe.json").read_text())
     assert results["cases"]["clamped_explicit_b12x"]["raised"] == "ValueError"
     assert "selected" in results["cases"]["clamped_auto"]
+
+
+@pytest.mark.parametrize("build", ["real", "named"])
+def test_a_routed_stack_on_a_family_with_no_builder_is_refused_by_name(monkeypatch, build):
+    """A compressed BF16 expert stack with no research block has no production
+    builder; the refusal names ``MOE_BUILDERS`` and the families that have one,
+    and it arrives from ``get_quant_method`` before any builder module's vLLM
+    imports."""
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    if build == "real":
+        from vllm.model_executor.layers.fused_moe import RoutedExperts
+        layer = object.__new__(RoutedExperts)
+    else:
+        layer = object.__new__(type("RoutedExperts", (), {}))
+    scheme = _moe_scheme(family=TESSERA_BF16, grid="BF16", body="WINDOW", plane="CHANNEL",
+                         q256=1792)
+    config = _resolved(_config(scheme, targets=(MOE_TARGET,)))
+    with pytest.raises(ValueError, match="no expert route") as excinfo:
+        config.get_quant_method(layer, MOE_TARGET)
+    message = str(excinfo.value)
+    assert "MOE_BUILDERS" in message and "TESSERA_NVFP4" in message and "TESSERA_FP8" in message
+    assert not re.search(r"docs/measurements/[\w.\-]+\.md", message), \
+        "the by-name refusal no longer cites the NVFP4 oracle receipt: that family has a builder"
 
 
 def test_a_world_size_above_one_reaches_its_route(monkeypatch):

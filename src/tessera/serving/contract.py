@@ -868,7 +868,8 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
     structure the dispatch refuses, or a rung the reader will not accept would
     be a claim about a runtime that does not exist.
     """
-    from .scheme import ROUTES, STRUCTURES
+    from .scheme import (MOE_BUILDERS, ROUTES, STRUCTURE_DENSE, STRUCTURE_ROUTED_MOE,
+                         STRUCTURES)
 
     _require_keys(contract, "runtime_contract",
                   required={"schema", "contract_version", "quant_method", "versions",
@@ -915,7 +916,7 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
                                 "reader_rate_bound", "attested_rungs_q256",
                                 "attested_wire",
                                 "native_terminal_q256", "residency_modes"},
-                      optional={"candidate_rungs_q256"})
+                      optional={"candidate_rungs_q256", "structures"})
         # The A side, where a gate can read it.  It belongs on the ROW and not
         # only on the cells because it is a claim about EXECUTION -- what this
         # family's route feeds the GEMM -- and a family can be decodable before
@@ -962,6 +963,26 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
                 f"non-empty list of distinct modes from {list(MODES)} "
                 "(tessera.serving.lane.MODES -- the set lane.serve_mode and "
                 f"build_tessera_method gate on). Got {modes!r}.")
+        # The STRUCTURES the plugin dispatches for this family (v27,
+        # tessera#492), where a gate can read them.  A dispatch fact and not
+        # an attestation -- the cells say what was served -- checked against
+        # the dict the config dispatches on, exactly as ``activation_contract``
+        # is checked against ``ROUTES`` and ``loader_axes`` against
+        # ``ROUTE_TP_AXES``: every family has the dense route, and a family
+        # has the routed_moe structure iff ``scheme.MOE_BUILDERS`` names a
+        # builder for it.  Optional so a reader written against an earlier
+        # version keeps reading the document.
+        structures = entry.get("structures")
+        if structures is not None:
+            expected_structures = [STRUCTURE_DENSE] + (
+                [STRUCTURE_ROUTED_MOE] if route in MOE_BUILDERS else [])
+            if list(structures) != expected_structures:
+                raise ValueError(
+                    f"{where}.structures is {structures!r} but the {route} route dispatches "
+                    f"{expected_structures!r} (tessera.serving.scheme.MOE_BUILDERS names "
+                    f"{sorted(MOE_BUILDERS)}). The dispatch table is the authority; a document "
+                    "that disagreed with it would offer a structure the plugin refuses, or hide "
+                    "one it serves.")
         alias = entry.get("candidate_rungs_q256")
         if alias is not None and list(alias) != list(entry["attested_rungs_q256"]):
             raise ValueError(

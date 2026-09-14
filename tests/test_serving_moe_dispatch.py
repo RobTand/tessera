@@ -212,10 +212,45 @@ def test_every_declared_stack_selects_the_packed_owner(monkeypatch):
 
 
 @pytest.mark.parametrize("off_route", [0, 11, 21])
-def test_one_off_route_stack_among_many_refuses_before_loading(monkeypatch, off_route):
+def test_an_nvfp4_stack_among_selected_stacks_takes_its_own_builder(monkeypatch, off_route):
+    """tessera#492: the selected block covers the FP8/BF16 stacks it names and
+    nothing else.  An NVFP4 stack beside them is not refused and not handed
+    the selected owner -- it is dispatched to ``nvfp4_moe_route`` without a
+    research argument, the way an ordinary checkpoint dispatches it."""
+    from tessera.serving import config as config_module, moe_route, nvfp4_moe_route
+    import vllm.model_executor.layers.fused_moe as moe
+
     monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
-    payload = _multi_stack_config(_research_checkpoint(), off_route=off_route)
-    with pytest.raises(ValueError, match="research_selected_moe.*TESSERA_FP8/E4M3"):
+    payload = _multi_stack_config(_research_checkpoint(tp=2, backend="triton"), off_route=off_route)
+    config = TesseraConfig.from_config(payload)
+    monkeypatch.setattr(config_module, "declare_compile_identity", lambda **kw: None)
+    selected, production = [], []
+    monkeypatch.setattr(moe_route, "build_tessera_moe_method",
+                        lambda *a, **kw: selected.append((a, kw)) or object())
+    monkeypatch.setattr(nvfp4_moe_route, "build_tessera_nvfp4_moe_method",
+                        lambda *a, **kw: production.append((a, kw)) or object())
+    layer = moe.RoutedExperts()
+    for stack in _LFM_STACKS:
+        assert config.get_quant_method(layer, stack) is not None
+    assert len(selected) == len(_LFM_STACKS) - 1
+    assert all("research_selected" in kw for _, kw in selected)
+    assert len(production) == 1
+    (scheme, prefix, mode, built), kwargs = production[0]
+    assert prefix == _LFM_STACKS[off_route] and mode == "resident" and built is layer
+    assert scheme["family"] == "TESSERA_NVFP4" and kwargs == {}
+
+
+def test_a_selected_block_that_names_no_stack_it_serves_refuses_before_loading(monkeypatch):
+    """Every declared stack on the NVFP4 route: the block would select nothing."""
+    from tessera.serving.scheme import TESSERA_NVFP4
+
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    groups = {f"experts_{index}": {"format": "TESSERA", "targets": [stack],
+                                   "scheme": _routed_scheme(TESSERA_NVFP4)}
+              for index, stack in enumerate(_LFM_STACKS)}
+    payload = {"quant_method": "tessera", "config_groups": groups, "ignore": [],
+               "research_selected_moe": _research_checkpoint()}
+    with pytest.raises(ValueError, match="research_selected_moe names no routed target"):
         TesseraConfig.from_config(payload)
 
 

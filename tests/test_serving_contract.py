@@ -1245,3 +1245,39 @@ def test_the_grammar_is_the_one_the_receipt_and_the_consumer_name(contract):
     assert CELL_PREDICATE_FACTS == ("payload_family", "k", "n_sub", "rate_q256",
                                     "role_split", "in_features", "out_features")
     assert CELL_PREDICATE_OPS == ("equals", "in", "multiple_of", "at_least", "at_most")
+
+
+def test_format_structures_follow_the_dispatch_builders(contract):
+    """v27 (tessera#492): each format row names the structures the plugin
+    dispatches for its family, and the validator holds the row to
+    ``scheme.MOE_BUILDERS`` -- a dispatch fact, distinct from the cells."""
+    import copy
+
+    from tessera.serving.contract import validate_serving_contract
+    from tessera.serving.scheme import (
+        MOE_BUILDERS, STRUCTURE_DENSE, STRUCTURE_ROUTED_MOE)
+
+    by_family = {"TESSERA_E2M1_K2": "TESSERA_NVFP4", "TESSERA_E4M3_K1": "TESSERA_FP8",
+                 "TESSERA_BF16_K1": "TESSERA_BF16"}
+    for entry in contract["formats"]:
+        route = by_family[entry["family"]]
+        expected = [STRUCTURE_DENSE] + ([STRUCTURE_ROUTED_MOE] if route in MOE_BUILDERS else [])
+        assert entry["structures"] == expected, entry["family"]
+    assert {entry["family"] for entry in contract["formats"]
+            if STRUCTURE_ROUTED_MOE in entry["structures"]} == {"TESSERA_E2M1_K2", "TESSERA_E4M3_K1"}
+    # A row that offers a structure its route does not dispatch, or hides one
+    # it does, is refused by the validator rather than read.
+    for family, wrong in (("TESSERA_BF16_K1", [STRUCTURE_DENSE, STRUCTURE_ROUTED_MOE]),
+                          ("TESSERA_E2M1_K2", [STRUCTURE_DENSE]),
+                          ("TESSERA_E4M3_K1", [STRUCTURE_ROUTED_MOE, STRUCTURE_DENSE])):
+        broken = copy.deepcopy(contract)
+        for entry in broken["formats"]:
+            if entry["family"] == family:
+                entry["structures"] = wrong
+        with pytest.raises(ValueError, match="structures"):
+            validate_serving_contract(broken)
+    # The field is optional: a v26 document without it still validates.
+    older = copy.deepcopy(contract)
+    for entry in older["formats"]:
+        del entry["structures"]
+    validate_serving_contract(older)

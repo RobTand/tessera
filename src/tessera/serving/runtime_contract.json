@@ -1,6 +1,6 @@
 {
   "schema": "tessera.runtime-contract.v1",
- "contract_version": 26,
+ "contract_version": 27,
  "quant_method": {
   "canonical": "tessera",
   "accepted": [
@@ -116,6 +116,10 @@
     "resident",
     "streamed"
    ],
+   "structures": [
+    "dense",
+    "routed_moe"
+   ],
    "candidate_rungs_q256": [
     896
    ]
@@ -152,6 +156,10 @@
     "resident",
     "streamed"
    ],
+   "structures": [
+    "dense",
+    "routed_moe"
+   ],
    "candidate_rungs_q256": [
     1024
    ]
@@ -187,6 +195,9 @@
    "residency_modes": [
     "resident",
     "streamed"
+   ],
+   "structures": [
+    "dense"
    ],
    "candidate_rungs_q256": [
     1792
@@ -1825,6 +1836,11 @@
   }
  },
  "changelog": [
+  {
+   "contract_version": 27,
+   "date": "2026-09-14",
+   "change": "The NVFP4 family has an expert route (tessera#492). scheme.MOE_BUILDERS names tessera.serving.nvfp4_moe_route.build_tessera_nvfp4_moe_method for TESSERA_NVFP4 beside the FP8 builder, and TesseraConfig.get_quant_method dispatches a routed_moe stack to its family's builder off that table; scheme.ROUTE_LAUNCHES[TESSERA_NVFP4] gains the one resident routed_moe launch (vllm.fused_moe.modular_kernel over torch_materialize_stock) the FP8 stack already publishes. WHAT MOVES IN THIS DOCUMENT: each formats[] row gains an OPTIONAL `structures` list naming the structures the plugin dispatches for the family -- ['dense', 'routed_moe'] for TESSERA_E2M1_K2 and TESSERA_E4M3_K1, ['dense'] for TESSERA_BF16_K1 -- checked by the validator against tessera.serving.scheme.MOE_BUILDERS exactly as activation_contract is checked against ROUTES and loader_axes against ROUTE_TP_AXES; a reader that knows nothing of the field reads the document as it did at v26. WHAT DOES NOT MOVE, DELIBERATELY: no lane_eligibility cell is added. A builder is a dispatch fact; a cell is an attestation from a container receipt on the pinned image, and no routed_moe receipt exists for TESSERA_E2M1_K2 yet (the load probe, then a served census on the GLM-5.3-Flash-4layer stub, are the receipts a later version will cite). So attested_rungs_q256, every cell, every platform entry, tensor_parallel (max_world_size 1, loader_axes), expert_parallel (empty), lane_eligibility.schema v10 and every served byte are as at v26, and a producer's route-status gate -- which reads the cells -- admits nothing on this route until then. An NVFP4 expert stack exports only under --allow-unserveable, stamped in the manifest's serving_gate. THE ROUTE, for the record: one E2M1x2 container per expert projection, parsed and verified whole, cut to the rank by sharding.shard_parsed_roles on the group plan (w13 rows, w2 columns), decoded once at load through stock.materialize_stock after a per-expert fused.shared_lut_global join of the gate and up globals, into the modelopt NVFP4 parameter set vLLM's ModelOptNvFp4FusedMoE builds (packed nibbles, group-16 ue4m3 block scales, per-expert weight_scale_2 multiplier, per-expert input_scale = 1 / the checkpoint's experts.{e}.{proj}.input_global_scale), then convert_to_nvfp4_moe_kernel_format, make_nvfp4_moe_quant_config and make_nvfp4_moe_kernel over the backend the runtime's own select_nvfp4_moe_backend picks. The executed A side is the family's activation_contract (e2m1_group16_ue4m3_static): the kernel's own group-16 quantisation under the static scale. Version bump rather than edit because `structures` is a value a producer's planner may read to decide whether a routed stack on this family can be dispatched at all, distinct from whether it is attested."
+  },
   {
    "contract_version": 26,
    "date": "2026-09-14",
