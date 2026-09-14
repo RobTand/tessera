@@ -322,11 +322,13 @@ def _packed_group_shard_plan(declared, group, target, tp_rank, tp_size):
 def prepare_tessera_packed_moe_experts(blobs, declared, target, device=None, *, tp_rank=0, tp_size=1):
     """Research load: validate original containers into existing packed owners.
 
-    Layout compatibility is checked by ``PreparedWindow.stack``. Per-expert
-    bodies/scales/alphabets may differ; heterogeneous gather layouts refuse.
-    TP2 validates each original full container before the existing dense shard
-    planner/slicer derives rank-local roles. Global expert IDs are unchanged.
-    Only a transient per-role FP8 reference is materialized during preparation.
+    Each expert is placed on its group's expert axis as soon as it is
+    prepared, and the axis checks layout compatibility as ``stack`` does.
+    Per-expert bodies/scales/alphabets may differ; heterogeneous gather
+    layouts refuse. TP2 validates each original full container before the
+    existing dense shard planner/slicer derives rank-local roles. Global
+    expert IDs are unchanged. Only a transient per-role FP8 reference is
+    materialized during preparation.
     """
     from .fp8_route import PreparedTesseraFp8Module, prepare_tessera_fp8_module
     from .sharding import shard_parsed_roles
@@ -344,11 +346,12 @@ def prepare_tessera_packed_moe_experts(blobs, declared, target, device=None, *, 
     for group in MOE_GROUPS:
         declaration = declared['groups'][group]
         plan = _packed_group_shard_plan(declared, group, target, tp_rank, tp_size)
-        modules = [prepare_tessera_fp8_module(shard_parsed_roles(roles, plan), device=device)
-                   for roles in _parsed_experts(blobs[group], declaration,
-                                                f"{target} {group}", device)]
-        prepared[group] = PreparedTesseraFp8Module.stack(modules)
-        del modules
+        axis = PreparedTesseraFp8Module.axis(len(blobs[group]))
+        for expert, roles in enumerate(_parsed_experts(blobs[group], declaration,
+                                                       f"{target} {group}", device)):
+            axis.put(expert, prepare_tessera_fp8_module(shard_parsed_roles(roles, plan),
+                                                        device=device))
+        prepared[group] = axis.finish()
     return PreparedTesseraPackedMoeExperts(prepared['w13'], prepared['w2'])
 
 
@@ -376,28 +379,50 @@ def prepare_tessera_packed_bf16_moe_experts(blobs, declared, target, device=None
     for group in MOE_GROUPS:
         declaration = declared['groups'][group]
         plan = _packed_group_shard_plan(declared, group, target, tp_rank, tp_size)
-        modules = [prepare_tessera_bf16_module(shard_parsed_roles(roles, plan), device=device)
-                   for roles in _parsed_experts(blobs[group], declaration,
-                                                f"{target} {group}", device)]
-        prepared[group] = PreparedTesseraBf16Module.stack(modules)
-        del modules
+        axis = PreparedTesseraBf16Module.axis(len(blobs[group]))
+        for expert, roles in enumerate(_parsed_experts(blobs[group], declaration,
+                                                       f"{target} {group}", device)):
+            axis.put(expert, prepare_tessera_bf16_module(shard_parsed_roles(roles, plan),
+                                                         device=device))
+        prepared[group] = axis.finish()
     return PreparedTesseraPackedBf16MoeExperts(prepared['w13'], prepared['w2'])
 
 
 class _RankLocalPackedIntake:
-    """TP2 loader ownership: one validated original becomes one local packed role."""
+    """TP2 loader ownership: one validated original becomes one local packed role.
+
+    The role is placed on its group's expert axis inside its own load callback
+    (tessera#501): the axis allocates each stacked tensor once, at a part's
+    first placement, so no per-expert owner outlives its callback and
+    ``finish`` copies no packed plane.  vLLM finishes only after every layer
+    has loaded, so per-expert owners held to ``finish`` stacked the whole
+    model's routed experts twice over, in E small allocations per tensor.
+    """
 
     def __init__(self, declared, target, device, tp_rank, tp_size):
         self.declared, self.target, self.device = declared, target, device
         self.family = declared['family']
         if self.family not in (TESSERA_FP8, TESSERA_BF16):
             raise ValueError(f"{target}: selected packed intake has no {self.family} decoder")
+        from .bf16_route import PreparedTesseraBf16Module
+        from .fp8_route import PreparedTesseraFp8Module
+
+        module_type = (PreparedTesseraFp8Module if self.family == TESSERA_FP8
+                       else PreparedTesseraBf16Module)
         self._has_loaded = False
         self.plans = {g: _packed_group_shard_plan(declared, g, target, tp_rank, tp_size)
                       for g in MOE_GROUPS}
         self.roles = {g: expert_role_declarations(declared['groups'][g]) for g in MOE_GROUPS}
-        self.prepared = {g: [[None] * len(self.roles[g]) for _ in range(declared['experts'])]
-                         for g in MOE_GROUPS}
+        self.axes = {g: module_type.axis(int(declared['experts']), parts=len(self.roles[g]))
+                     for g in MOE_GROUPS}
+
+    def placed_projections(self) -> int:
+        """How many rank-local projections the load callbacks have placed."""
+        return sum(axis.placed() for axis in self.axes.values() if axis is not None)
+
+    def resident_bytes(self) -> int:
+        """Device bytes the expert axes hold, every slot of each started part."""
+        return sum(axis.resident_bytes() for axis in self.axes.values() if axis is not None)
 
     def load(self, group, index, expert, wire, *, device):
         from .bf16_route import prepare_tessera_bf16_module
@@ -416,28 +441,22 @@ class _RankLocalPackedIntake:
         local = shard_parsed_roles(parsed, self.plans[group])
         prepare = (prepare_tessera_fp8_module if self.family == TESSERA_FP8
                    else prepare_tessera_bf16_module)
-        prepared = prepare(local, device=self.device)
-        self.prepared[group][expert][index] = prepared
+        # The axis copies the planes into their slot; this projection's own
+        # allocation is released when the callback returns.
+        self.axes[group].put(expert, prepare(local, device=self.device), part=index)
         self._has_loaded = True
 
     def finish(self, w13_lengths, w2_lengths):
-        from .bf16_route import PreparedTesseraBf16Module
-        from .fp8_route import PreparedTesseraFp8Module
-
         validate_moe_wire_lengths(w13_lengths, w2_lengths,
             experts=self.declared['experts'],
             stride13=self.declared['groups']['w13']['wire_stride'],
             stride2=self.declared['groups']['w2']['wire_stride'])
-        module_type = (PreparedTesseraFp8Module if self.family == TESSERA_FP8
-                       else PreparedTesseraBf16Module)
         groups = {}
         for group in MOE_GROUPS:
-            modules = [module_type.concatenate(roles)
-                       for roles in self.prepared[group]]
-            groups[group] = module_type.stack(modules)
-            # Release this group's per-expert owners before stacking the next.
-            self.prepared[group] = None
-            del modules
+            # Joins gate and up as ``concatenate`` did, then hands over the
+            # axis's tensors: nothing packed is copied here.
+            groups[group] = self.axes[group].finish()
+            self.axes[group] = None
         owner_type = (PreparedTesseraPackedMoeExperts if self.family == TESSERA_FP8
                       else PreparedTesseraPackedBf16MoeExperts)
         return owner_type(groups['w13'], groups['w2'])

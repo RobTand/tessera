@@ -59,7 +59,8 @@ from .scheme import ROUTES, TESSERA_FP8, parse_tessera_blob_for_scheme, validate
 from .sharding import plan_shard_for_layer, require_axis_supported, shard_parsed_roles
 from .telemetry import (DECODER_TORCH_WINDOW, DECODER_WINDOW_GEMV, emit_route,
                         note_lane_refusal, route_shape)
-from .window import PreparedWindow, _fingerprint, prepare_window, require_expert_ids
+from .window import (PreparedModuleAxis, PreparedWindow, _fingerprint, prepare_window,
+                     require_expert_ids)
 
 __all__ = [
     "ACTIVATION_CONTRACT",
@@ -147,23 +148,31 @@ class PreparedTesseraFp8Module:
         return cls(roles, rows=offset, columns=first.columns,
                    scale=torch.cat([m.__scale for m in modules]), device=first.device)
 
+    def _axis_slot(self):
+        """What ``PreparedModuleAxis`` places: the stacking layout, the roles'
+        windows in row order, and the row scale."""
+        return ((self.__rows, self.__columns, self.__device,
+                 tuple((r.name, r.row_offset, r.rows) for r in self.__roles)),
+                tuple(r.window for r in self.__roles), self.__scale)
+
+    @classmethod
+    def axis(cls, experts: int, parts: Optional[int] = None) -> PreparedModuleAxis:
+        """An empty expert axis these modules are placed on as they are prepared."""
+        return PreparedModuleAxis(experts, PreparedTesseraFp8Batch, "FP8", parts)
+
     @classmethod
     def stack(cls, modules: Sequence[PreparedTesseraFp8Module]) -> PreparedTesseraFp8Batch:
         """Own packed expert windows for an explicit research selection path."""
         modules = tuple(modules)
         if not modules:
             raise ValueError("stacking needs at least one prepared FP8 module")
-        first = modules[0]
-        def layout(module):
-            return (module.rows, module.columns, module.device,
-                    tuple((r.name, r.row_offset, r.rows) for r in module.__roles))
-        if any(layout(module) != layout(first) for module in modules):
+        layout = modules[0]._axis_slot()[0]
+        if any(module._axis_slot()[0] != layout for module in modules):
             raise ValueError("stacked FP8 modules must share roles and geometry")
-        windows = [PreparedWindow.stack([m.__roles[i].window for m in modules])
-                   for i in range(len(first.__roles))]
-        return PreparedTesseraFp8Batch(
-            windows, torch.stack([m.__scale for m in modules]), first.role_names,
-            first.rows, first.columns, first.device)
+        axis = cls.axis(len(modules))
+        for expert, module in enumerate(modules):
+            axis.put(expert, module)
+        return axis.finish()
 
 
 class PreparedTesseraFp8Batch:

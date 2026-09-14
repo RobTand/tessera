@@ -5,6 +5,18 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-14 for the research packed-expert load's expert axis
+(tessera#501). `PreparedWindowAxis` and `PreparedModuleAxis`
+(`serving/window.py`) allocate each stacked tensor of a packed expert owner
+once, at a part's first placement, and copy every later expert into its slot,
+so the TP2 rank-local intake and the TP1 research prepare drop each per-expert
+owner as soon as it is placed. `PreparedWindow.stack` and the FP8/BF16
+`Module.stack` are built on them, with the same refusals and byte-identical
+batches. Before this, vLLM's finalize-after-complete-load kept every
+per-expert owner of the model alive to be stacked, so the model's routed
+experts were held twice around each finalization, in E small allocations per
+tensor. Wire, pins, packaged cells and serving gates are unchanged.
+
 Re-stamped 2026-09-14 for committed Hessian identity and the parallel
 cached-unit intake (tessera#497). Cached intake against a `*.references.json`
 capture establishes each unit's `calibration.hessian` identity from the
@@ -208,10 +220,11 @@ CUDA device before loading any weights and finalizes modules only after the
 complete load. The explicit research TP2 path therefore registers zero-byte
 wire parameters carrying the existing custom loaders. Every callback validates
 its original full container, derives the existing rank-local role slice and
-retains only that packed role. Finalization checks original lengths against
-the declared maximum stride and stacks the prepared local roles. Transient
-source/parse/reference storage is bounded to the current projection; stacking
-can temporarily duplicate one owner's local packed group. TP1 and ordinary
+places that packed role on its group's expert axis (`PreparedModuleAxis`,
+since tessera#501; before it, the role's own owner was retained and stacked at
+finalization). Finalization checks original lengths against the declared
+maximum stride and joins the axis's parts; it copies no packed plane.
+Transient source/parse/reference storage is bounded to the current projection. TP1 and ordinary
 materialized intake keep their existing behavior. This removes the all-model
 full-wire staging allocation. The bounded CUDA ownership result is recorded
 above; complete-model automatic loading and whole-engine fit still require
@@ -461,8 +474,9 @@ against base `2083062d`. `build_tessera_moe_method` accepts an explicit
 from the versioned checkpoint block described above. The serving environment,
 packaged cells and release gates do not select it. Its original TP1 path requires eager TP1/EP1/DP1
 and the stock Triton FP8 backend. The actual expert loader initially owns wire
-buffers only, then replaces them with `PreparedTesseraFp8Module.stack` packed
-owners; each apply decodes the requested experts in bounded chunks, constructs
+buffers only, then replaces them with packed owners built on an expert axis
+(`PreparedModuleAxis`, the mechanism under `PreparedTesseraFp8Module.stack`,
+each expert placed as it is prepared since tessera#501); each apply decodes the requested experts in bounded chunks, constructs
 the stock global-to-compact map and uses a temporary stock kernel and scales.
 No persistent full FP8 pool or kernel scale references survive the call. Empty
 input returns an empty output. Missing/duplicate/late wires, invalid IDs and

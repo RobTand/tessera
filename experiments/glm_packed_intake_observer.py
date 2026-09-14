@@ -75,11 +75,12 @@ class IntakeObservation(AbstractContextManager):
 
     def ownership(self, method):
         intake = getattr(method, '_rank_local_intake', None)
-        modules = ([] if intake is None else
-            [m for group in intake.prepared.values() for expert in group for m in expert if m is not None])
-        sizes = [m.wire_bytes_resident() + m.rows * 4 for m in modules]
-        return {'completed_loader_callbacks':self.count, 'prepared_local_projections':len(modules),
-                'prepared_local_bytes':sum(sizes)}
+        # Since tessera#501 a projection lives only in its group's expert axis,
+        # which allocates every expert's slot at a part's first placement:
+        # the bytes are what the axes hold, not a sum over placed projections.
+        return {'completed_loader_callbacks':self.count,
+                'prepared_local_projections':0 if intake is None else intake.placed_projections(),
+                'prepared_local_bytes':0 if intake is None else intake.resident_bytes()}
 
     def after_load(self, method, expected_count):
         if self.options is None:
