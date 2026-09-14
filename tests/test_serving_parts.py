@@ -43,20 +43,33 @@ def _tensor_file(path, names):
     path.write_bytes(struct.pack("<Q", len(raw)) + raw + b"\0\0" * len(names))
 
 
-def _fixture(tmp_path):
+SHARD_A, SHARD_B = "model-00001-of-00002.safetensors", "model-00002-of-00002.safetensors"
+
+
+def _fixture(tmp_path, two_shards=False):
+    """Two parts; with ``two_shards`` each part reads a different source shard."""
     source = tmp_path / "source"
     source.mkdir()
     names = ["model.layers.0.norm.weight", "model.layers.1.norm.weight", "lm_head.weight"]
-    _tensor_file(source / "model.safetensors", names)
+    if two_shards:
+        layout = {SHARD_A: [names[0], names[2]], SHARD_B: [names[1]]}
+        for shard, held in layout.items():
+            _tensor_file(source / shard, held)
+        (source / "model.safetensors.index.json").write_text(json.dumps({
+            "weight_map": {name: shard for shard, held in layout.items() for name in held}}))
+    else:
+        _tensor_file(source / "model.safetensors", names)
     (source / "config.json").write_text(json.dumps({"architectures": ["Example"]}))
-    identity = {"source": parts.source_identity(source), "code_sha256": "a" * 64,
-                "runtime_image": "test/image@sha256:" + "b" * 64,
-                "options": {"plan": {}}}
+    inventory = parts.source_inventory(source)
+    shared = {"code_sha256": "a" * 64, "runtime_image": "test/image@sha256:" + "b" * 64,
+              "options": {"plan": {}}}
     paths = []
     for rank in range(2):
         path = tmp_path / f"part{rank}"
         path.mkdir()
         owned = [name for name in names if parts.partition_owner(name, 2) == rank]
+        identity = {"source": parts.source_part_identity(source, {inventory[n] for n in owned}),
+                    **shared}
         _tensor_file(path / "model.safetensors", owned)
         (path / "model.safetensors.index.json").write_text(json.dumps({
             "weight_map": {name: "model.safetensors" for name in owned}}))
@@ -262,6 +275,122 @@ def test_partitioned_expert_wires_equal_one_process_export(tmp_path, monkeypatch
     assert json.loads((merged / "config.json").read_text()) == json.loads((whole / "config.json").read_text())
 
 
+def _count_hashes(monkeypatch):
+    """Record every path ``serving_parts`` digests (the source-stamp hash)."""
+    hashed = []
+    original = parts.sha256_file
+
+    def counting(path):
+        hashed.append(Path(path).name)
+        return original(path)
+
+    monkeypatch.setattr(parts, "sha256_file", counting)
+    return hashed
+
+
+def test_a_partition_part_stamps_only_the_shards_it_reads(tmp_path, monkeypatch):
+    """tessera#495: a part hashes its own input, never the whole checkpoint."""
+    import importlib.util
+    torch = pytest.importorskip("torch")
+    safetensors = pytest.importorskip("safetensors.torch")
+    script = Path(__file__).resolve().parents[1] / "experiments/export_tessera_serving.py"
+    spec = importlib.util.spec_from_file_location("serving_export_stamp_test", script)
+    exporter = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(exporter)
+    source = tmp_path / "source"
+    source.mkdir()
+    layout = {SHARD_A: {"model.layers.0.mlp.down_proj.weight": torch.ones(32, 16),
+                        "lm_head.weight": torch.ones(32, 16)},
+              SHARD_B: {"model.layers.1.mlp.down_proj.weight": torch.ones(32, 16)}}
+    for shard, tensors in layout.items():
+        safetensors.save_file(tensors, str(source / shard))
+    (source / "model.safetensors.index.json").write_text(json.dumps({
+        "weight_map": {name: shard for shard, tensors in layout.items() for name in tensors}}))
+    (source / "config.json").write_text(json.dumps({"architectures": ["Example"]}))
+    paths = []
+    for rank, reads in ((0, SHARD_A), (1, SHARD_B)):
+        hashed = _count_hashes(monkeypatch)
+        out = tmp_path / f"export{rank}"
+        monkeypatch.setattr("sys.argv", ["export", str(source), str(out), "--grid", "E4M3",
+            "--q256", "1024", "--layers", "0", "--device", "cpu", "--partition", f"{rank}/2",
+            "--partition-runtime-image", "test/image@sha256:" + "b" * 64])
+        exporter.main()
+        stamp = json.loads((out / "tessera_serving_manifest.json").read_text())[
+            "export_partition"]["identity"]["source"]
+        assert stamp["schema"] == parts.SOURCE_PART_SCHEMA
+        assert set(stamp["files"]) == {reads}
+        assert stamp["tensors"] == parts.source_inventory(source)
+        other = SHARD_B if reads == SHARD_A else SHARD_A
+        assert reads in hashed and other not in hashed, hashed
+        monkeypatch.undo()
+        paths.append(out)
+    hashed = _count_hashes(monkeypatch)
+    manifest = parts.merge_serving_parts(paths, tmp_path / "merged", source)
+    assert sorted(n for n in hashed if n in layout) == [SHARD_A, SHARD_B]
+    assert set(manifest["export_identity"]["source"]["files"]) == {SHARD_A, SHARD_B}
+
+
+def test_the_merge_accepts_parts_with_one_pass_over_the_source(tmp_path, monkeypatch):
+    source, paths = _fixture(tmp_path, two_shards=True)
+    stamps = [json.loads((p / "tessera_serving_manifest.json").read_text())[
+        "export_partition"]["identity"]["source"] for p in paths]
+    assert [set(s["files"]) for s in stamps] == [{SHARD_A}, {SHARD_B}]
+    hashed = _count_hashes(monkeypatch)
+    manifest = parts.merge_serving_parts(paths, tmp_path / "merged", source)
+    assert sorted(n for n in hashed if n.startswith("model-")) == [SHARD_A, SHARD_B]
+    assert manifest["export_identity"]["source"] == parts.source_part_identity(source)
+
+
+def test_a_part_whose_shard_differs_from_the_source_refuses(tmp_path):
+    source, paths = _fixture(tmp_path, two_shards=True)
+    shard = source / SHARD_B
+    raw = shard.read_bytes()
+    shard.write_bytes(raw[:-2] + b"\1\1")  # same header and size, other bytes
+    with pytest.raises(ValueError, match=f"partition 1: source identity changed.*{SHARD_B}"):
+        parts.merge_serving_parts(paths, tmp_path / "merged", source)
+    assert not (tmp_path / "merged").exists()
+
+
+def test_a_part_naming_a_shard_the_source_lacks_refuses(tmp_path):
+    source, paths = _fixture(tmp_path, two_shards=True)
+    _change(paths[1], lambda m: m["export_partition"]["identity"]["source"]["files"].update(
+        {"model-00003-of-00002.safetensors": "c" * 64}))
+    with pytest.raises(ValueError, match="partition 1: .*model-00003-of-00002.safetensors, "
+                                         "which the source does not hold"):
+        parts.merge_serving_parts(paths, tmp_path / "merged", source)
+    assert not (tmp_path / "merged").exists()
+
+
+@pytest.mark.parametrize("field", ["tensors", "config_sha256", "auxiliary_sha256"])
+def test_a_part_whose_source_fields_differ_refuses(tmp_path, field):
+    source, paths = _fixture(tmp_path, two_shards=True)
+    changed = {"tensors": {"model.layers.1.norm.weight": SHARD_B},
+               "config_sha256": "d" * 64,
+               "auxiliary_sha256": {"config.json": "d" * 64}}[field]
+    _change(paths[1], lambda m: m["export_partition"]["identity"]["source"].update({field: changed}))
+    with pytest.raises(ValueError, match="partition 1: source identity changed since partition export"):
+        parts.merge_serving_parts(paths, tmp_path / "merged", source)
+    assert not (tmp_path / "merged").exists()
+
+
+def test_a_part_stamping_other_shards_than_it_read_refuses(tmp_path):
+    source, paths = _fixture(tmp_path, two_shards=True)
+    digest = parts.sha256_file(source / SHARD_A)
+    _change(paths[1], lambda m: m["export_partition"]["identity"]["source"]["files"].update(
+        {SHARD_A: digest}))
+    with pytest.raises(ValueError, match="partition 1: source stamp coverage"):
+        parts.merge_serving_parts(paths, tmp_path / "merged", source)
+
+
+def test_a_part_with_a_whole_source_identity_from_before_495_refuses_by_name(tmp_path):
+    source, paths = _fixture(tmp_path, two_shards=True)
+    legacy = parts.source_identity(source)
+    for path in paths:
+        _change(path, lambda m: m["export_partition"]["identity"].update({"source": legacy}))
+    with pytest.raises(ValueError, match="partition 0: source identity is not a tessera.source-part.v1"):
+        parts.merge_serving_parts(paths, tmp_path / "merged", source)
+
+
 def _moe_plan_parts(tmp_path, encoded=None, count=2):
     """Two source stacks; an omitted encode is internally consistent BF16."""
     source = tmp_path / "source"
@@ -272,7 +401,7 @@ def _moe_plan_parts(tmp_path, encoded=None, count=2):
     _tensor_file(source / "model.safetensors", source_names)
     (source / "config.json").write_text(json.dumps({"architectures": ["Example"]}))
     plan = {stack: {"grid": "E4M3", "q256": 1024} for stack in stacks}
-    identity = {"source": parts.source_identity(source), "code_sha256": "a" * 64,
+    identity = {"source": parts.source_part_identity(source), "code_sha256": "a" * 64,
                 "runtime_image": "test/image@sha256:" + "b" * 64, "options": {"plan": plan}}
     paths = []
     for rank, stack in enumerate(stacks):

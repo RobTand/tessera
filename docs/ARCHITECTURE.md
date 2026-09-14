@@ -5,6 +5,22 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-14 for serving-part source stamps (tessera#495). A
+`--partition` export no longer hashes the whole source checkpoint:
+`export_partition.identity.source` is `serving_parts.source_part_identity`
+over only the shards that part reads tensors from, under
+`schema: tessera.source-part.v1`. `merge_serving_parts` hashes `--source`
+once and holds every part to that pass through
+`serving_parts.prove_source_part`: `config_sha256`, `auxiliary_sha256` and
+`tensors` must be equal, every stamped shard must be a source shard with the
+same sha256, and the stamped shards must be exactly the shards the part's
+`source_tensors` live in. Parts must agree on every other identity field.
+The merged `export_identity.source` is the whole identity the merge took. A
+cached-unit partition proves its stamp against the bundle manifest's
+whole-checkpoint `source` the same way; the whole-arm export keeps its single
+`source_identity` pass and equality. Parts written before this change carry
+the schema-less block and are refused by name.
+
 Re-stamped 2026-09-13 for the opt-in historical cached-producer intake (§3.2).
 `--cached-producer-package` plus `--cached-producer-source-sha256` binds the
 original package's full source once when reading an existing cached bundle;

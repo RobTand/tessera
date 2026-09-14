@@ -230,6 +230,41 @@ def test_manifest_refuses_ambiguous_coverage_before_loading_blobs(tmp_path, enco
         api.CachedUnitBundle(manifest, tmp_path, expected, {"sha256": "source"})
 
 
+def test_a_partition_stamp_is_proved_against_the_bundle_whole_source(tmp_path, encoded):
+    """tessera#495: a part hashed only its shards; the bundle vouches for each."""
+    from safetensors.torch import save_file
+    from tessera.serving_parts import source_identity, source_part_identity
+
+    api = _api()
+    src = tmp_path / "src"
+    src.mkdir()
+    first, second = "model-00001-of-00002.safetensors", "model-00002-of-00002.safetensors"
+    save_file({TENSOR: encoded[0]}, str(src / first))
+    save_file({"lm_head.weight": encoded[0]}, str(src / second))
+    (src / "model.safetensors.index.json").write_text(json.dumps(
+        {"weight_map": {TENSOR: first, "lm_head.weight": second}}))
+    (src / "config.json").write_text(json.dumps({"architectures": ["Example"]}))
+    record, _ = _record(encoded)
+    manifest = {"schema": api.CACHE_SCHEMA, "source": source_identity(src), "units": {UNIT: record}}
+    stamp = source_part_identity(src, [first])
+    api.CachedUnitBundle(manifest, tmp_path, {UNIT}, stamp)
+    cases = {"digest": lambda s: s["files"].update({first: "0" * 64}),
+             "absent": lambda s: s["files"].update({"model-00009.safetensors": "0" * 64}),
+             "tensors": lambda s: s["tensors"].pop("lm_head.weight"),
+             "config": lambda s: s.update(config_sha256="0" * 64),
+             "auxiliary": lambda s: s.update(auxiliary_sha256={})}
+    for name, mutate in cases.items():
+        bad = copy.deepcopy(stamp)
+        mutate(bad)
+        with pytest.raises(ValueError, match="cached unit bundle: source identity"):
+            api.CachedUnitBundle(manifest, tmp_path, {UNIT}, bad)
+    partial = dict(manifest, source={k: v for k, v in stamp.items() if k != "schema"})
+    with pytest.raises(ValueError, match="not a whole-checkpoint identity"):
+        api.CachedUnitBundle(partial, tmp_path, {UNIT}, stamp)
+    with pytest.raises(ValueError, match="source checkpoint identity mismatch"):
+        api.CachedUnitBundle(manifest, tmp_path, {UNIT}, source_identity(src) | {"files": {}})
+
+
 def test_projection_uses_producer_role_order_and_group_geometry():
     exporter = _exporter()
     shapes = {f"{STACK}.{expert}.{role}.weight": [32, 32]
@@ -327,10 +362,11 @@ def test_export_consumes_complete_bundle_without_encoder(tmp_path, encoded, monk
     assert all(role["cached_blob_sha256"] for role in receipt["modules"][STACK]["roles"])
 
 
+@pytest.mark.parametrize("partition", [False, True])
 @pytest.mark.parametrize("include_experts", [False, True])
 @pytest.mark.parametrize("omit_dense", [False, True])
 def test_complete_cached_export_preserves_dense_and_expert_originals(
-        tmp_path, encoded, monkeypatch, include_experts, omit_dense):
+        tmp_path, encoded, monkeypatch, include_experts, omit_dense, partition):
     from safetensors import safe_open
     from safetensors.torch import save_file
     from tessera.serving_parts import source_identity
@@ -378,7 +414,11 @@ def test_complete_cached_export_preserves_dense_and_expert_originals(
                         lambda census, module: [32, 32] if module.endswith('.w13') else [32])
     out = tmp_path / "out"
     monkeypatch.setattr("sys.argv", ["export", str(src), str(out), "--plan-json", str(plan_path),
-        "--cached-units", str(manifest_path), "--device", "cpu", "--allow-unrouted", "--allow-unserveable"])
+        "--cached-units", str(manifest_path), "--device", "cpu", "--allow-unrouted", "--allow-unserveable",
+        # A one-part partition stamps a source-part block the bundle must prove
+        # against its whole-checkpoint source (tessera#495).
+        *(["--partition", "0/1", "--partition-runtime-image", "test/image@sha256:" + "b" * 64]
+          if partition else [])])
     if omit_dense:
         with pytest.raises(ValueError, match="coverage"):
             exporter.main()
