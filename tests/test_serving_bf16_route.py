@@ -119,6 +119,76 @@ def test_the_bf16_route_declares_an_unquantised_a_side():
     assert route.ACTIVATION_CONTRACT in telemetry.ROUTE_CONTRACTS
 
 
+def _selected_bf16_module(expert, names=('gate', 'up'), rate=2):
+    """Small prepared windows with distinct BF16 tables and row scales."""
+    from tessera.serving.window import prepare_window
+
+    generator = torch.Generator().manual_seed(1201 + expert)
+    roles = []
+    for position, name in enumerate(names):
+        table = (torch.arange(256, dtype=torch.float32) + expert + position).to(torch.bfloat16)
+        window = prepare_window(
+            torch.randint(0, 1 << rate, (16, 8), generator=generator, dtype=torch.uint8),
+            [rate] * 8, 8, table, 'cpu')
+        roles.append(route._Bf16Role(name, position * 16, 16, window))
+    return route.PreparedTesseraBf16Module(
+        roles, rows=len(names) * 16, columns=8,
+        scale=torch.arange(len(names) * 16, dtype=torch.float32) + expert + 1,
+        device=torch.device('cpu'))
+
+
+def test_selected_bf16_windows_preserve_values_scales_and_global_expert_ids():
+    modules = [_selected_bf16_module(expert) for expert in range(4)]
+    batch = route.PreparedTesseraBf16Module.stack(modules)
+    ids = torch.tensor([3, 0, 2, 3], dtype=torch.int32)
+    expected_values = torch.stack([m.decode() for m in modules]).index_select(0, ids.long())
+    expected_scale = torch.stack([m.row_scale() for m in modules]).index_select(0, ids.long())
+    assert torch.equal(batch.decode(ids, max_experts_per_chunk=2), expected_values)
+    assert torch.equal(batch.row_scale(ids), expected_scale)
+    assert torch.equal(batch.decode_folded(ids, max_experts_per_chunk=2),
+                       (expected_values.float() * expected_scale[:, :, None]).to(torch.bfloat16))
+    assert batch.decode(ids[:0], max_experts_per_chunk=2).shape == (0, 32, 8)
+    assert batch.resident_bytes() == batch.wire_bytes_resident() + 4 * 32 * 4
+    assert batch.decode(ids, max_experts_per_chunk=1).data_ptr() != batch.decode(
+        ids, max_experts_per_chunk=4).data_ptr()
+    modules[0]._PreparedTesseraBf16Module__scale.zero_()
+    assert batch.row_scale(torch.tensor([0]))[0, 0].item() == 1
+
+
+def test_selected_bf16_windows_refuse_incompatible_layouts():
+    with pytest.raises(ValueError, match='at least one'):
+        route.PreparedTesseraBf16Module.stack([])
+    with pytest.raises(ValueError, match='roles'):
+        route.PreparedTesseraBf16Module.stack([
+            _selected_bf16_module(0), _selected_bf16_module(1, ('up', 'gate'))])
+    with pytest.raises(ValueError, match='layout'):
+        route.PreparedTesseraBf16Module.stack([
+            _selected_bf16_module(0), _selected_bf16_module(1, rate=3)])
+
+
+def test_selected_bf16_folded_tile_matches_the_joint_screens_wire_reader():
+    fused, export, _decode, alphabet = _tessera()
+    from tessera.serving.scheme import parse_tessera_blob_for_scheme
+    from tessera.unit_artifact import read_unit_artifact
+
+    modules, rendered = [], []
+    for expert in range(2):
+        weight = torch.randn(32, 64, generator=torch.Generator().manual_seed(expert + 51))
+        written, _unit, _forests = export.encode_linear_planes(
+            weight, grid=alphabet.BF16_GRID, q256=512, name='weight',
+            window_bits=8, verify=False)
+        blob = fused.pack_fused([('weight', 32, written.blob)])
+        scheme = _scheme(rows=32, columns=64, roles=[['weight', 32]],
+                         q256=512, wire_bytes=len(blob))
+        parsed = parse_tessera_blob_for_scheme(blob, scheme, f'expert {expert}')
+        modules.append(route.prepare_tessera_bf16_module(parsed, device='cpu'))
+        rendered.append(read_unit_artifact(written.blob).to(torch.bfloat16))
+    ids = torch.tensor([1, 0, 1], dtype=torch.int32)
+    selected = route.PreparedTesseraBf16Module.stack(modules).decode_folded(
+        ids, max_experts_per_chunk=2)
+    assert torch.equal(selected, torch.stack(rendered).index_select(0, ids.long()))
+
+
 def test_the_route_contract_set_is_derived_from_the_table():
     from tessera.serving import scheme as sch
     assert telemetry.ROUTE_CONTRACTS == {
