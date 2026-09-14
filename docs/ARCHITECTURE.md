@@ -17,7 +17,9 @@ reader-range rungs through an explicit research-selected decoder gate and
 stamps `serving_gate.research_selected_decoder_only`; ordinary production
 routed-cell attestation, `MOE_BUILDERS`, runtime contract cells, release pin and
 ship gate remain unchanged. Exact TP2 GLM numerical, memory and latency serves
-are still required before claiming qualification.
+are still required before claiming qualification. The bounded TP1 native
+stock-kernel and shared-runner control is in
+`docs/measurements/bf16_selected_moe_native_2026-09-13.md`.
 
 Re-stamped 2026-09-13 for what the fp4 activation quantizer EMITS (#484):
 contract v25 adds a top-level `activation_quantizers` block publishing, per
