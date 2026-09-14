@@ -200,9 +200,10 @@ MOE_SOURCE_LAYOUTS = (
 #: result is not a Tessera load, generation, or quality receipt
 #: (``docs/measurements/nvfp4-moe-oracle-2026-09-02.md``). ``TESSERA_BF16``
 #: is a compressed BF16-alphabet wire with a per-row scale; this build has no
-#: expert builder for it. Its dense route keeps that scale for the output
-#: epilogue, whereas a separately declared research route could fold it into
-#: BF16 weights. Plain source BF16 passthrough uses ``ignore``.
+#: *production* expert builder for it. Its dense route keeps that scale for
+#: the output epilogue; the explicit research-selected route folds it into
+#: BF16 weights to match PrismaQuant's joint screen. Plain source BF16
+#: passthrough uses ``ignore``.
 MOE_BUILDERS: dict[str, tuple[str, str]] = {
     TESSERA_FP8: ("tessera.serving.moe_route", "build_tessera_moe_method"),
 }
@@ -744,7 +745,8 @@ def refuse_a_family_with_no_expert_route(route: str, target: str) -> None:
         "resolves a clamp-capable backend on sm121, but Tessera has no NVFP4 "
         "expert builder or served qualification "
         "(docs/measurements/nvfp4-moe-oracle-2026-09-02.md); the compressed "
-        "TESSERA_BF16 expert wire has no expert builder in this build. Plain "
+        "TESSERA_BF16 expert wire has no production expert builder in this build "
+        "(its folded selected route requires explicit research execution). Plain "
         "source BF16 passthrough is separate and uses "
         "quantization_config.ignore. An expert stack is "
         "refused rather than decoded through another family's tile: plan it on a family "
