@@ -553,7 +553,12 @@ def scales_from_lut(
             f"a scale index {int(index.max())} addresses past the "
             f"{table.numel()}-entry LUT"
         )
-    values = table.to(torch.uint8).view(torch.float8_e4m3fn).float() * global_scale
+    # The table is the manifest's 16 bytes and lives wherever the caller keeps
+    # the manifest; the index is a plane and lives wherever the unit was
+    # parsed.  Indexing needs both on one device, so the table follows the
+    # plane (a unit parsed onto CUDA keeps its host table, tessera#492).
+    table = table.to(torch.uint8).to(index.device)
+    values = table.view(torch.float8_e4m3fn).float() * global_scale
     return values[index]
 
 
@@ -573,4 +578,5 @@ def nvfp4_scale_bytes_lut(
             f"a scale index {int(index.max())} addresses past the "
             f"{table.numel()}-entry LUT"
         )
-    return table.to(torch.uint8)[index], float(global_scale)
+    # As in ``scales_from_lut``: the 16-byte table follows the plane's device.
+    return table.to(torch.uint8).to(index.device)[index], float(global_scale)
