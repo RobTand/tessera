@@ -471,7 +471,8 @@ def module_scheme_key(grid, q256: int) -> tuple:
 
 def check_recipe(grid, q256: int, where: "str | None" = None, *,
                  allow_unserveable: bool = False, overrides: "list | None" = None,
-                 structure: str = STRUCTURE_DENSE):
+                 structure: str = STRUCTURE_DENSE, research_selected=None,
+                 research_records: "list | None" = None):
     """The recipe this plugin build publishes a decode for, or a refusal.
 
     THE SEAM IS HERE, and it is the export-time half of the load-time gate.
@@ -513,6 +514,18 @@ def check_recipe(grid, q256: int, where: "str | None" = None, *,
     """
     recipe = wire_recipe(grid, q256)
     target = where or f"--grid {grid.name} --q256 {q256}"
+    if research_selected is not None and structure == STRUCTURE_ROUTED_MOE:
+        try:
+            family = research_selected.require_wire_recipe(
+                grid=grid.name, q256=q256, body=recipe.body.name,
+                plane=recipe.scale_plane.name, span=recipe.span, target=target)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
+        if research_records is not None:
+            research_records.append({"target": target, "family": family,
+                                     "grid": grid.name, "q256": int(q256),
+                                     "qualification": "research_decoder_only"})
+        return recipe
     try:
         # The family this checkpoint will declare for the wire, so the gate
         # reads THAT route's published range rather than resolving the route
@@ -945,7 +958,8 @@ def packed_expert_stacks(expert_shapes):
 
 
 def plan_expert_stack(stack: str, experts: dict, grid, q256: int, *,
-                      source_layout: str = MOE_SOURCE_UNPACKED, config: dict):
+                      source_layout: str = MOE_SOURCE_UNPACKED, config: dict,
+                      research_selected: bool = False):
     """Everything about a planned expert stack that must be refused BEFORE the encode.
 
     A routed stack is 864 units on GLM-5.3-Flash and ~75 minutes of GPU per
@@ -978,7 +992,8 @@ def plan_expert_stack(stack: str, experts: dict, grid, q256: int, *,
     """
     family = family_for(grid)
     try:
-        refuse_a_family_with_no_expert_route(family, stack)
+        if not (research_selected and family == "TESSERA_BF16"):
+            refuse_a_family_with_no_expert_route(family, stack)
     except ValueError as exc:
         raise SystemExit(
             f"the plan gives the expert stack {stack} grid {grid.name} ({family}): {exc}") from exc
@@ -1087,7 +1102,8 @@ def _stack_config_geometry(config: dict, stack: str) -> tuple[int, int, int]:
 
 
 def plan_packed_expert_stack(stack: str, sources: dict, grid, q256: int, *,
-                             source_layout: str, config: dict):
+                             source_layout: str, config: dict,
+                             research_selected: bool = False):
     """Normalise one explicitly-described packed source to canonical units.
 
     The convention is deliberately not inferred from shape.  Orientation and
@@ -1136,7 +1152,8 @@ def plan_packed_expert_stack(stack: str, sources: dict, grid, q256: int, *,
             "down_proj": (f"{stack}.{expert}.down_proj.weight", (hidden, inter)),
         }
     record = plan_expert_stack(
-        stack, synthetic, grid, q256, source_layout=source_layout, config=config)
+        stack, synthetic, grid, q256, source_layout=source_layout, config=config,
+        research_selected=research_selected)
     for unit in record["units"]:
         projection = unit["projection"]
         physical_projection = ("gate_up_proj" if projection in
@@ -1188,7 +1205,7 @@ def packed_expert_weight(source: torch.Tensor, unit: dict) -> torch.Tensor:
 
 
 def project_expert_plan(source_shapes: dict, source_config: dict,
-                        stack_plan: dict) -> dict:
+                        stack_plan: dict, *, research_selected: bool = False) -> dict:
     """JSON producer view of source slices and the groups the exporter writes.
 
     Header shapes and explicit stack choices go through the same planners as
@@ -1220,13 +1237,15 @@ def project_expert_plan(source_shapes: dict, source_config: dict,
         if stack in packed_stacks:
             planned = plan_packed_expert_stack(
                 stack, packed_stacks[stack], grid, choice["q256"],
-                source_layout=choice.get("source_layout"), config=source_config)
+                source_layout=choice.get("source_layout"), config=source_config,
+                research_selected=research_selected)
         else:
             layout = choice.get("source_layout", MOE_SOURCE_UNPACKED)
             if layout != MOE_SOURCE_UNPACKED:
                 raise SystemExit(f"{stack}: unpacked source requires source_layout={MOE_SOURCE_UNPACKED}")
             planned = plan_expert_stack(stack, unpacked_stacks[stack], grid,
-                                        choice["q256"], config=source_config)
+                                        choice["q256"], config=source_config,
+                                        research_selected=research_selected)
         result[stack] = dict(planned, grid=grid.name)
     return json.loads(json.dumps({"schema": "tessera.expert_projection.v1", "stacks": result}))
 
@@ -1368,6 +1387,8 @@ def main():
             raise SystemExit(f"--research-selected-moe-json: {exc}") from exc
         if args.stock_twin is not None:
             raise SystemExit("research_selected_moe refuses --stock-twin")
+        if args.allow_unserveable:
+            raise SystemExit("research_selected_moe has its own decoder gate and refuses --allow-unserveable")
     if (args.priced_inputs is None) != (args.priced_inputs_sha256 is None):
         ap.error("--priced-inputs and --priced-inputs-sha256 must be supplied together")
     priced_inputs = (PricedInputsSnapshot(args.priced_inputs, args.priced_inputs_sha256)
@@ -1418,6 +1439,7 @@ def main():
     # default (grid, q256) or a --plan-json override, and both are gated before
     # a single unit is encoded.
     gate_overrides: list = []
+    research_gate_records: list = []
     required_lanes = list(dict.fromkeys(args.require_lane or ()))
     check_recipe(default_grid, args.q256,
                  allow_unserveable=args.allow_unserveable, overrides=gate_overrides)
@@ -1461,7 +1483,10 @@ def main():
                 structure = (STRUCTURE_ROUTED_MOE if name in stacks or name in packed_stacks
                              else STRUCTURE_DENSE)
                 check_recipe(g, int(spec["q256"]), where=name, structure=structure,
-                             allow_unserveable=args.allow_unserveable, overrides=gate_overrides)
+                             allow_unserveable=args.allow_unserveable, overrides=gate_overrides,
+                             research_selected=(research_execution.config
+                                                if research_execution is not None else None),
+                             research_records=research_gate_records)
                 check_lanes(required_lanes, g, int(spec["q256"]), where=name)
                 overrides[name] = (g, int(spec["q256"]))
                 if "source_layout" in spec:
@@ -1555,11 +1580,12 @@ def main():
         if stack in packed_stacks:
             record = plan_packed_expert_stack(
                 stack, packed_stacks[stack], grid, q256,
-                source_layout=source_layout, config=src_config)
+                source_layout=source_layout, config=src_config,
+                research_selected=research_execution is not None)
         else:
             record = plan_expert_stack(
                 stack, stacks[stack], grid, q256, source_layout=source_layout,
-                config=src_config)
+                config=src_config, research_selected=research_execution is not None)
         stack_plan[stack] = record
         print(f"  routed_moe {stack}: {record['experts']} experts x "
               f"{len(EXPERT_PROJECTIONS)} projections at {grid.name} q256={q256} "
@@ -2400,13 +2426,15 @@ def main():
         # What the SERVING gate decided, in the artifact rather than in a shell
         # history: which contract version bounded it, whether the run carried
         # the override, and the verbatim refusal for every wire written anyway.
-        # An empty list is the shippable state; a non-empty one says this
-        # checkpoint will not load under the plugin build named here.
+        # A production cell is not implied by empty `unserveable_overrides`:
+        # research-selected routed targets are recorded separately as
+        # decoder-only, with device qualification still absent.
         "serving_gate": {
             "contract": "tessera/serving/runtime_contract.json",
             "contract_version": load_serving_contract()["contract_version"],
             "allow_unserveable": bool(args.allow_unserveable),
             "unserveable_overrides": gate_overrides,
+            "research_selected_decoder_only": research_gate_records,
             # What the pinned runtime does with each planned module, from the
             # contract's construction block -- and which way this run resolved
             # a module it will not route.  ``unrouted`` non-empty together with

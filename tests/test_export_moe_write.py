@@ -43,6 +43,7 @@ from tessera.serving.contract import (classify_construction,  # noqa: E402
 from tessera.serving.scheme import (MOE_GROUPS, expert_role_declarations,  # noqa: E402
                                     parse_tessera_expert_blob,
                                     validate_tessera_moe_scheme)
+from tessera.moe_execution import ResearchSelectedMoeConfig
 
 _spec = importlib.util.spec_from_file_location(
     "export_tessera_serving",
@@ -56,6 +57,46 @@ STACK = f"{LAYER}.mlp.experts"
 
 cuda = pytest.mark.skipif(not torch.cuda.is_available(),
                           reason="the encoder is a GPU job")
+
+
+@pytest.mark.parametrize("grid,q256", [("E4M3", 896), ("BF16", 1792)])
+def test_research_selected_export_gate_accepts_reader_range_without_publishing_a_cell(grid, q256):
+    from tessera.control import grid_for_name
+
+    candidate = grid_for_name(grid)
+    with pytest.raises(SystemExit):
+        export.check_recipe(candidate, q256, where=STACK, structure="routed_moe")
+    records = []
+    config = ResearchSelectedMoeConfig(max_experts_per_chunk=2,
+                                       expected_tensor_parallel_size=2)
+    export.check_recipe(candidate, q256, where=STACK, structure="routed_moe",
+                        research_selected=config, research_records=records)
+    assert records == [{"target": STACK, "family": "TESSERA_FP8" if grid == "E4M3" else "TESSERA_BF16",
+                        "grid": grid, "q256": q256,
+                        "qualification": "research_decoder_only"}]
+
+
+def test_research_bf16_export_stamps_decoder_only_gate_and_exact_scheme(tmp_path, monkeypatch):
+    generator = torch.Generator().manual_seed(73)
+    tensors = {f"{STACK}.0.{projection}.weight": torch.randn(32, 32, generator=generator)
+               for projection in ("gate_proj", "up_proj", "down_proj")}
+    tensors["model.language_model.layers.0.norm.weight"] = torch.randn(32, generator=generator).bfloat16()
+    config = _config()
+    config["text_config"].update(n_routed_experts=1, hidden_size=32, moe_intermediate_size=32)
+    plan = {STACK: {"grid": "BF16", "q256": 1792}}
+    execution, block, _text = _research_input(tmp_path)
+    after = _export(tmp_path, monkeypatch, tensors, plan, "--device", "cpu",
+                    "--research-selected-moe-json", str(execution), config=config)
+    qconfig = json.loads((after / "config.json").read_text())["quantization_config"]
+    groups = [group for group in qconfig["config_groups"].values()
+              if STACK in group["targets"]]
+    assert len(groups) == 1 and groups[0]["scheme"]["family"] == "TESSERA_BF16"
+    manifest = json.loads((after / "tessera_serving_manifest.json").read_text())
+    assert manifest["research_selected_moe"]["config"] == block
+    assert manifest["serving_gate"]["unserveable_overrides"] == []
+    assert manifest["serving_gate"]["research_selected_decoder_only"] == [
+        {"target": STACK, "family": "TESSERA_BF16", "grid": "BF16",
+         "q256": 1792, "qualification": "research_decoder_only"}]
 
 
 def _research_input(tmp_path, tp=2):
@@ -104,6 +145,9 @@ def test_research_export_preserves_wires_and_snapshots_execution(tmp_path, monke
     assert manifest["research_selected_moe"] == {
         "input_sha256": hashlib.sha256(text.encode()).hexdigest(),
         "input_utf8": text, "config": block}
+    assert manifest["serving_gate"]["research_selected_decoder_only"] == [
+        {"target": STACK, "family": "TESSERA_FP8", "grid": "E4M3",
+         "q256": 1024, "qualification": "research_decoder_only"}]
     if partition:
         assert manifest["export_identity"]["options"]["research_selected_moe"] == manifest["research_selected_moe"]
         # Numeric equality must not accept JSON floats in an integer-only carrier.

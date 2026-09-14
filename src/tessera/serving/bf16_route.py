@@ -95,7 +95,7 @@ from .scheme import (ROUTES, TESSERA_BF16, WINDOW_GEMV_SYMBOL, launch_pairs,
 from .sharding import plan_shard_for_layer, require_axis_supported, shard_parsed_roles
 from .telemetry import (DECODER_TORCH_WINDOW, DECODER_WINDOW_GEMV, emit_route,
                         note_lane_refusal, route_shape)
-from .window import PreparedWindow, prepare_window
+from .window import PreparedWindow, _fingerprint, prepare_window, require_expert_ids
 
 __all__ = [
     "ACTIVATION_CONTRACT",
@@ -108,6 +108,7 @@ __all__ = [
     "COMPILED_SYMBOL",
     "COMPILED_DECODER",
     "PreparedTesseraBf16Module",
+    "PreparedTesseraBf16Batch",
     "PreparedBf16Gemv",
     "prepare_tessera_bf16_module",
     "prepare_bf16_gemv",
@@ -204,6 +205,99 @@ class PreparedTesseraBf16Module:
         if len(self.__roles) == 1:
             return self.__roles[0].window.decode()
         return torch.cat([r.window.decode() for r in self.__roles], 0)
+
+    @classmethod
+    def concatenate(cls, modules: Sequence[PreparedTesseraBf16Module]) -> PreparedTesseraBf16Module:
+        """Join already prepared roles without copying their packed windows."""
+        modules = tuple(modules)
+        if not modules:
+            raise ValueError("concatenating needs at least one prepared BF16 module")
+        first = modules[0]
+        if any((m.columns, m.device) != (first.columns, first.device) for m in modules):
+            raise ValueError("concatenated BF16 roles must share columns and device")
+        roles, offset, names = [], 0, set()
+        for module in modules:
+            for role in module.__roles:
+                if role.name in names:
+                    raise ValueError("concatenated BF16 roles must have distinct names")
+                names.add(role.name)
+                roles.append(_Bf16Role(role.name, offset + role.row_offset, role.rows, role.window))
+            offset += module.rows
+        return cls(roles, rows=offset, columns=first.columns,
+                   scale=torch.cat([m.__scale for m in modules]), device=first.device)
+
+    @classmethod
+    def stack(cls, modules: Sequence[PreparedTesseraBf16Module]) -> PreparedTesseraBf16Batch:
+        """Own compatible packed windows for explicit selected BF16 research."""
+        modules = tuple(modules)
+        if not modules:
+            raise ValueError("stacking needs at least one prepared BF16 module")
+        first = modules[0]
+        def layout(module):
+            return (module.rows, module.columns, module.device,
+                    tuple((r.name, r.row_offset, r.rows) for r in module.__roles))
+        if any(layout(module) != layout(first) for module in modules):
+            raise ValueError("stacked BF16 modules must share roles and geometry")
+        windows = [PreparedWindow.stack([m.__roles[i].window for m in modules])
+                   for i in range(len(first.__roles))]
+        return PreparedTesseraBf16Batch(
+            windows, torch.stack([m.__scale for m in modules]), first.role_names,
+            first.rows, first.columns, first.device)
+
+
+class PreparedTesseraBf16Batch:
+    """Selected raw BF16 tiles and row scales; no fused-MoE execution claim."""
+
+    def __init__(self, windows, scales, role_names, rows, columns, device):
+        self.__windows = tuple(windows)
+        self.__scales = scales
+        self.__scale_fingerprint = _fingerprint(scales)
+        self.role_names, self.rows, self.columns, self.device = role_names, rows, columns, scales.device
+        self.experts = scales.shape[0]
+
+    def row_scale(self, expert_ids):
+        require_expert_ids(expert_ids, self.device)
+        if _fingerprint(self.__scales) != self.__scale_fingerprint:
+            raise RuntimeError("prepared Tessera BF16 batch scale changed after preparation")
+        return self.__scales.index_select(0, expert_ids)
+
+    def wire_bytes_resident(self):
+        return sum(w.resident_bytes() for w in self.__windows)
+
+    def resident_bytes(self):
+        return self.wire_bytes_resident() + self.__scales.numel() * self.__scales.element_size()
+
+    def decode(self, expert_ids, *, max_experts_per_chunk, backend="torch"):
+        parts = [w.decode(expert_ids, max_experts_per_chunk=max_experts_per_chunk,
+                          backend=backend)
+                 for w in self.__windows]
+        return parts[0] if len(parts) == 1 else torch.cat(parts, 1)
+
+    def decode_folded(self, expert_ids, *, max_experts_per_chunk, backend="torch"):
+        """One BF16 rounding of the scaled tile, matching read_unit_artifact.
+
+        This is the joint quality screen's canonical PWC weight. Tessera's
+        native dense BF16 serving route instead applies the scale after GEMM;
+        this explicit method must only back a separately named research route.
+        """
+        require_expert_ids(expert_ids, self.device)
+        if type(max_experts_per_chunk) is not int or max_experts_per_chunk <= 0:
+            raise ValueError("max_experts_per_chunk must be a positive integer")
+        if backend not in ("torch", "triton"):
+            raise ValueError(f"unknown selected window backend {backend!r}")
+        # The final selected BF16 stack is unavoidable. Keep raw decoded tiles
+        # and their fp32 folding intermediates bounded by the declared chunk;
+        # a whole-selection float copy would dominate TP2 prefill memory.
+        folded = torch.empty((expert_ids.numel(), self.rows, self.columns),
+                             dtype=torch.bfloat16, device=self.device)
+        for start in range(0, expert_ids.numel(), max_experts_per_chunk):
+            stop = min(start + max_experts_per_chunk, expert_ids.numel())
+            chunk_ids = expert_ids[start:stop]
+            values = self.decode(chunk_ids, max_experts_per_chunk=max_experts_per_chunk,
+                                 backend=backend)
+            scale = self.row_scale(chunk_ids)
+            folded[start:stop] = (values.float() * scale[:, :, None]).to(torch.bfloat16)
+        return folded
 
 
 def prepare_tessera_bf16_module(parsed_roles, device=None) -> PreparedTesseraBf16Module:

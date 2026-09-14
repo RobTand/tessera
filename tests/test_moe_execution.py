@@ -48,8 +48,25 @@ def test_changed_input_record_refuses(field, value):
 
 def test_shared_config_incompatible_targets():
     config = ResearchSelectedMoeConfig.from_checkpoint(_block())
+    config.require_targets({"m": {"structure": "routed_moe", "family": "TESSERA_BF16", "grid": "BF16"}},
+                           "resident")
     with pytest.raises(ValueError, match="requires TESSERA_FP8/E4M3"):
-        config.require_targets({"m": {"structure": "routed_moe", "family": "TESSERA_BF16", "grid": "BF16"}}, "resident")
+        config.require_targets({"m": {"structure": "routed_moe", "family": "TESSERA_NVFP4", "grid": "E2M1x2"}},
+                               "resident")
+
+
+def test_research_selected_recipe_reads_decoder_range_without_production_cell():
+    config = ResearchSelectedMoeConfig.from_checkpoint(_block())
+    assert config.require_wire_recipe(grid="E4M3", q256=896, body="WINDOW",
+                                      plane="CHANNEL", span=1, target="m") == "TESSERA_FP8"
+    assert config.require_wire_recipe(grid="BF16", q256=1792, body="WINDOW",
+                                      plane="CHANNEL", span=1, target="m") == "TESSERA_BF16"
+    with pytest.raises(ValueError, match="outside.*reader range"):
+        config.require_wire_recipe(grid="BF16", q256=4097, body="WINDOW",
+                                   plane="CHANNEL", span=1, target="m")
+    with pytest.raises(ValueError, match="no selected decoder"):
+        config.require_wire_recipe(grid="E2M1x2", q256=896, body="TCQ",
+                                   plane="LUT", span=2, target="m")
 
 
 @pytest.mark.parametrize("field,value", [("expected_tensor_parallel_size", True),

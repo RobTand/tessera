@@ -114,7 +114,8 @@ from tessera.errors import TesseraError  # noqa: E402
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from export_tessera_serving import (  # noqa: E402
-    MOE_ROUTER, MOE_SOURCE_UNPACKED, body_layer, expert_stacks, fused_module, module_scheme_key,
+    MOE_ROUTER, MOE_SOURCE_UNPACKED, body_layer, expert_stacks, family_for,
+    fused_module, module_scheme_key,
     packed_expert_stacks, project_expert_plan, quantizable,
 )
 from tessera.serving_parts import source_identity  # noqa: E402
@@ -199,7 +200,7 @@ def body_weights(model: Path) -> dict:
     return shapes
 
 
-def model_plan_context(model: Path, config: dict):
+def model_plan_context(model: Path, config: dict, *, research_selected: bool = False):
     """Use the exporter's classification and its carried projection, never guess slices."""
     _shards, dense, packed, routed = quantizable(model)
     stacks = expert_stacks(routed)
@@ -221,7 +222,8 @@ def model_plan_context(model: Path, config: dict):
         if producer.get("source") != source_identity(model):
             raise PlanError("carried expert projection source identity disagrees with this checkpoint")
         current = project_expert_plan({**dense, **packed, **routed},
-                    json.loads((model / "config.json").read_text()), request)
+                    json.loads((model / "config.json").read_text()), request,
+                    research_selected=research_selected)
         if current["stacks"] != producer.get("stacks"):
             raise PlanError("carried expert projection disagrees with the producer's current source projection")
         bindings = carried.get("stacks")
@@ -592,10 +594,18 @@ def main(argv=None):
                     help="a PrismaQuant tree, imported read-only for its own wire accounting "
                          "(prismaquant.tessera_formats.artifact_bpp) so the sidecar carries the "
                          "bits the allocator charged")
+    ap.add_argument("--research-selected-moe-json", type=Path, default=None,
+                    help="explicit research selected expert execution input; permits its "
+                         "reader-legal BF16 expert planning without claiming a production cell")
     args = ap.parse_args(argv)
 
     config = json.loads(args.layer_config.read_text())
-    shapes, stack_members, layouts = model_plan_context(args.model, config)
+    research_input = None
+    if args.research_selected_moe_json is not None:
+        from tessera.moe_execution import ResearchSelectedMoeInput
+        research_input = ResearchSelectedMoeInput.read(args.research_selected_moe_json)
+    shapes, stack_members, layouts = model_plan_context(
+        args.model, config, research_selected=research_input is not None)
     if args.cover != "as-allocated" and stack_members:
         raise PlanError("broadcast-by-role cannot extrapolate routed expert stacks; use as-allocated")
     routers = {name for name in shapes if MOE_ROUTER.fullmatch(name)}
@@ -622,11 +632,17 @@ def main(argv=None):
     # remains a header-only operation, including its selection warning.
     selected_stacks = {stack: plan[stack] for stack in stack_members
                        if isinstance(plan[stack], dict)}
+    if research_input is not None:
+        research_input.config.require_targets({
+            stack: {"structure": "routed_moe", "family": family_for(grid_for_name(choice["grid"])),
+                    "grid": choice["grid"]}
+            for stack, choice in selected_stacks.items()}, "resident")
+        provenance["research_selected_moe"] = research_input.record()
     if selected_stacks:
         _shards, dense, packed, routed = quantizable(args.model)
         project_expert_plan({**dense, **packed, **routed},
                            json.loads((args.model / "config.json").read_text()),
-                           selected_stacks)
+                           selected_stacks, research_selected=research_input is not None)
     provenance["expert_stacks"] = {stack: {"units": members, "planned_as": plan[stack]}
                                    for stack, members in stack_members.items()}
     provenance["immutable_bf16_routers"] = sorted(routers)

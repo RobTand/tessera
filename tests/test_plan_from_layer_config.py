@@ -546,6 +546,8 @@ def test_actual_translator_hands_off_whole_expert_stacks(tmp_path, monkeypatch, 
     PLAN.main([str(path), str(src), str(out), "--no-uniform-control"])
     assert json.loads(out.read_text()) == plan
     assert json.loads(out.with_suffix(".json.provenance.json").read_text()) == provenance
+
+
     if not packed:
         dictionary.pop("__prismaquant__")
         path.write_text(json.dumps(dictionary))
@@ -577,6 +579,29 @@ def test_actual_translator_hands_off_whole_expert_stacks(tmp_path, monkeypatch, 
     monkeypatch.setattr("sys.argv", argv)
     with pytest.raises(PlanningCompleted):
         export.main()
+
+
+def test_compressed_bf16_expert_plan_needs_explicit_selected_execution(tmp_path):
+    src, stack, units, carried = _moe_plan_source(tmp_path, packed=True)
+    assignment = {name: tessera("TESSERA_BF16_K1_R1792") for name in units}
+    assignment["model.layers.0.feed_forward.gate"] = "BF16"
+    assignment["model.layers.0.self_attn.o_proj"] = "BF16"
+    assignment["__prismaquant__"] = {"tessera_expert_projection": carried}
+    path, out = tmp_path / "assignment.json", tmp_path / "plan.json"
+    path.write_text(json.dumps(assignment))
+    with pytest.raises(SystemExit, match="no expert route"):
+        PLAN.main([str(path), str(src), str(out), "--no-uniform-control"])
+    config = {"schema": "tessera.research_selected_moe.v1",
+              "max_experts_per_chunk": 2, "decode_backend": "torch",
+              "expected_tensor_parallel_size": 2}
+    execution = tmp_path / "selected.json"
+    execution.write_text(json.dumps(config))
+    PLAN.main([str(path), str(src), str(out), "--no-uniform-control",
+               "--research-selected-moe-json", str(execution)])
+    assert json.loads(out.read_text())[stack] == {
+        "grid": "BF16", "q256": 1792, "source_layout": "out_first_chunked"}
+    provenance = json.loads(out.with_suffix(".json.provenance.json").read_text())
+    assert provenance["research_selected_moe"]["config"] == config
 
 
 @pytest.mark.parametrize("bad_choice", ["BF16", "TESSERA_E4M3_K1_R1083"])

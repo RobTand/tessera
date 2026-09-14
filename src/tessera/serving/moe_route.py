@@ -1,4 +1,4 @@
-"""The Tessera routed-MoE expert route: per-expert E4M3 wires as the stock FP8 stack.
+"""Tessera routed-MoE: production FP8 and explicit selected research owners.
 
 WHAT IT SERVES. One ``tessera.fused`` container per expert per projection,
 assembled into ``w13`` (gate then up, the row order
@@ -59,6 +59,10 @@ TP1 or TP2 selected decode. TP2 constructs zero-byte loader parameters and
 validates each whole original wire during its load callback, then invokes
 the existing role slicer and retains only local packed roles; it preserves global expert IDs and
 leaves output reduction to stock vLLM. It is not a qualified runtime cell.
+The research-only BF16 branch folds its decoded row scale into each selected
+BF16 tile once to match PrismaQuant's joint PWC render, then uses stock
+unquantized Triton MoE. Tessera's dense BF16 wire route keeps the row scale
+for an output epilogue instead; neither route claims the other's arithmetic.
 
 WHAT IS ATTESTED. The packaged contract publishes exactly two ``routed_moe`` cells:
 E4M3/q1024, resident/eager on sm_121, for decode and batch on the exact EUGR
@@ -89,7 +93,7 @@ from ..moe_layout import (W13_PROJECTIONS, MoePacked, unpack_moe_wires,
                           validate_moe_wire_lengths)
 from .lane import MODE_RESIDENT, MODES
 from .scheme import (MOE_GEMM_SYMBOL, MOE_GROUP_SHARDS, MOE_GROUPS, ROUTES,
-                     STRUCTURE_ROUTED_MOE, TESSERA_FP8, launch_pairs, route_launches,
+                     STRUCTURE_ROUTED_MOE, TESSERA_BF16, TESSERA_FP8, launch_pairs, route_launches,
                      moe_census_symbol_base as census_symbol_base,
                      expert_role_declarations, parse_tessera_expert_blob,
                      validate_tessera_moe_scheme)
@@ -101,11 +105,13 @@ __all__ = [
     "SHARD_TO_GROUP",
     "PreparedTesseraMoeExperts",
     "PreparedTesseraPackedMoeExperts",
+    "PreparedTesseraPackedBf16MoeExperts",
     "ResearchSelectedMoeConfig",
     "census_expected",
     "census_symbol_base",
     "prepare_tessera_moe_experts",
     "prepare_tessera_packed_moe_experts",
+    "prepare_tessera_packed_bf16_moe_experts",
     "build_tessera_moe_method",
 ]
 
@@ -211,6 +217,31 @@ class PreparedTesseraPackedMoeExperts:
             self.__second.decode(expert_ids, max_experts_per_chunk=max_experts_per_chunk, backend=backend).view(torch.float8_e4m3fn),
             self.__first.row_scale(expert_ids).unsqueeze(-1),
             self.__second.row_scale(expert_ids).unsqueeze(-1))
+
+
+class PreparedTesseraFoldedBf16MoeExperts:
+    """Selected stock BF16 tiles matching the joint screen's PWC render."""
+
+    def __init__(self, w13_weight, w2_weight):
+        self.w13_weight, self.w2_weight = w13_weight, w2_weight
+
+
+class PreparedTesseraPackedBf16MoeExperts:
+    """Two selected compressed BF16 groups; no resident decoded expert pool."""
+
+    def __init__(self, first, second):
+        self.__first, self.__second = first, second
+        self.experts, self.device = first.experts, first.device
+
+    def resident_bytes(self) -> int:
+        return self.__first.resident_bytes() + self.__second.resident_bytes()
+
+    def decode_folded(self, expert_ids, *, max_experts_per_chunk, backend="torch"):
+        return PreparedTesseraFoldedBf16MoeExperts(
+            self.__first.decode_folded(expert_ids, max_experts_per_chunk=max_experts_per_chunk,
+                                       backend=backend),
+            self.__second.decode_folded(expert_ids, max_experts_per_chunk=max_experts_per_chunk,
+                                        backend=backend))
 
 
 def _parsed_experts(blobs, declared_group, target, device):
@@ -321,11 +352,46 @@ def prepare_tessera_packed_moe_experts(blobs, declared, target, device=None, *, 
     return PreparedTesseraPackedMoeExperts(prepared['w13'], prepared['w2'])
 
 
+def prepare_tessera_packed_bf16_moe_experts(blobs, declared, target, device=None,
+                                            *, tp_rank=0, tp_size=1):
+    """Research-only selected BF16 owner over original verified expert wires.
+
+    The selected folded tile matches ``read_unit_artifact(...).to(bfloat16)``,
+    the current PrismaQuant joint screen. It is distinct from Tessera's dense
+    BF16 route, which applies row scale after the GEMM instead.
+    """
+    from .bf16_route import PreparedTesseraBf16Module, prepare_tessera_bf16_module
+    from .sharding import shard_parsed_roles
+
+    if type(tp_size) is not int or tp_size not in (1, 2):
+        raise ValueError(f"{target}: research packed BF16 experts cover TP1 or TP2 only")
+    if type(tp_rank) is not int or not 0 <= tp_rank < tp_size:
+        raise ValueError(f"{target}: invalid research tensor-parallel rank")
+    inter = int(declared["intermediate_size"])
+    if inter % tp_size:
+        raise ValueError(f"{target}: intermediate size must divide the tensor-parallel size")
+    device = torch.device("cuda" if device is None else device)
+    _require_expert_groups(blobs, declared, target)
+    prepared = {}
+    for group in MOE_GROUPS:
+        declaration = declared['groups'][group]
+        plan = _packed_group_shard_plan(declared, group, target, tp_rank, tp_size)
+        modules = [prepare_tessera_bf16_module(shard_parsed_roles(roles, plan), device=device)
+                   for roles in _parsed_experts(blobs[group], declaration,
+                                                f"{target} {group}", device)]
+        prepared[group] = PreparedTesseraBf16Module.stack(modules)
+        del modules
+    return PreparedTesseraPackedBf16MoeExperts(prepared['w13'], prepared['w2'])
+
+
 class _RankLocalPackedIntake:
     """TP2 loader ownership: one validated original becomes one local packed role."""
 
     def __init__(self, declared, target, device, tp_rank, tp_size):
         self.declared, self.target, self.device = declared, target, device
+        self.family = declared['family']
+        if self.family not in (TESSERA_FP8, TESSERA_BF16):
+            raise ValueError(f"{target}: selected packed intake has no {self.family} decoder")
         self._has_loaded = False
         self.plans = {g: _packed_group_shard_plan(declared, g, target, tp_rank, tp_size)
                       for g in MOE_GROUPS}
@@ -334,6 +400,7 @@ class _RankLocalPackedIntake:
                          for g in MOE_GROUPS}
 
     def load(self, group, index, expert, wire, *, device):
+        from .bf16_route import prepare_tessera_bf16_module
         from .fp8_route import prepare_tessera_fp8_module
         from .sharding import shard_parsed_roles
 
@@ -347,26 +414,33 @@ class _RankLocalPackedIntake:
         parsed = parse_tessera_expert_blob(blob, self.roles[group][index],
             f'{self.target} {group} expert {expert}', device=self.device)
         local = shard_parsed_roles(parsed, self.plans[group])
-        prepared = prepare_tessera_fp8_module(local, device=self.device)
+        prepare = (prepare_tessera_fp8_module if self.family == TESSERA_FP8
+                   else prepare_tessera_bf16_module)
+        prepared = prepare(local, device=self.device)
         self.prepared[group][expert][index] = prepared
         self._has_loaded = True
 
     def finish(self, w13_lengths, w2_lengths):
+        from .bf16_route import PreparedTesseraBf16Module
         from .fp8_route import PreparedTesseraFp8Module
 
         validate_moe_wire_lengths(w13_lengths, w2_lengths,
             experts=self.declared['experts'],
             stride13=self.declared['groups']['w13']['wire_stride'],
             stride2=self.declared['groups']['w2']['wire_stride'])
+        module_type = (PreparedTesseraFp8Module if self.family == TESSERA_FP8
+                       else PreparedTesseraBf16Module)
         groups = {}
         for group in MOE_GROUPS:
-            modules = [PreparedTesseraFp8Module.concatenate(roles)
+            modules = [module_type.concatenate(roles)
                        for roles in self.prepared[group]]
-            groups[group] = PreparedTesseraFp8Module.stack(modules)
+            groups[group] = module_type.stack(modules)
             # Release this group's per-expert owners before stacking the next.
             self.prepared[group] = None
             del modules
-        return PreparedTesseraPackedMoeExperts(groups['w13'], groups['w2'])
+        owner_type = (PreparedTesseraPackedMoeExperts if self.family == TESSERA_FP8
+                      else PreparedTesseraPackedBf16MoeExperts)
+        return owner_type(groups['w13'], groups['w2'])
 
 
 def prepare_tessera_moe_experts(blobs: Mapping[str, Sequence[Sequence[bytes]]],
@@ -403,7 +477,8 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
     declared = validate_tessera_moe_scheme(scheme, prefix)
     family = declared["family"]
     from .scheme import refuse_a_family_with_no_expert_route
-    refuse_a_family_with_no_expert_route(family, prefix)
+    if not (research_selected is not None and family == TESSERA_BF16):
+        refuse_a_family_with_no_expert_route(family, prefix)
     # THE PLATFORM GATE FOR THE EXPERT ROUTE (#457), asked here rather than in
     # ``config.get_quant_method`` so that both builders -- dense and expert --
     # are gated at their own front door and neither can be reached past it.
@@ -461,13 +536,24 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
                     "single-shard tile.")
             # The runtime picks the backend, from the runtime's own predicate,
             # for the keys this route's tile actually is.
-            self.fp8_backend, self.experts_cls = select_fp8_moe_backend(
-                config=self.moe, weight_key=kFp8StaticChannelSym,
-                activation_key=kFp8DynamicTokenSym, allow_vllm_cutlass=True)
-            if research_selected is not None:
-                from vllm.model_executor.layers.fused_moe.oracle.fp8 import Fp8MoeBackend
-                if self.fp8_backend != Fp8MoeBackend.TRITON or self.experts_cls.is_monolithic():
-                    raise ValueError(f"{prefix}: research selected expert mapping covers stock TRITON FP8 only")
+            if family == TESSERA_BF16:
+                if research_selected is None:
+                    raise ValueError(f"{prefix}: compressed BF16 routed experts require explicit research-selected execution")
+                if self.moe.has_bias:
+                    raise ValueError(f"{prefix}: research selected BF16 experts do not cover MoE biases")
+                from vllm.model_executor.layers.fused_moe.oracle.unquantized import (
+                    UnquantizedMoeBackend, select_unquantized_moe_backend)
+                self.bf16_backend, self.experts_cls = select_unquantized_moe_backend(moe_config=self.moe)
+                if self.bf16_backend != UnquantizedMoeBackend.TRITON or self.experts_cls.is_monolithic():
+                    raise ValueError(f"{prefix}: research selected BF16 expert mapping covers stock TRITON only")
+            else:
+                self.fp8_backend, self.experts_cls = select_fp8_moe_backend(
+                    config=self.moe, weight_key=kFp8StaticChannelSym,
+                    activation_key=kFp8DynamicTokenSym, allow_vllm_cutlass=True)
+                if research_selected is not None:
+                    from vllm.model_executor.layers.fused_moe.oracle.fp8 import Fp8MoeBackend
+                    if self.fp8_backend != Fp8MoeBackend.TRITON or self.experts_cls.is_monolithic():
+                        raise ValueError(f"{prefix}: research selected expert mapping covers stock TRITON FP8 only")
 
         def _require_research_parallel_contract(self):
             parallel = self.moe.moe_parallel_config
@@ -573,7 +659,7 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
             layer.tessera_mode = self._mode
             layer.tessera_family = family
             layer.tessera_structure = declared["structure"]
-            layer.tessera_activation_contract = ACTIVATION_CONTRACT
+            layer.tessera_activation_contract = ROUTES[family]["activation_contract"]
             layer.tessera_rows = n_rows
             layer.tessera_columns = k
             self._research_phase = 'loading'
@@ -659,7 +745,8 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
                 if device.type != "cuda" and torch.cuda.is_available():
                     device = torch.device("cuda")
                 prepare = (prepare_tessera_moe_experts if research_selected is None
-                           else prepare_tessera_packed_moe_experts)
+                           else (prepare_tessera_packed_bf16_moe_experts if family == TESSERA_BF16
+                                 else prepare_tessera_packed_moe_experts))
                 prepared = prepare(
                     {"w13": w13_blobs, "w2": [[blob] for blob in w2_blobs]},
                     declared, prefix, device=device,
@@ -671,8 +758,10 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
                 self._w13_len = self._w2_len = self._wire_ids = None
                 self._packed = prepared
                 self._research_phase = 'ready'
-                layer.tessera_decoder = f'research_selected_{research_selected.decode_backend}_window'
-                layer.tessera_backend = str(getattr(self.fp8_backend, 'value', self.fp8_backend))
+                layer.tessera_decoder = (f'research_selected_{research_selected.decode_backend}_window'
+                                         + ('_folded_bf16' if family == TESSERA_BF16 else ''))
+                selected_backend = self.bf16_backend if family == TESSERA_BF16 else self.fp8_backend
+                layer.tessera_backend = str(getattr(selected_backend, 'value', selected_backend))
                 return
 
             w13, w2, w13_scale, w2_scale = convert_to_fp8_moe_kernel_format(
@@ -778,20 +867,33 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
                 expert_map.scatter_(0, selected_ids.long(),
                                     torch.arange(selected_ids.numel(), dtype=torch.int32, device=x.device))
             with torch.profiler.record_function('tessera_research_decode_selected_experts'):
-                selected = self._packed.decode(selected_ids,
+                decode = self._packed.decode_folded if family == TESSERA_BF16 else self._packed.decode
+                selected = decode(selected_ids,
                     max_experts_per_chunk=research_selected.max_experts_per_chunk,
                     backend=research_selected.decode_backend)
-            quant = make_fp8_moe_quant_config(
-                fp8_backend=self.fp8_backend,
-                w1_scale=selected.w13_weight_scale, w2_scale=selected.w2_weight_scale,
-                a1_scale=None, a2_scale=None, per_act_token_quant=True,
-                per_out_ch_quant=True, block_shape=None,
-                gemm1_alpha=getattr(layer,'swiglu_alpha',None),
-                gemm1_beta=getattr(layer,'swiglu_beta',None),
-                swiglu_limit=getattr(layer,'swiglu_limit',None), layer=layer)
-            kernel = make_fp8_moe_kernel(moe_quant_config=quant, moe_config=self.moe,
-                fp8_backend=self.fp8_backend, experts_cls=self.experts_cls,
-                routing_tables=layer._expert_routing_tables())
+            if family == TESSERA_BF16:
+                from vllm.model_executor.layers.fused_moe.config import FusedMoEQuantConfig
+                from vllm.model_executor.layers.fused_moe.oracle.unquantized import make_unquantized_moe_kernel
+                quant = FusedMoEQuantConfig.make(
+                    gemm1_alpha=getattr(layer, 'swiglu_alpha', None),
+                    gemm1_beta=getattr(layer, 'swiglu_beta', None),
+                    gemm1_clamp_limit=getattr(layer, 'swiglu_limit', None))
+                kernel = make_unquantized_moe_kernel(
+                    quant_config=quant, moe_config=self.moe,
+                    backend=self.bf16_backend, experts_cls=self.experts_cls,
+                    routing_tables=layer._expert_routing_tables())
+            else:
+                quant = make_fp8_moe_quant_config(
+                    fp8_backend=self.fp8_backend,
+                    w1_scale=selected.w13_weight_scale, w2_scale=selected.w2_weight_scale,
+                    a1_scale=None, a2_scale=None, per_act_token_quant=True,
+                    per_out_ch_quant=True, block_shape=None,
+                    gemm1_alpha=getattr(layer,'swiglu_alpha',None),
+                    gemm1_beta=getattr(layer,'swiglu_beta',None),
+                    swiglu_limit=getattr(layer,'swiglu_limit',None), layer=layer)
+                kernel = make_fp8_moe_kernel(moe_quant_config=quant, moe_config=self.moe,
+                    fp8_backend=self.fp8_backend, experts_cls=self.experts_cls,
+                    routing_tables=layer._expert_routing_tables())
             with torch.profiler.record_function('tessera_research_apply_selected_experts'):
                 return kernel.apply(x, selected.w13_weight, selected.w2_weight, weights, ids,
                     activation=layer.activation, global_num_experts=layer.global_num_experts,

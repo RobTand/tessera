@@ -22,6 +22,73 @@ from tests.test_serving_moe_route import _stack, EXPERTS, HIDDEN, INTER
 
 
 @pytest.fixture(scope='module')
+def bf16_wires():
+    from tessera.alphabet import BF16_GRID
+    from tessera.export import encode_linear_planes
+    from tessera.fused import pack_fused
+    from tessera.unit_artifact import read_unit_artifact
+
+    w13_blobs, w2_blobs, expected = [], [], []
+    for expert in range(2):
+        parts = {}
+        for projection, rows, cols in (('gate_proj', INTER, HIDDEN),
+                                       ('up_proj', INTER, HIDDEN),
+                                       ('down_proj', HIDDEN, INTER)):
+            weight = torch.randn(rows, cols,
+                                 generator=torch.Generator().manual_seed(600 + expert * 3 + len(parts)))
+            written, _unit, _forests = encode_linear_planes(
+                weight, grid=BF16_GRID, q256=512, name=projection,
+                window_bits=8, verify=False)
+            parts[projection] = (pack_fused([(projection, rows, written.blob)]),
+                                 read_unit_artifact(written.blob).to(torch.bfloat16))
+        w13_blobs.append([parts['gate_proj'][0], parts['up_proj'][0]])
+        w2_blobs.append([parts['down_proj'][0]])
+        expected.append((torch.cat([parts['gate_proj'][1], parts['up_proj'][1]]),
+                         parts['down_proj'][1]))
+    scheme = {
+        'family': 'TESSERA_BF16', 'structure': 'routed_moe', 'grid': 'BF16',
+        'body': 'WINDOW', 'plane': 'CHANNEL', 'experts': 2,
+        'groups': {
+            'w13': {'rows': 2 * INTER, 'columns': HIDDEN, 'q256': 512,
+                    'wire_stride': max(len(blob) for pair in w13_blobs for blob in pair),
+                    'roles': [['gate_proj', INTER], ['up_proj', INTER]]},
+            'w2': {'rows': HIDDEN, 'columns': INTER, 'q256': 512,
+                   'wire_stride': max(len(pair[0]) for pair in w2_blobs),
+                   'roles': [['down_proj', HIDDEN]]}}}
+    return w13_blobs, w2_blobs, scheme, expected
+
+
+def test_bf16_selected_owner_matches_actual_folded_wire_weights(bf16_wires):
+    w13_blobs, w2_blobs, scheme, expected = bf16_wires
+    owner = moe_route.prepare_tessera_packed_bf16_moe_experts(
+        {'w13': w13_blobs, 'w2': w2_blobs},
+        validate_tessera_moe_scheme(scheme, 'm'), 'm', device='cpu')
+    ids = torch.tensor([1, 0, 1], dtype=torch.int32)
+    selected = owner.decode_folded(ids, max_experts_per_chunk=2)
+    for slot, expert in enumerate(ids.tolist()):
+        assert torch.equal(selected.w13_weight[slot], expected[expert][0])
+        assert torch.equal(selected.w2_weight[slot], expected[expert][1])
+    assert owner.resident_bytes() > 0
+
+
+def test_bf16_selected_owner_tp2_cuts_original_wires_into_exact_rank_tiles(bf16_wires):
+    w13_blobs, w2_blobs, scheme, expected = bf16_wires
+    ids = torch.tensor([1, 0], dtype=torch.int32)
+    for rank in (0, 1):
+        owner = moe_route.prepare_tessera_packed_bf16_moe_experts(
+            {'w13': w13_blobs, 'w2': w2_blobs},
+            validate_tessera_moe_scheme(scheme, 'm'), 'm', device='cpu',
+            tp_rank=rank, tp_size=2)
+        selected = owner.decode_folded(ids, max_experts_per_chunk=2)
+        lo, hi = rank * (INTER // 2), (rank + 1) * (INTER // 2)
+        for slot, expert in enumerate(ids.tolist()):
+            full13, full2 = expected[expert]
+            local13 = torch.cat([full13[lo:hi], full13[INTER + lo:INTER + hi]])
+            assert torch.equal(selected.w13_weight[slot], local13)
+            assert torch.equal(selected.w2_weight[slot], full2[:, lo:hi])
+
+
+@pytest.fixture(scope='module')
 def original_wires():
     return _stack()
 
@@ -158,6 +225,101 @@ def _load(method, layer, original_wires):
             param = layer.w2_wire if shard == 'w2' else layer.w13_wire
             assert param.weight_loader(param,torch.frombuffer(bytearray(blob),dtype=torch.uint8),
                 'wire',shard,expert,return_success=True)
+
+
+@pytest.fixture
+def bf16_stub_runtime(stub_runtime, monkeypatch):
+    for name in ('vllm.model_executor.layers.fused_moe.config',
+                 'vllm.model_executor.layers.fused_moe.oracle.unquantized'):
+        monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
+    config = sys.modules['vllm.model_executor.layers.fused_moe.config']
+    config.FusedMoEQuantConfig = types.SimpleNamespace(make=lambda **kw: kw)
+    unquant = sys.modules['vllm.model_executor.layers.fused_moe.oracle.unquantized']
+    unquant.UnquantizedMoeBackend = enum.Enum('UnquantizedMoeBackend', ['TRITON', 'FLASHINFER_CUTLASS'])
+    unquant.select_unquantized_moe_backend = lambda **kw: (
+        unquant.UnquantizedMoeBackend.TRITON,
+        types.SimpleNamespace(is_monolithic=lambda: False))
+    calls = []
+
+    class Kernel:
+        def apply(self, x, w13, w2, weights, ids, **kwargs):
+            mapping = kwargs['expert_map']
+            assert bool((mapping[ids.long()] >= 0).all())
+            calls.append((w13.clone(), w2.clone(), mapping.clone()))
+            out = torch.zeros_like(x)
+            for token in range(x.shape[0]):
+                for choice in range(ids.shape[1]):
+                    expert = int(mapping[ids[token, choice]])
+                    gate, up = (w13[expert].float() @ x[token].float()).chunk(2)
+                    value = w2[expert].float() @ (torch.nn.functional.silu(gate) * up)
+                    out[token] += (weights[token, choice] * value).to(out.dtype)
+            return out
+    unquant.make_unquantized_moe_kernel = lambda **kw: Kernel()
+    return calls
+
+
+def test_bf16_selected_builder_uses_stock_unquantized_kernel_with_folded_weights(
+        bf16_wires, bf16_stub_runtime):
+    first, second, scheme, expected = bf16_wires
+    layer = _layer()
+    layer.global_num_experts = 2
+    layer.moe_config.has_bias = False
+    method = _build(scheme, layer)
+    method.create_weights(layer, 2, HIDDEN, INTER, torch.bfloat16)
+    for expert in range(2):
+        for shard, blob in (('w1', first[expert][0]), ('w3', first[expert][1]),
+                            ('w2', second[expert][0])):
+            param = layer.w2_wire if shard == 'w2' else layer.w13_wire
+            param.weight_loader(param, torch.frombuffer(bytearray(blob), dtype=torch.uint8),
+                                'wire', shard, expert, return_success=True)
+    method.process_weights_after_loading(layer)
+    assert method.research_resident_bytes() > 0
+    assert not dict(layer.named_parameters())
+    x = torch.randn(1, HIDDEN, dtype=torch.bfloat16)
+    ids = torch.tensor([[1, 0]], dtype=torch.int32)
+    weights = torch.tensor([[0.6, 0.4]], dtype=torch.float32)
+    output = method.apply(layer, x, weights, ids, None, None)
+    assert output.shape == x.shape and torch.isfinite(output).all()
+    selected_w13, selected_w2, mapping = bf16_stub_runtime[-1]
+    assert torch.equal(selected_w13, torch.stack([expected[0][0], expected[1][0]]))
+    assert torch.equal(selected_w2, torch.stack([expected[0][1], expected[1][1]]))
+    assert mapping.tolist() == [0, 1]
+    assert layer.tessera_activation_contract == 'bf16_unquantized'
+    assert layer.tessera_decoder.endswith('_folded_bf16')
+
+
+def test_bf16_selected_tp2_incremental_loader_keeps_only_rank_local_folded_owners(
+        bf16_wires, bf16_stub_runtime):
+    first, second, scheme, expected = bf16_wires
+    for rank in (0, 1):
+        layer = _layer()
+        layer.global_num_experts = 2
+        layer.moe_config.has_bias = False
+        layer.moe_config.moe_parallel_config.tp_size = 2
+        layer.moe_config.moe_parallel_config.tp_rank = rank
+        config = moe_route.ResearchSelectedMoeConfig(
+            max_experts_per_chunk=2, expected_tensor_parallel_size=2)
+        method = moe_route.build_tessera_moe_method(
+            scheme, 'm', 'resident', layer, research_selected=config)
+        method.create_weights(layer, 2, HIDDEN, INTER // 2, torch.bfloat16)
+        assert {name: p.numel() for name, p in layer.named_parameters()} == {
+            'w13_wire': 0, 'w2_wire': 0}
+        for expert in range(2):
+            for shard, blob in (('w1', first[expert][0]), ('w3', first[expert][1]),
+                                ('w2', second[expert][0])):
+                param = layer.w2_wire if shard == 'w2' else layer.w13_wire
+                param.weight_loader(param, torch.frombuffer(bytearray(blob), dtype=torch.uint8),
+                                    'wire', shard, expert, return_success=True)
+        method.process_weights_after_loading(layer)
+        assert not dict(layer.named_parameters())
+        selected = method._packed.decode_folded(torch.tensor([1, 0], dtype=torch.int32),
+                                                max_experts_per_chunk=2)
+        lo, hi = rank * (INTER // 2), (rank + 1) * (INTER // 2)
+        for slot, expert in enumerate((1, 0)):
+            full13, full2 = expected[expert]
+            assert torch.equal(selected.w13_weight[slot], torch.cat([
+                full13[lo:hi], full13[INTER + lo:INTER + hi]]))
+            assert torch.equal(selected.w2_weight[slot], full2[:, lo:hi])
 
 
 def test_builder_retains_only_packed_owners_and_maps_each_invocation(original_wires, stub_runtime, monkeypatch):

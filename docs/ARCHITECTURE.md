@@ -5,6 +5,26 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-13 for opt-in folded BF16 selected experts. The research
+checkpoint grammar accepts `TESSERA_BF16/BF16` routed targets alongside
+`TESSERA_FP8/E4M3`. Its selected BF16 owner reuses the window parser, TP shard
+plan and rank-local packed intake, then folds the row scale once into a BF16
+tile equal to PrismaQuant's joint PWC render (`read_unit_artifact(...).to(bf16)`).
+The stock unquantized Triton modular MoE consumes only selected experts, with
+the existing eager TP/EP/DP/PCP/SP guards. This is distinct from Tessera's
+dense BF16 route, which applies row scale after GEMM. The exporter accepts
+reader-range rungs through an explicit research-selected decoder gate and
+stamps `serving_gate.research_selected_decoder_only`; ordinary production
+routed-cell attestation, `MOE_BUILDERS`, runtime contract cells, release pin and
+ship gate remain unchanged. Exact TP2 GLM numerical, memory and latency serves
+are still required before claiming qualification. The bounded TP1 native
+stock-kernel and shared-runner control is in
+`docs/measurements/bf16_selected_moe_native_2026-09-13.md`. The selected BF16
+fold keeps raw and FP32 intermediates bounded by `max_experts_per_chunk`; the
+final selected BF16 tile remains a required output. Its one-box before/after
+allocator-peak measurement is in
+`docs/measurements/bf16_selected_moe_chunk_memory_2026-09-13.md`.
+
 Re-stamped 2026-09-13 for what the fp4 activation quantizer EMITS (#484):
 contract v25 adds a top-level `activation_quantizers` block publishing, per
 platform and activation contract, the codes and block-scale bytes the pinned
@@ -129,7 +149,8 @@ import-compatible re-export. Ordinary checkpoint reconstruction parses the
 object into the existing packed selected-expert builder. Omission preserves
 the ordinary materialized route and its compile identity. Explicit `null`,
 malformed fields, non-resident mode, no declared routed target, and routed
-targets outside TESSERA_FP8/E4M3 refuse. Existing eager, stock TRITON modular
+targets outside TESSERA_FP8/E4M3 or TESSERA_BF16/BF16 refuse. Existing eager,
+stock TRITON modular
 backend, TP/EP/DP/PCP/SP, finalization and reduction guards still apply.
 The execution digest joins the existing compile identity only when present;
 it does not qualify a runtime cell. Ignored source-precision expert stacks
@@ -2660,11 +2681,12 @@ and would return `False` for `w13_wire` -- writing nothing, silently
 (`docs/measurements/tessera-moe-wire-loader-2026-09-03.md`). What
 `load_weights` calls is `param.weight_loader`, so the parameter is the seam.
 
-Which families have an expert route is `scheme.MOE_BUILDERS`, and the
-absences are measured: the NVFP4 expert arm resolves on this build only under
-a `swiglu_limit` clamp that changes the arithmetic the experts execute
-(`docs/measurements/nvfp4-moe-oracle-2026-09-02.md`), and a BF16 expert stack
-is the passthrough `quantization_config.ignore` already gives. The route
+Which families have a production expert route is `scheme.MOE_BUILDERS`. The
+NVFP4 oracle resolves a clamp-capable backend on sm121, but Tessera has no
+NVFP4 expert builder or served qualification
+(`docs/measurements/nvfp4-moe-oracle-2026-09-02.md`). Compressed BF16-family
+expert wires have only the explicit research-selected folded route above;
+plain source BF16 passthrough uses `quantization_config.ignore`. The route
 refuses, by name: expert parallelism and tensor parallelism inside an expert
 (the stride invariant needs every expert's blob, and no expert slicer has been
 run), a residency other than `resident`, a non-gated MoE, and any

@@ -11,7 +11,8 @@ import json
 from pathlib import Path
 from typing import Mapping
 
-from .serving.scheme import STRUCTURE_ROUTED_MOE, TESSERA_FP8
+from .serving.scheme import (ROUTES, STRUCTURE_ROUTED_MOE, TESSERA_BF16,
+                             TESSERA_FP8, route_for_grid)
 
 @dataclass(frozen=True)
 class ResearchSelectedMoeConfig:
@@ -64,8 +65,35 @@ class ResearchSelectedMoeConfig:
         if not routed:
             raise ValueError("research_selected_moe requires a declared routed_moe target")
         for name, scheme in routed.items():
-            if scheme.get("family") != TESSERA_FP8 or scheme.get("grid") != "E4M3":
-                raise ValueError(f"research_selected_moe target {name!r} requires TESSERA_FP8/E4M3")
+            if (scheme.get("family"), scheme.get("grid")) not in (
+                    (TESSERA_FP8, "E4M3"), (TESSERA_BF16, "BF16")):
+                raise ValueError(f"research_selected_moe target {name!r} requires "
+                                 "TESSERA_FP8/E4M3 or TESSERA_BF16/BF16")
+
+    def require_wire_recipe(self, *, grid: str, q256: int, body: str,
+                            plane: str, span: int, target: str) -> str:
+        """Research selected decoder reach, separate from production cells.
+
+        A readable dense recipe is necessary for the selected owner but says
+        nothing about TP2 geometry, runtime execution, or device qualification.
+        Those are checked at construction and in served validation.
+        """
+        from .serving.contract import reader_accepts, reader_rate_grid
+
+        family = route_for_grid(grid)
+        if (family, grid) not in ((TESSERA_FP8, "E4M3"), (TESSERA_BF16, "BF16")):
+            raise ValueError(f"research_selected_moe target {target!r}: no selected "
+                             f"decoder for grid {grid!r}")
+        route = ROUTES[family]
+        if (body, plane, int(span)) != (route["body"], route["plane"], route["span"]):
+            raise ValueError(f"research_selected_moe target {target!r}: {family} requires "
+                             f"{route['body']}/{route['plane']}/span-{route['span']}, "
+                             f"got {body}/{plane}/span-{span}")
+        found = reader_rate_grid(family, grid)
+        if found is None or not reader_accepts(int(q256), *found[1:]):
+            raise ValueError(f"research_selected_moe target {target!r}: q256={q256} "
+                             f"is outside the {family} selected decoder's published reader range")
+        return family
 
 
 @dataclass(frozen=True)

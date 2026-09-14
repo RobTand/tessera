@@ -1,0 +1,83 @@
+{
+  "backend": "TRITON",
+  "clamp_effect_fp32": {
+    "exact": false,
+    "max_abs": 2535.664306640625,
+    "rel_l2": 18.2228946685791
+  },
+  "deliberately_wrong_map": {
+    "exact": false,
+    "max_abs": 100.25,
+    "rel_l2": 0.6426882743835449
+  },
+  "experts_cls": "TritonExperts",
+  "loaded_parameter_names": [
+    "w13_wire",
+    "w13_wire",
+    "w13_wire",
+    "w13_wire",
+    "w13_wire",
+    "w13_wire",
+    "w13_wire",
+    "w13_wire",
+    "w2_wire",
+    "w2_wire",
+    "w2_wire",
+    "w2_wire"
+  ],
+  "native_vs_fp32_clamped": {
+    "exact": false,
+    "max_abs": 0.5470046997070312,
+    "rel_l2": 0.002545668976381421
+  },
+  "performance_claim": false,
+  "q256": 1792,
+  "resident_packed_bytes": 784384,
+  "runtime_cell_promoted": false,
+  "schema": "tessera.bf16_selected_native_control.v1",
+  "selected_apply_allocated_before_bytes": 45762560,
+  "selected_apply_incremental_peak_bytes": 1707008,
+  "selected_apply_peak_allocated_bytes": 47469568,
+  "selected_apply_trace": "/out/result.trace.json",
+  "selected_global_experts": [
+    0,
+    1,
+    3
+  ],
+  "selected_vs_full_stock_unquantized": {
+    "exact": true,
+    "max_abs": 0.0,
+    "rel_l2": 0.0
+  },
+  "shared_expert_runner_checked": true,
+  "shared_expert_runner_vs_stock_sum": {
+    "exact": true,
+    "max_abs": 0.0,
+    "rel_l2": 0.0
+  },
+  "source_scope": "locally generated 4-expert BF16 wires",
+  "stock_image_scope": "external pinned Docker image; recorded by caller",
+  "tokens": 5,
+  "topk": 2,
+  "unselected_experts": [
+    2
+  ],
+  "wire_anchor_bytes": {
+    "w13_wire": 499000,
+    "w2_wire": 250524
+  },
+  "wire_sha256": {
+    "0.down_proj.wire": "2437bf94a838bd18407292b0f03da248d99fe35e8a5d165301ccade1a39c0e7a",
+    "0.gate_proj.wire": "79f4acabbd42374233f79448f44c8b8c2c09189202876068ee1fcd83d7af429c",
+    "0.up_proj.wire": "91aba841966a9f420bf35bbf69b4900ae089bd64b3bbac228a0d9eeb0cc08f3d",
+    "1.down_proj.wire": "b84bf398a9b7ddda07498ef2c60397569c1111c3567d3c6836a43f8ea95efbe1",
+    "1.gate_proj.wire": "501b9238508113b6dce3586bcf07b63c9add576e131157af2ffa5bda847e8102",
+    "1.up_proj.wire": "02b7992593d73302104374dac05c4a8c5b55370bf31b0661f4ebd8017ef67263",
+    "2.down_proj.wire": "ab6c5915bc51e5d7082a53f798df5d68bd27a5bd15dd0b1b77e6c9c63d2cf6eb",
+    "2.gate_proj.wire": "090927375a1ce2c7fb4ee102637423ae37a8a7af26cb6ead09e5d70c6e269fd4",
+    "2.up_proj.wire": "1a4f35eb79ca9b56229ee7ae9dbbbf2f1a5182fc53be38f5fef8af9c2a7e6865",
+    "3.down_proj.wire": "6fdfd02e530996f645d387cf98bac57f628caf1fd9eab41d62afc409c7f9e8e6",
+    "3.gate_proj.wire": "012d698c5ef51942af59d058af389c6ef0365877afb0a23cff509beceb5880ae",
+    "3.up_proj.wire": "14ed2d1bdae6628e1d4c40e6104245a531c7106b3f81f9d03688276f7c7e5632"
+  }
+}
