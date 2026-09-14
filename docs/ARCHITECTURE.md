@@ -5,6 +5,33 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-14 for committed Hessian identity and the parallel
+cached-unit intake (tessera#497). Cached intake against a `*.references.json`
+capture establishes each unit's `calibration.hessian` identity from the
+document's sealed per-unit commitment (`ReferenceHessians.commitment`, counted
+in the receipt as `committed_units_served`) instead of reading and digesting
+the canonical H payload, which nothing on the cached path consumes. This is
+exact: `__getitem__` refuses any payload whose `tensor_identity` differs from
+that commitment, so on every accepting run the digested value is the
+committed value; the commitment is bound by the document's `capture_sha256`
+(recomputed from every commitment at load) and its row proofs. Every other
+identity field is still derived by the producer that wrote the receipt
+(`cached_unit.CachedUnitIdentity` wraps the historical or current identity
+factory); the first cached unit is derived both ways and the committed form
+must equal the consumed form before any other unit is served, and that
+witness fixes the unit-independent `calibration.settings`. The export
+manifest's `cached_units.hessian_identity` block (mirrored beside a part's
+`identity`, not inside it) states `established: committed | digested`, the
+reference document/capture digests, the witness and the served count; a
+legacy `.pt` capture is always `digested`, and `--cached-hessian-identity
+digested` keeps the reading path. The per-unit expert work (source slice,
+cached wire read, digests, historical and current verification, framing) runs
+on a thread pool (`--cached-intake-threads`, default one per available CPU)
+bounded by `--cached-intake-window-bytes` (default 8 GiB), committed on the
+shard loop's thread in its order, so the written bytes, records and refusals
+are those of the serial loop. Neither flag is an identity input. Wire bytes,
+serving gates and the cached-unit verifier are unchanged (§3.2).
+
 Re-stamped 2026-09-14 for serving-part source stamps (tessera#495). A
 `--partition` export no longer hashes the whole source checkpoint:
 `export_partition.identity.source` is `serving_parts.source_part_identity`
@@ -1754,8 +1781,12 @@ For packed expert plans, `--hessian` is accepted only with complete
 expert tensor and source slice; its exact logical H key, column geometry,
 actual source/H bytes and full calibration settings must match the cached
 receipt. The physical stack key is never an H fallback. Bounded canonical
-references use `ActivationSource.from_capture` and authenticate one source
-payload per logical H lookup without retaining earlier H tensors. Legacy
+references use `ActivationSource.from_capture`; since tessera#497 the cached
+intake takes each unit's H identity from the document's sealed commitment
+after one witness unit is authenticated both ways (`--cached-hessian-identity
+committed`, the default), and `digested` authenticates one source payload per
+logical H lookup without retaining earlier H tensors. The manifest's
+`cached_units.hessian_identity` block says which. Legacy
 `.pt` captures retain their eager reader. A missing dense or expert cache entry
 refuses complete coverage; no unit is re-encoded. Packed-H exports without
 `--cached-units`, including expert-only cache mode, continue to refuse before

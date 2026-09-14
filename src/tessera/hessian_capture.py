@@ -167,6 +167,7 @@ class ReferenceHessians(Mapping):
         self._resident_was_bound = False
         self._resident_observed = set()
         self._resident_finite = set()
+        self._committed_served = set()
         self._reads = self._read_bytes = self._peak_file = self._peak_h = 0
         self._live_payloads = 0
         try:
@@ -427,6 +428,27 @@ class ReferenceHessians(Mapping):
         self.require_current()
         return {name:item['sha256'] for name,item in self._document['hessians'].items()}
 
+    def commitment(self, name):
+        """One unit's sealed tensor identity, served without reading its bytes.
+
+        ``__getitem__`` refuses any payload whose ``tensor_identity`` is not
+        this value, so on every accepting path the identity a consumer derives
+        from the consumed H *is* this commitment.  A consumer that shapes
+        nothing with H and needs only its identity -- cached-unit intake, whose
+        acceptance compares a receipt's ``calibration.hessian`` against exactly
+        this -- takes it here and pays no read.  The document binds it: the
+        ``capture_sha256`` recomputed from every commitment at load and the row
+        proofs both move when a commitment does.  What is NOT established here
+        is that the canonical ``.pt`` on disk still matches: the receipt counts
+        the unit under ``committed_units_served``, never ``verified_units``,
+        because nothing here compared bytes.
+        """
+        with self._lock:
+            self.require_current()
+            item = self._document['hessians'][name]
+            self._committed_served.add(name)
+            return dict(item, shape=list(item['shape']))
+
     def resident_mapping(self):
         """The bound resident tensors as bound, or ``None`` when nothing is.
 
@@ -525,10 +547,14 @@ class ReferenceHessians(Mapping):
         against their commitment.  ``resident_units_observed`` are units it
         handed out from a resident binding after the owner and geometry checks:
         looked at, not authenticated here, because the authenticating digest for
-        those is taken by the consumer.  Two names because they are two claims.
+        those is taken by the consumer.  ``committed_units_served`` are units
+        whose sealed commitment was handed out by ``commitment`` in place of
+        their bytes: identity established from the document, no payload read.
+        Three names because they are three claims.
         """
         return dict(schema='tessera.hessian_reference_consumption.v1',
             committed_units=len(self._document['hessians']), verified_units=sorted(self._verified),
+            committed_units_served=sorted(self._committed_served),
             loaded_entries=self._reads, source_read_bytes=self._read_bytes,
             peak_file_bytes=self._peak_file, peak_hessian_bytes=self._peak_h,
             live_payloads=self._live_payloads, closed=self._closed,
