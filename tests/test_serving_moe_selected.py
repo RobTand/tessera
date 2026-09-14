@@ -18,7 +18,7 @@ torch = pytest.importorskip('torch')
 from tessera.serving import moe_route
 from tessera.errors import GrammarError
 from tessera.serving.scheme import validate_tessera_moe_scheme
-from tests.test_serving_moe_route import _stack, EXPERTS, HIDDEN, INTER
+from test_serving_moe_route import _stack, EXPERTS, HIDDEN, INTER  # the tests dir is on sys.path (conftest)
 
 
 @pytest.fixture(scope='module')

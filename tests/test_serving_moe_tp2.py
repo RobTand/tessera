@@ -6,8 +6,12 @@ import torch
 
 from tessera.serving import moe_route
 from tessera.serving.scheme import validate_tessera_moe_scheme
-from tests.test_serving_moe_route import _stack, _encode
-from tests.test_serving_moe_selected import stub_runtime, _layer
+# Sibling test modules by their own names: ``tests/conftest.py`` puts this
+# directory on ``sys.path``, while ``tests.<module>`` needs the checkout root
+# there too and resolves to whatever top-level ``tests`` package an
+# interpreter happens to carry (the GB10 venv carries one).
+from test_serving_moe_route import _stack, _encode
+from test_serving_moe_selected import stub_runtime, _layer
 
 H, N, E = 64, 32, 3
 
