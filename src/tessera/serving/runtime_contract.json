@@ -1,6 +1,6 @@
 {
   "schema": "tessera.runtime-contract.v1",
- "contract_version": 25,
+ "contract_version": 26,
  "quant_method": {
   "canonical": "tessera",
   "accepted": [
@@ -940,8 +940,8 @@
     "max_world_size": 1,
     "loader_axes": {
      "row": {
-      "status": "refused",
-      "reason": "a row shard begins mid-column, so it carries an INITIAL_STATE plane, and the span-2 TCQ decoders this family's route packs for (tessera.lane_planes.pack_unit_for_kernel, csrc/window_gemv.cu) supply state_{-1} = 0 themselves; the loader refuses such a cut on EVERY rank, including rank 0 whose shard would pack, because a group whose ranks disagree about a module hangs on its first collective"
+      "status": "sharded",
+      "reason": null
      },
      "column": {
       "status": "sharded",
@@ -980,7 +980,7 @@
     }
    }
   ],
-  "units_note": "max_world_size is an ATTESTATION bound: the largest tensor-parallel world size a served receipt covers. It is 1 for every declared family because no multi-rank serve has been run. loader_axes is a different claim -- what this build's LOADER does with each shard axis -- and it is checked against tessera.serving.sharding.ROUTE_TP_AXES, which the routes gate on, so the document and the code cannot drift. A serve above max_world_size is unattested, which is the same honest status a rung with no lane_eligibility cell has, and not a refusal."
+  "units_note": "max_world_size is an ATTESTATION bound: the largest tensor-parallel world size a served receipt covers. It is 1 for every declared family because no multi-rank serve has been run. loader_axes is a different claim -- what this build's LOADER does with each shard axis -- and it is checked against tessera.serving.sharding.ROUTE_TP_AXES, which the routes gate on, so the document and the code cannot drift. Since v26 every declared family cuts both axes: a row shard's INITIAL_STATE plane is threaded into the decoder's pad by every shipping body (the window body's window_bits pad for E4M3_K1 and BF16_K1; the span-2 select plane's SELECT_PAD for E2M1_K2, tessera#492), and the native decode of a shard is held to tessera.stock.materialize_stock at load exactly as a whole unit's is. A serve above max_world_size is unattested, which is the same honest status a rung with no lane_eligibility cell has, and not a refusal."
  },
  "expert_parallel": {
   "axis": "vllm_expert_parallel_size",
@@ -1825,6 +1825,11 @@
   }
  },
  "changelog": [
+  {
+   "contract_version": 26,
+   "date": "2026-09-14",
+   "change": "TESSERA_E2M1_K2 cuts the ROW axis (tessera#492). tensor_parallel.units[TESSERA_E2M1_K2].loader_axes.row moves from refused to sharded and its reason to null; nothing else moves: no format, cell, rung, route, launch, grade, KL entry, qualification, max_world_size or served byte, lane_eligibility.schema stays v10, expert_parallel.units stays empty, and a reader that knows nothing of loader_axes reads the document exactly as it did at v25. A version bump rather than an edit because the row status is a value a producer's TP planner reads (a v25 reader that cached 'refused' would plan every ColumnParallel E2M1 Linear -- q/k/v, gate/up, the routed experts' w13 -- onto another family at TP2), and the change is to what the LOADER does, which the validator checks against tessera.serving.sharding.ROUTE_TP_AXES. WHAT CHANGED IN THE LOADER. A row shard begins mid-column and carries the register each column is in at the cut (the INITIAL_STATE plane of tessera.layout.slice_unit). The window body always threaded it through its window_bits pad; the span-2 TCQ body's decoders read step 0's history out of the select plane's eight-bit SELECT_PAD, which was pinned to zero, so pack_unit_for_kernel refused a shard by name and ops.PreparedTesseraModule refused it again at decode. lane_planes._thread_start_state now writes the state into the last `memory` pad positions in STREAM order -- bit j of the register (select bit -(memory - j)) at pad position SELECT_PAD - memory + j -- which is exactly the order build_span2_luts and build_history_lut map a window to a ConvCode state (newest bit at the top, decode._conv_state_stream), so the CUDA span-2 decoder (csrc/tessera_nvfp4.cu) is unchanged and reads a shard's first window as it reads any later one. The reference decoder (tessera.stock.materialize_stock via decode.decode_codes_mixed) already started from unit.initial_state, and ops._require_reference_agreement holds the native decode of every prepared module -- shards included -- to it with torch.equal on both planes at load, so a start state threaded in the wrong order is a refusal naming the module, never a served tile. Proven by tests/test_span2_start_state.py: a synthetic select stream against decode's own replay tables (CPU), and a real E2M1x2 q256=896 unit cut on rows at tp 2 and 4 through sharding.shard_parsed_roles and ops.prepare_tessera_module, whose decode equals the whole unit's decode sliced, bit for bit, on the native decoder and on the torch fallback (CUDA). NOT ATTESTED: max_world_size stays 1; a two-rank serve of this family is what this build now attempts, and it becomes a claim when a two-rank receipt exists."
+  },
   {
    "contract_version": 25,
    "date": "2026-09-13",

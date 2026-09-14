@@ -34,14 +34,17 @@ disappointing.
 TWO GATES, AND THEY ANSWER DIFFERENT QUESTIONS.  ``require_a_cutter`` refuses a
 TP group in a build with no ``tessera.layout.slice_unit`` -- the whole-file
 answer, asked once per module at method construction.  ``require_axis_supported``
-refuses the ONE axis a route's decoders cannot start, read off ``ROUTE_TP_AXES``
+refuses an axis a route's decoders cannot start, read off ``ROUTE_TP_AXES``
 and asked at ``create_weights`` where ``plan_shard`` has just named the axis.  A
-ROW shard (``r0 > 0``) carries an INITIAL_STATE plane, and only the window body
-threads a start state through its pad (``lane_planes.pack_window_planes``) --
-which the E4M3 and BF16 families ship and the span-2 TCQ body does not, so the
-span-2 packer refuses such a unit by name (``pack_unit_for_kernel``).  So the NVFP4 route serves column cuts
-(RowParallel) at any TP and refuses row cuts -- on every rank, including rank 0,
-whose shard would in fact pack, because a group whose ranks disagree about
+ROW shard (``r0 > 0``) carries an INITIAL_STATE plane, and every shipping body
+threads that start state through its decoder's pad: the window body through
+``lane_planes.pack_window_planes`` (E4M3, BF16) and the span-2 TCQ body through
+the select plane's ``SELECT_PAD`` (``lane_planes._thread_start_state``, E2M1x2;
+tessera#492).  So every route serves both axes today and the table below
+refuses nothing -- it stays, and the gate stays, because the answer is a
+property of a BODY and a fourth body may bring a refusal with it.  Where a
+refusal exists it is symmetric across the group -- every rank, including rank 0,
+whose shard would in fact pack -- because a group whose ranks disagree about
 whether a module exists hangs on its first collective rather than failing.
 
 NONE OF THIS IS ATTESTED.  ``runtime_contract.json``'s
@@ -200,13 +203,16 @@ TP_STATUSES = (TP_SHARDED, TP_REFUSED)
 #:
 #: The row axis's answer is a property of the BODY, not of the tile: the window
 #: body's L-bit pad IS ``state_{-1}``, so a row shard costs the window decoders
-#: an argument, while the span-2 TCQ body's ``SELECT_PAD`` feeds a window whose
-#: bit order ``build_span2_luts`` reverses and threading the state through that
-#: reversal is unwritten.  It is keyed by ROUTE because family, body and route
-#: are one-to-one today (``export_tessera_serving.check_recipe`` enforces it);
-#: a third family with a different body brings its own row.
+#: an argument; the span-2 TCQ body's ``SELECT_PAD`` is the same opportunity
+#: and, since tessera#492, ``lane_planes._thread_start_state`` writes the
+#: shard's register into it in the stream order ``build_span2_luts`` maps, so
+#: the native span-2 decoder and ``materialize_stock`` start a row shard from
+#: the same state (held to each other at load, ``ops._require_reference_agreement``).
+#: It is keyed by ROUTE because family, body and route are one-to-one today
+#: (``export_tessera_serving.check_recipe`` enforces it); a fourth family with
+#: a different body brings its own row.
 ROUTE_TP_AXES: dict[str, dict[str, str]] = {
-    TESSERA_NVFP4: {AXIS_ROWS: TP_REFUSED, AXIS_COLUMNS: TP_SHARDED},
+    TESSERA_NVFP4: {AXIS_ROWS: TP_SHARDED, AXIS_COLUMNS: TP_SHARDED},
     TESSERA_FP8: {AXIS_ROWS: TP_SHARDED, AXIS_COLUMNS: TP_SHARDED},
     # The third family, and the docstring above said what to do with one: it
     # brings its own row.  BF16 gets FP8's answer for FP8's reason and not by
@@ -221,15 +227,10 @@ ROUTE_TP_AXES: dict[str, dict[str, str]] = {
 
 #: Why a refused axis is refused.  PROSE, and deliberately not a gate input
 #: (principle 14): ``ROUTE_TP_AXES`` is what a gate reads, this is what a
-#: person reads.  The contract may carry its own wording.
-ROUTE_TP_AXIS_REASONS: dict[str, dict[str, str]] = {
-    TESSERA_NVFP4: {
-        AXIS_ROWS: (
-            "a row shard begins mid-column, so it carries an INITIAL_STATE plane, and the "
-            "span-2 TCQ decoders this route packs for (tessera.lane_planes."
-            "pack_unit_for_kernel) supply state_{-1} = 0 themselves"),
-    },
-}
+#: person reads.  The contract may carry its own wording.  Empty since
+#: tessera#492 lifted the NVFP4 row refusal; a route that refuses an axis
+#: adds its reason here beside the status.
+ROUTE_TP_AXIS_REASONS: dict[str, dict[str, str]] = {}
 
 
 def axis_status(family: str, axis: str) -> str:
@@ -368,14 +369,16 @@ def require_a_cuttable_artifact(prefix: str, world: int, config: "Optional[dict]
 def require_axis_supported(family: str, plan: "ShardPlan") -> None:
     """Refuse, at ``create_weights``, an axis this route's decoders cannot start.
 
-    Called with the plan and NOT with the rank, on purpose.  A row cut of a
-    span-2 unit is packable on rank 0 -- its shard starts at row 0, so it
+    Called with the plan and NOT with the rank, on purpose.  A row cut is
+    packable on rank 0 whatever the body -- its shard starts at row 0, so it
     carries no INITIAL_STATE plane -- and refusing only where it bites would
     mean rank 0 building a layer while its peers raised.  A TP group whose
     ranks disagree about whether a module exists does not fail: it hangs on the
-    first collective, which is a worse bug than the one being reported.  So the
+    first collective, which is a worse bug than the one being reported.  So a
     refusal is symmetric across the group, and it arrives before any byte is
-    loaded rather than from inside a packer.
+    loaded rather than from inside a packer.  No shipping route refuses an
+    axis today (tessera#492 threaded the span-2 start state); the gate is
+    kept for the body that will.
     """
     if plan.axis is None or plan.tp_size <= 1:
         return                       # nothing is cut: replicated, or one rank

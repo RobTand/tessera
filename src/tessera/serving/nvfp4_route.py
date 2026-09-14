@@ -120,9 +120,11 @@ def build_tessera_nvfp4_method(scheme, prefix: str, mode: str):
             # Which slice of the whole unit this rank serves.  At TP=1 the plan
             # is the whole module and this is the shape check it replaces; at
             # TP>1 it names the axis, and the axis is gated here rather than
-            # inside a packer: this route decodes the span-2 TCQ body, whose
-            # kernel supplies state_{-1} = 0 itself, so a ROW cut is refused on
-            # every rank before a byte is read (see ``sharding.ROUTE_TP_AXES``).
+            # inside a packer (``sharding.ROUTE_TP_AXES``).  Both axes cut on
+            # this route: a ROW shard's start state rides in the select
+            # plane's pad (``lane_planes._thread_start_state``, tessera#492)
+            # and the native decode of every shard is held to
+            # ``materialize_stock`` at load, exactly as a whole unit's is.
             # The LISTS, not their sums: ``output_partition_sizes`` is the
             # per-member answer and the declared roles are its counterpart, and
             # a fused container's members are cut independently (#32).  The

@@ -905,21 +905,23 @@ def test_loader_axes_is_the_table_the_routes_gate_on(contract):
 
 
 def test_the_published_axes_are_the_ones_the_seam_can_serve(contract):
-    """Named, not merely derived: E4M3 cuts both axes, E2M1x2 cuts columns only.
+    """Named, not merely derived: every declared family cuts both axes.
 
     The row axis is the body's answer, not the tile's -- the window body's
-    L-bit pad IS ``state_{-1}``, and the span-2 TCQ decoders supply
-    ``state_{-1} = 0`` themselves -- so this is the assertion that would fail if
-    a future edit quietly widened the NVFP4 route's claim without teaching its
-    packer a start state.
+    L-bit pad IS ``state_{-1}``, and since v26 (tessera#492) the span-2 TCQ
+    packer threads a shard's register into its decoders' select pad
+    (``tests/test_span2_start_state.py``) -- so this is the assertion that
+    would fail if a future edit quietly narrowed the NVFP4 route's claim back,
+    or widened a new family's without teaching its packer a start state.
     """
     axes = {u["unit"]: {a: v["status"] for a, v in u["loader_axes"].items()}
             for u in contract["tensor_parallel"]["units"]}
-    assert axes["TESSERA_E4M3_K1"] == {"row": "sharded", "column": "sharded"}
-    assert axes["TESSERA_E2M1_K2"] == {"row": "refused", "column": "sharded"}
-    refused = [u for u in contract["tensor_parallel"]["units"]
-               if u["unit"] == "TESSERA_E2M1_K2"][0]["loader_axes"]["row"]
-    assert "INITIAL_STATE" in refused["reason"]
+    both = {"row": "sharded", "column": "sharded"}
+    assert axes["TESSERA_E4M3_K1"] == both
+    assert axes["TESSERA_E2M1_K2"] == both
+    assert axes["TESSERA_BF16_K1"] == both
+    for u in contract["tensor_parallel"]["units"]:
+        assert all(v["reason"] is None for v in u["loader_axes"].values()), u["unit"]
 
 
 # --- what the validator refuses ----------------------------------------------
@@ -1033,19 +1035,38 @@ def test_an_unmeasured_world_size_is_refused(contract):
 
 
 def test_a_loader_axis_that_disagrees_with_the_code_is_refused(contract):
-    """The document may not widen what the loader does."""
+    """The document may neither widen nor narrow what the loader does: a row
+    refusal the code no longer makes (units[0] is TESSERA_E2M1_K2, whose row
+    cut the loader has taken since v26) is a claim about a runtime that does
+    not exist."""
+    assert contract["tensor_parallel"]["units"][0]["unit"] == "TESSERA_E2M1_K2"
     bad = _mutated(contract, lambda c: c["tensor_parallel"]["units"][0]["loader_axes"]["row"]
-                   .update({"status": "sharded", "reason": None}))
+                   .update({"status": "refused", "reason": "a reason the code does not give"}))
     with pytest.raises(ValueError, match="ROUTE_TP_AXES"):
         validate_serving_contract(bad)
 
 
-def test_a_refused_axis_must_carry_a_reason(contract):
+def test_a_refused_axis_must_carry_a_reason(contract, monkeypatch):
+    """Provoked through the code table, since no shipping route refuses an
+    axis today: with the loader refusing the NVFP4 row cut, a document that
+    agrees but says nothing about why is a wall, not a contract."""
+    from tessera.serving import sharding
+    from tessera.serving.scheme import TESSERA_NVFP4
+
+    monkeypatch.setitem(sharding.ROUTE_TP_AXES, TESSERA_NVFP4,
+                        {sharding.AXIS_ROWS: sharding.TP_REFUSED,
+                         sharding.AXIS_COLUMNS: sharding.TP_SHARDED})
+    assert contract["tensor_parallel"]["units"][0]["unit"] == "TESSERA_E2M1_K2"
     bad = _mutated(contract,
                    lambda c: c["tensor_parallel"]["units"][0]["loader_axes"]["row"]
-                   .__setitem__("reason", None))
+                   .update({"status": "refused", "reason": None}))
     with pytest.raises(ValueError, match="carries no reason"):
         validate_serving_contract(bad)
+    # ... and the same refusal with its reason is the document the code asks for.
+    good = _mutated(contract,
+                    lambda c: c["tensor_parallel"]["units"][0]["loader_axes"]["row"]
+                    .update({"status": "refused", "reason": "the pad cannot start it"}))
+    validate_serving_contract(good)
 
 
 def test_a_unit_without_loader_axes_is_refused(contract):
