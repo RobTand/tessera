@@ -5,7 +5,9 @@ import copy
 import importlib
 import importlib.util
 import json
+import hashlib
 from pathlib import Path
+import shutil
 
 import pytest
 import torch
@@ -13,6 +15,8 @@ import torch
 from tessera.alphabet import E4M3_GRID
 from tessera.export import ActivationSource, encode_linear
 from tessera.fused import parse_fused
+from tessera.historical_producer import load_historical_producer
+from tessera.moe_execution import ResearchSelectedMoeConfig
 
 ROOT = Path(__file__).resolve().parents[1]
 STACK = "model.layers.2.feed_forward.experts"
@@ -53,6 +57,85 @@ def _record(encoded, activation=None):
     identity = api.unit_input_identity(weight, _projection(), E4M3_GRID, 1024,
                                        activation=activation)
     return api.make_unit_record(blob, identity, filename="unit.tessera"), identity
+
+
+def _distinct_producer(tmp_path, *, escape=False):
+    """A real package with a changed serving-only file and the same wire owner."""
+    package = tmp_path / "src/tessera"
+    shutil.copytree(ROOT / "src/tessera", package,
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"))
+    shutil.copy2(ROOT / "pyproject.toml", tmp_path / "pyproject.toml")
+    route = package / "serving/scheme.py"
+    route.write_bytes(route.read_bytes() +
+                      f"\n# historical package source seal: {tmp_path.name}\n".encode())
+    if escape:
+        cached = package / "cached_unit.py"
+        cached.write_bytes(cached.read_bytes() + b"\nimport tessera.serving.scheme\n")
+    digest = hashlib.sha256()
+    for path in sorted(p for p in package.rglob("*")
+                       if p.suffix in {".py", ".cu", ".cuh", ".cpp", ".h"}):
+        digest.update(path.relative_to(package).as_posix().encode() + b"\0")
+        digest.update(path.read_bytes())
+        digest.update(b"\0")
+    return package, digest.hexdigest()
+
+
+def test_sealed_historical_identity_accepts_original_without_relabelling(tmp_path, encoded):
+    exporter = _exporter()
+    package, source_sha256 = _distinct_producer(tmp_path)
+    producer = load_historical_producer(package, source_sha256)
+    identity = exporter.cached_input_identity(producer, encoded[0], TENSOR,
+                                              _projection(), E4M3_GRID, 1024)
+    record = {"file": "original.tessera", "identity": identity,
+              "blob_bytes": len(encoded[1]),
+              "blob_sha256": hashlib.sha256(encoded[1]).hexdigest()}
+    assert identity["encoder_source_sha256"] == source_sha256
+    assert identity["encoder_source_sha256"] != _api().encoder_source_sha256()
+    assert producer.verify(encoded[1], record, identity).blob == encoded[1]
+    accepted, packaged = exporter.pack_cached_expert_unit(encoded[1], record, identity)
+    assert accepted.blob == parse_fused(packaged)[0].blob == encoded[1]
+    assert producer.namespace in __import__("sys").modules
+    assert producer.namespace + ".serving.scheme" not in __import__("sys").modules
+
+    wrong = encoded[0].clone(); wrong[0, 0] += 1
+    with pytest.raises(ValueError, match="source"):
+        producer.verify(encoded[1], record, exporter.cached_input_identity(
+            producer, wrong, TENSOR, _projection(), E4M3_GRID, 1024))
+    provenance = {"text_sha256": "a" * 64, "fit_ids_sha256": "b" * 64, "fit_tokens": 32}
+    first = ActivationSource({UNIT: torch.eye(32)}, provenance)
+    for changed in (ActivationSource({UNIT: torch.eye(32) * 2}, provenance),
+                    ActivationSource({UNIT: torch.eye(32)}, provenance,
+                                     refit_objective_trailing="h^0.5")):
+        historical = exporter.cached_input_identity(producer, encoded[0], TENSOR,
+            _projection(), E4M3_GRID, 1024, activation=first)
+        modified = exporter.cached_input_identity(producer, encoded[0], TENSOR,
+            _projection(), E4M3_GRID, 1024, activation=changed)
+        assert historical["calibration"] != modified["calibration"]
+        with pytest.raises(ValueError, match="calibration"):
+            producer.verify(encoded[1], {**record, "identity": historical}, modified)
+    changed_wire = bytearray(encoded[1]); changed_wire[-1] ^= 1
+    with pytest.raises(ValueError, match="sha256"):
+        producer.verify(bytes(changed_wire), record, identity)
+    (package / "serving/scheme.py").write_text("changed again")
+    with pytest.raises(ValueError, match="SHA256"):
+        load_historical_producer(package, source_sha256)
+
+    current_gate = ResearchSelectedMoeConfig(max_experts_per_chunk=2)
+    with pytest.raises(ValueError, match="no selected decoder"):
+        current_gate.require_wire_recipe(grid="E2M1x2", q256=896,
+            body="TCQ", plane="LUT", span=2, target=STACK)
+
+
+def test_historical_namespace_refuses_serving_and_absolute_current_import(tmp_path):
+    package, source_sha256 = _distinct_producer(tmp_path)
+    producer = load_historical_producer(package, source_sha256)
+    with pytest.raises(ImportError, match="cannot import serving"):
+        importlib.import_module(producer.namespace + ".serving.scheme")
+    escaped = tmp_path / "escaped"
+    escaped.mkdir()
+    altered_package, altered_sha256 = _distinct_producer(escaped, escape=True)
+    with pytest.raises(ImportError, match="escape into the current producer"):
+        load_historical_producer(altered_package, altered_sha256)
 
 
 def test_cached_blob_round_trip_keeps_original_unit_name_and_bytes(encoded):
@@ -183,12 +266,21 @@ def test_cached_packaging_never_calls_encoder(encoded, monkeypatch):
     assert accepted.blob == encoded[1]
 
 
-def test_export_consumes_complete_bundle_without_encoder(tmp_path, encoded, monkeypatch):
+@pytest.mark.parametrize("historical", [False, True])
+def test_export_consumes_complete_bundle_without_encoder(tmp_path, encoded, monkeypatch, historical):
     from safetensors import safe_open
     from safetensors.torch import save_file
     from tessera.serving_parts import source_identity
 
     api, exporter = _api(), _exporter()
+    old_flags = []
+    if historical:
+        producer_root = tmp_path / "original"
+        producer_root.mkdir()
+        package, source_sha256 = _distinct_producer(producer_root)
+        api = load_historical_producer(package, source_sha256)
+        old_flags = ["--cached-producer-package", str(package),
+                     "--cached-producer-source-sha256", source_sha256]
     src = tmp_path / "src"
     src.mkdir()
     tensors = {f"{STACK}.0.{role}.weight": encoded[0].clone() for role in ("w1", "w2", "w3")}
@@ -203,11 +295,14 @@ def test_export_consumes_complete_bundle_without_encoder(tmp_path, encoded, monk
     cache.mkdir()
     records = {}
     for index, unit in enumerate(projection["stacks"][STACK]["units"]):
-        identity = api.unit_input_identity(tensors[unit["source_tensor"]], unit, E4M3_GRID, 1024)
+        identity = exporter.cached_input_identity(api if historical else None,
+            tensors[unit["source_tensor"]], unit["tensor"], unit, E4M3_GRID, 1024)
         filename = f"unit-{index}.tessera"
         (cache / filename).write_bytes(encoded[1])
-        records[identity["unit"]] = api.make_unit_record(encoded[1], identity, filename=filename)
-    manifest = {"schema": api.CACHE_SCHEMA, "source": source_identity(src), "units": records}
+        records[identity["unit"]] = ({"file": filename, "blob_bytes": len(encoded[1]),
+            "blob_sha256": hashlib.sha256(encoded[1]).hexdigest(), "identity": identity}
+            if historical else api.make_unit_record(encoded[1], identity, filename=filename))
+    manifest = {"schema": _api().CACHE_SCHEMA, "source": source_identity(src), "units": records}
     manifest_path = cache / "manifest.json"
     manifest_path.write_text(json.dumps(manifest))
     plan_path = tmp_path / "plan.json"
@@ -218,7 +313,7 @@ def test_export_consumes_complete_bundle_without_encoder(tmp_path, encoded, monk
     out = tmp_path / "out"
     monkeypatch.setattr("sys.argv", ["export", str(src), str(out), "--plan-json", str(plan_path),
                                     "--cached-expert-units", str(manifest_path), "--device", "cpu",
-                                    "--allow-unrouted", "--allow-unserveable"])
+                                    "--allow-unrouted", "--allow-unserveable", *old_flags])
     exporter.main()
     with safe_open(str(out / "model.safetensors"), framework="pt") as handle:
         for name in tensors:
@@ -226,6 +321,8 @@ def test_export_consumes_complete_bundle_without_encoder(tmp_path, encoded, monk
             assert parse_fused(packed)[0].blob == encoded[1]
     receipt = json.loads((out / "tessera_serving_manifest.json").read_text())
     assert receipt["cached_expert_units"]["planned_units"] == 3
+    if historical:
+        assert receipt["cached_expert_units"]["historical_producer"]["source_sha256"] == source_sha256
     assert len(receipt["modules"][STACK]["roles"]) == 3
     assert all(role["cached_blob_sha256"] for role in receipt["modules"][STACK]["roles"])
 
