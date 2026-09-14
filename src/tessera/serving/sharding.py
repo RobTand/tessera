@@ -1057,16 +1057,91 @@ def check_shard_granularity(plan: ShardPlan, role: RoleShard, unit) -> None:
             f"{plan.axis} granularity {gran}")
 
 
-def _reparse_shard(parsed, sharded, label: str):
-    """A shard is a whole artifact: write it, and read it back.
+_SHARD_PARSE = None
 
-    The cheap alternative -- swapping the sliced unit into the parent's
-    ``ParsedUnit`` -- would leave a manifest describing the PARENT: the wrong
-    rows, the wrong columns, no shard record, and a parent digest naming a unit
-    this rank does not hold.  Everything downstream that asks a parse for a
-    shape would then get the whole module's.  Serialising is the same round trip
-    ``tests/test_slice_unit.py::test_shard_round_trips_through_bytes`` proves
-    exact, and it costs one write and one parse per role, once, at load.
+
+def _shard_parse_type():
+    """``_ShardParse``, defined on first use.
+
+    ``tessera.unit_artifact`` is imported lazily everywhere in this module, and
+    a subclass needs its base at definition time, so the class is built here.
+    """
+    global _SHARD_PARSE
+    if _SHARD_PARSE is not None:
+        return _SHARD_PARSE
+    from tessera.unit_artifact import ParsedUnit
+
+    class _ShardParse(ParsedUnit):
+        """A shard's ``ParsedUnit``: the cut unit now, the shard's manifest when read.
+
+        Every route prepares from ``unit``, ``grid``, ``forests`` and ``code``,
+        and a cut unit already is its own: ``layout.slice_unit`` restricts the
+        parent's planes and carries the start state and the shard record on
+        the unit (``SlicedUnit``), which is what the reader rebuilds from a
+        shard's bytes (``unit_artifact._as_unit``).  What only a write can
+        produce is the MANIFEST -- geometry, plane table, digests -- and no
+        route reads one off a shard.  So it is written and read back on first
+        access, by the same writer and reader a shard's bytes always went
+        through, and cached.  ``ParsedUnit``'s own initialiser is not called
+        because it would assign the field this class derives.
+        """
+
+        def __init__(self, parent, sharded, label: str):
+            self.unit = sharded
+            self.forests = parent.forests
+            self.code = parent.code
+            self.grid = parent.grid
+            manifest = parent.manifest
+            self._shard_label = label
+            self._shard_writer = (int(manifest.branch.root_q256),
+                                  int(manifest.geometry.superblock_columns),
+                                  manifest.branch.container, manifest.encoder_fixture_id)
+            self._shard_manifest = None
+
+        @property
+        def manifest(self):
+            if self._shard_manifest is None:
+                from tessera.trellis import ConvCode
+                from tessera.unit_artifact import build_unit_artifact, parse_unit_artifact
+
+                root_q256, superblock, container, fixture_id = self._shard_writer
+                _m, _region, blob = build_unit_artifact(
+                    self.unit, self._shard_label, self.forests, root_q256,
+                    self.code or ConvCode(), superblock=superblock, container=container,
+                    fixture_id=fixture_id)
+                self._shard_manifest = parse_unit_artifact(
+                    blob, device=self.unit.body_bits.device).manifest
+            return self._shard_manifest
+
+    _SHARD_PARSE = _ShardParse
+    return _SHARD_PARSE
+
+
+def _reparse_shard(parsed, sharded, label: str):
+    """A shard is a whole artifact: its parse describes the shard, never the parent.
+
+    Swapping the sliced unit into the parent's ``ParsedUnit`` would leave a
+    manifest describing the PARENT: the wrong rows, the wrong columns, no shard
+    record, and a parent digest naming a unit this rank does not hold.  So the
+    parse this returns carries the shard's own manifest -- the one
+    ``build_unit_artifact`` writes and ``parse_unit_artifact`` reads back, the
+    round trip ``tests/test_slice_unit.py::test_shard_round_trips_through_bytes``
+    proves exact -- but writes it only when something reads it
+    (``_ShardParse``).  The load never does: at one write and one parse per
+    role per expert it was a quarter of a routed-expert load (tessera#501).
+
+    What the eager round trip checked, and where each check now lives:
+
+    - the container and profile digests are over bytes this process had just
+      written, so they attested nothing a parse of the parent had not;
+    - the rate schedule, the table size and range, and the arity are the
+      parent's, already validated by its parse, and ``slice_unit`` refuses a
+      cut that breaks the rate quota or a granularity;
+    - the start-state width is set by ``slice_unit`` from the body kind, the
+      rule ``_as_unit`` checks;
+    - the shard record's own refusals (``manifest.ShardOrigin``: offsets,
+      extent, digest length, state versus row offset) run here, now, on the
+      record the writer would build.
 
     THE PARENT'S ENCODER IS THE SHARD'S ENCODER.  ``fixture_id`` is passed
     EXPLICITLY, including when the parent carries none: cutting restricts
@@ -1079,17 +1154,15 @@ def _reparse_shard(parsed, sharded, label: str):
     same holds in the other direction: an untagged parent's ``None`` is
     forwarded rather than promoted to a current identity it never carried.
     """
-    from tessera.trellis import ConvCode
-    from tessera.unit_artifact import build_unit_artifact, parse_unit_artifact
+    from tessera.manifest import ShardOrigin
 
-    manifest = parsed.manifest
-    _m, _region, blob = build_unit_artifact(
-        sharded, label, parsed.forests, int(manifest.branch.root_q256),
-        parsed.code or ConvCode(),
-        superblock=int(manifest.geometry.superblock_columns),
-        container=manifest.branch.container,
-        fixture_id=manifest.encoder_fixture_id)
-    return parse_unit_artifact(blob, device=parsed.unit.body_bits.device)
+    if int(getattr(sharded, "parent_rows", 0)):
+        ShardOrigin(row_offset=int(sharded.row_offset), col_offset=int(sharded.col_offset),
+                    parent_rows=int(sharded.parent_rows),
+                    parent_columns=int(sharded.parent_columns),
+                    parent_digest=bytes(sharded.parent_digest),
+                    state_bits=int(sharded.state_bits))
+    return _shard_parse_type()(parsed, sharded, label)
 
 
 def shard_parsed_roles(parsed_roles, plan: ShardPlan):
