@@ -1276,6 +1276,14 @@ def cached_input_identity(producer, weight, unit_name, unit, grid, q256, *, acti
     return projected_identity(weight, unit, original_grid, q256, activation=activation)
 
 
+def _warm_encoder_fixture_id(build) -> None:
+    """Fill the encoder identity memo; the caller's own call reports a failure."""
+    try:
+        build()
+    except Exception:
+        pass
+
+
 def default_intake_threads() -> int:
     """One worker per CPU this process may run on: the intake is read + hash bound."""
     try:
@@ -2113,9 +2121,16 @@ def main():
         # Stamp only the shards this part reads tensors from (tessera#495): the
         # merge proves each stamp against its one pass over the whole source.
         read_shards = sorted(shard for shard, names in shards.items() if any(map(owns, names)))
+        from tessera.encoder_identity import encoder_fixture_id
+        # Build the per-process encoder identity memo on a helper thread while
+        # the shards hash (tessera#499). The call below takes the memo, or
+        # waits on the build's lock; if the helper failed, the memo is empty
+        # and that call rebuilds and raises the refusal itself.
+        import threading
+        threading.Thread(target=_warm_encoder_fixture_id, args=(encoder_fixture_id,),
+                         name="encoder-fixture-id", daemon=True).start()
         identity = export_identity(args.src, options, args.partition_runtime_image,
                                    Path(__file__).resolve().parents[1], shards=read_shards)
-        from tessera.encoder_identity import encoder_fixture_id
         identity["encoder_fixture_id"] = encoder_fixture_id().hex()
         partition_record = {"schema": PART_SCHEMA, "index": index, "count": count,
                             "identity": identity, "source_tensors": selected}

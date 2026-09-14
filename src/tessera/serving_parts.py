@@ -9,10 +9,12 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
 import re
 import shutil
 import stat
 import struct
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 SCHEMA = "tessera.serving-part.v1"
@@ -41,6 +43,37 @@ def sha256_file(path: Path) -> str:
         for block in iter(lambda: handle.read(8 * 1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def _affinity_cpus() -> int:
+    try:
+        return max(1, len(os.sched_getaffinity(0)))
+    except (AttributeError, OSError):
+        return max(1, os.cpu_count() or 1)
+
+
+def sha256_files(paths, workers=None) -> list:
+    """:func:`sha256_file` of each path, in the order given.
+
+    Runs one file per thread, at most ``workers`` at a time (the CPUs this
+    process may run on when ``None``); ``hashlib`` and file reads release the
+    GIL, so a multi-shard pass is bounded by cores rather than by one core
+    (tessera#499). The result is what the serial loop returns, and a refusal
+    is the one the serial loop would raise first: results are collected in
+    ``paths`` order, so an earlier file's exception surfaces before a later
+    file's. ``workers=1`` is the serial loop itself.
+    """
+    paths = list(paths)
+    workers = min(len(paths), workers if workers is not None else _affinity_cpus())
+    if workers <= 1:
+        return [sha256_file(path) for path in paths]
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="source-sha256") as pool:
+        futures = [pool.submit(sha256_file, path) for path in paths]
+        try:
+            return [future.result() for future in futures]
+        finally:
+            for future in futures:
+                future.cancel()
 
 
 def make_artifact_readable(path: Path) -> None:
@@ -517,7 +550,7 @@ def source_inventory(source: Path) -> dict:
     return tensors
 
 
-def source_part_identity(source: Path, shards=None) -> dict:
+def source_part_identity(source: Path, shards=None, *, workers=None) -> dict:
     """``source_identity`` for a part that read only ``shards``.
 
     The same binding under the same field names -- ``config_sha256``,
@@ -534,6 +567,10 @@ def source_part_identity(source: Path, shards=None) -> dict:
     and a present file do not compare equal.  A ``shards`` entry that names no
     shard of the source is refused: a filter over absent shards is a mistyped
     range, not an empty part.
+
+    The chosen shards are hashed concurrently by :func:`sha256_files`
+    (``workers`` as there); the document and the order of its refusals are
+    the serial pass's.
     """
     source = Path(source)
     tensors = source_inventory(source)
@@ -550,10 +587,15 @@ def source_part_identity(source: Path, shards=None) -> dict:
     auxiliary = sorted({p for pattern in ("*.json", "*.txt", "*.jinja", "*.model")
                         for p in source.glob(pattern)})
     config_path = source / "config.json"
+    # Config and auxiliary first, as the serial pass evaluated them, so their
+    # refusals still precede any shard's.
+    config_sha256 = sha256_file(config_path) if config_path.exists() else None
+    auxiliary_sha256 = {p.name: sha256_file(p) for p in auxiliary}
+    digests = sha256_files([source / name for name in chosen], workers)
     return {"schema": SOURCE_PART_SCHEMA,
-            "config_sha256": sha256_file(config_path) if config_path.exists() else None,
-            "auxiliary_sha256": {p.name: sha256_file(p) for p in auxiliary},
-            "files": {name: sha256_file(source / name) for name in chosen},
+            "config_sha256": config_sha256,
+            "auxiliary_sha256": auxiliary_sha256,
+            "files": dict(zip(chosen, digests)),
             "tensors": tensors}
 
 
