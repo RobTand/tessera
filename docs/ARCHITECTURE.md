@@ -46,12 +46,19 @@ The merged `export_identity.source` is the whole identity the merge took. A
 cached-unit partition proves its stamp against the bundle manifest's
 whole-checkpoint `source` the same way; the whole-arm export keeps its single
 `source_identity` pass and equality. Parts written before this change carry
-the schema-less block and are refused by name. The shards one stamp names
-are hashed concurrently, one thread per shard up to the CPUs the process may
-run on (`serving_parts.sha256_files`, tessera#499); the document and the
-order of its refusals are the serial pass's. A partition export also builds
-the per-process `encoder_fixture_id` memo on a helper thread during that
-hash; the id and its refusal still come from the caller's own call.
+the schema-less block and are refused by name.
+
+Re-stamped 2026-09-14 for concurrent source and merge hashing (tessera#499).
+The shards one stamp names, including the merge's whole-source pass, are
+hashed concurrently, one thread per shard up to the CPUs the process may run
+on (`serving_parts.sha256_files`); the document and the order of its refusals
+are the serial pass's. The merge's check of every part's `output_sha256`
+starts each part's output shards on a pool of the same bound
+(`serving_parts._HashAhead`) and takes each digest where the serial loop
+hashed that file, so the checks run and refuse in the serial order and a
+mismatch names the same file. A partition export also builds the per-process
+`encoder_fixture_id` memo on a helper thread during the source hash; the id
+and its refusal still come from the caller's own call.
 
 Re-stamped 2026-09-13 for the opt-in historical cached-producer intake (§3.2).
 `--cached-producer-package` plus `--cached-producer-source-sha256` binds the
