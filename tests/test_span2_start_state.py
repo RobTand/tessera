@@ -139,22 +139,43 @@ def test_a_state_that_is_not_one_register_per_column_is_refused():
 
 # --- the CUDA half: a real shard through the serving seam ---------------------
 
-UNIT_ROWS, UNIT_COLS = 64, 512
+#: 128 rows is 64 codes, and the kernel's select plane packs eight span-2
+#: super-symbols (16 codes) to a byte per column, so a row cut must be a whole
+#: multiple of 32 rows.  TP=2 gives 64 rows and TP=4 gives 32 -- both land on
+#: the byte -- which is what makes this fixture cover the aligned native shard
+#: at two world sizes rather than only the coarser one.
+UNIT_ROWS, UNIT_COLS = 128, 512
+#: One row cut BELOW the byte: 64 rows gives TP=4 16 rows = 8 codes, one
+#: span-2 super-symbol column that ``slice_unit`` cuts and the packer cannot.
+NARROW_ROWS = 64
+
+
+def _encoded_unit(rows: int, seed: int):
+    from tessera.alphabet import E2M1_GRID, tuple_grid
+    from tessera.export import encode_linear_planes
+    from tessera.unit_artifact import parse_unit_artifact
+
+    torch.manual_seed(seed)
+    weight = (torch.randn(rows, UNIT_COLS, device="cuda") * 0.02).contiguous()
+    exported, _unit, _forests = encode_linear_planes(
+        weight, grid=tuple_grid(E2M1_GRID, 2), q256=896, name="shard-me", verify=False)
+    return parse_unit_artifact(exported.blob, device="cuda")
 
 
 @pytest.fixture(scope="module")
 def parsed_unit():
     if not torch.cuda.is_available():
         pytest.skip("the Tessera encoder is a CUDA path")
-    from tessera.alphabet import E2M1_GRID, tuple_grid
-    from tessera.export import encode_linear_planes
-    from tessera.unit_artifact import parse_unit_artifact
+    return _encoded_unit(UNIT_ROWS, 492)
 
-    torch.manual_seed(492)
-    weight = (torch.randn(UNIT_ROWS, UNIT_COLS, device="cuda") * 0.02).contiguous()
-    exported, _unit, _forests = encode_linear_planes(
-        weight, grid=tuple_grid(E2M1_GRID, 2), q256=896, name="shard-me", verify=False)
-    return parse_unit_artifact(exported.blob, device="cuda")
+
+@pytest.fixture(scope="module")
+def parsed_unit_narrow():
+    """A unit whose rows are 32 codes: half a byte-column per span-2 shard at
+    TP=4 and a quarter at TP=8, so every cut of it is refused at admission."""
+    if not torch.cuda.is_available():
+        pytest.skip("the Tessera encoder is a CUDA path")
+    return _encoded_unit(NARROW_ROWS, 493)
 
 
 def _row_plan(rows, columns, tp_rank, tp_size):
@@ -179,7 +200,10 @@ def test_a_row_shard_decodes_to_the_whole_units_rows_on_the_native_decoder(parse
     INITIAL_STATE plane.  Every rank's shard now decodes, through the native
     span-2 decoder, to exactly its rows of the whole unit's decode -- and the
     load-time reference agreement inside ``prepare_tessera_module`` has already
-    held each of those decodes to ``materialize_stock``."""
+    held each of those decodes to ``materialize_stock``.  Both world sizes land
+    on the select plane's own byte -- 32 rows per shard is 16 codes, eight
+    span-2 super-symbols -- so this is the aligned cut at TP=2 AND TP=4, not a
+    TP=2-only fixture widened to make a red test green."""
     from tessera.serving.ext import get_tessera_ext
     from tessera.serving.sharding import AXIS_ROWS, shard_parsed_roles
     from tessera.serving.telemetry import DECODER_NATIVE_SPAN2
@@ -202,6 +226,29 @@ def test_a_row_shard_decodes_to_the_whole_units_rows_on_the_native_decoder(parse
         lo, hi = rank * rows_per_rank, (rank + 1) * rows_per_rank
         assert torch.equal(packed, packed_whole[lo:hi]), (tp_size, rank, "packed")
         assert torch.equal(scales, scales_whole[lo:hi]), (tp_size, rank, "scales")
+
+
+@needs_cuda
+@pytest.mark.parametrize("tp_size", [4, 8])
+def test_a_row_cut_below_one_select_byte_is_refused_at_admission(parsed_unit_narrow, tp_size):
+    """FAILS BEFORE with the PACKER's error, after the wire was cut.
+
+    A 64-row unit at TP=4 is 16 rows = 8 codes: one span-2 super-symbol per
+    column.  ``layout.slice_unit`` cuts that exactly and ``can_shard`` admits
+    it -- the super-symbol boundary is ``arity * span`` = 4 rows -- but the
+    kernel's select plane packs eight super-symbols to a byte per column and
+    resumes no column on a half-byte, so what the packer needs is
+    ``arity * 8 * span`` = 32 rows.  The refusal belongs to the SERVING
+    admission, by name, before the cut; PB recorded the old shape as
+    ``lane_planes.py:137`` "8 codes is not a multiple of 16" at LOAD
+    (tessera#492).
+    """
+    from tessera.serving.sharding import AXIS_ROWS, shard_parsed_roles
+
+    plan = _row_plan(NARROW_ROWS, UNIT_COLS, 1, tp_size)
+    assert plan.axis == AXIS_ROWS
+    with pytest.raises(ValueError, match="whole number of the select columns"):
+        shard_parsed_roles([("weight", parsed_unit_narrow)], plan)
 
 
 @needs_cuda

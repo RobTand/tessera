@@ -149,6 +149,48 @@ def pack_kernel_planes(
     return select_plane, _pack_columns(label, 2), point_plane
 
 
+def select_plane_row_alignment(parsed) -> "int | None":
+    """Rows per column the kernel's SELECT plane needs, or ``None`` for a body
+    that packs any length.
+
+    ``pack_kernel_planes`` packs the span-L select plane one bit per
+    super-symbol and eight to a byte, column after column in one flat uint8
+    array with no per-column offset to resume on.  A rank's rows are therefore
+    an exact cut only when they are a whole number of columns of ``8 * span``
+    super-symbols: ``arity * 8 * span`` rows.  ``shard_granularity`` reports
+    the finer super-symbol boundary (``arity * span``) because that is what
+    ``slice_unit`` measures its offsets against, so a cut of one span-2
+    super-symbol per column slices cleanly and then refuses in the PACKER
+    ("not a multiple of 16") -- after the wire has been cut, and naming bytes
+    rather than the cut that produced them.  That is the gap this answers, and
+    it is the SERVING admission's to close.
+
+    The window body has no such requirement: ``pack_window_planes`` carries a
+    per-column offset table and starts every column on its own byte, so any
+    step count packs.  It answers ``None`` here and no cut is refused for it.
+
+    Takes the parse (``(unit, unit.forests)``), not a bare unit, because the
+    arity lives on the forest the same way ``pack_unit_for_kernel`` reads it.
+    """
+    from .manifest import BodyKind
+
+    unit = getattr(parsed, "unit", parsed)
+    body = BodyKind(getattr(unit, "body", BodyKind.TCQ))
+    if body is not BodyKind.TCQ:
+        return None
+    forests = getattr(parsed, "forests", None)
+    rates = sorted(set(getattr(unit, "rates", ()) or ()))
+    if not isinstance(forests, dict) or not rates:
+        return None
+    forest = forests[rates[0]]
+    grid = getattr(forest, "grid", forest)
+    arity = getattr(grid, "arity", None)
+    if not isinstance(arity, int) or arity < 1:
+        return None
+    span = int(getattr(unit, "span", 1))
+    return arity * 8 * span
+
+
 def pack_scale_nibbles(scale_refine: torch.Tensor, rows: int, cols: int, half: int = 16) -> torch.Tensor:
     """The LUT scale plane as the kernel reads it: ``[groups, rows]`` nibbles,
     two per byte, the even row in the high nibble.

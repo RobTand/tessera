@@ -1291,17 +1291,24 @@ at the unit. The loader routes it onto `{group}_input_global_scale` by the
 same suffix-agnostic expert mapping that routes `wire`, inverts it once into
 modelopt's `input_scale`, and refuses at finalize if any is missing rather
 than quantising activations at 1.0. FlashInfer's CUTLASS path collapses the
-per-expert values to one per layer (`amax_for_moe_activation_quant`); the
-per-expert tensors are what the stock method reads, and the collapse is the
-runtime's.
+per-expert values to ONE per projection group
+(`amax_for_moe_activation_quant`): it takes the max of the loader's
+reciprocal, so the executed global scale is the smallest per-expert
+`input_global_scale` -- the layer's largest calibrated amax -- broadcast to
+every expert. The per-expert tensors are what the stock method reads and what
+a per-expert price describes, so priced == served only where the per-expert
+amax spread is zero.
 
 **What is refused, by name.** Expert parallelism and EPLB (the parameter is
 `[E, ...]` by global id and the stride invariant needs every blob), a
 residency other than `resident`, a non-gated MoE, another family's scheme, an
 expert/hidden/intermediate width that disagrees with the sidecar or is not a
-whole number of 16-wide groups per rank, an expert whose gate arrived without
-its up, and any stock tensor name (`experts.{e}.{proj}.weight` and friends) in
-a Tessera checkpoint.
+whole number of 16-wide groups per rank, a ROW cut that is not a whole number
+of the kernel's select columns (`arity * 8 * span` rows: the span-L select
+plane packs eight super-symbols to a byte and resumes none on a half-byte, so
+the cut is refused at admission rather than by the packer after the wire was
+cut), an expert whose gate arrived without its up, and any stock tensor name
+(`experts.{e}.{proj}.weight` and friends) in a Tessera checkpoint.
 
 **With `research_selected_moe`.** The block covers the stacks it serves
 (`ResearchSelectedMoeConfig.applies_to`: FP8/E4M3 and BF16/BF16) and nothing

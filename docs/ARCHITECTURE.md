@@ -5,6 +5,20 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-14 for the span-2 select plane's row-cut admission
+(tessera#492).  A rank's rows are a whole number of the kernel's select
+columns only when they are a multiple of ``arity * 8 * span``: the span-L
+trellis packs one select bit per super-symbol, eight to a byte, in one flat
+byte array and resumes no column on a half-byte.  ``layout.shard_granularity``
+reports the finer ``arity * span`` boundary -- what ``slice_unit`` cuts
+exactly -- so one super-symbol per column slices and then died in the PACKER
+("not a multiple of 16"), at load, after the wire had been cut.
+``serving.sharding`` now asks ``lane_planes.select_plane_row_alignment`` for
+the packing boundary and refuses the cut by name BEFORE it is taken.  The
+window body has no such requirement -- ``pack_window_planes`` carries a
+per-column offset table and starts every column on its own byte -- and is
+unchanged.
+
 Re-stamped 2026-09-14 for the routed NVFP4 expert route (tessera#492):
 `scheme.MOE_BUILDERS` names a second family, `TESSERA_NVFP4` dispatches a
 `routed_moe` stack to `tessera.serving.nvfp4_moe_route`, the loader cuts an
@@ -2817,7 +2831,16 @@ relies on. The static A side is a checkpoint fact: the exporter writes
 the dense route's `trellis_input_global_scale` quantity, from
 `--input-scales`), the loader inverts it once into modelopt's
 `input_scale`, and a stack missing any refuses rather than quantising at
-1.0. A builder is a dispatch fact and not a served qualification: the
+1.0. FlashInfer's CUTLASS finalizer then collapses the per-expert values to
+ONE per projection group -- `amax_for_moe_activation_quant` takes the max of
+the loader's reciprocal, so the executed global scale is the SMALLEST
+per-expert `input_global_scale`, i.e. the layer's LARGEST calibrated amax --
+and broadcasts it to every expert; the per-expert tensors the method reads are
+what a per-expert price describes, and priced == served only when the amax
+spread is zero. A row cut of an expert container must also land on the select
+plane's byte (see the re-stamp above): `sharding` refuses a rank whose rows are
+not a multiple of `arity * 8 * span`. A builder is a dispatch fact and not a
+served qualification: the
 `routed_moe` cells for this family are `lane_eligibility`'s to publish from a
 container receipt, and until they exist an NVFP4 stack exports only under
 `--allow-unserveable`. Compressed BF16-family expert wires have only the
