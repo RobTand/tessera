@@ -5,19 +5,24 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
-Re-stamped 2026-09-14 for the span-2 select plane's row-cut admission
+Re-stamped 2026-09-14 for the NATIVE span-2 select-plane admission
 (tessera#492).  A rank's rows are a whole number of the kernel's select
 columns only when they are a multiple of ``arity * 8 * span``: the span-L
 trellis packs one select bit per super-symbol, eight to a byte, in one flat
 byte array and resumes no column on a half-byte.  ``layout.shard_granularity``
 reports the finer ``arity * span`` boundary -- what ``slice_unit`` cuts
-exactly -- so one super-symbol per column slices and then died in the PACKER
-("not a multiple of 16"), at load, after the wire had been cut.
-``serving.sharding`` now asks ``lane_planes.select_plane_row_alignment`` for
-the packing boundary and refuses the cut by name BEFORE it is taken.  The
-window body has no such requirement -- ``pack_window_planes`` carries a
-per-column offset table and starts every column on its own byte -- and is
-unchanged.
+exactly -- so one super-symbol per column is a LEGAL cut that then died in the
+PACKER ("not a multiple of 16"), after the wire had been cut, naming bytes
+instead of the cut.  ``lane_planes.select_plane_codes_per_byte`` is now the one
+number the packer measures against and the admission asks for, and
+``lane_planes.require_native_select_plane_admission`` -- called from
+``prepare_span2_planes``, the native seam -- refuses the cut by name and by
+rows.  It stays OUT of ``serving.sharding``'s cutter deliberately: the
+``when_unavailable`` torch fallback decodes codes rather than these planes, so
+that cut is one the fallback still serves, and a refusal at the cutter would
+take it away.  The window body has no requirement at all --
+``pack_window_planes`` carries a per-column offset table and starts every
+column on its own byte -- and is unchanged.
 
 Re-stamped 2026-09-14 for the routed NVFP4 expert route (tessera#492):
 `scheme.MOE_BUILDERS` names a second family, `TESSERA_NVFP4` dispatches a
@@ -2838,9 +2843,11 @@ per-expert `input_global_scale`, i.e. the layer's LARGEST calibrated amax --
 and broadcasts it to every expert; the per-expert tensors the method reads are
 what a per-expert price describes, and priced == served only when the amax
 spread is zero. A row cut of an expert container must also land on the select
-plane's byte (see the re-stamp above): `sharding` refuses a rank whose rows are
-not a multiple of `arity * 8 * span`. A builder is a dispatch fact and not a
-served qualification: the
+plane's byte (see the re-stamp above) for the NATIVE decoder: a rank whose rows
+are not a multiple of `arity * 8 * span` is refused by name at
+`lane_planes.require_native_select_plane_admission`, and the torch fallback --
+which decodes codes, not those planes -- still serves that cut. A builder is a
+dispatch fact and not a served qualification: the
 `routed_moe` cells for this family are `lane_eligibility`'s to publish from a
 container receipt, and until they exist an NVFP4 stack exports only under
 `--allow-unserveable`. Compressed BF16-family expert wires have only the

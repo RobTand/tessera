@@ -1306,8 +1306,10 @@ expert/hidden/intermediate width that disagrees with the sidecar or is not a
 whole number of 16-wide groups per rank, a ROW cut that is not a whole number
 of the kernel's select columns (`arity * 8 * span` rows: the span-L select
 plane packs eight super-symbols to a byte and resumes none on a half-byte, so
-the cut is refused at admission rather than by the packer after the wire was
-cut), an expert whose gate arrived without its up, and any stock tensor name
+`lane_planes.require_native_select_plane_admission` refuses it by name at the
+native seam -- the cut itself is legal and the `when_unavailable` torch
+fallback, which decodes codes rather than those planes, still serves it), an
+expert whose gate arrived without its up, and any stock tensor name
 (`experts.{e}.{proj}.weight` and friends) in a Tessera checkpoint.
 
 **With `research_selected_moe`.** The block covers the stacks it serves

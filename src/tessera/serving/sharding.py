@@ -1058,42 +1058,6 @@ def check_shard_granularity(plan: ShardPlan, role: RoleShard, unit) -> None:
             f"{plan.tp_size} ranks, giving this rank [{role.lo}, {role.hi}) -- {width} "
             f"{plan.axis}s at offset {role.lo}, which is not a multiple of this unit's "
             f"{plan.axis} granularity {gran}")
-    if plan.axis == AXIS_ROWS:
-        _require_select_plane_row_alignment(plan, role, unit)
-
-
-def _require_select_plane_row_alignment(plan: ShardPlan, role: RoleShard, unit) -> None:
-    """Refuse a row cut the kernel's SELECT plane cannot pack.
-
-    ``shard_granularity`` measures what ``layout.slice_unit`` cuts EXACTLY, and
-    for a span-L trellis that is one super-symbol: ``arity * span`` rows.  The
-    kernel's select plane is STRICTER and is not a property of the cutter: it
-    packs one bit per super-symbol, eight to a byte, in one flat byte array
-    with no per-column offset to resume on, so a rank's rows must be a whole
-    number of ``8 * span`` super-symbol columns.  One super-symbol per column
-    satisfies ``slice_unit`` and ``can_shard`` and then dies in
-    ``lane_planes.pack_kernel_planes`` ("not a multiple of 16") -- at LOAD,
-    after the wire has been cut, naming bytes instead of the cut that produced
-    them.  ``lane_planes.select_plane_row_alignment`` owns the number; this is
-    the serving admission asking for it (tessera#492).
-    """
-    try:
-        from ..lane_planes import select_plane_row_alignment
-    except Exception:
-        return
-    alignment = select_plane_row_alignment(unit)
-    if alignment is None:
-        return
-    width = role.hi - role.lo
-    if width % alignment or role.lo % alignment:
-        raise ValueError(
-            f"{plan.prefix}: role {role.name!r} is {role.extent} rows over "
-            f"{plan.tp_size} ranks, giving this rank [{role.lo}, {role.hi}) -- {width} "
-            f"rows, which is not a whole number of the select columns the kernel "
-            f"packs: this body's trellis packs one select bit per super-symbol, "
-            f"eight to a byte, so a row cut must be a multiple of {alignment} rows. "
-            f"Serve with a tensor_parallel_size that divides this role on that "
-            f"boundary, or a wire whose rows do.")
 
 
 def _reparse_shard(parsed, sharded, label: str):

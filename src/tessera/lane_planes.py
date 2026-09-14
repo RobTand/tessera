@@ -52,6 +52,10 @@ __all__ = [
 #: positions (``_thread_start_state``).  Eight rather than six keeps every
 #: column byte-aligned.
 SELECT_PAD = 8
+#: Super-symbols whose select bits share one byte of a column plane.  The
+#: span-L select plane packs one bit per super-symbol, so one byte holds this
+#: many of them and a whole column holds ``8 * span`` codes.
+SELECT_PLANE_SUPER_SYMBOLS_PER_BYTE = 8
 
 
 def _thread_start_state(padded: torch.Tensor, memory: int,
@@ -125,17 +129,18 @@ def pack_kernel_planes(
     body = body_bits.to(torch.int32)
     point = body & ((1 << (rate - 1)) - 1)
     point_plane = _pack_columns(point, rate - 1)
+    codes_per_byte = select_plane_codes_per_byte(span)
     if span == 1:
-        if rows % 8:
+        if rows % codes_per_byte:
             raise GrammarError(f"{rows} rows does not byte-align a column plane")
         select = (body >> (rate - 1)) & 1
         padded = torch.zeros(rows + SELECT_PAD, cols, dtype=torch.int32, device=device)
         padded[SELECT_PAD:] = select
         _thread_start_state(padded, memory, initial_state)
         return _pack_columns(padded, 1), point_plane
-    if rows % 16:
+    if rows % codes_per_byte:
         raise GrammarError(
-            f"{rows} codes is not a multiple of 16; a span-2 column holds one "
+            f"{rows} codes is not a multiple of {codes_per_byte}; a span-2 column holds one "
             "select bit and one label per pair and needs a byte-aligned column of pairs"
         )
     select = (body[0::2] >> (rate - 1)) & 1                 # [pairs, cols]
@@ -149,28 +154,48 @@ def pack_kernel_planes(
     return select_plane, _pack_columns(label, 2), point_plane
 
 
-def select_plane_row_alignment(parsed) -> "int | None":
-    """Rows per column the kernel's SELECT plane needs, or ``None`` for a body
-    that packs any length.
+def select_plane_codes_per_byte(span: int) -> int:
+    """Codes per column ONE byte of the SELECT plane holds: ``8 * span``.
+
+    The span-L select plane packs one bit per super-symbol, eight
+    super-symbols to a byte. This is the single number ``pack_kernel_planes``
+    measures its columns against and the native admission below asks for, so
+    the two cannot disagree about where a byte ends.
+    """
+    span = int(span)
+    if span < 1:
+        raise GrammarError(
+            f"a span of {span} is not a positive number of rows per super-symbol"
+        )
+    return SELECT_PLANE_SUPER_SYMBOLS_PER_BYTE * span
+
+
+def native_select_plane_admission(parsed) -> "tuple[int, int] | None":
+    """``(rows, required_multiple)`` for the NATIVE span-2 decode, or ``None``
+    for a body that has no select plane.
 
     ``pack_kernel_planes`` packs the span-L select plane one bit per
     super-symbol and eight to a byte, column after column in one flat uint8
-    array with no per-column offset to resume on.  A rank's rows are therefore
-    an exact cut only when they are a whole number of columns of ``8 * span``
-    super-symbols: ``arity * 8 * span`` rows.  ``shard_granularity`` reports
-    the finer super-symbol boundary (``arity * span``) because that is what
-    ``slice_unit`` measures its offsets against, so a cut of one span-2
-    super-symbol per column slices cleanly and then refuses in the PACKER
-    ("not a multiple of 16") -- after the wire has been cut, and naming bytes
-    rather than the cut that produced them.  That is the gap this answers, and
-    it is the SERVING admission's to close.
+    array with no per-column offset to resume on, so the native decoder needs
+    each rank's rows to be a whole number of columns of
+    ``select_plane_codes_per_byte(span)`` super-symbols: ``arity * 8 * span``.
+    ``layout.shard_granularity`` reports the finer super-symbol boundary
+    (``arity * span``) because that is what ``slice_unit`` measures its offsets
+    against, so one super-symbol per column slices cleanly and the PACKER is
+    where it lands -- naming bytes rather than the cut that produced them.
 
-    The window body has no such requirement: ``pack_window_planes`` carries a
-    per-column offset table and starts every column on its own byte, so any
-    step count packs.  It answers ``None`` here and no cut is refused for it.
+    ONLY THE NATIVE DECODER NEEDS THIS.  ``stock.materialize_stock`` (the
+    ``when_unavailable`` torch fallback the span-2 route publishes) decodes
+    codes, not these planes, so a cut below the byte is a cut it serves; the
+    refusal therefore belongs at the native seam and not in
+    ``serving.sharding``'s cutter, where it would take that fallback away too.
 
-    Takes the parse (``(unit, unit.forests)``), not a bare unit, because the
-    arity lives on the forest the same way ``pack_unit_for_kernel`` reads it.
+    A TCQ parse whose geometry cannot be read REFUSES rather than answering
+    None: absent geometry means "we cannot tell whether this packs", and a
+    coverage gate that reads an unknown as "no requirement" is one that fails
+    open -- exactly the shape this function exists to close.  The window body
+    is the one true None: ``pack_window_planes`` carries a per-column offset
+    table and starts every column on its own byte, so every length packs.
     """
     from .manifest import BodyKind
 
@@ -180,15 +205,42 @@ def select_plane_row_alignment(parsed) -> "int | None":
         return None
     forests = getattr(parsed, "forests", None)
     rates = sorted(set(getattr(unit, "rates", ()) or ()))
-    if not isinstance(forests, dict) or not rates:
-        return None
+    where = (f"forests={type(forests).__name__}, rates={rates}, "
+             f"body={body.name}, span={getattr(unit, 'span', None)!r}")
+    if not isinstance(forests, dict) or len(rates) != 1:
+        raise GrammarError(
+            "the native span-2 admission needs exactly one forest per unit to "
+            f"read the arity from; this parse reports {where}")
     forest = forests[rates[0]]
     grid = getattr(forest, "grid", forest)
     arity = getattr(grid, "arity", None)
     if not isinstance(arity, int) or arity < 1:
-        return None
-    span = int(getattr(unit, "span", 1))
-    return arity * 8 * span
+        raise GrammarError(
+            "the native span-2 admission needs the grid's arity, which this "
+            f"forest does not carry ({where})")
+    return arity * select_plane_codes_per_byte(int(getattr(unit, "span", 1)))
+
+
+def require_native_select_plane_admission(parsed) -> None:
+    """Refuse, by name, a native span-2 decode whose rows are not a whole
+    number of select columns (``native_select_plane_admission``).
+
+    Names the rank-local rows, the multiple the plane needs, and the fallback
+    that does serve the cut, so the operator acts on the cut rather than on a
+    byte count in someone else's module."""
+    admission = native_select_plane_admission(parsed)
+    if admission is None:
+        return
+    rows, multiple = admission
+    if rows % multiple:
+        raise GrammarError(
+            f"the native span-2 decoder packs "
+            f"{SELECT_PLANE_SUPER_SYMBOLS_PER_BYTE} super-symbols to a byte per "
+            f"column; this rank's unit is {rows} rows, which is not a whole number of "
+            f"that column ({multiple} rows = arity * 8 * span), so the select plane "
+            f"cannot be packed. Serve at a tensor_parallel_size that lands on the "
+            f"boundary, or take the torch fallback, which decodes codes and serves "
+            f"this cut.")
 
 
 def pack_scale_nibbles(scale_refine: torch.Tensor, rows: int, cols: int, half: int = 16) -> torch.Tensor:
@@ -748,6 +800,10 @@ def prepare_span2_planes(parsed, device: str = "cuda") -> dict:
     if len(rates) != 1:
         raise GrammarError(f"the span-2 planes take one forest per unit; rates {rates}")
     forest = forests[rates[0]]
+    # The native decoder's own admission, before any packing: a rank cut below
+    # the select plane's byte is refused here, by name, naming the cut.  The
+    # torch fallback does not come through this function.
+    require_native_select_plane_admission(parsed)
     packed = pack_unit_for_kernel(unit, forest, code)
     packed = {k: (v.to(device) if isinstance(v, torch.Tensor) else v) for k, v in packed.items()}
     packed["subset_nibbles"] = build_subset_nibbles(forest, code, device)

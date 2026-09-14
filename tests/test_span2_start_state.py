@@ -230,25 +230,59 @@ def test_a_row_shard_decodes_to_the_whole_units_rows_on_the_native_decoder(parse
 
 @needs_cuda
 @pytest.mark.parametrize("tp_size", [4, 8])
-def test_a_row_cut_below_one_select_byte_is_refused_at_admission(parsed_unit_narrow, tp_size):
-    """FAILS BEFORE with the PACKER's error, after the wire was cut.
+def test_the_native_decoder_refuses_a_row_cut_below_one_select_byte(parsed_unit_narrow, tp_size):
+    """The cut itself is LEGAL; the NATIVE decoder is what refuses it.
 
     A 64-row unit at TP=4 is 16 rows = 8 codes: one span-2 super-symbol per
     column.  ``layout.slice_unit`` cuts that exactly and ``can_shard`` admits
-    it -- the super-symbol boundary is ``arity * span`` = 4 rows -- but the
-    kernel's select plane packs eight super-symbols to a byte per column and
-    resumes no column on a half-byte, so what the packer needs is
-    ``arity * 8 * span`` = 32 rows.  The refusal belongs to the SERVING
-    admission, by name, before the cut; PB recorded the old shape as
-    ``lane_planes.py:137`` "8 codes is not a multiple of 16" at LOAD
-    (tessera#492).
+    it -- the super-symbol boundary is ``arity * span`` = 4 rows -- so
+    ``shard_parsed_roles`` takes it, and that is the point: only the native
+    select plane needs a whole byte per column (``arity * 8 * span`` = 32
+    rows).  The refusal is therefore the native admission's, by name, naming
+    this rank's rows; PB recorded the old shape as ``lane_planes.py:137``
+    "8 codes is not a multiple of 16" (tessera#492).
     """
+    from tessera.serving.ext import get_tessera_ext
     from tessera.serving.sharding import AXIS_ROWS, shard_parsed_roles
 
+    if get_tessera_ext() is None:
+        pytest.skip("the native span-2 decoder could not be built here")
     plan = _row_plan(NARROW_ROWS, UNIT_COLS, 1, tp_size)
     assert plan.axis == AXIS_ROWS
-    with pytest.raises(ValueError, match="whole number of the select columns"):
-        shard_parsed_roles([("weight", parsed_unit_narrow)], plan)
+    roles = shard_parsed_roles([("weight", parsed_unit_narrow)], plan)
+    with pytest.raises(
+        GrammarError, match="packs 8 super-symbols to a byte per column"
+    ):
+        _prepare(roles, allow_torch_fallback=False)
+
+
+@needs_cuda
+@pytest.mark.parametrize("tp_size", [4, 8])
+def test_that_same_cut_still_serves_on_the_torch_fallback(parsed_unit_narrow, monkeypatch, tp_size):
+    """The refusal is scoped to the native admission and takes no serving away.
+
+    ``materialize_stock`` decodes codes rather than the packed select plane, so
+    the cut the native decoder refuses is one this route still serves -- which
+    is why the check lives at the native seam and not in the cutter.
+    """
+    from tessera.serving import ext
+    from tessera.serving.sharding import shard_parsed_roles
+    from tessera.serving.telemetry import DECODER_TORCH_STOCK
+
+    monkeypatch.setattr(ext, "get_tessera_ext", lambda: None)
+    whole = _prepare([("weight", parsed_unit_narrow)], allow_torch_fallback=True)
+    assert whole.decoder == DECODER_TORCH_STOCK
+    packed_whole, scales_whole = whole.decode()
+    rows_per_rank = NARROW_ROWS // tp_size
+    for rank in range(tp_size):
+        roles = shard_parsed_roles(
+            [("weight", parsed_unit_narrow)], _row_plan(NARROW_ROWS, UNIT_COLS, rank, tp_size)
+        )
+        prepared = _prepare(roles, allow_torch_fallback=True)
+        packed, scales = prepared.decode()
+        lo, hi = rank * rows_per_rank, (rank + 1) * rows_per_rank
+        assert torch.equal(packed, packed_whole[lo:hi]), (tp_size, rank, "packed")
+        assert torch.equal(scales, scales_whole[lo:hi]), (tp_size, rank, "scales")
 
 
 @needs_cuda
