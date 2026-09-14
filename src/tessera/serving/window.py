@@ -365,8 +365,12 @@ def prepare_window(body_bits: torch.Tensor, rates: Sequence[int], window_bits: i
     positions = torch.arange(steps, device=device, dtype=torch.int64)
     groups = []
     order = []
-    for present in sorted(set(rates)):
-        which_list = [c for c, r in enumerate(rates) if r == present]
+    # One pass over the schedule, not one per rate group (tessera#501).
+    columns_at: "dict[int, list[int]]" = {}
+    for column, rate in enumerate(rates):
+        columns_at.setdefault(rate, []).append(column)
+    for present in sorted(columns_at):
+        which_list = columns_at[present]
         which = torch.tensor(which_list, dtype=torch.int64, device=device)
         nbytes = (window_bits + steps * present + 7) // 8
         span = torch.arange(nbytes + WINDOW_READ_BYTES, device=device, dtype=torch.int64)
