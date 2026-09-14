@@ -5,6 +5,21 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-13 for the opt-in historical cached-producer intake (§3.2).
+`--cached-producer-package` plus `--cached-producer-source-sha256` binds the
+original package's full source once when reading an existing cached bundle;
+its identity factory derives the original source projection/H/settings and
+its verifier authenticates the unmodified receipt and blob. Every imported
+historical file is checked against that source seal in an isolated namespace
+that cannot import serving. The current Tessera cached-unit verifier parses
+the same original blob, while current planning and the research-selected
+decoder gate retain authority over the exported route. The export receipt
+records historical producer source/namespace separately from current export
+Git identity and the original wire SHA. No cache mode, serving qualification
+or default changes. The bounded original E4M3 and BF16 proof is in
+`/home/rob/dq-runs/glm-campaign-takeover-20260913/export/historical-selected-wires-proof.json`;
+it is an intake/decoder proof, not a complete served artifact.
+
 Re-stamped 2026-09-13 for opt-in folded BF16 selected experts. The research
 checkpoint grammar accepts `TESSERA_BF16/BF16` routed targets alongside
 `TESSERA_FP8/E4M3`. Its selected BF16 owner reuses the window parser, TP shard
@@ -1707,6 +1722,16 @@ its original blob SHA. Dense row-sliced modules refuse because a whole original
 unit cannot stand for a different source slice. The two cache flags are mutually
 exclusive; the expert-only flag preserves its prior scope. The cache mode requires a fresh output
 directory and records each accepted blob's SHA in the export manifest.
+The paired `--cached-producer-package PATH` and
+`--cached-producer-source-sha256 SHA` option is available only with one of
+these cache modes. It derives `expected_identity` from the original producer
+package loaded under a source-sealed namespace, so harmless subsequent
+serving changes cannot rewrite or invalidate a historically correct encoder
+source receipt. The original producer verifies source/H/settings/recipe and
+wire, then the current package verifier checks the same bytes and current
+planning still applies its full serving/research decoder gate. Unknown,
+incomplete, modified or escaping producer sources refuse; no source seal
+field is overridden and no fallback re-encodes a missing unit.
 
 For packed expert plans, `--hessian` is accepted only with complete
 `--cached-units` intake. The existing producer projection supplies each logical

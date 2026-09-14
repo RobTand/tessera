@@ -1259,6 +1259,22 @@ def pack_cached_expert_unit(blob: bytes, record: dict, expected_identity: dict):
     return accepted, pack_fused([(projection["projection"], projection["rows"], accepted.blob)])
 
 
+def cached_input_identity(producer, weight, unit_name, unit, grid, q256, *, activation=None):
+    """Derive original inputs under the exact producer that wrote the receipt."""
+    if producer is None:
+        from tessera import cached_unit
+        original_grid = grid
+        dense_identity = cached_unit.encoding_input_identity
+        projected_identity = cached_unit.unit_input_identity
+    else:
+        original_grid = producer.grid_for_name(grid.name)
+        dense_identity = producer.dense_identity
+        projected_identity = producer.input_identity
+    if unit is None:
+        return dense_identity(weight, unit_name, original_grid, q256, activation=activation)
+    return projected_identity(weight, unit, original_grid, q256, activation=activation)
+
+
 def stock_targets(modules):
     """compressed-tensors targets for member modules plus their fused names (the stock exporter's rule)."""
     found = sorted(set(modules))
@@ -1305,6 +1321,10 @@ def main():
     cache_options.add_argument("--cached-units", type=Path, default=None,
                     help="closed exact-unit cache manifest for every planned dense and expert unit; "
                          "requires whole source tensors for dense roles, with no re-encode fallback")
+    ap.add_argument("--cached-producer-package", type=Path,
+                    help="original producer's immutable src/tessera package for cached intake")
+    ap.add_argument("--cached-producer-source-sha256",
+                    help="full source SHA256 of that original producer package")
     ap.add_argument("--no-verify", action="store_true")
     ap.add_argument("--layers", type=int, default=None, help="encode only the first N layers (smoke)")
     ap.add_argument("--partition", type=parse_partition, metavar="INDEX/COUNT",
@@ -1378,6 +1398,10 @@ def main():
                          "serving_gate block. Admission depends on the selected recipe's "
                          "published runtime contract, including BF16 recipes.")
     args = ap.parse_args()
+    if bool(args.cached_producer_package) != bool(args.cached_producer_source_sha256):
+        ap.error("historical cached producer package and source SHA256 must be paired")
+    if args.cached_producer_package is not None and not (args.cached_units or args.cached_expert_units):
+        ap.error("historical cached producer requires cached unit intake")
     research_execution = None
     if args.research_selected_moe_json is not None:
         from tessera.moe_execution import ResearchSelectedMoeInput
@@ -1897,7 +1921,7 @@ def main():
                    if key not in {"src", "out", "partition", "partition_runtime_image",
                                   "device", "stock_twin", "plan_json", "hessian", "input_scales",
                                   "cached_expert_units", "cached_units", "priced_inputs", "priced_inputs_sha256",
-                                  "research_selected_moe_json"}}
+                                  "research_selected_moe_json", "cached_producer_package"}}
         if research_execution is not None:
             options["research_selected_moe"] = research_execution.record()
         if priced_inputs is not None:
@@ -1933,6 +1957,7 @@ def main():
               f"{len(stack_plan)} routed stacks, {len(modules)} dense modules", flush=True)
 
     cached_units = None
+    historical_producer = None
     if cache_path is not None:
         from tessera.cached_unit import CachedUnitBundle, read_manifest
         from tessera.serving_parts import source_identity
@@ -1940,6 +1965,10 @@ def main():
                   else source_identity(args.src))
         cached_units = CachedUnitBundle(read_manifest(cache_path),
                                         cache_path.parent, cache_unit_names, source)
+        if args.cached_producer_package is not None:
+            from tessera.historical_producer import load_historical_producer
+            historical_producer = load_historical_producer(
+                args.cached_producer_package, args.cached_producer_source_sha256)
 
     input_scales = {}
     if args.input_scales:
@@ -2045,11 +2074,12 @@ def main():
                             own_global = float(unit_artifact_.scale_global)
                             del weight
                         else:
-                            from tessera.cached_unit import unit_input_identity
                             from tessera.export import ExportedUnit
-                            expected = unit_input_identity(
-                                source_weight, unit, unit_grid, unit_q256, activation=activation)
+                            expected = cached_input_identity(historical_producer, source_weight,
+                                unit["tensor"], unit, unit_grid, unit_q256, activation=activation)
                             cached_blob, cache_record = cached_units.read(expected["unit"])
+                            if historical_producer is not None:
+                                historical_producer.verify(cached_blob, cache_record, expected)
                             accepted, blob = pack_cached_expert_unit(cached_blob, cache_record, expected)
                             exported = ExportedUnit(unit["tensor"], accepted.blob,
                                                     unit["rows"], unit["cols"], unit_q256,
@@ -2134,11 +2164,13 @@ def main():
                     parse_unit_artifact(exported.blob, device=args.device)
                     stock_code = DEFAULT_CODE
                 else:
-                    from tessera.cached_unit import encoding_input_identity, verify_cached_unit
+                    from tessera.cached_unit import verify_cached_unit
                     from tessera.export import ExportedUnit
-                    expected = encoding_input_identity(weight, member, member_grid, q256,
-                                                       activation=activation)
+                    expected = cached_input_identity(historical_producer, weight, member, None,
+                                                     member_grid, q256, activation=activation)
                     cached_blob, cache_record = cached_units.read(expected["unit"])
+                    if historical_producer is not None:
+                        historical_producer.verify(cached_blob, cache_record, expected)
                     accepted = verify_cached_unit(cached_blob, cache_record, expected)
                     parsed = parse_unit_artifact(accepted.blob, device=args.device)
                     unit, forests, stock_code = parsed.unit, parsed.forests, parsed.code
@@ -2409,7 +2441,12 @@ def main():
            if research_execution is not None else {}),
         **({cache_scope: {"manifest_sha256": cached_units.manifest_sha256,
                                     "manifest_encoding": "canonical_json.sorted_compact.v1",
-                                    "planned_units": len(cache_unit_names)}}
+                                    "planned_units": len(cache_unit_names),
+                                    **({"historical_producer": {
+                                        "package": str(args.cached_producer_package.resolve()),
+                                        "source_sha256": historical_producer.source_sha256,
+                                        "namespace": historical_producer.namespace}}
+                                       if historical_producer is not None else {})}}
            if cached_units is not None else {}),
         "arm": f"tessera {default_grid.name} q256={args.q256}" + (f" + plan {args.plan_json}" if args.plan_json else "")
                + f" -> tessera.serving {'+'.join(families)}",
