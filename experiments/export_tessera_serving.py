@@ -1276,6 +1276,14 @@ def cached_input_identity(producer, weight, unit_name, unit, grid, q256, *, acti
     return projected_identity(weight, unit, original_grid, q256, activation=activation)
 
 
+def _warm_encoder_fixture_id(build) -> None:
+    """Fill the encoder identity memo; the caller's own call reports a failure."""
+    try:
+        build()
+    except Exception:
+        pass
+
+
 def default_intake_threads() -> int:
     """One worker per CPU this process may run on: the intake is read + hash bound."""
     try:
@@ -1501,6 +1509,11 @@ def main():
                          "non-body tensors belong to index 0. Merge every part before serving.")
     ap.add_argument("--partition-runtime-image",
                     help="exact repository@sha256 image pinned by the part's dispatch command")
+    ap.add_argument("--source-digest-cache", type=Path, default=None,
+                    help="directory of stat-bound source shard digests (tessera#499): a shard "
+                         "whose inode, size, mtime_ns and ctime_ns match a recorded full read "
+                         "is not re-read for the part's source stamp. Reuse is recorded in "
+                         "export_partition.source_digest_receipt, never in the identity.")
     ap.add_argument("--research-selected-moe-json", type=Path,
                     help="explicit versioned packed research execution input; snapshotted once "
                          "and emitted in the checkpoint, without changing encoded wires")
@@ -2084,6 +2097,15 @@ def main():
     if cache_path is not None and args.out.exists():
         raise SystemExit("cached export requires a fresh output directory")
     partition_record = None
+    source_digest_cache = None
+    if args.source_digest_cache is not None:
+        if not args.partition:
+            raise SystemExit("--source-digest-cache applies to --partition source stamps only")
+        from tessera.source_digest_cache import SourceDigestCache
+        try:
+            source_digest_cache = SourceDigestCache(args.source_digest_cache, source=args.src)
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
     if args.partition:
         index, count = args.partition
         options = {key: value for key, value in vars(args).items()
@@ -2095,7 +2117,10 @@ def main():
                                   # from change no accepted byte; they are receipt
                                   # fields (hessian_identity below), not identity.
                                   "cached_hessian_identity", "cached_intake_threads",
-                                  "cached_intake_window_bytes"}}
+                                  "cached_intake_window_bytes",
+                                  # Where shard digests may be reused from changes no
+                                  # stamped digest; the receipt records how each was taken.
+                                  "source_digest_cache"}}
         if research_execution is not None:
             options["research_selected_moe"] = research_execution.record()
         if priced_inputs is not None:
@@ -2113,9 +2138,17 @@ def main():
         # Stamp only the shards this part reads tensors from (tessera#495): the
         # merge proves each stamp against its one pass over the whole source.
         read_shards = sorted(shard for shard, names in shards.items() if any(map(owns, names)))
-        identity = export_identity(args.src, options, args.partition_runtime_image,
-                                   Path(__file__).resolve().parents[1], shards=read_shards)
         from tessera.encoder_identity import encoder_fixture_id
+        # Build the per-process encoder identity memo on a helper thread while
+        # the shards hash (tessera#499). The call below takes the memo, or
+        # waits on the build's lock; if the helper failed, the memo is empty
+        # and that call rebuilds and raises the refusal itself.
+        import threading
+        threading.Thread(target=_warm_encoder_fixture_id, args=(encoder_fixture_id,),
+                         name="encoder-fixture-id", daemon=True).start()
+        identity = export_identity(args.src, options, args.partition_runtime_image,
+                                   Path(__file__).resolve().parents[1], shards=read_shards,
+                                   digest_cache=source_digest_cache)
         identity["encoder_fixture_id"] = encoder_fixture_id().hex()
         partition_record = {"schema": PART_SCHEMA, "index": index, "count": count,
                             "identity": identity, "source_tensors": selected}
@@ -2775,6 +2808,10 @@ def main():
             # same accepted bytes.  The merged checkpoint keeps every part's
             # statement of how.
             partition_record["hessian_identity"] = cached_identity.record()
+        if source_digest_cache is not None:
+            # Beside ``identity`` for the same reason: which source digests were
+            # reused from a recorded read changes no stamped digest.
+            partition_record["source_digest_receipt"] = source_digest_cache.receipt()
         manifest["export_partition"] = partition_record
     (args.out / "tessera_serving_manifest.json").write_text(json.dumps(manifest, indent=2))
 

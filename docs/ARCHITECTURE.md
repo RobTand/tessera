@@ -48,6 +48,34 @@ whole-checkpoint `source` the same way; the whole-arm export keeps its single
 `source_identity` pass and equality. Parts written before this change carry
 the schema-less block and are refused by name.
 
+Re-stamped 2026-09-14 for concurrent source and merge hashing (tessera#499).
+The shards one stamp names, including the merge's whole-source pass, are
+hashed concurrently, one thread per shard up to the CPUs the process may run
+on (`serving_parts.sha256_files`); the document and the order of its refusals
+are the serial pass's. The merge's check of every part's `output_sha256`
+starts each part's output shards on a pool of the same bound
+(`serving_parts._HashAhead`) and takes each digest where the serial loop
+hashed that file, so the checks run and refuse in the serial order and a
+mismatch names the same file. A partition export also builds the per-process
+`encoder_fixture_id` memo on a helper thread during the source hash; the id
+and its refusal still come from the caller's own call.
+An opt-in source digest cache (`tessera.source_digest_cache`,
+`--source-digest-cache DIR` on the partition exporter and on
+`merge_tessera_parts.py`) lets a source shard's digest stand for a recorded
+full read while the shard's inode, size, `mtime_ns` and `ctime_ns` are
+unchanged. They are taken with `open` plus `fstat`, and `st_dev` and the path
+are recorded but not keyed. A fresh hash that sees the fingerprint change
+raises. A digest is recorded only for a shard whose newest timestamp is 300 s
+older than the hash start. Corrupt entries and two reads that disagree are
+refused. Only source shard bodies go through it; config, auxiliary files,
+output shards and identity inputs are always hashed. The stamped `source`
+document is unchanged. Reuse is recorded beside the identity:
+`export_partition.source_digest_receipt` on a part, `source_proof` on a merge
+(`mode: stat-bound` when any digest was reused). A ctime-preserving rewrite,
+or bit rot on a reused read, goes undetected, so write access to the cache
+directory is trust base. A publication that needs a second read merges without
+the flag.
+
 Re-stamped 2026-09-13 for the opt-in historical cached-producer intake (§3.2).
 `--cached-producer-package` plus `--cached-producer-source-sha256` binds the
 original package's full source once when reading an existing cached bundle;

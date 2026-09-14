@@ -9,10 +9,12 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import os
 import re
 import shutil
 import stat
 import struct
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 SCHEMA = "tessera.serving-part.v1"
@@ -41,6 +43,85 @@ def sha256_file(path: Path) -> str:
         for block in iter(lambda: handle.read(8 * 1024 * 1024), b""):
             digest.update(block)
     return digest.hexdigest()
+
+
+def _affinity_cpus() -> int:
+    try:
+        return max(1, len(os.sched_getaffinity(0)))
+    except (AttributeError, OSError):
+        return max(1, os.cpu_count() or 1)
+
+
+def sha256_files(paths, workers=None, hash_file=None) -> list:
+    """:func:`sha256_file` of each path, in the order given.
+
+    Runs one file per thread, at most ``workers`` at a time (the CPUs this
+    process may run on when ``None``); ``hashlib`` and file reads release the
+    GIL, so a multi-shard pass is bounded by cores rather than by one core
+    (tessera#499). The result is what the serial loop returns, and a refusal
+    is the one the serial loop would raise first: results are collected in
+    ``paths`` order, so an earlier file's exception surfaces before a later
+    file's. ``workers=1`` is the serial loop itself. ``hash_file`` replaces
+    :func:`sha256_file` per path, e.g. a source digest cache's lookup.
+    """
+    paths = list(paths)
+    hash_file = hash_file or sha256_file
+    workers = min(len(paths), workers if workers is not None else _affinity_cpus())
+    if workers <= 1:
+        return [hash_file(path) for path in paths]
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="source-sha256") as pool:
+        futures = [pool.submit(hash_file, path) for path in paths]
+        try:
+            return [future.result() for future in futures]
+        finally:
+            for future in futures:
+                future.cancel()
+
+
+class _HashAhead:
+    """:func:`sha256_file` of known paths, started ahead on a bounded thread pool.
+
+    :meth:`sha256` takes one path's digest at the point the serial loop hashed
+    it, re-raising that file's exception there, so a check that reads digests
+    one at a time still refuses the file it refused serially (tessera#499). A
+    path that was not started ahead is hashed on the spot. Leaving the block
+    cancels hashes that have not started and waits for running ones.
+    """
+
+    def __init__(self, paths, workers=None):
+        paths = list(dict.fromkeys(paths))
+        workers = min(len(paths), workers if workers is not None else _affinity_cpus())
+        self._pool = (ThreadPoolExecutor(max_workers=workers, thread_name_prefix="output-sha256")
+                      if workers > 1 else None)
+        self._futures = ({path: self._pool.submit(sha256_file, path) for path in paths}
+                         if self._pool is not None else {})
+
+    def sha256(self, path: Path) -> str:
+        future = self._futures.pop(path, None)
+        return future.result() if future is not None else sha256_file(path)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        if self._pool is not None:
+            self._pool.shutdown(wait=True, cancel_futures=True)
+        return False
+
+
+def _output_payloads(loaded) -> list:
+    """Each part's output shards, in the order the merge checks them.
+
+    A part whose index cannot name them contributes nothing here; the merge
+    refuses it at its own check.
+    """
+    payloads = []
+    for _rank, path, _part, _manifest, _config, index in loaded:
+        try:
+            payloads.extend([path / _leaf(name) for name in sorted(set(index["weight_map"].values()))])
+        except Exception:
+            continue
+    return payloads
 
 
 def make_artifact_readable(path: Path) -> None:
@@ -102,7 +183,7 @@ def source_identity(source: Path) -> dict:
 
 
 def export_identity(source: Path, options: dict, runtime_image: str, root: Path,
-                    shards=None) -> dict:
+                    shards=None, *, digest_cache=None) -> dict:
     """What every serving part of one export must agree on, plus its own input.
 
     ``source`` is :func:`source_part_identity` over ``shards`` -- the shards
@@ -122,7 +203,8 @@ def export_identity(source: Path, options: dict, runtime_image: str, root: Path,
         digest.update(str(path.relative_to(root)).encode() + b"\0")
         digest.update(path.read_bytes())
         digest.update(b"\0")
-    return {"source": source_part_identity(source, shards), "code_sha256": digest.hexdigest(),
+    return {"source": source_part_identity(source, shards, digest_cache=digest_cache),
+            "code_sha256": digest.hexdigest(),
             # The dispatch command pins this image. Its observed runtime identity
             # belongs to the PrismaBuild receipt, not a self-attestation here.
             "runtime_image": runtime_image, "options": options}
@@ -287,8 +369,17 @@ def validate_explicit_plan(plan, modules: dict, config_groups: dict, *, source_t
                 raise ValueError(f"explicit plan {name}: emitted role grid/rung differs from plan")
 
 
-def merge_serving_parts(paths, out: Path, source: Path, *, move=False) -> dict:
-    """Prove identities, ownership and written tensor coverage before publishing."""
+def merge_serving_parts(paths, out: Path, source: Path, *, move=False,
+                        source_digest_cache=None) -> dict:
+    """Prove identities, ownership and written tensor coverage before publishing.
+
+    ``source_digest_cache`` (a :class:`tessera.source_digest_cache.SourceDigestCache`)
+    lets the whole-source pass reuse stat-bound shard digests instead of
+    re-reading every shard; the merged manifest then records ``source_proof``
+    with the receipt, whose ``mode`` is ``stat-bound`` when any digest was
+    reused. Without it the pass hashes every shard and no ``source_proof`` is
+    written. Output shards are always hashed.
+    """
     from .moe_execution import ResearchSelectedMoeConfig, ResearchSelectedMoeInput
 
     out, source = Path(out), Path(source)
@@ -327,7 +418,7 @@ def merge_serving_parts(paths, out: Path, source: Path, *, move=False) -> dict:
     execution_record = ({"research_selected_moe": research_execution.record()}
                         if research_execution is not None else {})
     # The one pass over the whole source; every part's stamp is held to it.
-    whole = source_part_identity(source)
+    whole = source_part_identity(source, digest_cache=source_digest_cache)
     for rank, path, part, *_ in loaded:
         prove_source_part(part["identity"].get("source"), whole, f"partition {rank}")
     expected_source = set(whole["tensors"])
@@ -346,75 +437,79 @@ def merge_serving_parts(paths, out: Path, source: Path, *, move=False) -> dict:
     modules, groups, weight_map, copies = {}, {}, {}, []
     ignore, covered = set(), set()
     passthrough_bytes = 0
-    for rank, path, part, manifest, config, index in loaded:
-        owned = set(part["source_tensors"])
-        expected = {n for n in expected_source if partition_owner(n, count) == rank}
-        if owned != expected or len(owned) != len(part["source_tensors"]) or covered & owned:
-            raise ValueError(f"partition {rank}: source tensor coverage disagrees with ownership")
-        # A part that stamped fewer shards than its tensors live in left bytes
-        # it read unproved; one that stamped more claims input it did not use.
-        read = {whole["tensors"][name] for name in owned}
-        if read != set(part["identity"]["source"]["files"]):
-            raise ValueError(f"partition {rank}: source stamp coverage disagrees with the shards "
-                             f"its source tensors live in: stamped "
-                             f"{sorted(part['identity']['source']['files'])[:5]}, read {sorted(read)[:5]}")
-        covered.update(owned)
-        qconfig = config["quantization_config"]
-        # Validate every carrier before equality: JSON floats and booleans can
-        # compare equal to the integer-only declaration in Python.
-        if "research_selected_moe" in qconfig:
-            ResearchSelectedMoeConfig.from_checkpoint(qconfig["research_selected_moe"])
-        if "research_selected_moe" in manifest:
-            ResearchSelectedMoeInput.from_record(manifest["research_selected_moe"])
-        if "research_selected_moe" in part["identity"]["options"]:
-            ResearchSelectedMoeInput.from_record(part["identity"]["options"]["research_selected_moe"])
-        if ({k: qconfig[k] for k in ("research_selected_moe",)
-             if k in qconfig} != execution_config
-                or {k: manifest[k] for k in ("research_selected_moe",) if k in manifest}
-                != execution_record):
-            raise ValueError(f"partition {rank}: research_selected_moe disagrees with sealed export identity")
-        if {k: v for k, v in config.items() if k != "quantization_config"} != source_config:
-            raise ValueError(f"partition {rank}: model config disagrees with source identity")
-        if qconfig["quant_method"] != "tessera" or qconfig["format"] != base_format:
-            raise ValueError("partition quantization config disagrees")
-        if {k: qconfig[k] for k in ("schema_minor", "tp_agnostic")
-                if k in qconfig} != base_slicing:
-            raise ValueError(
-                f"partition {rank}: the parts disagree about what their bytes admit at load "
-                "(schema_minor / tp_agnostic) -- they were written by different exporters, "
-                "and a merged artifact may not declare more than every part of it does")
-        declarations = {target for group in qconfig["config_groups"].values() for target in group["targets"]}
-        if declarations != set(manifest["modules"]):
-            raise ValueError(f"partition {rank}: config targets disagree with manifest modules")
-        if modules.keys() & manifest["modules"].keys() or groups.keys() & qconfig["config_groups"].keys():
-            raise ValueError("module or config group is claimed by two partitions")
-        modules.update(manifest["modules"])
-        groups.update(qconfig["config_groups"])
-        ignore.update(qconfig["ignore"])
-        local_map = index["weight_map"]
-        if set(local_map) != _expected_outputs(owned, manifest["modules"]):
-            raise ValueError(f"partition {rank}: written tensor coverage disagrees with source and encoded modules")
-        files = set(local_map.values())
-        if files != set(part["output_sha256"]):
-            raise ValueError(f"partition {rank}: output sha256 coverage disagrees with index")
-        actual = {}
-        for filename in sorted(files):
-            filename = _leaf(filename)
-            payload = path / filename
-            if sha256_file(payload) != part["output_sha256"][filename]:
-                raise ValueError(f"partition {rank}: output sha256 mismatch: {filename}")
-            for name in tensor_names(payload):
-                if name in actual:
-                    raise ValueError(f"tensor appears in two files: {name}")
-                actual[name] = filename
-            target = f"part-{rank:05d}-{filename}"
-            copies.append((payload, target))
-        if actual != local_map:
-            raise ValueError(f"partition {rank}: index disagrees with actual tensor headers")
-        if weight_map.keys() & local_map.keys():
-            raise ValueError("tensor appears in two partitions")
-        weight_map.update({n: f"part-{rank:05d}-{s}" for n, s in local_map.items()})
-        passthrough_bytes += manifest["totals"]["passthrough_bytes"]
+    # Every part's output shards hash ahead on a bounded pool (tessera#499);
+    # each digest is still taken, and each refusal raised, where the serial
+    # loop hashed that file, so a refusal names the file it named before.
+    with _HashAhead(_output_payloads(loaded)) as hashed:
+        for rank, path, part, manifest, config, index in loaded:
+            owned = set(part["source_tensors"])
+            expected = {n for n in expected_source if partition_owner(n, count) == rank}
+            if owned != expected or len(owned) != len(part["source_tensors"]) or covered & owned:
+                raise ValueError(f"partition {rank}: source tensor coverage disagrees with ownership")
+            # A part that stamped fewer shards than its tensors live in left bytes
+            # it read unproved; one that stamped more claims input it did not use.
+            read = {whole["tensors"][name] for name in owned}
+            if read != set(part["identity"]["source"]["files"]):
+                raise ValueError(f"partition {rank}: source stamp coverage disagrees with the shards "
+                                 f"its source tensors live in: stamped "
+                                 f"{sorted(part['identity']['source']['files'])[:5]}, read {sorted(read)[:5]}")
+            covered.update(owned)
+            qconfig = config["quantization_config"]
+            # Validate every carrier before equality: JSON floats and booleans can
+            # compare equal to the integer-only declaration in Python.
+            if "research_selected_moe" in qconfig:
+                ResearchSelectedMoeConfig.from_checkpoint(qconfig["research_selected_moe"])
+            if "research_selected_moe" in manifest:
+                ResearchSelectedMoeInput.from_record(manifest["research_selected_moe"])
+            if "research_selected_moe" in part["identity"]["options"]:
+                ResearchSelectedMoeInput.from_record(part["identity"]["options"]["research_selected_moe"])
+            if ({k: qconfig[k] for k in ("research_selected_moe",)
+                 if k in qconfig} != execution_config
+                    or {k: manifest[k] for k in ("research_selected_moe",) if k in manifest}
+                    != execution_record):
+                raise ValueError(f"partition {rank}: research_selected_moe disagrees with sealed export identity")
+            if {k: v for k, v in config.items() if k != "quantization_config"} != source_config:
+                raise ValueError(f"partition {rank}: model config disagrees with source identity")
+            if qconfig["quant_method"] != "tessera" or qconfig["format"] != base_format:
+                raise ValueError("partition quantization config disagrees")
+            if {k: qconfig[k] for k in ("schema_minor", "tp_agnostic")
+                    if k in qconfig} != base_slicing:
+                raise ValueError(
+                    f"partition {rank}: the parts disagree about what their bytes admit at load "
+                    "(schema_minor / tp_agnostic) -- they were written by different exporters, "
+                    "and a merged artifact may not declare more than every part of it does")
+            declarations = {target for group in qconfig["config_groups"].values() for target in group["targets"]}
+            if declarations != set(manifest["modules"]):
+                raise ValueError(f"partition {rank}: config targets disagree with manifest modules")
+            if modules.keys() & manifest["modules"].keys() or groups.keys() & qconfig["config_groups"].keys():
+                raise ValueError("module or config group is claimed by two partitions")
+            modules.update(manifest["modules"])
+            groups.update(qconfig["config_groups"])
+            ignore.update(qconfig["ignore"])
+            local_map = index["weight_map"]
+            if set(local_map) != _expected_outputs(owned, manifest["modules"]):
+                raise ValueError(f"partition {rank}: written tensor coverage disagrees with source and encoded modules")
+            files = set(local_map.values())
+            if files != set(part["output_sha256"]):
+                raise ValueError(f"partition {rank}: output sha256 coverage disagrees with index")
+            actual = {}
+            for filename in sorted(files):
+                filename = _leaf(filename)
+                payload = path / filename
+                if hashed.sha256(payload) != part["output_sha256"][filename]:
+                    raise ValueError(f"partition {rank}: output sha256 mismatch: {filename}")
+                for name in tensor_names(payload):
+                    if name in actual:
+                        raise ValueError(f"tensor appears in two files: {name}")
+                    actual[name] = filename
+                target = f"part-{rank:05d}-{filename}"
+                copies.append((payload, target))
+            if actual != local_map:
+                raise ValueError(f"partition {rank}: index disagrees with actual tensor headers")
+            if weight_map.keys() & local_map.keys():
+                raise ValueError("tensor appears in two partitions")
+            weight_map.update({n: f"part-{rank:05d}-{s}" for n, s in local_map.items()})
+            passthrough_bytes += manifest["totals"]["passthrough_bytes"]
     if covered != expected_source:
         raise ValueError("source tensor coverage is incomplete")
     if ignore & modules.keys():
@@ -438,6 +533,8 @@ def merge_serving_parts(paths, out: Path, source: Path, *, move=False) -> dict:
     # The published artifact records the whole source this merge proved, not
     # part 0's subset.
     manifest["export_identity"] = {**identity, "source": whole}
+    if source_digest_cache is not None:
+        manifest["source_proof"] = source_digest_cache.receipt()
     moe = manifest["routed_moe"]
     for field in ("modules", "quantized_stacks"):
         moe[field] = sorted({name for row in loaded for name in row[3]["routed_moe"][field]})
@@ -517,7 +614,7 @@ def source_inventory(source: Path) -> dict:
     return tensors
 
 
-def source_part_identity(source: Path, shards=None) -> dict:
+def source_part_identity(source: Path, shards=None, *, workers=None, digest_cache=None) -> dict:
     """``source_identity`` for a part that read only ``shards``.
 
     The same binding under the same field names -- ``config_sha256``,
@@ -534,6 +631,13 @@ def source_part_identity(source: Path, shards=None) -> dict:
     and a present file do not compare equal.  A ``shards`` entry that names no
     shard of the source is refused: a filter over absent shards is a mistyped
     range, not an empty part.
+
+    The chosen shards are hashed concurrently by :func:`sha256_files`
+    (``workers`` as there); the document and the order of its refusals are
+    the serial pass's. ``digest_cache`` (a
+    :class:`tessera.source_digest_cache.SourceDigestCache`) serves the shard
+    digests only -- never config or auxiliary files -- and the document is the
+    same as a fresh pass's; the caller records the cache's receipt.
     """
     source = Path(source)
     tensors = source_inventory(source)
@@ -550,10 +654,16 @@ def source_part_identity(source: Path, shards=None) -> dict:
     auxiliary = sorted({p for pattern in ("*.json", "*.txt", "*.jinja", "*.model")
                         for p in source.glob(pattern)})
     config_path = source / "config.json"
+    # Config and auxiliary first, as the serial pass evaluated them, so their
+    # refusals still precede any shard's.
+    config_sha256 = sha256_file(config_path) if config_path.exists() else None
+    auxiliary_sha256 = {p.name: sha256_file(p) for p in auxiliary}
+    digests = sha256_files([source / name for name in chosen], workers,
+                           digest_cache.sha256 if digest_cache is not None else None)
     return {"schema": SOURCE_PART_SCHEMA,
-            "config_sha256": sha256_file(config_path) if config_path.exists() else None,
-            "auxiliary_sha256": {p.name: sha256_file(p) for p in auxiliary},
-            "files": {name: sha256_file(source / name) for name in chosen},
+            "config_sha256": config_sha256,
+            "auxiliary_sha256": auxiliary_sha256,
+            "files": dict(zip(chosen, digests)),
             "tensors": tensors}
 
 
