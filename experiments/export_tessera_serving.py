@@ -150,6 +150,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from export_stock_compressed import (  # noqa: E402
     FP8_INPUTS, FP8_WEIGHTS, NVFP4_INPUTS, NVFP4_WEIGHTS, regex_target,
     stock_quantization_config)
+from tessera.cached_unit import CachedUnitIdentity, HESSIAN_IDENTITY_MODES  # noqa: E402
 from tessera.alphabet import (  # noqa: E402
     BF16_GRID, E2M1_GRID, E4M3_GRID, tuple_grid)
 from tessera.bf16_route import BF16_FAMILY  # noqa: E402
@@ -1275,6 +1276,156 @@ def cached_input_identity(producer, weight, unit_name, unit, grid, q256, *, acti
     return projected_identity(weight, unit, original_grid, q256, activation=activation)
 
 
+def default_intake_threads() -> int:
+    """One worker per CPU this process may run on: the intake is read + hash bound."""
+    try:
+        return max(1, len(os.sched_getaffinity(0)))
+    except (AttributeError, OSError):
+        return max(1, os.cpu_count() or 1)
+
+
+DEFAULT_INTAKE_WINDOW_BYTES = 8 << 30
+
+
+class CachedExpertIntake:
+    """Cached expert units read, digested, verified and framed on a thread pool,
+    committed on the caller's thread in the order the shard loop writes them.
+
+    The serial loop was the defect (tessera#497): one unit at a time, each a
+    source slice off the checkpoint, the cached wire off the bundle, a sha256
+    of both and a parse, with nineteen cores idle.  Every one of those steps
+    is a file read or a ``hashlib``/tensor op that releases the GIL, so the
+    per-unit work runs on ``threads`` workers, ahead of the caller by at most
+    ``window_units`` units and ``window_bytes`` of estimated resident bytes,
+    across shard boundaries.  ``take`` hands back the next unit in task
+    order -- the caller's order -- so the shard payload, the records and the
+    manifest are built exactly as the serial loop built them; a worker's
+    refusal surfaces at the ``take`` for its unit, in that order, as the same
+    exception.
+
+    One ``safe_open`` handle per source shard, shared by the workers (the
+    handle is mmap-backed and ``get_tensor`` on it is concurrency-safe) and
+    closed once the caller has taken the shard's last unit.
+    """
+
+    def __init__(self, src: Path, tasks: list, work, *, threads: int,
+                 window_units: int, window_bytes: int, estimate):
+        import collections
+        import threading
+        from concurrent.futures import ThreadPoolExecutor
+
+        if threads < 1 or window_units < 1 or window_bytes < 1:
+            raise SystemExit("cached intake needs at least one thread, one unit and one byte of window")
+        self.src = src
+        self.tasks = tasks
+        self.work = work
+        self.estimate = estimate
+        self.threads = threads
+        self.window_units = window_units
+        self.window_bytes = window_bytes
+        self._pool = ThreadPoolExecutor(max_workers=threads, thread_name_prefix="cached-intake")
+        self._handles: dict[str, object] = {}
+        self._handle_lock = threading.Lock()
+        self._pending = collections.deque()
+        self._in_flight_bytes = 0
+        self._next_submit = 0
+        self._next_take = 0
+        self._remaining_per_shard = collections.Counter(shard for shard, _name, _unit in tasks)
+        self.peak_in_flight_units = 0
+        self.peak_in_flight_bytes = 0
+
+    def handle(self, shard: str):
+        with self._handle_lock:
+            handle = self._handles.get(shard)
+            if handle is None:
+                handle = self._handles[shard] = safe_open(str(self.src / shard), framework="pt")
+            return handle
+
+    def prime(self):
+        """Run the first unit on the caller's thread before any worker starts.
+
+        The first cached unit is the one that witnesses the committed Hessian
+        identity and warms every per-process memo (encoder fixture identity,
+        producer source seal, capture seal); doing it here keeps those
+        first-use paths off the pool.
+        """
+        if self.tasks and self._next_submit == 0:
+            from concurrent.futures import Future
+            shard, name, unit = self.tasks[0]
+            future = Future()
+            try:
+                future.set_result(self.work(self.handle(shard), shard, name, unit))
+            except BaseException as error:
+                future.set_exception(error)
+            size = self.estimate(unit)
+            self._pending.append((0, future, size))
+            self._in_flight_bytes += size
+            self._next_submit = 1
+        self._fill()
+
+    def _fill(self):
+        while self._next_submit < len(self.tasks) and len(self._pending) < self.window_units:
+            index = self._next_submit
+            shard, name, unit = self.tasks[index]
+            size = self.estimate(unit)
+            if self._pending and self._in_flight_bytes + size > self.window_bytes:
+                break
+            future = self._pool.submit(self.work, self.handle(shard), shard, name, unit)
+            self._pending.append((index, future, size))
+            self._in_flight_bytes += size
+            self._next_submit = index + 1
+        self.peak_in_flight_units = max(self.peak_in_flight_units, len(self._pending))
+        self.peak_in_flight_bytes = max(self.peak_in_flight_bytes, self._in_flight_bytes)
+
+    def take(self, shard: str, name: str, unit: dict):
+        """The result for exactly the next task, which must be this unit."""
+        index = self._next_take
+        if index >= len(self.tasks) or self.tasks[index] != (shard, name, unit):
+            raise SystemExit(f"cached intake order broke at {unit.get('tensor')}: "
+                             "the shard loop asked for a unit out of task order")
+        self._fill()
+        taken, future, size = self._pending.popleft()
+        assert taken == index
+        try:
+            result = future.result()
+        except BaseException:
+            # The refusal is this unit's and it ends the export; nothing
+            # queued behind it is wanted.
+            self.close()
+            raise
+        finally:
+            self._in_flight_bytes -= size
+            self._next_take = index + 1
+            self._remaining_per_shard[shard] -= 1
+            if self._remaining_per_shard[shard] == 0:
+                self._close_handle(shard)
+        self._fill()
+        return result
+
+    @property
+    def taken(self) -> int:
+        return self._next_take
+
+    def _close_handle(self, shard):
+        with self._handle_lock:
+            handle = self._handles.pop(shard, None)
+        if handle is not None:
+            handle.__exit__(None, None, None)
+
+    def record(self) -> dict:
+        return {"threads": self.threads, "window_units": self.window_units,
+                "window_bytes": self.window_bytes, "units": len(self.tasks),
+                "peak_in_flight_units": self.peak_in_flight_units,
+                "peak_in_flight_bytes": self.peak_in_flight_bytes}
+
+    def close(self):
+        # Queued units are dropped; a unit already on a worker finishes, so no
+        # handle is closed under a worker's borrow of it.
+        self._pool.shutdown(wait=True, cancel_futures=True)
+        for shard in list(self._handles):
+            self._close_handle(shard)
+
+
 def stock_targets(modules):
     """compressed-tensors targets for member modules plus their fused names (the stock exporter's rule)."""
     found = sorted(set(modules))
@@ -1325,6 +1476,24 @@ def main():
                     help="original producer's immutable src/tessera package for cached intake")
     ap.add_argument("--cached-producer-source-sha256",
                     help="full source SHA256 of that original producer package")
+    ap.add_argument("--cached-hessian-identity", choices=list(HESSIAN_IDENTITY_MODES),
+                    default="committed",
+                    help="how cached intake establishes each unit's calibration Hessian "
+                         "identity against a --hessian reference document: 'committed' takes "
+                         "the document's sealed commitment (exact: the reader refuses any H "
+                         "whose identity differs from it, and the cached path consumes no H "
+                         "bytes), after one witness unit is derived both ways and required to "
+                         "agree; 'digested' reads and digests every unit's H, the path before "
+                         "tessera#497. A legacy .pt capture is always digested. Recorded in "
+                         "the manifest's cached_units.hessian_identity block; never an "
+                         "identity input, since the accepted bytes are the same either way.")
+    ap.add_argument("--cached-intake-threads", type=int, default=None,
+                    help="workers for the cached expert intake (source slice, wire read, "
+                         "digests, verify, framing); default one per CPU this process may "
+                         "run on. The commit order is the shard loop's whatever the count.")
+    ap.add_argument("--cached-intake-window-bytes", type=int, default=DEFAULT_INTAKE_WINDOW_BYTES,
+                    help="bound on the estimated bytes the cached intake holds ahead of the "
+                         "shard loop (source slices plus wires), default 8 GiB")
     ap.add_argument("--no-verify", action="store_true")
     ap.add_argument("--layers", type=int, default=None, help="encode only the first N layers (smoke)")
     ap.add_argument("--partition", type=parse_partition, metavar="INDEX/COUNT",
@@ -1921,7 +2090,12 @@ def main():
                    if key not in {"src", "out", "partition", "partition_runtime_image",
                                   "device", "stock_twin", "plan_json", "hessian", "input_scales",
                                   "cached_expert_units", "cached_units", "priced_inputs", "priced_inputs_sha256",
-                                  "research_selected_moe_json", "cached_producer_package"}}
+                                  "research_selected_moe_json", "cached_producer_package",
+                                  # How fast the intake ran and where H identity came
+                                  # from change no accepted byte; they are receipt
+                                  # fields (hessian_identity below), not identity.
+                                  "cached_hessian_identity", "cached_intake_threads",
+                                  "cached_intake_window_bytes"}}
         if research_execution is not None:
             options["research_selected_moe"] = research_execution.record()
         if priced_inputs is not None:
@@ -1961,6 +2135,7 @@ def main():
 
     cached_units = None
     historical_producer = None
+    cached_identity = None
     if cache_path is not None:
         from tessera.cached_unit import CachedUnitBundle, read_manifest
         from tessera.serving_parts import source_identity
@@ -1972,6 +2147,13 @@ def main():
             from tessera.historical_producer import load_historical_producer
             historical_producer = load_historical_producer(
                 args.cached_producer_package, args.cached_producer_source_sha256)
+        # ONE deriver for every cached unit, dense or expert: the producer's
+        # own identity factory, with the calibration H identity established
+        # the way ``--cached-hessian-identity`` says and recorded below.
+        cached_identity = CachedUnitIdentity(
+            lambda weight, unit_name, unit, grid, q256, *, activation: cached_input_identity(
+                historical_producer, weight, unit_name, unit, grid, q256, activation=activation),
+            activation, mode=args.cached_hessian_identity)
 
     input_scales = {}
     if args.input_scales:
@@ -2046,13 +2228,54 @@ def main():
     moe_total = sum(len(units) for units in expert_units.values())
     moe_done = 0
 
+    # THE CACHED EXPERT INTAKE runs ahead of the shard loop on a pool (see
+    # CachedExpertIntake); the loop below takes each unit back in its own
+    # order.  Task order is the loop's: shards sorted, names in shard order,
+    # units in plan order.
+    intake = None
+    if cached_units is not None and expert_units:
+        from tessera.export import ExportedUnit
+
+        def intake_unit(handle, shard, name, unit):
+            stack_spec = stack_plan[unit["stack"]]
+            unit_grid, unit_q256 = stack_spec["grid"], stack_spec["q256"]
+            source_weight = packed_expert_weight(handle.get_tensor(name), unit)
+            expected = cached_identity(source_weight, unit["tensor"], unit, unit_grid, unit_q256)
+            cached_blob, cache_record = cached_units.read(expected["unit"])
+            if historical_producer is not None:
+                historical_producer.verify(cached_blob, cache_record, expected)
+            accepted, blob = pack_cached_expert_unit(cached_blob, cache_record, expected)
+            exported = ExportedUnit(unit["tensor"], accepted.blob, unit["rows"], unit["cols"],
+                                    unit_q256, accepted.wire_bytes)
+            payload = torch.frombuffer(bytearray(blob), dtype=torch.uint8).clone()
+            return exported, blob, cache_record, payload, float(accepted.manifest.scale_plane.global_scale)
+
+        def intake_estimate(unit):
+            record = cached_units.units[ActivationSource.unit_name(unit["tensor"])]
+            return 3 * int(record["blob_bytes"]) + 2 * int(unit["rows"]) * int(unit["cols"])
+
+        threads = (default_intake_threads() if args.cached_intake_threads is None
+                   else args.cached_intake_threads)
+        intake = CachedExpertIntake(
+            args.src,
+            [(shard, name, unit) for shard, names in sorted(shards.items())
+             for name in names if name in expert_units for unit in expert_units[name]],
+            intake_unit, threads=threads, window_units=4 * threads,
+            window_bytes=args.cached_intake_window_bytes, estimate=intake_estimate)
+        print(f"cached expert intake: {len(intake.tasks)} units on {threads} thread(s), "
+              f"window {intake.window_units} units / {intake.window_bytes >> 20} MiB, "
+              f"Hessian identity {cached_identity.established}", flush=True)
+        intake.prime()
+
     pending_modules = dict(modules)
     for shard, names in sorted(shards.items()):
         shard_payload: dict[str, torch.Tensor] = {}
         twin_payload: dict[str, torch.Tensor] = {}
         with safe_open(str(args.src / shard), framework="pt") as handle:
             for name in names:
-                tensor = handle.get_tensor(name)
+                # The intake reads its own source slices through its shared
+                # handle; the loop does not stage a tensor it never touches.
+                tensor = None if intake is not None and name in expert_units else handle.get_tensor(name)
                 if name in plan:
                     weights_cache[name] = tensor
                 elif name in expert_units:
@@ -2060,8 +2283,11 @@ def main():
                         stack_spec = stack_plan[unit["stack"]]
                         unit_grid, unit_q256 = stack_spec["grid"], stack_spec["q256"]
                         unit_recipe = wire_recipe(unit_grid, unit_q256)
-                        source_weight = packed_expert_weight(tensor, unit)
-                        if cached_units is None:
+                        source_weight = None
+                        if intake is not None:
+                            exported, blob, cache_record, payload, own_global = intake.take(shard, name, unit)
+                        elif cached_units is None:
+                            source_weight = packed_expert_weight(tensor, unit)
                             weight = source_weight.to(args.device, torch.float32).contiguous()
                             # Same call as the dense path: a missing Hessian key
                             # must refuse rather than fall through to RTN.
@@ -2075,25 +2301,13 @@ def main():
                             parse_unit_artifact(exported.blob, device=args.device)
                             blob = pack_fused([(unit["projection"], exported.rows, exported.blob)])
                             own_global = float(unit_artifact_.scale_global)
+                            payload = torch.frombuffer(bytearray(blob), dtype=torch.uint8).clone()
                             del weight
-                        else:
-                            from tessera.export import ExportedUnit
-                            expected = cached_input_identity(historical_producer, source_weight,
-                                unit["tensor"], unit, unit_grid, unit_q256, activation=activation)
-                            cached_blob, cache_record = cached_units.read(expected["unit"])
-                            if historical_producer is not None:
-                                historical_producer.verify(cached_blob, cache_record, expected)
-                            accepted, blob = pack_cached_expert_unit(cached_blob, cache_record, expected)
-                            exported = ExportedUnit(unit["tensor"], accepted.blob,
-                                                    unit["rows"], unit["cols"], unit_q256,
-                                                    accepted.wire_bytes)
-                            own_global = float(accepted.manifest.scale_plane.global_scale)
                         # ONE container per expert PROJECTION -- the granularity of
                         # the runtime's shard ids and of
                         # ``scheme.expert_role_declarations``.  A packed physical
                         # tensor may supply several such logical projections.
-                        shard_payload[unit["wire"]] = torch.frombuffer(
-                            bytearray(blob), dtype=torch.uint8).clone()
+                        shard_payload[unit["wire"]] = payload
                         stack_record = moe_records[unit["stack"]]
                         stack_record["group_blob_bytes"][unit["group"]].append(len(blob))
                         stack_record["container_bytes"] += len(blob)
@@ -2114,7 +2328,7 @@ def main():
                             "own_global": own_global,
                             **({"cached_blob_sha256": cache_record["blob_sha256"]}
                                if cached_units is not None else {})})
-                        del source_weight
+                        del source_weight, payload
                         moe_done += 1
                         if moe_done % 50 == 0 or moe_done == moe_total:
                             print(f"  [moe {moe_done}/{moe_total}] {unit['tensor']}  "
@@ -2169,8 +2383,7 @@ def main():
                 else:
                     from tessera.cached_unit import verify_cached_unit
                     from tessera.export import ExportedUnit
-                    expected = cached_input_identity(historical_producer, weight, member, None,
-                                                     member_grid, q256, activation=activation)
+                    expected = cached_identity(weight, member, None, member_grid, q256)
                     cached_blob, cache_record = cached_units.read(expected["unit"])
                     if historical_producer is not None:
                         historical_producer.verify(cached_blob, cache_record, expected)
@@ -2304,6 +2517,10 @@ def main():
             for key in twin_payload:
                 twin_weight_map[key] = shard
             print(f"wrote twin {shard}: {len(twin_payload)} tensors", flush=True)
+    if intake is not None:
+        intake.close()
+        if intake.taken != len(intake.tasks):
+            raise SystemExit(f"cached intake took {intake.taken} of {len(intake.tasks)} planned expert units")
     if pending_modules:
         raise SystemExit(f"modules never completed: {sorted(pending_modules)}")
 
@@ -2449,7 +2666,14 @@ def main():
                                         "package": str(args.cached_producer_package.resolve()),
                                         "source_sha256": historical_producer.source_sha256,
                                         "namespace": historical_producer.namespace}}
-                                       if historical_producer is not None else {})}}
+                                       if historical_producer is not None else {}),
+                                    # How each unit's calibration H identity was
+                                    # established -- from the reference document's
+                                    # sealed commitment or by reading and digesting
+                                    # H -- and how the intake ran.  Neither changes
+                                    # an accepted byte; both are stated, never implied.
+                                    "hessian_identity": cached_identity.record(),
+                                    "intake": None if intake is None else intake.record()}}
            if cached_units is not None else {}),
         "arm": f"tessera {default_grid.name} q256={args.q256}" + (f" + plan {args.plan_json}" if args.plan_json else "")
                + f" -> tessera.serving {'+'.join(families)}",
@@ -2545,6 +2769,12 @@ def main():
     if partition_record is not None:
         partition_record["output_sha256"] = {
             shard: sha256_file(args.out / shard) for shard in sorted(shards)}
+        if cached_units is not None:
+            # Beside ``identity``, not inside it: the merge compares identity,
+            # and parts whose H identity was established two ways carry the
+            # same accepted bytes.  The merged checkpoint keeps every part's
+            # statement of how.
+            partition_record["hessian_identity"] = cached_identity.record()
         manifest["export_partition"] = partition_record
     (args.out / "tessera_serving_manifest.json").write_text(json.dumps(manifest, indent=2))
 

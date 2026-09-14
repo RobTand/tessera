@@ -584,12 +584,25 @@ def _canonical_handoff(root, hessians, provenance):
     return handoff
 
 
-def _calibrated_packed_export(tmp_path, calibrated_wires, monkeypatch, layout):
+def _calibrated_packed_export(tmp_path, calibrated_wires, monkeypatch, layout, *, historical=False):
     from safetensors.torch import save_file
     from tessera.serving_parts import source_identity
 
     api, exporter = _api(), _exporter()
     provenance, triples = calibrated_wires
+    producer, producer_flags = None, []
+    if historical:
+        # Receipts written by a distinct, source-sealed producer package: the
+        # export must derive every identity field under that producer.
+        # A package name unique to this call: the historical namespace is
+        # keyed by the package seal, which ``_distinct_producer`` derives from
+        # the directory name, and one process may load several.
+        original = tmp_path / ("original-" + hashlib.sha256(str(tmp_path).encode()).hexdigest()[:12])
+        original.mkdir()
+        package, source_sha256 = _distinct_producer(original)
+        producer = load_historical_producer(package, source_sha256)
+        producer_flags = ["--cached-producer-package", str(package),
+                          "--cached-producer-source-sha256", source_sha256]
     stack = "model.language_model.layers.1.mlp.experts"
     roles = ("gate_proj", "up_proj", "down_proj")
     dense = {f"model.language_model.layers.0.mlp.{role}.weight": triples[i][0].clone()
@@ -623,11 +636,12 @@ def _calibrated_packed_export(tmp_path, calibrated_wires, monkeypatch, layout):
     hessians = {name: triple[1] for name, triple in logical.items()}
     handoff = _canonical_handoff(tmp_path / "capture", hessians, provenance)
     activation = ActivationSource.from_capture(handoff)
-    identities = [api.encoding_input_identity(weight, name, E4M3_GRID, 1024, activation=activation)
+    identities = [exporter.cached_input_identity(producer, weight, name, None, E4M3_GRID, 1024,
+                                                 activation=activation)
                   for name, weight in dense.items()]
-    identities.extend(api.unit_input_identity(
-        exporter.packed_expert_weight(tensors[unit["source_tensor"]], unit), unit,
-        E4M3_GRID, 1024, activation=activation) for unit in units)
+    identities.extend(exporter.cached_input_identity(
+        producer, exporter.packed_expert_weight(tensors[unit["source_tensor"]], unit),
+        unit["tensor"], unit, E4M3_GRID, 1024, activation=activation) for unit in units)
     activation.hessians.close()
     records = {}
     for index, identity in enumerate(identities):
@@ -647,20 +661,19 @@ def _calibrated_packed_export(tmp_path, calibrated_wires, monkeypatch, layout):
     out = tmp_path / "out"
     argv = ["export", str(src), str(out), "--plan-json", str(plan_path),
             "--cached-units", str(manifest_path), "--hessian", str(handoff),
-            "--device", "cpu", "--allow-unrouted", "--allow-unserveable"]
+            "--device", "cpu", "--allow-unrouted", "--allow-unserveable", *producer_flags]
     monkeypatch.setattr("sys.argv", argv)
     return dict(exporter=exporter, argv=argv, src=src, out=out, manifest=manifest,
                 manifest_path=manifest_path, hessians=hessians, handoff=handoff,
-                provenance=provenance, logical=logical, units=units, tensors=tensors)
+                provenance=provenance, logical=logical, units=units, tensors=tensors,
+                producer=producer)
 
 
-@pytest.mark.parametrize("layout", ["out_first_chunked", "in_first_interleaved"])
-def test_calibrated_packed_cached_cli_preserves_originals(tmp_path, calibrated_wires, monkeypatch, layout):
+def _observe_h_consumption(monkeypatch):
+    """Record every H the export reads through the reference owner."""
     import weakref
-    from safetensors import safe_open
     from tessera.hessian_capture import ReferenceHessians
 
-    case = _calibrated_packed_export(tmp_path, calibrated_wires, monkeypatch, layout)
     original = ReferenceHessians.__getitem__
     returned, consumed = [], []
     def observed(self, key):
@@ -671,8 +684,33 @@ def test_calibrated_packed_cached_cli_preserves_originals(tmp_path, calibrated_w
         returned.append(weakref.ref(result))
         return result
     monkeypatch.setattr(ReferenceHessians, "__getitem__", observed)
+    return consumed, returned
+
+
+@pytest.mark.parametrize("identity_mode", ["digested", "committed"])
+@pytest.mark.parametrize("layout", ["out_first_chunked", "in_first_interleaved"])
+def test_calibrated_packed_cached_cli_preserves_originals(tmp_path, calibrated_wires, monkeypatch,
+                                                          layout, identity_mode):
+    from safetensors import safe_open
+
+    case = _calibrated_packed_export(tmp_path, calibrated_wires, monkeypatch, layout)
+    case["argv"].extend(["--cached-hessian-identity", identity_mode])
+    consumed, returned = _observe_h_consumption(monkeypatch)
     case["exporter"].main()
-    assert sorted(consumed) == sorted(case["logical"])
+    receipt = json.loads((case["out"] / "tessera_serving_manifest.json").read_text())
+    established = receipt["cached_units"]["hessian_identity"]
+    assert established["established"] == identity_mode
+    if identity_mode == "digested":
+        # Every unit's H read and digested: the path before tessera#497.
+        assert sorted(consumed) == sorted(case["logical"])
+        assert established["witness"] is None and established["committed_units_served"] is None
+    else:
+        # One witness H read; every unit's identity taken from the commitment.
+        assert consumed == [established["witness"]["unit"]] and established["witness"]["agreed"]
+        assert established["committed_units_served"] == len(case["logical"])
+        assert established["reference"]["document_sha256"] == hashlib.sha256(
+            case["handoff"].read_bytes()).hexdigest()
+        assert established["reference"]["capture_sha256"] == receipt["activation_aware"]["hessian"]["capture_sha256"]
     assert all(ref() is None for ref in returned)
     with safe_open(str(case["out"] / "model.safetensors"), framework="pt") as handle:
         members = [unit for name in handle.keys() if name.endswith((".wire", ".wire_bytes"))
@@ -733,6 +771,10 @@ def test_calibrated_packed_cached_cli_refuses_mismatched_inputs(
         path = case["manifest_path"].parent / record["file"]
         raw = bytearray(path.read_bytes()); raw[-1] ^= 1; path.write_bytes(raw)
     elif problem == "changed_reference_payload":
+        # The digested path reads every H payload and refuses the flipped
+        # byte; the committed path consumes no unwitnessed payload by design
+        # (test_committed_intake_consumes_only_the_witness_payload).
+        case["argv"].extend(["--cached-hessian-identity", "digested"])
         canonical = json.loads((case["handoff"].parent / "capture_manifest.json").read_text())
         path = case["handoff"].parent / canonical["entries"][name]["path"]
         raw = bytearray(path.read_bytes()); raw[-1] ^= 1; path.write_bytes(raw)
@@ -755,3 +797,196 @@ def test_calibrated_packed_cli_requires_complete_cached_mode(tmp_path, calibrate
     else: case["argv"][index] = "--cached-expert-units"
     with pytest.raises(SystemExit, match="--hessian.*packed expert"): case["exporter"].main()
     assert not case["out"].exists()
+
+
+def _identity_run(tmp_path, calibrated_wires, monkeypatch, label, flags, *, historical=False):
+    """One calibrated cached export under ``flags``, with the H reads it made."""
+    root = tmp_path / label
+    root.mkdir()
+    case = _calibrated_packed_export(root, calibrated_wires, monkeypatch, "out_first_chunked",
+                                     historical=historical)
+    case["argv"].extend(flags)
+    consumed, _returned = _observe_h_consumption(monkeypatch)
+    case["exporter"].main()
+    # A snapshot: a later run's observer wraps this one and keeps appending.
+    case["consumed"] = list(consumed)
+    case["receipt"] = json.loads((case["out"] / "tessera_serving_manifest.json").read_text())
+    return case
+
+
+@pytest.mark.parametrize("historical", [False, True])
+def test_committed_parallel_intake_is_byte_identical_to_digested_serial(
+        tmp_path, calibrated_wires, monkeypatch, historical):
+    """(a) Same bytes, same acceptance: threads and the H identity source change nothing written."""
+    serial = _identity_run(tmp_path, calibrated_wires, monkeypatch, "serial",
+                           ["--cached-hessian-identity", "digested", "--cached-intake-threads", "1"],
+                           historical=historical)
+    parallel = _identity_run(tmp_path, calibrated_wires, monkeypatch, "parallel",
+                             ["--cached-hessian-identity", "committed", "--cached-intake-threads", "4"],
+                             historical=historical)
+    assert (serial["out"] / "model.safetensors").read_bytes() == (parallel["out"] / "model.safetensors").read_bytes()
+    for key in ("modules", "totals", "plan", "default", "serving_gate"):
+        assert serial["receipt"][key] == parallel["receipt"][key], key
+    if historical:
+        # Each run sealed its own distinct producer package, so the two cache
+        # manifests differ in exactly that seal; the accepted bytes do not.
+        for run in (serial, parallel):
+            assert run["receipt"]["cached_units"]["historical_producer"]["source_sha256"] == \
+                run["producer"].source_sha256
+            assert all(record["identity"]["encoder_source_sha256"] == run["producer"].source_sha256
+                       for record in run["manifest"]["units"].values())
+    else:
+        assert serial["receipt"]["cached_units"]["manifest_sha256"] == \
+            parallel["receipt"]["cached_units"]["manifest_sha256"]
+    # The serial digested run read every H; the parallel committed run read one.
+    assert sorted(serial["consumed"]) == sorted(serial["logical"])
+    witness = parallel["receipt"]["cached_units"]["hessian_identity"]["witness"]
+    assert parallel["consumed"] == [witness["unit"]] and witness["agreed"] is True
+    intake = parallel["receipt"]["cached_units"]["intake"]
+    assert intake["threads"] == 4 and intake["units"] == len(parallel["units"])
+    assert 1 <= intake["peak_in_flight_units"] <= intake["window_units"]
+    assert serial["receipt"]["cached_units"]["intake"]["threads"] == 1
+
+
+def test_committed_identity_equals_full_derivation_for_every_unit(tmp_path, calibrated_wires):
+    """The deriver's committed form is the producer's own digested form, field for field."""
+    from tessera.cached_unit import CachedUnitIdentity
+    from tessera.errors import GrammarError
+
+    provenance, triples = calibrated_wires
+    exporter = _exporter()
+    hessians = {f"unit{i}": triple[1] for i, triple in enumerate(triples)}
+    handoff = _canonical_handoff(tmp_path / "capture", hessians, provenance)
+    derive = lambda weight, unit_name, unit, grid, q256, *, activation: exporter.cached_input_identity(
+        None, weight, unit_name, unit, grid, q256, activation=activation)
+    digested = CachedUnitIdentity(derive, ActivationSource.from_capture(handoff), mode="digested")
+    committed = CachedUnitIdentity(derive, ActivationSource.from_capture(handoff), mode="committed")
+    assert (digested.established, committed.established) == ("digested", "committed")
+    for i, (weight, _hessian, _blob) in enumerate(triples):
+        assert committed(weight, f"unit{i}.weight", None, E4M3_GRID, 1024) == \
+            digested(weight, f"unit{i}.weight", None, E4M3_GRID, 1024)
+    assert digested.activation.hessians.receipt()["verified_units"] == sorted(hessians)
+    assert committed.activation.hessians.receipt()["verified_units"] == ["unit0"]
+    assert committed.record()["committed_units_served"] == len(triples)
+    with pytest.raises(ValueError, match="no exact Hessian key"):
+        committed(triples[0][0], "absent.weight", None, E4M3_GRID, 1024)
+    with pytest.raises(ValueError, match="Hessian shape"):
+        committed(torch.ones(32, 16, dtype=torch.bfloat16), "unit0.weight", None, E4M3_GRID, 1024)
+    # A plain mapping has no commitments, whatever was asked; no activation, no calibration.
+    plain = CachedUnitIdentity(derive, ActivationSource(hessians, provenance), mode="committed")
+    assert plain.established == "digested" and plain.record()["reference"] is None
+    none = CachedUnitIdentity(derive, None, mode="committed")
+    assert none.established is None
+    assert none(triples[0][0], "unit0.weight", None, E4M3_GRID, 1024)["calibration"] is None
+    # The witness must agree or nothing is served from commitments.
+    disagreeing = CachedUnitIdentity(derive, ActivationSource.from_capture(handoff), mode="committed")
+    disagreeing._derive = lambda weight, unit_name, unit, grid, q256, *, activation: dict(
+        derive(weight, unit_name, unit, grid, q256, activation=activation),
+        **({"extra": True} if activation is not None else {}))
+    with pytest.raises(GrammarError, match="committed Hessian identity disagrees"):
+        disagreeing(triples[0][0], "unit0.weight", None, E4M3_GRID, 1024)
+    assert disagreeing.record()["witness"] is None
+    for deriver in (digested, committed, disagreeing):
+        deriver.activation.hessians.close()
+
+
+def test_cache_record_h_identity_disagreeing_with_commitment_refuses(tmp_path, calibrated_wires, monkeypatch):
+    """(b) A receipt whose calibration.hessian is not the commitment refuses; the driver decides."""
+    from tessera.hessian_capture import ReferenceHessians
+
+    # Not the first task, so the witness derivation itself stays honest.
+    tampered = case_unit = None
+    for label in ("refuses", "driver_mutated"):
+        root = tmp_path / label
+        root.mkdir()
+        case = _calibrated_packed_export(root, calibrated_wires, monkeypatch, "out_first_chunked")
+        case_unit = case["units"][-1]["tensor"].removesuffix(".weight")
+        record = case["manifest"]["units"][case_unit]
+        record["identity"]["calibration"]["hessian"]["sha256"] = "0" * 64
+        tampered = record["identity"]["calibration"]["hessian"]
+        case["manifest_path"].write_text(json.dumps(case["manifest"]))
+        if label == "refuses":
+            with pytest.raises(ValueError, match="calibration"):
+                case["exporter"].main()
+            assert not (case["out"] / "tessera_serving_manifest.json").exists()
+            continue
+        # Mutate the DRIVER: a commitment that echoes the receipt makes the
+        # check vacuous, and the export accepts -- proving the refusal above
+        # is decided by ``ReferenceHessians.commitment``, not by the fixture.
+        original = ReferenceHessians.commitment
+        monkeypatch.setattr(ReferenceHessians, "commitment", lambda self, name:
+                            dict(tampered) if name == case_unit else original(self, name))
+        case["exporter"].main()
+        receipt = json.loads((case["out"] / "tessera_serving_manifest.json").read_text())
+        assert receipt["cached_units"]["hessian_identity"]["established"] == "committed"
+
+
+@pytest.mark.parametrize("reseal", ["none", "capture_only", "capture_and_rows"])
+def test_tampered_reference_commitment_refuses(tmp_path, calibrated_wires, monkeypatch, reseal):
+    """(c) A commitment edited in the document refuses at load, or at the unit once resealed."""
+    import tessera.hessian_capture as hessian_capture
+    from tessera.errors import GrammarError
+    from tessera.hessian_capture import capture_sha256_from_units
+
+    case = _calibrated_packed_export(tmp_path, calibrated_wires, monkeypatch, "out_first_chunked")
+    name = case["units"][-1]["tensor"].removesuffix(".weight")
+    payload = json.loads(case["handoff"].read_text())
+    payload["hessians"][name]["sha256"] = "0" * 64
+    forged = capture_sha256_from_units(payload["provenance"],
+                                       {n: v["sha256"] for n, v in payload["hessians"].items()})
+    if reseal != "none":
+        payload["capture_sha256"] = forged
+    if reseal == "capture_and_rows":
+        payload["rows"][0]["capture_sha256"] = forged
+    case["handoff"].write_text(json.dumps(payload, sort_keys=True))
+    if reseal == "none":
+        with pytest.raises(GrammarError, match="disagree with the capture seal"):
+            case["exporter"].main()
+    elif reseal == "capture_only":
+        with pytest.raises(GrammarError, match="row commitments disagree"):
+            case["exporter"].main()
+    else:
+        # Fully resealed, the document loads; the receipt's H identity is
+        # then not the (forged) commitment and the unit refuses.
+        with pytest.raises(ValueError, match="calibration"):
+            case["exporter"].main()
+    assert not case["out"].exists() or not (case["out"] / "tessera_serving_manifest.json").exists()
+    if reseal != "none":
+        return
+    # Mutate the DRIVER: a seal check that echoes the document lets the forged
+    # commitment load -- so the load refusal above is that check's -- and the
+    # unit still refuses against the receipt, the second line.
+    monkeypatch.setattr(hessian_capture, "capture_sha256_from_units",
+                        lambda provenance, units: payload["capture_sha256"])
+    with pytest.raises(ValueError, match="calibration"):
+        case["exporter"].main()
+
+
+@pytest.mark.parametrize("flipped", ["witness", "other"])
+def test_committed_intake_consumes_only_the_witness_payload(tmp_path, calibrated_wires, monkeypatch, flipped):
+    """Committed intake reads one canonical payload; the rest are commitments, and the receipt says so."""
+    from tessera.errors import GrammarError
+
+    first = _identity_run(tmp_path, calibrated_wires, monkeypatch, "first", [])
+    witness = first["receipt"]["cached_units"]["hessian_identity"]["witness"]["unit"]
+    assert first["consumed"] == [witness]
+    other = next(n for n in sorted(first["logical"]) if n != witness)
+    root = tmp_path / "second"
+    root.mkdir()
+    case = _calibrated_packed_export(root, calibrated_wires, monkeypatch, "out_first_chunked")
+    target = witness if flipped == "witness" else other
+    canonical = json.loads((case["handoff"].parent / "capture_manifest.json").read_text())
+    path = case["handoff"].parent / canonical["entries"][target]["path"]
+    raw = bytearray(path.read_bytes()); raw[-1] ^= 1; path.write_bytes(raw)
+    consumed, _returned = _observe_h_consumption(monkeypatch)
+    if flipped == "witness":
+        with pytest.raises(GrammarError, match="checksum"):
+            case["exporter"].main()
+        return
+    case["exporter"].main()
+    assert consumed == [witness]
+    receipt = json.loads((case["out"] / "tessera_serving_manifest.json").read_text())
+    established = receipt["cached_units"]["hessian_identity"]
+    assert established["established"] == "committed"
+    assert established["committed_units_served"] == len(case["logical"])
+    assert (case["out"] / "model.safetensors").read_bytes() == (first["out"] / "model.safetensors").read_bytes()

@@ -165,6 +165,112 @@ def unit_input_identity(weight, projection: dict, grid, q256: int, *,
                        "projection": {key: projection[key] for key in sorted(required)}})
 
 
+HESSIAN_IDENTITY_MODES = ("committed", "digested")
+
+
+class CachedUnitIdentity:
+    """Derive cached-unit input identities, establishing H identity one of two ways.
+
+    ``derive(weight, unit_name, unit, grid, q256, *, activation)`` is the
+    producer's own identity factory -- the historical producer's when a
+    receipt was written by one, this package's otherwise -- and every field
+    of every identity still comes from it.  What this class decides is
+    where ``calibration.hessian`` comes from:
+
+    ``digested``
+        the producer consumes H through ``activation.hessians[name]`` and
+        digests it, the path every cached export took before this class.
+        On a reference document that is one whole canonical ``.pt`` read
+        per unit, for bytes the cached path never otherwise touches.
+    ``committed``
+        the sealed commitment the reference document holds for the unit,
+        served by ``ReferenceHessians.commitment``.  Exact by construction:
+        ``ReferenceHessians.__getitem__`` refuses any payload whose identity
+        differs from that commitment, so the digested value on an accepting
+        run is the committed value.  The first unit is still derived in full
+        -- H read, digested -- and the spliced form is required to equal it
+        before any other unit is served; that witness also fixes
+        ``calibration.settings``, which is unit-independent (it is the
+        owner's ``config_block`` less prose, the same for every unit).
+
+    Only a ``ReferenceHessians`` owner has commitments; a plain mapping is
+    digested whatever was asked, and no activation means no calibration
+    block at all.  ``record()`` says which happened, so a receipt never
+    implies bytes were compared when they were not.  Safe to call from
+    several threads once witnessed; the witness itself is serialised.
+    """
+
+    def __init__(self, derive, activation, *, mode: str = "committed"):
+        import threading
+
+        if mode not in HESSIAN_IDENTITY_MODES:
+            raise ValueError(f"cached unit Hessian identity mode must be one of {HESSIAN_IDENTITY_MODES}")
+        self._derive = derive
+        self.activation = activation
+        self._lock = threading.Lock()
+        self._settings = None
+        self._witness = None
+        self._reference = None
+        if activation is None:
+            self.established = None
+        else:
+            from .hessian_capture import ReferenceHessians
+            reference = isinstance(activation.hessians, ReferenceHessians)
+            self.established = mode if reference else "digested"
+            if reference:
+                owner = activation.hessians
+                self._reference = {
+                    "path": activation.provenance.get("path"),
+                    "document_sha256": owner.document_sha256,
+                    **{k: v for k, v in owner.binding().items() if k != "schema"}}
+
+    def __call__(self, weight, unit_name: str, unit, grid, q256: int) -> dict:
+        if self.established != "committed":
+            return self._derive(weight, unit_name, unit, grid, q256, activation=self.activation)
+        with self._lock:
+            if self._settings is None:
+                return self._witness_unit(weight, unit_name, unit, grid, q256)
+        return self._committed(weight, unit_name, unit, grid, q256)
+
+    def _witness_unit(self, weight, unit_name, unit, grid, q256):
+        from .errors import GrammarError
+
+        full = self._derive(weight, unit_name, unit, grid, q256, activation=self.activation)
+        self._settings = _json_copy(full["calibration"]["settings"])
+        spliced = self._committed(weight, unit_name, unit, grid, q256)
+        if spliced != full:
+            self._settings = None
+            raise GrammarError(f"{full['unit']}: committed Hessian identity disagrees with "
+                               "the consumed derivation; refusing to serve commitments")
+        self._witness = {"unit": full["unit"], "agreed": True}
+        return full
+
+    def _committed(self, weight, unit_name, unit, grid, q256):
+        identity = self._derive(weight, unit_name, unit, grid, q256, activation=None)
+        name = identity["unit"]
+        hessians = self.activation.hessians
+        if name not in hessians:
+            raise ValueError(f"{name}: cached unit has no exact Hessian key")
+        commitment = hessians.commitment(name)
+        if commitment["shape"] != [weight.shape[1], weight.shape[1]]:
+            raise ValueError(f"{name}: cached unit Hessian shape disagrees with columns")
+        identity["calibration"] = {"settings": self._settings, "hessian": commitment}
+        return _json_copy(identity)
+
+    def record(self) -> dict:
+        """How calibration H identity was established, for the export receipt."""
+        served = reference = None
+        if self._reference is not None:
+            reference = dict(self._reference, capture_sha256=self.activation.capture_sha256())
+        if self.established == "committed":
+            served = len(self.activation.hessians.receipt()["committed_units_served"])
+        return _json_copy({"schema": "tessera.cached_unit_hessian_identity.v1",
+                           "established": self.established,
+                           "reference": reference,
+                           "witness": self._witness,
+                           "committed_units_served": served})
+
+
 def _local_filename(name: str) -> str:
     if not isinstance(name, str) or not name or Path(name).name != name or name in {".", ".."}:
         raise ValueError(f"cached unit filename must be a local leaf: {name!r}")
