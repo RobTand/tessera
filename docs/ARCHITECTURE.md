@@ -5,6 +5,19 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-14 for the fused coset TCQ trellis (tessera#486).
+`encode.viterbi_columns`'s `auto` now takes `tcq_fused.viterbi_columns_fused`
+-- three Triton launches a call, `_minima`, `_forward` and `_traceback` -- on
+a CUDA device whenever `fused_available()` holds and `tcq_fused_refusal` names
+nothing: float32, float16 or bfloat16 targets and weights, arity 1 or 2.
+Every other call keeps the captured-graph rule, `TESSERA_TCQ_FUSED=0`
+restores that rule everywhere, and an explicit `impl="fused"` raises on a
+call the fused path refuses. The contract is identity with `_TCQPlan.run`,
+which is unchanged: the same anchors, the same body field and the same `sse`
+float, exact ties included (`tests/test_tcq_fused.py`). `encoder_fixture_id`
+does not move, and stored GLM-5.3 census `TESSERA_E2M1_K2_R896` wires
+re-encode byte for byte. §3.1b carries the measured deltas.
+
 Re-stamped 2026-09-14 for contract v28's routed E2M1_K2 cells (tessera#506,
 leg 1). `lane_eligibility` publishes
 `tessera_e2m1_k2_routed_moe_sm121_{decode,batch}_resident` at q256 896, eager
@@ -1759,9 +1772,19 @@ expert stack's projections are the natural batch -- and gets each unit's
 `ExportedUnit` in order.
 
 What the batch buys is measured, not assumed, and it differs by body. The
-coset trellis (`_TCQPlan`, the E2M1_K2 cap rung) is launch-bound at
-`ldl_block` columns a call, so joining `B` blocks divides its launch count by
-`B`. The fused window body is tiled over an L2-bounded column width
+coset trellis (`_TCQPlan`, the E2M1_K2 cap rung) was launch-bound at
+`ldl_block` columns a call, so joining `B` blocks divided its launch count by
+`B`. Since tessera#486 its `auto` path is `tcq_fused.viterbi_columns_fused`,
+three Triton launches a call at any width. On the LFM fixture at `B=8`, the
+encoder's device kernels fell from 608 to 103.9 per unit-column and its
+device time from 1.101 to 0.280 ms per unit-column. On the same binary,
+throughput rose 1.96x at `B=32` and 3.07x at `B=8`, for 1.82x and 2.47x the
+parameters per joule. Host launches and syncs did not move (103.9 and 11.45
+per unit-column). The encoder still draws 35-37 % of the 140 W envelope, and
+fused `B=8` is within 4 % of fused `B=32`. The bound is now `_fit_lut`'s swap
+loop, which makes one host sync per trial
+(`docs/measurements/tessera486-fused-tcq-2026-09-14.md`). The fused window
+body is tiled over an L2-bounded column width
 (`window_viterbi._layout`, width 32 at L=14), so a wider call there is more
 tiles of the same width and the gain is per-call overhead only; the numbers
 are in `docs/measurements/tessera385-batched-ldlq-2026-09-06.md`. Two things
