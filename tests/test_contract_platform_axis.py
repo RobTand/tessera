@@ -350,12 +350,14 @@ def test_the_serve_image_rule_is_the_weaker_one_the_data_supports(contract):
 
     The design asked that every cell's ``runtime.image`` equal its platform's
     ``serve_image``. The shipped document falsifies that: ``sm_121`` carries
-    two attested images. Taken literally the stronger rule refuses the
-    contract in this repository, so the rule is "attested by one of the
-    platform's own cells" instead. This test is the measurement.
+    two attested images, and since v28 (#506) three: the routed E2M1_K2 cells
+    name the NCCL 2.30 image their two-rank receipt ran. Taken literally the
+    stronger rule refuses the contract in this repository, so the rule is
+    "attested by one of the platform's own cells" instead. This test is the
+    measurement.
     """
     block = contract["lane_eligibility"]
     images = {cell["runtime"]["image"] for cell in block["cells"]
               if cell["platform"] == "sm_121"}
-    assert len(images) == 2, images
+    assert len(images) == 3, images
     assert block["platforms"]["sm_121"]["serve_image"] in images

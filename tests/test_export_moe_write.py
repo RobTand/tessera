@@ -826,7 +826,8 @@ def test_an_nvfp4_stack_writes_a_static_input_scale_beside_each_wire(tmp_path, m
     per expert projection, the scheme on the NVFP4 route at the wire's rung,
     the role records carrying the scale.  Since contract v28 (#506) the two
     routed E2M1_K2 cells attest the stack at q896, so it exports with no
-    override and names them; a rung no routed cell attests is still refused."""
+    override and names them.  q768 is not in either cell's ``rungs_q256``, so
+    the same stack at q768 is still refused without the override."""
     from tessera.serving import nvfp4_moe_route
     from tessera.serving.scheme import STRUCTURE_ROUTED_MOE, TESSERA_NVFP4, attested_cells
 

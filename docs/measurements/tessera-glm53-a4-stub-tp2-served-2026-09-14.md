@@ -32,7 +32,7 @@ The findings:
 
 | Item | Value |
 |---|---|
-| Tessera tree | `44d20d670700d719a50052e6050372fd5d9b9c2f` (master: #507 plus #505), mounted read-only into both containers |
+| Tessera tree | `44d20d670700d719a50052e6050372fd5d9b9c2f` (on master), mounted read-only into both containers |
 | Checkpoint | GLM-5.3-Flash 4-layer stub, `glm53-4layer-a4-e2m1x2-q896-l2`: 4 layers, hidden size 4096, one dense layer (intermediate size 12288), 288 routed experts per MoE layer (moe intermediate size 2048, 8 per token) |
 | Tessera modules | `layers.0.mlp.gate_up_proj` E4M3 q1024; `layers.0.mlp.down_proj` BF16 q1792; `layers.1.mlp.shared_experts.gate_up_proj` and `.down_proj` E2M1x2 q896; `layers.1.mlp.experts` E2M1x2 q896, routed. Layers 2 and 3 carry passthrough experts that stock vLLM serves. |
 | Image | `localhost/prismaquant/spark-vllm-nccl230@sha256:a5424378322071f4c33e63d1372a2bb028e46b03f0da0e5edb0cdd7418e2cebb`: the pinned EUGR spark-vllm image with system NCCL 2.31.2 replaced by 2.30.7, identical on both boxes |
@@ -122,11 +122,18 @@ This check is agreement with BF16 on one prompt. It is not the per-(prompt, form
 - **The dense cells' image is a different image.** The dense sm_121 cells name the packaged
   vanilla vLLM pin. This serve ran the dense routes on another image, so it adds nothing to
   those cells; it shows only that the same routes executed at a world of two.
-- **No KV-head replication.** The stub's attention has 64 heads and no `QKVParallelLinear`, so
-  `num_kv_head_replicas` was never above 1.
+- **Nothing about KV-head replication.** The stub's config declares 64 key/value heads, so a
+  world of two needs no replication, and no attention module is a Tessera module, so the traces
+  record none. This serve says nothing about `num_kv_head_replicas` above 1.
 - **Not the full model.** No 45-layer serve has run at any world size.
 - **No world-size attestation in contract v28.** The traces are a two-rank census of all three
-  families, but v28 leaves `tensor_parallel.units[].max_world_size` at 1 for every family.
+  families, and they would support `tensor_parallel.units[].max_world_size` 2 on a bar of a
+  per-rank route census. v28 leaves every family at 1. Raising it changes the validator's
+  refusal of any value other than 1 and the tests that pin 1 (and with them the #330 decision
+  to publish no replication rule), and that change is outside this version. The validator's
+  own stated bar also asks for a KL against a single-rank arm, which this serve does not
+  carry: the smallest serve that adds it is a one-rank arm of the same stub on one GB10, scored
+  top-1024 against this arm.
 
 ## Sources
 

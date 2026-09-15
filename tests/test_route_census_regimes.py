@@ -115,6 +115,12 @@ def test_every_route_the_two_rank_stub_served_joins_to_a_cell():
     matching what the serve executed fails here.  The routed launch carries
     the backend the runtime picked (``:FLASHINFER_CUTLASS``); the comparison
     removes it through ``scheme.moe_census_symbol_base``, as the census does.
+
+    The runtime image is NOT part of this join.  The stub served every family
+    on one image, and the dense cells name the vanilla vLLM pin their own
+    receipts ran; a dense record here shows the route executed at a world of
+    two, not that the dense cells cover this image.  The routed E2M1_K2 cells'
+    image is tied to the receipt in ``tests/test_serving_contract.py``.
     """
     from tessera.serving.contract import cell_residency_modes
     from tessera.serving.scheme import moe_census_symbol_base
