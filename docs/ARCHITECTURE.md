@@ -5,12 +5,21 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-15 for torch 2.13 on the fused LUT swap passes
+(tessera#486, tessera#519). `lut_swap_refusal` now admits fits on torch 2.13,
+the GLM census image's release, as well as on 2.11. 2.13's `Reduce.cuh` keeps
+2.11's CUDA float32 `sum` order, and in the census image the replica matches
+`torch.sum` bitwise in 906 of 906 cases. There the census wires re-encode byte
+for byte with all 160 fits on the fused passes, at 0.452 s a unit against
+1.182 on the reference
+(`docs/measurements/tessera486-lut-torch213-2026-09-15.md`).
+
 Re-stamped 2026-09-15 for the fused LUT swap passes (tessera#486, stage 2).
 `encode._fit_lut`'s swap refinement now takes `lut_fused.swap_passes_fused`
 on a CUDA device whenever `fused_available()` holds and `lut_swap_refusal`
 names nothing: float32 targets, weights, table and grid on one device, 128 to
-33,333,331 live halves, torch 2.11 and the native caching allocator. The
-passes make one host sync a pass instead of one a trial.
+33,333,331 live halves, torch 2.11 or 2.13 and the native caching allocator.
+The passes make one host sync a pass instead of one a trial.
 `TESSERA_LUT_FUSED=0` runs `_lut_swap_passes_reference`, the unchanged loop,
 on every fit. The contract is identity with that loop: the same bytes, the
 same table floats and the same accept/reject sequence, exact ties included,
