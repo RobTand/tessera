@@ -1779,16 +1779,38 @@ def test_a_manifest_cannot_declare_a_state_it_does_not_carry():
 
 
 @needs_cuda
-def test_the_span2_kernel_lane_refuses_a_shard(units):
-    """The kernel lane fails closed where it cannot take a start state."""
-    from tessera.kernel import pack_unit_for_kernel
+def test_the_span2_kernel_lane_decodes_a_shard():
+    """The span-2 lane threads a shard's register into its select pad
+    (``lane_planes._thread_start_state``, tessera#492), so a row shard decodes
+    on the kernel to the reference's rows.  A shard whose column is not a
+    byte of pairs is still refused, by name.
 
-    unit, forests, grid, blob = units["e2m1x2-cap-tcq-lut"]
+    The unit is 64 rows so that each TP2 half is 16 codes, one select byte;
+    the module's 32-row unit cuts to 8 codes, which only the refusal reaches.
+    ``tests/test_span2_start_state.py`` holds the same rule on the serving
+    decoders."""
+    from tessera.kernel import gemv_from_packed, pack_unit_for_kernel
+
+    grid = GRIDS["E2M1x2"]
+    _unit, _forests, _grid, blob = _encode(
+        "e2m1x2-cap-tcq-lut-64", grid, tcq_cap_q256(grid), rows=64)
     parsed = parse_unit_artifact(blob, device=DEVICE)
-    shard = slice_unit(parsed, rows=(16, 32))
     forest = parsed.forests[parsed.unit.rates[0]]
-    with pytest.raises(GrammarError, match="does not yet take a start state"):
-        pack_unit_for_kernel(shard, forest, parsed.code)
+    cols = parsed.manifest.geometry.columns
+    torch.manual_seed(1)
+    x = torch.randn(cols, device=DEVICE)
+    for lo, hi in _tp_ranges(parsed.manifest.geometry.rows, 2):
+        shard = slice_unit(parsed, rows=(lo, hi))
+        if lo:
+            # A zero register would pass with the pad left pinned at zero.
+            assert int(shard.initial_state.count_nonzero()), "the cut must carry a live state"
+        reference = reconstruct_unit(shard, parsed.forests, parsed.code).float() @ x
+        got = gemv_from_packed(x, pack_unit_for_kernel(shard, forest, parsed.code))
+        assert torch.allclose(got.float(), reference, rtol=1e-4, atol=1e-4)
+
+    short = slice_unit(parsed, rows=(16, 32))
+    with pytest.raises(GrammarError, match="8 codes is not a multiple of 16"):
+        pack_unit_for_kernel(short, forest, parsed.code)
 
 
 @needs_cuda
