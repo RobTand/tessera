@@ -318,27 +318,50 @@ def pack_levels(completion_bits: torch.Tensor, widths: "tuple[int, ...]") -> byt
     steps, cols = completion_bits.shape
     if len(widths) != cols:
         raise GrammarError(f"{len(widths)} completion widths for {cols} columns")
-    array = completion_bits.detach().cpu().numpy().astype(np.int64)
-    width = np.asarray(widths, dtype=np.int64)
-    if width.size and width.min() < 0:
+    widths_host = np.asarray(widths, dtype=np.int64)
+    if widths_host.size and widths_host.min() < 0:
         raise GrammarError(f"negative completion width in {widths}")
-    if array.size and (
-        (array < 0).any() or (array >= (np.int64(1) << width)[None, :]).any()
-    ):
-        raise GrammarError(
-            "a completion word is out of range for its column's width: the "
-            "word holds exactly the bits the terminal declares for the column"
-        )
-    chunks = []
-    for level in range(1, int(width.max()) + 1 if width.size else 1):
-        columns = _level_columns(width, level)
-        shift = width[columns] - level
-        bits = ((array[:, columns] >> shift[None, :]) & 1).astype(np.uint8)
-        # Column-major within the level, as every position-domain plane is.
-        chunks.append(bits.T.ravel())
-    return np.packbits(
-        np.concatenate(chunks) if chunks else np.zeros(0, np.uint8), bitorder="big"
-    ).tobytes()
+    top = int(widths_host.max()) if widths_host.size else 0
+    if top == 0:
+        # Every column is zero-width: the plane holds no bit, and a zero-bit
+        # word can only be zero.  Every window body and every full-rate TCQ
+        # unit writes this plane, and it used to cost a host copy of an int64
+        # (steps, cols) plane and three passes over it to emit ``b""``
+        # (tessera#504) -- the tensor is not read at all now.
+        return b""
+    # On the device the plane lives on, as ``pack_body`` and
+    # ``lane_planes.pack_window_planes`` pack: the only host copy is the
+    # packed bytes.  ``tests/test_pack_levels_device.py`` holds this to the
+    # numpy packer it replaced, bit for bit.  A (levels, cols, steps) bit
+    # cube read through a (levels, cols) mask that keeps the columns whose
+    # width reaches the level is the stream in its order: level-major, then
+    # schedule order, then step.
+    values = completion_bits.detach()
+    if values.dtype != torch.int64:
+        values = values.to(torch.int64)
+    device = values.device
+    width = torch.from_numpy(widths_host).to(device)
+    if values.numel():
+        bound = torch.bitwise_left_shift(
+            torch.ones((), dtype=torch.int64, device=device), width)
+        if bool(((values < 0) | (values >= bound)).any()):
+            raise GrammarError(
+                "a completion word is out of range for its column's width: the "
+                "word holds exactly the bits the terminal declares for the column"
+            )
+    cube_dtype = torch.uint8 if top <= 8 else torch.int16 if top <= 15 else torch.int64
+    level = torch.arange(1, top + 1, dtype=torch.int64, device=device)[:, None]
+    keep = level <= width[None, :]  # (levels, cols)
+    shift = (width[None, :] - level).clamp(min=0).to(cube_dtype)
+    plane = values.T.to(cube_dtype)  # (cols, steps)
+    cube = (plane[None, :, :] >> shift[:, :, None]) & 1  # (levels, cols, steps)
+    bits = cube[keep].reshape(-1).to(torch.uint8)
+    pad = (-bits.numel()) % 8
+    if pad:
+        bits = torch.cat([bits, bits.new_zeros(pad)])
+    weights = 1 << torch.arange(7, -1, -1, dtype=torch.uint8, device=device)
+    packed = (bits.reshape(-1, 8) * weights).sum(1, dtype=torch.uint8)
+    return packed.cpu().numpy().tobytes()
 
 
 def unpack_levels(
