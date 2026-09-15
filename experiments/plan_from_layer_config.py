@@ -191,6 +191,20 @@ def parse_entry(qname: str, entry) -> tuple:
     return ("other", str(label))
 
 
+def refuse_non_tessera_choices(other: dict) -> None:
+    """One home for the refusal of a quantised choice no Tessera wire serves."""
+    if not other:
+        return
+    counts = collections.Counter(other.values())
+    sample = sorted(other)[:5]
+    raise PlanError(
+        f"{len(other)} unit(s) carry a non-Tessera QUANTISED choice "
+        f"({dict(counts)}); the Tessera plugin serves TESSERA_* wires only, so one "
+        f"checkpoint cannot hold these and a Tessera wire at the same time.  Units, "
+        f"first five: {sample}.  BF16 is not in this count -- a BF16 choice is a plain "
+        f"BF16 module and is planned as one.")
+
+
 def carried_projection(config: dict):
     """The carried expert projection, schema-checked, or ``None`` without one."""
     carried = (config.get("__prismaquant__") or {}).get("tessera_expert_projection")
@@ -215,8 +229,15 @@ def refuse_before_source(config: dict, research_input) -> None:
     checks that need the source still run where they did.
     """
     carried_projection(config)
-    choices = [parse_entry(qname, entry) for qname, entry in config.items()
-               if not qname.startswith("__")]
+    choices = {qname: parse_entry(qname, entry) for qname, entry in config.items()
+               if not qname.startswith("__")}
+    refuse_non_tessera_choices({qname: payload for qname, (kind, payload) in choices.items()
+                                if kind == "other"})
+    # Router BF16 is a disposition, not an exporter override: GateLinear never
+    # asks a quantization method to load it and the exporter refuses that key.
+    for qname, (kind, _payload) in sorted(choices.items()):
+        if MOE_ROUTER.fullmatch(qname + ".weight") and kind != "bf16":
+            raise PlanError(f"{qname}: an immutable MoE router must remain BF16")
     if research_input is None:
         return
     # A selected stack's scheme is the scheme of the allocation entries for its
@@ -394,15 +415,7 @@ def build(config: dict, shapes: dict, *, cover: str, allow_disagreement: bool,
             bf16.append(qname)
         else:
             other[qname] = payload
-    if other:
-        counts = collections.Counter(other.values())
-        sample = sorted(other)[:5]
-        raise PlanError(
-            f"{len(other)} unit(s) carry a non-Tessera QUANTISED choice "
-            f"({dict(counts)}); the Tessera plugin serves TESSERA_* wires only, so one "
-            f"checkpoint cannot hold these and a Tessera wire at the same time.  Units, "
-            f"first five: {sample}.  BF16 is not in this count -- a BF16 choice is a plain "
-            f"BF16 module and is planned as one.")
+    refuse_non_tessera_choices(other)
 
     priced_layers = sorted({layer_of(q) for q in tessera} | {layer_of(q) for q in bf16})
     all_layers = sorted({layer_of(t[: -len(".weight")]) for t in shapes})
@@ -653,13 +666,9 @@ def main(argv=None):
         args.model, config, research_selected=research_input is not None)
     if args.cover != "as-allocated" and stack_members:
         raise PlanError("broadcast-by-role cannot extrapolate routed expert stacks; use as-allocated")
+    # The refusal for a router the allocation quantised is in
+    # ``refuse_before_source``; this set is the filter it leaves behind.
     routers = {name for name in shapes if MOE_ROUTER.fullmatch(name)}
-    for name in routers:
-        qname = name[:-len(".weight")]
-        if qname in config and parse_entry(qname, config[qname])[0] != "bf16":
-            raise PlanError(f"{qname}: an immutable MoE router must remain BF16")
-    # Router BF16 is a disposition, not an exporter override: GateLinear never
-    # asks a quantization method to load it and the exporter refuses that key.
     allocation = {name: entry for name, entry in config.items()
                   if name + ".weight" not in routers}
     shapes = {name: shape for name, shape in shapes.items() if name not in routers}
