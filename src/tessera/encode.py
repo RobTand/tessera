@@ -1547,6 +1547,66 @@ def _fit_lut(
         keep[drop] = False
         table, candidate_bytes = table[keep], candidate_bytes[keep]
 
+    table, candidate_bytes = _lut_swap_passes(s, w, table, candidate_bytes, grid_values,
+                                              first, last, swaps)
+    order = torch.argsort(candidate_bytes)
+    return candidate_bytes[order].to(torch.uint8), table[order]
+
+
+#: The cost the swap passes are defined on.  The fused passes reproduce this
+#: function, so they run only while ``_lut_cost`` is still it: a test that
+#: scripts the cost drives the reference loop, which is the loop it means.
+_LUT_COST_REFERENCE = _lut_cost
+#: Whether ``_fit_lut``'s swap passes take the fused kernels (``lut_fused``)
+#: wherever they are admitted.  Unset or "1" takes them; "0" runs
+#: ``_lut_swap_passes_reference`` on every fit, which is the control an A/B
+#: measures against.  A measurement knob, never a correctness one: the fused
+#: passes return the reference's table and bytes, which
+#: ``tests/test_lut_fused.py`` pins.
+_LUT_FUSED_ENV = "TESSERA_LUT_FUSED"
+
+
+def _lut_fused_wanted() -> bool:
+    raw = os.environ.get(_LUT_FUSED_ENV, "")
+    if raw in ("", "1"):
+        return True
+    if raw == "0":
+        return False
+    raise GrammarError(
+        f"{_LUT_FUSED_ENV}={raw!r} is not 0 (the reference swap passes), 1 or unset "
+        "(the fused passes wherever they are admitted)")
+
+
+def _lut_swap_passes(s, w, table, candidate_bytes, grid_values, first, last, swaps):
+    """``_fit_lut``'s swap refinement: the fused passes where admitted, else the reference.
+
+    Both return ``(table, candidate_bytes)`` as the passes leave them.  The
+    fused passes also hand a fit back when their tripwire sees their cost
+    differ from torch's; the reference then runs from the same arguments.
+    """
+    if (swaps > 0 and s.is_cuda and _lut_cost is _LUT_COST_REFERENCE
+            and _lut_fused_wanted()):
+        from .lut_fused import lut_swap_refusal, swap_passes_fused
+
+        if lut_swap_refusal(s, w, table, grid_values) is None:
+            fused = swap_passes_fused(s, w, table, candidate_bytes, grid_values,
+                                      first, last, swaps)
+            if fused is not None:
+                return fused
+    return _lut_swap_passes_reference(s, w, table, candidate_bytes, grid_values,
+                                      first, last, swaps)
+
+
+def _lut_swap_passes_reference(s, w, table, candidate_bytes, grid_values, first, last, swaps):
+    """The swap passes as torch ops, one trial at a time: the definition.
+
+    Each pass tries every table entry against every unused grid value in the
+    bracket ``[first, last)`` at full cost; ``_fit_lut``'s docstring states the
+    stop rule.  ``lut_fused.swap_passes_fused`` is this loop fused, and returns
+    what this returns.
+    """
+    device = s.device
+    FIRST = E4M3_NORMAL_BYTES[0]
     for _ in range(swaps):
         improved = False
         base_cost = _lut_cost(s, w, table)
@@ -1571,8 +1631,7 @@ def _fit_lut(
                     unused = all_bytes[~torch.isin(all_bytes, candidate_bytes)]
         if not improved:
             break
-    order = torch.argsort(candidate_bytes)
-    return candidate_bytes[order].to(torch.uint8), table[order]
+    return table, candidate_bytes
 
 
 def _lut_values(table_bytes: torch.Tensor, global_scale: float) -> torch.Tensor:

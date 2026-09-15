@@ -5,6 +5,22 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-15 for the fused LUT swap passes (tessera#486, stage 2).
+`encode._fit_lut`'s swap refinement now takes `lut_fused.swap_passes_fused`
+on a CUDA device whenever `fused_available()` holds and `lut_swap_refusal`
+names nothing: float32 targets, weights, table and grid on one device, 128 to
+33,333,331 live halves, torch 2.11 and the native caching allocator. The
+passes make one host sync a pass instead of one a trial.
+`TESSERA_LUT_FUSED=0` runs `_lut_swap_passes_reference`, the unchanged loop,
+on every fit. The contract is identity with that loop: the same bytes, the
+same table floats and the same accept/reject sequence, exact ties included,
+because every trial cost is the float torch's CUDA `sum` returns
+(`tests/test_lut_fused.py`). A tripwire holds the replica to torch on every
+fit and hands a fit it disagrees on back to the reference. On the same
+binary the encoder does 3.93x the work per second and 4.49x the work per
+joule at `B=32`, and the GLM census wires re-encode byte for byte
+(`docs/measurements/tessera486-fused-lut-2026-09-15.md`).
+
 Re-stamped 2026-09-15 for contract v29's tensor-parallel attestation
 (tessera#506, tessera#514). `tensor_parallel.units[].max_world_size` is 2 for
 `TESSERA_E2M1_K2`, `TESSERA_E4M3_K1` and `TESSERA_BF16_K1`, and each unit names
@@ -1796,10 +1812,20 @@ encoder's device kernels fell from 608 to 103.9 per unit-column and its
 device time from 1.101 to 0.280 ms per unit-column. On the same binary,
 throughput rose 1.96x at `B=32` and 3.07x at `B=8`, for 1.82x and 2.47x the
 parameters per joule. Host launches and syncs did not move (103.9 and 11.45
-per unit-column). The encoder still draws 35-37 % of the 140 W envelope, and
-fused `B=8` is within 4 % of fused `B=32`. The bound is now `_fit_lut`'s swap
-loop, which makes one host sync per trial
-(`docs/measurements/tessera486-fused-tcq-2026-09-14.md`). The fused window
+per unit-column). That stage left the encoder at 35-37 % of the 140 W
+envelope, with fused `B=8` within 4 % of fused `B=32`, and bound by
+`_fit_lut`'s swap loop, which made one host sync per trial
+(`docs/measurements/tessera486-fused-tcq-2026-09-14.md`). Since tessera#486's
+second stage those passes run fused (`lut_fused.swap_passes_fused`): one host
+sync a pass, and the reference loop's bytes and table floats. On the same
+fixture, device kernels and host launches fell 78 %, to 22.9 per
+unit-column, host syncs from 11.45 to 1.69 and device time from 0.280 to
+0.137 ms. On the same binary, throughput rose 3.93x at `B=32` and 3.49x at
+`B=8`, for 4.49x and 4.79x the parameters per joule, and the GLM
+routed-expert units encode 2.49x faster. The encoder draws 27-30 % of the
+envelope, so the host is still the bound, and fused `B=32` has 1.18x the
+throughput of fused `B=8` (`docs/measurements/tessera486-fused-lut-2026-09-15.md`).
+The fused window
 body is tiled over an L2-bounded column width
 (`window_viterbi._layout`, width 32 at L=14), so a wider call there is more
 tiles of the same width and the gain is per-call overhead only; the numbers
