@@ -180,7 +180,7 @@ def child(args) -> int:
                 tcq[f"{label}-{layout.name}"] = {
                     "seconds": seconds, "median_seconds": statistics.median(seconds),
                     "blob_sha256": hashlib.sha256(blob).hexdigest(), "blob_bytes": len(blob),
-                    "completion_limit": int(unit.completion_limit),
+                    "completion_limit": unit.completion_limit,
                     "body": unit.body.name, "unit_input_sha256": inputs,
                     "completion_bits_device": str(unit.completion_bits.device)}
     t_end = time.time()
