@@ -799,19 +799,42 @@ def test_a_cell_id_may_not_name_a_launch(contract):
         validate_serving_contract(broken)
 
 
-def test_no_unit_attests_a_world_size_above_one(contract):
-    """``max_world_size`` is an ATTESTATION, and nothing has been measured.
+def test_a_world_size_above_one_is_attested_by_a_receipt(contract):
+    """``max_world_size`` is an ATTESTATION, and above 1 it names its receipt.
 
-    It is 1 not because the bytes cannot shard -- they can, and the loader cuts
-    a unit at load -- but because no multi-rank serve has been run.  Raising it
-    takes a two-rank serve with a per-rank census and a KL against the
-    single-rank arm.
+    It is not a statement about whether the bytes can shard -- they can, and
+    the loader cuts a unit at load -- but about which world a served receipt
+    covers.  A unit at 1 names nothing.  A unit above 1 names a
+    ``tensor_parallel.world_size_receipts`` entry at exactly its world whose
+    route traces executed it, carrying a two-rank serve record and a KL
+    against the single-rank arm.  The packaged contract validates with the
+    receipts in place, and every raised unit is refused, by name, once its
+    receipt is removed.
     """
     units = contract["tensor_parallel"]["units"]
     assert units, "the contract makes a tensor-parallel claim"
     assert {u["unit"] for u in units} == set(_FAMILY_RUNGS)
+    receipts = {r["id"]: r for r in contract["tensor_parallel"].get("world_size_receipts", [])}
+    raised = [i for i, unit in enumerate(units) if unit["max_world_size"] > 1]
     for unit in units:
-        assert unit["max_world_size"] == 1
+        if unit["max_world_size"] == 1:
+            assert "world_size_receipt" not in unit, unit["unit"]
+            continue
+        receipt = receipts[unit["world_size_receipt"]]
+        assert receipt["world_size"] == unit["max_world_size"], unit["unit"]
+        assert unit["unit"] in receipt["executed_units"], unit["unit"]
+        assert receipt["single_rank_kl"]["arms"], unit["unit"]
+        assert all(len(serve["route_traces"]) == receipt["world_size"]
+                   for serve in receipt["serves"]), unit["unit"]
+        assert receipt["grade"] == "route_only", unit["unit"]
+
+    validate_serving_contract(copy.deepcopy(contract))
+    for i in raised:
+        bad = _mutated(contract,
+                       lambda c, i=i: c["tensor_parallel"]["units"][i].pop("world_size_receipt"))
+        with pytest.raises(ValueError, match="names no world_size_receipt") as excinfo:
+            validate_serving_contract(bad)
+        assert units[i]["unit"] in str(excinfo.value)
 
 
 # --- KV-head replication: the silence #330 gated, and v29's exit from it ------
