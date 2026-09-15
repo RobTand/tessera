@@ -221,9 +221,11 @@ def refuse_before_source(config: dict, research_input) -> None:
         return
     # A selected stack's scheme is the scheme of the allocation entries for its
     # members, so no such entry means ``require_targets`` below cannot pass.
-    if not any(research_input.config.applies_to(
-                   {"family": family_for(grid_for_name(payload[0])), "grid": payload[0]})
-               for kind, payload in choices if kind == "tessera"):
+    # An allocation with no Tessera entry at all is left to that call, which
+    # names the missing routed target itself.
+    schemes = [{"family": family_for(grid_for_name(payload[0])), "grid": payload[0]}
+               for kind, payload in choices if kind == "tessera"]
+    if schemes and not any(research_input.config.applies_to(scheme) for scheme in schemes):
         raise PlanError("research_selected_moe names no routed target it serves "
                         "(TESSERA_FP8/E4M3 or TESSERA_BF16/BF16): no allocation entry takes "
                         "either, so no planned expert stack can")
