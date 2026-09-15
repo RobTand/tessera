@@ -174,11 +174,41 @@ def source_identity(source: Path) -> dict:
                 tensors[tensor] = name
     if not tensors:
         raise ValueError("source has no safetensors tensors")
+    return {"config_sha256": sha256_file(source / "config.json"),
+            "auxiliary_sha256": _auxiliary_sha256(source),
+            "files": {name: sha256_file(source / name) for name in files},
+            "tensors": tensors}
+
+
+def _auxiliary_sha256(source: Path) -> dict:
+    """The small non-tensor files every source identity binds, by name."""
     auxiliary = sorted({p for pattern in ("*.json", "*.txt", "*.jinja", "*.model")
                         for p in source.glob(pattern)})
-    return {"config_sha256": sha256_file(source / "config.json"),
-            "auxiliary_sha256": {p.name: sha256_file(p) for p in auxiliary},
-            "files": {name: sha256_file(source / name) for name in files},
+    return {p.name: sha256_file(p) for p in auxiliary}
+
+
+#: The :func:`source_identity` fields that bind a checkpoint's configuration
+#: and tensor roster without reading a shard payload (tessera#523).
+SOURCE_ROSTER_FIELDS = ("config_sha256", "auxiliary_sha256", "tensors")
+
+
+def source_roster_identity(source: Path) -> dict:
+    """:func:`source_identity` restricted to :data:`SOURCE_ROSTER_FIELDS`.
+
+    Reads the safetensors headers, ``config.json`` and the auxiliary files,
+    never the tensor payloads, so it costs seconds where the whole identity
+    reads the entire checkpoint.  Use it where every decision depends only on
+    names, shapes and configuration -- the planner's carried-projection check
+    -- and leave byte binding to the checks that read the bytes: the
+    partition stamps and their merge, and the cached-unit intake.  A source
+    with no ``config.json`` records ``config_sha256: None``, which never
+    equals a whole identity's digest.
+    """
+    source = Path(source)
+    tensors = source_inventory(source)
+    config_path = source / "config.json"
+    return {"config_sha256": sha256_file(config_path) if config_path.exists() else None,
+            "auxiliary_sha256": _auxiliary_sha256(source),
             "tensors": tensors}
 
 

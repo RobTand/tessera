@@ -659,6 +659,39 @@ def test_carried_projection_plans_without_hashing_shard_payloads(tmp_path, monke
     assert out.read_bytes() == expected_out.read_bytes()
 
 
+def test_research_moe_refusal_precedes_any_source_read(tmp_path, monkeypatch):
+    """A refusal the allocation and MoE json decide never waits on the source.
+
+    The GLM-5.3 A4 control (PB 8ee3d37e2c81) read its whole 642.7 GB source
+    and only then refused: every routed stack was E2M1, which the research
+    selected owner does not serve (tessera#523).
+    """
+    from tessera import serving_parts
+
+    src, stack, units, carried = _moe_plan_source(tmp_path, packed=True)
+    assignment = {name: tessera("TESSERA_E2M1_K2_R896") for name in units}
+    assignment["model.layers.0.feed_forward.gate"] = "BF16"
+    assignment["model.layers.0.self_attn.o_proj"] = "BF16"
+    assignment["__prismaquant__"] = {"tessera_expert_projection": carried}
+    path, out = tmp_path / "assignment.json", tmp_path / "plan.json"
+    path.write_text(json.dumps(assignment))
+    execution = tmp_path / "selected.json"
+    execution.write_text(json.dumps({"schema": "tessera.research_selected_moe.v1",
+                                     "max_experts_per_chunk": 2, "decode_backend": "torch",
+                                     "expected_tensor_parallel_size": 2}))
+
+    def source_read(*args, **kwargs):
+        raise AssertionError("planner read the source before an input-only refusal")
+
+    monkeypatch.setattr(PLAN, "quantizable", source_read)
+    monkeypatch.setattr(serving_parts, "tensor_names", source_read)
+    monkeypatch.setattr(serving_parts, "sha256_file", source_read)
+    with pytest.raises(PLAN.PlanError, match="names no routed target it serves"):
+        PLAN.main([str(path), str(src), str(out), "--no-uniform-control",
+                   "--research-selected-moe-json", str(execution)])
+    assert not out.exists()
+
+
 def test_carried_projection_still_refuses_another_checkpoint(tmp_path):
     """Dropping the payload hash keeps the config and tensor-roster binding."""
     import torch

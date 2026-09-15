@@ -118,7 +118,7 @@ from export_tessera_serving import (  # noqa: E402
     fused_module, module_scheme_key,
     packed_expert_stacks, project_expert_plan, quantizable,
 )
-from tessera.serving_parts import source_identity  # noqa: E402
+from tessera.serving_parts import SOURCE_ROSTER_FIELDS, source_roster_identity  # noqa: E402
 
 #: ``TESSERA_<BASE>_K<arity>_R<rung>`` -- the allocator's format spelling.
 FORMAT = re.compile(r"^TESSERA_(?P<base>[A-Z0-9]+)_K(?P<arity>\d+)_R(?P<rung>\d+)$")
@@ -191,6 +191,44 @@ def parse_entry(qname: str, entry) -> tuple:
     return ("other", str(label))
 
 
+def carried_projection(config: dict):
+    """The carried expert projection, schema-checked, or ``None`` without one."""
+    carried = (config.get("__prismaquant__") or {}).get("tessera_expert_projection")
+    if carried is None:
+        return None
+    if not isinstance(carried, dict) or carried.get("schema") != "prismaquant.tessera_expert_projection.v1":
+        raise PlanError("unreadable carried Tessera expert projection")
+    producer = carried.get("producer", {})
+    request = carried.get("request")
+    if not isinstance(request, dict) or producer.get("schema") != "tessera.expert_projection.v1":
+        raise PlanError("carried projection lacks the producer request/answer")
+    return carried
+
+
+def refuse_before_source(config: dict, research_input) -> None:
+    """Every refusal the layer_config and explicit inputs decide on their own.
+
+    Runs before the planner opens the source checkpoint, so a plan that cannot
+    be written fails in seconds, not after a pass over the source.  The GLM-5.3
+    A4 control read all 642.7 GB of its checkpoint and then refused on its
+    research MoE target, which these inputs alone decide (tessera#523).  The
+    checks that need the source still run where they did.
+    """
+    carried_projection(config)
+    choices = [parse_entry(qname, entry) for qname, entry in config.items()
+               if not qname.startswith("__")]
+    if research_input is None:
+        return
+    # A selected stack's scheme is the scheme of the allocation entries for its
+    # members, so no such entry means ``require_targets`` below cannot pass.
+    if not any(research_input.config.applies_to(
+                   {"family": family_for(grid_for_name(payload[0])), "grid": payload[0]})
+               for kind, payload in choices if kind == "tessera"):
+        raise PlanError("research_selected_moe names no routed target it serves "
+                        "(TESSERA_FP8/E4M3 or TESSERA_BF16/BF16): no allocation entry takes "
+                        "either, so no planned expert stack can")
+
+
 def body_weights(model: Path) -> dict:
     """Producer-classified dense and unpacked logical body weights."""
     _shards, dense, _packed, routed = quantizable(model)
@@ -211,15 +249,19 @@ def model_plan_context(model: Path, config: dict, *, research_selected: bool = F
     members = {stack: [name for expert in experts.values() for name, _shape in expert.values()]
                for stack, experts in stacks.items()}
     layouts = {stack: MOE_SOURCE_UNPACKED for stack in stacks}
-    carried = (config.get("__prismaquant__") or {}).get("tessera_expert_projection")
+    carried = carried_projection(config)
     if carried is not None:
-        if not isinstance(carried, dict) or carried.get("schema") != "prismaquant.tessera_expert_projection.v1":
-            raise PlanError("unreadable carried Tessera expert projection")
-        producer = carried.get("producer", {})
-        request = carried.get("request")
-        if not isinstance(request, dict) or producer.get("schema") != "tessera.expert_projection.v1":
-            raise PlanError("carried projection lacks the producer request/answer")
-        if producer.get("source") != source_identity(model):
+        producer, request = carried["producer"], carried["request"]
+        # Bind the projection to this checkpoint's config and tensor roster,
+        # not its payload digests: every output below is recomputed from
+        # headers and config.json, and the exporter's partition stamps, their
+        # merge and the cached-unit intake bind the bytes they read
+        # (tessera#523).  Hashing the payloads here read the whole checkpoint
+        # before planning started.
+        source = producer.get("source")
+        if (not isinstance(source, dict)
+                or {field: source.get(field) for field in SOURCE_ROSTER_FIELDS}
+                != source_roster_identity(model)):
             raise PlanError("carried expert projection source identity disagrees with this checkpoint")
         current = project_expert_plan({**dense, **packed, **routed},
                     json.loads((model / "config.json").read_text()), request,
@@ -604,6 +646,7 @@ def main(argv=None):
     if args.research_selected_moe_json is not None:
         from tessera.moe_execution import ResearchSelectedMoeInput
         research_input = ResearchSelectedMoeInput.read(args.research_selected_moe_json)
+    refuse_before_source(config, research_input)
     shapes, stack_members, layouts = model_plan_context(
         args.model, config, research_selected=research_input is not None)
     if args.cover != "as-allocated" and stack_members:
