@@ -86,6 +86,17 @@ def child(args) -> int:
     blobs = [(f"L{layer}.E{expert}.{proj}", wires[layer][expert][proj].numpy().tobytes())
              for layer in layers for expert in range(args.experts) for _g, _i, proj in MOE_UNITS]
     del wires
+    # A routed expert's wire is a TSRFUSE1 frame of per-role unit artifacts;
+    # the units inside are the encoder's bytes, and they are what is parsed.
+    from tessera.fused import FUSED_MAGIC, parse_fused
+
+    expanded = []
+    for key, blob in blobs:
+        if blob[: len(FUSED_MAGIC)] == FUSED_MAGIC:
+            expanded += [(f"{key}:{member.name}", member.blob) for member in parse_fused(blob)]
+        else:
+            expanded.append((key, blob))
+    blobs = expanded
     profiler = None
     if args.profile == "torch":
         from torch.profiler import ProfilerActivity, profile
