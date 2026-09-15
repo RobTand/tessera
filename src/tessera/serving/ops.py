@@ -266,17 +266,52 @@ def _torch_fallback_tile(parsed_roles, moved_tables, shared, device):
     two to ``torch.equal``), but built from the unpacked planes at load, so it
     can only stand in where a load-time decode is the whole job.
     """
+    parts = _torch_fallback_role_tiles(parsed_roles, moved_tables, shared, device)
+    return (torch.cat([p for p, _ in parts], 0).contiguous(),
+            torch.cat([s for _, s in parts], 0).contiguous())
+
+
+def _torch_fallback_role_tiles(parsed_roles, moved_tables, shared, device):
+    """Each role's ``(packed, scales)`` through ``materialize_stock``, in order."""
     import dataclasses
 
     from tessera.stock import materialize_stock
 
-    packed_parts, scale_parts = [], []
+    parts = []
     for (name, parsed), table in zip(parsed_roles, moved_tables):
         unit = dataclasses.replace(parsed.unit, scale_lut=table.cpu(), scale_global=float(shared))
         tensors = materialize_stock(unit, parsed.forests, parsed.code)
-        packed_parts.append(tensors["weight_packed"].to(device))
-        scale_parts.append(tensors["weight_scale"].view(torch.uint8).to(device))
-    return (torch.cat(packed_parts, 0).contiguous(), torch.cat(scale_parts, 0).contiguous())
+        parts.append((tensors["weight_packed"].to(device),
+                      tensors["weight_scale"].view(torch.uint8).to(device)))
+    return parts
+
+
+def _prepare_torch_fallback(parsed_roles, moved_tables, shared, device, body):
+    """The module through the pure-torch decoder alone: no native planes.
+
+    ``materialize_stock`` decodes codes, so nothing the native packer builds
+    -- and nothing only the native decoder needs, such as the select plane's
+    whole-byte row cut -- is asked of it.  What it refuses it refuses itself
+    (``stock.require_untransformed`` and its plane checks): the substitute IS
+    the reference the native decode is held to.  A role keeps its name, rows
+    and input width, read off its own tile, so the module's header facts are
+    the ones the native path reports."""
+    parts = _torch_fallback_role_tiles(parsed_roles, moved_tables, shared, device)
+    roles = []
+    offset = 0
+    columns = None
+    for (name, _parsed), (packed, _scales) in zip(parsed_roles, parts):
+        rows, cols = int(packed.shape[0]), 2 * int(packed.shape[1])
+        if columns is None:
+            columns = cols
+        elif cols != columns:
+            raise ValueError(f"role {name!r} has {cols} input columns, the module {columns}")
+        roles.append(_PreparedRole(name, offset, (), {"rows": rows, "cols": cols}))
+        offset += rows
+    tile = (torch.cat([p for p, _ in parts], 0).contiguous(),
+            torch.cat([s for _, s in parts], 0).contiguous())
+    return PreparedTesseraModule(roles, rows=offset, columns=columns, global_scale=shared,
+                                 device=device, body=body, decoder=DECODER_TORCH_STOCK, tile=tile)
 
 
 def _require_reference_agreement(prepared: PreparedTesseraModule, roles, reference,
@@ -404,6 +439,19 @@ def prepare_tessera_module(parsed_roles, device=None, *,
     tables = [u.scale_lut for u in units]
     globals_ = [float(u.scale_global) for u in units]
     shared, moved = shared_lut_global(tables, globals_, names)
+    # Resolve (and if need be build) the native decode module HERE, at weight
+    # load, so the first decode -- which under vLLM's compiled forward is the
+    # trace itself -- never takes ``ext``'s build lock.  It is resolved BEFORE
+    # any role is packed because the decoder decides what preparation is:
+    # the native planes (and the native select plane's row admission,
+    # ``lane_planes.require_native_select_plane_admission``) are the native
+    # decoder's inputs, and the pure-torch fallback reads none of them.
+    # Packing them on the fallback path refused a row cut the fallback serves
+    # (tessera#492: 16 rows = 8 E2M1x2 codes per rank) for bytes nobody reads.
+    from .ext import get_tessera_ext, require_tessera_ext
+
+    if get_tessera_ext() is None and allow_torch_fallback:
+        return _prepare_torch_fallback(parsed_roles, moved, shared, device, route["body"])
     roles = []
     offset = 0
     columns = None
@@ -423,16 +471,6 @@ def prepare_tessera_module(parsed_roles, device=None, *,
             raise ValueError(f"role {name!r} has {scalars['cols']} input columns, the module {columns}")
         roles.append(_PreparedRole(name, offset, planes, scalars))
         offset += scalars["rows"]
-    # Resolve (and if need be build) the native decode module HERE, at weight
-    # load, so the first decode -- which under vLLM's compiled forward is the
-    # trace itself -- never takes ``ext``'s build lock.
-    from .ext import get_tessera_ext, require_tessera_ext
-
-    if get_tessera_ext() is None and allow_torch_fallback:
-        tile = _torch_fallback_tile(parsed_roles, moved, shared, device)
-        return PreparedTesseraModule(roles, rows=offset, columns=columns, global_scale=shared,
-                                     device=device, body=route["body"], decoder=DECODER_TORCH_STOCK,
-                                     tile=tile)
     require_tessera_ext("Tessera NVFP4 native decode")
     prepared = PreparedTesseraModule(roles, rows=offset, columns=columns, global_scale=shared,
                                      device=device, body=route["body"], decoder=DECODER_NATIVE_SPAN2)

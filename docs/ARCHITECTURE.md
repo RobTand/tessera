@@ -20,7 +20,12 @@ number the packer measures against and the admission asks for, and
 rows.  It stays OUT of ``serving.sharding``'s cutter deliberately: the
 ``when_unavailable`` torch fallback decodes codes rather than these planes, so
 that cut is one the fallback still serves, and a refusal at the cutter would
-take it away.  The window body has no requirement at all --
+take it away.  ``ops.prepare_tessera_module`` therefore resolves the decoder
+BEFORE it packs a role: on the fallback it packs nothing and builds the tile
+through ``materialize_stock`` alone (``ops._prepare_torch_fallback``).  It had
+packed every role for the native decoder first and chosen the fallback after,
+so the fallback refused the very cut it serves, for planes it never reads
+(``tests/test_lane_planes_refusals.py``, CPU).  The window body has no requirement at all --
 ``pack_window_planes`` carries a per-column offset table and starts every
 column on its own byte -- and is unchanged.
 
@@ -2842,11 +2847,13 @@ the loader's reciprocal, so the executed global scale is the SMALLEST
 per-expert `input_global_scale`, i.e. the layer's LARGEST calibrated amax --
 and broadcasts it to every expert; the per-expert tensors the method reads are
 what a per-expert price describes, and priced == served only when the amax
-spread is zero. A row cut of an expert container must also land on the select
-plane's byte (see the re-stamp above) for the NATIVE decoder: a rank whose rows
-are not a multiple of `arity * 8 * span` is refused by name at
-`lane_planes.require_native_select_plane_admission`, and the torch fallback --
-which decodes codes, not those planes -- still serves that cut. A builder is a
+spread is zero. This route decodes every expert wire once at load through
+`materialize_stock` (the load probe's `route_record.decoder` is
+`torch_materialize_stock`), never through the native span-2 planes, so a row
+cut of an expert container needs only `slice_unit`'s super-symbol boundary; the
+select plane's byte (see the re-stamp above) is the dense route's NATIVE
+decoder's requirement, refused by name at
+`lane_planes.require_native_select_plane_admission`. A builder is a
 dispatch fact and not a served qualification: the
 `routed_moe` cells for this family are `lane_eligibility`'s to publish from a
 container receipt, and until they exist an NVFP4 stack exports only under

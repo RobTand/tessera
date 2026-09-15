@@ -1303,14 +1303,16 @@ amax spread is zero.
 `[E, ...]` by global id and the stride invariant needs every blob), a
 residency other than `resident`, a non-gated MoE, another family's scheme, an
 expert/hidden/intermediate width that disagrees with the sidecar or is not a
-whole number of 16-wide groups per rank, a ROW cut that is not a whole number
-of the kernel's select columns (`arity * 8 * span` rows: the span-L select
-plane packs eight super-symbols to a byte and resumes none on a half-byte, so
-`lane_planes.require_native_select_plane_admission` refuses it by name at the
-native seam -- the cut itself is legal and the `when_unavailable` torch
-fallback, which decodes codes rather than those planes, still serves it), an
-expert whose gate arrived without its up, and any stock tensor name
-(`experts.{e}.{proj}.weight` and friends) in a Tessera checkpoint.
+whole number of 16-wide groups per rank, an expert whose gate arrived without
+its up, and any stock tensor name (`experts.{e}.{proj}.weight` and friends) in
+a Tessera checkpoint. A ROW cut below the kernel's select byte is NOT on this
+list: this route decodes expert wires through `materialize_stock`, which reads
+codes, so it serves any cut `slice_unit` makes. The `arity * 8 * span` row
+requirement (the span-L select plane packs eight super-symbols to a byte and
+resumes none on a half-byte) belongs to the dense NVFP4 route's native span-2
+decoder, where `lane_planes.require_native_select_plane_admission` refuses it by
+name; that route's resident `when_unavailable` torch fallback packs no planes
+and serves the cut too.
 
 **With `research_selected_moe`.** The block covers the stacks it serves
 (`ResearchSelectedMoeConfig.applies_to`: FP8/E4M3 and BF16/BF16) and nothing
