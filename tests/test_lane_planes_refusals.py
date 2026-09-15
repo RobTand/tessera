@@ -140,3 +140,55 @@ def test_the_reader_side_planes_refuse_the_same_plane(q256, completion, refused)
         assert packed["kind"] == "span2"
         assert packed["rate"] == unit.rates[0]
         assert "subset_nibbles" in packed and "lut_bytes" in packed
+
+
+def test_the_native_select_plane_admission_refuses_exactly_the_packers_cuts():
+    """tessera#492: the native admission and the packer draw one boundary.
+
+    ``native_select_plane_admission`` answers ``(rows, multiple)`` in rows and
+    ``pack_kernel_planes`` measures body steps (``arity`` rows per step), so
+    the two are checked against each other at every row cut of one parsed
+    E2M1x2 unit: the admission refuses a cut exactly when the packer would,
+    and names the rows.  The admission once returned a bare int that its
+    caller unpacked as a pair, which broke EVERY native span-2 prepare --
+    aligned or not -- with ``TypeError: cannot unpack non-iterable int``
+    (PB 6c6d00954366 / b86544eadc02 on GB10; 8289704d3818 on x86)."""
+    from types import SimpleNamespace
+
+    from tessera.lane_planes import (
+        native_select_plane_admission, pack_kernel_planes,
+        require_native_select_plane_admission,
+    )
+
+    torch.manual_seed(3)
+    w = torch.randn(64, 32) * 0.02
+    exported, _unit, _forests = encode_linear_planes(
+        w, grid=K2, q256=896, name="u", verify=False,
+        body=BodyKind.TCQ, span=2, scale_plane=ScalePlaneKind.LUT,
+    )
+    parsed = parse_unit_artifact(exported.blob, device="cpu")
+    unit = parsed.unit
+    forest = parsed.forests[sorted(set(unit.rates))[0]]
+    steps = int(unit.body_bits.shape[0])
+    assert steps * K2.arity == 64, "a 64-row E2M1x2 unit is 32 steps"
+    refused = packed = 0
+    for k in range(1, steps + 1):
+        cut = SimpleNamespace(unit=replace(unit, body_bits=unit.body_bits[:k]),
+                              forests=parsed.forests)
+        rows, multiple = native_select_plane_admission(cut)
+        assert (rows, multiple) == (k * K2.arity, K2.arity * 16), k
+        try:
+            pack_kernel_planes(unit.body_bits[:k], rate=forest.rate,
+                               memory=parsed.code.memory, span=2)
+            packs = True
+        except GrammarError:
+            packs = False
+        assert (rows % multiple == 0) is packs, (k, rows, multiple)
+        if packs:
+            require_native_select_plane_admission(cut)
+            packed += 1
+        else:
+            with pytest.raises(GrammarError, match=f"unit is {rows} rows"):
+                require_native_select_plane_admission(cut)
+            refused += 1
+    assert packed == 2 and refused == steps - 2, "both sides of the boundary are exercised"

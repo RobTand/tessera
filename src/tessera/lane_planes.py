@@ -218,7 +218,19 @@ def native_select_plane_admission(parsed) -> "tuple[int, int] | None":
         raise GrammarError(
             "the native span-2 admission needs the grid's arity, which this "
             f"forest does not carry ({where})")
-    return arity * select_plane_codes_per_byte(int(getattr(unit, "span", 1)))
+    # ``pack_kernel_planes`` measures the BODY plane's steps (one code per
+    # step, ``arity`` rows per code), so the rows named here are
+    # ``steps * arity`` -- the same ``rows`` ``pack_unit_for_kernel`` derives
+    # -- and the multiple is that step boundary in rows.  Rows divide the
+    # multiple exactly when steps divide ``select_plane_codes_per_byte``, so
+    # this refuses the packer's own set of cuts and no other.
+    body_bits = getattr(unit, "body_bits", None)
+    if body_bits is None or getattr(body_bits, "ndim", 0) != 2:
+        raise GrammarError(
+            "the native span-2 admission needs the unit's [steps, cols] body "
+            f"plane to count its rows ({where})")
+    rows = int(body_bits.shape[0]) * arity
+    return rows, arity * select_plane_codes_per_byte(int(getattr(unit, "span", 1)))
 
 
 def require_native_select_plane_admission(parsed) -> None:
