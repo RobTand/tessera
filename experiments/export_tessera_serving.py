@@ -2199,7 +2199,11 @@ def main():
                     input_scales[key] = float(tensor.float().reshape(-1)[0])
     if priced_inputs is not None:
         priced_inputs.require(activation, input_scales)
-    needs_scales = [m for m, members in modules.items() if family_for(plan[members[0]][0]) == NVFP4]
+    # Dense modules AND expert stacks: an NVFP4 stack needs one static A-side
+    # scale per expert projection (``nvfp4_moe_route.INPUT_GLOBAL_SCALE_SUFFIX``),
+    # written beside each wire below.
+    needs_scales = ([m for m, members in modules.items() if family_for(plan[members[0]][0]) == NVFP4]
+                    + [stack for stack, record in stack_plan.items() if record["family"] == NVFP4])
     if needs_scales and not input_scales:
         raise SystemExit(f"{len(needs_scales)} modules take the NVFP4 route (W4A4 needs a static input scale) "
                          "but no --input-scales was given")
@@ -2345,9 +2349,37 @@ def main():
                         stack_record["group_blob_bytes"][unit["group"]].append(len(blob))
                         stack_record["container_bytes"] += len(blob)
                         stack_record["wire_bytes"] += exported.exact_bytes
-                        stack_record["resident_bytes_resident_mode"] += (
-                            exported.rows * exported.columns + exported.rows * 4)
+                        expert_scale = {}
+                        if stack_spec["family"] == NVFP4:
+                            # THE A-SIDE SCALE, PER EXPERT PROJECTION (tessera#492).
+                            # The plugin's NVFP4 expert route reads
+                            # ``experts.{e}.{proj}.input_global_scale`` beside
+                            # each wire -- the same capacity/amax quantity the
+                            # dense route reads as ``trellis_input_global_scale``
+                            # -- and refuses a stack missing any.  So the
+                            # exporter refuses first, by key, at the unit.
+                            scale_key = unit["wire"][: -len(".wire")] + ".input_global_scale"
+                            if scale_key not in input_scales:
+                                raise SystemExit(
+                                    f"no {scale_key} in {args.input_scales}; W4A4 cannot serve "
+                                    f"{unit['stack']} expert {unit['expert']} {unit['projection']} "
+                                    "(one static input scale per expert projection)")
+                            a_scale = float(input_scales[scale_key])
+                            if not (math.isfinite(a_scale) and a_scale > 0.0):
+                                raise SystemExit(f"{scale_key} = {a_scale!r} is not a finite positive scale")
+                            shard_payload[scale_key] = torch.tensor([a_scale], dtype=torch.float32)
+                            expert_scale = {"input_global_scale": a_scale}
+                            # The stock NVFP4 tile: packed nibbles, group-16
+                            # ue4m3 block scales, one fp32 global and one fp32
+                            # input scale per expert projection.
+                            stack_record["resident_bytes_resident_mode"] += (
+                                exported.rows * exported.columns // 2
+                                + exported.rows * exported.columns // 16 + 8)
+                        else:
+                            stack_record["resident_bytes_resident_mode"] += (
+                                exported.rows * exported.columns + exported.rows * 4)
                         stack_record["roles"].append({
+                            **expert_scale,
                             "tensor": unit["tensor"],
                             "source_tensor": unit["source_tensor"],
                             "source_layout": unit["source_layout"],

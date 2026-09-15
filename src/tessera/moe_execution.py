@@ -11,8 +11,16 @@ import json
 from pathlib import Path
 from typing import Mapping
 
-from .serving.scheme import (ROUTES, STRUCTURE_ROUTED_MOE, TESSERA_BF16,
+from .serving.scheme import (MOE_BUILDERS, ROUTES, STRUCTURE_ROUTED_MOE, TESSERA_BF16,
                              TESSERA_FP8, route_for_grid)
+
+#: The routed ``(family, grid)`` pairs the selected owner decodes.  A routed
+#: stack on any OTHER family is not this block's to serve: it is dispatched to
+#: that family's own production builder (``scheme.MOE_BUILDERS``) whether or
+#: not the checkpoint carries this block, and the block neither covers nor
+#: refuses it (tessera#492: an NVFP4 expert stack beside selected FP8 ones).
+SELECTED_TARGETS = ((TESSERA_FP8, "E4M3"), (TESSERA_BF16, "BF16"))
+
 
 @dataclass(frozen=True)
 class ResearchSelectedMoeConfig:
@@ -56,19 +64,41 @@ class ResearchSelectedMoeConfig:
                 "decode_backend": self.decode_backend,
                 "expected_tensor_parallel_size": self.expected_tensor_parallel_size}
 
+    @staticmethod
+    def applies_to(scheme: Mapping) -> bool:
+        """Is this routed scheme one the selected owner serves?
+
+        ``TesseraConfig.get_quant_method`` asks this per stack: a selected
+        pair goes to the research owner, any other routed family to its own
+        production builder.  Structure is the caller's to check.
+        """
+        return (scheme.get("family"), scheme.get("grid")) in SELECTED_TARGETS
+
     def require_targets(self, target_schemes: Mapping, mode: str) -> None:
-        """Fail before loading; runtime geometry/backend guards remain at construction."""
+        """Fail before loading; runtime geometry/backend guards remain at construction.
+
+        Every routed target must be one this block serves OR one with its
+        own production builder; at least one must be this block's, or the
+        block names nothing.  A routed family with neither is refused here by
+        name rather than at load.
+        """
         if mode != "resident":
             raise ValueError("research_selected_moe requires resident mode")
         routed = {name: scheme for name, scheme in target_schemes.items()
                   if scheme.get("structure") == STRUCTURE_ROUTED_MOE}
         if not routed:
             raise ValueError("research_selected_moe requires a declared routed_moe target")
+        selected = [name for name, scheme in routed.items() if self.applies_to(scheme)]
         for name, scheme in routed.items():
-            if (scheme.get("family"), scheme.get("grid")) not in (
-                    (TESSERA_FP8, "E4M3"), (TESSERA_BF16, "BF16")):
-                raise ValueError(f"research_selected_moe target {name!r} requires "
-                                 "TESSERA_FP8/E4M3 or TESSERA_BF16/BF16")
+            if name in selected or scheme.get("family") in MOE_BUILDERS:
+                continue
+            raise ValueError(f"research_selected_moe target {name!r} requires "
+                             "TESSERA_FP8/E4M3 or TESSERA_BF16/BF16, or a family with its "
+                             f"own expert builder ({sorted(MOE_BUILDERS)})")
+        if not selected:
+            raise ValueError("research_selected_moe names no routed target it serves "
+                             "(TESSERA_FP8/E4M3 or TESSERA_BF16/BF16); every declared "
+                             "routed stack takes its own production builder")
 
     def require_wire_recipe(self, *, grid: str, q256: int, body: str,
                             plane: str, span: int, target: str) -> str:

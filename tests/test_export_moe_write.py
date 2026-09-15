@@ -385,12 +385,15 @@ def test_planning_a_leaf_is_refused_and_names_the_stack_spelling(tmp_path, monke
 # --------------------------------------------------------------------------
 
 def test_a_family_with_no_expert_route_is_refused(tmp_path, monkeypatch):
+    """A 16-bit expert stack has no production builder (tessera#492 gave the
+    NVFP4 family one; BF16 keeps the passthrough ``ignore`` already gives)."""
     with pytest.raises(SystemExit) as caught:
         _export(tmp_path, monkeypatch, _checkpoint(),
-                {STACK: {"grid": "E2M1x2", "q256": 896}})
+                {STACK: {"grid": "BF16", "q256": 1792}})
 
     message = str(caught.value)
-    assert "MOE_BUILDERS" in message and "TESSERA_FP8" in message, message
+    assert "MOE_BUILDERS" in message and "TESSERA_BF16" in message, message
+    assert "TESSERA_NVFP4" in message, "the refusal names the families that DO have a builder"
 
 
 def test_a_gap_in_the_expert_indices_is_refused(tmp_path, monkeypatch):
@@ -775,3 +778,113 @@ def test_a_stack_at_a_rung_only_the_dense_route_reads_is_refused_before_any_enco
     for cell in routed:
         assert cell["id"] in message, message
     assert not (tmp_path / "out").exists()
+
+
+# --------------------------------------------------------------------------
+# The NVFP4 expert stack (tessera#492): a static A-side scale beside each wire
+# --------------------------------------------------------------------------
+
+NVFP4_HIDDEN = NVFP4_INTER = 64     # the E2M1x2 encoder's row quantum, one group column
+
+
+def _nvfp4_stack_tensors(experts=1):
+    generator = torch.Generator().manual_seed(492)
+    tensors = {}
+    for index in range(experts):
+        for projection in ("gate_proj", "up_proj", "down_proj"):
+            tensors[f"{STACK}.{index}.{projection}.weight"] = (
+                torch.randn(NVFP4_INTER, NVFP4_HIDDEN, generator=generator) * 0.02)
+    tensors["model.language_model.layers.0.norm.weight"] = torch.randn(
+        NVFP4_HIDDEN, generator=generator).bfloat16()
+    return tensors
+
+
+def _nvfp4_config(experts=1):
+    config = _config()
+    config["text_config"].update(n_routed_experts=experts, hidden_size=NVFP4_HIDDEN,
+                                 moe_intermediate_size=NVFP4_INTER)
+    return config
+
+
+def _input_scales_file(tmp_path, scales):
+    path = tmp_path / "input_scales.safetensors"
+    safetensors_torch.save_file(
+        {key: torch.tensor([value], dtype=torch.float32) for key, value in scales.items()},
+        str(path), metadata={"format": "pt"})
+    return path
+
+
+def _nvfp4_scales(experts=1):
+    return {f"{STACK}.{e}.{projection}.input_global_scale": float(3 + 2 * i + 7 * e)
+            for e in range(experts)
+            for i, projection in enumerate(("gate_proj", "up_proj", "down_proj"))}
+
+
+def test_an_nvfp4_stack_writes_a_static_input_scale_beside_each_wire(tmp_path, monkeypatch):
+    """What the exporter writes for an NVFP4 stack is what
+    ``nvfp4_moe_route`` reads: one ``.wire`` and one ``.input_global_scale``
+    per expert projection, the scheme on the NVFP4 route at the wire's rung,
+    the role records carrying the scale.  The stack has no routed_moe cell
+    yet, so it exports only under ``--allow-unserveable`` and says so."""
+    from tessera.serving import nvfp4_moe_route
+    from tessera.serving.scheme import TESSERA_NVFP4
+
+    scales = _nvfp4_scales()
+    donor = _input_scales_file(tmp_path, scales)
+    plan = {STACK: {"grid": "E2M1x2", "q256": 896}}
+    with pytest.raises(SystemExit):
+        _export(tmp_path, monkeypatch, _nvfp4_stack_tensors(), plan, "--device", "cpu",
+                "--input-scales", str(donor), config=_nvfp4_config())
+    after = _export(tmp_path, monkeypatch, _nvfp4_stack_tensors(), plan, "--device", "cpu",
+                    "--input-scales", str(donor), "--allow-unserveable", config=_nvfp4_config())
+    qconfig = json.loads((after / "config.json").read_text())["quantization_config"]
+    (group,) = [g for g in qconfig["config_groups"].values() if STACK in g["targets"]]
+    scheme = group["scheme"]
+    assert (scheme["family"], scheme["grid"], scheme["body"], scheme["plane"]) == (
+        TESSERA_NVFP4, "E2M1x2", "TCQ", "LUT")
+    declared = validate_tessera_moe_scheme(scheme, STACK)
+    with safetensors_torch.safe_open(str(after / "model.safetensors"), framework="pt") as handle:
+        keys = set(handle.keys())
+        for key, value in scales.items():
+            assert key in keys, key
+            assert handle.get_tensor(key).tolist() == [value]
+            wire = handle.get_tensor(key[: -len(".input_global_scale")] + ".wire")
+            assert wire.dtype == torch.uint8 and wire.numel() > 0
+    manifest = json.loads((after / "tessera_serving_manifest.json").read_text())
+    stack_record = manifest["modules"][STACK]
+    assert stack_record["family"] == TESSERA_NVFP4 and stack_record["attested_by"] == []
+    scale_of = {f"{STACK}.{record['expert']}.{record['role']}.input_global_scale":
+                record["input_global_scale"] for record in stack_record["roles"]}
+    assert scale_of == scales
+    # The stock NVFP4 tile per projection: nibbles + group-16 scales + two fp32.
+    assert stack_record["resident_bytes_resident_mode"] == 3 * (
+        NVFP4_INTER * NVFP4_HIDDEN // 2 + NVFP4_INTER * NVFP4_HIDDEN // 16 + 8)
+    gate = manifest["serving_gate"]
+    assert gate["allow_unserveable"] is True and gate["unserveable_overrides"], \
+        "the unattested stack is stamped, not hidden"
+    # The suffix the route reads is the suffix the exporter wrote.
+    assert all(key.endswith("." + nvfp4_moe_route.INPUT_GLOBAL_SCALE_SUFFIX) for key in scales)
+    # And the plugin reads the wires it was handed.
+    with safetensors_torch.safe_open(str(after / "model.safetensors"), framework="pt") as handle:
+        for group_name in MOE_GROUPS:
+            for role in expert_role_declarations(declared["groups"][group_name]):
+                projection = role["roles"][0][0]
+                blob = handle.get_tensor(f"{STACK}.0.{projection}.wire").numpy().tobytes()
+                parsed = parse_tessera_expert_blob(blob, role, STACK)
+                assert len(parsed) == 1
+
+
+def test_an_nvfp4_stack_missing_one_input_scale_is_refused_by_key(tmp_path, monkeypatch):
+    scales = _nvfp4_scales()
+    missing = f"{STACK}.0.up_proj.input_global_scale"
+    del scales[missing]
+    donor = _input_scales_file(tmp_path, scales)
+    plan = {STACK: {"grid": "E2M1x2", "q256": 896}}
+    with pytest.raises(SystemExit) as caught:
+        _export(tmp_path, monkeypatch, _nvfp4_stack_tensors(), plan, "--device", "cpu",
+                "--input-scales", str(donor), "--allow-unserveable", config=_nvfp4_config())
+    assert missing in str(caught.value), str(caught.value)
+    with pytest.raises(SystemExit) as caught:
+        _export(tmp_path, monkeypatch, _nvfp4_stack_tensors(), plan, "--device", "cpu",
+                "--allow-unserveable", config=_nvfp4_config())
+    assert "--input-scales" in str(caught.value), str(caught.value)

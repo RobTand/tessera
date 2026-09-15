@@ -888,27 +888,27 @@ def test_granularity_refusal_names_the_granularity(monkeypatch, units):
     assert "40" in str(e.value) and "128" in str(e.value)
 
 
-def test_a_prepared_role_carries_an_initial_state_and_refuses_to_decode_it():
-    """The representation carries the sliced-unit plane; the span-2 decoder
-    refuses it.  A ROW shard of a TCQ unit is the one cut this route cannot
-    serve, and it is refused rather than decoded against a pinned zero start."""
+def test_a_prepared_role_is_its_planes_and_nothing_beside_them():
+    """The representation carries no separate INITIAL_STATE plane any more.
+
+    A row shard's register is threaded into the select plane's pad by
+    ``lane_planes.pack_unit_for_kernel`` (tessera#492), so what
+    ``prepare_tessera_module`` holds per role -- and fingerprints -- is the
+    packed planes alone; there is no second tensor a decoder could ignore.
+    ``tests/test_span2_start_state.py`` is the proof the pad decodes as the
+    register; this pins the shape of the record.
+    """
     torch = pytest.importorskip("torch")
     from tessera.serving import ops
 
     plane = torch.zeros(4, dtype=torch.uint8)
     role = ops._PreparedRole("q", 0, (plane,) * 7, dict(rows=1, cols=16, rate=1, arity=2,
                                                         memory=1, half=0))
-    assert role.initial_state is None
     assert role.tensors() == role.planes
-
-    state = torch.zeros(16, dtype=torch.int32)
-    role = ops._PreparedRole("q", 0, (plane,) * 7, dict(rows=1, cols=16, rate=1, arity=2,
-                                                        memory=1, half=0), state)
-    assert role.initial_state is state
-    assert role.tensors()[-1] is state          # fingerprinted with the rest
-
-    with pytest.raises(NotImplementedError, match="INITIAL_STATE"):
-        ops.PreparedTesseraModule._require_no_initial_state(_FakeModule([role]))
+    assert not hasattr(role, "initial_state")
+    assert not hasattr(ops.PreparedTesseraModule, "_require_no_initial_state")
+    with pytest.raises(TypeError):
+        ops._PreparedRole("q", 0, (plane,) * 7, {}, torch.zeros(16, dtype=torch.int32))
 
 
 def test_what_an_artifact_says_about_slicing_is_read_off_it_not_assumed():
@@ -950,13 +950,6 @@ def test_the_artifact_gate_passes_at_one_rank_whatever_the_checkpoint_says():
         require_a_cuttable_artifact("m", 0, config)          # nor a bare test build
     with pytest.raises(ValueError, match="tensor_parallel_size=2"):
         require_a_cuttable_artifact("m", 2, {"tp_agnostic": False})
-
-
-class _FakeModule:
-    """Just enough of PreparedTesseraModule for the refusal, whose only input is the roles."""
-
-    def __init__(self, roles):
-        setattr(self, "_PreparedTesseraModule__roles", tuple(roles))
 
 
 def test_the_window_carries_a_start_state_through_the_pad_not_a_refusal():

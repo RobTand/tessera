@@ -5,6 +5,42 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-14 for the NATIVE span-2 select-plane admission
+(tessera#492).  A rank's rows are a whole number of the kernel's select
+columns only when they are a multiple of ``arity * 8 * span``: the span-L
+trellis packs one select bit per super-symbol, eight to a byte, in one flat
+byte array and resumes no column on a half-byte.  ``layout.shard_granularity``
+reports the finer ``arity * span`` boundary -- what ``slice_unit`` cuts
+exactly -- so one super-symbol per column is a LEGAL cut that then died in the
+PACKER ("not a multiple of 16"), after the wire had been cut, naming bytes
+instead of the cut.  ``lane_planes.select_plane_codes_per_byte`` is now the one
+number the packer measures against and the admission asks for, and
+``lane_planes.require_native_select_plane_admission`` -- called from
+``prepare_span2_planes``, the native seam -- refuses the cut by name and by
+rows.  It stays OUT of ``serving.sharding``'s cutter deliberately: the
+``when_unavailable`` torch fallback decodes codes rather than these planes, so
+that cut is one the fallback still serves, and a refusal at the cutter would
+take it away.  ``ops.prepare_tessera_module`` therefore resolves the decoder
+BEFORE it packs a role: on the fallback it packs nothing and builds the tile
+through ``materialize_stock`` alone (``ops._prepare_torch_fallback``).  It had
+packed every role for the native decoder first and chosen the fallback after,
+so the fallback refused the very cut it serves, for planes it never reads
+(``tests/test_lane_planes_refusals.py``, CPU).  The window body has no requirement at all --
+``pack_window_planes`` carries a per-column offset table and starts every
+column on its own byte -- and is unchanged.
+
+Re-stamped 2026-09-14 for the routed NVFP4 expert route (tessera#492):
+`scheme.MOE_BUILDERS` names a second family, `TESSERA_NVFP4` dispatches a
+`routed_moe` stack to `tessera.serving.nvfp4_moe_route`, the loader cuts an
+expert container to its rank on the group's shard plan (contract v26 moves
+`loader_axes.row` from the sharded-off-the-table value to one the span-2
+select pad reads), and contract v27 adds the additive `structures` list to
+every format row so a consumer can tell a dense-only format from one with an
+expert route. A builder is a dispatch fact, not a served qualification: the
+`routed_moe` cells for the NVFP4 family are still unpublished, so a routed
+E2M1x2 export needs `--allow-unserveable` until a container receipt exists
+(§5.7 has the route, §7 the cells).
+
 Re-stamped 2026-09-14 for committed Hessian identity and the parallel
 cached-unit intake (tessera#497). Cached intake against a `*.references.json`
 capture establishes each unit's `calibration.hessian` identity from the
@@ -2781,16 +2817,59 @@ and would return `False` for `w13_wire` -- writing nothing, silently
 (`docs/measurements/tessera-moe-wire-loader-2026-09-03.md`). What
 `load_weights` calls is `param.weight_loader`, so the parameter is the seam.
 
-Which families have a production expert route is `scheme.MOE_BUILDERS`. The
-NVFP4 oracle resolves a clamp-capable backend on sm121, but Tessera has no
-NVFP4 expert builder or served qualification
-(`docs/measurements/nvfp4-moe-oracle-2026-09-02.md`). Compressed BF16-family
-expert wires have only the explicit research-selected folded route above;
-plain source BF16 passthrough uses `quantization_config.ignore`. The route
-refuses, by name: expert parallelism and tensor parallelism inside an expert
-(the stride invariant needs every expert's blob, and no expert slicer has been
-run), a residency other than `resident`, a non-gated MoE, and any
-expert/hidden/intermediate size that disagrees with the sidecar.
+Which families have a production expert route is `scheme.MOE_BUILDERS`, and
+`TesseraConfig.get_quant_method` dispatches a `routed_moe` stack to its
+family's builder off that table exactly as a Linear is dispatched off
+`ROUTES`. Two families have one. `TESSERA_FP8` is the route above.
+`TESSERA_NVFP4` is `tessera.serving.nvfp4_moe_route` (tessera#492): one
+E2M1x2 container per expert projection, parsed and verified whole, cut to
+the rank by `sharding.shard_parsed_roles` on the group's plan (rows of `w13`,
+columns of `w2`), decoded once at load through `stock.materialize_stock`
+after a per-expert `fused.shared_lut_global` join of the gate and up globals,
+into exactly the modelopt NVFP4 parameter set vLLM's `ModelOptNvFp4FusedMoE`
+builds (`w13_weight`/`w2_weight` packed nibbles, group-16 ue4m3
+`*_weight_scale`, per-expert `*_weight_scale_2` MULTIPLIER, per-expert
+`*_input_scale`), and from `process_weights_after_loading` onward it IS that
+class: `convert_to_nvfp4_moe_kernel_format`, `make_nvfp4_moe_quant_config`,
+`make_nvfp4_moe_kernel` over the backend the runtime's own
+`select_nvfp4_moe_backend` picks -- on sm121 under GLM's `swiglu_limit` a
+clamp-capable flashinfer CUTLASS backend
+(`docs/measurements/nvfp4-moe-oracle-2026-09-02.md`), the receipt that used
+to be the reason the family had no builder and is now what the builder
+relies on. The static A side is a checkpoint fact: the exporter writes
+`experts.{e}.{proj}.input_global_scale` beside each wire (capacity over amax,
+the dense route's `trellis_input_global_scale` quantity, from
+`--input-scales`), the loader inverts it once into modelopt's
+`input_scale`, and a stack missing any refuses rather than quantising at
+1.0. FlashInfer's CUTLASS finalizer then collapses the per-expert values to
+ONE per projection group -- `amax_for_moe_activation_quant` takes the max of
+the loader's reciprocal, so the executed global scale is the SMALLEST
+per-expert `input_global_scale`, i.e. the layer's LARGEST calibrated amax --
+and broadcasts it to every expert; the per-expert tensors the method reads are
+what a per-expert price describes, and priced == served only when the amax
+spread is zero. This route decodes every expert wire once at load through
+`materialize_stock` (the load probe's `route_record.decoder` is
+`torch_materialize_stock`), never through the native span-2 planes, so a row
+cut of an expert container needs only `slice_unit`'s super-symbol boundary; the
+select plane's byte (see the re-stamp above) is the dense route's NATIVE
+decoder's requirement, refused by name at
+`lane_planes.require_native_select_plane_admission`. A builder is a
+dispatch fact and not a served qualification: the
+`routed_moe` cells for this family are `lane_eligibility`'s to publish from a
+container receipt, and until they exist an NVFP4 stack exports only under
+`--allow-unserveable`. Compressed BF16-family expert wires have only the
+explicit research-selected folded route above; plain source BF16 passthrough
+uses `quantization_config.ignore`. Both production routes refuse, by name:
+expert parallelism and EPLB (the stride invariant needs every expert's blob
+and the parameter is `[E, ...]` by global id), a residency other than
+`resident`, a non-gated MoE, and any expert/hidden/intermediate size that
+disagrees with the sidecar; the FP8 route additionally refuses tensor
+parallelism inside an expert outside the research-selected path, where the
+NVFP4 route cuts it at load. When a checkpoint carries
+`research_selected_moe`, only the stacks that block serves
+(`ResearchSelectedMoeConfig.applies_to`: FP8/E4M3, BF16/BF16) take the
+selected owner; an NVFP4 stack beside them takes its production builder, and
+a block that names no stack it serves is refused at config parse.
 
 **The exporter writes it.** A `--plan-json` entry keyed `<moe>.experts` -- the
 STACK, not one of its leaves, because vLLM builds one method for the stack --

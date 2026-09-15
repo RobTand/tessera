@@ -10,16 +10,22 @@ Two facts drive every test here:
 
 1. **The row axis is the BODY's answer, not the tile's.**  A row shard begins
    mid-column, so it carries an INITIAL_STATE plane.  The window body's L-bit
-   pad *is* ``state_{-1}``, so the E4M3/FP8 route threads it and cuts rows; the
-   span-2 TCQ decoders the NVFP4 route packs for supply ``state_{-1} = 0``
-   themselves (``lane_planes.pack_unit_for_kernel``, ``csrc/window_gemv.cu``),
-   so that route cuts columns only.
-2. **The refusal is symmetric across the group.**  Rank 0's row shard starts at
+   pad *is* ``state_{-1}``, so the E4M3/FP8 route threads it and cuts rows.
+   The span-2 TCQ decoders the NVFP4 route packs for read step 0's history
+   out of the select plane's ``SELECT_PAD``, and since tessera#492 the packer
+   writes a shard's register into that pad
+   (``lane_planes._thread_start_state``), so that route cuts rows too --
+   ``tests/test_span2_start_state.py`` is the bit-for-bit proof.  The table
+   the routes gate on (``ROUTE_TP_AXES``) therefore refuses nothing today,
+   and it stays, because a fourth body may bring a refusal with it.
+2. **A refusal is symmetric across the group.**  Rank 0's row shard starts at
    row 0 and carries no INITIAL_STATE plane, so it would in fact pack.
    Refusing only where it bites would leave rank 0 building a layer while its
    peers raised, and a TP group whose ranks disagree about whether a module
-   exists does not fail -- it hangs on the first collective.  So the NVFP4 row
-   cut is refused on *every* rank, including rank 0.
+   exists does not fail -- it hangs on the first collective.  So a refused
+   axis is refused on *every* rank, including rank 0 -- pinned below by
+   refusing the NVFP4 row cut through the table, as this build did before
+   tessera#492.
 
 Before this file, both of those were true of the packer and of nothing else:
 ``create_weights`` planned a row cut happily and the refusal arrived from
@@ -165,14 +171,23 @@ def _create(monkeypatch, scheme, *, axis, tp_size=2, tp_rank=0):
 
 # --- the gate itself ---------------------------------------------------------
 
-def test_the_two_routes_publish_different_axes():
-    """A pin on the table both the routes and the contract read."""
-    assert ROUTE_TP_AXES[TESSERA_FP8] == {AXIS_ROWS: TP_SHARDED, AXIS_COLUMNS: TP_SHARDED}
-    assert ROUTE_TP_AXES[TESSERA_NVFP4] == {AXIS_ROWS: TP_REFUSED, AXIS_COLUMNS: TP_SHARDED}
-    assert ROUTE_TP_AXES[TESSERA_BF16] == {AXIS_ROWS: TP_SHARDED, AXIS_COLUMNS: TP_SHARDED}
-    assert axis_status(TESSERA_NVFP4, AXIS_ROWS) == TP_REFUSED
+def test_every_route_publishes_both_axes():
+    """A pin on the table both the routes and the contract read.
+
+    Named, not derived: the NVFP4 row axis is the one that moved (tessera#492),
+    and the assertion that would fail if a future edit quietly refused it
+    again -- or widened a fourth route's claim without a packer -- is this one.
+    """
+    both = {AXIS_ROWS: TP_SHARDED, AXIS_COLUMNS: TP_SHARDED}
+    assert ROUTE_TP_AXES[TESSERA_FP8] == both
+    assert ROUTE_TP_AXES[TESSERA_NVFP4] == both
+    assert ROUTE_TP_AXES[TESSERA_BF16] == both
+    assert axis_status(TESSERA_NVFP4, AXIS_ROWS) == TP_SHARDED
     # BF16 has FP8's answer because it has FP8's body, not because it is new.
     assert ROUTE_TP_AXES[TESSERA_BF16] == ROUTE_TP_AXES[TESSERA_FP8]
+    # ... and no reason is left for an axis nobody refuses.
+    from tessera.serving.sharding import ROUTE_TP_AXIS_REASONS
+    assert ROUTE_TP_AXIS_REASONS == {}
 
 
 def test_an_unknown_route_or_axis_is_a_refusal_not_a_default():
@@ -196,10 +211,36 @@ def test_a_module_served_whole_is_never_gated():
 
 # --- what create_weights does with each axis ---------------------------------
 
-def test_the_nvfp4_route_refuses_a_row_cut_by_name(monkeypatch):
-    """FAILS BEFORE: ``create_weights`` planned this cut and returned, and the
-    refusal arrived later from ``pack_unit_for_kernel`` -- after the blob was
-    loaded, naming a row offset rather than a ``tensor_parallel_size``."""
+def _refuse_nvfp4_rows(monkeypatch):
+    """Put the table back the way it was before tessera#492, for the pins
+    on the REFUSAL mechanism: symmetric across the group, named, early."""
+    from tessera.serving import sharding
+
+    monkeypatch.setitem(sharding.ROUTE_TP_AXES, TESSERA_NVFP4,
+                        {AXIS_ROWS: TP_REFUSED, AXIS_COLUMNS: TP_SHARDED})
+    monkeypatch.setitem(sharding.ROUTE_TP_AXIS_REASONS, TESSERA_NVFP4,
+                        {AXIS_ROWS: "a row shard begins mid-column, so it carries an "
+                                    "INITIAL_STATE plane this body's decoders cannot start from"})
+
+
+def test_the_nvfp4_route_takes_a_row_cut(monkeypatch):
+    """FAILS BEFORE tessera#492: ``create_weights`` refused every row cut of
+    this route on every rank.  A column-parallel Linear (q/k/v, gate/up) now
+    plans its rows over the group exactly as the FP8 route does."""
+    for rank in (0, 1):
+        layer = _create(monkeypatch, _nvfp4_scheme(), axis=AXIS_ROWS, tp_size=2, tp_rank=rank)
+        plan = layer.tessera_shard_plan
+        assert plan.axis == AXIS_ROWS and (plan.tp_rank, plan.tp_size) == (rank, 2)
+        assert (plan.role("weight").lo, plan.role("weight").hi) == (ROWS // 2 * rank, ROWS // 2 * (rank + 1))
+        assert layer.tessera_rows == ROWS // 2 and layer.tessera_columns == COLUMNS
+        assert layer.tessera_groups == COLUMNS // 16
+
+
+def test_a_refused_axis_is_refused_by_name_and_early(monkeypatch):
+    """The mechanism a fourth body will inherit: ``create_weights`` refuses a
+    planned cut on a refused axis before a blob is loaded, naming a
+    ``tensor_parallel_size`` rather than a row offset."""
+    _refuse_nvfp4_rows(monkeypatch)
     with pytest.raises(ValueError) as excinfo:
         _create(monkeypatch, _nvfp4_scheme(), axis=AXIS_ROWS, tp_size=2, tp_rank=0)
     message = str(excinfo.value)
@@ -207,16 +248,17 @@ def test_the_nvfp4_route_refuses_a_row_cut_by_name(monkeypatch):
     assert "tensor_parallel_size=2" in message
     assert "ColumnParallelLinear" in message and "QKVParallelLinear" in message
     assert "INITIAL_STATE" in message
-    assert "TESSERA_FP8" in message          # the route that does cut rows
+    assert "TESSERA_FP8" in message          # a route that cuts rows
 
 
-def test_the_nvfp4_row_refusal_is_symmetric_across_the_group(monkeypatch):
-    """FAILS BEFORE, and it is the half that matters.
+def test_a_row_refusal_is_symmetric_across_the_group(monkeypatch):
+    """The half that matters.
 
     Rank 0's row shard starts at row 0, carries no INITIAL_STATE plane and
     would pack.  If only the other ranks refused, rank 0 would build the layer
     and the group would hang on its first collective instead of failing.
     """
+    _refuse_nvfp4_rows(monkeypatch)
     for rank in (0, 1, 3):
         with pytest.raises(ValueError, match="does not serve a row cut"):
             _create(monkeypatch, _nvfp4_scheme(), axis=AXIS_ROWS, tp_size=4, tp_rank=rank)
@@ -245,11 +287,20 @@ def test_the_fp8_route_takes_both_axes(monkeypatch, axis, want):
     assert (layer.tessera_rows, layer.tessera_columns) == want
 
 
-def test_a_fused_nvfp4_module_is_refused_on_the_axis_vllm_would_split(monkeypatch):
-    """FAILS BEFORE.  q/k/v is the row-cut case in practice: vLLM gives every
-    rank its own rows of each role, which is exactly the cut this route cannot
-    start."""
+def test_a_fused_nvfp4_module_is_cut_per_role_on_the_axis_vllm_splits(monkeypatch):
+    """q/k/v is the row-cut case in practice: vLLM gives every rank its own
+    rows of each role, and each role is cut independently (#32) -- the plan
+    every ColumnParallel E2M1 Linear of a TP2 GLM export takes (tessera#492)."""
     scheme = _nvfp4_scheme(roles=[["q_proj", 128], ["k_proj", 64], ["v_proj", 64]])
+    layer = _create(monkeypatch, scheme, axis=AXIS_ROWS, tp_size=2, tp_rank=1)
+    plan = layer.tessera_shard_plan
+    assert plan.axis == AXIS_ROWS
+    assert (plan.role("q_proj").lo, plan.role("q_proj").hi) == (64, 128)
+    assert (plan.role("k_proj").lo, plan.role("k_proj").hi) == (32, 64)
+    assert (plan.role("v_proj").lo, plan.role("v_proj").hi) == (32, 64)
+    assert layer.tessera_rows == 128
+    # ... and the same module under the pre-#492 table is refused whole.
+    _refuse_nvfp4_rows(monkeypatch)
     with pytest.raises(ValueError, match="does not serve a row cut"):
         _create(monkeypatch, scheme, axis=AXIS_ROWS, tp_size=2)
 

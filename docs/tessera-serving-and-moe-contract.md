@@ -1101,9 +1101,11 @@ width; a blob's true length rides beside it; `moe_layout.unpack_moe_wires`
 refuses a stride that is not the maximum its lengths imply, and that refusal
 fired on real bytes in the probe.
 
-**§9.1 held.** The route is `TESSERA_FP8` only. `scheme.MOE_BUILDERS` is the
-one home for which families have an expert route, and it cites this doc's own
-clamp finding for why NVFP4 is absent.
+**§9.1 held, until tessera#492.** At the time of this section the route was
+`TESSERA_FP8` only. `scheme.MOE_BUILDERS` is the one home for which families
+have an expert route; it now names `TESSERA_NVFP4` too (§16), and the clamp
+finding this doc recorded is what that builder relies on rather than the
+reason it was absent.
 
 **§9.6 held, and is now load-bearing.** The wire parameter carries its **own**
 `weight_loader`; twelve loader calls in the probe went through
@@ -1242,3 +1244,89 @@ census, no KL.
 4-8. Unchanged: expert parallelism, TP inside an expert and `streamed` are
    refused by name; memory at 288 experts is a design item; the model-level
    load hop and the compiled forward are unmeasured.
+
+## 16. The NVFP4 expert route (2026-09-14, tessera#492)
+
+`tessera.serving.nvfp4_moe_route` landed. `scheme.MOE_BUILDERS` now names two
+families, and `TesseraConfig.get_quant_method` dispatches a `routed_moe` stack
+to its family's builder off that table the way a Linear is dispatched off
+`ROUTES`; a family with neither goes through the FP8 builder's front door and
+is refused there by name.
+
+**What the builder is.** From `process_weights_after_loading` onward it is
+vLLM's own `ModelOptNvFp4FusedMoE`: the same parameter set (`w13_weight`
+`[E, 2N, K/2]` and `w2_weight` `[E, K, N/2]` packed nibbles, group-16 ue4m3
+`w13_weight_scale`/`w2_weight_scale`, per-expert `w13_weight_scale_2 [E, 2]`
+and `w2_weight_scale_2 [E]`, per-expert `w13_input_scale [E, 2]` and
+`w2_input_scale [E]`), the same `convert_to_nvfp4_moe_kernel_format`,
+`make_nvfp4_moe_quant_config` and `make_nvfp4_moe_kernel`, over the backend
+the runtime's own `select_nvfp4_moe_backend` picks for `(kNvfp4Static,
+kNvfp4Dynamic)`. §9.1's clamp finding is what it relies on: under GLM's
+`swiglu_limit` the pinned oracle refuses an explicit non-clamp backend and
+resolves `auto` to flashinfer CUTLASS on sm121
+(`experiments/results/nvfp4_moe_oracle_probe.json`). Nothing here writes a
+kernel; the A side is the kernel's own group-16 quantisation under the static
+scale, which is why the executed contract is `ROUTES[TESSERA_NVFP4]
+["activation_contract"]` and not a claim the module makes.
+
+**What is ours.** The decode: each expert projection's container is parsed
+and verified whole, cut to the rank by `sharding.shard_parsed_roles` on the
+group's plan (rows of `w13`, columns of `w2` -- the row cut is what
+tessera#492's select-pad threading made decodable), and decoded once through
+`stock.materialize_stock` after a per-expert `fused.shared_lut_global` join of
+the gate and up globals, so the two halves of one `w13` tile sit under the ONE
+`weight_scale_2` the kernel reads (the stock method warns and takes column 0
+when they differ -- a silent wrong answer this route does not produce). The
+global handed over is the MULTIPLIER, the reciprocal of the stock tile's
+`weight_global_scale` divisor; `tests/test_serving_nvfp4_moe_route.py` pins
+that numerically through `stock_dequant`, not by name. The planes are dropped
+per expert as it lands, so a layer holds the wires only transiently, one
+projection at a time -- §14's item 5 does not apply to this route.
+
+**The A-side scale is a checkpoint fact.** The exporter writes
+`experts.{e}.{proj}.input_global_scale` beside each wire -- capacity over amax,
+the dense route's `trellis_input_global_scale` quantity, one per expert
+projection from `--input-scales` -- and refuses a stack missing any, by key,
+at the unit. The loader routes it onto `{group}_input_global_scale` by the
+same suffix-agnostic expert mapping that routes `wire`, inverts it once into
+modelopt's `input_scale`, and refuses at finalize if any is missing rather
+than quantising activations at 1.0. FlashInfer's CUTLASS path collapses the
+per-expert values to ONE per projection group
+(`amax_for_moe_activation_quant`): it takes the max of the loader's
+reciprocal, so the executed global scale is the smallest per-expert
+`input_global_scale` -- the layer's largest calibrated amax -- broadcast to
+every expert. The per-expert tensors are what the stock method reads and what
+a per-expert price describes, so priced == served only where the per-expert
+amax spread is zero.
+
+**What is refused, by name.** Expert parallelism and EPLB (the parameter is
+`[E, ...]` by global id and the stride invariant needs every blob), a
+residency other than `resident`, a non-gated MoE, another family's scheme, an
+expert/hidden/intermediate width that disagrees with the sidecar or is not a
+whole number of 16-wide groups per rank, an expert whose gate arrived without
+its up, and any stock tensor name (`experts.{e}.{proj}.weight` and friends) in
+a Tessera checkpoint. A ROW cut below the kernel's select byte is NOT on this
+list: this route decodes expert wires through `materialize_stock`, which reads
+codes, so it serves any cut `slice_unit` makes. The `arity * 8 * span` row
+requirement (the span-L select plane packs eight super-symbols to a byte and
+resumes none on a half-byte) belongs to the dense NVFP4 route's native span-2
+decoder, where `lane_planes.require_native_select_plane_admission` refuses it by
+name; that route's resident `when_unavailable` torch fallback packs no planes
+and serves the cut too.
+
+**With `research_selected_moe`.** The block covers the stacks it serves
+(`ResearchSelectedMoeConfig.applies_to`: FP8/E4M3 and BF16/BF16) and nothing
+else: an NVFP4 stack beside them takes its production builder, and a block
+that names no stack it serves is refused at config parse.
+
+**What this does not settle.** A builder is a dispatch fact. `runtime_contract.json`
+v27 publishes it as such -- `formats[].structures` names the structures the
+plugin dispatches for a family, checked against `MOE_BUILDERS` by the
+validator -- and adds **no** `routed_moe` cell for `TESSERA_E2M1_K2`: a cell is
+an attestation and comes from a container receipt on the pinned image
+(`experiments/nvfp4_moe_route_load_probe.py`, then a served census). Until it
+lands an NVFP4 stack exports only under `--allow-unserveable`, stamped in the
+manifest's `serving_gate`; the producer's route-status gate reads the cells and
+admits nothing on this route until then. Tensor parallelism is attempted and
+not attested (`max_world_size` stays 1); the compiled forward and memory at
+288 experts are measured on the stub, not here.

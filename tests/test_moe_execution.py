@@ -47,10 +47,18 @@ def test_changed_input_record_refuses(field, value):
 
 
 def test_shared_config_incompatible_targets():
+    """A research block scopes the selected FP8/BF16 stacks only.  A routed
+    NVFP4 stack beside them takes its own production builder
+    (``scheme.MOE_BUILDERS``, tessera#492), so a block whose checkpoint names
+    ONLY such stacks scopes nothing and is refused as such, rather than as an
+    unsupported family."""
     config = ResearchSelectedMoeConfig.from_checkpoint(_block())
     config.require_targets({"m": {"structure": "routed_moe", "family": "TESSERA_BF16", "grid": "BF16"}},
                            "resident")
-    with pytest.raises(ValueError, match="requires TESSERA_FP8/E4M3"):
+    config.require_targets({"m": {"structure": "routed_moe", "family": "TESSERA_BF16", "grid": "BF16"},
+                            "n": {"structure": "routed_moe", "family": "TESSERA_NVFP4", "grid": "E2M1x2"}},
+                           "resident")
+    with pytest.raises(ValueError, match="names no routed target it serves"):
         config.require_targets({"m": {"structure": "routed_moe", "family": "TESSERA_NVFP4", "grid": "E2M1x2"}},
                                "resident")
 

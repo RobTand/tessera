@@ -42,16 +42,24 @@ them degrade to BF16:
 WHERE THE MoE ROUTE PLUGS IN.  ``get_quant_method``'s MoE branch is the seam
 (derived from vLLM's MoE layer module, never a hand-kept name list, so a
 version rename cannot slip it into the silent unquantized fallback).  A stack
-whose scheme declares ``structure: routed_moe`` goes to ``moe_route``, which
-decodes one container per expert PROJECTION into the stock per-channel FP8
-expert parameters and dispatches through vLLM's own fused-MoE kernel -- the
-same ``select_fp8_moe_backend`` / ``convert_to_fp8_moe_kernel_format`` /
+whose scheme declares ``structure: routed_moe`` goes to ITS FAMILY'S expert
+builder, read off ``scheme.MOE_BUILDERS`` exactly as a Linear's route is read
+off ``scheme.ROUTES``: ``TESSERA_FP8`` to ``moe_route``, which decodes one
+container per expert PROJECTION into the stock per-channel FP8 expert
+parameters and dispatches through vLLM's own fused-MoE kernel (the same
+``select_fp8_moe_backend`` / ``convert_to_fp8_moe_kernel_format`` /
 ``make_fp8_moe_kernel`` path ``CompressedTensorsW8A8Fp8MoEMethod`` takes at
-``strategy: channel``.  Which families have an expert route is
-``scheme.MOE_BUILDERS``, and it says why the other two do not: the NVFP4 arm
-resolves only under a ``swiglu_limit`` clamp on this build
-(``docs/measurements/nvfp4-moe-oracle-2026-09-02.md``), and a BF16 expert
-stack is the passthrough ``ignore`` already gives.
+``strategy: channel``); ``TESSERA_NVFP4`` to ``nvfp4_moe_route`` (tessera#492),
+which decodes E2M1x2 wires into the stock modelopt NVFP4 expert parameter
+set and dispatches through the same ``select_nvfp4_moe_backend`` /
+``convert_to_nvfp4_moe_kernel_format`` / ``make_nvfp4_moe_kernel`` path
+``ModelOptNvFp4FusedMoE`` takes.  A family absent from ``MOE_BUILDERS`` is
+refused by name through the FP8 builder's front door
+(``refuse_a_family_with_no_expert_route``); a BF16 expert stack is the
+passthrough ``ignore`` already gives.  When the checkpoint carries
+``research_selected_moe``, only the stacks that block serves
+(``ResearchSelectedMoeConfig.applies_to``: FP8/E4M3, BF16/BF16) take the
+selected owner; an NVFP4 stack beside them takes its production builder.
 
 ``runtime_contract.json`` v16 publishes two ``routed_moe`` cells, and only
 two: ``TESSERA_E4M3_K1`` at rung 1024 on ``sm_121``, resident/eager, decode
@@ -395,13 +403,25 @@ class TesseraConfig(QuantizationConfig):
             scheme = self.target_scheme.get(prefix)
             if scheme is not None and scheme.get("structure") == STRUCTURE_ROUTED_MOE:
                 self._declare_once()
-                from .moe_route import build_tessera_moe_method
+                from importlib import import_module
 
-                if self._research_selected_moe is not None:
+                from .moe_route import ResearchSelectedMoeConfig, build_tessera_moe_method
+                from .scheme import MOE_BUILDERS, TESSERA_FP8
+
+                if (self._research_selected_moe is not None
+                        and ResearchSelectedMoeConfig.applies_to(scheme)):
                     return build_tessera_moe_method(
                         scheme, prefix, self._mode, layer,
                         research_selected=self._research_selected_moe)
-                return build_tessera_moe_method(scheme, prefix, self._mode, layer)
+                # FAMILY = BUILDER, the way FAMILY = ROUTE holds for a Linear.
+                # A family with no builder goes through the FP8 builder's front
+                # door, whose first refusal names it (``refuse_a_family_with_no_
+                # expert_route``) rather than this branch keeping a second copy
+                # of that message.
+                module_name, builder_name = MOE_BUILDERS.get(
+                    scheme.get("family"), MOE_BUILDERS[TESSERA_FP8])
+                builder = getattr(import_module(module_name), builder_name)
+                return builder(scheme, prefix, self._mode, layer)
             if scheme is not None:
                 raise ValueError(
                     f"tessera target {prefix!r}: this is a routed-MoE expert stack but its "
