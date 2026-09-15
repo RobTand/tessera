@@ -10,8 +10,8 @@ per-step host loop are the next levers.
 
 Date: 2026-09-15. Branch: `claude/486-fused-lut-fit`. The code is `3aa8b9c8d`, on `master`
 `e056e23d5`, and this documentation follows it. After the runs below, the branch merged `master`
-`4c384e604` (#517). That merge changes the serving contract, config and sharding modules, with
-their tests, documents and receipts; it doesn't change `encode.py`, `lut_fused.py` or
+`4c384e604` (tessera#517). That merge changes the serving contract, config and sharding modules,
+with their tests, documents and receipts; it doesn't change `encode.py`, `lut_fused.py` or
 `tcq_fused.py`. Boxes: GB10 / DGX Spark (`sparky`, `sparklina`), 140 W envelope, torch
 2.11.0+cu130.
 
@@ -122,8 +122,10 @@ The test runs:
 - **Where the LUT tests ran.** `tests/test_lut_fused.py` ran in shard `1d135369ff0f` (sparky) on
   `3aa8b9c8d` and in shard `f58e52fe7c47` (sparky) on `d9bee6267`. Each shard reported 633
   passed and 5 skipped.
-- **Stage 1's excluded failure.** `tests/test_slice_unit.py::test_the_span2_kernel_lane_refuses_a_shard`
-  ran in the same shard in both runs, and neither shard failed anything, so this gate excludes
+- **Stage 1's excluded failure.** #512 is closed: `0047bf4f7`, before `e056e23d5`, replaced
+  `tests/test_slice_unit.py::test_the_span2_kernel_lane_refuses_a_shard` with
+  `test_the_span2_kernel_lane_decodes_a_shard`. That test needs only CUDA, and it ran in the same
+  shard as the LUT tests in both runs. Neither shard failed anything, so this gate excludes
   nothing.
 - **Documentation tests.** On `d9bee6267`, `test_audit_doc_claims.py`, `test_issue_refs.py`,
   `test_doc_scope_69.py`, `test_doc_route_71.py`, `test_doc_alphabet_70.py` and
