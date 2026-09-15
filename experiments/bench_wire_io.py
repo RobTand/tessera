@@ -242,8 +242,11 @@ def parent(args) -> int:
                 row["power"] = window(row["summary"]["t_start"], row["summary"]["t_end"])
             else:
                 failed = True
+                print((run_dir / "child.log").read_text()[-4000:], flush=True)
             runs.append(row)
             print(json.dumps({"rep": rep, "arm": arm, "rc": rc}), flush=True)
+            if rc and rep == 0:
+                return 1
             (out / "runs.json").write_text(json.dumps(runs, indent=1, default=str))
     if args.profile:
         for arm, src in arms:
