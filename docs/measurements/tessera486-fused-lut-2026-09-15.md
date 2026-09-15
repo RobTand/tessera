@@ -6,14 +6,33 @@ binary, the E2M1_K2 encoder is 3.93x faster at `B=32` and 3.49x faster at `B=8`,
 4.79x the parameters per joule. On the GLM-5.3 routed-expert shape it is 2.49x faster per unit,
 and 10.9x faster than before stage 1. It draws 27-30% of the 140 W envelope, so the host is
 still the bound. The trellis's final sum, the greedy elimination's argmin and `viterbi_window`'s
-per-step host loop are the next levers.
+per-step host loop are the next levers. These measurements ran on `3aa8b9c8d` with NVIDIA driver
+595.84. A later full suite run hit an illegal memory access in the first accept launch of a fit.
+`57f12627c` fixes it, and the full suite on `57f12627c` passes on driver 595.91.07 (The accept
+launch's unmasked loads).
 
-Date: 2026-09-15. Branch: `claude/486-fused-lut-fit`. The code is `3aa8b9c8d`, on `master`
-`e056e23d5`, and this documentation follows it. After the runs below, the branch merged `master`
-`4c384e604` (tessera#517). That merge changes the serving contract, config and sharding modules,
-with their tests, documents and receipts; it doesn't change `encode.py`, `lut_fused.py` or
-`tcq_fused.py`. Boxes: GB10 / DGX Spark (`sparky`, `sparklina`), 140 W envelope, torch
-2.11.0+cu130.
+Date: 2026-09-15. Branch: `claude/486-fused-lut-fit`. The measured code is `3aa8b9c8d`, on
+`master` `e056e23d5`. After those runs, the branch merged `master` `4c384e604` (tessera#517).
+That merge changes the serving contract, config and sharding modules, with their tests, documents
+and receipts; it doesn't change `encode.py`, `lut_fused.py` or `tcq_fused.py`. Then `57f12627c`
+masked two loads in `_accept` and added a regression test. Boxes: GB10 / DGX Spark (`sparky`,
+`sparklina`), 140 W envelope, torch 2.11.0+cu130.
+
+- **Drivers.** The receipts on `3aa8b9c8d`, the full suites on `d9bee6267`, `007dde084` and
+  `b6d60de26`, and the fixture id probes on `007dde084` and `b6d60de26` finished before 13:11Z,
+  while both boxes ran NVIDIA driver 595.84. The two probes' receipts record it.
+- **The upgrade.** At 13:11Z a package upgrade moved both boxes' userspace driver to 595.91 while
+  the 595.84 kernel module stayed loaded. Two loop actions queued after it never ran:
+  `5ab15b0b1d4e` was withdrawn from the ready queue, and `ec1ec5f8a46d` has a sealed request and
+  no queue record. Both boxes rebooted into 595.91.07 at about 13:28Z.
+- **After the reboot.** The runs in The accept launch's unmasked loads, the fixture id probe on
+  `57f12627c` and the full suite on `57f12627c` finished after the reboot. The receipts that the
+  loop and probe clients printed record 595.91.07.
+- **Not re-run.** By decision, the throughput, power, profile and GLM receipts were not re-run on
+  595.91.07 or after the fix. A power re-run and a GLM re-run on `57f12627c` started on
+  595.91.07 and were withdrawn after about two minutes. Their partial outputs are in
+  `withdrawn-2026-09-15/` and are not receipts. The census reseal's proof arms, which run on
+  595.91.07, check bytes against the stored rows.
 
 ## What changed
 
@@ -63,6 +82,52 @@ construction:
   fit back to the reference. No receipt below printed the tripwire's warning, and the GLM
   counters read 0 tripped.
 
+## The accept launch's unmasked loads
+
+The full suite on `007dde084` failed in shard `7be94bb90e20` (sparky, driver 595.84), whose
+kernel is `3aa8b9c8d`'s. `test_concurrent_fits_are_each_the_reference` raised a CUDA illegal
+memory access. A CUDA context stays broken after one, so later tests in that process failed or
+errored too: the 10 LUT tests after it, 16 window-plane tests, 29 graph tests and 124 slice
+tests.
+
+- **The cause.** `_accept` loaded `unused` at the taken trial, or at 0 when no trial was taken,
+  and then loaded `grid` at the value it read. Only the stores were masked, and an unmasked
+  Triton load dereferences its pointer even when the store that uses its value is masked off.
+  The launch before a fit's first pass (`lut_fused.py:558` in `b6d60de26`) runs before any
+  launch has written `unused`. So it read whatever the allocator's block last held, and it loaded
+  `grid` at that index. Whether that faults depends on the leftover value.
+- **The fix.** `57f12627c` gives both loads `mask=took`. A taken trial loads the same index and
+  value as before, so no byte or table float changes. `src/tessera` differs from `b6d60de26`'s
+  only in `lut_fused.py`, and the full suite on `57f12627c` passed (Tests).
+- **The regression test.** `test_no_launch_reads_a_buffer_before_a_launch_writes_it` fits a
+  4,096-target unit in a child process while every `torch.empty` in `lut_fused` returns memory
+  that holds INT32_MIN or INT32_MAX, or NaN in a float buffer. It requires exactly one fused fit,
+  with nothing tripped and nothing non-finite, and the reference's bytes and table floats. The
+  child process keeps a fault out of the suite's CUDA context.
+
+| Run | Kernel | Result | PB |
+|---|---|---|---|
+| The regression test, 3 runs | `b6d60de26` | All 3 failed; both values raised an illegal memory access each time | `9848a88e87e2` (sparky) |
+| The concurrent-fits test, 20 runs | `b6d60de26` | 2 failed | `94643fb7da27` (sparky) |
+| The concurrent-fits test, 20 runs, `CUDA_LAUNCH_BLOCKING=1` | `b6d60de26` | 2 failed; all 7 failing threads raised at `lut_fused.py:558` | `64b700582ae0` (sparky) |
+| `tests/test_lut_fused.py`, 93 tests | `57f12627c` | 93 passed | `ca5e58f7e959` (sparky) |
+| The concurrent-fits test, 60 runs | `57f12627c` | 0 failed | `dcd68394b348` (sparky) |
+
+- **Trees.** Every run in this table used `57f12627c`'s test file and ran on driver 595.91.07.
+  The first three ran `b6d60de26`'s kernel from a second worktree. `ca5e58f7e959` ran the fix
+  before its commit, and its sealed `lut_fused.py` is `57f12627c`'s.
+- **Loops.** `receipts/lut_loop.py` runs pytest in a fresh process for each run and counts the
+  runs that fail. It exits 0 either way, so the loop records are in `done/`, and the counts are
+  in the client logs, `receipts/stage2-fix-*.log`.
+- **Error text.** With blocking launches, 4 of the 7 failing threads reported "an illegal memory
+  access was encountered" and 3 reported "operation not supported on global/shared address
+  space". Without them, both failing runs reported only the second. All 6 faults of the
+  regression test reported the first.
+- **Earlier passes.** The concurrent-fits test passed in the suites on `3aa8b9c8d`, `d9bee6267`
+  and `b6d60de26`, in the targeted run and in 7 of the 8 bite actions; the prefix mutation fails
+  it by changing bytes. At the loops' rate of 2 failures in 20 runs, that many passes is
+  consistent.
+
 ## Identity
 
 ### Correctness probe
@@ -87,7 +152,7 @@ rather than land on its float.
 
 ### Tests
 
-`tests/test_lut_fused.py` has 91 tests:
+`tests/test_lut_fused.py` has 93 tests:
 
 - **Trial costs.** Every trial cost at positions 0, 5 and 15 equals torch's `_lut_cost` bit for
   bit, at 14 sizes from 128 to 1,048,577 on both sides of each change in torch's reduction
@@ -102,6 +167,9 @@ rather than land on its float.
   fits are each the reference. A fit with no trial or no pass returns its arguments, and a
   scripted `_lut_cost` drives the reference loop. The environment rule, the refusals, another
   allocator backend, the tripwire, a non-finite weight and the tile knob each have a test.
+- **Unwritten buffers.** A fit returns the reference's bytes and table floats while every
+  `torch.empty` in `lut_fused` returns INT32_MIN or INT32_MAX, or NaN in a float buffer (The
+  accept launch's unmasked loads).
 
 The test runs:
 
@@ -110,33 +178,52 @@ The test runs:
   and `9400010f6267` (48: `test_lut_stop_dtype.py`, `test_lut_stop_ulp_band.py`,
   `test_batched_encode_identity.py`). Their `lut_fused.py`, `encode.py` and
   `tests/test_lut_fused.py` are `3aa8b9c8d`'s.
-- **Full suite.** It ran on `3aa8b9c8d`, and again on `d9bee6267`, which adds this
-  documentation. Each run was 12 shards through `pbtest.py`, `--tag gb10 --gpu`, priority 1: 8
-  on sparky and 4 on sparklina for `3aa8b9c8d`, and 11 and 1 for `d9bee6267`.
+- **After the fix.** 93 passed and 0 skipped on sparky with driver 595.91.07: `ca5e58f7e959`.
+  Its sealed `lut_fused.py` and `tests/test_lut_fused.py` are `57f12627c`'s.
+- **Full suite.** It ran on `3aa8b9c8d`, on `d9bee6267`, which adds this documentation, on
+  `007dde084`, on `b6d60de26` and on `57f12627c`. Each run was 12 shards through `pbtest.py`,
+  `--tag gb10 --gpu`, priority 1: 8 on sparky and 4 on sparklina for `3aa8b9c8d` and
+  `57f12627c`, 11 and 1 for `d9bee6267`, and 12 on sparky for `007dde084` and `b6d60de26`.
 
-| Tree | Passed | Skipped | xfailed | Failed |
-|---|---:|---:|---:|---:|
-| `3aa8b9c8d` | 5,469 | 16 | 1 | 0 |
-| `d9bee6267` | 5,469 | 16 | 1 | 0 |
+| Tree | Driver | Passed | Skipped | xfailed | Failed |
+|---|---|---:|---:|---:|---:|
+| `3aa8b9c8d` | 595.84 | 5,469 | 16 | 1 | 0 |
+| `d9bee6267` | 595.84 | 5,469 | 16 | 1 | 0 |
+| `007dde084` | 595.84 | 5,309 | 12 | 1 | 84, and 97 errors |
+| `b6d60de26` | 595.84 | 5,486 | 16 | 1 | 0 |
+| `57f12627c` | 595.91.07 | **5,488** | 16 | 1 | **0** |
 
-- **Where the LUT tests ran.** `tests/test_lut_fused.py` ran in shard `1d135369ff0f` (sparky) on
-  `3aa8b9c8d` and in shard `f58e52fe7c47` (sparky) on `d9bee6267`. Each shard reported 633
-  passed and 5 skipped.
+- **The failed shards on `007dde084`.** Shard `7be94bb90e20` is the illegal memory access (The
+  accept launch's unmasked loads). Shard `1b1908cb5ac0` failed
+  `test_issue_refs.py::test_every_issue_reference_in_the_docs_resolves`: line 13 of this
+  document gave tessera#517 as a bare issue number, and `docs/issues-snapshot.json` predates it.
+  `b6d60de26` writes `tessera#517`, which the test's pattern doesn't match.
+- **The added tests.** `b6d60de26` has 17 more tests than `d9bee6267`: `4c384e604` (tessera#517)
+  adds 14 test functions to `tests/test_serving_contract.py`, and two of them are parametrized
+  over 3 and 2 cases. `57f12627c` adds the regression test's 2 cases.
+- **Where the LUT tests ran.** `tests/test_lut_fused.py` ran on sparky, in shard `1d135369ff0f`
+  on `3aa8b9c8d`, `f58e52fe7c47` on `d9bee6267`, `7be94bb90e20` on `007dde084`,
+  `60d9feab1893` on `b6d60de26` and `738fd505a6b7` on `57f12627c`. `1d135369ff0f`,
+  `f58e52fe7c47` and `60d9feab1893` each reported 633 passed and 5 skipped, and `738fd505a6b7`
+  reported 635 passed and 5 skipped.
 - **Stage 1's excluded failure.** #512 is closed: `0047bf4f7`, before `e056e23d5`, replaced
   `tests/test_slice_unit.py::test_the_span2_kernel_lane_refuses_a_shard` with
   `test_the_span2_kernel_lane_decodes_a_shard`. That test needs only CUDA, and it ran in the same
-  shard as the LUT tests in both runs. Neither shard failed anything, so this gate excludes
-  nothing.
-- **Documentation tests.** On `d9bee6267`, `test_audit_doc_claims.py`, `test_issue_refs.py`,
-  `test_doc_scope_69.py`, `test_doc_route_71.py`, `test_doc_alphabet_70.py` and
-  `test_refresh_issues.py` ran in four shards and passed. None of them has a skip condition.
-- **Collection.** Every shard of both runs reported 0 modules not collected.
+  shard as the LUT tests in every run. It failed only in `7be94bb90e20`, after the illegal memory
+  access, so this gate excludes nothing.
+- **Documentation tests.** On `d9bee6267`, `b6d60de26` and `57f12627c`,
+  `test_audit_doc_claims.py`, `test_issue_refs.py`, `test_doc_scope_69.py`,
+  `test_doc_route_71.py`, `test_doc_alphabet_70.py` and `test_refresh_issues.py` ran in four
+  shards and passed. On `007dde084`, `test_issue_refs.py` failed (The failed shards on
+  `007dde084`). None of them has a skip condition.
+- **Collection.** Every shard of all five runs reported 0 modules not collected.
 - **The client.** The session that submitted the `3aa8b9c8d` suite ended before `pbtest.py`
   printed its table. On `d9bee6267`, the client reported rc 74 for shard `f52f980c94c9`; its
   record is in `done/` with rc 0 (sparklina: 558 passed, 1 xfailed). All 24 actions are in
-  `done/` with rc 0, and the counts come from each attempt's stdout.
+  `done/` with rc 0, and the counts come from each attempt's stdout. For the other three runs the
+  client printed every shard's result, and every record's parent is its run's commit.
 
-The 16 skips have the same reasons and counts as stage 1's:
+In every run but `007dde084`, the 16 skips have the same reasons and counts as stage 1's:
 
 | Count | Reason |
 |---:|---|
@@ -154,7 +241,10 @@ The 16 skips have the same reasons and counts as stage 1's:
 Each mutation changes one expression of `src/tessera/lut_fused.py`, and each ran the 91 tests of
 `tests/test_lut_fused.py` in its own action, on sparky or sparklina. They ran on the stage 2
 change before its commit; that kernel and test file are identical to `3aa8b9c8d`'s. The diffs
-are `receipts/stage2-bite-<name>.diff`, taken from each action's sealed checkout.
+are `receipts/stage2-bite-<name>.diff`, taken from each action's sealed checkout. They ran
+before the fix, with driver 595.84. No mutation touches either of the fix's two loads, and the fix
+has its own bite: the regression test fails on the unfixed kernel (The accept launch's unmasked
+loads).
 
 | Mutation | Where | Failed of 91 | What failed | PB |
 |---|---|---:|---|---|
@@ -177,7 +267,9 @@ are `receipts/stage2-bite-<name>.diff`, taken from each action's sealed checkout
 
 - **Fixture id.** `encoder_fixture_id` is
   `03bbc5b1c56d55e1d7f5f0d1baa1107e462d5bad18a412d0c232c78d04c95519` in every bench and GLM
-  result below. The old and the new id are the same.
+  result below. The old and the new id are the same. Probes read the same id on `007dde084`
+  (PB `d1027b0b6a0b`) and `b6d60de26` (PB `02bee8b227c0`), both on sparky with driver 595.84,
+  and on `57f12627c` (PB `2a45078990d8`, sparklina, driver 595.91.07).
 - **Source.** Every bench result records the sha256 of all 85 files of `src/tessera` and of
   the bench script, and every one equals `3aa8b9c8d`'s.
 - **LFM timing units.** The 32 LFM L18 expert `w1` digests are identical across all 88 arms of
@@ -194,7 +286,7 @@ The check re-encodes the 32 stored `TESSERA_E2M1_K2_R896` routed-expert units th
 compares each blob with the stored blob byte for byte. The script is
 `receipts/glm_identity_reencode.py`, schema v2, which adds the LUT counters and
 `--expect-lut-fused`. Both arms ran in one action, PB `3f4d21d40676`, on sparklina with
-exclusive GPU admission.
+exclusive GPU admission, driver 595.84.
 
 | Tree | Arm | Byte-identical | TCQ fused calls | LUT fused fits | Tripped | Warm s/unit | Peak allocated |
 |---|---|---:|---:|---:|---:|---:|---:|
@@ -219,7 +311,7 @@ exclusive GPU admission.
 This is `torch.profiler` with CUDA activities, from `experiments/tessera385_bench.py
 --only-profile`, on the #385 shape: `B=8`, 8 LFM experts x 256 columns, which is 2,048
 unit-columns. Both arms ran in one action on `3aa8b9c8d`, PB `8f0cb7f0eb23`, on sparklina with
-exclusive GPU admission. `receipts/profile_families.py` reads the tables.
+exclusive GPU admission, driver 595.84. `receipts/profile_families.py` reads the tables.
 
 | Kernel family | Control: per unit-col | Control: device s | Fused: per unit-col | Fused: device s |
 |---|---:|---:|---:|---:|
@@ -263,8 +355,9 @@ exclusive GPU admission. `receipts/profile_families.py` reads the tables.
 
 This is py-spy at 100 Hz over the bench's `B=8` arm, 16 experts and two passes, on `3aa8b9c8d`.
 The control is PB `3ad4876d9b83` (3,762 samples) and the fused arm is PB `bdae5dc96f73` (1,540
-samples), both on sparklina with exclusive GPU admission. `receipts/pyspy_frames.py` reads the
-speedscope blobs. An inclusive count takes a sample once if the frame is anywhere on its stack;
+samples), both on sparklina with exclusive GPU admission, driver 595.84. Line numbers are
+`3aa8b9c8d`'s. `receipts/pyspy_frames.py` reads the speedscope blobs. An inclusive count takes a
+sample once if the frame is anywhere on its stack;
 a self count takes its leaf.
 
 | Frame | Control | Fused |
@@ -298,7 +391,7 @@ a self count takes its leaf.
 ### The same-binary A/B of record
 
 - **Tree and action.** `3aa8b9c8d`, PB `dc563b315f67`, sparky with exclusive GPU admission,
-  priority 1.
+  priority 1, driver 595.84.
 - **Arms.** The control sets `TESSERA_LUT_FUSED=0`, which is stage 1's state: the fused trellis
   and the reference swap loop. The fused arm is the default.
 - **Workload.** `experiments/tessera385_bench.py`, E2M1_K2@896, 32 LFM L18 experts (117,440,512
@@ -338,7 +431,8 @@ a self count takes its leaf.
 
 ### First read, superseded for power
 
-PB `9c05e73d00ee` ran the same tree on the same box, with 8 arms of each width in both arms.
+PB `9c05e73d00ee` ran the same tree on the same box and driver, with 8 arms of each width in
+both arms.
 
 | Arm | B | Arms | Window | n | Mparam/s | Mean W | Envelope | params/J |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
@@ -395,6 +489,10 @@ Stage 2 removed the per-trial sync, and the encoder is still host-bound:
   count calls, and `_lut_swap_passes` admits the fused passes only when `_lut_cost` is the
   reference. Under the wrapper every fit runs the reference loop, so its statistics describe the
   reference path.
+- **The fix, unmeasured.** The throughput, power, profile and GLM receipts ran before
+  `57f12627c`, with driver 595.84. The fix masks two loads in `_accept`, which launches about once
+  a position (1,096 launches against `_prefix`'s 1,056 in the profile), and its cost is
+  unmeasured.
 
 ## Development runs that failed
 
@@ -426,12 +524,25 @@ Stage 2 removed the per-trial sync, and the encoder is still host-bound:
 | Bite, trial order | `e056e23d5` + stage 2 + mutation | `d13420e77df57cf0e8d63887c344b0375a45bcf88f6a35fdf99ffa8bed9dd455` | `failed/`, as intended |
 | Full suite, 12 shards | `3aa8b9c8d` | `c547eb40fbba`, `b385b6706965`, `1d135369ff0f`, `2caed5fa1d15`, `d5a273c51977`, `74f4b074e247`, `76efc431c102`, `0d67b0638279`, `082b5cfba802`, `04ae5aca3d80`, `377b46d6d006`, `ec9c232a3477` | `done/` |
 | Full suite, 12 shards | `d9bee6267` | `3494500d3c47`, `367d4429f3a5`, `7b1be7ddeb61`, `b740c004408e`, `f52f980c94c9`, `f58e52fe7c47`, `461714086d2e`, `3bcc10897c3a`, `459fcfd88d7d`, `cb646933142e`, `fa8907473dd7`, `a58524ce9a2e` | `done/` |
+| Full suite, 12 shards | `007dde084` | `5cd51f60dfdf`, `0d8351c1852d`, `de8c3d6568c9`, `1e0a4fe84e51`, `f717a2687e97`, `7be94bb90e20`, `1b1908cb5ac0`, `04562f33d2a5`, `296ce9bf6417`, `a015cbb8b0ed`, `d302353a490a`, `6d97f7c1d19d` | `done/`; `7be94bb90e20` and `1b1908cb5ac0` in `failed/` |
+| Full suite, 12 shards | `b6d60de26` | `2cef479fdbc6`, `6ebf9fbe057d`, `8521c8329504`, `e830448c5206`, `31d468e5212b`, `60d9feab1893`, `c834a4ea381f`, `dde55635b0e5`, `dd3ef69a08e8`, `fa9ea69a95d2`, `0c6a2e04fbb9`, `a44565615c59` | `done/` |
+| Full suite, 12 shards | `57f12627c` | `505dfd7247c4`, `3ea2a0a609c2`, `90fb66c67971`, `a97eff84405c`, `1a1de766da9c`, `738fd505a6b7`, `eb1793d7ac40`, `38ed218f172a`, `7e9eec15a4e2`, `e4fda39908a2`, `f5cc0d56b62f`, `7c648623a0df` | `done/` |
+| Fixture id probe | `007dde084` | `d1027b0b6a0b332e598f637b233714af7a72f9501ccfcb0e9359acead0711ec9` | `done/` (sparky) |
+| Fixture id probe | `b6d60de26` | `02bee8b227c052eebd2111fb275eaad6570b86b577e18bb5ce7752bbd95bfc98` | `done/` (sparky) |
+| Fixture id probe | `57f12627c` | `2a45078990d898f9d3256220ee82e5db2082eaa0fa7d73ea5a07a6d8023e9027` | `done/` (sparklina) |
 | Profile A/B | `3aa8b9c8d` | `8f0cb7f0eb232e3bbe325beb9eafa898859ba31b4fbcb0cec966db5add61c1ca` | `done/` (sparklina) |
 | py-spy, control | `3aa8b9c8d` | `3ad4876d9b83123d3a086f9acf4c74fee28dc9af31f33d55dbb24453a5e587c1` | `done/` (sparklina); blob `6cf1d7e18ccf` |
 | py-spy, fused | `3aa8b9c8d` | `bdae5dc96f73d0954e571e89c8f05060d54dd0a656b36244542cda0d22eeb16c` | `done/` (sparklina); blob `7d42f096ab3a` |
 | GLM A/B, both arms | `3aa8b9c8d` | `3f4d21d406763de37751c6dd2ce596c6b20375a049e875b6bde88965a1dd386c` | `done/` (sparklina) |
 | Power, first read | `3aa8b9c8d` | `9c05e73d00ee4d4b6d750d72b34f028dc77f0dcf213b695fb6712b6dc423fcdd` | `done/` (sparky) |
 | Power A/B of record | `3aa8b9c8d` | `dc563b315f672b81f515224837c4819778ac7cad1630d900bf904b0fe9d59d1a` | `done/` (sparky) |
+| Regression test, unfixed kernel | `b6d60de26` + the test | `9848a88e87e29638b34e84d5159c8d2df7888756044e7a17e668df603609dc33` | `done/` (sparky); the loop exits 0 |
+| Concurrent-fits loop, unfixed kernel | `b6d60de26` + the test | `94643fb7da271ad223633aef7228353a32ca1adfb49985b1e94013032d29fcd7` | `done/` (sparky); the loop exits 0 |
+| Concurrent-fits loop, unfixed kernel, blocking launches | `b6d60de26` + the test | `64b700582ae0de6e5a0aeb1f0fb768582c46a289bea61cabb0822a30090a5130` | `done/` (sparky); the loop exits 0 |
+| LUT tests, the fix | `b6d60de26` + the fix | `ca5e58f7e95921e01be88526a3303d044dad599224b96fca263756651c1b93a7` | `done/` (sparky) |
+| Concurrent-fits loop, the fix | `57f12627c` | `dcd68394b3489853e76c20c98f878a301b40a4ee9f3bd11d031714ed6203d457` | `done/` (sparky) |
+| Loops queued during the driver mismatch | `b6d60de26` | `5ab15b0b1d4e0b6226f00e7702c150eddf4c0b834e947ae06c9569d05e9e48ae`, `ec1ec5f8a46d4c29e34da0b8aaa80aa87851e664b690e7ad019d0b918740e119` | `5ab15b0b1d4e` in `withdrawn/`; `ec1ec5f8a46d` has no queue record |
+| Power and GLM re-runs, withdrawn | `57f12627c` | `083c7c5e39c450c1fac3ca5598796f392e948bb4b58b6c9d7547ecda8fd21332`, `ea0b45e369517fd93d58c7c7a78d1a80be48bca123813558c45ee07479a9c69b` | `withdrawn/` |
 | Development failures | `e056e23d5` + stage 2 | `672d51708ac771ad5d22bcc724ff362a365a7ff2174633d63ddd89957f0c1b10`, `70ebc18f503fd0b086ec18c21577e0154dd60a3dae0f51d4843d4712fad2bc11`, `34d44efa2f4a45973dbad731c02cd5de92842d484797a2d6307f4283c654997c`, `3520846a841ae680a8a60681736d584bdc31ed4d14a33ce046097b711d95d7a6` | `failed/` |
 
 **Where things live**
@@ -439,10 +550,16 @@ Stage 2 removed the per-trial sync, and the encoder is still host-bound:
 - **Records.** Records are under `/mnt/shared/prismabuild-fleet/pb-queue/<state>/<key>.json`. A
   pbrun snapshot of a worktree with uncommitted edits records the commit it was taken from as
   its parent. The "Tree" column is that parent. The `3aa8b9c8d` snapshots add only the untracked
-  GLM script and pbrun's closure file.
+  GLM script and pbrun's closure file. The fix runs' snapshots add `lut_loop.py` and pbrun's
+  closure file, and `ca5e58f7e959` and `dcd68394b348`, taken from this branch's worktree, also
+  add the GLM script.
 - **Receipts.** Bench results, profile tables and GLM results are under
   `/mnt/shared/tessera-measurements/tessera486-fused-lut/`. Each `results.json` records its argv,
   environment and `encoder_fixture_id`.
 - **Scripts and derived files.** `receipts/` in that directory holds the Netdata samples and
   window tables, the py-spy blob copies and frame tables, the bite diffs, the probe logs and the
-  scripts named above.
+  scripts named above. It also holds the fix runs' client logs and results (`stage2-fix-*`) and
+  the pbtest results of the suites on `d9bee6267`, `007dde084`, `b6d60de26` and `57f12627c`
+  (`stage2-suite-<tree>.json`).
+- **Withdrawn outputs.** `withdrawn-2026-09-15/` holds the partial outputs of the withdrawn power
+  and GLM re-runs, with a note. They are not receipts.
