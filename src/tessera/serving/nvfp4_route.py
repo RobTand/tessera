@@ -37,6 +37,7 @@ from typing import Optional
 
 import torch
 
+from .compile_identity import note_traced_dispatch
 from .ext import substitutes_when_unavailable
 from .lane import MODE_RESIDENT, MODE_STREAMED, MODES
 from .ops import PreparedTesseraModule, prepare_tessera_module  # noqa: F401  (re-export)
@@ -281,6 +282,14 @@ def build_tessera_nvfp4_method(scheme, prefix: str, mode: str):
                                   torch.ones((), dtype=torch.float32, device=device),
                                   persistent=False)
             native_ops.require_native_fp4_quant(f"{prefix}: the Tessera NVFP4 route's A side")
+            # The node this module's forward will contain, declared where the
+            # other two routes declare theirs (``fp8_route``, ``bf16_route``).
+            # This route has one launch and no lane branch, so the pair is the
+            # same for every module -- but vLLM 0.28 builds its AOT key before
+            # Dynamo runs and checks traced sources only against the list the
+            # SAVED artifact carries, so what a forward dispatches through is
+            # a fact this plugin states rather than one the cache infers.
+            note_traced_dispatch(prefix, GEMM_ALPHA_OP)
             del layer.wire_bytes
             if self._mode == MODE_RESIDENT:
                 packed, scales = prepared.decode()
