@@ -250,8 +250,10 @@ planes amortising.
 > written, and because the mechanism it names — the trellis running down rows
 > within a column — is exactly why the row axis needed a new plane and why the
 > span-2 route still refuses a row cut (`sharding.ROUTE_TP_AXES`).
-> **What has not moved:** no multi-rank serve has been run, so
-> `runtime_contract.json` still publishes `max_world_size: 1` per family.
+> **What moved later (contract v29, 2026-09-15):** two-rank serves have run, and
+> `runtime_contract.json` publishes `max_world_size: 2` per family on a named
+> world-size receipt, graded `route_only`
+> (`docs/measurements/tessera-glm53-a4-stub-tp2-world-size-2026-09-15.md`).
 >
 > **Also superseded 2026-09-05 (#328): the field named below no longer exists.**
 > The paragraph says the config "declares `tp_size` so a loader cannot quietly
@@ -1330,6 +1332,9 @@ stub (`docs/measurements/tessera-glm53-a4-stub-tp2-served-2026-09-14.md`). An
 NVFP4 stack at q896 exports without `--allow-unserveable` and names both cells
 in its manifest; any other rung still needs the override, stamped in the
 manifest's `serving_gate`. Both cells grade `route_only` and carry no smoke
-record. Tensor parallelism is not attested (`max_world_size` stays 1 at v28,
-although that receipt is a two-rank serve), and the stub's attention backend
-refuses graph mode, so no compiled forward is attested.
+record. Tensor parallelism was not attested at v28 (`max_world_size` stayed 1,
+although that receipt is a two-rank serve); v29 raises every family to 2 on a
+world-size receipt that adds a KL against a single-rank arm
+(`docs/measurements/tessera-glm53-a4-stub-tp2-world-size-2026-09-15.md`,
+tessera#514), still `route_only`. The stub's attention backend refuses graph
+mode, so no compiled forward is attested.

@@ -814,27 +814,27 @@ def test_no_unit_attests_a_world_size_above_one(contract):
         assert unit["max_world_size"] == 1
 
 
-# --- the silence about KV-head replication, and what ends it (#330) -----------
+# --- KV-head replication: the silence #330 gated, and v29's exit from it ------
 #
-# ``tensor_parallel`` publishes ``max_world_size`` and ``loader_axes`` and says
-# NOTHING about KV-head replication, although the loader enforces vLLM's rule
-# (``sharding.layer_replicas`` reads ``KV_REPLICAS_ATTRIBUTE`` off the layer and
-# the plan hands rank ``tp_rank`` the shard at ``tp_rank // replicas``).  That
-# is deliberate: at ``max_world_size == 1`` a published replication rule would
-# be a claim a consumer PINS -- and Tessera must then keep, so that a vLLM
-# change becomes a contract break rather than a loader bug -- on the strength of
-# no served evidence, which is a claim beyond its evidence in the direction
-# nobody checks for.  The silence is only honest while the world is one, so it
-# is GATED rather than commented.
+# Until v29 ``tensor_parallel`` published ``max_world_size`` and ``loader_axes``
+# and said NOTHING about KV-head replication, although the loader enforces
+# vLLM's rule (``sharding.layer_replicas`` reads ``KV_REPLICAS_ATTRIBUTE`` off
+# the layer and the plan hands rank ``tp_rank`` the shard at
+# ``tp_rank // replicas``).  That was deliberate: at ``max_world_size == 1`` a
+# published replication rule would have been a claim a consumer PINS on the
+# strength of no served evidence.  The silence was only honest while the world
+# was one, so it was GATED rather than commented -- and v29, which attests a
+# world of two on a receipt, takes the gate's publish exit.  The gate below is
+# unchanged; the tests read the other way.
 
 def _packaged_tensor_parallel() -> dict:
     """The shipped ``tensor_parallel`` block, read WITHOUT the validator.
 
-    ``load_serving_contract`` refuses ``max_world_size != 1`` outright, so on
-    the one tree this gate exists for -- the one where somebody has attested a
-    bigger world -- the ``contract`` fixture raises before the gate can speak.
-    Reading the packaged bytes through the contract module's own
-    ``contract_path`` keeps the gate alive across that lift.
+    Since v29 the validator refuses a raised world with no published rule
+    itself (``_validate_tensor_parallel``), so on a tree that drops the rule the
+    ``contract`` fixture raises before the gate can speak.  Reading the
+    packaged bytes through the contract module's own ``contract_path`` keeps
+    this test-side gate an independent second reading of the same bytes.
     """
     return json.loads(contract_path().read_text(encoding="utf-8"))["tensor_parallel"]
 
@@ -873,32 +873,39 @@ def _unpublished_replication_above_one(tensor_parallel: dict) -> str | None:
         f"single-rank arm anyway.")
 
 
-def test_the_contract_does_not_owe_a_replication_rule_it_has_not_attested():
-    """The #330 gate on the SHIPPED bytes: silent, and honestly so.
+def test_the_contract_publishes_the_replication_rule_its_attested_world_owes():
+    """The #330 gate on the SHIPPED bytes, inverted: the world is above one,
+    so the rule is published, and it is the loader's own.
 
-    This passes today two ways -- the world is 1 -- and it is the assertion
-    that fails the day somebody raises ``max_world_size`` (and lifts the
-    validator's refusal of it) while the block is still silent.  It does not
-    restate that the world is 1: ``test_no_unit_attests_a_world_size_above_one``
-    owns that claim, and this one owns the obligation that outlives it.
+    It passes because v29 took the publish exit, not because the world is 1:
+    the first assertion is what would fail if a later version put every unit
+    back to 1 without also withdrawing the rule, which the validator refuses
+    separately (``test_a_replication_rule_at_a_world_of_one_is_refused``).
     """
-    problem = _unpublished_replication_above_one(_packaged_tensor_parallel())
+    from tessera.serving.sharding import KV_REPLICAS_ATTRIBUTE
+
+    tensor_parallel = _packaged_tensor_parallel()
+    assert max(int(unit["max_world_size"]) for unit in tensor_parallel["units"]) > 1
+    problem = _unpublished_replication_above_one(tensor_parallel)
     assert problem is None, problem
+    rule = tensor_parallel["kv_head_replication"]
+    assert rule["attribute"] == KV_REPLICAS_ATTRIBUTE
+    assert rule["shard_index"] == f"tp_rank // {KV_REPLICAS_ATTRIBUTE}"
+    assert rule["exercised_by_receipt"] is False
 
 
 @pytest.mark.parametrize("raised", [2, 8])
-def test_a_world_above_one_may_not_leave_the_replication_rule_unpublished(raised):
-    """The gate has teeth: raise the world in the fixture, not in the file.
+def test_withdrawing_the_rule_above_one_is_refused_twice(contract, raised):
+    """The gate still has teeth: drop the rule in a copy, not in the file.
 
-    The shipped contract is never edited to prove this -- the mutation is a
-    copy, exactly as the validator's refusals are exercised -- and the message
-    is checked for the two exits, because a gate that fires without saying what
-    to do is a gate that gets deleted.
+    The test-side gate names both exits, and the validator -- which now owns
+    the rule -- refuses the same copy on its own reading.
     """
     from tessera.serving.sharding import KV_REPLICAS_ATTRIBUTE
 
     tensor_parallel = _packaged_tensor_parallel()
     tensor_parallel["units"][0]["max_world_size"] = raised
+    del tensor_parallel["kv_head_replication"]
 
     problem = _unpublished_replication_above_one(tensor_parallel)
     assert problem is not None, "a world above one with no replication rule must be refused"
@@ -907,26 +914,48 @@ def test_a_world_above_one_may_not_leave_the_replication_rule_unpublished(raised
     assert "#330" in problem
     assert "PUBLISH" in problem and "PUT THE ATTESTATION BACK" in problem
 
+    bad = _mutated(contract, lambda c: c["tensor_parallel"].pop("kv_head_replication"))
+    with pytest.raises(ValueError, match="publishes no kv_head_replication"):
+        validate_serving_contract(bad)
 
-def test_publishing_the_rule_is_a_real_exit_from_the_gate():
-    """Not a tripwire that only ever says "go back".
 
-    Option (a) of #330 -- publish the rule -- must satisfy this gate, or the
-    gate would be quietly pinning ``max_world_size == 1`` forever under
-    another name.  Any published field naming the loader's constant clears it;
-    what that field must SAY is the decision the gate hands back to a person.
-    """
-    from tessera.serving.sharding import KV_REPLICAS_ATTRIBUTE
-
+def test_publishing_the_rule_is_the_exit_the_shipped_block_took():
+    """Not a tripwire that only ever says "go back": the packaged rule clears
+    the gate, removing it trips the gate, and restoring it clears it again."""
     tensor_parallel = _packaged_tensor_parallel()
-    for unit in tensor_parallel["units"]:
-        unit["max_world_size"] = 2
+    rule = tensor_parallel.pop("kv_head_replication")
     assert _unpublished_replication_above_one(tensor_parallel) is not None
-    tensor_parallel["kv_head_replication"] = {
-        "attribute": KV_REPLICAS_ATTRIBUTE,
-        "shard_index": f"tp_rank // {KV_REPLICAS_ATTRIBUTE}",
-    }
+    tensor_parallel["kv_head_replication"] = rule
     assert _unpublished_replication_above_one(tensor_parallel) is None
+
+
+def test_a_replication_rule_that_is_not_the_loaders_is_refused(contract):
+    """``attribute`` and ``shard_index`` are compared with the constant the
+    loader reads, as ``loader_axes`` is compared with ``ROUTE_TP_AXES``."""
+    renamed = _mutated(contract, lambda c: c["tensor_parallel"]["kv_head_replication"]
+                       .__setitem__("attribute", "num_kv_heads"))
+    with pytest.raises(ValueError, match="KV_REPLICAS_ATTRIBUTE"):
+        validate_serving_contract(renamed)
+    reindexed = _mutated(contract, lambda c: c["tensor_parallel"]["kv_head_replication"]
+                         .__setitem__("shard_index", "tp_rank"))
+    with pytest.raises(ValueError, match="index arithmetic"):
+        validate_serving_contract(reindexed)
+
+
+def test_a_replication_rule_at_a_world_of_one_is_refused(contract):
+    """At one rank the rule describes no served path: #330's silence holds."""
+    def back_to_one(c):
+        tp = c["tensor_parallel"]
+        for unit in tp["units"]:
+            unit["max_world_size"] = 1
+            unit.pop("world_size_receipt")
+        tp.pop("world_size_receipts")
+
+    bad = _mutated(contract, back_to_one)
+    with pytest.raises(ValueError, match="while every unit is at 1"):
+        validate_serving_contract(bad)
+    bad["tensor_parallel"].pop("kv_head_replication")
+    validate_serving_contract(bad)
 
 
 def test_loader_axes_is_the_table_the_routes_gate_on(contract):
@@ -1064,18 +1093,165 @@ def test_an_expert_parallel_claim_is_refused(contract):
 
 
 def test_an_unmeasured_world_size_is_refused(contract):
-    """And the refusal no longer gives a false reason.
-
-    It used to say a sharded form needs per-rank wires.  It does not: the
-    artifact is TP-agnostic, one whole unit per role, and the rank cuts its own
-    shard at load.  What is missing is the measurement, and that is what the
-    message now says.
+    """A world wider than the named receipt covers is refused, and so is a
+    raised unit that names no receipt -- with the reason being the missing
+    measurement, never the old false one that a sharded form needs per-rank
+    wires (the artifact is TP-agnostic and the rank cuts its shard at load).
     """
-    bad = _mutated(contract,
-                   lambda c: c["tensor_parallel"]["units"][0].__setitem__("max_world_size", 2))
+    wider = _mutated(contract,
+                     lambda c: c["tensor_parallel"]["units"][0].__setitem__("max_world_size", 4))
+    with pytest.raises(ValueError, match="covers a world of 2"):
+        validate_serving_contract(wider)
+
+    bare = _mutated(contract,
+                    lambda c: c["tensor_parallel"]["units"][0].pop("world_size_receipt"))
     with pytest.raises(ValueError, match="ATTESTATION") as excinfo:
-        validate_serving_contract(bad)
+        validate_serving_contract(bare)
     assert "per-rank wires" not in str(excinfo.value)
+
+
+# --- world-size receipts (v29, tessera#506, tessera#514) ----------------------
+#
+# ``max_world_size`` above 1 names an entry of ``tensor_parallel
+# .world_size_receipts``.  The validator checks every value's grammar and the
+# joins inside the document; the tests below also hold the entry to the files
+# it names -- which the wheel does not ship -- by DERIVING what the entry
+# states from them: the executed units from the committed route traces, the
+# KL arms from the committed table.
+
+_REPO = Path(__file__).resolve().parent.parent
+
+
+def _world_size_receipts(contract) -> dict:
+    return {r["id"]: r for r in contract["tensor_parallel"]["world_size_receipts"]}
+
+
+@pytest.mark.parametrize("index", [0, 1, 2])
+def test_a_raised_unit_without_its_receipt_is_refused_by_name(contract, index):
+    unit = contract["tensor_parallel"]["units"][index]
+    assert unit["max_world_size"] > 1, "the premise: every packaged unit is raised"
+    bad = _mutated(contract,
+                   lambda c: c["tensor_parallel"]["units"][index].pop("world_size_receipt"))
+    with pytest.raises(ValueError, match="names no world_size_receipt") as excinfo:
+        validate_serving_contract(bad)
+    assert unit["unit"] in str(excinfo.value)
+
+
+def test_a_receipt_the_block_does_not_publish_is_refused(contract):
+    bad = _mutated(contract, lambda c: c["tensor_parallel"]["units"][0]
+                   .__setitem__("world_size_receipt", "some_other_serve"))
+    with pytest.raises(ValueError, match="some_other_serve"):
+        validate_serving_contract(bad)
+
+
+def test_a_receipt_whose_traces_did_not_execute_the_unit_is_refused(contract):
+    family = contract["tensor_parallel"]["units"][1]["unit"]
+    bad = _mutated(contract, lambda c: c["tensor_parallel"]["world_size_receipts"][0]
+                   ["executed_units"].remove(family))
+    with pytest.raises(ValueError, match="not this unit") as excinfo:
+        validate_serving_contract(bad)
+    assert family in str(excinfo.value)
+
+
+def test_a_serve_record_at_another_world_is_refused(contract):
+    def one_rank(c):
+        flags = c["tensor_parallel"]["world_size_receipts"][0]["serves"][0]["flags"]
+        flags[flags.index("--tensor-parallel-size") + 1] = "1"
+
+    with pytest.raises(ValueError, match="covers a world of 2"):
+        validate_serving_contract(_mutated(contract, one_rank))
+
+
+def test_a_serve_needs_one_route_trace_per_rank(contract):
+    bad = _mutated(contract, lambda c: c["tensor_parallel"]["world_size_receipts"][0]
+                   ["serves"][1]["route_traces"].pop())
+    with pytest.raises(ValueError, match="one route trace per rank"):
+        validate_serving_contract(bad)
+
+
+def test_a_typed_excess_that_the_arms_do_not_derive_is_refused(contract):
+    bad = _mutated(contract, lambda c: c["tensor_parallel"]["world_size_receipts"][0]
+                   ["single_rank_kl"]["excess_over_control"].__setitem__("abs_dlogprob_p50", 1.0))
+    with pytest.raises(ValueError, match="derive"):
+        validate_serving_contract(bad)
+
+
+def test_a_single_rank_kl_missing_an_arm_is_refused(contract):
+    bad = _mutated(contract, lambda c: c["tensor_parallel"]["world_size_receipts"][0]
+                   ["single_rank_kl"]["arms"].pop("control"))
+    with pytest.raises(ValueError, match="control"):
+        validate_serving_contract(bad)
+
+
+@pytest.mark.parametrize("grade", ["kl_lower_bound", "kl_full_vocab"])
+def test_a_world_size_receipt_grades_route_only(contract, grade):
+    bad = _mutated(contract, lambda c: c["tensor_parallel"]["world_size_receipts"][0]
+                   .__setitem__("grade", grade))
+    with pytest.raises(ValueError, match="route_only"):
+        validate_serving_contract(bad)
+
+
+def test_a_receipt_no_unit_names_is_refused(contract):
+    def orphan(c):
+        extra = copy.deepcopy(c["tensor_parallel"]["world_size_receipts"][0])
+        extra["id"] = "unnamed_serve"
+        c["tensor_parallel"]["world_size_receipts"].append(extra)
+
+    with pytest.raises(ValueError, match="unnamed_serve"):
+        validate_serving_contract(_mutated(contract, orphan))
+
+
+def test_every_file_a_world_size_receipt_names_is_in_the_tree(contract):
+    for receipt in _world_size_receipts(contract).values():
+        named = [receipt["receipt"], receipt["single_rank_kl"]["table"]]
+        named += [t for serve in receipt["serves"] for t in serve["route_traces"]]
+        missing = [path for path in named if not (_REPO / path).is_file()]
+        assert missing == [], f"{receipt['id']} names files that are not here: {missing}"
+
+
+def test_executed_units_are_what_every_rank_of_every_serve_traced(contract):
+    """Scope from the evidence: a unit is raised exactly when its route is on
+    every rank's trace, and ``executed_units`` is derived here, not trusted."""
+    import hashlib
+
+    from tessera.serving.contract import PAYLOAD_FAMILY_BY_ROUTE
+
+    units = contract["tensor_parallel"]["units"]
+    for name, receipt in _world_size_receipts(contract).items():
+        receipt_text = (_REPO / receipt["receipt"]).read_text(encoding="utf-8")
+        per_rank = []
+        for serve in receipt["serves"]:
+            for path in serve["route_traces"]:
+                raw = (_REPO / path).read_bytes()
+                trace = json.loads(raw)
+                assert trace["schema"] == "tessera.route_trace/1", path
+                per_rank.append({PAYLOAD_FAMILY_BY_ROUTE[e["policy"].partition(":")[0]]
+                                 for e in trace["entries"]})
+                assert hashlib.sha256(raw).hexdigest() in receipt_text, (
+                    f"{receipt['receipt']} does not quote the sha256 of {path}")
+        on_every_rank = set.intersection(*per_rank)
+        assert set(receipt["executed_units"]) == on_every_rank, (name, per_rank)
+        raised = {u["unit"] for u in units if u.get("world_size_receipt") == name}
+        assert raised == on_every_rank
+
+
+def test_the_single_rank_kl_block_is_the_committed_table(contract):
+    for receipt in _world_size_receipts(contract).values():
+        block = receipt["single_rank_kl"]
+        table = json.loads((_REPO / block["table"]).read_text(encoding="utf-8"))
+        assert table["issue"] == block["issue"]
+        assert table["instrument"] == block["instrument"]
+        assert table["read"] == block["read"]
+        for role, arm in block["arms"].items():
+            assert arm["metrics"] == table["arms"][arm["id"]]["metrics"], role
+            assert arm["scope"] == table["arms"][arm["id"]]["scope"], role
+        assert table["excess_over_control"]["quantized"] == block["arms"]["quantized"]["id"]
+        assert table["excess_over_control"]["control"] == block["arms"]["control"]["id"]
+        for metric, ratio in block["excess_over_control"].items():
+            assert table["excess_over_control"][metric] == ratio
+        assert receipt["grade"] == "route_only"
+        text = (_REPO / receipt["receipt"]).read_text(encoding="utf-8")
+        assert block["issue"] in text and "route_only" in text
 
 
 def test_a_loader_axis_that_disagrees_with_the_code_is_refused(contract):

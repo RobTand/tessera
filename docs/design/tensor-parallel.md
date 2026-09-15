@@ -3,11 +3,15 @@
 **Status:** the Tessera-side mechanism is built and tested (schema minor 4,
 `layout.slice_unit`, 2026-09-02), and so is the serving plugin's per-rank
 loader, including the gate that decides which axis each route may be cut on
-(2026-09-02, #7). **Nothing here has run on two ranks.** The contract still
-publishes `max_world_size: 1` for both families, because that field is an
-attestation and no multi-rank serve has been measured; what it publishes beside
-it is `loader_axes`, which is what the loader *does*. The served two-box TP=2
-gate is the remaining work and is named at the end.
+(2026-09-02, #7). **Update 2026-09-15 (contract v29):** the two-box TP=2 gate
+has run. The contract publishes `max_world_size: 2` for all three families,
+each unit naming a world-size receipt: two two-rank serves of the GLM-5.3-Flash
+4-layer stub, one route trace per rank, and a KL against a single-rank arm,
+graded `route_only`
+(`docs/measurements/tessera-glm53-a4-stub-tp2-world-size-2026-09-15.md`,
+tessera#514). Beside it the contract publishes `loader_axes`, which is what the
+loader *does*, and `kv_head_replication`. The text below was written before that
+serve and is kept as the design record.
 
 ## The claim
 

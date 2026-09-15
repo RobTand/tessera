@@ -47,13 +47,16 @@ refusal exists it is symmetric across the group -- every rank, including rank 0,
 whose shard would in fact pack -- because a group whose ranks disagree about
 whether a module exists hangs on its first collective rather than failing.
 
-NONE OF THIS IS ATTESTED.  ``runtime_contract.json``'s
-``tensor_parallel.units[].max_world_size`` is still 1 and stays 1 until a
-multi-rank serve has been run: what is published above it is
+WHAT IS ATTESTED, AND WHAT IS ONLY ATTEMPTED.  ``runtime_contract.json``'s
+``tensor_parallel.units[].max_world_size`` is 2 for every family since v29,
+each unit naming the world-size receipt that covers it: two two-rank serves of
+the GLM-5.3-Flash stub, a route trace per rank, and a KL against a single-rank
+arm (tessera#514), graded ``route_only``.  A wider world is something this build
+will attempt and nothing has measured.  What is published beside it is
 ``loader_axes``, which is ``ROUTE_TP_AXES`` -- a statement about what this
-build's loader DOES, checked against this module so the two cannot drift.  A
-two-rank serve is therefore something this build will attempt and nothing has
-measured, and that distinction is machine-readable rather than a footnote.
+build's loader DOES, checked against this module so the two cannot drift -- and
+``kv_head_replication``, checked against :data:`KV_REPLICAS_ATTRIBUTE`.  That
+distinction is machine-readable rather than a footnote.
 
 WHICH AXIS, AND WHICH ROWS.  vLLM's parallel Linears split one of the two axes
 and tell the method so at ``create_weights``, with the TILE this rank computes
@@ -197,9 +200,11 @@ TP_STATUSES = (TP_SHARDED, TP_REFUSED)
 #:
 #: It is a machine-readable STATUS, and it is a statement about this build's
 #: DECODERS, not an attestation: ``max_world_size`` in the same block is the
-#: attestation, and it is still 1 because no multi-rank serve has been run.
-#: A producer that wants "will this even load" reads this; a producer that
-#: wants "has this been measured" reads ``max_world_size``.
+#: attestation, 2 since v29 on a receipt each unit names.  The receipt's traces
+#: cut E4M3_K1 on rows and BF16_K1 on columns only, so the other axis of each is
+#: this table's word and no trace's.  A producer that wants "will this even
+#: load" reads this; a producer that wants "has this been measured" reads
+#: ``max_world_size``.
 #:
 #: The row axis's answer is a property of the BODY, not of the tile: the window
 #: body's L-bit pad IS ``state_{-1}``, so a row shard costs the window decoders
@@ -336,9 +341,9 @@ def require_a_cuttable_artifact(prefix: str, world: int, config: "Optional[dict]
     a current exporter, which stamps the declaration, and the bytes themselves
     do not change.
 
-    A world size above one remains ATTEMPTED and not ATTESTED whatever this
-    gate says: ``runtime_contract.json`` publishes ``max_world_size: 1`` for
-    every family until a multi-rank serve has been run.
+    Whatever this gate says, a world size is ATTESTED only up to the
+    contract's ``max_world_size``: 2 for every family since v29, on the receipt
+    each unit names.  Above that it is ATTEMPTED.
     """
     if int(world) <= 1:
         return
