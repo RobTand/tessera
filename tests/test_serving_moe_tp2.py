@@ -285,4 +285,52 @@ def test_tp2_intake_refuses_device_change_after_first_packed_projection(wires):
     with pytest.raises(ValueError, match='cannot change device'):
         intake.load('w13', 0, 1, wire, device=torch.device('meta'))
     assert intake.device == torch.device('cpu')
-    assert intake.prepared['w13'][1][0] is None
+    assert intake.placed_projections() == 1
+
+
+def _fresh_storage_bytes(fn):
+    """Bytes of every storage an operator creates while ``fn`` runs.
+
+    A view shares its input's storage and is not counted, so this is what the
+    call allocates, counted at the dispatcher, with no device needed."""
+    from torch.utils._python_dispatch import TorchDispatchMode
+    from torch.utils._pytree import tree_leaves
+
+    class Fresh(TorchDispatchMode):
+        def __init__(self):
+            super().__init__()
+            self.bytes = 0
+
+        def __torch_dispatch__(self, func, types, args=(), kwargs=None):
+            out = func(*args, **(kwargs or {}))
+            given = {t.untyped_storage().data_ptr() for t in tree_leaves((args, kwargs))
+                     if isinstance(t, torch.Tensor)}
+            for t in tree_leaves(out):
+                if isinstance(t, torch.Tensor) and t.untyped_storage().data_ptr() not in given:
+                    self.bytes += t.untyped_storage().nbytes()
+            return out
+
+    with Fresh() as fresh:
+        fn()
+    return fresh.bytes
+
+
+@pytest.mark.parametrize('rank', [0, 1])
+def test_tp2_finishing_the_load_copies_no_packed_expert(wires, stub_runtime, rank):
+    # vLLM finishes a layer only after EVERY layer has loaded. An intake that
+    # kept each projection's owner until then and stacked at finish held the
+    # whole model's routed experts twice (tessera#501). Each projection is
+    # placed on its expert axis inside its own callback, so finishing
+    # allocates less than one expert's packed bytes: the joined scale only.
+    layer = layer_for(rank)
+    method = method_for(wires, layer)
+    method.create_weights(layer, E, H, N // 2, torch.bfloat16)
+    for expert in range(E):
+        for shard, blob in [('w1', wires[0][expert][0]), ('w3', wires[0][expert][1]),
+                            ('w2', wires[1][expert])]:
+            param = layer.w2_wire if shard == 'w2' else layer.w13_wire
+            param.weight_loader(param, torch.frombuffer(bytearray(blob), dtype=torch.uint8),
+                                'wire', shard, expert)
+    allocated = _fresh_storage_bytes(lambda: method.process_weights_after_loading(layer))
+    resident = method.research_resident_bytes()
+    assert allocated < resident // E, (allocated, resident)

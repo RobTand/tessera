@@ -443,6 +443,15 @@ def pack_window_planes(
     and the schedule's top rate together -- a half-lane's windows share one
     int64 -- so that check lives in ``tessera_gemv_window``, where both are
     known.
+
+    The work per rate group is a fixed number of whole-tensor operations, not
+    one strided write per bit position and per pad bit (tessera#501): the
+    group's columns expand to ``[m, steps, R]`` bits in one broadcast shift,
+    the pad to ``[m, L]`` in another, and the byte layout -- which columns
+    share a rate, where each column starts -- is arithmetic on the ``rates``
+    tuple the host already holds, so it costs no device read.  A serving
+    load packs every role of every routed expert here, and the launch count
+    is what bounded it.
     """
     steps, cols = body_bits.shape
     device = body_bits.device
@@ -468,36 +477,50 @@ def pack_window_planes(
                 f"a start state of {int(initial_state.max())} does not fit a "
                 f"{window_bits}-bit window"
             )
+    rates = tuple(int(r) for r in rates)
+    columns_at: "dict[int, list[int]]" = {}
+    for column, rate in enumerate(rates):
+        columns_at.setdefault(rate, []).append(column)
+    col_bytes = [(window_bits + steps * rate + 7) // 8 for rate in rates]
+    starts = [0] * (cols + 1)
+    for column, nbytes in enumerate(col_bytes):
+        starts[column + 1] = starts[column] + nbytes
     rate_t = torch.tensor(rates, dtype=torch.int32, device=device)
-    col_bytes = (window_bits + steps * rate_t.long() + 7) // 8
-    starts = torch.zeros(cols + 1, dtype=torch.int64, device=device)
-    starts[1:] = torch.cumsum(col_bytes, 0)
-    plane = torch.zeros(int(starts[-1]) + 8, dtype=torch.uint8, device=device)
-    body = body_bits.to(torch.int32)
+    plane = torch.zeros(starts[-1] + 8, dtype=torch.uint8, device=device)
+    # uint8 shifts extract the same low bits an int32 copy would for the
+    # reader's uint8 body; any wider dtype takes the int32 the loop always used.
+    body = body_bits if body_bits.dtype == torch.uint8 else body_bits.to(torch.int32)
     weights = 1 << torch.arange(7, -1, -1, device=device, dtype=torch.uint8)
-    for present in sorted(set(rates)):
-        which = torch.tensor(
-            [c for c, r in enumerate(rates) if r == present],
-            dtype=torch.int64, device=device,
-        )
-        nbytes = int(col_bytes[which[0]])
-        bits = torch.zeros(which.numel(), nbytes * 8, dtype=torch.uint8, device=device)
-        values = body[:, which]                                   # [steps, m]
-        stop = window_bits + steps * present
-        for position in range(present):
-            bits[:, window_bits + position : stop : present] = (
-                (values >> (present - 1 - position)) & 1
-            ).t().to(torch.uint8)
-        if initial_state is not None:
-            start = initial_state.to(device).long()[which]         # [m]
-            for position in range(window_bits):
-                bits[:, position] = (
-                    (start >> (window_bits - 1 - position)) & 1
-                ).to(torch.uint8)
+    start = None if initial_state is None else initial_state.to(device).long()
+    pad_shifts = torch.arange(window_bits - 1, -1, -1, device=device, dtype=torch.int64)
+    whole = len(columns_at) == 1
+    for present in sorted(columns_at):
+        columns = columns_at[present]
+        m = len(columns)
+        nbytes = col_bytes[columns[0]]
+        which = None if whole else torch.tensor(columns, dtype=torch.int64, device=device)
+        values = body if whole else body.index_select(1, which)          # [steps, m]
+        shifts = torch.arange(present - 1, -1, -1, device=device, dtype=torch.int64).to(body.dtype)
+        body_part = ((values.t().unsqueeze(-1) >> shifts) & 1).reshape(m, steps * present)
+        if start is None:
+            pad = torch.zeros(m, window_bits, dtype=torch.uint8, device=device)
+        else:
+            state = start if whole else start.index_select(0, which)
+            pad = ((state.unsqueeze(-1) >> pad_shifts) & 1).to(torch.uint8)
+        tail = nbytes * 8 - window_bits - steps * present
+        bits = torch.cat([pad, body_part.to(torch.uint8),
+                          torch.zeros(m, tail, dtype=torch.uint8, device=device)], 1)
         packed = (bits.reshape(-1, 8) * weights).sum(1, dtype=torch.uint8)
-        dest = starts[which][:, None] + torch.arange(nbytes, device=device)[None, :]
-        plane[dest.reshape(-1)] = packed
-    return plane, starts[:cols] * 8, rate_t
+        if whole:
+            # One rate: the columns sit back to back at one width, so the
+            # plane's head IS the group's bytes in column order.
+            plane[: m * nbytes] = packed
+        else:
+            first = torch.tensor([starts[c] for c in columns], dtype=torch.int64, device=device)
+            dest = first[:, None] + torch.arange(nbytes, device=device)[None, :]
+            plane[dest.reshape(-1)] = packed
+    offsets = torch.tensor([8 * s for s in starts[:cols]], dtype=torch.int64, device=device)
+    return plane, offsets, rate_t
 
 
 def build_window_values(grid, device: str = "cuda") -> torch.Tensor:

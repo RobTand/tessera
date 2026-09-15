@@ -845,6 +845,141 @@ def test_a_shard_keeps_its_parent_encoder_identity_and_never_asks_the_current_on
     assert untagged.manifest.encoder_fixture_id is None
 
 
+def _window_plan(parsed, axis, rank):
+    rows, columns = _unit_extent(parsed)
+    if axis == AXIS_ROWS:
+        return plan_shard("mlp.gate_up", roles=[("weight", rows)], columns=columns,
+                          out_partitions=[rows // 2], in_size=columns, tp_rank=rank, tp_size=2,
+                          input_size=columns, output_size=rows)
+    return plan_shard("mlp.down_proj", roles=[("weight", rows)], columns=columns,
+                      out_partitions=[rows], in_size=columns // 2, tp_rank=rank, tp_size=2,
+                      input_size=columns, output_size=rows)
+
+
+def _written_and_read_back(parsed, sharded, label):
+    """A shard parse as the load built it at 00d517d40: serialised, then parsed."""
+    from tessera.trellis import ConvCode
+    from tessera.unit_artifact import build_unit_artifact, parse_unit_artifact
+
+    manifest = parsed.manifest
+    _m, _region, blob = build_unit_artifact(
+        sharded, label, parsed.forests, int(manifest.branch.root_q256),
+        parsed.code or ConvCode(), superblock=int(manifest.geometry.superblock_columns),
+        container=manifest.branch.container, fixture_id=manifest.encoder_fixture_id)
+    return parse_unit_artifact(blob, device=parsed.unit.body_bits.device)
+
+
+def _identical(a, b, path):
+    import dataclasses
+
+    if isinstance(a, torch.Tensor):
+        assert isinstance(b, torch.Tensor), path
+        assert (a.dtype, tuple(a.shape), a.device.type) == (b.dtype, tuple(b.shape), b.device.type), path
+        assert torch.equal(a, b), path
+    elif dataclasses.is_dataclass(a) and not isinstance(a, type):
+        assert type(a) is type(b), path
+        for field in dataclasses.fields(a):
+            _identical(getattr(a, field.name), getattr(b, field.name), f"{path}.{field.name}")
+    elif isinstance(a, (tuple, list)):
+        assert type(a) is type(b) and len(a) == len(b), path
+        for i, (x, y) in enumerate(zip(a, b)):
+            _identical(x, y, f"{path}[{i}]")
+    else:
+        assert a == b, (path, a, b)
+
+
+def _prepared_roles(module):
+    return getattr(module, f"_{type(module).__name__}__roles")
+
+
+WINDOW_LEGACY = [("e4m3-1024-window-channel-256c", "fp8"), ("bf16-1024-window-channel-256c", "bf16")]
+
+
+@pytest.mark.parametrize("name, route", WINDOW_LEGACY)
+@pytest.mark.parametrize("axis", [AXIS_ROWS, AXIS_COLUMNS])
+@pytest.mark.parametrize("rank", [0, 1])
+def test_a_cut_parse_prepares_exactly_what_its_written_shard_did(name, route, axis, rank):
+    """The route's module from the cut unit is the module from the shard's bytes.
+
+    Every unit field, and every tensor and field of the prepared module --
+    packed planes, gathers, tables, the start state, the row scale and the
+    decoded tile -- on ``torch.equal``, dtype, shape and device kind, both ranks
+    of both axes, for the E4M3 and the BF16 window routes.
+    """
+    from tessera.serving.bf16_route import prepare_tessera_bf16_module
+    from tessera.serving.fp8_route import prepare_tessera_fp8_module
+
+    prepare = prepare_tessera_fp8_module if route == "fp8" else prepare_tessera_bf16_module
+    parsed = _legacy(name)
+    plan = _window_plan(parsed, axis, rank)
+    [(role, cut)] = shard_parsed_roles([("weight", parsed)], plan)
+    sharded = _shard_unit_for_rank(parsed, plan, plan.role("weight"))
+    written = _written_and_read_back(parsed, sharded, "oracle")
+    _identical(cut.unit, written.unit, "unit")
+    assert cut.grid == written.grid and cut.code == written.code
+    got, want = prepare([(role, cut)], device="cpu"), prepare([(role, written)], device="cpu")
+    assert (got.rows, got.columns, got.role_names) == (want.rows, want.columns, want.role_names)
+    _identical(got.decode(), want.decode(), "decode")
+    _identical(got.row_scale(), want.row_scale(), "row_scale")
+    for g_role, w_role in zip(_prepared_roles(got), _prepared_roles(want)):
+        assert (g_role.name, g_role.row_offset, g_role.rows) == (w_role.name, w_role.row_offset, w_role.rows)
+        g_win, w_win = g_role.window, w_role.window
+        assert (g_win.steps, g_win.cols, g_win.window_bits, g_win.rates) == (
+            w_win.steps, w_win.cols, w_win.window_bits, w_win.rates)
+        _identical(g_win.tensors(), w_win.tensors(), "window")
+    if axis == AXIS_ROWS and rank == 1:
+        assert got.decode().shape[0] == plan.shard_rows and _prepared_roles(got)[0].window.initial_state is not None
+
+
+def test_a_cut_role_is_served_without_writing_the_shard(monkeypatch):
+    """No route reads a shard's manifest, so a load does not write one.
+
+    Writing each cut role and parsing it back was a quarter of a routed-expert
+    load (tessera#501).  The manifest is still the shard's own when asked for:
+    written by the same writer, on first read.
+    """
+    from tessera import unit_artifact
+    from tessera.serving.fp8_route import prepare_tessera_fp8_module
+
+    parsed = _legacy("e4m3-1024-window-channel-256c")
+    plan = _window_plan(parsed, AXIS_ROWS, 1)
+    writer = unit_artifact.build_unit_artifact
+
+    def refuse(*args, **kwargs):
+        raise AssertionError("a load serialised a shard it only had to cut")
+
+    monkeypatch.setattr(unit_artifact, "build_unit_artifact", refuse)
+    [(role, shard)] = shard_parsed_roles([("weight", parsed)], plan)
+    prepared = prepare_tessera_fp8_module([(role, shard)], device="cpu")
+    assert prepared.rows == plan.shard_rows
+    monkeypatch.setattr(unit_artifact, "build_unit_artifact", writer)
+    geometry = shard.manifest.geometry
+    assert (geometry.rows, geometry.columns) == (plan.shard_rows, plan.shard_columns)
+    assert shard.manifest.shard.parent_digest == parsed.manifest.manifest_digest()
+    assert shard.manifest.shard.row_offset == plan.role("weight").lo
+
+
+def test_a_malformed_shard_record_is_refused_when_cut_not_when_first_read():
+    """The record's refusals run at the cut, as they did when every cut was written.
+
+    A row shard that claims no start state is the record ``ShardOrigin``
+    refuses; deferring the write must not defer that refusal to whoever
+    first reads the manifest.
+    """
+    import dataclasses
+
+    from tessera.layout import slice_unit
+    from tessera.serving.sharding import _reparse_shard
+
+    parsed = _legacy("e4m3-1024-window-channel-256c")
+    rows = parsed.manifest.geometry.rows
+    sharded = slice_unit(parsed, rows=(rows // 2, rows))
+    broken = dataclasses.replace(sharded, state_bits=0)
+    # The writer said "state bits", the record says "state_bits": one refusal.
+    with pytest.raises(Exception, match=r"state.bits"):
+        _reparse_shard(parsed, broken, "rank1")
+
+
 @needs_cuda
 def test_granularity_is_read_off_the_wire_not_guessed(units):
     """``tessera.layout`` derives these from the body's own packing: arity x

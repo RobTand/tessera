@@ -141,6 +141,16 @@ class PreparedWindow:
         if tuple(_fingerprint(t) for t in self.tensors()) != self.__fingerprints:
             raise RuntimeError("prepared Tessera window changed after preparation")
 
+    def _axis_parts(self):
+        """What an expert axis places: the layout key, the rate groups, the table
+        and the inverse permutation.  ``PreparedWindowAxis`` is the only reader."""
+        self._require_unchanged()
+        key = (self.__steps, self.__cols, self.__window_bits, self.__device,
+               self.__table.dtype, tuple(self.__table.shape), self.rates,
+               tuple((g.plane.dtype, tuple(g.plane.shape)) for g in self.__groups),
+               self.__inverse is None)
+        return key, self.__groups, self.__table, self.__inverse
+
     @classmethod
     def stack(cls, windows: Sequence[PreparedWindow]) -> PreparedWindowBatch:
         """Own a packed expert axis for research selected-expert decoding.
@@ -148,36 +158,16 @@ class PreparedWindow:
         Layout comparisons happen at preparation. Bodies, initial states and
         alphabet values may differ; the gather geometry must agree exactly.
         This does not change the single-window or production serving route.
+        A caller that prepares experts one at a time should place each on a
+        ``PreparedWindowAxis`` instead, so no expert is held twice.
         """
         windows = tuple(windows)
         if not windows:
             raise ValueError("stacking needs at least one prepared window")
-        first = windows[0]
-        for window in windows:
-            window._require_unchanged()
-            if (window.steps, window.cols, window.window_bits, window.device,
-                window.__table.dtype, window.rates) != (
-                    first.steps, first.cols, first.window_bits, first.device,
-                    first.__table.dtype, first.rates):
-                raise ValueError("stacked windows must share their layout")
-            for a, b in zip(first.__groups, window.__groups):
-                if (a.plane.shape != b.plane.shape or any(
-                    not torch.equal(x, y) for x, y in zip(
-                        (a.gather, a.shift, a.which), (b.gather, b.shift, b.which)))):
-                    raise ValueError("stacked windows must share their layout")
-            if (first.__inverse is None) != (window.__inverse is None) or (
-                first.__inverse is not None and not torch.equal(first.__inverse, window.__inverse)
-            ):
-                raise ValueError("stacked windows must share their layout")
-        groups = [
-            _RateGroup(g.rate, torch.stack([w.__groups[i].plane for w in windows]),
-                       g.gather.clone(), g.shift.clone(), g.which.clone())
-            for i, g in enumerate(first.__groups)
-        ]
-        return PreparedWindowBatch(
-            groups, torch.stack([w.__table for w in windows]),
-            None if first.__inverse is None else first.__inverse.clone(),
-            first.steps, first.cols, first.window_bits, first.device)
+        axis = PreparedWindowAxis(len(windows))
+        for expert, window in enumerate(windows):
+            axis.put(expert, window)
+        return axis.finish()
 
     def decode(self) -> torch.Tensor:
         """What the table holds, ``[steps, cols]``, in a fresh tensor.
@@ -282,6 +272,218 @@ class PreparedWindowBatch:
         return chunks[0] if len(chunks) == 1 else torch.cat(chunks, 0)
 
 
+class PreparedWindowAxis:
+    """A packed expert axis filled one prepared window at a time (tessera#501).
+
+    ``PreparedWindow.stack`` copies E windows its caller already holds, so an
+    owner prepared expert by expert held every expert twice at the stack and
+    left E small allocations per tensor split across the caching allocator's
+    blocks while it loaded.  This axis allocates each stacked tensor once, at
+    the first placement, and copies every later window into its slot, so the
+    caller can drop a window as soon as it is placed.
+
+    The checks are ``stack``'s: every window matches the first one placed, and
+    the gather geometry, which is the same for every expert, is cloned from it
+    once.  ``finish`` returns the ``PreparedWindowBatch`` ``stack`` builds, and
+    the batch is the same byte for byte whatever order the experts arrived in.
+    Nothing here reads a family: the table may be E4M3 bytes, grid codes or
+    snapped values.
+    """
+
+    __slots__ = ("__experts", "__key", "__geometry", "__planes", "__table", "__shared",
+                 "__inverse", "__filled", "__state")
+
+    def __init__(self, experts: int):
+        if type(experts) is not int or experts < 0:
+            raise ValueError("an expert axis needs a non-negative integer expert count")
+        self.__experts = experts
+        self.__key = self.__geometry = self.__planes = self.__table = None
+        self.__shared = self.__inverse = None
+        self.__filled = [False] * experts
+        self.__state = "open"
+
+    def __require_open(self):
+        if self.__state != "open":
+            raise RuntimeError(f"this expert axis is {self.__state}; nothing more is placed on it")
+
+    def put(self, expert: int, window: PreparedWindow) -> None:
+        """Copy ``window`` into slot ``expert``; the axis keeps no reference to it."""
+        self.__require_open()
+        if type(expert) is not int or not 0 <= expert < self.__experts:
+            raise ValueError(f"expert {expert!r} is not on this {self.__experts}-expert axis")
+        if self.__filled[expert]:
+            raise ValueError(f"expert {expert} is already placed on this axis")
+        key, groups, table, inverse = window._axis_parts()
+        if self.__key is None:
+            experts = self.__experts
+            self.__planes = [torch.empty((experts,) + tuple(g.plane.shape), dtype=g.plane.dtype,
+                                         device=g.plane.device) for g in groups]
+            self.__table = torch.empty((experts,) + tuple(table.shape), dtype=table.dtype,
+                                       device=table.device)
+            self.__shared = [(g.rate, g.gather.clone(), g.shift.clone(), g.which.clone())
+                             for g in groups]
+            self.__inverse = None if inverse is None else inverse.clone()
+            self.__geometry = (window.steps, window.cols, window.window_bits, window.device)
+            self.__key = key
+        elif key != self.__key or any(
+                not torch.equal(kept, given)
+                for (_rate, *kept_tensors), g in zip(self.__shared, groups)
+                for kept, given in zip(kept_tensors, (g.gather, g.shift, g.which))) or (
+                inverse is not None and not torch.equal(self.__inverse, inverse)):
+            raise ValueError("stacked windows must share their layout")
+        try:
+            for plane, g in zip(self.__planes, groups):
+                plane[expert].copy_(g.plane)
+            self.__table[expert].copy_(table)
+        except BaseException:
+            self.__state = "refused"
+            raise
+        self.__filled[expert] = True
+
+    def placed(self) -> int:
+        return self.__filled.count(True)
+
+    def resident_bytes(self) -> int:
+        """Device bytes this axis has allocated: every slot, placed or not."""
+        if self.__key is None or self.__state == "finished":
+            return 0
+        tensors = [*self.__planes, self.__table,
+                   *(t for _rate, *kept in self.__shared for t in kept)]
+        if self.__inverse is not None:
+            tensors.append(self.__inverse)
+        return sum(t.numel() * t.element_size() for t in tensors)
+
+    def finish(self) -> PreparedWindowBatch:
+        self.__require_open()
+        if self.__key is None:
+            raise ValueError("stacking needs at least one prepared window")
+        if not all(self.__filled):
+            raise ValueError(
+                f"{self.__filled.count(False)} of {self.__experts} experts were never placed on "
+                f"this axis, the first is expert {self.__filled.index(False)}")
+        steps, cols, window_bits, device = self.__geometry
+        groups = [_RateGroup(rate, plane, gather, shift, which)
+                  for (rate, gather, shift, which), plane in zip(self.__shared, self.__planes)]
+        batch = PreparedWindowBatch(groups, self.__table, self.__inverse, steps, cols,
+                                    window_bits, device)
+        self.__state = "finished"
+        self.__planes = self.__table = self.__shared = self.__inverse = None
+        return batch
+
+
+class _ModulePart:
+    __slots__ = ("layout", "windows", "scales", "filled")
+
+    def __init__(self, layout, windows, scales, experts):
+        self.layout, self.windows, self.scales = layout, windows, scales
+        self.filled = [False] * experts
+
+
+class PreparedModuleAxis:
+    """An expert axis of prepared route modules, filled one module at a time.
+
+    The family-agnostic half of the FP8 and BF16 ``Module.stack``: a module
+    hands over its stacking layout, its roles' windows and its fp32 row scale
+    (``_axis_slot``); each role's windows go onto a ``PreparedWindowAxis`` and
+    the scale into a preallocated ``[experts, rows]``.  ``batch_type`` is the
+    family's batch, built from ``(windows, scales, role_names, rows, columns,
+    device)``.
+
+    ``parts=None`` places whole modules and ``finish`` is ``stack``.  An
+    integer ``parts`` places a module's containers separately, in any order --
+    the TP2 intake prepares gate, up and down as their load callbacks arrive
+    -- and ``finish`` joins the parts as ``concatenate`` joins modules before
+    it stacks them, with ``concatenate``'s refusals.  No packed plane is copied
+    at ``finish``; only the joined row scale is.
+    """
+
+    __slots__ = ("__experts", "__batch_type", "__label", "__joined", "__parts", "__state")
+
+    def __init__(self, experts: int, batch_type, label: str, parts: Optional[int] = None):
+        if type(experts) is not int or experts < 0:
+            raise ValueError("an expert axis needs a non-negative integer expert count")
+        if parts is not None and (type(parts) is not int or parts <= 0):
+            raise ValueError("an expert axis joins a positive integer number of parts")
+        self.__experts, self.__batch_type, self.__label = experts, batch_type, str(label)
+        self.__joined = parts is not None
+        self.__parts = [None] * (1 if parts is None else parts)
+        self.__state = "open"
+
+    def __require_open(self):
+        if self.__state != "open":
+            raise RuntimeError(f"this expert axis is {self.__state}; nothing more is placed on it")
+
+    def put(self, expert: int, module, part: int = 0) -> None:
+        """Copy ``module``'s windows and scale into slot ``(expert, part)``."""
+        self.__require_open()
+        if type(part) is not int or not 0 <= part < len(self.__parts):
+            raise ValueError(f"part {part!r} is not one of this axis's {len(self.__parts)}")
+        if type(expert) is not int or not 0 <= expert < self.__experts:
+            raise ValueError(f"expert {expert!r} is not on this {self.__experts}-expert axis")
+        layout, windows, scale = module._axis_slot()
+        slot = self.__parts[part]
+        if slot is None:
+            slot = _ModulePart(layout, [PreparedWindowAxis(self.__experts) for _ in windows],
+                               torch.empty((self.__experts,) + tuple(scale.shape),
+                                           dtype=scale.dtype, device=scale.device),
+                               self.__experts)
+            self.__parts[part] = slot
+        elif layout != slot.layout or scale.device != slot.scales.device:
+            raise ValueError(f"stacked {self.__label} modules must share roles and geometry")
+        if slot.filled[expert]:
+            raise ValueError(f"expert {expert} part {part} is already placed on this axis")
+        try:
+            for axis, window in zip(slot.windows, windows):
+                axis.put(expert, window)
+            slot.scales[expert].copy_(scale)
+        except BaseException:
+            self.__state = "refused"
+            raise
+        slot.filled[expert] = True
+
+    def placed(self) -> int:
+        """How many ``(expert, part)`` placements have landed."""
+        return sum(p.filled.count(True) for p in self.__parts if p is not None)
+
+    def resident_bytes(self) -> int:
+        """Device bytes this axis has allocated: every slot, placed or not."""
+        if self.__state == "finished":
+            return 0
+        return sum(sum(a.resident_bytes() for a in p.windows)
+                   + p.scales.numel() * p.scales.element_size()
+                   for p in self.__parts if p is not None)
+
+    def finish(self):
+        self.__require_open()
+        parts = [p for p in self.__parts if p is not None]
+        if not parts:
+            raise ValueError(f"stacking needs at least one prepared {self.__label} module")
+        missing = (len(self.__parts) - len(parts)) * self.__experts + sum(
+            p.filled.count(False) for p in parts)
+        if missing:
+            raise ValueError(f"{missing} of {len(self.__parts) * self.__experts} {self.__label} "
+                             "expert placements never arrived on this axis")
+        rows, columns, device, _roles = parts[0].layout
+        names = []
+        if self.__joined:
+            if any((p.layout[1], p.layout[2]) != (columns, device) for p in parts):
+                raise ValueError(f"concatenated {self.__label} roles must share columns and device")
+            for p in parts:
+                for name, _offset, _rows in p.layout[3]:
+                    if name in names:
+                        raise ValueError(f"concatenated {self.__label} roles must have distinct names")
+                    names.append(name)
+            rows = sum(p.layout[0] for p in parts)
+        else:
+            names = [name for name, _offset, _rows in parts[0].layout[3]]
+        windows = [axis.finish() for p in parts for axis in p.windows]
+        scales = parts[0].scales if len(parts) == 1 else torch.cat([p.scales for p in parts], 1)
+        batch = self.__batch_type(windows, scales, tuple(names), rows, columns, device)
+        self.__state = "finished"
+        self.__parts = None
+        return batch
+
+
 def _pack(body_bits, rates, window_bits, initial_state):
     """``pack_window_planes``, threading a shard's start state into the pad.
 
@@ -365,8 +567,12 @@ def prepare_window(body_bits: torch.Tensor, rates: Sequence[int], window_bits: i
     positions = torch.arange(steps, device=device, dtype=torch.int64)
     groups = []
     order = []
-    for present in sorted(set(rates)):
-        which_list = [c for c, r in enumerate(rates) if r == present]
+    # One pass over the schedule, not one per rate group (tessera#501).
+    columns_at: "dict[int, list[int]]" = {}
+    for column, rate in enumerate(rates):
+        columns_at.setdefault(rate, []).append(column)
+    for present in sorted(columns_at):
+        which_list = columns_at[present]
         which = torch.tensor(which_list, dtype=torch.int64, device=device)
         nbytes = (window_bits + steps * present + 7) // 8
         span = torch.arange(nbytes + WINDOW_READ_BYTES, device=device, dtype=torch.int64)

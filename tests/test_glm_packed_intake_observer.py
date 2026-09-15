@@ -10,9 +10,9 @@ from experiments.glm_packed_intake_observer import IntakeObservation
 def test_intake_observer_checks_zero_wire_anchors_and_complete_projection_count(tmp_path):
     observer = IntakeObservation(tmp_path, {'expected_mode':'rank_local', 'profile_initial_callbacks':3})
     layer = SimpleNamespace(w13_wire=torch.empty(0), w2_wire=torch.empty(0))
-    prepared = SimpleNamespace(wire_bytes_resident=lambda:12, rows=2)
-    method = SimpleNamespace(_rank_local_intake=SimpleNamespace(prepared={'w13':[[prepared, prepared]],
-                                                                          'w2':[[prepared]]}))
+    placed = [3]
+    intake = SimpleNamespace(placed_projections=lambda: placed[0], resident_bytes=lambda: 60)
+    method = SimpleNamespace(_rank_local_intake=intake)
     observer.after_create(layer, method)
     observer.count = 3
     observer.after_load(method, 3)
@@ -20,7 +20,7 @@ def test_intake_observer_checks_zero_wire_anchors_and_complete_projection_count(
         'completed_loader_callbacks':3, 'prepared_local_projections':3, 'prepared_local_bytes':60}
     with pytest.raises(AssertionError):
         observer.after_load(method, 4)
-    method._rank_local_intake.prepared['w2'][0][0] = None
+    placed[0] = 2
     with pytest.raises(AssertionError):
         observer.after_load(method, 3)
     layer.w13_wire = torch.zeros(8)
