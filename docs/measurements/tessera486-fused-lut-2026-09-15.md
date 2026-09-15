@@ -9,8 +9,11 @@ still the bound. The trellis's final sum, the greedy elimination's argmin and `v
 per-step host loop are the next levers.
 
 Date: 2026-09-15. Branch: `claude/486-fused-lut-fit`. The code is `3aa8b9c8d`, on `master`
-`e056e23d5`, and this documentation follows it. Boxes: GB10 / DGX Spark (`sparky`,
-`sparklina`), 140 W envelope, torch 2.11.0+cu130.
+`e056e23d5`, and this documentation follows it. After the runs below, the branch merged `master`
+`4c384e604` (#517). That merge changes the serving contract, config and sharding modules, with
+their tests, documents and receipts; it doesn't change `encode.py`, `lut_fused.py` or
+`tcq_fused.py`. Boxes: GB10 / DGX Spark (`sparky`, `sparklina`), 140 W envelope, torch
+2.11.0+cu130.
 
 ## What changed
 
@@ -107,20 +110,29 @@ The test runs:
   and `9400010f6267` (48: `test_lut_stop_dtype.py`, `test_lut_stop_ulp_band.py`,
   `test_batched_encode_identity.py`). Their `lut_fused.py`, `encode.py` and
   `tests/test_lut_fused.py` are `3aa8b9c8d`'s.
-- **Full suite.** It ran on `3aa8b9c8d`: 12 shards through `pbtest.py`, `--tag gb10 --gpu`,
-  priority 1, 8 shards on sparky and 4 on sparklina.
+- **Full suite.** It ran on `3aa8b9c8d`, and again on `d9bee6267`, which adds this
+  documentation. Each run was 12 shards through `pbtest.py`, `--tag gb10 --gpu`, priority 1: 8
+  on sparky and 4 on sparklina for `3aa8b9c8d`, and 11 and 1 for `d9bee6267`.
 
-| Passed | Skipped | xfailed | Failed |
-|---:|---:|---:|---:|
-| 5,469 | 16 | 1 | 0 |
+| Tree | Passed | Skipped | xfailed | Failed |
+|---|---:|---:|---:|---:|
+| `3aa8b9c8d` | 5,469 | 16 | 1 | 0 |
+| `d9bee6267` | 5,469 | 16 | 1 | 0 |
 
-- **Where the LUT tests ran.** `tests/test_lut_fused.py` ran in shard `1d135369ff0f` (sparky),
-  which reported 633 passed and 5 skipped.
+- **Where the LUT tests ran.** `tests/test_lut_fused.py` ran in shard `1d135369ff0f` (sparky) on
+  `3aa8b9c8d` and in shard `f58e52fe7c47` (sparky) on `d9bee6267`. Each shard reported 633
+  passed and 5 skipped.
 - **Stage 1's excluded failure.** `tests/test_slice_unit.py::test_the_span2_kernel_lane_refuses_a_shard`
-  ran in the same shard, which failed nothing, so this gate excludes nothing.
-- **Collection.** Every shard reported 0 modules not collected.
-- **The client.** The session that submitted the suite ended before `pbtest.py` printed its
-  table. All 12 actions are in `done/` with rc 0, and the counts come from each attempt's stdout.
+  ran in the same shard in both runs, and neither shard failed anything, so this gate excludes
+  nothing.
+- **Documentation tests.** On `d9bee6267`, `test_audit_doc_claims.py`, `test_issue_refs.py`,
+  `test_doc_scope_69.py`, `test_doc_route_71.py`, `test_doc_alphabet_70.py` and
+  `test_refresh_issues.py` ran in four shards and passed. None of them has a skip condition.
+- **Collection.** Every shard of both runs reported 0 modules not collected.
+- **The client.** The session that submitted the `3aa8b9c8d` suite ended before `pbtest.py`
+  printed its table. On `d9bee6267`, the client reported rc 74 for shard `f52f980c94c9`; its
+  record is in `done/` with rc 0 (sparklina: 558 passed, 1 xfailed). All 24 actions are in
+  `done/` with rc 0, and the counts come from each attempt's stdout.
 
 The 16 skips have the same reasons and counts as stage 1's:
 
@@ -166,8 +178,8 @@ are `receipts/stage2-bite-<name>.diff`, taken from each action's sealed checkout
   result below. The old and the new id are the same.
 - **Source.** Every bench result records the sha256 of all 85 files of `src/tessera` and of
   the bench script, and every one equals `3aa8b9c8d`'s.
-- **LFM timing units.** The 32 LFM L18 expert `w1` digests are identical across all 72 arms of
-  both power reads, and identical to stage 1's graph, before, after and A/B arms.
+- **LFM timing units.** The 32 LFM L18 expert `w1` digests are identical across all 88 arms of
+  both power reads, and identical to the 22 arms of stage 1's before, after and power A/B runs.
 - **py-spy units.** The 16 units are identical across both arms and to stage 1's py-spy run.
 - **Profile units.** The 8 units of 256 columns are identical across both arms and to stage 1's
   before and after profiles.
@@ -411,6 +423,7 @@ Stage 2 removed the per-trial sync, and the encoder is still host-bound:
 | Bite, prefix index | `e056e23d5` + stage 2 + mutation | `51be430f6e6edede2192ce3f5189a3a995e3a0f5157da9ad477531148606e660` | `failed/`, as intended |
 | Bite, trial order | `e056e23d5` + stage 2 + mutation | `d13420e77df57cf0e8d63887c344b0375a45bcf88f6a35fdf99ffa8bed9dd455` | `failed/`, as intended |
 | Full suite, 12 shards | `3aa8b9c8d` | `c547eb40fbba`, `b385b6706965`, `1d135369ff0f`, `2caed5fa1d15`, `d5a273c51977`, `74f4b074e247`, `76efc431c102`, `0d67b0638279`, `082b5cfba802`, `04ae5aca3d80`, `377b46d6d006`, `ec9c232a3477` | `done/` |
+| Full suite, 12 shards | `d9bee6267` | `3494500d3c47`, `367d4429f3a5`, `7b1be7ddeb61`, `b740c004408e`, `f52f980c94c9`, `f58e52fe7c47`, `461714086d2e`, `3bcc10897c3a`, `459fcfd88d7d`, `cb646933142e`, `fa8907473dd7`, `a58524ce9a2e` | `done/` |
 | Profile A/B | `3aa8b9c8d` | `8f0cb7f0eb232e3bbe325beb9eafa898859ba31b4fbcb0cec966db5add61c1ca` | `done/` (sparklina) |
 | py-spy, control | `3aa8b9c8d` | `3ad4876d9b83123d3a086f9acf4c74fee28dc9af31f33d55dbb24453a5e587c1` | `done/` (sparklina); blob `6cf1d7e18ccf` |
 | py-spy, fused | `3aa8b9c8d` | `bdae5dc96f73d0954e571e89c8f05060d54dd0a656b36244542cda0d22eeb16c` | `done/` (sparklina); blob `7d42f096ab3a` |

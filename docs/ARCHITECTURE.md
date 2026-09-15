@@ -1823,8 +1823,8 @@ unit-column, host syncs from 11.45 to 1.69 and device time from 0.280 to
 0.137 ms. On the same binary, throughput rose 3.93x at `B=32` and 3.49x at
 `B=8`, for 4.49x and 4.79x the parameters per joule, and the GLM
 routed-expert units encode 2.49x faster. The encoder draws 27-30 % of the
-envelope, so the host is still the bound, and fused `B=32` does 1.18x the
-work of fused `B=8` (`docs/measurements/tessera486-fused-lut-2026-09-15.md`).
+envelope, so the host is still the bound, and fused `B=32` has 1.18x the
+throughput of fused `B=8` (`docs/measurements/tessera486-fused-lut-2026-09-15.md`).
 The fused window
 body is tiled over an L2-bounded column width
 (`window_viterbi._layout`, width 32 at L=14), so a wider call there is more
