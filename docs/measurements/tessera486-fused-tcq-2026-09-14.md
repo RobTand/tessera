@@ -238,6 +238,9 @@ process: 3,988 samples.
   `_pack_scales_lut` (23.7%).
 - **Where the host waits.** Almost half the process's samples sit in one host sync per swap
   trial. The fused trellis itself shows up only where the host waits for its three launches.
+- **Correction (2026-09-15).** The first row is the inclusive share of the trial line
+  `encode.py:1566`, not of `_fit_lut`. The function as a whole is 70.8% of this profile.
+  Stage 2 re-read the same blob (`docs/measurements/tessera486-fused-lut-2026-09-15.md`).
 
 ## Throughput and power
 
@@ -306,7 +309,8 @@ The fused encoder barely cares about batch width. Fused `B=8` is 3.8% below fuse
 
 ## Reseal
 
-PQ #629 carries the campaign identity reseal proof; this change submits none.
+PrismaQuant PR RobTand/prismaquant#629 carries the campaign identity reseal proof; this change
+submits none.
 `encoder_fixture_id` is `03bbc5b1...` before and after. The GLM census wires above re-encode
 byte for byte on both trees they were taken on.
 
