@@ -306,7 +306,8 @@ The fused encoder barely cares about batch width. Fused `B=8` is 3.8% below fuse
 
 ## Reseal
 
-PQ #629 carries the campaign identity reseal proof; this change submits none.
+PrismaQuant PR RobTand/prismaquant#629 carries the campaign identity reseal proof; this change
+submits none.
 `encoder_fixture_id` is `03bbc5b1...` before and after. The GLM census wires above re-encode
 byte for byte on both trees they were taken on.
 
