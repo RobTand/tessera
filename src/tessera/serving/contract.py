@@ -55,8 +55,14 @@ fresh export writes.
 
 TWO CLAIMS ABOUT TENSOR PARALLELISM, AND THEY ARE NOT THE SAME.
 ``tensor_parallel.units[].max_world_size`` is an ATTESTATION: the largest world
-size a served receipt covers.  It is 1, and it stays 1 until a multi-rank serve
-has been run and measured.  Beside it, ``loader_axes`` says what this build's
+size a served receipt covers.  A unit at 1 names nothing; a unit above 1 names
+its ``world_size_receipt``, an entry of ``tensor_parallel.world_size_receipts``
+that carries the two-rank serve record, one route trace per rank, the unit
+among the families those traces executed, and the KL against a single-rank arm
+-- and a unit above 1 without one is refused by name
+(``_validate_tensor_parallel``).  Since v29 the three families are at 2 on the
+GLM-5.3-Flash stub serves (tessera#506, tessera#514), graded ``route_only``.
+Beside it, ``loader_axes`` says what this build's
 LOADER does with a shard on each axis, which is a different question with a
 different answer -- the E4M3 family cuts both axes, the E2M1x2 family cuts
 columns only.  ``_validate_loader_axes`` checks that block against
@@ -550,6 +556,327 @@ def cell_runtime_id_suffix(cell: Mapping[str, Any]) -> str:
     encoded = json.dumps({"image": image, "execution_modes": list(modes)},
                          sort_keys=True, separators=(",", ":")).encode("utf-8")
     return "_runtime_" + hashlib.sha256(encoded).hexdigest()
+
+
+#: Where a world-size receipt's committed data lives: route traces and the
+#: single-rank KL table.  A repository path, never a box path, for the reason
+#: ``EVIDENCE_RECEIPT_ROOT`` is one (tests/test_contract_is_portable.py).
+WORLD_SIZE_DATA_ROOT = "experiments/results/"
+
+#: The one grade a world-size receipt carries.  Its KL compares a checkpoint
+#: with ITSELF at another world size, never with its reference, so it attests
+#: that the routes execute there and publishes the divergence it measured; a
+#: quality grade is a ``lane_eligibility`` cell's evidence, not this block's.
+WORLD_SIZE_RECEIPT_GRADE = "route_only"
+
+#: The arms a single-rank KL is read from (tessera#514): the Tessera checkpoint
+#: at the raised world against one rank, the same model with no Tessera module
+#: at the same two worlds (vLLM's own tensor-parallel numerics), and two
+#: single-rank serves of the Tessera checkpoint (the serve-to-serve floor).
+SINGLE_RANK_KL_ARMS = ("quantized", "control", "floor")
+
+#: The metrics each arm publishes.  Shared-id |d logprob| and the renormalized
+#: shared-support KL are the columns to read on a near-flat model; the lumped
+#: top-K lower bound is published beside its coverage so a reader can see why.
+SINGLE_RANK_KL_METRICS = (
+    "abs_dlogprob_p50", "abs_dlogprob_p99", "abs_dlogprob_max",
+    "renormalized_kl_mean", "renormalized_kl_p99", "renormalized_kl_max",
+    "top1_agree_pct", "top8_exact_pct",
+    "topk_kl_lower_bound_mean", "topk_coverage_mean")
+
+#: The metric families a receipt may tell a reader to read.
+SINGLE_RANK_KL_READINGS = ("abs_dlogprob", "renormalized_kl", "topk_kl_lower_bound")
+
+#: The quantized arm's excess over the control, as ratios the validator
+#: DERIVES from the two arms' metrics at two decimals.  A typed ratio that
+#: disagrees with the numbers beside it is refused.
+SINGLE_RANK_KL_EXCESS = ("abs_dlogprob_p50", "abs_dlogprob_p99")
+
+
+def _require_data_path(value: Any, where: str) -> str:
+    """A repository path under :data:`WORLD_SIZE_DATA_ROOT`, or raise.
+
+    The grammar only, as :func:`_require_receipt_path`: the wheel ships no
+    ``experiments/``, so the file's existence and content are a tree test's
+    business (``tests/test_serving_contract.py``).
+    """
+    if (not isinstance(value, str) or not value.startswith(WORLD_SIZE_DATA_ROOT)
+            or len(value) == len(WORLD_SIZE_DATA_ROOT)
+            or any(part in ("", ".", "..") for part in value.split("/"))):
+        raise ValueError(
+            f"{where} must be a repository path under {WORLD_SIZE_DATA_ROOT!r}, got {value!r}")
+    return value
+
+
+def _require_distinct_strings(value: Any, where: str) -> list:
+    if (not isinstance(value, list) or not value
+            or not all(isinstance(item, str) and item for item in value)
+            or len(set(value)) != len(value)):
+        raise ValueError(f"{where} must be a non-empty list of distinct strings, got {value!r}")
+    return value
+
+
+def _require_count(value: Any, where: str, minimum: int) -> int:
+    if type(value) is not int or value < minimum:
+        raise ValueError(f"{where} must be an integer of at least {minimum}, got {value!r}")
+    return value
+
+
+def _validate_single_rank_kl(block: Any, where: str) -> None:
+    """The KL against the single-rank arm, as numbers a reader can check.
+
+    Three arms (:data:`SINGLE_RANK_KL_ARMS`), each with every metric in
+    :data:`SINGLE_RANK_KL_METRICS`, and the quantized arm's excess over the
+    control DERIVED from them.  What the numbers mean -- whether the excess is
+    acceptable -- is not a value here: the grade stays
+    :data:`WORLD_SIZE_RECEIPT_GRADE` whatever they say.
+    """
+    import math
+
+    _require_keys(block, where,
+                  required={"issue", "table", "instrument", "read", "arms",
+                            "excess_over_control"})
+    if not isinstance(block["issue"], str) or not re.fullmatch(r"[\w.-]+#\d+", block["issue"]):
+        raise ValueError(f"{where}.issue must name the tracking issue as repo#N, "
+                         f"got {block['issue']!r}")
+    _require_data_path(block["table"], f"{where}.table")
+    if not isinstance(block["instrument"], str) or not block["instrument"]:
+        raise ValueError(f"{where}.instrument must say which instrument measured the arms")
+    read = _require_distinct_strings(block["read"], f"{where}.read")
+    unknown = sorted(set(read) - set(SINGLE_RANK_KL_READINGS))
+    if unknown:
+        raise ValueError(f"{where}.read names {unknown}; the readings are "
+                         f"{list(SINGLE_RANK_KL_READINGS)}")
+    arms = block["arms"]
+    _require_keys(arms, f"{where}.arms", required=set(SINGLE_RANK_KL_ARMS))
+    for name in SINGLE_RANK_KL_ARMS:
+        at = f"{where}.arms.{name}"
+        _require_keys(arms[name], at, required={"id", "scope", "metrics"})
+        for key in ("id", "scope"):
+            if not isinstance(arms[name][key], str) or not arms[name][key]:
+                raise ValueError(f"{at}.{key} must be a non-empty string")
+        metrics = arms[name]["metrics"]
+        _require_keys(metrics, f"{at}.metrics", required=set(SINGLE_RANK_KL_METRICS))
+        for metric in SINGLE_RANK_KL_METRICS:
+            value = metrics[metric]
+            if (isinstance(value, bool) or not isinstance(value, (int, float))
+                    or not math.isfinite(value) or value < 0):
+                raise ValueError(f"{at}.metrics.{metric} must be a finite number of at least 0, "
+                                 f"got {value!r}")
+            if metric.endswith("_pct") and value > 100:
+                raise ValueError(f"{at}.metrics.{metric} is a percentage, got {value!r}")
+            if metric == "topk_coverage_mean" and value > 1:
+                raise ValueError(f"{at}.metrics.{metric} is a probability mass, got {value!r}")
+    excess = block["excess_over_control"]
+    _require_keys(excess, f"{where}.excess_over_control", required=set(SINGLE_RANK_KL_EXCESS))
+    for metric in SINGLE_RANK_KL_EXCESS:
+        control = arms["control"]["metrics"][metric]
+        if control <= 0:
+            raise ValueError(
+                f"{where}.arms.control.metrics.{metric} is {control!r}: a control with no "
+                "divergence cannot scale the quantized arm's, so there is no excess to publish")
+        derived = round(arms["quantized"]["metrics"][metric] / control, 2)
+        if excess[metric] != derived:
+            raise ValueError(
+                f"{where}.excess_over_control.{metric} is {excess[metric]!r}, but the arms "
+                f"beside it derive {derived!r} (quantized / control, two decimals). The ratio "
+                "is read off the metrics, not typed next to them.")
+
+
+def _validate_world_size_receipt(receipt: Any, where: str, platforms: Mapping[str, Any],
+                                 declared_units: set) -> None:
+    """One two-rank (or wider) receipt: the serves, their traces, the KL.
+
+    Every value a consumer could gate on is checked for its grammar here; that
+    the named files exist and that ``executed_units`` is what the traces in
+    them actually executed is a tree test's business, because the wheel ships
+    neither ``docs/`` nor ``experiments/``.
+    """
+    _require_keys(receipt, where,
+                  required={"id", "world_size", "platform", "receipt", "serves",
+                            "executed_units", "single_rank_kl", "grade"})
+    if not isinstance(receipt["id"], str) or not re.fullmatch(r"[a-z0-9_]+", receipt["id"]):
+        raise ValueError(f"{where}.id must be a lower-case identifier, got {receipt['id']!r}")
+    world = _require_count(receipt["world_size"], f"{where}.world_size", 2)
+    if receipt["platform"] not in platforms:
+        raise ValueError(f"{where}.platform {receipt['platform']!r} is not a platform "
+                         f"lane_eligibility publishes ({sorted(platforms)})")
+    _require_receipt_path(receipt["receipt"], where)
+    serves = receipt["serves"]
+    if not isinstance(serves, list) or not serves:
+        raise ValueError(f"{where}.serves must be a non-empty list of serve records")
+    traces_seen: set = set()
+    for j, serve in enumerate(serves):
+        at = f"{where}.serves[{j}]"
+        _require_keys(serve, at, required={"role", "image", "tessera_tree", "hosts", "flags",
+                                           "route_traces"})
+        if not isinstance(serve["role"], str) or not serve["role"]:
+            raise ValueError(f"{at}.role must say what the serve was for")
+        require_runtime_image(serve["image"], f"{at}.image")
+        if (not isinstance(serve["tessera_tree"], str)
+                or not re.fullmatch(r"[0-9a-f]{40}", serve["tessera_tree"])):
+            raise ValueError(f"{at}.tessera_tree must be a full 40-hex commit, "
+                             f"got {serve['tessera_tree']!r}")
+        _require_distinct_strings(serve["hosts"], f"{at}.hosts")
+        flags = serve["flags"]
+        if not isinstance(flags, list) or not all(isinstance(f, str) and f for f in flags):
+            raise ValueError(f"{at}.flags must be the serve's argument list, got {flags!r}")
+        asked = [flags[k + 1] for k, flag in enumerate(flags[:-1])
+                 if flag == "--tensor-parallel-size"]
+        asked += [flag.split("=", 1)[1] for flag in flags
+                  if flag.startswith("--tensor-parallel-size=")]
+        if asked != [str(world)]:
+            raise ValueError(
+                f"{at}.flags ask for tensor_parallel_size {asked or 'nothing'}, and this receipt "
+                f"covers a world of {world}: a serve record must be the serve at that world")
+        traces = serve["route_traces"]
+        if not isinstance(traces, list) or len(traces) != world:
+            raise ValueError(
+                f"{at}.route_traces must name one route trace per rank, {world} of them, "
+                f"got {traces!r}")
+        for k, trace in enumerate(traces):
+            _require_data_path(trace, f"{at}.route_traces[{k}]")
+            if trace in traces_seen:
+                raise ValueError(f"{at}.route_traces[{k}] {trace!r} is named twice; each rank of "
+                                 "each serve writes its own trace")
+            traces_seen.add(trace)
+    executed = _require_distinct_strings(receipt["executed_units"], f"{where}.executed_units")
+    undeclared = sorted(set(executed) - declared_units)
+    if undeclared:
+        raise ValueError(f"{where}.executed_units names {undeclared}, which tensor_parallel.units "
+                         "does not declare")
+    _validate_single_rank_kl(receipt["single_rank_kl"], f"{where}.single_rank_kl")
+    if receipt["grade"] != WORLD_SIZE_RECEIPT_GRADE:
+        raise ValueError(
+            f"{where}.grade is {receipt['grade']!r}, and a world-size receipt grades "
+            f"{WORLD_SIZE_RECEIPT_GRADE!r} only: its KL compares the checkpoint with itself at "
+            "another world size, not with its reference, so it attests execution and publishes "
+            "a divergence. A quality grade is a lane_eligibility cell's evidence.")
+
+
+def _validate_kv_head_replication(rule: Any, where: str) -> None:
+    """The replication rule, derived from the loader's own constant (#330).
+
+    Above one rank vLLM's ``num_kv_head_replicas`` decides which rows of a
+    GQA/MQA layer each rank loads; ``sharding.layer_replicas`` reads it off the
+    layer.  Publishing it is a statement about what the LOADER does, checked
+    against :data:`sharding.KV_REPLICAS_ATTRIBUTE` exactly as ``loader_axes``
+    is checked against ``ROUTE_TP_AXES``.  Whether a served receipt exercised
+    a replicated layer is its own boolean, because a world-size receipt on a
+    model with at least one KV head per rank does not.
+    """
+    from .sharding import KV_REPLICAS_ATTRIBUTE
+
+    _require_keys(rule, where, required={"attribute", "shard_index", "exercised_by_receipt"},
+                  # Prose for a person; no gate reads it.
+                  optional={"note"})
+    if rule["attribute"] != KV_REPLICAS_ATTRIBUTE:
+        raise ValueError(
+            f"{where}.attribute is {rule['attribute']!r}, and the loader reads "
+            f"{KV_REPLICAS_ATTRIBUTE!r} (tessera.serving.sharding.KV_REPLICAS_ATTRIBUTE)")
+    expected = f"tp_rank // {KV_REPLICAS_ATTRIBUTE}"
+    if rule["shard_index"] != expected:
+        raise ValueError(f"{where}.shard_index is {rule['shard_index']!r}, and the loader's "
+                         f"index arithmetic is {expected!r}")
+    if not isinstance(rule["exercised_by_receipt"], bool):
+        raise ValueError(f"{where}.exercised_by_receipt must be true or false")
+
+
+def _validate_tensor_parallel(block: Any, platforms: Mapping[str, Any]) -> None:
+    """``max_world_size`` above 1 names a receipt, or it is refused by name.
+
+    The field is an ATTESTATION -- the largest world size a served receipt
+    covers -- and NOT a statement about whether the bytes can shard: they can,
+    the artifact is TP-agnostic and the loader cuts a unit at load
+    (``tessera.layout.slice_unit``); that is ``loader_axes``.  A unit at 1
+    names no receipt.  A unit above 1 names a ``world_size_receipts`` entry at
+    exactly its world whose serves' traces executed it, and whose single-rank
+    KL arms are published; with any unit above 1 the block also publishes the
+    KV-head replication rule the loader applies there (#330).
+    """
+    where_tp = "runtime_contract.tensor_parallel"
+    _require_keys(block, where_tp, required={"axis", "semantics", "units"},
+                  # ``units_note`` is prose for a person; no gate reads it
+                  # (principle 14).
+                  optional={"units_note", "world_size_receipts", "kv_head_replication"})
+    units = block["units"]
+    if not isinstance(units, list) or not units:
+        raise ValueError(f"{where_tp}.units must be a non-empty list")
+    for i, unit in enumerate(units):
+        _require_keys(unit, f"{where_tp}.units[{i}]",
+                      required={"unit", "kind", "max_world_size", "loader_axes"},
+                      optional={"world_size_receipt"})
+    declared = {unit["unit"] for unit in units}
+
+    receipts = block.get("world_size_receipts", [])
+    if not isinstance(receipts, list):
+        raise ValueError(f"{where_tp}.world_size_receipts must be a list")
+    by_id: dict = {}
+    for j, receipt in enumerate(receipts):
+        at = f"{where_tp}.world_size_receipts[{j}]"
+        _validate_world_size_receipt(receipt, at, platforms, declared)
+        if receipt["id"] in by_id:
+            raise ValueError(f"{at}.id {receipt['id']!r} is published twice")
+        by_id[receipt["id"]] = receipt
+
+    named: set = set()
+    for i, unit in enumerate(units):
+        where = f"{where_tp}.units[{i}]"
+        world = _require_count(unit["max_world_size"], f"{where}.max_world_size", 1)
+        family = unit["unit"]
+        if world == 1:
+            if "world_size_receipt" in unit:
+                raise ValueError(
+                    f"{where} ({family}) attests max_world_size 1 and names world_size_receipt "
+                    f"{unit['world_size_receipt']!r}; one rank is the world every serve covers, "
+                    "so there is nothing for a receipt to attest")
+        else:
+            name = unit.get("world_size_receipt")
+            if name is None:
+                raise ValueError(
+                    f"{where} ({family}) attests max_world_size {world} and names no "
+                    "world_size_receipt. The field is an ATTESTATION -- the largest world size a "
+                    "served receipt covers -- and above 1 it must name the receipt that covers "
+                    "it: a two-rank serve record, one route trace per rank recording this unit, "
+                    "and a KL against the single-rank arm. It is NOT a statement that the bytes "
+                    "cannot shard (they can; loader_axes says what the loader does with each "
+                    "axis). Name a tensor_parallel.world_size_receipts entry, or put this unit "
+                    "back to 1.")
+            receipt = by_id.get(name)
+            if receipt is None:
+                raise ValueError(
+                    f"{where} ({family}) names world_size_receipt {name!r}, and "
+                    f"tensor_parallel.world_size_receipts publishes {sorted(by_id)}")
+            if receipt["world_size"] != world:
+                raise ValueError(
+                    f"{where} ({family}) attests max_world_size {world} on receipt {name!r}, "
+                    f"which covers a world of {receipt['world_size']}")
+            if family not in receipt["executed_units"]:
+                raise ValueError(
+                    f"{where} ({family}) names receipt {name!r}, whose traces executed "
+                    f"{receipt['executed_units']} and not this unit; a receipt covers the units "
+                    "its ranks served, not every unit in the block")
+            named.add(name)
+        _validate_loader_axes(unit["loader_axes"], family, where)
+
+    orphans = sorted(set(by_id) - named)
+    if orphans:
+        raise ValueError(f"{where_tp}.world_size_receipts publishes {orphans}, which no unit "
+                         "names; a receipt nothing attests with is not a contract value")
+    raised = any(unit["max_world_size"] > 1 for unit in units)
+    if raised:
+        if "kv_head_replication" not in block:
+            raise ValueError(
+                f"{where_tp} attests a world above 1 and publishes no kv_head_replication. Above "
+                "one rank vLLM's num_kv_head_replicas decides which rows of a GQA/MQA layer each "
+                "rank loads (tessera#330); publish the rule the loader applies, derived from "
+                "tessera.serving.sharding.KV_REPLICAS_ATTRIBUTE.")
+        _validate_kv_head_replication(block["kv_head_replication"],
+                                      f"{where_tp}.kv_head_replication")
+    elif "kv_head_replication" in block:
+        raise ValueError(
+            f"{where_tp}.kv_head_replication is published while every unit is at 1: at one rank "
+            "the rule describes no served path, and #330 keeps the contract silent there")
 
 
 def _validate_loader_axes(axes: Any, family: str, where: str) -> None:
@@ -1270,24 +1597,8 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
             + "Publish the served cell only after its census, artifact, and quality receipt "
               "exist, then derive this axis from those cells.")
 
-    _require_keys(contract["tensor_parallel"], "runtime_contract.tensor_parallel",
-                  required={"axis", "semantics", "units"},
-                  # Prose for a person; no gate reads it (principle 14).
-                  optional={"units_note"})
-    for i, unit in enumerate(contract["tensor_parallel"]["units"]):
-        where = f"runtime_contract.tensor_parallel.units[{i}]"
-        _require_keys(unit, where,
-                      required={"unit", "kind", "max_world_size", "loader_axes"})
-        if unit["max_world_size"] != 1:
-            raise ValueError(
-                f"{where}.max_world_size is {unit['max_world_size']}, and it may only be 1. This "
-                "field is an ATTESTATION -- the largest world size a served receipt covers -- and "
-                "no multi-rank Tessera serve has been run. It is NOT a statement that the bytes "
-                "cannot shard: they can, the artifact is TP-agnostic and the loader cuts a unit "
-                "at load (tessera.layout.slice_unit). What this build's loader does with each "
-                "axis is loader_axes, beside it; raising this number needs a two-rank serve with "
-                "a per-rank census and a KL against the single-rank arm.")
-        _validate_loader_axes(unit["loader_axes"], unit["unit"], where)
+    _validate_tensor_parallel(contract["tensor_parallel"],
+                              contract["lane_eligibility"]["platforms"])
     if contract["expert_parallel"]["units"]:
         raise ValueError(
             "runtime_contract.expert_parallel.units must be empty: no served measurement covers "

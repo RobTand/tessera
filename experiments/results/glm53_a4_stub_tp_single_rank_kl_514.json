@@ -1,0 +1,109 @@
+{
+ "schema": "tessera.tp_single_rank_kl/1",
+ "issue": "tessera#514",
+ "instrument": "kl_tool dump at top-1024 over the n8 x s512 corpus contract, prefill, eager; compared by tp-equivalence (three metrics)",
+ "read": [
+  "abs_dlogprob",
+  "renormalized_kl"
+ ],
+ "read_note": "top-1024 coverage is about 0.26 on this near-flat stub, so the lumped top-K KL lower bound sees a quarter of the mass; read |d logprob| on shared ids and the renormalized shared-support KL.",
+ "arms": {
+  "a4_tp2_vs_tp1": {
+   "scope": "TP2 vs TP1 on the degenerate 4-layer A4 stub (routed E2M1x2 q896), prefill 8x512, eager",
+   "reference": {
+    "arm": "TP1 on one GB10",
+    "npz_sha256": "0539c6c269abceb96bb0b910a345f96e92a655270b23926e1d109ecc10c315b5",
+    "checkpoint": "glm53-4layer-a4-e2m1x2-q896-l2"
+   },
+   "compared": {
+    "arm": "TP2 on two GB10s",
+    "npz_sha256": "06f7d86e38d2ab06a55c4351f774703e40e03d2330045ba273b7c0009d7bac87",
+    "checkpoint": "glm53-4layer-a4-e2m1x2-q896-l2"
+   },
+   "positions": 4088,
+   "regime": "prefill",
+   "requested_top_k": 1024,
+   "metrics": {
+    "abs_dlogprob_p50": 0.11315155029296875,
+    "abs_dlogprob_p99": 0.6671838998794559,
+    "abs_dlogprob_max": 3.04483699798584,
+    "renormalized_kl_mean": 0.02567334490262606,
+    "renormalized_kl_p99": 0.17697411363586915,
+    "renormalized_kl_max": 0.26895395423080803,
+    "top1_agree_pct": 81.01761252446184,
+    "top8_exact_pct": 33.85518590998043,
+    "topk_kl_lower_bound_mean": 0.00613803038950649,
+    "topk_coverage_mean": 0.26315830952244945
+   },
+   "tp_equivalence_json_sha256": "cd3636d0fc7b901510d2e4cec28254e3fd5dea1d76fdb2c92bab7af783106a72"
+  },
+  "bf16_tp2_vs_tp1": {
+   "scope": "TP2 vs TP1 on the degenerate 4-layer BF16 stub (no Tessera module), prefill 8x512, eager",
+   "reference": {
+    "arm": "TP1 on one GB10",
+    "npz_sha256": "2df32781eefcc9941e0e02ead3cdaddb723b04685db3ba763c6e676bcc2eaaf5",
+    "checkpoint": "GLM-5.3-Flash-4layer"
+   },
+   "compared": {
+    "arm": "TP2 on two GB10s",
+    "npz_sha256": "58de614ee3550573e56480b25ad4b4d79cbdcc8e2538081bf5f06f37ae5fa4b9",
+    "checkpoint": "GLM-5.3-Flash-4layer"
+   },
+   "positions": 4088,
+   "regime": "prefill",
+   "requested_top_k": 1024,
+   "metrics": {
+    "abs_dlogprob_p50": 0.026550769805908203,
+    "abs_dlogprob_p99": 0.60223388671875,
+    "abs_dlogprob_max": 2.8654913902282715,
+    "renormalized_kl_mean": 0.011671636794383804,
+    "renormalized_kl_p99": 0.1693348630593774,
+    "renormalized_kl_max": 0.4242459916989004,
+    "top1_agree_pct": 92.4412915851272,
+    "top8_exact_pct": 76.07632093933464,
+    "topk_kl_lower_bound_mean": 0.002743283346407396,
+    "topk_coverage_mean": 0.2715373537240018
+   },
+   "tp_equivalence_json_sha256": "48c345359d012396b6aa93e25fc5bdedb6454289dc5d211d388b3860138a0627"
+  },
+  "a4_tp1_floor": {
+   "scope": "TP1 vs TP1 on the degenerate 4-layer A4 stub, a second serve, prefill 8x512, eager",
+   "reference": {
+    "arm": "TP1 on one GB10",
+    "npz_sha256": "0539c6c269abceb96bb0b910a345f96e92a655270b23926e1d109ecc10c315b5",
+    "checkpoint": "glm53-4layer-a4-e2m1x2-q896-l2"
+   },
+   "compared": {
+    "arm": "TP1 on one GB10, a second serve",
+    "npz_sha256": "bef716c4ebaf678860b325631292168ebbae31d4586907388d2d7af979b17e3b",
+    "checkpoint": "glm53-4layer-a4-e2m1x2-q896-l2"
+   },
+   "positions": 4088,
+   "regime": "prefill",
+   "requested_top_k": 1024,
+   "metrics": {
+    "abs_dlogprob_p50": 0.0,
+    "abs_dlogprob_p99": 0.0,
+    "abs_dlogprob_max": 0.0,
+    "renormalized_kl_mean": 0.0,
+    "renormalized_kl_p99": 0.0,
+    "renormalized_kl_max": 0.0,
+    "top1_agree_pct": 100.0,
+    "top8_exact_pct": 100.0,
+    "topk_kl_lower_bound_mean": 0.0,
+    "topk_coverage_mean": 0.26315830952244945
+   },
+   "tp_equivalence_json_sha256": "4239ed580466abaaeb89013ac363de9ba7be7c1fea6612c1fac7ebad19a5e766"
+  }
+ },
+ "excess_over_control": {
+  "quantized": "a4_tp2_vs_tp1",
+  "control": "bf16_tp2_vs_tp1",
+  "abs_dlogprob_p50": 4.26,
+  "abs_dlogprob_p99": 1.11
+ },
+ "serves": {
+  "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:a5424378322071f4c33e63d1372a2bb028e46b03f0da0e5edb0cdd7418e2cebb",
+  "tessera_tree": "44d20d670700d719a50052e6050372fd5d9b9c2f"
+ }
+}

@@ -5,6 +5,22 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-15 for contract v29's tensor-parallel attestation
+(tessera#506, tessera#514). `tensor_parallel.units[].max_world_size` is 2 for
+`TESSERA_E2M1_K2`, `TESSERA_E4M3_K1` and `TESSERA_BF16_K1`, and each unit names
+`world_size_receipt: glm53_a4_stub_tp2_sm121`, an entry of the new
+`tensor_parallel.world_size_receipts`
+(`docs/measurements/tessera-glm53-a4-stub-tp2-world-size-2026-09-15.md`): two
+two-rank serves of the GLM-5.3-Flash 4-layer stub, one committed route trace
+per rank, all three routes on every rank, and the single-rank KL table (A4
+TP2 vs TP1, a BF16 control, an A4 TP1 floor; the A4 excess over the control
+is 4.26x at the median |d logprob| and 1.11x at the p99). The grade stays
+`route_only`. `contract.py`'s outright refusal of any value other than 1 is
+now `_validate_tensor_parallel`: a unit above 1 without a receipt at its world
+whose traces executed it is refused by name. The #330 silence ends with the
+world of one: `tensor_parallel.kv_head_replication` publishes the loader's
+rule, checked against `sharding.KV_REPLICAS_ATTRIBUTE` (§3.8).
+
 Re-stamped 2026-09-14 for the fused coset TCQ trellis (tessera#486).
 `encode.viterbi_columns`'s `auto` now takes `tcq_fused.viterbi_columns_fused`
 -- three Triton launches a call, `_minima`, `_forward` and `_traceback` -- on
@@ -2265,9 +2281,10 @@ cut and nothing is refused, which is every serve this plugin has run.
 
 What that costs: an artifact already on disk declares neither key, so it is
 refused above one rank until it is re-exported. Its **bytes do not change** —
-only what its config says about them — and no multi-rank serve has ever been
-run (`runtime_contract.json` publishes `max_world_size: 1` for every family),
-so nothing that has served stops serving. On the merge side the two keys are
+only what its config says about them — and when this gate landed no
+multi-rank serve had been run, so nothing that had served stopped serving.
+(The two-rank serves that raised `max_world_size` to 2 in contract v29 ran a
+checkpoint exported after it, which declares both keys.) On the merge side the two keys are
 `SHARED_WHEN_WRITTEN` in `merge_tessera_parts.py`, not required fields: legacy
 parts still merge with each other (their `tp_size` is compared as a driver
 field, no exporter writing it any more), fresh parts are compared on the new
@@ -2280,16 +2297,36 @@ them, and the loader is now held to it (above). What the **contract** says
 about the replication rule is a claim about another runtime, and the answer
 there was to say nothing (below, #330). The two do not overlap and neither
 weakens the other: an artifact may declare itself cuttable at any world size
-while `max_world_size` stays 1, because "these bytes admit a cut" and "a
+while `max_world_size` names only the world a receipt served, because "these bytes admit a cut" and "a
 served receipt covers this world" are the attempted/attested distinction this
 whole section is built on.
 
-**What the contract publishes about that replication: nothing, and the
-silence is the decision (#330).** `runtime_contract.json`'s `tensor_parallel`
-block publishes `max_world_size` -- an attestation, the largest world a
-served receipt covers -- beside `loader_axes`, what this build's loader does
-with each shard axis, and it names no replication rule at all. The rule the
-loader enforces is vLLM's own: `QKVParallelLinear` sets
+**What the contract publishes about a world above one: the receipt that
+covers it, and the replication rule the loader applies there (v29, #330).**
+`runtime_contract.json`'s `tensor_parallel` block publishes `max_world_size`
+-- an attestation, the largest world a served receipt covers -- beside
+`loader_axes`, what this build's loader does with each shard axis. Since v29
+every family is at 2, and a unit above 1 must name a
+`world_size_receipts` entry: `contract._validate_tensor_parallel` refuses it
+by name otherwise. The entry is machine-readable where a gate could read it:
+per serve the image, tree, hosts, flags (which must ask for the receipt's
+world) and one route trace per rank; the units those traces executed (the
+unit must be among them, and `tests/test_serving_contract.py` derives the list
+from the committed trace files through `PAYLOAD_FAMILY_BY_ROUTE`); the KL
+against a single-rank arm as three arms -- the Tessera checkpoint TP2 vs TP1,
+a no-Tessera control TP2 vs TP1, a single-rank floor -- with the quantized
+arm's excess over the control derived from the metrics, not typed; and the
+grade, which may only be `route_only`, because every arm compares a
+checkpoint with itself at another world size and never with its reference.
+The receipt is `docs/measurements/tessera-glm53-a4-stub-tp2-world-size-2026-09-15.md`
+(the A4 excess over the BF16 control is 4.26x at the median shared-id
+|d logprob| and 1.11x at the p99, tessera#514). The traces cut E2M1_K2 on
+both axes, E4M3_K1 on rows and BF16_K1 on columns; the other axis of each is
+`loader_axes`' word and no trace's.
+
+The rest of this paragraph is the decision v29 closed, kept because the gate
+it describes still runs. Until v29 the block named no replication rule at
+all. The rule the loader enforces is vLLM's own: `QKVParallelLinear` sets
 `num_kv_head_replicas = tp_size // total_num_kv_heads` and its
 `weight_loader` reads `shard_rank = tp_rank // num_kv_head_replicas`, and
 Tessera READS that off the layer (`sharding.KV_REPLICAS_ATTRIBUTE`,
@@ -2298,21 +2335,26 @@ TP-agnostic stance as the rest of this section, and the reason the wire never
 learns the topology. Publishing the rule in the contract would turn it into a
 claim a consumer PINS (PrismaQuant pins this contract) and Tessera must then
 keep, so that a vLLM change becomes a contract break rather than a loader
-bug. `max_world_size` is 1 on every family, so that claim would describe a
-path no receipt covers, and a rule asserted above its evidence is the same
-defect as a number asserted above its evidence -- only in the direction
-nobody checks for. So the contract stays silent, and the silence is gated
-rather than commented: `tests/test_serving_contract.py`
-(`test_the_contract_does_not_owe_a_replication_rule_it_has_not_attested`)
-fails the day `max_world_size` rises above 1 while the `tensor_parallel`
-block still nowhere names `sharding.KV_REPLICAS_ATTRIBUTE`, deriving the
-attested world from the packaged contract and the name from the loader's own
-constant rather than typing either, and naming the two exits -- publish the
-rule, or put the attestation back. What would have to be true to publish it
-is therefore a served TP>1 measurement: a two-rank serve with a per-rank
-census and a KL against the single-rank arm, which is what raises
-`max_world_size` in the first place and what `contract.py`'s outright refusal
-of `max_world_size != 1` is waiting for. (The adjacent question of what the
+bug. While `max_world_size` was 1 on every family that claim would have
+described a path no receipt covered, and a rule asserted above its evidence
+is the same defect as a number asserted above its evidence -- only in the
+direction nobody checks for. So the contract stayed silent, and the silence
+was gated rather than commented: `tests/test_serving_contract.py`
+(`_unpublished_replication_above_one`) fails whenever `max_world_size` is
+above 1 while the `tensor_parallel` block nowhere names
+`sharding.KV_REPLICAS_ATTRIBUTE`, deriving the attested world from the
+packaged contract and the name from the loader's own constant rather than
+typing either, and naming the two exits -- publish the rule, or put the
+attestation back. v29 took the first exit. `tensor_parallel.kv_head_replication`
+publishes `attribute: num_kv_head_replicas` and
+`shard_index: tp_rank // num_kv_head_replicas`, and
+`contract._validate_kv_head_replication` checks both against the loader's
+constant, requires the block whenever a unit is above 1 and refuses it while
+every unit is at 1. It carries `exercised_by_receipt: false`: the receipt's
+stub declares 64 key/value heads, so a world of two replicates nothing, and
+no attention module in it is a Tessera module. The rule is published as what
+the loader DOES, the same kind of claim as `loader_axes`, and a served
+replicated layer is still unmeasured. (The adjacent question of what the
 ARTIFACT's own `tessera_config.json` says about TP is #328, answered above in
 this section: it declares `schema_minor` and a derived `tp_agnostic`, and the
 loader gates on them. That declaration is about the bytes and is

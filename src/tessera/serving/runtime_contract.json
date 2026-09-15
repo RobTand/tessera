@@ -1,6 +1,6 @@
 {
   "schema": "tessera.runtime-contract.v1",
- "contract_version": 28,
+ "contract_version": 29,
  "quant_method": {
   "canonical": "tessera",
   "accepted": [
@@ -1002,7 +1002,8 @@
    {
     "unit": "TESSERA_E2M1_K2",
     "kind": "tessera_wire_family",
-    "max_world_size": 1,
+    "max_world_size": 2,
+    "world_size_receipt": "glm53_a4_stub_tp2_sm121",
     "loader_axes": {
      "row": {
       "status": "sharded",
@@ -1017,7 +1018,8 @@
    {
     "unit": "TESSERA_E4M3_K1",
     "kind": "tessera_wire_family",
-    "max_world_size": 1,
+    "max_world_size": 2,
+    "world_size_receipt": "glm53_a4_stub_tp2_sm121",
     "loader_axes": {
      "row": {
       "status": "sharded",
@@ -1032,7 +1034,8 @@
    {
     "unit": "TESSERA_BF16_K1",
     "kind": "tessera_wire_family",
-    "max_world_size": 1,
+    "max_world_size": 2,
+    "world_size_receipt": "glm53_a4_stub_tp2_sm121",
     "loader_axes": {
      "row": {
       "status": "sharded",
@@ -1045,7 +1048,167 @@
     }
    }
   ],
-  "units_note": "max_world_size is an ATTESTATION bound: the largest tensor-parallel world size a served receipt covers. It is 1 for every declared family because no multi-rank serve has been run. loader_axes is a different claim -- what this build's LOADER does with each shard axis -- and it is checked against tessera.serving.sharding.ROUTE_TP_AXES, which the routes gate on, so the document and the code cannot drift. Since v26 every declared family cuts both axes: a row shard's INITIAL_STATE plane is threaded into the decoder's pad by every shipping body (the window body's window_bits pad for E4M3_K1 and BF16_K1; the span-2 select plane's SELECT_PAD for E2M1_K2, tessera#492), and the native decode of a shard is held to tessera.stock.materialize_stock at load exactly as a whole unit's is. A serve above max_world_size is unattested, which is the same honest status a rung with no lane_eligibility cell has, and not a refusal."
+  "world_size_receipts": [
+   {
+    "id": "glm53_a4_stub_tp2_sm121",
+    "world_size": 2,
+    "platform": "sm_121",
+    "receipt": "docs/measurements/tessera-glm53-a4-stub-tp2-world-size-2026-09-15.md",
+    "serves": [
+     {
+      "role": "route_census",
+      "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:a5424378322071f4c33e63d1372a2bb028e46b03f0da0e5edb0cdd7418e2cebb",
+      "tessera_tree": "44d20d670700d719a50052e6050372fd5d9b9c2f",
+      "hosts": [
+       "sparky",
+       "sparklina"
+      ],
+      "flags": [
+       "--tensor-parallel-size",
+       "2",
+       "--nnodes",
+       "2",
+       "--distributed-executor-backend",
+       "mp",
+       "--enforce-eager",
+       "--attention-backend",
+       "CUSTOM",
+       "--kv-cache-dtype",
+       "fp8_ds_mla",
+       "--moe-backend",
+       "flashinfer_cutlass",
+       "--max-model-len",
+       "4096",
+       "--gpu-memory-utilization",
+       "0.25",
+       "--kv-cache-memory-bytes",
+       "4294967296"
+      ],
+      "route_traces": [
+       "experiments/results/glm53_a4_stub_tp2_route_trace_rank0.json",
+       "experiments/results/glm53_a4_stub_tp2_route_trace_rank1.json"
+      ]
+     },
+     {
+      "role": "single_rank_kl_arm",
+      "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:a5424378322071f4c33e63d1372a2bb028e46b03f0da0e5edb0cdd7418e2cebb",
+      "tessera_tree": "44d20d670700d719a50052e6050372fd5d9b9c2f",
+      "hosts": [
+       "sparky",
+       "sparklina"
+      ],
+      "flags": [
+       "--tensor-parallel-size",
+       "2",
+       "--nnodes",
+       "2",
+       "--distributed-executor-backend",
+       "mp",
+       "--gpu-memory-utilization",
+       "0.25",
+       "--enforce-eager",
+       "--attention-backend",
+       "CUSTOM",
+       "--kv-cache-dtype",
+       "fp8_ds_mla",
+       "--moe-backend",
+       "flashinfer_cutlass",
+       "--kernel-config",
+       "{\"enable_flashinfer_autotune\":false}",
+       "--max-model-len",
+       "4096",
+       "--kv-cache-memory-bytes",
+       "4294967296",
+       "--trust-remote-code",
+       "--max-logprobs",
+       "1024",
+       "--served-model-name",
+       "kl-target"
+      ],
+      "route_traces": [
+       "experiments/results/glm53_a4_stub_tp2_kl_arm_route_trace_rank0.json",
+       "experiments/results/glm53_a4_stub_tp2_kl_arm_route_trace_rank1.json"
+      ]
+     }
+    ],
+    "executed_units": [
+     "TESSERA_E2M1_K2",
+     "TESSERA_E4M3_K1",
+     "TESSERA_BF16_K1"
+    ],
+    "single_rank_kl": {
+     "issue": "tessera#514",
+     "table": "experiments/results/glm53_a4_stub_tp_single_rank_kl_514.json",
+     "instrument": "kl_tool dump at top-1024 over the n8 x s512 corpus contract, prefill, eager; compared by tp-equivalence (three metrics)",
+     "read": [
+      "abs_dlogprob",
+      "renormalized_kl"
+     ],
+     "arms": {
+      "quantized": {
+       "id": "a4_tp2_vs_tp1",
+       "scope": "TP2 vs TP1 on the degenerate 4-layer A4 stub (routed E2M1x2 q896), prefill 8x512, eager",
+       "metrics": {
+        "abs_dlogprob_p50": 0.11315155029296875,
+        "abs_dlogprob_p99": 0.6671838998794559,
+        "abs_dlogprob_max": 3.04483699798584,
+        "renormalized_kl_mean": 0.02567334490262606,
+        "renormalized_kl_p99": 0.17697411363586915,
+        "renormalized_kl_max": 0.26895395423080803,
+        "top1_agree_pct": 81.01761252446184,
+        "top8_exact_pct": 33.85518590998043,
+        "topk_kl_lower_bound_mean": 0.00613803038950649,
+        "topk_coverage_mean": 0.26315830952244945
+       }
+      },
+      "control": {
+       "id": "bf16_tp2_vs_tp1",
+       "scope": "TP2 vs TP1 on the degenerate 4-layer BF16 stub (no Tessera module), prefill 8x512, eager",
+       "metrics": {
+        "abs_dlogprob_p50": 0.026550769805908203,
+        "abs_dlogprob_p99": 0.60223388671875,
+        "abs_dlogprob_max": 2.8654913902282715,
+        "renormalized_kl_mean": 0.011671636794383804,
+        "renormalized_kl_p99": 0.1693348630593774,
+        "renormalized_kl_max": 0.4242459916989004,
+        "top1_agree_pct": 92.4412915851272,
+        "top8_exact_pct": 76.07632093933464,
+        "topk_kl_lower_bound_mean": 0.002743283346407396,
+        "topk_coverage_mean": 0.2715373537240018
+       }
+      },
+      "floor": {
+       "id": "a4_tp1_floor",
+       "scope": "TP1 vs TP1 on the degenerate 4-layer A4 stub, a second serve, prefill 8x512, eager",
+       "metrics": {
+        "abs_dlogprob_p50": 0.0,
+        "abs_dlogprob_p99": 0.0,
+        "abs_dlogprob_max": 0.0,
+        "renormalized_kl_mean": 0.0,
+        "renormalized_kl_p99": 0.0,
+        "renormalized_kl_max": 0.0,
+        "top1_agree_pct": 100.0,
+        "top8_exact_pct": 100.0,
+        "topk_kl_lower_bound_mean": 0.0,
+        "topk_coverage_mean": 0.26315830952244945
+       }
+      }
+     },
+     "excess_over_control": {
+      "abs_dlogprob_p50": 4.26,
+      "abs_dlogprob_p99": 1.11
+     }
+    },
+    "grade": "route_only"
+   }
+  ],
+  "kv_head_replication": {
+   "attribute": "num_kv_head_replicas",
+   "shard_index": "tp_rank // num_kv_head_replicas",
+   "exercised_by_receipt": false,
+   "note": "What the LOADER applies above one rank, published since v29 because a world above 1 is now attested (tessera#330). vLLM's QKVParallelLinear sets num_kv_head_replicas = tp_size // total_num_kv_heads (at least 1) and its weight_loader gives rank tp_rank the k and v shard at tp_rank // num_kv_head_replicas; tessera.serving.sharding.layer_replicas reads the attribute off the layer and plans each rank's rows from it. The validator checks attribute and shard_index against sharding.KV_REPLICAS_ATTRIBUTE, the constant the loader reads, exactly as loader_axes is checked against ROUTE_TP_AXES. exercised_by_receipt is false: the world-size receipt's model declares 64 key/value heads, so a world of two replicates nothing, and no attention module in it is a Tessera module."
+  },
+  "units_note": "max_world_size is an ATTESTATION bound: the largest tensor-parallel world size a served receipt covers. A unit at 1 names nothing. A unit above 1 names a world_size_receipts entry at exactly that world, and the validator refuses it by name without one: the entry carries each serve's record (image, tree, hosts, flags asking for that world), one route trace per rank, the units those traces executed, the KL against a single-rank arm (a quantized arm, a no-Tessera control and a single-rank floor, with the excess over the control derived from the metrics) and the grade, which is route_only because the KL compares a checkpoint with itself at another world and never with its reference. Since v29 every declared family is at 2 on the GLM-5.3-Flash 4-layer stub serves (docs/measurements/tessera-glm53-a4-stub-tp2-world-size-2026-09-15.md): all three routes executed on both ranks of both two-rank serves. The traces cut E2M1_K2 on both axes, E4M3_K1 on rows and BF16_K1 on columns. loader_axes is a different claim -- what this build's LOADER does with each shard axis -- and it is checked against tessera.serving.sharding.ROUTE_TP_AXES, which the routes gate on, so the document and the code cannot drift. Since v26 every declared family cuts both axes: a row shard's INITIAL_STATE plane is threaded into the decoder's pad by every shipping body (the window body's window_bits pad for E4M3_K1 and BF16_K1; the span-2 select plane's SELECT_PAD for E2M1_K2, tessera#492), and the native decode of a shard is held to tessera.stock.materialize_stock at load exactly as a whole unit's is. A serve above max_world_size is unattested, which is the same honest status a rung with no lane_eligibility cell has, and not a refusal."
  },
  "expert_parallel": {
   "axis": "vllm_expert_parallel_size",
@@ -1890,6 +2053,11 @@
   }
  },
  "changelog": [
+  {
+   "contract_version": 29,
+   "date": "2026-09-15",
+   "change": "tensor_parallel raises max_world_size from 1 to 2 for TESSERA_E2M1_K2, TESSERA_E4M3_K1 and TESSERA_BF16_K1 on a receipt (tessera#506, tessera#514). THE RECEIPT is docs/measurements/tessera-glm53-a4-stub-tp2-world-size-2026-09-15.md, published as tensor_parallel.world_size_receipts[glm53_a4_stub_tp2_sm121] and named by each unit's new world_size_receipt field. It carries two two-rank serves of the GLM-5.3-Flash 4-layer stub over two GB10s on one image and tree (the route census contract v28's routed cells rest on, and a KL arm), each with one committed route trace per rank; all three families' routes executed on both ranks of both serves, which is why all three units move and executed_units names them. The KL against the single-rank arm is the tessera#514 table (experiments/results/glm53_a4_stub_tp_single_rank_kl_514.json): the A4 stub TP2 vs TP1, the BF16 stub TP2 vs TP1 as the control, and a second A4 TP1 serve as the floor, which agrees bit for bit. The A4 excess over the control is 4.26x at the median shared-id |d logprob| and 1.11x at the p99; top-1024 coverage is about 0.26 on this near-flat stub, so read the |d logprob| and renormalized columns. THE GRADE STAYS route_only: every arm compares the checkpoint with itself at another world size. WHAT CHANGED IN THE VALIDATOR: the outright refusal of any max_world_size other than 1 is replaced by a receipt requirement (contract._validate_tensor_parallel). A unit above 1 without a world_size_receipt, naming an unknown one, one at another world, or one whose executed_units omit it is refused by name; a receipt's serve flags must ask for its world, its route traces must be one per rank, its single-rank KL excess is derived from the arms and a typed value that disagrees is refused, and its grade must be route_only. THE #330 SILENCE ENDS WITH THE WORLD OF ONE: tensor_parallel.kv_head_replication publishes the loader's rule, attribute num_kv_head_replicas and shard_index tp_rank // num_kv_head_replicas, checked against tessera.serving.sharding.KV_REPLICAS_ATTRIBUTE, required whenever a unit is above 1 and refused while every unit is at 1; exercised_by_receipt is false because the stub's 64 KV heads replicate nothing at a world of two. ADDITIVE for a lane reader: formats, lane_eligibility (schema v10, every cell byte for byte), attested_rungs_q256, platforms, loader_axes, fused_module, activation_quantizers and expert_parallel (empty) do not move. A consumer that gates tensor-parallel admission on max_world_size now admits a world of 2 for these families, which is why this is a version bump."
+  },
   {
    "contract_version": 28,
    "date": "2026-09-14",
