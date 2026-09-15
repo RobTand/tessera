@@ -77,18 +77,29 @@ from .window_viterbi import fused_available
 __all__ = ["STATS", "SumPlan", "fused_available", "lut_swap_refusal", "position_costs",
            "sum_plan", "swap_passes_fused"]
 
-#: The torch releases whose CUDA float32 ``sum`` order this module reproduces:
-#: read from torch 2.11.0's shipped ``Reduce.cuh`` and held to ``torch.sum``
-#: bitwise (PB ``197cbc785234``: 906 of 906 cases over 151 sizes from 128 to
-#: 33,333,331 elements, 593 of them order-sensitive).  Another release may
-#: reorder the reduction, so it keeps the reference until it is checked.
-_VERIFIED_TORCH = ("2.11.",)
+#: The torch releases whose CUDA float32 ``sum`` order this module reproduces,
+#: each held to ``torch.sum`` bitwise by
+#: ``experiments/tessera486_sum_order_probe.py`` (906 of 906 cases over 151
+#: sizes from 128 to 33,333,331 elements):
+#:
+#:   * 2.11.0, read from its shipped ``Reduce.cuh``: PB ``197cbc785234``, 593
+#:     cases order-sensitive.
+#:   * 2.13.0, in the GLM census image: PB ``080e269adbcb``, 596
+#:     order-sensitive.  On this path its ``Reduce.cuh`` differs from 2.11's
+#:     only in ``block_x_reduce`` spelling ``warpSize`` as ``C10_WARP_SIZE``
+#:     (32 on CUDA) and in branches a CUDA wheel does not compile
+#:     (``USE_ROCM``, ``FBCODE_CAFFE2``).
+#:
+#: Another release may reorder the reduction, so it keeps the reference until
+#: it is checked.
+_VERIFIED_TORCH = ("2.11.", "2.13.")
 #: ``setReduceConfig`` vectorises a reduction of at least this many elements.
 _MIN_VECTORISED = 128
 #: The largest fit admitted: the longest sum the replica is held to torch on
-#: (PB ``197cbc785234``).  Longer sums reach layouts it is not checked on -- a
-#: lane summing more than one staged row, and past 2^31 index bits torch's
-#: split into sub-reductions -- and LUT fits are far shorter.
+#: (PB ``197cbc785234`` on 2.11, ``080e269adbcb`` on 2.13).  Longer sums reach
+#: layouts it is not checked on -- a lane summing more than one staged row,
+#: and past 2^31 index bits torch's split into sub-reductions -- and LUT fits
+#: are far shorter.
 _MAX_TARGETS = 33_333_331
 #: ``T`` or ``T,W``: trials per ``_blocks`` program and its warps, both powers
 #: of two.  Unset takes ``_TILE_DEFAULT``.  A measurement knob, never a

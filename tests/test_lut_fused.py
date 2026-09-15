@@ -364,6 +364,19 @@ def test_another_allocator_backend_is_refused(monkeypatch):
 
 
 @cuda
+def test_a_torch_release_nobody_checked_keeps_the_reference(monkeypatch):
+    """The replicated order is checked per torch release; a release outside the list is refused."""
+    s, w = _unit(4096, "halves", seed=5)
+    grid = enc.e4m3_positive_values("cuda")
+    table = grid[40:56]
+    monkeypatch.setattr(torch, "__version__", "2.12.0+cu130")
+    assert "torch 2.12.0+cu130" in lut_swap_refusal(s, w, table, grid)
+    for release in ("2.11.0+cu130", "2.13.0+cu130", "2.13.1"):
+        monkeypatch.setattr(torch, "__version__", release)
+        assert lut_swap_refusal(s, w, table, grid) is None, release
+
+
+@cuda
 def test_the_tripwire_hands_a_wrong_replica_back_to_the_reference(monkeypatch):
     """A replica summing in another order must not answer a fit, only cost one."""
     t, w = _unit(229376, "halves", seed=6)
