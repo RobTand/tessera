@@ -615,3 +615,75 @@ def test_translator_refuses_incompatible_projected_stack_before_export(tmp_path,
     with pytest.raises(PLAN.PlanError, match="whole stack"):
         PLAN.main([str(path), str(src), str(out), "--no-uniform-control"])
     assert not out.exists()
+
+
+def _carried_assignment(tmp_path, src, units, carried):
+    assignment = {name: "TESSERA_E4M3_K1_R1024" for name in units}
+    assignment["model.layers.0.feed_forward.gate"] = "BF16"
+    assignment["model.layers.0.self_attn.o_proj"] = "BF16"
+    assignment["__prismaquant__"] = {"tessera_expert_projection": carried}
+    path = tmp_path / "assignment.json"
+    path.write_text(json.dumps(assignment))
+    return path
+
+
+@pytest.mark.parametrize("packed", [False, True])
+def test_carried_projection_plans_without_hashing_shard_payloads(tmp_path, monkeypatch, packed):
+    """The planner reads headers and config, never shard payload bytes (tessera#523).
+
+    Every planner output comes from the projection recomputed from headers and
+    ``config.json``; the shard digests in ``producer.source.files`` decide
+    nothing it writes.  Hashing them cost 1,424+ s and 334 GB of NFS reads on
+    GLM-5.3-Flash before the plan could start.
+    """
+    from tessera import serving_parts
+
+    src, stack, units, carried = _moe_plan_source(tmp_path, packed=packed)
+    path = _carried_assignment(tmp_path, src, units, carried)
+    expected_out = tmp_path / "expected.json"
+    PLAN.main([str(path), str(src), str(expected_out), "--no-uniform-control"])
+
+    def no_shard_payload(original):
+        def guarded(*args, **kwargs):
+            names = [str(a) for a in args if isinstance(a, (str, Path))]
+            names += [str(p) for a in args if isinstance(a, list) for p in a]
+            if any(name.endswith(".safetensors") for name in names):
+                raise AssertionError(f"planner hashed a shard payload: {names}")
+            return original(*args, **kwargs)
+        return guarded
+
+    monkeypatch.setattr(serving_parts, "sha256_file", no_shard_payload(serving_parts.sha256_file))
+    monkeypatch.setattr(serving_parts, "sha256_files", no_shard_payload(serving_parts.sha256_files))
+    out = tmp_path / "plan.json"
+    PLAN.main([str(path), str(src), str(out), "--no-uniform-control"])
+    assert out.read_bytes() == expected_out.read_bytes()
+
+
+def test_carried_projection_still_refuses_another_checkpoint(tmp_path):
+    """Dropping the payload hash keeps the config and tensor-roster binding."""
+    import torch
+    from safetensors.torch import load_file, save_file
+
+    src, stack, units, carried = _moe_plan_source(tmp_path)
+    path = _carried_assignment(tmp_path, src, units, carried)
+    out = tmp_path / "plan.json"
+    config_path = src / "config.json"
+    original_config = config_path.read_text()
+    config_path.write_text(json.dumps({**json.loads(original_config), "rope_theta": 1.0}))
+    with pytest.raises(PLAN.PlanError, match="source identity disagrees"):
+        PLAN.main([str(path), str(src), str(out), "--no-uniform-control"])
+    config_path.write_text(original_config)
+
+    shard = src / "model.safetensors"
+    tensors = load_file(str(shard))
+    tensors["model.layers.0.self_attn.extra.weight"] = torch.zeros(4, 4)
+    save_file(tensors, str(shard))
+    with pytest.raises(PLAN.PlanError, match="source identity disagrees"):
+        PLAN.main([str(path), str(src), str(out), "--no-uniform-control"])
+
+    (src / "tokenizer_config.json").write_text("{}")
+    tensors.pop("model.layers.0.self_attn.extra.weight")
+    save_file(tensors, str(shard))
+    with pytest.raises(PLAN.PlanError, match="source identity disagrees"):
+        PLAN.main([str(path), str(src), str(out), "--no-uniform-control"])
+    assert not out.exists()
