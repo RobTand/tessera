@@ -1,6 +1,6 @@
 {
   "schema": "tessera.runtime-contract.v1",
- "contract_version": 27,
+ "contract_version": 28,
  "quant_method": {
   "canonical": "tessera",
   "accepted": [
@@ -797,6 +797,60 @@
        ]
       }
      }
+    }
+   },
+   {
+    "id": "tessera_e2m1_k2_routed_moe_sm121_decode_resident",
+    "runtime": {
+     "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:a5424378322071f4c33e63d1372a2bb028e46b03f0da0e5edb0cdd7418e2cebb",
+     "execution_modes": ["eager"],
+     "vllm": "0.28.1rc1.dev397+gfd4a15126.d20260904",
+     "torch": "2.13.0+cu130"
+    },
+    "platform": "sm_121",
+    "family": "TESSERA_E2M1_K2",
+    "structure": "routed_moe",
+    "regime": "decode",
+    "rungs_q256": [896],
+    "activation_contract": "e2m1_group16_ue4m3_static",
+    "executes": [{"symbol": "vllm.fused_moe.modular_kernel", "decoder": "torch_materialize_stock"}],
+    "route_status": "backed_with_serve_flag",
+    "qualification": "device_qualified",
+    "requires_plugin": "tessera",
+    "requires_serve_flags": ["TESSERA_SERVE_MODE=resident"],
+    "predicates": [],
+    "evidence": {
+     "artifact": null,
+     "grade": "route_only",
+     "kl": [],
+     "smoke": {"status": "not_recorded", "receipt": null, "attribution": "unattributed", "control": null, "record": null}
+    }
+   },
+   {
+    "id": "tessera_e2m1_k2_routed_moe_sm121_batch_resident",
+    "runtime": {
+     "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:a5424378322071f4c33e63d1372a2bb028e46b03f0da0e5edb0cdd7418e2cebb",
+     "execution_modes": ["eager"],
+     "vllm": "0.28.1rc1.dev397+gfd4a15126.d20260904",
+     "torch": "2.13.0+cu130"
+    },
+    "platform": "sm_121",
+    "family": "TESSERA_E2M1_K2",
+    "structure": "routed_moe",
+    "regime": "batch",
+    "rungs_q256": [896],
+    "activation_contract": "e2m1_group16_ue4m3_static",
+    "executes": [{"symbol": "vllm.fused_moe.modular_kernel", "decoder": "torch_materialize_stock"}],
+    "route_status": "backed_with_serve_flag",
+    "qualification": "device_qualified",
+    "requires_plugin": "tessera",
+    "requires_serve_flags": ["TESSERA_SERVE_MODE=resident"],
+    "predicates": [],
+    "evidence": {
+     "artifact": null,
+     "grade": "route_only",
+     "kl": [],
+     "smoke": {"status": "not_recorded", "receipt": null, "attribution": "unattributed", "control": null, "record": null}
     }
    },
    {
@@ -1836,6 +1890,11 @@
   }
  },
  "changelog": [
+  {
+   "contract_version": 28,
+   "date": "2026-09-14",
+   "change": "Two routed_moe cells for TESSERA_E2M1_K2 at q256 896 on sm_121, one per regime: tessera_e2m1_k2_routed_moe_sm121_decode_resident and tessera_e2m1_k2_routed_moe_sm121_batch_resident (tessera#506, leg 1). THE RECEIPT is docs/measurements/tessera-glm53-a4-stub-tp2-served-2026-09-14.md: the GLM-5.3-Flash 4-layer stub, whose layer-1 routed experts are the E2M1x2 cap wire at q896, served tensor-parallel over two GB10s from tree 44d20d670, eager, resident. Both ranks' route traces are committed (experiments/results/glm53_a4_stub_tp2_route_trace_rank0.json, experiments/results/glm53_a4_stub_tp2_route_trace_rank1.json) and tests/test_route_census_regimes.py joins every record in them to a cell. Every routed record executed vllm.fused_moe.modular_kernel over torch_materialize_stock under e2m1_group16_ue4m3_static, at one row (decode) and at 2 to 2048 rows (batch); the runtime chose the FLASHINFER_CUTLASS backend, which the trace carries as a symbol suffix and the join removes through scheme.moe_census_symbol_base. SCOPE the cells carry: the image the serve ran (the EUGR spark-vllm image rebuilt with NCCL 2.30.7, a third sm_121 image; the platform's serve_image stays the dense pin), vLLM 0.28.1rc1.dev397+gfd4a15126.d20260904, torch 2.13.0+cu130, execution_modes ['eager'] only because the GLM53 NoPE attention backend refuses graph mode (tessera#508), residency resident. EVIDENCE: grade route_only in both regimes and kl []; smoke not_recorded, because the serve's greedy check (29 of 32 tokens equal to a BF16 recording, on stub text that degenerates at every precision) is not in the record form experiments/moe_greedy_smoke.py defines, and a word nothing can derive is not published. A producer's export gate now admits an NVFP4 expert stack at q896 without --allow-unserveable and names these two cells in the manifest's attested_by. WHAT DOES NOT MOVE: tensor_parallel. The same receipt is a two-rank serve of all three families (E2M1_K2 cut on both axes, E4M3_K1 on rows, BF16_K1 on columns), but this version raises no max_world_size: every unit stays at 1, the validator still refuses any other value, and a consumer that gates tensor-parallel admission on this block still refuses a world of 2. Also unchanged: formats, attested_rungs_q256, platforms, expert_parallel (empty), lane_eligibility.schema v10, and every existing cell byte for byte."
+  },
   {
    "contract_version": 27,
    "date": "2026-09-14",

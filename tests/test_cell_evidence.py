@@ -234,6 +234,16 @@ _EVIDENCE = {
     "tessera_e4m3_k1_routed_moe_sm121_batch_resident": {
         "grade": "kl_lower_bound", "kl": [_bound("batch", ["eager"], LFM)],
         "smoke": _recorded_against_reference(MOE_SMOKE, _moe_smoke_record())},
+    # Routed MoE on the E2M1x2 cap wire (q896, contract v28, #506): the
+    # GLM-5.3-Flash 4-layer stub served over two GB10s, eager, resident
+    # (TP2_STUB).  Both ranks' route traces cover the stack in both regimes,
+    # and that is the whole of the evidence: no KL against any arm, and no
+    # smoke in the instrument's form.  The serve's own greedy check -- 29 of 32
+    # tokens equal to a BF16 recording, on text that degenerates at every
+    # precision -- is not a record this grammar can derive a word from, so the
+    # cells publish `not_recorded` rather than a word nothing here can check.
+    "tessera_e2m1_k2_routed_moe_sm121_decode_resident": _ROUTE_ONLY,
+    "tessera_e2m1_k2_routed_moe_sm121_batch_resident": _ROUTE_ONLY,
 }
 
 
@@ -700,11 +710,21 @@ def test_a_control_tells_a_shared_symptom_from_a_route_specific_one(contract):
         smoke = cell["evidence"]["smoke"]
         assert smoke["control"] is None, cell["id"]
         assert smoke["attribution"] == derive_smoke_attribution(smoke), cell["id"]
-        if cell["structure"] == "routed_moe":
+        # The distinction lives on the cells that carry a record.  The E2M1
+        # routed pair (v28) carries none and publishes `not_recorded`: being a
+        # routed_moe cell does not make a smoke exist.
+        if cell["structure"] == "routed_moe" and smoke["record"] is not None:
             assert smoke["status"] == "recorded", cell["id"]
             assert smoke["attribution"] == "shared_with_reference", cell["id"]
         else:
             assert smoke["attribution"] == "unattributed", cell["id"]
+    routed_without_record = sorted(
+        cell["id"] for cell in contract["lane_eligibility"]["cells"]
+        if cell["structure"] == "routed_moe" and cell["evidence"]["smoke"]["record"] is None)
+    assert routed_without_record == ["tessera_e2m1_k2_routed_moe_sm121_batch_resident",
+                                     "tessera_e2m1_k2_routed_moe_sm121_decode_resident"]
+    for cell_id in routed_without_record:
+        assert _cells(contract)[cell_id]["evidence"]["smoke"] == _NO_SMOKE, cell_id
 
 
 def test_the_stored_attribution_is_the_derived_one(contract):

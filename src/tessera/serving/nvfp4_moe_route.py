@@ -62,9 +62,12 @@ an expert whose gate arrived without its up; a stock tensor name
 
 WHAT IS ATTESTED.  Being in ``scheme.MOE_BUILDERS`` is a dispatch fact.  The
 served ``routed_moe`` cells for this family are ``lane_eligibility``'s to
-publish, per image and per regime, from a container receipt; until such a
-cell exists, an export on this route needs ``--allow-unserveable`` and says so
-in its manifest.
+publish, per image and per regime, from a container receipt.  Contract v28
+publishes two, at q256 896, eager and resident, on the image the two-rank
+GLM-5.3-Flash 4-layer stub served
+(``docs/measurements/tessera-glm53-a4-stub-tp2-served-2026-09-14.md``).  An
+export at another rung, or a serve outside that scope, is unattested, and an
+export of it needs ``--allow-unserveable`` and says so in its manifest.
 """
 from __future__ import annotations
 

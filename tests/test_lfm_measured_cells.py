@@ -106,8 +106,10 @@ def test_the_moe_cells_name_the_runtime_the_receipt_records():
     raw = RECEIPT.read_bytes().removesuffix(b"\n")
     assert hashlib.sha256(raw).hexdigest() == RAW_SHA256
     receipt = json.loads(raw)
+    # The LFM receipt is the FP8 family's.  The routed E2M1_K2 pair (v28) rests
+    # on the two-rank GLM stub serve and names that serve's runtime instead.
     cells = [cell for cell in load_serving_contract()["lane_eligibility"]["cells"]
-             if cell["structure"] == "routed_moe"]
+             if cell["structure"] == "routed_moe" and cell["family"] == "TESSERA_E4M3_K1"]
     assert len(cells) == 2
     for cell in cells:
         assert cell["runtime"] == {
