@@ -1,0 +1,49 @@
+{
+ "tag": "m44e1",
+ "results": [
+  {
+   "prompt": "The capital of France is",
+   "text": " unloaded unload unloadishunloadunloadunload unloadunloadunloadunloadunloadunloadunloadunloadunloadunloadunloadunloadunloadunloadunloadunloadunloadunloadunloadunloadunloadunloadunloadunloadunload",
+   "completion_tokens": 32,
+   "finish_reason": "length"
+  },
+  {
+   "prompt": "def fibonacci(n):",
+   "text": "SCO unload unloaded unload unload unload unload unload unload unload\u5728\u5efa unloaded unload unload unload unload unload unload unloademy unload unload unload unload unloadUnload unload unload unload unloademy unload",
+   "completion_tokens": 32,
+   "finish_reason": "length"
+  },
+  {
+   "prompt": "Water boils at a temperature of",
+   "text": " impuls unload unloadUnload unloadUnload unloadUnloadunload unload unload unload unloadUnloadunloadunloadunload unloaded unloadUnloadunload unload unload unloadUnloadUnloadUnloadunloadunloadunloadunloadunload",
+   "completion_tokens": 32,
+   "finish_reason": "length"
+  }
+ ],
+ "bf16_replay": {
+  "bf16_text": " unloaded unload unloadishunload unloadunloadunload unloadunloadunloadunloadunloadunloadunloadunloadunloadunloadunloadunloadunloadunloadunloadunloadunloadunloadunloadunloadunloadunloadunloadunload",
+  "tokens_compared": 32,
+  "greedy_token_matches": 29,
+  "first_divergence_index": 5,
+  "a4_first8_logprobs": [
+   -5.358546733856201,
+   -4.640435695648193,
+   -4.618565559387207,
+   -4.358400344848633,
+   -3.820354461669922,
+   -4.116331577301025,
+   -4.396832466125488,
+   -4.092999458312988
+  ],
+  "bf16_first8_logprobs": [
+   -5.159354209899902,
+   -4.529618263244629,
+   -4.566919803619385,
+   -4.258461952209473,
+   -3.7376511096954346,
+   -4.323171138763428,
+   -3.7670838832855225,
+   -4.191201686859131
+  ]
+ }
+}

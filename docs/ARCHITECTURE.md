@@ -5,6 +5,17 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-14 for contract v28's routed E2M1_K2 cells (tessera#506,
+leg 1). `lane_eligibility` publishes
+`tessera_e2m1_k2_routed_moe_sm121_{decode,batch}_resident` at q256 896, eager
+and resident, on the image a two-rank serve of the GLM-5.3-Flash 4-layer stub
+ran (`docs/measurements/tessera-glm53-a4-stub-tp2-served-2026-09-14.md`), so a
+routed E2M1x2 export at q896 passes the export serving gate without
+`--allow-unserveable` and names both cells in `attested_by`. Both cells grade
+`route_only` with no smoke record. `tensor_parallel` does not move: every
+family's `max_world_size` stays 1, although the same receipt is a two-rank
+route census of all three families (§3.8).
+
 Re-stamped 2026-09-14 for the NATIVE span-2 select-plane admission
 (tessera#492).  A rank's rows are a whole number of the kernel's select
 columns only when they are a multiple of ``arity * 8 * span``: the span-L
@@ -2870,8 +2881,9 @@ decoder's requirement, refused by name at
 `lane_planes.require_native_select_plane_admission`. A builder is a
 dispatch fact and not a served qualification: the
 `routed_moe` cells for this family are `lane_eligibility`'s to publish from a
-container receipt, and until they exist an NVFP4 stack exports only under
-`--allow-unserveable`. Compressed BF16-family expert wires have only the
+container receipt. Contract v28 publishes two, at q256 896, eager and resident,
+on the two-rank stub serve's image; an NVFP4 stack at any other rung exports
+only under `--allow-unserveable`. Compressed BF16-family expert wires have only the
 explicit research-selected folded route above; plain source BF16 passthrough
 uses `quantization_config.ignore`. Both production routes refuse, by name:
 expert parallelism and EPLB (the stride invariant needs every expert's blob

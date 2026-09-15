@@ -99,6 +99,65 @@ def test_every_phase_the_census_drives_joins_to_a_cell_of_every_family():
     )
 
 
+#: The two ranks' route traces from the two-rank GLM-5.3-Flash 4-layer stub
+#: serve (#506), committed byte for byte from the serve's log directory.
+TP2_STUB_TRACES = (ROOT / "experiments/results/glm53_a4_stub_tp2_route_trace_rank0.json",
+                   ROOT / "experiments/results/glm53_a4_stub_tp2_route_trace_rank1.json")
+
+
+def test_every_route_the_two_rank_stub_served_joins_to_a_cell():
+    """The routed E2M1_K2 cells rest on records, not on a summary of them.
+
+    Each rank's ``tessera.route_trace/1`` entry is joined to the sm_121 cells
+    by what it names -- family (through the route), structure (through the
+    record kind), regime (through the forward's own M, one row for decode),
+    residency, activation contract and the launch pair -- so a cell that stops
+    matching what the serve executed fails here.  The routed launch carries
+    the backend the runtime picked (``:FLASHINFER_CUTLASS``); the comparison
+    removes it through ``scheme.moe_census_symbol_base``, as the census does.
+
+    The runtime image is NOT part of this join.  The stub served every family
+    on one image, and the dense cells name the vanilla vLLM pin their own
+    receipts ran; a dense record here shows the route executed at a world of
+    two, not that the dense cells cover this image.  The routed E2M1_K2 cells'
+    image is tied to the receipt in ``tests/test_serving_contract.py``.
+    """
+    from tessera.serving.contract import cell_residency_modes
+    from tessera.serving.scheme import moe_census_symbol_base
+
+    cells = [cell for cell in load_serving_contract()["lane_eligibility"]["cells"]
+             if cell["platform"] == "sm_121"]
+    joined = set()
+    per_rank = []
+    for path in TP2_STUB_TRACES:
+        trace = json.loads(path.read_text(encoding="utf-8"))
+        assert trace["schema"] == "tessera.route_trace/1", path.name
+        assert trace["entries"], f"{path.name} records no route"
+        seen = set()
+        for entry in trace["entries"]:
+            route, _, mode = entry["policy"].partition(":")
+            family = PAYLOAD_FAMILY_BY_ROUTE[route]
+            structure = "routed_moe" if entry["kind"] == "moe" else "dense"
+            rows = entry["shape"].split(":", 1)[0]
+            regime = "decode" if rows == "M1" else "batch"
+            symbol = (moe_census_symbol_base(entry["symbol"])
+                      if structure == "routed_moe" else entry["symbol"])
+            launch = {"symbol": symbol, "decoder": entry["decoder"]}
+            matched = [cell["id"] for cell in cells
+                       if cell["family"] == family and cell["structure"] == structure
+                       and cell["regime"] == regime
+                       and cell["activation_contract"] == entry["contract"]
+                       and mode in cell_residency_modes(cell)
+                       and launch in cell["executes"]]
+            assert matched, f"{path.name}: {entry} joins to no sm_121 cell"
+            seen.add((family, structure, regime))
+        per_rank.append(seen)
+        joined |= seen
+    assert per_rank[0] == per_rank[1], "the two ranks served different routes"
+    assert {("TESSERA_E2M1_K2", "routed_moe", "decode"),
+            ("TESSERA_E2M1_K2", "routed_moe", "batch")} <= joined, joined
+
+
 def test_the_census_drives_every_regime_the_table_names():
     source = CENSUS.read_text()
     driven = re.search(r"^DRIVEN_REGIMES = \(([^)]*)\)", source, re.MULTILINE)
