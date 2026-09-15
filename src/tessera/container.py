@@ -193,7 +193,7 @@ def plane_ranges(
 
 def verify_plane_region(
     manifest: Manifest, terminal: TerminalRecord, plane_region: bytes
-) -> None:
+) -> bytes:
     """Check every integrity claim the manifest makes about these bytes.
 
     Three claims, none of which was checked before this review:
@@ -203,8 +203,13 @@ def verify_plane_region(
     * each fully-present plane's `content_digest` (F1);
     * that alignment padding is zero, so the encoding is canonical and the
       slack is not a covert channel (F4).
+
+    Returns the region's sha256, so a caller that also holds the manifest's
+    whole-artifact digest compares against it without hashing the region a
+    second time (tessera#503).
     """
-    if hashlib.sha256(plane_region).digest() != terminal.payload_digest:
+    digest = hashlib.sha256(plane_region).digest()
+    if digest != terminal.payload_digest:
         raise SchemaError(
             f"terminal {terminal.slot_id!r}: plane-region bytes do not match "
             "the declared payload digest"
@@ -254,6 +259,7 @@ def verify_plane_region(
                     f"{descriptor.kind.name}: bytes do not match the plane's "
                     "declared content digest"
                 )
+    return digest
 
 
 @dataclass(frozen=True)
@@ -329,9 +335,12 @@ def parse(data: bytes) -> ParsedArtifact:
         manifest, terminal, side_bytes=side_bytes, physical_bytes=len(plane_region)
     )
 
-    verify_plane_region(manifest, terminal, plane_region)
+    # One sha256 over the region serves both comparisons: the region is the
+    # bulk of every wire, and hashing it twice was a second full pass over
+    # hundreds of megabytes on a routed load (tessera#503).
+    digest = verify_plane_region(manifest, terminal, plane_region)
     if len(plane_region) == region_bytes:
-        if hashlib.sha256(plane_region).digest() != manifest.payload_digest:
+        if digest != manifest.payload_digest:
             raise SchemaError("payload digest mismatch on a complete artifact")
 
     return ParsedArtifact(
