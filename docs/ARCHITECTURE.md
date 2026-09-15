@@ -5,6 +5,19 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-15 for the fused LUT swap passes (tessera#486, stage 2).
+`encode._fit_lut`'s swap refinement now takes `lut_fused.swap_passes_fused`
+on a CUDA device whenever `fused_available()` holds and `lut_swap_refusal`
+names nothing: float32 targets, weights, table and grid on one device, 128 to
+33,333,331 live halves, torch 2.11 and the native caching allocator. The
+passes make one host sync a pass instead of one a trial.
+`TESSERA_LUT_FUSED=0` runs `_lut_swap_passes_reference`, the unchanged loop,
+on every fit. The contract is identity with that loop: the same bytes, the
+same table floats and the same accept/reject sequence, exact ties included,
+because every trial cost is the float torch's CUDA `sum` returns
+(`tests/test_lut_fused.py`). A tripwire holds the replica to torch on every
+fit and hands a fit it disagrees on back to the reference.
+
 Re-stamped 2026-09-14 for the fused coset TCQ trellis (tessera#486).
 `encode.viterbi_columns`'s `auto` now takes `tcq_fused.viterbi_columns_fused`
 -- three Triton launches a call, `_minima`, `_forward` and `_traceback` -- on
@@ -1781,9 +1794,11 @@ device time from 1.101 to 0.280 ms per unit-column. On the same binary,
 throughput rose 1.96x at `B=32` and 3.07x at `B=8`, for 1.82x and 2.47x the
 parameters per joule. Host launches and syncs did not move (103.9 and 11.45
 per unit-column). The encoder still draws 35-37 % of the 140 W envelope, and
-fused `B=8` is within 4 % of fused `B=32`. The bound is now `_fit_lut`'s swap
-loop, which makes one host sync per trial
-(`docs/measurements/tessera486-fused-tcq-2026-09-14.md`). The fused window
+fused `B=8` is within 4 % of fused `B=32`. The bound after that was
+`_fit_lut`'s swap loop, which made one host sync per trial
+(`docs/measurements/tessera486-fused-tcq-2026-09-14.md`). Since tessera#486's
+second stage those passes run fused (`lut_fused.swap_passes_fused`): one host
+sync a pass, and the reference loop's bytes and table floats. The fused window
 body is tiled over an L2-bounded column width
 (`window_viterbi._layout`, width 32 at L=14), so a wider call there is more
 tiles of the same width and the gain is per-call overhead only; the numbers
