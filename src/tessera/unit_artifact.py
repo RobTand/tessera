@@ -1539,12 +1539,21 @@ def _read_window_unit(art, grid: PayloadGrid, device) -> ParsedUnit:
     n_released = elements(PlaneKind.RELEASE)
     scales = _read_scale_planes(plane, chunks, terminal, geometry, device, wire)
     seed, wsigma, csigma = _reach_attrs(manifest)
+    # A window body has no anchors, no TCQ codes and no completion words: it
+    # decodes from BODY and the table (``decode._decode_window``), and its
+    # writer packs zero-width COMPLETION without reading the plane
+    # (``wire.pack_levels``).  One shared zero-stride view stands in for all
+    # three -- 8 bytes, not three int64 planes of ``steps * cols`` words each
+    # (tessera#502).  It reads as zeros everywhere a plane is read (shape,
+    # ``any``, ``torch.equal``, indexing, ``slice_unit``); nothing writes these
+    # fields, and a write across its shared elements raises.
+    zeros = torch.zeros((), dtype=torch.long, device=device).expand(steps, cols)
     unit = _as_unit(manifest, dict(
         rates=rates,
-        anchors=torch.zeros(steps, cols, dtype=torch.long, device=device),
-        codes=torch.zeros(steps, cols, dtype=torch.long, device=device),
+        anchors=zeros,
+        codes=zeros,
         body_bits=unpack_body(chunks[PlaneKind.BODY], rates, steps, device, 1),
-        completion_bits=torch.zeros(steps, cols, dtype=torch.long, device=device),
+        completion_bits=zeros,
         release_index=torch.zeros(0, dtype=torch.long, device=device),
         release_code=torch.zeros(0, dtype=torch.long, device=device),
         sse=0.0,
