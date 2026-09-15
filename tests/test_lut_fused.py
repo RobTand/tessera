@@ -20,8 +20,13 @@ So these hold that line where it can break:
 - The dispatch rules, the refusals by name, the tripwire and the tile knob.
 """
 import dataclasses
+import json
+import os
 import struct
+import subprocess
+import sys
 import threading
+from pathlib import Path
 
 import pytest
 import torch
@@ -36,6 +41,7 @@ cuda = pytest.mark.skipif(not fused_available(),
                           reason="the fused LUT swap passes are a CUDA path and need triton")
 
 FIRST = enc.E4M3_NORMAL_BYTES[0]
+ROOT = Path(__file__).resolve().parents[1]
 
 
 def _bits(x) -> int:
@@ -236,6 +242,68 @@ def test_concurrent_fits_are_each_the_reference(monkeypatch):
         th.join()
     for k, (ref, g) in enumerate(zip(refs, got)):
         assert_identical(ref, g, f"unit {k}")
+
+
+# The child fits one unit with the reference passes, then with the fused passes while every
+# ``torch.empty`` in ``lut_fused`` returns memory that already holds ``argv[1]``, or NaN in a
+# float buffer: contents that ``torch.empty`` is free to return.
+_POISONED_FIT = r'''
+import json
+import os
+import sys
+
+import torch
+
+import tessera.encode as enc
+import tessera.lut_fused as lf
+
+poison = int(sys.argv[1])
+
+
+class _Torch:
+    def __getattr__(self, name):
+        return getattr(torch, name)
+
+    @staticmethod
+    def empty(*args, **kwargs):
+        out = torch.empty(*args, **kwargs)
+        return out.fill_(float("nan") if out.dtype.is_floating_point else poison)
+
+
+g = torch.Generator(device="cuda").manual_seed(7)
+t = torch.exp(torch.randn(4096, device="cuda", generator=g) * 0.7)
+w = torch.exp(torch.randn(4096, device="cuda", generator=g) * 1.2)
+gs = float(2.0 ** (torch.floor(torch.log2(t.max())).item() - 6.0))
+os.environ["TESSERA_LUT_FUSED"] = "0"
+ref = enc._fit_lut(t, w, gs)
+os.environ["TESSERA_LUT_FUSED"] = "1"
+lf.torch = _Torch()
+got = enc._fit_lut(t, w, gs)
+torch.cuda.synchronize()
+print(json.dumps({"stats": lf.STATS, "bytes": torch.equal(ref[0], got[0]),
+                  "table": torch.equal(ref[1].view(torch.int32), got[1].view(torch.int32))}))
+'''
+
+
+@cuda
+@pytest.mark.parametrize("poison", [-2**31, 2**31 - 1])
+def test_no_launch_reads_a_buffer_before_a_launch_writes_it(poison):
+    """``torch.empty`` returns whatever its block last held, so no launch may depend on it.
+
+    The first ``accept`` launch of a fit read an index from ``unused`` before any launch had
+    written it, then loaded ``grid`` at that index.  The store that took the value was
+    masked, but the load was not, so a large leftover index was an illegal memory access,
+    and one poisons the CUDA context for the rest of the process.  Here every
+    ``torch.empty`` in ``lut_fused`` returns a large index, or NaN in a float buffer, and
+    the fit runs in a child process.
+    """
+    env = dict(os.environ, PYTHONPATH=str(ROOT / "src"))
+    proc = subprocess.run([sys.executable, "-c", _POISONED_FIT, str(poison)], env=env,
+                          capture_output=True, text=True, timeout=900)
+    assert proc.returncode == 0, f"poison {poison}: rc {proc.returncode}\n{proc.stderr[-4000:]}"
+    got = json.loads(proc.stdout.splitlines()[-1])
+    assert got["stats"] == {"fused": 1, "tripped": 0, "nonfinite": 0}, got
+    assert got["bytes"] and got["table"], got
 
 
 # ---- dispatch, refusals, tripwire, knobs -------------------------------------------------
