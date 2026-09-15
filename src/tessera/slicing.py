@@ -779,6 +779,11 @@ def _slice_step_plane(plane, s0: int, s1: int, c0: int, c1: int):
     """Slice a per-step plane, tolerating the zero placeholders a reader makes."""
     if plane is None or plane.ndim != 2 or plane.numel() == 0:
         return plane
+    if plane.stride() == (0, 0):
+        # The window reader's shared zero view (tessera#502): a slice of it is
+        # still one element, and ``contiguous`` would allocate the plane the
+        # reader declined to -- on every role a sharded load cuts.
+        return plane[s0:s1, c0:c1]
     return plane[s0:s1, c0:c1].contiguous()
 
 
