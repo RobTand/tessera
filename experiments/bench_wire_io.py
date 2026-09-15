@@ -156,13 +156,17 @@ def child(args) -> int:
         from tessera.alphabet import SERIALISABLE_GRIDS
         from tessera.export import DEFAULT_CODE, encode_linear_planes
 
-        grid = {g.name: g for g in SERIALISABLE_GRIDS.values()}["E2M1x2"]
+        grids = {g.name: g for g in SERIALISABLE_GRIDS.values()}
         weight = torch.load(args.tcq_weight, map_location="cpu", weights_only=True)
         weight = weight[: args.tcq_rows].float().to(device)
-        for completion in (0, None):
-            _e, unit, forests = encode_linear_planes(weight, grid=grid, q256=896, name="u",
+        cases = [(name, int(q), completion) for name, _, q in
+                 (spec.partition(":") for spec in args.tcq_grids.split(","))
+                 for completion in (0, None)]
+        for grid_name, q256, completion in cases:
+            grid = grids[grid_name]
+            _e, unit, forests = encode_linear_planes(weight, grid=grid, q256=q256, name="u",
                                                      completion=completion)
-            label = f"c{'full' if completion is None else completion}"
+            label = f"{grid_name}-R{q256}-c{'full' if completion is None else completion}"
             # The manifest's root is per column, and an arity-2 column holds
             # two weights: read it off the schedule the encoder produced.
             root_q256 = sum(unit.rates) * 256 // len(unit.rates)
@@ -181,6 +185,7 @@ def child(args) -> int:
                     "seconds": seconds, "median_seconds": statistics.median(seconds),
                     "blob_sha256": hashlib.sha256(blob).hexdigest(), "blob_bytes": len(blob),
                     "completion_limit": unit.completion_limit,
+                    "completion_word_max": int(unit.completion_bits.max()) if unit.completion_bits.numel() else 0,
                     "body": unit.body.name, "unit_input_sha256": inputs,
                     "completion_bits_device": str(unit.completion_bits.device)}
     t_end = time.time()
@@ -220,7 +225,7 @@ def _run_child(args, src, out, profile="none"):
            "--data", args.data, "--layers", args.layers, "--experts", str(args.experts),
            "--device", args.device, "--digest-units", str(args.digest_units),
            "--write-repeats", str(args.write_repeats), "--tcq-rows", str(args.tcq_rows),
-           "--profile", profile, "--out", str(out)]
+           "--tcq-grids", args.tcq_grids, "--profile", profile, "--out", str(out)]
     if args.tcq_weight:
         cmd += ["--tcq-weight", args.tcq_weight]
     out.mkdir(parents=True, exist_ok=True)
@@ -335,6 +340,7 @@ def main(argv=None) -> int:
         q.add_argument("--write-repeats", type=int, default=3)
         q.add_argument("--tcq-weight", default="")
         q.add_argument("--tcq-rows", type=int, default=64)
+        q.add_argument("--tcq-grids", default="E2M1x2:896", help="grid:q256[,grid:q256]")
         q.add_argument("--out", required=True)
     args = parser.parse_args(argv)
     return parent(args) if args.mode == "parent" else child(args)
