@@ -9,8 +9,10 @@ pack (tessera#504).  Three properties are pinned here:
 - the bytes are the numpy packer's: it is kept below, verbatim, as the
   definition, and compared across mixed widths with zero columns interleaved,
   uniform widths, one step, no steps, and every word dtype a unit carries;
-- an all-zero-width plane is not read at all -- no operation reaches the
-  dispatcher, and a meta tensor, which has no bytes to read, packs;
+- an all-zero-width plane packs no bit and is read once, to refuse a nonzero
+  word: one reduction on its device, or one element of the window reader's
+  shared zero view -- never a copy of the plane
+  (``tests/test_pack_levels_zero_width_refusal.py`` pins the refusal);
 - on CUDA the only host-bound copy is the packed bytes, never the plane.
 """
 from __future__ import annotations
@@ -101,13 +103,38 @@ def _dispatched(fn):
     return result, recorder.calls
 
 
-def test_an_all_zero_width_plane_is_not_read():
-    words = torch.zeros(4096, 1024, dtype=torch.long)
+def _names(calls):
+    return [func.__name__ for func, _ in calls]
+
+
+def _assert_no_plane_copy(calls, plane):
+    """Views of the plane (``detach``, ``select``) allocate nothing; every
+    other tensor an operation returns is at most one word."""
+    storage = plane.untyped_storage().data_ptr()
+    for func, out in calls:
+        if isinstance(out, torch.Tensor) and out.untyped_storage().data_ptr() != storage:
+            assert out.numel() <= 1, (func, out.shape)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_an_all_zero_width_plane_is_read_by_one_reduction(device):
+    """No bit to pack, but the refusal reads the plane: once, on its device."""
+    words = torch.zeros(4096, 1024, dtype=torch.long, device=device)
     packed, calls = _dispatched(lambda: pack_levels(words, (0,) * 1024))
     assert packed == b""
-    assert calls == [], [func for func, _ in calls]
-    # A meta tensor has no bytes to copy: packing one is packing without reading.
-    assert pack_levels(torch.zeros(4096, 1024, dtype=torch.long, device="meta"), (0,) * 1024) == b""
+    names = _names(calls)
+    assert len([n for n in names if n.startswith("any")]) == 1 and len(names) <= 3, names
+    _assert_no_plane_copy(calls, words)
+
+
+@pytest.mark.parametrize("device", DEVICES)
+def test_the_zero_view_is_read_at_one_element(device):
+    """The window reader's shared zero view (tessera#502) costs one word."""
+    view = torch.zeros((), dtype=torch.long, device=device).expand(4096, 1024)
+    packed, calls = _dispatched(lambda: pack_levels(view, (0,) * 1024))
+    assert packed == b""
+    assert not [n for n in _names(calls) if n.startswith("any")], _names(calls)
+    _assert_no_plane_copy(calls, view)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a CUDA plane")
