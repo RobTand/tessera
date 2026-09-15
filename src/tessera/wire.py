@@ -302,6 +302,13 @@ def _level_columns(widths: np.ndarray, level: int) -> np.ndarray:
     return np.nonzero(widths >= level)[0]
 
 
+def _completion_word_out_of_range() -> GrammarError:
+    return GrammarError(
+        "a completion word is out of range for its column's width: the "
+        "word holds exactly the bits the terminal declares for the column"
+    )
+
+
 def pack_levels(completion_bits: torch.Tensor, widths: "tuple[int, ...]") -> bytes:
     """Pack the COMPLETION plane level-major (schema minor 7).
 
@@ -327,7 +334,19 @@ def pack_levels(completion_bits: torch.Tensor, widths: "tuple[int, ...]") -> byt
         # word can only be zero.  Every window body and every full-rate TCQ
         # unit writes this plane, and it used to cost a host copy of an int64
         # (steps, cols) plane and three passes over it to emit ``b""``
-        # (tessera#504) -- the tensor is not read at all now.
+        # (tessera#504).  The bytes need nothing from the tensor, but the
+        # refusal stays: a nonzero word here is an encoder emitting completion
+        # bits the rate schedule gives no room for, and the writer fails
+        # closed on it.  One read decides it -- a single element when every
+        # position shares one word (the window reader's zero view,
+        # tessera#502), otherwise one reduction on the plane's device.
+        if completion_bits.numel():
+            if all(stride == 0 for stride in completion_bits.stride()):
+                nonzero = bool(completion_bits[(0,) * completion_bits.dim()] != 0)
+            else:
+                nonzero = bool(completion_bits.detach().any())
+            if nonzero:
+                raise _completion_word_out_of_range()
         return b""
     # On the device the plane lives on, as ``pack_body`` and
     # ``lane_planes.pack_window_planes`` pack: the only host copy is the
@@ -345,10 +364,7 @@ def pack_levels(completion_bits: torch.Tensor, widths: "tuple[int, ...]") -> byt
         bound = torch.bitwise_left_shift(
             torch.ones((), dtype=torch.int64, device=device), width)
         if bool(((values < 0) | (values >= bound)).any()):
-            raise GrammarError(
-                "a completion word is out of range for its column's width: the "
-                "word holds exactly the bits the terminal declares for the column"
-            )
+            raise _completion_word_out_of_range()
     cube_dtype = torch.uint8 if top <= 8 else torch.int16 if top <= 15 else torch.int64
     level = torch.arange(1, top + 1, dtype=torch.int64, device=device)[:, None]
     keep = level <= width[None, :]  # (levels, cols)
