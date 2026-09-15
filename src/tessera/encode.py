@@ -308,9 +308,10 @@ def _anchor_block_table(forest: AnchorForest, device):
     return torch.tensor(forest.blocks, device=device, dtype=torch.long)
 
 
-#: Whether the TCQ Viterbi's step loop is replayed as a CUDA graph.  Unset
+#: Whether the TCQ Viterbi's step loop is replayed as a CUDA graph, on every
+#: call the fused trellis does not take (``_TCQ_FUSED_ENV``).  Unset
 #: lets the reuse rule in ``viterbi_columns`` decide, "0" forces the eager
-#: loop everywhere, "1" captures as soon as a shape repeats.  A measurement
+#: loop, "1" captures as soon as a shape repeats.  A measurement
 #: knob, never a correctness one: both spellings run the same ops in the same
 #: order on the same buffers and return the same states and the same ``sse``
 #: float, which ``tests/test_tcq_graph.py`` pins.
@@ -336,6 +337,25 @@ _TCQ_PLAN_CACHE = 4
 #: and PrismaBuild's workers encode units concurrently in one process.  The
 #: table memos above are shared because they are read-only; these are not.
 _TCQ_LOCAL = threading.local()
+#: Whether ``auto`` takes the fused trellis (``tcq_fused``) wherever it is
+#: admitted.  Unset or "1" takes it; "0" leaves ``auto`` on the reference and
+#: graph rule above, which is the control an A/B of the two machines measures
+#: against -- ``TESSERA_TCQ_GRAPH`` governs that rule and nothing else.  A
+#: measurement knob, never a correctness one: the fused path returns the
+#: reference's anchors, body field and ``sse`` float, which
+#: ``tests/test_tcq_fused.py`` pins.
+_TCQ_FUSED_ENV = "TESSERA_TCQ_FUSED"
+
+
+def _tcq_fused_wanted() -> bool:
+    raw = os.environ.get(_TCQ_FUSED_ENV, "")
+    if raw in ("", "1"):
+        return True
+    if raw == "0":
+        return False
+    raise GrammarError(
+        f"{_TCQ_FUSED_ENV}={raw!r} is not 0 (the graph rule), 1 or unset "
+        "(the fused trellis wherever it is admitted)")
 
 
 def _tcq_maps():
@@ -647,14 +667,20 @@ def viterbi_columns(
     ``impl`` picks the machine, never the answer, exactly as it does on
     ``viterbi_window``.  ``"reference"`` builds a plan for this call alone and
     runs its step loop eagerly; ``"graph"`` keeps a plan per shape and replays
-    a captured CUDA graph of the same loop; ``"auto"`` is ``"graph"`` on CUDA
-    once a shape has been asked for ``_TCQ_GRAPH_MIN_CALLS`` times, and
-    ``"reference"`` before that and on CPU.  Both run ``_TCQPlan.run``, so
+    a captured CUDA graph of the same loop.  Both run ``_TCQPlan.run``, so
     the states, the body field and the ``sse`` float are the same object graph
     evaluated the same way -- the difference is the launch stream, which is
-    what issue #13 measured and what a graph removes.
+    what issue #13 measured and what a graph removes.  ``"fused"`` is the
+    three-launch Triton trellis in ``tcq_fused`` (tessera#486), which returns
+    the identical anchors, body field and ``sse`` float by construction and
+    by test; it takes float32, float16 and bfloat16 inputs at arity 1 and 2
+    on CUDA, and refuses anything else by name.  ``"auto"`` is ``"fused"``
+    wherever that path admits the call (unless ``TESSERA_TCQ_FUSED=0``), then
+    ``"graph"`` on CUDA once a shape has been asked for
+    ``_TCQ_GRAPH_MIN_CALLS`` times, and ``"reference"`` before that and on
+    CPU.
     """
-    if impl not in ("auto", "reference", "graph"):
+    if impl not in ("auto", "reference", "graph", "fused"):
         raise GrammarError(f"unknown viterbi_columns impl {impl!r}")
     device = targets.device
     rows, cols = targets.shape
@@ -673,6 +699,17 @@ def viterbi_columns(
             "super-symbols; the multidimensional trellis needs the column "
             "length to be a multiple of its span"
         )
+
+    if impl == "fused" or (impl == "auto" and device.type == "cuda"
+                           and _tcq_fused_wanted()):
+        from .tcq_fused import tcq_fused_refusal, viterbi_columns_fused
+
+        refusal = tcq_fused_refusal(targets, weights, arity)
+        if refusal is None:
+            return viterbi_columns_fused(targets, weights, forest, code,
+                                         completion, span)
+        if impl == "fused":
+            raise GrammarError(f"the fused TCQ trellis cannot take this call: {refusal}")
 
     weight_dtype = None if weights is None else weights.dtype
     key = (device, rows, cols, targets.dtype, weight_dtype, forest, code,

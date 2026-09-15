@@ -110,7 +110,9 @@ def test_replay_is_stable_across_calls():
 def test_auto_takes_the_graph_only_on_a_repeat(monkeypatch):
     """``auto`` is the reference on a shape's first call and the graph after,
     and both spellings return the same bytes -- so the policy is a cost
-    decision and never an answer decision."""
+    decision and never an answer decision.  That rule governs the calls the
+    fused trellis does not take, so the fused path is switched off here."""
+    monkeypatch.setenv("TESSERA_TCQ_FUSED", "0")
     monkeypatch.delenv("TESSERA_TCQ_GRAPH", raising=False)
     forest = build_forest(7, grid=grid("E2M1x2"))
     torch.manual_seed(5)
@@ -128,6 +130,7 @@ def test_auto_takes_the_graph_only_on_a_repeat(monkeypatch):
 
 
 def test_env_zero_forces_the_eager_loop(monkeypatch):
+    monkeypatch.setenv("TESSERA_TCQ_FUSED", "0")
     monkeypatch.setenv("TESSERA_TCQ_GRAPH", "0")
     forest = build_forest(7, grid=grid("E2M1x2"))
     torch.manual_seed(9)
