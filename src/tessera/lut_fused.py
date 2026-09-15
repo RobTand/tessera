@@ -415,12 +415,15 @@ def _build() -> _Kernels:
             acc = tl.where(take, u, acc)
         tl.store(base, b)
         took = acc >= 0
-        new = tl.load(unused + tl.where(took, acc, 0))
+        # Both loads are masked.  The launch before the first pass runs before any launch
+        # has written ``unused``, and an unmasked load of ``grid`` at an index left in that
+        # memory reads wherever the index points, whether or not a trial was taken.
+        new = tl.load(unused + tl.where(took, acc, 0), mask=took, other=0)
         old = tl.load(cand + i)
         tl.store(inuse + old, tl.zeros([], tl.int8), mask=took)
         tl.store(inuse + new, tl.full([], 1, tl.int8), mask=took)
         tl.store(cand + i, new, mask=took)
-        tl.store(tab + i, tl.load(grid + new), mask=took)
+        tl.store(tab + i, tl.load(grid + new, mask=took, other=0.0), mask=took)
         tl.store(flags, tl.full([], 1, tl.int32), mask=took)
         k = tl.zeros([], tl.int32)
         for bb in range(0, bracket):
