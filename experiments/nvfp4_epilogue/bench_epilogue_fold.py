@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Price the NVFP4 dense route's scalar epilogue pass, and the ways to remove it (tessera#522).
 
-``nvfp4_route.apply`` runs ``y = y * layer.tessera_epilogue_scale`` after the
-fp4 ``torch._scaled_mm``: a full M x N bf16 read and write to apply one scalar.
-This driver measures that route against candidates that apply the scalar
-differently, on the same prepared cells, in one process, with the arms
+``nvfp4_route.apply`` used to run ``y = y * layer.tessera_epilogue_scale`` after
+the fp4 ``torch._scaled_mm``: a full M x N bf16 read and write to apply one
+scalar.  This driver measures that route against candidates that apply the
+scalar differently, on the same prepared cells, in one process, with the arms
 interleaved inside each M:
 
 * ``route``: the route's own ``method.apply``.  With ``--baseline-route`` the
@@ -20,12 +20,22 @@ interleaved inside each M:
   vLLM's own compressed-tensors NVFP4 W4A4 scheme calls.
 * ``fp8``: the byte-matched fp8 cell's route, for the fp4/fp8 ratio.
 
+THREE REGIMES, one process.  ``--rows`` at or below 512 slices the frozen
+prefill panel and is the DECODE shape a serve actually runs; above 512 it tiles
+it.  ``--graph-rows`` repeats the decode set under ``torch.cuda.CUDAGraph``
+capture and replay, which is how a serve issues those shapes -- at one row the
+launch path, not the mainloop, is the cost.  ``--compile-rows`` runs
+``torch._dynamo.explain`` and a ``fullgraph=True`` compile of each arm, and
+captures the COMPILED callable into a graph as well.
+
 Numerics: every fp4 candidate is compared with the route's output at every M
 (bit equality, max abs, max relative, fraction of differing elements), and both
-are compared with a float32-output GEMM times the float64 scalar.  At M=512 the
-route and every candidate are also compared with the cell's frozen reference at
-the panel's own tolerance.  M above 512 tiles the frozen 512-row input, and the
-replica blocks of each arm's output must be exactly equal.
+are compared with a float32-output GEMM times the float64 scalar.  At M=512 and
+at the cell's own decode row the route and every candidate are compared with
+the cell's frozen reference at the panel's own tolerance.  M above 512 tiles the
+frozen 512-row input, and the replica blocks of each arm's output must be
+exactly equal.  Every graph replay is compared with its arm's eager output, and
+every compiled output with its arm's eager output, for bit equality.
 
 Instruments: CUDA events per apply (bootstrap interval on the sum of the three
 units' medians), a sustained apply loop with an in-process NVML power sampler
@@ -45,7 +55,7 @@ import time
 import traceback
 from pathlib import Path
 
-SCHEMA = "tessera.nvfp4_epilogue_fold_bench.v1"
+SCHEMA = "tessera.nvfp4_epilogue_fold_bench.v2"
 ENVELOPE_W = 140.0
 BASE_ROWS = 512
 FP4_FORMAT = "TESSERA_E2M1_K2_R896"
@@ -228,6 +238,21 @@ def numerics(torch, candidate, baseline, chunk_rows=8192):
             "fraction_differing": differing / numel, "baseline_abs_max": base_max}
 
 
+def input_rows(tensor, m):
+    """The M-row input for a cell: a slice of the frozen panel below 512 rows, a
+    tiling of it above.  The decode shapes are rows of the SAME panel, so an arm
+    is never compared across inputs."""
+    if m <= BASE_ROWS:
+        return tensor[:m].contiguous()
+    if m % BASE_ROWS:
+        raise ValueError(f"M={m} above {BASE_ROWS} must be a multiple of it")
+    return tensor.repeat(m // BASE_ROWS, 1).contiguous()
+
+
+def error_text(exc):
+    return "".join(traceback.format_exception_only(exc)).strip()
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--cells-root", type=Path, required=True)
@@ -241,24 +266,36 @@ def main(argv=None):
     parser.add_argument("--power-seconds", type=float, default=5.0)
     parser.add_argument("--power-settle-seconds", type=float, default=1.5)
     parser.add_argument("--profile-dir", type=Path)
-    parser.add_argument("--compile-check-rows", default="512,8192")
+    parser.add_argument("--graph-rows", default="", help="M values to capture and replay as CUDA graphs")
+    parser.add_argument("--compile-rows", default="1,512,8192",
+                        help="M values for the dynamo explain, fullgraph compile and compiled-graph checks")
+    parser.add_argument("--compile-arms", default="route,route_new,v2_device,cutlass")
     args = parser.parse_args(argv)
-    rows = [int(v) for v in args.rows.split(",") if v]
-    for m in rows:
-        if m < BASE_ROWS or m % BASE_ROWS:
-            raise SystemExit(f"M={m} is not a positive multiple of {BASE_ROWS}")
+
+    def parse_rows(text, what):
+        values = [int(v) for v in str(text).split(",") if v.strip()]
+        for m in values:
+            if m < 1 or (m > BASE_ROWS and m % BASE_ROWS):
+                raise SystemExit(f"{what}: M={m} must be >= 1, and a multiple of {BASE_ROWS} above it")
+        return values
+
+    rows = parse_rows(args.rows, "--rows")
+    graph_rows = parse_rows(args.graph_rows, "--graph-rows")
+    compile_rows = parse_rows(args.compile_rows, "--compile-rows")
 
     import torch
     from safetensors.torch import load_file
     from experiments.bench_native_operator import (compare_tensors, native_runtime_context,
                                                    prepare_native_operator, time_apply)
 
-    report = {"schema": SCHEMA, "started_utc": utc(), "rows": rows, "base_rows": BASE_ROWS,
+    report = {"schema": SCHEMA, "started_utc": utc(), "rows": rows, "graph_rows": graph_rows,
+              "compile_rows": compile_rows, "base_rows": BASE_ROWS,
               "bench_sha256": digest(__file__), "torch": torch.__version__,
               "warmup_iterations": args.warmup_iterations, "iterations": args.iterations,
               "power": {"seconds": args.power_seconds, "settle_seconds": args.power_settle_seconds,
                         "envelope_w": ENVELOPE_W},
-              "units": {}, "points": {}, "arm_errors": {}, "compile_check": {}, "profile": {}}
+              "units": {}, "points": {}, "graph_points": {}, "arm_errors": {},
+              "compile_check": {}, "profile": {}}
     try:
         import vllm
         report["vllm"] = vllm.__version__
@@ -320,57 +357,93 @@ def main(argv=None):
             if "cutlass" in requested and not have_cutlass:
                 report["arm_errors"]["cutlass"] = "torch.ops._C.cutlass_scaled_fp4_mm is absent"
 
-            def fp4_arm(name):
-                if name == "route":
-                    if baseline_module is None:
-                        return lambda unit, x: cells[(unit, FP4_FORMAT)]["prepared"]["method"].apply(
-                            cells[(unit, FP4_FORMAT)]["prepared"]["layer"], x)
-                    baseline = {}
-                    for unit in UNITS:
-                        scheme = cells[(unit, FP4_FORMAT)]["prepared"]["operator"]["scheme"]
-                        baseline[unit] = baseline_module.build_tessera_nvfp4_method(scheme, unit, "resident")
-                    return lambda unit, x: baseline[unit].apply(cells[(unit, FP4_FORMAT)]["prepared"]["layer"], x)
-                if name == "route_new":
-                    return lambda unit, x: cells[(unit, FP4_FORMAT)]["prepared"]["method"].apply(
-                        cells[(unit, FP4_FORMAT)]["prepared"]["layer"], x)
-                fn = candidates[name]
-                return lambda unit, x: fn(cells[(unit, FP4_FORMAT)]["prepared"]["layer"], x)
+            baseline_methods = {}
+            if baseline_module is not None:
+                for unit in UNITS:
+                    scheme = cells[(unit, FP4_FORMAT)]["prepared"]["operator"]["scheme"]
+                    baseline_methods[unit] = baseline_module.build_tessera_nvfp4_method(scheme, unit, "resident")
 
-            arm_names = ["route"] + (["route_new"] if baseline_module is not None else []) + list(candidates)
-            arms = {name: fp4_arm(name) for name in arm_names}
-            arms["fp8"] = lambda unit, x: cells[(unit, FP8_FORMAT)]["prepared"]["method"].apply(
-                cells[(unit, FP8_FORMAT)]["prepared"]["layer"], x)
+            def arm_layer(name, unit):
+                fmt = FP8_FORMAT if name == "fp8" else FP4_FORMAT
+                return cells[(unit, fmt)]["prepared"]["layer"]
+
+            def bound_apply(name, unit):
+                """The arm as a one-argument callable over this unit's layer: what a
+                compile or a capture is handed, with no bench dispatch inside it."""
+                layer = arm_layer(name, unit)
+                if name == "route" and baseline_module is not None:
+                    method = baseline_methods[unit]
+                elif name in ("route", "route_new"):
+                    method = cells[(unit, FP4_FORMAT)]["prepared"]["method"]
+                elif name == "fp8":
+                    method = cells[(unit, FP8_FORMAT)]["prepared"]["method"]
+                else:
+                    fn = candidates[name]
+                    return lambda t: fn(layer, t)
+                return lambda t: method.apply(layer, t)
+
+            arm_names = (["route"] + (["route_new"] if baseline_module is not None else [])
+                         + list(candidates) + ["fp8"])
+            bound = {name: {unit: bound_apply(name, unit) for unit in UNITS} for name in arm_names}
+            arms = {name: (lambda unit, x, _n=name: bound[_n][unit](x)) for name in arm_names}
             report["arms"] = list(arms)
 
-            # Admission: an arm that raises or is not finite at M=512 is recorded and dropped.
+            # Admission: an arm that raises or is not finite at M=512, or on the
+            # cell's own decode row, is recorded and dropped.
             with torch.inference_mode():
                 for name in list(arms):
                     try:
                         for unit in UNITS:
                             fmt = FP8_FORMAT if name == "fp8" else FP4_FORMAT
                             cell = cells[(unit, fmt)]
-                            y = arms[name](unit, cell["tensors"]["prefill.input"])
-                            torch.cuda.synchronize()
-                            anchor = compare_tensors(y, cell["tensors"]["prefill.reference_output"],
-                                                     **cell["inputs"]["numerics"])
-                            report["units"][unit].setdefault("anchor_512", {})[name] = anchor
-                            if not anchor["finite"]:
-                                raise ValueError("non-finite output")
+                            for key, source, reference in (
+                                    ("anchor_512", "prefill.input", "prefill.reference_output"),
+                                    ("anchor_decode", "decode.input", "decode.reference_output")):
+                                if source not in cell["tensors"]:
+                                    continue
+                                y = arms[name](unit, cell["tensors"][source])
+                                torch.cuda.synchronize()
+                                anchor = compare_tensors(y, cell["tensors"][reference],
+                                                         **cell["inputs"]["numerics"])
+                                report["units"][unit].setdefault(key, {})[name] = anchor
+                                if not anchor["finite"]:
+                                    raise ValueError(f"non-finite output at {key}")
                     except Exception as exc:  # noqa: BLE001
-                        report["arm_errors"][name] = "".join(traceback.format_exception_only(exc)).strip()
+                        report["arm_errors"][name] = error_text(exc)
                         del arms[name]
             if "route" not in arms or "fp8" not in arms:
                 raise SystemExit(f"a required arm failed: {report['arm_errors']}")
             report["admitted_arms"] = list(arms)
 
+            def sustained(name, xs, m, seconds):
+                """One power window over a sustained loop of this arm's three units."""
+                torch.cuda.synchronize()
+                start = time.time()
+                applies = 0
+                while time.time() - start < seconds:
+                    for unit in UNITS:
+                        out = arms[name](unit, xs[unit])
+                        del out
+                    torch.cuda.synchronize()
+                    applies += 1
+                end = time.time()
+                window = power.window(start, end, settle_s=args.power_settle_seconds)
+                flop = sum(2 * m * report["units"][u]["shape"][0] * report["units"][u]["shape"][1] for u in UNITS)
+                window.update(three_unit_applies=applies, elapsed_s=end - start,
+                              wall_ms_per_three_unit_apply=1000.0 * (end - start) / applies)
+                if window.get("status") == "observed":
+                    flops = applies * flop / (end - start)
+                    window["achieved_tflop_s"] = flops / 1e12
+                    window["gflop_per_joule"] = flops / window["mean_w"] / 1e9
+                return window
+
             order = list(arms)
             for index, m in enumerate(rows):
-                reps = m // BASE_ROWS
+                replicas = m // BASE_ROWS if m > BASE_ROWS else 1
                 rotation = order[index % len(order):] + order[:index % len(order)]
                 point = {"m": m, "arm_order": rotation, "arms": {}, "numerics": {}}
                 with torch.inference_mode():
-                    xs = {unit: {fmt: (cells[(unit, fmt)]["tensors"]["prefill.input"] if reps == 1 else
-                                       cells[(unit, fmt)]["tensors"]["prefill.input"].repeat(reps, 1).contiguous())
+                    xs = {unit: {fmt: input_rows(cells[(unit, fmt)]["tensors"]["prefill.input"], m)
                                  for fmt in (FP4_FORMAT, FP8_FORMAT)} for unit in UNITS}
                     # Numerics, before any timing.
                     for unit in UNITS:
@@ -378,9 +451,10 @@ def main(argv=None):
                         base = arms["route"](unit, x)
                         torch.cuda.synchronize()
                         n = base.shape[1]
-                        per_unit = {"route_replica_spread": float((base.view(reps, BASE_ROWS, n) -
-                                                                   base.view(reps, BASE_ROWS, n)[0:1]).abs().max())
-                                    if reps > 1 else 0.0}
+                        per_unit = {}
+                        if replicas > 1:
+                            blocks = base.view(replicas, BASE_ROWS, n)
+                            per_unit["route_replica_spread"] = float((blocks - blocks[0:1]).abs().max())
                         try:
                             ref = reference_fp32(cells[(unit, FP4_FORMAT)]["prepared"]["layer"], x)
                             per_unit["route_vs_fp32_reference"] = numerics(torch, base, ref)
@@ -393,8 +467,8 @@ def main(argv=None):
                             y = arms[name](unit, x)
                             torch.cuda.synchronize()
                             entry = numerics(torch, y, base)
-                            if reps > 1:
-                                blocks = y.view(reps, BASE_ROWS, n)
+                            if replicas > 1:
+                                blocks = y.view(replicas, BASE_ROWS, n)
                                 entry["replica_spread"] = float((blocks - blocks[0:1]).abs().max())
                             if ref is not None:
                                 entry["vs_fp32_reference"] = numerics(torch, y, ref)
@@ -415,28 +489,12 @@ def main(argv=None):
                         entry = {"samples_ms": samples,
                                  "unit_median_ms": {u: statistics.median(s) for u, s in samples.items()}}
                         entry.update(bootstrap_sum_of_medians([samples[u] for u in UNITS]))
-                        torch.cuda.synchronize()
-                        start = time.time()
-                        applies = 0
-                        while time.time() - start < args.power_seconds:
-                            for unit in UNITS:
-                                out = arms[name](unit, xs[unit][fmt])
-                                del out
-                            torch.cuda.synchronize()
-                            applies += 1
-                        end = time.time()
-                        window = power.window(start, end, settle_s=args.power_settle_seconds)
-                        flop = sum(2 * m * report["units"][u]["shape"][0] * report["units"][u]["shape"][1] for u in UNITS)
-                        window.update(three_unit_applies=applies, elapsed_s=end - start,
-                                      wall_ms_per_three_unit_apply=1000.0 * (end - start) / applies)
-                        if window.get("status") == "observed":
-                            flops = applies * flop / (end - start)
-                            window["achieved_tflop_s"] = flops / 1e12
-                            window["gflop_per_joule"] = flops / window["mean_w"] / 1e9
+                        window = sustained(name, {u: xs[u][fmt] for u in UNITS}, m, args.power_seconds)
                         entry["sustained"] = window
                         point["arms"][name] = entry
                         torch.cuda.empty_cache()
-                        print(json.dumps({"m": m, "arm": name, "median_of_sums_ms": entry["median_of_sums_ms"],
+                        print(json.dumps({"mode": "eager", "m": m, "arm": name,
+                                          "median_of_sums_ms": entry["median_of_sums_ms"],
                                           "low_ms": entry["low_ms"], "high_ms": entry["high_ms"],
                                           "mean_w": window.get("mean_w")}), flush=True)
                     del xs
@@ -448,63 +506,231 @@ def main(argv=None):
                 report["points"][str(m)] = point
                 torch.cuda.empty_cache()
 
+            # -- the same M set under CUDA-graph capture ----------------------
+            # A decode serve replays graphs; at one row the launch path is the
+            # cost, so an arm that wins eager can lose here and the two tables
+            # are reported side by side.
+            def capture(call, x):
+                """Capture ``call(x)`` on a static input after the standard
+                side-stream warmup, and return the graph and its output."""
+                side = torch.cuda.Stream()
+                side.wait_stream(torch.cuda.current_stream())
+                with torch.cuda.stream(side):
+                    for _ in range(3):
+                        call(x)
+                torch.cuda.current_stream().wait_stream(side)
+                torch.cuda.synchronize()
+                graph = torch.cuda.CUDAGraph()
+                with torch.cuda.graph(graph):
+                    out = call(x)
+                return graph, out
+
+            for index, m in enumerate(graph_rows):
+                rotation = order[index % len(order):] + order[:index % len(order)]
+                point = {"m": m, "arm_order": rotation, "arms": {}, "numerics": {}, "capture_errors": {}}
+                with torch.inference_mode():
+                    xs = {unit: {fmt: input_rows(cells[(unit, fmt)]["tensors"]["prefill.input"], m)
+                                 for fmt in (FP4_FORMAT, FP8_FORMAT)} for unit in UNITS}
+                    for name in rotation:
+                        fmt = FP8_FORMAT if name == "fp8" else FP4_FORMAT
+                        graphs, outputs, samples, checks = {}, {}, {}, {}
+                        try:
+                            for unit in UNITS:
+                                x = xs[unit][fmt]
+                                eager = arms[name](unit, x).clone()
+                                graph, out = capture(bound[name][unit], x)
+                                out.zero_()          # the replay must be what rewrites it
+                                graph.replay()
+                                torch.cuda.synchronize()
+                                checks[unit] = numerics(torch, out, eager)
+                                graphs[unit], outputs[unit] = graph, out
+                                del eager
+                        except Exception as exc:  # noqa: BLE001
+                            point["capture_errors"][name] = error_text(exc)
+                            graphs.clear()
+                            torch.cuda.synchronize()
+                            torch.cuda.empty_cache()
+                            continue
+                        point["numerics"][name] = checks
+                        for unit in UNITS:
+                            timing = time_apply(graphs[unit].replay,
+                                                warmup_iterations=args.warmup_iterations,
+                                                iterations=args.iterations)
+                            samples[unit] = timing["samples_ms"]
+                        entry = {"samples_ms": samples,
+                                 "unit_median_ms": {u: statistics.median(s) for u, s in samples.items()}}
+                        entry.update(bootstrap_sum_of_medians([samples[u] for u in UNITS]))
+                        torch.cuda.synchronize()
+                        start = time.time()
+                        replays = 0
+                        while time.time() - start < args.power_seconds:
+                            for unit in UNITS:
+                                graphs[unit].replay()
+                            torch.cuda.synchronize()
+                            replays += 1
+                        end = time.time()
+                        window = power.window(start, end, settle_s=args.power_settle_seconds)
+                        flop = sum(2 * m * report["units"][u]["shape"][0] * report["units"][u]["shape"][1]
+                                   for u in UNITS)
+                        window.update(three_unit_applies=replays, elapsed_s=end - start,
+                                      wall_ms_per_three_unit_apply=1000.0 * (end - start) / replays)
+                        if window.get("status") == "observed":
+                            flops = replays * flop / (end - start)
+                            window["achieved_tflop_s"] = flops / 1e12
+                            window["gflop_per_joule"] = flops / window["mean_w"] / 1e9
+                        entry["sustained"] = window
+                        point["arms"][name] = entry
+                        print(json.dumps({"mode": "graph", "m": m, "arm": name,
+                                          "median_of_sums_ms": entry["median_of_sums_ms"],
+                                          "low_ms": entry["low_ms"], "high_ms": entry["high_ms"],
+                                          "bit_equal": all(c["bit_equal"] for c in checks.values()),
+                                          "mean_w": window.get("mean_w")}), flush=True)
+                        graphs.clear()
+                        outputs.clear()
+                        torch.cuda.synchronize()
+                        torch.cuda.empty_cache()
+                    del xs
+                if "route" in point["arms"]:
+                    route_ms = point["arms"]["route"]["median_of_sums_ms"]
+                    point["ratios"] = {name: {"vs_route": e["median_of_sums_ms"] / route_ms}
+                                       for name, e in point["arms"].items()}
+                report["graph_points"][str(m)] = point
+                torch.cuda.empty_cache()
+
             # Route telemetry is read once more so the record names the symbol the route emitted.
             report["route_records"] = {unit: read_route(cells[(unit, FP4_FORMAT)]["prepared"]["layer"])
                                        for unit in UNITS}
 
-            # Compile check: does a compiled candidate reproduce its own eager output?
+            # -- compile: what Dynamo does with each arm's forward ------------
             unit = UNITS[0]
-            layer = cells[(unit, FP4_FORMAT)]["prepared"]["layer"]
-            for name in [n for n in arms if n in ("v2_host", "v2_device", "cutlass", "route_new")]:
-                for m in [int(v) for v in args.compile_check_rows.split(",") if v]:
+            compile_arms = [n for n in args.compile_arms.split(",") if n and n in arms]
+            for name in compile_arms:
+                fmt = FP8_FORMAT if name == "fp8" else FP4_FORMAT
+                call = bound[name][unit]
+                for m in compile_rows:
                     key = f"{name}:M{m}"
+                    entry = {}
+                    x = input_rows(cells[(unit, fmt)]["tensors"]["prefill.input"], m)
+                    try:
+                        with torch.inference_mode():
+                            eager = call(x).clone()
+                            torch.cuda.synchronize()
+                    except Exception as exc:  # noqa: BLE001
+                        report["compile_check"][key] = {"eager_error": error_text(exc)}
+                        continue
                     try:
                         torch._dynamo.reset()
-                        x = cells[(unit, FP4_FORMAT)]["tensors"]["prefill.input"].repeat(m // BASE_ROWS, 1).contiguous()
-                        fn = arms[name]
-                        compiled = torch.compile(lambda t: fn(unit, t), dynamic=False, fullgraph=False)
                         with torch.inference_mode():
-                            eager = fn(unit, x)
+                            explanation = torch._dynamo.explain(call)(x)
+                        entry["graph_count"] = int(explanation.graph_count)
+                        entry["graph_break_count"] = int(explanation.graph_break_count)
+                        entry["break_reasons"] = [str(getattr(reason, "reason", reason))[:400]
+                                                  for reason in explanation.break_reasons]
+                        entry["op_count"] = int(getattr(explanation, "op_count", -1))
+                    except Exception as exc:  # noqa: BLE001
+                        entry["explain_error"] = error_text(exc)
+                    try:
+                        torch._dynamo.reset()
+                        compiled = torch.compile(call, dynamic=False, fullgraph=True)
+                        with torch.inference_mode():
                             got = compiled(x)
                             torch.cuda.synchronize()
-                        report["compile_check"][key] = numerics(torch, got, eager)
+                        entry["fullgraph"] = numerics(torch, got, eager)
+                        del got
                     except Exception as exc:  # noqa: BLE001
-                        report["compile_check"][key] = {"error": "".join(traceback.format_exception_only(exc)).strip()}
+                        entry["fullgraph"] = {"error": error_text(exc)}
+                        compiled = None
+                    if compiled is not None:
+                        try:
+                            with torch.inference_mode():
+                                graph, out = capture(compiled, x)
+                                out.zero_()
+                                graph.replay()
+                                torch.cuda.synchronize()
+                                entry["compiled_graph"] = numerics(torch, out, eager)
+                            del graph, out
+                        except Exception as exc:  # noqa: BLE001
+                            entry["compiled_graph"] = {"error": error_text(exc)}
+                    try:
+                        torch._dynamo.reset()
+                        with torch.inference_mode():
+                            graph, out = capture(call, x)
+                            out.zero_()
+                            graph.replay()
+                            torch.cuda.synchronize()
+                            entry["eager_graph"] = numerics(torch, out, eager)
+                        del graph, out
+                    except Exception as exc:  # noqa: BLE001
+                        entry["eager_graph"] = {"error": error_text(exc)}
+                    report["compile_check"][key] = entry
+                    print(json.dumps({"mode": "compile", "arm": name, "m": m,
+                                      "graph_breaks": entry.get("graph_break_count"),
+                                      "fullgraph_bit_equal": entry.get("fullgraph", {}).get("bit_equal"),
+                                      "eager_graph_bit_equal": entry.get("eager_graph", {}).get("bit_equal")},
+                                     default=str), flush=True)
+                    del eager, x
+                    torch.cuda.empty_cache()
+            torch._dynamo.reset()
 
             # Profiler last: nothing timed runs under this instrumentation.
             from torch.profiler import ProfilerActivity, profile
             directory = args.profile_dir or args.out.parent / "profile"
             directory.mkdir(parents=True, exist_ok=True)
+
+            def profile_calls(call, label, replays=5):
+                with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA]) as prof:
+                    for _ in range(replays):
+                        out = call()
+                        del out
+                    torch.cuda.synchronize()
+                events = prof.key_averages()
+                kernels = sorted(({"name": e.key, "calls": e.count, "self_device_us": e.self_device_time_total}
+                                  for e in events if e.device_type == torch.autograd.DeviceType.CUDA),
+                                 key=lambda row: -row["self_device_us"])
+                host_ops = sorted(({"name": e.key, "calls": e.count, "self_cpu_us": e.self_cpu_time_total}
+                                   for e in events if e.device_type == torch.autograd.DeviceType.CPU),
+                                  key=lambda row: -row["self_cpu_us"])[:12]
+                trace = directory / f"{label}.trace.json"
+                prof.export_chrome_trace(str(trace))
+                return {"replays": replays, "kernels": kernels, "host_ops": host_ops,
+                        "total_self_device_us": sum(k["self_device_us"] for k in kernels),
+                        "total_self_cpu_us": sum(h["self_cpu_us"] for h in host_ops),
+                        "trace_file": trace.name, "trace_sha256": digest(trace)}
+
             for m in rows:
-                reps = m // BASE_ROWS
                 for name in arms:
                     fmt = FP8_FORMAT if name == "fp8" else FP4_FORMAT
                     for unit in UNITS:
                         with torch.inference_mode():
-                            x = cells[(unit, fmt)]["tensors"]["prefill.input"]
-                            x = x if reps == 1 else x.repeat(reps, 1).contiguous()
+                            x = input_rows(cells[(unit, fmt)]["tensors"]["prefill.input"], m)
+                            call = bound[name][unit]
                             for _ in range(3):
-                                arms[name](unit, x)
+                                call(x)
                             torch.cuda.synchronize()
-                            with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA]) as prof:
-                                for _ in range(5):
-                                    out = arms[name](unit, x)
-                                    del out
-                                torch.cuda.synchronize()
+                            record = profile_calls(lambda: call(x),
+                                                   f"{name}.{unit.rsplit('.', 1)[-1]}.M{m}")
                             del x
-                        events = prof.key_averages()
-                        kernels = sorted(({"name": e.key, "calls": e.count, "self_device_us": e.self_device_time_total}
-                                          for e in events if e.device_type == torch.autograd.DeviceType.CUDA),
-                                         key=lambda row: -row["self_device_us"])
-                        host_ops = sorted(({"name": e.key, "calls": e.count, "self_cpu_us": e.self_cpu_time_total}
-                                           for e in events if e.device_type == torch.autograd.DeviceType.CPU),
-                                          key=lambda row: -row["self_cpu_us"])[:12]
-                        trace = directory / f"{name}.{unit.rsplit('.', 1)[-1]}.M{m}.trace.json"
-                        prof.export_chrome_trace(str(trace))
-                        report["profile"].setdefault(str(m), {}).setdefault(name, {})[unit] = {
-                            "replays": 5, "kernels": kernels, "host_ops": host_ops,
-                            "total_self_device_us": sum(k["self_device_us"] for k in kernels),
-                            "trace_file": trace.name, "trace_sha256": digest(trace)}
+                        report["profile"].setdefault(str(m), {}).setdefault(name, {})[unit] = record
+                        torch.cuda.empty_cache()
+
+            # One graph-replay profile per arm at the smallest captured M: what a
+            # decode replay actually launches.
+            if graph_rows:
+                m = min(graph_rows)
+                for name in arms:
+                    fmt = FP8_FORMAT if name == "fp8" else FP4_FORMAT
+                    for unit in UNITS:
+                        try:
+                            with torch.inference_mode():
+                                x = input_rows(cells[(unit, fmt)]["tensors"]["prefill.input"], m)
+                                graph, out = capture(bound[name][unit], x)
+                                record = profile_calls(graph.replay,
+                                                       f"graph.{name}.{unit.rsplit('.', 1)[-1]}.M{m}")
+                                del graph, out, x
+                        except Exception as exc:  # noqa: BLE001
+                            record = {"error": error_text(exc)}
+                        report["profile"].setdefault(f"graph_M{m}", {}).setdefault(name, {})[unit] = record
+                        torch.cuda.synchronize()
                         torch.cuda.empty_cache()
     finally:
         power.stop()

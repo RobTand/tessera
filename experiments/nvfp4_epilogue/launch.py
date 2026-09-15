@@ -39,6 +39,8 @@ def main() -> int:
     parser.add_argument("--arms", default="inplace,v2_host,v2_device,cutlass")
     parser.add_argument("--baseline-route", default="", help="path inside the tree, or empty")
     parser.add_argument("--power-seconds", default="5.0")
+    parser.add_argument("--graph-rows", default="", help="M values to capture as CUDA graphs")
+    parser.add_argument("--compile-rows", default="1,512,8192")
     parser.add_argument("--timeout-s", type=int, default=1700)
     args = parser.parse_args()
 
@@ -89,7 +91,7 @@ def main() -> int:
         "--source-tree", "/tessera", "--source-commit", args.source_commit,
         "--core-manifest", str(args.core_manifest), "--",
         "bash", "/tessera/experiments/nvfp4_epilogue/driver.sh", args.rows, args.arms,
-        args.baseline_route, args.power_seconds]
+        args.baseline_route, args.power_seconds, args.graph_rows, args.compile_rows]
     (out / "launch-command.json").write_text(json.dumps(command, indent=2))
     result = subprocess.run(["timeout", "--signal=INT", "--kill-after=60", str(args.timeout_s), *command])
     print(json.dumps({"returncode": result.returncode, "out": str(out), "control": str(control)}), flush=True)

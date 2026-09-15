@@ -1,6 +1,6 @@
 {
   "schema": "tessera.runtime-contract.v1",
- "contract_version": 29,
+ "contract_version": 30,
  "quant_method": {
   "canonical": "tessera",
   "accepted": [
@@ -272,7 +272,7 @@
     "activation_contract": "e2m1_group16_ue4m3_static",
     "executes": [
      {
-      "symbol": "torch._scaled_mm",
+      "symbol": "torch._scaled_mm_v2",
       "decoder": "native_span2"
      }
     ],
@@ -314,7 +314,7 @@
     "activation_contract": "e2m1_group16_ue4m3_static",
     "executes": [
      {
-      "symbol": "torch._scaled_mm",
+      "symbol": "torch._scaled_mm_v2",
       "decoder": "native_span2"
      }
     ],
@@ -2053,6 +2053,11 @@
   }
  },
  "changelog": [
+  {
+   "contract_version": 30,
+   "date": "2026-09-15",
+   "change": "DRAFT, NOT YET ATTESTED BY A SERVED CENSUS. The NVFP4 dense route hands its epilogue scalar to the GEMM as alpha, so the GEMM it calls is torch._scaled_mm_v2 (tessera#522). WHAT MOVES: scheme.ROUTES[TESSERA_NVFP4].gemm_symbol becomes torch._scaled_mm_v2, which carries ROUTE_LAUNCHES[TESSERA_NVFP4]'s dense launch and tools/tessera_route_census.py's symbol_for with it, and the two E2M1_K2 dense cells (tessera_e2m1_k2_dense_sm121_decode and _batch) name that symbol in executes. Nothing else moves: no format, rung, platform, activation contract, activation-quantizer attestation, tensor-parallel bound, expert-parallel entry, route_status, qualification, grade, KL entry or served byte, lane_eligibility.schema stays v10, and the FP8, BF16 and routed_moe launches are untouched. WHY THE ROUTE CHANGED: nvfp4_route.apply ran y = y * layer.tessera_epilogue_scale after the GEMM, a full M x N bf16 read and write to apply one scalar. torch's v2 scaled GEMM takes the NVFP4 tile's two scale levels per side -- the group-16 block plane and one tensor-wide global -- and passes global_a * global_b to cuBLASLt as alpha, so the scalar is applied to the fp32 accumulator inside the mainloop. THE NODE IS NOT THE SYMBOL: Inductor has no lowering for a v2 GEMM with a non-trivial swizzle, so the route dispatches through its own opaque custom op tessera::nvfp4_gemm_alpha (nvfp4_route.GEMM_ALPHA_OP) and a compiled forward contains that node; gemm_symbol stays the GEMM the route calls, which is what a route record and a cell's executes name. NUMERICS ARE NOT IDENTICAL AND THE DECISION IS OPEN: the old path computed bf16(bf16(acc) * bf16(s)) and the new one computes bf16(acc * fp32 s), so outputs differ where double rounding differed, by up to one bf16 ulp of the output (measured max relative difference 0.0078 over the three Qwen3-0.6B MLP cells). Against a float32-output GEMM times the float64 scalar the new path is the closer of the two on every cell measured. WHAT A READER MUST NOT DO WITH THIS VERSION YET: the cells' runtime block still names the image, vLLM and torch of the v29 receipt, and no served route census has recorded the new symbol. This entry is published with the route change so the document and the code are one artifact; it becomes an attestation when a served census on the pinned image records torch._scaled_mm_v2 over native_span2 in both regimes, and a consumer pinning the v29 document should keep pinning it until then."
+  },
   {
    "contract_version": 29,
    "date": "2026-09-15",

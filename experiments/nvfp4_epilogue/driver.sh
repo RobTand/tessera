@@ -7,6 +7,8 @@ ROWS=${1:?comma-separated M values}
 ARMS=${2:?comma-separated bench-local arms}
 BASELINE=${3:-}
 POWER_S=${4:-5.0}
+GRAPH_ROWS=${5:-}
+COMPILE_ROWS=${6:-1,512,8192}
 export PYTHONDONTWRITEBYTECODE=1
 
 python3 -c "import tessera, sys; print('tessera', tessera.__file__, file=sys.stderr)"
@@ -24,9 +26,10 @@ done
 BASELINE_FLAG=()
 if [ -n "$BASELINE" ]; then BASELINE_FLAG=(--baseline-route "/tessera/$BASELINE"); fi
 
-echo "=== BENCH start $(date -u +%FT%TZ) rows=$ROWS arms=$ARMS baseline=${BASELINE:-installed}"
+echo "=== BENCH start $(date -u +%FT%TZ) rows=$ROWS graph_rows=${GRAPH_ROWS:-none} compile_rows=$COMPILE_ROWS arms=$ARMS baseline=${BASELINE:-installed}"
 PYTHONPATH=/tessera python3 -u /tessera/experiments/nvfp4_epilogue/bench_epilogue_fold.py \
   --cells-root /out/cells --rows "$ROWS" --arms "$ARMS" --out /out/bench.json \
+  --graph-rows "$GRAPH_ROWS" --compile-rows "$COMPILE_ROWS" \
   --power-seconds "$POWER_S" --profile-dir /out/profile "${BASELINE_FLAG[@]}"
 python3 - <<'EOF'
 import hashlib, importlib.util, json

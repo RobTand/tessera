@@ -3,9 +3,8 @@
 WHAT IT SERVES.  Tessera's 4.0-bpp wire -- the E2M1x2 span-2 coset trellis over
 a 16-entry LUT scale plane -- decoded to the stock NVFP4 tile (nibble-packed
 E2M1 codes, group-16 ue4m3 block scales, one global) and multiplied by
-``torch._scaled_mm_v2``, the same W4A4 mainloop a compressed-tensors NVFP4
-checkpoint runs, with the module's one epilogue scalar handed to it as the
-GEMM's ``alpha`` rather than applied to the output afterwards (tessera#522).  The decoded tile is byte-identical to what
+``torch._scaled_mm``, the same W4A4 mainloop a compressed-tensors NVFP4
+checkpoint runs.  The decoded tile is byte-identical to what
 ``tessera.stock.materialize_stock`` writes for such a checkpoint (the stock
 lane vanilla vLLM serves at 4.5 bpw resident), so the numbers this route
 produces are the stock lane's numbers; what changes is the bytes on disk (the
@@ -47,24 +46,12 @@ from .telemetry import emit_route, route_shape
 
 __all__ = [
     "ACTIVATION_CONTRACT",
-    "GEMM_ALPHA_OP",
     "blocked_scales",
     "build_tessera_nvfp4_method",
-    "nvfp4_gemm_alpha",
 ]
 
 ACTIVATION_CONTRACT = ROUTES[TESSERA_NVFP4]["activation_contract"]
 GEMM_SYMBOL = ROUTES[TESSERA_NVFP4]["gemm_symbol"]
-
-#: The op this route's forward dispatches through, in the spelling torch
-#: registers it under.  The GEMM itself is ``GEMM_SYMBOL``
-#: (``torch._scaled_mm_v2``); this name is the NODE a traced forward contains,
-#: which is a different fact and is why both are written.  Inductor has no
-#: lowering for a v2 GEMM with a non-trivial swizzle (it refuses
-#: ``swizzle_a=[1, 0]`` by name), so a compiled forward must meet the call as
-#: an opaque custom op or not compile at all.  Same shape as
-#: ``fp8_gemv.STREAMED_APPLY_OP``.
-GEMM_ALPHA_OP = "tessera::nvfp4_gemm_alpha"
 
 #: cuBLAS block-scaling tile.  Not tunable -- it is the hardware's layout.
 _SF_ROW_TILE = 128
@@ -96,51 +83,6 @@ def blocked_scales(plane: torch.Tensor) -> torch.Tensor:
                          n_col_blocks, _SF_COL_TILE).permute(0, 2, 1, 3)
     return blocks.reshape(-1, 4, 32, 4).transpose(1, 2).reshape(-1, 32, 16) \
                  .flatten()
-
-
-def _two_level_nvfp4_recipe():
-    """``(scale_recipe, swizzle)`` for the NVFP4 tile, from torch's own enums.
-
-    Read from ``torch.nn.functional`` at the first call rather than at import:
-    a torch without the v2 entry point must fail the FORWARD of a module that
-    needs it, by name, and not the import of the plugin that also serves two
-    other families.
-    """
-    global _V2_RECIPE
-    if _V2_RECIPE is None:
-        from torch.nn.functional import ScalingType, SwizzleType
-
-        _V2_RECIPE = ([int(ScalingType.BlockWise1x16.value), int(ScalingType.TensorWise.value)],
-                      [int(SwizzleType.SWIZZLE_32_4_4.value), int(SwizzleType.NO_SWIZZLE.value)])
-    return _V2_RECIPE
-
-
-_V2_RECIPE = None
-
-
-# The scalar the epilogue used to apply is the GEMM's ``alpha``.  torch's v2
-# scaled GEMM takes the NVFP4 tile's TWO scale levels per side -- the group-16
-# block plane and one tensor-wide global -- and hands cuBLASLt
-# ``global_a * global_b`` as alpha, which the mainloop applies to the fp32
-# accumulator before it rounds once to bf16.  So the same scalar arrives
-# without the full M x N bf16 read-modify-write the route ran after the GEMM
-# (tessera#522), and the output is rounded once rather than twice.
-#
-# FUNCTIONAL, and opaque: the op owns the tensor it returns, mutates nothing,
-# and declares a fake so a traced forward has a shape without running it.
-@torch.library.custom_op(GEMM_ALPHA_OP, mutates_args=())
-def nvfp4_gemm_alpha(a_q: torch.Tensor, a_scale: torch.Tensor, b: torch.Tensor,
-                     scale_b: torch.Tensor, global_a: torch.Tensor,
-                     global_b: torch.Tensor) -> torch.Tensor:
-    scale_recipe, swizzle = _two_level_nvfp4_recipe()
-    return torch._scaled_mm_v2(a_q, b.t(), [a_scale, global_a], scale_recipe, swizzle,
-                               [scale_b, global_b], scale_recipe, swizzle, None,
-                               torch.bfloat16)
-
-
-@nvfp4_gemm_alpha.register_fake
-def _nvfp4_gemm_alpha_fake(a_q, a_scale, b, scale_b, global_a, global_b):
-    return a_q.new_empty((a_q.shape[0], b.shape[0]), dtype=torch.bfloat16)
 
 
 def build_tessera_nvfp4_method(scheme, prefix: str, mode: str):
@@ -265,21 +207,6 @@ def build_tessera_nvfp4_method(scheme, prefix: str, mode: str):
             # Derived, never accepted: the module's shared global over the A-side scale.
             layer.tessera_global_scale_real = prepared.global_scale
             layer.tessera_epilogue_scale = float(prepared.global_scale) / gs
-            # The same scalar the forward applies, as the GEMM's own scale
-            # operands: the B side's tensor-wide global, and the A side's 1.0
-            # that multiplies it.  Built ONCE, here, on the module's device --
-            # a per-forward ``torch.tensor(...)`` would be a pageable
-            # host-to-device copy every token, which a CUDA graph capture
-            # refuses outright.  ``tessera_epilogue_scale`` stays: it is the
-            # float this value is rounded from, and the load-time gates and
-            # the census read it.
-            layer.register_buffer("tessera_epilogue_alpha",
-                                  torch.tensor(layer.tessera_epilogue_scale,
-                                               dtype=torch.float32, device=device),
-                                  persistent=False)
-            layer.register_buffer("tessera_epilogue_one",
-                                  torch.ones((), dtype=torch.float32, device=device),
-                                  persistent=False)
             native_ops.require_native_fp4_quant(f"{prefix}: the Tessera NVFP4 route's A side")
             del layer.wire_bytes
             if self._mode == MODE_RESIDENT:
@@ -308,8 +235,9 @@ def build_tessera_nvfp4_method(scheme, prefix: str, mode: str):
                 packed, scales = layer.tessera_prepared.decode()
                 b = packed.view(torch.float4_e2m1fn_x2)
                 scale_b = blocked_scales(scales.view(torch.float8_e4m3fn))
-            y = nvfp4_gemm_alpha(a_q, a_scale, b, scale_b,
-                                 layer.tessera_epilogue_one, layer.tessera_epilogue_alpha)
+            y = torch._scaled_mm(a_q, b.t(), scale_a=a_scale, scale_b=scale_b,
+                                 out_dtype=torch.bfloat16)
+            y = y * layer.tessera_epilogue_scale
             try:
                 emit_route(
                     layer, kind="dense", policy=f"{TESSERA_NVFP4}:{layer.tessera_mode}",

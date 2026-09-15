@@ -13,6 +13,9 @@ ROWS=${2:?comma-separated M values}
 ARMS=${3:?comma-separated bench-local arms}
 BASELINE=${4:-}
 POWER_S=${5:-5.0}
+GRAPH_ROWS=${6:-}
+COMPILE_ROWS=${7:-1,512,8192}
+TIMEOUT_S=${8:-3300}
 R=/mnt/shared/tessera-runs/receipts/nvfp4-epilogue-fold-20260915
 R399=/mnt/shared/tessera-runs/receipts/399-qwen3-0.6b-20260913
 PREP=/mnt/shared/tessera-runs/receipts/frontier-fp4-qwen3-0.6b-20260913/prepA/prep
@@ -40,6 +43,7 @@ python3 -u "$TREE/experiments/nvfp4_epilogue/launch.py" \
   --serving-config "$R399/configs/qwen3_0.6b_tessera_full_engine_20260913.json" \
   --core-manifest "$R399/observer-build/runtime-inventory.json" \
   --rows "$ROWS" --arms "$ARMS" --baseline-route "$BASELINE" --power-seconds "$POWER_S" \
+  --graph-rows "$GRAPH_ROWS" --compile-rows "$COMPILE_ROWS" --timeout-s "$TIMEOUT_S" \
   > "$OUT.host/bench.log" 2>&1
 RC=$?
 set -e

@@ -5,6 +5,18 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-15 for contract v30's NVFP4 dense GEMM (tessera#522, DRAFT).
+`nvfp4_route.apply` no longer multiplies the GEMM output by
+`layer.tessera_epilogue_scale`; it hands that scalar to `torch._scaled_mm_v2`
+as the GEMM's `alpha`, through the route's own opaque custom op
+`tessera::nvfp4_gemm_alpha`, so the scalar is applied to the fp32 accumulator
+inside the mainloop instead of in a full M x N bf16 pass afterwards.
+`scheme.ROUTES[TESSERA_NVFP4].gemm_symbol` is `torch._scaled_mm_v2` and the two
+E2M1_K2 dense cells name it in `executes`. The outputs are NOT bit-identical to
+v29's -- the old path rounded twice (`bf16(bf16(acc) * bf16(s))`), the new one
+once -- and no served census has recorded the new symbol yet, so the contract
+entry is published as a draft and the numerics decision is open.
+
 Re-stamped 2026-09-15 for torch 2.13 on the fused LUT swap passes
 (tessera#486, tessera#519). `lut_swap_refusal` now admits fits on torch 2.13,
 the GLM census image's release, as well as on 2.11. 2.13's `Reduce.cuh` keeps

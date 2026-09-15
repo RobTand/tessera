@@ -244,7 +244,14 @@ ROUTES: dict[str, dict] = {
         "tile": "nvfp4 (packed E2M1 codes, group-16 ue4m3 block scales, one global)",
         "columns_multiple": 16,
         "activation_contract": NVFP4_ACTIVATION_CONTRACT,
-        "gemm_symbol": "torch._scaled_mm",
+        # The v2 entry point, because this route's epilogue scalar is the
+        # GEMM's ``alpha`` (tessera#522): the two-level NVFP4 recipe takes the
+        # tile's block plane AND its tensor-wide global per side, and no v1
+        # signature carries a global.  The route's traced node is its own
+        # custom op (``nvfp4_route.GEMM_ALPHA_OP``); this field stays the GEMM
+        # the route calls, which is what a census record and a cell's
+        # ``executes`` name.
+        "gemm_symbol": "torch._scaled_mm_v2",
     },
     TESSERA_FP8: {
         "grids": ("E4M3",), "plane": "CHANNEL",
