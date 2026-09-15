@@ -163,6 +163,9 @@ def child(args) -> int:
             _e, unit, forests = encode_linear_planes(weight, grid=grid, q256=896, name="u",
                                                      completion=completion)
             label = f"c{'full' if completion is None else completion}"
+            # The manifest's root is per column, and an arity-2 column holds
+            # two weights: read it off the schedule the encoder produced.
+            root_q256 = sum(unit.rates) * 256 // len(unit.rates)
             inputs = {name: _tensor_sha(torch, t)
                       for name, t in sorted(_unit_tensors(torch, unit).items())}
             for layout in (PlaneLayout.LADDER, PlaneLayout.LEGACY):
@@ -170,7 +173,7 @@ def child(args) -> int:
                 for _ in range(args.write_repeats):
                     sync()
                     start = time.perf_counter()
-                    blob = build_unit_artifact(unit, "u", forests, 896, DEFAULT_CODE,
+                    blob = build_unit_artifact(unit, "u", forests, root_q256, DEFAULT_CODE,
                                                fixture_id=None, layout=layout)[2]
                     sync()
                     seconds.append(time.perf_counter() - start)
