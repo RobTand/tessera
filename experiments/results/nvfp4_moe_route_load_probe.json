@@ -1,0 +1,819 @@
+{
+ "probe": "nvfp4_moe_route_load_probe",
+ "vllm": "0.28.1rc1.dev397+gfd4a15126.d20260904",
+ "torch": "2.13.0+cu130",
+ "device": "NVIDIA GB10",
+ "runtime_image": "localhost/prismaquant/spark-vllm-nccl230@sha256:a5424378322071f4c33e63d1372a2bb028e46b03f0da0e5edb0cdd7418e2cebb",
+ "runtime_image_digest": "sha256:a5424378322071f4c33e63d1372a2bb028e46b03f0da0e5edb0cdd7418e2cebb",
+ "serve_mode": "resident",
+ "dimensions": {
+  "experts": 4,
+  "hidden": 512,
+  "intermediate": 256,
+  "topk": 2,
+  "q256": 896,
+  "tokens": 17,
+  "swiglu_limit": 10.0
+ },
+ "positive": {
+  "method": "TesseraNvFp4MoEMethod",
+  "backend": "FLASHINFER_CUTLASS",
+  "experts_cls": "FlashInferExperts",
+  "x_scale": 1.0,
+  "swiglu_limit": 10.0,
+  "params_before_load": [
+   "w13_input_global_scale",
+   "w13_input_scale",
+   "w13_weight",
+   "w13_weight_scale",
+   "w13_weight_scale_2",
+   "w13_wire",
+   "w2_input_global_scale",
+   "w2_input_scale",
+   "w2_weight",
+   "w2_weight_scale",
+   "w2_weight_scale_2",
+   "w2_wire"
+  ],
+  "loaded_param_names": [
+   "w13_input_global_scale",
+   "w13_wire",
+   "w2_input_global_scale",
+   "w2_wire"
+  ],
+  "load_calls": 24,
+  "tile_is_materialize_stock_byte_for_byte": {
+   "identical": true,
+   "globals_match": true
+  },
+  "input_global_scale_loaded": {
+   "w13": [
+    [
+     572.3603515625,
+     572.3603515625
+    ],
+    [
+     572.3603515625,
+     572.3603515625
+    ],
+    [
+     572.3603515625,
+     572.3603515625
+    ],
+    [
+     572.3603515625,
+     572.3603515625
+    ]
+   ],
+   "w2": [
+    2241.91259765625,
+    1883.200927734375,
+    2219.77294921875,
+    1756.2984619140625
+   ]
+  },
+  "params_after_load": [
+   "w13_input_scale",
+   "w13_weight",
+   "w13_weight_scale",
+   "w13_weight_scale_2",
+   "w2_input_scale",
+   "w2_weight",
+   "w2_weight_scale",
+   "w2_weight_scale_2"
+  ],
+  "w13_weight_shape": [
+   4,
+   512,
+   256
+  ],
+  "w13_weight_dtype": "torch.uint8",
+  "w2_weight_shape": [
+   4,
+   512,
+   128
+  ],
+  "w2_weight_dtype": "torch.uint8",
+  "w13_weight_scale_shape": [
+   4,
+   512,
+   32
+  ],
+  "w13_weight_scale_dtype": "torch.float8_e4m3fn",
+  "w2_weight_scale_shape": [
+   4,
+   512,
+   16
+  ],
+  "w2_weight_scale_dtype": "torch.float8_e4m3fn",
+  "w13_weight_scale_2_shape": [
+   4
+  ],
+  "w13_weight_scale_2_dtype": "torch.float32",
+  "w2_weight_scale_2_shape": [
+   4
+  ],
+  "w2_weight_scale_2_dtype": "torch.float32",
+  "w13_input_scale_shape": [
+   4
+  ],
+  "w13_input_scale_dtype": "torch.float32",
+  "w2_input_scale_shape": [
+   4
+  ],
+  "w2_input_scale_dtype": "torch.float32",
+  "a_side_after_finalize": {
+   "w13_input_scale_unique": [
+    0.0017471510218456388
+   ],
+   "w2_input_scale_unique": [
+    0.0005693793063983321
+   ],
+   "w13_input_global_scale_given": [
+    572.3603615129055
+   ],
+   "w2_input_global_scale_given": [
+    1756.2984446860405,
+    1883.2009639924306,
+    2219.7729864848156,
+    2241.912578787565
+   ],
+   "collapsed_to_one_per_group": true,
+   "a1_gscale": 572.3603669610825,
+   "a2_gscale": 1756.298461785701
+  },
+  "tessera": {
+   "decoder": "torch_materialize_stock",
+   "backend": "FLASHINFER_CUTLASS",
+   "activation_contract": "e2m1_group16_ue4m3_static"
+  },
+  "output_shape": [
+   17,
+   512
+  ],
+  "output_dtype": "torch.bfloat16",
+  "vs_w4a4_emulated": {
+   "rel_l2": 0.03165495072900842,
+   "max_abs": 0.0058328527957201,
+   "want_absmax": 0.11904507130384445
+  },
+  "vs_dequantised_reference": {
+   "rel_l2": 0.15761816463029266,
+   "max_abs": 0.019560132175683975,
+   "want_absmax": 0.12195918709039688
+  },
+  "vs_dequantised_unclamped": {
+   "rel_l2": 0.15761816463029266,
+   "max_abs": 0.019560132175683975,
+   "want_absmax": 0.12195918709039688
+  },
+  "vs_bf16_source": {
+   "rel_l2": 0.22438475265565622,
+   "max_abs": 0.025288475677371025,
+   "want_absmax": 0.1185760572552681
+  },
+  "clamp_active_fraction": 0.0,
+  "resident_bytes": {
+   "w13_weight": 524288,
+   "w2_weight": 262144,
+   "w13_weight_scale": 65536,
+   "w2_weight_scale": 32768,
+   "w13_weight_scale_2": 16,
+   "w2_weight_scale_2": 16,
+   "w13_input_scale": 16,
+   "w2_input_scale": 16
+  },
+  "wire_bytes_on_disk": 800912,
+  "route_record": {
+   "kind": "moe",
+   "policy": "TESSERA_NVFP4:resident",
+   "symbol": "vllm.fused_moe.modular_kernel:FLASHINFER_CUTLASS",
+   "tile_m": 0,
+   "shape": "M17:N512:K512",
+   "contract": "e2m1_group16_ue4m3_static",
+   "state": "served",
+   "reason": null,
+   "decoder": "torch_materialize_stock",
+   "platform": "sm_121"
+  },
+  "scheme": {
+   "family": "TESSERA_NVFP4",
+   "structure": "routed_moe",
+   "grid": "E2M1x2",
+   "body": "TCQ",
+   "plane": "LUT",
+   "experts": 4,
+   "groups": {
+    "w13": {
+     "rows": 512,
+     "columns": 512,
+     "q256": 896,
+     "wire_stride": 66746,
+     "roles": [
+      [
+       "gate_proj",
+       256
+      ],
+      [
+       "up_proj",
+       256
+      ]
+     ]
+    },
+    "w2": {
+     "rows": 512,
+     "columns": 256,
+     "q256": 896,
+     "wire_stride": 66740,
+     "roles": [
+      [
+       "down_proj",
+       512
+      ]
+     ]
+    }
+   }
+  }
+ },
+ "positive_clamped": {
+  "method": "TesseraNvFp4MoEMethod",
+  "backend": "FLASHINFER_CUTLASS",
+  "experts_cls": "FlashInferExperts",
+  "x_scale": 40.0,
+  "swiglu_limit": 10.0,
+  "params_before_load": [
+   "w13_input_global_scale",
+   "w13_input_scale",
+   "w13_weight",
+   "w13_weight_scale",
+   "w13_weight_scale_2",
+   "w13_wire",
+   "w2_input_global_scale",
+   "w2_input_scale",
+   "w2_weight",
+   "w2_weight_scale",
+   "w2_weight_scale_2",
+   "w2_wire"
+  ],
+  "loaded_param_names": [
+   "w13_input_global_scale",
+   "w13_wire",
+   "w2_input_global_scale",
+   "w2_wire"
+  ],
+  "load_calls": 24,
+  "tile_is_materialize_stock_byte_for_byte": {
+   "identical": true,
+   "globals_match": true
+  },
+  "input_global_scale_loaded": {
+   "w13": [
+    [
+     14.309008598327637,
+     14.309008598327637
+    ],
+    [
+     14.309008598327637,
+     14.309008598327637
+    ],
+    [
+     14.309008598327637,
+     14.309008598327637
+    ],
+    [
+     14.309008598327637,
+     14.309008598327637
+    ]
+   ],
+   "w2": [
+    26.8812198638916,
+    26.8812198638916,
+    26.8812198638916,
+    26.8812198638916
+   ]
+  },
+  "params_after_load": [
+   "w13_input_scale",
+   "w13_weight",
+   "w13_weight_scale",
+   "w13_weight_scale_2",
+   "w2_input_scale",
+   "w2_weight",
+   "w2_weight_scale",
+   "w2_weight_scale_2"
+  ],
+  "w13_weight_shape": [
+   4,
+   512,
+   256
+  ],
+  "w13_weight_dtype": "torch.uint8",
+  "w2_weight_shape": [
+   4,
+   512,
+   128
+  ],
+  "w2_weight_dtype": "torch.uint8",
+  "w13_weight_scale_shape": [
+   4,
+   512,
+   32
+  ],
+  "w13_weight_scale_dtype": "torch.float8_e4m3fn",
+  "w2_weight_scale_shape": [
+   4,
+   512,
+   16
+  ],
+  "w2_weight_scale_dtype": "torch.float8_e4m3fn",
+  "w13_weight_scale_2_shape": [
+   4
+  ],
+  "w13_weight_scale_2_dtype": "torch.float32",
+  "w2_weight_scale_2_shape": [
+   4
+  ],
+  "w2_weight_scale_2_dtype": "torch.float32",
+  "w13_input_scale_shape": [
+   4
+  ],
+  "w13_input_scale_dtype": "torch.float32",
+  "w2_input_scale_shape": [
+   4
+  ],
+  "w2_input_scale_dtype": "torch.float32",
+  "a_side_after_finalize": {
+   "w13_input_scale_unique": [
+    0.06988604366779327
+   ],
+   "w2_input_scale_unique": [
+    0.0372006930410862
+   ],
+   "w13_input_global_scale_given": [
+    14.309008747253207
+   ],
+   "w2_input_global_scale_given": [
+    26.881220270237794
+   ],
+   "collapsed_to_one_per_group": true,
+   "a1_gscale": 14.309008601968497,
+   "a2_gscale": 26.88121962931048
+  },
+  "tessera": {
+   "decoder": "torch_materialize_stock",
+   "backend": "FLASHINFER_CUTLASS",
+   "activation_contract": "e2m1_group16_ue4m3_static"
+  },
+  "output_shape": [
+   17,
+   512
+  ],
+  "output_dtype": "torch.bfloat16",
+  "vs_w4a4_emulated": {
+   "rel_l2": 0.00837484032430963,
+   "max_abs": 0.9226493835449219,
+   "want_absmax": 55.8094367980957
+  },
+  "vs_dequantised_reference": {
+   "rel_l2": 0.18892029893515275,
+   "max_abs": 10.229204177856445,
+   "want_absmax": 55.20075607299805
+  },
+  "vs_dequantised_unclamped": {
+   "rel_l2": 0.8323559302629059,
+   "max_abs": 203.6416778564453,
+   "want_absmax": 244.6687774658203
+  },
+  "vs_bf16_source": {
+   "rel_l2": 0.26939779250396056,
+   "max_abs": 12.085631370544434,
+   "want_absmax": 56.88191223144531
+  },
+  "clamp_active_fraction": 0.5822035670280457,
+  "resident_bytes": {
+   "w13_weight": 524288,
+   "w2_weight": 262144,
+   "w13_weight_scale": 65536,
+   "w2_weight_scale": 32768,
+   "w13_weight_scale_2": 16,
+   "w2_weight_scale_2": 16,
+   "w13_input_scale": 16,
+   "w2_input_scale": 16
+  },
+  "wire_bytes_on_disk": 800912,
+  "route_record": {
+   "kind": "moe",
+   "policy": "TESSERA_NVFP4:resident",
+   "symbol": "vllm.fused_moe.modular_kernel:FLASHINFER_CUTLASS",
+   "tile_m": 0,
+   "shape": "M17:N512:K512",
+   "contract": "e2m1_group16_ue4m3_static",
+   "state": "served",
+   "reason": null,
+   "decoder": "torch_materialize_stock",
+   "platform": "sm_121"
+  },
+  "scheme": {
+   "family": "TESSERA_NVFP4",
+   "structure": "routed_moe",
+   "grid": "E2M1x2",
+   "body": "TCQ",
+   "plane": "LUT",
+   "experts": 4,
+   "groups": {
+    "w13": {
+     "rows": 512,
+     "columns": 512,
+     "q256": 896,
+     "wire_stride": 66746,
+     "roles": [
+      [
+       "gate_proj",
+       256
+      ],
+      [
+       "up_proj",
+       256
+      ]
+     ]
+    },
+    "w2": {
+     "rows": 512,
+     "columns": 256,
+     "q256": 896,
+     "wire_stride": 66740,
+     "roles": [
+      [
+       "down_proj",
+       512
+      ]
+     ]
+    }
+   }
+  }
+ },
+ "positive_exported": {
+  "method": "TesseraNvFp4MoEMethod",
+  "backend": "FLASHINFER_CUTLASS",
+  "experts_cls": "FlashInferExperts",
+  "x_scale": 1.0,
+  "swiglu_limit": 10.0,
+  "params_before_load": [
+   "w13_input_global_scale",
+   "w13_input_scale",
+   "w13_weight",
+   "w13_weight_scale",
+   "w13_weight_scale_2",
+   "w13_wire",
+   "w2_input_global_scale",
+   "w2_input_scale",
+   "w2_weight",
+   "w2_weight_scale",
+   "w2_weight_scale_2",
+   "w2_wire"
+  ],
+  "loaded_param_names": [
+   "w13_input_global_scale",
+   "w13_wire",
+   "w2_input_global_scale",
+   "w2_wire"
+  ],
+  "load_calls": 24,
+  "tile_is_materialize_stock_byte_for_byte": {
+   "identical": true,
+   "globals_match": true
+  },
+  "input_global_scale_loaded": {
+   "w13": [
+    [
+     572.3603515625,
+     572.3603515625
+    ],
+    [
+     572.3603515625,
+     572.3603515625
+    ],
+    [
+     572.3603515625,
+     572.3603515625
+    ],
+    [
+     572.3603515625,
+     572.3603515625
+    ]
+   ],
+   "w2": [
+    2241.91259765625,
+    1883.200927734375,
+    2219.77294921875,
+    1756.2984619140625
+   ]
+  },
+  "params_after_load": [
+   "w13_input_scale",
+   "w13_weight",
+   "w13_weight_scale",
+   "w13_weight_scale_2",
+   "w2_input_scale",
+   "w2_weight",
+   "w2_weight_scale",
+   "w2_weight_scale_2"
+  ],
+  "w13_weight_shape": [
+   4,
+   512,
+   256
+  ],
+  "w13_weight_dtype": "torch.uint8",
+  "w2_weight_shape": [
+   4,
+   512,
+   128
+  ],
+  "w2_weight_dtype": "torch.uint8",
+  "w13_weight_scale_shape": [
+   4,
+   512,
+   32
+  ],
+  "w13_weight_scale_dtype": "torch.float8_e4m3fn",
+  "w2_weight_scale_shape": [
+   4,
+   512,
+   16
+  ],
+  "w2_weight_scale_dtype": "torch.float8_e4m3fn",
+  "w13_weight_scale_2_shape": [
+   4
+  ],
+  "w13_weight_scale_2_dtype": "torch.float32",
+  "w2_weight_scale_2_shape": [
+   4
+  ],
+  "w2_weight_scale_2_dtype": "torch.float32",
+  "w13_input_scale_shape": [
+   4
+  ],
+  "w13_input_scale_dtype": "torch.float32",
+  "w2_input_scale_shape": [
+   4
+  ],
+  "w2_input_scale_dtype": "torch.float32",
+  "a_side_after_finalize": {
+   "w13_input_scale_unique": [
+    0.0017471510218456388
+   ],
+   "w2_input_scale_unique": [
+    0.0005693793063983321
+   ],
+   "w13_input_global_scale_given": [
+    572.3603515625
+   ],
+   "w2_input_global_scale_given": [
+    1756.2984619140625,
+    1883.200927734375,
+    2219.77294921875,
+    2241.91259765625
+   ],
+   "collapsed_to_one_per_group": true,
+   "a1_gscale": 572.3603669610825,
+   "a2_gscale": 1756.298461785701
+  },
+  "tessera": {
+   "decoder": "torch_materialize_stock",
+   "backend": "FLASHINFER_CUTLASS",
+   "activation_contract": "e2m1_group16_ue4m3_static"
+  },
+  "output_shape": [
+   17,
+   512
+  ],
+  "output_dtype": "torch.bfloat16",
+  "vs_w4a4_emulated": {
+   "rel_l2": 0.03165495072900842,
+   "max_abs": 0.0058328527957201,
+   "want_absmax": 0.11904507130384445
+  },
+  "vs_dequantised_reference": {
+   "rel_l2": 0.15761816463029266,
+   "max_abs": 0.019560132175683975,
+   "want_absmax": 0.12195918709039688
+  },
+  "vs_dequantised_unclamped": {
+   "rel_l2": 0.15761816463029266,
+   "max_abs": 0.019560132175683975,
+   "want_absmax": 0.12195918709039688
+  },
+  "vs_bf16_source": {
+   "rel_l2": 0.22438475265565622,
+   "max_abs": 0.025288475677371025,
+   "want_absmax": 0.1185760572552681
+  },
+  "clamp_active_fraction": 0.0,
+  "resident_bytes": {
+   "w13_weight": 524288,
+   "w2_weight": 262144,
+   "w13_weight_scale": 65536,
+   "w2_weight_scale": 32768,
+   "w13_weight_scale_2": 16,
+   "w2_weight_scale_2": 16,
+   "w13_input_scale": 16,
+   "w2_input_scale": 16
+  },
+  "wire_bytes_on_disk": 801524,
+  "route_record": {
+   "kind": "moe",
+   "policy": "TESSERA_NVFP4:resident",
+   "symbol": "vllm.fused_moe.modular_kernel:FLASHINFER_CUTLASS",
+   "tile_m": 0,
+   "shape": "M17:N512:K512",
+   "contract": "e2m1_group16_ue4m3_static",
+   "state": "served",
+   "reason": null,
+   "decoder": "torch_materialize_stock",
+   "platform": "sm_121"
+  },
+  "scheme": {
+   "family": "TESSERA_NVFP4",
+   "structure": "routed_moe",
+   "source_layout": "unpacked_per_expert",
+   "grid": "E2M1x2",
+   "body": "TCQ",
+   "plane": "LUT",
+   "experts": 4,
+   "groups": {
+    "w13": {
+     "q256": 896,
+     "rows": 512,
+     "columns": 512,
+     "roles": [
+      [
+       "gate_proj",
+       256
+      ],
+      [
+       "up_proj",
+       256
+      ]
+     ],
+     "wire_stride": 66797
+    },
+    "w2": {
+     "q256": 896,
+     "rows": 512,
+     "columns": 256,
+     "roles": [
+      [
+       "down_proj",
+       512
+      ]
+     ],
+     "wire_stride": 66791
+    }
+   }
+  },
+  "exported_manifest": {
+   "family": "TESSERA_NVFP4",
+   "attested_by": [],
+   "resident_bytes_resident_mode": 884832,
+   "serving_gate": {
+    "contract": "tessera/serving/runtime_contract.json",
+    "contract_version": 27,
+    "allow_unserveable": true,
+    "unserveable_overrides": [
+     {
+      "target": "model.language_model.layers.1.mlp.experts",
+      "grid": "E2M1x2",
+      "q256": 896,
+      "body": "TCQ",
+      "plane": "LUT",
+      "structure": "routed_moe",
+      "refusal": "tessera export 'model.language_model.layers.1.mlp.experts': no lane_eligibility cell in runtime_contract.json attests TESSERA_E2M1_K2 served as structure 'routed_moe', so this build promises no rung for a routed_moe stack on grid 'E2M1x2'. A cell is published when a container receipt covers the structure on a runtime image; absence is 'unattested', which an export that declares the structure cannot ship on. The rung is still legal to ENCODE -- this refusal is about what THIS plugin build can decode, not about the wire -- so a research or measurement artifact at this rung is unaffected; it just cannot be served by this build."
+     }
+    ],
+    "research_selected_decoder_only": [],
+    "construction_census": {
+     "architecture": "Glm5NextForConditionalGeneration",
+     "runtime": {
+      "image": "prismaquant/glm53-mia-sm121:487ecf187",
+      "image_id": "sha256:75ea13eda532280afb4a829ab13eb572a4be49cbb47ca0a02a484a98e476ef69",
+      "vllm": "0.1.dev20051+g487ecf187"
+     },
+     "model": {
+      "model_type": "glm5_next",
+      "num_hidden_layers": 4,
+      "layer_types": [
+       "linear_attention",
+       "deepseek_sparse_attention",
+       "linear_attention",
+       "deepseek_sparse_attention"
+      ],
+      "mlp_layer_types": [
+       "dense",
+       "sparse",
+       "sparse",
+       "sparse"
+      ]
+     },
+     "receipt": "docs/measurements/construction/glm53-flash-4layer.json"
+    },
+    "allow_unrouted": false,
+    "passthrough_unrouted": false,
+    "unrouted": [],
+    "geometry": {
+     "attested_modules": 0,
+     "unattested_modules": [],
+     "row_sliced_modules": []
+    }
+   }
+  },
+  "export_workdir": "/work/run/nvfp4_moe_export_leg_enk63xoy"
+ },
+ "negative": [
+  {
+   "leg": "payload_byte_flipped",
+   "expected_substring": [
+    "digest",
+    "checksum"
+   ],
+   "refused": true,
+   "error_type": "SchemaError",
+   "matched": true,
+   "message": "terminal 't-nvfp4': plane-region bytes do not match the declared payload digest"
+  },
+  {
+   "leg": "stride_understated",
+   "expected_substring": [
+    "does not fit the group"
+   ],
+   "refused": true,
+   "error_type": "ValueError",
+   "matched": true,
+   "message": "tessera target 'model.layers.0.mlp.experts' expert 0 w1: a 66746-byte wire does not fit the group's declared wire_stride=66745; the sidecar and the bytes disagree about the row width"
+  },
+  {
+   "leg": "stride_overstated",
+   "expected_substring": [
+    "is not what its lengths imply",
+    "wire_stride"
+   ],
+   "refused": true,
+   "error_type": "GrammarError",
+   "matched": true,
+   "message": "moe w13 stride 70842 is not what its lengths imply (66746): the stride is the max over the packed blobs, so a declared stride beside it is a wrong tensor, not room"
+  },
+  {
+   "leg": "expert_count_wrong",
+   "expected_substring": [
+    "the sidecar declares"
+   ],
+   "refused": true,
+   "error_type": "ValueError",
+   "matched": true,
+   "message": "tessera target 'model.layers.0.mlp.experts': this rank holds 4 of 4 experts and the sidecar declares 5. The wire stride is the maximum over EVERY expert's blob, so a rank holding a subset cannot check it -- expert parallelism is refused here rather than served on an unverifiable stride."
+  },
+  {
+   "leg": "rung_wrong",
+   "expected_substring": [
+    "outside the rungs this build's decoder reads"
+   ],
+   "refused": true,
+   "error_type": "ValueError",
+   "matched": true,
+   "message": "tessera target \"model.layers.0.mlp.experts group 'w2' role 'down_proj'\": q256=768 is outside the rungs this build's decoder reads for TESSERA_E2M1_K2 -- [896, 896] (every integer). Serving it would decode bytes the reader does not promise to understand, which is a wrong tensor rather than a refusal. Re-export at a rung inside the range, or publish a measured range that contains this one in runtime"
+  },
+  {
+   "leg": "input_scale_missing",
+   "expected_substring": [
+    "carry no input_global_scale"
+   ],
+   "refused": true,
+   "error_type": "ValueError",
+   "matched": true,
+   "message": "tessera target 'model.layers.0.mlp.experts': 1 expert projection(s) in w13 carry no input_global_scale (first [[1, 1]]). W4A4 needs a static A-side scale per expert projection; refusing rather than quantising activations at 1.0."
+  },
+  {
+   "leg": "half_an_expert",
+   "expected_substring": [
+    "one half of w13",
+    "wire length",
+    "empty wire"
+   ],
+   "refused": true,
+   "error_type": "GrammarError",
+   "matched": true,
+   "message": "moe w13 expert 2 projection 1: wire length 0 -- an empty wire unpacks to nothing fused.parse_fused accepts, so it was never packable"
+  },
+  {
+   "leg": "stock_tensor_for_a_wire_stack",
+   "expected_substring": [
+    "carries a stock tensor"
+   ],
+   "refused": true,
+   "error_type": "ValueError",
+   "matched": true,
+   "message": "tessera target 'model.layers.0.mlp.experts' expert 0 w1: the checkpoint carries a stock tensor ('model.layers.0.mlp.experts.w13_weight') for a stack the sidecar declares as Tessera wires. A Tessera expert projection is ``wire`` plus ``input_global_scale``; refusing rather than overwriting a decoded tile with checkpoint bytes."
+  }
+ ],
+ "seconds": 68.1
+}

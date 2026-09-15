@@ -45,21 +45,70 @@ __all__ = [
 # -- so this costs no grammar and no stored bytes.
 # ---------------------------------------------------------------------------
 
-#: Zero bits prepended to each column's select plane so that row 0's history
-#: window reads the encoder's initial state instead of the previous column.
-#: Eight rather than six keeps every column byte-aligned.
+#: Bits prepended to each column's select plane so that row 0's history
+#: window reads the trellis start state instead of the previous column.
+#: Zero for a whole unit -- the encoder's pinned zero start -- and, for a
+#: row shard, the shard's INITIAL_STATE plane written into the last ``memory``
+#: positions (``_thread_start_state``).  Eight rather than six keeps every
+#: column byte-aligned.
 SELECT_PAD = 8
+#: Super-symbols whose select bits share one byte of a column plane.  The
+#: span-L select plane packs one bit per super-symbol, so one byte holds this
+#: many of them and a whole column holds ``8 * span`` codes.
+SELECT_PLANE_SUPER_SYMBOLS_PER_BYTE = 8
+
+
+def _thread_start_state(padded: torch.Tensor, memory: int,
+                        initial_state: "torch.Tensor | None") -> None:
+    """Write a shard's start state into the pad, in STREAM order.
+
+    ``padded`` is ``[SELECT_PAD + steps, cols]`` with the select bits from row
+    ``SELECT_PAD`` down; the decoders read step ``t``'s window as the
+    ``memory`` positions above it followed by its own bit, oldest first, and
+    ``build_history_lut`` / ``build_span2_luts`` map that window to the
+    ``ConvCode`` state whose NEWEST bit is the top (``decode._conv_state_stream``:
+    ``state_t = sum_{k=1..memory} select_{t-k} << (memory - k)``).  So bit
+    ``j`` of the start state is select bit ``-(memory - j)``, which sits at pad
+    position ``SELECT_PAD - memory + j``: bit 0 (the oldest) first, bit
+    ``memory - 1`` (``select_{-1}``) in the last pad position.  Once the pad
+    holds the state the decoders need no other argument -- step 0's window
+    reads it exactly as step ``memory`` reads the select bits above it, and
+    ``decode._conv_state_stream``'s ``init >> t`` correction is the same
+    sliding window read ``t`` positions later.  ``None`` leaves the zero pad
+    every whole unit decodes from.
+    """
+    if initial_state is None:
+        return
+    cols = padded.shape[1]
+    state = initial_state.reshape(-1).to(padded.device, torch.int64)
+    if state.numel() != cols:
+        raise GrammarError(
+            f"a start state names one register per column ({cols}); this one has "
+            f"{state.numel()} entries")
+    if memory < 1 or memory > SELECT_PAD:
+        raise GrammarError(
+            f"memory {memory} does not fit the {SELECT_PAD}-bit select pad the start "
+            "state is threaded through")
+    if state.numel() and (bool((state < 0).any()) or bool((state >> memory).any())):
+        raise GrammarError(
+            f"a start state is a {memory}-bit register per column; this one holds a "
+            f"value outside [0, {1 << memory})")
+    for j in range(memory):
+        padded[SELECT_PAD - memory + j] = ((state >> j) & 1).to(padded.dtype)
 
 
 def pack_kernel_planes(
-    body_bits: torch.Tensor, rate: int = 3, memory: int = 6, span: int = 1
+    body_bits: torch.Tensor, rate: int = 3, memory: int = 6, span: int = 1,
+    initial_state: "torch.Tensor | None" = None,
 ) -> "tuple[torch.Tensor, ...]":
     """Wire BODY -> kernel planes, column-major, MSB-first.
 
     ``span == 1``: ``(select plane, point plane)``.  The select plane carries
-    ``SELECT_PAD`` zero bits before each column, which is what lets a decoder
-    read row 0's history without a boundary test: the pad *is* the initial
-    state.
+    ``SELECT_PAD`` bits before each column, which is what lets a decoder read
+    row 0's history without a boundary test: the pad *is* the initial state
+    -- zero for a whole unit, the shard's own register for a row shard
+    (``initial_state``, one ``memory``-bit value per column, threaded by
+    ``_thread_start_state``).
 
     ``span == 2``: ``(select plane, label plane, point plane)``.  One select
     bit per super-symbol (a pair of codes), padded per column exactly as
@@ -80,26 +129,130 @@ def pack_kernel_planes(
     body = body_bits.to(torch.int32)
     point = body & ((1 << (rate - 1)) - 1)
     point_plane = _pack_columns(point, rate - 1)
+    codes_per_byte = select_plane_codes_per_byte(span)
     if span == 1:
-        if rows % 8:
+        if rows % codes_per_byte:
             raise GrammarError(f"{rows} rows does not byte-align a column plane")
         select = (body >> (rate - 1)) & 1
         padded = torch.zeros(rows + SELECT_PAD, cols, dtype=torch.int32, device=device)
         padded[SELECT_PAD:] = select
+        _thread_start_state(padded, memory, initial_state)
         return _pack_columns(padded, 1), point_plane
-    if rows % 16:
+    if rows % codes_per_byte:
         raise GrammarError(
-            f"{rows} codes is not a multiple of 16; a span-2 column holds one "
+            f"{rows} codes is not a multiple of {codes_per_byte}; a span-2 column holds one "
             "select bit and one label per pair and needs a byte-aligned column of pairs"
         )
     select = (body[0::2] >> (rate - 1)) & 1                 # [pairs, cols]
     label = (body[1::2] >> (rate - 1)) & (SUBSET_COUNT - 1)  # [pairs, cols]
     padded = torch.zeros(rows // 2 + SELECT_PAD, cols, dtype=torch.int32, device=device)
     padded[SELECT_PAD:] = select
+    _thread_start_state(padded, memory, initial_state)
     select_plane = torch.cat([
         _pack_columns(padded, 1), torch.zeros(8, dtype=torch.uint8, device=device)
     ])
     return select_plane, _pack_columns(label, 2), point_plane
+
+
+def select_plane_codes_per_byte(span: int) -> int:
+    """Codes per column ONE byte of the SELECT plane holds: ``8 * span``.
+
+    The span-L select plane packs one bit per super-symbol, eight
+    super-symbols to a byte. This is the single number ``pack_kernel_planes``
+    measures its columns against and the native admission below asks for, so
+    the two cannot disagree about where a byte ends.
+    """
+    span = int(span)
+    if span < 1:
+        raise GrammarError(
+            f"a span of {span} is not a positive number of rows per super-symbol"
+        )
+    return SELECT_PLANE_SUPER_SYMBOLS_PER_BYTE * span
+
+
+def native_select_plane_admission(parsed) -> "tuple[int, int] | None":
+    """``(rows, required_multiple)`` for the NATIVE span-2 decode, or ``None``
+    for a body that has no select plane.
+
+    ``pack_kernel_planes`` packs the span-L select plane one bit per
+    super-symbol and eight to a byte, column after column in one flat uint8
+    array with no per-column offset to resume on, so the native decoder needs
+    each rank's rows to be a whole number of columns of
+    ``select_plane_codes_per_byte(span)`` super-symbols: ``arity * 8 * span``.
+    ``layout.shard_granularity`` reports the finer super-symbol boundary
+    (``arity * span``) because that is what ``slice_unit`` measures its offsets
+    against, so one super-symbol per column slices cleanly and the PACKER is
+    where it lands -- naming bytes rather than the cut that produced them.
+
+    ONLY THE NATIVE DECODER NEEDS THIS.  ``stock.materialize_stock`` (the
+    ``when_unavailable`` torch fallback the span-2 route publishes) decodes
+    codes, not these planes, so a cut below the byte is a cut it serves; the
+    refusal therefore belongs at the native seam and not in
+    ``serving.sharding``'s cutter, where it would take that fallback away too.
+
+    A TCQ parse whose geometry cannot be read REFUSES rather than answering
+    None: absent geometry means "we cannot tell whether this packs", and a
+    coverage gate that reads an unknown as "no requirement" is one that fails
+    open -- exactly the shape this function exists to close.  The window body
+    is the one true None: ``pack_window_planes`` carries a per-column offset
+    table and starts every column on its own byte, so every length packs.
+    """
+    from .manifest import BodyKind
+
+    unit = getattr(parsed, "unit", parsed)
+    body = BodyKind(getattr(unit, "body", BodyKind.TCQ))
+    if body is not BodyKind.TCQ:
+        return None
+    forests = getattr(parsed, "forests", None)
+    rates = sorted(set(getattr(unit, "rates", ()) or ()))
+    where = (f"forests={type(forests).__name__}, rates={rates}, "
+             f"body={body.name}, span={getattr(unit, 'span', None)!r}")
+    if not isinstance(forests, dict) or len(rates) != 1:
+        raise GrammarError(
+            "the native span-2 admission needs exactly one forest per unit to "
+            f"read the arity from; this parse reports {where}")
+    forest = forests[rates[0]]
+    grid = getattr(forest, "grid", forest)
+    arity = getattr(grid, "arity", None)
+    if not isinstance(arity, int) or arity < 1:
+        raise GrammarError(
+            "the native span-2 admission needs the grid's arity, which this "
+            f"forest does not carry ({where})")
+    # ``pack_kernel_planes`` measures the BODY plane's steps (one code per
+    # step, ``arity`` rows per code), so the rows named here are
+    # ``steps * arity`` -- the same ``rows`` ``pack_unit_for_kernel`` derives
+    # -- and the multiple is that step boundary in rows.  Rows divide the
+    # multiple exactly when steps divide ``select_plane_codes_per_byte``, so
+    # this refuses the packer's own set of cuts and no other.
+    body_bits = getattr(unit, "body_bits", None)
+    if body_bits is None or getattr(body_bits, "ndim", 0) != 2:
+        raise GrammarError(
+            "the native span-2 admission needs the unit's [steps, cols] body "
+            f"plane to count its rows ({where})")
+    rows = int(body_bits.shape[0]) * arity
+    return rows, arity * select_plane_codes_per_byte(int(getattr(unit, "span", 1)))
+
+
+def require_native_select_plane_admission(parsed) -> None:
+    """Refuse, by name, a native span-2 decode whose rows are not a whole
+    number of select columns (``native_select_plane_admission``).
+
+    Names the rank-local rows, the multiple the plane needs, and the fallback
+    that does serve the cut, so the operator acts on the cut rather than on a
+    byte count in someone else's module."""
+    admission = native_select_plane_admission(parsed)
+    if admission is None:
+        return
+    rows, multiple = admission
+    if rows % multiple:
+        raise GrammarError(
+            f"the native span-2 decoder packs "
+            f"{SELECT_PLANE_SUPER_SYMBOLS_PER_BYTE} super-symbols to a byte per "
+            f"column; this rank's unit is {rows} rows, which is not a whole number of "
+            f"that column ({multiple} rows = arity * 8 * span), so the select plane "
+            f"cannot be packed. Serve at a tensor_parallel_size that lands on the "
+            f"boundary, or take the torch fallback, which decodes codes and serves "
+            f"this cut.")
 
 
 def pack_scale_nibbles(scale_refine: torch.Tensor, rows: int, cols: int, half: int = 16) -> torch.Tensor:
@@ -568,6 +721,14 @@ def pack_unit_for_kernel(unit, forest: AnchorForest, code: ConvCode) -> dict:
     anchor, so a deep unit would be served as its zeroed twin).  The window
     branch reads both scale planes and any mixed schedule, and a window body
     has no completion axis by grammar.
+
+    Both branches take a ROW SHARD.  A unit cut below row 0
+    (``layout.slice_unit``) carries the register each column is in at the
+    cut, and each branch threads it into its own pad -- the window branch's
+    ``window_bits`` pad and, here, the span-2 select plane's ``SELECT_PAD``
+    (``_thread_start_state``) -- so the decoder that reads the planes starts
+    step 0 from the parent's state with no argument of its own.  A whole
+    unit carries no state and packs to the zero pad it always did.
     """
     from .manifest import BodyKind, ScalePlaneKind
 
@@ -575,19 +736,23 @@ def pack_unit_for_kernel(unit, forest: AnchorForest, code: ConvCode) -> dict:
     if getattr(unit, "body", BodyKind.TCQ) is BodyKind.WINDOW:
         grid = forest.grid if isinstance(forest, AnchorForest) else forest
         return _pack_window_unit(unit, grid)
-    if getattr(unit, "initial_state", None) is not None:
-        # The window branch threads the state through its pad; the span-2
-        # trellis planes would need the same treatment on the select plane's
-        # SELECT_PAD, in the bit order ``build_span2_luts`` reverses, and that
-        # is unwritten and untested.  Refusing is the only honest answer: a
-        # shard packed against the pinned zero start decodes to plausible
-        # wrong weights, silently.
-        raise GrammarError(
-            "the span-2 kernel lane does not yet take a start state; this unit "
-            f"is a shard beginning at row {getattr(unit, 'row_offset', 0)} of "
-            "its parent. Decode it through tessera.decode, or serve it from a "
-            "whole unit"
-        )
+    # A row shard (``layout.slice_unit``) carries its columns' trellis
+    # register at the cut, ``state_bits`` wide.  The span-2 planes thread it
+    # through the select pad exactly as the window branch threads its own
+    # (``_thread_start_state``), so the decoders start step 0 from it with no
+    # further argument; a whole unit carries None and packs to the pinned
+    # zero pad it always did.  The width is checked against the code the
+    # planes are packed for: a register of another code's memory would be
+    # written into the wrong pad positions and read as a different state.
+    initial_state = getattr(unit, "initial_state", None)
+    if initial_state is not None:
+        state_bits = int(getattr(unit, "state_bits", 0))
+        if state_bits != code.memory:
+            raise GrammarError(
+                f"this shard's start state is {state_bits} bits wide and the code's "
+                f"register is {code.memory}; the pad cannot carry a register of another "
+                "code (unit begins at row "
+                f"{getattr(unit, 'row_offset', 0)} of its parent)")
     if unit.span != 2:
         raise GrammarError(f"pack_unit_for_kernel is the span-2 path; this unit is span {unit.span}")
     if unit.scale_plane is not ScalePlaneKind.LUT:
@@ -603,7 +768,9 @@ def pack_unit_for_kernel(unit, forest: AnchorForest, code: ConvCode) -> dict:
     steps, cols = unit.codes.shape
     rows = steps * forest.grid.arity
     device = unit.body_bits.device
-    select, label, point = pack_kernel_planes(unit.body_bits, rate=forest.rate, memory=code.memory, span=2)
+    select, label, point = pack_kernel_planes(
+        unit.body_bits, rate=forest.rate, memory=code.memory, span=2,
+        initial_state=initial_state)
     label_lut, _subset_lut = build_span2_luts(forest, code, device)
     return {
         "kind": "span2",
@@ -668,6 +835,10 @@ def prepare_span2_planes(parsed, device: str = "cuda") -> dict:
     if len(rates) != 1:
         raise GrammarError(f"the span-2 planes take one forest per unit; rates {rates}")
     forest = forests[rates[0]]
+    # The native decoder's own admission, before any packing: a rank cut below
+    # the select plane's byte is refused here, by name, naming the cut.  The
+    # torch fallback does not come through this function.
+    require_native_select_plane_admission(parsed)
     packed = pack_unit_for_kernel(unit, forest, code)
     packed = {k: (v.to(device) if isinstance(v, torch.Tensor) else v) for k, v in packed.items()}
     packed["subset_nibbles"] = build_subset_nibbles(forest, code, device)

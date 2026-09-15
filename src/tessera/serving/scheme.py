@@ -194,18 +194,25 @@ MOE_SOURCE_LAYOUTS = (
 #: absent from it is refused by name rather than served through another
 #: family's decode.
 #:
-#: Only ``TESSERA_FP8`` is here. ``TESSERA_NVFP4`` has no Tessera expert
-#: builder or served qualification. The pinned vLLM oracle *does* resolve a
-#: clamp-capable NVFP4 fused-MoE backend on sm121; that constructed-config
-#: result is not a Tessera load, generation, or quality receipt
-#: (``docs/measurements/nvfp4-moe-oracle-2026-09-02.md``). ``TESSERA_BF16``
-#: is a compressed BF16-alphabet wire with a per-row scale; this build has no
-#: *production* expert builder for it. Its dense route keeps that scale for
-#: the output epilogue; the explicit research-selected route folds it into
-#: BF16 weights to match PrismaQuant's joint screen. Plain source BF16
-#: passthrough uses ``ignore``.
+#: ``TESSERA_FP8`` and ``TESSERA_NVFP4`` are here. The FP8 builder decodes
+#: E4M3 window wires into vLLM's per-channel FP8 fused-MoE parameter set; the
+#: NVFP4 builder (tessera#492) decodes E2M1x2 trellis wires into the stock
+#: modelopt NVFP4 fused-MoE parameter set (packed nibbles, group-16 ue4m3
+#: block scales, one per-expert global, a static per-expert input scale) and
+#: hands it to the runtime's own ``select_nvfp4_moe_backend`` answer, which on
+#: sm121 with ``swiglu_limit`` set resolves to a clamp-capable flashinfer
+#: CUTLASS backend (``docs/measurements/nvfp4-moe-oracle-2026-09-02.md``).
+#: A builder is a dispatch fact, not a served qualification: which
+#: ``(family, structure)`` cells the packaged contract attests is
+#: ``lane_eligibility``'s to say, and ``attested_cells`` reads it.
+#: ``TESSERA_BF16`` is a compressed BF16-alphabet wire with a per-row scale;
+#: this build has no *production* expert builder for it. Its dense route
+#: keeps that scale for the output epilogue; the explicit research-selected
+#: route folds it into BF16 weights to match PrismaQuant's joint screen.
+#: Plain source BF16 passthrough uses ``ignore``.
 MOE_BUILDERS: dict[str, tuple[str, str]] = {
     TESSERA_FP8: ("tessera.serving.moe_route", "build_tessera_moe_method"),
+    TESSERA_NVFP4: ("tessera.serving.nvfp4_moe_route", "build_tessera_nvfp4_moe_method"),
 }
 
 #: What each route can hold, by Tessera's own names (``PayloadGrid.name``,
@@ -475,6 +482,14 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
          "regimes": _ALL_REGIMES, "modes": _ALL_MODES, "lane": None,
          "structures": (STRUCTURE_DENSE,),
          "when_lane_absent": True},
+        # The expert stack (tessera#492): decoded ONCE at load through the
+        # stock materialiser into the modelopt NVFP4 parameter set, then
+        # every forward, at any M, hands the runtime's modular fused-MoE
+        # kernel that tile -- the same one-launch shape as the FP8 stack's,
+        # and resident-only for the same reason.
+        {"symbol": MOE_GEMM_SYMBOL, "decoder": _DECODER_TORCH_STOCK,
+         "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": None,
+         "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": True},
     ),
     TESSERA_FP8: _window_launches(ROUTES[TESSERA_FP8]["gemm_symbol"]) + (
         {"symbol": MOE_GEMM_SYMBOL, "decoder": _DECODER_TORCH_STOCK,
@@ -741,10 +756,7 @@ def refuse_a_family_with_no_expert_route(route: str, target: str) -> None:
         return
     raise ValueError(
         f"tessera target {target!r}: {route} has no expert route in this build "
-        f"(scheme.MOE_BUILDERS names {sorted(MOE_BUILDERS)}). The NVFP4 oracle "
-        "resolves a clamp-capable backend on sm121, but Tessera has no NVFP4 "
-        "expert builder or served qualification "
-        "(docs/measurements/nvfp4-moe-oracle-2026-09-02.md); the compressed "
+        f"(scheme.MOE_BUILDERS names {sorted(MOE_BUILDERS)}). The compressed "
         "TESSERA_BF16 expert wire has no production expert builder in this build "
         "(its folded selected route requires explicit research execution). Plain "
         "source BF16 passthrough is separate and uses "

@@ -127,30 +127,26 @@ def _nvfp4_decode_module_fake(planes, scalars, rows, output_columns, groups):
 class _PreparedRole:
     """One role's device-resident planes.
 
-    ``initial_state`` is the per-column trellis state a COLUMN-SLICED unit
-    starts from (``tessera.layout.slice_unit``'s INITIAL_STATE plane, see
-    ``sharding``); absent -- the whole-unit case, and everything this build
-    serves -- it is None and the decoder's pinned-zero start is correct.  It is
-    carried rather than dropped so the representation does not have to change
-    when the slicer and the kernel input land together, and it is REFUSED at
-    decode rather than ignored, because a decoder that silently started a
-    sliced row from zero would return plausible wrong weights.
+    A ROW-SLICED unit (``tessera.layout.slice_unit``'s INITIAL_STATE plane,
+    see ``sharding``) needs no field of its own here: ``pack_unit_for_kernel``
+    threads the shard's per-column start state into the select plane's pad
+    (``lane_planes._thread_start_state``), so the planes a shard hands the
+    decoder already begin from the parent's register and the decoder starts
+    every role the same way.  The whole-unit case packs the zero pad it
+    always did.
     """
 
-    __slots__ = ("name", "row_offset", "planes", "scalars", "initial_state", "fingerprints")
+    __slots__ = ("name", "row_offset", "planes", "scalars", "fingerprints")
 
-    def __init__(self, name, row_offset, planes, scalars, initial_state=None):
+    def __init__(self, name, row_offset, planes, scalars):
         self.name = str(name)
         self.row_offset = int(row_offset)
         self.planes = tuple(planes)
         self.scalars = dict(scalars)
-        self.initial_state = initial_state
         self.fingerprints = tuple(_fingerprint(t) for t in self.tensors())
 
     def tensors(self):
-        if self.initial_state is None:
-            return self.planes
-        return self.planes + (self.initial_state,)
+        return self.planes
 
 
 class PreparedTesseraModule:
@@ -216,32 +212,6 @@ class PreparedTesseraModule:
             if tuple(_fingerprint(t) for t in r.tensors()) != r.fingerprints:
                 raise RuntimeError("prepared Tessera module contract changed after preparation")
 
-    def _require_no_initial_state(self):
-        """Refuse a role whose trellis starts somewhere this decoder cannot start.
-
-        THE SPAN-2 LANE REFUSES A SHARD, BY DESIGN AND UPSTREAM TOO.  Its
-        ``SELECT_PAD`` is the same opportunity the window body exploits -- the
-        pad is ``state_{-1}`` -- but the eight pad bits feed a window whose bit
-        order ``build_span2_luts`` reverses, and threading a state through that
-        reversal is unwritten and untested.  ``tessera.layout``'s own
-        ``pack_unit_for_kernel`` fails closed on a shard for exactly this
-        reason, naming the row offset; this is the serving side of the same
-        refusal.
-
-        Packing a shard against the pinned zero would decode to plausible wrong
-        weights in silence, which is the one outcome this codebase exists to
-        prevent.  The window body -- the shipping E4M3 wire -- has no such
-        problem and threads its state through the pad instead (``window._pack``).
-        """
-        offenders = [r.name for r in self.__roles if r.initial_state is not None]
-        if offenders:
-            raise NotImplementedError(
-                f"roles {offenders} carry an INITIAL_STATE plane (a sliced unit); the span-2 "
-                "decoder starts every row at the pinned zero state, and its reversed window bit "
-                "order makes threading a start state unwritten and untested, so a shard here "
-                "would decode to plausible wrong weights.  Serve this family whole "
-                "(tensor_parallel_size=1); the E4M3 window family shards today.")
-
     def empty_tile(self):
         packed = torch.empty((self.rows, self.output_columns), dtype=torch.uint8, device=self.device)
         scales = torch.empty((self.rows, self.groups), dtype=torch.uint8, device=self.device)
@@ -254,7 +224,6 @@ class PreparedTesseraModule:
                 "this module was prepared through the pure-torch fallback decoder, which decodes "
                 "once at load; it has no per-call decode target")
         self._require_unchanged()
-        self._require_no_initial_state()
         for t, shape in ((packed, (self.rows, self.output_columns)),
                          (scales, (self.rows, self.groups))):
             if (t.dtype != torch.uint8 or t.device != self.device or not t.is_contiguous()
@@ -280,7 +249,6 @@ class PreparedTesseraModule:
             packed, scales = self.__tile
             return packed.clone(), scales.clone()
         self._require_unchanged()
-        self._require_no_initial_state()
         planes: List[torch.Tensor] = []
         scalars: List[int] = []
         for r in self.__roles:
@@ -298,17 +266,52 @@ def _torch_fallback_tile(parsed_roles, moved_tables, shared, device):
     two to ``torch.equal``), but built from the unpacked planes at load, so it
     can only stand in where a load-time decode is the whole job.
     """
+    parts = _torch_fallback_role_tiles(parsed_roles, moved_tables, shared, device)
+    return (torch.cat([p for p, _ in parts], 0).contiguous(),
+            torch.cat([s for _, s in parts], 0).contiguous())
+
+
+def _torch_fallback_role_tiles(parsed_roles, moved_tables, shared, device):
+    """Each role's ``(packed, scales)`` through ``materialize_stock``, in order."""
     import dataclasses
 
     from tessera.stock import materialize_stock
 
-    packed_parts, scale_parts = [], []
+    parts = []
     for (name, parsed), table in zip(parsed_roles, moved_tables):
         unit = dataclasses.replace(parsed.unit, scale_lut=table.cpu(), scale_global=float(shared))
         tensors = materialize_stock(unit, parsed.forests, parsed.code)
-        packed_parts.append(tensors["weight_packed"].to(device))
-        scale_parts.append(tensors["weight_scale"].view(torch.uint8).to(device))
-    return (torch.cat(packed_parts, 0).contiguous(), torch.cat(scale_parts, 0).contiguous())
+        parts.append((tensors["weight_packed"].to(device),
+                      tensors["weight_scale"].view(torch.uint8).to(device)))
+    return parts
+
+
+def _prepare_torch_fallback(parsed_roles, moved_tables, shared, device, body):
+    """The module through the pure-torch decoder alone: no native planes.
+
+    ``materialize_stock`` decodes codes, so nothing the native packer builds
+    -- and nothing only the native decoder needs, such as the select plane's
+    whole-byte row cut -- is asked of it.  What it refuses it refuses itself
+    (``stock.require_untransformed`` and its plane checks): the substitute IS
+    the reference the native decode is held to.  A role keeps its name, rows
+    and input width, read off its own tile, so the module's header facts are
+    the ones the native path reports."""
+    parts = _torch_fallback_role_tiles(parsed_roles, moved_tables, shared, device)
+    roles = []
+    offset = 0
+    columns = None
+    for (name, _parsed), (packed, _scales) in zip(parsed_roles, parts):
+        rows, cols = int(packed.shape[0]), 2 * int(packed.shape[1])
+        if columns is None:
+            columns = cols
+        elif cols != columns:
+            raise ValueError(f"role {name!r} has {cols} input columns, the module {columns}")
+        roles.append(_PreparedRole(name, offset, (), {"rows": rows, "cols": cols}))
+        offset += rows
+    tile = (torch.cat([p for p, _ in parts], 0).contiguous(),
+            torch.cat([s for _, s in parts], 0).contiguous())
+    return PreparedTesseraModule(roles, rows=offset, columns=columns, global_scale=shared,
+                                 device=device, body=body, decoder=DECODER_TORCH_STOCK, tile=tile)
 
 
 def _require_reference_agreement(prepared: PreparedTesseraModule, roles, reference,
@@ -323,9 +326,10 @@ def _require_reference_agreement(prepared: PreparedTesseraModule, roles, referen
     first differing byte and its tile -- row and group-16 column block -- so
     a refusal at load says where the decoder went wrong, not only that it did.
     """
-    # The decode first: a role this decoder cannot start (a sliced unit's
-    # INITIAL_STATE plane) is refused by ``decode`` itself, by name, before a
-    # reference is built for it.
+    # The decode first, then the reference: for a row shard this is also the
+    # check that the start state threaded into the select pad
+    # (``lane_planes._thread_start_state``) is read by the kernel exactly as
+    # ``materialize_stock`` reads the unit's ``initial_state``.
     packed, scales = prepared.decode()
     reference = reference()
     where = f"{prefix}: " if prefix else ""
@@ -435,6 +439,19 @@ def prepare_tessera_module(parsed_roles, device=None, *,
     tables = [u.scale_lut for u in units]
     globals_ = [float(u.scale_global) for u in units]
     shared, moved = shared_lut_global(tables, globals_, names)
+    # Resolve (and if need be build) the native decode module HERE, at weight
+    # load, so the first decode -- which under vLLM's compiled forward is the
+    # trace itself -- never takes ``ext``'s build lock.  It is resolved BEFORE
+    # any role is packed because the decoder decides what preparation is:
+    # the native planes (and the native select plane's row admission,
+    # ``lane_planes.require_native_select_plane_admission``) are the native
+    # decoder's inputs, and the pure-torch fallback reads none of them.
+    # Packing them on the fallback path refused a row cut the fallback serves
+    # (tessera#492: 16 rows = 8 E2M1x2 codes per rank) for bytes nobody reads.
+    from .ext import get_tessera_ext, require_tessera_ext
+
+    if get_tessera_ext() is None and allow_torch_fallback:
+        return _prepare_torch_fallback(parsed_roles, moved, shared, device, route["body"])
     roles = []
     offset = 0
     columns = None
@@ -445,27 +462,15 @@ def prepare_tessera_module(parsed_roles, device=None, *,
         packed["lut_bytes"] = lut
         planes = tuple(packed[k].contiguous().clone() for k in _PLANE_KEYS)
         scalars = {k: int(packed[k]) for k in _SCALAR_KEYS}
-        # Present only for a sliced unit (``sharding``); None is the whole-unit
-        # wire this build serves, and the decoder's zero start is then exact.
-        initial_state = packed.get("initial_state")
-        if initial_state is not None:
-            initial_state = initial_state.to(device).contiguous().clone()
+        # A row shard's start state is already inside ``select`` (its pad;
+        # ``lane_planes._thread_start_state``), so the roles of a sliced module
+        # and of a whole one are the same shape here and decode the same way.
         if columns is None:
             columns = scalars["cols"]
         elif scalars["cols"] != columns:
             raise ValueError(f"role {name!r} has {scalars['cols']} input columns, the module {columns}")
-        roles.append(_PreparedRole(name, offset, planes, scalars, initial_state))
+        roles.append(_PreparedRole(name, offset, planes, scalars))
         offset += scalars["rows"]
-    # Resolve (and if need be build) the native decode module HERE, at weight
-    # load, so the first decode -- which under vLLM's compiled forward is the
-    # trace itself -- never takes ``ext``'s build lock.
-    from .ext import get_tessera_ext, require_tessera_ext
-
-    if get_tessera_ext() is None and allow_torch_fallback:
-        tile = _torch_fallback_tile(parsed_roles, moved, shared, device)
-        return PreparedTesseraModule(roles, rows=offset, columns=columns, global_scale=shared,
-                                     device=device, body=route["body"], decoder=DECODER_TORCH_STOCK,
-                                     tile=tile)
     require_tessera_ext("Tessera NVFP4 native decode")
     prepared = PreparedTesseraModule(roles, rows=offset, columns=columns, global_scale=shared,
                                      device=device, body=route["body"], decoder=DECODER_NATIVE_SPAN2)

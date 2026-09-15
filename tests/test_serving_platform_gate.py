@@ -243,22 +243,27 @@ def test_the_sixteen_bit_load_reaches_its_route_on_the_same_platform(monkeypatch
     assert reached == ["tessera.serving.bf16_route"]
 
 
-def test_the_expert_route_asks_the_same_question_before_it_touches_vllm():
+@pytest.mark.parametrize("module_file,builder", [
+    ("moe_route.py", "build_tessera_moe_method"),
+    ("nvfp4_moe_route.py", "build_tessera_nvfp4_moe_method"),
+])
+def test_the_expert_route_asks_the_same_question_before_it_touches_vllm(module_file, builder):
     """The MoE seam, read off the source because driving it needs vLLM.
 
-    ``build_tessera_moe_method`` refuses in two directions and both are named:
-    a 16-bit expert stack has no builder on ANY platform
-    (``scheme.MOE_BUILDERS`` names only ``TESSERA_FP8``, and
-    ``refuse_a_family_with_no_expert_route`` says so), and an FP8 expert stack
-    on a platform that executes no E4M3 route is refused by the same gate the
-    dense routes use.  What this test pins is the ORDER: both refusals precede
-    the first ``from vllm...`` import in the function, which is what "before
-    any HIP kernel is touched" means on this path.
+    Each expert builder refuses in two directions and both are named: a
+    16-bit expert stack has no builder on ANY platform
+    (``scheme.MOE_BUILDERS`` names ``TESSERA_FP8`` and ``TESSERA_NVFP4``, and
+    ``refuse_a_family_with_no_expert_route`` says so), and an expert stack on
+    a platform that executes no route for its family is refused by the same
+    gate the dense routes use.  What this test pins is the ORDER: both
+    refusals precede the first ``from vllm...`` import in the function, which
+    is what "before any HIP kernel is touched" means on this path -- for the
+    FP8 builder and for the NVFP4 builder that mirrors it (tessera#492).
     """
-    tree = ast.parse((SRC / "serving" / "moe_route.py").read_text(encoding="utf-8"))
+    tree = ast.parse((SRC / "serving" / module_file).read_text(encoding="utf-8"))
     function = next(node for node in ast.walk(tree)
                     if isinstance(node, ast.FunctionDef)
-                    and node.name == "build_tessera_moe_method")
+                    and node.name == builder)
     gate = [node.lineno for node in ast.walk(function)
             if isinstance(node, ast.Call) and getattr(node.func, "id", None)
             in ("require_platform_backs", "refuse_a_family_with_no_expert_route")]
