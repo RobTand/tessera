@@ -1,11 +1,15 @@
 """Selected kernel reads existing prepared bytes, including shard pads."""
+import os
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 import torch
 
 from tessera.serving.window import PreparedWindow, prepare_window
+
+ROOT = Path(__file__).resolve().parents[1]
 
 pytestmark = pytest.mark.skipif(not torch.cuda.is_available(), reason='selected window kernel requires CUDA')
 
@@ -75,7 +79,11 @@ b = PreparedWindow.stack([w] * 4)
 b.decode(torch.tensor([{invalid}], device='cuda'), max_experts_per_chunk=1, backend='triton')
 torch.cuda.synchronize()
 '''
-    result = subprocess.run([sys.executable, '-c', code], capture_output=True, text=True)
+    # Point the child at this checkout. Left alone it resolves ``tessera``
+    # against whatever the venv installed, which on this fleet is an editable
+    # pin to another tree that may predate ``PreparedWindow.stack``.
+    env = dict(os.environ, PYTHONPATH=str(ROOT / 'src'))
+    result = subprocess.run([sys.executable, '-c', code], env=env, capture_output=True, text=True)
     assert result.returncode != 0
     assert 'device-side assert' in result.stderr or 'expert IDs out of range' in result.stderr
 
