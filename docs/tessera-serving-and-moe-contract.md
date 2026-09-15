@@ -1323,10 +1323,13 @@ that names no stack it serves is refused at config parse.
 v27 publishes it as such -- `formats[].structures` names the structures the
 plugin dispatches for a family, checked against `MOE_BUILDERS` by the
 validator -- and adds **no** `routed_moe` cell for `TESSERA_E2M1_K2`: a cell is
-an attestation and comes from a container receipt on the pinned image
-(`experiments/nvfp4_moe_route_load_probe.py`, then a served census). Until it
-lands an NVFP4 stack exports only under `--allow-unserveable`, stamped in the
-manifest's `serving_gate`; the producer's route-status gate reads the cells and
-admits nothing on this route until then. Tensor parallelism is attempted and
-not attested (`max_world_size` stays 1); the compiled forward and memory at
-288 experts are measured on the stub, not here.
+an attestation and comes from a container receipt. v28 publishes the two
+cells, `tessera_e2m1_k2_routed_moe_sm121_{decode,batch}_resident`, at q256 896,
+eager and resident, from a two-rank served census of the GLM-5.3-Flash 4-layer
+stub (`docs/measurements/tessera-glm53-a4-stub-tp2-served-2026-09-14.md`). An
+NVFP4 stack at q896 exports without `--allow-unserveable` and names both cells
+in its manifest; any other rung still needs the override, stamped in the
+manifest's `serving_gate`. Both cells grade `route_only` and carry no smoke
+record. Tensor parallelism is not attested (`max_world_size` stays 1 at v28,
+although that receipt is a two-rank serve), and the stub's attention backend
+refuses graph mode, so no compiled forward is attested.
