@@ -401,6 +401,31 @@ def test_a_routed_stack_is_gated_against_the_routed_moe_cells_not_the_dense_rang
                 contract=table) == "TESSERA_FP8"
 
 
+def test_a_routed_e2m1x2_stack_at_q896_passes_the_gate_without_an_override():
+    """#506 leg 1: the routed E2M1_K2 R896 stack is attested, so it exports.
+
+    Until contract v28 no ``routed_moe`` cell named ``TESSERA_E2M1_K2``, and
+    an NVFP4 expert stack exported only under ``--allow-unserveable`` with the
+    refusal stamped in its manifest.  The two cells the two-rank stub serve
+    backs are what this gate reads, on the packaged table, with no override.
+    """
+    from tessera.serving.scheme import STRUCTURE_ROUTED_MOE, attested_cells
+
+    routed = attested_cells("TESSERA_E2M1_K2", STRUCTURE_ROUTED_MOE)
+    assert {cell["regime"] for cell in routed} == {"decode", "batch"}, routed
+    assert all(cell["rungs_q256"] == [896] for cell in routed), routed
+
+    recipe = wire_recipe(GRIDS["E2M1x2"], 896)
+    assert refuse_unserveable_wire(
+        "E2M1x2", 896, recipe.body.name, recipe.scale_plane.name, family="TESSERA_NVFP4",
+        span=recipe.span, target="stack.probe",
+        structure=STRUCTURE_ROUTED_MOE) == "TESSERA_NVFP4"
+    stamped: list = []
+    assert EXPORT.check_recipe(GRIDS["E2M1x2"], 896, where="stack.probe",
+                               structure=STRUCTURE_ROUTED_MOE, overrides=stamped) is not None
+    assert stamped == [], "an attested stack is not an override"
+
+
 def test_a_structure_no_cell_attests_is_refused_by_name():
     """Three refusals, in the order the facts are established.
 

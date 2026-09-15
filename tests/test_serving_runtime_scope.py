@@ -67,8 +67,9 @@ def test_one_image_carries_one_toolchain():
         by_image.setdefault(cell["runtime"]["image"], set()).add(
             runtime_contract.cell_runtime_versions(cell))
     assert all(len(versions) == 1 for versions in by_image.values()), by_image
-    assert len(by_image) == 3, (
-        "the dense pin, the EUGR MoE image and the gfx1201 ROCm image, "
+    assert len(by_image) == 4, (
+        "the dense pin, the EUGR MoE image, the gfx1201 ROCm image and the "
+        "NCCL 2.30.7 rebuild of the EUGR image the two-rank GLM stub served on, "
         "nothing else")
 
 

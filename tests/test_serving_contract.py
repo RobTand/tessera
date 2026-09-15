@@ -239,6 +239,26 @@ for _regime in ("decode", "batch"):
             # tests/test_lfm_measured_cells.py ties the cells to that receipt.
             "vllm": "0.28.1rc1.dev397+gfd4a15126.d20260904", "torch": "2.13.0+cu130"}}
 
+#: The two-rank GLM-5.3-Flash 4-layer stub serve (#506).  Its receipt names the
+#: image, the vLLM build its rank logs print, and the torch build
+#: ``experiments/results/nvfp4_moe_route_load_probe.json`` records for the same
+#: image digest.  Eager only: the GLM NoPE attention backend refuses graph mode
+#: (tessera#508), so no compiled arm exists to attest.
+TP2_STUB_RECEIPT = "docs/measurements/tessera-glm53-a4-stub-tp2-served-2026-09-14.md"
+for _regime in ("decode", "batch"):
+    _CELL_LAWS[f"tessera_e2m1_k2_routed_moe_sm121_{_regime}_resident"] = {
+        "platform": "sm_121", "family": "TESSERA_E2M1_K2", "structure": "routed_moe",
+        "regime": _regime, "rungs_q256": [896],
+        "activation_contract": "e2m1_group16_ue4m3_static",
+        "executes": [{"symbol": "vllm.fused_moe.modular_kernel", "decoder": "torch_materialize_stock"}],
+        "route_status": "backed_with_serve_flag", "qualification": "device_qualified",
+        "requires_plugin": "tessera", "requires_serve_flags": ["TESSERA_SERVE_MODE=resident"],
+        "predicates": [], "runtime": {
+            "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:"
+                     "a5424378322071f4c33e63d1372a2bb028e46b03f0da0e5edb0cdd7418e2cebb",
+            "execution_modes": ["eager"],
+            "vllm": "0.28.1rc1.dev397+gfd4a15126.d20260904", "torch": "2.13.0+cu130"}}
+
 #: The toolchain the gfx1201 receipt records, verbatim: vLLM 0.30.0.dev0 and
 #: torch 2.11.0+rocm7.2.4.git5fbd98f3, transcribed from the census receipt
 #: header rather than from a summary -- two reports of this run disagreed
@@ -473,6 +493,21 @@ def test_the_cells_are_pinned_field_for_field(contract):
             assert got[field] == value, f"{cell_id}.{field}"
 
 
+def test_the_routed_e2m1_cells_name_the_runtime_their_receipt_records(contract):
+    """The image and vLLM build on the two routed E2M1_K2 cells are the ones
+    the two-rank stub receipt records, read from the receipt rather than
+    trusted from the LAWS table alone (#506)."""
+    receipt = (ROOT / TP2_STUB_RECEIPT).read_text(encoding="utf-8")
+    images = sorted(set(re.findall(
+        r"localhost/prismaquant/spark-vllm-nccl230@sha256:[0-9a-f]{64}", receipt)))
+    assert len(images) == 1, images
+    for regime in ("decode", "batch"):
+        cell = _cells(contract)[f"tessera_e2m1_k2_routed_moe_sm121_{regime}_resident"]
+        assert cell["runtime"]["image"] == images[0], cell["id"]
+        assert cell["runtime"]["vllm"] in receipt, cell["id"]
+        assert cell["runtime"]["torch"] in receipt, cell["id"]
+
+
 def test_every_cell_is_backed_with_a_serve_flag_and_plugin_gated(contract):
     """Every route is plugin-gated and reached through a NAMED residency.
 
@@ -494,16 +529,25 @@ def test_every_cell_is_backed_with_a_serve_flag_and_plugin_gated(contract):
 
 
 def test_the_table_adds_only_the_measured_moe_scope_without_expert_parallelism(contract):
-    """The LFM receipt adds one family/rung/residency/runtime pair of regimes."""
+    """Two receipts, two (family, rung, runtime) pairs of regimes, and no more.
+
+    The LFM receipt adds the FP8 family at q1024; the two-rank GLM stub serve
+    (v28, #506) adds the E2M1x2 cap wire at q896.  Each pair is resident and
+    eager, and each names its own receipt's image.
+    """
     block = contract["lane_eligibility"]
     assert block["structures"] == ["dense", "routed_moe"]
     moe = [cell for cell in block["cells"] if cell["structure"] == "routed_moe"]
-    assert {cell["regime"] for cell in moe} == {"decode", "batch"}
-    assert len(moe) == 2
+    by_family: dict = {}
     for cell in moe:
-        assert cell["family"] == "TESSERA_E4M3_K1" and cell["rungs_q256"] == [1024]
+        by_family.setdefault((cell["family"], tuple(cell["rungs_q256"]),
+                              cell["runtime"]["image"]), set()).add(cell["regime"])
         assert cell["requires_serve_flags"] == ["TESSERA_SERVE_MODE=resident"]
         assert cell["runtime"]["execution_modes"] == ["eager"]
+    assert len(moe) == 4
+    assert sorted((family, rungs) for family, rungs, _ in by_family) == [
+        ("TESSERA_E2M1_K2", (896,)), ("TESSERA_E4M3_K1", (1024,))]
+    assert all(regimes == {"decode", "batch"} for regimes in by_family.values())
     assert contract["expert_parallel"]["units"] == []
 
 

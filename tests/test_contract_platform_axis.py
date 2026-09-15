@@ -73,9 +73,11 @@ def test_the_packaged_contract_validates_at_v27(contract):
     .row`` from refused to sharded -- and it still moved no lane-eligibility
     field: a v10 reader resolves every cell as before and only a TP planner
     reads the axis.  v27 adds ``structures`` (validated against
-    ``scheme.MOE_BUILDERS``) and no cell.
+    ``scheme.MOE_BUILDERS``) and no cell.  v28 (#506) adds the two routed
+    ``TESSERA_E2M1_K2`` cells and raises ``tensor_parallel`` to a world of 2
+    on a two-rank receipt; both are additive for a v10 lane reader.
     """
-    assert int(contract["contract_version"]) == 27
+    assert int(contract["contract_version"]) == 28
     assert "activation_quantizers" in contract
     assert all("structures" in entry for entry in contract["formats"])
     assert contract["lane_eligibility"]["schema"] == LANE_ELIGIBILITY_SCHEMA
