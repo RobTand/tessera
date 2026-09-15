@@ -33,11 +33,13 @@ them degrade to BF16:
   ``sharding.ROUTE_TP_AXES`` table.  A refusal, never "every rank holds the
   whole weight".
 
-  A world size above one is ATTEMPTED and not ATTESTED.  The packaged
-  ``runtime_contract.json`` still says ``max_world_size: 1`` for every family,
-  because no multi-rank serve has been run; what it publishes above that is
-  ``loader_axes``, which is what the loader DOES.  Two different questions, two
-  machine-readable fields, and a producer may gate on either.
+  A world size is ATTESTED up to ``max_world_size`` and ATTEMPTED above it.
+  The packaged ``runtime_contract.json`` says ``max_world_size: 2`` for every
+  family since v29, each unit naming the world-size receipt that covers it
+  (two-rank serves, a route trace per rank, a single-rank KL, ``route_only``);
+  what it publishes beside that is ``loader_axes``, which is what the loader
+  DOES.  Two different questions, two machine-readable fields, and a producer
+  may gate on either.
 
 WHERE THE MoE ROUTE PLUGS IN.  ``get_quant_method``'s MoE branch is the seam
 (derived from vLLM's MoE layer module, never a hand-kept name list, so a
@@ -353,14 +355,15 @@ class TesseraConfig(QuantizationConfig):
         (``sharding.require_axis_supported``), off the same
         ``sharding.ROUTE_TP_AXES`` table the packaged contract publishes.
 
-        WHAT IS NOT CLAIMED.  A world size above one is something this build
-        ATTEMPTS, not something it has served: ``runtime_contract.json`` still
-        says ``max_world_size: 1`` for every family and will until a multi-rank
-        serve has been run and measured.  That is the same status a rung with no
-        ``lane_eligibility`` cell has -- unattested, which is honest, and not a
-        refusal.  What the CONTRACT publishes about tensor parallelism is a
-        different question, answered in tessera#330: nothing about the
-        replication rule, deliberately, and the silence is gated.  This gate
+        WHAT IS NOT CLAIMED.  A world size above ``max_world_size`` is
+        something this build ATTEMPTS, not something it has served:
+        ``runtime_contract.json`` says ``max_world_size: 2`` for every family
+        since v29, on the world-size receipt each unit names, and nothing wider.
+        That is the same status a rung with no ``lane_eligibility`` cell has --
+        unattested, which is honest, and not a refusal.  What the CONTRACT
+        publishes about tensor parallelism is a different question: since the
+        world above one is attested it publishes the loader's KV-head
+        replication rule too (tessera#330, ``kv_head_replication``).  This gate
         reads the ARTIFACT, which is a statement about bytes and is derived
         from them.
         """
