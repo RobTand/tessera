@@ -46,6 +46,14 @@ from .manifest import BodyKind, RotationState, ScalePlaneKind
 from .planes import NORMATIVE_ELEMENT_BITS, PlaneKind
 from .unit_artifact import ParsedMetadata, parse_unit_metadata
 
+#: The highest column rate the documented window tile-word layout expresses:
+#: a column's 512-code tile is ``512 * rate`` bits = ``16 * rate`` int32
+#: words, exact for every integer rate, and the window GEMM's own reference
+#: packs 1..8 (``tests/window_pack_reference.py``).  This is the LAYOUT's
+#: bound, not the CUDA GEMV roster's (1, 2, 4), which keeps its own refusal
+#: where it belongs.
+WINDOW_GEMM_RATE_MAX = 8
+
 __all__ = [
     "CompactWire",
     "parse_compact_wire",
@@ -53,6 +61,7 @@ __all__ = [
     "require_compact_cut",
     "prepare_span2_compact",
     "prepare_window_compact",
+    "WINDOW_GEMM_RATE_MAX",
 ]
 
 
@@ -477,7 +486,7 @@ def _repack_window_compact(metadata: ParsedMetadata, rows: "tuple[int, int]",
     the rank's row range read in place and codes past ``rows_local`` zeroed.
     """
     from . import kernel_wire as kw
-    from .kernel_window_gemv import Repacked, SUPPORTED_RATES, TILE_ROWS
+    from .kernel_window_gemv import Repacked, TILE_ROWS
     from .lane_planes import require_window_geometry
 
     r0, r1 = rows
@@ -486,12 +495,22 @@ def _repack_window_compact(metadata: ParsedMetadata, rows: "tuple[int, int]",
     cols_local = c1 - c0
     rates_all = tuple(int(r) for r in metadata.rates)
     rates_local = rates_all[c0:c1]
-    require_window_geometry(int(metadata.manifest.window_bits), rates_local)
-    bad = sorted(set(rates_local) - set(SUPPORTED_RATES))
+    wind = int(metadata.manifest.window_bits)
+    require_window_geometry(wind, rates_local)
+    # The bound is the tile-word LAYOUT's, not the CUDA GEMV's roster: a
+    # column chunk is ``512 * rate`` bits = ``16 * rate`` int32 words for every
+    # integer rate, and the bitstream recipe is exact for 1..8
+    # (``tests/window_pack_reference.py``, the window GEMM's own reference).
+    # ``SUPPORTED_RATES`` = (1, 2, 4) is that GEMV's admission and it keeps its
+    # own refusal; inheriting it here rejected grammar-valid 3/5/6/7 streams
+    # the GEMM serves.
+    bad = sorted({int(r) for r in rates_local} - set(range(1, WINDOW_GEMM_RATE_MAX + 1)))
     if bad:
         raise GrammarError(
-            f"rates {bad} have no lane here (supported {SUPPORTED_RATES}); "
-            "the materialised FP8 path serves this unit"
+            f"rates {bad} are outside the window GEMM's bitstream layout 1.."
+            f"{WINDOW_GEMM_RATE_MAX}: a column chunk is 16 * rate int32 words, "
+            "and the documented recipe covers every integer rate in that range "
+            "(the CUDA GEMV roster is not this bound)"
         )
     rows_total = metadata.rows
     # The parent's bit prefix before this cut's first column (see
@@ -521,7 +540,8 @@ def _repack_window_compact(metadata: ParsedMetadata, rows: "tuple[int, int]",
             body, col_starts=col_starts, perm=perm, row0=r0,
             rows_local=rows_local, rate=present, group_col0=group_col0,
             group_byte0=group_byte0, n_cols=n, n_tiles=n_tiles,
-            chunk_bytes=chunk_bytes, tile_bytes=tile_bytes, device=device)
+            chunk_bytes=chunk_bytes, tile_bytes=tile_bytes, device=device,
+            tile_rows=TILE_ROWS)
         flat = flat + part
         runs.append((present, group_col0, n, word0))
         word0 += n * 16 * present
