@@ -273,8 +273,21 @@ def _expected_outputs(owned: set[str], modules: dict) -> set[str]:
         for role in module["roles"]:
             consumed.add(role.get("source_tensor", role["tensor"]))
         if module.get("structure") == "routed_moe":
-            outputs.update(r["tensor"].removesuffix(".weight") + ".wire"
-                           for r in module["roles"])
+            for role in module["roles"]:
+                stem = role["tensor"].removesuffix(".weight")
+                outputs.add(stem + ".wire")
+                # The NVFP4 routed builder reads one A-side scale per expert
+                # projection, ``experts.{e}.{proj}.input_global_scale`` -- the
+                # same quantity the dense route reads as
+                # ``trellis_input_global_scale`` (``nvfp4_moe_route``
+                # :107-109, :328-331), written beside each wire by
+                # ``export_tessera_serving`` (:2356-2371).  The role declares
+                # the scale exactly when the export wrote one, so expect it
+                # from the declaration rather than from the family: a role
+                # that declares a scale and wrote none is as broken as a
+                # missing wire, and this set is what proves it.
+                if "input_global_scale" in role:
+                    outputs.add(stem + ".input_global_scale")
         else:
             outputs.add(name + ".wire_bytes")
             if module["family"] == "TESSERA_NVFP4":
