@@ -24,6 +24,7 @@ image:
     "python3 -m pip install -q --user pytest; python3 /work/tests/native_window_moe_stock_crosscheck.py"
 """
 import json
+import os
 import sys
 
 import torch
@@ -106,6 +107,67 @@ def _fp8_quant_config():
             per_out_ch_quant=True, block_shape=None,
             gemm1_alpha=None, gemm1_beta=None, swiglu_limit=swiglu_limit, layer=None)
     return build
+
+
+def canonical_units(fixture, layers=(3, 4), experts=(0, 1), verify=True):
+    """The FIXTURE'S OWN canonical experts, not synthetic wires.
+
+    Reads the derivative's index + manifest, takes the named experts'
+    per-projection containers straight from the shards they live in, checks
+    each tensor's sha256 against the manifest entry that recorded it (so the
+    bytes named are the bytes served), and parses each container with the
+    SHARED compact reader -- the same call the serving intake makes -- against
+    the checkpoint's own ``quantization_config`` groups.  No encoder runs and
+    nothing is re-derived: a mismatch refuses instead of borrowing cache under
+    a false identity.
+
+    Returns ``{layer: {"family", "roles", "local": {(rank, size): ...}}}`` with
+    the raw containers per projection, so a caller can slice and decode them.
+    """
+    import hashlib, json, os
+    from safetensors import safe_open
+    from tessera.serving import scheme as _scheme
+
+    cfg = json.load(open(os.path.join(fixture, "config.json")))
+    quant = cfg["quantization_config"]
+    index = json.load(open(os.path.join(fixture, "model.safetensors.index.json")))["weight_map"]
+    manifest = json.load(open(os.path.join(fixture, "tessera_derivative_manifest.json")))
+    recorded = {entry["tensor"]: entry for entry in manifest["tensors"]}
+    groups = quant["config_groups"]
+
+    out = {}
+    for layer in layers:
+        target = f"model.language_model.layers.{layer}.mlp.experts"
+        group = groups.get(target) or groups.get(target + ".experts")
+        if group is None:
+            raise SystemExit(f"no config group for {target}: {sorted(groups)[:4]}...")
+        declared = _scheme.validate_tessera_moe_scheme(
+            {"config_groups": {target: group}}, target)
+        roles = {row["roles"][0][0]: row
+                 for row in _scheme.expert_role_declarations(declared)}
+        per_expert = {}
+        for e in experts:
+            blobs = {}
+            for role_key, tensor_role in (("w1", "gate_proj"), ("w3", "up_proj"), ("w2", "down_proj")):
+                name = f"{target}.{e}.{tensor_role}.wire"
+                shard = index[name]
+                with safe_open(os.path.join(fixture, shard), framework="pt") as f:
+                    raw = f.get_tensor(name).numpy().tobytes()
+                entry = recorded.get(name)
+                if verify:
+                    digest = hashlib.sha256(raw).hexdigest()
+                    if entry is None or entry["sha256"] != digest:
+                        raise SystemExit(f"sha256 mismatch for {name}: manifest says "
+                                         f"{None if entry is None else entry['sha256'][:12]}, bytes are {digest[:12]}")
+                    if int(entry["bytes"]) != len(raw):
+                        raise SystemExit(f"byte count mismatch for {name}")
+                parsed = _scheme.parse_compact_tessera_expert_blob(
+                    raw, roles[role_key], target, device="cpu")
+                blobs[role_key] = parsed
+            per_expert[e] = blobs
+        out[layer] = {"family": declared["family"], "declared": declared,
+                      "experts": per_expert, "target": target}
+    return out
 
 
 def _stock_activation(gate, up, limit):
@@ -238,6 +300,27 @@ def _loose_reference(reference, x, ids, weights, tp_rank=0, tp_size=1):
 
 
 def main():
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--canonical-fixture", default=os.environ.get("TESSERA_CANONICAL_FIXTURE"))
+    ap.add_argument("--canonical-layers", default="3,4")
+    ap.add_argument("--canonical-experts", default="0,1")
+    ap.add_argument("--canonical-select-only", action="store_true",
+                    help="parse+verify the fixture's own containers and stop (CPU)")
+    args = ap.parse_args()
+    if args.canonical_select_only:
+        units = canonical_units(args.canonical_fixture,
+                                layers=tuple(int(v) for v in args.canonical_layers.split(",")),
+                                experts=tuple(int(v) for v in args.canonical_experts.split(",")))
+        summary = {layer: {"family": u["family"],
+                           "roles": sorted(next(iter(u["experts"].values())).keys()),
+                           "experts": sorted(u["experts"]),
+                           "containers": {str(e): {k: len(v) for k, v in blobs.items()}
+                                          for e, blobs in u["experts"].items()}}
+                   for layer, u in units.items()}
+        print(json.dumps({"canonical_selection": summary, "bytes_verified": True}, indent=1))
+        raise SystemExit(0)
+
     torch.manual_seed(11)
     report = {"device": torch.cuda.get_device_name(), "arms": []}
     ok = True
