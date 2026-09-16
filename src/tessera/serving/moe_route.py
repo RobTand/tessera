@@ -670,7 +670,8 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
             from . import scheme as _scheme
             self._compact_ready = getattr(
                 _scheme, "parse_compact_tessera_expert_blob", None) is not None
-            native_route = self._compact_ready and (family == TESSERA_FP8 or self._tp_size == 2)
+            native_route = (self._compact_ready and torch.cuda.is_available()
+                            and (family == TESSERA_FP8 or self._tp_size == 2))
             if not native_route:
                 if family == TESSERA_BF16:
                     if research_selected is None:
@@ -753,7 +754,7 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
             # published: the FP8 candidate route at every tp size, and the
             # research-selected TP2 route.
             from . import scheme as _scheme
-            incremental = (self._compact_ready
+            incremental = (self._compact_ready and torch.cuda.is_available()
                            and (family == TESSERA_FP8
                                 or (research_selected is not None and self._tp_size == 2)))
             if incremental:
