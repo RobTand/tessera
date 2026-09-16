@@ -445,6 +445,7 @@ def test_window_compact_whole_unit_is_the_repacked_layout(family, grid_name):
     assert int(unit.initial_state.numel()) == cols
     assert not bool(unit.initial_state.any()), "a whole unit starts from zero"
     assert int(unit.row_offset) == 0
+    assert not bool(unit.permuted_start_state().any()), "zero start, permuted"
     assert torch.equal(
         unit.scale,
         (parsed.unit.scale_rows.float()
@@ -532,6 +533,12 @@ def test_window_compact_tp_cuts_match_the_reference_repack(family, grid_name, ax
             assert not bool(unit.initial_state.any()), "no history means zeros"
         else:
             assert torch.equal(unit.initial_state, expected.to(torch.int32)), "state"
+            # The kernel reads history through the repack's column order; the
+            # accessor is silent about the base state's dtype, so compare it
+            # against the shard's register permuted by the same reference perm.
+            assert torch.equal(
+                unit.permuted_start_state(),
+                expected.index_select(0, unit.rep.perm.long()).to(torch.int32)), "permuted state"
             if bool(expected.any()):
                 assert bool(unit.initial_state.any()), "the inherited register is real"
         assert int(unit.row_offset) == int(shard.unit.row_offset)
