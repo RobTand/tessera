@@ -5,10 +5,12 @@ construction-time identity (``native_route``) and once for loader ownership
 (``incremental``).  At A16 the answer is the research-selected config: the FP8
 stack takes the compact lane at every world size, and compressed BF16 takes it
 only under ``research_selected``, whose folded arithmetic is that config's
-contract.  TP1 was the hole: the two questions were spelled once as
-``family == FP8 or tp_size == 2`` and once as ``family == FP8 or
-(research is not None and tp_size == 2)``, so an A16 research-selected TP1
-stack was built non-native and loaded through the padded wire bank.
+contract.  TP1 was the hole, and it was not a disagreement between the two
+spellings: both said ``tp_size == 2`` for BF16, so an A16 research-selected TP1
+stack was *consistently* built non-native and loaded through the padded wire
+bank.  The one input they answered differently -- ordinary BF16 at TP2, where
+the identity arm said native and the intake arm did not -- is refused at the
+builder's front door and was never reachable.
 
 CONSTRUCTION ONLY.  The compact lane's kernels are CUDA-only and are exercised
 on a device by ``test_serving_moe_tp2.py``; what is pinned here is which intake
@@ -29,7 +31,7 @@ pytest.importorskip("vllm")
 import torch
 
 from tessera.serving import moe_route
-from tessera.serving.scheme import TESSERA_BF16, TESSERA_FP8
+from tessera.serving.scheme import TESSERA_BF16, TESSERA_FP8, TESSERA_NVFP4
 # Sibling test modules by their own names: ``tests/conftest.py`` puts this
 # directory on ``sys.path``.
 from test_native_window_moe_method import _native_layer
@@ -81,6 +83,12 @@ def _build(*, family, tp_rank=0, tp_size=1, research=True):
     (TESSERA_BF16, True, 4, True, False),
     # No shared reader published: nothing takes the compact lane.
     (TESSERA_FP8, False, 2, False, False),
+    # A family this builder does not serve is not admitted through the lane --
+    # at any world size, with or without a research-selected config.  NVFP4 has
+    # its own builder (``scheme.MOE_BUILDERS``).
+    (TESSERA_NVFP4, True, 1, False, False),
+    (TESSERA_NVFP4, True, 2, False, False),
+    (TESSERA_NVFP4, True, 2, True, False),
 ])
 def test_one_predicate_answers_both_questions(family, compact_ready, tp_size, research,
                                               expected):

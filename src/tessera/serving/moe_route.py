@@ -649,13 +649,15 @@ def compact_window_lane(family: str, compact_ready: bool, *, tp_size: int,
     """ONE home for the routed window lane's own predicate.
 
     The construction-time identity (``native_route``) and the loader's
-    ownership (``incremental``) are the same question, and asking it twice let
-    the two spellings drift: the identity arm said ``tp_size == 2`` while the
-    intake arm said ``research is not None and tp_size == 2``, so an A16
-    research-selected TP1 stack was constructed non-native -- straight into the
-    materialising branch and vLLM's backend oracle (``moe_route.py:738``) --
-    while its intake had no compact lane to fill.  Whoever moves this rule
-    moves it here.
+    ownership (``incremental``) are one question asked in two places, and for
+    every input this builder can be reached with the two said the same thing.
+    What their shared rule did NOT do was admit the compact lane below TP2 for
+    BF16: a research-selected A16 stack at TP1 was constructed non-native --
+    straight into the materialising branch and vLLM's backend oracle
+    (``moe_route.py:738``) -- while nothing filled a compact lane for it.  One
+    home now answers both call sites, and the A16 arm admits TP1 as well as
+    TP2, so the identity and the intake cannot be moved apart.  Whoever moves
+    this rule moves it here.
 
     FP8 takes the compact lane at every world size: the shared reader cuts its
     windows per rank and the wire is TP-agnostic.  Compressed BF16 has no
@@ -663,21 +665,25 @@ def compact_window_lane(family: str, compact_ready: bool, *, tp_size: int,
     NVFP4; ``refuse_a_family_with_no_expert_route`` is asked at the builder's
     front door, and the builder's carve-out admits BF16 only with an explicit
     research-selected config), so its only admission is that config, whose
-    folded arithmetic is the bundle's contract.  That route is qualified at
-    TP1 and TP2 -- ``_require_research_parallel_contract`` refuses anything
-    else -- and takes the compact lane at both.  ``compact_ready`` is whether
-    this build publishes the shared reader; without it nothing takes the
-    compact lane and the FP8 route keeps its materialising branch.
+    folded arithmetic is the bundle's contract.  That route's parallel contract
+    ACCEPTS TP1 and TP2 only (``_require_research_parallel_contract`` refuses
+    anything else) and it now takes the compact lane at both; acceptance by
+    config is not device qualification, which the research route still owes.
+    ``compact_ready`` is whether this build publishes the shared reader;
+    without it nothing takes the compact lane and the FP8 route keeps its
+    materialising branch.
     """
     if not compact_ready:
         return False
     if family == TESSERA_FP8:
         return True
-    if family != TESSERA_BF16:
-        # Another family's stack does not belong to this builder at all
-        # (``scheme.MOE_BUILDERS`` names each family's own route); answer the
-        # way the previous spelling did rather than inventing a lane for it.
-        return int(tp_size) == 2
+    if family not in (TESSERA_FP8, TESSERA_BF16):
+        # This builder serves FP8 and the research-selected BF16 carve-out;
+        # another family's stack belongs to its own builder
+        # (``scheme.MOE_BUILDERS`` names each family's route).  Do not admit a
+        # lane nothing here serves: an unsupported family answers False, and
+        # whatever refuses it by name does so where the family is decided.
+        return False
     return research_selected is not None and int(tp_size) in (1, 2)
 
 
