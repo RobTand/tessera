@@ -21,17 +21,24 @@ answered before it can claim to have measured a decode-path kernel
 (tessera#102, ``_RouteTrace``).  It is off by default and eager-only.
 
 Since tessera#509 each histogram entry also names the modules it counted
-(``module_names``, sorted; ``modules`` is that list's length, always), and the
-file header carries its own ``rank``, ``world_size``, ``rank_source`` and
-``platform``.  Before that, an entry's ``modules`` was the size of a set whose
-members the file never wrote -- a layer with no ``prefix`` was counted by
-``hex(id(layer))`` -- so a consumer could compare module COUNTS and nothing
-else: two modules that swapped contracts left the histogram identical.  The
-headers are read from ``torch.distributed`` when it is initialized and are
-JSON ``null`` with ``rank_source: "unavailable"`` when it is not, because a
+(``module_names``, sorted, real prefixes only), reports how many distinct
+modules had no usable prefix (``unnamed_modules``, plus
+``dispatches_without_prefix``), and the file header carries its own ``rank``,
+``world_size``, ``rank_source`` and ``platform``.  ``modules`` stays what it
+always counted -- distinct named prefixes plus distinct unnamed objects, so a
+legacy consumer sees the same number -- but it is now equal to
+``len(module_names) + unnamed_modules`` and therefore checkable against the
+names beside it.  Before this, an entry's ``modules`` was the size of a set
+whose members the file never wrote (an unnamed layer was counted by
+``hex(id(layer))``), so a consumer could compare module COUNTS and nothing
+else: two modules that swapped contracts left the histogram identical.  A
+complete per-module identity requires ``unnamed_modules == 0``.  The headers
+are read from ``torch.distributed`` when it is initialized and are JSON
+``null`` with ``rank_source: "unavailable"`` when it is not, because a
 defaulted rank 0 is indistinguishable from a real one.  Both additions are
 additive: ``schema`` is unchanged, no field was renamed or removed, and a
 reader that knows only the histogram still reads exactly what it read before.
+``identity_version`` is compared for equality -- see its definition.
 
 This is Gridbook's ``nvfp4_activation_contract`` telemetry, reduced to the
 Tessera routes and owned here.  The attribute prefix is ``_tessera_route_``
@@ -85,7 +92,6 @@ __all__ = [
     "read_lane_refusal",
     "LANE_REFUSAL_ATTR",
     "route_shape",
-    "MODULE_NO_PREFIX",
     "IDENTITY_VERSION",
 ]
 
@@ -151,20 +157,18 @@ ATTR_PREFIX = "_tessera_route_"
 ROUTE_TRACE_ENV = "TESSERA_ROUTE_TRACE"
 ROUTE_TRACE_SCHEMA = "tessera.route_trace/1"
 
-#: The explicit bucket a dispatch whose layer carries no ``prefix`` is counted
-#: under (tessera#509).  The file used to count such a layer by
-#: ``hex(id(layer))`` inside a set it never wrote out: an identity no reader
-#: could resolve and no consumer could compare, and one that changed every run.
-#: One deterministic name plus the dispatch count says the same thing honestly.
-MODULE_NO_PREFIX = "<unprefixed>"
-
 #: Version of the ADDITIVE identity block this file writes: entry
-#: ``module_names`` / ``dispatches_without_prefix``, and the header's
-#: ``rank`` / ``world_size`` / ``rank_source`` / ``platform``.  ``schema``
-#: stays ``tessera.route_trace/1`` because nothing was removed or renamed: a
-#: reader that knows only the histogram still reads exactly what it read
-#: before, and a reader that wants per-module identity checks this number
+#: ``module_names`` / ``unnamed_modules`` / ``dispatches_without_prefix``, and
+#: the header's ``rank`` / ``world_size`` / ``rank_source`` / ``platform``.
+#: ``schema`` stays ``tessera.route_trace/1`` because nothing was removed or
+#: renamed: a reader that knows only the histogram still reads exactly what it
+#: read before, and a reader that wants per-module identity checks this number
 #: instead of guessing from the presence of a field.
+#:
+#: ``== IDENTITY_VERSION`` is the only supported comparison.  A consumer must
+#: NOT treat a future ``> 1`` as if it had v1 semantics: the fields it knows
+#: may have been redefined, and reading an unknown version with known names is
+#: how a schema silently changes meaning under a caller.
 IDENTITY_VERSION = 1
 
 #: The record's field names, in report order.  The census reads exactly these.
@@ -440,20 +444,37 @@ class _RouteTrace:
             return
         key = (values["policy"], values["shape"], values["symbol"],
                values["decoder"], values["contract"], values["kind"])
-        # ``None`` for a layer with no prefix -- never ``hex(id(layer))``.  The
-        # fabricated id was an identity the file never wrote out, so a consumer
-        # could only ever compare module COUNTS, which is the gap tessera#509
-        # exists to close.  The unprefixed bucket is explicit and counted.
-        module = getattr(layer, "prefix", "") or None
+        # A layer's prefix, when it HAS one.  Anything else -- missing, empty,
+        # or not a string -- is UNNAMED: it is never given a made-up name, and
+        # it is never sorted into the same list as real prefixes (which would
+        # compare a str against whatever else arrived).
+        #
+        # The object's own ``id`` is kept PRIVATELY, in the count, and is never
+        # written to the file.  That preserves what the pre-#509 ``modules``
+        # counted -- one per distinct unnamed object, because that was
+        # ``len(set(layer.prefix or hex(id(layer))))`` -- so a legacy consumer
+        # sees the same number it always saw.  Collapsing every unnamed layer
+        # into one bucket would have been a silent SEMANTIC change in the
+        # backwards-compatible direction I claimed, and a rarer but real
+        # miscount: two unknown modules would read as one.
+        prefix = getattr(layer, "prefix", None)
+        named = prefix if isinstance(prefix, str) and prefix else None
         with self._lock:
             entry = self._counts.get(key)
             if entry is None:
-                entry = self._counts[key] = [0, set(), 0]
+                entry = self._counts[key] = [0, set(), {}, 0]
             entry[0] += 1
-            if module is None:
-                entry[2] += 1
+            if named is None:
+                # Keyed by id and holding the object: a plain id set would
+                # MERGE two unnamed layers whose lifetimes do not overlap (a
+                # freed address is reused), which is the same miscount in a
+                # rarer disguise.  Holding the reference keeps each distinct
+                # object distinct for as long as the trace counts it, and only
+                # ever costs a reference in the path where prefixes are absent.
+                entry[2][id(layer)] = layer
+                entry[3] += 1
             else:
-                entry[1].add(module)
+                entry[1].add(named)
             self._dirty = True
 
     # -- readout -----------------------------------------------------------
@@ -461,20 +482,19 @@ class _RouteTrace:
         with self._lock:
             entries = []
             for (policy, shape, symbol, decoder, contract, kind), (
-                    count, modules, unprefixed) in sorted(self._counts.items()):
-                names = sorted(modules)
-                if unprefixed:
-                    names = sorted(names + [MODULE_NO_PREFIX])
+                    count, names, unnamed, unprefixed) in sorted(self._counts.items()):
+                named = sorted(names)
                 entries.append({
                     "policy": policy, "shape": shape, "symbol": symbol,
                     "decoder": decoder, "contract": contract, "kind": kind,
                     "launches": count,
-                    # ``modules`` and ``module_names`` are the SAME fact: the
-                    # count is the length of the list beside it, always.  A
-                    # consumer that reads only the count is still reading
-                    # something a reader of the names can verify.
-                    "modules": len(names),
-                    "module_names": names,
+                    # The count is the SAME fact as the names plus the number
+                    # of unnamed modules, always, and it is unchanged from the
+                    # pre-#509 meaning: distinct named prefixes plus distinct
+                    # unnamed objects.
+                    "modules": len(named) + len(unnamed),
+                    "module_names": named,
+                    "unnamed_modules": len(unnamed),
                     "dispatches_without_prefix": unprefixed,
                 })
         rank, world_size, rank_source = _process_rank()
@@ -496,12 +516,16 @@ class _RouteTrace:
                      "torch.compile was tracing, where one graph serves every "
                      "M and a count is not a launch count.  Since "
                      f"identity_version {IDENTITY_VERSION} each entry also "
-                     "names the modules it counted (module_names, sorted); a "
-                     "dispatch from a layer with no prefix is counted under "
-                     f"{MODULE_NO_PREFIX} and its dispatches are "
-                     "dispatches_without_prefix.  Before this version "
-                     "'modules' counted such a layer by an id the file never "
-                     "wrote, so a per-module comparison was impossible."),
+                     "names the modules it counted (module_names, sorted).  "
+                     "module_names holds real prefixes ONLY: a layer with no "
+                     "usable prefix is unnamed, reported as the count "
+                     "unnamed_modules (with dispatches_without_prefix for how "
+                     "many dispatches came from them) and never given a made-"
+                     "up name.  'modules' is len(module_names) + "
+                     "unnamed_modules, which is the same number it carried "
+                     "before this version.  A complete per-module identity "
+                     "needs unnamed_modules == 0; otherwise the names present "
+                     "are exact and the rest are honestly unknown."),
             "entries": entries,
         }
 

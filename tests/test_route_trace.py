@@ -285,17 +285,52 @@ def test_swapped_contracts_leave_the_histogram_identical_and_move_the_names(tmp_
             == ["model.layers.0.mlp.experts.0.up_proj"])
 
 
-def test_a_layer_without_a_prefix_is_named_explicitly_not_by_an_id(tracing):
+def test_unnamed_modules_keep_their_count_and_never_get_a_name(tracing):
+    """The backwards-compat regression root caught in be9d9c2.
+
+    Pre-#509 ``modules`` was ``len(set(layer.prefix or hex(id(layer))))``: two
+    DISTINCT unnamed objects counted as two.  Collapsing them into one named
+    bucket would have made two unknown modules read as one -- a semantic change
+    dressed as an additive one.  So the private object identity is kept for the
+    COUNT only, the names list stays real prefixes only, and a consumer can
+    tell complete identity (``unnamed_modules == 0``) from partial.
+    """
     trace, _path = tracing
-    layer = _Layer(None)
-    _emit(layer)
-    _emit(layer)
+    first, second = _Layer(None), _Layer(None)
+    _emit(first)
+    _emit(first)
+    _emit(second)
     entry = trace.snapshot()["entries"][0]
-    assert entry["module_names"] == [telemetry.MODULE_NO_PREFIX]
-    assert entry["modules"] == 1
-    assert entry["dispatches_without_prefix"] == 2
-    assert not any(name.startswith("0x") for name in entry["module_names"]), \
-        "an object id is not a module identity a consumer can compare"
+    assert entry["modules"] == 2, "two unnamed modules must still count as two"
+    assert entry["unnamed_modules"] == 2
+    assert entry["dispatches_without_prefix"] == 3
+    assert entry["module_names"] == []
+    assert not any(name.startswith("0x") or name == "<unprefixed>"
+                   for name in entry["module_names"]), \
+        "an object id and a placeholder are both non-identities"
+
+
+def test_a_prefix_that_is_not_a_usable_string_is_unnamed(tracing):
+    """No mixed-type sort, and no invented name for a broken prefix."""
+    trace, _path = tracing
+    for bad in (None, "", 17, ["model.layers.0"]):
+        _emit(_Layer(bad))
+    entry = trace.snapshot()["entries"][0]
+    assert entry["module_names"] == []
+    assert entry["unnamed_modules"] == 4
+    assert entry["modules"] == 4
+
+
+def test_modules_is_always_names_plus_unnamed(tracing):
+    trace, _path = tracing
+    _emit(_Layer("model.layers.0.mlp.down_proj"))
+    _emit(_Layer("model.layers.1.mlp.down_proj"))
+    _emit(_Layer(None))
+    entry = trace.snapshot()["entries"][0]
+    assert entry["modules"] == len(entry["module_names"]) + entry["unnamed_modules"]
+    assert entry["module_names"] == ["model.layers.0.mlp.down_proj",
+                                     "model.layers.1.mlp.down_proj"]
+    assert entry["unnamed_modules"] == 1
 
 
 def test_module_names_are_sorted_and_independent_of_arrival_order(tracing):
@@ -310,7 +345,10 @@ def test_the_header_states_its_own_rank_world_and_platform(tracing, monkeypatch)
     """Uninitialized distributed state is reported as absent, never as rank 0."""
     trace, _path = tracing
     snapshot = trace.snapshot()
-    assert snapshot["identity_version"] == telemetry.IDENTITY_VERSION
+    # Equality against the literal, not the constant: a consumer supports the
+    # versions it was written against, so bumping the version must make a
+    # reader revisit this instead of inheriting v1 semantics silently.
+    assert snapshot["identity_version"] == 1 == telemetry.IDENTITY_VERSION
     assert snapshot["rank"] is None and snapshot["world_size"] is None
     assert snapshot["rank_source"] == "unavailable"
     # The platform token is the SAME value the route records carry, including
