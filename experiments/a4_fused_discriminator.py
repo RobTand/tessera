@@ -86,11 +86,11 @@ def main() -> None:
     # The test's own numbers for both fixtures, with the current (fixed)
     # reference rule -- the value the report carries is here, not a pass count.
     single_got, single_want, _l1, _m1, _p1 = T._drive(
-        monkey, T.MODE_RESIDENT, roles=(("weight", 256),), seed=0)
+        monkey, "resident", roles=(("weight", 256),), seed=0)
     _print_err("single-role dense seed=0", single_got, single_want)
 
     got, want, layer, _method, (packed, scale, global_) = T._drive(
-        monkey, T.MODE_RESIDENT, roles=ROLES, seed=SEED)
+        monkey, "resident", roles=ROLES, seed=SEED)
     _print_err("fused q/k/v seed=3", got, want)
 
     err = (got.float() - want.float()).abs()
