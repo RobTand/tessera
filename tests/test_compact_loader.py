@@ -377,6 +377,185 @@ def test_actual_a4_wire_decodes_identically_through_the_native_symbol():
         assert torch.equal(got_scale, want_scale), ("scales", rank)
 
 
+# --- the documented tile-word layout, for every rate ------------------------
+#
+# ``kernel_window_gemv.repack_window_body`` groups codes into bytes (8 // rate)
+# and so only expresses rates dividing 8; the documented layout is the bit
+# stream itself -- a column's 512-code tile is 512 * rate bits = 16 * rate
+# int32 words, MSB-first -- which is what the window GEMM reads and is exact
+# for every integer rate.  These two helpers are the independent oracles: one
+# packs the recipe bit by bit, the other reads the persisted words back as
+# states, and neither shares arithmetic with the loader's kernel or with the
+# byte-grouping packer.
+
+
+def _bitpack_words(body, rates, tile_rows=512):
+    """The documented tile-word layout packed bit by bit.
+
+    Independent of the loader's GPU kernel and of
+    ``kernel_window_gemv.repack_window_body`` (whose byte grouping only admits
+    rates dividing 8).  Returns ``(words, tile_words, n_tiles, rows_p, perm,
+    runs)``.
+    """
+    rows, cols = body.shape
+    rates = tuple(int(r) for r in rates)
+    order = sorted(range(cols), key=lambda c: (rates[c], c))
+    rows_p = -(-rows // tile_rows) * tile_rows
+    n_tiles = rows_p // tile_rows
+    weights = (1 << torch.arange(31, -1, -1)).to(torch.int64)
+    parts, runs, col0, word0 = [], [], 0, 0
+    for rate in sorted(set(rates)):
+        which = [c for c in order if rates[c] == rate]
+        n = len(which)
+        codes = body[:, torch.tensor(which, dtype=torch.long)].to(torch.int64)
+        bits = ((codes[:, :, None] >> torch.arange(rate - 1, -1, -1))
+                & 1).permute(1, 0, 2)                       # [n, rows, rate]
+        if rows_p != rows:
+            bits = torch.cat(
+                [bits, torch.zeros(n, rows_p - rows, rate, dtype=torch.int64)], 1)
+        bits = bits.reshape(n, n_tiles, tile_rows * rate)
+        words = (bits.reshape(n, n_tiles, tile_rows * rate // 32, 32)
+                 * weights).sum(-1)
+        parts.append(words.permute(1, 0, 2).reshape(n_tiles, n * 16 * rate))
+        runs.append((rate, col0, n, word0))
+        col0 += n
+        word0 += n * 16 * rate
+    flat = torch.cat(parts, dim=1).reshape(-1)
+    words = ((flat + (1 << 31)) % (1 << 32) - (1 << 31)).to(torch.int32)
+    return (words, word0, n_tiles, rows_p,
+            torch.tensor(order, dtype=torch.int32),
+            torch.tensor(runs, dtype=torch.int32).reshape(-1, 4))
+
+
+def _states_from_words(rep, window_bits, tile_rows=512):
+    """Every (row, column) state read back from the persisted words.
+
+    A column's stream is its chunks' words concatenated MSB-first (bit 31 of
+    a word is the earliest bit), and the state of row ``n`` is the last
+    ``L`` bits ending at ``(n + 1) * rate``, zero-padded before the stream.
+    The addressing is the documented layout's, not the kernel's.
+    """
+    words = rep.words.detach().cpu()
+    rows, cols = int(rep.rows), int(rep.cols)
+    out = torch.zeros(rows, cols, dtype=torch.int64)
+    for rate, col0, n, word0 in rep.runs.tolist():
+        by_original = rep.perm.detach().cpu()[col0:col0 + n].tolist()
+        for j, col in enumerate(by_original):
+            base = word0 + j * 16 * rate
+            for row in range(rows):
+                q = (row + 1) * rate
+                state = 0
+                for b in range(window_bits):
+                    p = q - window_bits + b
+                    if p < 0:
+                        continue
+                    tile, bit_in = divmod(p, tile_rows * rate)
+                    word = int(words[tile * int(rep.tile_words) + base + (bit_in >> 5)])
+                    state |= ((word >> (31 - (bit_in & 31))) & 1) << (window_bits - 1 - b)
+                out[row, col] = state
+    return out
+
+
+@cuda
+@pytest.mark.parametrize("q256", [768, 1280, 1536, 1792, 2048, 896])
+def test_window_compact_layout_is_general_over_rates(q256):
+    """Rates 3, 5, 6, 7, 8 and the mixed 3.5 rung: the compact repack is the
+    documented bitstream layout for every rate -- not just those dividing 8 --
+    and the persisted words decode to the state definition.
+
+    ``repack_window_body`` is also compared wherever its byte grouping is
+    defined (rates 1, 2, 4), so the general path is pinned to the old one on
+    the population they share.
+    """
+    from tessera.alphabet import BF16_GRID
+    from tessera.compact_prep import parse_compact_wire, prepare_window_compact
+    from tessera.kernel_window_gemv import reference_states
+    from tessera.unit_artifact import parse_unit_artifact
+
+    rows, cols = 96, 64
+    blob = _encoded_window(rows, cols, BF16_GRID, seed=90 + q256, q256=q256)
+    parsed = parse_unit_artifact(blob, device="cuda")
+    body = parsed.unit.body_bits.detach().cpu()
+    rates = tuple(int(r) for r in parsed.unit.rates)
+    if q256 == 896:
+        assert len(set(rates)) > 1, rates          # the mixed rung, not a typo
+    wire = parse_compact_wire(blob, device="cuda", name="w")
+    unit = prepare_window_compact(wire, device="cuda", family="value")
+    got_words, tile_words, n_tiles, rows_p, perm, runs = _bitpack_words(body, rates)
+    assert int(unit.rep.tile_words) == tile_words
+    assert int(unit.rep.n_tiles) == n_tiles
+    assert int(unit.rep.rows_p) == rows_p
+    assert torch.equal(unit.rep.perm.cpu(), perm)
+    assert torch.equal(unit.rep.runs.cpu(), runs)
+    assert torch.equal(unit.rep.words.cpu(), got_words), "words"
+    states = _states_from_words(unit.rep, int(unit.window_bits))
+    assert torch.equal(states, reference_states(body, rates, int(unit.window_bits))), "states"
+    if all(r in (1, 2, 4) for r in rates):
+        from tessera.kernel_window_gemv import repack_window_body
+
+        old = repack_window_body(body, rates)
+        assert torch.equal(unit.rep.words.cpu(), old.words.cpu()), "old packer"
+
+
+def _bf16_r7_wire(tensor: str) -> bytes:
+    shard = box_artifacts.skip_now(
+        "shared_runs", "bf16/qwen0.6b-bf16-r7-plugin/model.safetensors")
+    from safetensors import safe_open
+
+    with safe_open(str(shard), framework="pt") as handle:
+        return bytes(handle.get_tensor(tensor).detach().cpu().numpy().tobytes())
+
+
+@cuda
+@pytest.mark.parametrize(
+    "tensor, rows, columns",
+    [
+        ("model.layers.0.mlp.down_proj.wire_bytes", 1024, 3072),
+        ("model.layers.0.self_attn.o_proj.wire_bytes", 1024, 2048),
+    ],
+)
+def test_actual_bf16_r7_wire_tp2_cuts_tile_and_history(tensor, rows, columns):
+    """The actual BF16 R7 checkpoint (q256 1792, rate 7 -- outside the old
+    packer's roster): TP2 row and column cuts produce the documented layout,
+    and rank 1's row cut carries the sliced unit's own register.
+
+    The oracle is ``_bitpack_words`` on the sliced reference body (rate 7 has
+    no ``repack_window_body``), and the history oracle is
+    ``layout.slice_unit``'s ``initial_state`` -- computed by the reference
+    reader, not by this loader.
+    """
+    from tessera.compact_prep import parse_compact_wire, prepare_window_compact
+    from tessera.fused import parse_fused
+    from tessera.serving.sharding import shard_parsed_roles
+    from tessera.unit_artifact import parse_unit_artifact
+
+    blob = _bf16_r7_wire(tensor)
+    member = parse_fused(blob)[0]
+    parsed = parse_unit_artifact(member.blob, device="cuda")
+    assert parsed.unit.window_bits == 14
+    assert set(parsed.unit.rates) == {7}, sorted(set(parsed.unit.rates))
+    wire = parse_compact_wire(member.blob, device="cuda", name=member.name)
+    for rank in (0, 1):
+        for axis in ("row", "column"):
+            plan = (_row_plan if axis == "row" else _col_plan)(rows, columns, rank, 2, name="w")
+            shard = shard_parsed_roles([("w", parsed)], plan)[0][1]
+            cut = _cut_kwargs(plan)
+            unit = prepare_window_compact(wire, device="cuda", family="value", **cut)
+            body = shard.unit.body_bits.detach().cpu()
+            rates = tuple(int(r) for r in shard.unit.rates)
+            want_words, tile_words, _n, _rp, perm, runs = _bitpack_words(body, rates)
+            assert int(unit.rep.tile_words) == tile_words, (tensor, rank, axis)
+            assert torch.equal(unit.rep.perm.cpu(), perm), (tensor, rank, axis)
+            assert torch.equal(unit.rep.runs.cpu(), runs), (tensor, rank, axis)
+            assert torch.equal(unit.rep.words.cpu(), want_words), (tensor, rank, axis, "words")
+            expected = shard.unit.initial_state
+            if expected is None:
+                assert not bool(unit.initial_state.any())
+            else:
+                assert torch.equal(unit.initial_state, expected.to(torch.int32)), (tensor, rank, axis)
+            assert int(unit.row_offset) == int(shard.unit.row_offset)
+
+
 # ---------------------------------------------------------------------------
 # GPU: window tile-word layout straight from the packed BODY
 # ---------------------------------------------------------------------------

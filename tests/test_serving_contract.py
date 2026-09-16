@@ -631,7 +631,8 @@ def test_the_routes_census_expectation_is_the_launch_table():
     for module, route in ((fp8_gemv, TESSERA_FP8), (bf16_route, TESSERA_BF16)):
         eager = module.census_expected(compiled=False)
         for regime in ("decode", "batch"):
-            assert eager[regime] == launch_pairs(route, regime=regime), (route, regime)
+            assert eager[regime] == launch_pairs(
+                route, regime=regime, include_experimental=True), (route, regime)
             assert (module.GEMV_SYMBOL, "window_gemv") in eager[regime], (route, regime)
         # ...and the launch only the materialised path makes is batch-only:
         # ``decode_is_gemv`` is unconditionally true at one row, so a one-row
@@ -663,16 +664,25 @@ def test_the_launch_tables_regimes_are_the_routes_own_dispatch():
     import types
 
     from tessera.serving import bf16_route, ext, fp8_gemv, telemetry
-    from tessera.serving.scheme import (TESSERA_BF16, TESSERA_FP8, launch_pairs,
-                                        regime_of_m)
+    from tessera.serving.scheme import (TESSERA_BF16, TESSERA_FP8, WINDOW_GEMM_SYMBOL,
+                                        launch_pairs, regime_of_m)
 
     for module, route in ((fp8_gemv, TESSERA_FP8), (bf16_route, TESSERA_BF16)):
         seen: dict[str, set] = {"decode": set(), "batch": set()}
+        # The native packed GEMM the compact loader prepares: one launch for
+        # every M, both residencies, no extension lane.  It is in the table in
+        # both regimes, so the derivation adds it to both.
+        seen["decode"].add((WINDOW_GEMM_SYMBOL,
+                            telemetry.DECODER_NATIVE_WINDOW_GEMM))
+        seen["batch"].add((WINDOW_GEMM_SYMBOL,
+                           telemetry.DECODER_NATIVE_WINDOW_GEMM))
         for m in range(1, module.GEMV_MAX_M + 2):
             for rate_one in (False, True):
                 holder = types.SimpleNamespace(rate_one=rate_one)
-                # The two pairs ``apply``'s lane branch stamps, by the same
-                # predicate it stamps them on.
+                # The two pairs ``apply``'s RETAINED lane branch stamps, by the
+                # same predicate it stamps them on: the native path above is
+                # what a serve takes, and these stay derived so the reference
+                # lane's table cannot drift from it.
                 pair = ((module.GEMV_SYMBOL, telemetry.DECODER_WINDOW_GEMV)
                         if module.decode_is_gemv(holder, m)
                         else (module.GEMM_SYMBOL, telemetry.DECODER_WINDOW_GEMV))
@@ -680,7 +690,8 @@ def test_the_launch_tables_regimes_are_the_routes_own_dispatch():
         for regime, pairs in seen.items():
             assert pairs == launch_pairs(
                 route, regime=regime, mode="streamed",
-                lanes=(ext.WINDOW_GEMV_MODULE_NAME,)), (route, regime)
+                lanes=(ext.WINDOW_GEMV_MODULE_NAME,),
+                include_experimental=True), (route, regime)
 
 
 def test_every_cell_executes_a_launch_its_route_can_make(contract):
@@ -724,10 +735,18 @@ def test_moe_launches_are_structure_specific_and_resident_only(regime):
         TESSERA_FP8, launch_pairs)
 
     # Existing callers keep their dense meaning. A requested expert structure
-    # cannot borrow a dense launch, even at the same family and rate.
-    dense = launch_pairs(TESSERA_FP8, regime=regime)
-    assert dense == launch_pairs(TESSERA_FP8, structure=STRUCTURE_DENSE, regime=regime)
+    # cannot borrow a dense launch, even at the same family and rate.  The
+    # dense side is compared with the experimental launches in: the routes'
+    # census expectation knows the packed native lane, and the MoE side below
+    # must still not see it.
+    dense = launch_pairs(TESSERA_FP8, regime=regime, include_experimental=True)
+    assert dense == launch_pairs(TESSERA_FP8, structure=STRUCTURE_DENSE,
+                                 regime=regime, include_experimental=True)
     assert dense == fp8_gemv.census_expected(compiled=False)[regime]
+    non_experimental = launch_pairs(TESSERA_FP8, regime=regime)
+    assert non_experimental <= dense
+    assert not any(pair in non_experimental
+                   for pair in dense - non_experimental), "experimental leaked"
     moe = launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE,
                        regime=regime, mode="resident", lanes=())
     assert moe == moe_route.census_expected(compiled=False)[regime]

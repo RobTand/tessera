@@ -222,6 +222,17 @@ fourteen-row record with a BF16 reference arm. `gfx1151` still has no cell.
 Receipt: `docs/measurements/tessera-gfx1201-bf16-k1-served-2026-09-13.md`.
 See §4.5f.
 
+Re-stamped 2026-09-16 for the dense native window lane. The FP8 and BF16
+dense routes load through the compact reader and serve a packed bitstream
+GEMM (`tessera.window_gemm`, one functional custom op
+`tessera::window_gemm_dense`; `serving/native_window.py`), stamping the new
+`native_window_gemm` decoder and the `tessera::window_gemm_dense` symbol,
+with the launch table (`scheme.ROUTE_LAUNCHES`) carrying the pair for both
+routes. The materialising preparations and the torch window decode stay as
+the reference path and are not reached from a serve. This is an experimental
+lane: no runtime-contract cell, rung, grade, qualification or ship gate
+moves, and the packaged contract is not promoted. See §3.3.
+
 Re-stamped 2026-09-13 for the census's world (#470): `tools/tessera_route_census.py`
 takes the topology it is run at (`src/tessera/serving/topology.py`), runs its
 per-module checks on every rank instead of `apply_model(...)[0]`, and sums the
@@ -1944,6 +1955,23 @@ both residencies and takes no operator knob, because the other two routes
 take none. It is vacuous on the resident fallback, where the substitute IS
 the reference and there is nothing independent to hold it to. What it costs
 per module at load is not measured.
+
+**The dense FP8 and BF16 routes now serve a compact native lane, and that
+lane does NOT decode the reference at load.**  The startup cost §3.3 measures
+elsewhere is exactly what `NATIVE-ACCEPTANCE` forbids on a routed load: the
+compact reader (`unit_artifact.parse_unit_metadata`) validates structure,
+digests, canonical padding, sub-byte slack, profile, rates, geometry, plane
+ranges and the shard record, and `compact_prep` repacks the rank-local planes
+from the packed bits -- no expanded parent, no `materialize_*` call.  The
+reference decoders stay in the tree and are the **test oracle**: the dense
+lane's equivalence (decoded codes/scales, both families, M tails, TP cuts
+with history, actual wires) is held by PB-run tests
+(`tests/test_window_gemm.py`, `tests/test_compact_loader.py`,
+`tests/test_serving_native_window.py`), and the retained
+`prepare_tessera_fp8_module`/`prepare_tessera_bf16_module` preparations keep
+their own load-time agreement for the reference path.  The lane stamps
+`native_window_gemm`, a decoder distinct from `torch_window` and
+`window_gemv`, so a census can tell a native serve from a reference one.
 
 ### 3.4 Declared weight transforms are refused at the materialisation boundary
 
