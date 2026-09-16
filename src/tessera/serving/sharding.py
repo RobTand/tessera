@@ -212,7 +212,7 @@ TP_STATUSES = (TP_SHARDED, TP_REFUSED)
 #: and, since tessera#492, ``lane_planes._thread_start_state`` writes the
 #: shard's register into it in the stream order ``build_span2_luts`` maps, so
 #: the native span-2 decoder and ``materialize_stock`` start a row shard from
-#: the same state (held to each other at load, ``ops._require_reference_agreement``).
+#: the same state (held to each other by the tests' reference asset).
 #: It is keyed by ROUTE because family, body and route are one-to-one today
 #: (``export_tessera_serving.check_recipe`` enforces it); a fourth family with
 #: a different body brings its own row.

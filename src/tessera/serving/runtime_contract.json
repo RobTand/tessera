@@ -1,6 +1,6 @@
 {
   "schema": "tessera.runtime-contract.v1",
- "contract_version": 29,
+ "contract_version": 30,
  "quant_method": {
   "canonical": "tessera",
   "accepted": [
@@ -14,29 +14,6 @@
   "default_serve_image": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14"
  },
   "native_extensions": [
-   {
-    "module_name_prefix": "tessera_nvfp4_",
-    "filename_glob": "tessera_nvfp4_*.so",
-    "match": "basename_fnmatch",
-    "source": "csrc/tessera_nvfp4.cu",
-    "loaded_by": "tessera.serving.ext",
-    "routes": [
-     "TESSERA_NVFP4"
-    ],
-    "lane": {
-     "decoder": "native_span2"
-    },
-    "when_unavailable": {
-     "resident": {
-      "status": "substituted",
-      "decoder": "torch_materialize_stock"
-     },
-     "streamed": {
-      "status": "refused",
-      "decoder": null
-     }
-    }
-   },
    {
     "module_name_prefix": "tessera_window_gemv",
     "filename_glob": "tessera_window_gemv*.so",
@@ -2053,6 +2030,11 @@
   }
  },
  "changelog": [
+  {
+   "contract_version": 30,
+   "date": "2026-09-16",
+   "change": "The span-2 NVFP4 decoder's native extension is RETIRED from native_extensions: the A4 lanes decode the compact loader's packed planes in-kernel (tessera.kernel_a4.a4_span2_gemm dense, tessera.kernel_a4.a4_span2_grouped_gemm routed) and nothing under tessera.serving loads tessera_nvfp4.cu any more, so the table no longer publishes that library. WHAT DOES NOT MOVE: every lane_eligibility cell byte for byte (their executes name the launches their receipts actually ran, historical claims that stay true), formats, attested_rungs_q256, platforms, tensor_parallel, expert_parallel, fused_module, activation_quantizers and quant_method. No device qualification is forged and no historical receipt is rewritten; the native A4 and window pairs remain experimental launches (scheme.EXPERIMENTAL_LAUNCHES), recognised by a census through scheme.experimental_launch_pairs and not attested by any cell. The independent correctness oracle (tessera.stock.materialize_stock on a parsed unit) is preserved in the tests, not in a serving path."
+  },
   {
    "contract_version": 29,
    "date": "2026-09-15",

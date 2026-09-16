@@ -50,7 +50,6 @@ ROOT = Path(__file__).resolve().parent.parent
 #: JIT-builds a kernel opens the .cu; the producer preflight opens the contract.
 REQUIRED = (
     "tessera/serving/csrc/window_gemv.cu",
-    "tessera/serving/csrc/tessera_nvfp4.cu",
     "tessera/serving/runtime_contract.json",
 )
 
@@ -75,7 +74,6 @@ assert contract.load_serving_contract()["schema"] == contract.CONTRACT_SCHEMA
 from tessera.serving import ext
 for package, name in (
     ("tessera.serving", "csrc/window_gemv.cu"),
-    ("tessera.serving", "csrc/tessera_nvfp4.cu"),
 ):
     assert resources.files(package).joinpath(name).is_file(), f"{package}: {name}"
 for entry in ext.NATIVE_EXTENSIONS:

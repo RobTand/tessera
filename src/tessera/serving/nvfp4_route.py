@@ -40,7 +40,6 @@ from .ext import substitutes_when_unavailable
 from .lane import MODE_RESIDENT, MODE_STREAMED, MODES
 import dataclasses
 
-from .ops import PreparedTesseraModule, prepare_tessera_module  # noqa: F401  (re-export)
 from ..kernel_a4 import a4_quantize_activation, a4_span2_gemm
 from .scheme import (A4_DENSE_GEMM_SYMBOL, GROUP_SIZE, ROUTES, TESSERA_NVFP4,
                      parse_compact_blob_for_scheme, parse_tessera_blob_for_scheme,

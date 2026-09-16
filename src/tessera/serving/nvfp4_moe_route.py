@@ -98,7 +98,6 @@ __all__ = [
     "PAYLOAD_FAMILY",
     "census_expected",
     "census_symbol_base",
-    "decode_expert_tile",
     "build_tessera_nvfp4_moe_method",
 ]
 
@@ -151,31 +150,6 @@ def census_expected(*, compiled: bool = False, platform=None) -> dict:
     from .census import platform_expectation
 
     return platform_expectation(PAYLOAD_FAMILY, platform, pairs)
-
-
-def decode_expert_tile(parsed_roles, device):
-    """``[(name, parsed)]`` for ONE expert group -> ``(packed, scale, global)``.
-
-    ``packed`` is ``[rows, cols/2]`` uint8 nibbles, ``scale`` is ``[rows,
-    cols/16]`` float8_e4m3fn block scales and ``global`` is the fp32
-    MULTIPLIER the kernel folds into its alpha (modelopt ``weight_scale_2``,
-    the reciprocal of the stock tile's ``weight_global_scale`` divisor) --
-    ONE value, shared across the roles handed in, so a two-role ``w13`` decodes
-    onto the one global its tile carries.  The bytes are
-    ``tessera.stock.materialize_stock``'s after ``fused.shared_lut_global``'s
-    power-of-two move, the same pair the dense route's fallback tile is built
-    from (``ops._torch_fallback_tile``), so what the fused-MoE kernel reads is
-    what the stock lane was measured on.
-    """
-    from ..fused import shared_lut_global
-    from .ops import _torch_fallback_tile
-
-    shared, moved = shared_lut_global(
-        [parsed.unit.scale_lut for _name, parsed in parsed_roles],
-        [float(parsed.unit.scale_global) for _name, parsed in parsed_roles],
-        [name for name, _parsed in parsed_roles])
-    packed, scale = _torch_fallback_tile(parsed_roles, moved, shared, device)
-    return packed, scale.view(torch.float8_e4m3fn), float(shared)
 
 
 class _ExpertIntake:

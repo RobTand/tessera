@@ -331,52 +331,6 @@ def test_actual_a4_wire_tp2_both_rank_shapes_are_byte_equal(
         assert got["cols"] == role.hi - role.lo
 
 
-@cuda
-def test_actual_a4_wire_decodes_identically_through_the_native_symbol():
-    """The packed planes are the decoder's input, so plane equality already
-    settles the decode; this runs the actual symbol when it can build, on the
-    whole unit and on TP2 rank 1's row cut, and holds both to
-    ``prepare_span2_planes``' planes through the same op."""
-    from tessera.lane_planes import prepare_span2_planes
-    from tessera.serving.ext import get_tessera_ext
-    from tessera.serving.sharding import shard_parsed_roles
-    from tessera.unit_artifact import parse_unit_artifact
-    from tessera.compact_prep import parse_compact_wire, prepare_span2_compact
-    from tessera.fused import parse_fused
-
-    if get_tessera_ext() is None:
-        pytest.skip("the native span-2 decoder could not be built here")
-    from tessera.serving.ops import _decode_impl
-
-    blob = _a4_wire_blob("gate_proj")
-    member = parse_fused(blob)[0]
-    wire = parse_compact_wire(member.blob, device="cuda", name="gate_proj")
-
-    def decode(planes):
-        packed = torch.empty((planes["rows"], planes["cols"] // 2),
-                             dtype=torch.uint8, device="cuda")
-        scales = torch.empty((planes["rows"], planes["cols"] // 16),
-                             dtype=torch.uint8, device="cuda")
-        _decode_impl(
-            planes["select"], planes["label"], planes["point"], planes["nibbles"],
-            planes["lut_bytes"], planes["label_lut"], planes["subset_nibbles"],
-            int(planes["rows"]), int(planes["cols"]), int(planes["rate"]),
-            int(planes["arity"]), int(planes["memory"]), int(planes["half"]),
-            packed, scales)
-        return packed, scales
-
-    for rank in (0, 1):
-        plan = _row_plan(2048, 4096, rank, 2, name="gate_proj")
-        compact_planes = prepare_span2_compact(wire, device="cuda", **_cut_kwargs(plan))
-        parsed = parse_unit_artifact(member.blob, device="cuda")
-        shard = shard_parsed_roles([("gate_proj", parsed)], plan)[0][1]
-        old_planes = prepare_span2_planes(shard, device="cuda")
-        got, got_scale = decode(compact_planes)
-        want, want_scale = decode(old_planes)
-        assert torch.equal(got, want), ("packed", rank)
-        assert torch.equal(got_scale, want_scale), ("scales", rank)
-
-
 # --- the documented tile-word layout, for every rate ------------------------
 #
 # ``kernel_window_gemv.repack_window_body`` groups codes into bytes (8 // rate)

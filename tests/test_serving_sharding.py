@@ -1028,7 +1028,7 @@ def test_a_prepared_role_is_its_planes_and_nothing_beside_them():
 
     A row shard's register is threaded into the select plane's pad by
     ``lane_planes.pack_unit_for_kernel`` (tessera#492), so what
-    ``prepare_tessera_module`` holds per role -- and fingerprints -- is the
+    ``native_a4.prepare_a4_unit`` holds per role -- and fingerprints -- is the
     packed planes alone; there is no second tensor a decoder could ignore.
     ``tests/test_span2_start_state.py`` is the proof the pad decodes as the
     register; this pins the shape of the record.

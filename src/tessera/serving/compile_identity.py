@@ -11,9 +11,9 @@ process to start then loads the first's function with guards disabled (vLLM
 verifies file contents, not the trace) and its bytecode dereferences attributes
 the running mode never set.  Measured 2026-09-02 on vLLM 0.28.0 with the same
 routes under Gridbook's flag pair: a resident route census after a streamed one
-in the same cache died at the first forward on ``'NoneType' object has no
-attribute '_PreparedTesseraModule__roles'``.  Loud, but a supported
-configuration must not crash on the operator's default ``~/.cache/vllm``.
+in the same cache died at the first forward on a stale prepared-module
+attribute.  Loud, but a supported configuration must not crash on the
+operator's default ``~/.cache/vllm``.
 
 ``VllmConfig.additional_config`` is the one input to that hash a plugin can
 reach: vLLM hashes it by JSON content.  The Tessera config declares its mode

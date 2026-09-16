@@ -237,7 +237,7 @@ MOE_BUILDERS: dict[str, tuple[str, str]] = {
 #:
 #: ``body``/``span`` name the trellis body the route's decoder reads, and they
 #: are the same fact its own module already refuses by name at load
-#: (``ops.prepare_tessera_module`` for NVFP4, ``fp8_route`` for FP8,
+#: (``nvfp4_route`` for NVFP4, ``fp8_route`` for FP8,
 #: ``bf16_route`` for BF16).  They are written here because the PRODUCER needs
 #: them too: ``refuse_unserveable_wire`` is the export-time half of the same
 #: rule, and the exporter used to carry its own copy in an if/elif -- a third
