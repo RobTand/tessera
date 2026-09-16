@@ -2939,39 +2939,48 @@ Which families have a production expert route is `scheme.MOE_BUILDERS`, and
 `TesseraConfig.get_quant_method` dispatches a `routed_moe` stack to its
 family's builder off that table exactly as a Linear is dispatched off
 `ROUTES`. Two families have one. `TESSERA_FP8` is the route above.
-`TESSERA_NVFP4` is `tessera.serving.nvfp4_moe_route` (tessera#492): one
-E2M1x2 container per expert projection, parsed and verified whole, cut to
-the rank by `sharding.shard_parsed_roles` on the group's plan (rows of `w13`,
-columns of `w2`), decoded once at load through `stock.materialize_stock`
-after a per-expert `fused.shared_lut_global` join of the gate and up globals,
-into exactly the modelopt NVFP4 parameter set vLLM's `ModelOptNvFp4FusedMoE`
-builds (`w13_weight`/`w2_weight` packed nibbles, group-16 ue4m3
-`*_weight_scale`, per-expert `*_weight_scale_2` MULTIPLIER, per-expert
-`*_input_scale`), and from `process_weights_after_loading` onward it IS that
-class: `convert_to_nvfp4_moe_kernel_format`, `make_nvfp4_moe_quant_config`,
-`make_nvfp4_moe_kernel` over the backend the runtime's own
-`select_nvfp4_moe_backend` picks -- on sm121 under GLM's `swiglu_limit` a
-clamp-capable flashinfer CUTLASS backend
-(`docs/measurements/nvfp4-moe-oracle-2026-09-02.md`), the receipt that used
-to be the reason the family had no builder and is now what the builder
-relies on. The static A side is a checkpoint fact: the exporter writes
-`experts.{e}.{proj}.input_global_scale` beside each wire (capacity over amax,
-the dense route's `trellis_input_global_scale` quantity, from
-`--input-scales`), the loader inverts it once into modelopt's
-`input_scale`, and a stack missing any refuses rather than quantising at
-1.0. FlashInfer's CUTLASS finalizer then collapses the per-expert values to
-ONE per projection group -- `amax_for_moe_activation_quant` takes the max of
-the loader's reciprocal, so the executed global scale is the SMALLEST
-per-expert `input_global_scale`, i.e. the layer's LARGEST calibrated amax --
-and broadcasts it to every expert; the per-expert tensors the method reads are
-what a per-expert price describes, and priced == served only when the amax
-spread is zero. This route decodes every expert wire once at load through
-`materialize_stock` (the load probe's `route_record.decoder` is
-`torch_materialize_stock`), never through the native span-2 planes, so a row
-cut of an expert container needs only `slice_unit`'s super-symbol boundary; the
-select plane's byte (see the re-stamp above) is the dense route's NATIVE
-decoder's requirement, refused by name at
-`lane_planes.require_native_select_plane_admission`. A builder is a
+`TESSERA_NVFP4` is `tessera.serving.nvfp4_moe_route` (tessera#492),
+NATIVE since the A4 serving integration: one E2M1x2 container per expert
+projection is read by the shared compact validator
+(`scheme.parse_compact_tessera_expert_blob`, the same refusals as the
+materialising reader, no weight-plane expansion), cut to the rank by the
+group's plan (rows of `w13`, columns of `w2`), and prepared into
+`kernel_a4`'s bundle per (group, role) on an `A4ExpertAxis` --
+`serving/native_a4.py` -- with the gate/up LUT tables joined by
+`fused.shared_lut_global` under the fused tile's one global.  No stock
+NVFP4 tile is built at load or in a forward and no expanded expert pool is
+resident: the compact planes ride through residency and the fused decode
+happens in the kernel.  The stock modelopt names stay registered as
+ZERO-SIZE anchors whose loader refuses checkpoint bytes, so a stock tensor
+in a Tessera stack is still refused by name while the 4.5-bpp pool is never
+allocated.  `apply` is the native two-stage pipeline: separate grouped
+gate/up calls (per-role tables and globals intact), vLLM's own
+`apply_moe_activation` for the layer's activation, the down grouped call on
+the per-route rows under a second static scale, and the router weights
+applied only in the final combine; shared experts are the runner's and are
+never recomputed here.  The method's protocol is MODULAR BY ITS OWN
+DEFINITION: `is_monolithic` is False, and neither `experts_cls` nor
+`moe_kernel` is owned (the base class delegates `is_monolithic` to a
+selected stock class when one is present, which is exactly the ownership
+this lane refuses); `get_fused_moe_quant_config` carries the model's swiglu
+alphas and no stock tensors.  The static A side is a checkpoint fact: the
+exporter writes `experts.{e}.{proj}.input_global_scale` beside each wire
+(capacity over amax, the dense route's `trellis_input_global_scale`
+quantity, from `--input-scales`), a stack missing any refuses rather than
+quantising at 1.0, and the selected backend's aggregation is preserved
+unchanged -- ONE scalar per layer/projection, the max of the loader's
+reciprocal (the layer's largest calibrated amax) broadcast to every expert,
+from `amax_for_moe_activation_quant` via
+`is_global_sf_supported_for_nvfp4_backend`, per the scale review; the
+per-expert tensors are what a per-expert price describes, and priced ==
+served only when the amax spread is zero.  The executed symbols are the
+native ones (`scheme.A4_GROUPED_GEMM_SYMBOL`,
+`telemetry.DECODER_NATIVE_SPAN2_GROUPED`), published as EXPERIMENTAL pairs
+(`scheme.experimental_launch_pairs`) so a census accepts the candidate while
+`launch_pairs` keeps the cell validator on the attested dispatch -- no
+qualification is promoted by this change.
+
+A builder is a
 dispatch fact and not a served qualification: the
 `routed_moe` cells for this family are `lane_eligibility`'s to publish from a
 container receipt. Contract v28 publishes two, at q256 896, eager and resident,

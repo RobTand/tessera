@@ -14,12 +14,16 @@ per group (``w13_input_scale [E, 2]``, ``w2_input_scale [E]``).  From
 ``convert_to_nvfp4_moe_kernel_format``, the same
 ``make_nvfp4_moe_quant_config``, the same ``make_nvfp4_moe_kernel`` over the
 backend the runtime's own ``select_nvfp4_moe_backend`` picked for
-``(kNvfp4Static, kNvfp4Dynamic)`` on this box, and an ``apply`` that hands the
-runtime's modular kernel the runtime's own tensors.  Nothing here writes a
-kernel, and the A side -- group-16 dynamic E2M1 quantisation of every token
-under the static per-expert scale -- is the kernel's, which is what makes the
-executed contract ``ROUTES[TESSERA_NVFP4]["activation_contract"]`` and not a
-claim this module makes.
+``(kNvfp4Static, kNvfp4Dynamic)`` on this box.  The native lane replaced
+that path: the module now owns NO stock kernel and NO stock experts class,
+its ``is_monolithic`` is False by its own definition (never delegated to a
+selection it does not run), and ``apply`` is the native two-stage grouped
+pipeline -- ``a4_grouped_apply`` for gate, up and down, vLLM's own
+``apply_moe_activation``, the runner's shared experts, and the router weights
+applied only in the final combine.  The A side is the runtime's registered
+``scaled_fp4_quant`` under the static per-expert scale, which is what makes
+the executed contract ``ROUTES[TESSERA_NVFP4]["activation_contract"]`` and
+not a claim this module makes.
 
 THE GLOBAL IS SHARED PER EXPERT, NOT PER STACK.  The gate and up units of one
 expert are encoded on their own LUT globals; ``w13`` is one tile per expert
@@ -85,8 +89,7 @@ from .scheme import (A4_GROUPED_GEMM_SYMBOL, GROUP_SIZE, MOE_GEMM_SYMBOL, MOE_GR
                      launch_pairs, moe_census_symbol_base as census_symbol_base,
                      parse_tessera_expert_blob, route_launches,
                      validate_tessera_moe_scheme)
-from .telemetry import (DECODER_NATIVE_SPAN2_GROUPED, DECODER_TORCH_STOCK, emit_route,
-                        route_shape)
+from .telemetry import DECODER_NATIVE_SPAN2_GROUPED, emit_route, route_shape
 
 __all__ = [
     "ACTIVATION_CONTRACT",
@@ -306,12 +309,7 @@ def build_tessera_nvfp4_moe_method(scheme: Mapping, prefix: str, mode: str, laye
             "measurement; refusing is what keeps 'streamed' meaning one thing.")
 
     from vllm.model_executor.layers.fused_moe.fused_moe_method_base import FusedMoEMethodBase
-    from vllm.model_executor.layers.fused_moe.oracle.nvfp4 import (
-        convert_to_nvfp4_moe_kernel_format, make_nvfp4_moe_kernel,
-        make_nvfp4_moe_quant_config, select_nvfp4_moe_backend)
-    from vllm.model_executor.layers.quantization.utils.quant_utils import (
-        kNvfp4Dynamic, kNvfp4Static)
-    from vllm.model_executor.utils import replace_parameter, set_weight_attrs
+    from vllm.model_executor.utils import set_weight_attrs
 
     groups = declared["groups"]
     experts = int(declared["experts"])
@@ -342,11 +340,17 @@ def build_tessera_nvfp4_moe_method(scheme: Mapping, prefix: str, mode: str, laye
             if self._tp_size < 1 or not 0 <= self._tp_rank < self._tp_size:
                 raise ValueError(f"tessera target {prefix!r}: invalid tensor-parallel "
                                  f"rank {self._tp_rank} of {self._tp_size}")
-            # The runtime picks the backend, from the runtime's own predicate,
-            # for the keys this route's tile actually is: static per-expert
-            # NVFP4 weights, dynamically NVFP4-quantised activations.
-            self.nvfp4_backend, self.experts_cls = select_nvfp4_moe_backend(
-                config=self.moe, weight_key=kNvfp4Static, activation_key=kNvfp4Dynamic)
+            # NO stock modular kernel and NO stock experts class: the native
+            # grouped calls are this route's whole computation.  The runtime's
+            # ``is_monolithic`` delegates to ``experts_cls`` whenever one is
+            # present and ``moe_kernel`` is None
+            # (fused_moe_method_base.py:137-143), so a selected stock backend
+            # with a monolithic class would send this method to the obsolete
+            # ``apply_monolithic`` path and assert a kernel that never exists
+            # here.  Both are pinned to None instead of inherited from a
+            # selection whose kernel this route never runs.
+            self.moe_kernel = None
+            self.moe_quant_config = None
             self._intake = None
             self._tiles = None
             self._w13_len = self._w2_len = None
@@ -354,6 +358,32 @@ def build_tessera_nvfp4_moe_method(scheme: Mapping, prefix: str, mode: str, laye
 
         @property
         def supports_eplb(self) -> bool:
+            return False
+
+        # -- the native modular protocol, stated explicitly -----------------
+        # (The runtime dispatches on exactly these; see
+        # ``FusedMoERunner._apply_quant_method``: ``is_monolithic`` False
+        # means ``forward_modular``, which is the only path this route has.)
+        @property
+        def is_monolithic(self) -> bool:
+            """The native lane is modular; no stock class may answer this.
+
+            Overridden so the answer can never come from an
+            ``experts_cls`` this route does not own: the base property
+            returns ``self.experts_cls.is_monolithic()`` when a class is
+            present, and the native grouped calls have no stock kernel to be
+            monolithic about.
+            """
+            return False
+
+        @property
+        def topk_indices_dtype(self) -> "torch.dtype | None":
+            """The router's own ids are consumed as given (int32/int64)."""
+            return None
+
+        @property
+        def mk_can_overlap_shared_experts(self) -> bool:
+            """The runner owns shared experts; this method runs none."""
             return False
 
         # -- load -------------------------------------------------------
@@ -615,19 +645,30 @@ def build_tessera_nvfp4_moe_method(scheme: Mapping, prefix: str, mode: str, laye
             self._input_global = None
             self._w13_len = self._w2_len = None
             self._shared_w13 = self._shared_w2 = None
+            # The runtime asks a method whose config is None for one before it
+            # serves; build it here, once, from the model's own facts.
+            self.moe_quant_config = self.get_fused_moe_quant_config(layer)
             layer.tessera_decoder = DECODER_NATIVE_SPAN2_GROUPED
             layer.tessera_backend = A4_GROUPED_GEMM_SYMBOL
 
+
         def get_fused_moe_quant_config(self, layer):
-            return make_nvfp4_moe_quant_config(
-                backend=self.nvfp4_backend,
-                w13_scale=layer.w13_weight_scale, w2_scale=layer.w2_weight_scale,
-                w13_scale_2=layer.w13_weight_scale_2, w2_scale_2=layer.w2_weight_scale_2,
-                a13_scale=layer.w13_input_scale, a2_scale=layer.w2_input_scale,
-                swiglu_limit=getattr(layer, "swiglu_limit", None),
-                swiglu_alpha=getattr(layer, "swiglu_alpha", None),
-                swiglu_beta=getattr(layer, "swiglu_beta", None),
-                layer=layer, use_a16=False)
+            """The native lane's quant config: alphas only, no stock tensors.
+
+            ``FusedMoEMethodBase`` declares this abstract and the runtime asks
+            every method for it (``RoutedExperts._ensure_moe_quant_config_init``);
+            the native grouped kernels take no quantised operands from it, so
+            it carries the model's swiglu facts and nothing else.  It must not
+            read the stock weight tensors (``w13_weight_scale`` and friends):
+            this route deliberately never fills them, and a config assembled
+            from empty anchors would be a lie about what serves.
+            """
+            from vllm.model_executor.layers.fused_moe.config import FusedMoEQuantConfig
+
+            return FusedMoEQuantConfig.make(
+                gemm1_alpha=getattr(layer, "swiglu_alpha", None),
+                gemm1_beta=getattr(layer, "swiglu_beta", None),
+                gemm1_clamp_limit=getattr(layer, "swiglu_limit", None))
 
         # -- forward ----------------------------------------------------
         def apply(self, layer, x, topk_weights, topk_ids, shared_experts,
@@ -738,19 +779,6 @@ def build_tessera_nvfp4_moe_method(scheme: Mapping, prefix: str, mode: str, laye
             self._record(layer, x)
             return out
 
-        def apply_monolithic(self, layer, x, router_logits, input_ids=None):
-            assert self.is_monolithic
-            assert self.moe_kernel is not None
-            out = self.moe_kernel.apply_monolithic(
-                x, layer.w13_weight, layer.w2_weight, router_logits,
-                activation=layer.activation, global_num_experts=layer.global_num_experts,
-                expert_map=layer.expert_map,
-                apply_router_weight_on_input=layer.apply_router_weight_on_input,
-                num_expert_group=layer.num_expert_group, topk_group=layer.topk_group,
-                e_score_correction_bias=layer.e_score_correction_bias,
-                routed_scaling_factor=layer.routed_scaling_factor)
-            self._record(layer, x)
-            return out
 
         def _record(self, layer, x) -> None:
             try:

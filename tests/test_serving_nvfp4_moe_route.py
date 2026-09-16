@@ -39,11 +39,33 @@ torch = pytest.importorskip("torch")
 
 from tessera.serving import nvfp4_moe_route                        # noqa: E402
 from tessera.serving.scheme import (                               # noqa: E402
-    STRUCTURE_ROUTED_MOE, TESSERA_NVFP4, launch_pairs)
+    STRUCTURE_ROUTED_MOE, TESSERA_NVFP4, experimental_launch_pairs, launch_pairs)
 
 HIDDEN, INTER, EXPERTS, Q256 = 64, 64, 3, 896
 SHARDS = ("w1", "w3", "w2")     # gate, up, down: the runtime's shard ids
 KERNEL_PAIR = ("vllm.fused_moe.modular_kernel", "torch_materialize_stock")
+
+
+def _native_prep_available() -> bool:
+    """Whether this interpreter can run the native load path at all.
+
+    ``prepare_a4_unit`` repacks the packed BODY through Triton CUDA kernels,
+    so the CPU stub suite below cannot drive it; the pinned image's
+    ``experiments/native_a4_serve_probe.py`` covers that ground against real
+    vLLM (and is the receipt for the native load/apply protocol).
+    """
+    try:
+        import tokenspeed_triton  # noqa: F401
+    except Exception:  # noqa: BLE001
+        return False
+    return torch.cuda.is_available()
+
+
+needs_native_prep = pytest.mark.skipif(
+    not _native_prep_available(),
+    reason=("the native load path repacks the packed BODY through Triton on "
+            "CUDA; this CPU suite cannot drive it -- see "
+            "experiments/native_a4_serve_probe.py in the pinned image"))
 
 
 def _tessera():
@@ -253,6 +275,7 @@ def _assert_tiles(layer, reference, rank=0, tp_size=1):
 # the tile
 # --------------------------------------------------------------------------
 
+@needs_native_prep
 def test_the_tile_is_the_stock_pair_after_the_per_expert_global_join(stack, nvfp4_runtime):
     """Gate at rows [0:N], up at [N:2N], one joined global per expert per
     group, every byte materialize_stock's -- and from finalize onward the
@@ -297,6 +320,7 @@ def test_the_tile_is_the_stock_pair_after_the_per_expert_global_join(stack, nvfp
     assert method.moe_kernel is not None
 
 
+@needs_native_prep
 def test_the_global_handed_to_the_kernel_is_the_multiplier(stack, nvfp4_runtime):
     """weight_scale_2 x block scale x nibble value == the stock dequant of the
     joined reference, exactly; the divisor read as a multiplier is not."""
@@ -331,6 +355,7 @@ def test_the_join_moved_a_half_on_at_least_one_expert(stack):
     assert moved >= 1
 
 
+@needs_native_prep
 def test_apply_hands_the_kernel_operands_that_compute_the_stock_reference(stack, nvfp4_runtime):
     wires, scheme, reference = stack
     from tessera.stock import stock_dequant
@@ -358,6 +383,7 @@ def test_apply_hands_the_kernel_operands_that_compute_the_stock_reference(stack,
     assert kwargs["activation"] == "silu" and kwargs["apply_router_weight_on_input"] is False
 
 
+@needs_native_prep
 def test_load_order_does_not_matter(stack, nvfp4_runtime):
     """Up before gate, down first, experts interleaved: the w13 join waits
     for both halves and the tile is the same."""
@@ -371,6 +397,7 @@ def test_load_order_does_not_matter(stack, nvfp4_runtime):
 
 
 @pytest.mark.parametrize("rank", [0, 1])
+@needs_native_prep
 def test_tp2_ranks_decode_and_hold_their_own_rows_and_columns(stack, nvfp4_runtime, rank):
     """Each rank parses every FULL container, cuts it on the group plan (rows
     of w13, columns of w2) and decodes only its own slice; the joined global
@@ -444,6 +471,7 @@ def test_geometry_refusals_arrive_at_create_weights(stack, nvfp4_runtime):
         method.create_weights(layer, EXPERTS, HIDDEN, INTER, torch.bfloat16)
 
 
+@needs_native_prep
 def test_wire_and_scale_loader_refusals(stack, nvfp4_runtime):
     wires, scheme, _reference = stack
     layer = _layer()
@@ -484,6 +512,7 @@ def test_wire_and_scale_loader_refusals(stack, nvfp4_runtime):
                            "experts.0.gate_proj.weight", "w1", 0)
 
 
+@needs_native_prep
 def test_finalize_refuses_an_incomplete_stack(stack, nvfp4_runtime):
     wires, scheme, _reference = stack
     # A missing A-side scale on one projection.
@@ -515,13 +544,47 @@ def test_finalize_refuses_an_incomplete_stack(stack, nvfp4_runtime):
 # the census expectation
 # --------------------------------------------------------------------------
 
+def test_native_method_is_modular_and_owns_no_stock_kernel(stack, nvfp4_runtime):
+    """The native method answers the modular protocol from its own definition.
+
+    Regression for the false stock-kernel ownership: the runtime's
+    ``is_monolithic`` delegates to ``experts_cls`` when one is present and
+    ``moe_kernel`` is None, so a selected stock backend's monolithic class
+    would route this method to the obsolete ``apply_monolithic`` path.  The
+    native route must own neither, and must answer ``is_monolithic`` False
+    itself.
+    """
+    _wires, scheme, _reference = stack
+    method = _build(scheme, _layer())
+    assert method.moe_kernel is None
+    assert method.moe_quant_config is None
+    assert not hasattr(method, "experts_cls")
+    assert method.is_monolithic is False
+    assert method.topk_indices_dtype is None
+    assert method.mk_can_overlap_shared_experts is False
+    assert method.supports_eplb is False
+    # the obsolete monolithic hook is gone from THIS class (the base may
+    # keep its own); the quant-config hook stays abstract-satisfied, without
+    # reading any stock tensor
+    assert "apply_monolithic" not in type(method).__dict__
+    assert "get_fused_moe_quant_config" in type(method).__dict__
+
+
 def test_census_expectation_is_the_shared_launch_table():
     expected = nvfp4_moe_route.census_expected()
     assert set(expected) == {"batch", "decode"}
     for regime, pairs in expected.items():
-        assert pairs == {KERNEL_PAIR}
-        assert pairs == launch_pairs(TESSERA_NVFP4, structure=STRUCTURE_ROUTED_MOE,
-                                     regime=regime, mode="resident")
+        # The route reports the native lane's own pairs on top of the attested
+        # dispatch (``experimental_launch_pairs``); the attested set is what
+        # ``launch_pairs`` returns and no qualification is promoted here.
+        native = experimental_launch_pairs(
+            TESSERA_NVFP4, structure=STRUCTURE_ROUTED_MOE, regime=regime,
+            mode="resident")
+        assert native, "the native lane must publish its own pairs"
+        assert pairs == {KERNEL_PAIR} | native
+        # the attested view itself is unchanged
+        assert {KERNEL_PAIR} == launch_pairs(TESSERA_NVFP4, structure=STRUCTURE_ROUTED_MOE,
+                                             regime=regime, mode="resident")
         assert pairs.isdisjoint(launch_pairs(TESSERA_NVFP4, regime=regime))
         assert not launch_pairs(TESSERA_NVFP4, structure=STRUCTURE_ROUTED_MOE,
                                 regime=regime, mode="streamed")
