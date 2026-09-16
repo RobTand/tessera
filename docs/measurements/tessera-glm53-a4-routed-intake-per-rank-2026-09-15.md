@@ -229,6 +229,36 @@ true value sits between them and depends on how vLLM shards each passthrough ter
 bench does not exercise. Two terms move it most: the MTP layer is resident only when
 speculative decoding is enabled, and attention is head-sharded at TP2.
 
+## Against the two figures this was meant to replace
+
+**The ~71.3 GiB/rank "measured-extrapolated" figure is refuted.** The routed expert tiles
+*alone* measure 79.735 GiB/rank — 8.4 GiB above that whole-rank estimate, before attention,
+embeddings, the visual tower, the MTP layer or anything else is counted. Whatever it
+extrapolated from, it cannot be a per-rank total.
+
+**The 104.5 GiB/rank routed projection could not be checked.** `a4/footprint-budget.md` is not
+present under the artifact export tree, so its derivation is a missing input and is not
+reconstructed here. Taken at face value it is *consistent* with this measurement — it sits
+inside the 94.5 to 108.8 GiB weights-alone band above — so this run constrains it rather than
+confirming or refuting it.
+
+## Does it clear the 16 GiB floor at TP2?
+
+The pool is 121.6 GiB and the floor is 16 GiB, so 105.6 GiB is usable for everything.
+
+| Quantity | GiB | Against 105.6 |
+|---|---|---|
+| Routed intake, **measured** | 79.735 | clears, 25.9 spare |
+| Weights alone, lower bound (every term cut) | 94.5 | clears by 11.1 before KV |
+| Weights alone, upper bound (passthrough replicated) | 108.8 | **fails by 3.2 before KV** |
+| Weights alone, realistic band | 88 to 95 | clears, 10.6 to 17.6 left |
+
+The routed tiles clear the floor with real margin, and that is what this receipt measures. **A
+whole-rank fit is not established here.** It turns on the two terms this bench does not
+exercise — whether the MTP layer is resident (13.84 GiB, only under speculative decoding) and
+whether attention is head-sharded — and the upper bound genuinely fails. Those want their own
+measurement before a full serve, not another projection.
+
 ## Environment
 
 | Item | Value |
