@@ -16,9 +16,18 @@ At layer 6 the real run held **288 pooled blocks of exactly 20,971,520 B whose
 last request was 1,572,864 B** -- the point plane
 (`kernel_wire.pack_span2_point_cuda`'s `torch.zeros(cols*steps_per_col*wid//8)`),
 one per expert projection.  Reserved 20.545 GiB against 14.887 GiB allocated;
-the standalone probe without the constructor's 7.95 GiB parameter pool pooled
-only 2 such blocks, which is why the earlier probes did not see it.  The
-per-wire output was allocated, copied into the axis by `put`, and dropped.
+the standalone 4-layer probe's own terminal counters were clean instead:
+6.8210 GiB allocated against 6.8438 GiB reserved -- 23.34 MiB of excess at its
+last wire callback and before finalize (7,323,942,400 B / 7,348,420,608 B,
+identical on both ranks; end-of-load `cuda_before` in
+`f5-incident-review/receipts/ml-tp{0,1}-f5rev/summary.json`).
+The full runtime carried 7.950 GiB of parameters over 214 segments before its
+first wire, but that the resulting pool composition is what let the point-plane
+bodies accumulate is a hypothesis, not something either run measured; the
+earlier reading of the standalone dump as ~1.86 GiB of dead 20 MiB slabs is
+withdrawn, because that dump's segment list does not reproduce the run's
+recorded counters.  The per-wire output was allocated, copied into the axis by
+`put`, and dropped.
 
 ## Change
 
