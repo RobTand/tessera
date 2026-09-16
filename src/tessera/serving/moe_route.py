@@ -610,10 +610,15 @@ def _bind_module_prefix(layer, prefix: str) -> bool:
     The route trace names a module by ``layer.prefix`` (``telemetry.py``,
     ``_RouteTrace.count``), and this layer arrives WITHOUT one: vLLM's fused
     MoE takes ``prefix`` as a constructor argument and stores no attribute, so
-    every routed dispatch was counted UNNAMED and two routed layers -- L3's A8
-    stack and L4's folded A16 stack -- collapsed into one bucket per shape of
-    their shared policy.  A lane policy is not module coverage, and no consumer
-    may read it as any.
+    every routed dispatch was counted UNNAMED -- ``module_names: []``,
+    ``unnamed_modules: 1``, per entry.  That is a missing module identity, not
+    an observed collapse: in the one traced fixture the two routed layers carry
+    DIFFERENT policies (``TESSERA_FP8`` on L3, ``TESSERA_BF16`` on L4), so the
+    entry key separated them by accident.  Nothing guarantees it.  Entries are
+    keyed by policy, shape, symbol, decoder and contract, so two routed modules
+    of the SAME policy and shape are one entry with one module count, and the
+    trace then cannot say which module dispatched or how many did.  A lane
+    policy is not module coverage, and no consumer may read it as any.
 
     The builder is handed the module's real name and already prints it in every
     refusal here, so that is the identity it binds -- and ONLY where the layer

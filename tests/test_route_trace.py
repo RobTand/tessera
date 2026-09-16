@@ -233,11 +233,13 @@ def test_the_routed_builder_names_its_layer_and_two_routed_layers_stay_two(traci
 
     vLLM's fused MoE takes ``prefix`` as a constructor argument and stores no
     attribute, so the routed layer reached ``emit_route`` with no ``prefix``
-    and every routed dispatch was counted UNNAMED: layer 3's A8 stack and
-    layer 4's folded A16 stack were ONE bucket, separable only by lane policy
-    -- which is not module coverage.  The builder binds the name it was given,
-    so two routed layers are two named modules, and their swap moves names
-    rather than leaving a histogram.
+    and every routed dispatch was counted UNNAMED -- a missing module identity.
+    In the traced fixture the two routed layers happened to hold DIFFERENT
+    policies (FP8 on layer 3, BF16 on layer 4) and so landed in different
+    entries by accident; two modules of the SAME policy and shape would not,
+    because the entry key is policy+shape+symbol+decoder+contract.  The builder
+    binds the name it was given, so two routed layers of one policy are two
+    named modules, and their swap moves names rather than leaving a histogram.
     """
     from tessera.serving import moe_route
 
