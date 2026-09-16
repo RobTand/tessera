@@ -18,6 +18,18 @@ def test_cuda_body_does_not_reconstruct_fields_on_cpu(monkeypatch):
     assert torch.equal(actual.cpu(), expected)
 
 @cuda
+def test_cuda_body_reads_the_packed_plane_without_host_expansion(monkeypatch):
+    blob = bytes([0x1b, 0xe4])
+    expected = wire.unpack_body(blob, (2, 2), 4)
+    def forbidden(*args, **kwargs):
+        raise AssertionError('CUDA BODY expanded the packed plane on the host')
+    monkeypatch.setattr(wire.np, 'unpackbits', forbidden)
+    actual = wire.unpack_body(blob, (2, 2), 4, 'cuda')
+    assert actual.is_cuda
+    assert torch.equal(actual.cpu(), expected)
+
+
+@cuda
 @pytest.mark.parametrize('span', [1, 2, 3, 8])
 @pytest.mark.parametrize('rows_per_span', [0, 1, 17, 257])
 def test_cuda_body_matches_cpu_for_mixed_unaligned_fields(span, rows_per_span):
