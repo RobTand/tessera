@@ -12,13 +12,17 @@ memory; it is not a full-model footprint or serve claim.
 ## Causal finding
 
 The f5 in-process profile (worker main thread, both ranks; sleeping threads
-excluded) put 97 % of the sampled second in `_load_wire`, and none of it
-decoded a wire — it re-derived layer-constant facts per wire: two serialised
-SHA-256 passes (`verify_plane_region` 4.36 / 4.25 s), `_check_rate`'s linear
+excluded) put 97 % of the 15 s loader sample in `_load_wire`.  There is no
+full-weight materialization on this path -- parsing and packed preparation
+are real work and remain -- but most of the time was per-wire re-derivation
+of layer-constant facts and two serialised digest passes rather than
+preparation: `verify_plane_region` (4.36 / 4.25 s), `_check_rate`'s linear
 legal-rate scan (2.14 / 2.23 s, 3.28 M calls), `_steps_of`'s per-column
 `body_bits` walk (0.85 / 0.72 s), 4096 `completion_capacity` calls per wire
 (1.19 / 1.02 s), the encoder-profile search per wire (0.56 / 0.52 s), and
-`_plane_words` rebuilt once per packer (0.20 / 0.23 s).
+`_plane_words` rebuilt once per packer (0.20 / 0.23 s); packed preparation
+itself (`prepare_span2_compact`) was 4.62 / 5.05 s and is optimized here only
+where it repeated work.
 
 ## Changes
 
@@ -57,6 +61,11 @@ Probe timers: `loader_seconds` wraps only the `_load_wire` call;
 `loop_seconds` includes the probe's per-callback accounting; `wire_bytes_read`
 is the sum of the actual per-wire `tensor_bytes` (projections differ, so it is
 not `count x constant`).  Units are MiB = 2**20 and MiB/s = bytes / 2**20 / s.
+
+These are bounded geometry measurements of a warm-cache loader benchmark on
+one workload host; they are not a throughput goal and not an NFS end-to-end
+figure (the probe runs with the artifact already cached, and the storage NICs
+stayed at ~0.1-0.2 Mbit/s in the retained host series).
 
 | geometry | before (`a0d85cc`) | after (`4d512bf`) | loader speedup |
 |---|---|---|---|
@@ -111,18 +120,35 @@ per rank, `reserved/allocated = 1.016`, oracle PASS.  Both-host time series
   the `fused.shared_lut_global` gate/up join; oracle PASS and scratch-reuse
   invariance hold (`receipts/perf-gate2-r{0,1}`, `full-layer-r{0,1}-perf2`).
 
+## Host evidence (retained historical Netdata, full JSON)
+
+`loader-memory/receipts/host-evidence/` holds the per-window series for the
+four runs above from both nodes (head `127.0.0.1:19999`, peer
+`192.168.1.110:19999`): CPU, RAM, `mem.available`, PSI, three NICs and the
+GPU power gauge, with per-window sample counts in
+`host-evidence-summary.json`.  The workload host is sparky for every run (the
+runner executes locally; `--tp-rank` selects the geometry, not the host), so
+the peer series are the idle baseline: 1.4-2.3 % CPU, 4.0-5.7 GiB used,
+`MemAvailable` >= 114.9 GiB, PSI 0.  Sparky during the runs: 9.1-11.4 % CPU
+busy (max 17.8-21.7 %), `MemAvailable` minimum 103.2-107.7 GiB, PSI 0 in every
+window, storage NICs ~0.1-0.2 Mbit/s, GPU power gauge (10 s cadence, 7-8
+samples/window) 7.8-12.9 W mean, 15 W max.  The power samples do not resolve
+a ~7 s load window and no energy claim is made.  Two peer power series were
+empty in the retained window and are recorded as absent, not as zero.
+
 ## Remaining limitations
 
 - `Manifest.decode` still calls `bresenham_rate_schedule` twice per wire
   (~7 % of the remaining probe load time); untouched.
 - The probe's intake order is file/key order for one layer, so its memory
-  figure is not a production-order peak bound (see
-  `loader-memory/ASTRA-F5-ORDER-FINDING.md`); per that finding, writing each
-  projection directly into its final destination and deferring only the small
-  LUT/global reconciliation is the next structural step, not part of this
-  change.
-- Full-model memory acceptance and any serve claim remain with the full-run
-  owner (`FULL-LOAD-MEMORY-ACCEPTANCE.md`).
+  figure is not a production-order peak bound.  The bounded 4-layer probe on
+  both TP cuts run by the incident-review owner was **negative** for the
+  pending-projection hypothesis (~6.84 GiB reserved) and established no
+  order difference; nothing here claims pending projections as a memory
+  cause.
+- These numbers are a warm-cache loader benchmark; NFS end-to-end loading is
+  not measured here.  Full-model memory acceptance and any serve claim remain
+  with the full-run owner (`FULL-LOAD-MEMORY-ACCEPTANCE.md`).
 
 ## Standing note
 
