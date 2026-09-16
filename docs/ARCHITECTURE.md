@@ -5,6 +5,20 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-16 for the routed window lane's intake predicate
+(`moe_route.compact_window_lane`).  The construction-time identity and the
+loader ownership were two spellings of one question, and they disagreed at A16
+TP1: the identity arm named `tp_size == 2` while the intake arm named the
+research-selected config *and* `tp_size == 2`, so a research-selected BF16 stack
+at TP1 was constructed non-native and walked into the materialising branch and
+vLLM's backend oracle.  One function now answers both, and the A16 arm admits
+TP1 and TP2 under the research-selected config only.  Construction-level
+evidence: PB action `0a02b919…` (14 passed, CPU, no device) with the pre-fix
+failure recorded as `moe_route.py:738` -> `select_unquantized_moe_backend`.
+This is a dispatch fact, not a qualification: no native A16 TP1 serve has run,
+the routed cells still name the stock dispatch, and the pair stays in
+`scheme.EXPERIMENTAL_LAUNCHES`.
+
 Re-stamped 2026-09-15 for contract v29's tensor-parallel attestation
 (tessera#506, tessera#514). `tensor_parallel.units[].max_world_size` is 2 for
 `TESSERA_E2M1_K2`, `TESSERA_E4M3_K1` and `TESSERA_BF16_K1`, and each unit names
@@ -2018,8 +2032,15 @@ their own load-time agreement for the reference path.  The lane stamps
 `window_gemv`, so a census can tell a native serve from a reference one.
 
 **The ROUTED window lane serves the same way, and is likewise a candidate.** A
-routed stack whose family is FP8 (`TESSERA_E4M3_K1`) or BF16
-(`TESSERA_BF16_K1`) runs the compact intake -- one
+routed stack reaches the compact intake through ONE predicate,
+`moe_route.compact_window_lane`: `TESSERA_E4M3_K1` (FP8) takes it at every
+world size, and `TESSERA_BF16_K1` takes it only under an explicit
+research-selected config, at TP1 and TP2 -- the world sizes
+`_require_research_parallel_contract` checks -- because compressed BF16 has no
+production expert route (`scheme.MOE_BUILDERS` names FP8 and NVFP4, and
+`refuse_a_family_with_no_expert_route` refuses the stack at the builder's front
+door before any fused-MoE import).  An unsupported BF16 stack is therefore
+refused by name, never handed to a materialiser.  The lane runs one
 `scheme.parse_compact_tessera_expert_blob` per projection -- into a
 preallocated per-expert axis (`native_window_moe.WindowUnitAxis`) and applies
 the two-stage grouped kernels (`window_gemm_grouped`, wrapped by
