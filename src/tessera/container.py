@@ -279,20 +279,26 @@ def verify_plane_region(
             failure["error"] = exc
 
     worker = None
-    if len(plane_region) >= _PARALLEL_DIGEST_MIN_BYTES:
-        worker = threading.Thread(target=_verify_planes, daemon=True)
-        worker.start()
-    digest = hashlib.sha256(region).digest()
-    if digest != terminal.payload_digest:
+    payload_ok = False
+    try:
+        if len(plane_region) >= _PARALLEL_DIGEST_MIN_BYTES:
+            worker = threading.Thread(target=_verify_planes, daemon=True)
+            worker.start()
+        digest = hashlib.sha256(region).digest()
+        payload_ok = digest == terminal.payload_digest
+    finally:
+        # Unconditional: a failure in the caller's own hash (MemoryError, an
+        # interrupt) must not leave the worker running.  No check moves; the
+        # payload comparison below still runs before any plane-level error is
+        # re-raised.
         if worker is not None:
             worker.join()
+    if not payload_ok:
         raise SchemaError(
             f"terminal {terminal.slot_id!r}: plane-region bytes do not match "
             "the declared payload digest"
         )
-    if worker is not None:
-        worker.join()
-    else:
+    if worker is None:
         _verify_planes()
     if "error" in failure:
         raise failure["error"]

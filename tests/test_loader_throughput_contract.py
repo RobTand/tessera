@@ -187,6 +187,126 @@ def test_parallel_digest_path_over_one_mib_payload_precedence_and_content_digest
         container.parse(b"\x89TESSERA\x01\x00" + bytes(64))
 
 
+def test_main_hash_failure_still_joins_the_worker(monkeypatch):
+    """A caller-side hash failure must not leave the plane worker running."""
+    import time
+
+    blob = _a4_wire_blob()
+    art = container.parse(blob)
+    region_len = len(art.plane_region)
+    assert region_len >= (1 << 20)
+    smallest_gap = min(
+        total for _d, _o, _c, total in container.plane_ranges(art.manifest, art.terminal)
+    )
+    assert smallest_gap < region_len, "the region hash is the only call this shim fails"
+
+    class _Shim:
+        def __init__(self, real):
+            self._real = real
+            self.raised = False
+
+        def sha256(self, buf, *args, **kwargs):
+            if not self.raised and len(buf) >= region_len:
+                self.raised = True
+                raise MemoryError("injected region-hash failure")
+            return self._real.sha256(buf, *args, **kwargs)
+
+    monkeypatch.setattr(container, "hashlib", _Shim(container.hashlib))
+    before = threading.active_count()
+    with pytest.raises(MemoryError, match="injected region-hash failure"):
+        container.parse(blob)
+    deadline = time.monotonic() + 5.0
+    while threading.active_count() > before and time.monotonic() < deadline:
+        time.sleep(0.01)
+    assert threading.active_count() == before, "the digest worker outlived the failure"
+
+
+def _plane_with_count(art, order_index: int, count: int, *, alignment=None):
+    """A manifest/terminal pair whose plane ``order_index`` declares ``count``.
+
+    Both sides move together: the terminal's element count and the
+    descriptor's ``counts``/``restart_offsets``, plus the terminal's
+    ``exact_bytes`` recomputed from the descriptors, because the manifest
+    validates them against each other.
+    """
+    kind = art.manifest.plane_order[order_index]
+    planes = list(art.manifest.planes)
+    for index, descriptor in enumerate(planes):
+        if descriptor.kind is kind:
+            # One granule of ``count`` elements: ``element_count`` is
+            # ``sum(counts)`` and ``restart_offsets`` are its prefix sums.
+            changes = {"counts": (count,), "restart_offsets": (0,)}
+            if alignment is not None:
+                changes["alignment_bytes"] = alignment
+            planes[index] = dataclasses.replace(descriptor, **changes)
+            break
+    elements = list(art.terminal.plane_elements)
+    elements[order_index] = count
+    exact = sum(descriptor.byte_length(elements[index])
+                for index, descriptor in enumerate(planes))
+    terminal = dataclasses.replace(art.terminal, plane_elements=tuple(elements),
+                                   exact_bytes=exact)
+    terminals = tuple(terminal if record is art.terminal else record
+                      for record in art.manifest.terminals)
+    manifest = dataclasses.replace(art.manifest, planes=tuple(planes),
+                                   terminals=terminals)
+    return manifest, terminal
+
+
+def test_parallel_digest_path_refuses_nonzero_padding_after_a_recomputed_payload():
+    """The plane error path itself, at >= 1 MiB, with the payload check passing."""
+    blob = _a4_wire_blob()
+    art = container.parse(blob)
+    order_index = next(
+        index for index, kind in enumerate(art.manifest.plane_order)
+        if art.manifest.planes[index].element_bits == 1
+    )
+    # count = 1 bit -> content 1 byte; declaring an 8-byte alignment makes
+    # the rest of the slice alignment padding (the wire's own planes declare
+    # alignment 1, so the canonicality check is reached by declaring one).
+    manifest, terminal = _plane_with_count(art, order_index, 1, alignment=8)
+    ranges = list(container.plane_ranges(manifest, terminal))
+    descriptor, offset, content, total = next(
+        r for r in ranges if r[0].kind is manifest.plane_order[order_index])
+    assert total > content, "the constructed plane has alignment padding"
+    region = bytearray(art.plane_region)
+    for byte in range(offset + content, offset + total):
+        region[byte] = 0xFF
+    terminal = dataclasses.replace(terminal,
+                                   payload_digest=hashlib.sha256(bytes(region)).digest())
+    with pytest.raises(PlaneLayoutError, match="alignment padding"):
+        container.verify_plane_region(manifest, terminal, bytes(region))
+
+
+def test_parallel_digest_path_refuses_nonzero_slack_after_a_recomputed_payload():
+    """The sub-byte slack refusal, at >= 1 MiB, with the payload check passing."""
+    blob = _a4_wire_blob()
+    art = container.parse(blob)
+    order_index = next(
+        index for index, kind in enumerate(art.manifest.plane_order)
+        if art.manifest.planes[index].element_bits == 1
+    )
+    alignment = None
+    for count in range(1, 4096):
+        manifest, terminal = _plane_with_count(art, order_index, count)
+        ranges = list(container.plane_ranges(manifest, terminal))
+        descriptor, offset, content, total = next(
+            r for r in ranges if r[0].kind is manifest.plane_order[order_index])
+        bits = count * descriptor.element_bits
+        if content == total and (-bits) % 8 and content:
+            alignment = (count, descriptor, offset, content, (-bits) % 8)
+            break
+    assert alignment is not None, "a 1-bit plane can carry slack without padding"
+    count, descriptor, offset, content, slack = alignment
+    manifest, terminal = _plane_with_count(art, order_index, count)
+    region = bytearray(art.plane_region)
+    region[offset + content - 1] |= (1 << slack) - 1
+    terminal = dataclasses.replace(terminal,
+                                   payload_digest=hashlib.sha256(bytes(region)).digest())
+    with pytest.raises(PlaneLayoutError, match="pad bits"):
+        container.verify_plane_region(manifest, terminal, bytes(region))
+
+
 def test_parallel_digest_path_is_exact_on_the_valid_wire():
     blob = _a4_wire_blob()
     art = container.parse(blob)
