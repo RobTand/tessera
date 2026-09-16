@@ -54,8 +54,10 @@ def _down(dn_stack, act, ids, rw, rows_h, family, folded, weight_input):
     if family == "e4m3":
         routes = routes * a2.reshape(t, k, 1)
     if not weight_input:
-        routes = routes * rw[..., None]                      # gemm2 / topk_weight_and_reduce
-    return routes.sum(1).bfloat16()
+        routes = (routes * rw[..., None]).bfloat16()         # gemm2 bf16 cast
+    else:
+        routes = routes.bfloat16()
+    return routes.float().sum(1).bfloat16()                  # stock moe_sum
 
 
 @cuda
@@ -110,6 +112,48 @@ def test_native_window_moe_matches_the_oracle_fused_and_split():
                 f"fused {family}/{arithmetic} weight_input={weight_input}")
             assert float((out_s.float() - ref_s.float()).abs().max()) < _tol(ref_s), (
                 f"split {family}/{arithmetic} weight_input={weight_input}")
+
+
+@cuda
+def test_packed_window_units_prepare_matches_the_direct_adapter():
+    """The loader-facing bundle: packed units in, adapter out, fused and split
+    spellings, with the per-expert bytes accounted."""
+    rows_h, cols_h, inter, experts = 768, 192, 96, 2
+    gu = [Expert(2 * inter, cols_h, (4,) * cols_h, 900 + i) for i in range(experts)]
+    gate = [Expert(inter, cols_h, (4,) * cols_h, 910 + i) for i in range(experts)]
+    up = [Expert(inter, cols_h, (4,) * cols_h, 920 + i) for i in range(experts)]
+    dn = [Expert(rows_h, inter, (4,) * inter, 930 + i) for i in range(experts)]
+    t, k = 16, 2
+    x = torch.randn(t, cols_h, device="cuda").bfloat16()
+    ids = torch.randint(0, experts, (t, k), device="cuda", dtype=torch.int32)
+    rw = torch.rand(t, k, device="cuda")
+
+    fused_pack = nwm.PackedWindowUnits(gate=tuple(e.unit for e in gu), up=(),
+                                       down=tuple(e.unit for e in dn), family="value")
+    split_pack = nwm.PackedWindowUnits(gate=tuple(e.unit for e in gate),
+                                       up=tuple(e.unit for e in up),
+                                       down=tuple(e.unit for e in dn), family="value")
+    for pack, direct in (
+        (fused_pack, nwm.prepare_native_window_moe([e.unit for e in gu],
+                                                   [e.unit for e in dn],
+                                                   arithmetic="folded")),
+        (split_pack, nwm.prepare_native_window_moe([e.unit for e in gate],
+                                                   [e.unit for e in dn],
+                                                   up=[e.unit for e in up],
+                                                   arithmetic="folded")),
+    ):
+        assert pack.experts == experts and pack.resident_bytes() > 0
+        from_pack = pack.prepare()
+        assert torch.equal(from_pack(x, ids, rw), direct(x, ids, rw))
+        assert from_pack.down.arithmetic == "folded", \
+            "the research BF16 wire's default arithmetic is folded"
+    fp8_gu = [Expert(2 * inter, cols_h, (4,) * cols_h, 940 + i, family="e4m3")
+              for i in range(experts)]
+    fp8_dn = [Expert(rows_h, inter, (4,) * inter, 950 + i, family="e4m3")
+              for i in range(experts)]
+    fp8_pack = nwm.PackedWindowUnits(gate=tuple(e.unit for e in fp8_gu), up=(),
+                                     down=tuple(e.unit for e in fp8_dn), family="e4m3")
+    assert fp8_pack.prepare().down.arithmetic == "epilogue"
 
 
 @cuda

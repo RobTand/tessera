@@ -42,10 +42,51 @@ from .errors import GrammarError
 from .kernel_window_gemv import WindowGemvUnit
 from .window_gemm_grouped import PreparedGroupedWindowGemm, prepare_grouped_window_gemm
 
-__all__ = ["NativeWindowMoE", "prepare_native_window_moe", "SUPPORTED_ACTIVATIONS"]
+__all__ = ["NativeWindowMoE", "prepare_native_window_moe", "PackedWindowUnits",
+           "SUPPORTED_ACTIVATIONS"]
 
 #: The activations this adapter reproduces exactly.  Everything else refuses.
 SUPPORTED_ACTIVATIONS = ("silu",)
+
+
+@dataclasses.dataclass(frozen=True)
+class PackedWindowUnits:
+    """Rank-local per-expert units in GLOBAL expert order, one entry per
+    expert: what a loader hands the adapter without a second weight walk."""
+
+    gate: tuple
+    up: tuple
+    down: tuple
+    family: str
+
+    @property
+    def experts(self) -> int:
+        return len(self.down)
+
+    def resident_bytes(self) -> int:
+        total = 0
+        for unit in (*self.gate, *self.up, *self.down):
+            rep = unit.rep
+            total += rep.words.numel() * rep.words.element_size()
+            for t in (unit.table, unit.scale, unit.initial_state, unit.codes_of_state, unit.native):
+                if t is not None:
+                    total += t.numel() * t.element_size()
+        return total
+
+    def prepare(self, *, block_m: int = 64, block_n: int = 64, block_k: int = 64,
+                arithmetic: "str | None" = None, activation: str = "silu",
+                quantizer: "str | None" = "native") -> "NativeWindowMoE":
+        """Build the adapter.  The default arithmetic is each family's
+        published contract: folded for the research BF16 wire, epilogue for
+        the FP8 wire.  An explicit value must match the family's served
+        contract; nothing here silently swaps them."""
+        if arithmetic is None:
+            arithmetic = "folded" if self.family == "value" else "epilogue"
+        up = list(self.up) if self.up else None
+        return prepare_native_window_moe(
+            list(self.gate), list(self.down), up=up,
+            block_m=block_m, block_n=block_n, block_k=block_k,
+            quantizer=quantizer, arithmetic=arithmetic, activation=activation)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -89,7 +130,8 @@ class NativeWindowMoE:
         t_tokens, top_k, _ = act.shape
         return self.down(act.reshape(t_tokens * top_k, inter), expert_ids, routing_weights,
                          route_input=True,
-                         apply_router_weight_on_input=apply_router_weight_on_input)
+                         apply_router_weight_on_input=apply_router_weight_on_input,
+                         round_routes=True)
 
 
 def _silu_and_mul(gate: torch.Tensor, up: torch.Tensor) -> torch.Tensor:

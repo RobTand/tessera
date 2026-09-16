@@ -29,6 +29,10 @@ MODES (matching vLLM's ``TopKWeightAndReduce`` semantics).
   and cast once to bf16.  ``route_input=True`` indexes ``x`` by route instead
   of by token, so the down projection of a two-stage MoE consumes the
   per-route activations directly and still reduces over ``top_k``.
+  ``round_routes=True`` rounds each route's down output to bf16 *before* the
+  atomic reduction, which is the stock runtime boundary (vLLM's bf16 cache13
+  plus ``moe_sum``); without it the whole reduction stays fp32 and rounds
+  once, a different arithmetic for the same weights.
 * Both modes apply the family epilogues: BF16 row scale only (the research
   folded rounding has no API here); FP8 ``y = acc * a_scale[t] * w_scale[e, n]``
   under vLLM's native per-token quantizer.  ``prepare_grouped_window_gemm``'s
@@ -87,6 +91,7 @@ def _grouped_window_gemm_kernel(
     BM: tl.constexpr, BN: tl.constexpr, BK: tl.constexpr,
     FP8: tl.constexpr, PRESERVE: tl.constexpr,
     MUL_WEIGHT: tl.constexpr, ROUTE_INPUT: tl.constexpr, FOLDED: tl.constexpr,
+    ROUND_ROUTES: tl.constexpr,
 ):
     e = tl.program_id(0)
     pid_n = tl.program_id(1)
@@ -199,6 +204,11 @@ def _grouped_window_gemm_kernel(
                 contrib.to(tl.bfloat16), mask=live_tok[:, None] & live_n[None, :],
             )
         else:
+            if ROUND_ROUTES:
+                # the stock runtime boundary: each route's down output is
+                # rounded to the compute dtype before the reduction, exactly
+                # what vLLM's cache13 (bf16) + moe_sum performs
+                contrib = contrib.to(tl.bfloat16).to(tl.float32)
             tl.atomic_add(
                 out_ptr + tok[:, None] * rows + offs_n[None, :],
                 contrib, mask=live_tok[:, None] & live_n[None, :],
@@ -244,7 +254,8 @@ class PreparedGroupedWindowGemm:
                  *,
                  preserve: bool = False,
                  apply_router_weight_on_input: bool = False,
-                 route_input: bool = False) -> torch.Tensor:
+                 route_input: bool = False,
+                 round_routes: bool = False) -> torch.Tensor:
         if x.dim() != 2 or x.shape[1] != self.cols or x.device != self.device:
             raise GrammarError(
                 f"x must be a [T, {self.cols}] tensor on {self.device}, got "
@@ -365,6 +376,7 @@ class PreparedGroupedWindowGemm:
                 MUL_WEIGHT=(apply_router_weight_on_input == preserve),
                 ROUTE_INPUT=route_input,
                 FOLDED=(self.arithmetic == "folded"),
+                ROUND_ROUTES=round_routes,
                 num_warps=8,
             )
         return result if preserve else result.to(torch.bfloat16)

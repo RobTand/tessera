@@ -355,8 +355,10 @@ def test_grouped_two_stage_moe_matches_the_route_preserving_oracle():
             if family == "e4m3":
                 routes2 = routes2 * a2.reshape(t, k, 1)
             if not weight_input:
-                routes2 = routes2 * rw[..., None]      # gemm2 / topk_weight_and_reduce
-            return routes2.sum(1).bfloat16()
+                routes2 = (routes2 * rw[..., None]).bfloat16()   # gemm2 cast
+            else:
+                routes2 = routes2.bfloat16()
+            return routes2.float().sum(1).bfloat16()             # moe_sum
 
         for weight_input in (False, True):
             route = gu(x, ids, rw, preserve=True,
@@ -428,6 +430,29 @@ def test_grouped_folded_arithmetic_is_decode_folded_and_differs_from_epilogue():
             arithmetic="folded")
     with pytest.raises(GrammarError, match="unknown weight arithmetic"):
         wgg.prepare_grouped_window_gemm([e.unit for e in stack], arithmetic="fold")
+
+
+@cuda
+def test_grouped_round_routes_is_the_stock_boundary():
+    """Every route's down output is bf16 before the reduction -- vLLM's bf16
+    cache13 plus moe_sum -- while the default fp32 reduction rounds once at
+    the end; the two are different arithmetic and the mode is explicit."""
+    rows, cols, experts = 768, 192, 3
+    stack = _stack(rows, cols, "value", [201, 202, 203])
+    prepared = wgg.prepare_grouped_window_gemm([e.unit for e in stack],
+                                               block_m=32, block_n=64, block_k=64)
+    t, k = 16, 2
+    x = torch.randn(t, cols, device="cuda").bfloat16()
+    ids = torch.randint(0, experts, (t, k), device="cuda", dtype=torch.int32)
+    rw = torch.rand(t, k, device="cuda")
+    out = prepared(x, ids, rw, round_routes=True)
+    sel = torch.arange(t, device="cuda")[:, None].expand_as(ids)
+    routes = torch.stack([e.reference(x, "value") for e in stack])[ids.long(), sel]
+    ref = (routes * rw[..., None]).bfloat16().float().sum(1).bfloat16()
+    assert float((out.float() - ref.float()).abs().max()) < _tol(ref)
+    plain = prepared(x, ids, rw, round_routes=False)
+    assert not torch.allclose(out.float(), plain.float(), rtol=0, atol=0), \
+        "the round_routes boundary must be observable"
 
 
 @cuda
