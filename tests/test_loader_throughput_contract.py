@@ -135,14 +135,20 @@ def test_memo_does_not_change_any_corpus_verdict():
 
 
 def _a4_wire_blob() -> bytes:
+    """The Tessera artifact inside one expert projection's fused container."""
     index_path = box_artifacts.skip_now("a4_export", "model.safetensors.index.json")
     weight_map = json.loads(Path(index_path).read_text())["weight_map"]
     tensor = A4_TENSOR.format(projection="gate_proj")
     shard = box_artifacts.skip_now("a4_export", weight_map[tensor])
     from safetensors import safe_open
 
+    from tessera.fused import parse_fused
+
     with safe_open(shard, framework="pt") as f:
-        return f.get_tensor(tensor).numpy().tobytes()
+        fused = f.get_tensor(tensor).numpy().tobytes()
+    members = list(parse_fused(fused))
+    assert len(members) == 1, "one expert projection container frames one role"
+    return members[0].blob
 
 
 def test_parallel_digest_path_over_one_mib_payload_precedence_and_content_digest():
@@ -176,7 +182,9 @@ def test_parallel_digest_path_over_one_mib_payload_precedence_and_content_digest
     with pytest.raises((TruncationError, SchemaError)):
         container.parse(blob[: container.HEADER_BYTES + 8])
     with pytest.raises(SchemaError, match="foreign magic"):
-        container.parse(b"\x89TESSERA\x00\x00" + bytes(64))
+        container.parse(b"NOTTESSERA" + bytes(64))
+    with pytest.raises(SchemaError, match="header size"):
+        container.parse(b"\x89TESSERA\x01\x00" + bytes(64))
 
 
 def test_parallel_digest_path_is_exact_on_the_valid_wire():

@@ -94,8 +94,11 @@ class A4ExpertAxis:
     layout and fills that expert's slot (expert ids arrive in checkpoint
     order, not necessarily from zero); later experts verify the layout and
     fill their own slot; the per-expert ``A4Unit`` is dropped as soon as its
-    slot is written, so ``finish`` copies nothing and the model's packed weights are
-    never held twice.  This is the same rule
+    slot is written, so ``finish`` copies nothing.  A ``w13`` expert's two
+    halves still wait in ``_ExpertIntake.pending`` until both arrive (the
+    fused tile carries one shared global), so a pending half coexists with
+    the destination buffers during intake; what is never held twice is a
+    written expert's planes.  This is the same rule
     ``native_window_moe.WindowUnitAxis`` encodes for its grouped stacks, and
     it is what keeps a load under the runtime's ``max_split_size_mb=20``
     allocator context from churning dead slabs: per-expert temporaries are

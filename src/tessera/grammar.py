@@ -271,7 +271,8 @@ def _check_rate(rate: int, cap: "int | None" = C_FULL_BITS) -> None:
     if cap is None:
         return
     if cap == C_FULL_BITS:
-        legal = (rate in _LEGAL_RANGE) if _LEGAL_RANGE is not None             else (rate in LEGAL_RATES)
+        legal = (rate in _LEGAL_RANGE) if _LEGAL_RANGE is not None \
+            else (rate in LEGAL_RATES)
         domain = LEGAL_RATES
     else:
         legal = rate in range(1, cap + 1)
