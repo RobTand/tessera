@@ -88,6 +88,7 @@ from typing import Mapping, Sequence
 
 import torch
 
+from ..errors import GrammarError
 from ..moe_execution import ResearchSelectedMoeConfig
 from ..moe_layout import (W13_PROJECTIONS, MoePacked, unpack_moe_wires,
                           validate_moe_wire_lengths)
@@ -1089,7 +1090,7 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
                     f"{prefix}: native routing needs integer IDs and floating weights")
             if any(t.device != self._packed.device for t in (x, topk_ids, topk_weights)):
                 raise ValueError(f"{prefix}: inputs and packed experts must share one device")
-            self._require_native_contract(layer)
+            limit = self._require_native_contract(layer)
             if x.shape[0] == 0:
                 return x.new_empty((0, int(declared['hidden_size'])))
             x_native = x.reshape(-1, x.shape[-1])
@@ -1098,26 +1099,38 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
             with torch.profiler.record_function('tessera_native_window_moe'):
                 out = self._native(
                     x_native, topk_ids, topk_weights,
+                    swiglu_limit=limit,
                     apply_router_weight_on_input=bool(
                         getattr(layer, 'apply_router_weight_on_input', False)))
             self._record(layer, x)
             return out
 
-        def _require_native_contract(self, layer) -> None:
+        def _require_native_contract(self, layer) -> "float | None":
             """Fail closed on serving semantics the native path does not
-            reproduce: only silu, and no swiglu modifiers.  ``layer.activation``
-            is a vLLM ``MoEActivation`` enum, not a callable."""
+            reproduce: only silu, no swiglu alpha/beta, and a SwiGLU clamp limit
+            only when it is a usable number.  ``layer.activation`` is a vLLM
+            ``MoEActivation`` enum, not a callable.  Returns the clamp limit the
+            adapter must reproduce (``None`` when the model sets none) -- the
+            adapter owns the arithmetic, this owns the policy."""
             activation = getattr(layer, 'activation', 'silu')
             name = str(getattr(activation, 'value', activation)).lower()
             if name != 'silu':
                 raise ValueError(
                     f"{prefix}: the native window MoE serves silu; activation "
                     f"{name!r} has no exact implementation and is refused")
-            for field in ('swiglu_alpha', 'swiglu_beta', 'swiglu_limit'):
+            for field in ('swiglu_alpha', 'swiglu_beta'):
                 if getattr(layer, field, None) is not None:
                     raise ValueError(
                         f"{prefix}: {field} is set; the native window MoE refuses to "
                         "approximate it")
+            # Lazily imported, like the adapter itself (line ~477): the plugin
+            # import path stays free of the kernel modules.
+            from ..native_window_moe import checked_swiglu_limit
+            try:
+                return checked_swiglu_limit(
+                    getattr(layer, 'swiglu_limit', None), where=f"{prefix}: ")
+            except GrammarError as exc:
+                raise ValueError(str(exc)) from exc
 
         def _apply_selected(self, layer, x, weights, ids, shared_experts, shared_experts_input):
             self._require_research_parallel_contract()
@@ -1142,13 +1155,14 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
                 # The stock runner owns any shared-expert output independently.
                 return x.new_empty((0, int(declared['hidden_size'])))
             if self._native is not None:
-                self._require_native_contract(layer)
+                limit = self._require_native_contract(layer)
                 x_native = x.reshape(-1, x.shape[-1])
                 if not x_native.is_contiguous():
                     x_native = x_native.contiguous()
                 with torch.profiler.record_function('tessera_native_window_moe'):
                     return self._native(
                         x_native, ids, weights,
+                        swiglu_limit=limit,
                         apply_router_weight_on_input=bool(
                             getattr(layer, 'apply_router_weight_on_input', False)))
             with torch.profiler.record_function('tessera_research_select_experts'):

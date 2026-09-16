@@ -11,10 +11,14 @@ this module owns:
   separate).  The routing weight multiplies this projection's fp32
   accumulator iff ``apply_router_weight_on_input``, exactly as vLLM dispatches
   gemm1 (``fused_moe.py``).
-* the activation is applied per route.  Only ``silu`` is served;
-  ``swiglu_alpha``/``swiglu_beta``/``swiglu_limit``/another activation **fail
-  closed** until an implementation reproduces vLLM's exact arithmetic -- no
-  silent substitution.
+* the activation is applied per route.  ``silu`` is served, with the model's
+  SwiGLU clamp (``swiglu_limit`` / vLLM's ``gemm1_clamp_limit``) reproduced by
+  clamping both branches in fp32 before the activation -- the gate saturates at
+  ``+limit`` and the up branch at ``+-limit``, the arithmetic vLLM's own
+  ``silu_and_mul``/``apply_moe_activation`` performs.  ``swiglu_alpha``,
+  ``swiglu_beta`` and another activation **fail closed** until an
+  implementation reproduces vLLM's exact arithmetic -- no silent
+  substitution.
 * ``down`` runs with ``route_input=True``: it consumes the per-route
   activations, and weights each route's fp32 accumulator iff the input did
   not already carry the weights (vLLM's gemm2 / ``topk_weight_and_reduce``
@@ -34,6 +38,7 @@ layer's; this adapter returns the routed-expert result ``[T, rows]`` bf16.
 from __future__ import annotations
 
 import dataclasses
+import math
 from typing import Sequence
 
 import torch
@@ -43,7 +48,7 @@ from .kernel_window_gemv import WindowGemvUnit
 from .window_gemm_grouped import PreparedGroupedWindowGemm, prepare_grouped_window_gemm
 
 __all__ = ["NativeWindowMoE", "prepare_native_window_moe", "PackedWindowUnits",
-           "SUPPORTED_ACTIVATIONS"]
+           "SUPPORTED_ACTIVATIONS", "checked_swiglu_limit"]
 
 #: The activations this adapter reproduces exactly.  Everything else refuses.
 SUPPORTED_ACTIVATIONS = ("silu",)
@@ -104,7 +109,9 @@ class NativeWindowMoE:
                  expert_ids: torch.Tensor,
                  routing_weights: torch.Tensor,
                  *,
-                 apply_router_weight_on_input: bool = False) -> torch.Tensor:
+                 apply_router_weight_on_input: bool = False,
+                 swiglu_limit: "float | None" = None) -> torch.Tensor:
+        limit = checked_swiglu_limit(swiglu_limit)
         if self.activation not in SUPPORTED_ACTIVATIONS:
             raise GrammarError(
                 f"the native window MoE serves {SUPPORTED_ACTIVATIONS}; "
@@ -126,7 +133,7 @@ class NativeWindowMoE:
                              apply_router_weight_on_input=apply_router_weight_on_input)
             up = self.up(x, expert_ids, routing_weights, preserve=True,
                          apply_router_weight_on_input=apply_router_weight_on_input)
-        act = _silu_and_mul(gate, up)
+        act = _silu_and_mul(gate, up, clamp_limit=limit)
         t_tokens, top_k, _ = act.shape
         return self.down(act.reshape(t_tokens * top_k, inter), expert_ids, routing_weights,
                          route_input=True,
@@ -134,11 +141,42 @@ class NativeWindowMoE:
                          round_routes=True)
 
 
-def _silu_and_mul(gate: torch.Tensor, up: torch.Tensor) -> torch.Tensor:
+def checked_swiglu_limit(limit: "float | None", *, where: str = "") -> "float | None":
+    """Validate a model's SwiGLU clamp limit, or ``None`` when absent.
+
+    vLLM carries this as ``gemm1_clamp_limit`` and refuses, in its own words,
+    to let a backend "silently select one and drop the clamp"; a value that is
+    not a finite positive number is a model fact we cannot reproduce, so it
+    fails closed here instead of arming a clamp that does nothing.
+    """
+    if limit is None:
+        return None
+    try:
+        value = float(limit)
+    except (TypeError, ValueError) as exc:
+        raise GrammarError(
+            f"{where}swiglu_limit {limit!r} is not a number; refusing") from exc
+    if not math.isfinite(value) or value <= 0.0:
+        raise GrammarError(
+            f"{where}swiglu_limit {value!r} is not finite and positive; refusing")
+    return value
+
+
+def _silu_and_mul(gate: torch.Tensor, up: torch.Tensor, *,
+                  clamp_limit: "float | None" = None) -> torch.Tensor:
     """``silu(gate) * up`` with one bf16 rounding, the same arithmetic vLLM's
-    ``SiluAndMul`` performs on the gemm output (fp32 activation, cast once)."""
+    ``SiluAndMul`` performs on the gemm output (fp32 activation, cast once).
+
+    ``clamp_limit`` is vLLM's SwiGLU clamp, applied while both branches are
+    still fp32 accumulators: the gate saturates at ``+limit`` (no lower clamp),
+    the up branch at ``+-limit``.  Same saturation points as vLLM's
+    ``silu_and_mul`` (``fp8_utils.py``), which clamps before narrowing."""
     if gate.shape != up.shape:
         raise GrammarError(f"gate {tuple(gate.shape)} and up {tuple(up.shape)} must match")
+    limit = checked_swiglu_limit(clamp_limit)
+    if limit is not None:
+        gate = torch.clamp(gate.float(), max=limit)
+        up = torch.clamp(up.float(), min=-limit, max=limit)
     act = torch.nn.functional.silu(gate.float()) * up.float()
     return act.to(torch.bfloat16)
 

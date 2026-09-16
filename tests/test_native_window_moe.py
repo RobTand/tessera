@@ -156,6 +156,69 @@ def test_packed_window_units_prepare_matches_the_direct_adapter():
     assert fp8_pack.prepare().down.arithmetic == "epilogue"
 
 
+# -- the model's SwiGLU clamp (CPU: the arithmetic, not the kernel) --------
+
+def test_silu_and_mul_applies_the_models_swiglu_clamp_in_fp32():
+    """``swiglu_limit`` saturates the gate at ``+limit`` and the up branch at
+    ``+-limit``, in fp32, before the activation -- vLLM's ``gemm1_clamp_limit``
+    (config.py: "backends that do not implement the clamp cannot silently
+    select one and drop the clamp").
+
+    Direction matters and is asserted branch by branch: the gate is clamped
+    with a *minimum* only (``min(gate, limit)``), the up branch with a
+    two-sided clamp.  A sign slip here would read as a plausible activation.
+    """
+    limit = 10.0
+    band = torch.tensor([[-3.0, 0.0, 3.0]], dtype=torch.float32)
+    # gate above the limit with the up branch inside it: silu(limit) * up
+    gate_hi = torch.tensor([[12.0, 3.0, 3.0]], dtype=torch.float32)
+    # gate below the limit must NOT be clamped: silu(-12) * -10
+    gate_lo = torch.tensor([[-12.0, 3.0, 3.0]], dtype=torch.float32)
+    up_hi = torch.tensor([[3.0, 12.0, 3.0]], dtype=torch.float32)
+    up_lo = torch.tensor([[3.0, -12.0, 3.0]], dtype=torch.float32)
+
+    want_hi = (torch.nn.functional.silu(torch.tensor([[10.0, 3.0, 3.0]]))
+               * torch.tensor([[3.0, 10.0, 3.0]])).bfloat16()
+    assert torch.equal(nwm._silu_and_mul(gate_hi, up_hi, clamp_limit=limit), want_hi)
+    want_lo = (torch.nn.functional.silu(torch.tensor([[-12.0, 3.0, 3.0]]))
+               * torch.tensor([[3.0, -10.0, 3.0]])).bfloat16()
+    assert torch.equal(nwm._silu_and_mul(gate_lo, up_lo, clamp_limit=limit), want_lo)
+
+    # inside the band the clamp is a no-op; above it, the clamp is observable
+    assert torch.equal(nwm._silu_and_mul(band, band, clamp_limit=limit),
+                       nwm._silu_and_mul(band, band))
+    assert not torch.equal(nwm._silu_and_mul(gate_hi, up_hi, clamp_limit=limit),
+                           nwm._silu_and_mul(gate_hi, up_hi))
+    # and no limit is exactly the pre-clamp arithmetic
+    assert torch.equal(nwm._silu_and_mul(gate_hi, up_hi, clamp_limit=None),
+                       nwm._silu_and_mul(gate_hi, up_hi))
+
+
+def test_the_adapter_carries_the_clamp_limit_to_the_activation():
+    """The limit reaches the activation from the call, not from a constant."""
+    limit = 2.0
+    gate = torch.tensor([[8.0]], dtype=torch.float32)
+    up = torch.tensor([[8.0]], dtype=torch.float32)
+    clamped = nwm._silu_and_mul(gate, up, clamp_limit=limit)
+    assert torch.equal(clamped,
+                       (torch.nn.functional.silu(torch.tensor([[2.0]]))
+                        * torch.tensor([[2.0]])).bfloat16())
+
+
+@pytest.mark.parametrize("bad", [0.0, -1.0, float("nan"), float("inf"), "ten", object()])
+def test_native_window_moe_refuses_an_unusable_clamp_limit(bad):
+    """Not a number, or not finite and positive: refuse, never arm a clamp that
+    cannot saturate anything."""
+    with pytest.raises(GrammarError, match="swiglu_limit"):
+        nwm.checked_swiglu_limit(bad)
+
+
+def test_native_window_moe_accepts_the_models_limit_and_still_refuses_alpha_beta():
+    assert nwm.checked_swiglu_limit(None) is None
+    assert nwm.checked_swiglu_limit(10.0) == 10.0
+    assert nwm.checked_swiglu_limit(10) == 10.0
+
+
 @cuda
 def test_native_window_moe_refuses_unsupported_activations_and_families():
     rows_h, cols_h, inter, experts = 768, 192, 96, 2

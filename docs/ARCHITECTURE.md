@@ -2024,7 +2024,11 @@ routed stack whose family is FP8 (`TESSERA_E4M3_K1`) or BF16
 preallocated per-expert axis (`native_window_moe.WindowUnitAxis`) and applies
 the two-stage grouped kernels (`window_gemm_grouped`, wrapped by
 `native_window_moe.NativeWindowMoE`: gathered routed rows in, activation, down
-projection, routing weights, routed output only).  It stamps `moe_route.py`'s
+projection, routing weights, routed output only).  The activation is `silu`
+with the model's SwiGLU clamp (`swiglu_limit` / vLLM's `gemm1_clamp_limit`)
+reproduced on the fp32 accumulators -- gate saturated at `+limit`, up branch at
+`+-limit`, the arithmetic vLLM's own `silu_and_mul` performs; `swiglu_alpha`,
+`swiglu_beta` and another activation still refuse.  It stamps `moe_route.py`'s
 `native_window_moe_compact` decoder and the
 `tessera.native_window_moe.NativeWindowMoE.__call__` symbol, published as an
 EXPERIMENTAL pair (`scheme.EXPERIMENTAL_LAUNCHES`) rather than as a cell, so
