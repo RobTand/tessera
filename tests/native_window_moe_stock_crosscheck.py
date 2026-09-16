@@ -31,6 +31,7 @@ import torch
 sys.path.insert(0, "/work/src")
 sys.path.insert(0, "/work/tests")
 
+from tessera import native_window_moe as nwm               # noqa: E402
 from tessera.serving import moe_route                       # noqa: E402
 from tessera.serving.scheme import validate_tessera_moe_scheme  # noqa: E402
 from test_serving_moe_route import _stack, HIDDEN, INTER, EXPERTS   # noqa: E402
@@ -74,7 +75,7 @@ def _arm(name, native, stock, report):
 
 
 def _fp8_stock(reference, x, ids, weights, quant, tp_rank, tp_size,
-               apply_router_weight_on_input=False):
+               apply_router_weight_on_input=False, swiglu_limit=None):
     from vllm.model_executor.layers.fused_moe.activation import MoEActivation
     from vllm.model_executor.layers.fused_moe.fused_moe import fused_experts
 
@@ -91,20 +92,65 @@ def _fp8_stock(reference, x, ids, weights, quant, tp_rank, tp_size,
     return fused_experts(
         x, w1, w2, weights, ids, activation=MoEActivation.SILU,
         apply_router_weight_on_input=apply_router_weight_on_input,
-        quant_config=quant(w1_scale=s1, w2_scale=s2))
+        quant_config=quant(w1_scale=s1, w2_scale=s2, swiglu_limit=swiglu_limit))
 
 
 def _fp8_quant_config():
     from vllm.model_executor.layers.fused_moe.oracle.fp8 import (
         Fp8MoeBackend, make_fp8_moe_quant_config)
 
-    def build(w1_scale, w2_scale):
+    def build(w1_scale, w2_scale, swiglu_limit=None):
         return make_fp8_moe_quant_config(
             fp8_backend=Fp8MoeBackend.TRITON, w1_scale=w1_scale, w2_scale=w2_scale,
             a1_scale=None, a2_scale=None, per_act_token_quant=True,
             per_out_ch_quant=True, block_shape=None,
-            gemm1_alpha=None, gemm1_beta=None, swiglu_limit=None, layer=None)
+            gemm1_alpha=None, gemm1_beta=None, swiglu_limit=swiglu_limit, layer=None)
     return build
+
+
+def _stock_activation(gate, up, limit):
+    """THE STOCK STAGE, the op itself: ``activation.py``'s
+    ``silu_and_mul_with_clamp`` (SILU + clamp resolves to
+    ``torch.ops._C.silu_and_mul_with_clamp``) on the bf16 gemm1 output, which
+    is what the reference path feeds it.  This is an oracle, not a restatement:
+    the native lane is compared against the kernel, not the formula."""
+    import vllm  # noqa: F401  (registers _C)
+    d = gate.shape[-1]
+    inp = torch.cat([gate, up], dim=-1).to(torch.bfloat16).contiguous()
+    out = torch.empty_like(inp[..., :d])
+    torch.ops._C.silu_and_mul_with_clamp(out, inp, float(limit), 1.0, 0.0)
+    return out
+
+
+def _clamp_activity(gate, up, limit):
+    """How many accumulator entries the clamp actually saturates, per branch.
+    A clamp arm whose inputs never cross the limit proves nothing."""
+    flat_g, flat_u = gate.float().reshape(-1), up.float().reshape(-1)
+    return {"gate_over_limit": int((flat_g > limit).sum()),
+            "gate_under_neg_limit": int((flat_g < -limit).sum()),
+            "up_over_limit": int((flat_u > limit).sum()),
+            "up_under_neg_limit": int((flat_u < -limit).sum()),
+            "entries": int(flat_g.numel()), "limit": float(limit)}
+
+
+def _activation_arm(name, native_gate_up, gate, up, limit, report):
+    """Native clamp+silu vs the stock op at the SAME accumulators.
+
+    The lane's documented single rounding is the only intended difference, so
+    the deviation is reported in true bf16 ulps of the reference maximum --
+    the same unit the end-to-end arms use."""
+    got = native_gate_up(gate, up, limit)
+    want = _stock_activation(gate, up, limit)
+    diff = (got.float() - want.float()).abs()
+    mag = float(want.float().abs().max())
+    ulp = _bf16_ulp(mag)
+    arm = {"arm": name, "max_abs": float(diff.max()), "mag": mag,
+           "bf16_ulps": None if not ulp else float(diff.max() / ulp),
+           "activity": _clamp_activity(gate, up, limit),
+           "shapes": [list(gate.shape), list(up.shape)]}
+    report.setdefault("clamp_arms", []).append(arm)
+    print("CLAMP", json.dumps(arm), flush=True)
+    return arm
 
 
 def _staged(reference, x, ids, weights, tp_rank=0, tp_size=1, dtype=torch.float64):
@@ -361,6 +407,80 @@ def main():
     stock = fused_experts(x, w1.cuda(), w2.cuda(), weights, ids2,
                           activation=MoEActivation.SILU, global_num_experts=2)
     ok &= _arm("bf16_folded_tp2_rank0", native, stock, report)
+
+    # --- the model's SwiGLU clamp, ACTIVE, on both families ----------------
+    # Every arm above ran with no clamp, so none of them exercised the
+    # arithmetic the derived fixture needs (GLM's ``swiglu_limit: 10.0``).
+    # These arms drive inputs whose gemm1 accumulators cross the limit in BOTH
+    # directions, on both TP2 rank cuts, under both weight-on-input semantics,
+    # and grade the lane against the ACTUAL stock stage -- the op for the
+    # activation, ``fused_experts`` for the routed result.
+    CLAMP = 10.0
+    x_clamped = (torch.randn(8, HIDDEN) * 8.0).bfloat16().cuda()
+    quant_clamped = _fp8_quant_config()
+    for tp_rank, tp_size in ((0, 2), (1, 2)):
+        layer = _native_layer(tp_rank=tp_rank, tp_size=tp_size)
+        layer.swiglu_limit = CLAMP
+        method = moe_route.build_tessera_moe_method(scheme, "m", "resident", layer)
+        method.create_weights(layer, EXPERTS, HIDDEN, INTER // tp_size, torch.bfloat16)
+        _load_all(method, layer, w13_blobs, w2_blobs)
+        method.process_weights_after_loading(layer)
+        ones_ids = torch.zeros(4, 1, dtype=torch.int32, device="cuda")
+        ones_w = torch.ones(4, 1, device="cuda")
+        if method._native.gate_up is not None:
+            gu = method._native.gate_up(x_clamped[:4], ones_ids, ones_w, preserve=True)
+        else:
+            gu = torch.cat([method._native.gate(x_clamped[:4], ones_ids, ones_w, preserve=True),
+                            method._native.up(x_clamped[:4], ones_ids, ones_w, preserve=True)],
+                           dim=-1)
+        act = _activation_arm(
+            f"fp8_tp2_rank{tp_rank}_activation_vs_stock_op",
+            lambda g, u, lim: nwm._silu_and_mul(g, u, clamp_limit=lim),
+            gu[:, 0, :INTER], gu[:, 0, INTER:], CLAMP, report)
+        ok &= (act["activity"]["gate_over_limit"] > 0
+               and act["activity"]["up_under_neg_limit"] > 0
+               and act["activity"]["up_over_limit"] > 0), "clamp not active in both branches"
+        for weight_input in (False, True):
+            layer.apply_router_weight_on_input = weight_input
+            native_c = method.apply(layer, x_clamped, weights, ids, None, None)
+            stock_c = _fp8_stock(reference, x_clamped, ids, weights, quant_clamped,
+                                 tp_rank, tp_size,
+                                 apply_router_weight_on_input=weight_input,
+                                 swiglu_limit=CLAMP)
+            ok &= _arm(f"fp8_tp2_rank{tp_rank}_clamped_weight_input={int(weight_input)}",
+                       native_c, stock_c, report)
+
+    # folded BF16 research route (layer 4's family), both rank cuts
+    from vllm.model_executor.layers.fused_moe.config import FusedMoEQuantConfig
+    for tp_rank, tp_size in ((0, 2), (1, 2)):
+        layer = _native_layer(tp_rank=tp_rank, tp_size=tp_size)
+        layer.swiglu_limit = CLAMP
+        with set_current_vllm_config(
+                types.SimpleNamespace(model_config=types.SimpleNamespace(enforce_eager=True))):
+            method = moe_route.build_tessera_moe_method(
+                bscheme, "m", "resident", layer,
+                research_selected=moe_route.ResearchSelectedMoeConfig(
+                    max_experts_per_chunk=2, expected_tensor_parallel_size=2))
+        method.create_weights(layer, 2, HIDDEN, INTER // tp_size, torch.bfloat16)
+        _load_all(method, layer, b13, [pair[tp_rank] if len(pair) > tp_rank else pair[0]
+                                       for pair in b2])
+        method.process_weights_after_loading(layer)
+        local = INTER // tp_size
+        lo, hi = tp_rank * local, (tp_rank + 1) * local
+        w1c = torch.stack([
+            torch.cat([expected[e][0][lo:hi], expected[e][0][INTER + lo:INTER + hi]])
+            for e in range(2)]).cuda().contiguous()
+        w2c = torch.stack([expected[e][1][:, lo:hi] for e in range(2)]).cuda().contiguous()
+        qc = FusedMoEQuantConfig.make(gemm1_clamp_limit=CLAMP)
+        for weight_input in (False, True):
+            layer.apply_router_weight_on_input = weight_input
+            native_c = method.apply(layer, x_clamped, weights, ids2, None, None)
+            stock_c = fused_experts(x_clamped, w1c, w2c, weights, ids2,
+                                    activation=MoEActivation.SILU, global_num_experts=2,
+                                    apply_router_weight_on_input=weight_input,
+                                    quant_config=qc)
+            ok &= _arm(f"bf16_folded_tp2_rank{tp_rank}_clamped_weight_input={int(weight_input)}",
+                       native_c, stock_c, report)
 
     report["passed"] = bool(ok)
     print(json.dumps(report))
