@@ -188,56 +188,153 @@ def canonical_units(fixture, layers=(3, 4), experts=(0, 1), verify=True):
     return out
 
 
-def canonical_stock_decode(units, layer, device="cpu"):
-    """The INDEPENDENT stock decode of those exact containers.
+def canonical_reference_tensors(units, layer, device="cpu"):
+    """REFERENCE TENSORS for every projection -- gate, up AND down.
 
-    FP8 (layer 3) goes through ``prepare_tessera_moe_experts``: it parses every
-    blob against its group's declaration and materialises the stock per-channel
-    stack the fused-MoE kernel was measured on.  BF16 (layer 4) goes through
-    ``prepare_tessera_bf16_module``, the reference decode for that family.
-    Neither is the compact intake under test.
+    FP8 (layer 3): ``prepare_tessera_moe_experts`` materialises the stock
+    per-channel stack; its ``w13`` rows are split into gate and up at the
+    expert's intermediate size, ``w2`` is down.
+    BF16 (layer 4): each role is decoded independently with
+    ``decode.materialize_bf16_folded`` on the MATERIALISING parse (the
+    reference reader), which is the twin's rendering -- one bf16 rounding with
+    the row scale folded in.
+
+    Returns ``{"tensors": {...}, "meta": {...}}``: tensors stay out of the JSON
+    a receipt prints, and the metadata is shapes only -- it is a preparation
+    report, not a decode.
     """
     from tessera.serving import moe_route as _mr
-    from tessera.serving.bf16_route import prepare_tessera_bf16_module
+    from tessera.decode import materialize_bf16_folded
 
     u = units[layer]
     experts = sorted(u["experts"])
-    if u["family"].endswith("FP8") or u["family"] == "TESSERA_FP8":
+    declared = u["declared"]
+    inter = int(declared["groups"]["w13"]["rows"]) // 2
+
+    def _fold(expert_entry, role):
+        # the MATERIALISING parse, never the compact one under test
+        parsed = expert_entry["materialized"][role][0][1]
+        return materialize_bf16_folded(parsed.unit, parsed.forests, parsed.code)
+
+    if u["family"] == "TESSERA_FP8":
+        bounded = dict(declared)
+        bounded["experts"] = len(experts)
         blobs = {"w13": [[u["experts"][e]["raw"]["w1"], u["experts"][e]["raw"]["w3"]]
                          for e in experts],
                  "w2": [[u["experts"][e]["raw"]["w2"]] for e in experts]}
-        # BOUNDED by construction: the declaration is the checkpoint's own
-        # except for the expert COUNT, which is narrowed to the experts
-        # actually carried here.  Every other fact -- family, grid, body,
-        # plane, both groups' geometry, q256 and wire_stride -- is untouched,
-        # and the containers are the manifest-verified bytes.
-        bounded = dict(u["declared"])
-        bounded["experts"] = len(experts)
         prepared = _mr.prepare_tessera_moe_experts(blobs, bounded, u["target"],
                                                    device=device)
-        return {"family": u["family"], "experts": experts,
-                "declaration": {"experts_declared": u["declared"].get("experts"),
-                                "experts_decoded": len(experts),
-                                "note": "count narrowed for a bounded decode; all other facts are the checkpoint's"},
-                "bounded": True,
-                "w13_weight": list(prepared.w13_weight.shape),
-                "w13_weight_scale": list(prepared.w13_weight_scale.shape),
-                "w2_weight": list(prepared.w2_weight.shape),
-                "w2_weight_scale": list(prepared.w2_weight_scale.shape)}
-    decoded = {}
-    for e in experts:
-        roles = (u["experts"][e]["materialized"]["w1"]
-                 + u["experts"][e]["materialized"]["w3"])
-        mod = prepare_tessera_bf16_module(roles, device=device)
-        info = {"type": type(mod).__name__}
-        for name in ("rows", "columns"):
-            value = getattr(mod, name, None)
-            if isinstance(value, int):
-                info[name] = value
-        decoded[str(e)] = info
-    return {"family": u["family"], "experts": experts,
-            "note": "materialising reference decode (parse_tessera_expert_blob), not the compact intake",
-            "modules": decoded}
+        tensors = {"w1": [prepared.w13_weight[e][:inter] for e in range(len(experts))],
+                   "w3": [prepared.w13_weight[e][inter:2 * inter] for e in range(len(experts))],
+                   "w2": [prepared.w2_weight[e] for e in range(len(experts))],
+                   "s1": [prepared.w13_weight_scale[e][:inter] for e in range(len(experts))],
+                   "s3": [prepared.w13_weight_scale[e][inter:2 * inter] for e in range(len(experts))],
+                   "s2": [prepared.w2_weight_scale[e] for e in range(len(experts))]}
+    else:
+        tensors = {"w1": [_fold(u["experts"][e], "w1") for e in experts],
+                   "w3": [_fold(u["experts"][e], "w3") for e in experts],
+                   "w2": [_fold(u["experts"][e], "w2") for e in experts]}
+    meta = {"family": u["family"], "experts": experts, "intermediate": inter,
+            "note": "reference tensors materialised independently of the compact intake",
+            "shapes": {k: [list(v.shape) for v in vs] for k, vs in tensors.items()}}
+    return {"tensors": tensors, "meta": meta}
+
+
+def canonical_execution(fixture, layers=(3, 4), experts=(0, 1), clamp=10.0):
+    """The clamp-active arms at the FIXTURE'S geometry, both TP2 cuts.
+
+    H, I and E come from the units actually loaded -- H is ``w13``'s columns, I
+    is half its rows, E is the experts carried -- never from this file's
+    synthetic HIDDEN/INTER globals, which is the whole point of the mode.
+    """
+    from vllm.model_executor.layers.fused_moe.activation import MoEActivation
+    from vllm.model_executor.layers.fused_moe.config import FusedMoEQuantConfig
+    from vllm.model_executor.layers.fused_moe.fused_moe import fused_experts
+    from vllm.config import set_current_vllm_config
+    import types as _types
+
+    units = canonical_units(fixture, layers=layers, experts=experts)
+    report = {"canonical": True, "fixture": fixture, "clamp": clamp, "arms": []}
+    ok = True
+    for layer in layers:
+        u = units[layer]
+        ref = canonical_reference_tensors(units, layer)
+        tenor = ref["tensors"]
+        declared = u["declared"]
+        H = int(declared["groups"]["w13"]["columns"])
+        inter = int(declared["groups"]["w13"]["rows"]) // 2
+        E = len(u["experts"])
+        report["arms"].append({"layer": layer, "family": u["family"], "H": H,
+                               "intermediate": inter, "experts": E,
+                               "reference": ref["meta"]["shapes"]})
+        x = (torch.randn(8, H) * 8.0).bfloat16().cuda()
+        ids = torch.zeros(8, 2, dtype=torch.int32, device="cuda")
+        ids[:, 1] = min(1, E - 1)
+        weights = torch.ones(8, 2, device="cuda")
+        quant_fp8 = _fp8_quant_config()
+        for tp_rank, tp_size in ((0, 2), (1, 2)):
+            local = inter // tp_size
+            lo, hi = tp_rank * local, (tp_rank + 1) * local
+            layer_stub = _native_layer(tp_rank=tp_rank, tp_size=tp_size,
+                                       hidden=H, inter=inter)
+            layer_stub.swiglu_limit = clamp
+            kwargs = {}
+            if u["family"] == "TESSERA_BF16":
+                kwargs["research_selected"] = moe_route.ResearchSelectedMoeConfig(
+                    max_experts_per_chunk=8, expected_tensor_parallel_size=2,
+                    decode_backend="triton")
+            with set_current_vllm_config(_types.SimpleNamespace(
+                    model_config=_types.SimpleNamespace(enforce_eager=True))):
+                method = moe_route.build_tessera_moe_method(
+                    declared, u["target"], "resident", layer_stub, **kwargs)
+            method.create_weights(layer_stub, E, H, local, torch.bfloat16)
+            _load_all(method, layer_stub,
+                      [[u["experts"][e]["raw"]["w1"], u["experts"][e]["raw"]["w3"]]
+                       for e in sorted(u["experts"])],
+                      [[u["experts"][e]["raw"]["w2"]] for e in sorted(u["experts"])])
+            method.process_weights_after_loading(layer_stub)
+            if u["family"] == "TESSERA_FP8":
+                w1 = torch.stack([torch.cat([tenor["w1"][e][lo:hi], tenor["w3"][e][lo:hi]])
+                                  for e in range(E)]).cuda().contiguous()
+                s1 = torch.stack([torch.cat([tenor["s1"][e][lo:hi], tenor["s3"][e][lo:hi]])
+                                  for e in range(E)]).cuda().contiguous()
+                w2 = torch.stack([tenor["w2"][e][:, lo:hi] for e in range(E)]).cuda().contiguous()
+                s2 = torch.stack([tenor["s2"][e] for e in range(E)]).cuda().contiguous()
+            else:
+                w1 = torch.stack([torch.cat([tenor["w1"][e][lo:hi], tenor["w3"][e][lo:hi]])
+                                  for e in range(E)]).cuda().contiguous()
+                s1 = None
+                w2 = torch.stack([tenor["w2"][e][:, lo:hi] for e in range(E)]).cuda().contiguous()
+                s2 = None
+            ones_ids = torch.zeros(4, 1, dtype=torch.int32, device="cuda")
+            ones_w = torch.ones(4, 1, device="cuda")
+            if method._native.gate_up is not None:
+                gu = method._native.gate_up(x[:4], ones_ids, ones_w, preserve=True)
+            else:
+                gu = torch.cat([method._native.gate(x[:4], ones_ids, ones_w, preserve=True),
+                                method._native.up(x[:4], ones_ids, ones_w, preserve=True)], dim=-1)
+            act = _activation_arm(
+                f"canonical_L{layer}_tp2_rank{tp_rank}_activation_vs_stock_op",
+                lambda g, u_, lim: nwm._silu_and_mul(g, u_, clamp_limit=lim),
+                gu[:, 0, :inter], gu[:, 0, inter:], clamp, report)
+            active = act["activity"]
+            ok &= (active["gate_over_limit"] > 0 and active["up_under_neg_limit"] > 0
+                   and active["up_over_limit"] > 0)
+            for weight_input in (False, True):
+                layer_stub.apply_router_weight_on_input = weight_input
+                native = method.apply(layer_stub, x, weights, ids, None, None)
+                qc = (quant_fp8(w1_scale=s1, w2_scale=s2, swiglu_limit=clamp)
+                      if s1 is not None else
+                      FusedMoEQuantConfig.make(gemm1_clamp_limit=clamp))
+                stock = fused_experts(x, w1, w2, weights, ids,
+                                      activation=MoEActivation.SILU,
+                                      global_num_experts=E,
+                                      apply_router_weight_on_input=weight_input,
+                                      quant_config=qc)
+                ok &= _arm(f"canonical_L{layer}_tp2_rank{tp_rank}"
+                           f"_clamped_weight_input={int(weight_input)}", native, stock, report)
+    report["all_arms_active_and_bounded"] = bool(ok)
+    return report
 
 
 def _stock_activation(gate, up, limit):
@@ -378,6 +475,25 @@ def main():
     ap.add_argument("--canonical-select-only", action="store_true",
                     help="parse+verify the fixture's own containers and stop (CPU)")
     args = ap.parse_args()
+    if args.canonical_fixture and not args.canonical_select_only:
+        # A fixture request that silently fell through to the synthetic arms
+        # would run SMALL wires at HIDDEN/INTER and print a pass: a false pass
+        # at geometry nobody asked about.  The canonical path either runs or
+        # the process stops here.
+        try:
+            import vllm  # noqa: F401
+        except Exception as exc:  # noqa: BLE001
+            raise SystemExit(
+                f"--canonical-fixture {args.canonical_fixture} needs the canonical "
+                f"execution path, which needs the vLLM runtime; refusing rather "
+                f"than running the synthetic arms at the wrong geometry ({exc})")
+        report = canonical_execution(
+            args.canonical_fixture,
+            layers=tuple(int(v) for v in args.canonical_layers.split(",")),
+            experts=tuple(int(v) for v in args.canonical_experts.split(",")))
+        print(json.dumps(report, indent=1))
+        raise SystemExit(0 if report["all_arms_active_and_bounded"] else 1)
+
     if args.canonical_select_only:
         units = canonical_units(args.canonical_fixture,
                                 layers=tuple(int(v) for v in args.canonical_layers.split(",")),
@@ -401,7 +517,7 @@ def main():
                 "parsed_roles": {str(e): {k: [r for r, _w in v["parsed"][k]]
                                           for k in ("w1", "w3", "w2")}
                                  for e, v in u["experts"].items()},
-                "stock_decode": canonical_stock_decode(units, layer),
+                "reference": canonical_reference_tensors(units, layer)["meta"],
             }
         print(json.dumps({"canonical_selection": summary, "bytes_verified": True}, indent=1))
         raise SystemExit(0)

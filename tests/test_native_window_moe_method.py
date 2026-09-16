@@ -46,7 +46,8 @@ class _Lax(types.SimpleNamespace):
         return False if item.startswith("is_") else None
 
 
-def _native_layer(tp_rank: int = 0, tp_size: int = 1):
+def _native_layer(tp_rank: int = 0, tp_size: int = 1, *, hidden: int = None,
+                  inter: int = None):
     """The route's layer stub, completed for real vLLM's backend selection.
 
     ``test_serving_moe_selected``'s CPU stub patches ``select_fp8_moe_backend``
@@ -63,10 +64,13 @@ def _native_layer(tp_rank: int = 0, tp_size: int = 1):
     mc.num_local_experts = EXPERTS
     mc.num_logical_experts = EXPERTS
     mc.experts_per_token = 2
-    mc.hidden_dim = HIDDEN
-    mc.intermediate_size = INTER
-    mc.intermediate_size_per_partition = INTER // tp_size
-    mc.intermediate_size_per_partition_unpadded = INTER // tp_size
+    # Geometry is a parameter: the canonical fixture is H=4096 / I=2048, not
+    # this helper's small synthetic tile, and a harness that ran the real
+    # containers at the synthetic geometry would be a false pass.
+    mc.hidden_dim = int(hidden or HIDDEN)
+    mc.intermediate_size = int(inter or INTER)
+    mc.intermediate_size_per_partition = int(inter or INTER) // tp_size
+    mc.intermediate_size_per_partition_unpadded = int(inter or INTER) // tp_size
     mc.has_bias = False
     mc.is_lora_enabled = False
     mc.activation = MoEActivation.SILU
