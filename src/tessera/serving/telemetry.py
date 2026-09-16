@@ -38,7 +38,11 @@ are read from ``torch.distributed`` when it is initialized and are JSON
 defaulted rank 0 is indistinguishable from a real one.  The object identity
 that keeps two unnamed modules distinct is a bare ``id``, never a reference:
 telemetry does not keep a module -- and through it, its weights -- alive after
-the model is unloaded.  Both additions are
+the model is unloaded.  The rank identity is observed once and kept for the
+trace's lifetime -- the atexit flush runs after
+``destroy_process_group()``, so re-reading there would erase it -- and a later
+observation that disagrees is reported as ``rank_conflict`` instead of being
+adopted.  Nothing is queried per dispatch.  Both additions are
 additive: ``schema`` is unchanged, no field was renamed or removed, and a
 reader that knows only the histogram still reads exactly what it read before.
 ``identity_version`` is compared for equality -- see its definition.
@@ -411,6 +415,16 @@ class _RouteTrace:
         self._lock = threading.Lock()
         self._counts: dict[tuple, list] = {}
         self._dirty = False
+        #: The FIRST rank/world/source observed while distributed was
+        #: initialized, kept for the trace's whole lifetime.  ``None`` until
+        #: observed -- reported as JSON null with an "unavailable" source, never
+        #: guessed.  Never rewritten: ``dist.destroy_process_group()`` runs
+        #: before the atexit flush, and a header that went null there would
+        #: throw away the only identity the counts in this file ever had.
+        self._rank_identity = None
+        #: A LATER observation that disagrees with the cached one.  Recorded and
+        #: reported, never adopted: the counts belong to the first identity.
+        self._rank_conflict = None
         # Write NOW: the point of failure for a mis-set path must be the
         # serve's startup, loudly, and not a silent no-op discovered when the
         # receipt is being written.  ``emit_route`` swallows exceptions by
@@ -485,6 +499,30 @@ class _RouteTrace:
             self._dirty = True
 
     # -- readout -----------------------------------------------------------
+    def _identity(self):
+        """The rank identity for this trace: observed once, then stable.
+
+        The observation is re-taken at snapshot time (once per flush, never per
+        dispatch), but a non-null identity is never replaced.  That matters
+        because the last write a serve makes is the atexit flush, which runs
+        AFTER ``torch.distributed.destroy_process_group()``: re-reading there
+        would report null and erase the identity the counts were recorded
+        under.  A later observation that *disagrees* is reported as
+        ``rank_conflict`` rather than silently adopted.
+        """
+        if self._rank_identity is not None and self._rank_identity[2] != "unavailable":
+            observed = _process_rank()
+            if observed[0] is not None and (observed[0], observed[1]) != (
+                    self._rank_identity[0], self._rank_identity[1]):
+                self._rank_conflict = {"rank": observed[0],
+                                       "world_size": observed[1],
+                                       "source": observed[2]}
+            return self._rank_identity
+        observed = _process_rank()
+        if observed[0] is not None:
+            self._rank_identity = observed
+        return self._rank_identity or observed
+
     def snapshot(self) -> dict:
         with self._lock:
             entries = []
@@ -504,7 +542,7 @@ class _RouteTrace:
                     "unnamed_modules": len(unnamed),
                     "dispatches_without_prefix": unprefixed,
                 })
-        rank, world_size, rank_source = _process_rank()
+        rank, world_size, rank_source = self._identity()
         return {
             "schema": ROUTE_TRACE_SCHEMA,
             "identity_version": IDENTITY_VERSION,
@@ -513,6 +551,7 @@ class _RouteTrace:
             "rank": rank,
             "world_size": world_size,
             "rank_source": rank_source,
+            "rank_conflict": self._rank_conflict,
             "platform": record_platform(),
             "pid": os.getpid(),
             "started_utc": self.started_utc,

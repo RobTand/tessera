@@ -368,6 +368,66 @@ def test_the_header_states_its_own_rank_world_and_platform(tracing, monkeypatch)
     snapshot = trace.snapshot()
     assert (snapshot["rank"], snapshot["world_size"]) == (1, 2)
     assert snapshot["rank_source"] == "torch.distributed"
+    assert snapshot["rank_conflict"] is None
+
+
+def _fake_dist(monkeypatch, rank, world):
+    import torch.distributed as dist
+    monkeypatch.setattr(dist, "is_available", lambda: True)
+    monkeypatch.setattr(dist, "is_initialized", lambda: True)
+    monkeypatch.setattr(dist, "get_rank", lambda: rank)
+    monkeypatch.setattr(dist, "get_world_size", lambda: world)
+
+
+def test_the_observed_rank_survives_destroy_process_group(tracing, monkeypatch):
+    """The atexit flush runs AFTER teardown; it must not null the header.
+
+    Regression: reading the rank at every flush meant
+    ``destroy_process_group()`` turned a correctly-bound trace into an
+    anonymous one on the very write that makes it durable.
+    """
+    trace, _path = tracing
+    _fake_dist(monkeypatch, 1, 2)
+    _emit(_Layer("model.layers.0.mlp.down_proj"))     # so the flush writes
+    assert (trace.snapshot()["rank"], trace.snapshot()["world_size"]) == (1, 2)
+
+    import torch.distributed as dist
+    monkeypatch.setattr(dist, "is_initialized", lambda: False)   # destroyed
+    trace.flush()
+    payload = json.loads(_path.read_text())
+    assert (payload["rank"], payload["world_size"]) == (1, 2)
+    assert payload["rank_source"] == "torch.distributed"
+    assert payload["rank_conflict"] is None
+
+
+def test_a_later_conflicting_identity_is_reported_not_adopted(tracing, monkeypatch):
+    trace, _path = tracing
+    _fake_dist(monkeypatch, 1, 2)
+    trace.snapshot()
+    _fake_dist(monkeypatch, 0, 2)
+    snapshot = trace.snapshot()
+    assert (snapshot["rank"], snapshot["world_size"]) == (1, 2), \
+        "the counts belong to the identity they were recorded under"
+    assert snapshot["rank_conflict"] == {"rank": 0, "world_size": 2,
+                                        "source": "torch.distributed"}
+
+
+def test_a_served_dispatch_does_not_probe_the_rank(tracing, monkeypatch):
+    """The identity is read at snapshot time, never on the counting path.
+
+    200 dispatches in a burst must not cost 200 probes.  The flusher thread
+    ticks at one hertz, so one probe arriving from it during the burst is the
+    instrument working, not a per-dispatch query.
+    """
+    trace, _path = tracing
+    probes = []
+    real = telemetry._process_rank
+    monkeypatch.setattr(
+        telemetry, "_process_rank",
+        lambda: (probes.append(1), real())[1])
+    for _ in range(200):
+        _emit(_Layer("model.layers.0.mlp.down_proj"))
+    assert len(probes) <= 1, f"200 dispatches caused {len(probes)} rank probes"
 
 
 def test_the_trace_never_keeps_an_unnamed_module_alive(tracing):
