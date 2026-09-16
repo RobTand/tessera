@@ -10,6 +10,13 @@ never the native path's own bundles):
   the rank-local stock result; no all-reduce in this component check);
 * folded BF16 through the research route (TP2 rank 0).
 
+With ``--canonical-fixture`` the arms run on the fixture's OWN layer-3/layer-4
+expert wires at H=4096 / I=2048, clamp ACTIVE, non-unit routing, and both
+input-weight/output-weight placements.  Folded BF16 (A16) is exercised there
+at **TP1 and both TP2 cuts** -- the A16 research-selected TP1 compact lane had
+never been run on a device -- and each arm proves the native dispatch was
+reached and no selected-expert materialization ran.
+
 Stock is the oracle for the boundary in question: dynamic per-token FP8 at
 both stages, the per-route bf16 down output and `moe_sum` rounding.  The
 numbers are reported, not buried: each arm prints max abs, max relative and
@@ -77,6 +84,54 @@ def _arm(name, native, stock, report):
     entry["tolerance"] = {"screen_bf16_ulps_of_max": 4.0,
                           "derivation": "chosen screen, not a composed bound"}
     return ulps is not None and ulps <= 4.0
+
+
+def _install_dispatch_probe(method):
+    """Instrument ONE routed method so an arm reports WHICH compute ran.
+
+    ``apply`` dispatches to the native compact adapter whenever ``_native`` is
+    set (``moe_route.py`` ``if self._native is not None: return
+    self._apply_native``); the path that would instead *materialise the
+    selected experts* is the research-selected fallback ``_apply_selected``,
+    which decodes ``self._packed.decode`` / ``decode_folded``.  A test that
+    only reads ``_native_mode`` infers the branch; this wraps the adapter to
+    count its real invocations and shadows the two fallbacks so a call to
+    either fails the arm.  It also records whether a selected-expert decode
+    is even resident (the compact bundle carries none -- its only route to
+    compute is ``adapter()``), which is the direct evidence for "no
+    selected-expert materialization".
+
+    Install AFTER any staged arm that reaches ``method._native.gate_up`` and
+    friends directly, and read the returned dict after the ``apply`` calls.
+    """
+    real_native = method._native
+    state = {"native_present": real_native is not None,
+             "native_calls": 0,
+             "selected_path_calls": 0,
+             "monolithic_calls": 0,
+             "materializer_decls": sorted(
+                 name for name in ("decode", "decode_folded")
+                 if callable(getattr(method._packed, name, None)))}
+    if real_native is None:
+        return state
+
+    def _native(*args, **kwargs):
+        state["native_calls"] += 1
+        return real_native(*args, **kwargs)
+
+    def _selected(*args, **kwargs):
+        state["selected_path_calls"] += 1
+        raise AssertionError(
+            "the materialising selected-experts path ran on a native arm")
+
+    def _monolithic(*args, **kwargs):
+        state["monolithic_calls"] += 1
+        raise AssertionError("monolithic apply ran on a native arm")
+
+    method._native = _native
+    method._apply_selected = _selected
+    method.apply_monolithic = _monolithic
+    return state
 
 
 def _fp8_stock(reference, x, ids, weights, quant, tp_rank, tp_size,
@@ -297,7 +352,16 @@ def canonical_execution(fixture, layers=(3, 4), experts=(0, 1), clamp=10.0):
             {"layer": layer, "distinct": int(torch.unique(weights).numel()),
              "min": float(weights.min()), "max": float(weights.max())})
         quant_fp8 = _fp8_quant_config()
-        for tp_rank, tp_size in ((0, 2), (1, 2)):
+        # A16 (folded BF16, layer 4) is exercised at TP1 as well as both TP2
+        # cuts: the A16 RESEARCH-SELECTED TP1 device result is the one this
+        # fixture owes, because that world size took the compact lane only
+        # after ``moe_route.compact_window_lane`` was unified and had never
+        # been run on a device.  The FP8 route (layer 3) keeps its two TP2
+        # canonical cuts; its TP1 arithmetic is already covered by the
+        # synthetic-geometry arms above and the pinned component test.
+        arms = (((0, 1), (0, 2), (1, 2)) if u["family"] == "TESSERA_BF16"
+                else ((0, 2), (1, 2)))
+        for tp_rank, tp_size in arms:
             local = inter // tp_size
             lo, hi = tp_rank * local, (tp_rank + 1) * local
             layer_stub = _native_layer(tp_rank=tp_rank, tp_size=tp_size,
@@ -306,7 +370,7 @@ def canonical_execution(fixture, layers=(3, 4), experts=(0, 1), clamp=10.0):
             kwargs = {}
             if u["family"] == "TESSERA_BF16":
                 kwargs["research_selected"] = moe_route.ResearchSelectedMoeConfig(
-                    max_experts_per_chunk=8, expected_tensor_parallel_size=2,
+                    max_experts_per_chunk=8, expected_tensor_parallel_size=tp_size,
                     decode_backend="triton")
             # The builder and the stub must agree with create_weights' E.  The
             # checkpoint's 288 stays in provenance; the declaration is bounded
@@ -386,7 +450,7 @@ def canonical_execution(fixture, layers=(3, 4), experts=(0, 1), clamp=10.0):
             # splitting at the full intermediate size leaves the up half empty
             # and the arm would compare a real gate against a zero block.
             act = _activation_arm(
-                f"canonical_L{layer}_tp2_rank{tp_rank}_activation_vs_stock_op",
+                f"canonical_L{layer}_tp{tp_size}_rank{tp_rank}_activation_vs_stock_op",
                 lambda g, u_, lim: nwm._silu_and_mul(g, u_, clamp_limit=lim),
                 gu[:, 0, :local], gu[:, 0, local:], clamp, report)
             active = act["activity"]
@@ -474,6 +538,10 @@ def canonical_execution(fixture, layers=(3, 4), experts=(0, 1), clamp=10.0):
                      "clamped_mag": float(fused_clamped.float().abs().max()),
                      "byte_identical": bool(torch.equal(fused_clamped, fused_uncapped)),
                      "note": "0 here would mean fused_experts IGNORED the clamp"})
+            # MEASURE the dispatch, do not infer it.  Installed here, after the
+            # staged arms that reach ``method._native.gate_up`` directly and
+            # before the ``apply`` calls the probe is about.
+            dispatch = _install_dispatch_probe(method)
             for weight_input in (False, True):
                 # The stock modular kernel only implements
                 # ``apply_router_weight_on_input`` for topk=1 (it asserts so).
@@ -509,8 +577,23 @@ def canonical_execution(fixture, layers=(3, 4), experts=(0, 1), clamp=10.0):
                      "stock_used": "FusedMoEKernel.apply via make_fp8_moe_kernel / "
                                    "make_unquantized_moe_kernel with the clamp in the "
                                    "quant config (modular path)"})
-                ok &= _arm(f"canonical_L{layer}_tp2_rank{tp_rank}"
+                ok &= _arm(f"canonical_L{layer}_tp{tp_size}_rank{tp_rank}"
                            f"_clamped_weight_input={int(weight_input)}", native, stock, report)
+            # Two ``apply`` calls (both weight placements) must each have
+            # reached the native adapter, and neither fallback may have run.
+            dispatch["reached"] = (dispatch["native_present"]
+                                   and dispatch["native_calls"] == 2
+                                   and dispatch["selected_path_calls"] == 0
+                                   and dispatch["monolithic_calls"] == 0
+                                   and not dispatch["materializer_decls"])
+            report.setdefault("dispatch", []).append(
+                {"layer": layer, "family": u["family"], "tp_rank": tp_rank,
+                 "tp_size": tp_size, **dispatch,
+                 "note": "native_calls counts real adapter invocations across "
+                         "both weight placements; selected_path_calls and "
+                         "monolithic_calls must be 0; materializer_decls names "
+                         "any selected-expert decode resident on the bundle"})
+            ok &= dispatch["reached"]
     report["all_arms_active_and_bounded"] = bool(ok)
     return report
 
