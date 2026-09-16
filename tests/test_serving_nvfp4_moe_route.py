@@ -1,31 +1,42 @@
-"""The NVFP4 expert route's load half, on real E2M1x2 wires (tessera#492).
+"""The NVFP4 expert route's load and native-apply half (tessera#492).
 
-WHAT THIS FILE CAN COVER AND WHAT IT CANNOT.  Same boundary as
-``test_serving_moe_route.py``: the route's ``apply`` hands vLLM's own NVFP4
-fused-MoE modular kernel vLLM's own parameters, and neither that kernel nor
-``RoutedExperts.load_weights`` exists here -- vendoring the runtime is
-forbidden (AGENTS.md).  So vLLM's ``oracle.nvfp4`` seam is STUBBED with a
-kernel that computes the float reference from the operands it is handed (a
-spy that also does the arithmetic), and what is pinned is the half that is
-ours:
+WHAT THIS FILE CAN COVER AND WHAT IT CANNOT.  Two populations share it.
 
-* the decoded tile IS ``tessera.stock.materialize_stock``'s after the
-  per-expert global join (``fused.shared_lut_global``), byte for byte, expert
-  by expert, gate at rows ``[0:N]`` and up at ``[N:2N]``;
-* the per-expert global handed to the kernel is the MULTIPLIER (modelopt
-  ``weight_scale_2``), the reciprocal of the stock tile's
-  ``weight_global_scale`` divisor -- checked numerically through
-  ``stock_dequant`` and not by name, because a divisor read as a multiplier
-  is a plausible-looking wrong serve;
-* the static A-side scale is inverted once (``input_scale = 1 /
-  input_global_scale``) and a missing one refuses;
-* at TP2 each rank decodes and holds its own ``w13`` rows and ``w2`` columns;
-* the refusals: EP/EPLB, non-gated, streamed, another family, geometry
-  disagreement, half an expert, a stock tensor name.
+The CPU stub suite drives the route's protocol surface without vLLM:
+``oracle.nvfp4`` is STUBBED with a kernel that computes the float reference
+from the operands it is handed (a spy that also does the arithmetic), because
+vendoring the runtime into this repository is forbidden (AGENTS.md).  What
+that stub pins is construction and geometry refusals, the census expectation,
+and the native method answering the modular protocol from its own definition
+instead of inheriting a stock kernel's.
 
-The load-and-execute half on the pinned image is
-``experiments/nvfp4_moe_route_load_probe.py``; the A side (the kernel's own
-group-16 quantisation under the static scale) is measured there, not here.
+The eight device-driven cases marked ``needs_native_prep`` are the native
+lane's own coverage and run for REAL in the pinned image: ``create_weights``
+imports vLLM's own ``FusedMoEMethodBase``, ``apply`` executes the native
+grouped kernels, and the A side is the runtime's registered
+``scaled_fp4_quant``.  They are vLLM-exempt from PrismaBuild like every
+actual vLLM run, and their references are the encoder's own
+``materialize_stock`` tiles and the materializing reader's parsed units --
+never the loader's own path:
+
+* the served stacks' 16-byte scale tables and per-expert globals are the
+  independent ``shared_lut_global`` join (the encoder's materialized pair
+  moved onto one global by ``stock.share_global``), and the joined multiplier
+  is byte-for-byte the raw-table join over independently parsed containers;
+* the per-expert epilogue is the joined multiplier over the one static A-side
+  scalar (the max of the loader's reciprocal, i.e. the min of the checkpoint
+  scales), and the stock divisor read as a multiplier dequants differently;
+* ``apply`` computes the runtime's own quantized arithmetic over those
+  materialized tiles, weights applied only in the final combine, and never
+  consumes the shared experts the runner owns;
+* the load order moves no byte of the served stacks;
+* at TP2 each rank holds its own rows of w13 and columns of w2;
+* the wire/scale loaders and finalize refuse by name.
+
+The load-and-execute receipt on the pinned image, including the CUDA-graph
+capture and the fuller stock oracle, is
+``experiments/native_a4_serve_probe.py``; this file is the regression suite
+that must execute in that same image, not skip.
 """
 from __future__ import annotations
 
@@ -41,7 +52,7 @@ from tessera.serving import nvfp4_moe_route                        # noqa: E402
 from tessera.serving.scheme import (                               # noqa: E402
     STRUCTURE_ROUTED_MOE, TESSERA_NVFP4, experimental_launch_pairs, launch_pairs)
 
-HIDDEN, INTER, EXPERTS, Q256 = 64, 64, 3, 896
+HIDDEN, INTER, EXPERTS, Q256 = 128, 256, 3, 896
 SHARDS = ("w1", "w3", "w2")     # gate, up, down: the runtime's shard ids
 KERNEL_PAIR = ("vllm.fused_moe.modular_kernel", "torch_materialize_stock")
 
@@ -49,10 +60,10 @@ KERNEL_PAIR = ("vllm.fused_moe.modular_kernel", "torch_materialize_stock")
 def _native_prep_available() -> bool:
     """Whether this interpreter can run the native load path at all.
 
-    ``prepare_a4_unit`` repacks the packed BODY through Triton CUDA kernels,
-    so the CPU stub suite below cannot drive it; the pinned image's
-    ``experiments/native_a4_serve_probe.py`` covers that ground against real
-    vLLM (and is the receipt for the native load/apply protocol).
+    ``prepare_a4_unit`` repacks the packed BODY through Triton CUDA kernels and
+    ``apply`` executes the native span-2 grouped GEMM, so the CPU stub suite
+    cannot drive either; the pinned image runs this file's device-driven cases
+    for real (``experiments/native_a4_serve_probe.py`` is the fuller receipt).
     """
     try:
         import tokenspeed_triton  # noqa: F401
@@ -63,9 +74,10 @@ def _native_prep_available() -> bool:
 
 needs_native_prep = pytest.mark.skipif(
     not _native_prep_available(),
-    reason=("the native load path repacks the packed BODY through Triton on "
-            "CUDA; this CPU suite cannot drive it -- see "
-            "experiments/native_a4_serve_probe.py in the pinned image"))
+    reason=("the native load path imports vLLM's own runtime and repacks the "
+            "packed BODY through Triton on CUDA; run this file in the pinned "
+            "image, where these cases execute rather than skip -- see "
+            "experiments/native_a4_serve_probe.py for the fuller receipt"))
 
 
 def _tessera():
@@ -248,99 +260,257 @@ def _load(method, layer, wires, *, tp_size=1, order=None, scales=None, finish=Tr
     return scales
 
 
+# --------------------------------------------------------------------------
+# the native lane's independent reference
+# --------------------------------------------------------------------------
+
+def _native_layer(tp_size=1, tp_rank=0, **moe):
+    """``_layer`` with the real runtime's activation enum, for native apply."""
+    from vllm.model_executor.layers.fused_moe.activation import MoEActivation
+
+    layer = _layer(tp_size=tp_size, tp_rank=tp_rank, **moe)
+    layer.activation = MoEActivation.SILU
+    return layer
+
+
+def _declared_roles(scheme):
+    """The sidecar's per-projection role declarations, from the shared gate."""
+    from tessera.serving.scheme import expert_role_declarations, validate_tessera_moe_scheme
+
+    declared = validate_tessera_moe_scheme(scheme, "m")
+    return {group: expert_role_declarations(declared["groups"][group])
+            for group in ("w13", "w2")}
+
+
+def _parse_reference(blob, role, context):
+    """One container through the MATERIALIZING reader, not the compact twin."""
+    from tessera.serving.scheme import parse_tessera_expert_blob
+
+    return parse_tessera_expert_blob(blob, role, context, device="cuda")[0][1]
+
+
+def _independent_join(wires, roles):
+    """``shared_lut_global`` over tables the materializing reader parsed.
+
+    Gate and up of one expert are encoded on their own globals; the join is
+    the loader's own rule, applied here to the encoder's containers instead
+    of the loader's, so a byte difference is the loader's and not this test's.
+    """
+    from tessera.fused import shared_lut_global
+    from tessera.lane_planes import lut_scale_bytes
+
+    out = []
+    for e in range(EXPERTS):
+        gate = _parse_reference(wires[(e, "w1")], roles["w13"][0], f"reference gate {e}")
+        up = _parse_reference(wires[(e, "w3")], roles["w13"][1], f"reference up {e}")
+        down = _parse_reference(wires[(e, "w2")], roles["w2"][0], f"reference down {e}")
+        shared, moved = shared_lut_global(
+            [lut_scale_bytes(gate.unit.scale_lut), lut_scale_bytes(up.unit.scale_lut)],
+            [float(gate.unit.scale_global), float(up.unit.scale_global)],
+            ["gate_proj", "up_proj"])
+        out.append({"shared": shared, "gate": moved[0].cpu(), "up": moved[1].cpu(),
+                    "down": lut_scale_bytes(down.unit.scale_lut).cpu(),
+                    "down_global": float(down.unit.scale_global)})
+    return out
+
+
+def _served_lut_bytes(stack, expert):
+    return stack.lut_bytes[expert].view(torch.uint8)
+
+
+def _served_scale_plane(stack, expert):
+    """The stack's scale-index nibbles expanded through its served table.
+
+    The compact plane is ``[groups, rows/2]`` bytes, the even row in the high
+    nibble; expanding the served 16-byte table at those indices is the
+    per-element E4M3 plane a stock tile carries.
+    """
+    rows, groups = stack.rows, stack.cols // stack.half
+    packed = stack.nibbles[expert].view(torch.uint8).to(torch.int64)
+    index = torch.empty((groups, rows), dtype=torch.int64, device=packed.device)
+    index[:, 0::2] = (packed >> 4).reshape(groups, rows // 2)
+    index[:, 1::2] = (packed & 0xF).reshape(groups, rows // 2)
+    return _served_lut_bytes(stack, expert)[index].t().contiguous().cpu()
+
+
 def _expected(reference, rank=0, tp_size=1):
     """The rank's rows of w13 and columns of w2, from the joined references."""
     lo, hi = rank * INTER // tp_size, (rank + 1) * INTER // tp_size
-    w13 = [torch.cat([ref["gate"]["weight_packed"][lo:hi], ref["up"]["weight_packed"][lo:hi]])
-           for ref in reference]
-    w13_scale = [torch.cat([ref["gate"]["weight_scale"][lo:hi], ref["up"]["weight_scale"][lo:hi]])
-                 for ref in reference]
-    w2 = [ref["down"]["weight_packed"][:, lo // 2: hi // 2].contiguous() for ref in reference]
-    w2_scale = [ref["down"]["weight_scale"][:, lo // 16: hi // 16].contiguous() for ref in reference]
-    return w13, w13_scale, w2, w2_scale
+    out = []
+    for ref in reference:
+        out.append({
+            "gate_scale": ref["gate"]["weight_scale"][lo:hi].view(torch.uint8),
+            "up_scale": ref["up"]["weight_scale"][lo:hi].view(torch.uint8),
+            "down_scale": ref["down"]["weight_scale"][:, lo // 16: hi // 16].view(torch.uint8),
+            "w13_global": ref["w13_global"], "w2_global": ref["w2_global"]})
+    return out
 
 
-def _assert_tiles(layer, reference, rank=0, tp_size=1):
-    w13, w13_scale, w2, w2_scale = _expected(reference, rank, tp_size)
-    for e in range(EXPERTS):
-        assert torch.equal(layer.w13_weight[e], w13[e]), e
-        assert torch.equal(layer.w13_weight_scale[e].view(torch.uint8), w13_scale[e].view(torch.uint8)), e
-        assert torch.equal(layer.w2_weight[e], w2[e]), e
-        assert torch.equal(layer.w2_weight_scale[e].view(torch.uint8), w2_scale[e].view(torch.uint8)), e
-        assert float(layer.w13_weight_scale_2[e]) == reference[e]["w13_global"], e
-        assert float(layer.w2_weight_scale_2[e]) == reference[e]["w2_global"], e
+def _assert_native_stacks(layer, reference, rank=0, tp_size=1):
+    """Every rank-local stack is the independently materialized reference."""
+    gate, up, down = (layer.tessera_a4_gate_stack, layer.tessera_a4_up_stack,
+                      layer.tessera_a4_down_stack)
+    for e, want in enumerate(_expected(reference, rank, tp_size)):
+        assert torch.equal(_served_scale_plane(gate, e), want["gate_scale"]), e
+        assert torch.equal(_served_scale_plane(up, e), want["up_scale"]), e
+        assert torch.equal(_served_scale_plane(down, e), want["down_scale"]), e
+        assert float(gate.globals[e]) == want["w13_global"], e
+        assert float(up.globals[e]) == want["w13_global"], e
+        assert float(down.globals[e]) == want["w2_global"], e
+
+
+def _rank_tiles(reference, rank, tp_size):
+    """The rank's slice of the joined tiles: w13 rows, w2 columns."""
+    lo, hi = rank * INTER // tp_size, (rank + 1) * INTER // tp_size
+    tiles = []
+    for ref in reference:
+        tiles.append({
+            "gate": {"weight_packed": ref["gate"]["weight_packed"][lo:hi].contiguous(),
+                     "weight_scale": ref["gate"]["weight_scale"][lo:hi].contiguous()},
+            "up": {"weight_packed": ref["up"]["weight_packed"][lo:hi].contiguous(),
+                   "weight_scale": ref["up"]["weight_scale"][lo:hi].contiguous()},
+            "down": {"weight_packed": ref["down"]["weight_packed"][:, lo // 2: hi // 2].contiguous(),
+                     "weight_scale": ref["down"]["weight_scale"][:, lo // 16: hi // 16].contiguous()},
+        })
+    return tiles
+
+
+def _stock_oracle(x, weights, ids, tiles, gs13, gs2, gate_epilogues, down_epilogues,
+                  clamp_limit):
+    """The stock lane's arithmetic for the same routing.
+
+    The runtime's own FP4 quantizer in its ``_scaled_mm`` layout over the
+    independently materialized tiles, the layer's clamped SILU, and the
+    router weights applied only in the final combine.
+    """
+    import vllm._custom_ops  # noqa: F401  (registers torch.ops._C)
+
+    from tessera.serving.nvfp4_route import blocked_scales
+
+    tiles = [{projection: {name: tensor.to(x.device) for name, tensor in tile.items()}
+              for projection, tile in expert.items() if isinstance(tile, dict)}
+             for expert in tiles]
+
+    def gemm(activations, global_scale, tile, epilogue):
+        a_q, a_s = torch.ops._C.scaled_fp4_quant(
+            activations.contiguous(), global_scale, True)
+        a_q = a_q.view(torch.float4_e2m1fn_x2)
+        a_s = a_s.view(torch.uint8).view(torch.float8_e4m3fn).contiguous()
+        b_q = tile["weight_packed"].view(torch.float4_e2m1fn_x2)
+        b_s = blocked_scales(tile["weight_scale"].view(torch.uint8)
+                             .view(torch.float8_e4m3fn))
+        try:
+            y = torch._scaled_mm(a_q, b_q.t(), scale_a=a_s, scale_b=b_s,
+                                 out_dtype=torch.float32)
+        except RuntimeError:
+            y = torch._scaled_mm(a_q, b_q.t(), scale_a=a_s, scale_b=b_s,
+                                 out_dtype=torch.bfloat16).to(torch.float32)
+        return y * epilogue.reshape(1)
+
+    out = torch.zeros_like(x, dtype=torch.float32)
+    for token in range(x.shape[0]):
+        for choice in range(ids.shape[1]):
+            expert = int(ids[token, choice])
+            gate = gemm(x[token:token + 1], gs13, tiles[expert]["gate"], gate_epilogues[expert])
+            up = gemm(x[token:token + 1], gs13, tiles[expert]["up"], gate_epilogues[expert])
+            gate = torch.clamp(gate, max=clamp_limit)
+            up = torch.clamp(up, min=-clamp_limit, max=clamp_limit)
+            hidden = (torch.nn.functional.silu(gate) * up).to(torch.bfloat16)
+            down = gemm(hidden, gs2, tiles[expert]["down"], down_epilogues[expert])
+            out[token] += float(weights[token, choice]) * down[0]
+    return out
 
 
 # --------------------------------------------------------------------------
-# the tile
+# the native stacks and their globals
 # --------------------------------------------------------------------------
 
 @needs_native_prep
-def test_the_tile_is_the_stock_pair_after_the_per_expert_global_join(stack, nvfp4_runtime):
-    """Gate at rows [0:N], up at [N:2N], one joined global per expert per
-    group, every byte materialize_stock's -- and from finalize onward the
-    layer is the modelopt parameter set and nothing else."""
+def test_the_served_stacks_are_the_joined_stock_scale_planes(stack):
+    """The load is the native one: gate and up of each expert decode onto ONE
+    shared global through ``shared_lut_global`` -- byte for byte against both
+    the encoder's materialized tiles and the raw tables of independently
+    parsed containers -- and the down side keeps its own.  From finalize
+    onward the layer holds those stacks and zero-size stock anchors, and the
+    stock names carry a refusing loader rather than a decoded tile."""
     wires, scheme, reference = stack
-    oracle, log, quant = nvfp4_runtime
-    layer = _layer()
+    layer = _native_layer()
     method = _build(scheme, layer)
-    assert log["select"] == [{"config": layer.moe_config, "weight_key": quant.kNvfp4Static,
-                              "activation_key": quant.kNvfp4Dynamic}]
-    assert method.supports_eplb is False
-    scales = _load(method, layer, wires)
-    _assert_tiles(layer, reference)
-    for e in range(EXPERTS):
-        assert torch.equal(layer.w13_input_scale[e], torch.tensor(
-            [1.0 / scales[(e, "w1")], 1.0 / scales[(e, "w3")]], dtype=torch.float32))
-        # The inverse lands in float32 (the modelopt parameter dtype), so it is
-        # compared as one: 1/7 in Python is the float64 neighbour, not this value.
-        assert torch.equal(layer.w2_input_scale[e],
-                           torch.tensor(1.0 / scales[(e, "w2")], dtype=torch.float32))
+    _load(method, layer, wires)
+    _assert_native_stacks(layer, reference)
+    roles = _declared_roles(scheme)
+    for e, ref in enumerate(_independent_join(wires, roles)):
+        assert torch.equal(_served_lut_bytes(layer.tessera_a4_gate_stack, e).cpu(),
+                           ref["gate"]), e
+        assert torch.equal(_served_lut_bytes(layer.tessera_a4_up_stack, e).cpu(),
+                           ref["up"]), e
+        assert torch.equal(_served_lut_bytes(layer.tessera_a4_down_stack, e).cpu(),
+                           ref["down"]), e
+        assert float(layer.tessera_a4_gate_stack.globals[e]) == ref["shared"], e
+        assert float(layer.tessera_a4_down_stack.globals[e]) == ref["down_global"], e
+    # The wires and A-side scales are consumed; the modelopt names survive
+    # only as zero-size anchors, so no expanded expert pool is ever resident.
     assert set(dict(layer.named_parameters())) == set(nvfp4_moe_route._STOCK_TILE_NAMES)
+    assert all(param.numel() == 0 for param in layer.parameters())
     assert layer.tessera_w13_wire_len is None and layer.tessera_w2_wire_len is None
-    assert (layer.tessera_decoder, layer.tessera_backend) == ("torch_materialize_stock",
-                                                              "FLASHINFER_CUTLASS")
+    # the native lane's own labels, not a stock decoder/backend pair
+    assert (layer.tessera_decoder, layer.tessera_backend) == (
+        nvfp4_moe_route.DECODER_NATIVE_SPAN2_GROUPED,
+        nvfp4_moe_route.A4_GROUPED_GEMM_SYMBOL)
     assert (layer.tessera_rows, layer.tessera_columns) == (2 * INTER, HIDDEN)
     assert layer.tessera_activation_contract == nvfp4_moe_route.ACTIVATION_CONTRACT
     assert (layer.tessera_family, layer.tessera_structure, layer.tessera_mode) == (
         TESSERA_NVFP4, STRUCTURE_ROUTED_MOE, "resident")
-    # The modelopt mirror: the runtime's converter and quant config get the
-    # runtime's own kwargs, the kernel's own finalizer runs last.
-    (convert,) = log["convert"]
-    assert convert["nvfp4_backend"] is oracle.NvFp4MoeBackend.FLASHINFER_CUTLASS
-    assert convert["layer"] is layer and convert["is_act_and_mul"] is True
-    assert convert["use_a16"] is False
-    assert torch.equal(convert["w13_scale_2"], layer.w13_weight_scale_2)
-    assert tuple(layer.w13_weight_scale_2.shape) == (EXPERTS,)
-    assert log["finalized"] == [layer]
-    config = method.moe_quant_config
-    assert config["backend"] is oracle.NvFp4MoeBackend.FLASHINFER_CUTLASS
-    assert config["swiglu_limit"] == 10.0 and config["use_a16"] is False
-    assert config["a13_scale"] is layer.w13_input_scale and config["a2_scale"] is layer.w2_input_scale
-    assert method.moe_kernel is not None
+    # the method owns no stock kernel, and the runtime's config is the
+    # model's swiglu facts -- a config assembled from the empty anchors would
+    # be a lie about what serves
+    assert method.moe_kernel is None
+    assert method.moe_quant_config is not None
+    assert method.moe_quant_config.gemm1_clamp_limit == 10.0
 
 
 @needs_native_prep
-def test_the_global_handed_to_the_kernel_is_the_multiplier(stack, nvfp4_runtime):
-    """weight_scale_2 x block scale x nibble value == the stock dequant of the
-    joined reference, exactly; the divisor read as a multiplier is not."""
+def test_the_global_handed_to_the_kernel_is_the_multiplier(stack):
+    """The joined global is the stock divisor's reciprocal, and the epilogue
+    is that multiplier over the one static A-side scalar -- the max of the
+    loader's reciprocal.  Read the divisor as a multiplier and the stock
+    arithmetic dequants differently, which is the wrong serve this pins."""
     from tessera.stock import stock_dequant
 
     wires, scheme, reference = stack
-    layer = _layer()
+    layer = _native_layer()
     method = _build(scheme, layer)
-    _load(method, layer, wires)
+    scales = _load(method, layer, wires)
+    w13_scales = [scales[(e, s)] for e in range(EXPERTS) for s in ("w1", "w3")]
+    w2_scales = [scales[(e, "w2")] for e in range(EXPERTS)]
+    # one quantizer scalar per GEMM: the selected backend's aggregation, the
+    # max of the loader's reciprocal (capacity / amax) over the projections
+    assert float(layer.tessera_a4_gs13) == min(w13_scales)
+    assert float(layer.tessera_a4_gs2) == min(w2_scales)
+    assert float(layer.tessera_a4_gs13) != max(w13_scales)
+    assert torch.equal(layer.tessera_a4_gate_epilogues, layer.tessera_a4_up_epilogues)
     for e in range(EXPERTS):
-        want13 = torch.cat([stock_dequant(reference[e]["gate"]), stock_dequant(reference[e]["up"])])
-        got13 = _dequant(layer.w13_weight[e], layer.w13_weight_scale[e], layer.w13_weight_scale_2[e])
-        assert torch.equal(got13, want13), e
-        want2 = stock_dequant(reference[e]["down"])
-        got2 = _dequant(layer.w2_weight[e], layer.w2_weight_scale[e], layer.w2_weight_scale_2[e])
-        assert torch.equal(got2, want2), e
-        wrong = _dequant(layer.w13_weight[e], layer.w13_weight_scale[e],
-                         1.0 / float(layer.w13_weight_scale_2[e]))
-        assert not torch.equal(wrong, want13), "a divisor would have read as a multiplier"
+        divisor = float(reference[e]["gate"]["weight_global_scale"].reshape(-1)[0])
+        multiplier = reference[e]["w13_global"]
+        assert multiplier == 1.0 / divisor
+        assert float(layer.tessera_a4_gate_stack.globals[e]) == multiplier, e
+        assert torch.equal(layer.tessera_a4_gate_epilogues[e],
+                           layer.tessera_a4_gate_stack.globals[e] / layer.tessera_a4_gs13), e
+        assert torch.equal(layer.tessera_a4_down_epilogues[e],
+                           layer.tessera_a4_down_stack.globals[e] / layer.tessera_a4_gs2), e
+        assert float(layer.tessera_a4_down_stack.globals[e]) == reference[e]["w2_global"], e
+        # the direction, numerically: the joined multiplier used as though it
+        # were the stock divisor is a different dequant, so a swapped read
+        # cannot pass this test by looking plausible
+        true = stock_dequant(reference[e]["gate"])
+        wrong = stock_dequant({**reference[e]["gate"], "weight_global_scale": torch.tensor(
+            [float(layer.tessera_a4_gate_stack.globals[e])])})
+        assert not torch.equal(wrong, true), e
 
+
+# --------------------------------------------------------------------------
+# the forward
+# --------------------------------------------------------------------------
 
 def test_the_join_moved_a_half_on_at_least_one_expert(stack):
     """The fixture exercises the join: some expert's gate and up were encoded
@@ -356,76 +526,103 @@ def test_the_join_moved_a_half_on_at_least_one_expert(stack):
 
 
 @needs_native_prep
-def test_apply_hands_the_kernel_operands_that_compute_the_stock_reference(stack, nvfp4_runtime):
+def test_apply_computes_the_stock_reference_through_the_native_stages(stack):
+    """``apply`` returns the runtime's own quantized arithmetic over the
+    independently materialized tiles, per route, weights only in the final
+    combine; the runner's shared experts are never consumed, and the two
+    approximations the native contract refuses are refused by name."""
     wires, scheme, reference = stack
-    from tessera.stock import stock_dequant
-
-    _oracle, log, _quant = nvfp4_runtime
-    layer = _layer()
+    layer = _native_layer()
     method = _build(scheme, layer)
     _load(method, layer, wires)
     generator = torch.Generator().manual_seed(7)
-    x = torch.randn(4, HIDDEN, generator=generator)
-    ids = torch.tensor([[0, 2], [1, 0], [2, 1], [1, 2]], dtype=torch.int32)
-    weights = torch.rand(4, 2, generator=generator)
-    got = method.apply(layer, x, weights, ids, None, None)
-    expected = torch.zeros_like(x)
-    for token in range(4):
-        for choice in range(2):
-            ref = reference[int(ids[token, choice])]
-            gate = stock_dequant(ref["gate"]) @ x[token]
-            up = stock_dequant(ref["up"]) @ x[token]
-            expected[token] += weights[token, choice] * (
-                stock_dequant(ref["down"]) @ (torch.nn.functional.silu(gate) * up))
-    torch.testing.assert_close(got, expected, atol=1e-5, rtol=1e-5)
-    kwargs = log["apply"][-1]
-    assert kwargs["global_num_experts"] == EXPERTS and kwargs["expert_map"] is None
-    assert kwargs["activation"] == "silu" and kwargs["apply_router_weight_on_input"] is False
+    x = (torch.randn(4, HIDDEN, generator=generator) * 0.5).to("cuda").to(torch.bfloat16)
+    ids = torch.tensor([[0, 2], [1, 0], [2, 1], [1, 2]], dtype=torch.int32, device="cuda")
+    weights = torch.rand(4, 2, generator=generator).to("cuda")
+
+    class Sentinel:
+        called = False
+
+        def __call__(self, *args, **kwargs):
+            Sentinel.called = True
+
+    got = method.apply(layer, x, weights, ids, Sentinel(), None)
+    assert Sentinel.called is False, "apply consumed the runner's shared experts"
+    expected = _stock_oracle(
+        x, weights, ids, reference,
+        layer.tessera_a4_gs13, layer.tessera_a4_gs2,
+        layer.tessera_a4_gate_epilogues, layer.tessera_a4_down_epilogues,
+        float(layer.swiglu_limit))
+    assert got.dtype == x.dtype
+    torch.testing.assert_close(got.float(), expected, rtol=2e-2, atol=5e-3)
+    layer.apply_router_weight_on_input = True
+    with pytest.raises(ValueError, match="apply_router_weight_on_input"):
+        method.apply(layer, x, weights, ids, None, None)
+    layer.apply_router_weight_on_input = False
+    with pytest.raises(ValueError, match="routing"):
+        method.apply(layer, x, weights, ids[:, :1], None, None)
+    layer.expert_map = torch.zeros(1, dtype=torch.int32, device="cuda")
+    with pytest.raises(ValueError, match="expert map"):
+        method.apply(layer, x, weights, ids, None, None)
 
 
 @needs_native_prep
-def test_load_order_does_not_matter(stack, nvfp4_runtime):
+def test_load_order_does_not_matter(stack):
     """Up before gate, down first, experts interleaved: the w13 join waits
-    for both halves and the tile is the same."""
+    for both halves and every served byte is the same."""
     wires, scheme, reference = stack
-    layer = _layer()
-    method = _build(scheme, layer)
-    order = [(2, "w2"), (0, "w3"), (0, "w1"), (1, "w3"), (2, "w1"), (1, "w1"),
-             (0, "w2"), (2, "w3"), (1, "w2")]
-    _load(method, layer, wires, order=order)
-    _assert_tiles(layer, reference)
+    orders = (
+        [(2, "w2"), (0, "w3"), (0, "w1"), (1, "w3"), (2, "w1"), (1, "w1"),
+         (0, "w2"), (2, "w3"), (1, "w2")],
+        [(e, s) for s in ("w2", "w1", "w3") for e in reversed(range(EXPERTS))],
+    )
+    layers = []
+    for order in orders:
+        layer = _native_layer()
+        method = _build(scheme, layer)
+        _load(method, layer, wires, order=order)
+        _assert_native_stacks(layer, reference)
+        layers.append(layer)
+    first, second = layers
+    assert torch.equal(first.tessera_a4_gate_stack.lut_bytes,
+                       second.tessera_a4_gate_stack.lut_bytes)
+    assert torch.equal(first.tessera_a4_up_stack.nibbles, second.tessera_a4_up_stack.nibbles)
+    assert torch.equal(first.tessera_a4_down_stack.lut_bytes,
+                       second.tessera_a4_down_stack.lut_bytes)
+    assert torch.equal(first.tessera_a4_gate_epilogues, second.tessera_a4_gate_epilogues)
+    assert torch.equal(first.tessera_a4_down_epilogues, second.tessera_a4_down_epilogues)
 
 
 @pytest.mark.parametrize("rank", [0, 1])
 @needs_native_prep
-def test_tp2_ranks_decode_and_hold_their_own_rows_and_columns(stack, nvfp4_runtime, rank):
+def test_tp2_ranks_decode_and_hold_their_own_rows_and_columns(stack, rank):
     """Each rank parses every FULL container, cuts it on the group plan (rows
     of w13, columns of w2) and decodes only its own slice; the joined global
     is a whole-unit fact and is the same on both ranks."""
-    from tessera.stock import stock_dequant
-
     wires, scheme, reference = stack
-    layer = _layer(tp_size=2, tp_rank=rank)
+    layer = _native_layer(tp_size=2, tp_rank=rank)
     method = _build(scheme, layer)
     _load(method, layer, wires, tp_size=2)
-    assert tuple(layer.w13_weight.shape) == (EXPERTS, INTER, HIDDEN // 2)
-    assert tuple(layer.w2_weight.shape) == (EXPERTS, HIDDEN, INTER // 4)
-    assert (layer.tessera_rows, layer.tessera_columns) == (INTER, HIDDEN)
-    _assert_tiles(layer, reference, rank, 2)
-    lo, hi = rank * INTER // 2, (rank + 1) * INTER // 2
-    x = torch.randn(2, HIDDEN, generator=torch.Generator().manual_seed(11))
-    ids = torch.tensor([[2, 0], [1, 2]], dtype=torch.int32)
-    weights = torch.tensor([[.2, .8], [.7, .3]])
+    local = INTER // 2
+    assert (layer.tessera_a4_gate_stack.rows, layer.tessera_a4_gate_stack.cols) == (
+        local, HIDDEN)
+    assert (layer.tessera_a4_up_stack.rows, layer.tessera_a4_up_stack.cols) == (
+        local, HIDDEN)
+    assert (layer.tessera_a4_down_stack.rows, layer.tessera_a4_down_stack.cols) == (
+        HIDDEN, local)
+    assert (layer.tessera_rows, layer.tessera_columns) == (2 * local, HIDDEN)
+    _assert_native_stacks(layer, reference, rank, 2)
+    x = (torch.randn(2, HIDDEN, generator=torch.Generator().manual_seed(11))
+         * 0.5).to("cuda").to(torch.bfloat16)
+    ids = torch.tensor([[2, 0], [1, 2]], dtype=torch.int32, device="cuda")
+    weights = torch.tensor([[.2, .8], [.7, .3]], device="cuda")
     got = method.apply(layer, x, weights, ids, None, None)
-    expected = torch.zeros_like(x)
-    for token in range(2):
-        for choice in range(2):
-            ref = reference[int(ids[token, choice])]
-            gate = stock_dequant(ref["gate"])[lo:hi] @ x[token]
-            up = stock_dequant(ref["up"])[lo:hi] @ x[token]
-            expected[token] += weights[token, choice] * (
-                stock_dequant(ref["down"])[:, lo:hi] @ (torch.nn.functional.silu(gate) * up))
-    torch.testing.assert_close(got, expected, atol=1e-5, rtol=1e-5)
+    expected = _stock_oracle(
+        x, weights, ids, _rank_tiles(reference, rank, 2),
+        layer.tessera_a4_gs13, layer.tessera_a4_gs2,
+        layer.tessera_a4_gate_epilogues, layer.tessera_a4_down_epilogues,
+        float(layer.swiglu_limit))
+    torch.testing.assert_close(got.float(), expected, rtol=2e-2, atol=5e-3)
 
 
 # --------------------------------------------------------------------------
@@ -472,7 +669,7 @@ def test_geometry_refusals_arrive_at_create_weights(stack, nvfp4_runtime):
 
 
 @needs_native_prep
-def test_wire_and_scale_loader_refusals(stack, nvfp4_runtime):
+def test_wire_and_scale_loader_refusals(stack):
     wires, scheme, _reference = stack
     layer = _layer()
     method = _build(scheme, layer)
@@ -513,7 +710,7 @@ def test_wire_and_scale_loader_refusals(stack, nvfp4_runtime):
 
 
 @needs_native_prep
-def test_finalize_refuses_an_incomplete_stack(stack, nvfp4_runtime):
+def test_finalize_refuses_an_incomplete_stack(stack):
     wires, scheme, _reference = stack
     # A missing A-side scale on one projection.
     layer = _layer()
@@ -532,12 +729,15 @@ def test_finalize_refuses_an_incomplete_stack(stack, nvfp4_runtime):
     order = [(e, s) for e in range(EXPERTS) for s in SHARDS if (e, s) != (1, "w3")]
     with pytest.raises((ValueError, GrammarError), match="wire length|one half"):
         _load(method, layer, wires, order=order)
-    # A completed stack takes no more wires.
+    # A completed stack takes no more wires or scales.
     layer = _layer()
     method = _build(scheme, layer)
     _load(method, layer, wires)
     with pytest.raises(RuntimeError, match="finalize"):
         method._load_wire(None, torch.zeros(4, dtype=torch.uint8), "wire", "w1", 0)
+    with pytest.raises(RuntimeError, match="finalize"):
+        method._load_input_global_scale(None, torch.tensor([1.0]),
+                                        "input_global_scale", "w1", 0)
 
 
 # --------------------------------------------------------------------------
