@@ -264,6 +264,14 @@ def canonical_execution(fixture, layers=(3, 4), experts=(0, 1), clamp=10.0):
     # apply_router_weight_on_input mathematically degenerate, which would pass
     # either placement without distinguishing them.
     torch.manual_seed(4242)
+    # The real modular kernel allocates through vLLM's workspace manager,
+    # which the GPU model runner normally initialises.  A harness that calls
+    # ``FusedMoEKernel.apply`` directly must do the same or the kernel asserts
+    # before any arithmetic.
+    from vllm.v1.worker.workspace import init_workspace_manager
+    if torch.cuda.is_available():
+        init_workspace_manager(torch.device("cuda", torch.cuda.current_device()))
+
     units = canonical_units(fixture, layers=layers, experts=experts)
     report = {"canonical": True, "fixture": fixture, "clamp": clamp,
               "seed": 4242, "arms": []}
@@ -467,8 +475,18 @@ def canonical_execution(fixture, layers=(3, 4), experts=(0, 1), clamp=10.0):
                      "byte_identical": bool(torch.equal(fused_clamped, fused_uncapped)),
                      "note": "0 here would mean fused_experts IGNORED the clamp"})
             for weight_input in (False, True):
+                # The stock modular kernel only implements
+                # ``apply_router_weight_on_input`` for topk=1 (it asserts so).
+                # Comparing that placement therefore requires a topk=1 routing
+                # on BOTH sides; with topk=2 only the gemm2 placement is
+                # comparable against this stock path.
+                if weight_input and ids.shape[1] != 1:
+                    ids_wi = ids[:, :1].contiguous()
+                    w_wi = weights[:, :1].contiguous()
+                else:
+                    ids_wi, w_wi = ids, weights
                 layer_stub.apply_router_weight_on_input = weight_input
-                native = method.apply(layer_stub, x, weights, ids, None, None)
+                native = method.apply(layer_stub, x, w_wi, ids_wi, None, None)
                 qc = (quant_fp8(w1_scale=s1, w2_scale=s2, swiglu_limit=clamp)
                       if s1 is not None else
                       FusedMoEQuantConfig.make(gemm1_clamp_limit=clamp))
@@ -482,7 +500,7 @@ def canonical_execution(fixture, layers=(3, 4), experts=(0, 1), clamp=10.0):
                 # the composition is graded against the operation the model
                 # actually specifies rather than against a clamp-less stand-in.
                 stock = _stock_modular_reference(
-                    x, w1, w2, weights, ids, family=u["family"], clamp=clamp,
+                    x, w1, w2, w_wi, ids_wi, family=u["family"], clamp=clamp,
                     experts=E, apply_router_weight_on_input=weight_input,
                     w1_scale=s1, w2_scale=s2,
                     moe_config=method.moe)
