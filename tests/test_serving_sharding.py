@@ -1023,27 +1023,33 @@ def test_granularity_refusal_names_the_granularity(monkeypatch, units):
     assert "40" in str(e.value) and "128" in str(e.value)
 
 
-def test_a_prepared_role_is_its_planes_and_nothing_beside_them():
-    """The representation carries no separate INITIAL_STATE plane any more.
+def test_a_prepared_span2_role_is_its_planes_and_nothing_beside_them():
+    """The representation carries no separate INITIAL_STATE plane.
 
     A row shard's register is threaded into the select plane's pad by
-    ``lane_planes.pack_unit_for_kernel`` (tessera#492), so what
-    ``native_a4.prepare_a4_unit`` holds per role -- and fingerprints -- is the
-    packed planes alone; there is no second tensor a decoder could ignore.
-    ``tests/test_span2_start_state.py`` is the proof the pad decodes as the
-    register; this pins the shape of the record.
+    ``lane_planes._thread_start_state`` (tessera#492), so what the A4 lanes
+    hold per role -- and fingerprint -- is the packed planes alone; there is no
+    second tensor a decoder could ignore.  ``tests/test_span2_start_state.py``
+    is the proof the pad decodes as the register; this pins the shape of the
+    record at the surviving packer, now that the materialising ``ops`` wrapper
+    is retired.
     """
     torch = pytest.importorskip("torch")
-    from tessera.serving import ops
+    from tessera import lane_planes
 
-    plane = torch.zeros(4, dtype=torch.uint8)
-    role = ops._PreparedRole("q", 0, (plane,) * 7, dict(rows=1, cols=16, rate=1, arity=2,
-                                                        memory=1, half=0))
-    assert role.tensors() == role.planes
-    assert not hasattr(role, "initial_state")
-    assert not hasattr(ops.PreparedTesseraModule, "_require_no_initial_state")
-    with pytest.raises(TypeError):
-        ops._PreparedRole("q", 0, (plane,) * 7, {}, torch.zeros(16, dtype=torch.int32))
+    body = torch.zeros(16, 4, dtype=torch.int32)        # 16 codes x 4 columns
+    planes = lane_planes.pack_kernel_planes(body, rate=3, memory=6, span=2)
+    assert len(planes) == 3, "select, label and point -- no state tensor beside them"
+
+    state = torch.arange(4, dtype=torch.int64)
+    with_state = lane_planes.pack_kernel_planes(body, rate=3, memory=6, span=2,
+                                                initial_state=state)
+    assert len(with_state) == 3
+    # The register lives IN the select plane's pad: it moves nothing the body
+    # alone decides (label, point) and is never returned as a plane of its own.
+    assert torch.equal(with_state[1], planes[1])
+    assert torch.equal(with_state[2], planes[2])
+    assert not torch.equal(with_state[0], planes[0]), "the select pad must carry the state"
 
 
 def test_what_an_artifact_says_about_slicing_is_read_off_it_not_assumed():

@@ -497,7 +497,8 @@ if _TL is not None:
         """
         # The window's anchor is the OLDEST of its memory+1 bits:
         # select_base = k*(pairs+PAD) + PAD - memory, then the pair's own bit
-        # is the newest (serving/csrc/tessera_nvfp4.cu:104-125 states it).
+        # is the newest -- the order lane_planes._thread_start_state writes the
+        # pad in and build_span2_luts reads a window in (newest bit on top).
         q = k * (pairs + PAD) + PAD - MEMORY + p
         byte = q // 8
         b0 = _TL.load(select_ptr + byte).to(_TL.int32)

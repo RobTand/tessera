@@ -221,6 +221,24 @@ fourteen-row record with a BF16 reference arm. `gfx1151` still has no cell.
 Receipt: `docs/measurements/tessera-gfx1201-bf16-k1-served-2026-09-13.md`.
 See §4.5f.
 
+Re-stamped 2026-09-16 for the **multilevel integration**: the A4 native lanes
+and the routed window native lane are one tree, and the A4 whole-weight
+expansion is retired in the same tree (its own commit). The two lines bring no
+divergent copy of anything they share — the compact reader, the scheme dispatch
+table, the census tokens and the residency model are single. Checked, not
+asserted: relative to the A4 baseline `d98c8dc`, the only source movement in
+the A4 route is 27 deleted lines (`decode_expert_tile`, its `__all__` entry and
+the `nvfp4_route` re-export); `native_a4.py`/`kernel_a4.py` are byte-identical,
+and the window lane's files are byte-identical to their authoring branch
+`30fb2bf`. Nothing about activation semantics moves with the integration: the
+packaged `activation_quantizers`, every `lane_eligibility` cell, `formats` and
+`tensor_parallel` are byte-identical to the A4 baseline, and the only contract
+movement is the retired `native_extensions` entry with its version bump (29 ->
+30). Each family keeps the quantizer, scale grouping and accumulation order its
+own route already published — no route order was changed to satisfy a kernel
+test. The routed window lane joins as an EXPERIMENTAL pair, and a mixed
+A4/A8/A16 served census is still pending. See §3.3.
+
 Re-stamped 2026-09-16 for the A4 whole-weight-expansion retirement. The A4
 lanes decode the compact loader's packed planes in-kernel; the superseded
 expansion — `serving/ops.py` (span-2 decode custom ops, `PreparedTesseraModule`,
@@ -1998,6 +2016,26 @@ with history, actual wires) is held by PB-run tests
 their own load-time agreement for the reference path.  The lane stamps
 `native_window_gemm`, a decoder distinct from `torch_window` and
 `window_gemv`, so a census can tell a native serve from a reference one.
+
+**The ROUTED window lane serves the same way, and is likewise a candidate.** A
+routed stack whose family is FP8 (`TESSERA_E4M3_K1`) or BF16
+(`TESSERA_BF16_K1`) runs the compact intake -- one
+`scheme.parse_compact_tessera_expert_blob` per projection -- into a
+preallocated per-expert axis (`native_window_moe.WindowUnitAxis`) and applies
+the two-stage grouped kernels (`window_gemm_grouped`, wrapped by
+`native_window_moe.NativeWindowMoE`: gathered routed rows in, activation, down
+projection, routing weights, routed output only).  It stamps `moe_route.py`'s
+`native_window_moe_compact` decoder and the
+`tessera.native_window_moe.NativeWindowMoE.__call__` symbol, published as an
+EXPERIMENTAL pair (`scheme.EXPERIMENTAL_LAUNCHES`) rather than as a cell, so
+the routed `lane_eligibility` cells keep naming the attested stock dispatch.
+The evidence so far is numerical -- the PB receipt `b3dfb9b0…` (55 passed, 13
+device-allocated, one GB10) plus stage-by-stage comparison against stock
+`scaled_mm`/`fused_experts` -- and a two-node serve of this lane has NOT run,
+so nothing is promoted: the shared-expert combination stays the runner's
+(`SharedExpertsOrder.NO_OVERLAP`), no internal MK kernel is claimed, and the
+family's activation contract (quantizer, scale grouping, accumulation order)
+is the one the family already publishes.
 
 ### 3.4 Declared weight transforms are refused at the materialisation boundary
 

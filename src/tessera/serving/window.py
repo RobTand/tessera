@@ -29,9 +29,10 @@ window table holds, at the table's own dtype -- the grid's CODES, ``uint8
 [steps, cols]``.  A route maps them to its tile (the FP8 route hands in the
 grid's ``native`` byte map so the table gather yields E4M3 bytes directly;
 an NVFP4 route would hand in the tuple->nibble map).  Every prepared tensor
-is a private device clone fingerprinted at preparation, as on ``ops``'s
-prepared module; the eager path re-checks the fingerprints, a compiled
-forward skips the untraceable data-pointer comparison.
+is a private device clone fingerprinted at preparation, as on the A4 lanes'
+``native_a4.prepare_a4_unit`` record; the eager path re-checks the
+fingerprints, a compiled forward skips the untraceable data-pointer
+comparison.
 
 The default backend is pure torch and needs no CUDA extension, which is why the
 FP8 route serves without one wherever the window GEMV lane did not prepare

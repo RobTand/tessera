@@ -362,9 +362,11 @@ def _materialised_path(a_q: torch.Tensor, a_scale: torch.Tensor, scale_b: torch.
 
 # The forward's dispatch is FUNCTIONAL: the op owns the tensor it returns, so
 # a compiled forward traces it as one opaque node -- no branch on the token
-# dim, no mutation of an aliased pool (the failure ``ops`` documents at
-# length), no data-pointer comparison.  The ``(tensors, meta)`` flattening is
-# the same shape as ``ops._nvfp4_decode_module``'s ``(planes, scalars)``.
+# dim, no mutation of an aliased pool (the dispatch failure the retired
+# materialising ``ops`` module documented at length), no data-pointer
+# comparison.  The ``(tensors, meta)`` flattening is the same shape as the
+# loader's record -- ``lane_planes.pack_unit_for_kernel``'s planes plus their
+# scalars.
 @torch.library.custom_op(STREAMED_APPLY_OP, mutates_args=())
 def streamed_apply(a_q: torch.Tensor, a_scale: torch.Tensor, scale_b: torch.Tensor,
                    tensors: List[torch.Tensor], meta: List[int],
