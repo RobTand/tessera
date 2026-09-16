@@ -101,10 +101,15 @@ expert container to its rank on the group's shard plan (contract v26 moves
 `loader_axes.row` from the sharded-off-the-table value to one the span-2
 select pad reads), and contract v27 adds the additive `structures` list to
 every format row so a consumer can tell a dense-only format from one with an
-expert route. A builder is a dispatch fact, not a served qualification: the
-`routed_moe` cells for the NVFP4 family are still unpublished, so a routed
-E2M1x2 export needs `--allow-unserveable` until a container receipt exists
-(§5.7 has the route, §7 the cells).
+expert route. A builder is a dispatch fact, not a served qualification; the
+qualification arrived later, in contract v28: the two `routed_moe` cells
+`tessera_e2m1_k2_routed_moe_sm121_{decode,batch}_resident` publish q256 896,
+eager and resident, from a two-rank served census of the GLM-5.3-Flash 4-layer
+stub, both `route_only` with no smoke record (tessera#506, the re-stamp above).
+A routed E2M1x2 export at that one rung therefore passes the export serving gate
+without `--allow-unserveable` and names both cells; a routed stack at any other
+rung still needs the override. `route_only` is a route census, not a full-model
+quality or native-kernel qualification (§5.7 has the route, §7 the cells).
 
 Re-stamped 2026-09-14 for the research packed-expert load's expert axis
 (tessera#501). `PreparedWindowAxis` and `PreparedModuleAxis`
