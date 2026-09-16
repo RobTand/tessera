@@ -228,6 +228,55 @@ def test_each_entry_names_the_modules_it_counted(tracing):
     assert entry["dispatches_without_prefix"] == 0
 
 
+def test_the_routed_builder_names_its_layer_and_two_routed_layers_stay_two(tracing):
+    """THE ROUTED-LANE REGRESSION, from the first two-rank serve.
+
+    vLLM's fused MoE takes ``prefix`` as a constructor argument and stores no
+    attribute, so the routed layer reached ``emit_route`` with no ``prefix``
+    and every routed dispatch was counted UNNAMED: layer 3's A8 stack and
+    layer 4's folded A16 stack were ONE bucket, separable only by lane policy
+    -- which is not module coverage.  The builder binds the name it was given,
+    so two routed layers are two named modules, and their swap moves names
+    rather than leaving a histogram.
+    """
+    from tessera.serving import moe_route
+
+    l3 = _Layer(None)      # vLLM's fused MoE: no prefix attribute value at all
+    l4 = _Layer(None)
+    assert moe_route._bind_module_prefix(l3, "language_model.model.layers.3.mlp.experts")
+    assert moe_route._bind_module_prefix(l4, "language_model.model.layers.4.mlp.experts")
+
+    trace, _path = tracing
+    _emit(l3, kind="moe", policy="TESSERA_FP8:resident", symbol="native", decoder="d")
+    _emit(l4, kind="moe", policy="TESSERA_FP8:resident", symbol="native", decoder="d")
+    entry = trace.snapshot()["entries"][0]
+    assert entry["module_names"] == ["language_model.model.layers.3.mlp.experts",
+                                     "language_model.model.layers.4.mlp.experts"]
+    assert entry["unnamed_modules"] == 0 and entry["dispatches_without_prefix"] == 0
+    assert entry["modules"] == 2
+
+
+def test_binding_a_prefix_never_overwrites_a_real_one_or_invents_one():
+    """Only a layer with no name of its own is named; ours is never merged
+    with vLLM's, and an empty/foreign name is left exactly as found."""
+    from tessera.serving import moe_route
+
+    theirs = _Layer("model.layers.7.mlp.experts")            # a legit vLLM fact
+    assert not moe_route._bind_module_prefix(theirs, "language_model.model.layers.3.mlp.experts")
+    assert theirs.prefix == "model.layers.7.mlp.experts"
+
+    blank = _Layer("")
+    assert moe_route._bind_module_prefix(blank, "model.layers.3.mlp.experts")
+    assert blank.prefix == "model.layers.3.mlp.experts"
+
+    # a builder prefix that is not a usable name binds nothing (the collector
+    # would treat it as unnamed anyway -- say so here rather than pretend).
+    for bad in ("", None, 7):
+        layer = _Layer(None)
+        assert not moe_route._bind_module_prefix(layer, bad)
+        assert getattr(layer, "prefix", None) is None
+
+
 def test_a_repeated_prefix_counts_once_but_launches_every_time(tracing):
     trace, _path = tracing
     layer = _Layer("model.layers.0.mlp.down_proj")

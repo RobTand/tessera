@@ -604,6 +604,37 @@ def prepare_tessera_moe_experts(blobs: Mapping[str, Sequence[Sequence[bytes]]],
         w13_weight_scale=w13_scale, w2_weight_scale=w2_scale)
 
 
+def _bind_module_prefix(layer, prefix: str) -> bool:
+    """Give the routed experts layer the module identity its trace needs.
+
+    The route trace names a module by ``layer.prefix`` (``telemetry.py``,
+    ``_RouteTrace.count``), and this layer arrives WITHOUT one: vLLM's fused
+    MoE takes ``prefix`` as a constructor argument and stores no attribute, so
+    every routed dispatch was counted UNNAMED and two routed layers -- L3's A8
+    stack and L4's folded A16 stack -- collapsed into one bucket per shape of
+    their shared policy.  A lane policy is not module coverage, and no consumer
+    may read it as any.
+
+    The builder is handed the module's real name and already prints it in every
+    refusal here, so that is the identity it binds -- and ONLY where the layer
+    has no name of its own.  A legitimate ``layer.prefix`` that vLLM set (the
+    dense ``LinearBase`` path does set one) is somebody else's fact: it is
+    preserved, never overwritten, and never merged with ours.
+
+    Returns True when this call wrote the name.
+    """
+    if not isinstance(prefix, str) or not prefix:
+        return False
+    existing = getattr(layer, "prefix", None)
+    if existing not in (None, ""):
+        return False
+    try:
+        layer.prefix = prefix
+    except (AttributeError, TypeError):  # a slotted/immutable layer: no name
+        return False
+    return True
+
+
 def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
                              research_selected: ResearchSelectedMoeConfig | None = None):
     """Construct the vLLM fused-MoE method serving a Tessera expert stack.
@@ -618,6 +649,7 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
         raise ValueError("research_selected requires an explicit ResearchSelectedMoeConfig")
     declared = validate_tessera_moe_scheme(scheme, prefix)
     family = declared["family"]
+    _bind_module_prefix(layer, prefix)
     from .scheme import refuse_a_family_with_no_expert_route
     if not (research_selected is not None and family == TESSERA_BF16):
         refuse_a_family_with_no_expert_route(family, prefix)
