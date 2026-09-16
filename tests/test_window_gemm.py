@@ -27,6 +27,8 @@ from tessera import kernel_window_gemv as kg    # noqa: E402
 from tessera import window_gemm as wg           # noqa: E402
 from tessera.errors import GrammarError         # noqa: E402
 
+import window_pack_reference as wpr             # noqa: E402
+
 cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="the lane is a CUDA kernel")
 
 L = 14
@@ -354,57 +356,90 @@ def test_prepare_refusals_are_at_the_boundary():
         wg.prepare_window_gemm(e4m3)(torch.zeros(32, cols, device="cuda").to(torch.float8_e4m3fn))
 
 
-# --- rate roster boundary ------------------------------------------------------
+@cuda
+def test_prepared_refuses_noncontiguous_out_and_scale():
+    """The hot path assumes contiguous operands; a strided out or activation
+    scale is refused at the API boundary, not misaddressed."""
+    rows, cols = 512, 128
+    unit, _, _ = _make(rows, cols, (4,) * cols, seed=57)
+    prepared = wg.prepare_window_gemm(unit, block_m=16)
+    x = torch.randn(16, cols, device="cuda").bfloat16()
+    wide = torch.empty(16, rows * 2, dtype=torch.bfloat16, device="cuda")[:, ::2]
+    assert not wide.is_contiguous()
+    with pytest.raises(GrammarError, match="contiguous"):
+        prepared(x, out=wide)
 
-
-def _manual_repack(body, rate):
-    """The documented tile-word recipe for one uniform rate that divides 8 --
-    used for rate 8, which the pinned CUDA lane's roster excludes but the
-    layout (and this kernel) admits."""
-    rows, cols = body.shape
-    rows_p = -(-rows // kg.TILE_ROWS) * kg.TILE_ROWS
-    codes = body.to(torch.int32)
-    if rows_p != rows:
-        codes = torch.cat([codes, torch.zeros(rows_p - rows, cols, dtype=torch.int32)], 0)
-    cpb = 8 // rate
-    grouped = codes.view(rows_p // cpb, cpb, cols)
-    byte = torch.zeros(rows_p // cpb, cols, dtype=torch.int32)
-    for i in range(cpb):
-        byte |= grouped[:, i, :] << (rate * (cpb - 1 - i))
-    byte = byte.to(torch.uint8)
-    chunk_bytes = 64 * rate
-    n_tiles = rows_p // kg.TILE_ROWS
-    tiles = byte.view(n_tiles, kg.TILE_ROWS // cpb, cols).permute(0, 2, 1)
-    tiles = tiles.reshape(n_tiles, cols, chunk_bytes // 4, 4).flip(-1)
-    words = tiles.reshape(-1).view(torch.int32).contiguous()
-    perm = torch.arange(cols, dtype=torch.int32)
-    runs = torch.tensor([[rate, 0, cols, 0]], dtype=torch.int32)
-    return kg.Repacked(words=words, tile_words=cols * 16 * rate, n_tiles=n_tiles, rows=rows,
-                       cols=cols, rows_p=rows_p, perm=perm, runs=runs, rates=(rate,) * cols)
+    e4m3 = dataclasses.replace(
+        unit, family="e4m3",
+        codes_of_state=torch.zeros(1 << L, dtype=torch.uint8, device="cuda"),
+        native=torch.zeros(256, dtype=torch.uint8, device="cuda"))
+    p8 = wg.prepare_window_gemm(e4m3, block_m=16)
+    xq = torch.zeros(16, cols, device="cuda").to(torch.float8_e4m3fn)
+    a_wide = torch.rand(16 * 2, device="cuda")[::2]
+    assert not a_wide.is_contiguous()
+    with pytest.raises(GrammarError, match="contiguous"):
+        p8(xq, a_scale=a_wide)
 
 
 @cuda
-def test_window_gemm_rate_boundary_and_rate_eight_layout():
-    """Rates the layout cannot express are refused by the packer, with the
-    reason; the rate-8 layout the recipe does express (cpb = 1, no wasted
-    bits) decodes exactly through the kernel."""
+def test_prepare_freezes_strided_constants_contiguously():
+    """The constants may arrive as strided views (they do not normally, but
+    the API does not say so); preparation freezes contiguous copies and the
+    result is bit-identical to the contiguous unit's."""
+    rows, cols = 768, 192
+    unit, _, _ = _make(rows, cols, (4,) * cols, seed=59)
+    wide_scale = torch.empty(rows * 2, device="cuda")
+    wide_scale[::2] = unit.scale
+    wide_scale[1::2] = 0.0
+    strided_scale = wide_scale[::2]
+    assert not strided_scale.is_contiguous()
+    wide_words = torch.empty(unit.rep.words.numel() * 2, dtype=torch.int32, device="cuda")
+    wide_words[::2] = unit.rep.words
+    wide_words[1::2] = 0
+    strided_words = wide_words[::2]
+    assert not strided_words.is_contiguous()
+    rep = dataclasses.replace(unit.rep, words=strided_words)
+    unit2 = dataclasses.replace(unit, rep=rep, scale=strided_scale)
+
+    prepared = wg.prepare_window_gemm(unit2, block_m=32, block_n=64, block_k=64)
+    assert prepared.words.is_contiguous() and prepared.scale.is_contiguous()
+    x = torch.randn(32, cols, device="cuda").bfloat16()
+    ref = wg.window_gemm(unit, x, block_m=32, block_n=64, block_k=64)
+    assert torch.equal(prepared(x), ref)
+
+
+# --- rate roster boundary ------------------------------------------------------
+
+
+@cuda
+def test_window_gemm_decodes_every_rate_through_the_bitstream_layout():
+    """The layout is bit-exact for every rate 1..8 (512*R bits is always whole
+    words); only the legacy ``repack_window_body`` byte step is restricted.
+    The independent bitstream packer agrees with it wherever it can run, and
+    the kernel decodes every rate exactly against the definition."""
     body = _body(600, 32, (4,) * 32, seed=53)
+    values = (torch.arange(1 << L) & 127).to(torch.bfloat16).cuda()
+    x = torch.eye(32, device="cuda").bfloat16()
+
+    official = kg.repack_window_body(body.cuda(), (4,) * 32)
+    reference4 = wpr.pack_bitstream(body, (4,) * 32)
+    assert torch.equal(reference4.words, official.words.cpu())
+    assert torch.equal(reference4.runs, official.runs.cpu())
+    assert torch.equal(reference4.perm, official.perm.cpu())
+
     for bad in (3, 5, 6, 7):
+        # the LEGACY implementation cannot pack these (its 8//rate byte step);
+        # the layout itself is fine, so the test packs them independently
         with pytest.raises(GrammarError, match="no lane"):
             kg.repack_window_body(body.cuda(), (bad,) * 32)
-    # the manual recipe reproduces the official packer for a rate it admits
-    official = kg.repack_window_body(body.cuda(), (4,) * 32)
-    manual4 = _manual_repack(body, 4)
-    assert torch.equal(manual4.words, official.words.cpu())
-    assert torch.equal(manual4.runs, official.runs.cpu())
-    # and rate 8 is exact through the kernel
-    rates = (8,) * 32
-    rep = _manual_repack(body, 8)
-    rep = dataclasses.replace(rep, runs=rep.runs.cuda(), words=rep.words.cuda(),
-                              perm=rep.perm.cuda())
-    values = (torch.arange(1 << L) & 127).to(torch.bfloat16).cuda()
-    unit = kg.WindowGemvUnit(rep=rep, table=values, scale=torch.ones(600, device="cuda"),
-                             window_bits=L, plan=kg.default_plan(600, 32, 1), family="value")
-    x = torch.eye(32, device="cuda").bfloat16()
-    y = wg.window_gemm(unit, x, block_m=16, block_n=64, block_k=64)
-    assert torch.equal(y.long().t(), (_states(body, rates, L) & 127).cuda())
+    for rate in range(1, 9):
+        rates = (rate,) * 32
+        body_r = _body(600, 32, rates, seed=53)
+        rep = wpr.pack_bitstream(body_r, rates)
+        rep = dataclasses.replace(rep, runs=rep.runs.cuda(), words=rep.words.cuda(),
+                                  perm=rep.perm.cuda())
+        unit = kg.WindowGemvUnit(rep=rep, table=values, scale=torch.ones(600, device="cuda"),
+                                 window_bits=L, plan=kg.default_plan(600, 32, 1),
+                                 family="value")
+        y = wg.window_gemm(unit, x, block_m=16, block_n=64, block_k=64)
+        assert torch.equal(y.long().t(), (_states(body_r, rates, L) & 127).cuda()), f"rate {rate}"
