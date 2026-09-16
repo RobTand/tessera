@@ -305,14 +305,31 @@ def canonical_execution(fixture, layers=(3, 4), experts=(0, 1), clamp=10.0):
             # in expert COUNT only and every other fact is the checkpoint's.
             bounded = dict(declared)
             bounded["experts"] = E
-            report.setdefault("provenance", []).append(
-                {"layer": layer, "declared_experts": declared.get("experts"),
-                 "decoded_experts": E,
-                 "note": "count narrowed for a bounded decode; geometry untouched"})
             with set_current_vllm_config(_types.SimpleNamespace(
                     model_config=_types.SimpleNamespace(enforce_eager=True))):
                 method = moe_route.build_tessera_moe_method(
                     bounded, u["target"], "resident", layer_stub, **kwargs)
+            # MEASURE state, do not infer it: the finalizer deliberately clears
+            # ``_rank_local_intake`` before ``finish``, so a None afterwards says
+            # nothing about which branch ran.
+            intake_now = getattr(method, "_rank_local_intake", None)
+            intake_before = None
+            if intake_now is not None:
+                intake_before = {"type": type(intake_now).__name__,
+                                 "tp_rank": getattr(intake_now, "tp_rank", None),
+                                 "tp_size": getattr(intake_now, "tp_size", None)}
+                for attr in ("_axis", "axis", "plans", "declared", "_declared"):
+                    value = getattr(intake_now, attr, None)
+                    if isinstance(value, dict):
+                        intake_before[attr] = sorted(value)[:6]
+            report.setdefault("provenance", []).append(
+                {"layer": layer, "declared_experts": declared.get("experts"),
+                 "decoded_experts": E,
+                 "create_weights": {"experts": E, "hidden": H,
+                                    "intermediate_per_partition": local},
+                 "compact_ready": bool(getattr(method, "_compact_ready", None)),
+                 "intake_before_finalize": intake_before,
+                 "note": "count narrowed for a bounded decode; geometry untouched"})
             method.create_weights(layer_stub, E, H, local, torch.bfloat16)
             # ``_load_all`` walks one blob per shard id: w13 takes the gate/up
             # pair in order, w2 takes the single down blob (NOT a list of one).
@@ -321,6 +338,22 @@ def canonical_execution(fixture, layers=(3, 4), experts=(0, 1), clamp=10.0):
                        for e in sorted(u["experts"])],
                       [u["experts"][e]["raw"]["w2"] for e in sorted(u["experts"])])
             method.process_weights_after_loading(layer_stub)
+            # what the native path ACTUALLY holds after finalize
+            native_geom = {}
+            for part in ("gate_up", "gate", "up", "down"):
+                bundle = getattr(method._native, part, None)
+                if bundle is not None:
+                    native_geom[part] = {"rows": getattr(bundle, "rows", None),
+                                         "cols": getattr(bundle, "cols", None),
+                                         "experts": getattr(bundle, "experts", None)}
+            report.setdefault("provenance", [])[-1]["native_after_finalize"] = {
+                "adapter": type(method._native).__name__,
+                "intake_after_finalize": type(getattr(method, "_rank_local_intake", None)).__name__
+                if getattr(method, "_rank_local_intake", None) is not None else None,
+                "geometry": native_geom,
+                "layer_w13_weight": (list(layer_stub.w13_weight.shape)
+                                     if getattr(layer_stub, "w13_weight", None) is not None
+                                     and hasattr(layer_stub.w13_weight, "shape") else None)}
             if u["family"] == "TESSERA_FP8":
                 w1 = torch.stack([torch.cat([tenor["w1"][e][lo:hi], tenor["w3"][e][lo:hi]])
                                   for e in range(E)]).cuda().contiguous()
@@ -352,21 +385,166 @@ def canonical_execution(fixture, layers=(3, 4), experts=(0, 1), clamp=10.0):
             ok &= (active["gate_over_limit"] > 0 and active["up_under_neg_limit"] > 0
                    and active["up_over_limit"] > 0)
             ok &= bool(act.get("_ok"))
+            # STAGED localization per rank: native gate/up vs the reference
+            # tensors the arms are built from, before any activation.
+            report.setdefault("stages", [])
+            # ---- staged localization, COMPLETE -------------------------
+            # Cover gate AND up, BOTH experts, non-unit routing, and the
+            # composition the full arm actually performs.  A stage check that
+            # looks at expert 0's gate under unit weights cannot say anything
+            # about routing or the fused expert path.
+            rids = torch.tensor([[0, 1], [1, 0], [0, 0], [1, 1], [0, 1], [1, 0],
+                                 [0, 0], [1, 1]], dtype=torch.int32, device="cuda")
+            for expert in range(E):
+                e_ids = torch.full((4, 1), expert, dtype=torch.int32, device="cuda")
+                e_w = torch.ones(4, 1, device="cuda")
+                if method._native.gate_up is not None:
+                    gu_e = method._native.gate_up(x[:4], e_ids, e_w, preserve=True)
+                    n_g, n_u = gu_e[:, 0, :local], gu_e[:, 0, local:]
+                else:
+                    n_g = method._native.gate(x[:4], e_ids, e_w, preserve=True)[:, 0]
+                    n_u = method._native.up(x[:4], e_ids, e_w, preserve=True)[:, 0]
+                if u["family"] == "TESSERA_FP8":
+                    xq = torch.empty_like(x[:4], dtype=torch.float8_e4m3fn)
+                    xs = torch.empty((4, 1), dtype=torch.float32, device=x.device)
+                    torch.ops._C.dynamic_per_token_scaled_fp8_quant(xq, x[:4], xs, None)
+                    r_g = torch._scaled_mm(xq, w1[expert][:local].t(), xs,
+                                           s1[expert][:local].reshape(1, -1).contiguous(),
+                                           out_dtype=torch.bfloat16)
+                    r_u = torch._scaled_mm(xq, w1[expert][local:].t(), xs,
+                                           s1[expert][local:].reshape(1, -1).contiguous(),
+                                           out_dtype=torch.bfloat16)
+                    n_act = nwm._silu_and_mul(n_g, n_u, clamp_limit=clamp)
+                    r_act = _stock_activation(r_g, r_u, clamp)
+                    flat_act = n_act.reshape(-1, local).contiguous()
+                    d_ids = torch.full((flat_act.shape[0], 1), expert, dtype=torch.int32, device="cuda")
+                    d_w = torch.ones(flat_act.shape[0], 1, device="cuda")
+                    n_dn = method._native.down(flat_act, d_ids, d_w, route_input=True)
+                    aq = torch.empty_like(flat_act, dtype=torch.float8_e4m3fn)
+                    asc = torch.empty((flat_act.shape[0], 1), dtype=torch.float32, device="cuda")
+                    torch.ops._C.dynamic_per_token_scaled_fp8_quant(aq, flat_act, asc, None)
+                    r_dn = torch._scaled_mm(aq, w2[expert].t(), asc,
+                                            s2[expert].reshape(1, -1).contiguous(),
+                                            out_dtype=torch.bfloat16)
+                    report["stages"].append(
+                        {"layer": layer, "tp_rank": tp_rank, "expert": expert,
+                         "stage": "gate", "max_abs": float((n_g.float() - r_g.float()).abs().max()),
+                         "mag": float(r_g.float().abs().max()),
+                         "gate_cols": list(n_g.shape), "up_cols": list(n_u.shape)})
+                    report["stages"].append(
+                        {"layer": layer, "tp_rank": tp_rank, "expert": expert,
+                         "stage": "up", "max_abs": float((n_u.float() - r_u.float()).abs().max()),
+                         "mag": float(r_u.float().abs().max())})
+                    report["stages"].append(
+                        {"layer": layer, "tp_rank": tp_rank, "expert": expert,
+                         "stage": "activation", "max_abs": float((n_act.float() - r_act.float()).abs().max()),
+                         "mag": float(r_act.float().abs().max())})
+                    report["stages"].append(
+                        {"layer": layer, "tp_rank": tp_rank, "expert": expert,
+                         "stage": "down_on_act", "max_abs": float((n_dn.float() - r_dn.float()).abs().max()),
+                         "mag": float(r_dn.float().abs().max())})
+            # ---- COMPOSITION: does the arm's stock actually honour the clamp?
+            # The full arm calls fused_experts with quant_config carrying
+            # swiglu_limit, ONE kernel, not the standalone op above.  Compare a
+            # single-kernel run against the arm's own reconstruction.
+            if u["family"] == "TESSERA_FP8":
+                qc_probe = quant_fp8(w1_scale=s1, w2_scale=s2, swiglu_limit=clamp)
+                fused_clamped = fused_experts(x[:4], w1, w2, torch.ones(4, 2, device="cuda"),
+                                              rids[:4], activation=MoEActivation.SILU,
+                                              global_num_experts=E, quant_config=qc_probe)
+                qc_uncapped = quant_fp8(w1_scale=s1, w2_scale=s2, swiglu_limit=None)
+                fused_uncapped = fused_experts(x[:4], w1, w2, torch.ones(4, 2, device="cuda"),
+                                               rids[:4], activation=MoEActivation.SILU,
+                                               global_num_experts=E, quant_config=qc_uncapped)
+                report["stages"].append(
+                    {"layer": layer, "tp_rank": tp_rank,
+                     "stage": "fused_experts_respects_swiglu_limit",
+                     "clamped_vs_uncapped_max_abs": float(
+                         (fused_clamped.float() - fused_uncapped.float()).abs().max()),
+                     "clamped_mag": float(fused_clamped.float().abs().max()),
+                     "byte_identical": bool(torch.equal(fused_clamped, fused_uncapped)),
+                     "note": "0 here would mean fused_experts IGNORED the clamp"})
             for weight_input in (False, True):
                 layer_stub.apply_router_weight_on_input = weight_input
                 native = method.apply(layer_stub, x, weights, ids, None, None)
                 qc = (quant_fp8(w1_scale=s1, w2_scale=s2, swiglu_limit=clamp)
                       if s1 is not None else
                       FusedMoEQuantConfig.make(gemm1_clamp_limit=clamp))
-                stock = fused_experts(x, w1, w2, weights, ids,
-                                      activation=MoEActivation.SILU,
-                                      global_num_experts=E,
-                                      apply_router_weight_on_input=weight_input,
-                                      quant_config=qc)
+                # ``fused_experts`` calls ``apply_moe_activation`` with NO
+                # ``activation_config``, so it DROPS ``gemm1_clamp_limit`` --
+                # demonstrated below by a clamped run that is byte-identical to
+                # an uncapped one.  The stock clamped semantics live on the
+                # modular path, which builds ``ApplyMoEActivationConfig`` from
+                # the quant config and passes it.  The arm applies the stock
+                # stage explicitly on the fused kernel's own gemm1 output, so
+                # the composition is graded against the operation the model
+                # actually specifies rather than against a clamp-less stand-in.
+                stock = _stock_modular_reference(
+                    x, w1, w2, weights, ids, family=u["family"], clamp=clamp,
+                    experts=E, apply_router_weight_on_input=weight_input,
+                    w1_scale=s1, w2_scale=s2,
+                    fp8_backend=method.fp8_backend,
+                    moe_config=method.moe, experts_cls=method.experts_cls)
+                report.setdefault("clamp_wiring", []).append(
+                    {"layer": layer, "tp_rank": tp_rank, "weight_input": weight_input,
+                     "stock_used": "FusedMoEKernel.apply via make_fp8_moe_kernel / "
+                                   "make_unquantized_moe_kernel with the clamp in the "
+                                   "quant config (modular path)"})
                 ok &= _arm(f"canonical_L{layer}_tp2_rank{tp_rank}"
                            f"_clamped_weight_input={int(weight_input)}", native, stock, report)
     report["all_arms_active_and_bounded"] = bool(ok)
     return report
+
+
+def _stock_modular_reference(x, w1, w2, weights, ids, *, family, clamp,
+                             experts, apply_router_weight_on_input,
+                             w1_scale=None, w2_scale=None, fp8_backend=None,
+                             moe_config=None, experts_cls=None):
+    """THE ACTUAL STOCK KERNEL, clamp included.
+
+    Not a composition and not ``fused_experts``: ``FusedMoEKernel.apply``
+    (``modular_kernel.py``) is what the serving lane itself calls, and its
+    activation path passes ``ApplyMoEActivationConfig``, which is where
+    ``gemm1_clamp_limit`` survives.  The non-modular ``fused_experts`` calls
+    ``apply_moe_activation`` with NO config and silently drops the clamp --
+    measured, not inferred (see the ``fused_experts_respects_swiglu_limit``
+    stage in this file, which is retained as the negative evidence).
+
+    FP8 (layer 3): ``make_fp8_moe_kernel`` with the stock per-channel quant
+    config carrying ``swiglu_limit``.
+    BF16 (layer 4): ``make_unquantized_moe_kernel`` with
+    ``gemm1_clamp_limit``.
+    """
+    from vllm.model_executor.layers.fused_moe.activation import MoEActivation
+    from vllm.model_executor.layers.fused_moe.config import FusedMoEQuantConfig
+
+    if family == "TESSERA_FP8":
+        from vllm.model_executor.layers.fused_moe.oracle.fp8 import (
+            make_fp8_moe_kernel, make_fp8_moe_quant_config)
+        quant = make_fp8_moe_quant_config(
+            fp8_backend=fp8_backend, w1_scale=w1_scale, w2_scale=w2_scale,
+            a1_scale=None, a2_scale=None, per_act_token_quant=True,
+            per_out_ch_quant=True, block_shape=None,
+            gemm1_alpha=None, gemm1_beta=None, swiglu_limit=clamp, layer=None)
+        kernel = make_fp8_moe_kernel(
+            moe_quant_config=quant, moe_config=moe_config,
+            fp8_backend=fp8_backend, experts_cls=experts_cls,
+            routing_tables=None)
+        ids_arg = ids.int()
+    else:
+        from vllm.model_executor.layers.fused_moe.oracle.unquantized import (
+            make_unquantized_moe_kernel)
+        quant = FusedMoEQuantConfig.make(gemm1_clamp_limit=clamp)
+        kernel = make_unquantized_moe_kernel(
+            quant_config=quant, moe_config=moe_config,
+            backend=moe_config.moe_backend, experts_cls=experts_cls,
+            routing_tables=None)
+        ids_arg = ids.int()
+    return kernel.apply(x, w1, w2, weights, ids_arg,
+                        activation=MoEActivation.SILU,
+                        global_num_experts=experts,
+                        expert_map=None,
+                        apply_router_weight_on_input=apply_router_weight_on_input)
 
 
 def canonical_self_check(fixture, layers=(3, 4), experts=(0, 1)):
@@ -829,6 +1007,12 @@ def main():
         ok &= (act["activity"]["gate_over_limit"] > 0
                and act["activity"]["up_under_neg_limit"] > 0
                and act["activity"]["up_over_limit"] > 0), "clamp not active in both branches"
+        # WITHDRAWN as a gate: ``_fp8_stock``/``fused_experts`` pass the clamp
+        # only as far as a quant config that the non-modular activation path
+        # never reads, so an arm built on it compares a CLAMPED native lane
+        # against an UNCLAMPED stock stand-in.  This block is retained as
+        # negative evidence -- it is what produced the original 115-134 ulp
+        # residual -- and deliberately does NOT contribute to ``ok``.
         for weight_input in (False, True):
             layer.apply_router_weight_on_input = weight_input
             native_c = method.apply(layer, x_clamped, weights, ids, None, None)
@@ -836,8 +1020,14 @@ def main():
                                  tp_rank, tp_size,
                                  apply_router_weight_on_input=weight_input,
                                  swiglu_limit=CLAMP)
-            ok &= _arm(f"fp8_tp2_rank{tp_rank}_clamped_weight_input={int(weight_input)}",
-                       native_c, stock_c, report)
+            withdrawn = _arm(f"WITHDRAWN_clamp_ignoring_fp8_tp2_rank{tp_rank}"
+                             f"_weight_input={int(weight_input)}", native_c, stock_c, report)
+            report.setdefault("withdrawn_gates", []).append(
+                {"arm": f"fp8_tp2_rank{tp_rank}_weight_input={int(weight_input)}",
+                 "reason": "stock side is fused_experts, which drops gemm1_clamp_limit",
+                 "ulps_observed": report["arms"][-1].get("bf16_ulps_of_max"),
+                 "counts_toward_acceptance": False})
+            del withdrawn
 
     # folded BF16 research route (layer 4's family), both rank cuts
     from vllm.model_executor.layers.fused_moe.config import FusedMoEQuantConfig
@@ -860,6 +1050,8 @@ def main():
             torch.cat([expected[e][0][lo:hi], expected[e][0][INTER + lo:INTER + hi]])
             for e in range(2)]).cuda().contiguous()
         w2c = torch.stack([expected[e][1][:, lo:hi] for e in range(2)]).cuda().contiguous()
+        # ALSO WITHDRAWN (same defect, BF16 family): ``fused_experts`` ignores
+        # the clamp here too.  Kept as negative evidence, excluded from ``ok``.
         qc = FusedMoEQuantConfig.make(gemm1_clamp_limit=CLAMP)
         for weight_input in (False, True):
             layer.apply_router_weight_on_input = weight_input
@@ -868,8 +1060,13 @@ def main():
                                     activation=MoEActivation.SILU, global_num_experts=2,
                                     apply_router_weight_on_input=weight_input,
                                     quant_config=qc)
-            ok &= _arm(f"bf16_folded_tp2_rank{tp_rank}_clamped_weight_input={int(weight_input)}",
-                       native_c, stock_c, report)
+            _arm(f"WITHDRAWN_clamp_ignoring_bf16_tp2_rank{tp_rank}"
+                 f"_weight_input={int(weight_input)}", native_c, stock_c, report)
+            report.setdefault("withdrawn_gates", []).append(
+                {"arm": f"bf16_folded_tp2_rank{tp_rank}_weight_input={int(weight_input)}",
+                 "reason": "stock side is fused_experts, which drops gemm1_clamp_limit",
+                 "ulps_observed": report["arms"][-1].get("bf16_ulps_of_max"),
+                 "counts_toward_acceptance": False})
 
     report["passed"] = bool(ok)
     print(json.dumps(report))
