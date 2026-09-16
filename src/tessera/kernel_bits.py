@@ -35,7 +35,7 @@ def _span_of(words_ptr, byte, mask):
     return (w0 << s) | ((w1 >> ((64 - s) & 63)) & ((1 << s) - 1))
 
 
-def _plane_words(plane: torch.Tensor) -> torch.Tensor:
+def _plane_words(plane: torch.Tensor, scratch: "dict | None" = None) -> torch.Tensor:
     """``pack_window_planes``' bytes as int64 words a little-endian load reads
     big-endian: each eight-byte word reversed, padded to a whole number of
     words plus two of slack for the funnel's second load.
@@ -45,9 +45,35 @@ def _plane_words(plane: torch.Tensor) -> torch.Tensor:
     reorders the same bytes differently (per-rate group rows with four bytes
     of slack), for the same reason: a prepared plane is the wire laid out for
     the machine that reads it.
+
+    ``scratch`` is an optional **caller-owned** dict holding one reusable
+    source/destination buffer pair and one fixed reversal index, so a loader
+    that prepares many planes does not allocate a fresh large buffer per call:
+    under the runtime's ``max_split_size_mb=20`` load context each fresh
+    ~3.75 MB request left a dead 20 MiB allocator slab (the measurement is in
+    ``docs/measurements/tessera-a4-loader-staging-20260916.md``).  The scratch
+    path returns exactly ``words`` int64 values whatever capacity the pair has
+    grown to; without ``scratch`` this is the original single-buffer path.
     """
     n = plane.numel()
     words = (n + 7) // 8 + 2
-    buf = torch.zeros(words * 8, dtype=torch.uint8, device=plane.device)
-    buf[:n] = plane
-    return buf.reshape(-1, 8).flip(1).reshape(-1).view(torch.int64).contiguous()
+    if scratch is None:
+        buf = torch.zeros(words * 8, dtype=torch.uint8, device=plane.device)
+        buf[:n] = plane
+        return buf.reshape(-1, 8).flip(1).reshape(-1).view(torch.int64).contiguous()
+    need = words * 8
+    cached = scratch.get("plane_words")
+    if cached is None or cached[0].numel() < need:
+        src = torch.zeros(need, dtype=torch.uint8, device=plane.device)
+        dst = torch.zeros(need, dtype=torch.uint8, device=plane.device)
+        rev = torch.arange(7, -1, -1, dtype=torch.int64, device=plane.device)
+        scratch["plane_words"] = (src, dst, rev)
+    else:
+        src, dst, rev = cached
+        src.zero_()
+    src[:n].copy_(plane)
+    # A strided gather reverses each word with no third buffer: the padded
+    # source holds the wire's bytes then the zero slack, exactly the tensor
+    # ``buf[:n] = plane`` produced before the flip.
+    torch.index_select(src.view(-1, 8), 1, rev, out=dst.view(-1, 8))
+    return dst[:need].view(torch.int64)

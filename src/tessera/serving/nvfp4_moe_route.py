@@ -188,6 +188,15 @@ class _ExpertIntake:
                       for g in MOE_GROUPS}
         self.roles = {g: expert_role_declarations(declared["groups"][g]) for g in MOE_GROUPS}
         self.pending: dict[int, list] = {}
+        # One caller-owned reusable transfer buffer per plane kind, bounded by
+        # the largest plane this layer's wires carry.  The runtime runs the
+        # whole load under ``max_split_size_mb=20``; a fresh ``.to(device)``
+        # per wire left a dead 20 MiB allocator slab per wire in that context.
+        # Reusing the buffer keeps the transfer out of the allocator's large
+        # bucket; nothing here is module-global, so two loaded layers never
+        # share a buffer.  The committed measurement is
+        # ``docs/measurements/tessera-a4-loader-staging-20260916.md``.
+        self._scratch: dict = {}
 
     def take(self, group, index, expert, blob: bytes, device):
         """One verified container -> this rank's native bundles for its role.
@@ -232,7 +241,8 @@ class _ExpertIntake:
                     f"holds one role, this one frames {len(validated)}")
             name, member = validated[0]
             rows, cols = _cuts(plan.role(name))
-            unit = prepare_a4_unit(member, rows=rows, cols=cols)
+            unit = prepare_a4_unit(member, rows=rows, cols=cols,
+                                   scratch=self._scratch)
         else:
             from ..kernel_a4 import A4Unit
             from ..lane_planes import prepare_span2_planes

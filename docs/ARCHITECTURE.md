@@ -2950,7 +2950,17 @@ group's plan (rows of `w13`, columns of `w2`), and prepared into
 `fused.shared_lut_global` under the fused tile's one global.  No stock
 NVFP4 tile is built at load or in a forward and no expanded expert pool is
 resident: the compact planes ride through residency and the fused decode
-happens in the kernel.  The stock modelopt names stay registered as
+happens in the kernel.  The loader's staging is bounded and owned by the
+load: the per-wire packed-plane transfers fill caller-owned reusable buffers
+(`compact_prep._plane_u8`, `kernel_bits._plane_words`; one scratch dict per
+`_ExpertIntake`, never module-global) instead of allocating a fresh device
+tensor per wire, and `A4ExpertAxis` allocates its stacked planes once on the
+first `put` and copies each expert into its own slot, so `finish` copies
+nothing and no per-expert temporaries are retained.  That staging is what
+keeps a load under the runtime's `max_split_size_mb=20` allocator context
+from churning dead CUDA slabs; the measured before/after is
+`docs/measurements/tessera-a4-loader-staging-20260916.md`.  The stock
+modelopt names stay registered as
 ZERO-SIZE anchors whose loader refuses checkpoint bytes, so a stock tensor
 in a Tessera stack is still refused by name while the 4.5-bpp pool is never
 allocated.  `apply` is the native two-stage pipeline: separate grouped

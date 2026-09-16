@@ -35,7 +35,8 @@ def _unpack_body_kernel(words, schedule, out, ROWS: tl.constexpr,
 
 
 def unpack_body_cuda(data: bytes, rates: tuple[int, ...], rows: int,
-                     device: torch.device, span: int) -> torch.Tensor:
+                     device: torch.device, span: int,
+                     scratch: "dict | None" = None) -> torch.Tensor:
     """Unpack byte-sized fields from a validated column-major plane."""
     cols = len(rates)
     out = torch.empty((rows, cols), dtype=torch.uint8, device=device)
@@ -49,7 +50,7 @@ def unpack_body_cuda(data: bytes, rates: tuple[int, ...], rows: int,
     schedule = torch.tensor((rates, tuple(offsets)), dtype=torch.int64, device=device)
     plane = (torch.frombuffer(bytearray(data), dtype=torch.uint8).to(device)
              if data else torch.empty(0, dtype=torch.uint8, device=device))
-    words = _plane_words(plane)
+    words = _plane_words(plane, scratch)
     with torch.cuda.device(device):
         _unpack_body_kernel[(triton.cdiv(rows * cols, 256),)](
             words, schedule, out, rows, cols, span, 256)
@@ -185,7 +186,8 @@ def _span2_point_kernel(words, out, cols, groups_per_col, col0, col_bits,
 
 def pack_span2_select_cuda(plane: torch.Tensor, *, cols: int, groups_per_col: int,
                            col0: int, col_bits: int, pair0: int, per: int,
-                           device: torch.device) -> torch.Tensor:
+                           device: torch.device,
+                           scratch: "dict | None" = None) -> torch.Tensor:
     """The select plane of a span-2 unit (see ``_span2_select_kernel``).
 
     ``col_bits`` is the source BODY bits per column *of the plane being
@@ -193,7 +195,7 @@ def pack_span2_select_cuda(plane: torch.Tensor, *, cols: int, groups_per_col: in
     ``groups_per_col`` the cut's shape.  Returns uint8
     ``[cols * groups_per_col + 8]`` -- the destination's own trailing slack.
     """
-    words = _plane_words(plane)
+    words = _plane_words(plane, scratch)
     out = torch.zeros(cols * (groups_per_col + 1) + 8, dtype=torch.uint8,
                       device=device)
     total = cols * groups_per_col
@@ -207,9 +209,10 @@ def pack_span2_select_cuda(plane: torch.Tensor, *, cols: int, groups_per_col: in
 
 def pack_span2_label_cuda(plane: torch.Tensor, *, cols: int, groups_per_col: int,
                           col0: int, col_bits: int, pair0: int, per: int,
-                          label_off: int, device: torch.device) -> torch.Tensor:
+                          label_off: int, device: torch.device,
+                          scratch: "dict | None" = None) -> torch.Tensor:
     """The label plane of a span-2 unit (see ``_span2_label_kernel``)."""
-    words = _plane_words(plane)
+    words = _plane_words(plane, scratch)
     out = torch.zeros(cols * groups_per_col, dtype=torch.uint8, device=device)
     total = cols * groups_per_col
     if total:
@@ -223,9 +226,10 @@ def pack_span2_label_cuda(plane: torch.Tensor, *, cols: int, groups_per_col: int
 def pack_span2_point_cuda(plane: torch.Tensor, *, cols: int, groups_per_col: int,
                           col0: int, col_bits: int, step0: int, per: int,
                           rate: int, steps_per_col: int,
-                          device: torch.device) -> torch.Tensor:
+                          device: torch.device,
+                          scratch: "dict | None" = None) -> torch.Tensor:
     """The point plane of a span-2 unit (see ``_span2_point_kernel``)."""
-    words = _plane_words(plane)
+    words = _plane_words(plane, scratch)
     wid = rate - 1
     out = torch.zeros(cols * (steps_per_col * wid // 8), dtype=torch.uint8,
                       device=device)
@@ -287,14 +291,15 @@ def window_repack_stream_cuda(plane: torch.Tensor, *, col_starts: torch.Tensor,
                               rate: int, group_col0: int, group_byte0: int,
                               n_cols: int, n_tiles: int, chunk_bytes: int,
                               tile_bytes: int, device: torch.device,
-                              tile_rows: int = 512) -> torch.Tensor:
+                              tile_rows: int = 512,
+                              scratch: "dict | None" = None) -> torch.Tensor:
     """One rate group's repacked bytes, in the reference's flat order.
 
     Returns uint8 ``[n_tiles * tile_bytes]``: the group's ``n_cols`` columns,
     each ``n_tiles * chunk_bytes`` bytes of stream, per tile -- the operand of
     the int32 view ``Repacked.words`` is.
     """
-    words = _plane_words(plane)
+    words = _plane_words(plane, scratch)
     out = torch.zeros(n_tiles * tile_bytes, dtype=torch.uint8, device=device)
     bytes_per_col = n_tiles * chunk_bytes
     total = n_cols * bytes_per_col

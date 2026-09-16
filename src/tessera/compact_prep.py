@@ -178,12 +178,31 @@ def require_compact_cut(wire: CompactWire, rows=None, cols=None):
 # ---------------------------------------------------------------------------
 
 
-def _plane_u8(data: bytes, device) -> torch.Tensor:
+def _plane_u8(data: bytes, device, scratch: "dict | None" = None,
+              key: str = "plane") -> torch.Tensor:
     """A packed plane's bytes on ``device``; empty planes get one zero byte so
-    a gather degrades to zero rather than to an index error."""
+    a gather degrades to zero rather than to an index error.
+
+    ``scratch`` is a **caller-owned** dict holding one reusable device buffer
+    per ``key`` (never a module global).  A fresh ``.to(device)`` per call is
+    what the runtime's ``max_split_size_mb=20`` loader context turned into a
+    dead 20 MiB allocator slab per wire; a reused buffer keeps the transfer
+    bounded and out of the allocator's large bucket.  The buffer's contents
+    are consumed by the parser before the next call reuses it.  The committed
+    measurement is ``docs/measurements/tessera-a4-loader-staging-20260916.md``.
+    """
     if not data:
         return torch.zeros(1, dtype=torch.uint8, device=device)
-    return torch.frombuffer(bytearray(data), dtype=torch.uint8).to(device)
+    src = torch.frombuffer(bytearray(data), dtype=torch.uint8)
+    if scratch is None:
+        return src.to(device)
+    buf = scratch.get(key)
+    if buf is None or buf.numel() < src.numel():
+        buf = torch.empty(src.numel(), dtype=torch.uint8, device=device)
+        scratch[key] = buf
+    view = buf[: src.numel()]
+    view.copy_(src)
+    return view
 
 
 def gather_packed_fields(packed: torch.Tensor, offsets: torch.Tensor,
@@ -215,7 +234,8 @@ def _nibble_at(packed: torch.Tensor, index: torch.Tensor) -> torch.Tensor:
 
 
 def _compact_scale_nibbles(metadata: ParsedMetadata, *, r0: int, r1: int,
-                           c0: int, c1: int, device) -> torch.Tensor:
+                           c0: int, c1: int, device,
+                           scratch: "dict | None" = None) -> torch.Tensor:
     """The LUT refinement plane as ``pack_scale_nibbles`` writes it, gathered
     from the packed 4-bit words over the rank-local rectangle.
 
@@ -229,7 +249,8 @@ def _compact_scale_nibbles(metadata: ParsedMetadata, *, r0: int, r1: int,
         raise GrammarError(f"{rows_local} rows does not pair nibbles into bytes")
     groups_parent = metadata.columns // half
     groups_local = (c1 - c0) // half
-    packed = _plane_u8(metadata.chunks[PlaneKind.SCALE_REFINE], device)
+    packed = _plane_u8(metadata.chunks[PlaneKind.SCALE_REFINE], device,
+                       scratch, "scale_refine")
     t = torch.arange(rows_local // 2, dtype=torch.int64, device=device)[:, None]
     g = torch.arange(groups_local, dtype=torch.int64, device=device)[None, :]
     base = (r0 + 2 * t) * groups_parent + (c0 // half + g)
@@ -251,7 +272,8 @@ def _window_codes(metadata: ParsedMetadata) -> torch.Tensor:
 # ---------------------------------------------------------------------------
 
 
-def _tcq_cut_state(metadata: ParsedMetadata, s0: int, c0: int, c1: int, device):
+def _tcq_cut_state(metadata: ParsedMetadata, s0: int, c0: int, c1: int, device,
+                   scratch: "dict | None" = None):
     """The trellis register each local column is in at step ``s0``.
 
     Exactly ``slicing._initial_state``'s coset branch -- the same
@@ -284,7 +306,8 @@ def _tcq_cut_state(metadata: ParsedMetadata, s0: int, c0: int, c1: int, device):
     offsets = ((col_index * col_bits + (supers - depth) * per)
                + step_index * per).reshape(-1)
     select = gather_packed_fields(
-        _plane_u8(metadata.chunks[PlaneKind.BODY], device), offsets, 1
+        _plane_u8(metadata.chunks[PlaneKind.BODY], device, scratch, "body"),
+        offsets, 1
     ).reshape(depth, c1 - c0)
     stream = _conv_state_stream(select, memory, parent)
     return ((select[depth - 1] << memory) | stream[depth - 1]) >> 1
@@ -362,7 +385,7 @@ def _write_select_pad(select: torch.Tensor, state: torch.Tensor, cols: int,
 
 
 def prepare_span2_compact(wire: CompactWire, *, rows=None, cols=None,
-                          device="cuda") -> dict:
+                          device="cuda", scratch: "dict | None" = None) -> dict:
     """A span-2 LUT-plane unit -> the native decoder's inputs, rank-local.
 
     The returned dictionary is ``lane_planes.prepare_span2_planes``'s, key for
@@ -436,29 +459,31 @@ def prepare_span2_compact(wire: CompactWire, *, rows=None, cols=None,
     per = span * rate + span - 1
     col_bits = (steps_total // span) * per
     cols_local = c1 - c0
-    body = _plane_u8(metadata.chunks[PlaneKind.BODY], device)
+    body = _plane_u8(metadata.chunks[PlaneKind.BODY], device, scratch, "body")
     select = kw.pack_span2_select_cuda(
         body, cols=cols_local, groups_per_col=pairs_local // 8, col0=c0,
-        col_bits=col_bits, pair0=s0 // span, per=per, device=device)
-    state = _tcq_cut_state(metadata, s0, c0, c1, device)
+        col_bits=col_bits, pair0=s0 // span, per=per, device=device,
+        scratch=scratch)
+    state = _tcq_cut_state(metadata, s0, c0, c1, device, scratch)
     if state is not None:
         _write_select_pad(select, state, cols_local, pairs_local, code.memory)
     label = kw.pack_span2_label_cuda(
         body, cols=cols_local, groups_per_col=pairs_local // 4, col0=c0,
         col_bits=col_bits, pair0=s0 // span, per=per, label_off=rate,
-        device=device)
+        device=device, scratch=scratch)
     wid = rate - 1
     point = kw.pack_span2_point_cuda(
         body, cols=cols_local, groups_per_col=(steps_local * wid) // 8, col0=c0,
         col_bits=col_bits, step0=s0, per=per, rate=rate,
-        steps_per_col=steps_local, device=device)
+        steps_per_col=steps_local, device=device, scratch=scratch)
     scale_lut = metadata.scale_lut
     label_lut, _subset_lut = lp.build_span2_luts(forest, code, device)
     return {
         "kind": "span2",
         "select": select, "label": label, "point": point,
         "nibbles": _compact_scale_nibbles(
-            metadata, r0=r0, r1=r1, c0=c0, c1=c1, device=device),
+            metadata, r0=r0, r1=r1, c0=c0, c1=c1, device=device,
+            scratch=scratch),
         "table": lp.lut_scale_table(scale_lut, device),
         "label_lut": label_lut,
         "values": lp.build_subset_values(forest, code, device),
