@@ -143,6 +143,64 @@ def test_axis_refuses_a_second_put_and_a_foreign_layout():
 
 
 @cuda
+def test_direct_destination_axis_equals_the_allocating_path():
+    """The in-place intake writes the same stack the allocating path builds.
+
+    Two different real expert wires go through ``prepare_span2_compact`` with
+    and without a destination factory; the finished axes must agree field for
+    field, and the direct path's slots must BE the axis buffers (no per-wire
+    output tensor, nothing copied at finish).
+    """
+    import json
+    from pathlib import Path
+
+    import box_artifacts
+
+    from tessera.compact_prep import parse_compact_wire, prepare_span2_compact
+    from tessera.serving.native_a4 import A4ExpertAxis, prepare_a4_unit
+
+    index_path = box_artifacts.skip_now("a4_export", "model.safetensors.index.json")
+    weight_map = json.loads(Path(index_path).read_text())["weight_map"]
+    template = "model.language_model.layers.3.mlp.experts.{expert}.gate_proj.wire"
+    from safetensors import safe_open
+    from tessera.fused import parse_fused
+
+    blobs = []
+    for expert in (0, 1):
+        name = template.format(expert=expert)
+        with safe_open(box_artifacts.skip_now("a4_export", weight_map[name]),
+                       framework="pt") as f:
+            fused = f.get_tensor(name).numpy().tobytes()
+        blobs.append(list(parse_fused(fused))[0].blob)
+
+    allocating = A4ExpertAxis(2)
+    for expert, blob in enumerate(blobs):
+        unit = prepare_a4_unit(parse_compact_wire(blob, "cuda"), scratch={})
+        allocating.put(expert, unit)
+    reference = allocating.finish()
+
+    direct = A4ExpertAxis(2)
+    for expert, blob in enumerate(blobs):
+        wire = parse_compact_wire(blob, "cuda")
+        prepared = prepare_span2_compact(
+            wire, scratch={},
+            out_factory=lambda field, size, dtype, _e=expert:
+            direct.destination(_e, field, size, dtype, "cuda"),
+            on_layout=lambda *facts, _axis=direct: _axis.bind_geometry(*facts))
+        direct.set_global(expert, float(prepared["global_scale"]))
+        direct.mark_filled(expert)
+    pointers = {field: direct._planes[field].data_ptr()
+                for field in A4ExpertAxis._FIELDS}
+    stack = direct.finish()
+
+    for field in A4ExpertAxis._FIELDS:
+        assert bool(torch.equal(getattr(stack, field), getattr(reference, field))), field
+        # finish() returns the axis's own buffers: no stacking copy.
+        assert getattr(stack, field).data_ptr() == pointers[field], field
+    assert bool(torch.equal(stack.globals.cpu(), reference.globals.cpu()))
+
+
+@cuda
 def test_scratch_reuse_leaves_written_experts_untouched():
     """The ownership invariant the probe also checks end to end."""
     scratch: dict = {}

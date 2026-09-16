@@ -204,7 +204,7 @@ class _ExpertIntake:
         # question and the verification it returns was computed, not assumed.
         self._memo: dict = {}
 
-    def take(self, group, index, expert, blob: bytes, device):
+    def take(self, group, index, expert, blob: bytes, device, axes=None):
         """One verified container -> this rank's native bundles for its role.
 
         The compact reader runs the same metadata verification the parsed
@@ -247,6 +247,49 @@ class _ExpertIntake:
                     f"holds one role, this one frames {len(validated)}")
             name, member = validated[0]
             rows, cols = _cuts(plan.role(name))
+            if axes is not None:
+                # Direct-destination intake: the prepared planes are written
+                # once into this expert's preallocated axis slot, so no
+                # per-wire output tensor is allocated and `finish` copies
+                # nothing.  Only the 16-byte LUT table and the scalar global
+                # wait for the mate (the fused tile's shared global); the
+                # planes are already in their final place.
+                axis = axes[(group, expected)]
+
+                def _factory(field, size, dtype, _axis=axis):
+                    return _axis.destination(expert, field, size, dtype, device)
+
+                def _layout(rows_local, cols_local, rate, arity, memory, half,
+                            _axis=axis):
+                    return _axis.bind_geometry(rows_local, cols_local, rate,
+                                               arity, memory, half)
+
+                from ..compact_prep import prepare_span2_compact
+
+                prepared = prepare_span2_compact(
+                    member, rows=rows, cols=cols, scratch=self._scratch,
+                    memo=self._memo, out_factory=_factory, on_layout=_layout)
+                table = prepared["lut_bytes"].view(torch.uint8).clone()
+                scale = float(prepared["global_scale"])
+                if group != "w13":
+                    axis.set_global(expert, scale)
+                    axis.mark_filled(expert)
+                    return ("direct", group, scale)
+                halves = self.pending.setdefault(expert, [None] * W13_PROJECTIONS)
+                halves[index] = (expected, table, scale)
+                if any(half is None for half in halves):
+                    return None
+                del self.pending[expert]
+                names = [half[0] for half in halves]
+                shared, moved = shared_lut_global(
+                    [half[1] for half in halves], [half[2] for half in halves], names)
+                for (role_name, _table, _scale), moved_table in zip(halves, moved):
+                    joined = axes[("w13", role_name)]
+                    joined.set_lut_bytes(expert,
+                                         moved_table.view(torch.uint8).contiguous())
+                    joined.set_global(expert, float(shared))
+                    joined.mark_filled(expert)
+                return ("direct", group, float(shared))
             unit = prepare_a4_unit(member, rows=rows, cols=cols,
                                    scratch=self._scratch, memo=self._memo)
         else:
@@ -547,16 +590,26 @@ def build_tessera_nvfp4_moe_method(scheme: Mapping, prefix: str, mode: str, laye
             device = self._decode_device()
             ready = self._intake.take(
                 group, index, expert_id, blob.detach().cpu().contiguous().numpy().tobytes(),
-                device)
+                device, axes=self._axes)
             if ready is not None:
-                units, shared = ready
-                for name, unit in units:
-                    self._axes[(group, name)].put(expert_id, unit)
-                if group == "w13":
-                    self._shared_w13[expert_id] = shared
+                if ready[0] == "direct":
+                    # The planes are already in their final axis slots; only
+                    # the joined/global multiplier the epilogues freeze is
+                    # handed back here.
+                    _tag, group_name, shared = ready
+                    if group_name == "w13":
+                        self._shared_w13[expert_id] = shared
+                    else:
+                        self._shared_w2[expert_id] = shared
                 else:
-                    self._shared_w2[expert_id] = shared
-                del units, ready
+                    units, shared = ready
+                    for name, unit in units:
+                        self._axes[(group, name)].put(expert_id, unit)
+                    if group == "w13":
+                        self._shared_w13[expert_id] = shared
+                    else:
+                        self._shared_w2[expert_id] = shared
+                    del units, ready
             if group == "w13":
                 self._w13_len[expert_id, index] = length
             else:

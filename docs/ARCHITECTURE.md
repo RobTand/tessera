@@ -2950,7 +2950,15 @@ group's plan (rows of `w13`, columns of `w2`), and prepared into
 `fused.shared_lut_global` under the fused tile's one global.  No stock
 NVFP4 tile is built at load or in a forward and no expanded expert pool is
 resident: the compact planes ride through residency and the fused decode
-happens in the kernel.  The loader's parse is bounded and owned by the
+happens in the kernel.  The expert intake writes each projection's prepared planes
+**directly into that expert's preallocated axis slot** the moment the wire
+arrives (`A4ExpertAxis.destination`/`set_lut_bytes`/`set_global`), so no
+per-wire output tensor exists and `finish` copies nothing; only the 16-byte
+LUT table and its scalar global wait in `_ExpertIntake.pending` for the mate
+(the fused tile's shared global), which keeps arbitrary wire order legal and
+the join semantics exactly the stock lane's.  That direct destination is what
+removes the per-wire point-plane allocation the ml19 runtime showed pooling
+288 dead 20 MiB blocks.  The loader's parse is bounded and owned by the
 load too: the two mandated SHA-256 passes over a wire overlap (per-plane
 checks on one short-lived worker thread, the whole-region payload digest on
 the caller, payload-digest precedence unchanged), the geometry-keyed

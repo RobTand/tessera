@@ -398,7 +398,8 @@ def _write_select_pad(select: torch.Tensor, state: torch.Tensor, cols: int,
 
 def prepare_span2_compact(wire: CompactWire, *, rows=None, cols=None,
                           device="cuda", scratch: "dict | None" = None,
-                          memo: "dict | None" = None) -> dict:
+                          memo: "dict | None" = None,
+                          out_factory=None, on_layout=None) -> dict:
     """A span-2 LUT-plane unit -> the native decoder's inputs, rank-local.
 
     The returned dictionary is ``lane_planes.prepare_span2_planes``'s, key for
@@ -407,6 +408,14 @@ def prepare_span2_compact(wire: CompactWire, *, rows=None, cols=None,
     tensor, whole unit and TP2/TP4 rank shapes.  What differs is the work: the
     parent's BODY and scale planes stay packed, the rank's planes are written
     straight from those bits, and no parent-sized tensor is allocated.
+
+    ``out_factory(field, size, dtype)`` (optional) returns the **preallocated
+    destination** for that field -- the expert's slot in its axis -- so the
+    prepared planes are written once, in place, with no per-wire output
+    allocation and no later copy.  Every field the axis stores goes through
+    the factory; the small transient tables that are not stored (the subset
+    values) stay local.  Without a factory this is the allocating reader the
+    dense route and the tests use.
     """
     from . import lane_planes as lp
 
@@ -477,38 +486,85 @@ def prepare_span2_compact(wire: CompactWire, *, rows=None, cols=None,
     # packer rebuilding it was two extra full-plane passes per wire, and the
     # kernels only read it.
     words = kw.plane_words(body, scratch)
+    if on_layout is not None:
+        # Asked before any destination is written, so a geometry the axis
+        # already committed is refused without touching a slot.
+        on_layout(rows_local, cols_local, rate, arity, code.memory,
+                  int(metadata.manifest.geometry.half_weights))
     select = kw.pack_span2_select_cuda(
         body, cols=cols_local, groups_per_col=pairs_local // 8, col0=c0,
         col_bits=col_bits, pair0=s0 // span, per=per, device=device,
-        scratch=scratch, words=words)
+        scratch=scratch, words=words,
+        out_factory=(lambda _field, size, dtype: out_factory("select", size, dtype))
+        if out_factory is not None else None)
     state = _tcq_cut_state(metadata, s0, c0, c1, device, scratch)
     if state is not None:
         _write_select_pad(select, state, cols_local, pairs_local, code.memory)
     label = kw.pack_span2_label_cuda(
         body, cols=cols_local, groups_per_col=pairs_local // 4, col0=c0,
         col_bits=col_bits, pair0=s0 // span, per=per, label_off=rate,
-        device=device, scratch=scratch, words=words)
+        device=device, scratch=scratch, words=words,
+        out_factory=(lambda _field, size, dtype: out_factory("label", size, dtype))
+        if out_factory is not None else None)
     wid = rate - 1
     point = kw.pack_span2_point_cuda(
         body, cols=cols_local, groups_per_col=(steps_local * wid) // 8, col0=c0,
         col_bits=col_bits, step0=s0, per=per, rate=rate,
-        steps_per_col=steps_local, device=device, scratch=scratch, words=words)
+        steps_per_col=steps_local, device=device, scratch=scratch, words=words,
+        out_factory=(lambda _field, size, dtype: out_factory("point", size, dtype))
+        if out_factory is not None else None)
     scale_lut = metadata.scale_lut
     label_lut, _subset_lut = lp.build_span2_luts(forest, code, device)
+    nibbles = _compact_scale_nibbles(
+        metadata, r0=r0, r1=r1, c0=c0, c1=c1, device=device, scratch=scratch)
+    lut_bytes = lp.lut_scale_bytes(scale_lut, device)
+    subset_nibbles = lp.build_subset_nibbles(forest, code, device)
+    from .kernel_a4 import build_code_nibbles
+
+    code_nibbles = build_code_nibbles(subset_nibbles, 1 << (rate - 1), arity)
+    if out_factory is not None:
+        # Write the stored fields into their destination slots, once.  The LUT
+        # plane's slot is e4m3-typed like ``A4Unit.lut_bytes`` (the kernels and
+        # the dense bundles read it that way); its bytes are written through a
+        # uint8 view, exactly the byte reinterpretation the allocating path
+        # performs in ``A4Unit.from_prepared``.
+        dest = {}
+        for field, tensor, dtype in (
+            ("nibbles", nibbles, torch.uint8),
+            ("lut_bytes", lut_bytes, torch.float8_e4m3fn),
+            ("label_lut", label_lut, torch.int32),
+            ("code_nibbles", code_nibbles, torch.uint8),
+        ):
+            slot = out_factory(field, tensor.numel(), dtype)
+            if slot.numel() != tensor.numel() or slot.dtype != dtype:
+                raise GrammarError(
+                    f"{field}: destination is {slot.numel()} x {slot.dtype}, "
+                    f"the prepared field is {tensor.numel()} x {dtype}")
+            if dtype is torch.float8_e4m3fn:
+                slot.view(torch.uint8).copy_(tensor.view(torch.uint8))
+            else:
+                slot.copy_(tensor)
+            dest[field] = slot
+        nibbles, label_lut = dest["nibbles"], dest["label_lut"]
+        lut_bytes_view, code_nibbles = dest["lut_bytes"], dest["code_nibbles"]
+    else:
+        lut_bytes_view = lut_bytes
     return {
         "kind": "span2",
         "select": select, "label": label, "point": point,
-        "nibbles": _compact_scale_nibbles(
-            metadata, r0=r0, r1=r1, c0=c0, c1=c1, device=device,
-            scratch=scratch),
+        "nibbles": nibbles,
         "table": lp.lut_scale_table(scale_lut, device),
         "label_lut": label_lut,
         "values": lp.build_subset_values(forest, code, device),
         "global_scale": float(metadata.manifest.scale_plane.global_scale),
         "rows": rows_local, "cols": cols_local, "rate": rate, "arity": arity,
         "memory": code.memory, "half": int(metadata.manifest.geometry.half_weights),
-        "subset_nibbles": lp.build_subset_nibbles(forest, code, device),
-        "lut_bytes": lp.lut_scale_bytes(scale_lut, device),
+        "subset_nibbles": subset_nibbles,
+        "code_nibbles": code_nibbles,
+        # The stored LUT plane, as e4m3 bytes: a factory slot is a uint8 view
+        # of the axis's e4m3 buffer, the allocating path is the byte tensor
+        # ``A4Unit.from_prepared`` views.
+        "lut_bytes": lut_bytes_view,
     }
 
 

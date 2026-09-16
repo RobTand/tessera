@@ -17,6 +17,8 @@ adapter invents).
 """
 from __future__ import annotations
 
+import math
+
 import torch
 
 from ..compact_prep import prepare_span2_compact
@@ -34,7 +36,8 @@ __all__ = [
 
 
 def prepare_a4_unit(wire, *, rows=None, cols=None, global_scale=None,
-                    scratch=None, memo=None) -> A4Unit:
+                    scratch=None, memo=None, out_factory=None,
+                    on_layout=None) -> A4Unit:
     """One rank-local role's ``A4Unit`` from a verified compact wire.
 
     ``wire`` is ``compact_prep.CompactWire`` (metadata verified, no parent
@@ -48,7 +51,8 @@ def prepare_a4_unit(wire, *, rows=None, cols=None, global_scale=None,
     a fresh device buffer per wire under the runtime's allocator context.
     """
     prepared = prepare_span2_compact(wire, rows=rows, cols=cols, scratch=scratch,
-                                     memo=memo)
+                                     memo=memo, out_factory=out_factory,
+                                     on_layout=on_layout)
     return A4Unit.from_prepared(prepared, global_scale=global_scale)
 
 
@@ -122,6 +126,79 @@ class A4ExpertAxis:
         self._layout = None
         self._meta = None
 
+    def bind_geometry(self, rows: int, cols: int, rate: int, arity: int,
+                      memory: int, half: int) -> None:
+        """One geometry for the whole axis, checked before any slot is written."""
+        facts = (int(rows), int(cols), int(rate), int(arity), int(memory), int(half))
+        if self._meta is None:
+            self._meta = facts
+        elif facts != self._meta:
+            raise GrammarError(
+                f"expert axis: geometry {facts} differs from the first expert's "
+                f"{self._meta}; one grouped stack needs one geometry")
+
+    def destination(self, expert: int, field: str, size: int, dtype,
+                    device=None, shape=None) -> torch.Tensor:
+        """The preallocated slot view for one field of one expert.
+
+        The first request for a field allocates the whole ``[experts, *shape]``
+        plane (``shape`` defaults to the flat ``(size,)``, which every packer
+        emits; the allocating ``put`` path passes the unit's own shape so a
+        multi-dimensional field keeps it through ``finish``).  Every later
+        request must match the shape and dtype by name, and the returned view
+        is written in place -- no per-wire output tensor and no copy at
+        ``finish``.  ``device`` is only read on the first request.
+        """
+        if not 0 <= expert < self.experts:
+            raise GrammarError(
+                f"expert {expert} is outside the axis's {self.experts}")
+        if field not in self._FIELDS:
+            raise GrammarError(f"{field!r} is not a stacked field of the axis")
+        if self._planes is None:
+            self._planes = {}
+        wanted = (int(size),) if shape is None else tuple(int(v) for v in shape)
+        if int(size) != 1 and math.prod(wanted) != int(size):
+            raise GrammarError(
+                f"{field}: shape {wanted} does not hold {size} elements")
+        plane = self._planes.get(field)
+        if plane is None:
+            plane = torch.empty((self.experts, *wanted), dtype=dtype,
+                                device=torch.device(device if device is not None
+                                                    else "cuda"))
+            self._planes[field] = plane
+        elif tuple(plane.shape[1:]) != wanted or plane.dtype != dtype:
+            raise GrammarError(
+                f"{field}: expert {expert}'s slot is {wanted} x {dtype}, the "
+                f"axis holds {tuple(plane.shape[1:])} x {plane.dtype}")
+        if self._globals is None:
+            self._globals = torch.empty(self.experts, dtype=torch.float32,
+                                        device=plane.device)
+        return plane[expert]
+
+    def set_lut_bytes(self, expert: int, table: torch.Tensor) -> None:
+        """The joined 16-entry LUT written into a preallocated slot."""
+        plane = (self._planes or {}).get("lut_bytes")
+        if plane is None:
+            raise GrammarError("lut_bytes was never written for this axis")
+        slot = plane[expert].view(torch.uint8)
+        if slot.numel() != table.numel():
+            raise GrammarError(
+                f"lut_bytes: a joined table of {table.numel()} entries does not "
+                f"fit the slot's {slot.numel()}")
+        slot.copy_(table.view(torch.uint8))
+
+    def set_global(self, expert: int, value: float) -> None:
+        if self._globals is None:
+            self._globals = torch.empty(self.experts, dtype=torch.float32,
+                                        device=(self._planes["select"].device
+                                                if self._planes else "cuda"))
+        self._globals[expert] = float(value)
+
+    def mark_filled(self, expert: int) -> None:
+        if expert in self._filled:
+            raise GrammarError(f"expert {expert} was placed twice")
+        self._filled.add(expert)
+
     def _layout_of(self, unit: A4Unit) -> tuple:
         return (
             (unit.rows, unit.cols, unit.rate, unit.arity, unit.memory, unit.half),
@@ -143,21 +220,32 @@ class A4ExpertAxis:
                       unit.half)
 
     def put(self, expert: int, unit: A4Unit) -> None:
+        """Copy a prepared unit into its slot (the allocating-path adapter).
+
+        The direct-write loader calls ``destination``/``set_lut_bytes``/
+        ``set_global``/``mark_filled`` instead; this keeps the axis consumable
+        by callers and tests that have a whole ``A4Unit``.
+        """
         if not 0 <= expert < self.experts:
             raise GrammarError(
                 f"expert {expert} is outside the axis's {self.experts}")
         if expert in self._filled:
             raise GrammarError(f"expert {expert} was placed twice")
-        if self._planes is None:
-            self._alloc(unit)
-        elif self._layout_of(unit) != self._layout:
+        self.bind_geometry(unit.rows, unit.cols, unit.rate, unit.arity,
+                           unit.memory, unit.half)
+        if self._layout is not None and self._layout_of(unit) != self._layout:
             raise GrammarError(
                 f"expert {expert}: the prepared layout differs from the first "
                 "expert's; one grouped launch takes one layout per axis")
         for field in self._FIELDS:
-            self._planes[field][expert].copy_(getattr(unit, field))
-        self._globals[expert] = float(unit.global_scale)
-        self._filled.add(expert)
+            tensor = getattr(unit, field)
+            slot = self.destination(expert, field, tensor.numel(), tensor.dtype,
+                                    tensor.device, shape=tensor.shape)
+            slot.copy_(tensor)
+        self.set_global(expert, unit.global_scale)
+        self.mark_filled(expert)
+        if self._layout is None:
+            self._layout = self._layout_of(unit)
 
     def finish(self) -> A4UnitStack:
         missing = [index for index in range(self.experts)

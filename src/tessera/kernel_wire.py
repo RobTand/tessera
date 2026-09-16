@@ -188,11 +188,41 @@ def _span2_point_kernel(words, out, cols, groups_per_col, col0, col_bits,
     tl.store(out + j * out_bytes_per_col + k, acc.to(tl.uint8), mask=mask)
 
 
+def _destination(out, out_factory, field: str, size: int, dtype, device,
+                *, zero: bool):
+    """The output buffer a packer writes into.
+
+    ``out_factory`` (optional) lets a caller hand a **preallocated
+    destination** -- the expert's slot in its axis -- so the loader stops
+    allocating a fresh several-megabyte output per wire; the runtime's
+    ``max_split_size_mb=20`` context turned each such request into a pooled
+    20 MiB block that was never reused (the ml19 diagnostic: 288 inactive
+    blocks whose last request was the 1.5 MiB point plane).  A caller-provided
+    buffer is checked for exact size and dtype, and ``zero`` selects whether
+    the original ``torch.zeros`` semantics need the unwritten bytes cleared
+    (the select kernel leaves one pad byte per column and its trailing slack
+    untouched; label and point write every byte).
+    """
+    if out is None and out_factory is not None:
+        out = out_factory(field, size, dtype)
+    if out is None:
+        return torch.zeros(size, dtype=dtype, device=device)
+    if out.numel() != size or out.dtype != dtype:
+        raise GrammarError(
+            f"{field}: destination is {out.numel()} x {out.dtype}, the packer "
+            f"writes {size} x {dtype}")
+    if zero:
+        out.zero_()
+    return out
+
+
 def pack_span2_select_cuda(plane: torch.Tensor, *, cols: int, groups_per_col: int,
                            col0: int, col_bits: int, pair0: int, per: int,
                            device: torch.device,
                            scratch: "dict | None" = None,
-                           words: "torch.Tensor | None" = None) -> torch.Tensor:
+                           words: "torch.Tensor | None" = None,
+                           out: "torch.Tensor | None" = None,
+                           out_factory=None) -> torch.Tensor:
     """The select plane of a span-2 unit (see ``_span2_select_kernel``).
 
     ``col_bits`` is the source BODY bits per column *of the plane being
@@ -202,8 +232,9 @@ def pack_span2_select_cuda(plane: torch.Tensor, *, cols: int, groups_per_col: in
     """
     if words is None:
         words = _plane_words(plane, scratch)
-    out = torch.zeros(cols * (groups_per_col + 1) + 8, dtype=torch.uint8,
-                      device=device)
+    size = cols * (groups_per_col + 1) + 8
+    out = _destination(out, out_factory, "select", size, torch.uint8, device,
+                       zero=True)
     total = cols * groups_per_col
     if total:
         with torch.cuda.device(device):
@@ -217,11 +248,15 @@ def pack_span2_label_cuda(plane: torch.Tensor, *, cols: int, groups_per_col: int
                           col0: int, col_bits: int, pair0: int, per: int,
                           label_off: int, device: torch.device,
                           scratch: "dict | None" = None,
-                           words: "torch.Tensor | None" = None) -> torch.Tensor:
+                           words: "torch.Tensor | None" = None,
+                           out: "torch.Tensor | None" = None,
+                           out_factory=None) -> torch.Tensor:
     """The label plane of a span-2 unit (see ``_span2_label_kernel``)."""
     if words is None:
         words = _plane_words(plane, scratch)
-    out = torch.zeros(cols * groups_per_col, dtype=torch.uint8, device=device)
+    size = cols * groups_per_col
+    out = _destination(out, out_factory, "label", size, torch.uint8, device,
+                       zero=False)  # the kernel writes every output byte
     total = cols * groups_per_col
     if total:
         with torch.cuda.device(device):
@@ -236,13 +271,16 @@ def pack_span2_point_cuda(plane: torch.Tensor, *, cols: int, groups_per_col: int
                           rate: int, steps_per_col: int,
                           device: torch.device,
                           scratch: "dict | None" = None,
-                           words: "torch.Tensor | None" = None) -> torch.Tensor:
+                           words: "torch.Tensor | None" = None,
+                           out: "torch.Tensor | None" = None,
+                           out_factory=None) -> torch.Tensor:
     """The point plane of a span-2 unit (see ``_span2_point_kernel``)."""
     if words is None:
         words = _plane_words(plane, scratch)
     wid = rate - 1
-    out = torch.zeros(cols * (steps_per_col * wid // 8), dtype=torch.uint8,
-                      device=device)
+    size = cols * (steps_per_col * wid // 8)
+    out = _destination(out, out_factory, "point", size, torch.uint8, device,
+                       zero=False)  # the kernel writes every output byte
     total = cols * groups_per_col
     if total:
         with torch.cuda.device(device):
