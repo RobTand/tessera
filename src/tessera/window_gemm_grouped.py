@@ -31,7 +31,13 @@ MODES (matching vLLM's ``TopKWeightAndReduce`` semantics).
   per-route activations directly and still reduces over ``top_k``.
 * Both modes apply the family epilogues: BF16 row scale only (the research
   folded rounding has no API here); FP8 ``y = acc * a_scale[t] * w_scale[e, n]``
-  under vLLM's native per-token quantizer.
+  under vLLM's native per-token quantizer.  ``prepare_grouped_window_gemm``'s
+  ``arithmetic="folded"`` selects the **research BF16 folded contract**
+  instead -- one bf16 rounding of ``(value * row_scale)`` per weight in
+  registers before the dot, exactly ``bf16_route.decode_folded``'s
+  ``(values.float() * scale[:, :, None]).to(torch.bfloat16)``, with no scale
+  in the epilogue.  It is a prepare-time property, not a call flag, and the
+  FP8 family refuses it; the dense/default epilogue is unchanged.
 
 ``preserve`` + a per-route activation + ``reduce`` is the two-stage MoE shape
 (gate/up -> activation -> down); the module itself never assumes that a sum
@@ -80,7 +86,7 @@ def _grouped_window_gemm_kernel(
     L: tl.constexpr, TILE: tl.constexpr,
     BM: tl.constexpr, BN: tl.constexpr, BK: tl.constexpr,
     FP8: tl.constexpr, PRESERVE: tl.constexpr,
-    MUL_WEIGHT: tl.constexpr, ROUTE_INPUT: tl.constexpr,
+    MUL_WEIGHT: tl.constexpr, ROUTE_INPUT: tl.constexpr, FOLDED: tl.constexpr,
 ):
     e = tl.program_id(0)
     pid_n = tl.program_id(1)
@@ -110,6 +116,7 @@ def _grouped_window_gemm_kernel(
         n_runs = tl.load(run_off_ptr + e + 1) - run_off
         has_init = tl.load(has_init_ptr + e)
         words = words_all + word_off
+        wscale = tl.load(scale_all + e * rows + offs_n, mask=live_n, other=0.0)
 
         rows_v = tl.arange(0, BN)
         acc = tl.zeros((BM, BN), dtype=tl.float32)
@@ -161,6 +168,10 @@ def _grouped_window_gemm_kernel(
                     val = byte.to(tl.float8e4nv, bitcast=True)
                 else:
                     val = tl.load(table_all + e * (1 << L) + state, mask=live_k2, other=0.0)
+                    if FOLDED:
+                        # the research BF16 contract: one bf16 rounding of
+                        # (value * row scale) in registers, before the dot
+                        val = (val.to(tl.float32) * wscale[None, :]).to(tl.bfloat16)
 
                 kcol = tl.load(perm_ptr + e * cols + kglob, mask=live_k, other=0)
                 if ROUTE_INPUT:
@@ -173,8 +184,7 @@ def _grouped_window_gemm_kernel(
                 )
                 acc += tl.dot(xk, val, out_dtype=tl.float32)
 
-        wscale = tl.load(scale_all + e * rows + offs_n, mask=live_n, other=0.0)
-        contrib = acc * wscale[None, :]
+        contrib = acc if FOLDED else acc * wscale[None, :]
         if FP8:
             if ROUTE_INPUT:
                 a_s = tl.load(a_scale_ptr + flat, mask=live_tok, other=0.0)
@@ -220,6 +230,7 @@ class PreparedGroupedWindowGemm:
     block_n: int
     block_k: int
     quantizer: str = "native"
+    arithmetic: str = "epilogue"
 
     @property
     def device(self) -> torch.device:
@@ -353,6 +364,7 @@ class PreparedGroupedWindowGemm:
                 FP8=fp8, PRESERVE=preserve,
                 MUL_WEIGHT=(apply_router_weight_on_input == preserve),
                 ROUTE_INPUT=route_input,
+                FOLDED=(self.arithmetic == "folded"),
                 num_warps=8,
             )
         return result if preserve else result.to(torch.bfloat16)
@@ -372,6 +384,7 @@ def prepare_grouped_window_gemm(
     block_n: int = 64,
     block_k: int = 64,
     quantizer: "str | None" = "native",
+    arithmetic: str = "epilogue",
 ) -> PreparedGroupedWindowGemm:
     """Validate every unit once and freeze the SoA stack.
 
@@ -379,7 +392,20 @@ def prepare_grouped_window_gemm(
     row per expert); a unit's own ``initial_state`` field is used where the
     stack does not carry a row.  Families, ``cols``, ``rows`` and
     ``window_bits`` must agree across the stack, and so must the block sizes.
+
+    ``arithmetic`` names the weight-side contract, once and explicitly:
+
+    * ``"epilogue"`` (default, dense): the row scale multiplies the fp32
+      accumulator after the dot -- the dense BF16 route's contract;
+    * ``"folded"``: the research BF16 contract, exactly
+      ``bf16_route.decode_folded``'s ``(values.float() * scale[:, :, None])
+      .to(torch.bfloat16)`` -- one bf16 rounding of (value * row scale) in
+      registers, before ``tl.dot``, and no scale in the epilogue.  The FP8
+      family has no folded form (its per-token A quant and row-scale epilogue
+      are the published contract), so ``"folded"`` is refused there.
     """
+    if arithmetic not in ("epilogue", "folded"):
+        raise GrammarError(f"unknown weight arithmetic {arithmetic!r}")
     units = list(units)
     if not units:
         raise GrammarError("a grouped stack needs at least one expert")
@@ -399,6 +425,11 @@ def prepare_grouped_window_gemm(
                     f"{getattr(first, name)}; a grouped stack is homogeneous"
                 )
     device = first.device
+    if arithmetic == "folded" and first.family != "value":
+        raise GrammarError(
+            "the folded weight arithmetic is the research BF16 contract; the E4M3 "
+            "family keeps the per-token A quant and the row-scale epilogue"
+        )
     run_lengths = torch.tensor([p.runs.numel() // 4 for p in prepared], dtype=torch.int32)
     run_off = torch.cat([torch.zeros(1, dtype=torch.int32), torch.cumsum(run_lengths, 0)])
     word_sizes = torch.tensor([p.words.numel() for p in prepared], dtype=torch.int32)
@@ -427,4 +458,5 @@ def prepare_grouped_window_gemm(
         block_n=block_n,
         block_k=block_k,
         quantizer=quantizer if first.family == "e4m3" else "native",
+        arithmetic=arithmetic,
     )

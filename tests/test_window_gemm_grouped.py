@@ -78,14 +78,22 @@ class Expert:
         )
         self.states = _states(self.body, self.rates, L, init)
 
-    def reference(self, x, family):
-        """The per-expert dense definition: fp32 [T, rows], no routing."""
-        raw = self.values.float().to(x.device)
+    def reference(self, x, family, folded=False):
+        """The per-expert dense definition: fp32 [T, rows], no routing.
+
+        ``folded=True`` is the research BF16 contract:
+        ``bf16(values * row_scale)`` before the dot, no epilogue scale --
+        exactly ``bf16_route.decode_folded``'s arithmetic.
+        """
         if family == "e4m3":
             byte = self.unit.native[self.unit.codes_of_state[self.states.cuda()].long()]
             w = byte.view(torch.float8_e4m3fn).float()
         else:
-            w = raw[self.states.cuda()]
+            w = self.values.float().cuda()[self.states.cuda()]
+            if folded:
+                w = (w * self.scale[:, None]).bfloat16().float()
+                acc = x.float() @ w.t()
+                return acc
         acc = x.float() @ w.t()
         return acc * self.scale[None, :]
 
@@ -303,15 +311,19 @@ def test_grouped_two_stage_moe_matches_the_route_preserving_oracle():
     sel = torch.arange(t, device="cuda")[:, None].expand_as(ids)
     route_rows = torch.arange(t * k, device="cuda")
 
-    for family in ("value", "e4m3"):
+    for family, arithmetic in (("value", "epilogue"), ("e4m3", "epilogue"),
+                               ("value", "folded")):
+        folded = arithmetic == "folded"
         gu_stack = [Expert(2 * inter, cols_h, (4,) * cols_h, s, family=family)
                     for s in seeds]
         dn_stack = [Expert(rows_h, inter, (2 if i % 2 else 4,) * inter, s + 10,
                            family=family) for i, s in enumerate(seeds)]
         gu = wgg.prepare_grouped_window_gemm([e.unit for e in gu_stack],
-                                             block_m=32, block_n=64, block_k=64)
+                                             block_m=32, block_n=64, block_k=64,
+                                             arithmetic=arithmetic)
         dn = wgg.prepare_grouped_window_gemm([e.unit for e in dn_stack],
-                                             block_m=32, block_n=64, block_k=64)
+                                             block_m=32, block_n=64, block_k=64,
+                                             arithmetic=arithmetic)
         x = torch.randn(t, cols_h, device="cuda").bfloat16()
         if family == "e4m3":
             x_in, a1 = _quant(x)
@@ -320,7 +332,8 @@ def test_grouped_two_stage_moe_matches_the_route_preserving_oracle():
             xq1, a1 = x, None
 
         def reference(weight_input):
-            picked1 = torch.stack([e.reference(xq1, family) for e in gu_stack])  # [E,T,2I]
+            picked1 = torch.stack([e.reference(xq1, family, folded=folded)
+                                   for e in gu_stack])                           # [E,T,2I]
             if family == "e4m3":
                 picked1 = picked1 * a1.reshape(1, t, 1)
             routes1 = picked1[ids.long(), sel]                                   # [T,K,2I]
@@ -335,7 +348,8 @@ def test_grouped_two_stage_moe_matches_the_route_preserving_oracle():
                 flat_q = a_in.float()
             else:
                 flat_q, a2 = flat, None
-            picked2 = torch.stack([e.reference(flat_q, family) for e in dn_stack])  # [E,T*K,H]
+            picked2 = torch.stack([e.reference(flat_q, family, folded=folded)
+                                   for e in dn_stack])                           # [E,T*K,H]
             routes2 = picked2[ids.long().reshape(-1), route_rows]                    # [T*K, H]
             routes2 = routes2.reshape(t, k, rows_h)
             if family == "e4m3":
@@ -355,7 +369,7 @@ def test_grouped_two_stage_moe_matches_the_route_preserving_oracle():
             ref = reference(weight_input)
             assert out.shape == (t, rows_h)
             assert float((out.float() - ref.float()).abs().max()) < _tol(ref), \
-                f"{family} apply_router_weight_on_input={weight_input}"
+                f"{family}/{arithmetic} apply_router_weight_on_input={weight_input}"
             if family == "e4m3":
                 # the per-route scale must be indexed by route, not by token:
                 # the prequantized path and the internal-quantizer path agree
@@ -378,6 +392,42 @@ def test_grouped_out_buffer_is_overwritten_not_accumulated():
     dirty = torch.full((8, rows), 7.5, dtype=torch.float32, device="cuda")
     reused = prepared(x, ids, rw, out=dirty)
     assert torch.equal(reused, fresh)
+
+
+@cuda
+def test_grouped_folded_arithmetic_is_decode_folded_and_differs_from_epilogue():
+    """``arithmetic="folded"`` is exactly ``decode_folded``'s
+    ``bf16(value * row_scale)`` before the dot -- not the dense epilogue --
+    and the two differ on nontrivial scales; FP8 refuses it."""
+    rows, cols, experts = 768, 192, 3
+    stack = _stack(rows, cols, "value", [101, 102, 103])
+    folded = wgg.prepare_grouped_window_gemm([e.unit for e in stack],
+                                             block_m=32, block_n=64, block_k=64,
+                                             arithmetic="folded")
+    dense = wgg.prepare_grouped_window_gemm([e.unit for e in stack],
+                                            block_m=32, block_n=64, block_k=64)
+    t, k = 16, 2
+    x = torch.randn(t, cols, device="cuda").bfloat16()
+    ids = torch.randint(0, experts, (t, k), device="cuda", dtype=torch.int32)
+    rw = torch.rand(t, k, device="cuda")
+    sel = torch.arange(t, device="cuda")[:, None].expand_as(ids)
+    route = folded(x, ids, rw, preserve=True)
+    y_e = []
+    for e in stack:
+        w = e.values.float().cuda()[e.states.cuda()]
+        w = (w * e.scale[:, None]).bfloat16().float()        # decode_folded
+        y_e.append(x.float() @ w.t())
+    ref = torch.stack(y_e)[ids.long(), sel].bfloat16()
+    assert float((route.float() - ref.float()).abs().max()) < _tol(ref)
+    epi = dense(x, ids, rw, preserve=True)
+    assert not torch.allclose(route.float(), epi.float(), rtol=1e-3, atol=1e-5), \
+        "folded and epilogue arithmetic must differ on nontrivial scales"
+    with pytest.raises(GrammarError, match="folded"):
+        wgg.prepare_grouped_window_gemm(
+            [e.unit for e in _stack(rows, cols, "e4m3", [111, 112])],
+            arithmetic="folded")
+    with pytest.raises(GrammarError, match="unknown weight arithmetic"):
+        wgg.prepare_grouped_window_gemm([e.unit for e in stack], arithmetic="fold")
 
 
 @cuda
