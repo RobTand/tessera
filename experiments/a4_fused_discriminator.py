@@ -146,7 +146,10 @@ def main() -> None:
     _blob, _scheme, _packed, _scale, _global, ref_w = T._encode_module(
         list(ROLES), cols=COLS, seed=SEED)
     stock_want = (stock_vals / gs) @ ref_w.t()
-    ref_vals = T._reference_fp4_quant_value(x, gs)
+    # the historical comparator: the argmin model this probe was built against
+    ref_sign = (ref_codes & 8).to(torch.bool)
+    ref_level = levels[(ref_codes & 7).to(torch.int64)]
+    ref_vals = torch.where(ref_sign, -ref_level, ref_level) * ref_sf
     ref_want = (ref_vals / gs) @ ref_w.t()
     stock_err = stock_want.sub(got.float()).abs().max().item()
     ref_err = ref_want.sub(got.float()).abs().max().item()
@@ -156,6 +159,8 @@ def main() -> None:
           f"(ratio={ref_err / max(ref_want.abs().max().item(), 1e-9):.6f})")
     print(f"[rebuild] max|want_from_stock - want_from_reference| = "
           f"{stock_want.sub(ref_want).abs().max().item():.6f}")
+    print(f"[rebuild] max|test_oracle - got| = "
+          f"{want.float().sub(got.float()).abs().max().item():.6f}")
 
 
 if __name__ == "__main__":

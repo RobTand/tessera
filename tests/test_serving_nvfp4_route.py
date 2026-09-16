@@ -186,37 +186,35 @@ def _register_runtime_fp4_op():
             f"{exc})") from exc
 
 
-def _reference_fp4_quant_value(x, global_scale):
-    """The A-side VALUE matrix, one group-16 E2M1 quantisation at the static
-    global -- the arithmetic vLLM's ``scaled_fp4_quant`` publishes, written out
-    so the expectation is the tensor the route's own quantizer stands for.
+def _stock_product(x, gscale, packed, scale, epilogue):
+    """The executed W4A4 product, built from the RUNTIME'S OWN operators.
 
-    TIES RESOLVE UPWARD, AWAY FROM ZERO.  A magnitude that sits exactly between
-    two E2M1 levels is not a corner case the runtime leaves to ``argmin``:
-    measured on the fused q/k/v fixture (``experiments/a4_fused_discriminator.py``,
-    PB action 5ea787ef, GB10), the registered ``scaled_fp4_quant`` and this
-    model disagree on 172 of 32768 elements, and all 172 are exactly midpoints
-    (``max|q-mid| = 0.0``) where the operator takes the LARGER level.  Taking
-    ``argmin``'s lower neighbour instead made the fused product miss by 1.67%
-    while the operator's own codes land it at 0.26% -- a reference defect, not
-    a kernel one, so the model rounds the way the operator does.
+    The A side is the registered ``scaled_fp4_quant`` -- the operator the route
+    executes, not a written-out model of it -- held to the module's stock tile
+    through ``torch._scaled_mm``, the same oracle ``tests/test_kernel_a4.py``
+    uses.  A hand-written model of that operator is NOT equivalent: on the
+    fused q/k/v fixture it disagrees with the operator on 172 of 32768 elements,
+    every one of them exactly on a level midpoint
+    (``experiments/a4_fused_discriminator.py``, PB action 5ea787ef).  Whether
+    that is a tie rule or the operator's reciprocal/scale arithmetic shifting
+    the nominal midpoint is NOT established by one fixture, so this oracle does
+    not restate either: it uses the operator, and a claim about its rounding
+    would need its own test across scales, signs and all seven boundaries.
     """
-    m, k = x.shape
-    groups = k // GROUP
-    xf = x.float().view(m, groups, GROUP)
-    amax = xf.abs().amax(dim=2, keepdim=True).clamp_min(1e-12)
-    sf = (amax / 6.0 * float(global_scale)).to(torch.float8_e4m3fn)
-    sf_f = sf.float().clamp_min(1e-12)
-    q = (xf * float(global_scale) / sf_f).clamp(-6.0, 6.0)
-    levels = torch.tensor([0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0],
-                          dtype=torch.float32, device=x.device)
-    # ``right=True`` sends an exact midpoint to the upper level, which is the
-    # operator's rule above (the list has no level past 6.0, so the clamp
-    # cannot run off its end).
-    midpoints = 0.5 * (levels[:-1] + levels[1:])
-    idx = torch.searchsorted(midpoints, q.abs().contiguous(), right=True)
-    vals = levels[idx] * torch.sign(q)
-    return (vals * sf_f).view(m, k)
+    from tessera.serving.nvfp4_route import blocked_scales
+
+    a_q, a_s = torch.ops._C.scaled_fp4_quant(x.contiguous(), gscale, True)
+    a_q = a_q.view(torch.float4_e2m1fn_x2)
+    a_s = a_s.view(torch.uint8).view(torch.float8_e4m3fn).contiguous()
+    b_q = packed.to("cuda").view(torch.float4_e2m1fn_x2)
+    b_s = blocked_scales(scale.to("cuda").view(torch.uint8).view(torch.float8_e4m3fn))
+    try:
+        ref = torch._scaled_mm(a_q, b_q.t(), scale_a=a_s, scale_b=b_s,
+                               out_dtype=torch.float32)
+    except RuntimeError:
+        ref = torch._scaled_mm(a_q, b_q.t(), scale_a=a_s, scale_b=b_s,
+                               out_dtype=torch.bfloat16).to(torch.float32)
+    return (ref * epilogue).to(torch.bfloat16)
 
 
 class _Layer(torch.nn.Module):
@@ -266,7 +264,7 @@ def _drive(monkeypatch, mode, roles=(("weight", 256),), cols=1024, m=32, seed=0,
     _ATTESTED.clear()
     monkeypatch.setattr(native_ops, "require_native_fp4_quant",
                         lambda context: _ATTESTED.append(context))
-    blob, scheme, packed, scale, global_, ref_w = _encode_module(
+    blob, scheme, packed, scale, global_, _ref_w = _encode_module(
         list(roles), cols=cols, seed=seed)
     method = build_tessera_method(scheme, "test.layer")
     layer = _Layer()
@@ -283,13 +281,11 @@ def _drive(monkeypatch, mode, roles=(("weight", 256),), cols=1024, m=32, seed=0,
     x = torch.randn(m, cols, dtype=torch.bfloat16, device="cuda",
                     generator=torch.Generator(device="cuda").manual_seed(seed))
     got = method.apply(layer, x)
-    # ``_reference_fp4_quant_value`` is the A-side VALUES the quantizer stands
-    # for, which carry the static global (``sf = amax/6 * gs``).  The route's
-    # epilogue divides that global back out (``A4Unit.epilogue_for``:
-    # ``global_scale / input_global_scale``), so the expectation divides it too
-    # -- without this the reference is ``gs`` times the product and the
-    # comparison fails at exactly ``(gs-1)/gs``.
-    want = ((_reference_fp4_quant_value(x, gs) / float(gs)) @ ref_w.t()).to(torch.bfloat16)
+    # The route's epilogue is ``global_scale / input_global_scale``
+    # (``A4Unit.epilogue_for``); the stock operators produce the unscaled
+    # product, so the expectation carries that one scalar and nothing else.
+    gscale = layer.trellis_input_global_scale.data.to(torch.float32)
+    want = _stock_product(x, gscale, packed, scale, float(global_) / gs)
     return got, want, layer, method, (packed, scale, global_)
 
 
