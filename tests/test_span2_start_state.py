@@ -17,13 +17,15 @@ read, and this file is the proof, in two halves:
   derives from the same stream and the same start -- at every step the start
   can still reach.  A wrong bit order fails here before any GPU is asked.
 
-* **CUDA, on a real unit through the serving seam.**  A real E2M1x2 q256=896
-  unit is cut on rows at tp 2 and 4 through ``sharding.shard_parsed_roles``
-  (the route's own path) and prepared by ``ops.prepare_tessera_module``, whose
-  decode must equal the whole unit's decode sliced, ``torch.equal`` on both
-  planes -- on the native decoder, which at load is also held to
-  ``materialize_stock`` (``_require_reference_agreement``), and on the
-  pure-torch fallback.
+* **CUDA, on a real unit through the stock reference.**  A real E2M1x2
+  q256=896 unit is cut on rows at tp 2 and 4 through
+  ``sharding.shard_parsed_roles`` (the route's own path) and decoded through
+  the tests' reference asset (``nvfp4_reference``: ``materialize_stock`` with
+  the role's LUT table on its shared global), which must equal the whole
+  unit's decode sliced, ``torch.equal`` on both planes.  The A4 native lane's
+  own suite holds ITS decode to the same reference; what this file pins is
+  ``slice_unit``'s row property and the native admission's refusal, both of
+  which outlive the retired serving wrapper.
 """
 from __future__ import annotations
 
@@ -186,31 +188,34 @@ def _row_plan(rows, columns, tp_rank, tp_size):
                       tp_size=tp_size, input_size=columns, output_size=rows)
 
 
-def _prepare(roles, *, allow_torch_fallback):
-    from tessera.serving.ops import prepare_tessera_module
+def _prepare(roles):
+    """The stock NVFP4 pair for these roles, through the TEST ASSET.
 
-    return prepare_tessera_module(roles, device=torch.device("cuda"),
-                                  allow_torch_fallback=allow_torch_fallback, prefix="test")
+    The retired ``ops.prepare_tessera_module`` wrapper exposed exactly this
+    pair (``materialize_stock`` on the roles with their LUT tables moved onto
+    one shared global); the A4 lanes decode the compact loader's planes
+    in-kernel now, and their own suite holds THEM to this reference.  What this
+    file holds is ``slice_unit``'s row property, which is the same under
+    either decoder.
+    """
+    from nvfp4_reference import reference_module
+
+    return reference_module(roles, device="cuda")
 
 
 @needs_cuda
 @pytest.mark.parametrize("tp_size", [2, 4])
-def test_a_row_shard_decodes_to_the_whole_units_rows_on_the_native_decoder(parsed_unit, tp_size):
-    """FAILS BEFORE: ``prepare_tessera_module`` refused a role carrying an
-    INITIAL_STATE plane.  Every rank's shard now decodes, through the native
-    span-2 decoder, to exactly its rows of the whole unit's decode -- and the
-    load-time reference agreement inside ``prepare_tessera_module`` has already
-    held each of those decodes to ``materialize_stock``.  Both world sizes land
-    on the select plane's own byte -- 32 rows per shard is 16 codes, eight
-    span-2 super-symbols -- so this is the aligned cut at TP=2 AND TP=4, not a
-    TP=2-only fixture widened to make a red test green."""
-    from tessera.serving.ext import get_tessera_ext
-    from tessera.serving.sharding import AXIS_ROWS, shard_parsed_roles
-    from tessera.serving.telemetry import DECODER_NATIVE_SPAN2
+def test_a_row_shard_decodes_to_the_whole_units_rows(parsed_unit, tp_size):
+    """A rank's shard decodes to exactly its rows of the whole unit's decode.
 
-    if get_tessera_ext() is None:
-        pytest.skip("the native span-2 decoder could not be built here")
-    whole = _prepare([("weight", parsed_unit)], allow_torch_fallback=False)
+    The reference asset's tile is the oracle here; the A4 lanes' own suite
+    holds the native decode to the same reference.  Both world sizes land on
+    the select plane's own byte -- 32 rows per shard is 16 codes, eight span-2
+    super-symbols -- so this is the aligned cut at TP=2 AND TP=4.
+    """
+    from tessera.serving.sharding import AXIS_ROWS, shard_parsed_roles
+
+    whole = _prepare([("weight", parsed_unit)])
     packed_whole, scales_whole = whole.decode()
     rows_per_rank = UNIT_ROWS // tp_size
     for rank in range(tp_size):
@@ -220,8 +225,7 @@ def test_a_row_shard_decodes_to_the_whole_units_rows_on_the_native_decoder(parse
         shard_unit = roles[0][1].unit
         if rank:
             assert shard_unit.initial_state is not None and shard_unit.row_offset == rank * rows_per_rank
-        prepared = _prepare(roles, allow_torch_fallback=False)
-        assert prepared.decoder == DECODER_NATIVE_SPAN2
+        prepared = _prepare(roles)
         packed, scales = prepared.decode()
         lo, hi = rank * rows_per_rank, (rank + 1) * rows_per_rank
         assert torch.equal(packed, packed_whole[lo:hi]), (tp_size, rank, "packed")
@@ -242,43 +246,39 @@ def test_the_native_decoder_refuses_a_row_cut_below_one_select_byte(parsed_unit_
     this rank's rows; PB recorded the old shape as ``lane_planes.py:137``
     "8 codes is not a multiple of 16" (tessera#492).
     """
-    from tessera.serving.ext import get_tessera_ext
+    from tessera.lane_planes import require_native_select_plane_admission
     from tessera.serving.sharding import AXIS_ROWS, shard_parsed_roles
 
-    if get_tessera_ext() is None:
-        pytest.skip("the native span-2 decoder could not be built here")
     plan = _row_plan(NARROW_ROWS, UNIT_COLS, 1, tp_size)
     assert plan.axis == AXIS_ROWS
     roles = shard_parsed_roles([("weight", parsed_unit_narrow)], plan)
+    # The admission is stated on the rank's own parse, by name (the compact
+    # preparer calls this same function before packing).
     with pytest.raises(
         GrammarError, match="packs 8 super-symbols to a byte per column"
     ):
-        _prepare(roles, allow_torch_fallback=False)
+        require_native_select_plane_admission(roles[0][1])
 
 
 @needs_cuda
 @pytest.mark.parametrize("tp_size", [4, 8])
-def test_that_same_cut_still_serves_on_the_torch_fallback(parsed_unit_narrow, monkeypatch, tp_size):
-    """The refusal is scoped to the native admission and takes no serving away.
+def test_that_same_cut_decodes_through_the_stock_reference(parsed_unit_narrow, tp_size):
+    """The refusal is scoped to the NATIVE select plane and not to the cutter.
 
     ``materialize_stock`` decodes codes rather than the packed select plane, so
-    the cut the native decoder refuses is one this route still serves -- which
-    is why the check lives at the native seam and not in the cutter.
+    the cut the native admission refuses is one ``slice_unit`` expresses and the
+    reference decodes to the parent's rows.
     """
-    from tessera.serving import ext
     from tessera.serving.sharding import shard_parsed_roles
-    from tessera.serving.telemetry import DECODER_TORCH_STOCK
 
-    monkeypatch.setattr(ext, "get_tessera_ext", lambda: None)
-    whole = _prepare([("weight", parsed_unit_narrow)], allow_torch_fallback=True)
-    assert whole.decoder == DECODER_TORCH_STOCK
+    whole = _prepare([("weight", parsed_unit_narrow)])
     packed_whole, scales_whole = whole.decode()
     rows_per_rank = NARROW_ROWS // tp_size
     for rank in range(tp_size):
         roles = shard_parsed_roles(
             [("weight", parsed_unit_narrow)], _row_plan(NARROW_ROWS, UNIT_COLS, rank, tp_size)
         )
-        prepared = _prepare(roles, allow_torch_fallback=True)
+        prepared = _prepare(roles)
         packed, scales = prepared.decode()
         lo, hi = rank * rows_per_rank, (rank + 1) * rows_per_rank
         assert torch.equal(packed, packed_whole[lo:hi]), (tp_size, rank, "packed")
@@ -286,22 +286,15 @@ def test_that_same_cut_still_serves_on_the_torch_fallback(parsed_unit_narrow, mo
 
 
 @needs_cuda
-def test_a_row_shard_decodes_to_the_whole_units_rows_on_the_torch_fallback(parsed_unit, monkeypatch):
-    """The other decoder the route publishes (``native_extensions[].when_unavailable``):
-    the same shards through ``materialize_stock`` alone, held to the same rows."""
-    from tessera.serving import ext
+def test_a_row_shard_decodes_to_the_whole_units_rows_at_tp2(parsed_unit):
+    """The TP=2 case of the row property, through the stock reference."""
     from tessera.serving.sharding import shard_parsed_roles
-    from tessera.serving.telemetry import DECODER_TORCH_STOCK
 
-    # ``ops.prepare_tessera_module`` imports ``get_tessera_ext`` from ``.ext``
-    # at call time, so the module attribute is the one seam to close.
-    monkeypatch.setattr(ext, "get_tessera_ext", lambda: None)
-    whole = _prepare([("weight", parsed_unit)], allow_torch_fallback=True)
-    assert whole.decoder == DECODER_TORCH_STOCK
+    whole = _prepare([("weight", parsed_unit)])
     packed_whole, scales_whole = whole.decode()
     for rank in range(2):
         roles = shard_parsed_roles([("weight", parsed_unit)], _row_plan(UNIT_ROWS, UNIT_COLS, rank, 2))
-        prepared = _prepare(roles, allow_torch_fallback=True)
+        prepared = _prepare(roles)
         packed, scales = prepared.decode()
         lo, hi = rank * (UNIT_ROWS // 2), (rank + 1) * (UNIT_ROWS // 2)
         assert torch.equal(packed, packed_whole[lo:hi])

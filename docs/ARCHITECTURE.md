@@ -58,13 +58,12 @@ number the packer measures against and the admission asks for, and
 ``lane_planes.require_native_select_plane_admission`` -- called from
 ``prepare_span2_planes``, the native seam -- refuses the cut by name and by
 rows.  It stays OUT of ``serving.sharding``'s cutter deliberately: the
-``when_unavailable`` torch fallback decodes codes rather than these planes, so
-that cut is one the fallback still serves, and a refusal at the cutter would
-take it away.  ``ops.prepare_tessera_module`` therefore resolves the decoder
-BEFORE it packs a role: on the fallback it packs nothing and builds the tile
-through ``materialize_stock`` alone (``ops._prepare_torch_fallback``).  It had
-packed every role for the native decoder first and chosen the fallback after,
-so the fallback refused the very cut it serves, for planes it never reads
+``when_unavailable`` torch-materialised reference decodes codes rather than
+these planes, so that cut is one the stock decode still serves, and a refusal
+at the cutter would take it away.  The retired ``ops.prepare_tessera_module``
+resolved the decoder BEFORE it packed a role for exactly this reason; since the
+A4 retirement the admission lives at the native seam alone and the stock
+reference asset in the tests decodes the same cut
 (``tests/test_lane_planes_refusals.py``, CPU).  The window body has no requirement at all --
 ``pack_window_planes`` carries a per-column offset table and starts every
 column on its own byte -- and is unchanged.
@@ -221,6 +220,21 @@ ROCm image, both name the one launch the rate grammar leaves at this rung
 fourteen-row record with a BF16 reference arm. `gfx1151` still has no cell.
 Receipt: `docs/measurements/tessera-gfx1201-bf16-k1-served-2026-09-13.md`.
 See §4.5f.
+
+Re-stamped 2026-09-16 for the A4 whole-weight-expansion retirement. The A4
+lanes decode the compact loader's packed planes in-kernel; the superseded
+expansion — `serving/ops.py` (span-2 decode custom ops, `PreparedTesseraModule`,
+the pure-torch fallback and the load-time reference cross-check),
+`serving/csrc/tessera_nvfp4.cu`, the `tessera_nvfp4_` native-extension entry,
+`nvfp4_moe_route.decode_expert_tile` and the `nvfp4_route` re-export — is
+deleted. The independent oracle (`materialize_stock`/`scaled_fp4_quant`/
+`torch._scaled_mm`) is preserved under tests (`tests/nvfp4_reference.py`) and
+experiments; the useful window GEMV and the shared toolchain/extension table
+remain. The packaged `native_extensions` now describes exactly the one library
+that is still loadable (`tessera_window_gemv`), `contract_version` moves 29 ->
+30 with a changelog entry, and no cell, rung, platform, grade or historical
+receipt moves: the A4/experimental pairs stay experimental launches. See §3.3
+and §5.2.
 
 Re-stamped 2026-09-16 for the dense native window lane. The FP8 and BF16
 dense routes load through the compact reader and serve a packed bitstream
@@ -1935,26 +1949,38 @@ These are producer evidence and tests only. They do not promote a recipe,
 open an eligibility cell, or replace the source-matched served measurements
 required for the PrismaQuant campaign bridge.
 
-### 3.3 The native decode is held to the reference at load
+### 3.3 The native decode is held to the reference — in tests, since the A4 retirement
 
-The NVFP4 route was the one route whose decoder reached generation
-unchallenged: the FP8 and BF16 routes have always decoded once at load and
-refused on inequality with `tessera.decode.materialize_*`, while the span-2
-route prepared the module and returned (tessera#130).
-`ops.prepare_tessera_module` now decodes the module once through the same
-native op the forward runs, and holds both uint8 planes to what
+**Historical (until 2026-09-16).** The NVFP4 route was the one route whose
+decoder reached generation unchallenged: the FP8 and BF16 routes have always
+decoded once at load and refused on inequality with
+`tessera.decode.materialize_*`, while the span-2 route prepared the module and
+returned (tessera#130). From then until the A4 retirement,
+`ops.prepare_tessera_module` decoded the module once through the same native op
+the forward ran and held both uint8 planes to what
 `tessera.stock.materialize_stock` writes for the same roles on the moved LUT
-tables and the shared global (`_torch_fallback_tile`, the same reference the
-resident fallback substitutes) -- `torch.equal`, no tolerance, because the
-reference is bit-exact. A difference refuses the module at load naming the
-vLLM prefix, the role, how many bytes of how many differ, and the first
-differing tile (row, role row, group-16 column block), so a refusal says
-where the decoder went wrong rather than only that it did
-(`_require_reference_agreement`, `src/tessera/serving/ops.py`). It runs in
-both residencies and takes no operator knob, because the other two routes
-take none. It is vacuous on the resident fallback, where the substitute IS
-the reference and there is nothing independent to hold it to. What it costs
-per module at load is not measured.
+tables and the shared global (`_torch_fallback_tile`) — `torch.equal`, no
+tolerance, because the reference is bit-exact. A difference refused the module
+at load naming the vLLM prefix, the role, how many bytes of how many differed,
+and the first differing tile (row, role row, group-16 column block)
+(`_require_reference_agreement`, `src/tessera/serving/ops.py`).
+
+**What replaced it.** The A4 lanes decode the compact loader's packed planes
+in-kernel (`tessera.kernel_a4`: `a4_span2_gemm` dense,
+`a4_span2_grouped_gemm` routed), and the whole-weight expansion —
+`serving/ops.py`, `csrc/tessera_nvfp4.cu`, the decode custom ops, the
+pure-torch fallback and the load-time cross-check — is retired. Holding a
+decoder to the reference moved from a load cost to a **test obligation**:
+`tests/nvfp4_reference.py` keeps the stock pair as a test asset (no serving
+code), and the A4 lane suites plus
+`tests/test_span2_start_state.py`/`tests/test_lane_planes_refusals.py` hold
+the native decode and `slice_unit`'s row property to it under PrismaBuild.
+The retired production functions have no production callers or package
+imports; the independent oracle (`tessera.stock.materialize_stock` +
+`scaled_fp4_quant` + `torch._scaled_mm`) stays under tests and experiments,
+which is where it was already the A4 owner's contract. Loading no longer
+spends a per-module reference decode, which is what
+`NATIVE-ACCEPTANCE`'s startup clause required.
 
 **The dense FP8 and BF16 routes now serve a compact native lane, and that
 lane does NOT decode the reference at load.**  The startup cost §3.3 measures
@@ -2116,7 +2142,7 @@ full-depth unit reads its limit back as `None`
 Full-rate units (`R == cap`, the shipping span-2 wire) have no completion
 axis and pack unchanged at any limit; the window branch is untouched because
 a window body has no completion axis by grammar. `prepare_span2_planes`, the
-native decoder's entry (`serving/ops.py`), packs through the same function
+native lane's entry (`lane_planes`), packs through the same function
 and inherits the refusal. Decoding the plane in the kernel is a
 `measurement-needed` follow-up, not part of this refusal.
 `tests/test_lane_planes_refusals.py` holds the reproduction (CPU).
@@ -4657,14 +4683,13 @@ measure full-model quality or qualify routed MoE, TP2, or a runtime contract cel
 
 ### 5.2 What the wheel ships besides Python
 
-Three non-Python files are opened at run time, and each is declared in
+Two non-Python files are opened at run time, and each is declared in
 `[tool.setuptools.package-data]` because an editable install reads the tree
 and would never notice one missing:
 
 | File | Opened by | Why it is in the wheel |
 |---|---|---|
 | `tessera/serving/runtime_contract.json` | `contract.contract_path()` through `importlib.resources`, by the plugin at load and by the producer preflight | the attested-cell table (§3, §4.4d); repo-root arithmetic is refused so a wheel, an editable install and a checkout read the same bytes |
-| `tessera/serving/csrc/tessera_nvfp4.cu` | the NVFP4 route's JIT build (`ext.py`) | the span-2 decoder |
 | `tessera/serving/csrc/window_gemv.cu` | `tessera.kernel_window_gemv._ext`, which `serving/fp8_gemv.py` and `bf16_route.py` load through; the loader resolves the path from `ext.NATIVE_EXTENSIONS[].source` via `ext.native_source_path`, so the published `source` and the compiled file are one inode | the window-body GEMV. Until #134 a second, byte-identical copy at `tessera/csrc/window_gemv.cu` was the one compiled while this one was the one published; `tests/test_serving_fp8_gemv.py::test_the_published_source_is_the_file_the_loader_compiles` now captures the JIT call and asserts `samefile` |
 
 `tests/test_packaging.py` refuses either half of that table on its own: a
@@ -4837,12 +4862,11 @@ boolean:
   different numeric object than the native one. The resident NVFP4 route
   decodes once at load and may substitute `tessera.stock.materialize_stock`;
   the window GEMV substitutes the torch window decode in both residencies.
-- `refused` -- no serve exists. The streamed NVFP4 route decodes inside a
-  traced forward whose data-dependent shapes the substitute cannot run, so it
-  refuses instead of serving something else (`ops.prepare_tessera_module`).
-  A module also refuses at load, in either residency, when the native decode
-  disagrees with the reference (§3.3): a build that exists and is wrong is
-  not a serve.
+- `refused` -- no serve exists. The retired streamed NVFP4 route decoded
+  inside a traced forward whose data-dependent shapes the substitute could not
+  run, so it refused instead of serving something else; with the A4 retirement
+  the native lane requires its kernels outright (fail closed on an absent
+  backend), which is the same refusal reached earlier.
 
 The decoder that actually ran is the `decoder` field on every route record
 (`telemetry.py`), which is how a fingerprint tells a native serve from a

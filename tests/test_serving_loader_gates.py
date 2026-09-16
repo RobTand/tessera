@@ -1,5 +1,11 @@
 """The load-time prepare gates derive from scheme.ROUTES, not from literals.
 
+(The NVFP4 half of this file tested the retired ``ops.prepare_tessera_module``
+wrapper; that wrapper is gone with the A4 whole-weight expansion, and the A4
+lanes validate the compact reader's sidecar and per-role facts directly --
+their refusals are covered by ``tests/test_serving_nvfp4_route.py`` and the
+A4 owner's suite.  What remains here is the FP8 route's gate.)
+
 ``validate_tessera_scheme`` + ``refuse_unserveable_wire`` accept a wire at
 export off ``ROUTES``; the ``prepare_*_module`` gates run AFTER, at load, and
 restated the same facts in string literals (``{"TCQ"}``, ``{"LUT"}``,
@@ -22,7 +28,7 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from tessera.serving import bf16_route, fp8_route, ops           # noqa: E402
+from tessera.serving import bf16_route, fp8_route               # noqa: E402
 from tessera.serving.scheme import (                             # noqa: E402
     ROUTES, TESSERA_BF16, TESSERA_FP8, TESSERA_NVFP4,
     parse_tessera_blob_for_scheme, validate_tessera_scheme)
@@ -38,49 +44,6 @@ def _ns(**kw):
 # no stubs at all.  Acceptance paths (a mutated ROUTES entry the gate must
 # follow) stub the steps AFTER the gate: the packer, the reference decoder,
 # the shared-global move and the extension handle.
-
-def _nvfp4_roles(*, grid="E2M1x2", body="TCQ", plane="LUT", span=2):
-    from tessera.manifest import ScalePlaneKind
-
-    unit = _ns(scale_plane=ScalePlaneKind[plane],
-               scale_lut=torch.zeros(16, dtype=torch.uint8),
-               scale_global=1.0, span=span)
-    return [("weight", _ns(body=_ns(name=body), grid=_ns(name=grid),
-                            unit=unit, forests={}, code=None))]
-
-
-def _stub_nvfp4_tail(monkeypatch, decode=None):
-    import tessera.fused
-    import tessera.lane_planes
-    from tessera.serving import ext as ext_module
-
-    def _planes(parsed, device=None, **kw):
-        shape = (4, 64)
-        out = {k: torch.zeros(shape, dtype=torch.uint8) for k in ops._PLANE_KEYS}
-        out.update({"rows": 4, "cols": 64, "rate": 7, "arity": 2,
-                    "memory": 6, "half": 16})
-        return out
-
-    monkeypatch.setattr(tessera.fused, "shared_lut_global",
-                        lambda tables, globals_, names: (1.0, list(tables)))
-    monkeypatch.setattr(tessera.lane_planes, "prepare_span2_planes", _planes)
-    monkeypatch.setattr(ext_module, "get_tessera_ext", lambda: object())
-    monkeypatch.setattr(ext_module, "require_tessera_ext", lambda op: object())
-    # The reference decoder and the native seam, after the gate: the decode
-    # writes what the reference returns (zeros), so the load-time equality
-    # check passes and only the ROUTES gates can refuse.
-    monkeypatch.setattr(ops, "_torch_fallback_tile",
-                        lambda parsed_roles, moved, shared, device: (
-                            torch.zeros(4, 32, dtype=torch.uint8, device=device),
-                            torch.zeros(4, 4, dtype=torch.uint8, device=device)))
-    monkeypatch.setattr(ops, "_decode_impl", decode or _zero_decode)
-
-
-def _zero_decode(select, label, point, nibbles, lut_bytes, label_lut, subset_nibbles,
-                 rows, cols, rate, arity, memory, half, packed_out, scale_out):
-    packed_out.zero_()
-    scale_out.zero_()
-
 
 def _window_roles(*, grid="E4M3", body="WINDOW", plane="CHANNEL", span=1,
                   steps=8, cols=64):
@@ -127,70 +90,6 @@ def _stub_bf16_tail(monkeypatch):
     monkeypatch.setattr(bf16_route, "prepare_window", _window)
     monkeypatch.setattr(tessera.decode, "materialize_bf16",
                         lambda unit, forests, code: (tile.clone(), scale.clone()))
-
-
-# --- NVFP4: ops.prepare_tessera_module --------------------------------------
-
-def test_nvfp4_control_wire_prepares(monkeypatch):
-    """The harness itself: an unmutated wire prepares on CPU with stubs."""
-    _stub_nvfp4_tail(monkeypatch)
-    module = ops.prepare_tessera_module(_nvfp4_roles(), device="cpu")
-    assert module.body == ROUTES[TESSERA_NVFP4]["body"]
-    assert module.rows == 4 and module.columns == 64
-
-
-def test_nvfp4_body_follows_the_route_table(monkeypatch):
-    """A body ROUTES names is served; the old literal refused it."""
-    route = ROUTES[TESSERA_NVFP4]
-    monkeypatch.setitem(route, "body", "WOBBLE")
-    _stub_nvfp4_tail(monkeypatch)
-    module = ops.prepare_tessera_module(
-        _nvfp4_roles(body="WOBBLE"), device="cpu")
-    assert module.body == ROUTES[TESSERA_NVFP4]["body"]
-
-
-def test_nvfp4_plane_follows_the_route_table(monkeypatch):
-    route = ROUTES[TESSERA_NVFP4]
-    monkeypatch.setitem(route, "plane", "CHANNEL")
-    _stub_nvfp4_tail(monkeypatch)
-    module = ops.prepare_tessera_module(
-        _nvfp4_roles(plane="CHANNEL"), device="cpu")
-    assert module.rows == 4
-
-
-def test_nvfp4_refuses_a_grid_no_route_holds(monkeypatch):
-    """ops.py never checked the grid at all: an E4M3 wire sailed through the
-    body/plane gates and died downstream.  The table holds E2M1*, not E4M3."""
-    assert "E4M3" not in ROUTES[TESSERA_NVFP4]["grids"]
-    _stub_nvfp4_tail(monkeypatch)  # the tail is stubbed so only the gate can refuse
-    # The refusal cites the table, not a literal: pin that, not the roster.
-    with pytest.raises(ValueError, match=r"ROUTES\['TESSERA_NVFP4'\]"):
-        ops.prepare_tessera_module(_nvfp4_roles(grid="E4M3"), device="cpu")
-
-
-def test_nvfp4_refuses_a_span_no_route_reads(monkeypatch):
-    """Neither ops.py nor validate_tessera_scheme checked span, so a span
-    mismatch was refused nowhere.  The route reads its own span only."""
-    assert ROUTES[TESSERA_NVFP4]["span"] != 99
-    _stub_nvfp4_tail(monkeypatch)  # the tail is stubbed so only the gate can refuse
-    with pytest.raises(ValueError, match="span"):
-        ops.prepare_tessera_module(_nvfp4_roles(span=99), device="cpu")
-
-
-def test_nvfp4_refuses_a_decode_the_reference_would_not_produce(monkeypatch):
-    """The gate AFTER the ROUTES gates: what the span-2 decoder wrote is held
-    to ``tessera.stock.materialize_stock`` byte for byte at load, and a
-    disagreement refuses the module naming it, the role and the first
-    differing tile (#130).  The CUDA twin in ``test_serving_nvfp4_route`` runs
-    it on real bytes; this one runs the comparison itself on any device."""
-    def _one_bit_wrong(*args):
-        _zero_decode(*args)
-        args[-1][2, 3] = 0x10       # scale plane, role row 2, group 3
-
-    _stub_nvfp4_tail(monkeypatch, decode=_one_bit_wrong)
-    with pytest.raises(RuntimeError, match=r"a\.layer: role 'weight'.*materialize_stock.*"
-                                            r"1 of 16 scales bytes.*row 2.*group 3.*refusing"):
-        ops.prepare_tessera_module(_nvfp4_roles(), device="cpu", prefix="a.layer")
 
 
 # --- FP8: fp8_route.prepare_tessera_fp8_module --------------------------------

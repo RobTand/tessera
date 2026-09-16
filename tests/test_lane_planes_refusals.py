@@ -117,7 +117,7 @@ def test_a_full_rate_unit_packs_at_any_completion_limit():
 )
 def test_the_reader_side_planes_refuse_the_same_plane(q256, completion, refused):
     """``prepare_span2_planes`` is the native decoder's entry
-    (``serving/ops.py``) and it packs through the same function, so the
+    (``lane_planes``) and it packs through the same function, so the
     refusal reaches a unit parsed back from artifact bytes -- where a
     full-depth plane's ``completion_limit`` is recovered as ``None``, which is
     why the rule reads the written width and not the limit."""
@@ -194,27 +194,19 @@ def test_the_native_select_plane_admission_refuses_exactly_the_packers_cuts():
     assert packed == 2 and refused == steps - 2, "both sides of the boundary are exercised"
 
 
-def test_the_torch_fallback_serves_the_row_cut_the_native_admission_refuses(monkeypatch):
-    """tessera#492: the refusal is the NATIVE decoder's and takes no serving away.
+def test_the_stock_reference_decodes_the_row_cut_the_native_admission_refuses(monkeypatch):
+    """tessera#492: the refusal is the NATIVE decoder's and takes no cut away.
 
     A 64-row E2M1x2 unit cut four ways is 16 rows per rank -- one super-symbol
     column, which ``slice_unit`` cuts and the native select plane cannot pack.
-    Through ``ops.prepare_tessera_module`` with no extension:
-
-    * ``allow_torch_fallback=False`` refuses the cut at the native admission, by
-      name, before asking for the extension;
-    * ``allow_torch_fallback=True`` serves it through ``materialize_stock``, and
-      every rank's tile is its rows of the whole unit's tile.
-
-    FAILED BEFORE: ``prepare_tessera_module`` packed every role for the native
-    decoder before it chose the fallback, so the fallback leg raised the native
-    admission's ``GrammarError`` (and, before the admission, the packer's
-    "8 codes is not a multiple of 16") for planes it never reads.  CPU on
-    purpose: the fallback is pure torch, so the x86 arm proves this seam."""
-    from tessera.serving import ext
-    from tessera.serving.ops import prepare_tessera_module
+    The native admission refuses that cut by name (``require_native_select_plane_admission``,
+    which the compact preparer calls), while the stock reference -- which
+    decodes codes, not the packed select plane -- decodes every rank's tile to
+    its rows of the whole unit's.  CPU on purpose: the reference is pure torch.
+    """
+    from nvfp4_reference import reference_module
+    from tessera.lane_planes import require_native_select_plane_admission
     from tessera.serving.sharding import AXIS_ROWS, plan_shard, shard_parsed_roles
-    from tessera.serving.telemetry import DECODER_TORCH_STOCK
 
     rows, cols, tp = 64, 32, 4
     torch.manual_seed(7)
@@ -224,10 +216,7 @@ def test_the_torch_fallback_serves_the_row_cut_the_native_admission_refuses(monk
     )
     parsed = parse_unit_artifact(exported.blob, device="cpu")
     cpu = torch.device("cpu")
-    monkeypatch.setattr(ext, "get_tessera_ext", lambda: None)
-    whole = prepare_tessera_module([("weight", parsed)], device=cpu, allow_torch_fallback=True)
-    assert whole.decoder == DECODER_TORCH_STOCK
-    packed_whole, scales_whole = whole.decode()
+    packed_whole, scales_whole = reference_module([("weight", parsed)], device=cpu).decode()
     per_rank = rows // tp
     for rank in range(tp):
         plan = plan_shard("mlp.gate_up", roles=[("weight", rows)], columns=cols,
@@ -236,12 +225,8 @@ def test_the_torch_fallback_serves_the_row_cut_the_native_admission_refuses(monk
         assert plan.axis == AXIS_ROWS
         roles = shard_parsed_roles([("weight", parsed)], plan)
         with pytest.raises(GrammarError, match=f"unit is {per_rank} rows"):
-            prepare_tessera_module(roles, device=cpu, allow_torch_fallback=False)
-        prepared = prepare_tessera_module(roles, device=cpu, allow_torch_fallback=True)
-        assert prepared.decoder == DECODER_TORCH_STOCK
-        assert (prepared.rows, prepared.columns) == (per_rank, cols)
-        assert prepared.role_names == ("weight",)
-        packed, scales = prepared.decode()
+            require_native_select_plane_admission(roles[0][1])
+        packed, scales = reference_module(roles, device=cpu).decode()
         lo = rank * per_rank
         assert torch.equal(packed, packed_whole[lo:lo + per_rank]), (rank, "packed")
         assert torch.equal(scales, scales_whole[lo:lo + per_rank]), (rank, "scales")

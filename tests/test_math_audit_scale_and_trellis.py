@@ -160,23 +160,6 @@ def test_shared_lut_global_still_carries_a_normal_group():
 
 # --- D: the fused serving lane refuses the CHANNEL plane by name ------------
 
-def test_prepare_tessera_module_refuses_a_channel_plane_unit():
-    """§5 P2-10d.  A CHANNEL+TCQ unit is a supported export (``export.py``'s
-    resolver gives one to a caller that names ``body=TCQ`` over the E4M3
-    recipe) and carries no ``scale_lut``, so it used to reach
-    ``shared_lut_global`` as ``None`` and die on ``AttributeError``."""
-    ops = pytest.importorskip("tessera.serving.ops")
-    blob = encode_linear(
-        torch.randn(32, 256), grid=E4M3_GRID, q256=1024,
-        body=BodyKind.TCQ, verify=False,
-    )
-    parsed = parse_unit_artifact(blob.blob)
-    assert ScalePlaneKind(parsed.unit.scale_plane) is ScalePlaneKind.CHANNEL
-    assert parsed.unit.scale_lut is None
-    with pytest.raises(ValueError, match="CHANNEL"):
-        ops.prepare_tessera_module([("weight", parsed)], device="cpu")
-
-
 # --- E: the completion argmin scores under the trellis's own metric ---------
 
 def test_completion_is_optimal_in_weight_space_at_arity_two():
