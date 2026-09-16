@@ -240,16 +240,19 @@ def pack_span2_point_cuda(plane: torch.Tensor, *, cols: int, groups_per_col: int
 
 @triton.jit
 def _window_repack_kernel(words, out, col_starts, perm, row0, rows_local, rate,
-                          cpb, tile_bytes, chunk_bytes, group_col0, group_byte0,
-                          n_cols, bytes_per_col, BLOCK: tl.constexpr):
+                          tile_rows, tile_bytes, chunk_bytes, group_col0,
+                          group_byte0, n_cols, bytes_per_col,
+                          BLOCK: tl.constexpr):
     """Packed WINDOW body -> the repacked tile-word stream, byte for byte.
 
-    Destination byte ``(column j, b)`` of one rate group holds the ``cpb``
-    codes starting at code ``b * cpb``, MSB-first -- the byte
-    ``kernel_window_gemv.repack_window_body`` builds from the expanded codes.
-    Codes at or past ``rows_local`` (the tail of the last tile) are zero.  The
-    4-byte word order the reference's ``flip(-1)`` produces is folded into the
-    destination index.
+    The documented tile-word layout, for **any** integer rate: a column's
+    512-code tile is ``512 * rate`` bits -- always ``16 * rate`` words --
+    holding the codes MSB-first with the first stream bit as bit 31 of the
+    column's first word (the 4-byte-flip spelling the int32 view reads back
+    numerically).  A destination byte holds eight consecutive stream bits, so
+    the transform is a bit-string copy; the rate enters only through where a
+    column's bits start and the ``rate``-bit alignment of a code.  Codes at or
+    past ``rows_local`` (the tail of the last tile) are zero.
 
     ``group_col0`` is the group's first column in the reference's permuted
     order (what ``rep.runs`` records); ``group_byte0`` is where the group's
@@ -263,17 +266,16 @@ def _window_repack_kernel(words, out, col_starts, perm, row0, rows_local, rate,
     b = idx % bytes_per_col
     col = tl.load(perm + group_col0 + j, mask=mask, other=0)
     start = tl.load(col_starts + col, mask=mask, other=0)
-    code0 = b * cpb
-    src0 = start + (row0 + code0) * rate
+    g = b // chunk_bytes
+    within = b % chunk_bytes
+    src0 = start + (row0 + g * tile_rows) * rate + within * 8
     base = src0 // 8
     rel = src0 - base * 8
     acc = tl.zeros([BLOCK], dtype=tl.int32)
     for i in tl.static_range(8):
-        code = code0 + i // rate
+        code = g * tile_rows + (within * 8 + i) // rate
         bit = _bit_window(words, base, rel + i, mask & (code < rows_local))
         acc = acc | (bit.to(tl.int32) << (7 - i))
-    g = b // chunk_bytes
-    within = b % chunk_bytes
     word = within // 4
     sub = within % 4
     dest = g * tile_bytes + group_byte0 + j * chunk_bytes + word * 4 + (3 - sub)
@@ -284,22 +286,22 @@ def window_repack_stream_cuda(plane: torch.Tensor, *, col_starts: torch.Tensor,
                               perm: torch.Tensor, row0: int, rows_local: int,
                               rate: int, group_col0: int, group_byte0: int,
                               n_cols: int, n_tiles: int, chunk_bytes: int,
-                              tile_bytes: int, device: torch.device) -> torch.Tensor:
+                              tile_bytes: int, device: torch.device,
+                              tile_rows: int = 512) -> torch.Tensor:
     """One rate group's repacked bytes, in the reference's flat order.
 
     Returns uint8 ``[n_tiles * tile_bytes]``: the group's ``n_cols`` columns,
     each ``n_tiles * chunk_bytes`` bytes of stream, per tile -- the operand of
-    ``repack_window_body``'s ``reshape(-1).view(torch.int32)``.
+    the int32 view ``Repacked.words`` is.
     """
     words = _plane_words(plane)
     out = torch.zeros(n_tiles * tile_bytes, dtype=torch.uint8, device=device)
     bytes_per_col = n_tiles * chunk_bytes
     total = n_cols * bytes_per_col
-    cpb = 8 // rate
     if total:
         with torch.cuda.device(device):
             _window_repack_kernel[(triton.cdiv(total, 256),)](
-                words, out, col_starts, perm, row0, rows_local, rate, cpb,
-                tile_bytes, chunk_bytes, group_col0, group_byte0, n_cols,
-                bytes_per_col, 256)
+                words, out, col_starts, perm, row0, rows_local, rate,
+                tile_rows, tile_bytes, chunk_bytes, group_col0, group_byte0,
+                n_cols, bytes_per_col, 256)
     return out
