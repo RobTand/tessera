@@ -169,8 +169,16 @@ def _silu_and_mul(gate: torch.Tensor, up: torch.Tensor, *,
 
     ``clamp_limit`` is vLLM's SwiGLU clamp, applied while both branches are
     still fp32 accumulators: the gate saturates at ``+limit`` (no lower clamp),
-    the up branch at ``+-limit``.  Same saturation points as vLLM's
-    ``silu_and_mul`` (``fp8_utils.py``), which clamps before narrowing."""
+    the up branch at ``+-limit``.  That is the contract of the stock stage this
+    lane replaces -- ``vllm/model_executor/layers/fused_moe/activation.py``
+    ``silu_and_mul_with_clamp`` (SILU + a clamp resolves to
+    ``torch.ops._C.silu_and_mul_with_clamp``), whose XPU branch spells the
+    directions out as ``clamp(gate, max=limit)`` / ``clamp(up, -limit, limit)``.
+    The quantised-activation Triton kernel
+    ``.../layers/quantization/utils/fp8_utils.py`` saturates identically before
+    narrowing.  What differs here is only the *narrowing*: the stock op clamps
+    and narrows the bf16 gemm output, this adapter clamps the fp32 accumulator
+    and keeps the lane's documented single rounding of the product."""
     if gate.shape != up.shape:
         raise GrammarError(f"gate {tuple(gate.shape)} and up {tuple(up.shape)} must match")
     limit = checked_swiglu_limit(clamp_limit)
