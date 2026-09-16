@@ -349,6 +349,21 @@ class A4Unit:
                                else global_scale),
         )
 
+    def epilogue_for(self, input_global_scale: torch.Tensor) -> torch.Tensor:
+        """``[1]`` fp32 device tensor: ``global_scale / input_global_scale``.
+
+        Computed once at preparation.  The kernels read the epilogue from the
+        device, so a forward never reads a tensor's contents on the host and
+        the call stays inside a CUDA graph.
+        """
+        gscale = torch.as_tensor(input_global_scale)
+        if gscale.numel() != 1:
+            raise GrammarError(
+                "the A-side static global is one scalar per GEMM; got "
+                f"{gscale.numel()} values")
+        return (torch.full((1,), float(self.global_scale), dtype=torch.float32,
+                           device=gscale.device) / gscale.to(torch.float32).reshape(1))
+
     def to(self, device) -> "A4Unit":
         """The bundle on ``device`` (every plane and table moves with it)."""
         fields = ("select", "label", "point", "nibbles", "lut_bytes", "label_lut",
@@ -518,7 +533,7 @@ if _TL is not None:
     @_TRITON.jit
     def _a4_span2_gemm_kernel(
         a_ptr, a_scale_ptr, select_ptr, label_ptr, point_ptr, nibbles_ptr, lut_ptr,
-        label_lut_ptr, code_ptr, out_ptr, epilogue,
+        label_lut_ptr, code_ptr, out_ptr, epilogue_ptr,
         M, rows, cols,
         MEMORY: _TL.constexpr, PAD: _TL.constexpr, RATE: _TL.constexpr,
         BM: _TL.constexpr, BN: _TL.constexpr, BK: _TL.constexpr,
@@ -566,15 +581,16 @@ if _TL is not None:
                           + (k0 // 16 + g)[None, :], mask=live_m[:, None],
                           other=0).to(_TL.float8e4nv, bitcast=True)
             acc = _TL.dot_scaled(a, sa, "e2m1", w, sw, "e2m1", acc)
+        epilogue = _TL.load(epilogue_ptr)
         _TL.store(out_ptr + offs_m[:, None] * rows + offs_n[None, :],
                   acc * epilogue, mask=live_m[:, None])
 
     @_TRITON.jit
     def _a4_span2_grouped_kernel(
-        a_ptr, a_scale_ptr, token_ids_ptr, weights_ptr, expert_start_ptr,
+        a_ptr, a_scale_ptr, token_ids_ptr, expert_start_ptr,
         select_ptr, label_ptr, point_ptr, nibbles_ptr, lut_ptr, label_lut_ptr,
-        code_ptr, globals_ptr, partial_ptr, inv_input_scale,
-        rows, cols, num_tokens,
+        code_ptr, epilogue_ptr, partial_ptr,
+        rows, cols, num_routes,
         SELECT_STRIDE, LABEL_STRIDE, POINT_STRIDE, NIB_STRIDE, CODE_STRIDE,
         LUT_STRIDE, LUTLUT_STRIDE,
         MEMORY: _TL.constexpr, PAD: _TL.constexpr, RATE: _TL.constexpr,
@@ -583,12 +599,13 @@ if _TL is not None:
         """Grouped W4A4: one launch over the expert axis, rows gathered by token.
 
         ``expert_start`` is the CSR offset of each expert's run in
-        ``token_ids``/``weights`` (device-built by the runtime's dispatch, as
+        ``token_ids`` (device-built by the runtime's dispatch, as
         ``moe_align_block_size`` already does); every program whose row block
-        starts past its expert's count exits.  Output rows are the routing
-        rows, scaled by the routing weight; the caller reduces them onto the
-        tokens (``index_add``), which is the same device-side reduction shape
-        the stock modular kernel's top-k combine uses.
+        starts past its expert's count exits.  Output rows are the ROUTING
+        rows in dispatch order, one expert-scoped GEMM each: the caller keeps
+        them per route through the gate/up activation and the down projection,
+        and applies routing weights only where the runtime contract says so
+        (routed-MoE combines after the down projection, not before).
         """
         POINTS: _TL.constexpr = 1 << (RATE - 1)
         steps = rows // 2
@@ -604,8 +621,7 @@ if _TL is not None:
         row_ids = m0 + _TL.arange(0, BM)
         live_m = row_ids < count
         tokens = _TL.load(token_ids_ptr + start + row_ids, mask=live_m, other=0)
-        routing = _TL.load(weights_ptr + start + row_ids, mask=live_m, other=0.0)
-        epilogue = _TL.load(globals_ptr + e) * inv_input_scale
+        epilogue = _TL.load(epilogue_ptr + e)
 
         sel = select_ptr + e * SELECT_STRIDE
         lab_p = label_ptr + e * LABEL_STRIDE
@@ -648,7 +664,7 @@ if _TL is not None:
                           other=0).to(_TL.float8e4nv, bitcast=True)
             acc = _TL.dot_scaled(a, sa, "e2m1", w_tile, sw, "e2m1", acc)
         _TL.store(partial_ptr + (start + row_ids)[:, None] * rows + offs_n[None, :],
-                  acc * epilogue * routing[:, None], mask=live_m[:, None])
+                  acc * epilogue, mask=live_m[:, None])
 
     @_TRITON.jit
     def _a4_state_dump_kernel(select_ptr, label_ptr, point_ptr, code_ptr, label_lut_ptr,
@@ -741,7 +757,7 @@ def a4_span2_gemm(
     a_packed: torch.Tensor,
     a_scale: torch.Tensor,
     unit: A4Unit,
-    input_global_scale: "float | torch.Tensor",
+    epilogue: "torch.Tensor | float",
     *,
     block_m: int = 64,
     block_n: int = 64,
@@ -754,8 +770,10 @@ def a4_span2_gemm(
 
     ``a_packed``/``a_scale`` are ``a4_quantize_activation``'s output (packed
     along K, low nibble = even column; one E4M3 scale per 16 columns, linear
-    layout).  The epilogue is ``unit.global_scale / input_global_scale``, the
-    same factor the stock routes fold in.
+    layout).  ``epilogue`` is the ``[1]`` fp32 device tensor
+    ``A4Unit.epilogue_for(input_global_scale)`` computed once at preparation;
+    a float is accepted for development callers and is frozen here, but a
+    captured forward must pass the tensor so no host read sits in the call.
     """
     require_native_fp4_mma("a4_span2_gemm")
     unit._check("a4_span2_gemm")
@@ -779,8 +797,14 @@ def a4_span2_gemm(
     a_scale = _unit_dtype(a_scale, "a4_span2_gemm activation scales")
     a_scale = a_scale.view(torch.uint8).contiguous()
     M = a_packed.shape[0]
+    if not isinstance(epilogue, torch.Tensor):
+        epilogue = unit.epilogue_for(
+            torch.tensor([float(epilogue)], dtype=torch.float32, device=a_packed.device))
+    if epilogue.numel() != 1 or epilogue.device != a_packed.device:
+        raise GrammarError(
+            "a4_span2_gemm: the epilogue is one fp32 value on the activation device")
+    epilogue = epilogue.to(torch.float32).reshape(1).contiguous()
     out = torch.empty((M, unit.rows), dtype=out_dtype, device=a_packed.device)
-    epilogue = unit.global_scale / float(input_global_scale)
     grid = (max(1, -(-M // block_m)), unit.rows // block_n)
     _a4_span2_gemm_kernel[grid](
         a_packed, a_scale, unit.select, unit.label, unit.point, unit.nibbles,
@@ -797,12 +821,11 @@ def a4_span2_grouped_gemm(
     a_packed: torch.Tensor,
     a_scale: torch.Tensor,
     stack: A4UnitStack,
-    input_global_scale: "float | torch.Tensor",
+    epilogues: torch.Tensor,
     *,
     expert_offsets: torch.Tensor,
     token_ids: torch.Tensor,
-    weights: torch.Tensor,
-    num_tokens: int,
+    num_routes: "int | None" = None,
     block_m: int = 64,
     block_n: int = 64,
     block_k: int = 128,
@@ -810,15 +833,22 @@ def a4_span2_grouped_gemm(
     num_warps: int = 4,
     num_stages: int = 3,
 ) -> torch.Tensor:
-    """``[num_tokens, rows]``: the routed experts' W4A4 output, weighted and summed.
+    """``[num_routes, rows]``: one expert-scoped W4A4 GEMM per routing row.
 
-    ``expert_offsets``/``token_ids``/``weights`` are the device-built dispatch:
-    a CSR run per expert over the routing rows, each row naming the token it
-    belongs to and its routing weight.  The kernel launches once over the
-    expert axis (a program whose row block starts past its expert's run exits)
-    and writes the weighted routing rows; the caller's ``index_add`` onto the
-    token axis is the top-k reduction.  No host loop over experts or tokens,
-    and no per-expert launch.
+    ``expert_offsets``/``token_ids`` are the device-built dispatch: a CSR run
+    per expert over the routing rows, each row naming the token it belongs to.
+    The kernel launches once over the expert axis (a program whose row block
+    starts past its expert's run exits) and writes the routing rows in
+    dispatch order.  It does NOT reduce onto tokens and does NOT apply routing
+    weights: routed-MoE keeps each route's gate/up output through the
+    activation and the down projection, and applies weights only where its
+    contract says so (after the down projection).  ``epilogues`` is the
+    ``[E]`` fp32 tensor of per-expert ``weight_global / input_global_scale``
+    quotients, computed once at preparation -- per-expert activation globals
+    keep their own value, as the stock MoE's per-expert input scales do.
+
+    ``num_routes`` is the row-axis extent the caller's dispatch actually uses
+    (repeated token ids admitted); it defaults to ``token_ids.numel()``.
     """
     require_native_fp4_mma("a4_span2_grouped_gemm")
     stack._check("a4_span2_grouped_gemm")
@@ -843,25 +873,32 @@ def a4_span2_grouped_gemm(
         raise GrammarError(
             f"a4_span2_grouped_gemm: expert_offsets holds {expert_offsets.numel()} "
             f"entries for {stack.experts} experts + 1")
-    if token_ids.numel() != weights.numel():
+    if num_routes is None:
+        num_routes = int(token_ids.numel())
+    if int(num_routes) < int(token_ids.numel()):
         raise GrammarError(
-            "a4_span2_grouped_gemm: one routing weight per gathered token row")
+            f"a4_span2_grouped_gemm: the route axis is {num_routes} rows but the "
+            f"dispatch names {token_ids.numel()}")
+    if epilogues.numel() != stack.experts or epilogues.device != a_packed.device:
+        raise GrammarError(
+            f"a4_span2_grouped_gemm: one epilogue per expert on the activation "
+            f"device ({stack.experts} experts, got {epilogues.numel()})")
+    epilogues = epilogues.to(torch.float32).reshape(-1).contiguous()
     device = a_packed.device
     expert_offsets = expert_offsets.to(torch.int32).to(device).contiguous()
     token_ids = token_ids.to(torch.int32).to(device).contiguous()
-    weights = weights.to(torch.float32).to(device).contiguous()
     a_packed = _unit_dtype(a_packed, "a4_span2_grouped_gemm activation codes").contiguous()
     a_scale = _unit_dtype(a_scale, "a4_span2_grouped_gemm activation scales")
     a_scale = a_scale.view(torch.uint8).contiguous()
-    partial = torch.empty((token_ids.numel(), stack.rows), dtype=torch.float32,
+    partial = torch.empty((int(num_routes), stack.rows), dtype=torch.float32,
                           device=device)
-    grid = (stack.experts, max(1, -(-num_tokens // block_m)), stack.rows // block_n)
+    grid = (stack.experts, max(1, -(-int(num_routes) // block_m)), stack.rows // block_n)
     _a4_span2_grouped_kernel[grid](
-        a_packed, a_scale, token_ids, weights, expert_offsets,
+        a_packed, a_scale, token_ids, expert_offsets,
         stack.select, stack.label, stack.point, stack.nibbles,
         stack.lut_bytes.view(torch.uint8), stack.label_lut, stack.code_nibbles,
-        stack.globals, partial, 1.0 / float(input_global_scale),
-        stack.rows, stack.cols, int(num_tokens),
+        epilogues, partial,
+        stack.rows, stack.cols, int(num_routes),
         int(stack.select.shape[1]), int(stack.label.shape[1]), int(stack.point.shape[1]),
         int(stack.nibbles.shape[1]), int(stack.code_nibbles.shape[1]),
         int(stack.lut_bytes.shape[1]), int(stack.label_lut.shape[1]),
@@ -869,9 +906,9 @@ def a4_span2_grouped_gemm(
         BM=block_m, BN=block_n, BK=block_k,
         num_warps=num_warps, num_stages=num_stages,
     )
-    out = torch.zeros((int(num_tokens), stack.rows), dtype=out_dtype, device=device)
-    out.index_add_(0, token_ids.to(torch.int64), partial)
-    return out
+    if out_dtype != torch.float32:
+        partial = partial.to(out_dtype)
+    return partial
 
 
 def a4_span2_gemv(x: torch.Tensor, unit: A4Unit, input_global_scale, *,
@@ -881,10 +918,10 @@ def a4_span2_gemv(x: torch.Tensor, unit: A4Unit, input_global_scale, *,
         raise GrammarError(
             f"a4_span2_gemv: activation is {tuple(x.shape)} for a reduction over "
             f"{unit.cols} columns")
+    gscale = torch.as_tensor(input_global_scale, dtype=torch.float32, device=x.device)
     packed, scale = a4_quantize_activation(
-        x.to(torch.bfloat16).reshape(1, unit.cols),
-        torch.as_tensor(input_global_scale, dtype=torch.float32, device=x.device))
-    return a4_span2_gemm(packed, scale, unit, input_global_scale,
+        x.to(torch.bfloat16).reshape(1, unit.cols), gscale)
+    return a4_span2_gemm(packed, scale, unit, unit.epilogue_for(gscale),
                          out_dtype=out_dtype)[0]
 
 

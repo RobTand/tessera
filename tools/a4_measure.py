@@ -117,7 +117,8 @@ def main():
                 packed, scales = a4_quantize_activation(x, gscale)
                 entry["gemm_ms"][str(m)] = time_call(
                     lambda packed=packed, scales=scales, unit=unit, gscale=gscale:
-                    a4_span2_gemm(packed, scales, unit, gscale, out_dtype=torch.float32),
+                    a4_span2_gemm(packed, scales, unit, unit.epilogue_for(gscale),
+                                  out_dtype=torch.float32),
                     args.iters)
             # decode-time bandwidth: one expert's planes are read once per forward
             entry["wire_read_bytes_per_call"] = int(native_bytes)

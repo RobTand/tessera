@@ -432,7 +432,8 @@ def check_gemm_arithmetic(units, rank, group, m):
         gscale = torch.tensor([448.0 * 6.0 / max(float(x.abs().max()), 1e-6)],
                               dtype=torch.float32, device="cuda")
         packed, scales = a4_quantize_activation(x, gscale)
-        y = a4_span2_gemm(packed, scales, unit, gscale, out_dtype=torch.float32)
+        y = a4_span2_gemm(packed, scales, unit, unit.epilogue_for(gscale),
+                          out_dtype=torch.float32)
         assert y.shape == (m, rows)
         a = _dequant_activation(packed, scales, cols)
         w = _dequant_weights(stock["weight_packed"].cpu().numpy(),
@@ -460,7 +461,8 @@ def check_gemm_contract(units, rank, group, m):
         gscale = torch.tensor([448.0 * 6.0 / max(float(x.abs().max()), 1e-6)],
                               dtype=torch.float32, device="cuda")
         packed, scales = a4_quantize_activation(x, gscale)
-        y = a4_span2_gemm(packed, scales, unit, gscale, out_dtype=torch.float32)
+        y = a4_span2_gemm(packed, scales, unit, unit.epilogue_for(gscale),
+                          out_dtype=torch.float32)
 
         a_q, a_s = torch.ops._C.scaled_fp4_quant(x.contiguous(), gscale, True)
         a_q = a_q.view(torch.float4_e2m1fn_x2)
@@ -481,20 +483,20 @@ def check_gemm_contract(units, rank, group, m):
     return details
 
 
-def check_grouped_gemm(units, rank, group, num_tokens=8, top_k=2):
+def check_grouped_gemm(units, rank, group, num_tokens=6, top_k=2):
     """The grouped operator vs the dense kernel on the same routing.
 
     The stack is the group's own roles (w13: gate and up -- distinct bytes,
-    distinct globals, one geometry), so expert identity is not a copy.  The
-    reference runs the already-gated dense kernel per expert over exactly the
-    rows routed to that expert and reduces with the routing weights; the
-    candidate must match it.
+    distinct scales, one geometry), which is the expert axis the kernel
+    addresses; per-route outputs are held to the dense kernel's rows for the
+    routed token, with repeated expert ids and an empty expert in the
+    dispatch.  Routing weights are deliberately absent: the operator keeps
+    per-route rows, and a routed MoE applies weights after the down
+    projection.
     """
     bundle = units[rank][group]
     stack = A4UnitStack.stack([unit for _name, _parsed, unit, _stock, _prepared in bundle])
     experts = stack.experts
-    if experts < 2:  # a single-expert group still exercises the gather path
-        top_k = 1
     cols, rows = stack.cols, stack.rows
     torch.manual_seed(7)
     x = torch.randn(num_tokens, cols, dtype=torch.bfloat16, device="cuda") * 0.25
@@ -502,37 +504,99 @@ def check_grouped_gemm(units, rank, group, num_tokens=8, top_k=2):
                           dtype=torch.float32, device="cuda")
     packed, scales = a4_quantize_activation(x, gscale)
 
-    chosen = torch.randint(0, experts, (num_tokens, top_k), device="cuda")
-    routing = torch.rand(num_tokens, top_k, device="cuda", dtype=torch.float32) + 0.5
+    # Dispatch with a repeated expert id (token 0 twice on expert 0) and, when
+    # there are two tiles, an expert that receives nothing.
+    if experts == 1:
+        chosen = torch.zeros((num_tokens, top_k), dtype=torch.long, device="cuda")
+    else:
+        chosen = torch.tensor([[0, 0], [1, 0], [0, 1], [1, 1], [0, 0], [1, 0]],
+                              dtype=torch.long, device="cuda")[:num_tokens, :top_k]
+        chosen[0, 1] = 0                              # repeated expert id
     flat_expert = chosen.reshape(-1)
     flat_token = torch.arange(num_tokens, device="cuda").repeat_interleave(top_k)
-    flat_weight = routing.reshape(-1)
     order = torch.argsort(flat_expert, stable=True)
-    sorted_expert = flat_expert[order]
     token_ids = flat_token[order].to(torch.int32)
-    weights = flat_weight[order]
-    counts = torch.bincount(sorted_expert, minlength=experts)
+    counts = torch.bincount(flat_expert[order], minlength=experts)
     expert_offsets = torch.zeros(experts + 1, dtype=torch.int32, device="cuda")
     expert_offsets[1:] = torch.cumsum(counts, 0).to(torch.int32)
 
+    epilogues = torch.stack([unit.epilogue_for(gscale)[0]
+                             for _n, _p, unit, _s, _pr in bundle])
     got = a4_span2_grouped_gemm(
-        packed, scales, stack, gscale, expert_offsets=expert_offsets,
-        token_ids=token_ids, weights=weights, num_tokens=num_tokens)
+        packed, scales, stack, epilogues, expert_offsets=expert_offsets,
+        token_ids=token_ids)
 
-    ref = torch.zeros((num_tokens, rows), dtype=torch.float32, device="cuda")
+    assert got.shape == (token_ids.numel(), rows), (got.shape, token_ids.numel(), rows)
+    ref = torch.zeros_like(got)
     for index in range(experts):
         start = int(expert_offsets[index].item())
         end = int(expert_offsets[index + 1].item())
         if start == end:
             continue
         toks = token_ids[start:end].to(torch.int64)
-        dense = a4_span2_gemm(packed.index_select(0, toks),
-                              scales.index_select(0, toks),
-                              bundle[index][2], gscale, out_dtype=torch.float32)
-        ref.index_add_(0, toks, dense * weights[start:end, None])
+        dense = a4_span2_gemm(packed.index_select(0, toks), scales.index_select(0, toks),
+                              bundle[index][2], epilogues[index:index + 1],
+                              out_dtype=torch.float32)
+        ref[start:end] = dense
     rel = float((got - ref).abs().max() / ref.abs().max().clamp_min(1e-12))
-    assert rel < 2e-2, f"grouped rank{rank} {group}: rel={rel}"
-    return {"experts": experts, "rows": int(token_ids.numel()), "rel": rel}
+    empty = int((counts == 0).sum().item())
+
+    # A dispatch whose second expert is empty must be the same operator with an
+    # expert axis nobody addresses: the early-exit path is the one tested.
+    if experts > 1:
+        one_way = torch.zeros((num_tokens, top_k), dtype=torch.long, device="cuda")
+        flat = one_way.reshape(-1)
+        order = torch.argsort(flat, stable=True)
+        ids = flat_token[order].to(torch.int32)
+        counts_one = torch.bincount(flat[order], minlength=experts)
+        offsets_one = torch.zeros(experts + 1, dtype=torch.int32, device="cuda")
+        offsets_one[1:] = torch.cumsum(counts_one, 0).to(torch.int32)
+        got_one = a4_span2_grouped_gemm(packed, scales, stack, epilogues,
+                                        expert_offsets=offsets_one, token_ids=ids)
+        ref_one = a4_span2_gemm(packed.index_select(0, ids.to(torch.int64)),
+                                scales.index_select(0, ids.to(torch.int64)),
+                                bundle[0][2], epilogues[0:1], out_dtype=torch.float32)
+        rel_one = float((got_one - ref_one).abs().max()
+                        / ref_one.abs().max().clamp_min(1e-12))
+        assert rel_one < 1e-6, f"grouped rank{rank} {group} empty-expert: rel={rel_one}"
+        empty = int((counts_one == 0).sum().item())
+    assert rel < 1e-6, f"grouped rank{rank} {group}: rel={rel}"
+    return {"experts": experts, "routes": int(token_ids.numel()), "empty_experts": empty,
+            "rel": rel}
+
+
+def check_graph_capture(units, rank, group):
+    """A dense forward captures and replays inside a CUDA graph.
+
+    The epilogue is a device tensor and the quantizer takes a device scalar, so
+    no host read sits in the call; a host synchronization during capture is an
+    error in torch, which makes capture success the test.
+    """
+    bundle = units[rank][group]
+    cols = bundle[0][2].cols
+    torch.manual_seed(3)
+    x = torch.randn(8, cols, dtype=torch.bfloat16, device="cuda") * 0.25
+    gscale = torch.tensor([448.0 * 6.0 / max(float(x.abs().max()), 1e-6)],
+                          dtype=torch.float32, device="cuda")
+    details = {}
+    for name, _parsed, unit, _stock, _prepared in bundle:
+        packed, scales = a4_quantize_activation(x, gscale)
+        epilogue = unit.epilogue_for(gscale)
+        eager = a4_span2_gemm(packed, scales, unit, epilogue, out_dtype=torch.float32)
+        side = torch.cuda.Stream()
+        side.wait_stream(torch.cuda.current_stream())
+        with torch.cuda.stream(side):
+            for _ in range(3):
+                a4_span2_gemm(packed, scales, unit, epilogue, out_dtype=torch.float32)
+        torch.cuda.current_stream().wait_stream(side)
+        graph = torch.cuda.CUDAGraph()
+        with torch.cuda.graph(graph):
+            captured = a4_span2_gemm(packed, scales, unit, epilogue, out_dtype=torch.float32)
+        graph.replay()
+        torch.cuda.synchronize()
+        assert torch.equal(captured, eager), f"{name}: replay differs from eager"
+        details[name] = "captured"
+    return details
 
 
 def check_gemm_refusal(units):
@@ -594,6 +658,13 @@ def test_grouped_gemm_matches_the_dense_kernel(gpu_units, rank, group):
     check_grouped_gemm(gpu_units, rank, group)
 
 
+@CUDA
+@pytest.mark.parametrize("rank", [0, 1])
+@pytest.mark.parametrize("group", ["w13", "w2"])
+def test_dense_forward_captures_in_a_cuda_graph(gpu_units, rank, group):
+    check_graph_capture(gpu_units, rank, group)
+
+
 def test_gemm_refuses_a_remainder_shape(gpu_units):
     check_gemm_refusal(gpu_units)
 
@@ -634,6 +705,8 @@ def run_gate(*, ranks=(0, 1), groups=("w13", "w2"), ms=(1, 8, 32, 128),
                 continue
             record(f"grouped.rank{rank}.{group}",
                    lambda rank=rank, group=group: check_grouped_gemm(units, rank, group))
+            record(f"graph_capture.rank{rank}.{group}",
+                   lambda rank=rank, group=group: check_graph_capture(units, rank, group))
             for m in ms:
                 record(f"gemm_arithmetic.rank{rank}.{group}.M{m}",
                        lambda rank=rank, group=group, m=m:
