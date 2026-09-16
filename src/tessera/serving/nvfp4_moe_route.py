@@ -87,8 +87,7 @@ from .moe_route import SHARD_TO_GROUP, _packed_group_shard_plan
 from .scheme import (A4_GROUPED_GEMM_SYMBOL, GROUP_SIZE, MOE_GEMM_SYMBOL, MOE_GROUPS, ROUTES,
                      STRUCTURE_ROUTED_MOE, TESSERA_NVFP4, expert_role_declarations,
                      launch_pairs, moe_census_symbol_base as census_symbol_base,
-                     parse_tessera_expert_blob, route_launches,
-                     validate_tessera_moe_scheme)
+                     route_launches, validate_tessera_moe_scheme)
 from .telemetry import DECODER_NATIVE_SPAN2_GROUPED, emit_route, route_shape
 
 __all__ = [
@@ -206,79 +205,65 @@ class _ExpertIntake:
                 return None, (shard.lo, shard.hi)
             return None, None
 
-        # The shared owner's factored compact validator (same container
-        # framing, role list and per-role byte facts as the parsed reader,
-        # with no weight-plane expansion).  Until it lands, the parsed
-        # validator runs instead -- stricter and slower, never weaker; the
-        # dependency is published in native-a4/INTEGRATION-REQUEST.md.
-        validator = getattr(scheme_module, "parse_compact_tessera_expert_blob", None)
-        if validator is not None:
-            validated = validator(blob, declared_role, f"{target} {group} expert {expert}",
-                                  device=device, memo=self._memo)
-            if len(validated) != 1:
-                raise GrammarError(
-                    f"{target} {group} expert {expert}: an expert projection container "
-                    f"holds one role, this one frames {len(validated)}")
-            name, member = validated[0]
-            rows, cols = _cuts(plan.role(name))
-            if axes is not None:
-                # Direct-destination intake: the prepared planes are written
-                # once into this expert's preallocated axis slot, so no
-                # per-wire output tensor is allocated and `finish` copies
-                # nothing.  Only the 16-byte LUT table and the scalar global
-                # wait for the mate (the fused tile's shared global); the
-                # planes are already in their final place.
-                axis = axes[(group, expected)]
+        # The factored compact validator, called by name.  It applies the same
+        # container framing, role list and per-role byte checks as the parsed
+        # reader with no weight-plane expansion, and it is the ONLY reader this
+        # route takes: the materialising fallback that stood here while the
+        # shared reader was unpublished is gone, so the lane cannot quietly
+        # serve through an unpacked path if that reader ever disappears.
+        validated = scheme_module.parse_compact_tessera_expert_blob(
+            blob, declared_role, f"{target} {group} expert {expert}",
+            device=device, memo=self._memo)
+        if len(validated) != 1:
+            raise GrammarError(
+                f"{target} {group} expert {expert}: an expert projection container "
+                f"holds one role, this one frames {len(validated)}")
+        name, member = validated[0]
+        rows, cols = _cuts(plan.role(name))
+        if axes is not None:
+            # Direct-destination intake: the prepared planes are written once
+            # into this expert's preallocated axis slot, so no per-wire output
+            # tensor is allocated and `finish` copies nothing.  Only the
+            # 16-byte LUT table and the scalar global wait for the mate (the
+            # fused tile's shared global); the planes are already in place.
+            axis = axes[(group, expected)]
 
-                def _factory(field, size, dtype, _axis=axis):
-                    return _axis.destination(expert, field, size, dtype, device)
+            def _factory(field, size, dtype, _axis=axis):
+                return _axis.destination(expert, field, size, dtype, device)
 
-                def _layout(rows_local, cols_local, rate, arity, memory, half,
-                            _axis=axis):
-                    return _axis.bind_geometry(rows_local, cols_local, rate,
-                                               arity, memory, half)
+            def _layout(rows_local, cols_local, rate, arity, memory, half,
+                        _axis=axis):
+                return _axis.bind_geometry(rows_local, cols_local, rate,
+                                           arity, memory, half)
 
-                from ..compact_prep import prepare_span2_compact
+            from ..compact_prep import prepare_span2_compact
 
-                prepared = prepare_span2_compact(
-                    member, rows=rows, cols=cols, scratch=self._scratch,
-                    memo=self._memo, out_factory=_factory, on_layout=_layout)
-                table = prepared["lut_bytes"].view(torch.uint8).clone()
-                scale = float(prepared["global_scale"])
-                if group != "w13":
-                    axis.set_global(expert, scale)
-                    axis.mark_filled(expert)
-                    return ("direct", group, scale)
-                halves = self.pending.setdefault(expert, [None] * W13_PROJECTIONS)
-                halves[index] = (expected, table, scale)
-                if any(half is None for half in halves):
-                    return None
-                del self.pending[expert]
-                names = [half[0] for half in halves]
-                shared, moved = shared_lut_global(
-                    [half[1] for half in halves], [half[2] for half in halves], names)
-                for (role_name, _table, _scale), moved_table in zip(halves, moved):
-                    joined = axes[("w13", role_name)]
-                    joined.set_lut_bytes(expert,
-                                         moved_table.view(torch.uint8).contiguous())
-                    joined.set_global(expert, float(shared))
-                    joined.mark_filled(expert)
-                return ("direct", group, float(shared))
-            unit = prepare_a4_unit(member, rows=rows, cols=cols,
-                                   scratch=self._scratch, memo=self._memo)
-        else:
-            from ..kernel_a4 import A4Unit
-            from ..lane_planes import prepare_span2_planes
-            from .sharding import shard_parsed_roles
-
-            validated = parse_tessera_expert_blob(
-                blob, declared_role, f"{target} {group} expert {expert}", device=device)
-            local = shard_parsed_roles(validated, plan)
-            if local[0][0] != expected:
-                raise GrammarError(
-                    f"{target} {group} expert {expert}: the container frames role "
-                    f"{local[0][0]!r}, the sidecar declares {expected!r}")
-            unit = A4Unit.from_prepared(prepare_span2_planes(local[0][1], device=device))
+            prepared = prepare_span2_compact(
+                member, rows=rows, cols=cols, scratch=self._scratch,
+                memo=self._memo, out_factory=_factory, on_layout=_layout)
+            table = prepared["lut_bytes"].view(torch.uint8).clone()
+            scale = float(prepared["global_scale"])
+            if group != "w13":
+                axis.set_global(expert, scale)
+                axis.mark_filled(expert)
+                return ("direct", group, scale)
+            halves = self.pending.setdefault(expert, [None] * W13_PROJECTIONS)
+            halves[index] = (expected, table, scale)
+            if any(half is None for half in halves):
+                return None
+            del self.pending[expert]
+            names = [half[0] for half in halves]
+            shared, moved = shared_lut_global(
+                [half[1] for half in halves], [half[2] for half in halves], names)
+            for (role_name, _table, _scale), moved_table in zip(halves, moved):
+                joined = axes[("w13", role_name)]
+                joined.set_lut_bytes(expert,
+                                     moved_table.view(torch.uint8).contiguous())
+                joined.set_global(expert, float(shared))
+                joined.mark_filled(expert)
+            return ("direct", group, float(shared))
+        unit = prepare_a4_unit(member, rows=rows, cols=cols,
+                               scratch=self._scratch, memo=self._memo)
         if group != "w13":
             return ([(expected, unit)], float(unit.global_scale))
         halves = self.pending.setdefault(expert, [None] * W13_PROJECTIONS)
