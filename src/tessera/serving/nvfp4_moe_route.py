@@ -76,6 +76,7 @@ from typing import Mapping
 
 import torch
 
+from ..errors import GrammarError
 from ..moe_layout import W13_PROJECTIONS, validate_moe_wire_lengths
 from .lane import MODE_RESIDENT, MODES
 from .moe_route import SHARD_TO_GROUP, _packed_group_shard_plan
@@ -177,20 +178,62 @@ class _ExpertIntake:
         self.pending: dict[int, list] = {}
 
     def take(self, group, index, expert, blob: bytes, device):
-        from .sharding import shard_parsed_roles
+        """One verified container -> this rank's native bundles for its role.
 
-        parsed = parse_tessera_expert_blob(
-            blob, self.roles[group][index], f"{self.target} {group} expert {expert}",
-            device=device)
-        local = shard_parsed_roles(parsed, self.plans[group])
+        The compact reader runs the same metadata verification the parsed
+        reader does (digests, canonical padding, slack, geometry, the shard
+        record) and repacks the packed BODY straight into the kernel planes:
+        no parent-plane expansion and no decoded stock tile.  w13's halves are
+        held until both arrive, then their 16-entry tables are moved onto one
+        shared global exactly as the stock lane moves them
+        (``fused.shared_lut_global``), because a fused tile carries one
+        weight global.
+        """
+        from ..compact_prep import parse_compact_expert
+        from ..fused import shared_lut_global
+        from .native_a4 import prepare_a4_unit
+
+        target = self.target
+        members = parse_compact_expert(blob, device)
+        if len(members) != 1:
+            raise GrammarError(
+                f"{target} {group} expert {expert}: an expert projection container "
+                f"holds one role, this one frames {len(members)}")
+        member = members[0]
+        expected = self.roles[group][index].name
+        if member.name != expected:
+            raise GrammarError(
+                f"{target} {group} expert {expert}: the container frames role "
+                f"{member.name!r}, the sidecar declares {expected!r}")
+        plan = self.plans[group]
+        shard = plan.role(member.name)
+        if plan.axis == "row":
+            rows, cols = (shard.lo, shard.hi), None
+        elif plan.axis == "column":
+            rows, cols = None, (shard.lo, shard.hi)
+        else:
+            rows = cols = None
+        unit = prepare_a4_unit(member, rows=rows, cols=cols)
         if group != "w13":
-            return local
+            return ([(expected, unit)], float(unit.global_scale))
         halves = self.pending.setdefault(expert, [None] * W13_PROJECTIONS)
-        halves[index] = local
+        halves[index] = (expected, unit)
         if any(half is None for half in halves):
             return None
         del self.pending[expert]
-        return [role for half in halves for role in half]
+        names = [half[0] for half in halves]
+        shared, moved = shared_lut_global(
+            [half[1].lut_bytes for half in halves],
+            [half[1].global_scale for half in halves], names)
+        import dataclasses
+
+        joined = [
+            (name, dataclasses.replace(unit, lut_bytes=table.view(torch.uint8)
+                                       .view(torch.float8_e4m3fn).contiguous(),
+                                       global_scale=float(shared)))
+            for (name, unit), table in zip(halves, moved)
+        ]
+        return (joined, float(shared))
 
 
 def build_tessera_nvfp4_moe_method(scheme: Mapping, prefix: str, mode: str, layer):
@@ -331,24 +374,15 @@ def build_tessera_nvfp4_moe_method(scheme: Mapping, prefix: str, mode: str, laye
             set_weight_attrs(w2_input_global, {"weight_loader": self._load_input_global_scale})
             self._input_global = {"w13": w13_input_global, "w2": w2_input_global}
 
-            # The stock modelopt parameter set, allocated at create time with
-            # the shapes ``ModelOptNvFp4FusedMoE.create_weights`` allocates,
-            # so what the kernel sees is the runtime's own parameter set and
-            # ``replace_parameter`` has something to replace.
-            shapes = {
-                "w13_weight": ((experts, n_rows, hidden // 2), torch.uint8),
-                "w2_weight": ((experts, hidden, local // 2), torch.uint8),
-                "w13_weight_scale": ((experts, n_rows, hidden // GROUP_SIZE), torch.float8_e4m3fn),
-                "w2_weight_scale": ((experts, hidden, local // GROUP_SIZE), torch.float8_e4m3fn),
-                "w13_weight_scale_2": ((experts, W13_PROJECTIONS), torch.float32),
-                "w2_weight_scale_2": ((experts,), torch.float32),
-                "w13_input_scale": ((experts, W13_PROJECTIONS), torch.float32),
-                "w2_input_scale": ((experts,), torch.float32),
-            }
+            # The stock modelopt names stay registered as ZERO-SIZE anchors,
+            # each with the refusing loader: a checkpoint carrying a stock
+            # tensor is still refused by name, while the 4.5-bpp expanded pool
+            # this route exists to avoid is never allocated.  The stock
+            # ``ModelOptNvFp4FusedMoE`` parameter set is not needed because no
+            # modular kernel runs on this route.
             self._tiles = {}
             for name in _STOCK_TILE_NAMES:
-                shape, dtype = shapes[name]
-                param = torch.nn.Parameter(torch.zeros(*shape, dtype=dtype), requires_grad=False)
+                param = torch.nn.Parameter(torch.empty(0), requires_grad=False)
                 layer.register_parameter(name, param)
                 set_weight_attrs(param, {"weight_loader": self._refuse_stock_tensor})
                 self._tiles[name] = param
@@ -359,6 +393,17 @@ def build_tessera_nvfp4_moe_method(scheme: Mapping, prefix: str, mode: str, laye
             self._w13_len = layer.tessera_w13_wire_len
             self._w2_len = layer.tessera_w2_wire_len
             self._intake = _ExpertIntake(declared, prefix, self._tp_rank, self._tp_size)
+            # One axis per (group, role): each is one stacked allocation per
+            # plane kind over the expert axis, filled as containers arrive.
+            from .native_a4 import A4ExpertAxis
+
+            self._axes = {
+                (group_name, role.name): A4ExpertAxis(experts)
+                for group_name in MOE_GROUPS
+                for role in self._intake.roles[group_name]
+            }
+            self._shared_w13 = {}
+            self._shared_w2 = {}
             layer.tessera_mode = mode
             layer.tessera_family = family
             layer.tessera_structure = declared["structure"]
@@ -421,23 +466,14 @@ def build_tessera_nvfp4_moe_method(scheme: Mapping, prefix: str, mode: str, laye
                 group, index, expert_id, blob.detach().cpu().contiguous().numpy().tobytes(),
                 device)
             if ready is not None:
-                packed, scale, shared = decode_expert_tile(ready, device)
-                weight = self._tiles[f"{group}_weight"]
-                block_scale = self._tiles[f"{group}_weight_scale"]
-                if (tuple(packed.shape) != tuple(weight.shape[1:])
-                        or tuple(scale.shape) != tuple(block_scale.shape[1:])):
-                    raise ValueError(
-                        f"tessera target {prefix!r} expert {expert_id} {group}: the rank-local "
-                        f"decode is {tuple(packed.shape)} nibbles / {tuple(scale.shape)} "
-                        f"scales, the tile is {tuple(weight.shape[1:])} / "
-                        f"{tuple(block_scale.shape[1:])}")
-                weight.data[expert_id].copy_(packed)
-                block_scale.data[expert_id].copy_(scale)
+                units, shared = ready
+                for name, unit in units:
+                    self._axes[(group, name)].put(expert_id, unit)
                 if group == "w13":
-                    self._tiles["w13_weight_scale_2"].data[expert_id, :] = shared
+                    self._shared_w13[expert_id] = shared
                 else:
-                    self._tiles["w2_weight_scale_2"].data[expert_id] = shared
-                del packed, scale, ready
+                    self._shared_w2[expert_id] = shared
+                del units, ready
             if group == "w13":
                 self._w13_len[expert_id, index] = length
             else:
@@ -498,8 +534,41 @@ def build_tessera_nvfp4_moe_method(scheme: Mapping, prefix: str, mode: str, laye
                         "than quantising activations at 1.0.")
             # modelopt's ``input_scale`` is the reciprocal of Tessera's
             # ``input_global_scale`` (amax / capacity vs capacity / amax).
-            self._tiles["w13_input_scale"].data.copy_(1.0 / self._input_global["w13"].data)
-            self._tiles["w2_input_scale"].data.copy_(1.0 / self._input_global["w2"].data)
+            input_small = {group: 1.0 / self._input_global[group].data
+                           for group in MOE_GROUPS}
+            # The selected FlashInfer MoE backends aggregate the routed
+            # activation scale per layer/projection rather than per expert
+            # (``flashinfer_fp4_moe.py``'s
+            # ``is_global_sf_supported_for_nvfp4_backend`` computes it through
+            # ``amax_for_moe_activation_quant`` and repeats it across the
+            # experts; the oracle collapses a disagreeing vector the same way),
+            # so one quantizer scalar per GEMM is the served contract.  The
+            # native path reproduces that reduction instead of quantising per
+            # expert.
+            gs13 = (1.0 / input_small["w13"].max()).to(torch.float32).reshape(())
+            gs2 = (1.0 / input_small["w2"].max()).to(torch.float32).reshape(())
+
+            device = self._decode_device()
+            stacks = {}
+            for key, axis in self._axes.items():
+                stacks[key] = axis.finish()
+            self._axes = None
+            # Per-expert epilogues: the joined weight global over the A-side
+            # global, frozen once so a forward reads no host scalar.
+            shared13 = torch.tensor(
+                [self._shared_w13[index] for index in range(experts)],
+                dtype=torch.float32, device=device)
+            shared2 = torch.tensor(
+                [self._shared_w2[index] for index in range(experts)],
+                dtype=torch.float32, device=device)
+            layer.tessera_a4_gate_stack = stacks[("w13", "gate_proj")]
+            layer.tessera_a4_up_stack = stacks[("w13", "up_proj")]
+            layer.tessera_a4_down_stack = stacks[("w2", "down_proj")]
+            layer.tessera_a4_gs13 = gs13
+            layer.tessera_a4_gs2 = gs2
+            layer.tessera_a4_gate_epilogues = shared13 / gs13
+            layer.tessera_a4_up_epilogues = shared13 / gs13
+            layer.tessera_a4_down_epilogues = shared2 / gs2
             del layer.w13_wire, layer.w2_wire
             del layer.w13_input_global_scale, layer.w2_input_global_scale
             layer.tessera_w13_wire_len = None
@@ -508,43 +577,10 @@ def build_tessera_nvfp4_moe_method(scheme: Mapping, prefix: str, mode: str, laye
             self._tiles = None
             self._input_global = None
             self._w13_len = self._w2_len = None
-
-            # From here this IS ``ModelOptNvFp4FusedMoE.process_weights_after_loading``.
-            if not torch.equal(layer.w13_weight_scale_2[:, 0], layer.w13_weight_scale_2[:, 1]):
-                raise ValueError(
-                    f"tessera target {prefix!r}: w13 gate/up globals differ on some expert; "
-                    "the loader joins them per expert, so this is a decode defect")
-            w13_weight_scale_2 = layer.w13_weight_scale_2[:, 0].contiguous()
-            (w13, w13_scale, w13_scale_2, a13_scale,
-             w2, w2_scale, w2_scale_2, a2_scale) = convert_to_nvfp4_moe_kernel_format(
-                nvfp4_backend=self.nvfp4_backend, layer=layer,
-                w13=layer.w13_weight, w13_scale=layer.w13_weight_scale,
-                w13_scale_2=w13_weight_scale_2, a13_scale=layer.w13_input_scale,
-                w2=layer.w2_weight, w2_scale=layer.w2_weight_scale,
-                w2_scale_2=layer.w2_weight_scale_2, a2_scale=layer.w2_input_scale,
-                is_act_and_mul=self.moe.is_act_and_mul, use_a16=False)
-            replace_parameter(layer, "w13_weight", w13)
-            replace_parameter(layer, "w13_weight_scale", w13_scale)
-            replace_parameter(layer, "w13_weight_scale_2", w13_scale_2)
-            replace_parameter(layer, "w13_input_scale", a13_scale)
-            replace_parameter(layer, "w2_weight", w2)
-            replace_parameter(layer, "w2_weight_scale", w2_scale)
-            replace_parameter(layer, "w2_weight_scale_2", w2_scale_2)
-            replace_parameter(layer, "w2_input_scale", a2_scale)
-
-            self.moe_quant_config = self.get_fused_moe_quant_config(layer)
-            assert self.moe_quant_config is not None
-            assert self.experts_cls is not None
-            self.moe_kernel = make_nvfp4_moe_kernel(
-                moe_quant_config=self.moe_quant_config, moe_config=self.moe,
-                experts_cls=self.experts_cls, backend=self.nvfp4_backend,
-                routing_tables=layer._expert_routing_tables())
-            self.moe_kernel.fused_experts.process_weights_after_loading(layer)
-            layer.tessera_decoder = DECODER_TORCH_STOCK
-            # The oracle's enum names its members by their own name (value ==
-            # name on the pinned image); the NAME is the stable identifier the
-            # route symbol carries.
-            layer.tessera_backend = str(getattr(self.nvfp4_backend, "name", self.nvfp4_backend))
+            self._shared_w13 = self._shared_w2 = None
+            layer.tessera_decoder = "native_span2_grouped"
+            layer.tessera_backend = str(getattr(self.nvfp4_backend, "name",
+                                                self.nvfp4_backend))
 
         def get_fused_moe_quant_config(self, layer):
             return make_nvfp4_moe_quant_config(
@@ -560,14 +596,79 @@ def build_tessera_nvfp4_moe_method(scheme: Mapping, prefix: str, mode: str, laye
         # -- forward ----------------------------------------------------
         def apply(self, layer, x, topk_weights, topk_ids, shared_experts,
                   shared_experts_input):
+            """Two native stages over one device dispatch, weights applied last.
+
+            gate/up are separate grouped calls (per-role tables and globals
+            stay per role; no artificial trellis merge), the activation is the
+            layer's own, the down stage consumes the per-route rows, and the
+            router weights are applied only in the final combine -- the
+            routed-MoE contract.  ``apply_router_weight_on_input`` and an
+            expert map are refused rather than approximated.
+            """
+            from ..kernel_a4 import a4_grouped_apply
+
             assert not self.is_monolithic
-            assert self.moe_kernel is not None
-            out = self.moe_kernel.apply(
-                x, layer.w13_weight, layer.w2_weight, topk_weights, topk_ids,
-                activation=layer.activation, global_num_experts=layer.global_num_experts,
-                expert_map=layer.expert_map,
-                apply_router_weight_on_input=layer.apply_router_weight_on_input,
-                shared_experts=shared_experts, shared_experts_input=shared_experts_input)
+            if layer.expert_map is not None:
+                raise ValueError(
+                    f"tessera target {prefix!r}: expert parallelism carries an expert "
+                    "map and the native A4 route serves global expert ids only")
+            if getattr(layer, "apply_router_weight_on_input", False):
+                raise ValueError(
+                    f"tessera target {prefix!r}: apply_router_weight_on_input is not "
+                    "part of the native A4 contract (weights apply after the down "
+                    "projection); refusing rather than approximating")
+            if x.ndim != 2 or x.shape[1] != hidden:
+                raise ValueError(
+                    f"tessera target {prefix!r}: the routed activation must be "
+                    f"[tokens, {hidden}], got {tuple(x.shape)}")
+            top_k = int(self.moe.experts_per_token)
+            if tuple(topk_ids.shape) != (x.shape[0], top_k):
+                raise ValueError(
+                    f"tessera target {prefix!r}: routing must be [tokens, {top_k}], "
+                    f"got {tuple(topk_ids.shape)}")
+            if x.shape[0] == 0:
+                return x.new_empty((0, hidden))
+
+            device = x.device
+            flat_ids = topk_ids.to(torch.int64).reshape(-1)
+            if bool((flat_ids < 0).any()) or bool((flat_ids >= experts).any()):
+                raise ValueError(
+                    f"tessera target {prefix!r}: routing names an expert outside the "
+                    f"{experts} the sidecar declares")
+            flat_tokens = torch.arange(x.shape[0], device=device,
+                                       dtype=torch.int64).repeat_interleave(top_k)
+            flat_weights = topk_weights.reshape(-1).to(torch.float32)
+            order = torch.argsort(flat_ids, stable=True)
+            counts = torch.zeros(experts, dtype=torch.int32, device=device)
+            counts.scatter_add_(0, flat_ids[order],
+                                torch.ones_like(flat_ids, dtype=torch.int32))
+            offsets = torch.zeros(experts + 1, dtype=torch.int32, device=device)
+            offsets[1:] = torch.cumsum(counts, 0).to(torch.int32)
+            route_tokens = flat_tokens[order].to(torch.int32)
+            route_weights = flat_weights[order]
+            routes = int(flat_ids.numel())
+
+            gate = a4_grouped_apply(x, layer.tessera_a4_gate_stack, layer.tessera_a4_gs13,
+                                    expert_offsets=offsets, route_ids=route_tokens,
+                                    num_routes=routes,
+                                    epilogues=layer.tessera_a4_gate_epilogues)
+            up = a4_grouped_apply(x, layer.tessera_a4_up_stack, layer.tessera_a4_gs13,
+                                  expert_offsets=offsets, route_ids=route_tokens,
+                                  num_routes=routes,
+                                  epilogues=layer.tessera_a4_up_epilogues)
+            activated = layer.activation(torch.cat([gate, up], dim=-1))
+            identity = torch.arange(routes, dtype=torch.int32, device=device)
+            down = a4_grouped_apply(activated, layer.tessera_a4_down_stack,
+                                    layer.tessera_a4_gs2, expert_offsets=offsets,
+                                    route_ids=identity, num_routes=routes,
+                                    epilogues=layer.tessera_a4_down_epilogues)
+            out = torch.zeros((x.shape[0], hidden), dtype=torch.float32, device=device)
+            out.index_add_(0, route_tokens.to(torch.int64),
+                           down * route_weights[:, None])
+            out = out.to(x.dtype)
+            if shared_experts is not None:
+                shared_input = shared_experts_input if shared_experts_input is not None else x
+                out = out + shared_experts(shared_input)
             self._record(layer, x)
             return out
 
