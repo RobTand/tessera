@@ -418,18 +418,12 @@ def _compact_expert_units(blob, declared_role, plan, target, *, device, family):
     while the boundary is unpublished; no wire validation is duplicated here.
     """
     from .compact_prep import prepare_window_compact
-    from .sharding import AXIS_ROWS
+    from .native_window import _role_cut
 
     units = []
     for name, wire in _compact_role_units(blob, declared_role, target, device):
-        if plan.axis is None or plan.is_whole:
-            rows = cols = None
-        else:
-            shard = plan.role(name)
-            rows = (shard.lo, shard.hi) if plan.axis == AXIS_ROWS else None
-            cols = None if plan.axis == AXIS_ROWS else (shard.lo, shard.hi)
         units.append((name, prepare_window_compact(
-            wire, rows=rows, cols=cols, device=device, family=family)))
+            wire, device=device, family=family, **_role_cut(plan, name))))
     return units
 
 
@@ -970,16 +964,18 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
 
         def _require_native_contract(self, layer) -> None:
             """Fail closed on serving semantics the native path does not
-            reproduce: only silu, and no swiglu modifiers."""
-            activation = str(getattr(layer, 'activation', 'silu')).lower()
-            if not activation.endswith('silu'):
+            reproduce: only silu, and no swiglu modifiers.  ``layer.activation``
+            is a vLLM ``MoEActivation`` enum, not a callable."""
+            activation = getattr(layer, 'activation', 'silu')
+            name = str(getattr(activation, 'value', activation)).lower()
+            if name != 'silu':
                 raise ValueError(
                     f"{prefix}: the native window MoE serves silu; activation "
-                    f"{activation!r} has no exact implementation and is refused")
-            for name in ('swiglu_alpha', 'swiglu_beta', 'swiglu_limit'):
-                if getattr(layer, name, None) is not None:
+                    f"{name!r} has no exact implementation and is refused")
+            for field in ('swiglu_alpha', 'swiglu_beta', 'swiglu_limit'):
+                if getattr(layer, field, None) is not None:
                     raise ValueError(
-                        f"{prefix}: {name} is set; the native window MoE refuses to "
+                        f"{prefix}: {field} is set; the native window MoE refuses to "
                         "approximate it")
 
         def _apply_selected(self, layer, x, weights, ids, shared_experts, shared_experts_input):
