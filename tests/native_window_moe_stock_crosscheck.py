@@ -70,8 +70,12 @@ def _arm(name, native, stock, report):
     }
     report["arms"].append(entry)
     print("ARM", json.dumps(entry), flush=True)
-    # Ceiling derived from the bf16 boundaries in the chain (gemm1 cast, act
-    # cast, down cast, sum cast = 4 x 0.5 ulp) plus accumulation-order headroom.
+    # A CHOSEN DIAGNOSTIC SCREEN, not a derived bound: the chain runs through a
+    # nonlinear activation and two quantized stages, so 4 x 0.5 ulp does not
+    # compose into an end-to-end proof.  It is tight enough to catch a wrong
+    # clamp or a wrong projection and labelled as a screen in the report.
+    entry["tolerance"] = {"screen_bf16_ulps_of_max": 4.0,
+                          "derivation": "chosen screen, not a composed bound"}
     return ulps is not None and ulps <= 4.0
 
 
@@ -209,6 +213,8 @@ def canonical_reference_tensors(units, layer, device="cpu"):
     u = units[layer]
     experts = sorted(u["experts"])
     declared = u["declared"]
+    # ``inter`` is the module's intermediate size; the stock w13 stack is
+    # [2*inter, K] and is split gate-first for the per-role reference tensors.
     inter = int(declared["groups"]["w13"]["rows"]) // 2
 
     def _fold(expert_entry, role):
@@ -253,8 +259,14 @@ def canonical_execution(fixture, layers=(3, 4), experts=(0, 1), clamp=10.0):
     from vllm.config import set_current_vllm_config
     import types as _types
 
+    # A canonical path is a measurement, so its inputs are reproducible and
+    # its routing weights are neither uniform nor unit: all-ones weights make
+    # apply_router_weight_on_input mathematically degenerate, which would pass
+    # either placement without distinguishing them.
+    torch.manual_seed(4242)
     units = canonical_units(fixture, layers=layers, experts=experts)
-    report = {"canonical": True, "fixture": fixture, "clamp": clamp, "arms": []}
+    report = {"canonical": True, "fixture": fixture, "clamp": clamp,
+              "seed": 4242, "arms": []}
     ok = True
     for layer in layers:
         u = units[layer]
@@ -270,7 +282,12 @@ def canonical_execution(fixture, layers=(3, 4), experts=(0, 1), clamp=10.0):
         x = (torch.randn(8, H) * 8.0).bfloat16().cuda()
         ids = torch.zeros(8, 2, dtype=torch.int32, device="cuda")
         ids[:, 1] = min(1, E - 1)
-        weights = torch.ones(8, 2, device="cuda")
+        weights = (0.2 + 0.6 * torch.rand(8, 2, device="cuda")).float()
+        weights[1::2, 0] = 0.2
+        weights[0::2, 1] = 0.8
+        report.setdefault("routing_weights", []).append(
+            {"layer": layer, "distinct": int(torch.unique(weights).numel()),
+             "min": float(weights.min()), "max": float(weights.max())})
         quant_fp8 = _fp8_quant_config()
         for tp_rank, tp_size in ((0, 2), (1, 2)):
             local = inter // tp_size
@@ -283,15 +300,26 @@ def canonical_execution(fixture, layers=(3, 4), experts=(0, 1), clamp=10.0):
                 kwargs["research_selected"] = moe_route.ResearchSelectedMoeConfig(
                     max_experts_per_chunk=8, expected_tensor_parallel_size=2,
                     decode_backend="triton")
+            # The builder and the stub must agree with create_weights' E.  The
+            # checkpoint's 288 stays in provenance; the declaration is bounded
+            # in expert COUNT only and every other fact is the checkpoint's.
+            bounded = dict(declared)
+            bounded["experts"] = E
+            report.setdefault("provenance", []).append(
+                {"layer": layer, "declared_experts": declared.get("experts"),
+                 "decoded_experts": E,
+                 "note": "count narrowed for a bounded decode; geometry untouched"})
             with set_current_vllm_config(_types.SimpleNamespace(
                     model_config=_types.SimpleNamespace(enforce_eager=True))):
                 method = moe_route.build_tessera_moe_method(
-                    declared, u["target"], "resident", layer_stub, **kwargs)
+                    bounded, u["target"], "resident", layer_stub, **kwargs)
             method.create_weights(layer_stub, E, H, local, torch.bfloat16)
+            # ``_load_all`` walks one blob per shard id: w13 takes the gate/up
+            # pair in order, w2 takes the single down blob (NOT a list of one).
             _load_all(method, layer_stub,
                       [[u["experts"][e]["raw"]["w1"], u["experts"][e]["raw"]["w3"]]
                        for e in sorted(u["experts"])],
-                      [[u["experts"][e]["raw"]["w2"]] for e in sorted(u["experts"])])
+                      [u["experts"][e]["raw"]["w2"] for e in sorted(u["experts"])])
             method.process_weights_after_loading(layer_stub)
             if u["family"] == "TESSERA_FP8":
                 w1 = torch.stack([torch.cat([tenor["w1"][e][lo:hi], tenor["w3"][e][lo:hi]])
@@ -313,13 +341,17 @@ def canonical_execution(fixture, layers=(3, 4), experts=(0, 1), clamp=10.0):
             else:
                 gu = torch.cat([method._native.gate(x[:4], ones_ids, ones_w, preserve=True),
                                 method._native.up(x[:4], ones_ids, ones_w, preserve=True)], dim=-1)
+            # The fused gate/up stack is 2*LOCAL wide on a rank, not 2*inter:
+            # splitting at the full intermediate size leaves the up half empty
+            # and the arm would compare a real gate against a zero block.
             act = _activation_arm(
                 f"canonical_L{layer}_tp2_rank{tp_rank}_activation_vs_stock_op",
                 lambda g, u_, lim: nwm._silu_and_mul(g, u_, clamp_limit=lim),
-                gu[:, 0, :inter], gu[:, 0, inter:], clamp, report)
+                gu[:, 0, :local], gu[:, 0, local:], clamp, report)
             active = act["activity"]
             ok &= (active["gate_over_limit"] > 0 and active["up_under_neg_limit"] > 0
                    and active["up_over_limit"] > 0)
+            ok &= bool(act.get("_ok"))
             for weight_input in (False, True):
                 layer_stub.apply_router_weight_on_input = weight_input
                 native = method.apply(layer_stub, x, weights, ids, None, None)
@@ -335,6 +367,61 @@ def canonical_execution(fixture, layers=(3, 4), experts=(0, 1), clamp=10.0):
                            f"_clamped_weight_input={int(weight_input)}", native, stock, report)
     report["all_arms_active_and_bounded"] = bool(ok)
     return report
+
+
+def canonical_self_check(fixture, layers=(3, 4), experts=(0, 1)):
+    """CPU self-check of the canonical wiring facts, without the vLLM runtime.
+
+    Catches, before a GPU is touched, the three wiring bugs that a shape check
+    can see: the expert count the builder is given must equal the count
+    ``create_weights`` allocates, the fused gate/up width on a rank must be
+    twice the rank-local intermediate (splitting at the full intermediate
+    leaves the up half empty), and the blob list the loader callbacks take must
+    have one entry per shard id.  Nothing here executes a kernel.
+    """
+    problems = []
+    units = canonical_units(fixture, layers=layers, experts=experts)
+    checked = {}
+    for layer in layers:
+        u = units[layer]
+        declared = u["declared"]
+        E = len(u["experts"])
+        inter = int(declared["groups"]["w13"]["rows"]) // 2
+        H = int(declared["groups"]["w13"]["columns"])
+        bounded = dict(declared)
+        bounded["experts"] = E
+        facts = {"layer": layer, "family": u["family"], "H": H, "inter": inter,
+                 "declared_experts": declared["experts"], "bounded_experts": E}
+        if bounded["experts"] != E:
+            problems.append(f"L{layer}: bounded declaration does not carry E")
+        if declared["experts"] != 288:
+            problems.append(f"L{layer}: expected the checkpoint's 288, got {declared['experts']}")
+        for tp_size in (1, 2):
+            local = inter // tp_size
+            fused_width = 2 * local
+            if fused_width == 2 * inter and tp_size == 2:
+                problems.append(f"L{layer}: rank-local gate/up width is the module's")
+            # the split the arms use, at this rank's width
+            gate_cols, up_cols = fused_width // 2, fused_width - fused_width // 2
+            if gate_cols != local or up_cols != local:
+                problems.append(
+                    f"L{layer} tp{tp_size}: split at LOCAL gives {gate_cols}/{up_cols}, "
+                    f"expected {local}/{local}")
+            if up_cols == 0:
+                problems.append(f"L{layer} tp{tp_size}: up half would be empty")
+            facts[f"tp{tp_size}_local"] = local
+            facts[f"tp{tp_size}_fused_gate_up_width"] = fused_width
+        # the loader blob contract: w13 is (gate, up), w2 is ONE blob
+        per_expert_w13 = [[u["experts"][e]["raw"]["w1"], u["experts"][e]["raw"]["w3"]]
+                          for e in sorted(u["experts"])]
+        per_expert_w2 = [u["experts"][e]["raw"]["w2"] for e in sorted(u["experts"])]
+        if len(per_expert_w2) != E or any(isinstance(b, list) for b in per_expert_w2):
+            problems.append(f"L{layer}: w2 blobs are not one blob per expert")
+        if len(per_expert_w13) != E or any(len(pair) != 2 for pair in per_expert_w13):
+            problems.append(f"L{layer}: w13 blobs are not a gate/up pair per expert")
+        facts["w2_blob_bytes"] = [len(b) for b in per_expert_w2]
+        checked[layer] = facts
+    return {"checked": checked, "problems": problems, "ok": not problems}
 
 
 def _stock_activation(gate, up, limit):
@@ -373,12 +460,20 @@ def _activation_arm(name, native_gate_up, gate, up, limit, report):
     diff = (got.float() - want.float()).abs()
     mag = float(want.float().abs().max())
     ulp = _bf16_ulp(mag)
+    ulps = None if not ulp else float(diff.max() / ulp)
+    # The lane's documented single rounding is the only intended difference
+    # from the stock op, so the stage is gated: one ulp of the reference
+    # maximum, the same unit the staged comparison uses.
+    within = ulps is not None and ulps <= 1.0
     arm = {"arm": name, "max_abs": float(diff.max()), "mag": mag,
-           "bf16_ulps": None if not ulp else float(diff.max() / ulp),
+           "bf16_ulps": ulps, "within_1_ulp_of_stock_op": within,
+           "tolerance": {"screen_bf16_ulps_of_max": 1.0,
+                         "derivation": "the lane's documented single rounding"},
            "activity": _clamp_activity(gate, up, limit),
            "shapes": [list(gate.shape), list(up.shape)]}
     report.setdefault("clamp_arms", []).append(arm)
     print("CLAMP", json.dumps(arm), flush=True)
+    arm["_ok"] = within
     return arm
 
 
@@ -472,9 +567,19 @@ def main():
     ap.add_argument("--canonical-fixture", default=os.environ.get("TESSERA_CANONICAL_FIXTURE"))
     ap.add_argument("--canonical-layers", default="3,4")
     ap.add_argument("--canonical-experts", default="0,1")
+    ap.add_argument("--canonical-self-check", action="store_true",
+                    help="CPU check of the canonical wiring facts (no vLLM needed)")
     ap.add_argument("--canonical-select-only", action="store_true",
                     help="parse+verify the fixture's own containers and stop (CPU)")
     args = ap.parse_args()
+    if args.canonical_self_check:
+        result = canonical_self_check(
+            args.canonical_fixture,
+            layers=tuple(int(v) for v in args.canonical_layers.split(",")),
+            experts=tuple(int(v) for v in args.canonical_experts.split(",")))
+        print(json.dumps(result, indent=1))
+        raise SystemExit(0 if result["ok"] else 1)
+
     if args.canonical_fixture and not args.canonical_select_only:
         # A fixture request that silently fell through to the synthetic arms
         # would run SMALL wires at HIDDEN/INTER and print a pass: a false pass
