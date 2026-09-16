@@ -766,7 +766,8 @@ def refuse_a_family_with_no_expert_route(route: str, target: str) -> None:
 
 
 def attested_cells(family: str, structure: str,
-                   contract: "Mapping | None" = None) -> "list[dict]":
+                   contract: "Mapping | None" = None, *,
+                   device_backed: bool = True) -> "list[dict]":
     """The ``lane_eligibility`` cells that attest ``(family, structure)``.
 
     A cell is the unit of attestation (``contract`` module docstring): it
@@ -782,15 +783,32 @@ def attested_cells(family: str, structure: str,
     structure, which cannot resolve a predicate, and a narrowed cell read as
     unconditional is the failure the grammar exists to prevent
     (``contract.refuse_unevaluated_predicates``).
+
+    THE CELL'S OWN QUALIFICATION IS PART OF THE SELECTION.  A cell may state the
+    weaker fact -- ``qualification: compile_only`` beside ``route_status:
+    unbacked``, the one combination v10 (#456) permits for a compile receipt --
+    and such a cell proves a toolchain fact and never a serve.  ``device_backed``
+    (True by default) returns only the cells a DEVICE backed
+    (``contract.cell_is_device_backed``), which is what both callers mean by
+    "attests": the export gate that admits a stack's rungs, and the manifest's
+    ``attested_by`` record of the cells that admitted them.  With it False the
+    cells that state the pair WITHOUT a serve are returned instead, which is what
+    a refusal names so that "no cell" and "a cell that is not a receipt" do not
+    read as the same sentence.  Either way a cell whose qualification or
+    ``route_status`` this build cannot read is refused by name rather than
+    counted on one side of a question the document did not answer.
     """
-    from .contract import load_serving_contract, refuse_unevaluated_predicates
+    from .contract import (cell_is_device_backed, load_serving_contract,
+                           refuse_unevaluated_predicates)
 
     payload = load_serving_contract() if contract is None else contract
     cells = [cell for cell in payload["lane_eligibility"]["cells"]
              if cell["family"] == family and cell["structure"] == structure]
     for cell in cells:
         refuse_unevaluated_predicates(cell, f"lane_eligibility cell {cell.get('id')}")
-    return cells
+    wanted = bool(device_backed)
+    return [cell for cell in cells
+            if cell_is_device_backed(cell, f"lane_eligibility cell {cell.get('id')}") == wanted]
 
 
 def refuse_unserveable_wire(grid: str, q256: int, body: str, plane: str,
@@ -892,8 +910,22 @@ def refuse_unserveable_wire(grid: str, q256: int, body: str, plane: str,
         # bound is the union of those cells' rungs -- which the contract
         # validator already keeps inside the row's range, so this is the
         # tighter of the two and the only one that names the right kernel.
+        # A cell that attests a toolchain is not one of these: see
+        # ``attested_cells`` on the qualification, and the branch below, which
+        # names those cells rather than reporting the pair as unattested.
         cells = attested_cells(family, structure, contract)
         if not cells:
+            compiled_only = attested_cells(family, structure, contract, device_backed=False)
+            if compiled_only:
+                raise ValueError(
+                    f"tessera export {target!r}: the {structure} cells of runtime_contract.json "
+                    f"for {family} state the pair and no serve -- "
+                    + "; ".join(f"{cell['id']} is {cell['qualification']}/{cell['route_status']}"
+                                for cell in compiled_only)
+                    + f". A cell attests a serve only when a device ran the route, so this "
+                    f"build promises no rung for a {structure} stack on grid {grid!r}; the "
+                    "compile receipt is real evidence about the toolchain and no evidence "
+                    "that these bytes were ever served. " + still_legal)
             raise ValueError(
                 f"tessera export {target!r}: no lane_eligibility cell in runtime_contract.json "
                 f"attests {family} served as structure {structure!r}, so this build promises "

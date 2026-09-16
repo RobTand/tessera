@@ -5,6 +5,20 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-16 for the served-cell selection the export gate reads
+(tessera#456, tessera#135). `scheme.attested_cells` selected every
+`lane_eligibility` cell of a `(family, structure)` pair, so a cell stating the
+weaker fact the validator permits -- `qualification: compile_only` beside
+`route_status: unbacked` -- was read as a receipt, and its `rungs_q256` admitted
+a routed stack no device had ever run, with the same ids written into the
+manifest's `attested_by`. The selector now requires a device-backed cell
+(`contract.cell_is_device_backed`) and refuses a cell whose `qualification` or
+`route_status` is outside the published sets instead of answering either way for
+it; `refuse_unserveable_wire` names the cells it excluded, so "no cell" and "a
+cell that is not a receipt" are two sentences. No published cell moves: every
+cell in `runtime_contract.json` is `device_qualified` and
+`backed_with_serve_flag`, so no shipped rung is newly refused.
+
 Re-stamped 2026-09-15 for torch 2.13 on the fused LUT swap passes
 (tessera#486, tessera#519). `lut_swap_refusal` now admits fits on torch 2.13,
 the GLM census image's release, as well as on 2.11. 2.13's `Reduce.cuh` keeps
@@ -2519,8 +2533,14 @@ contract attests as its own structure, so `scheme.refuse_unserveable_wire`
 takes `structure` and, for `routed_moe`, first refuses a route
 `MOE_BUILDERS` has no builder for (`refuse_a_family_with_no_expert_route`,
 the one home for that rule at plan, gate and load) and then reads the
-union of `rungs_q256` over the `lane_eligibility` cells of that structure
-(`scheme.attested_cells`) rather than the row's range. The exporter reads
+union of `rungs_q256` over the DEVICE-BACKED `lane_eligibility` cells of that
+structure (`scheme.attested_cells`) rather than the row's range. A cell is
+selected on the facts it states about itself -- `qualification` and
+`route_status` (`contract.cell_is_device_backed`) -- because the validator
+permits a cell to attest a toolchain and no serve (`compile_only` beside
+`unbacked`, v10/#456); such a cell is named in the refusal instead of being
+counted, since counting it was how a compiled-but-unserved route would have
+admitted rungs no device ran. The exporter reads
 the source's shapes before the plan so it knows which plan entries are
 stacks, refuses a stack at a rung only the dense route reads by the cells'
 ids, stamps `structure` on every `serving_gate` override, and writes
@@ -3944,7 +3964,11 @@ The rules, all of them derived rather than transcribed:
 - **`qualification: compile_only` may only carry `route_status: unbacked`.** A
   compile receipt proves a toolchain fact; a backed route needs a device.
   This moves nothing shipped: every v22 cell is `device_qualified` and
-  `backed_with_serve_flag`.
+  `backed_with_serve_flag`. The reader's half of the same rule is
+  `contract.cell_is_device_backed`, and `scheme.attested_cells` applies it: the
+  export gate and a manifest's `attested_by` read device-backed cells only, so
+  a cell that states the weaker fact is named in a refusal rather than counted
+  as a receipt (re-stamp above, 2026-09-16).
 - **A platform's `serve_image` is one of its own receipts** — an image at
   least one of *its* cells attests, and `null` exactly when it has no cells.
   `versions.default_serve_image` must be some platform's `serve_image`.
