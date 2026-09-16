@@ -9,8 +9,11 @@ this module owns:
 * ``gate/up`` runs in ``preserve=True`` mode: per-route outputs
   ``[T, top_k, 2I]`` (or two ``[T, top_k, I]`` stacks if gate and up are
   separate).  The routing weight multiplies this projection's fp32
-  accumulator iff ``apply_router_weight_on_input``, exactly as vLLM dispatches
-  gemm1 (``fused_moe.py``).
+  accumulator iff ``apply_router_weight_on_input``, which is the legacy
+  ``fused_moe.py`` placement.  The MODULAR path that serves instead applies the
+  weight in ``prepare`` -- to the hidden states, BEFORE the activation
+  quantization (``prepare_finalize/no_dp_ep.py``) -- and that is what this
+  adapter now reproduces, so both are named here rather than conflated.
 * the activation is applied per route.  ``silu`` is served, with the model's
   SwiGLU clamp (``swiglu_limit`` / vLLM's ``gemm1_clamp_limit``) reproduced by
   clamping both branches in fp32 before the activation -- the gate saturates at
@@ -118,10 +121,41 @@ class NativeWindowMoE:
                 f"activation {self.activation!r} has no exact implementation here "
                 "and refusing beats approximating vLLM's arithmetic"
             )
+        # ``apply_router_weight_on_input`` is the MODULAR kernel's prepare-time
+        # placement, and that is a different operation from the legacy
+        # monolithic one.  ``prepare_finalize/no_dp_ep.py`` multiplies the
+        # HIDDEN STATES by ``topk_weights`` and only THEN calls
+        # ``_quantize_input``: the route weight is applied to x BEFORE the
+        # per-token FP8 activation quantization, so the activation scale is
+        # computed from the SCALED magnitudes.  A lane that quantizes the
+        # unscaled x and scales the gemm1 accumulator afterwards is quantizing
+        # different numbers, which is a different function, not a rounding
+        # difference.  Legacy ``fused_moe.py`` scales the accumulator; the
+        # modular path is what serves, and this lane follows the modular one.
+        #
+        # vLLM's prepare asserts the placement is only implemented for topk=1;
+        # refuse rather than silently serving something else.
         inter = self.down.cols
+        if apply_router_weight_on_input:
+            if int(expert_ids.shape[1]) != 1:
+                raise GrammarError(
+                    f"apply_router_weight_on_input is only implemented for topk=1 "
+                    f"(vLLM's own prepare asserts this); got topk="
+                    f"{int(expert_ids.shape[1])}"
+                )
+            # BEFORE the activation quantization, as the modular prepare does:
+            # ``no_dp_ep.py`` computes ``a1 = a1 * topk_weights.to(a1.dtype)``
+            # and only then quantizes.  The weight is narrowed to the ACTIVATION
+            # dtype first (not left fp32 to promote the product) and the product
+            # keeps that dtype, so the per-token scale is computed from exactly
+            # the magnitudes the stock prepare feeds its quantizer.
+            weights_in = routing_weights.reshape(-1, 1).to(x.dtype)
+            x = x * weights_in
+        # gemm1 consumes the ALREADY-SCALED activations: the weight is in x,
+        # so neither gemm1 nor gemm2 may apply it again.
         if self.gate_up is not None:
             route = self.gate_up(x, expert_ids, routing_weights, preserve=True,
-                                 apply_router_weight_on_input=apply_router_weight_on_input)
+                                 apply_router_weight_on_input=False)
             if route.shape[-1] != 2 * inter:
                 raise GrammarError(
                     f"the fused gate/up stack produces {route.shape[-1]} rows, "
@@ -130,11 +164,18 @@ class NativeWindowMoE:
             gate, up = route[..., :inter], route[..., inter:]
         else:
             gate = self.gate(x, expert_ids, routing_weights, preserve=True,
-                             apply_router_weight_on_input=apply_router_weight_on_input)
+                             apply_router_weight_on_input=False)
             up = self.up(x, expert_ids, routing_weights, preserve=True,
-                         apply_router_weight_on_input=apply_router_weight_on_input)
+                         apply_router_weight_on_input=False)
         act = _silu_and_mul(gate, up, clamp_limit=limit)
         t_tokens, top_k, _ = act.shape
+        # The down stage's weight application is decided by
+        # ``MUL_WEIGHT=(apply_router_weight_on_input == preserve)``
+        # (``window_gemm_grouped.py``) with ``preserve=False`` here, so the flag
+        # must be FORWARDED unchanged: True suppresses the second
+        # multiplication once x already carries the routes, False lets the down
+        # stage weight them when nothing upstream did.  Passing False
+        # unconditionally would multiply by the routes a second time.
         return self.down(act.reshape(t_tokens * top_k, inter), expert_ids, routing_weights,
                          route_input=True,
                          apply_router_weight_on_input=apply_router_weight_on_input,
@@ -167,10 +208,20 @@ def _silu_and_mul(gate: torch.Tensor, up: torch.Tensor, *,
     """``silu(gate) * up`` with one bf16 rounding, the same arithmetic vLLM's
     ``SiluAndMul`` performs on the gemm output (fp32 activation, cast once).
 
-    ``clamp_limit`` is vLLM's SwiGLU clamp, applied while both branches are
-    still fp32 accumulators: the gate saturates at ``+limit`` (no lower clamp),
-    the up branch at ``+-limit``.  That is the contract of the stock stage this
-    lane replaces -- ``vllm/model_executor/layers/fused_moe/activation.py``
+    ``clamp_limit`` is vLLM's SwiGLU clamp: the gate saturates at ``+limit``
+    (no lower clamp), the up branch at ``+-limit``.
+
+    DTYPE.  In the production adapter these branches are the ``preserve=True``
+    grouped outputs, which ``window_gemm_grouped`` allocates as **bfloat16**
+    (``result = torch.empty(..., dtype=torch.bfloat16)``), so the clamp
+    saturates a bf16 tile -- NOT an fp32 accumulator.  The saturation points are
+    identical in fp32 (that is the stock op's arithmetic) and the cast below
+    keeps the product in fp32, so the result is the single bf16 rounding of
+    ``silu(clamp(gate)) * clamp(up)`` either way; what must not be claimed is
+    that the clamp sees fp32 accumulators on this path.
+
+    The stock stage this lane replaces:
+    ``vllm/model_executor/layers/fused_moe/activation.py``
     ``silu_and_mul_with_clamp`` (SILU + a clamp resolves to
     ``torch.ops._C.silu_and_mul_with_clamp``), whose XPU branch spells the
     directions out as ``clamp(gate, max=limit)`` / ``clamp(up, -limit, limit)``.
