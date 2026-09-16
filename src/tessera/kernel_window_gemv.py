@@ -776,6 +776,10 @@ class WindowGemvUnit:
                     f"a window unit's start state holds one register per "
                     f"column in original order ({self.rep.cols}); this one has "
                     f"{state.numel()} entries")
+            if state.device != self.rep.words.device:
+                raise GrammarError(
+                    f"a window unit's start state must live beside its repacked "
+                    f"body ({self.rep.words.device}); this one is on {state.device}")
         elif self.row_offset:
             raise GrammarError(
                 f"this window unit is local rows [{self.row_offset}, "
@@ -803,6 +807,23 @@ class WindowGemvUnit:
     @property
     def cols(self) -> int:
         return self.rep.cols
+
+    def permuted_start_state(self) -> "torch.Tensor | None":
+        """The start state in the repack's column order, or ``None``.
+
+        Entry ``j`` is column ``rep.perm[j]``'s register, which is the order a
+        kernel walking the repacked runs reads its columns in: ``rep.perm``
+        maps a repacked column back to the original one, so the state a run
+        segment needs is ``permuted_start_state()[run_col]``.  A kernel merges
+        it for the first rows whose local bit count is below the window width
+        (``tessera.compact_prep`` documents the derivation).  The state is kept
+        in original order on the unit -- that is what a channel-scale-style
+        consumer expects, and what the artifact's INITIAL_STATE plane holds --
+        and this is the one place the permutation is applied.
+        """
+        if self.initial_state is None:
+            return None
+        return self.initial_state.index_select(0, self.rep.perm.long())
 
     @property
     def items(self) -> torch.Tensor:
