@@ -14,7 +14,7 @@ docker run --rm --name pb-a4-staging \
   --pids-limit 256 --cpus 4 --memory 16g --memory-swap 16g \
   --ulimit memlock=-1:-1 --cap-add IPC_LOCK \
   -e TMPDIR=/ext -e TRITON_CACHE_DIR=/ext/triton -e PYTHONUNBUFFERED=1 \
-  -v "$PWD":/tessera:ro -v "$EXT":/ext \
+  -v "$PWD":/tessera:ro -v "$EXT":/ext -v /mnt/shared:/mnt/shared:ro \
   --entrypoint bash "$IMG" -c '
 set -e
 inc="$(python3 -c "import glob; p=sorted(glob.glob(\"/usr/local/lib/python3*/dist-packages/nvidia/cu*/include\")); print(p[0] if p else \"\")")"
@@ -23,5 +23,5 @@ for src in "$inc"/*; do n="$(basename "$src")"; [ -e "$dst/$n" ] || ln -s "$src"
 pip install --no-deps --no-build-isolation -q -e /tessera
 pip install -q pytest
 cd /tessera
-python3 -m pytest -q tests/test_native_a4_loader_staging.py tests/test_serving_nvfp4_moe_route.py
+python3 -m pytest -q tests/test_native_a4_loader_staging.py tests/test_serving_nvfp4_moe_route.py tests/test_loader_throughput_contract.py
 '

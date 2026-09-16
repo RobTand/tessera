@@ -231,11 +231,16 @@ def descendant_set_size(completion: int) -> int:
     return 1 << completion
 
 
-#: The default cap's rates as a set: ``_check_rate`` runs once per column in
-#: the schedule and completion walks, and a linear scan of ``LEGAL_RATES``
-#: there was 0.57 s of a 5 s wire profile.  A constant of the grammar, not a
-#: cache; the non-default cap is an integer range, so it needs no table.
-_LEGAL_SET = frozenset(LEGAL_RATES)
+#: ``range`` membership keeps the *original* domain semantics exactly --
+#: equality against each integer, so an integral-valued float is accepted and
+#: a fractional one refused -- while being O(1) for real ints instead of the
+#: linear tuple scan that was 0.57 s of a 5 s wire profile.  It is derived from
+#: ``LEGAL_RATES`` and only used when the tuple is the contiguous range; the
+#: tuple itself stays the fallback, and the refusal message still formats the
+#: tuple.
+_LEGAL_RANGE = None
+if LEGAL_RATES and tuple(range(LEGAL_RATES[0], LEGAL_RATES[-1] + 1)) == LEGAL_RATES:
+    _LEGAL_RANGE = range(LEGAL_RATES[0], LEGAL_RATES[-1] + 1)
 
 
 def _rates_signature(rates: "tuple[int, ...]") -> tuple:
@@ -265,9 +270,13 @@ def _check_rate(rate: int, cap: "int | None" = C_FULL_BITS) -> None:
         raise GrammarError(f"rate {rate} is below the shaped domain (min 1)")
     if cap is None:
         return
-    legal = (rate in _LEGAL_SET) if cap == C_FULL_BITS else (1 <= rate <= cap)
+    if cap == C_FULL_BITS:
+        legal = (rate in _LEGAL_RANGE) if _LEGAL_RANGE is not None             else (rate in LEGAL_RATES)
+        domain = LEGAL_RATES
+    else:
+        legal = rate in range(1, cap + 1)
+        domain = tuple(range(1, cap + 1))
     if not legal:
-        domain = LEGAL_RATES if cap == C_FULL_BITS else tuple(range(1, cap + 1))
         raise GrammarError(
             f"rate {rate} outside the shaped domain {domain} "
             "(max_trellis_rate = native - 1)"

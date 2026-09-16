@@ -222,11 +222,15 @@ def verify_plane_region(
     """
     region = memoryview(plane_region)
     order = {kind: index for index, kind in enumerate(manifest.plane_order)}
-    ranges = list(plane_ranges(manifest, terminal))
     failure: dict = {}
 
     def _verify_planes() -> None:
+        # ``plane_ranges`` is evaluated inside here on purpose: a malformed
+        # manifest/terminal must not raise before the payload digest has been
+        # compared, and anything it raises is held until the caller has run
+        # that comparison -- the original precedence, verbatim.
         try:
+            ranges = list(plane_ranges(manifest, terminal))
             for descriptor, offset, content, total in ranges:
                 chunk = region[offset:offset + total]
                 if len(chunk) != total:
