@@ -55,6 +55,7 @@ from .manifest import (
     RotationState,
     ScalePlane,
     ScalePlaneKind,
+    TerminalRecord,
     scale_plane_terminal_flags,
 )
 from .planes import NORMATIVE_ELEMENT_BITS, PlaneKind, PlaneLayout
@@ -811,98 +812,150 @@ def read_unit_artifact(blob: bytes, device="cpu") -> torch.Tensor:
     return reconstruct_unit(parsed.unit, parsed.forests, parsed.code)
 
 
-def parse_unit_artifact(blob: bytes, device="cpu") -> ParsedUnit:
-    """Parse an artifact to a ``ParsedUnit`` from **bytes alone**.
+@dataclass
+class ParsedMetadata:
+    """A verified artifact read to its metadata, before any weight-bearing
+    plane is expanded.
 
-    Nothing here comes from the encoder: the forests come off the ALPHABET and
-    DESCENDANT planes, the scales off segment 2b, the convolutional code out of
-    the manifest's encoder profile.
+    The seam a compact preparer reads (``tessera.compact_prep``): every
+    structural, digest, profile, rate, slack, geometry and plane-range refusal
+    ``parse_unit_artifact`` applies has already run by the time one exists --
+    through the same helpers, so the two readers cannot disagree -- and the
+    byte chunks are the verified slices of the plane region, never copies.
+    What is absent is the expanded form: BODY and COMPLETION stay packed
+    bytes, and no block-scale value is materialised.
 
-    Every plane is read at the **terminal's** count, not at the count the
-    geometry would give a whole unit (tessera#144, obstacle 3): a terminal
-    shorter than the writer's is a rung of the ladder the wire admits since
-    minor 7, and what each shorter count means -- or that it means nothing,
-    and is refused by name -- is ``_refuse_partial_planes``'s docstring.
+    ``forests`` is the TCQ forests keyed by rate, or the bare ``PayloadGrid``
+    under a WINDOW body (which has no forest); ``code`` is ``None`` under
+    WINDOW.  ``completion_limit`` and ``widths`` are the COMPLETION plane's
+    resolved depth and per-column widths -- what a kernel lane refuses when
+    any is non-zero.  ``shard_state`` is the INITIAL_STATE plane unpacked
+    (one register per column, ``manifest.shard.state_bits`` wide) or ``None``;
+    its width has been checked against the resolved body.
     """
-    from .container import plane_ranges
-    from .diagonals import Diagonals, rotation_block_for
 
-    art = parse(blob)
-    manifest, terminal = art.manifest, art.terminal
-    geometry, rates = manifest.geometry, manifest.rates
-    rows, cols = geometry.rows, geometry.columns
-    # #57's rule, read back.  An S6b artifact at a width that is not a whole
-    # number of groups is byte-self-consistent -- every hash agrees with it --
-    # so the writer's gate cannot be the only one: an artifact from a
-    # nonconforming encoder is refused here, at acceptance, rather than handed
-    # back as a unit no consumer can cut (``slicing._slice_block_plane``
-    # refuses every cut of it, the identity slice included) and whose
-    # base-scale groups pair two unrelated output rows under one exponent
-    # (tessera#260, the shape of tessera#208's reserved SCALE_BASE word).  It
-    # orphans nothing: every S6b artifact this encoder has written went
-    # through ``encode._pack_scales``, which refuses the same widths, and each
-    # committed legacy fixture is a whole number of groups.  Before the body
-    # branch, because a WINDOW body carries the same block plane.  Through the
-    # same ``grammar.require_scale_groups`` the encoder and the writer call.
-    #
-    # #56's weaker rule owes the reader the same, and for the same reason --
-    # its three homes were the writer, the materialiser and the kernel lane,
-    # and none of them is asked before ``reconstruct_unit`` returns weights
-    # whose halves straddle two output rows.  Both calls, in the writer's own
-    # order, so an artifact is refused with the words the writer would have
-    # refused it with.  A CHANNEL plane carries one word per output row and no
-    # per-half plane, so the rule is vacuous there exactly as at write.
-    if manifest.scale_plane.kind is not ScalePlaneKind.CHANNEL:
-        require_column_groups(cols, geometry.half_weights)
-    if manifest.scale_plane.kind in (ScalePlaneKind.S6B, ScalePlaneKind.MX):
-        require_scale_groups(cols, geometry.group_weights)
+    manifest: Manifest
+    terminal: "TerminalRecord"
+    body: BodyKind
+    code: "ConvCode | None"
+    grid: PayloadGrid
+    chunks: "dict[PlaneKind, bytes]"
+    completion_limit: int
+    widths: "tuple[int, ...]"
+    n_released: int
+    forests: "dict[int, AnchorForest] | PayloadGrid"
+    shard_state: "torch.Tensor | None"
+
+    @property
+    def rates(self) -> "tuple[int, ...]":
+        return self.manifest.rates
+
+    @property
+    def rows(self) -> int:
+        return int(self.manifest.geometry.rows)
+
+    @property
+    def columns(self) -> int:
+        return int(self.manifest.geometry.columns)
+
+    @property
+    def span(self) -> int:
+        return int(self.manifest.span)
+
+    @property
+    def rotation(self) -> RotationState:
+        return RotationState(self.manifest.branch.rotation)
+
+    @property
+    def has_diagonals(self) -> bool:
+        """A rank-1 DIAG_SU/DIAG_SV pair is on the wire for this unit.
+
+        The same reading ``_read_diagonals`` makes: a CHANNEL plane's DIAG_SV
+        is its row scale and its DIAG_SU is refused, so diagonals exist only
+        on the other plane kinds and only when DIAG_SU is present.
+        """
+        if self.manifest.scale_plane.kind is ScalePlaneKind.CHANNEL:
+            return False
+        return bool(self.chunks.get(PlaneKind.DIAG_SU))
+
+    @property
+    def release_positions(self) -> int:
+        return int(self.n_released)
+
+    @property
+    def scale_lut(self) -> "torch.Tensor | None":
+        """The LUT plane's table as a uint8 tensor, or ``None`` for any other
+        plane kind.  The bytes are the manifest's own, no device move."""
+        if self.manifest.scale_plane.kind is not ScalePlaneKind.LUT:
+            return None
+        return torch.frombuffer(
+            bytearray(self.manifest.scale_plane.table), dtype=torch.uint8)
+
+    def role_facts(self) -> dict:
+        """The byte-side facts ``scheme._parse_container`` compares against a
+        declared role, in that function's own field names.
+
+        One home for the comparison's inputs: a loader that validated a wire
+        with this module and a route that validated it through ``scheme``
+        read the same numbers, and the root-rate divisibility refusal is
+        stated here rather than restated there.
+        """
+        geometry = self.manifest.geometry
+        root = int(self.manifest.branch.root_q256)
+        if root % self.grid.arity:
+            raise GrammarError(
+                f"root_q256={root} is not a whole per-weight rate over an "
+                f"arity-{self.grid.arity} grid"
+            )
+        return {
+            "grid": self.grid.name,
+            "body": self.body.name,
+            "plane": self.manifest.scale_plane.kind.name,
+            "q256": root // self.grid.arity,
+            "rows": int(geometry.rows),
+            "columns": int(geometry.columns),
+            "span": int(self.manifest.span),
+        }
+
+
+def _plane_chunks(art) -> "dict[PlaneKind, bytes]":
+    """The terminal's plane bytes, in wire order, after the partial-plane
+    refusals.  ONE home: ``parse_unit_artifact`` and ``parse_unit_metadata``
+    slice the same region and refuse the same truncations."""
+    from .container import plane_ranges
 
     chunks = {}
-    for descriptor, offset, content, _total in plane_ranges(manifest, terminal):
+    for descriptor, offset, content, _total in plane_ranges(art.manifest, art.terminal):
         chunks[descriptor.kind] = art.plane_region[offset : offset + content]
-    _refuse_partial_planes(manifest, terminal)
+    _refuse_partial_planes(art.manifest, art.terminal)
+    return chunks
 
-    # Neither the ConvCode nor the payload grid is stored field-by-field; the
-    # profile id commits to both.  Recovering them by search over the published
-    # orders and the closed grid registry, then checking the digest, is a
-    # *verification*, not a guess: a mismatch means the artifact was made by an
-    # encoder this reader does not implement, and it fails closed.  The search
-    # is over the product, because the digest binds the pair jointly -- and the
-    # grid must be resolved before anything else, since it fixes both the
-    # completion width (``rate_cap``) and how many weights a code covers.
+
+def _plane_element_lookup(manifest: Manifest, terminal):
+    """``elements(kind) -> int`` over the terminal's plane counts."""
+    wire = manifest.plane_order
+    return lambda kind: terminal.plane_elements[wire.index(kind)]
+
+
+def _resolve_tcq_profile(manifest: Manifest) -> "tuple[ConvCode, PayloadGrid]":
+    """The ``(convolutional code, payload grid)`` pair the profile id binds.
+
+    Neither is stored field-by-field, so recovering them by search over the
+    published orders and the closed grid registry, then checking the digest,
+    is a *verification*, not a guess.  The search is over the product because
+    the digest binds the pair jointly.  ONE home: the materialising reader and
+    the metadata reader walk the same roster and report the same refusal.
+    """
     span = manifest.span
     plane = manifest.scale_plane
     body, window_bits = manifest.body, manifest.window_bits
     seed, wsigma, csigma = _reach_attrs(manifest)
     code = grid = None
-    if body is BodyKind.WINDOW:
-        # No convolutional code to recover: the profile binds the body kind,
-        # the window width, the rates and the grid.
-        for known in SERIALISABLE_GRIDS.values():
-            if encoder_profile_id(
-                None, rates, known, span, plane.kind, body, window_bits,
-                seed, wsigma, csigma,
-            ) == manifest.encoder_profile_id:
-                grid = known
-                break
-        if grid is None:
-            raise GrammarError(
-                "encoder_profile_id matches no payload grid this reader "
-                f"implements for a window body of {window_bits} bits over a "
-                f"{plane.kind.name} scale plane; it searched grids "
-                f"{[g.name for g in SERIALISABLE_GRIDS.values()]}. Either the "
-                "manifest's body, window width, scale-plane kind or reach "
-                "record disagrees with the profile the encoder bound, or the "
-                "grid is outside SERIALISABLE_GRIDS. Refusing to decode "
-                "against an assumed grid."
-            )
-        _require_plane_grid(plane.kind, grid)
-        return _read_window_unit(art, grid, device)
     for candidate in replayable_codes():
         for known in SERIALISABLE_GRIDS.values():
             if encoder_profile_id(
-                candidate, rates, known, span, plane.kind, body, window_bits,
-                seed, wsigma, csigma,
+                candidate, manifest.rates, known, span, plane.kind, body,
+                window_bits, seed, wsigma, csigma,
             ) == manifest.encoder_profile_id:
                 code, grid = candidate, known
                 break
@@ -923,7 +976,218 @@ def parse_unit_artifact(blob: bytes, device="cpu") -> ParsedUnit:
             "grid: that is exactly the silent misdecode this digest exists to "
             "prevent."
         )
+    return code, grid
 
+
+def _resolve_window_grid(manifest: Manifest) -> PayloadGrid:
+    """The payload grid a WINDOW body's profile id binds.
+
+    No convolutional code to recover: the profile binds the body kind, the
+    window width, the rates and the grid.  Same roster, same refusal shape as
+    ``_resolve_tcq_profile``.
+    """
+    span = manifest.span
+    plane = manifest.scale_plane
+    body, window_bits = manifest.body, manifest.window_bits
+    seed, wsigma, csigma = _reach_attrs(manifest)
+    grid = None
+    for known in SERIALISABLE_GRIDS.values():
+        if encoder_profile_id(
+            None, manifest.rates, known, span, plane.kind, body, window_bits,
+            seed, wsigma, csigma,
+        ) == manifest.encoder_profile_id:
+            grid = known
+            break
+    if grid is None:
+        raise GrammarError(
+            "encoder_profile_id matches no payload grid this reader "
+            f"implements for a window body of {window_bits} bits over a "
+            f"{plane.kind.name} scale plane; it searched grids "
+            f"{[g.name for g in SERIALISABLE_GRIDS.values()]}. Either the "
+            "manifest's body, window width, scale-plane kind or reach "
+            "record disagrees with the profile the encoder bound, or the "
+            "grid is outside SERIALISABLE_GRIDS. Refusing to decode "
+            "against an assumed grid."
+        )
+    return grid
+
+
+def _check_scale_plane_shape(plane_kind: ScalePlaneKind, elements, geometry) -> None:
+    """The terminal's scale-plane shape rules, before any value is read.
+
+    Refuses a plane whose declared counts disagree with its kind: a LUT or
+    CHANNEL plane carries no SCALE_BASE, a CHANNEL plane carries no
+    SCALE_REFINE and no DIAG_SU, and its DIAG_SV holds exactly one word per
+    output row; an MX plane carries no SCALE_REFINE and no diagonals.  ONE
+    home: ``_read_scale_planes`` (which then materialises) and
+    ``parse_unit_metadata`` (which must refuse the same bytes without
+    expanding them) both call this.
+    """
+    rows = geometry.rows
+    n_base, n_refine = elements(PlaneKind.SCALE_BASE), elements(PlaneKind.SCALE_REFINE)
+    if plane_kind is ScalePlaneKind.CHANNEL:
+        if n_base or n_refine:
+            raise GrammarError(
+                "a CHANNEL scale plane carries no block-scale planes; the terminal "
+                f"declares {n_base} base and {n_refine} refinement elements"
+            )
+        if elements(PlaneKind.DIAG_SU):
+            raise GrammarError(
+                "a CHANNEL scale plane's row field is DIAG_SV alone; the terminal "
+                f"declares {elements(PlaneKind.DIAG_SU)} DIAG_SU elements"
+            )
+        if elements(PlaneKind.DIAG_SV) != rows:
+            raise GrammarError(
+                f"a CHANNEL scale plane holds one word per output row; the terminal "
+                f"declares {elements(PlaneKind.DIAG_SV)} for {rows} rows"
+            )
+    elif plane_kind is ScalePlaneKind.MX:
+        if n_refine:
+            raise GrammarError(
+                "an MX scale plane carries no SCALE_REFINE plane; the terminal "
+                f"declares {n_refine} refinement elements"
+            )
+        if elements(PlaneKind.DIAG_SU) or elements(PlaneKind.DIAG_SV):
+            raise GrammarError(
+                "an MX scale plane carries no DIAG_SU/DIAG_SV planes; the terminal "
+                f"declares {elements(PlaneKind.DIAG_SU)}/{elements(PlaneKind.DIAG_SV)}"
+            )
+        want = geometry.positions // geometry.group_weights
+        if n_base != want:
+            raise GrammarError(
+                f"an MX scale plane holds one E8M0 word per {geometry.group_weights} "
+                f"weights: the terminal declares {n_base} for {want} blocks"
+            )
+    elif plane_kind is ScalePlaneKind.LUT:
+        if n_base:
+            raise GrammarError(
+                f"a LUT scale plane carries no SCALE_BASE plane; the terminal "
+                f"declares {n_base} base elements"
+            )
+
+
+def _require_state_width(manifest: Manifest, code: "ConvCode | None") -> None:
+    """A shard's start state is the width of the body's own register.
+
+    A register of another code's memory would be written into the wrong pad
+    positions and read as a different state, so a WINDOW body's start state is
+    its window width and a TCQ body's is the convolutional code's memory.
+    ONE home: ``_as_unit`` and ``parse_unit_metadata`` both call it.
+    """
+    shard = manifest.shard
+    if shard is None or not shard.has_initial_state:
+        return
+    body = manifest.body
+    want = manifest.window_bits if body is BodyKind.WINDOW else code.memory
+    if shard.state_bits != want:
+        raise GrammarError(
+            f"a {body.name} body's start state is {want} bits wide; this "
+            f"shard declares {shard.state_bits}. Refusing to replay a body "
+            "from a state of the wrong width"
+        )
+
+
+def _shard_state_checked(manifest, chunks, device, code):
+    """The INITIAL_STATE plane unpacked, its width checked against the body."""
+    _require_state_width(manifest, code)
+    return _shard_state(manifest, chunks, device)
+
+
+def _window_table(chunks, grid: PayloadGrid, window_bits: int) -> torch.Tensor:
+    """The window body's ``2^L`` table off the ALPHABET plane, range-checked.
+
+    The table IS the alphabet plane (one grid code per state) and its width is
+    the grid's own ``code_bytes``; a table naming a code outside the grid is
+    refused here, before any state indexes it.  ONE home: the metadata reader
+    (which must refuse it) and the materialising reader (which installs it on
+    the unit) both call this.
+    """
+    table_bytes = chunks[PlaneKind.ALPHABET]
+    need = grid.code_bytes << window_bits
+    if len(table_bytes) != need:
+        raise GrammarError(
+            f"ALPHABET holds {len(table_bytes)} bytes; a {window_bits}-bit "
+            f"window body's table over {grid.name} is exactly {need} "
+            f"({grid.code_bytes} byte(s) x {1 << window_bits} states)"
+        )
+    if grid.code_bytes == 1:
+        table = torch.frombuffer(bytearray(table_bytes), dtype=torch.uint8)
+    else:
+        # Explicit little-endian, not the host's order: the wire's byte order
+        # is a property of the format, and a big-endian reader that took the
+        # native one would decode every state to a different code.
+        import numpy as np
+
+        table = torch.from_numpy(
+            np.frombuffer(bytes(table_bytes), dtype=f"<u{grid.code_bytes}")
+            .astype(np.int32)
+        )
+    if int(table.max()) >= grid.size:
+        raise GrammarError(
+            f"the window table names code {int(table.max())}, outside the "
+            f"{grid.size}-code {grid.name} grid: refusing to decode"
+        )
+    return table
+
+
+def parse_unit_metadata(blob: bytes, device="cpu") -> ParsedMetadata:
+    """Parse an artifact to its **verified metadata**, expanding no weight plane.
+
+    Every refusal ``parse_unit_artifact`` makes about structure, digests,
+    profile, rates, slack, geometry, plane ranges and the shard record fires
+    here, through the same helpers -- so a compact reader and the reference
+    reader answer identically about the same bytes -- and the difference is
+    what is *not* done: BODY and COMPLETION stay packed bytes and no block
+    scale is materialised.  Scale-plane **shape** rules run here; the
+    value-level scale refusals (the reserved E8M0 word, a LUT index past its
+    table) stay with the materialisers that read those values, because a
+    metadata reader does not read them.
+
+    The container parse is unconditional and identical: payload digests,
+    canonical padding, sub-byte slack and terminal truncation all run in
+    ``container.parse``, and there is no verify-off switch.
+    """
+    art = parse(blob)
+    manifest, terminal = art.manifest, art.terminal
+    geometry, rates = manifest.geometry, manifest.rates
+    rows, cols = geometry.rows, geometry.columns
+    if manifest.scale_plane.kind is not ScalePlaneKind.CHANNEL:
+        require_column_groups(cols, geometry.half_weights)
+    if manifest.scale_plane.kind in (ScalePlaneKind.S6B, ScalePlaneKind.MX):
+        require_scale_groups(cols, geometry.group_weights)
+
+    chunks = _plane_chunks(art)
+    plane = manifest.scale_plane
+    body, window_bits, span = manifest.body, manifest.window_bits, manifest.span
+    elements = _plane_element_lookup(manifest, terminal)
+    if body is BodyKind.WINDOW:
+        # No convolutional code to recover: the profile binds the body kind,
+        # the window width, the rates and the grid.
+        grid = _resolve_window_grid(manifest)
+        _require_plane_grid(plane.kind, grid)
+        # A window position may spend the grid's whole width (``_plan_for``).
+        validate_rate_schedule(rates, manifest.branch.root, grid.payload_bits)
+        if rows % grid.arity:
+            raise GrammarError(
+                f"geometry declares {rows} rows, not a whole number of arity-"
+                f"{grid.arity} tuples over grid {grid.name}"
+            )
+        if elements(PlaneKind.DESCENDANT) or elements(PlaneKind.COMPLETION):
+            raise GrammarError(
+                "a window body carries no DESCENDANT or COMPLETION elements; the "
+                f"terminal declares {elements(PlaneKind.DESCENDANT)}/"
+                f"{elements(PlaneKind.COMPLETION)}"
+            )
+        _window_table(chunks, grid, window_bits)
+        _check_scale_plane_shape(plane.kind, elements, geometry)
+        return ParsedMetadata(
+            manifest=manifest, terminal=terminal, body=body, code=None, grid=grid,
+            chunks=chunks, completion_limit=0, widths=(0,) * cols,
+            n_released=elements(PlaneKind.RELEASE), forests=grid,
+            shard_state=_shard_state_checked(manifest, chunks, device, None),
+        )
+
+    code, grid = _resolve_tcq_profile(manifest)
     _require_plane_grid(plane.kind, grid)
     # The manifest deferred the rate ceiling because it had no grid; there is
     # one now, so apply it before a single code becomes a weight.
@@ -943,23 +1207,58 @@ def parse_unit_artifact(blob: bytes, device="cpu") -> ParsedUnit:
     # unique solution of ``sum(min(limit, cap - R)) * steps``.  Recomputing the
     # ceiling here instead would mis-slice every unit encoded shallower than its
     # rate allows -- silently, since the bits would still unpack.
-    wire = manifest.plane_order
-
     completion_limit = completion_limit_from_elements(
-        terminal.plane_elements[wire.index(PlaneKind.COMPLETION)],
-        rates,
-        steps,
-        grid.rate_cap,
+        elements(PlaneKind.COMPLETION), rates, steps, grid.rate_cap,
     )
     widths = completion_widths_for(rates, grid.rate_cap, completion_limit)
-
     forests = _read_forest_planes(
         rates, chunks[PlaneKind.ALPHABET], chunks[PlaneKind.DESCENDANT], grid
     )
+    _check_scale_plane_shape(plane.kind, elements, geometry)
+    return ParsedMetadata(
+        manifest=manifest, terminal=terminal, body=body, code=code, grid=grid,
+        chunks=chunks, completion_limit=completion_limit, widths=widths,
+        n_released=elements(PlaneKind.RELEASE), forests=forests,
+        shard_state=_shard_state_checked(manifest, chunks, device, code),
+    )
 
-    n_released = terminal.plane_elements[wire.index(PlaneKind.RELEASE)]
-    scales = _read_scale_planes(plane, chunks, terminal, geometry, device, wire)
+
+def parse_unit_artifact(blob: bytes, device="cpu") -> ParsedUnit:
+    """Parse an artifact to a ``ParsedUnit`` from **bytes alone**.
+
+    Nothing here comes from the encoder: the forests come off the ALPHABET and
+    DESCENDANT planes, the scales off segment 2b, the convolutional code out of
+    the manifest's encoder profile.
+
+    Every plane is read at the **terminal's** count, not at the count the
+    geometry would give a whole unit (tessera#144, obstacle 3): a terminal
+    shorter than the writer's is a rung of the ladder the wire admits since
+    minor 7, and what each shorter count means -- or that it means nothing,
+    and is refused by name -- is ``_refuse_partial_planes``'s docstring.
+    """
+    metadata = parse_unit_metadata(blob, device)
+    if metadata.body is BodyKind.WINDOW:
+        return _window_unit(metadata, device)
+    return _tcq_unit(metadata, device)
+
+
+def _tcq_unit(metadata: ParsedMetadata, device) -> ParsedUnit:
+    """``parse_unit_artifact``'s TCQ half: the metadata plus every plane a
+    decode reads, expanded exactly as the materialising reader always did."""
+    from .diagonals import rotation_block_for
+
+    manifest, terminal = metadata.manifest, metadata.terminal
+    geometry, rates = manifest.geometry, manifest.rates
+    rows, cols = geometry.rows, geometry.columns
+    chunks = metadata.chunks
+    code, grid, forests = metadata.code, metadata.grid, metadata.forests
+    plane = manifest.scale_plane
+    span = manifest.span
+    steps = rows // grid.arity
+    wire = manifest.plane_order
+    n_released = metadata.n_released
     seed, wsigma, csigma = _reach_attrs(manifest)
+    scales = _read_scale_planes(plane, chunks, terminal, geometry, device, wire)
     unit = _as_unit(manifest, dict(
         rates=rates,
         anchors=torch.zeros(steps, cols, dtype=torch.long, device=device),
@@ -972,14 +1271,14 @@ def parse_unit_artifact(blob: bytes, device="cpu") -> ParsedUnit:
         # the header minor's to say (``manifest.layout``): level-major from
         # minor 7, per-position words before it.
         completion_bits=(
-            unpack_levels(chunks[PlaneKind.COMPLETION], widths, steps, device)
+            unpack_levels(chunks[PlaneKind.COMPLETION], metadata.widths, steps, device)
             if manifest.layout is PlaneLayout.LADDER
-            else unpack_body(chunks[PlaneKind.COMPLETION], widths, steps, device).long()
+            else unpack_body(chunks[PlaneKind.COMPLETION], metadata.widths, steps, device).long()
         ),
         release_index=torch.zeros(0, dtype=torch.long, device=device),
         release_code=torch.zeros(0, dtype=torch.long, device=device),
         sse=0.0,
-        completion_limit=completion_limit,
+        completion_limit=metadata.completion_limit,
         rotation=manifest.branch.rotation,
         # Derived from the same canonical rule the encoder used; the writer
         # refuses any unit this derivation would not reproduce (tessera#210).
@@ -1035,6 +1334,77 @@ def parse_unit_artifact(blob: bytes, device="cpu") -> ParsedUnit:
     return ParsedUnit(unit=unit, forests=forests, code=code, grid=grid, manifest=manifest)
 
 
+def _window_unit(metadata: ParsedMetadata, device) -> ParsedUnit:
+    """``parse_unit_artifact``'s WINDOW half: the table off the ALPHABET plane,
+    ranges checked by the metadata reader, plus the planes a decode installs."""
+    from .diagonals import rotation_block_for
+
+    manifest, terminal = metadata.manifest, metadata.terminal
+    geometry, rates = manifest.geometry, manifest.rates
+    rows, cols = geometry.rows, geometry.columns
+    chunks = metadata.chunks
+    grid = metadata.grid
+    window_bits = manifest.window_bits
+    plane = manifest.scale_plane
+    wire = manifest.plane_order
+    steps = rows // grid.arity
+    n_released = metadata.n_released
+    table = _window_table(chunks, grid, window_bits)
+    seed, wsigma, csigma = _reach_attrs(manifest)
+    scales = _read_scale_planes(plane, chunks, terminal, geometry, device, wire)
+    # A window body has no anchors, no TCQ codes and no completion words: it
+    # decodes from BODY and the table (``decode._decode_window``), and its
+    # writer packs zero-width COMPLETION without reading the plane
+    # (``wire.pack_levels``).  One shared zero-stride view stands in for all
+    # three -- 8 bytes, not three int64 planes of ``steps * cols`` words each
+    # (tessera#502).  It reads as zeros everywhere a plane is read (shape,
+    # ``any``, ``torch.equal``, indexing, ``slice_unit``); nothing writes these
+    # fields, and a write across its shared elements raises.
+    zeros = torch.zeros((), dtype=torch.long, device=device).expand(steps, cols)
+    unit = _as_unit(manifest, dict(
+        rates=rates,
+        anchors=zeros,
+        codes=zeros,
+        body_bits=unpack_body(chunks[PlaneKind.BODY], rates, steps, device, 1),
+        completion_bits=zeros,
+        release_index=torch.zeros(0, dtype=torch.long, device=device),
+        release_code=torch.zeros(0, dtype=torch.long, device=device),
+        sse=0.0,
+        completion_limit=0,
+        rotation=manifest.branch.rotation,
+        # Derived, not assumed: one rule for both body parsers (tessera#210).
+        rotation_block=rotation_block_for(manifest.branch.rotation, cols),
+        diagonals=_read_diagonals(plane, chunks, rows, cols, device),
+        group=geometry.group_weights,
+        half=geometry.half_weights,
+        span=1,
+        body=BodyKind.WINDOW,
+        window_bits=window_bits,
+        window_codes=table.to(device),
+        window_seed=seed,
+        window_sigma=wsigma,
+        channel_sigma=csigma,
+        **scales,
+    ), chunks, device, None, n_released)
+    if n_released and grid.arity > 1:
+        raise GrammarError("release is not defined at arity > 1")
+    if n_released:
+        # The writer's rule, read back; and below, the grid's own value table.
+        # Both for the reason the TCQ reader gives.
+        require_release_defined(grid)
+        from .decode import decode_codes_mixed, unit_scale_field
+        from .encode import grid_value_table
+
+        pre = decode_codes_mixed(unit, grid, None, apply_release=False)
+        scale = unit_scale_field(unit, rows, cols)
+        decoded = grid_value_table(grid, device)[pre.int()] * scale
+        unit.release_index = _release_placement(manifest, decoded, cols, n_released)
+        unit.release_code = unpack_uniform(
+            chunks[PlaneKind.RELEASE], n_released, RELEASE_BITS, device
+        )
+    return ParsedUnit(unit=unit, forests=grid, code=None, grid=grid, manifest=manifest)
+
+
 def _require_plane_grid(kind: ScalePlaneKind, grid: PayloadGrid) -> None:
     """The reader's half of a plane kind's grid rule, after the grid resolves.
 
@@ -1064,44 +1434,16 @@ def _read_scale_planes(plane, chunks, terminal, geometry, device, order) -> dict
     rows = geometry.rows
     n_base, n_refine = elements(PlaneKind.SCALE_BASE), elements(PlaneKind.SCALE_REFINE)
     empty = torch.zeros(0, dtype=torch.uint8, device=device)
+    # The shape rules are ONE function with ``parse_unit_metadata``'s, which
+    # must refuse the same terminals without expanding a value.
+    _check_scale_plane_shape(plane.kind, elements, geometry)
     if plane.kind is ScalePlaneKind.CHANNEL:
-        if n_base or n_refine:
-            raise GrammarError(
-                "a CHANNEL scale plane carries no block-scale planes; the terminal "
-                f"declares {n_base} base and {n_refine} refinement elements"
-            )
-        if elements(PlaneKind.DIAG_SU):
-            raise GrammarError(
-                "a CHANNEL scale plane's row field is DIAG_SV alone; the terminal "
-                f"declares {elements(PlaneKind.DIAG_SU)} DIAG_SU elements"
-            )
-        if elements(PlaneKind.DIAG_SV) != rows:
-            raise GrammarError(
-                f"a CHANNEL scale plane holds one word per output row; the terminal "
-                f"declares {elements(PlaneKind.DIAG_SV)} for {rows} rows"
-            )
         return dict(
             scale_base=empty, scale_refine=empty, scale_plane=plane.kind,
             scale_lut=None, scale_global=float(plane.global_scale),
             scale_rows=unpack_fp16(chunks[PlaneKind.DIAG_SV], rows, device),
         )
     if plane.kind is ScalePlaneKind.MX:
-        if n_refine:
-            raise GrammarError(
-                "an MX scale plane carries no SCALE_REFINE plane; the terminal "
-                f"declares {n_refine} refinement elements"
-            )
-        if elements(PlaneKind.DIAG_SU) or elements(PlaneKind.DIAG_SV):
-            raise GrammarError(
-                "an MX scale plane carries no DIAG_SU/DIAG_SV planes; the terminal "
-                f"declares {elements(PlaneKind.DIAG_SU)}/{elements(PlaneKind.DIAG_SV)}"
-            )
-        want = geometry.positions // geometry.group_weights
-        if n_base != want:
-            raise GrammarError(
-                f"an MX scale plane holds one E8M0 word per {geometry.group_weights} "
-                f"weights: the terminal declares {n_base} for {want} blocks"
-            )
         scale_base = unpack_uniform(
             chunks[PlaneKind.SCALE_BASE], n_base,
             NORMATIVE_ELEMENT_BITS[PlaneKind.SCALE_BASE], device,
@@ -1112,11 +1454,6 @@ def _read_scale_planes(plane, chunks, terminal, geometry, device, order) -> dict
             scale_lut=None, scale_global=1.0, scale_rows=None,
         )
     if plane.kind is ScalePlaneKind.LUT:
-        if n_base:
-            raise GrammarError(
-                f"a LUT scale plane carries no SCALE_BASE plane; the terminal "
-                f"declares {n_base} base elements"
-            )
         scale_base = empty
         scale_lut = torch.frombuffer(bytearray(plane.table), dtype=torch.uint8).to(device)
     else:
@@ -1428,15 +1765,7 @@ def _as_unit(manifest, fields: dict, chunks, device, code, n_released: int):
     shard = manifest.shard
     if shard is None:
         return EncodedUnit(**fields)
-    if shard.has_initial_state:
-        body = manifest.body
-        want = manifest.window_bits if body is BodyKind.WINDOW else code.memory
-        if shard.state_bits != want:
-            raise GrammarError(
-                f"a {body.name} body's start state is {want} bits wide; this "
-                f"shard declares {shard.state_bits}. Refusing to replay a body "
-                "from a state of the wrong width"
-            )
+    _require_state_width(manifest, code)
     counts = _shard_release_counts(manifest, n_released)
     return SlicedUnit(
         **fields,
@@ -1469,124 +1798,3 @@ def _read_diagonals(plane, chunks, rows, cols, device):
         sv=unpack_fp16(chunks[PlaneKind.DIAG_SV], rows, device),
         su=unpack_fp16(chunks[PlaneKind.DIAG_SU], cols, device),
     ))
-
-
-def _read_window_unit(art, grid: PayloadGrid, device) -> ParsedUnit:
-    """The window body's half of ``parse_unit_artifact``: bytes -> the unit.
-
-    The table comes off the ALPHABET plane and is range-checked against the
-    resolved grid before any state indexes it; DESCENDANT and COMPLETION must
-    be empty, because a window body has neither and a reader that tolerated
-    stray bytes there would be reading a different format.
-    """
-    from .container import plane_ranges
-    from .diagonals import Diagonals, rotation_block_for
-
-    manifest, terminal = art.manifest, art.terminal
-    wire = manifest.plane_order
-    geometry, rates = manifest.geometry, manifest.rates
-    rows, cols = geometry.rows, geometry.columns
-    window_bits = manifest.window_bits
-    plane = manifest.scale_plane
-    # A window position may spend the grid's whole width (``_plan_for``).
-    validate_rate_schedule(rates, manifest.branch.root, grid.payload_bits)
-    if rows % grid.arity:
-        raise GrammarError(
-            f"geometry declares {rows} rows, not a whole number of arity-"
-            f"{grid.arity} tuples over grid {grid.name}"
-        )
-    steps = rows // grid.arity
-
-    chunks = {}
-    for descriptor, offset, content, _total in plane_ranges(manifest, terminal):
-        chunks[descriptor.kind] = art.plane_region[offset : offset + content]
-    _refuse_partial_planes(manifest, terminal)
-
-    def elements(kind: PlaneKind) -> int:
-        return terminal.plane_elements[wire.index(kind)]
-
-    table_bytes = chunks[PlaneKind.ALPHABET]
-    need = grid.code_bytes << window_bits
-    if len(table_bytes) != need:
-        raise GrammarError(
-            f"ALPHABET holds {len(table_bytes)} bytes; a {window_bits}-bit "
-            f"window body's table over {grid.name} is exactly {need} "
-            f"({grid.code_bytes} byte(s) x {1 << window_bits} states)"
-        )
-    if elements(PlaneKind.DESCENDANT) or elements(PlaneKind.COMPLETION):
-        raise GrammarError(
-            "a window body carries no DESCENDANT or COMPLETION elements; the "
-            f"terminal declares {elements(PlaneKind.DESCENDANT)}/"
-            f"{elements(PlaneKind.COMPLETION)}"
-        )
-    if grid.code_bytes == 1:
-        table = torch.frombuffer(bytearray(table_bytes), dtype=torch.uint8)
-    else:
-        # Explicit little-endian, not the host's order: the wire's byte order
-        # is a property of the format, and a big-endian reader that took the
-        # native one would decode every state to a different code.
-        import numpy as np
-
-        table = torch.from_numpy(
-            np.frombuffer(bytes(table_bytes), dtype=f"<u{grid.code_bytes}")
-            .astype(np.int32)
-        )
-    if int(table.max()) >= grid.size:
-        raise GrammarError(
-            f"the window table names code {int(table.max())}, outside the "
-            f"{grid.size}-code {grid.name} grid: refusing to decode"
-        )
-    n_released = elements(PlaneKind.RELEASE)
-    scales = _read_scale_planes(plane, chunks, terminal, geometry, device, wire)
-    seed, wsigma, csigma = _reach_attrs(manifest)
-    # A window body has no anchors, no TCQ codes and no completion words: it
-    # decodes from BODY and the table (``decode._decode_window``), and its
-    # writer packs zero-width COMPLETION without reading the plane
-    # (``wire.pack_levels``).  One shared zero-stride view stands in for all
-    # three -- 8 bytes, not three int64 planes of ``steps * cols`` words each
-    # (tessera#502).  It reads as zeros everywhere a plane is read (shape,
-    # ``any``, ``torch.equal``, indexing, ``slice_unit``); nothing writes these
-    # fields, and a write across its shared elements raises.
-    zeros = torch.zeros((), dtype=torch.long, device=device).expand(steps, cols)
-    unit = _as_unit(manifest, dict(
-        rates=rates,
-        anchors=zeros,
-        codes=zeros,
-        body_bits=unpack_body(chunks[PlaneKind.BODY], rates, steps, device, 1),
-        completion_bits=zeros,
-        release_index=torch.zeros(0, dtype=torch.long, device=device),
-        release_code=torch.zeros(0, dtype=torch.long, device=device),
-        sse=0.0,
-        completion_limit=0,
-        rotation=manifest.branch.rotation,
-        # Derived, not assumed: one rule for both body parsers (tessera#210).
-        rotation_block=rotation_block_for(manifest.branch.rotation, cols),
-        diagonals=_read_diagonals(plane, chunks, rows, cols, device),
-        group=geometry.group_weights,
-        half=geometry.half_weights,
-        span=1,
-        body=BodyKind.WINDOW,
-        window_bits=window_bits,
-        window_codes=table.to(device),
-        window_seed=seed,
-        window_sigma=wsigma,
-        channel_sigma=csigma,
-        **scales,
-    ), chunks, device, None, n_released)
-    if n_released and grid.arity > 1:
-        raise GrammarError("release is not defined at arity > 1")
-    if n_released:
-        # The writer's rule, read back; and below, the grid's own value table.
-        # Both for the reason the TCQ reader gives.
-        require_release_defined(grid)
-        from .decode import decode_codes_mixed, unit_scale_field
-        from .encode import grid_value_table
-
-        pre = decode_codes_mixed(unit, grid, None, apply_release=False)
-        scale = unit_scale_field(unit, rows, cols)
-        decoded = grid_value_table(grid, device)[pre.int()] * scale
-        unit.release_index = _release_placement(manifest, decoded, cols, n_released)
-        unit.release_code = unpack_uniform(
-            chunks[PlaneKind.RELEASE], n_released, RELEASE_BITS, device
-        )
-    return ParsedUnit(unit=unit, forests=grid, code=None, grid=grid, manifest=manifest)

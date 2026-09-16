@@ -742,8 +742,49 @@ class WindowGemvUnit:
     native: "torch.Tensor | None" = None           # [256] u8 (E4M3 family)
     family: str = "e4m3"
     items_by_mt: dict = dataclasses.field(default_factory=dict)   # items key -> (items, max_cols)
+    #: The window state immediately before THIS unit's local row 0, one int32
+    #: per column in ORIGINAL column order (``rep.cols`` long; a consumer
+    #: indexes it through ``rep.perm``).  The compact loader
+    #: (``tessera.compact_prep.prepare_window_compact``) always emits one --
+    #: zeros for a whole unit or rank 0, the inherited/derived register for a
+    #: row cut -- so a kernel can merge history for the first rows whose local
+    #: bit count is below ``L`` without a missing-history branch.  ``None`` is
+    #: the legacy prepared-unit spelling and is only legal at ``row_offset``
+    #: 0, where the merge is the pinned zero start.
+    initial_state: "torch.Tensor | None" = None
+    #: This unit's local row 0 as an offset into the parent unit's rows.  A
+    #: nonzero offset without ``initial_state`` would decode the cut from the
+    #: wrong register, so ``__post_init__`` refuses it.
+    row_offset: int = 0
 
     def __post_init__(self):
+        # The start-state contract, checked where the unit is built: a
+        # row-offset unit must carry its incoming history, and any state must
+        # be the int32[cols] original-order tensor the compact loader emits.
+        # Both refusals name the field and the fix; neither is reachable from
+        # ``prepare_from_parsed``/``prepare_value_unit`` (which pass neither,
+        # or refuse a start state outright -- the old GEMV lane reads no
+        # history).
+        if self.initial_state is not None:
+            state = self.initial_state
+            if state.dtype is not torch.int32:
+                raise GrammarError(
+                    f"a window unit's start state is int32[cols] in original "
+                    f"column order; this one is {state.dtype}")
+            if state.numel() != self.rep.cols:
+                raise GrammarError(
+                    f"a window unit's start state holds one register per "
+                    f"column in original order ({self.rep.cols}); this one has "
+                    f"{state.numel()} entries")
+        elif self.row_offset:
+            raise GrammarError(
+                f"this window unit is local rows [{self.row_offset}, "
+                f"{self.row_offset + self.rep.rows}) of its parent -- a row "
+                "cut below row 0 -- and carries no start state. Serving it "
+                "from the pinned zero would decode its first ceil(L/R) rows "
+                "to plausible wrong weights; a cut unit must carry the window "
+                "state immediately before its local row 0 "
+                "(initial_state int32[cols], original column order)")
         # Plan every M tile this unit can serve NOW.  ``plan_items`` reads the
         # run table back to Python (``rep.runs.tolist()``) and ``max_cols`` is
         # a device ``max``; neither can run inside a compiled forward, and a

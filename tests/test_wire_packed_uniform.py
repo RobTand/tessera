@@ -12,16 +12,25 @@ def test_unpack_uniform_matches_the_bit_domain_oracle(width, count):
     rng = np.random.default_rng(211 * (width + 1) + count)
     nbytes = (count * width + 7) // 8
     data = bytes(rng.integers(0, 256, size=nbytes, dtype=np.uint8).tolist())
+    # The oracle is the BIT reader's own path: unpack, then refuse dirty slack
+    # over the UNSLICED array.  Passing the sliced bits made the oracle accept
+    # every dirty plane -- ``refuse_dirty_slack`` saw size == used -- while
+    # ``unpack_uniform``'s packed spelling correctly refused, so the test
+    # failed on 36 of its 77 cases from the patch that added it.
+    raw = np.unpackbits(np.frombuffer(data, dtype=np.uint8), bitorder='big')
     try:
-        bits = np.unpackbits(np.frombuffer(data, dtype=np.uint8), bitorder='big')[: count * width]
-        if bits.size != count * width:
+        if raw.size < count * width:
             raise GrammarError('short')
-        wire.refuse_dirty_slack(bits, count * width, 'plane')
+        wire.refuse_dirty_slack(raw, count * width, 'plane')
     except GrammarError as refused:
         with pytest.raises(GrammarError) as got:
             wire.unpack_uniform(data, count, width)
-        assert str(got.value) == str(refused.value)
+        # ``refused`` is the exception object; its message is ``str(refused)``
+        # (the patch wrote ``refused.value``, an AttributeError that made every
+        # refusal case an error rather than a comparison).
+        assert str(got.value) == str(refused)
         return
+    bits = raw[: count * width]
     expected = wire._from_bits(bits, width)
     actual = wire.unpack_uniform(data, count, width).numpy()
     assert actual.dtype == expected.dtype
