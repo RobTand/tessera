@@ -565,6 +565,198 @@ def check_grouped_gemm(units, rank, group, num_tokens=6, top_k=2):
             "rel": rel}
 
 
+def _stock_w4a4(a_packed, a_scale_linear, stock_packed, stock_scale, epilogue):
+    """The executed stock W4A4 arithmetic for one operand pair, fp32 out."""
+    from tessera.serving.nvfp4_route import blocked_scales
+
+    a_q = a_packed.view(torch.float4_e2m1fn_x2)
+    a_s = blocked_scales(a_scale_linear)
+    b_q = stock_packed.to("cuda").view(torch.float4_e2m1fn_x2)
+    b_s = blocked_scales(stock_scale.view(torch.uint8).view(torch.float8_e4m3fn).to("cuda"))
+    try:
+        out = torch._scaled_mm(a_q, b_q.t(), scale_a=a_s, scale_b=b_s,
+                               out_dtype=torch.float32)
+    except RuntimeError:
+        out = torch._scaled_mm(a_q, b_q.t(), scale_a=a_s, scale_b=b_s,
+                               out_dtype=torch.bfloat16).to(torch.float32)
+    return out * epilogue
+
+
+def _dispatch(token_of_route, expert_of_route, weights_of_route, experts, device="cuda"):
+    """Device CSR dispatch from per-route (token, expert, weight) lists; stable."""
+    expert = torch.tensor(expert_of_route, dtype=torch.long, device=device)
+    token = torch.tensor(token_of_route, dtype=torch.long, device=device)
+    weight = torch.tensor(weights_of_route, dtype=torch.float32, device=device)
+    order = torch.argsort(expert, stable=True)
+    counts = torch.bincount(expert[order], minlength=experts)
+    offsets = torch.zeros(experts + 1, dtype=torch.int32, device=device)
+    offsets[1:] = torch.cumsum(counts, 0).to(torch.int32)
+    return offsets, token[order].to(torch.int32), weight[order]
+
+
+def check_two_stage_moe(units, rank, num_tokens):
+    """Real routed-MoE: E=3 experts, T tokens, K=2 routes, both stages.
+
+    One device CSR order and route-id set is built once and used by both
+    stages.  Stage 1 runs SEPARATE grouped gate and grouped up stacks over the
+    same dispatch, so each route gets its own gate and up row (per-role tables
+    and per-role globals stay distinct); the nonlinearity is the checked
+    BF16-boundary ``silu(gate) * up``; stage 2 consumes THOSE per-route
+    activations (never a collapsed per-token activation) under a second static
+    scale gs2 != gs1 with the same expert CSR; the router weights are applied
+    only in the final combine after the down projection.  Expert 2 is empty
+    and token 0 is routed twice to expert 0.  The oracle walks (t, k) itself
+    with the independent stock tiles and the runtime quantizer.
+    """
+    from torch.nn import functional as F
+
+    w13 = {name: (unit, stock) for name, _p, unit, stock, _pr in units[rank]["w13"]}
+    w2 = {name: (unit, stock) for name, _p, unit, stock, _pr in units[rank]["w2"]}
+    real_gate, gate_stock = w13["gate_proj"]
+    real_up, up_stock = w13["up_proj"]
+    real_down, down_stock = w2["down_proj"]
+    inter, hidden = real_gate.rows, real_gate.cols
+    experts = 3
+    top_k = 2
+    gate_units = [dataclasses_replace_global(real_gate, f) for f in (1.0, 1.5, 2.0)]
+    up_units = [dataclasses_replace_global(real_up, f) for f in (1.0, 1.25, 2.5)]
+    down_units = [dataclasses_replace_global(real_down, f) for f in (1.0, 1.75, 3.0)]
+
+    torch.manual_seed(11)
+    x = torch.randn(num_tokens, hidden, dtype=torch.bfloat16, device="cuda") * 0.25
+    gs1 = torch.tensor([448.0 * 6.0 / max(float(x.abs().max()), 1e-6)],
+                       dtype=torch.float32, device="cuda")
+    packed1, scales1 = a4_quantize_activation(x, gs1)
+
+    # Routing: ids[t] = [t % 2, (t + 1) % 2] with token 0 -> [0, 0]; expert 2
+    # is never selected.  Weights are non-trivial and per (t, k).
+    ids = [[t % 2, (t + 1) % 2] for t in range(num_tokens)]
+    ids[0] = [0, 0]
+    weight_table = [[0.8, 0.2] for _ in range(num_tokens)]
+    if num_tokens > 2:                       # a second repeated id pair [0, 0]
+        ids[2] = [0, 0]
+    routes = num_tokens * top_k
+    route_token = [p // top_k for p in range(routes)]
+    route_expert = [ids[p // top_k][p % top_k] for p in range(routes)]
+    route_weight = [weight_table[p // top_k][p % top_k] for p in range(routes)]
+
+    route_expert_dev = torch.tensor(route_expert, dtype=torch.long, device="cuda")
+    route_token_dev = torch.tensor(route_token, dtype=torch.long, device="cuda")
+    route_weight_dev = torch.tensor(route_weight, dtype=torch.float32, device="cuda")
+
+    def build_dispatch():
+        """The stage-1/stage-2 CSR as pure device ops (capture-safe).
+
+        No ``torch.bincount``: its CUDA path falls back to a host copy, which
+        a graph capture refuses.  ``scatter_add_`` is the device spelling.
+        """
+        order = torch.argsort(route_expert_dev, stable=True)
+        counts = torch.zeros(experts, dtype=torch.int32, device="cuda")
+        counts.scatter_add_(0, route_expert_dev[order],
+                            torch.ones(routes, dtype=torch.int32, device="cuda"))
+        offsets = torch.zeros(experts + 1, dtype=torch.int32, device="cuda")
+        offsets[1:] = torch.cumsum(counts, 0).to(torch.int32)
+        return (offsets, route_token_dev[order].to(torch.int32),
+                route_weight_dev[order], order.to(torch.int32))
+
+    offsets, token_ids, weights_sorted, order = build_dispatch()
+    assert int((torch.bincount(torch.tensor(route_expert), minlength=experts) == 0).sum()) >= 1
+
+    epilogues_gate = torch.stack([u.epilogue_for(gs1)[0] for u in gate_units])
+    epilogues_up = torch.stack([u.epilogue_for(gs1)[0] for u in up_units])
+    stack_gate = A4UnitStack.stack(gate_units)
+    stack_up = A4UnitStack.stack(up_units)
+    gate_out = a4_span2_grouped_gemm(packed1, scales1, stack_gate, epilogues_gate,
+                                     expert_offsets=offsets, token_ids=token_ids)
+    up_out = a4_span2_grouped_gemm(packed1, scales1, stack_up, epilogues_up,
+                                   expert_offsets=offsets, token_ids=token_ids)
+    h = (F.silu(gate_out) * up_out).to(torch.bfloat16)      # runtime boundary
+    gs2 = torch.tensor([448.0 * 6.0 / max(float(h.abs().max()), 1e-6)],
+                       dtype=torch.float32, device="cuda")
+    packed2, scales2 = a4_quantize_activation(h, gs2)
+
+    # Stage 2: same CSR; the operand rows are the ROUTES, so the gather index
+    # is the dispatch order itself (route id), not a token id.
+    epilogues_down = torch.stack([u.epilogue_for(gs2)[0] for u in down_units])
+    stack_down = A4UnitStack.stack(down_units)
+    # The operand is in dispatch order, so stage 2 gathers row-for-row (the
+    # route id IS the row); `order` maps the other way and must not be used.
+    identity = torch.arange(routes, dtype=torch.int32, device="cuda")
+    down_out = a4_span2_grouped_gemm(packed2, scales2, stack_down, epilogues_down,
+                                     expert_offsets=offsets, token_ids=identity)
+    out = torch.zeros((num_tokens, hidden), dtype=torch.float32, device="cuda")
+    out.index_add_(0, token_ids.to(torch.int64), down_out * weights_sorted[:, None])
+
+    # --- independent stock oracle: walk (t, k), weight only the final sum ---
+    ref = torch.zeros_like(out)
+    for token in range(num_tokens):
+        for slot in range(top_k):
+            expert = ids[token][slot]
+            gate_ref = _stock_w4a4(packed1[token:token + 1], scales1[token:token + 1],
+                                   gate_stock["weight_packed"], gate_stock["weight_scale"],
+                                   gate_units[expert].epilogue_for(gs1))[0]
+            up_ref = _stock_w4a4(packed1[token:token + 1], scales1[token:token + 1],
+                                 up_stock["weight_packed"], up_stock["weight_scale"],
+                                 up_units[expert].epilogue_for(gs1))[0]
+            h_ref = (F.silu(gate_ref) * up_ref).to(torch.bfloat16).reshape(1, inter)
+            packed_h, scales_h = a4_quantize_activation(h_ref, gs2)
+            down_ref = _stock_w4a4(packed_h, scales_h,
+                                   down_stock["weight_packed"], down_stock["weight_scale"],
+                                   down_units[expert].epilogue_for(gs2))[0]
+            ref[token] += weight_table[token][slot] * down_ref
+    rel = float((out - ref).abs().max() / ref.abs().max().clamp_min(1e-12))
+    assert rel < 2e-2, f"two-stage rank{rank} M={num_tokens}: rel={rel}"
+
+    # --- capture the whole pipeline INCLUDING the device CSR build ----------
+    def pipeline():
+        offs, tok, wts, ordr = build_dispatch()
+        g_out = a4_span2_grouped_gemm(packed1, scales1, stack_gate, epilogues_gate,
+                                      expert_offsets=offs, token_ids=tok)
+        u_out = a4_span2_grouped_gemm(packed1, scales1, stack_up, epilogues_up,
+                                      expert_offsets=offs, token_ids=tok)
+        hb = (F.silu(g_out) * u_out).to(torch.bfloat16)
+        p2, s2 = a4_quantize_activation(hb, gs2)
+        d_out = a4_span2_grouped_gemm(p2, s2, stack_down, epilogues_down,
+                                      expert_offsets=offs,
+                                      token_ids=torch.arange(routes, dtype=torch.int32,
+                                                             device="cuda"))
+        o = torch.zeros((num_tokens, hidden), dtype=torch.float32, device="cuda")
+        o.index_add_(0, tok.to(torch.int64), d_out * wts[:, None])
+        return o
+
+    eager = pipeline()
+    assert torch.equal(eager, out), "rebuilt dispatch differs from the first run"
+    side = torch.cuda.Stream()
+    side.wait_stream(torch.cuda.current_stream())
+    with torch.cuda.stream(side):
+        for _ in range(3):
+            pipeline()
+    torch.cuda.current_stream().wait_stream(side)
+    graph = torch.cuda.CUDAGraph()
+    with torch.cuda.graph(graph):
+        captured = pipeline()
+    graph.replay()
+    torch.cuda.synchronize()
+    assert torch.equal(captured, eager), f"rank{rank} M={num_tokens}: capture differs"
+    return {"rank": rank, "M": num_tokens, "routes": routes, "rel": rel,
+            "empty_experts": 1, "repeated_ids": 2}
+
+
+def dataclasses_replace_global(unit, factor):
+    """A copy of the unit with its shared weight global scaled by ``factor``."""
+    import dataclasses
+
+    return dataclasses.replace(unit, global_scale=unit.global_scale * factor)
+
+
+def _expert_of_row(offsets, row):
+    ends = offsets[1:].tolist()
+    for expert, end in enumerate(ends):
+        if row < end:
+            return expert
+    return len(ends) - 1
+
+
 def check_graph_capture(units, rank, group):
     """A dense forward captures and replays inside a CUDA graph.
 
@@ -707,6 +899,10 @@ def run_gate(*, ranks=(0, 1), groups=("w13", "w2"), ms=(1, 8, 32, 128),
                    lambda rank=rank, group=group: check_grouped_gemm(units, rank, group))
             record(f"graph_capture.rank{rank}.{group}",
                    lambda rank=rank, group=group: check_graph_capture(units, rank, group))
+            if only == "all":
+                for m in ms:
+                    record(f"two_stage.rank{rank}.M{m}",
+                           lambda rank=rank, m=m: check_two_stage_moe(units, rank, m))
             for m in ms:
                 record(f"gemm_arithmetic.rank{rank}.{group}.M{m}",
                        lambda rank=rank, group=group, m=m:
