@@ -50,6 +50,7 @@ __all__ = [
     "DECODER_TORCH_STOCK",
     "DECODER_TORCH_WINDOW",
     "DECODER_WINDOW_GEMV",
+    "DECODER_NATIVE_WINDOW_GEMM",
     "ATTR_PREFIX",
     "ROUTE_TRACE_ENV",
     "ROUTE_TRACE_SCHEMA",
@@ -100,8 +101,14 @@ DECODER_TORCH_WINDOW = "torch_window"
 #: that did not run, the same defect the ``torch_materialize_stock`` value
 #: exists to prevent on the NVFP4 route.
 DECODER_WINDOW_GEMV = "window_gemv"
+#: The dense native window GEMM (``serving.native_window``): the compact
+#: loader's ``WindowGemvUnit`` decoded inside the packed bitstream GEMM, with
+#: no weight tile produced anywhere -- not at load, not per forward.  A
+#: distinct value because no other decoder ran, and a census that read
+#: ``torch_window`` here would claim one.
+DECODER_NATIVE_WINDOW_GEMM = "native_window_gemm"
 DECODERS = frozenset((DECODER_NATIVE_SPAN2, DECODER_TORCH_STOCK, DECODER_TORCH_WINDOW,
-                      DECODER_WINDOW_GEMV))
+                      DECODER_WINDOW_GEMV, DECODER_NATIVE_WINDOW_GEMM))
 
 ATTR_PREFIX = "_tessera_route_"
 

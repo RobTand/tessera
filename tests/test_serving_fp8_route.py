@@ -254,21 +254,29 @@ def _drive(monkeypatch, mode, roles=(("weight", 256),), cols=1024, m=32, seed=0,
 @requires_cuda
 @pytest.mark.parametrize("mode", [MODE_RESIDENT, MODE_STREAMED])
 def test_pair_is_the_stock_pair_byte_for_byte(monkeypatch, mode):
-    """The decoded bytes and per-row scale ARE materialize_stock's."""
+    """The retained reference pair IS ``materialize_stock``'s, the route's
+    scale is beside it, and the packed native forward matches the stock
+    product.
+
+    The route no longer materialises a tile (``native_window`` holds packed
+    bundles), so the byte-for-byte claim is made where it still has a subject:
+    the RETAINED ``prepare_tessera_fp8_module`` preparation, which stays in the
+    tree as the oracle.  The route's own claim is the forward parity at the
+    end, against the stock pair's product.
+    """
+    from tessera.serving.scheme import parse_tessera_blob_for_scheme
+
     got, want, layer, method, (weight, scale) = _drive(monkeypatch, mode)
-    if mode == MODE_RESIDENT:
-        tile = layer.weight_fp8.view(torch.uint8)
-    elif getattr(layer, "tessera_gemv", None) is not None:
-        # The GEMV lane verified its repack against these same bytes at load;
-        # read them back through the lane's own decode.
-        from tessera.serving import fp8_gemv as _gemv
-        tile, lane_scale = _gemv.holder_decode(layer.tessera_gemv)
-        assert torch.equal(lane_scale, scale)
-    else:
-        tile = layer.tessera_prepared.decode()
+    blob, scheme, *_ = _encode_module([("weight", 256)], cols=1024)
+    reference = route.prepare_tessera_fp8_module(
+        parse_tessera_blob_for_scheme(blob, scheme, "t"), device="cuda")
+    tile = reference.decode()
     assert torch.equal(tile, weight)
+    assert torch.equal(reference.row_scale(), scale)
     assert torch.equal(layer.scale_b.reshape(-1), scale)
     assert layer.scale_b.dtype == torch.float32 and tuple(layer.scale_b.shape) == (1, weight.shape[0])
+    assert layer.tessera_native is not None
+    assert not hasattr(layer, "weight_fp8") and not hasattr(layer, "tessera_prepared")
     err = (got.float() - want.float()).abs().max().item()
     assert err / max(want.float().abs().max().item(), 1e-9) < 8e-3
 
@@ -276,7 +284,12 @@ def test_pair_is_the_stock_pair_byte_for_byte(monkeypatch, mode):
 @requires_cuda
 def test_the_route_attests_the_native_a_side_abi(monkeypatch):
     _drive(monkeypatch, MODE_RESIDENT)
-    assert len(_ATTESTED) == 1 and "test.layer" in _ATTESTED[0]
+    # Two attestations of the same ABI, and both are the point: the prepared
+    # bundle attests the quantizer it will accept bf16 through, and the route
+    # attests the A side it actually runs, once each at load.
+    assert len(_ATTESTED) == 2
+    assert any("test.layer" in context for context in _ATTESTED)
+    assert any("quantizer" in context for context in _ATTESTED)
 
 
 @requires_cuda
@@ -284,8 +297,14 @@ def test_fused_roles_decode_into_row_slices_with_their_own_row_scales(monkeypatc
     roles = (("q_proj", 256), ("k_proj", 128), ("v_proj", 128))
     got, want, layer, _m, (weight, scale) = _drive(monkeypatch, MODE_RESIDENT, roles=roles, seed=3)
     assert layer.tessera_roles == ("q_proj", "k_proj", "v_proj")
-    assert torch.equal(layer.weight_fp8.view(torch.uint8), weight)
+    assert layer.tessera_native is not None
     assert torch.equal(layer.scale_b.reshape(-1), scale)
+    from tessera.serving.scheme import parse_tessera_blob_for_scheme
+
+    blob, scheme, *_ = _encode_module(list(roles), cols=1024, seed=3)
+    reference = route.prepare_tessera_fp8_module(
+        parse_tessera_blob_for_scheme(blob, scheme, "t"), device="cuda")
+    assert torch.equal(reference.decode(), weight)
     err = (got.float() - want.float()).abs().max().item()
     assert err / max(want.float().abs().max().item(), 1e-9) < 8e-3
 
@@ -293,8 +312,13 @@ def test_fused_roles_decode_into_row_slices_with_their_own_row_scales(monkeypatc
 @requires_cuda
 def test_a_mixed_rate_schedule_decodes_through_the_group_permutation(monkeypatch):
     got, want, layer, _m, (weight, scale) = _drive(monkeypatch, MODE_STREAMED, cols=512, seed=4, q256=1000)
-    prepared = layer.tessera_prepared
-    assert torch.equal(prepared.decode(), weight)
+    from tessera.serving.scheme import parse_tessera_blob_for_scheme
+
+    blob, scheme, *_ = _encode_module([("weight", 256)], cols=512, seed=4, q256=1000)
+    reference = route.prepare_tessera_fp8_module(
+        parse_tessera_blob_for_scheme(blob, scheme, "t"), device="cuda")
+    assert torch.equal(reference.decode(), weight)
+    assert len(set(layer.tessera_native.layout_facts()[0].rates)) > 1, "not a mixed schedule"
 
 
 @requires_cuda
@@ -307,40 +331,45 @@ def test_the_two_modes_are_numerically_identical(monkeypatch):
 @requires_cuda
 def test_streamed_holds_the_packed_wire_and_no_resident_tile(monkeypatch):
     _g, _w, a, _m, _ = _drive(monkeypatch, MODE_STREAMED, roles=(("weight", 512),), cols=512)
-    for name in ("wire_bytes", "weight_fp8", "decode_buf"):
+    for name in ("wire_bytes", "weight_fp8", "decode_buf", "tessera_prepared", "tessera_gemv"):
         assert not hasattr(a, name), name
-    if getattr(a, "tessera_gemv", None) is not None:
-        # The repacked wire, not the torch planes and not a tile: rows are a
-        # multiple of the lane's 512-row tile here, so no padding enters and
-        # the same wire-vs-tile cap the torch planes met applies.
-        from tessera.serving import fp8_gemv as _gemv
-        holder = a.tessera_gemv
-        assert holder is not None and a.tessera_prepared is None
-        assert holder.resident_bytes() < 512 * 512 * 4.5 / 8 + 65536
-        p1, p2 = _gemv.holder_decode(holder), _gemv.holder_decode(holder)
-        assert torch.equal(p1[0], p2[0]) and p1[0].data_ptr() != p2[0].data_ptr()
-        return
-    prepared = a.tessera_prepared
-    assert prepared is not None
-    assert prepared.wire_bytes_resident() < 512 * 512 * 4.5 / 8 + 65536   # ~ the wire, not the 8-bit tile
-    p1, p2 = prepared.decode(), prepared.decode()
+    native = a.tessera_native
+    assert native is not None
+    # The packed wire half (words + tables + the fp32 row scale), not the
+    # 8-bit tile: a generous cap over the body's own bytes.
+    assert native.packed_bytes() < 512 * 512 * 4.5 / 8 + 65536, native.packed_bytes()
+    fingerprints = native.fingerprints()
+    x = torch.randn(4, 512, dtype=torch.bfloat16, device="cuda")
+    q, s = _reference_fp8_quant(x)
+    p1, p2 = native.apply(q, s), native.apply(q, s)
     assert torch.equal(p1, p2) and p1.data_ptr() != p2.data_ptr()
+    assert native.fingerprints() == fingerprints, "a forward changed the prepared weights"
 
 
 @requires_cuda
 def test_resident_drops_the_wire(monkeypatch):
     _g, _w, r, _m, _ = _drive(monkeypatch, MODE_RESIDENT)
-    assert not hasattr(r, "wire_bytes") and r.tessera_prepared is None
-    assert r.weight_fp8.dtype == torch.float8_e4m3fn
-    assert tuple(r.weight_fp8.shape) == (r.tessera_rows, r.tessera_columns)
+    assert not hasattr(r, "wire_bytes") and not hasattr(r, "weight_fp8")
+    native = r.tessera_native
+    assert native is not None
+    # Resident mode holds the packed repack, not an 8-bit tile: the wire's own
+    # words over the layout's padded rows (``rep.rows_p``), plus the small
+    # tables and the per-column bookkeeping.
+    facts = native.layout_facts()[0]
+    cap = facts.rows_p * facts.cols * 4.5 / 8 + 65536
+    assert native.packed_bytes() < cap, (native.packed_bytes(), cap)
 
 
 @requires_cuda
 def test_streamed_decode_traces_under_torch_compile(monkeypatch):
     _g, _w, layer, _m, (weight, _s) = _drive(monkeypatch, MODE_STREAMED, cols=512, seed=9, q256=1000)
-    prepared = layer.tessera_prepared
-    compiled = torch.compile(prepared.decode, fullgraph=True)
-    assert torch.equal(compiled(), weight)
+    native = layer.tessera_native
+    assert native is not None
+    x = torch.randn(4, 512, dtype=torch.bfloat16, device="cuda")
+    q, s = _reference_fp8_quant(x)
+    eager = native.apply(q, s)
+    compiled = torch.compile(lambda a, b: native.apply(a, b), fullgraph=True)(q, s)
+    assert torch.equal(compiled, eager)
 
 
 @requires_cuda
@@ -365,24 +394,32 @@ def test_preparation_refuses_a_decoder_that_disagrees_with_the_reference(monkeyp
 def test_scheme_and_blob_must_agree(monkeypatch):
     from tessera.serving.scheme import parse_tessera_blob_for_scheme
     blob, scheme, *_ = _encode_module([("weight", 128)], cols=512)
+    from tessera.serving.scheme import parse_compact_blob_for_scheme
+
     parse_tessera_blob_for_scheme(blob, scheme, "t")
+    parse_compact_blob_for_scheme(blob, scheme, "t", device="cuda")
     with pytest.raises(ValueError, match="sidecar scheme declares"):
         parse_tessera_blob_for_scheme(blob, {**scheme, "q256": 896}, "t")
+    with pytest.raises(ValueError, match="sidecar scheme declares"):
+        parse_compact_blob_for_scheme(blob, {**scheme, "q256": 896}, "t", device="cuda")
     with pytest.raises(ValueError, match="TESSERA_FP8 serves WINDOW bodies"):
         parse_tessera_blob_for_scheme(blob, {**scheme, "body": "TCQ"}, "t")
+    with pytest.raises(ValueError, match="TESSERA_FP8 serves WINDOW bodies"):
+        parse_compact_blob_for_scheme(blob, {**scheme, "body": "TCQ"}, "t", device="cuda")
 
 
 @requires_cuda
 def test_route_record_names_the_family_mode_contract_and_decoder(monkeypatch):
     from tessera.serving.telemetry import read_route
     _g, _w, layer, _m, _ = _drive(monkeypatch, MODE_STREAMED)
+    from tessera.serving.scheme import WINDOW_GEMM_SYMBOL
+
     rec = read_route(layer)
     assert rec is not None and rec["policy"] == f"{TESSERA_FP8}:streamed" and rec["state"] == "served"
     assert rec["contract"] == route.ACTIVATION_CONTRACT == "fp8_per_token_dynamic"
-    assert rec["symbol"] == "torch._scaled_mm"
-    # The drive above is a 32-row prefill: the tile path either way, but the
-    # tile's producer is the lane that prepared the module.
-    if getattr(layer, "tessera_gemv", None) is not None:
-        assert rec["decoder"] == telemetry.DECODER_WINDOW_GEMV == layer.tessera_decoder
-    else:
-        assert rec["decoder"] == telemetry.DECODER_TORCH_WINDOW == layer.tessera_decoder
+    # The packed native GEMM, in both residencies and at every M: the tile is
+    # never materialised, so the record names the op that ran and the decoder
+    # that ran it.
+    assert rec["symbol"] == WINDOW_GEMM_SYMBOL == "tessera::window_gemm_dense"
+    assert rec["decoder"] == telemetry.DECODER_NATIVE_WINDOW_GEMM == layer.tessera_decoder
+    assert rec["decoder"] in telemetry.DECODERS

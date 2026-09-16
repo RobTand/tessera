@@ -441,8 +441,8 @@ def census_expected(*, compiled: bool, platform=None):
     regimes in one graph and stamps the combined pair (plus the torch pair
     where no GEMV lane was prepared).
     """
-    decode = launch_pairs(TESSERA_FP8, regime="decode")
-    batch = launch_pairs(TESSERA_FP8, regime="batch")
+    decode = launch_pairs(TESSERA_FP8, regime="decode", include_experimental=True)
+    batch = launch_pairs(TESSERA_FP8, regime="batch", include_experimental=True)
     if compiled:
         combined = {(COMPILED_SYMBOL, COMPILED_DECODER)}
         pairs = {"decode": combined | batch, "batch": combined | batch}
