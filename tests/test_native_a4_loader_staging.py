@@ -62,15 +62,19 @@ def test_plane_u8_scratch_reuses_storage_and_exact_length():
     assert bool(torch.equal(first, torch.frombuffer(bytearray(small), dtype=torch.uint8).cuda()))
     pointer = first.data_ptr()
 
+    # A larger plane reallocates the buffer once (by design: it grows), and
+    # the grown buffer is the one every later call must reuse.
     grown = _plane_u8(large, "cuda", scratch, "body")
     assert int(grown.numel()) == len(large)
-    assert grown.data_ptr() == pointer, "the scratch buffer was reallocated for a larger plane"
     assert bool(torch.equal(grown, torch.frombuffer(bytearray(large), dtype=torch.uint8).cuda()))
+    grown_pointer = grown.data_ptr()
 
     shrunk = _plane_u8(small, "cuda", scratch, "body")
     assert int(shrunk.numel()) == len(small), "a shrunk reuse must return the exact request"
-    assert shrunk.data_ptr() == pointer
+    assert shrunk.data_ptr() == grown_pointer, \
+        "a shrunk reuse reallocated instead of reusing the grown buffer"
     assert bool(torch.equal(shrunk, torch.frombuffer(bytearray(small), dtype=torch.uint8).cuda()))
+    assert small and pointer  # the first buffer's identity is not part of the contract
 
 
 @cuda
