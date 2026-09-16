@@ -35,7 +35,10 @@ else: two modules that swapped contracts left the histogram identical.  A
 complete per-module identity requires ``unnamed_modules == 0``.  The headers
 are read from ``torch.distributed`` when it is initialized and are JSON
 ``null`` with ``rank_source: "unavailable"`` when it is not, because a
-defaulted rank 0 is indistinguishable from a real one.  Both additions are
+defaulted rank 0 is indistinguishable from a real one.  The object identity
+that keeps two unnamed modules distinct is a bare ``id``, never a reference:
+telemetry does not keep a module -- and through it, its weights -- alive after
+the model is unloaded.  Both additions are
 additive: ``schema`` is unchanged, no field was renamed or removed, and a
 reader that knows only the histogram still reads exactly what it read before.
 ``identity_version`` is compared for equality -- see its definition.
@@ -462,16 +465,20 @@ class _RouteTrace:
         with self._lock:
             entry = self._counts.get(key)
             if entry is None:
-                entry = self._counts[key] = [0, set(), {}, 0]
+                entry = self._counts[key] = [0, set(), set(), 0]
             entry[0] += 1
             if named is None:
-                # Keyed by id and holding the object: a plain id set would
-                # MERGE two unnamed layers whose lifetimes do not overlap (a
-                # freed address is reused), which is the same miscount in a
-                # rarer disguise.  Holding the reference keeps each distinct
-                # object distinct for as long as the trace counts it, and only
-                # ever costs a reference in the path where prefixes are absent.
-                entry[2][id(layer)] = layer
+                # The private id only, exactly as the pre-#509 count did: a
+                # trace must never hold a reference to a module (and through
+                # it, to GPU weights) for telemetry.  The consequence is the
+                # legacy one and it is bounded: two unnamed layers whose
+                # lifetimes DO NOT OVERLAP can share a freed address and be
+                # counted once.  Any unnamed module already fails per-module
+                # qualification (unnamed_modules must be 0), so this cannot
+                # turn an unqualified run into a qualified one -- it can only
+                # understate how much was unnamed, which the presence of
+                # unnamed_modules itself reports.
+                entry[2].add(id(layer))
                 entry[3] += 1
             else:
                 entry[1].add(named)

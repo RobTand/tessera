@@ -313,8 +313,12 @@ def test_unnamed_modules_keep_their_count_and_never_get_a_name(tracing):
 def test_a_prefix_that_is_not_a_usable_string_is_unnamed(tracing):
     """No mixed-type sort, and no invented name for a broken prefix."""
     trace, _path = tracing
-    for bad in (None, "", 17, ["model.layers.0"]):
-        _emit(_Layer(bad))
+    # Held in a list, as real layers are: the private id set counts distinct
+    # LIVE objects, and two temporaries in a loop can share a freed address
+    # (the documented legacy limitation, not something this test should pin).
+    layers = [_Layer(bad) for bad in (None, "", 17, ["model.layers.0"])]
+    for layer in layers:
+        _emit(layer)
     entry = trace.snapshot()["entries"][0]
     assert entry["module_names"] == []
     assert entry["unnamed_modules"] == 4
@@ -364,6 +368,27 @@ def test_the_header_states_its_own_rank_world_and_platform(tracing, monkeypatch)
     snapshot = trace.snapshot()
     assert (snapshot["rank"], snapshot["world_size"]) == (1, 2)
     assert snapshot["rank_source"] == "torch.distributed"
+
+
+def test_the_trace_never_keeps_an_unnamed_module_alive(tracing):
+    """Telemetry must not retain a module -- and through it, GPU weights.
+
+    The private id is a number, not a reference.  The cost is documented
+    (non-overlapping lifetimes can share a freed address); the benefit is that
+    a trace cannot pin a model after it is unloaded.
+    """
+    import gc
+    import weakref
+
+    trace, _path = tracing
+    layer = _Layer(None)
+    _emit(layer)
+    ref = weakref.ref(layer)
+    del layer
+    gc.collect()
+    assert ref() is None, "the trace kept an unnamed module alive"
+    entry = trace.snapshot()["entries"][0]
+    assert entry["unnamed_modules"] == 1 and entry["module_names"] == []
 
 
 def test_a_legacy_file_stays_histogram_only_and_is_never_upgraded(tracing):
