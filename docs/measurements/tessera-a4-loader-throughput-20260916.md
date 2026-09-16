@@ -93,7 +93,10 @@ around each full-layer run are in
   (`tests/test_native_a4_loader_staging.py` plus the migrated
   `tests/test_serving_nvfp4_moe_route.py` device cases, which carry the
   corruption/refusal/load-order/TP checks): **19 passed, 0 skipped, 13
-  device-allocated**, action `acb57def77d7` on sparky/GB10.
+  device-allocated**, action
+  `a39417a5c2d88bc5fcca677e548a4b1417948cbd7f4ac75474b375628ec390f7`
+  (durable receipt: `loader-memory/receipts/pb-throughput-gate.txt`;
+  an earlier identical run was `acb57def77d7`).
 
 ## Remaining measured opportunity (not taken here)
 
