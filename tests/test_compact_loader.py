@@ -205,12 +205,24 @@ def _old_span2(blob, plan, name, device="cuda"):
 
 
 def _assert_planes_equal(got: dict, want: dict):
-    assert set(got) == set(want)
+    # The compact loader carries one field the reference packer does not name:
+    # ``code_nibbles``, the ``(label, point) -> two E2M1 nibbles`` table the A4
+    # kernels read.  It is DERIVED from ``subset_nibbles`` -- the reference's
+    # own table -- so it is held to that derivation explicitly below rather
+    # than being dropped from the comparison or required of the reference.
+    assert set(want) <= set(got), sorted(set(want) - set(got))
+    assert set(got) - set(want) == {"code_nibbles"}, sorted(set(got) - set(want))
     for key, value in want.items():
         if torch.is_tensor(value):
             assert torch.equal(got[key], value), key
         else:
             assert got[key] == value, key
+    # ``build_subset_nibbles``' layout is ``(label * points + point) * arity +
+    # a``; the code table packs the pair's two rows low-row-first into one byte.
+    # Written out here so the expectation is not the function under test.
+    sub = want["subset_nibbles"].to(torch.int64).reshape(4, -1, 2)
+    expected = (sub[:, :, 0] | (sub[:, :, 1] << 4)).reshape(-1).to(torch.uint8)
+    assert torch.equal(got["code_nibbles"], expected), "code_nibbles"
 
 
 def _cut_kwargs(plan):

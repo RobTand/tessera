@@ -246,7 +246,13 @@ def _drive(monkeypatch, mode, roles=(("weight", 256),), cols=1024, m=32, seed=0,
     x = torch.randn(m, cols, dtype=torch.bfloat16, device="cuda",
                     generator=torch.Generator(device="cuda").manual_seed(seed))
     got = method.apply(layer, x)
-    want = (_reference_fp4_quant_value(x, gs) @ ref_w.t()).to(torch.bfloat16)
+    # ``_reference_fp4_quant_value`` is the A-side VALUES the quantizer stands
+    # for, which carry the static global (``sf = amax/6 * gs``).  The route's
+    # epilogue divides that global back out (``A4Unit.epilogue_for``:
+    # ``global_scale / input_global_scale``), so the expectation divides it too
+    # -- without this the reference is ``gs`` times the product and the
+    # comparison fails at exactly ``(gs-1)/gs``.
+    want = ((_reference_fp4_quant_value(x, gs) / float(gs)) @ ref_w.t()).to(torch.bfloat16)
     return got, want, layer, method, (packed, scale, global_)
 
 
@@ -281,7 +287,9 @@ def test_fused_roles_stack_with_their_own_row_slices(monkeypatch):
     roles = (("q_proj", 256), ("k_proj", 128), ("v_proj", 128))
     got, want, layer, _m, (_packed, _scale, global_) = _drive(
         monkeypatch, MODE_RESIDENT, roles=roles, seed=3)
-    assert layer.tessera_roles == ("q_proj", "k_proj", "v_proj")
+    # The route records the role names in module order; the container is a
+    # list, and what the record owes a reader is the order, not the spelling.
+    assert list(layer.tessera_roles) == ["q_proj", "k_proj", "v_proj"]
     assert layer.tessera_global_scale_real == global_
     err = (got.float() - want.float()).abs().max().item()
     assert err / max(want.float().abs().max().item(), 1e-9) < 8e-3
