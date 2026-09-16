@@ -55,8 +55,10 @@ def _levels():
 
 
 def _reference_codes(x, global_scale):
-    """The reference helper's own decision, exposed as (codes, sf) so the
-    element a stock op disagrees about can be inspected."""
+    """The PRE-FIX reference rule (``argmin``, which takes the LOWER level on a
+    tie), kept here as the historical comparator: the probe exists to show
+    where that rule and the registered operator part company.  The test's own
+    helper now rounds an exact midpoint up, which is what the operator does."""
     m, k = x.shape
     groups = k // T.GROUP
     xf = x.float().view(m, groups, T.GROUP)

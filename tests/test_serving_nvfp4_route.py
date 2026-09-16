@@ -168,7 +168,18 @@ _ATTESTED = []
 def _reference_fp4_quant_value(x, global_scale):
     """The A-side VALUE matrix, one group-16 E2M1 quantisation at the static
     global -- the arithmetic vLLM's ``scaled_fp4_quant`` publishes, written out
-    so the expectation is the tensor the route's own quantizer stands for."""
+    so the expectation is the tensor the route's own quantizer stands for.
+
+    TIES RESOLVE UPWARD, AWAY FROM ZERO.  A magnitude that sits exactly between
+    two E2M1 levels is not a corner case the runtime leaves to ``argmin``:
+    measured on the fused q/k/v fixture (``experiments/a4_fused_discriminator.py``,
+    PB action 5ea787ef, GB10), the registered ``scaled_fp4_quant`` and this
+    model disagree on 172 of 32768 elements, and all 172 are exactly midpoints
+    (``max|q-mid| = 0.0``) where the operator takes the LARGER level.  Taking
+    ``argmin``'s lower neighbour instead made the fused product miss by 1.67%
+    while the operator's own codes land it at 0.26% -- a reference defect, not
+    a kernel one, so the model rounds the way the operator does.
+    """
     m, k = x.shape
     groups = k // GROUP
     xf = x.float().view(m, groups, GROUP)
@@ -178,7 +189,11 @@ def _reference_fp4_quant_value(x, global_scale):
     q = (xf * float(global_scale) / sf_f).clamp(-6.0, 6.0)
     levels = torch.tensor([0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0],
                           dtype=torch.float32, device=x.device)
-    idx = (q.abs().unsqueeze(-1) - levels).abs().argmin(dim=-1)
+    # ``right=True`` sends an exact midpoint to the upper level, which is the
+    # operator's rule above (the list has no level past 6.0, so the clamp
+    # cannot run off its end).
+    midpoints = 0.5 * (levels[:-1] + levels[1:])
+    idx = torch.searchsorted(midpoints, q.abs().contiguous(), right=True)
     vals = levels[idx] * torch.sign(q)
     return (vals * sf_f).view(m, k)
 
