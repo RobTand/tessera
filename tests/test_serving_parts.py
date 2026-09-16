@@ -396,8 +396,13 @@ def test_a_part_with_a_whole_source_identity_from_before_495_refuses_by_name(tmp
         parts.merge_serving_parts(paths, tmp_path / "merged", source)
 
 
-def _moe_plan_parts(tmp_path, encoded=None, count=2):
-    """Two source stacks; an omitted encode is internally consistent BF16."""
+def _moe_plan_parts(tmp_path, encoded=None, count=2, input_scales=False):
+    """Two source stacks; an omitted encode is internally consistent BF16.
+
+    ``input_scales`` writes the NVFP4 routed shape instead of the FP8 one:
+    each role declares an ``input_global_scale`` and the part writes one
+    beside each wire, which is what ``nvfp4_moe_route`` reads.
+    """
     source = tmp_path / "source"
     source.mkdir()
     encoded = range(count) if encoded is None else encoded
@@ -405,7 +410,13 @@ def _moe_plan_parts(tmp_path, encoded=None, count=2):
     source_names = [f"{stack}.0.{shard}.weight" for stack in stacks for shard in ("w1", "w3", "w2")]
     _tensor_file(source / "model.safetensors", source_names)
     (source / "config.json").write_text(json.dumps({"architectures": ["Example"]}))
-    plan = {stack: {"grid": "E4M3", "q256": 1024} for stack in stacks}
+    grid, q256 = ("E2M1x2", 896) if input_scales else ("E4M3", 1024)
+    family = "TESSERA_NVFP4" if input_scales else "TESSERA_FP8"
+    # The body/plane pair each route decodes (``scheme.ROUTES``): the NVFP4
+    # route reads a TCQ body over the LUT plane its group-16 ue4m3 block
+    # scales come from, the FP8 route a WINDOW body over the CHANNEL plane.
+    body, plane = ("TCQ", "LUT") if input_scales else ("WINDOW", "CHANNEL")
+    plan = {stack: {"grid": grid, "q256": q256} for stack in stacks}
     identity = {"source": parts.source_part_identity(source), "code_sha256": "a" * 64,
                 "runtime_image": "test/image@sha256:" + "b" * 64, "options": {"plan": plan}}
     paths = []
@@ -416,19 +427,22 @@ def _moe_plan_parts(tmp_path, encoded=None, count=2):
         modules, groups, ignore = {}, {}, []
         if rank in encoded:
             names = [n.removesuffix(".weight") + ".wire" for n in owned]
+            if input_scales:
+                names += [n.removesuffix(".weight") + ".input_global_scale" for n in owned]
             roles = [{"tensor": tensor, "source_tensor": tensor, "expert": 0,
                       "role": role, "group": "w2" if role == "down_proj" else "w13",
-                      "grid": "E4M3", "q256": 1024, "rows": 32, "cols": 32}
+                      "grid": grid, "q256": q256, "rows": 32, "cols": 32,
+                      **({"input_global_scale": 2.5} if input_scales else {})}
                      for tensor, role in zip(owned, ("gate_proj", "up_proj", "down_proj"))]
-            modules[stack] = {"structure": "routed_moe", "family": "TESSERA_FP8",
-                "grid": "E4M3", "q256": 1024, "experts": 1, "roles": roles,
+            modules[stack] = {"structure": "routed_moe", "family": family,
+                "grid": grid, "q256": q256, "experts": 1, "roles": roles,
                 "wire_bytes": 6, "container_bytes": 6, "resident_bytes_resident_mode": 3072}
             groups[f"stack{rank}"] = {"targets": [stack], "format": "TESSERA", "scheme": {
-                "structure": "routed_moe", "family": "TESSERA_FP8", "grid": "E4M3",
-                "body": "WINDOW", "plane": "CHANNEL", "experts": 1, "groups": {
-                    "w13": {"q256": 1024, "rows": 64, "columns": 32, "wire_stride": 2,
+                "structure": "routed_moe", "family": family, "grid": grid,
+                "body": body, "plane": plane, "experts": 1, "groups": {
+                    "w13": {"q256": q256, "rows": 64, "columns": 32, "wire_stride": 2,
                             "roles": [["gate_proj", 32], ["up_proj", 32]]},
-                    "w2": {"q256": 1024, "rows": 32, "columns": 32, "wire_stride": 2,
+                    "w2": {"q256": q256, "rows": 32, "columns": 32, "wire_stride": 2,
                            "roles": [["down_proj", 32]]}}}}
         else:
             names, ignore = owned, [stack]
@@ -463,6 +477,38 @@ def test_complete_explicit_stack_plan_still_merges_partial_matrix(tmp_path):
     manifest = parts.merge_serving_parts(paths, tmp_path / "merged", source)
     assert set(manifest["modules"]) == set(plan)
     assert manifest["totals"]["units"] == 6
+
+
+def test_routed_nvfp4_input_scales_are_expected_outputs(tmp_path):
+    """A routed NVFP4 part writes one A-side scale per role, and merges.
+
+    ``nvfp4_moe_route`` reads ``experts.{e}.{proj}.input_global_scale`` beside
+    each wire -- the quantity the dense route reads as
+    ``trellis_input_global_scale`` -- and the exporter writes it.  The merge
+    once expected only the wires, so every routed NVFP4 part failed its
+    written-coverage check on tensors the loader requires (tessera#526, found
+    by the GLM-5.3 A4 merge: 864 scales per MoE layer, 43 layers).
+    """
+    source, paths, plan = _moe_plan_parts(tmp_path, input_scales=True)
+    manifest = parts.merge_serving_parts(paths, tmp_path / "merged", source)
+    assert set(manifest["modules"]) == set(plan)
+    index = json.loads((tmp_path / "merged" / "model.safetensors.index.json").read_text())
+    assert sum(name.endswith(".input_global_scale") for name in index["weight_map"]) == 6
+
+
+def test_routed_nvfp4_part_that_drops_one_input_scale_refuses(tmp_path):
+    """The expectation bites: a declared scale that was never written refuses."""
+    source, paths, _plan = _moe_plan_parts(tmp_path, input_scales=True)
+    index_path = paths[0] / "model.safetensors.index.json"
+    weight_map = json.loads(index_path.read_text())["weight_map"]
+    del weight_map[sorted(n for n in weight_map if n.endswith(".input_global_scale"))[0]]
+    index_path.write_text(json.dumps({"weight_map": weight_map}))
+    _tensor_file(paths[0] / "model.safetensors", sorted(weight_map))
+    _change(paths[0], lambda m: m["export_partition"]["output_sha256"].update(
+        {"model.safetensors": parts.sha256_file(paths[0] / "model.safetensors")}))
+    with pytest.raises(ValueError, match="partition 0: written tensor coverage"):
+        parts.merge_serving_parts(paths, tmp_path / "merged", source)
+    assert not (tmp_path / "merged").exists()
 
 
 @pytest.mark.parametrize("field,value", [("grid", "BF16"), ("q256", 896)])
