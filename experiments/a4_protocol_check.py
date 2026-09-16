@@ -115,6 +115,33 @@ def main():
                {"shape": list(out.shape),
                 "quant_config": type(config).__name__ if config is not None else None})
 
+    # The hazard itself, on an isolated stub: a monolithic stock class
+    # attached as ``experts_cls`` makes the BASE ``is_monolithic`` answer
+    # True, which is the dispatch this route must never inherit.  (This is a
+    # demonstration of the mechanism, not a claim that the auto selection
+    # above picked such a class: the prefix receipts show it did not.)
+    class _MonolithicStock:
+        @staticmethod
+        def is_monolithic() -> bool:
+            return True
+
+    class _StubBase:
+        def __init__(self):
+            self.moe_kernel = None
+            self.experts_cls = _MonolithicStock
+
+        @property
+        def is_monolithic(self) -> bool:
+            if self.moe_kernel is None:
+                return self.experts_cls.is_monolithic()
+            return self.moe_kernel.is_monolithic
+
+    inherited = _StubBase().is_monolithic
+    native_answer = method.is_monolithic
+    record("monolithic_inheritance_stub",
+           inherited is True and native_answer is False,
+           {"stub_with_experts_cls": inherited, "native_method": native_answer})
+
     report["ok"] = all(c["ok"] for c in report["checks"])
     if args.report:
         with open(args.report, "w") as fh:
