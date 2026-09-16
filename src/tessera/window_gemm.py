@@ -1,58 +1,51 @@
 """The window body's prefill GEMM: the ~4 bits/weight wire read directly,
 decoded into registers, and fed to a hardware ``tl.dot``.
 
-WHAT IT SERVES.  ``WindowGemvUnit`` -- the value family, whose table holds
-bf16 values and whose per-row fp32 ``scale`` is applied once on the
-accumulated output (``kernel_window_gemv.decode_values``).  The M <= 8 GEMV
-remains available where its history contract holds; this lane is the direct
-packed GEMM for every M, including the tails (0, 1, 8, 9, 15, 16, 17, 32,
-128): rows past M are masked, so no multiple-of-16 requirement is imposed on
-the caller.  The weight tile is decoded in the mainloop, kept in registers,
-and consumed by ``tl.dot`` (bf16 operands, fp32 accumulate) -- no decoded
-weight tensor is ever written to global memory.
+WHAT IT SERVES.  ``WindowGemvUnit`` in either window family:
+
+* ``family == "value"`` (BF16) -- the table holds bf16 values, the per-row
+  fp32 ``scale`` is applied once on the accumulated output, and the
+  **research folded** variant (rounding the scale into the decoded tile,
+  ``decode_folded``) is a different contract this module never silently
+  substitutes: there is no API for it here.
+* ``family == "e4m3"`` (FP8) -- the wire decodes to E4M3 bytes through the
+  unit's own ``codes_of_state`` ([2^L] grid codes) and ``native`` ([256]
+  code -> byte) tables, the activation is quantized per token by **vLLM's
+  native CUDA quantizer** (``serving.native_ops.native_fp8_quant``, the
+  ``fp8_per_token_dynamic`` contract), and the epilogue is
+  ``y = a_scale[m] * w_scale[n] * acc``.  A bare bf16 activation multiplied
+  without that quantizer would be a different contract and is not offered.
+
+PREPARED ONCE, CALLED HOT.  ``prepare_window_gemm`` performs every
+tensor-content validation (family fields, table exactness, ``initial_state``
+bounds) and freezes the constants -- table/codes/native, permuted
+``initial_state``, row scale, geometry.  ``PreparedWindowGemm.__call__`` only
+checks cheap metadata (rank, width, dtype, device) and launches: no
+GPU-to-host synchronisation, no dtype casts, no reallocation of the constant
+bundles, so the call is capturable in a CUDA graph.  ``window_gemm`` remains
+a one-shot convenience that prepares and calls; serving holds the prepared
+object instead.
 
 THE DECODE.  ``reference_states`` defines the state of a column at position
 ``q`` as the **last ``L`` bits of the MSB-first code stream that end at
 ``q = (row + 1) * rate``**, zero-padded before the stream starts.  So no
 sequential walk is needed: the state of row ``n`` is a windowed bit gather,
 and the whole ``[BLOCK_K, BLOCK_N]`` tile is read straight from the repacked
-words:
-
-* a column's chunk in tile ``g`` starts at ``g * tile_words + word0 +
-  k * 16 * rate`` (the item table's own arithmetic);
-* a field of ``length`` bits ending at ``q`` starts at bit ``q - L``, which
-  crosses into the previous tile for the first few rows of ``g > 0`` -- there
-  the word before the chunk is the *previous tile's* last word of the same run
-  (``-tile_words + 16 * rate - 1``), exactly the lookback
-  ``csrc/window_gemv.cu`` performs for lane 0.  The following word is the
-  current chunk's first word, not the memory-neighbour;
-* the padding before position 0 of the first tile is supplied as zero for a
-  full unit, or by ``initial_state`` for a tensor-parallel row cut.
-
-TP ROW CUTS.  ``initial_state`` is the window state immediately before local
-row 0 -- int32 ``[cols]`` in ORIGINAL column order, re-indexed here by
-``rep.perm``.  With it, every window is full ``L`` bits from row 0 and the
-first rows' high bits come from the carried history instead of a zero pad.
-A unit that carries no history is a zero-start unit by definition; a cut that
-arrives without one is the loader's refusal to make, not a silent zero here
-(the bundle's cut metadata is the loader's to enforce).
+words.  The first tile's sub-L-bit rows take their high bits from the zero
+pad, or from ``initial_state`` when a TP row cut carries one.
 
 RATE RUNS.  ``rep.runs`` fixes the layout: rate runs are contiguous in
 permuted column order, so the K loop walks runs and cuts each into ``BLOCK_K``
-segments.  A short segment is masked, never reordered.  ``rep.perm`` maps the
-permuted columns back to ``x``'s original ones; ``x`` is permuted once per
-call (an activation-sized copy, never a weight materialisation).
+segments; a short segment is masked, never reordered.  ``rep.perm`` maps the
+permuted columns back to ``x``'s original ones.
 
-WHAT IT REFUSES.  The E4M3 family (FP8 GEMM is a later milestone; the
-materialised ``torch._scaled_mm`` path still serves it), a non-bf16 or
-wrong-width ``x``, an ``initial_state`` outside the window, and block sizes
-that would let one N block straddle a 512-row tile boundary.
-
-WHAT IS NOT HERE.  Grouped expert stacking is a later milestone; this file is
-new and edits no shared module.  The loader owns the bundle/dataclass
-extension; compute consumes it.
+WHAT IS NOT HERE.  Grouped/MoE stacking (the next milestone; its API is
+published in the task interface).  This file is new and edits no shared
+module; the loader owns the bundle/dataclass extension.
 """
 from __future__ import annotations
+
+import dataclasses
 
 import torch
 import triton
@@ -61,7 +54,7 @@ import triton.language as tl
 from .errors import GrammarError
 from .kernel_window_gemv import TILE_ROWS, WindowGemvUnit
 
-__all__ = ["window_gemm", "MIN_BLOCK"]
+__all__ = ["window_gemm", "prepare_window_gemm", "PreparedWindowGemm", "MIN_BLOCK"]
 
 #: ``tl.dot`` needs a 16-row minimum operand; any M is served by masking.
 MIN_BLOCK = 16
@@ -69,10 +62,12 @@ MIN_BLOCK = 16
 
 @triton.jit
 def _window_gemm_kernel(
-    words_ptr, table_ptr, x_ptr, out_ptr, scale_ptr, runs_ptr, init_ptr,
+    words_ptr, table_ptr, codes_ptr, native_ptr, x_ptr, out_ptr,
+    scale_ptr, a_scale_ptr, runs_ptr, init_ptr,
     n_runs, tile_words, total_words, M, rows, cols,
     L: tl.constexpr, TILE: tl.constexpr,
-    BM: tl.constexpr, BN: tl.constexpr, BK: tl.constexpr, HAS_INIT: tl.constexpr,
+    BM: tl.constexpr, BN: tl.constexpr, BK: tl.constexpr,
+    HAS_INIT: tl.constexpr, FP8: tl.constexpr,
 ):
     pid_n = tl.program_id(0)
     pid_m = tl.program_id(1)
@@ -140,7 +135,12 @@ def _window_gemm_kernel(
             combined = (w0 << 32) | w1
             state = (combined >> shift[None, :]) & ((1 << length) - 1)[None, :]
 
-            val = tl.load(table_ptr + state, mask=live_k2, other=0.0)
+            if FP8:
+                code = tl.load(codes_ptr + state, mask=live_k2, other=0)
+                byte = tl.load(native_ptr + code.to(tl.int32), mask=live_k2, other=0)
+                val = byte.to(tl.float8e4nv, bitcast=True)
+            else:
+                val = tl.load(table_ptr + state, mask=live_k2, other=0.0)
 
             xk = tl.load(
                 x_ptr + offs_m[:, None] * cols + kglob[None, :],
@@ -149,10 +149,234 @@ def _window_gemm_kernel(
             acc += tl.dot(xk, val, out_dtype=tl.float32)
 
     scale = tl.load(scale_ptr + offs_n, mask=live_n, other=0.0)
-    y = acc * scale[None, :]
+    if FP8:
+        a_scale = tl.load(a_scale_ptr + offs_m, mask=live_m, other=0.0)
+        y = (acc * a_scale[:, None]) * scale[None, :]
+    else:
+        y = acc * scale[None, :]
     tl.store(
         out_ptr + offs_m[:, None] * rows + offs_n[None, :],
         y.to(tl.bfloat16), mask=live_m[:, None] & live_n[None, :],
+    )
+
+
+@dataclasses.dataclass(frozen=True)
+class PreparedWindowGemm:
+    """The frozen bundle: constants, geometry, launch shape.  ``__call__``
+    is the hot path and performs no tensor-content validation."""
+
+    words: torch.Tensor
+    table: torch.Tensor
+    codes: torch.Tensor
+    native: torch.Tensor
+    scale: torch.Tensor
+    runs: torch.Tensor
+    init_perm: torch.Tensor
+    perm: torch.Tensor
+    tile_words: int
+    total_words: int
+    rows: int
+    cols: int
+    window_bits: int
+    family: str
+    has_init: bool
+    block_m: int
+    block_n: int
+    block_k: int
+    quantizer: str = "native"
+
+    @property
+    def device(self) -> torch.device:
+        return self.words.device
+
+    def __call__(self, x: torch.Tensor, a_scale: "torch.Tensor | None" = None,
+                 out: "torch.Tensor | None" = None) -> torch.Tensor:
+        if x.dim() != 2 or x.shape[1] != self.cols or x.device != self.device:
+            raise GrammarError(
+                f"x must be a [M, {self.cols}] tensor on {self.device}, got "
+                f"{tuple(x.shape)} on {x.device}"
+            )
+        m = int(x.shape[0])
+        if m == 0:
+            return torch.empty(0, self.rows, dtype=torch.bfloat16, device=self.device)
+        if self.family == "value":
+            if x.dtype != torch.bfloat16 or a_scale is not None:
+                raise GrammarError(
+                    "the value family takes a bf16 x and no activation scale; the E4M3 "
+                    "family is the one with a per-token FP8 activation"
+                )
+            x_perm = x.index_select(1, self.perm).contiguous()
+            dtype = torch.bfloat16
+            a = self.scale.new_zeros(1)
+            fp8 = False
+        else:
+            if x.dtype == torch.float8_e4m3fn:
+                if a_scale is None:
+                    raise GrammarError(
+                        "an fp8 x must carry its per-token activation scale; a bare "
+                        "fp8 or bf16 activation would change the contract"
+                    )
+                a = a_scale.reshape(-1)
+                if a.numel() != m or a.dtype != torch.float32 or a.device != self.device:
+                    raise GrammarError(
+                        f"a_scale must be fp32 [{m}] on {self.device}"
+                    )
+                x_perm = x.index_select(1, self.perm).contiguous()
+            else:
+                if x.dtype != torch.bfloat16:
+                    raise GrammarError(f"the E4M3 family takes bf16 or fp8 x, got {x.dtype}")
+                if self.quantizer != "native":
+                    raise GrammarError(
+                        "this bundle was prepared without a quantizer; pass the "
+                        "prequantized fp8 activation together with its per-token scale"
+                    )
+                from .serving.native_ops import native_fp8_quant
+                x_perm_raw = x.index_select(1, self.perm).contiguous()
+                x_perm, s = native_fp8_quant(x_perm_raw)
+                a = s.reshape(-1)
+            dtype = torch.float8_e4m3fn
+            fp8 = True
+        y = (torch.empty(m, self.rows, dtype=torch.bfloat16, device=self.device)
+             if out is None else out)
+        if y.shape != (m, self.rows) or y.dtype != torch.bfloat16 or y.device != self.device:
+            raise GrammarError(f"out must be bf16 [{m}, {self.rows}] on {self.device}")
+        grid = (triton.cdiv(self.rows, self.block_n), triton.cdiv(m, self.block_m))
+        _window_gemm_kernel[grid](
+            self.words, self.table, self.codes, self.native, x_perm, y,
+            self.scale, a, self.runs, self.init_perm,
+            int(self.runs.shape[0]), self.tile_words, self.total_words,
+            m, self.rows, self.cols,
+            L=self.window_bits, TILE=TILE_ROWS,
+            BM=self.block_m, BN=self.block_n, BK=self.block_k,
+            HAS_INIT=self.has_init, FP8=fp8,
+            num_warps=8,
+        )
+        return y
+
+
+def _resolve_initial_state(unit: WindowGemvUnit,
+                           initial_state: "torch.Tensor | None") -> "torch.Tensor | None":
+    if initial_state is None:
+        initial_state = getattr(unit, "initial_state", None)
+    if initial_state is None:
+        initial_state = getattr(unit.rep, "initial_state", None)
+    return initial_state
+
+
+def prepare_window_gemm(
+    unit: WindowGemvUnit,
+    *,
+    initial_state: "torch.Tensor | None" = None,
+    block_m: int = 64,
+    block_n: int = 64,
+    block_k: int = 64,
+    quantizer: "str | None" = "native",
+) -> PreparedWindowGemm:
+    """Validate the unit once and freeze every constant the call needs.
+
+    Every tensor-content check (table exactness, family tables, the
+    ``initial_state`` bounds) happens here; the returned object's ``__call__``
+    may not synchronise.  For the E4M3 family, ``quantizer="native"`` attests
+    vLLM's per-token FP8 quantizer once, here; ``quantizer=None`` prepares a
+    compute-only bundle that takes prequantized activations.
+    """
+    if unit.family not in ("value", "e4m3"):
+        raise GrammarError(f"window_gemm serves the value and e4m3 families, got {unit.family!r}")
+    for name, v in (("block_m", block_m), ("block_n", block_n), ("block_k", block_k)):
+        if v < MIN_BLOCK or v & (v - 1):
+            raise GrammarError(f"{name}={v} must be a power of two >= {MIN_BLOCK}")
+    if TILE_ROWS % block_n:
+        raise GrammarError(
+            f"block_n={block_n} does not divide the {TILE_ROWS}-row wire tile; "
+            "one N block must stay inside one tile (its lookback would be wrong)"
+        )
+    device = unit.rep.words.device
+    scale = unit.scale
+    if scale.numel() != unit.rows:
+        raise GrammarError(f"the unit's scale has {scale.numel()} entries for {unit.rows} rows")
+    if scale.dtype != torch.float32:
+        scale = scale.float().contiguous()
+
+    table = unit.table
+    codes = unit.codes_of_state
+    native = unit.native
+    if unit.family == "value":
+        if table is None:
+            raise GrammarError("the value family needs its table")
+        if table.dtype == torch.float32:
+            rounded = table.to(torch.bfloat16)
+            if not torch.equal(rounded.float(), table):
+                raise GrammarError(
+                    "the value family's table must be exactly representable in bf16; "
+                    "an fp32 table with rounded bits would silently change the values"
+                )
+            table = rounded
+        elif table.dtype != torch.bfloat16:
+            raise GrammarError(f"the value family reads a bf16 table; got {table.dtype}")
+        table = table.contiguous()
+        codes = native = torch.zeros(0, dtype=torch.uint8, device=device)
+    else:
+        if codes is None or native is None:
+            raise GrammarError(
+                "the E4M3 family needs its codes_of_state and native byte tables; "
+                "a unit without them has no E4M3 bytes to decode"
+            )
+        if codes.dtype != torch.uint8 or codes.numel() != 1 << int(unit.window_bits):
+            raise GrammarError(
+                f"codes_of_state must be uint8 [{1 << int(unit.window_bits)}], got "
+                f"{codes.dtype} [{codes.numel()}]"
+            )
+        if native.dtype != torch.uint8 or native.numel() != 256:
+            raise GrammarError(f"native must be uint8 [256], got {native.dtype} [{native.numel()}]")
+        codes = codes.contiguous()
+        native = native.contiguous()
+        table = torch.zeros(0, dtype=torch.bfloat16, device=device)
+        if quantizer == "native":
+            from .serving.native_ops import require_native_fp8_quant
+            require_native_fp8_quant("window_gemm: per-token FP8 quantizer")
+        elif quantizer is not None:
+            raise GrammarError(f"unknown quantizer {quantizer!r}; use 'native' or None")
+
+    resolved = _resolve_initial_state(unit, initial_state)
+    limit = 1 << int(unit.window_bits)
+    if resolved is None:
+        init_perm = torch.zeros(unit.cols, dtype=torch.int32, device=device)
+        has_init = False
+    else:
+        if resolved.numel() != unit.cols:
+            raise GrammarError(
+                f"initial_state has {resolved.numel()} columns, the unit {unit.cols}"
+            )
+        bad = (resolved < 0) | (resolved >= limit)
+        if bool(bad.any()):
+            raise GrammarError(
+                f"initial_state must hold {unit.window_bits}-bit window states "
+                f"in [0, {limit})"
+            )
+        init_perm = resolved.to(device=device, dtype=torch.int32)
+        init_perm = init_perm.index_select(0, unit.rep.perm.long()).contiguous()
+        has_init = True
+
+    return PreparedWindowGemm(
+        words=unit.rep.words,
+        table=table,
+        codes=codes,
+        native=native,
+        scale=scale,
+        runs=unit.rep.runs,
+        init_perm=init_perm,
+        perm=unit.rep.perm,
+        tile_words=int(unit.rep.tile_words),
+        total_words=int(unit.rep.words.numel()),
+        rows=int(unit.rows),
+        cols=int(unit.cols),
+        window_bits=int(unit.window_bits),
+        family=unit.family,
+        has_init=has_init,
+        block_m=block_m,
+        block_n=block_n,
+        block_k=block_k,
+        quantizer=quantizer if unit.family == "e4m3" else "native",
     )
 
 
@@ -166,93 +390,10 @@ def window_gemm(
     block_k: int = 64,
     out: "torch.Tensor | None" = None,
 ) -> torch.Tensor:
-    """``x [M, K] bf16 -> [M, rows] bf16``: the wire read directly, prefill.
-
-    Any M is served (tails masked); ``initial_state`` is the int32 ``[cols]``
-    window state before local row 0, original column order, for a TP row cut.
-    The per-row fp32 ``unit.scale`` is applied once on the accumulated output,
-    the same epilogue ``decode_values`` documents.  ``out`` is a caller-owned
-    bf16 buffer, a bench instrument only.
-    """
-    if unit.family != "value":
-        raise GrammarError(
-            "window_gemm serves the value (BF16) family; the E4M3 (FP8) family "
-            "has no native GEMM in this milestone -- the materialised FP8 path "
-            "(torch._scaled_mm) serves it until that lane lands"
-        )
-    if unit.codes_of_state is not None:
-        raise GrammarError("window_gemm serves the value family; the unit carries grid codes")
-    if x.dim() != 2 or x.dtype != torch.bfloat16 or not x.is_cuda:
-        raise GrammarError("x must be a CUDA bf16 [M, K] tensor")
-    if x.shape[1] != unit.cols:
-        raise GrammarError(f"x has {x.shape[1]} features, the unit {unit.cols} columns")
-    m = int(x.shape[0])
-    for name, v in (("block_m", block_m), ("block_n", block_n), ("block_k", block_k)):
-        if v < MIN_BLOCK or v & (v - 1):
-            raise GrammarError(f"{name}={v} must be a power of two >= {MIN_BLOCK}")
-    if TILE_ROWS % block_n:
-        raise GrammarError(
-            f"block_n={block_n} does not divide the {TILE_ROWS}-row wire tile; "
-            "one N block must stay inside one tile (its lookback would be wrong)"
-        )
-
-    device = unit.rep.words.device
-    if x.device != device:
-        raise GrammarError(f"x is on {x.device}, the unit's words on {device}")
-
-    table = unit.table
-    if table.dtype == torch.float32:
-        rounded = table.to(torch.bfloat16)
-        if not torch.equal(rounded.float(), table):
-            raise GrammarError(
-                "the value family's table must be exactly representable in bf16; "
-                "an fp32 table with rounded bits would silently change the values"
-            )
-        table = rounded
-    elif table.dtype != torch.bfloat16:
-        raise GrammarError(f"window_gemm reads a bf16 value table; got {table.dtype}")
-    table = table.contiguous()
-    scale = unit.scale
-    if scale.numel() != unit.rows:
-        raise GrammarError(f"the unit's scale has {scale.numel()} entries for {unit.rows} rows")
-
-    if initial_state is None:
-        initial_state = getattr(unit, "initial_state", None)
-    if initial_state is None:
-        initial_state = getattr(unit.rep, "initial_state", None)
-    limit = 1 << int(unit.window_bits)
-    if initial_state is None:
-        init_perm = torch.zeros(unit.cols, dtype=torch.int32, device=device)
-        has_init = False
-    else:
-        if initial_state.numel() != unit.cols:
-            raise GrammarError(
-                f"initial_state has {initial_state.numel()} columns, the unit {unit.cols}"
-            )
-        bad = (initial_state < 0) | (initial_state >= limit)
-        if bool(bad.any()):
-            raise GrammarError(
-                f"initial_state must hold {unit.window_bits}-bit window states "
-                f"in [0, {limit})"
-            )
-        init_perm = initial_state.to(device=device, dtype=torch.int32)
-        init_perm = init_perm.index_select(0, unit.rep.perm.long()).contiguous()
-        has_init = True
-
-    x_perm = x.index_select(1, unit.rep.perm.long()).contiguous()
-    if m == 0:
-        return torch.empty(0, unit.rows, dtype=torch.bfloat16, device=device)
-    y = torch.empty(m, unit.rows, dtype=torch.bfloat16, device=device) if out is None else out
-    if y.shape != (m, unit.rows) or y.dtype != torch.bfloat16 or y.device != device:
-        raise GrammarError(f"out must be a bf16 [{m}, {unit.rows}] tensor on {device}")
-
-    grid = (triton.cdiv(unit.rows, block_n), triton.cdiv(m, block_m))
-    _window_gemm_kernel[grid](
-        unit.rep.words, table, x_perm, y, scale, unit.rep.runs, init_perm,
-        int(unit.rep.runs.shape[0]), int(unit.rep.tile_words), int(unit.rep.words.numel()),
-        m, unit.rows, unit.cols,
-        L=int(unit.window_bits), TILE=TILE_ROWS,
-        BM=block_m, BN=block_n, BK=block_k, HAS_INIT=has_init,
-        num_warps=8,
+    """One-shot ``prepare_window_gemm`` + call.  Convenience for tests and
+    single uses; a serving path prepares once and holds the object."""
+    prepared = prepare_window_gemm(
+        unit, initial_state=initial_state,
+        block_m=block_m, block_n=block_n, block_k=block_k,
     )
-    return y
+    return prepared(x, out=out)
