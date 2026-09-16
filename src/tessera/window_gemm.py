@@ -221,6 +221,11 @@ class PreparedWindowGemm:
                     raise GrammarError(
                         f"a_scale must be fp32 [{m}] on {self.device}"
                     )
+                if not a.is_contiguous():
+                    raise GrammarError(
+                        "a_scale must be contiguous after flattening; the kernel reads it "
+                        "with one stride"
+                    )
                 x_perm = x.index_select(1, self.perm).contiguous()
             else:
                 if x.dtype != torch.bfloat16:
@@ -240,6 +245,8 @@ class PreparedWindowGemm:
              if out is None else out)
         if y.shape != (m, self.rows) or y.dtype != torch.bfloat16 or y.device != self.device:
             raise GrammarError(f"out must be bf16 [{m}, {self.rows}] on {self.device}")
+        if not y.is_contiguous():
+            raise GrammarError("out must be contiguous; the kernel writes row-major")
         grid = (triton.cdiv(self.rows, self.block_n), triton.cdiv(m, self.block_m))
         _window_gemm_kernel[grid](
             self.words, self.table, self.codes, self.native, x_perm, y,
@@ -294,8 +301,11 @@ def prepare_window_gemm(
     scale = unit.scale
     if scale.numel() != unit.rows:
         raise GrammarError(f"the unit's scale has {scale.numel()} entries for {unit.rows} rows")
-    if scale.dtype != torch.float32:
-        scale = scale.float().contiguous()
+    # constants are frozen contiguous here so the hot path never re-strides
+    scale = scale.to(torch.float32).contiguous()
+    words = unit.rep.words.contiguous()
+    runs = unit.rep.runs.contiguous()
+    perm = unit.rep.perm.contiguous()
 
     table = unit.table
     codes = unit.codes_of_state
@@ -358,14 +368,14 @@ def prepare_window_gemm(
         has_init = True
 
     return PreparedWindowGemm(
-        words=unit.rep.words,
+        words=words,
         table=table,
         codes=codes,
         native=native,
         scale=scale,
-        runs=unit.rep.runs,
+        runs=runs,
         init_perm=init_perm,
-        perm=unit.rep.perm,
+        perm=perm,
         tile_words=int(unit.rep.tile_words),
         total_words=int(unit.rep.words.numel()),
         rows=int(unit.rows),
