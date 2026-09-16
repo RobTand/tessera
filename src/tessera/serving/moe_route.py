@@ -616,9 +616,13 @@ def _bind_module_prefix(layer, prefix: str) -> bool:
     DIFFERENT policies (``TESSERA_FP8`` on L3, ``TESSERA_BF16`` on L4), so the
     entry key separated them by accident.  Nothing guarantees it.  Entries are
     keyed by policy, shape, symbol, decoder and contract, so two routed modules
-    of the SAME policy and shape are one entry with one module count, and the
-    trace then cannot say which module dispatched or how many did.  A lane
-    policy is not module coverage, and no consumer may read it as any.
+    of the SAME policy and shape share ONE ENTRY -- and that entry's identity is
+    then names-only.  The count does NOT collapse: unnamed objects are still
+    counted per distinct private ``id`` (``telemetry.py``), so two live unnamed
+    modules read ``modules=2`` with ``unnamed_modules=2`` and an empty
+    ``module_names``.  What is lost is which module each was, not how many ran;
+    per-module qualification fails because the names are missing, and a lane
+    policy is not a substitute for them.
 
     The builder is handed the module's real name and already prints it in every
     refusal here, so that is the identity it binds -- and ONLY where the layer
