@@ -165,6 +165,27 @@ def _install_vllm_stubs(monkeypatch):
 _ATTESTED = []
 
 
+def _register_runtime_fp4_op():
+    """Register the runtime's ``scaled_fp4_quant`` BEFORE the stubs go in.
+
+    ``_install_vllm_stubs`` replaces ``sys.modules['vllm']`` with a bare module,
+    so after it runs the real ``vllm._custom_ops`` cannot be imported and the
+    operator the route executes never registers.  The suite only worked when an
+    earlier test file had already registered it as a side effect (this file
+    passes in the A4 group, where ``test_kernel_a4.py`` runs first, and fails
+    when it is collected alone); the bootstrap cannot depend on test order.
+    """
+    if callable(getattr(torch.ops._C, "scaled_fp4_quant", None)):
+        return
+    try:
+        import vllm._custom_ops  # noqa: F401  (registers torch.ops._C)
+    except Exception as exc:  # noqa: BLE001 -- one diagnosis for every cause
+        raise RuntimeError(
+            "this suite drives the route's own A side, the runtime's registered "
+            f"scaled_fp4_quant, which could not be registered ({type(exc).__name__}: "
+            f"{exc})") from exc
+
+
 def _reference_fp4_quant_value(x, global_scale):
     """The A-side VALUE matrix, one group-16 E2M1 quantisation at the static
     global -- the arithmetic vLLM's ``scaled_fp4_quant`` publishes, written out
@@ -237,6 +258,7 @@ def _drive(monkeypatch, mode, roles=(("weight", 256),), cols=1024, m=32, seed=0,
     # that drives both modes clears it here rather than only between tests.
     serving_lane.reset_for_tests()
     monkeypatch.setenv(TESSERA_MODE_ENV, mode)
+    _register_runtime_fp4_op()
     _install_vllm_stubs(monkeypatch)
     # With sys.modules['vllm'] stubbed, the real operator library is not
     # importable; record that the route ATTESTs the ABI rather than executing
@@ -380,6 +402,7 @@ def _create_layer(monkeypatch, mode):
     load hook is driven through for the A-side scale gate below."""
     serving_lane.reset_for_tests()
     monkeypatch.setenv(TESSERA_MODE_ENV, mode)
+    _register_runtime_fp4_op()
     _install_vllm_stubs(monkeypatch)
     method = build_tessera_method(_scheme(), "test.layer")
     layer = _Layer()

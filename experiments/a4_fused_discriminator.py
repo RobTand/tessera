@@ -54,6 +54,12 @@ def _levels():
                         dtype=torch.float32, device="cuda")
 
 
+def _print_err(label, got, want):
+    err = (got.float() - want.float()).abs().max().item()
+    scale = max(want.float().abs().max().item(), 1e-9)
+    print(f"[{label}] err={err:.6f} max|want|={scale:.6f} ratio={err / scale:.6f}")
+
+
 def _reference_codes(x, global_scale):
     """The PRE-FIX reference rule (``argmin``, which takes the LOWER level on a
     tie), kept here as the historical comparator: the probe exists to show
@@ -76,8 +82,16 @@ def _reference_codes(x, global_scale):
 def main() -> None:
     torch.manual_seed(0)
     monkey = MonkeyPatch()
+
+    # The test's own numbers for both fixtures, with the current (fixed)
+    # reference rule -- the value the report carries is here, not a pass count.
+    single_got, single_want, _l1, _m1, _p1 = T._drive(
+        monkey, T.MODE_RESIDENT, roles=(("weight", 256),), seed=0)
+    _print_err("single-role dense seed=0", single_got, single_want)
+
     got, want, layer, _method, (packed, scale, global_) = T._drive(
         monkey, T.MODE_RESIDENT, roles=ROLES, seed=SEED)
+    _print_err("fused q/k/v seed=3", got, want)
 
     err = (got.float() - want.float()).abs()
     hess = want.float().abs().max().item()
