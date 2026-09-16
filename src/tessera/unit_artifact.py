@@ -937,7 +937,7 @@ def _plane_element_lookup(manifest: Manifest, terminal):
     return lambda kind: terminal.plane_elements[wire.index(kind)]
 
 
-def _resolve_tcq_profile(manifest: Manifest) -> "tuple[ConvCode, PayloadGrid]":
+def _resolve_tcq_profile(manifest: Manifest, memo: "dict | None" = None) -> "tuple[ConvCode, PayloadGrid]":
     """The ``(convolutional code, payload grid)`` pair the profile id binds.
 
     Neither is stored field-by-field, so recovering them by search over the
@@ -950,6 +950,16 @@ def _resolve_tcq_profile(manifest: Manifest) -> "tuple[ConvCode, PayloadGrid]":
     plane = manifest.scale_plane
     body, window_bits = manifest.body, manifest.window_bits
     seed, wsigma, csigma = _reach_attrs(manifest)
+    rates = manifest.rates
+    if memo is not None:
+        table = memo.get("__tcq_profile")
+        if table is not None:
+            key = (manifest.encoder_profile_id, span, plane.kind.name,
+                   body.name, window_bits, seed, wsigma, csigma,
+                   len(rates), hash(rates))
+            stored = table.get(key)
+            if stored is not None and stored[1] == rates:
+                return stored[0]
     code = grid = None
     for candidate in replayable_codes():
         for known in SERIALISABLE_GRIDS.values():
@@ -961,6 +971,11 @@ def _resolve_tcq_profile(manifest: Manifest) -> "tuple[ConvCode, PayloadGrid]":
                 break
         if code is not None:
             break
+    if code is not None and memo is not None:
+        table = memo.setdefault("__tcq_profile", {})
+        table[(manifest.encoder_profile_id, span, plane.kind.name, body.name,
+               window_bits, seed, wsigma, csigma, len(rates), hash(rates))] = (
+            (code, grid), rates)
     if code is None:
         raise GrammarError(
             "encoder_profile_id matches no (convolutional code, payload grid) "
@@ -1130,7 +1145,7 @@ def _window_table(chunks, grid: PayloadGrid, window_bits: int) -> torch.Tensor:
     return table
 
 
-def parse_unit_metadata(blob: bytes, device="cpu") -> ParsedMetadata:
+def parse_unit_metadata(blob: bytes, device="cpu", memo: "dict | None" = None) -> ParsedMetadata:
     """Parse an artifact to its **verified metadata**, expanding no weight plane.
 
     Every refusal ``parse_unit_artifact`` makes about structure, digests,
@@ -1149,6 +1164,7 @@ def parse_unit_metadata(blob: bytes, device="cpu") -> ParsedMetadata:
     """
     art = parse(blob)
     manifest, terminal = art.manifest, art.terminal
+    memo = {} if memo is None else memo
     geometry, rates = manifest.geometry, manifest.rates
     rows, cols = geometry.rows, geometry.columns
     if manifest.scale_plane.kind is not ScalePlaneKind.CHANNEL:
@@ -1166,7 +1182,8 @@ def parse_unit_metadata(blob: bytes, device="cpu") -> ParsedMetadata:
         grid = _resolve_window_grid(manifest)
         _require_plane_grid(plane.kind, grid)
         # A window position may spend the grid's whole width (``_plan_for``).
-        validate_rate_schedule(rates, manifest.branch.root, grid.payload_bits)
+        validate_rate_schedule(rates, manifest.branch.root, grid.payload_bits,
+                               memo=memo)
         if rows % grid.arity:
             raise GrammarError(
                 f"geometry declares {rows} rows, not a whole number of arity-"
@@ -1187,11 +1204,12 @@ def parse_unit_metadata(blob: bytes, device="cpu") -> ParsedMetadata:
             shard_state=_shard_state_checked(manifest, chunks, device, None),
         )
 
-    code, grid = _resolve_tcq_profile(manifest)
+    code, grid = _resolve_tcq_profile(manifest, memo)
     _require_plane_grid(plane.kind, grid)
     # The manifest deferred the rate ceiling because it had no grid; there is
     # one now, so apply it before a single code becomes a weight.
-    validate_rate_schedule(rates, manifest.branch.root, grid.rate_cap)
+    validate_rate_schedule(rates, manifest.branch.root, grid.rate_cap,
+                           memo=memo)
     if rows % grid.arity:
         raise GrammarError(
             f"geometry declares {rows} rows, not a whole number of arity-"
@@ -1208,9 +1226,10 @@ def parse_unit_metadata(blob: bytes, device="cpu") -> ParsedMetadata:
     # ceiling here instead would mis-slice every unit encoded shallower than its
     # rate allows -- silently, since the bits would still unpack.
     completion_limit = completion_limit_from_elements(
-        elements(PlaneKind.COMPLETION), rates, steps, grid.rate_cap,
+        elements(PlaneKind.COMPLETION), rates, steps, grid.rate_cap, memo=memo,
     )
-    widths = completion_widths_for(rates, grid.rate_cap, completion_limit)
+    widths = completion_widths_for(rates, grid.rate_cap, completion_limit,
+                                   memo=memo)
     forests = _read_forest_planes(
         rates, chunks[PlaneKind.ALPHABET], chunks[PlaneKind.DESCENDANT], grid
     )

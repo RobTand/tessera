@@ -11,6 +11,10 @@ import triton.language as tl
 
 from .kernel_bits import _plane_words, _span_of
 
+#: Public name for the prepared word view a caller can compute once per plane
+#: and hand to several packers (``_plane_words`` is the same function).
+plane_words = _plane_words
+
 
 @triton.jit
 def _unpack_body_kernel(words, schedule, out, ROWS: tl.constexpr,
@@ -187,7 +191,8 @@ def _span2_point_kernel(words, out, cols, groups_per_col, col0, col_bits,
 def pack_span2_select_cuda(plane: torch.Tensor, *, cols: int, groups_per_col: int,
                            col0: int, col_bits: int, pair0: int, per: int,
                            device: torch.device,
-                           scratch: "dict | None" = None) -> torch.Tensor:
+                           scratch: "dict | None" = None,
+                           words: "torch.Tensor | None" = None) -> torch.Tensor:
     """The select plane of a span-2 unit (see ``_span2_select_kernel``).
 
     ``col_bits`` is the source BODY bits per column *of the plane being
@@ -195,7 +200,8 @@ def pack_span2_select_cuda(plane: torch.Tensor, *, cols: int, groups_per_col: in
     ``groups_per_col`` the cut's shape.  Returns uint8
     ``[cols * groups_per_col + 8]`` -- the destination's own trailing slack.
     """
-    words = _plane_words(plane, scratch)
+    if words is None:
+        words = _plane_words(plane, scratch)
     out = torch.zeros(cols * (groups_per_col + 1) + 8, dtype=torch.uint8,
                       device=device)
     total = cols * groups_per_col
@@ -210,9 +216,11 @@ def pack_span2_select_cuda(plane: torch.Tensor, *, cols: int, groups_per_col: in
 def pack_span2_label_cuda(plane: torch.Tensor, *, cols: int, groups_per_col: int,
                           col0: int, col_bits: int, pair0: int, per: int,
                           label_off: int, device: torch.device,
-                          scratch: "dict | None" = None) -> torch.Tensor:
+                          scratch: "dict | None" = None,
+                           words: "torch.Tensor | None" = None) -> torch.Tensor:
     """The label plane of a span-2 unit (see ``_span2_label_kernel``)."""
-    words = _plane_words(plane, scratch)
+    if words is None:
+        words = _plane_words(plane, scratch)
     out = torch.zeros(cols * groups_per_col, dtype=torch.uint8, device=device)
     total = cols * groups_per_col
     if total:
@@ -227,9 +235,11 @@ def pack_span2_point_cuda(plane: torch.Tensor, *, cols: int, groups_per_col: int
                           col0: int, col_bits: int, step0: int, per: int,
                           rate: int, steps_per_col: int,
                           device: torch.device,
-                          scratch: "dict | None" = None) -> torch.Tensor:
+                          scratch: "dict | None" = None,
+                           words: "torch.Tensor | None" = None) -> torch.Tensor:
     """The point plane of a span-2 unit (see ``_span2_point_kernel``)."""
-    words = _plane_words(plane, scratch)
+    if words is None:
+        words = _plane_words(plane, scratch)
     wid = rate - 1
     out = torch.zeros(cols * (steps_per_col * wid // 8), dtype=torch.uint8,
                       device=device)

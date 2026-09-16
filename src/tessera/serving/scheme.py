@@ -1645,7 +1645,8 @@ def parse_tessera_blob_for_scheme(blob: bytes, scheme: Mapping, target: str, dev
 
 
 def _parse_compact_container(blob: bytes, declared: Mapping, target: str,
-                             device="cuda", expect_bytes: "int | None" = None) -> list:
+                             device="cuda", expect_bytes: "int | None" = None,
+                             memo: "dict | None" = None) -> list:
     """The compact reader's half of ``_parse_container``: same questions, no
     expanded plane.
 
@@ -1663,7 +1664,8 @@ def _parse_compact_container(blob: bytes, declared: Mapping, target: str,
     members = _declared_members(blob, declared, target, expect_bytes)
     out = []
     for member, member_q256 in zip(members, declared["role_q256"]):
-        wire = parse_compact_wire(member.blob, device=device, name=member.name)
+        wire = parse_compact_wire(member.blob, device=device, name=member.name,
+                                  memo=memo)
         meta = wire.metadata
         actual = {
             "grid": meta.grid.name, "body": meta.body.name,
@@ -1694,7 +1696,7 @@ def parse_compact_blob_for_scheme(blob: bytes, scheme: Mapping, target: str,
 
 
 def parse_compact_tessera_expert_blob(blob: bytes, declared_role: Mapping, target: str,
-                                      device="cpu") -> list:
+                                      device="cpu", memo: "dict | None" = None) -> list:
     """The compact twin of ``parse_tessera_expert_blob``, signature for signature.
 
     ``declared_role`` is one entry of :func:`expert_role_declarations`.  The
@@ -1710,7 +1712,8 @@ def parse_compact_tessera_expert_blob(blob: bytes, declared_role: Mapping, targe
             f"tessera target {target!r}: the expert blob is {len(blob)} bytes, longer than the "
             f"group's declared wire_stride={stride} -- the parameter row it was copied into "
             "ends before the blob does, so this is truncated data rather than a shorter read")
-    return _parse_compact_container(blob, declared_role, target, device, expect_bytes=None)
+    return _parse_compact_container(blob, declared_role, target, device,
+                                    expect_bytes=None, memo=memo)
 
 
 def expert_role_declarations(declared_group: Mapping) -> "list[dict]":

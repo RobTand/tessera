@@ -646,7 +646,7 @@ def _require_no_completion_plane(unit, forest: AnchorForest) -> None:
         limit=getattr(unit, "completion_limit", None))
 
 
-def require_no_completion_plane(*, rates, rate: int, cap: int, limit) -> None:
+def require_no_completion_plane(*, rates, rate: int, cap: int, limit, memo: "dict | None" = None) -> None:
     """Refuse a TCQ unit whose wire carries a COMPLETION plane.
 
     A column at body rate ``R`` under the grid's cap may spend up to
@@ -671,7 +671,7 @@ def require_no_completion_plane(*, rates, rate: int, cap: int, limit) -> None:
     """
     from .grammar import completion_widths
 
-    written = max(completion_widths(tuple(rates), cap, limit), default=0)
+    written = max(completion_widths(tuple(rates), cap, limit, memo=memo), default=0)
     if written:
         raise GrammarError(
             f"this unit carries a COMPLETION plane {written} level"

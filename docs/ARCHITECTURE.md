@@ -2950,7 +2950,15 @@ group's plan (rows of `w13`, columns of `w2`), and prepared into
 `fused.shared_lut_global` under the fused tile's one global.  No stock
 NVFP4 tile is built at load or in a forward and no expanded expert pool is
 resident: the compact planes ride through residency and the fused decode
-happens in the kernel.  The loader's staging is bounded and owned by the
+happens in the kernel.  The loader's parse is bounded and owned by the
+load too: the two mandated SHA-256 passes over a wire overlap (per-plane
+checks on one short-lived worker thread, the whole-region payload digest on
+the caller, payload-digest precedence unchanged), the geometry-keyed
+derivations that are constant across a layer (encoder-profile pair, rate
+schedule, completion depth, shard granularity) are memoised in a
+caller-owned per-layer dict whose keys carry the full rate schedule, and the
+byte-reversed word view is built once per wire for all three packers.  The
+staging is bounded and owned by the
 load: the per-wire packed-plane transfers fill caller-owned reusable buffers
 (`compact_prep._plane_u8`, `kernel_bits._plane_words`; one scratch dict per
 `_ExpertIntake`, never module-global) instead of allocating a fresh device

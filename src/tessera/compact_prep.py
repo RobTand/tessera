@@ -86,15 +86,19 @@ class CompactWire:
         return self.metadata.role_facts()
 
 
-def parse_compact_wire(blob: bytes, device="cuda", *, name: str = "") -> CompactWire:
+def parse_compact_wire(blob: bytes, device="cuda", *, name: str = "",
+                      memo: "dict | None" = None) -> CompactWire:
     """One unit's bytes -> verified metadata (digests and every structural
-    refusal included; nothing expanded)."""
-    metadata = parse_unit_metadata(bytes(blob), device)
+    refusal included; nothing expanded).  ``memo`` is a caller-owned dict for
+    the geometry-keyed derivations (profile pair, rate schedule, completion
+    depth); see ``unit_artifact.parse_unit_metadata``."""
+    metadata = parse_unit_metadata(bytes(blob), device, memo=memo)
     return CompactWire(name=str(name), rows=metadata.rows, metadata=metadata,
                        blob_len=len(blob))
 
 
-def parse_compact_expert(blob: bytes, device="cuda") -> "list[CompactWire]":
+def parse_compact_expert(blob: bytes, device="cuda",
+                        memo: "dict | None" = None) -> "list[CompactWire]":
     """One ``tessera.fused`` container -> its members' ``CompactWire``s.
 
     The framing checks are ``fused.parse_fused``'s (magic, version, member
@@ -106,13 +110,14 @@ def parse_compact_expert(blob: bytes, device="cuda") -> "list[CompactWire]":
 
     out = []
     for member in parse_fused(bytes(blob)):
-        metadata = parse_unit_metadata(member.blob, device)
+        metadata = parse_unit_metadata(member.blob, device, memo=memo)
         out.append(CompactWire(name=member.name, rows=int(member.rows),
                                metadata=metadata, blob_len=len(member.blob)))
     return out
 
 
-def require_compact_cut(wire: CompactWire, rows=None, cols=None):
+def require_compact_cut(wire: CompactWire, rows=None, cols=None,
+                       memo: "dict | None" = None):
     """Validate a rank cut with the *same* predicates ``slice_unit`` applies.
 
     Returns ``((r0, r1), (c0, c1))`` -- half-open, in weight space.  Bounds,
@@ -136,7 +141,8 @@ def require_compact_cut(wire: CompactWire, rows=None, cols=None):
     reason = slicing.unsliceable_reason(metadata.manifest)
     if reason is not None:
         raise GrammarError(reason)
-    row_gran, col_gran = slicing.shard_granularity(metadata.manifest)
+    row_gran, col_gran = slicing.shard_granularity(metadata.manifest,
+                                                   memo=memo)
     for offset, name, granularity in ((r0, "row", row_gran), (c0, "column", col_gran)):
         if offset % granularity:
             raise GrammarError(
@@ -228,9 +234,15 @@ def gather_packed_fields(packed: torch.Tensor, offsets: torch.Tensor,
 
 def _nibble_at(packed: torch.Tensor, index: torch.Tensor) -> torch.Tensor:
     """The 4-bit word at flat nibble ``index``, int64, exactly as
-    ``wire.unpack_uniform`` reads width 4 (even index = high nibble)."""
+    ``wire.unpack_uniform`` reads width 4 (even index = high nibble).
+
+    One shift selects the nibble: an even index takes the high one (shift 4),
+    an odd index the low one (shift 0), so no ``where`` and no second mask
+    tensor are built per call.
+    """
     byte = packed[index >> 1]
-    return torch.where((index & 1) == 0, byte >> 4, byte & 0x0F).to(torch.int64)
+    shift = ((index & 1) ^ 1) << 2
+    return ((byte >> shift.to(byte.dtype)) & 0x0F).to(torch.int64)
 
 
 def _compact_scale_nibbles(metadata: ParsedMetadata, *, r0: int, r1: int,
@@ -385,7 +397,8 @@ def _write_select_pad(select: torch.Tensor, state: torch.Tensor, cols: int,
 
 
 def prepare_span2_compact(wire: CompactWire, *, rows=None, cols=None,
-                          device="cuda", scratch: "dict | None" = None) -> dict:
+                          device="cuda", scratch: "dict | None" = None,
+                          memo: "dict | None" = None) -> dict:
     """A span-2 LUT-plane unit -> the native decoder's inputs, rank-local.
 
     The returned dictionary is ``lane_planes.prepare_span2_planes``'s, key for
@@ -419,7 +432,7 @@ def prepare_span2_compact(wire: CompactWire, *, rows=None, cols=None,
             f"bits per 128-bit window and admits rates up to 8; this unit is "
             f"rate {rate}. The materialising packer (lane_planes."
             "pack_unit_for_kernel) serves it")
-    (r0, r1), (c0, c1) = require_compact_cut(wire, rows, cols)
+    (r0, r1), (c0, c1) = require_compact_cut(wire, rows, cols, memo=memo)
     arity = int(forest.grid.arity)
     rows_local = r1 - r0
     # ``prepare_span2_planes`` asks the native admission first, then
@@ -446,7 +459,7 @@ def prepare_span2_compact(wire: CompactWire, *, rows=None, cols=None,
             f"unit rates {sorted(set(metadata.rates))} are not the forest's {rate}")
     lp.require_no_completion_plane(
         rates=metadata.rates, rate=rate, cap=forest.cap,
-        limit=metadata.completion_limit)
+        limit=metadata.completion_limit, memo=memo)
 
     device = torch.device(device)
     from . import kernel_wire as kw
@@ -460,22 +473,26 @@ def prepare_span2_compact(wire: CompactWire, *, rows=None, cols=None,
     col_bits = (steps_total // span) * per
     cols_local = c1 - c0
     body = _plane_u8(metadata.chunks[PlaneKind.BODY], device, scratch, "body")
+    # One byte-reversed word view per wire, shared by the three packers: each
+    # packer rebuilding it was two extra full-plane passes per wire, and the
+    # kernels only read it.
+    words = kw.plane_words(body, scratch)
     select = kw.pack_span2_select_cuda(
         body, cols=cols_local, groups_per_col=pairs_local // 8, col0=c0,
         col_bits=col_bits, pair0=s0 // span, per=per, device=device,
-        scratch=scratch)
+        scratch=scratch, words=words)
     state = _tcq_cut_state(metadata, s0, c0, c1, device, scratch)
     if state is not None:
         _write_select_pad(select, state, cols_local, pairs_local, code.memory)
     label = kw.pack_span2_label_cuda(
         body, cols=cols_local, groups_per_col=pairs_local // 4, col0=c0,
         col_bits=col_bits, pair0=s0 // span, per=per, label_off=rate,
-        device=device, scratch=scratch)
+        device=device, scratch=scratch, words=words)
     wid = rate - 1
     point = kw.pack_span2_point_cuda(
         body, cols=cols_local, groups_per_col=(steps_local * wid) // 8, col0=c0,
         col_bits=col_bits, step0=s0, per=per, rate=rate,
-        steps_per_col=steps_local, device=device, scratch=scratch)
+        steps_per_col=steps_local, device=device, scratch=scratch, words=words)
     scale_lut = metadata.scale_lut
     label_lut, _subset_lut = lp.build_span2_luts(forest, code, device)
     return {

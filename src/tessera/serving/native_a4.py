@@ -34,7 +34,7 @@ __all__ = [
 
 
 def prepare_a4_unit(wire, *, rows=None, cols=None, global_scale=None,
-                    scratch=None) -> A4Unit:
+                    scratch=None, memo=None) -> A4Unit:
     """One rank-local role's ``A4Unit`` from a verified compact wire.
 
     ``wire`` is ``compact_prep.CompactWire`` (metadata verified, no parent
@@ -47,7 +47,8 @@ def prepare_a4_unit(wire, *, rows=None, cols=None, global_scale=None,
     loader's intake owns one so the per-wire BODY transfer does not allocate
     a fresh device buffer per wire under the runtime's allocator context.
     """
-    prepared = prepare_span2_compact(wire, rows=rows, cols=cols, scratch=scratch)
+    prepared = prepare_span2_compact(wire, rows=rows, cols=cols, scratch=scratch,
+                                     memo=memo)
     return A4Unit.from_prepared(prepared, global_scale=global_scale)
 
 

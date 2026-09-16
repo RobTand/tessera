@@ -209,7 +209,8 @@ def _unsliceable_reason(rotation, block, columns) -> "str | None":
     return None
 
 
-def shard_granularity(unit, superblock: int = 256, arity: int = 1):
+def shard_granularity(unit, superblock: int = 256, arity: int = 1,
+                      memo: "dict | None" = None):
     """``(row_granularity, col_granularity)``: where a cut may legally fall.
 
     Both numbers are *derived* from the checks ``slice_unit`` applies, never
@@ -246,7 +247,7 @@ def shard_granularity(unit, superblock: int = 256, arity: int = 1):
     from .manifest import BodyKind, Manifest
 
     if isinstance(unit, Manifest):
-        return _manifest_granularity(unit)
+        return _manifest_granularity(unit, memo)
     unit, superblock, arity = _unwrap(unit, superblock, arity)
     steps, cols = unit.body_bits.shape
     span = int(getattr(unit, "span", 1))
@@ -260,7 +261,7 @@ def shard_granularity(unit, superblock: int = 256, arity: int = 1):
     return row, col
 
 
-def _manifest_granularity(manifest):
+def _manifest_granularity(manifest, memo: "dict | None" = None):
     """``shard_granularity`` for a manifest -- what a reader holding bytes has."""
     from .manifest import BodyKind
 
@@ -268,7 +269,8 @@ def _manifest_granularity(manifest):
     block = scale_block_columns(
         manifest.scale_plane.kind, geometry.group_weights, geometry.half_weights
     )
-    arity = geometry.rows * geometry.columns // (geometry.columns * _steps_of(manifest))
+    arity = geometry.rows * geometry.columns // (
+        geometry.columns * _steps_of(manifest, memo))
     row = arity * (manifest.span if manifest.body is BodyKind.TCQ else 1)
     col = 1 if block is None else block
     if len(set(manifest.rates)) > 1 or _released_positions(manifest):
@@ -286,7 +288,7 @@ def _released_positions(unit) -> int:
     return unit.released_positions
 
 
-def _steps_of(manifest) -> int:
+def _steps_of(manifest, memo: "dict | None" = None) -> int:
     """Trellis steps per column, from the BODY plane's declared element count.
 
     The arity is not on the wire, so it is recovered by trying the ones a
@@ -311,6 +313,15 @@ def _steps_of(manifest) -> int:
         terminal.plane_elements[wire.index(PlaneKind.BODY)]
         for terminal in manifest.terminals
     )
+    if memo is not None:
+        table = memo.get("__steps_of")
+        if table is not None:
+            rates = manifest.rates
+            key = (elements, manifest.geometry.rows, manifest.span,
+                   len(rates), hash(rates))
+            stored = table.get(key)
+            if stored is not None and stored[1] == rates:
+                return stored[0]
     # The arities a reader can meet are the tuple orders the registry commits
     # to: ``arity`` is the grid's tuple order, and a grid outside the registry
     # has no identity a reader can resolve.  A wider tuple is refused twice
@@ -327,6 +338,11 @@ def _steps_of(manifest) -> int:
         if steps % manifest.span:
             continue
         if sum(_bits(rate, steps, manifest.span) for rate in manifest.rates) == elements:
+            if memo is not None:
+                table = memo.setdefault("__steps_of", {})
+                table[(elements, manifest.geometry.rows, manifest.span,
+                       len(manifest.rates), hash(manifest.rates))] = (
+                    steps, manifest.rates)
             return steps
     raise GrammarError(
         f"the BODY plane declares {elements} bits, which no arity in "

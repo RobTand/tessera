@@ -197,6 +197,12 @@ class _ExpertIntake:
         # share a buffer.  The committed measurement is
         # ``docs/measurements/tessera-a4-loader-staging-20260916.md``.
         self._scratch: dict = {}
+        # Geometry-keyed derivations (encoder-profile pair, rate schedule,
+        # completion depth, shard granularity) are the same for every expert
+        # of a layer; one caller-owned dict per loaded layer pays them once.
+        # Every key stores the full input tuple, so a hit is an identical
+        # question and the verification it returns was computed, not assumed.
+        self._memo: dict = {}
 
     def take(self, group, index, expert, blob: bytes, device):
         """One verified container -> this rank's native bundles for its role.
@@ -234,7 +240,7 @@ class _ExpertIntake:
         validator = getattr(scheme_module, "parse_compact_tessera_expert_blob", None)
         if validator is not None:
             validated = validator(blob, declared_role, f"{target} {group} expert {expert}",
-                                  device=device)
+                                  device=device, memo=self._memo)
             if len(validated) != 1:
                 raise GrammarError(
                     f"{target} {group} expert {expert}: an expert projection container "
@@ -242,7 +248,7 @@ class _ExpertIntake:
             name, member = validated[0]
             rows, cols = _cuts(plan.role(name))
             unit = prepare_a4_unit(member, rows=rows, cols=cols,
-                                   scratch=self._scratch)
+                                   scratch=self._scratch, memo=self._memo)
         else:
             from ..kernel_a4 import A4Unit
             from ..lane_planes import prepare_span2_planes
@@ -516,8 +522,9 @@ def build_tessera_nvfp4_moe_method(scheme: Mapping, prefix: str, mode: str, laye
 
         def _load_wire(self, param, loaded_weight, weight_name, shard_id, expert_id,
                        return_success: bool = False):
-            """Validate one full container, cut it to this rank, decode it into the
-            expert's rows of the stock tile, and drop the planes."""
+            """Validate one full container, cut it to this rank, prepare it into
+            the expert's slot of the compact axis bundle, and drop the planes
+            (no stock tile is built on this route)."""
             if self._intake is None:
                 raise RuntimeError(f"tessera target {prefix!r}: wires arrived after finalize")
             group, index = self._group_of(shard_id, expert_id)
