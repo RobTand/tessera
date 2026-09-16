@@ -578,7 +578,14 @@ def _stock_modular_reference(x, w1, w2, weights, ids, *, family, clamp,
 
 
 def stock_factory_construction_check(fixture, layers=(3, 4), experts=(0, 1)):
-    """Actually CONSTRUCT the stock reference, on CPU, before any GPU run.
+    """Construct the stock SELECTION (backend + experts class) and check the
+    config the factory will read against the units.
+
+    Label corrected: this selects the backend and expert class and validates the
+    stub's config (E, local intermediate).  It does not call
+    ``make_fp8_moe_kernel``/``make_unquantized_moe_kernel`` -- the full factory
+    runs inside the canonical arms, where a workspace manager and CUDA are
+    available.
 
     The geometry self-check proves none of this: it never builds the adapter or
     the stock kernel.  Two real defects lived here -- the previous version read
