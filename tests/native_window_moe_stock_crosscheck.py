@@ -112,17 +112,19 @@ def _fp8_quant_config():
 def canonical_units(fixture, layers=(3, 4), experts=(0, 1), verify=True):
     """The FIXTURE'S OWN canonical experts, not synthetic wires.
 
-    Reads the derivative's index + manifest, takes the named experts'
-    per-projection containers straight from the shards they live in, checks
-    each tensor's sha256 against the manifest entry that recorded it (so the
-    bytes named are the bytes served), and parses each container with the
-    SHARED compact reader -- the same call the serving intake makes -- against
-    the checkpoint's own ``quantization_config`` groups.  No encoder runs and
-    nothing is re-derived: a mismatch refuses instead of borrowing cache under
-    a false identity.
+    Groups are found by EXACT target: the checkpoint's ``config_groups`` are
+    keyed by sanitized names, and each entry carries its real ``targets`` list
+    and its own ``scheme``, so the lookup matches the dotted module path inside
+    ``targets`` and requires it to be unique -- not by guessing a key spelling.
 
-    Returns ``{layer: {"family", "roles", "local": {(rank, size): ...}}}`` with
-    the raw containers per projection, so a caller can slice and decode them.
+    Every projection container is read from the shard the index names and its
+    sha256 and byte count are checked against the manifest entry that recorded
+    them, so the bytes named are the bytes served.  Each container is then
+    parsed with the SHARED compact reader, against its own declaration.
+
+    Returns ``{layer: {"family", "declared", "target", "experts": {e: {...}}}}``
+    where each expert carries the raw ``bytes`` (what the loader callbacks take)
+    and the parsed wires.
     """
     import hashlib, json, os
     from safetensors import safe_open
@@ -133,41 +135,109 @@ def canonical_units(fixture, layers=(3, 4), experts=(0, 1), verify=True):
     index = json.load(open(os.path.join(fixture, "model.safetensors.index.json")))["weight_map"]
     manifest = json.load(open(os.path.join(fixture, "tessera_derivative_manifest.json")))
     recorded = {entry["tensor"]: entry for entry in manifest["tensors"]}
-    groups = quant["config_groups"]
 
     out = {}
     for layer in layers:
         target = f"model.language_model.layers.{layer}.mlp.experts"
-        group = groups.get(target) or groups.get(target + ".experts")
-        if group is None:
-            raise SystemExit(f"no config group for {target}: {sorted(groups)[:4]}...")
-        declared = _scheme.validate_tessera_moe_scheme(
-            {"config_groups": {target: group}}, target)
-        roles = {row["roles"][0][0]: row
-                 for row in _scheme.expert_role_declarations(declared)}
-        per_expert = {}
+        hits = [entry for entry in quant["config_groups"].values()
+                if target in (entry.get("targets") or [])]
+        if len(hits) != 1:
+            raise SystemExit(f"{target}: {len(hits)} config_groups name it; a "
+                             f"canonical read requires exactly one")
+        # ``validate_tessera_moe_scheme`` takes the GROUP itself: the module
+        # facts (family, grid, body, plane) and the two groups live at its top.
+        declared = _scheme.validate_tessera_moe_scheme(hits[0]["scheme"], target)
+        w13_roles = _scheme.expert_role_declarations(declared["groups"]["w13"])
+        w2_roles = _scheme.expert_role_declarations(declared["groups"]["w2"])
+        by_role = {row["roles"][0][0]: row for row in w13_roles + w2_roles}
+        containers = {}
         for e in experts:
-            blobs = {}
-            for role_key, tensor_role in (("w1", "gate_proj"), ("w3", "up_proj"), ("w2", "down_proj")):
+            raw, parsed, materialized = {}, {}, {}
+            for role_key, tensor_role in (("w1", "gate_proj"), ("w3", "up_proj"),
+                                          ("w2", "down_proj")):
                 name = f"{target}.{e}.{tensor_role}.wire"
-                shard = index[name]
-                with safe_open(os.path.join(fixture, shard), framework="pt") as f:
-                    raw = f.get_tensor(name).numpy().tobytes()
+                with safe_open(os.path.join(fixture, index[name]), framework="pt") as f:
+                    blob = f.get_tensor(name).numpy().tobytes()
                 entry = recorded.get(name)
                 if verify:
-                    digest = hashlib.sha256(raw).hexdigest()
+                    digest = hashlib.sha256(blob).hexdigest()
                     if entry is None or entry["sha256"] != digest:
-                        raise SystemExit(f"sha256 mismatch for {name}: manifest says "
-                                         f"{None if entry is None else entry['sha256'][:12]}, bytes are {digest[:12]}")
-                    if int(entry["bytes"]) != len(raw):
+                        raise SystemExit(
+                            f"sha256 mismatch for {name}: manifest "
+                            f"{None if entry is None else entry['sha256'][:12]}, bytes {digest[:12]}")
+                    if int(entry["bytes"]) != len(blob):
                         raise SystemExit(f"byte count mismatch for {name}")
-                parsed = _scheme.parse_compact_tessera_expert_blob(
-                    raw, roles[role_key], target, device="cpu")
-                blobs[role_key] = parsed
-            per_expert[e] = blobs
+                declaration = by_role.get(tensor_role)
+                if declaration is None:
+                    raise SystemExit(f"{target}: no declaration for {tensor_role}; "
+                                     f"has {sorted(by_role)}")
+                raw[role_key] = blob
+                # The compact reader is what the native intake consumes; the
+                # materialising reader is the independent reference.  Both are
+                # kept, so the stock decode never runs on the parser under test.
+                parsed[role_key] = _scheme.parse_compact_tessera_expert_blob(
+                    blob, declaration, target, device="cpu")
+                materialized[role_key] = _scheme.parse_tessera_expert_blob(
+                    blob, declaration, target, device="cpu")
+            containers[e] = {"raw": raw, "parsed": parsed, "materialized": materialized,
+                             "manifest": {k: recorded.get(f"{target}.{e}."
+                                                          f"{ {'w1':'gate_proj','w3':'up_proj','w2':'down_proj'}[k] }.wire")
+                                          for k in raw}}
         out[layer] = {"family": declared["family"], "declared": declared,
-                      "experts": per_expert, "target": target}
+                      "target": target, "experts": containers}
     return out
+
+
+def canonical_stock_decode(units, layer, device="cpu"):
+    """The INDEPENDENT stock decode of those exact containers.
+
+    FP8 (layer 3) goes through ``prepare_tessera_moe_experts``: it parses every
+    blob against its group's declaration and materialises the stock per-channel
+    stack the fused-MoE kernel was measured on.  BF16 (layer 4) goes through
+    ``prepare_tessera_bf16_module``, the reference decode for that family.
+    Neither is the compact intake under test.
+    """
+    from tessera.serving import moe_route as _mr
+    from tessera.serving.bf16_route import prepare_tessera_bf16_module
+
+    u = units[layer]
+    experts = sorted(u["experts"])
+    if u["family"].endswith("FP8") or u["family"] == "TESSERA_FP8":
+        blobs = {"w13": [[u["experts"][e]["raw"]["w1"], u["experts"][e]["raw"]["w3"]]
+                         for e in experts],
+                 "w2": [[u["experts"][e]["raw"]["w2"]] for e in experts]}
+        # BOUNDED by construction: the declaration is the checkpoint's own
+        # except for the expert COUNT, which is narrowed to the experts
+        # actually carried here.  Every other fact -- family, grid, body,
+        # plane, both groups' geometry, q256 and wire_stride -- is untouched,
+        # and the containers are the manifest-verified bytes.
+        bounded = dict(u["declared"])
+        bounded["experts"] = len(experts)
+        prepared = _mr.prepare_tessera_moe_experts(blobs, bounded, u["target"],
+                                                   device=device)
+        return {"family": u["family"], "experts": experts,
+                "declaration": {"experts_declared": u["declared"].get("experts"),
+                                "experts_decoded": len(experts),
+                                "note": "count narrowed for a bounded decode; all other facts are the checkpoint's"},
+                "bounded": True,
+                "w13_weight": list(prepared.w13_weight.shape),
+                "w13_weight_scale": list(prepared.w13_weight_scale.shape),
+                "w2_weight": list(prepared.w2_weight.shape),
+                "w2_weight_scale": list(prepared.w2_weight_scale.shape)}
+    decoded = {}
+    for e in experts:
+        roles = (u["experts"][e]["materialized"]["w1"]
+                 + u["experts"][e]["materialized"]["w3"])
+        mod = prepare_tessera_bf16_module(roles, device=device)
+        info = {"type": type(mod).__name__}
+        for name in ("rows", "columns"):
+            value = getattr(mod, name, None)
+            if isinstance(value, int):
+                info[name] = value
+        decoded[str(e)] = info
+    return {"family": u["family"], "experts": experts,
+            "note": "materialising reference decode (parse_tessera_expert_blob), not the compact intake",
+            "modules": decoded}
 
 
 def _stock_activation(gate, up, limit):
@@ -312,12 +382,27 @@ def main():
         units = canonical_units(args.canonical_fixture,
                                 layers=tuple(int(v) for v in args.canonical_layers.split(",")),
                                 experts=tuple(int(v) for v in args.canonical_experts.split(",")))
-        summary = {layer: {"family": u["family"],
-                           "roles": sorted(next(iter(u["experts"].values())).keys()),
-                           "experts": sorted(u["experts"]),
-                           "containers": {str(e): {k: len(v) for k, v in blobs.items()}
-                                          for e, blobs in u["experts"].items()}}
-                   for layer, u in units.items()}
+        summary = {}
+        for layer, u in units.items():
+            w13 = u["declared"]["groups"]["w13"]
+            w2 = u["declared"]["groups"]["w2"]
+            summary[layer] = {
+                "target": u["target"], "family": u["family"],
+                "experts": sorted(u["experts"]),
+                "w13": {"rows": w13["rows"], "columns": w13["columns"],
+                        "roles": [list(r) for r in w13["roles"]],
+                        "q256": w13["q256"], "wire_stride": w13["wire_stride"]},
+                "w2": {"rows": w2["rows"], "columns": w2["columns"],
+                       "roles": [list(r) for r in w2["roles"]],
+                       "wire_stride": w2["wire_stride"]},
+                "containers": {str(e): {k: len(v["raw"][k])
+                                        for k in ("w1", "w3", "w2")}
+                               for e, v in u["experts"].items()},
+                "parsed_roles": {str(e): {k: [r for r, _w in v["parsed"][k]]
+                                          for k in ("w1", "w3", "w2")}
+                                 for e, v in u["experts"].items()},
+                "stock_decode": canonical_stock_decode(units, layer),
+            }
         print(json.dumps({"canonical_selection": summary, "bytes_verified": True}, indent=1))
         raise SystemExit(0)
 
