@@ -293,7 +293,7 @@ def canonical_execution(fixture, layers=(3, 4), experts=(0, 1), clamp=10.0):
             local = inter // tp_size
             lo, hi = tp_rank * local, (tp_rank + 1) * local
             layer_stub = _native_layer(tp_rank=tp_rank, tp_size=tp_size,
-                                       hidden=H, inter=inter)
+                                       hidden=H, inter=inter, experts=E)
             layer_stub.swiglu_limit = clamp
             kwargs = {}
             if u["family"] == "TESSERA_BF16":
@@ -443,10 +443,12 @@ def canonical_execution(fixture, layers=(3, 4), experts=(0, 1), clamp=10.0):
                         {"layer": layer, "tp_rank": tp_rank, "expert": expert,
                          "stage": "down_on_act", "max_abs": float((n_dn.float() - r_dn.float()).abs().max()),
                          "mag": float(r_dn.float().abs().max())})
-            # ---- COMPOSITION: does the arm's stock actually honour the clamp?
-            # The full arm calls fused_experts with quant_config carrying
-            # swiglu_limit, ONE kernel, not the standalone op above.  Compare a
-            # single-kernel run against the arm's own reconstruction.
+            # ---- NEGATIVE EVIDENCE: the non-modular path drops the clamp.
+            # ``fused_experts`` calls ``apply_moe_activation`` with no
+            # ``activation_config``, so ``gemm1_clamp_limit`` never reaches the
+            # activation.  This probe is retained to demonstrate that, which is
+            # why the arms below use ``_stock_modular_reference`` (the real
+            # ``FusedMoEKernel.apply``) instead of ``fused_experts``.
             if u["family"] == "TESSERA_FP8":
                 qc_probe = quant_fp8(w1_scale=s1, w2_scale=s2, swiglu_limit=clamp)
                 fused_clamped = fused_experts(x[:4], w1, w2, torch.ones(4, 2, device="cuda"),
@@ -483,8 +485,7 @@ def canonical_execution(fixture, layers=(3, 4), experts=(0, 1), clamp=10.0):
                     x, w1, w2, weights, ids, family=u["family"], clamp=clamp,
                     experts=E, apply_router_weight_on_input=weight_input,
                     w1_scale=s1, w2_scale=s2,
-                    fp8_backend=method.fp8_backend,
-                    moe_config=method.moe, experts_cls=method.experts_cls)
+                    moe_config=method.moe)
                 report.setdefault("clamp_wiring", []).append(
                     {"layer": layer, "tp_rank": tp_rank, "weight_input": weight_input,
                      "stock_used": "FusedMoEKernel.apply via make_fp8_moe_kernel / "
@@ -498,8 +499,7 @@ def canonical_execution(fixture, layers=(3, 4), experts=(0, 1), clamp=10.0):
 
 def _stock_modular_reference(x, w1, w2, weights, ids, *, family, clamp,
                              experts, apply_router_weight_on_input,
-                             w1_scale=None, w2_scale=None, fp8_backend=None,
-                             moe_config=None, experts_cls=None):
+                             w1_scale=None, w2_scale=None, moe_config=None):
     """THE ACTUAL STOCK KERNEL, clamp included.
 
     Not a composition and not ``fused_experts``: ``FusedMoEKernel.apply``
@@ -518,33 +518,107 @@ def _stock_modular_reference(x, w1, w2, weights, ids, *, family, clamp,
     from vllm.model_executor.layers.fused_moe.activation import MoEActivation
     from vllm.model_executor.layers.fused_moe.config import FusedMoEQuantConfig
 
+    # The backend and expert class are selected HERE, independently, with the
+    # stock oracle's own factories.  They must NOT be read off the native
+    # method: ``moe_route.py`` sets ``self.fp8_backend = self.bf16_backend =
+    # self.experts_cls = None`` in native mode by design, so reusing them
+    # cannot instantiate anything.
     if family == "TESSERA_FP8":
         from vllm.model_executor.layers.fused_moe.oracle.fp8 import (
-            make_fp8_moe_kernel, make_fp8_moe_quant_config)
+            make_fp8_moe_kernel, make_fp8_moe_quant_config,
+            select_fp8_moe_backend)
+        from vllm.model_executor.layers.quantization.utils.quant_utils import (
+            kFp8DynamicTokenSym, kFp8StaticChannelSym)
+        backend, experts_cls = select_fp8_moe_backend(
+            config=moe_config, weight_key=kFp8StaticChannelSym,
+            activation_key=kFp8DynamicTokenSym, allow_vllm_cutlass=True)
         quant = make_fp8_moe_quant_config(
-            fp8_backend=fp8_backend, w1_scale=w1_scale, w2_scale=w2_scale,
+            fp8_backend=backend, w1_scale=w1_scale, w2_scale=w2_scale,
             a1_scale=None, a2_scale=None, per_act_token_quant=True,
             per_out_ch_quant=True, block_shape=None,
             gemm1_alpha=None, gemm1_beta=None, swiglu_limit=clamp, layer=None)
         kernel = make_fp8_moe_kernel(
             moe_quant_config=quant, moe_config=moe_config,
-            fp8_backend=fp8_backend, experts_cls=experts_cls,
+            fp8_backend=backend, experts_cls=experts_cls,
             routing_tables=None)
-        ids_arg = ids.int()
     else:
         from vllm.model_executor.layers.fused_moe.oracle.unquantized import (
-            make_unquantized_moe_kernel)
+            UnquantizedMoeBackend, make_unquantized_moe_kernel,
+            select_unquantized_moe_backend)
+        backend, experts_cls = select_unquantized_moe_backend(moe_config=moe_config)
         quant = FusedMoEQuantConfig.make(gemm1_clamp_limit=clamp)
         kernel = make_unquantized_moe_kernel(
             quant_config=quant, moe_config=moe_config,
-            backend=moe_config.moe_backend, experts_cls=experts_cls,
+            backend=backend, experts_cls=experts_cls,
             routing_tables=None)
-        ids_arg = ids.int()
+    ids_arg = ids.int()
     return kernel.apply(x, w1, w2, weights, ids_arg,
                         activation=MoEActivation.SILU,
                         global_num_experts=experts,
                         expert_map=None,
                         apply_router_weight_on_input=apply_router_weight_on_input)
+
+
+def stock_factory_construction_check(fixture, layers=(3, 4), experts=(0, 1)):
+    """Actually CONSTRUCT the stock reference, on CPU, before any GPU run.
+
+    The geometry self-check proves none of this: it never builds the adapter or
+    the stock kernel.  Two real defects lived here -- the previous version read
+    ``method.fp8_backend``/``method.experts_cls``, which ``moe_route.py`` sets to
+    ``None`` in native mode by design, and it passed the string ``"auto"`` where
+    ``make_unquantized_moe_kernel`` wants a selected ``UnquantizedMoeBackend``.
+    Both are only caught by instantiating.
+
+    Runs the REAL selection + factory for each family's units.  No kernel is
+    launched (that needs CUDA); what is exercised is the wiring that failed.
+
+    NOTE: the stock backend SELECTION needs a visible CUDA device -- with no
+    active driver, Triton is disabled and ``select_fp8_moe_backend`` returns
+    ``Fp8MoeBackend.NONE``.  So this check is cheap but not CPU-only: run it in
+    the image WITH ``--gpus all``.  What it still avoids is any kernel launch.
+    """
+    import os
+    from vllm.model_executor.layers.fused_moe.config import FusedMoEQuantConfig
+    from vllm.model_executor.layers.fused_moe.oracle.unquantized import (
+        make_unquantized_moe_kernel, select_unquantized_moe_backend)
+
+    units = canonical_units(fixture, layers=layers, experts=experts)
+    out = {}
+    for layer in layers:
+        u = units[layer]
+        declared = u["declared"]
+        E = len(u["experts"])
+        H = int(declared["groups"]["w13"]["columns"])
+        inter = int(declared["groups"]["w13"]["rows"]) // 2
+        stub = _native_layer(tp_rank=0, tp_size=2, hidden=H, inter=inter, experts=E)
+        facts = {"family": u["family"], "E": E, "H": H, "inter": inter,
+                 "stub_num_experts": stub.moe_config.num_experts,
+                 "stub_local_intermediate": stub.moe_config.intermediate_size_per_partition}
+        if stub.moe_config.num_experts != E:
+            raise SystemExit(f"L{layer}: stub config says {stub.moe_config.num_experts} experts, weights carry {E}")
+        if stub.moe_config.intermediate_size_per_partition != inter // 2:
+            raise SystemExit(f"L{layer}: stub local intermediate "
+                             f"{stub.moe_config.intermediate_size_per_partition} != {inter // 2}")
+        if u["family"] == "TESSERA_FP8":
+            from vllm.model_executor.layers.fused_moe.oracle.fp8 import (
+                select_fp8_moe_backend)
+            from vllm.model_executor.layers.quantization.utils.quant_utils import (
+                kFp8DynamicTokenSym, kFp8StaticChannelSym)
+            backend, cls = select_fp8_moe_backend(
+                config=stub.moe_config, weight_key=kFp8StaticChannelSym,
+                activation_key=kFp8DynamicTokenSym, allow_vllm_cutlass=True)
+            facts["selected"] = str(getattr(backend, "value", backend))
+            facts["experts_cls"] = getattr(cls, "__name__", None)
+            if backend is None or cls is None:
+                raise SystemExit(f"L{layer}: fp8 stock selection returned {backend}/{cls}")
+        else:
+            backend, cls = select_unquantized_moe_backend(moe_config=stub.moe_config)
+            facts["selected"] = str(getattr(backend, "value", backend))
+            facts["experts_cls"] = getattr(cls, "__name__", None)
+            if backend is None or cls is None:
+                raise SystemExit(f"L{layer}: unquantized stock selection returned {backend}/{cls}")
+        out[layer] = facts
+    return {"construction": out, "ok": True}
 
 
 def canonical_self_check(fixture, layers=(3, 4), experts=(0, 1)):
@@ -745,11 +819,21 @@ def main():
     ap.add_argument("--canonical-fixture", default=os.environ.get("TESSERA_CANONICAL_FIXTURE"))
     ap.add_argument("--canonical-layers", default="3,4")
     ap.add_argument("--canonical-experts", default="0,1")
+    ap.add_argument("--stock-factory-check", action="store_true",
+                    help="construct the stock backend/cfg selection on CPU (no CUDA)")
     ap.add_argument("--canonical-self-check", action="store_true",
                     help="CPU check of the canonical wiring facts (no vLLM needed)")
     ap.add_argument("--canonical-select-only", action="store_true",
                     help="parse+verify the fixture's own containers and stop (CPU)")
     args = ap.parse_args()
+    if args.stock_factory_check:
+        result = stock_factory_construction_check(
+            args.canonical_fixture,
+            layers=tuple(int(v) for v in args.canonical_layers.split(",")),
+            experts=tuple(int(v) for v in args.canonical_experts.split(",")))
+        print(json.dumps(result, indent=1))
+        raise SystemExit(0 if result["ok"] else 1)
+
     if args.canonical_self_check:
         result = canonical_self_check(
             args.canonical_fixture,

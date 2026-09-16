@@ -47,7 +47,7 @@ class _Lax(types.SimpleNamespace):
 
 
 def _native_layer(tp_rank: int = 0, tp_size: int = 1, *, hidden: int = None,
-                  inter: int = None):
+                  inter: int = None, experts: int = None):
     """The route's layer stub, completed for real vLLM's backend selection.
 
     ``test_serving_moe_selected``'s CPU stub patches ``select_fp8_moe_backend``
@@ -60,9 +60,12 @@ def _native_layer(tp_rank: int = 0, tp_size: int = 1, *, hidden: int = None,
     layer.moe_config = _Lax(**vars(layer.moe_config))
     layer.moe_config.moe_parallel_config = _Lax(**vars(layer.moe_config.moe_parallel_config))
     mc, mp = layer.moe_config, layer.moe_config.moe_parallel_config
-    mc.num_experts = EXPERTS
-    mc.num_local_experts = EXPERTS
-    mc.num_logical_experts = EXPERTS
+    # The expert count is a parameter too: the canonical fixture decodes E=2
+    # and a stock factory asked for a config whose expert count disagrees with
+    # the weights it is handed is being asked a different question.
+    mc.num_experts = int(experts or EXPERTS)
+    mc.num_local_experts = int(experts or EXPERTS)
+    mc.num_logical_experts = int(experts or EXPERTS)
     mc.experts_per_token = 2
     # Geometry is a parameter: the canonical fixture is H=4096 / I=2048, not
     # this helper's small synthetic tile, and a harness that ran the real
