@@ -706,6 +706,48 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
                             raise ValueError(f"{prefix}: research selected expert mapping covers stock TRITON FP8 only")
             else:
                 self.fp8_backend = self.bf16_backend = self.experts_cls = None
+            # PERSIST THE NATIVE-MODE IDENTITY.  The runtime reads the modular
+            # protocol from the method itself; deriving those answers from
+            # ``self._native`` (set only in process_weights_after_loading) would
+            # leave the construction-time window -- which is when the runner
+            # asks -- delegating to an ``experts_cls`` this route does not own.
+            # It is set here, from the same predicate that chose the branch, so
+            # the ordinary native FP8 route and the research-selected route get
+            # the same explicit answers.
+            self._native_mode = bool(native_route)
+
+        # -- the native modular protocol, stated explicitly -----------------
+        # (Mirrors the A4 route's overrides.  The base properties answer from
+        # ``self.experts_cls``, which the native branch pins to None and the
+        # stock branch selects; delegating when a stock class exists keeps the
+        # legacy path's real behaviour rather than pretending it is native.)
+        @property
+        def is_monolithic(self) -> bool:
+            """Modular on the native route; the stock class answers otherwise.
+
+            Regression: the engine's MoE runner asks this from ``_forward_impl``
+            during ``profile_run``, and the base property returns
+            ``self.experts_cls.is_monolithic()`` -- an AttributeError on
+            ``None`` for a native route.  Attempt mixed514-a5 loaded its
+            weights and died there, in warm-up, with the engine never coming up.
+            """
+            if self._native_mode:
+                return False
+            return super().is_monolithic
+
+        @property
+        def topk_indices_dtype(self) -> "torch.dtype | None":
+            """The native route consumes the router's own ids as given."""
+            if self._native_mode:
+                return None
+            return super().topk_indices_dtype
+
+        @property
+        def mk_can_overlap_shared_experts(self) -> bool:
+            """The runner owns shared experts here; no MK overlap to claim."""
+            if self._native_mode:
+                return False
+            return super().mk_can_overlap_shared_experts
 
         def _require_research_parallel_contract(self):
             parallel = self.moe.moe_parallel_config
@@ -970,7 +1012,10 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
             # The compact scales/config and kernel are per invocation. The
             # stock runner permits None here and keeps shared experts under
             # its normal non-MK-overlap execution path.
-            if research_selected is not None:
+            if self._native_mode or research_selected is not None:
+                # The native route carries its own compact scales and has no
+                # stock quant config to build; the research-selected route has
+                # none either.  Both are answered from construction.
                 return None
             return make_fp8_moe_quant_config(
                 fp8_backend=self.fp8_backend,
