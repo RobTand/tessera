@@ -42,8 +42,8 @@ import dataclasses
 
 from .ops import PreparedTesseraModule, prepare_tessera_module  # noqa: F401  (re-export)
 from ..kernel_a4 import a4_quantize_activation, a4_span2_gemm
-from .scheme import GROUP_SIZE, ROUTES, TESSERA_NVFP4, parse_tessera_blob_for_scheme, \
-    validate_tessera_scheme
+from .scheme import GROUP_SIZE, ROUTES, TESSERA_NVFP4, parse_compact_blob_for_scheme, \
+    parse_tessera_blob_for_scheme, validate_tessera_scheme
 from .sharding import plan_shard_for_layer, require_axis_supported, shard_parsed_roles
 from .telemetry import emit_route, route_shape
 
