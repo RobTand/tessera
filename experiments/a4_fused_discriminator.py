@@ -21,7 +21,24 @@ Run inside the serve image (CUDA) with ``PYTHONPATH=src:tests``:
 """
 from __future__ import annotations
 
+import sys
+
 import torch
+
+# The suite registers the runtime's NVFP4 operator as a side effect of its
+# first CUDA test; a standalone probe has to do it BEFORE the route's stubs
+# replace sys.modules["vllm"], or the op the route executes never registers.
+try:
+    import vllm._custom_ops  # noqa: F401  (registers torch.ops._C)
+except Exception as _exc:  # noqa: BLE001 -- reported, not swallowed
+    print(f"[bootstrap] real vllm._custom_ops import failed: "
+          f"{type(_exc).__name__}: {_exc}")
+
+if not callable(getattr(torch.ops._C, "scaled_fp4_quant", None)):
+    print("[bootstrap] torch.ops._C.scaled_fp4_quant is NOT registered; the probe "
+          "needs the real operator library in the image")
+    sys.exit(2)
+print("[bootstrap] torch.ops._C.scaled_fp4_quant registered")
 
 import test_serving_nvfp4_route as T  # tests/ is on PYTHONPATH
 
