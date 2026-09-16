@@ -654,9 +654,9 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
                 if not get_current_vllm_config().model_config.enforce_eager:
                     raise ValueError(f"{prefix}: research selected experts require enforce_eager")
                 self._require_research_parallel_contract()
-            self._tp_size = (1 if research_selected is None
+            self._tp_size = (int(moe.moe_parallel_config.tp_size) if research_selected is None
                              else research_selected.expected_tensor_parallel_size)
-            self._tp_rank = (0 if research_selected is None else moe.moe_parallel_config.tp_rank)
+            self._tp_rank = int(moe.moe_parallel_config.tp_rank)
             if not moe.is_act_and_mul:
                 raise ValueError(
                     f"tessera target {prefix!r}: this MoE is not gated (is_act_and_mul is "
@@ -664,25 +664,34 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
                     "sidecar's groups describe. Refusing rather than loading a pair into a "
                     "single-shard tile.")
             # The runtime picks the backend, from the runtime's own predicate,
-            # for the keys this route's tile actually is.
-            if family == TESSERA_BF16:
-                if research_selected is None:
-                    raise ValueError(f"{prefix}: compressed BF16 routed experts require explicit research-selected execution")
-                if self.moe.has_bias:
-                    raise ValueError(f"{prefix}: research selected BF16 experts do not cover MoE biases")
-                from vllm.model_executor.layers.fused_moe.oracle.unquantized import (
-                    UnquantizedMoeBackend, select_unquantized_moe_backend)
-                self.bf16_backend, self.experts_cls = select_unquantized_moe_backend(moe_config=self.moe)
-                if self.bf16_backend != UnquantizedMoeBackend.TRITON or self.experts_cls.is_monolithic():
-                    raise ValueError(f"{prefix}: research selected BF16 expert mapping covers stock TRITON only")
+            # for the keys this route's tile actually is -- but only when the
+            # legacy stock-kernel path will run.  The compact native route
+            # never asks the stock kernel for anything.
+            from . import scheme as _scheme
+            self._compact_ready = getattr(
+                _scheme, "parse_compact_tessera_expert_blob", None) is not None
+            native_route = self._compact_ready and (family == TESSERA_FP8 or self._tp_size == 2)
+            if not native_route:
+                if family == TESSERA_BF16:
+                    if research_selected is None:
+                        raise ValueError(f"{prefix}: compressed BF16 routed experts require explicit research-selected execution")
+                    if self.moe.has_bias:
+                        raise ValueError(f"{prefix}: research selected BF16 experts do not cover MoE biases")
+                    from vllm.model_executor.layers.fused_moe.oracle.unquantized import (
+                        UnquantizedMoeBackend, select_unquantized_moe_backend)
+                    self.bf16_backend, self.experts_cls = select_unquantized_moe_backend(moe_config=self.moe)
+                    if self.bf16_backend != UnquantizedMoeBackend.TRITON or self.experts_cls.is_monolithic():
+                        raise ValueError(f"{prefix}: research selected BF16 expert mapping covers stock TRITON only")
+                else:
+                    self.fp8_backend, self.experts_cls = select_fp8_moe_backend(
+                        config=self.moe, weight_key=kFp8StaticChannelSym,
+                        activation_key=kFp8DynamicTokenSym, allow_vllm_cutlass=True)
+                    if research_selected is not None:
+                        from vllm.model_executor.layers.fused_moe.oracle.fp8 import Fp8MoeBackend
+                        if self.fp8_backend != Fp8MoeBackend.TRITON or self.experts_cls.is_monolithic():
+                            raise ValueError(f"{prefix}: research selected expert mapping covers stock TRITON FP8 only")
             else:
-                self.fp8_backend, self.experts_cls = select_fp8_moe_backend(
-                    config=self.moe, weight_key=kFp8StaticChannelSym,
-                    activation_key=kFp8DynamicTokenSym, allow_vllm_cutlass=True)
-                if research_selected is not None:
-                    from vllm.model_executor.layers.fused_moe.oracle.fp8 import Fp8MoeBackend
-                    if self.fp8_backend != Fp8MoeBackend.TRITON or self.experts_cls.is_monolithic():
-                        raise ValueError(f"{prefix}: research selected expert mapping covers stock TRITON FP8 only")
+                self.fp8_backend = self.bf16_backend = self.experts_cls = None
 
         def _require_research_parallel_contract(self):
             parallel = self.moe.moe_parallel_config
@@ -744,9 +753,8 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
             # published: the FP8 candidate route at every tp size, and the
             # research-selected TP2 route.
             from . import scheme as _scheme
-            compact_ready = getattr(_scheme, "parse_compact_tessera_expert_blob", None) is not None
-            incremental = (compact_ready
-                           and (self.family == TESSERA_FP8
+            incremental = (self._compact_ready
+                           and (family == TESSERA_FP8
                                 or (research_selected is not None and self._tp_size == 2)))
             if incremental:
                 # Stock constructs every owner before loading any weight. Keep
@@ -898,6 +906,9 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
                 # reduction (NATIVE-MOE-RUNTIME-BOUNDARY.md), so this apply
                 # returns ROUTED output only.  Telemetry says exactly what ran:
                 # an unqualified native experiment, no contract cell claimed.
+                for name in ("w13_weight", "w2_weight", "w13_weight_scale", "w2_weight_scale"):
+                    if hasattr(layer, name):
+                        layer.register_parameter(name, None)
                 self._w13_len = self._w2_len = self._wire_ids = None
                 self._packed = prepared
                 self._native = prepared.adapter()
