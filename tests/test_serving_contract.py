@@ -710,6 +710,56 @@ def test_every_cell_executes_a_launch_its_route_can_make(contract):
         assert cell_executes(cell) <= admissible, cell["id"]
 
 
+def test_the_native_route_pairs_are_registered_experimental_and_censusable():
+    """The four native lanes, by the constants route owners import.
+
+    Each pair is in ``ROUTE_LAUNCHES`` for the structure it serves, spelled in
+    ``telemetry.DECODERS``' vocabulary, absent from the contract validator's
+    default view, and reachable through the documented census opt-in
+    (``experimental_launch_pairs`` / ``include_experimental=True``).  Nothing
+    here promotes a cell: the only pairs in ``EXPERIMENTAL_LAUNCHES`` are ones
+    a table entry actually makes, so a candidate pair cannot dangle.
+    """
+    pytest.importorskip("torch")
+    from tessera.serving import telemetry
+    from tessera.serving.scheme import (A4_DENSE_GEMM_SYMBOL, A4_GROUPED_GEMM_SYMBOL,
+                                        EXPERIMENTAL_LAUNCHES, ROUTE_LAUNCHES,
+                                        STRUCTURE_DENSE, STRUCTURE_ROUTED_MOE,
+                                        TESSERA_FP8, TESSERA_NVFP4,
+                                        WINDOW_GEMM_SYMBOL, WINDOW_MOE_COMPACT_SYMBOL,
+                                        experimental_launch_pairs, launch_pairs)
+
+    expected = {
+        (A4_DENSE_GEMM_SYMBOL, telemetry.DECODER_NATIVE_SPAN2_GEMM):
+            (TESSERA_NVFP4, STRUCTURE_DENSE),
+        (A4_GROUPED_GEMM_SYMBOL, telemetry.DECODER_NATIVE_SPAN2_GROUPED):
+            (TESSERA_NVFP4, STRUCTURE_ROUTED_MOE),
+        (WINDOW_GEMM_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_GEMM):
+            (TESSERA_FP8, STRUCTURE_DENSE),
+        (WINDOW_MOE_COMPACT_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_MOE_COMPACT):
+            (TESSERA_FP8, STRUCTURE_ROUTED_MOE),
+    }
+    assert set(expected) == set(EXPERIMENTAL_LAUNCHES)
+    for pair, (route, structure) in expected.items():
+        assert pair[1] in telemetry.DECODERS, pair
+        assert pair in experimental_launch_pairs(route, structure=structure), pair
+        assert pair not in launch_pairs(route, structure=structure), (
+            f"{pair} leaked into the attested dispatch")
+        entries = [launch for launch in ROUTE_LAUNCHES[route]
+                   if (launch["symbol"], launch["decoder"]) == pair
+                   and structure in launch["structures"]]
+        assert entries, (pair, route, structure)
+        for launch in entries:
+            assert launch["lane"] is None and not launch["when_lane_absent"], launch
+    # A route owner's census opt-in is the union, not a new table.
+    for route, structure in ((TESSERA_NVFP4, STRUCTURE_DENSE),
+                             (TESSERA_NVFP4, STRUCTURE_ROUTED_MOE),
+                             (TESSERA_FP8, STRUCTURE_DENSE),
+                             (TESSERA_FP8, STRUCTURE_ROUTED_MOE)):
+        assert experimental_launch_pairs(route, structure=structure) <= launch_pairs(
+            route, structure=structure, include_experimental=True)
+
+
 def test_launch_table_structures_follow_the_dispatch_builders():
     from tessera.serving.scheme import (
         MOE_BUILDERS, ROUTE_LAUNCHES, ROUTES, STRUCTURE_DENSE, STRUCTURE_ROUTED_MOE,

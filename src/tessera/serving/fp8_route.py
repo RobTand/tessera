@@ -1,48 +1,36 @@
-"""The Tessera FP8 W8A8 dense route: an E4M3 wire served as per-channel FP8.
+"""The Tessera FP8 W8A8 dense route: an E4M3 wire served packed.
 
 WHAT IT SERVES.  Tessera's E4M3 wire -- the window body over the CHANNEL scale
 plane (Tessera's default for the E4M3 grid at every rung; 4.07 bpp on the wire
-at q1024) -- decoded to the stock per-channel FP8 pair (E4M3 bytes + one fp32
-scale per output row) and multiplied by ``torch._scaled_mm`` W8A8, the same
-mainloop a compressed-tensors ``float-quantized`` checkpoint at ``strategy:
-channel`` runs.  The decoded bytes are byte-identical to what
-``tessera.stock.materialize_fp8`` produces (the stock lane vanilla vLLM serves
-at 8 bpp resident), so the numbers this route produces are the stock lane's
-numbers; what changes is the bytes on disk (the wire's) and, in ``streamed``
-mode, the bytes resident.
+at q1024) -- loaded by the compact reader and decoded **inside** the packed
+bitstream GEMM (``tessera.window_gemm`` behind ``serving.native_window``): the
+wire's words are the resident weights in both residencies, the table gather and
+the ``tl.dot`` happen in registers/shared memory, and the fp32 epilogue is
+``y = a_scale[m] * w_scale[n] * acc``.  The activation is vLLM's per-token
+dynamic E4M3 quantizer, so the executed contract is ``fp8_per_token_dynamic``
+and the route stamps ``(tessera::window_gemm_dense, native_window_gemm)``.
 
-WHAT IT REUSES.  Blob parsing is Tessera's reader (``tessera.unit_artifact``,
-``tessera.fused``), the packing is the wire's own
-(``tessera.lane_planes.pack_window_planes``) and the reference decode is
-``tessera.decode.materialize_fp8``.  The one serving-side piece is ``window``:
-the packed-bit window decoder that runs inside a forward at static shape.  At
-preparation every role is decoded through it AND through the reference decoder
-and the two are compared byte for byte; a disagreement refuses the module.
-Both residency modes then hold bytes the reference decoder produced.  The
-resident mode needs no CUDA extension at all; the streamed mode builds the
-window GEMV where it can (``fp8_gemv``) and serves without it where it cannot,
-stamping which decoder ran so a census can tell the two serves apart.
+WHAT IT REUSES.  Blob parsing is the compact reader
+(``scheme.parse_compact_blob_for_scheme`` -> ``compact_prep``), which runs the
+same container/role/digest/slack/geometry checks as the materialising reader
+and expands no weight plane; the rank cut is the layer's own ``ShardPlan``; the
+compute is the window worker's prepared bundle, wrapped in one functional
+custom op.  The materialising preparation
+(``prepare_tessera_fp8_module``) and the torch window decode stay in the tree
+as the **reference** -- the decode oracle tests hold the native lane to
+(``tessera.decode.materialize_fp8``) -- and are no longer reached from a serve.
 
-RESIDENCY.  ``resident`` decodes once at load and holds the FP8 pair (8.0 bpw
-plus one fp32 per row: the stock lane's footprint, the wire's bytes on disk
-only); ``streamed`` holds the packed window planes (the wire's body bytes plus
-small per-unit tables) and decodes each forward into a transient tile the op
-owns -- no per-device pool, no buffer aliased across layers, which is what lets
-vLLM's compiled forward functionalise it (``ops`` says why).  The per-row scale
-is one fp32 per row in both modes: it is a factor of the row, not of the tile.
-Where the window GEMV builds, ``streamed`` additionally repacks the wire for
-it at load (``fp8_gemv``) and serves M <= 8 straight off the repack -- one
-pass, no tile -- keeping the decode-per-forward path for prefill; the torch
-planes are then dropped, so the resident is the repack alone.  Without the
-extension the streamed route serves exactly as before, by name.
+RESIDENCY.  ``resident`` and ``streamed`` hold the same packed repack (the
+wire's body words plus small per-unit tables and the fp32 row scale); no
+decoded 8-bit tile is materialised at load or per forward, and the route trace
+is eager-only by design (tessera#113), so a compiled serve records no launch
+counts rather than counts of compilation.
 
 THE ACTIVATION SIDE IS PRICED.  The stock arm of the same encoder measured KL
 0.470 against an image-matched BF16 teacher on Qwen3-0.6B
 (``docs/measurements/tessera-stock-lane-served-2026-09-02.md``) under the same
-``fp8_per_token_dynamic`` contract this route executes -- including on the GEMV
-path, which runs the same quantiser and hands the kernel the dequantised
-values (``fp8_gemv``), so the contract the census reads is the contract that
-ran.
+``fp8_per_token_dynamic`` contract this route executes (the same quantizer, the
+same per-token scale on the epilogue).
 """
 from __future__ import annotations
 
@@ -51,17 +39,14 @@ from typing import Optional, Sequence
 import torch
 
 from ..alphabet import require_hardware_byte_grid
-from . import fp8_gemv
 from .compile_identity import note_traced_dispatch
-from .ext import substitutes_when_unavailable
-from .lane import MODE_RESIDENT, MODE_STREAMED, MODES
+from .lane import MODES
 from .native_window import prepare_dense_native_module
 from .scheme import (ROUTES, TESSERA_FP8, WINDOW_GEMM_SYMBOL,
                      parse_compact_blob_for_scheme, validate_tessera_scheme)
-from .sharding import plan_shard_for_layer, require_axis_supported, shard_parsed_roles
+from .sharding import plan_shard_for_layer, require_axis_supported
 from .telemetry import (DECODER_NATIVE_WINDOW_GEMM, DECODER_TORCH_WINDOW,
-                        DECODER_WINDOW_GEMV, emit_route, note_lane_refusal,
-                        route_shape)
+                        emit_route, route_shape)
 from .window import (PreparedModuleAxis, PreparedWindow, _fingerprint, prepare_window,
                      require_expert_ids)
 
@@ -411,40 +396,22 @@ def build_tessera_fp8_method(scheme, prefix: str, mode: str):
             # operand is a rounding ``_scaled_mm`` does not do), so the
             # activation contract the census reads is the one that ran.
             a_q, a_scale = native_ops.native_fp8_quant(x2.contiguous())
+            # The packed native GEMM, every M and both residencies.  The
+            # quantizer above is the contract the bundle was prepared against;
+            # the bundle attests it once at preparation and this call runs the
+            # same bytes.  ``layer.tessera_native`` is set by
+            # ``process_weights_after_loading`` or the module does not serve;
+            # the materialised/decode-per-forward branches this replaced are
+            # retired with the decode-to-global paths (the reference decoders
+            # themselves stay, as tests' oracle).
             native = getattr(layer, "tessera_native", None)
-            if native is not None:
-                # The packed native GEMM.  The quantizer above is the contract
-                # the bundle was prepared against; the bundle attests it once
-                # at preparation and this call runs the same bytes.
-                y = native.apply(a_q, a_scale)
-                symbol, decoder, tile_m = WINDOW_GEMM_SYMBOL, DECODER_NATIVE_WINDOW_GEMM, 0
-            elif layer.tessera_mode == MODE_RESIDENT:
-                b = layer.weight_fp8
-                y = torch._scaled_mm(a_q, b.t(), scale_a=a_scale, scale_b=layer.scale_b,
-                                     out_dtype=torch.bfloat16)
-                symbol, decoder, tile_m = GEMM_SYMBOL, DECODER_TORCH_WINDOW, 0
-            elif getattr(layer, "tessera_gemv", None) is None:
-                b = layer.tessera_prepared.decode().view(torch.float8_e4m3fn)
-                y = torch._scaled_mm(a_q, b.t(), scale_a=a_scale, scale_b=layer.scale_b,
-                                     out_dtype=torch.bfloat16)
-                symbol, decoder, tile_m = GEMM_SYMBOL, DECODER_TORCH_WINDOW, 0
-            else:
-                holder = layer.tessera_gemv
-                tensors, meta, rows, cols = holder.op_args()
-                y = fp8_gemv.streamed_apply(a_q, a_scale, layer.scale_b,
-                                            tensors, meta, rows, cols)
-                if torch.compiler.is_compiling():
-                    # One graph serves every M: no single path's symbol is
-                    # true of every launch, so the record stamps the pair the
-                    # route owns (``fp8_gemv``), never a value read off the
-                    # token dim.
-                    symbol, decoder, tile_m = (fp8_gemv.COMPILED_SYMBOL,
-                                               fp8_gemv.COMPILED_DECODER, 0)
-                elif fp8_gemv.decode_is_gemv(holder, int(x2.shape[0])):
-                    symbol, decoder, tile_m = (fp8_gemv.GEMV_SYMBOL, DECODER_WINDOW_GEMV,
-                                               fp8_gemv.m_tile(int(x2.shape[0])))
-                else:
-                    symbol, decoder, tile_m = GEMM_SYMBOL, DECODER_WINDOW_GEMV, 0
+            if native is None:
+                raise RuntimeError(
+                    f"{prefix}: the Tessera FP8 module was not prepared "
+                    "(tessera_native missing); refusing to fall back to a "
+                    "materialised weight path this build no longer wires")
+            y = native.apply(a_q, a_scale)
+            symbol, decoder, tile_m = WINDOW_GEMM_SYMBOL, DECODER_NATIVE_WINDOW_GEMM, 0
             try:
                 emit_route(
                     layer, kind="dense", policy=f"{TESSERA_FP8}:{layer.tessera_mode}",
