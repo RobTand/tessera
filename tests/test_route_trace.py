@@ -430,6 +430,42 @@ def test_a_served_dispatch_does_not_probe_the_rank(tracing, monkeypatch):
     assert len(probes) <= 1, f"200 dispatches caused {len(probes)} rank probes"
 
 
+def test_starting_a_trace_never_probes_the_device(tmp_path, monkeypatch):
+    """The header READS the latched platform; a trace never probes hardware.
+
+    ``start_route_trace`` runs at PLUGIN IMPORT -- in the API-server process,
+    before vLLM forks the engine core -- and ``flush`` runs again from atexit.
+    A device probe on either path would initialise CUDA in the process that
+    must not have it, or freeze ``""`` before the engine core could name its
+    device.  The probe belongs to model build (``lane.build_tessera_method``),
+    eagerly; the header only reads the result.
+    """
+    from tessera.serving import backend
+
+    probes = []
+
+    def boom(*args, **kwargs):
+        probes.append(1)
+        raise AssertionError("the route trace probed this process's device")
+
+    monkeypatch.setattr(telemetry, "_PLATFORM", None)
+    monkeypatch.setattr(backend, "platform_of_this_process", boom)
+
+    path = tmp_path / "trace" / "startup.json"
+    trace = telemetry.start_route_trace(path)
+    try:
+        assert probes == [], "starting a trace probed the device"
+        assert trace.snapshot()["platform"] == ""
+        assert json.loads(path.read_text())["platform"] == ""
+
+        # What model build does: latch the real token.  The header follows it,
+        # because it reads the latch instead of holding its own answer.
+        monkeypatch.setattr(telemetry, "_PLATFORM", "sm_121")
+        assert trace.snapshot()["platform"] == "sm_121"
+    finally:
+        telemetry.stop_route_trace()
+
+
 def test_the_trace_never_keeps_an_unnamed_module_alive(tracing):
     """Telemetry must not retain a module -- and through it, GPU weights.
 

@@ -42,7 +42,12 @@ the model is unloaded.  The rank identity is observed once and kept for the
 trace's lifetime -- the atexit flush runs after
 ``destroy_process_group()``, so re-reading there would erase it -- and a later
 observation that disagrees is reported as ``rank_conflict`` instead of being
-adopted.  Nothing is queried per dispatch.  Both additions are
+adopted.  Nothing is queried per dispatch.  The header's ``platform`` is READ
+from the token already latched at model build, never probed for: the plugin
+writes this file at IMPORT, in the API-server process, before vLLM forks the
+engine core, so a device probe there would initialise CUDA in the wrong
+process.  Until it is latched the header says ``""``, the same "does not say"
+the per-route records use.  Both additions are
 additive: ``schema`` is unchanged, no field was renamed or removed, and a
 reader that knows only the histogram still reads exactly what it read before.
 ``identity_version`` is compared for equality -- see its definition.
@@ -93,6 +98,7 @@ __all__ = [
     "BF16_ACTIVATION_CONTRACT",
     "emit_route",
     "record_platform",
+    "latched_platform",
     "reset_platform_for_tests",
     "read_route",
     "note_lane_refusal",
@@ -245,6 +251,21 @@ def record_platform() -> str:
     except Exception:  # noqa: BLE001 -- a record with no platform is honest
         _PLATFORM = ""
     return _PLATFORM
+
+
+def latched_platform() -> str:
+    """The platform token IF it has already been latched; ``""`` otherwise.
+
+    READ-ONLY by contract, and deliberately not :func:`record_platform`: the
+    route trace's header is written from ``flush()``, which the plugin runs at
+    IMPORT -- in the API-server process, before vLLM forks the engine core --
+    and again from the atexit flush.  A device probe there would either
+    initialise CUDA in a process that must never have it, or freeze ``""``
+    before the engine core had a device to name, and the header would then be
+    wrong in both processes.  The probe stays where it belongs: eagerly, at
+    model build, in ``lane.build_tessera_method``.
+    """
+    return _PLATFORM or ""
 
 
 def reset_platform_for_tests() -> None:
@@ -552,7 +573,11 @@ class _RouteTrace:
             "world_size": world_size,
             "rank_source": rank_source,
             "rank_conflict": self._rank_conflict,
-            "platform": record_platform(),
+            # READ the latched token, never probe for one: this runs at PLUGIN
+            # IMPORT, in the API-server process, before vLLM forks the engine
+            # core.  A device probe here is a CUDA initialisation in the wrong
+            # process (or a frozen "" in the right one) for a header field.
+            "platform": latched_platform(),
             "pid": os.getpid(),
             "started_utc": self.started_utc,
             "flushed_utc": datetime.now(timezone.utc).isoformat(),
