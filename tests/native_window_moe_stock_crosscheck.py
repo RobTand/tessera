@@ -38,30 +38,39 @@ from test_native_window_moe_method import (                 # noqa: E402
     _load_all, _native_layer, bf16_wires_native_data)
 
 
-def _bf16_ulp(value: float) -> float:
-    import struct
+def _bf16_ulp(value: float):
+    """The spacing to the NEXT bf16 value, honestly.
 
+    ``torch.nextafter`` moves one representable step in bf16, so this is the
+    spacing at ``value``'s exponent -- not half of it (an fp32 bit bump of
+    0x8000 is half a bf16 ulp) and not an assumed unit.  A zero magnitude has
+    no meaningful ulp ratio; ``None`` says so instead of dividing by a
+    subnormal spacing.
+    """
     if value == 0.0:
-        return 1.0
-    bits = struct.unpack("<I", struct.pack("<f", abs(value)))[0]
-    upper = struct.unpack("<f", struct.pack("<I", bits + 0x8000))[0]
-    return float(upper - abs(value)) if upper != abs(value) else float(abs(value) * 2 ** -8)
+        return None
+    t = torch.tensor(abs(value), dtype=torch.bfloat16)
+    nxt = torch.nextafter(t, torch.tensor(float("inf"), dtype=torch.bfloat16))
+    return float(nxt) - float(t)
 
 
 def _arm(name, native, stock, report):
     diff = (native.float() - stock.float()).abs()
     mag = float(stock.float().abs().max())
     ulp = _bf16_ulp(mag)
+    ulps = None if (ulp in (None, 0.0)) else float(diff.max() / ulp)
     entry = {
         "arm": name,
         "max_abs": float(diff.max()),
         "max_over_mag": float(diff.max() / max(mag, 1e-6)),
-        "ulps_of_max": float(diff.max() / ulp),
+        "bf16_ulps_of_max": ulps,
         "shapes": [tuple(native.shape), tuple(stock.shape)],
     }
     report["arms"].append(entry)
     print("ARM", json.dumps(entry), flush=True)
-    return float(diff.max() / ulp) <= 4.0
+    # Ceiling derived from the bf16 boundaries in the chain (gemm1 cast, act
+    # cast, down cast, sum cast = 4 x 0.5 ulp) plus accumulation-order headroom.
+    return ulps is not None and ulps <= 4.0
 
 
 def _fp8_stock(reference, x, ids, weights, quant, tp_rank, tp_size,
@@ -128,16 +137,20 @@ def _staged(reference, x, ids, weights, tp_rank=0, tp_size=1, dtype=torch.float6
                 * ref["up"]["weight_scale"][lo:hi].to(x.device).to(dtype)
             down = ref["down"]["weight"][:, lo:hi].to(x.device).to(dtype) \
                 * ref["down"]["weight_scale"].to(x.device).to(dtype)
-            g = gate @ xg
-            u = up @ xg
-            act64 = torch.nn.functional.silu(g) * u
-            aq = torch.empty((1, act64.numel()), dtype=torch.float8_e4m3fn, device=x.device)
+            # bf16 boundaries thread through the arithmetic: gemm1 output is
+            # cast, the activation reads the CAST values, and its result is
+            # cast again BEFORE the stage-2 quantizer sees it.
+            g_bf = (gate @ xg).bfloat16().float()
+            u_bf = (up @ xg).bfloat16().float()
+            act64 = torch.nn.functional.silu(g_bf) * u_bf
+            act_bf = act64.bfloat16()
+            aq = torch.empty((1, act_bf.numel()), dtype=torch.float8_e4m3fn, device=x.device)
             as_ = torch.empty((1, 1), dtype=torch.float32, device=x.device)
             torch.ops._C.dynamic_per_token_scaled_fp8_quant(
-                aq, act64.float().reshape(1, -1), as_, None)
+                aq, act_bf.float().reshape(1, -1), as_, None)
             act_q = (aq.reshape(-1).float() * as_.reshape(-1)[0]).to(dtype)
-            row1.append(torch.cat([g, u]).bfloat16().to(dtype))
-            row2.append(act64.bfloat16().to(dtype))
+            row1.append(torch.cat([g_bf, u_bf]).to(dtype))
+            row2.append(act_bf.to(dtype))
             d = down @ act_q
             downs.append(d.bfloat16().to(dtype))
             rowf = d if rowf is None else rowf + d
@@ -146,28 +159,6 @@ def _staged(reference, x, ids, weights, tp_rank=0, tp_size=1, dtype=torch.float6
         finals.append((rowf * weights[token, 0]).bfloat16().to(dtype))
     return (torch.stack(s1s), torch.stack(acts), torch.stack(downs).reshape(t_tokens, top_k, -1),
             torch.stack(finals))
-
-
-def _budget(reference, x, ids, tp_rank=0, tp_size=1):
-    """A dtype-derived error budget for the staged pipeline.
-
-    fp32 accumulation: the standard gamma_n bound u=2^-24, gamma_n = n*u/(1-n*u),
-    applied to the sum of |product| magnitudes at each gemm.  Per-stage casts:
-    bf16 rounding is at most 2^-9 of the value cast.  Nothing here is read off
-    the observed difference.
-    """
-    u = 2.0 ** -24
-    local = INTER // tp_size
-    lo, hi = tp_rank * local, (tp_rank + 1) * local
-    e = int(ids[0, 0])
-    ref = reference[e]
-    gate = ref["gate"]["weight"][lo:hi].float().cuda()
-    xg = x[0].float().abs()
-    acc1 = HIDDEN * u / (1 - HIDDEN * u) * float((gate.abs() @ xg).max())
-    act_mag = float(torch.nn.functional.silu(torch.zeros(1)).abs().max()) + 1.0
-    acc2 = local * u / (1 - local * u) * act_mag
-    casts = 2 ** -9 * (1.0 + act_mag + 1.0)
-    return {"accumulation": acc1 + acc2, "casts": casts, "total": acc1 + acc2 + casts}
 
 
 def _loose_reference(reference, x, ids, weights, tp_rank=0, tp_size=1):
@@ -241,33 +232,93 @@ def main():
             layer.apply_router_weight_on_input = False
             ok &= _arm("fp8_tp1_rank0_weight_on_input", native_in, stock_in, report)
 
-            # --- staged comparison (k=1) with a dtype-derived budget ----------
-            ids1 = ids[:4, :1].contiguous()
+            # --- stage-by-stage against ACTUAL stock ops on identical
+            # quantized operands (no theoretical bound; the numbers are the
+            # result, labelled in true bf16 ulps).
+            # ONE expert for every staged token: the stock staged arms are
+            # single-expert comparisons, so routing must not vary inside them.
+            ids1 = torch.zeros(4, 1, dtype=torch.int32, device="cuda")
             x1 = x[:4].contiguous()
             weights1 = torch.ones(4, 1, device="cuda")
             ones = torch.ones_like(weights1)
-            s1_ref, act_ref, down_ref, final_ref = _staged(reference, x1, ids1, weights1)
-            budget = _budget(reference, x1, ids1)
+            xq1 = torch.empty((4, HIDDEN), dtype=torch.float8_e4m3fn, device="cuda")
+            a1s = torch.empty((4, 1), dtype=torch.float32, device="cuda")
+            torch.ops._C.dynamic_per_token_scaled_fp8_quant(xq1, x1, a1s, None)
+            s1_ref, act_ref, down_ref, _final = _staged(reference, x1, ids1, weights1)
+
             if method._native.gate_up is not None:
                 native_gu = method._native.gate_up(x1, ids1, ones, preserve=True)
             else:
                 native_gu = torch.cat([
                     method._native.gate(x1, ids1, ones, preserve=True),
                     method._native.up(x1, ids1, ones, preserve=True)], dim=-1)
-            gu_err = (native_gu[:, 0].float() - s1_ref.float()).abs().max().item()
-            act_native = (torch.nn.functional.silu(native_gu[:, 0, :INTER].float())
-                          * native_gu[:, 0, INTER:].float()).bfloat16()
-            act_err = (act_native.float() - act_ref.float()).abs().max().item()
-            native_down = method._native.down(act_ref.bfloat16().reshape(-1, INTER), ids1,
-                                              ones, route_input=True, round_routes=True)
-            down_err = (native_down.float() - down_ref[:, 0].float()).abs().max().item()
-            stage = {"arm": "fp8_tp1_staged",
-                     "gate_up_err": gu_err, "act_err": act_err, "down_err": down_err,
-                     "budget": budget}
+            native_gu1 = native_gu[:, 0]                       # [T, 2I], k=1
+
+            e0 = int(ids1[0, 0])
+            w13 = torch.cat([reference[e0]["gate"]["weight"],
+                             reference[e0]["up"]["weight"]]).cuda()
+            s13 = torch.cat([reference[e0]["gate"]["weight_scale"],
+                             reference[e0]["up"]["weight_scale"]]).cuda()
+            stock_s1 = torch._scaled_mm(xq1, w13.t(), a1s,
+                                        s13.reshape(1, -1).contiguous(), out_dtype=torch.bfloat16)
+            ref_s1 = (xq1.float() * a1s) @ (w13.float() * s13.reshape(-1, 1)).T
+            diag_s1 = {
+                "scaled_mm_vs_dequant_matmul": float(
+                    (stock_s1.float() - ref_s1).abs().max() / max(float(ref_s1.abs().max()), 1e-6)),
+                "native_vs_dequant_matmul": float(
+                    (native_gu1.float() - ref_s1).abs().max() / max(float(ref_s1.abs().max()), 1e-6)),
+            }
+            print("STAGE_S1_DIAG", json.dumps(diag_s1), flush=True)
+            s1_diff = (native_gu1.float() - stock_s1.float()).abs()
+            s1_mag = float(stock_s1.float().abs().max())
+            s1_ulp = _bf16_ulp(s1_mag)
+
+            # stock activation helper on the SAME bf16 gate/up input
+            stock_act = torch.empty((4, INTER), dtype=torch.bfloat16, device="cuda")
+            torch.ops._C.silu_and_mul(stock_act, native_gu1)
+            mine_act = (torch.nn.functional.silu(native_gu1[:, :INTER].float())
+                        * native_gu1[:, INTER:].float()).bfloat16()
+            act_diff = (mine_act.float() - stock_act.float()).abs()
+            act_mag = float(stock_act.float().abs().max())
+            act_ulp = _bf16_ulp(act_mag)
+
+            actq = torch.empty((4, INTER), dtype=torch.float8_e4m3fn, device="cuda")
+            a2s = torch.empty((4, 1), dtype=torch.float32, device="cuda")
+            torch.ops._C.dynamic_per_token_scaled_fp8_quant(actq, stock_act, a2s, None)
+            w2 = reference[e0]["down"]["weight"].cuda()
+            s2 = reference[e0]["down"]["weight_scale"].cuda()
+            stock_dn = torch._scaled_mm(actq, w2.t(), a2s,
+                                        s2.reshape(1, -1).contiguous(), out_dtype=torch.bfloat16)
+            native_dn = method._native.down(stock_act, ids1, ones, route_input=True,
+                                            round_routes=True)
+            ref_dn = (actq.float() * a2s) @ (w2.float() * s2.reshape(-1, 1)).T
+            diag_dn = {
+                "scaled_mm_vs_dequant_matmul": float(
+                    (stock_dn.float() - ref_dn).abs().max() / max(float(ref_dn.abs().max()), 1e-6)),
+                "native_vs_dequant_matmul": float(
+                    (native_dn.float() - ref_dn).abs().max() / max(float(ref_dn.abs().max()), 1e-6)),
+            }
+            print("STAGE_DN_DIAG", json.dumps(diag_dn), flush=True)
+            dn_diff = (native_dn.float() - stock_dn.float()).abs()
+            dn_mag = float(stock_dn.float().abs().max())
+            dn_ulp = _bf16_ulp(dn_mag)
+
+            def _ulps(d, ulp):
+                return None if ulp in (None, 0.0) else float(d.max() / ulp)
+
+            stage = {"arm": "fp8_tp1_stages_vs_stock_ops",
+                     "gate_up": {"max_abs": float(s1_diff.max()), "mag": s1_mag,
+                                 "bf16_ulps": _ulps(s1_diff, s1_ulp)},
+                     "silu_and_mul": {"max_abs": float(act_diff.max()), "mag": act_mag,
+                                      "bf16_ulps": _ulps(act_diff, act_ulp)},
+                     "down": {"max_abs": float(dn_diff.max()), "mag": dn_mag,
+                              "bf16_ulps": _ulps(dn_diff, dn_ulp)}}
             report["stages"] = stage
             print("STAGE", json.dumps(stage), flush=True)
-            ok &= gu_err <= 2 * budget["total"] and act_err <= 2 * budget["total"] \
-                and down_err <= 2 * budget["total"]
+            # one bf16 cast boundary per stage: <= 1 ulp; the end-to-end arms carry
+            # four boundaries and are bounded at 4.
+            ok &= all(v is not None and v <= 1.0 for v in
+                      (_ulps(s1_diff, s1_ulp), _ulps(act_diff, act_ulp), _ulps(dn_diff, dn_ulp)))
 
             # --- defect discriminator: the loose oracle must exceed the bound --
             loose = _loose_reference(reference, x, ids, weights)
@@ -275,10 +326,12 @@ def main():
             native_err = float((native.float() - stock.float()).abs().max())
             discriminator = {"arm": "loose_vs_native_vs_stock",
                              "native_vs_stock": native_err, "loose_vs_stock": loose_err,
-                             "budget_scale": budget["total"]}
+                             "ratio": loose_err / max(native_err, 1e-12)}
             report["discriminator"] = discriminator
             print("DISCRIMINATOR", json.dumps(discriminator), flush=True)
-            ok &= loose_err > 10 * max(native_err, budget["total"])
+            # A defect-sized disagreement must dwarf the accumulation-order one;
+            # the loose oracle is the negative control.
+            ok &= loose_err > 100 * native_err
 
     # --- folded BF16 research route, TP2 rank 0 ----------------------------
     from vllm.model_executor.layers.fused_moe.activation import MoEActivation

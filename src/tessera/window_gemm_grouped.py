@@ -189,13 +189,16 @@ def _grouped_window_gemm_kernel(
                 )
                 acc += tl.dot(xk, val, out_dtype=tl.float32)
 
+        wscale = tl.load(scale_all + e * rows + offs_n, mask=live_n, other=0.0)
         contrib = acc if FOLDED else acc * wscale[None, :]
         if FP8:
             if ROUTE_INPUT:
                 a_s = tl.load(a_scale_ptr + flat, mask=live_tok, other=0.0)
             else:
                 a_s = tl.load(a_scale_ptr + tok, mask=live_tok, other=0.0)
-            contrib = contrib * a_s[:, None]
+            # Stock's Triton kernel computes ``accumulator * a_scale * b_scale``
+            # left to right (fused_moe.py); keep the same fp32 operation order.
+            contrib = (acc * a_s[:, None]) * wscale[None, :]
         if MUL_WEIGHT:
             contrib = contrib * rw[:, None]      # vLLM multiplies the fp32 accumulator
         if PRESERVE:
