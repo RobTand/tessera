@@ -294,38 +294,70 @@ def test_bf16_selected_builder_uses_stock_unquantized_kernel_with_folded_weights
     assert layer.tessera_decoder.endswith('_folded_bf16')
 
 
-def test_bf16_selected_tp2_incremental_loader_keeps_only_rank_local_folded_owners(
-        bf16_wires, bf16_stub_runtime):
-    first, second, scheme, expected = bf16_wires
+def test_bf16_selected_tp2_incremental_loader_keeps_only_rank_local_folded_owners():
+    """The folded BF16 owner on the native contract: zero-byte wire anchors,
+    both shard axes as rank-local packed bundles whose adapter serves the
+    folded arithmetic over this rank's slices only.
+
+    The fixture is ``test_native_window_moe_method``'s window-width-14 wire set
+    (the roster this build instantiates) and the reference is that file's
+    folded computation, restricted to the rank cut -- not the loader read
+    back."""
+    if not torch.cuda.is_available():
+        pytest.skip('the native window MoE runs CUDA kernels')
+    from test_native_window_moe_method import bf16_wires_native_data, _native_layer
+
+    w13_blobs, w2_blobs, scheme, expected = bf16_wires_native_data()
     for rank in (0, 1):
-        layer = _layer()
+        layer = _native_layer(tp_rank=rank, tp_size=2)
         layer.global_num_experts = 2
-        layer.moe_config.has_bias = False
-        layer.moe_config.moe_parallel_config.tp_size = 2
-        layer.moe_config.moe_parallel_config.tp_rank = rank
         config = moe_route.ResearchSelectedMoeConfig(
             max_experts_per_chunk=2, expected_tensor_parallel_size=2)
-        method = moe_route.build_tessera_moe_method(
-            scheme, 'm', 'resident', layer, research_selected=config)
+        from vllm.config import set_current_vllm_config
+        with set_current_vllm_config(types.SimpleNamespace(
+                model_config=types.SimpleNamespace(enforce_eager=True))):
+            method = moe_route.build_tessera_moe_method(
+                scheme, 'm', 'resident', layer, research_selected=config)
         method.create_weights(layer, 2, HIDDEN, INTER // 2, torch.bfloat16)
         assert {name: p.numel() for name, p in layer.named_parameters()} == {
             'w13_wire': 0, 'w2_wire': 0}
         for expert in range(2):
-            for shard, blob in (('w1', first[expert][0]), ('w3', first[expert][1]),
-                                ('w2', second[expert][0])):
+            for shard, blob in (('w1', w13_blobs[expert][0]), ('w3', w13_blobs[expert][1]),
+                                ('w2', w2_blobs[expert][0])):
                 param = layer.w2_wire if shard == 'w2' else layer.w13_wire
-                param.weight_loader(param, torch.frombuffer(bytearray(blob), dtype=torch.uint8),
-                                    'wire', shard, expert, return_success=True)
+                assert param.weight_loader(
+                    param, torch.frombuffer(bytearray(blob), dtype=torch.uint8),
+                    'wire', shard, expert, return_success=True)
         method.process_weights_after_loading(layer)
         assert not dict(layer.named_parameters())
-        selected = method._packed.decode_folded(torch.tensor([1, 0], dtype=torch.int32),
-                                                max_experts_per_chunk=2)
+        assert method._native is not None
+        assert method._native.down.arithmetic == 'folded'
+        packed = method._packed
+        assert packed.experts == 2 and packed.device.type == 'cuda'
+        assert packed.family == 'value' and packed.gate.arithmetic == 'folded'
+        assert (packed.gate.rows, packed.gate.cols) == (INTER // 2, HIDDEN)
+        assert (packed.up.rows, packed.up.cols) == (INTER // 2, HIDDEN)
+        assert (packed.down.rows, packed.down.cols) == (HIDDEN, INTER // 2)
+
         lo, hi = rank * (INTER // 2), (rank + 1) * (INTER // 2)
-        for slot, expert in enumerate((1, 0)):
-            full13, full2 = expected[expert]
-            assert torch.equal(selected.w13_weight[slot], torch.cat([
-                full13[lo:hi], full13[INTER + lo:INTER + hi]]))
-            assert torch.equal(selected.w2_weight[slot], full2[:, lo:hi])
+        x = (torch.randn(8, HIDDEN) * 0.5).bfloat16().cuda()
+        ids = torch.tensor([[1, 0]], dtype=torch.int32, device='cuda').repeat(8, 1)
+        weights = torch.full((8, 2), 0.5, device='cuda')
+        out = method.apply(layer, x, weights, ids, None, None)
+        ref = torch.zeros(8, HIDDEN, dtype=torch.float32, device='cuda')
+        for token in range(8):
+            for choice in range(2):
+                full13, full2 = expected[int(ids[token, choice])]
+                gate = full13[lo:hi].float().to(x.device)
+                up = full13[INTER + lo:INTER + hi].float().to(x.device)
+                down = full2[:, lo:hi].float().to(x.device)
+                ref[token] += weights[token, choice] * (down @ (
+                    torch.nn.functional.silu(gate @ x[token].float())
+                    * (up @ x[token].float())))
+        ref = ref.bfloat16()
+        diff = (out.float() - ref.float()).abs()
+        assert float(diff.max()) < 5e-2 + 2e-2 * float(ref.float().abs().max()), \
+            f"rank {rank}: max abs diff {float(diff.max())}"
 
 
 def test_builder_retains_only_packed_owners_and_maps_each_invocation(original_wires, stub_runtime, monkeypatch):
