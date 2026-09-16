@@ -20,6 +20,19 @@ per-module "latest record" cannot answer, and the one a served KL needs
 answered before it can claim to have measured a decode-path kernel
 (tessera#102, ``_RouteTrace``).  It is off by default and eager-only.
 
+Since tessera#509 each histogram entry also names the modules it counted
+(``module_names``, sorted; ``modules`` is that list's length, always), and the
+file header carries its own ``rank``, ``world_size``, ``rank_source`` and
+``platform``.  Before that, an entry's ``modules`` was the size of a set whose
+members the file never wrote -- a layer with no ``prefix`` was counted by
+``hex(id(layer))`` -- so a consumer could compare module COUNTS and nothing
+else: two modules that swapped contracts left the histogram identical.  The
+headers are read from ``torch.distributed`` when it is initialized and are
+JSON ``null`` with ``rank_source: "unavailable"`` when it is not, because a
+defaulted rank 0 is indistinguishable from a real one.  Both additions are
+additive: ``schema`` is unchanged, no field was renamed or removed, and a
+reader that knows only the histogram still reads exactly what it read before.
+
 This is Gridbook's ``nvfp4_activation_contract`` telemetry, reduced to the
 Tessera routes and owned here.  The attribute prefix is ``_tessera_route_``
 (Gridbook's is ``_cb_route_``): the two records must never be mistaken for one
@@ -72,6 +85,8 @@ __all__ = [
     "read_lane_refusal",
     "LANE_REFUSAL_ATTR",
     "route_shape",
+    "MODULE_NO_PREFIX",
+    "IDENTITY_VERSION",
 ]
 
 #: Stamped on every record so a served route can be compared against a priced
@@ -135,6 +150,22 @@ ATTR_PREFIX = "_tessera_route_"
 #: Read once, at import, which is what latches it for the process.
 ROUTE_TRACE_ENV = "TESSERA_ROUTE_TRACE"
 ROUTE_TRACE_SCHEMA = "tessera.route_trace/1"
+
+#: The explicit bucket a dispatch whose layer carries no ``prefix`` is counted
+#: under (tessera#509).  The file used to count such a layer by
+#: ``hex(id(layer))`` inside a set it never wrote out: an identity no reader
+#: could resolve and no consumer could compare, and one that changed every run.
+#: One deterministic name plus the dispatch count says the same thing honestly.
+MODULE_NO_PREFIX = "<unprefixed>"
+
+#: Version of the ADDITIVE identity block this file writes: entry
+#: ``module_names`` / ``dispatches_without_prefix``, and the header's
+#: ``rank`` / ``world_size`` / ``rank_source`` / ``platform``.  ``schema``
+#: stays ``tessera.route_trace/1`` because nothing was removed or renamed: a
+#: reader that knows only the histogram still reads exactly what it read
+#: before, and a reader that wants per-module identity checks this number
+#: instead of guessing from the presence of a field.
+IDENTITY_VERSION = 1
 
 #: The record's field names, in report order.  The census reads exactly these.
 ROUTE_FIELDS = (
@@ -266,6 +297,27 @@ def route_shape(x2, rows, cols) -> str:
     return f"M{m}:N{int(rows)}:K{int(cols)}"
 
 
+def _process_rank():
+    """``(rank, world_size, source)`` for THIS process, never a fabricated one.
+
+    Read at snapshot time only -- never per dispatch, and never per forward.
+    ``torch.distributed`` is initialized in the engine-core process before the
+    first forward, so a real serve reports its real rank and world size.  A
+    process that never joined a group reports ``(None, None, "unavailable")``
+    rather than a plausible-looking ``0``: a defaulted rank is
+    indistinguishable from a genuine rank 0, which is precisely the confusion
+    a consumer binding a trace file to a rank has to avoid (tessera#509).
+    """
+    try:
+        import torch.distributed as dist
+
+        if dist.is_available() and dist.is_initialized():
+            return int(dist.get_rank()), int(dist.get_world_size()), "torch.distributed"
+    except Exception:  # noqa: BLE001 -- metadata must never break a serve
+        pass
+    return None, None, "unavailable"
+
+
 def emit_route(layer, *, kind: str, policy: str, symbol: str, tile_m: int = 0,
                shape: str = "", contract: str = "", state: str = "served",
                reason=None, decoder: str = "", platform: "str | None" = None) -> None:
@@ -388,27 +440,53 @@ class _RouteTrace:
             return
         key = (values["policy"], values["shape"], values["symbol"],
                values["decoder"], values["contract"], values["kind"])
-        module = getattr(layer, "prefix", "") or hex(id(layer))
+        # ``None`` for a layer with no prefix -- never ``hex(id(layer))``.  The
+        # fabricated id was an identity the file never wrote out, so a consumer
+        # could only ever compare module COUNTS, which is the gap tessera#509
+        # exists to close.  The unprefixed bucket is explicit and counted.
+        module = getattr(layer, "prefix", "") or None
         with self._lock:
             entry = self._counts.get(key)
             if entry is None:
-                entry = self._counts[key] = [0, set()]
+                entry = self._counts[key] = [0, set(), 0]
             entry[0] += 1
-            entry[1].add(module)
+            if module is None:
+                entry[2] += 1
+            else:
+                entry[1].add(module)
             self._dirty = True
 
     # -- readout -----------------------------------------------------------
     def snapshot(self) -> dict:
         with self._lock:
-            entries = [
-                {"policy": policy, "shape": shape, "symbol": symbol,
-                 "decoder": decoder, "contract": contract, "kind": kind,
-                 "launches": count, "modules": len(modules)}
-                for (policy, shape, symbol, decoder, contract, kind),
-                    (count, modules) in sorted(self._counts.items())
-            ]
+            entries = []
+            for (policy, shape, symbol, decoder, contract, kind), (
+                    count, modules, unprefixed) in sorted(self._counts.items()):
+                names = sorted(modules)
+                if unprefixed:
+                    names = sorted(names + [MODULE_NO_PREFIX])
+                entries.append({
+                    "policy": policy, "shape": shape, "symbol": symbol,
+                    "decoder": decoder, "contract": contract, "kind": kind,
+                    "launches": count,
+                    # ``modules`` and ``module_names`` are the SAME fact: the
+                    # count is the length of the list beside it, always.  A
+                    # consumer that reads only the count is still reading
+                    # something a reader of the names can verify.
+                    "modules": len(names),
+                    "module_names": names,
+                    "dispatches_without_prefix": unprefixed,
+                })
+        rank, world_size, rank_source = _process_rank()
         return {
             "schema": ROUTE_TRACE_SCHEMA,
+            "identity_version": IDENTITY_VERSION,
+            # The header's own identity, so binding a trace to a rank is a read
+            # and not an inference from the file's path.
+            "rank": rank,
+            "world_size": world_size,
+            "rank_source": rank_source,
+            "platform": record_platform(),
             "pid": os.getpid(),
             "started_utc": self.started_utc,
             "flushed_utc": datetime.now(timezone.utc).isoformat(),
@@ -416,7 +494,14 @@ class _RouteTrace:
             "note": ("launches counted per module per served dispatch; a "
                      "shape of M* means the record was written while "
                      "torch.compile was tracing, where one graph serves every "
-                     "M and a count is not a launch count"),
+                     "M and a count is not a launch count.  Since "
+                     f"identity_version {IDENTITY_VERSION} each entry also "
+                     "names the modules it counted (module_names, sorted); a "
+                     "dispatch from a layer with no prefix is counted under "
+                     f"{MODULE_NO_PREFIX} and its dispatches are "
+                     "dispatches_without_prefix.  Before this version "
+                     "'modules' counted such a layer by an id the file never "
+                     "wrote, so a per-module comparison was impossible."),
             "entries": entries,
         }
 

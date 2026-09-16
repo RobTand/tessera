@@ -205,3 +205,151 @@ def test_a_compiled_forward_can_emit_without_killing_the_serve(tracing):
     _emit(layer, shape="M1:N1024:K2048")
     assert [e["launches"] for e in trace.snapshot()["entries"]] == [1], \
         "eager counting after a compiled capture is unchanged"
+
+
+# --- tessera#509: per-module identity beside the counts ---------------------
+
+def _by_contract(entries):
+    return {e["contract"]: e for e in entries}
+
+
+def test_each_entry_names_the_modules_it_counted(tracing):
+    """The count and the names are one fact, so both must be readable."""
+    trace, _path = tracing
+    _emit(_Layer("model.layers.0.mlp.down_proj"))
+    _emit(_Layer("model.layers.1.mlp.down_proj"))
+    entries = trace.snapshot()["entries"]
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry["launches"] == 2
+    assert entry["module_names"] == ["model.layers.0.mlp.down_proj",
+                                     "model.layers.1.mlp.down_proj"]
+    assert entry["modules"] == len(entry["module_names"]) == 2
+    assert entry["dispatches_without_prefix"] == 0
+
+
+def test_a_repeated_prefix_counts_once_but_launches_every_time(tracing):
+    trace, _path = tracing
+    layer = _Layer("model.layers.0.mlp.down_proj")
+    _emit(layer)
+    _emit(layer)
+    entry = trace.snapshot()["entries"][0]
+    assert entry["launches"] == 2
+    assert entry["module_names"] == ["model.layers.0.mlp.down_proj"]
+    assert entry["modules"] == 1
+
+
+def test_swapped_contracts_leave_the_histogram_identical_and_move_the_names(tmp_path):
+    """THE NEGATIVE REGRESSION for #509.
+
+    Two modules, two contracts, one dispatch each.  Their swap leaves the
+    histogram (contract -> launches) byte-identical -- which is exactly how
+    this defect hid -- while the per-entry module lists swap with them.  A
+    consumer that can only read counts cannot pass this test; that is the
+    point of the change.
+    """
+    a = _Layer("model.layers.0.mlp.experts.0.gate_proj")
+    b = _Layer("model.layers.0.mlp.experts.0.up_proj")
+
+    def histogram(entries):
+        return sorted((e["contract"], e["launches"]) for e in entries)
+
+    def named(entries):
+        return {e["contract"]: e["module_names"] for e in entries}
+
+    # Two independent runs, because the swap is a property of a whole serve
+    # and mutating one trace in place would be the test reaching into the
+    # object it is measuring.  ``start_route_trace`` is the public install.
+    try:
+        first = telemetry.start_route_trace(tmp_path / "first.json")
+        _emit(a, contract="e2m1_group16_ue4m3_static")
+        _emit(b, contract="fp8_per_token_dynamic")
+        before_histogram = histogram(first.snapshot()["entries"])
+        before_named = named(first.snapshot()["entries"])
+
+        second = telemetry.start_route_trace(tmp_path / "second.json")
+        _emit(a, contract="fp8_per_token_dynamic")
+        _emit(b, contract="e2m1_group16_ue4m3_static")
+        after_histogram = histogram(second.snapshot()["entries"])
+        after_named = named(second.snapshot()["entries"])
+    finally:
+        telemetry.stop_route_trace()
+
+    assert before_histogram == after_histogram, \
+        "the fixture must not change the histogram, or it tests nothing"
+    assert before_named != after_named, \
+        "a swapped contract must move a module name between entries"
+    assert (before_named["e2m1_group16_ue4m3_static"]
+            == ["model.layers.0.mlp.experts.0.gate_proj"])
+    assert (after_named["e2m1_group16_ue4m3_static"]
+            == ["model.layers.0.mlp.experts.0.up_proj"])
+
+
+def test_a_layer_without_a_prefix_is_named_explicitly_not_by_an_id(tracing):
+    trace, _path = tracing
+    layer = _Layer(None)
+    _emit(layer)
+    _emit(layer)
+    entry = trace.snapshot()["entries"][0]
+    assert entry["module_names"] == [telemetry.MODULE_NO_PREFIX]
+    assert entry["modules"] == 1
+    assert entry["dispatches_without_prefix"] == 2
+    assert not any(name.startswith("0x") for name in entry["module_names"]), \
+        "an object id is not a module identity a consumer can compare"
+
+
+def test_module_names_are_sorted_and_independent_of_arrival_order(tracing):
+    trace, _path = tracing
+    for prefix in ("z.module", "a.module", "m.module"):
+        _emit(_Layer(prefix))
+    names = trace.snapshot()["entries"][0]["module_names"]
+    assert names == sorted(names) == ["a.module", "m.module", "z.module"]
+
+
+def test_the_header_states_its_own_rank_world_and_platform(tracing, monkeypatch):
+    """Uninitialized distributed state is reported as absent, never as rank 0."""
+    trace, _path = tracing
+    snapshot = trace.snapshot()
+    assert snapshot["identity_version"] == telemetry.IDENTITY_VERSION
+    assert snapshot["rank"] is None and snapshot["world_size"] is None
+    assert snapshot["rank_source"] == "unavailable"
+    # The platform token is the SAME value the route records carry, including
+    # "" for a process that never latched one (here: no CUDA, no token).  An
+    # empty token is honest; inventing a platform would not be.
+    assert isinstance(snapshot["platform"], str)
+
+    import torch.distributed as dist
+    monkeypatch.setattr(dist, "is_available", lambda: True)
+    monkeypatch.setattr(dist, "is_initialized", lambda: True)
+    monkeypatch.setattr(dist, "get_rank", lambda: 1)
+    monkeypatch.setattr(dist, "get_world_size", lambda: 2)
+    snapshot = trace.snapshot()
+    assert (snapshot["rank"], snapshot["world_size"]) == (1, 2)
+    assert snapshot["rank_source"] == "torch.distributed"
+
+
+def test_a_legacy_file_stays_histogram_only_and_is_never_upgraded(tracing):
+    """A pre-#509 file still reads as what it always was: a histogram.
+
+    It carries no ``module_names`` and no header identity, and nothing here
+    invents them for it -- a legacy trace must stay honestly
+    histogram-only rather than be upgraded into an identity claim it never
+    made.
+    """
+    trace, _path = tracing
+    _emit(_Layer("model.layers.0.mlp.down_proj"))
+    payload = trace.snapshot()
+    legacy_fields = {"policy", "shape", "symbol", "decoder", "contract",
+                     "kind", "launches", "modules"}
+    entry = payload["entries"][0]
+    assert legacy_fields <= set(entry), \
+        "every field a pre-#509 reader reads must survive unchanged"
+    assert entry["launches"] == 1 and entry["policy"] == "TESSERA_FP8:streamed"
+    # What a legacy FILE contains, reconstructed from the fields it had: the
+    # new metadata is absent, and nothing in this change supplies it on read.
+    legacy_payload = {"schema": payload["schema"], "pid": 1,
+                      "entries": [{k: entry[k] for k in legacy_fields}]}
+    assert "identity_version" not in legacy_payload
+    assert "rank" not in legacy_payload and "platform" not in legacy_payload
+    assert "module_names" not in legacy_payload["entries"][0]
+    assert legacy_payload["entries"][0]["modules"] == 1
