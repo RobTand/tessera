@@ -92,7 +92,11 @@ __all__ = [
     "LAUNCH_FIELDS",
     "WINDOW_GEMV_SYMBOL",
     "WINDOW_GEMM_SYMBOL",
+    "A4_DENSE_GEMM_SYMBOL",
+    "A4_GROUPED_GEMM_SYMBOL",
+    "WINDOW_MOE_COMPACT_SYMBOL",
     "EXPERIMENTAL_LAUNCHES",
+    "experimental_launch_pairs",
     "parse_compact_blob_for_scheme",
     "parse_compact_tessera_expert_blob",
     "MOE_GEMM_SYMBOL",
@@ -415,6 +419,22 @@ WINDOW_GEMV_SYMBOL = "tessera_window_gemv::gemv"
 #: behind ``serving.native_window``).  Same spelling rule as the GEMV's:
 #: the census compares the route record against this table.
 WINDOW_GEMM_SYMBOL = "tessera::window_gemm_dense"
+
+#: The native lanes' own spellings, in the module that executes them, so a
+#: route owner reports the same string the code does.  All four pairs below
+#: are EXPERIMENTAL: the dispatch can make these launches and the routes'
+#: census expectation must know them, while no ``lane_eligibility`` cell
+#: attests any of them (``EXPERIMENTAL_LAUNCHES``).  A pair leaves that set
+#: when a receipt earns it a cell.
+#: A4 (E2M1/span-2) dense: ``tessera.kernel_a4.a4_span2_gemm``.
+A4_DENSE_GEMM_SYMBOL = "tessera.kernel_a4.a4_span2_gemm"
+#: A4 routed experts: ``tessera.kernel_a4.a4_span2_grouped_gemm``.
+A4_GROUPED_GEMM_SYMBOL = "tessera.kernel_a4.a4_span2_grouped_gemm"
+#: Window routed experts: ``tessera.native_window_moe``'s adapter call, the
+#: compact FP8 MoE lane (and its BF16 research sibling).  The folded BF16
+#: arithmetic is a distinct numerical variant carried on the bundle and is
+#: never folded into the dense row-scale-epilogue contract.
+WINDOW_MOE_COMPACT_SYMBOL = "tessera.native_window_moe.NativeWindowMoE.__call__"
 #: The entry point the expert route calls. Its recorded backend suffix is
 #: selected by vLLM at runtime and remains in the census receipt.
 MOE_GEMM_SYMBOL = "vllm.fused_moe.modular_kernel"
@@ -427,6 +447,16 @@ _DECODER_TORCH_WINDOW = "torch_window"
 _DECODER_WINDOW_GEMV = "window_gemv"
 _DECODER_TORCH_STOCK = "torch_materialize_stock"
 _DECODER_NATIVE_WINDOW_GEMM = "native_window_gemm"
+#: The native A4 lanes: the span-2 GEMM decodes the packed planes in-kernel
+#: (dense) and the grouped form does it per selected expert.  Distinct from
+#: ``native_span2`` (the load-time span-2 DECODE) and from ``torch_window``.
+_DECODER_NATIVE_SPAN2_GEMM = "native_span2_gemm"
+_DECODER_NATIVE_SPAN2_GROUPED = "native_span2_grouped"
+#: The compact window MoE adapter: routed experts served from the loader's
+#: packed ``WindowGemvUnit``s with no decoded tile; FP8 keeps the per-token
+#: native A quant, BF16 keeps the row-scale epilogue (or its distinct folded
+#: variant on the bundle).
+_DECODER_NATIVE_WINDOW_MOE_COMPACT = "native_window_moe_compact"
 
 _ALL_REGIMES = ("batch", "decode")
 _ALL_MODES = ("resident", "streamed")
@@ -511,6 +541,14 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
          "regimes": _ALL_REGIMES, "modes": _ALL_MODES, "lane": None,
          "structures": (STRUCTURE_DENSE,),
          "when_lane_absent": True},
+        # The native A4 dense GEMM (experimental): the compact loader's packed
+        # span-2 planes decoded in-kernel by tessera.kernel_a4, no materialised
+        # stock tile.  No lane and no fallback flag -- it is a launch, and
+        # EXPERIMENTAL_LAUNCHES keeps it out of the contract validator's view.
+        {"symbol": A4_DENSE_GEMM_SYMBOL, "decoder": _DECODER_NATIVE_SPAN2_GEMM,
+         "regimes": _ALL_REGIMES, "modes": _ALL_MODES, "lane": None,
+         "structures": (STRUCTURE_DENSE,),
+         "when_lane_absent": False},
         # The expert stack (tessera#492): decoded ONCE at load through the
         # stock materialiser into the modelopt NVFP4 parameter set, then
         # every forward, at any M, hands the runtime's modular fused-MoE
@@ -519,12 +557,24 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
         {"symbol": MOE_GEMM_SYMBOL, "decoder": _DECODER_TORCH_STOCK,
          "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": None,
          "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": True},
+        # The native A4 routed GEMM (experimental, resident like every expert
+        # stack): the grouped form over the compact loader's planes.
+        {"symbol": A4_GROUPED_GEMM_SYMBOL, "decoder": _DECODER_NATIVE_SPAN2_GROUPED,
+         "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": None,
+         "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": False},
     ),
     TESSERA_FP8: _dense_native_window_launch() + _window_launches(
         ROUTES[TESSERA_FP8]["gemm_symbol"]) + (
         {"symbol": MOE_GEMM_SYMBOL, "decoder": _DECODER_TORCH_STOCK,
          "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": None,
          "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": True},
+        # The compact window MoE adapter (experimental): routed experts served
+        # from the loader's packed units, no decoded tile.  The folded BF16
+        # arithmetic is a bundle property and a distinct numerical variant;
+        # this launch relabels neither contract.
+        {"symbol": WINDOW_MOE_COMPACT_SYMBOL, "decoder": _DECODER_NATIVE_WINDOW_MOE_COMPACT,
+         "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": None,
+         "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": False},
     ),
     TESSERA_BF16: _dense_native_window_launch() + _window_launches(
         ROUTES[TESSERA_BF16]["gemm_symbol"]),
@@ -542,6 +592,9 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
 #: this set when a receipt earns it a cell.
 EXPERIMENTAL_LAUNCHES = frozenset({
     (WINDOW_GEMM_SYMBOL, _DECODER_NATIVE_WINDOW_GEMM),
+    (A4_DENSE_GEMM_SYMBOL, _DECODER_NATIVE_SPAN2_GEMM),
+    (A4_GROUPED_GEMM_SYMBOL, _DECODER_NATIVE_SPAN2_GROUPED),
+    (WINDOW_MOE_COMPACT_SYMBOL, _DECODER_NATIVE_WINDOW_MOE_COMPACT),
 })
 
 
@@ -606,6 +659,19 @@ def route_launches(route: str, *, structure: str = STRUCTURE_DENSE,
 def launch_pairs(route: str, **narrow) -> set:
     """``{(symbol, decoder)}`` for :func:`route_launches` -- the census's shape."""
     return {(l["symbol"], l["decoder"]) for l in route_launches(route, **narrow)}
+
+
+def experimental_launch_pairs(route: str, **narrow) -> set:
+    """The pairs a route can report that no contract cell attests.
+
+    How a native-lane owner reports its actual candidate: add these to the
+    route's ``census_expected`` (or call ``launch_pairs(...,
+    include_experimental=True)`` there) and a census accepts the candidate
+    pair, while ``launch_pairs``' default view keeps the cell validator on the
+    attested dispatch.  Empty for a route with no experimental lane.
+    """
+    return (launch_pairs(route, include_experimental=True, **narrow)
+            - launch_pairs(route, **narrow))
 
 
 def moe_census_symbol_base(symbol: str) -> str:

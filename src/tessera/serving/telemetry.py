@@ -51,6 +51,9 @@ __all__ = [
     "DECODER_TORCH_WINDOW",
     "DECODER_WINDOW_GEMV",
     "DECODER_NATIVE_WINDOW_GEMM",
+    "DECODER_NATIVE_SPAN2_GEMM",
+    "DECODER_NATIVE_SPAN2_GROUPED",
+    "DECODER_NATIVE_WINDOW_MOE_COMPACT",
     "ATTR_PREFIX",
     "ROUTE_TRACE_ENV",
     "ROUTE_TRACE_SCHEMA",
@@ -107,8 +110,22 @@ DECODER_WINDOW_GEMV = "window_gemv"
 #: distinct value because no other decoder ran, and a census that read
 #: ``torch_window`` here would claim one.
 DECODER_NATIVE_WINDOW_GEMM = "native_window_gemm"
+#: The native A4 lanes (``tessera.kernel_a4``): the span-2 GEMM decodes the
+#: compact loader's packed planes in-kernel -- densely, and per selected expert
+#: in the grouped form.  Distinct from ``native_span2``, which names the
+#: load-time span-2 DECODE into a stock tile.
+DECODER_NATIVE_SPAN2_GEMM = "native_span2_gemm"
+DECODER_NATIVE_SPAN2_GROUPED = "native_span2_grouped"
+#: The compact window MoE adapter (``tessera.native_window_moe``): routed
+#: experts served from the loader's packed ``WindowGemvUnit``s with no decoded
+#: tile.  FP8 keeps the per-token native A quant, BF16 keeps the row-scale
+#: epilogue, and the folded BF16 arithmetic is a distinct numerical variant on
+#: the bundle -- never relabelled into another contract here.
+DECODER_NATIVE_WINDOW_MOE_COMPACT = "native_window_moe_compact"
 DECODERS = frozenset((DECODER_NATIVE_SPAN2, DECODER_TORCH_STOCK, DECODER_TORCH_WINDOW,
-                      DECODER_WINDOW_GEMV, DECODER_NATIVE_WINDOW_GEMM))
+                      DECODER_WINDOW_GEMV, DECODER_NATIVE_WINDOW_GEMM,
+                      DECODER_NATIVE_SPAN2_GEMM, DECODER_NATIVE_SPAN2_GROUPED,
+                      DECODER_NATIVE_WINDOW_MOE_COMPACT))
 
 ATTR_PREFIX = "_tessera_route_"
 
