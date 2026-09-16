@@ -561,9 +561,27 @@ def _stock_modular_reference(x, w1, w2, weights, ids, *, family, clamp,
             routing_tables=None)
     else:
         from vllm.model_executor.layers.fused_moe.oracle.unquantized import (
-            UnquantizedMoeBackend, make_unquantized_moe_kernel,
-            select_unquantized_moe_backend)
-        backend, experts_cls = select_unquantized_moe_backend(moe_config=moe_config)
+            UnquantizedMoeBackend, make_unquantized_moe_kernel)
+        # TRITON, chosen explicitly rather than by the stock auto-selection.
+        #
+        # The lane's research BF16 route is pinned to stock TRITON
+        # (``moe_route.py`` refuses any other unquantized backend for
+        # research-selected experts), so the reference runs the same stock
+        # expert implementation the lane mirrors.
+        #
+        # The stock auto-selection instead lands on FlashInfer CUTLASS, which
+        # this direct-apply harness cannot feed -- NOT because of these shapes.
+        # It reads ``ep_rank`` from ``moe_parallel_config.ep_rank`` at
+        # construction and hands it to the FFI, which requires an int; the
+        # harness's layer stub (``test_serving_moe_selected._layer``) leaves
+        # every unlisted field ``None``, so ``ep_rank`` is ``None`` and the
+        # FlashInfer path rejects it.  That is a harness-metadata gap, not a
+        # geometry or backend limitation, and it is why the reference names
+        # its backend here instead of taking the auto selection.
+        backend, experts_cls = UnquantizedMoeBackend.TRITON, None
+        from vllm.model_executor.layers.fused_moe.experts.triton_moe import (
+            TritonExperts)
+        experts_cls = TritonExperts
         quant = FusedMoEQuantConfig.make(gemm1_clamp_limit=clamp)
         kernel = make_unquantized_moe_kernel(
             quant_config=quant, moe_config=moe_config,
