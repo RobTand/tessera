@@ -156,15 +156,29 @@ def pack_uniform(values: torch.Tensor, width: int) -> bytes:
 
 
 def unpack_uniform(data: bytes, count: int, width: int, device=None) -> torch.Tensor:
-    raw = np.unpackbits(np.frombuffer(data, dtype=np.uint8), bitorder="big")
-    bits = raw[: count * width]
-    if bits.size != count * width:
+    packed = np.frombuffer(data, dtype=np.uint8)
+    total = count * width
+    if packed.size * 8 < total:
         raise GrammarError(
-            f"need {count * width} bits for {count} elements of {width} bits, "
-            f"the plane holds {bits.size}"
+            f"need {total} bits for {count} elements of {width} bits, "
+            f"the plane holds {packed.size * 8}"
         )
-    refuse_dirty_slack(raw, count * width, "plane")
-    return torch.from_numpy(_from_bits(bits, width)).to(device or "cpu")
+    _refuse_packed_slack(packed, total, "plane")
+    # A width the packed byte already carries is read off that byte instead of
+    # through an eight-bytes-per-bit expansion and back (the scale plane is
+    # the largest such field on a routed load: 524 288 four-bit refinement
+    # words per expert container).  Any other width still takes the bit path.
+    if width == 8:
+        values = packed[:count].astype(np.int64)
+    elif width == 4:
+        values = np.empty(packed.size * 2, dtype=np.int64)
+        values[0::2] = packed >> 4
+        values[1::2] = packed & 0xF
+        values = values[:count]
+    else:
+        bits = np.unpackbits(packed, bitorder="big")[:total]
+        values = _from_bits(bits, width)
+    return torch.from_numpy(values).to(device or "cpu")
 
 
 def _column_to_bits(column: np.ndarray, rate: int, span: int) -> np.ndarray:
