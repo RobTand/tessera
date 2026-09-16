@@ -242,8 +242,15 @@ class _ExpertIntake:
             return None
         del self.pending[expert]
         names = [half[0] for half in halves]
+        # ``shared_lut_global`` takes each unit's E4M3 table as RAW UINT8
+        # BYTES (fused.py:169-174) and turns them into numbers with
+        # ``.to(torch.uint8).view(torch.float8_e4m3fn)``; an e4m3-typed axis
+        # would be converted NUMERICALLY there -- 0x38 (1.0) becomes byte 0x01
+        # (2^-9) -- and every table this route serves would be silently
+        # rescaled.  ``A4Unit.lut_bytes`` is the e4m3 view, so the view is
+        # undone here, at the one seam that needs bytes.
         shared, moved = shared_lut_global(
-            [half[1].lut_bytes for half in halves],
+            [half[1].lut_bytes.view(torch.uint8) for half in halves],
             [half[1].global_scale for half in halves], names)
         import dataclasses
 

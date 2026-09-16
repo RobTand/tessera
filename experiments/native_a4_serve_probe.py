@@ -126,6 +126,67 @@ def main():
     method.process_weights_after_loading(layer)
     report["checks"].append({"check": "construct_load_finalize", "ok": True})
 
+    # -- LUT-join regression: raw uint8 bytes, byte-exact move -------------
+    # The layer's joined tables must equal shared_lut_global over the
+    # INDEPENDENTLY parsed units' uint8 tables (unit.scale_lut), and the
+    # effective scales must be the shared global over the A-side global.
+    from tessera.fused import shared_lut_global
+    from tessera.errors import GrammarError
+    from tessera.kernel_a4 import a4_quantize_activation  # noqa: F401  (import order)
+    from tessera.serving.moe_route import _packed_group_shard_plan
+    from tessera.serving.scheme import (TESSERA_NVFP4, expert_role_declarations,
+                                        parse_tessera_expert_blob)
+    from tessera.serving.sharding import shard_parsed_roles
+
+    roles13 = expert_role_declarations(declared_group["groups"]["w13"])
+    plan13 = _packed_group_shard_plan(declared_group, "w13", PREFIX, args.rank, 2)
+    gate_parsed = shard_parsed_roles(
+        [parse_tessera_expert_blob((DATA / "gate_proj_wire.bin").read_bytes(),
+                                   roles13[0], f"{PREFIX} gate", device="cuda")[0]],
+        plan13)[0][1]
+    up_parsed = shard_parsed_roles(
+        [parse_tessera_expert_blob((DATA / "up_proj_wire.bin").read_bytes(),
+                                   roles13[1], f"{PREFIX} up", device="cuda")[0]],
+        plan13)[0][1]
+    assert gate_parsed.unit.scale_lut.dtype == torch.uint8
+    shared_ref, moved_ref = shared_lut_global(
+        [gate_parsed.unit.scale_lut, up_parsed.unit.scale_lut],
+        [float(gate_parsed.unit.scale_global), float(up_parsed.unit.scale_global)],
+        ["gate_proj", "up_proj"])
+    gate_bytes = layer.tessera_a4_gate_stack.lut_bytes[0].view(torch.uint8)
+    up_bytes = layer.tessera_a4_up_stack.lut_bytes[0].view(torch.uint8)
+    join_ok = (torch.equal(gate_bytes, moved_ref[0])
+               and torch.equal(up_bytes, moved_ref[1])
+               and torch.equal(layer.tessera_a4_gate_epilogues[0:1],
+                               (torch.tensor([shared_ref], dtype=torch.float32,
+                                             device="cuda")
+                                / layer.tessera_a4_gs13).reshape(1)))
+    report["checks"].append({"check": "lut_join_byte_exact", "ok": bool(join_ok),
+                             "shared": float(shared_ref),
+                             "gate_bytes": [int(b) for b in gate_bytes[:4].tolist()],
+                             "ref_bytes": [int(b) for b in moved_ref[0][:4].tolist()]})
+
+    # the bug class itself: an e4m3-typed table must NOT be fed to
+    # shared_lut_global -- the byte 0x38 (1.0) would come back as 0x01 (2^-9)
+    # Bytes whose NUMERIC value is itself a legal LUT byte are the dangerous
+    # band: 0x50 is 32.0, and ``.to(torch.uint8)`` turns it into 0x20 (0.125)
+    # -- accepted by the range check, 256x wrong.
+    raw = torch.tensor([0x50, 0x58], dtype=torch.uint8, device="cuda")
+    e4m3_view = raw.view(torch.float8_e4m3fn)
+    _shared_raw, moved_raw = shared_lut_global([raw], [2.0 ** -12], ["t"])
+    try:
+        _shared_numeric, moved_numeric = shared_lut_global(
+            [e4m3_view.to(torch.uint8)], [2.0 ** -12], ["t"])
+        bug_class_visible = not torch.equal(moved_raw[0], moved_numeric[0])
+        numeric = [int(b) for b in moved_numeric[0][:2].tolist()]
+    except GrammarError as exc:
+        bug_class_visible = True
+        numeric = f"refused: {str(exc)[:60]}"
+    report["checks"].append({"check": "lut_join_bug_class_detected",
+                             "ok": bool(bug_class_visible),
+                             "raw": [int(b) for b in moved_raw[0][:2].tolist()],
+                             "numeric": numeric})
+
     # -- apply vs the stock oracle -----------------------------------------
     torch.manual_seed(4)
     x = torch.randn(8, HIDDEN, dtype=torch.bfloat16, device="cuda") * 0.25

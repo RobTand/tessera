@@ -217,7 +217,9 @@ def build_tessera_nvfp4_method(scheme, prefix: str, mode: str):
             # so the epilogue stays one scalar per role.
             if len(units) > 1:
                 shared, moved = shared_lut_global(
-                    [wire.metadata.scale_lut for _name, wire in members],
+                    # raw uint8 bytes: shared_lut_global's contract
+                    [wire.metadata.scale_lut.view(torch.uint8)
+                     for _name, wire in members],
                     [float(wire.metadata.manifest.scale_plane.global_scale)
                      for _name, wire in members],
                     names)
