@@ -189,6 +189,7 @@ class _ExpertIntake:
         (``fused.shared_lut_global``), because a fused tile carries one
         weight global.
         """
+        from ..fused import shared_lut_global
         from ..serving import scheme as scheme_module
         from .native_a4 import prepare_a4_unit
 
@@ -417,7 +418,7 @@ def build_tessera_nvfp4_moe_method(scheme: Mapping, prefix: str, mode: str, laye
             from .native_a4 import A4ExpertAxis
 
             self._axes = {
-                (group_name, role.name): A4ExpertAxis(experts)
+                (group_name, role["roles"][0][0]): A4ExpertAxis(experts)
                 for group_name in MOE_GROUPS
                 for role in self._intake.roles[group_name]
             }
@@ -564,10 +565,11 @@ def build_tessera_nvfp4_moe_method(scheme: Mapping, prefix: str, mode: str, laye
             # so one quantizer scalar per GEMM is the served contract.  The
             # native path reproduces that reduction instead of quantising per
             # expert.
+            device = self._decode_device()
             gs13 = (1.0 / input_small["w13"].max()).to(torch.float32).reshape(())
             gs2 = (1.0 / input_small["w2"].max()).to(torch.float32).reshape(())
-
-            device = self._decode_device()
+            gs13 = gs13.to(device)
+            gs2 = gs2.to(device)
             stacks = {}
             for key, axis in self._axes.items():
                 stacks[key] = axis.finish()
