@@ -80,12 +80,13 @@ from ..errors import GrammarError
 from ..moe_layout import W13_PROJECTIONS, validate_moe_wire_lengths
 from .lane import MODE_RESIDENT, MODES
 from .moe_route import SHARD_TO_GROUP, _packed_group_shard_plan
-from .scheme import (GROUP_SIZE, MOE_GEMM_SYMBOL, MOE_GROUPS, ROUTES,
+from .scheme import (A4_GROUPED_GEMM_SYMBOL, GROUP_SIZE, MOE_GEMM_SYMBOL, MOE_GROUPS, ROUTES,
                      STRUCTURE_ROUTED_MOE, TESSERA_NVFP4, expert_role_declarations,
                      launch_pairs, moe_census_symbol_base as census_symbol_base,
                      parse_tessera_expert_blob, route_launches,
                      validate_tessera_moe_scheme)
-from .telemetry import DECODER_TORCH_STOCK, emit_route, route_shape
+from .telemetry import (DECODER_NATIVE_SPAN2_GROUPED, DECODER_TORCH_STOCK, emit_route,
+                        route_shape)
 
 __all__ = [
     "ACTIVATION_CONTRACT",
@@ -133,8 +134,16 @@ def census_expected(*, compiled: bool = False, platform=None) -> dict:
     launches = route_launches(TESSERA_NVFP4, structure=STRUCTURE_ROUTED_MOE,
                               mode=MODE_RESIDENT)
     regimes = {regime for launch in launches for regime in launch["regimes"]}
+    # The native lane's own (symbol, decoder) pairs are experimental: they are
+    # what this route actually reports now, so a census must accept them, and
+    # ``launch_pairs``' default view keeps the cell validator on the attested
+    # dispatch -- no qualification is promoted here.
+    from .scheme import experimental_launch_pairs
+
     pairs = {regime: launch_pairs(TESSERA_NVFP4, structure=STRUCTURE_ROUTED_MOE,
                                   regime=regime, mode=MODE_RESIDENT)
+             | experimental_launch_pairs(TESSERA_NVFP4, structure=STRUCTURE_ROUTED_MOE,
+                                         regime=regime, mode=MODE_RESIDENT)
              for regime in regimes}
     from .census import platform_expectation
 
@@ -606,9 +615,8 @@ def build_tessera_nvfp4_moe_method(scheme: Mapping, prefix: str, mode: str, laye
             self._input_global = None
             self._w13_len = self._w2_len = None
             self._shared_w13 = self._shared_w2 = None
-            layer.tessera_decoder = "native_span2_grouped"
-            layer.tessera_backend = str(getattr(self.nvfp4_backend, "name",
-                                                self.nvfp4_backend))
+            layer.tessera_decoder = DECODER_NATIVE_SPAN2_GROUPED
+            layer.tessera_backend = A4_GROUPED_GEMM_SYMBOL
 
         def get_fused_moe_quant_config(self, layer):
             return make_nvfp4_moe_quant_config(
@@ -749,7 +757,7 @@ def build_tessera_nvfp4_moe_method(scheme: Mapping, prefix: str, mode: str, laye
                 x2 = x.reshape(-1, x.shape[-1])
                 emit_route(
                     layer, kind="moe", policy=f"{family}:{layer.tessera_mode}",
-                    symbol=f"{GEMM_SYMBOL}:{layer.tessera_backend}", tile_m=0,
+                    symbol=layer.tessera_backend, tile_m=0,
                     shape=route_shape(x2, layer.tessera_rows, layer.tessera_columns),
                     contract=layer.tessera_activation_contract, state="served", reason=None,
                     decoder=layer.tessera_decoder)

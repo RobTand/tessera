@@ -95,6 +95,104 @@ def build_layer(tp_rank: int):
     return layer, method, declared_group
 
 
+def dense_check(rank: int, report: dict):
+    """The DENSE method: fused roles, load, apply, device audit.
+
+    The dense join moves each role's LUT table with ``shared_lut_global``
+    from CPU metadata, so every installed table and every plane must end on
+    the unit's CUDA device; a CPU table here is the startup failure the first
+    small serve hit.
+    """
+    import torch.nn as nn
+
+    from tessera import fused as fused_mod
+    from tessera.kernel_a4 import a4_quantize_activation, a4_span2_gemm
+    from tessera.serving.nvfp4_route import build_tessera_nvfp4_method
+    from tessera.serving.scheme import validate_tessera_moe_scheme
+    from tessera.stock import materialize_stock
+
+    cfg = json.loads((DATA / "a4-config.json").read_text())
+    group = dict(cfg["quantization_config"]["config_groups"][
+        "tessera_model_language_model_layers_3_mlp_experts"]["scheme"]["groups"]["w13"])
+    names = [name for name, _rows in group["roles"]]
+    # The fixture files are themselves ``tessera.fused`` frames with one
+    # member each; a fused container of units takes the bare unit bytes.
+    blobs = {}
+    for name in ("gate_proj", "up_proj"):
+        wrapped = fused_mod.parse_fused((DATA / f"{name}_wire.bin").read_bytes())
+        blobs[name] = wrapped[0].blob
+    container = fused_mod.pack_fused([
+        (name, int(rows), blobs[name]) for name, rows in group["roles"]])
+    # The dense declaration this container really is: the fused pair of the
+    # fixture's roles, framed, so the shared validator's byte count matches.
+    declared_group = validate_tessera_moe_scheme(
+        cfg["quantization_config"]["config_groups"][
+            "tessera_model_language_model_layers_3_mlp_experts"]["scheme"], PREFIX)
+    dense_scheme = {"family": declared_group["family"], "structure": "dense",
+                    "grid": declared_group["grid"], "body": declared_group["body"],
+                    "plane": declared_group["plane"],
+                    "q256": int(declared_group["groups"]["w13"]["q256"]),
+                    "rows": int(declared_group["groups"]["w13"]["rows"]),
+                    "columns": int(declared_group["groups"]["w13"]["columns"]),
+                    "roles": [[name, int(rows)] for name, rows in group["roles"]],
+                    "role_q256": [int(q) for q in declared_group["groups"]["w13"]["role_q256"]],
+                    "wire_bytes": len(container)}
+
+    prefix = "model.language_model.layers.0.mlp.gate_up_proj"
+    layer = nn.Module()
+    from tessera.serving.sharding import plan_shard
+    from tessera.serving.scheme import GROUP_SIZE
+
+    rows = [int(r) for _n, r in group["roles"]]
+    layer.tessera_shard_plan = plan_shard(
+        prefix, roles=[(name, int(r)) for name, r in group["roles"]],
+        columns=int(group["columns"]), out_partitions=rows, in_size=int(group["columns"]),
+        tp_rank=0, tp_size=1, input_size=int(group["columns"]),
+        output_size=int(group["rows"]))
+    method = build_tessera_nvfp4_method(dense_scheme, prefix, "resident")
+    # the attributes ``create_weights`` would have set on a real layer
+    from tessera.serving.scheme import TESSERA_NVFP4
+    from tessera.serving.nvfp4_route import ACTIVATION_CONTRACT
+
+    layer.tessera_rows = layer.tessera_shard_plan.shard_rows
+    layer.tessera_columns = layer.tessera_shard_plan.shard_columns
+    layer.tessera_groups = layer.tessera_shard_plan.shard_columns // GROUP_SIZE
+    layer.tessera_mode = "resident"
+    layer.tessera_family = TESSERA_NVFP4
+    layer.tessera_activation_contract = ACTIVATION_CONTRACT
+    # The runtime has both parameters on the model device.
+    layer.register_parameter("wire_bytes", nn.Parameter(
+        torch.frombuffer(bytearray(container), dtype=torch.uint8).clone().cuda(),
+        requires_grad=False))
+    layer.register_parameter("trellis_input_global_scale", nn.Parameter(
+        torch.tensor([1344.0], dtype=torch.float32, device="cuda"),
+        requires_grad=False))
+    method.process_weights_after_loading(layer)
+
+    devices = {unit.select.device.type for unit in layer.tessera_a4_units}
+    lut_devices = {unit.lut_bytes.device.type for unit in layer.tessera_a4_units}
+    report["checks"].append({"check": "dense_join_on_device",
+                             "ok": devices == {"cuda"} and lut_devices == {"cuda"},
+                             "devices": sorted(devices), "lut_devices": sorted(lut_devices)})
+
+    torch.manual_seed(9)
+    x = torch.randn(6, HIDDEN, dtype=torch.bfloat16, device="cuda") * 0.25
+    out = method.apply(layer, x)
+    gs = layer.trellis_input_global_scale.data.reshape(())
+    packed, scales = a4_quantize_activation(x, gs)
+    pieces = [a4_span2_gemm(packed, scales, unit, epilogue, out_dtype=torch.float32)
+              for unit, epilogue in zip(layer.tessera_a4_units,
+                                        layer.tessera_a4_epilogues)]
+    chain = torch.cat(pieces, dim=-1)
+    # ``apply`` returns the route's bf16 output; the chain is fp32, so the
+    # comparison is at bf16 rounding (~0.4%), not at the fp32 accumulation
+    # tolerance the kernel-level gates use.
+    rel = float((out.float() - chain).abs().max() / chain.abs().max().clamp_min(1e-12))
+    report["checks"].append({"check": "dense_apply_vs_native_chain", "ok": rel < 2e-2,
+                             "rel": rel, "rows": int(out.shape[-1]),
+                             "out_dtype": str(out.dtype), "roles": names})
+
+
 def load_expert(layer, expert: int):
     blobs = {name: (DATA / f"{name}_wire.bin").read_bytes()
              for name in ("gate_proj", "up_proj", "down_proj")}
@@ -120,6 +218,7 @@ def main():
     from tessera.serving.scheme import expert_role_declarations, parse_tessera_expert_blob
 
     report = {"rank": args.rank, "checks": []}
+    dense_check(args.rank, report)
     layer, method, declared_group = build_layer(args.rank)
     for expert in range(EXPERTS):
         load_expert(layer, expert)

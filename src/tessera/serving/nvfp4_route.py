@@ -42,10 +42,11 @@ import dataclasses
 
 from .ops import PreparedTesseraModule, prepare_tessera_module  # noqa: F401  (re-export)
 from ..kernel_a4 import a4_quantize_activation, a4_span2_gemm
-from .scheme import GROUP_SIZE, ROUTES, TESSERA_NVFP4, parse_compact_blob_for_scheme, \
-    parse_tessera_blob_for_scheme, validate_tessera_scheme
+from .scheme import (A4_DENSE_GEMM_SYMBOL, GROUP_SIZE, ROUTES, TESSERA_NVFP4,
+                     parse_compact_blob_for_scheme, parse_tessera_blob_for_scheme,
+                     validate_tessera_scheme)
 from .sharding import plan_shard_for_layer, require_axis_supported, shard_parsed_roles
-from .telemetry import emit_route, route_shape
+from .telemetry import DECODER_NATIVE_SPAN2_GEMM, emit_route, route_shape
 
 __all__ = [
     "ACTIVATION_CONTRACT",
@@ -217,22 +218,35 @@ def build_tessera_nvfp4_method(scheme, prefix: str, mode: str):
             # so the epilogue stays one scalar per role.
             if len(units) > 1:
                 shared, moved = shared_lut_global(
-                    # raw uint8 bytes: shared_lut_global's contract
+                    # raw uint8 bytes: shared_lut_global's contract.  The
+                    # metadata table is a CPU tensor, so every moved table is
+                    # moved onto the unit's device here -- a CPU table
+                    # installed into a CUDA unit is the startup failure the
+                    # first small serve hit, and the byte reinterpretation
+                    # stays exactly the moved bytes.
                     [wire.metadata.scale_lut.view(torch.uint8)
                      for _name, wire in members],
                     [float(wire.metadata.manifest.scale_plane.global_scale)
                      for _name, wire in members],
                     names)
+                devices = {unit.select.device for unit in units}
+                if len(devices) != 1:
+                    raise ValueError(
+                        f"{prefix}: the fused roles are on different devices: {devices}")
+                device = devices.pop()
                 units = [
-                    dataclasses.replace(unit, lut_bytes=table.view(torch.uint8)
-                                        .view(torch.float8_e4m3fn).contiguous(),
-                                        global_scale=float(shared))
+                    dataclasses.replace(
+                        unit,
+                        lut_bytes=table.to(device).view(torch.uint8)
+                        .view(torch.float8_e4m3fn).contiguous(),
+                        global_scale=float(shared))
                     for unit, table in zip(units, moved)
                 ]
             gs_tensor = layer.trellis_input_global_scale.data.to(device)
             layer.tessera_a4_units = units
             layer.tessera_a4_epilogues = [unit.epilogue_for(gs_tensor) for unit in units]
-            layer.tessera_decoder = "native_span2_gemm"
+            layer.tessera_decoder = DECODER_NATIVE_SPAN2_GEMM
+            layer.tessera_symbol = A4_DENSE_GEMM_SYMBOL
             layer.tessera_roles = names
             # Derived, never accepted: the module's shared global over the A-side scale.
             layer.tessera_global_scale_real = units[0].global_scale
@@ -261,7 +275,7 @@ def build_tessera_nvfp4_method(scheme, prefix: str, mode: str):
             try:
                 emit_route(
                     layer, kind="dense", policy=f"{TESSERA_NVFP4}:{layer.tessera_mode}",
-                    symbol=GEMM_SYMBOL, tile_m=0,
+                    symbol=getattr(layer, "tessera_symbol", GEMM_SYMBOL), tile_m=0,
                     shape=route_shape(x2, layer.tessera_rows, layer.tessera_columns),
                     contract=layer.tessera_activation_contract, state="served", reason=None,
                     decoder=layer.tessera_decoder,
