@@ -307,6 +307,48 @@ def test_bf16_folded_native_route_matches_folded_reference(bf16_wires_native):
 
 
 @cuda
+def test_router_weight_on_input_matches_actual_stock_placement():
+    """``apply_router_weight_on_input=True`` is ACCEPTED because actual stock
+    ``fused_experts`` agrees in that setting: vLLM's kernel multiplies the
+    route weight into gemm1's fp32 accumulator (before the bf16 cast that the
+    activation and the next A-quant consume), which is what the grouped
+    kernel's MUL_WEIGHT does.  No silent approximation: the placement is
+    demonstrated against the stock oracle, not asserted from our own chain."""
+    from vllm.model_executor.layers.fused_moe.activation import MoEActivation
+    from vllm.model_executor.layers.fused_moe.fused_moe import fused_experts
+    from vllm.model_executor.layers.fused_moe.oracle.fp8 import (
+        Fp8MoeBackend, make_fp8_moe_quant_config)
+
+    w13_blobs, w2_blobs, scheme, reference = _stack()
+    layer = _native_layer()
+    method = _native_method(scheme, layer)
+    _load_all(method, layer, w13_blobs, w2_blobs)
+    method.process_weights_after_loading(layer)
+    x = (torch.randn(8, HIDDEN) * 0.5).bfloat16().cuda()
+    ids = torch.randint(0, EXPERTS, (8, 2), dtype=torch.int32, device="cuda")
+    weights = torch.rand(8, 2, device="cuda")
+    layer.apply_router_weight_on_input = True
+    native = method.apply(layer, x, weights, ids, _SharedSpy(), None)
+
+    w1 = torch.stack([torch.cat([r["gate"]["weight"], r["up"]["weight"]])
+                      for r in reference]).cuda().contiguous()
+    s1 = torch.stack([torch.cat([r["gate"]["weight_scale"], r["up"]["weight_scale"]])
+                      for r in reference]).cuda().contiguous()
+    w2 = torch.stack([r["down"]["weight"] for r in reference]).cuda().contiguous()
+    s2 = torch.stack([r["down"]["weight_scale"] for r in reference]).cuda().contiguous()
+    quant = make_fp8_moe_quant_config(
+        fp8_backend=Fp8MoeBackend.TRITON, w1_scale=s1, w2_scale=s2,
+        a1_scale=None, a2_scale=None, per_act_token_quant=True,
+        per_out_ch_quant=True, block_shape=None, gemm1_alpha=None, gemm1_beta=None,
+        swiglu_limit=None, layer=None)
+    stock = fused_experts(x, w1, w2, weights, ids, activation=MoEActivation.SILU,
+                          apply_router_weight_on_input=True, quant_config=quant)
+    diff = (native.float() - stock.float()).abs()
+    assert float(diff.max()) < 5e-3 + 1e-2 * float(stock.float().abs().max()), \
+        f"max abs diff {float(diff.max())}"
+
+
+@cuda
 def test_native_method_refuses_missing_duplicate_and_wrong_rung():
     w13_blobs, w2_blobs, scheme, _reference = _stack()
 
