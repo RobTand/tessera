@@ -96,8 +96,10 @@ from .scheme import (MOE_GEMM_SYMBOL, MOE_GROUP_SHARDS, MOE_GROUPS, ROUTES,
                      STRUCTURE_ROUTED_MOE, TESSERA_BF16, TESSERA_FP8, launch_pairs, route_launches,
                      moe_census_symbol_base as census_symbol_base,
                      expert_role_declarations, parse_tessera_expert_blob,
+                     WINDOW_MOE_COMPACT_SYMBOL,
                      validate_tessera_moe_scheme)
-from .telemetry import DECODER_TORCH_STOCK, emit_route, route_shape
+from .telemetry import (DECODER_NATIVE_WINDOW_MOE_COMPACT, DECODER_TORCH_STOCK,
+                        emit_route, route_shape)
 
 __all__ = [
     "ACTIVATION_CONTRACT",
@@ -163,6 +165,12 @@ def census_expected(*, compiled: bool = False, platform=None) -> dict:
     pairs = {regime: launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE,
                                   regime=regime, mode=MODE_RESIDENT)
              for regime in regimes}
+    # The native compact lane records its own entry point/decoder pair, and it
+    # stays EXPERIMENTAL: the shared contract keeps this census on the attested
+    # dispatch (tests/test_serving_contract.py asserts the MoE side does not see
+    # the experimental pair), so a native run is visible and unqualified, never
+    # silently promoted to a cell.  A pair joins this set when a receipt earns
+    # it one.
     # PER ``(platform, family)`` (#457).  The expert stack's family is the
     # dense FP8 route's -- same wire, same activation contract -- so a
     # platform that executes no E4M3 route executes none for the experts
@@ -507,6 +515,11 @@ class _RankLocalPackedIntake:
         blob = wire.detach().cpu().contiguous().numpy().tobytes()
         target = f'{self.target} {group} expert {expert}'
         if self.compact:
+            if device.type != "cuda":
+                raise ValueError(
+                    f"{target}: the native compact window lane builds its packed planes "
+                    f"with CUDA kernels and requires a CUDA load device; got {device}. "
+                    "A CPU load is not a supported production device for this lane")
             family = "value" if self.family == TESSERA_BF16 else "e4m3"
             name, unit = _compact_expert_units(
                 blob, self.roles[group][index], self.plans[group], target,
@@ -670,7 +683,7 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
             from . import scheme as _scheme
             self._compact_ready = getattr(
                 _scheme, "parse_compact_tessera_expert_blob", None) is not None
-            native_route = (self._compact_ready and torch.cuda.is_available()
+            native_route = (self._compact_ready
                             and (family == TESSERA_FP8 or self._tp_size == 2))
             if not native_route:
                 if family == TESSERA_BF16:
@@ -754,7 +767,7 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
             # published: the FP8 candidate route at every tp size, and the
             # research-selected TP2 route.
             from . import scheme as _scheme
-            incremental = (self._compact_ready and torch.cuda.is_available()
+            incremental = (self._compact_ready
                            and (family == TESSERA_FP8
                                 or (research_selected is not None and self._tp_size == 2)))
             if incremental:
@@ -915,7 +928,7 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
                 self._native = prepared.adapter()
                 if research_selected is not None:
                     self._research_phase = 'ready'
-                layer.tessera_decoder = 'native_window_moe_compact'
+                layer.tessera_decoder = DECODER_NATIVE_WINDOW_MOE_COMPACT
                 layer.tessera_backend = 'native'
                 return
             if research_selected is not None:
@@ -1137,12 +1150,15 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
         def _record(self, layer, x) -> None:
             try:
                 x2 = x.reshape(-1, x.shape[-1])
+                native = self._native is not None
                 emit_route(
                     layer, kind="moe", policy=f"{family}:{layer.tessera_mode}",
-                    symbol=f"{GEMM_SYMBOL}:{layer.tessera_backend}", tile_m=0,
+                    symbol=(WINDOW_MOE_COMPACT_SYMBOL if native
+                            else f"{GEMM_SYMBOL}:{layer.tessera_backend}"), tile_m=0,
                     shape=route_shape(x2, layer.tessera_rows, layer.tessera_columns),
                     contract=layer.tessera_activation_contract, state="served", reason=None,
-                    decoder=layer.tessera_decoder)
+                    decoder=(DECODER_NATIVE_WINDOW_MOE_COMPACT if native
+                             else layer.tessera_decoder))
             except Exception:  # noqa: BLE001 -- telemetry never breaks a request
                 pass
 

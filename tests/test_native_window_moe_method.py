@@ -216,8 +216,7 @@ def test_fp8_native_method_tp2_shard_shapes_are_rank_local(tp_rank):
         f"rank {tp_rank}: max abs diff {float(diff.max())}"
 
 
-@pytest.fixture(scope="module")
-def bf16_wires_native():
+def bf16_wires_native_data():
     """BF16 expert wires at the window width this build instantiates (14).
 
     ``test_serving_moe_selected``'s fixture is encoded at window_bits 8 for the
@@ -256,6 +255,11 @@ def bf16_wires_native():
                    'wire_stride': max(len(b[0]) for b in w2_blobs),
                    'roles': [['down_proj', HIDDEN]]}}}
     return w13_blobs, w2_blobs, scheme, expected
+
+
+@pytest.fixture(scope="module")
+def bf16_wires_native():
+    return bf16_wires_native_data()
 
 
 @cuda

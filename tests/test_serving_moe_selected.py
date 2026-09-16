@@ -138,7 +138,13 @@ def test_research_construction_needs_an_explicit_positive_chunk_bound(chunk):
 
 @pytest.fixture
 def stub_runtime(monkeypatch):
-    # This seam is explicitly CPU arithmetic even on a CUDA test worker.
+    # This seam is explicitly CPU arithmetic even on a CUDA test worker.  It
+    # also exercises the LEGACY reader: the compact native lane builds its
+    # planes with CUDA kernels and refuses a CPU load by name, so these route
+    # tests remove the shared boundary rather than depend on a device fallback
+    # (the native lane's own CPU refusal is a separate assertion).
+    from tessera.serving import scheme as _scheme
+    monkeypatch.delattr(_scheme, "parse_compact_tessera_expert_blob", raising=False)
     monkeypatch.setattr(torch.cuda, 'is_available', lambda: False)
     names = ('vllm', 'vllm.config', 'vllm.model_executor', 'vllm.model_executor.layers',
              'vllm.model_executor.layers.fused_moe',
