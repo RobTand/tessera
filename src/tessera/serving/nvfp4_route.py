@@ -190,21 +190,20 @@ def build_tessera_nvfp4_method(scheme, prefix: str, mode: str):
             # any point.  Its plan cuts are the parsed path's own
             # (``LayerShard.role``), and every structural/digest refusal the
             # materialising reader makes is made by the metadata pass here.
-            from ..compact_prep import parse_compact_expert
             from ..fused import shared_lut_global
             from .native_a4 import prepare_a4_unit
 
-            members = parse_compact_expert(blob.contiguous().numpy().tobytes(), device)
+            # The shared owner's factored validator: the same framing, role
+            # list and per-role byte-fact comparison (grid/body/plane/q256/
+            # rows/columns/span) the parsed reader makes, through the
+            # metadata pass so no weight plane is expanded.
+            members = parse_compact_blob_for_scheme(
+                blob.contiguous().numpy().tobytes(), scheme, prefix, device=device)
             plan = layer.tessera_shard_plan
-            names = [member.name for member in members]
-            expected = [role.name for role in plan.roles]
-            if names != expected:
-                raise ValueError(
-                    f"{prefix}: the container's members {names} are not the declared "
-                    f"roles {expected}")
+            names = [name for name, _wire in members]
             units = []
-            for member in members:
-                shard = plan.role(member.name)
+            for name, member in members:
+                shard = plan.role(name)
                 if plan.axis == "row":
                     rows, cols = (shard.lo, shard.hi), None
                 elif plan.axis == "column":
@@ -218,9 +217,9 @@ def build_tessera_nvfp4_method(scheme, prefix: str, mode: str):
             # so the epilogue stays one scalar per role.
             if len(units) > 1:
                 shared, moved = shared_lut_global(
-                    [member.metadata.scale_lut for member in members],
-                    [float(member.metadata.manifest.scale_plane.global_scale)
-                     for member in members],
+                    [wire.metadata.scale_lut for _name, wire in members],
+                    [float(wire.metadata.manifest.scale_plane.global_scale)
+                     for _name, wire in members],
                     names)
                 units = [
                     dataclasses.replace(unit, lut_bytes=table.view(torch.uint8)

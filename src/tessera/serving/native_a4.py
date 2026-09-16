@@ -26,6 +26,7 @@ from ..kernel_a4 import (A4Unit, A4UnitStack, a4_quantize_activation,
 
 __all__ = [
     "prepare_a4_unit",
+    "stack_epilogues",
     "a4_dense_apply",
     "A4ExpertAxis",
     "a4_grouped_apply",
@@ -137,9 +138,11 @@ def a4_grouped_apply(
     """
     x2 = x.reshape(x.shape[0], -1).to(torch.bfloat16).contiguous()
     if epilogues is None:
-        epilogues = torch.cat([
-            stack_epilogue(stack, index, input_global_scale)
-            for index in range(stack.experts)])
+        # One vectorized device expression, never a per-expert host loop: the
+        # per-expert weight globals over the one A-side global.
+        gscale = torch.as_tensor(input_global_scale, dtype=torch.float32,
+                                 device=stack.globals.device).reshape(1)
+        epilogues = (stack.globals / gscale).to(torch.float32).contiguous()
     packed, scales = a4_quantize_activation(x2, input_global_scale)
     return a4_span2_grouped_gemm(
         packed, scales, stack, epilogues,
@@ -147,8 +150,11 @@ def a4_grouped_apply(
         num_routes=num_routes, out_dtype=out_dtype)
 
 
-def stack_epilogue(stack: A4UnitStack, index: int, input_global_scale: torch.Tensor):
-    """``[1]`` fp32 epilogue for one expert without rebuilding the whole axis."""
-    gscale = torch.as_tensor(input_global_scale)
-    return torch.full((1,), float(stack.globals[index]), dtype=torch.float32,
-                      device=gscale.device) / gscale.to(torch.float32).reshape(1)
+def stack_epilogues(stack: A4UnitStack, input_global_scale: torch.Tensor) -> torch.Tensor:
+    """``[E]`` fp32: every expert's weight global over the A-side global.
+
+    Device-side and vectorized; the caller freezes it once at preparation.
+    """
+    gscale = torch.as_tensor(input_global_scale, dtype=torch.float32,
+                             device=stack.globals.device).reshape(1)
+    return (stack.globals / gscale).to(torch.float32).contiguous()

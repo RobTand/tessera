@@ -189,31 +189,50 @@ class _ExpertIntake:
         (``fused.shared_lut_global``), because a fused tile carries one
         weight global.
         """
-        from ..compact_prep import parse_compact_expert
-        from ..fused import shared_lut_global
+        from ..serving import scheme as scheme_module
         from .native_a4 import prepare_a4_unit
 
         target = self.target
-        members = parse_compact_expert(blob, device)
-        if len(members) != 1:
-            raise GrammarError(
-                f"{target} {group} expert {expert}: an expert projection container "
-                f"holds one role, this one frames {len(members)}")
-        member = members[0]
-        expected = self.roles[group][index].name
-        if member.name != expected:
-            raise GrammarError(
-                f"{target} {group} expert {expert}: the container frames role "
-                f"{member.name!r}, the sidecar declares {expected!r}")
+        declared_role = self.roles[group][index]
+        expected = declared_role["roles"][0][0]
         plan = self.plans[group]
-        shard = plan.role(member.name)
-        if plan.axis == "row":
-            rows, cols = (shard.lo, shard.hi), None
-        elif plan.axis == "column":
-            rows, cols = None, (shard.lo, shard.hi)
+
+        def _cuts(shard):
+            if plan.axis == "row":
+                return (shard.lo, shard.hi), None
+            if plan.axis == "column":
+                return None, (shard.lo, shard.hi)
+            return None, None
+
+        # The shared owner's factored compact validator (same container
+        # framing, role list and per-role byte facts as the parsed reader,
+        # with no weight-plane expansion).  Until it lands, the parsed
+        # validator runs instead -- stricter and slower, never weaker; the
+        # dependency is published in native-a4/INTEGRATION-REQUEST.md.
+        validator = getattr(scheme_module, "parse_compact_tessera_expert_blob", None)
+        if validator is not None:
+            validated = validator(blob, declared_role, f"{target} {group} expert {expert}",
+                                  device=device)
+            if len(validated) != 1:
+                raise GrammarError(
+                    f"{target} {group} expert {expert}: an expert projection container "
+                    f"holds one role, this one frames {len(validated)}")
+            name, member = validated[0]
+            rows, cols = _cuts(plan.role(name))
+            unit = prepare_a4_unit(member, rows=rows, cols=cols)
         else:
-            rows = cols = None
-        unit = prepare_a4_unit(member, rows=rows, cols=cols)
+            from ..kernel_a4 import A4Unit
+            from ..lane_planes import prepare_span2_planes
+            from .sharding import shard_parsed_roles
+
+            validated = parse_tessera_expert_blob(
+                blob, declared_role, f"{target} {group} expert {expert}", device=device)
+            local = shard_parsed_roles(validated, plan)
+            if local[0][0] != expected:
+                raise GrammarError(
+                    f"{target} {group} expert {expert}: the container frames role "
+                    f"{local[0][0]!r}, the sidecar declares {expected!r}")
+            unit = A4Unit.from_prepared(prepare_span2_planes(local[0][1], device=device))
         if group != "w13":
             return ([(expected, unit)], float(unit.global_scale))
         halves = self.pending.setdefault(expert, [None] * W13_PROJECTIONS)
@@ -605,7 +624,7 @@ def build_tessera_nvfp4_moe_method(scheme: Mapping, prefix: str, mode: str, laye
             routed-MoE contract.  ``apply_router_weight_on_input`` and an
             expert map are refused rather than approximated.
             """
-            from ..kernel_a4 import a4_grouped_apply
+            from .native_a4 import a4_grouped_apply
 
             assert not self.is_monolithic
             if layer.expert_map is not None:
@@ -630,11 +649,11 @@ def build_tessera_nvfp4_moe_method(scheme: Mapping, prefix: str, mode: str, laye
                 return x.new_empty((0, hidden))
 
             device = x.device
+            # No host read of the routing tensor: ids are the router's device
+            # output and its own contract (0 <= id < num_experts) is what the
+            # modular kernels consume too.  An in-kernel gather of an
+            # out-of-range id is a fault, not a served answer.
             flat_ids = topk_ids.to(torch.int64).reshape(-1)
-            if bool((flat_ids < 0).any()) or bool((flat_ids >= experts).any()):
-                raise ValueError(
-                    f"tessera target {prefix!r}: routing names an expert outside the "
-                    f"{experts} the sidecar declares")
             flat_tokens = torch.arange(x.shape[0], device=device,
                                        dtype=torch.int64).repeat_interleave(top_k)
             flat_weights = topk_weights.reshape(-1).to(torch.float32)
@@ -656,7 +675,32 @@ def build_tessera_nvfp4_moe_method(scheme: Mapping, prefix: str, mode: str, laye
                                   expert_offsets=offsets, route_ids=route_tokens,
                                   num_routes=routes,
                                   epilogues=layer.tessera_a4_up_epilogues)
-            activated = layer.activation(torch.cat([gate, up], dim=-1))
+            # The layer's activation is a ``MoEActivation`` ENUM, not a
+            # callable: vLLM's own ``apply_moe_activation`` is the executor
+            # (same op the modular kernels dispatch), driven by the layer's
+            # own clamp/alpha/beta facts, and an unsupported activation is
+            # refused by name rather than approximated.
+            from vllm.model_executor.layers.fused_moe.activation import (
+                ApplyMoEActivationConfig, apply_moe_activation,
+                apply_moe_activation_supported)
+
+            activation = layer.activation
+            if not apply_moe_activation_supported(activation):
+                raise ValueError(
+                    f"tessera target {prefix!r}: the native A4 route does not "
+                    f"serve the layer activation {activation!r}")
+            activation_config = ApplyMoEActivationConfig(
+                clamp_limit=getattr(layer, "swiglu_limit", None),
+                alpha=float(getattr(layer, "swiglu_alpha", None) or 1.0),
+                beta=float(getattr(layer, "swiglu_beta", None) or 0.0),
+                activation_situ_beta=getattr(self.moe, "activation_situ_beta", None),
+                activation_situ_linear_beta=getattr(
+                    self.moe, "activation_situ_linear_beta", None))
+            gate_up = torch.cat([gate, up], dim=-1)
+            activated = torch.empty((gate_up.shape[0], gate_up.shape[1] // 2),
+                                    dtype=gate_up.dtype, device=gate_up.device)
+            apply_moe_activation(activation, activated, gate_up,
+                                 activation_config=activation_config)
             identity = torch.arange(routes, dtype=torch.int32, device=device)
             down = a4_grouped_apply(activated, layer.tessera_a4_down_stack,
                                     layer.tessera_a4_gs2, expert_offsets=offsets,
@@ -666,9 +710,14 @@ def build_tessera_nvfp4_moe_method(scheme: Mapping, prefix: str, mode: str, laye
             out.index_add_(0, route_tokens.to(torch.int64),
                            down * route_weights[:, None])
             out = out.to(x.dtype)
-            if shared_experts is not None:
-                shared_input = shared_experts_input if shared_experts_input is not None else x
-                out = out + shared_experts(shared_input)
+            # Shared experts are the RUNNER's: ``FusedMoERunner`` calls
+            # ``SharedExperts`` once (``NO_OVERLAP``, or the multi-stream path
+            # with its own wait) before this apply, and combines the stored
+            # output with the routed result after it.  A quant method that
+            # recomputed or re-added them here would count them twice; this
+            # method is not a modular kernel, so the MK-internal order is
+            # never its to run.  ``shared_experts``/``shared_experts_input``
+            # are therefore intentionally unconsumed.
             self._record(layer, x)
             return out
 
