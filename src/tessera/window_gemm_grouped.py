@@ -382,6 +382,77 @@ class PreparedGroupedWindowGemm:
         return result if preserve else result.to(torch.bfloat16)
 
 
+def prepare_grouped_window_gemm_from_soa(
+    *,
+    words_all: torch.Tensor,
+    table_all: torch.Tensor,
+    codes_all: torch.Tensor,
+    native_all: torch.Tensor,
+    scale_all: torch.Tensor,
+    runs_all: torch.Tensor,
+    init_all: torch.Tensor,
+    has_init: torch.Tensor,
+    word_off: torch.Tensor,
+    tile_words: torch.Tensor,
+    total_words: torch.Tensor,
+    run_off: torch.Tensor,
+    perm_all: torch.Tensor,
+    rows: int,
+    cols: int,
+    experts: int,
+    window_bits: int,
+    family: str,
+    block_m: int = 64,
+    block_n: int = 64,
+    block_k: int = 64,
+    quantizer: "str | None" = "native",
+    arithmetic: str = "epilogue",
+) -> PreparedGroupedWindowGemm:
+    """A prebuilt SoA stack -- what a loader fills incrementally -- validated
+    once and wrapped.  Shapes, dtypes and the per-expert offsets must already
+    be the kernel's contract; anything else refuses by name."""
+    if arithmetic not in ("epilogue", "folded"):
+        raise GrammarError(f"unknown weight arithmetic {arithmetic!r}")
+    if arithmetic == "folded" and family != "value":
+        raise GrammarError("the folded weight arithmetic is the research BF16 contract")
+    if family not in ("value", "e4m3"):
+        raise GrammarError(f"window_gemm_grouped serves the value and e4m3 families, got {family!r}")
+    word_width = int(words_all.shape[1])
+    for name, t, shape in (("word_off", word_off, (experts,)),
+                           ("tile_words", tile_words, (experts,)),
+                           ("total_words", total_words, (experts,)),
+                           ("run_off", run_off, (experts + 1,)),
+                           ("has_init", has_init, (experts,))):
+        if tuple(t.shape) != shape:
+            raise GrammarError(f"{name} must be [{shape[0]}], got {tuple(t.shape)}")
+    expected_off = torch.arange(experts, device=word_off.device, dtype=word_off.dtype) * word_width
+    if not bool((word_off == expected_off).all()):
+        raise GrammarError("word_off must be the uniform per-expert word stride")
+    for name, t, shape in (("scale_all", scale_all, (experts, rows)),
+                           ("perm_all", perm_all, (experts, cols)),
+                           ("init_all", init_all, (experts, cols))):
+        if tuple(t.shape) != shape:
+            raise GrammarError(f"{name} must be {shape}, got {tuple(t.shape)}")
+    if family == "value":
+        if tuple(table_all.shape) != (experts, 1 << window_bits) or table_all.dtype != torch.bfloat16:
+            raise GrammarError(
+                f"table_all must be bf16 [E, {1 << window_bits}], got "
+                f"{table_all.dtype} {tuple(table_all.shape)}")
+    else:
+        if tuple(codes_all.shape) != (experts, 1 << window_bits) or codes_all.dtype != torch.uint8:
+            raise GrammarError("codes_all must be uint8 [E, 2^L]")
+        if tuple(native_all.shape) != (experts, 256) or native_all.dtype != torch.uint8:
+            raise GrammarError("native_all must be uint8 [E, 256]")
+    return PreparedGroupedWindowGemm(
+        words_all=words_all, table_all=table_all, codes_all=codes_all, native_all=native_all,
+        scale_all=scale_all, runs_all=runs_all, init_all=init_all, has_init=has_init,
+        word_off=word_off, tile_words=tile_words, total_words=total_words, run_off=run_off,
+        perm_all=perm_all, rows=rows, cols=cols, experts=experts, window_bits=window_bits,
+        family=family, block_m=block_m, block_n=block_n, block_k=block_k,
+        quantizer=quantizer if family == "e4m3" else "native", arithmetic=arithmetic,
+    )
+
+
 def routing_ids_ok(expert_ids: torch.Tensor, experts: int) -> torch.Tensor:
     """A device predicate: every id in ``[0, experts)``.  No synchronisation;
     the caller reads it when it chooses (never on the hot path)."""

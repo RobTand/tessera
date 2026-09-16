@@ -410,21 +410,28 @@ def _compact_role_units(blob, declared_role, target, device):
 
 
 def _compact_expert_units(blob, declared_role, plan, target, *, device, family):
-    """One projection container -> this rank's ``(role, WindowGemvUnit)``.
+    """ONE projection container -> this rank's ``(role, WindowGemvUnit)``.
 
-    The boundary parses (same refusals as ``parse_tessera_expert_blob``); the
-    plan's own per-role cut is applied through ``prepare_window_compact``,
-    which validates it with ``slicing``'s predicates.  Tests mock this seam
-    while the boundary is unpublished; no wire validation is duplicated here.
+    Each load callback carries one projection, so the boundary must return
+    exactly one role and it must be the declared member; the plan's own cut
+    is applied through ``prepare_window_compact`` (via the dense lane's
+    ``_role_cut``, one home for the plan-to-cut mapping), which validates it
+    with ``slicing``'s predicates.  Tests mock this seam while the boundary is
+    unpublished; no wire validation is duplicated here.
     """
-    from .compact_prep import prepare_window_compact
+    from ..compact_prep import prepare_window_compact
     from .native_window import _role_cut
 
-    units = []
-    for name, wire in _compact_role_units(blob, declared_role, target, device):
-        units.append((name, prepare_window_compact(
-            wire, device=device, family=family, **_role_cut(plan, name))))
-    return units
+    roles = _compact_role_units(blob, declared_role, target, device)
+    declared = declared_role["roles"][0][0]
+    if len(roles) != 1 or roles[0][0] != declared:
+        raise ValueError(
+            f"{target}: the projection container carries "
+            f"{[name for name, _ in roles]} roles; this callback declared the "
+            f"single projection {declared!r}")
+    name, wire = roles[0]
+    return name, prepare_window_compact(
+        wire, device=device, family=family, **_role_cut(plan, name))
 
 
 class _RankLocalPackedIntake:
@@ -451,15 +458,21 @@ class _RankLocalPackedIntake:
         self.plans = {g: _packed_group_shard_plan(declared, g, target, tp_rank, tp_size)
                       for g in MOE_GROUPS}
         self.roles = {g: expert_role_declarations(declared['groups'][g]) for g in MOE_GROUPS}
-        self._units = {g: [[None] * len(self.roles[g]) for _ in range(int(declared['experts']))]
-                       for g in MOE_GROUPS}
         self._has_loaded = False
+        self.axis = {}
         if self.compact:
             if len(self.roles['w13']) != 2:
                 raise ValueError(
                     f"{target}: the compact routed path stacks gate and up per expert; "
                     f"w13 declares {len(self.roles['w13'])} roles"
                 )
+            from ..native_window_moe import WindowUnitAxis
+
+            window_family = "value" if self.family == TESSERA_BF16 else "e4m3"
+            self.axis = {g: WindowUnitAxis(
+                int(declared['experts']),
+                tuple(str(role['roles'][0][0]) for role in self.roles[g]),
+                family=window_family) for g in MOE_GROUPS}
             self.axes = {g: None for g in MOE_GROUPS}
         else:
             from .bf16_route import PreparedTesseraBf16Module
@@ -473,26 +486,13 @@ class _RankLocalPackedIntake:
     def placed_projections(self) -> int:
         """How many rank-local projections the load callbacks have placed."""
         if self.compact:
-            return sum(1 for g in MOE_GROUPS for row in self._units[g]
-                       for unit in row if unit is not None)
+            return sum(axis.filled() for axis in self.axis.values())
         return sum(axis.placed() for axis in self.axes.values() if axis is not None)
 
     def resident_bytes(self) -> int:
         """Device bytes the intake holds (packed constants, no decoded tiles)."""
         if self.compact:
-            total = 0
-            for g in MOE_GROUPS:
-                for row in self._units[g]:
-                    for unit in row:
-                        if unit is None:
-                            continue
-                        rep = unit.rep
-                        total += rep.words.numel() * rep.words.element_size()
-                        for t in (unit.table, unit.scale, unit.initial_state,
-                                  unit.codes_of_state, unit.native):
-                            if t is not None:
-                                total += t.numel() * t.element_size()
-            return total
+            return sum(axis.resident_bytes() for axis in self.axis.values())
         return sum(axis.resident_bytes() for axis in self.axes.values() if axis is not None)
 
     def load(self, group, index, expert, wire, *, device):
@@ -508,14 +508,12 @@ class _RankLocalPackedIntake:
         target = f'{self.target} {group} expert {expert}'
         if self.compact:
             family = "value" if self.family == TESSERA_BF16 else "e4m3"
-            units = _compact_expert_units(blob, self.roles[group][index], self.plans[group],
-                                          target, device=device, family=family)
-            if len(units) != len(self.roles[group]):
-                raise ValueError(
-                    f"{target}: the container carries {len(units)} role(s) for "
-                    f"{len(self.roles[group])} declared")
-            for part, (name, unit) in enumerate(units):
-                self._units[group][expert][part] = unit
+            name, unit = _compact_expert_units(
+                blob, self.roles[group][index], self.plans[group], target,
+                device=device, family=family)
+            # The axis allocates each plane stack once and drops this unit as
+            # soon as its expert slot is filled; a repeated callback refuses.
+            self.axis[group].put(name, expert, unit)
             self._has_loaded = True
             return
         parsed = parse_tessera_expert_blob(blob, self.roles[group][index], target, device=self.device)
@@ -536,21 +534,32 @@ class _RankLocalPackedIntake:
             stride13=self.declared['groups']['w13']['wire_stride'],
             stride2=self.declared['groups']['w2']['wire_stride'])
         if self.compact:
-            experts = int(self.declared['experts'])
-            for g in MOE_GROUPS:
-                for expert in range(experts):
-                    if any(unit is None for unit in self._units[g][expert]):
-                        raise ValueError(
-                            f"{self.target}: {g} expert {expert} is missing a "
-                            "projection at finish; the load is incomplete")
-            from ..native_window_moe import PackedWindowUnits
+            from ..native_window_moe import PackedWindowMoeBundles
+            from ..window_gemm_grouped import prepare_grouped_window_gemm_from_soa
 
             family = "value" if self.family == TESSERA_BF16 else "e4m3"
-            gate = tuple(self._units['w13'][e][0] for e in range(experts))
-            up = tuple(self._units['w13'][e][1] for e in range(experts))
-            down = tuple(self._units['w2'][e][0] for e in range(experts))
-            self._units = {g: None for g in MOE_GROUPS}
-            return PackedWindowUnits(gate=gate, up=up, down=down, family=family)
+            arithmetic = "folded" if self.family == TESSERA_BF16 else "epilogue"
+            soa = {g: self.axis[g].finish() for g in MOE_GROUPS}
+            names = {g: [str(role['roles'][0][0]) for role in self.roles[g]] for g in MOE_GROUPS}
+
+            def bundle(group, part):
+                slot = soa[group][part]
+                return prepare_grouped_window_gemm_from_soa(
+                    words_all=slot["words"], table_all=slot["table"],
+                    codes_all=slot["codes"], native_all=slot["native"],
+                    scale_all=slot["scale"], runs_all=slot["runs"],
+                    init_all=slot["init"], has_init=slot["has_init"],
+                    word_off=slot["word_off"], tile_words=slot["tile_words"],
+                    total_words=slot["total_words"], run_off=slot["run_off"],
+                    perm_all=slot["perm"], rows=slot["rows"], cols=slot["cols"],
+                    experts=int(self.declared['experts']),
+                    window_bits=slot["window_bits"], family=family,
+                    arithmetic=arithmetic)
+
+            self.axis = {}
+            return PackedWindowMoeBundles(
+                gate=bundle('w13', names['w13'][0]), up=bundle('w13', names['w13'][1]),
+                down=bundle('w2', names['w2'][0]), family=family)
         groups = {}
         for group in MOE_GROUPS:
             # Joins gate and up as ``concatenate`` did, then hands over the
@@ -730,8 +739,15 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
             n_rows, k = 2 * n_cols, int(declared["hidden_size"])
 
             # The wires: one padded row per (expert, projection), the group's
-            # declared stride wide, each with its own loader.
-            incremental = research_selected is not None and self._tp_size == 2
+            # declared stride wide, each with its own loader.  The compact
+            # intake replaces the padded staging wherever the shared reader is
+            # published: the FP8 candidate route at every tp size, and the
+            # research-selected TP2 route.
+            from . import scheme as _scheme
+            compact_ready = getattr(_scheme, "parse_compact_tessera_expert_blob", None) is not None
+            incremental = (compact_ready
+                           and (self.family == TESSERA_FP8
+                                or (research_selected is not None and self._tp_size == 2)))
             if incremental:
                 # Stock constructs every owner before loading any weight. Keep
                 # loader names/device anchors, without full-checkpoint staging.
@@ -822,7 +838,8 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
                     "and the bytes disagree about the row width")
             if self._rank_local_intake is not None:
                 try:
-                    self._require_research_parallel_contract()
+                    if research_selected is not None:
+                        self._require_research_parallel_contract()
                     # Resolve from the live loader anchor, not construction:
                     # stock can use a different explicit load device. Preserve
                     # the ordinary finalizer's CUDA promotion before packing.
@@ -874,6 +891,21 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
             del layer.w13_wire, layer.w2_wire
             layer.tessera_w13_wire_len = None
             layer.tessera_w2_wire_len = None
+            if hasattr(prepared, "adapter"):
+                # The compact intake filled the grouped stacks callback by
+                # callback; the native two-stage adapter is the routed-expert
+                # compute.  The runner keeps shared experts and the final
+                # reduction (NATIVE-MOE-RUNTIME-BOUNDARY.md), so this apply
+                # returns ROUTED output only.  Telemetry says exactly what ran:
+                # an unqualified native experiment, no contract cell claimed.
+                self._w13_len = self._w2_len = self._wire_ids = None
+                self._packed = prepared
+                self._native = prepared.adapter()
+                if research_selected is not None:
+                    self._research_phase = 'ready'
+                layer.tessera_decoder = 'native_window_moe_compact'
+                layer.tessera_backend = 'native'
+                return
             if research_selected is not None:
                 self._w13_len = self._w2_len = self._wire_ids = None
                 self._packed = prepared
@@ -928,6 +960,8 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
         # -- forward ----------------------------------------------------
         def apply(self, layer, x, topk_weights, topk_ids, shared_experts,
                   shared_experts_input):
+            if self._native is not None:
+                return self._apply_native(layer, x, topk_weights, topk_ids)
             if research_selected is not None:
                 return self._apply_selected(layer, x, topk_weights, topk_ids,
                                             shared_experts, shared_experts_input)
@@ -943,6 +977,10 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
             return out
 
         def apply_monolithic(self, layer, x, router_logits, input_ids=None):
+            if self._native is not None:
+                raise ValueError(
+                    f"{prefix}: the native window MoE requires external top-k routing "
+                    "and has no internal MK kernel; monolithic apply is refused")
             if research_selected is not None:
                 raise ValueError(f"{prefix}: research selected experts require external top-k routing")
             assert self.moe_kernel is not None
@@ -961,6 +999,39 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
             if research_selected is None or self._research_phase != 'ready':
                 raise RuntimeError(f"{prefix}: research packed owner is not ready")
             return self._packed.resident_bytes()
+
+        def _apply_native(self, layer, x, topk_weights, topk_ids) -> torch.Tensor:
+            """The routed-expert compute for the native compact route.
+
+            Returns ROUTED output only: the pinned runner computes shared
+            experts (NO_OVERLAP) before ``apply`` and combines afterwards, so
+            nothing shared may be added here.
+            """
+            if x.ndim != 2 or x.shape[1] != int(declared['hidden_size']):
+                raise ValueError(
+                    f"{prefix}: native input must be [tokens, {declared['hidden_size']}], "
+                    f"got {tuple(x.shape)}")
+            if tuple(topk_ids.shape) != tuple(topk_weights.shape) or topk_ids.shape[0] != x.shape[0]:
+                raise ValueError(f"{prefix}: native routing must be [tokens, top_k]")
+            if topk_ids.dtype not in (torch.int32, torch.int64) \
+                    or not topk_weights.is_floating_point():
+                raise ValueError(
+                    f"{prefix}: native routing needs integer IDs and floating weights")
+            if any(t.device != self._packed.device for t in (x, topk_ids, topk_weights)):
+                raise ValueError(f"{prefix}: inputs and packed experts must share one device")
+            self._require_native_contract(layer)
+            if x.shape[0] == 0:
+                return x.new_empty((0, int(declared['hidden_size'])))
+            x_native = x.reshape(-1, x.shape[-1])
+            if not x_native.is_contiguous():
+                x_native = x_native.contiguous()
+            with torch.profiler.record_function('tessera_native_window_moe'):
+                out = self._native(
+                    x_native, topk_ids, topk_weights,
+                    apply_router_weight_on_input=bool(
+                        getattr(layer, 'apply_router_weight_on_input', False)))
+            self._record(layer, x)
+            return out
 
         def _require_native_contract(self, layer) -> None:
             """Fail closed on serving semantics the native path does not

@@ -143,6 +143,208 @@ def _silu_and_mul(gate: torch.Tensor, up: torch.Tensor) -> torch.Tensor:
     return act.to(torch.bfloat16)
 
 
+class WindowUnitAxis:
+    """One group's preallocated per-expert SoA, filled callback by callback.
+
+    The first ``put`` for a projection allocates every stacked tensor ONCE
+    from that unit's layout and fills slot 0; later experts verify the layout
+    and fill their own slot; the temporary ``WindowGemvUnit`` is dropped as
+    soon as its slot is written, so finalization copies nothing and the
+    model's packed weights are never held twice (the intake's memory rule).
+    Layouts that differ between experts are refused by name rather than
+    silently re-strided.
+    """
+
+    def __init__(self, experts: int, parts: Sequence[str], *, family: str):
+        self.experts = int(experts)
+        self.parts = tuple(str(p) for p in parts)
+        self.family = family
+        self._slots: dict = {}
+        self._layout: dict = {}
+        self._filled: dict = {}
+        self._meta: dict = {}
+
+    def _alloc(self, part: str, unit: WindowGemvUnit) -> dict:
+        e = self.experts
+        rep = unit.rep
+        words = rep.words
+        runs = rep.runs
+        rows, cols, L = int(unit.rows), int(unit.cols), int(unit.window_bits)
+        device = words.device
+        slot = {
+            "words": torch.empty((e, words.numel()), dtype=torch.int32, device=device),
+            "runs": torch.empty((e, int(runs.shape[0]), 4), dtype=torch.int32, device=device),
+            "scale": torch.empty((e, rows), dtype=torch.float32, device=device),
+            "perm": torch.empty((e, cols), dtype=torch.int32, device=device),
+            "init": torch.empty((e, cols), dtype=torch.int32, device=device),
+        }
+        if self.family == "value":
+            slot["table"] = torch.empty((e, unit.table.numel()), dtype=torch.bfloat16, device=device)
+            slot["codes"] = torch.zeros(0, dtype=torch.uint8, device=device)
+            slot["native"] = torch.zeros(0, dtype=torch.uint8, device=device)
+        else:
+            slot["table"] = torch.zeros(0, dtype=torch.bfloat16, device=device)
+            slot["codes"] = torch.empty((e, unit.codes_of_state.numel()), dtype=torch.uint8,
+                                        device=device)
+            slot["native"] = torch.empty((e, unit.native.numel()), dtype=torch.uint8,
+                                         device=device)
+        slot["tile_words"] = torch.empty(e, dtype=torch.int32, device=device)
+        slot["total_words"] = torch.empty(e, dtype=torch.int32, device=device)
+        slot["has_init"] = torch.empty(e, dtype=torch.int32, device=device)
+        signature = (
+            self.family, rows, cols, L, int(words.numel()), int(runs.shape[0]),
+            tuple(int(r) for r in rep.rates), int(unit.table.numel()),
+            int(unit.scale.numel()), int(rep.tile_words), int(rep.n_tiles),
+        )
+        self._slots[part] = slot
+        self._layout[part] = signature
+        self._filled[part] = set()
+        self._meta[part] = (rows, cols, L)
+        return slot
+
+    def put(self, part: str, expert: int, unit: WindowGemvUnit) -> None:
+        part = str(part)
+        expert = int(expert)
+        if not 0 <= expert < self.experts:
+            raise GrammarError(f"expert {expert} outside the axis of {self.experts}")
+        if part in self._slots and expert in self._filled[part]:
+            raise GrammarError(f"expert {expert} of {part!r} already placed; a second put "
+                               "would overwrite packed weights")
+        slot = self._slots.get(part) or self._alloc(part, unit)
+        rep = unit.rep
+        signature = (
+            self.family, int(unit.rows), int(unit.cols), int(unit.window_bits),
+            int(rep.words.numel()), int(rep.runs.shape[0]),
+            tuple(int(r) for r in rep.rates), int(unit.table.numel()),
+            int(unit.scale.numel()), int(rep.tile_words), int(rep.n_tiles),
+        )
+        if signature != self._layout[part]:
+            raise GrammarError(
+                f"{part!r} expert {expert}: packed layout differs from the first expert's; "
+                "one grouped stack needs one layout per projection")
+        slot["words"][expert] = rep.words
+        slot["runs"][expert] = rep.runs
+        slot["scale"][expert] = unit.scale
+        slot["perm"][expert] = rep.perm
+        init = unit.initial_state
+        if init is None:
+            slot["init"][expert] = 0
+            slot["has_init"][expert] = 0
+        else:
+            slot["init"][expert] = init.to(torch.int32)
+            slot["has_init"][expert] = 1
+        if self.family == "value":
+            slot["table"][expert] = unit.table.to(torch.bfloat16)
+        else:
+            slot["codes"][expert] = unit.codes_of_state
+            slot["native"][expert] = unit.native
+        slot["tile_words"][expert] = int(rep.tile_words)
+        slot["total_words"][expert] = int(rep.words.numel())
+        self._filled[part].add(expert)
+
+    def finish(self) -> dict:
+        """The finished SoA per part; no copying, and incomplete slots refuse."""
+        out = {}
+        for part, slot in self._slots.items():
+            missing = [e for e in range(self.experts) if e not in self._filled[part]]
+            if missing:
+                raise GrammarError(f"{part!r} is missing experts {missing} at finish")
+            word_width = slot["words"].shape[1]
+            out[part] = {
+                **slot,
+                "rows": self._meta[part][0],
+                "cols": self._meta[part][1],
+                "window_bits": self._meta[part][2],
+                "word_off": (torch.arange(self.experts, dtype=torch.int32, device=slot["words"].device)
+                             * word_width),
+                "run_off": torch.cat([
+                    torch.zeros(1, dtype=torch.int32, device=slot["runs"].device),
+                    torch.cumsum(torch.full((self.experts,), int(slot["runs"].shape[1]),
+                                            dtype=torch.int32, device=slot["runs"].device), 0)]),
+            }
+        self._slots = {}
+        self._filled = {}
+        return out
+
+    def filled(self) -> int:
+        """How many (part, expert) slots have been placed."""
+        return sum(len(s) for s in self._filled.values())
+
+    def resident_bytes(self) -> int:
+        """Bytes the allocated slots hold (packed constants only)."""
+        return sum(t.numel() * t.element_size()
+                   for slot in self._slots.values() for t in slot.values()
+                   if isinstance(t, torch.Tensor))
+
+
+@dataclasses.dataclass(frozen=True)
+class PackedWindowMoeBundles:
+    """A loader-filled grouped stack: gate/up/down SoA bundles plus the
+    adapter they build.  ``resident_bytes`` counts the packed constants."""
+
+    gate: PreparedGroupedWindowGemm
+    up: PreparedGroupedWindowGemm
+    down: PreparedGroupedWindowGemm
+    family: str
+
+    @property
+    def experts(self) -> int:
+        return self.down.experts
+
+    @property
+    def device(self) -> torch.device:
+        return self.down.device
+
+    def resident_bytes(self) -> int:
+        total = 0
+        for bundle in (self.gate, self.up, self.down):
+            for t in (bundle.words_all, bundle.table_all, bundle.codes_all, bundle.native_all,
+                      bundle.scale_all, bundle.runs_all, bundle.init_all, bundle.has_init,
+                      bundle.word_off, bundle.tile_words, bundle.total_words, bundle.run_off,
+                      bundle.perm_all):
+                if isinstance(t, torch.Tensor):
+                    total += t.numel() * t.element_size()
+        return total
+
+    def adapter(self) -> NativeWindowMoE:
+        return native_window_moe_from_bundles(
+            self.down, gate=self.gate, up=self.up, activation="silu")
+
+
+def native_window_moe_from_bundles(
+    down: PreparedGroupedWindowGemm,
+    *,
+    gate_up: "PreparedGroupedWindowGemm | None" = None,
+    gate: "PreparedGroupedWindowGemm | None" = None,
+    up: "PreparedGroupedWindowGemm | None" = None,
+    activation: str = "silu",
+) -> NativeWindowMoE:
+    """The adapter from already-prepared grouped stacks (the loader path).
+
+    ``gate_up`` is the fused ``[2I]`` stack; ``gate``/``up`` are the separate
+    spelling.  Families, weight arithmetic and expert counts must agree.
+    """
+    if activation not in SUPPORTED_ACTIVATIONS:
+        raise GrammarError(f"activation {activation!r} is not served")
+    if gate_up is not None and (gate is not None or up is not None):
+        raise GrammarError("the fused gate_up stack cannot be combined with gate/up stacks")
+    if gate_up is None and (gate is None or up is None):
+        raise GrammarError("the adapter needs either one fused gate/up stack or both gate and up")
+    for name, bundle in (("gate_up", gate_up), ("gate", gate), ("up", up), ("down", down)):
+        if bundle is None:
+            continue
+        if bundle.family != down.family:
+            raise GrammarError(f"{name} family {bundle.family!r} differs from down's {down.family!r}")
+        if bundle.arithmetic != down.arithmetic:
+            raise GrammarError(f"{name} arithmetic {bundle.arithmetic!r} differs from down's")
+        if bundle.experts != down.experts:
+            raise GrammarError(f"{name} has {bundle.experts} experts, down has {down.experts}")
+    if gate_up is not None and gate_up.rows != 2 * down.cols:
+        raise GrammarError(
+            f"the fused gate/up stack has {gate_up.rows} rows for {down.cols} intermediate columns")
+    return NativeWindowMoE(gate_up=gate_up, gate=gate, up=up, down=down, activation=activation)
+
+
 def prepare_native_window_moe(
     gate: Sequence[WindowGemvUnit],
     down: Sequence[WindowGemvUnit],
