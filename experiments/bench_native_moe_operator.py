@@ -18,6 +18,7 @@ from enum import Enum
 import hashlib
 import json
 import math
+import re
 from pathlib import Path
 
 from experiments import bench_native_operator as dense
@@ -31,7 +32,32 @@ FORMAT = "TESSERA_E4M3_K1_R1024"
 ROLE_ORDER = ("w1", "w3", "w2")
 
 #: Where each geometry keeps the width its own members actually carry.
+def _parse_owner_format(name):
+    """``TESSERA_<BASE>_K<arity>_R<q256>`` -> base grid and rung, or refuse.
+
+    The returned family is the base grid the wire recipe reports
+    (``E2M1``/``E4M3``/``BF16``), which is what ``identity["recipe"]["grid"]``
+    carries -- not the family label from the format name alone.
+    """
+    match = re.fullmatch(r"TESSERA_([A-Z0-9]+)_K([0-9]+)_R([0-9]+)", name or "")
+    if match is None:
+        raise ValueError(f"owner format {name!r} is not a Tessera format name")
+    return match.group(1), int(match.group(3))
+
+
+def _owner_format(shape):
+    """The one format this whole owner holds; a whole routed owner is single-format."""
+    name = shape.get("format") if isinstance(shape, dict) else None
+    return name if isinstance(name, str) and name else FORMAT
+
+
 def _roster_shape(shape):
+    """The roster's view: one ``experts`` key and the rank-local intermediate.
+
+    The two geometries spell the expert count differently (``experts`` for LFM,
+    ``n_routed_experts`` for GLM); the roster walks one key, so the view
+    normalizes it rather than making every caller branch on the geometry.
+    """
     if is_glm_geometry(shape):
         return {**shape, "experts": shape["n_routed_experts"],
                 "intermediate_size": shape["intermediate_size"] // shape["tensor_parallel"]}
@@ -138,12 +164,24 @@ def validate_routing(routing, *, glm=False):
         if protocol["norm_topk_prob"] is not True:
             raise ValueError("GLM owner requires norm_topk_prob: the served route applies normalized "
                              "top-k weights before the routed scale")
+        # The bias is MANDATORY: `noaux_tc` selects on it, so a capture without
+        # it prices a different mixture even when every other field matches.
         correction = protocol["correction_bias"]
-        if correction is not None:
-            dense._fields(correction, ("content_sha256", "dtype"), "correction bias")
-            dense._sha(correction["content_sha256"], "source correction bias")
-            if correction["dtype"] != "torch.float32":
-                raise ValueError("GLM correction bias is the source's FP32 bias, not a cast")
+        if not isinstance(correction, dict):
+            raise ValueError("GLM owner requires its live FP32 correction bias; "
+                             "None is a different source's protocol")
+        dense._fields(correction, ("content_sha256", "dtype"), "correction bias")
+        dense._sha(correction["content_sha256"], "source correction bias")
+        if correction["dtype"] != "torch.float32":
+            raise ValueError("GLM correction bias is the source's FP32 bias, not a cast")
+        # Two statements of one fact must agree, and both must be true.
+        if routing["renormalize"] is not True:
+            raise ValueError("GLM owner requires renormalize true: the served route applies "
+                             "normalized top-k weights before the routed scale")
+        if routing["renormalize"] is not protocol["norm_topk_prob"]:
+            raise ValueError("GLM owner capture is internally inconsistent: renormalize "
+                             f"{routing['renormalize']!r} against source norm_topk_prob "
+                             f"{protocol['norm_topk_prob']!r}")
     else:
         dense._fields(protocol, ("router_class", "router_source_sha256", "selection_bias",
                                 "normalization_epsilon", "expert_bias_affects"), "source routing protocol")
@@ -250,8 +288,19 @@ def validate_glm_shape(shape):
     cuts that axis (`nvfp4_moe_route.py:374-381`). Stating it once, here, is
     what keeps the producer's member shapes and the consumer's expectation from
     being two independent readings of the same cut.
+
+    The owner's format is NOT part of this field set; it travels beside the
+    geometry (see `_owner_format`), because a whole routed owner holds exactly
+    one format for all of its members and that format is a parameter of the
+    measurement, not a fact about the model. The returned dict therefore keeps
+    whatever owner-view keys the caller attached.
     """
     dense._fields(shape, GLM_SHAPE_FIELDS, "shape")
+    for key in ("geometry_version", "n_routed_experts", "top_k", "hidden_size",
+                "intermediate_size", "shared_experts", "n_group", "topk_group",
+                "tensor_parallel"):
+        if type(shape[key]) is not int or shape[key] < 1:
+            raise ValueError(f"GLM owner {key} must be a positive integer, not {shape[key]!r}")
     if shape["geometry_version"] != GLM_GEOMETRY_VERSION:
         raise ValueError(f"GLM owner geometry version {shape['geometry_version']!r} is not {GLM_GEOMETRY_VERSION}")
     for key, expected in GLM_SOURCE_FACTS.items():
@@ -266,14 +315,38 @@ def validate_glm_shape(shape):
         raise ValueError("GLM owner intermediate is not divisible by its TP cut")
     if shape["top_k"] > shape["n_routed_experts"]:
         raise ValueError("GLM owner top_k exceeds its expert count")
-    return dict(shape)
+    return dict(shape)  # keeps any owner-view keys the caller attached
 
 
-def validate_execution(execution, role_order):
-    if dense.identity_sha256(execution) != dense.identity_sha256(EXECUTION):
-        raise ValueError("only complete routed eager resident TP1/EP1 with external top-k is supported")
+def validate_execution(execution, role_order, *, shape=None):
+    """The execution record for this geometry, not one hardcoded TP.
+
+    `EXECUTION` is the LFM record and stays byte-identical for an LFM owner. A
+    GLM owner states its own tensor-parallel size, because the member widths it
+    prices are that rank's own: an owner declaring `tensor_parallel: 2` while
+    the validator demanded the literal TP1 record would have been refused, and
+    a TP2 owner stamped with the TP1 record would have misdeclared its own
+    execution (root review of 266f80e52f).
+    """
+    expected = EXECUTION
+    if shape is not None and is_glm_geometry(shape):
+        expected = {**EXECUTION, "tensor_parallel": shape["tensor_parallel"],
+                    "tensor_parallel_cut_axis": shape["tensor_parallel_cut_axis"]}
+    if dense.identity_sha256(execution) != dense.identity_sha256(expected):
+        raise ValueError("only complete routed eager resident EP1 with external top-k is supported, "
+                         "at this geometry's own tensor-parallel size")
     if role_order != list(ROLE_ORDER):
         raise ValueError("explicit profile role order must be w1 gate, w3 up, w2 down")
+
+
+def validate_member_order_public(members, shape):
+    """`validate_member_order` for callers that do not carry wire blobs.
+
+    The production validator is the same function; this entry point exists so a
+    cross-repository test can drive the real roster check without inventing
+    wire records it does not have.
+    """
+    return validate_member_order(members, shape)
 
 
 def validate_member_order(members, shape):
@@ -295,8 +368,11 @@ def validate_member_order(members, shape):
         if not isinstance(unit, str) or not unit or unit in units:
             raise ValueError("member units must be nonempty and unique")
         units.add(unit)
-        if member.get("format") != FORMAT:
-            raise ValueError("whole routed receipt supports E4M3 K1 R1024 only")
+        owner_format = _owner_format(shape)
+        if member.get("format") != owner_format:
+            raise ValueError(
+                f"member format {member.get('format')!r} differs from the owner's "
+                f"{owner_format!r}")
     return members
 
 
@@ -533,8 +609,8 @@ def prepare_native_moe_operator(member_inputs, tensors, phase_tensors, *, unit, 
     from tessera.serving.scheme import MOE_SHARD_PROJECTIONS, TESSERA_FP8, validate_tessera_moe_scheme
     from tessera.unit_artifact import read_unit_artifact
     from vllm.v1.worker.workspace import lock_workspace
-    validate_execution(execution, profile_role_order)
     shape = validate_shape(shape)
+    validate_execution(execution, profile_role_order, shape=shape)
     validate_member_order(member_inputs, shape)
     validate_routing(routing, glm=is_glm_geometry(shape))
     dense._integer(warmup_iterations, "warmup_iterations")
@@ -569,9 +645,14 @@ def prepare_native_moe_operator(member_inputs, tensors, phase_tensors, *, unit, 
             raise ValueError("wire source differs from the actual source member")
         accepted = verify_cached_unit(original, record, identity)
         recipe, manifest = identity["recipe"], accepted.manifest
-        if (recipe["grid"] != "E4M3" or recipe["q256"] != 1024
-                or manifest.body.name != "WINDOW" or manifest.scale_plane.kind.name != "CHANNEL"):
-            raise ValueError("wire is outside the E4M3 K1 R1024 WINDOW/CHANNEL scope")
+        # The rung is the OWNER's, read from its format name, not a constant:
+        # an A4/A16 owner is a different recipe and was unreachable while this
+        # compared against E4M3 K1 R1024 in every case.
+        owner_family, owner_rung = _parse_owner_format(_owner_format(shape))
+        if (recipe["grid"] != owner_family or recipe["q256"] != owner_rung):
+            raise ValueError(
+                f"wire recipe {recipe['grid']} q{recipe['q256']} is not the owner's "
+                f"{owner_family} q{owner_rung}")
         decoded = read_unit_artifact(original, device=str(source.device)).bfloat16()
         if dense.tensor_identity(decoded) != dense.tensor_identity(rendered):
             raise ValueError("original wire decode differs from the actual PWC member render")
@@ -674,12 +755,14 @@ def validate_panel(panel):
         qualification = panel["source_execution_qualification_sha256"]
         if qualification is not None:
             dense._sha(qualification, "source execution qualification")
-    if panel["schema"] != PANEL_SCHEMA or panel["format"] != FORMAT:
-        raise ValueError("whole MoE panel schema or format unsupported")
+    if panel["schema"] != PANEL_SCHEMA:
+        raise ValueError("whole MoE panel schema unsupported")
+    if not isinstance(panel["format"], str) or not panel["format"]:
+        raise ValueError("whole MoE panel must name the one format its owner holds")
     if not isinstance(panel["unit"], str) or not panel["unit"]:
         raise ValueError("whole owner unit is missing")
     shape = validate_shape(panel["shape"])
-    validate_execution(panel["execution"], panel["profile_role_order"])
+    validate_execution(panel["execution"], panel["profile_role_order"], shape=shape)
     validate_member_order(panel["members"], shape)
     validate_routing(panel["routing"], glm=is_glm_geometry(shape))
     for key in ("routing_capture_sha256", "source_sha256", "calibration_sha256", "cost_sha256",
@@ -709,7 +792,7 @@ def validate_panel(panel):
         geometry = _member_shape(shape, member["role"])
         if (member["unit"] != f"{panel['unit']}.{member['expert']}.{member['role']}"
                 or member["shape"] != geometry or binding["member_shapes"][member["unit"]] != geometry
-                or binding["member_formats"][member["unit"]] != FORMAT):
+                or binding["member_formats"][member["unit"]] != panel["format"]):
             raise ValueError("member name/shape/format differs from its explicit owner role")
         dense._sha(binding["member_operator_identity_sha256"][member["unit"]], "member joint identity")
         for key in ("source_weight", "rendered_weight"):
