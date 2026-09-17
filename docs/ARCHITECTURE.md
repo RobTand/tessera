@@ -5,6 +5,27 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-17 for the census's engine budget and its decoder claim
+(§4.5g). A receipt said nothing about what the engine was allowed to spend, and
+the tool could not bound the KV cache at all: `--gpu-memory-utilization` is a
+fraction of the DEVICE's total and vLLM fills whatever it leaves with KV, so on
+a serve whose allocator is capped below that fraction the KV fill is what
+reaches the cap. Measured on sparklina over
+`denseA8A16-layers0-1-20260917`: the a4cap plugin verified the requested 24.0
+GiB fraction exactly (0.197327678710216 of 130593964032 B), vLLM computed 17.26
+GiB of KV from a 121.63 GiB device, and the model's own attention kernel OOM'd
+23.30 GiB into the 24.00 GiB cap. The tool now takes
+`--kv-cache-memory-bytes` (bound the cache inside the fraction),
+`--max-num-seqs` (the concurrent-sequence limit, which a bounded KV budget also
+bounds through the Mamba block cache that vLLM builds from it) and
+`--require-decoder` (name the launch the arm exists to measure, so a route's
+materialised fallback cannot pass), and publishes `memory_budget`, `scheduler`
+and `decoder_coverage`. Every one of those is ADDITIVE WITHIN
+`tessera.serving.route_census/2`, so a command line written before the
+arguments builds the engine it always did and writes the receipt it always
+did. No wire, route, launch row, cell, rung, grade, qualification or packaged
+contract moves.
+
 Re-stamped 2026-09-17 for the GLM routed owner's runtime path (§2.5). The
 whole-owner receipt at `experiments/bench_native_moe_operator.py` no longer
 carries a hardcoded family, rung, tensor-parallel degree or route: the owner's
@@ -3088,6 +3109,16 @@ which used to skip unknown fields. The block is read on both sides:
   lane refusal is a value on the layer (`telemetry.note_lane_refusal`), so
   the receipt says *why* the lane took nothing instead of leaving it on
   stderr.
+- **Serve time, one field over.** `--require-decoder` is the same refusal for
+  the launch rather than the lane: every Tessera module in both driven phases
+  must report the named decoder, and a named decoder that took zero modules is
+  refused from the other side. Without it the per-module check only asks that a
+  record's `(symbol, decoder)` pair be one its route OWNS -- and a route that
+  still publishes a materialised fallback owns that pair too, so a green
+  receipt can describe a serve in which the native decoder never ran. The
+  `decoder_coverage` block is written whether or not anything was named, so a
+  reader can tell "nothing was required" from "everything required was
+  measured".
 - **After the fact.** `tools/tessera_lane_preflight.py` answers the same
   question from the bytes of a checkpoint somebody else built, over every
   unit, and exits non-zero. It decides each unit through
@@ -3944,6 +3975,17 @@ prefixed with the rank that wrote it, and module names are namespaced
 `rank{r}/{name}` where engagement and agreement counts would otherwise collapse
 across ranks; `--expect-modules` is checked per rank, since every rank builds a
 module for every declared target.
+
+The same convention carries the engine's shape three keys further:
+`memory_budget` (the fraction, and the KV byte bound when one was named),
+`scheduler` (the concurrent-sequence limit when one was named) and
+`decoder_coverage` (the decoders named by `--require-decoder`, the count each
+took per phase, and the problems when one took none). They are written
+unconditionally so the receipt states the budget it was taken under instead of
+leaving it to whoever typed the command; the first two are empty or
+fraction-only on an unbounded command line, and `decoder_coverage.required` is
+`[]`, which is how a gate tells "nothing was required" from "everything
+required was measured".
 
 `experiments/tessera_plugin_served_tp.sh` drives two boxes: a ray head here, a
 ray worker over ssh on the other, one engine at tensor parallel 2. It refuses
