@@ -48,7 +48,10 @@ NON_STEP_PEAK_DOMAINS = ("history_join", "external_closure")
 # An allocation's owner class must be exactly one of these. ``shared`` and
 # ``unknown`` supply neither a classification nor an invariance, so a row
 # carrying either is unclassified and blocks the partition rather than
-# defaulting anywhere.
+# defaulting anywhere -- wherever a term reads the class. A row proven live
+# during no declared engine step is charged by no term, so no term reads its
+# owner, and it is classified by its lifetime alone (see
+# :func:`classify_allocations`).
 OWNER_CLASSES = ("fixed", "candidate", "kv")
 
 # The (owner, lifetime) cells the seven composition terms actually charge. The
@@ -211,9 +214,10 @@ def _owner_class(row):
     """The one owner class this allocation carries, or ``None``.
 
     ``observed_categories`` is already sorted and deduplicated by the replay. A
-    row with no category, more than one, or a ``shared``/``unknown`` category is
-    unclassified: ownership is never inferred from a pointer or from what is
-    left over.
+    row with no category, more than one, or a ``shared``/``unknown`` category
+    carries no class: ownership is never inferred from a pointer or from what
+    is left over. Whether the absence blocks the partition is the caller's
+    question, not this one's -- it blocks exactly where a term reads the class.
     """
     categories = row["observed_categories"]
     if len(categories) != 1:
@@ -340,6 +344,15 @@ def _checked_allocation_rows(ledger):
     return rows
 
 
+def _classified_row(row, owner, lifetime):
+    return {
+        "allocation_id": row["allocation_id"], "bytes": row["bytes"],
+        "owner_class": owner, "lifetime_class": lifetime,
+        "unit": _unit_of(row), "allocate_index": row["allocate_index"],
+        "free_completed_index": row["free_completed_index"],
+    }
+
+
 def classify_allocations(ledger):
     """Split every replayed allocation into (owner class, lifetime class).
 
@@ -350,11 +363,33 @@ def classify_allocations(ledger):
     intervals, to be live during no engine step, and the seven terms compose a
     per-step budget. They are named too, and priced separately, because an
     engine still has to fit its startup peak even when no step ever reaches it.
+
+    **An owner class is required exactly where a term reads one.** The lifetime
+    question is asked first because its answer decides whether the ownership
+    question is one the composition asks at all. Every term selects over the
+    classified rows, ``uncharged_allocations`` reads that same list, and the
+    off-step peak is a sweep over lifetimes -- so nothing in this module reads
+    the owner class of an off-step row. Refusing the whole partition because
+    that unread field is missing nulls seven terms on an absence of
+    information rather than on a contradiction, and it is not a small
+    population: 19,828 of the a5 capture's 21,104 unclassified rows, and 79.5
+    GB of its 80.2 GB, are rows that no checkpoint census saw and that its own
+    complete step coverage proves live during no step (tessera#478).
+
+    The off-step proof itself never used ownership: it is complete step
+    coverage plus this row's own liveness, both read from the replay. What an
+    owner class would add is an invariance claim, and only a term charges one.
+    A row some term does charge still needs it -- that is the other half of the
+    same rule, and it is why a ``shared`` boundary tensor carried out of a unit
+    stays unclassified here.
     """
     steps = _declared_steps(ledger)
     classified, unclassified, non_step = [], [], []
     for row in _checked_allocation_rows(ledger):
-        owner, lifetime = _owner_class(row), _lifetime_class(row, steps)
+        lifetime, owner = _lifetime_class(row, steps), _owner_class(row)
+        if lifetime == "non_step":
+            non_step.append(_classified_row(row, owner, lifetime))
+            continue
         if owner is None or lifetime is None:
             unclassified.append({
                 "allocation_id": row["allocation_id"], "bytes": row["bytes"],
@@ -367,13 +402,7 @@ def classify_allocations(ledger):
                                 "never again"),
             })
             continue
-        entry = {
-            "allocation_id": row["allocation_id"], "bytes": row["bytes"],
-            "owner_class": owner, "lifetime_class": lifetime,
-            "unit": _unit_of(row), "allocate_index": row["allocate_index"],
-            "free_completed_index": row["free_completed_index"],
-        }
-        (non_step if lifetime == "non_step" else classified).append(entry)
+        classified.append(_classified_row(row, owner, lifetime))
     return classified, unclassified, non_step
 
 
