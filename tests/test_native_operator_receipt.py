@@ -63,8 +63,13 @@ def _panel_fixture():
     scheme = {"family": "TESSERA_BF16", "grid": "BF16", "body": "WINDOW", "plane": "CHANNEL",
               "q256": 1792, "rows": 128, "columns": 256, "wire_bytes": 4096,
               "roles": [["weight", 128]], "role_q256": [1792]}
-    route = {"kind": "dense", "policy": "TESSERA_BF16:resident", "symbol": "torch.mm",
-             "decoder": "torch_window", "contract": "bf16_unquantized"}
+    # The launch the BF16 dense route makes: the packed native window GEMM.  It
+    # was ``torch.mm``/``torch_window`` until ``scheme.ROUTE_LAUNCHES`` stopped
+    # carrying the retired window-GEMV lane's rows (tessera#538); the bench
+    # resolves this pair from that table, so the expectation moves with it.
+    route = {"kind": "dense", "policy": "TESSERA_BF16:resident",
+             "symbol": "tessera::window_gemm_dense",
+             "decoder": "native_window_gemm", "contract": "bf16_unquantized"}
     native = {"weight": _tensor_identity(weight)}
     observed_operator = {"wire_sha256": blob_sha, "wire_record_sha256": _json_sha(record),
                          "source_weight": _tensor_identity(weight),

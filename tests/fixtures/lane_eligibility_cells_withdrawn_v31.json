@@ -1,0 +1,694 @@
+{
+  "what": "The eight lane_eligibility cells contract v31 WITHDREW, quoted from contract_version 30 (origin/master 9f93e144f) with the two serve-image digests replaced by placeholders.",
+  "why": "They attested the dense window-GEMV dispatch, which 1b767a207 retired; tessera#538 has the derivation. They are kept here, outside the published document, because the census-join and lane-reachability mechanisms were built on the served records these cells were minted from, and a mechanism is better exercised on the observation it was written for than on an invented one. Nothing resolves this file as a contract: it is a historical quote, and the shipped document is what a consumer reads.",
+  "why_placeholders": "tests/test_runtime_image_pin.py refuses a second copy of the serve-image digest in any file under tests/ that acts. The loader substitutes runtime_image.pinned_reference() for <versions.default_serve_image>, and the gfx1201 digest is read from its receipt under docs/measurements/, exactly as the cell laws do.",
+  "cells": [
+    {
+      "id": "tessera_e4m3_k1_dense_sm121_decode_resident",
+      "runtime": {
+        "image": "<versions.default_serve_image>",
+        "execution_modes": [
+          "eager",
+          "compiled"
+        ],
+        "vllm": "0.28.0",
+        "torch": "2.13.0+cu130"
+      },
+      "platform": "sm_121",
+      "family": "TESSERA_E4M3_K1",
+      "structure": "dense",
+      "regime": "decode",
+      "rungs_q256": [
+        1024
+      ],
+      "activation_contract": "fp8_per_token_dynamic",
+      "executes": [
+        {
+          "symbol": "torch._scaled_mm",
+          "decoder": "torch_window"
+        }
+      ],
+      "route_status": "backed_with_serve_flag",
+      "qualification": "device_qualified",
+      "requires_plugin": "tessera",
+      "requires_serve_flags": [
+        "TESSERA_SERVE_MODE=resident"
+      ],
+      "predicates": [],
+      "evidence": {
+        "artifact": {
+          "id": "gbfam/qwen3-0.6b-tessera-e4m3-reach-gridbook",
+          "encoder_commit": "8070ec6c4e0448826cda3f3f8d9401a125444e3b",
+          "reencode": {
+            "encoder_commit": "331703661baaa67ed73900c3d9e99f300fdc8415",
+            "unit": "model.layers.0.mlp.down_proj",
+            "payload": "different",
+            "metric": "weight_sse",
+            "weight_error": "lower",
+            "receipt": "docs/measurements/encoder-evidence-scope-2026-09-05.md"
+          }
+        },
+        "grade": "route_only",
+        "kl": [],
+        "smoke": {
+          "status": "not_recorded",
+          "receipt": null,
+          "attribution": "unattributed",
+          "control": null,
+          "record": null
+        }
+      }
+    },
+    {
+      "id": "tessera_e4m3_k1_dense_sm121_decode_streamed",
+      "runtime": {
+        "image": "<versions.default_serve_image>",
+        "execution_modes": [
+          "eager",
+          "compiled"
+        ],
+        "vllm": "0.28.0",
+        "torch": "2.13.0+cu130"
+      },
+      "platform": "sm_121",
+      "family": "TESSERA_E4M3_K1",
+      "structure": "dense",
+      "regime": "decode",
+      "rungs_q256": [
+        1024
+      ],
+      "activation_contract": "fp8_per_token_dynamic",
+      "executes": [
+        {
+          "symbol": "tessera_window_gemv::gemv",
+          "decoder": "window_gemv"
+        }
+      ],
+      "route_status": "backed_with_serve_flag",
+      "qualification": "device_qualified",
+      "requires_plugin": "tessera",
+      "requires_serve_flags": [
+        "TESSERA_SERVE_MODE=streamed"
+      ],
+      "predicates": [],
+      "evidence": {
+        "artifact": {
+          "id": "gbfam/qwen3-0.6b-tessera-e4m3-reach-gridbook",
+          "encoder_commit": "8070ec6c4e0448826cda3f3f8d9401a125444e3b",
+          "reencode": {
+            "encoder_commit": "331703661baaa67ed73900c3d9e99f300fdc8415",
+            "unit": "model.layers.0.mlp.down_proj",
+            "payload": "different",
+            "metric": "weight_sse",
+            "weight_error": "lower",
+            "receipt": "docs/measurements/encoder-evidence-scope-2026-09-05.md"
+          }
+        },
+        "grade": "kl_lower_bound",
+        "kl": [
+          {
+            "kind": "topk_intersection_lower_bound",
+            "top_k": 1024,
+            "regime": "decode",
+            "execution_modes": [
+              "eager"
+            ],
+            "receipt": "docs/measurements/tessera-decode-regime-kl-2026-09-03.md"
+          },
+          {
+            "kind": "topk_intersection_lower_bound",
+            "top_k": 1024,
+            "regime": "decode",
+            "execution_modes": [
+              "compiled"
+            ],
+            "receipt": "docs/measurements/tessera-compiled-decode-kl-r6-2026-09-04.md"
+          }
+        ],
+        "smoke": {
+          "status": "not_recorded",
+          "receipt": null,
+          "attribution": "unattributed",
+          "control": null,
+          "record": null
+        }
+      }
+    },
+    {
+      "id": "tessera_e4m3_k1_dense_sm121_batch_resident",
+      "runtime": {
+        "image": "<versions.default_serve_image>",
+        "execution_modes": [
+          "eager",
+          "compiled"
+        ],
+        "vllm": "0.28.0",
+        "torch": "2.13.0+cu130"
+      },
+      "platform": "sm_121",
+      "family": "TESSERA_E4M3_K1",
+      "structure": "dense",
+      "regime": "batch",
+      "rungs_q256": [
+        1024
+      ],
+      "activation_contract": "fp8_per_token_dynamic",
+      "executes": [
+        {
+          "symbol": "torch._scaled_mm",
+          "decoder": "torch_window"
+        }
+      ],
+      "route_status": "backed_with_serve_flag",
+      "qualification": "device_qualified",
+      "requires_plugin": "tessera",
+      "requires_serve_flags": [
+        "TESSERA_SERVE_MODE=resident"
+      ],
+      "predicates": [],
+      "evidence": {
+        "artifact": {
+          "id": "gbfam/qwen3-0.6b-tessera-e4m3-reach-gridbook",
+          "encoder_commit": "8070ec6c4e0448826cda3f3f8d9401a125444e3b",
+          "reencode": {
+            "encoder_commit": "331703661baaa67ed73900c3d9e99f300fdc8415",
+            "unit": "model.layers.0.mlp.down_proj",
+            "payload": "different",
+            "metric": "weight_sse",
+            "weight_error": "lower",
+            "receipt": "docs/measurements/encoder-evidence-scope-2026-09-05.md"
+          }
+        },
+        "grade": "kl_lower_bound",
+        "kl": [
+          {
+            "kind": "topk_intersection_lower_bound",
+            "top_k": 1024,
+            "regime": "batch",
+            "execution_modes": [
+              "eager",
+              "compiled"
+            ],
+            "receipt": "docs/measurements/tessera-serving-plugin-2026-09-02.md"
+          }
+        ],
+        "smoke": {
+          "status": "not_recorded",
+          "receipt": null,
+          "attribution": "unattributed",
+          "control": null,
+          "record": null
+        }
+      }
+    },
+    {
+      "id": "tessera_e4m3_k1_dense_sm121_batch_streamed",
+      "runtime": {
+        "image": "<versions.default_serve_image>",
+        "execution_modes": [
+          "eager",
+          "compiled"
+        ],
+        "vllm": "0.28.0",
+        "torch": "2.13.0+cu130"
+      },
+      "platform": "sm_121",
+      "family": "TESSERA_E4M3_K1",
+      "structure": "dense",
+      "regime": "batch",
+      "rungs_q256": [
+        1024
+      ],
+      "activation_contract": "fp8_per_token_dynamic",
+      "executes": [
+        {
+          "symbol": "tessera_window_gemv::gemv",
+          "decoder": "window_gemv"
+        },
+        {
+          "symbol": "torch._scaled_mm",
+          "decoder": "window_gemv"
+        }
+      ],
+      "route_status": "backed_with_serve_flag",
+      "qualification": "device_qualified",
+      "requires_plugin": "tessera",
+      "requires_serve_flags": [
+        "TESSERA_SERVE_MODE=streamed"
+      ],
+      "predicates": [],
+      "evidence": {
+        "artifact": {
+          "id": "gbfam/qwen3-0.6b-tessera-e4m3-reach-gridbook",
+          "encoder_commit": "8070ec6c4e0448826cda3f3f8d9401a125444e3b",
+          "reencode": {
+            "encoder_commit": "331703661baaa67ed73900c3d9e99f300fdc8415",
+            "unit": "model.layers.0.mlp.down_proj",
+            "payload": "different",
+            "metric": "weight_sse",
+            "weight_error": "lower",
+            "receipt": "docs/measurements/encoder-evidence-scope-2026-09-05.md"
+          }
+        },
+        "grade": "kl_lower_bound",
+        "kl": [
+          {
+            "kind": "topk_intersection_lower_bound",
+            "top_k": 1024,
+            "regime": "batch",
+            "execution_modes": [
+              "eager",
+              "compiled"
+            ],
+            "receipt": "docs/measurements/tessera-window-gemv-served-2026-09-03.md"
+          }
+        ],
+        "smoke": {
+          "status": "not_recorded",
+          "receipt": null,
+          "attribution": "unattributed",
+          "control": null,
+          "record": null
+        }
+      }
+    },
+    {
+      "id": "tessera_bf16_k1_dense_sm121_decode",
+      "runtime": {
+        "image": "<versions.default_serve_image>",
+        "execution_modes": [
+          "eager",
+          "compiled"
+        ],
+        "vllm": "0.28.0",
+        "torch": "2.13.0+cu130"
+      },
+      "platform": "sm_121",
+      "family": "TESSERA_BF16_K1",
+      "structure": "dense",
+      "regime": "decode",
+      "rungs_q256": [
+        1792
+      ],
+      "activation_contract": "bf16_unquantized",
+      "executes": [
+        {
+          "symbol": "torch.mm",
+          "decoder": "torch_window"
+        }
+      ],
+      "route_status": "backed_with_serve_flag",
+      "qualification": "device_qualified",
+      "requires_plugin": "tessera",
+      "requires_serve_flags": [
+        "TESSERA_SERVE_MODE=resident|streamed"
+      ],
+      "predicates": [],
+      "evidence": {
+        "artifact": null,
+        "grade": "route_only",
+        "kl": [],
+        "smoke": {
+          "status": "recorded",
+          "receipt": "docs/measurements/tessera-bf16-route-served-2026-09-02.md",
+          "attribution": "unattributed",
+          "control": null,
+          "record": null
+        }
+      }
+    },
+    {
+      "id": "tessera_bf16_k1_dense_sm121_batch",
+      "runtime": {
+        "image": "<versions.default_serve_image>",
+        "execution_modes": [
+          "eager",
+          "compiled"
+        ],
+        "vllm": "0.28.0",
+        "torch": "2.13.0+cu130"
+      },
+      "platform": "sm_121",
+      "family": "TESSERA_BF16_K1",
+      "structure": "dense",
+      "regime": "batch",
+      "rungs_q256": [
+        1792
+      ],
+      "activation_contract": "bf16_unquantized",
+      "executes": [
+        {
+          "symbol": "torch.mm",
+          "decoder": "torch_window"
+        }
+      ],
+      "route_status": "backed_with_serve_flag",
+      "qualification": "device_qualified",
+      "requires_plugin": "tessera",
+      "requires_serve_flags": [
+        "TESSERA_SERVE_MODE=resident|streamed"
+      ],
+      "predicates": [],
+      "evidence": {
+        "artifact": null,
+        "grade": "kl_lower_bound",
+        "kl": [
+          {
+            "kind": "topk_intersection_lower_bound",
+            "top_k": 1024,
+            "regime": "batch",
+            "execution_modes": [
+              "eager"
+            ],
+            "receipt": "docs/measurements/tessera-bf16-route-served-2026-09-02.md"
+          }
+        ],
+        "smoke": {
+          "status": "recorded",
+          "receipt": "docs/measurements/tessera-bf16-route-served-2026-09-02.md",
+          "attribution": "unattributed",
+          "control": null,
+          "record": null
+        }
+      }
+    },
+    {
+      "id": "tessera_bf16_k1_dense_gfx1201_decode",
+      "runtime": {
+        "image": "<gfx1201 receipt image>",
+        "execution_modes": [
+          "eager",
+          "compiled"
+        ],
+        "vllm": "0.30.0.dev0",
+        "torch": "2.11.0+rocm7.2.4.git5fbd98f3"
+      },
+      "platform": "gfx1201",
+      "family": "TESSERA_BF16_K1",
+      "structure": "dense",
+      "regime": "decode",
+      "rungs_q256": [
+        1792
+      ],
+      "activation_contract": "bf16_unquantized",
+      "executes": [
+        {
+          "symbol": "torch.mm",
+          "decoder": "torch_window"
+        }
+      ],
+      "route_status": "backed_with_serve_flag",
+      "qualification": "device_qualified",
+      "requires_plugin": "tessera",
+      "requires_serve_flags": [
+        "TESSERA_SERVE_MODE=resident|streamed"
+      ],
+      "predicates": [],
+      "evidence": {
+        "artifact": null,
+        "grade": "kl_lower_bound",
+        "kl": [
+          {
+            "kind": "topk_intersection_lower_bound",
+            "top_k": 1024,
+            "regime": "decode",
+            "execution_modes": [
+              "eager"
+            ],
+            "receipt": "docs/measurements/tessera-gfx1201-bf16-k1-served-2026-09-13.md"
+          }
+        ],
+        "smoke": {
+          "status": "recorded",
+          "receipt": "docs/measurements/tessera-gfx1201-bf16-k1-served-2026-09-13.md",
+          "attribution": "unattributed",
+          "control": null,
+          "record": {
+            "instrument": "experiments/moe_greedy_smoke.py",
+            "rule": "repetitive iff the completion ends in a cycle: some period p with 2p <= L has a p-periodic suffix holding >= 2 full periods (s >= 2p), whatever its share of the completion; not_recorded iff the completion is empty (L = 0), which is no completion for a verdict to be true of; recorded otherwise; tokens are the artifact tokenizer's canonical encoding of the returned text",
+            "reference": "bf16_source",
+            "rows": [
+              {
+                "prompt": "P0",
+                "form": "campaign",
+                "interface": "raw_completion",
+                "status": "recorded",
+                "reference_status": "recorded"
+              },
+              {
+                "prompt": "P1",
+                "form": "campaign",
+                "interface": "raw_completion",
+                "status": "recorded",
+                "reference_status": "repetitive"
+              },
+              {
+                "prompt": "P2",
+                "form": "campaign",
+                "interface": "raw_completion",
+                "status": "recorded",
+                "reference_status": "recorded"
+              },
+              {
+                "prompt": "P3",
+                "form": "campaign",
+                "interface": "raw_completion",
+                "status": "recorded",
+                "reference_status": "recorded"
+              },
+              {
+                "prompt": "P4",
+                "form": "campaign",
+                "interface": "chat_template",
+                "status": "recorded",
+                "reference_status": "recorded"
+              },
+              {
+                "prompt": "P5",
+                "form": "campaign",
+                "interface": "chat_template",
+                "status": "recorded",
+                "reference_status": "recorded"
+              },
+              {
+                "prompt": "P6",
+                "form": "campaign",
+                "interface": "chat_template",
+                "status": "recorded",
+                "reference_status": "recorded"
+              },
+              {
+                "prompt": "P0",
+                "form": "pure_greedy",
+                "interface": "raw_completion",
+                "status": "recorded",
+                "reference_status": "recorded"
+              },
+              {
+                "prompt": "P1",
+                "form": "pure_greedy",
+                "interface": "raw_completion",
+                "status": "recorded",
+                "reference_status": "repetitive"
+              },
+              {
+                "prompt": "P2",
+                "form": "pure_greedy",
+                "interface": "raw_completion",
+                "status": "recorded",
+                "reference_status": "recorded"
+              },
+              {
+                "prompt": "P3",
+                "form": "pure_greedy",
+                "interface": "raw_completion",
+                "status": "recorded",
+                "reference_status": "recorded"
+              },
+              {
+                "prompt": "P4",
+                "form": "pure_greedy",
+                "interface": "chat_template",
+                "status": "recorded",
+                "reference_status": "recorded"
+              },
+              {
+                "prompt": "P5",
+                "form": "pure_greedy",
+                "interface": "chat_template",
+                "status": "recorded",
+                "reference_status": "recorded"
+              },
+              {
+                "prompt": "P6",
+                "form": "pure_greedy",
+                "interface": "chat_template",
+                "status": "recorded",
+                "reference_status": "recorded"
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "tessera_bf16_k1_dense_gfx1201_batch",
+      "runtime": {
+        "image": "<gfx1201 receipt image>",
+        "execution_modes": [
+          "eager",
+          "compiled"
+        ],
+        "vllm": "0.30.0.dev0",
+        "torch": "2.11.0+rocm7.2.4.git5fbd98f3"
+      },
+      "platform": "gfx1201",
+      "family": "TESSERA_BF16_K1",
+      "structure": "dense",
+      "regime": "batch",
+      "rungs_q256": [
+        1792
+      ],
+      "activation_contract": "bf16_unquantized",
+      "executes": [
+        {
+          "symbol": "torch.mm",
+          "decoder": "torch_window"
+        }
+      ],
+      "route_status": "backed_with_serve_flag",
+      "qualification": "device_qualified",
+      "requires_plugin": "tessera",
+      "requires_serve_flags": [
+        "TESSERA_SERVE_MODE=resident|streamed"
+      ],
+      "predicates": [],
+      "evidence": {
+        "artifact": null,
+        "grade": "kl_lower_bound",
+        "kl": [
+          {
+            "kind": "topk_intersection_lower_bound",
+            "top_k": 1024,
+            "regime": "batch",
+            "execution_modes": [
+              "eager"
+            ],
+            "receipt": "docs/measurements/tessera-gfx1201-bf16-k1-served-2026-09-13.md"
+          }
+        ],
+        "smoke": {
+          "status": "recorded",
+          "receipt": "docs/measurements/tessera-gfx1201-bf16-k1-served-2026-09-13.md",
+          "attribution": "unattributed",
+          "control": null,
+          "record": {
+            "instrument": "experiments/moe_greedy_smoke.py",
+            "rule": "repetitive iff the completion ends in a cycle: some period p with 2p <= L has a p-periodic suffix holding >= 2 full periods (s >= 2p), whatever its share of the completion; not_recorded iff the completion is empty (L = 0), which is no completion for a verdict to be true of; recorded otherwise; tokens are the artifact tokenizer's canonical encoding of the returned text",
+            "reference": "bf16_source",
+            "rows": [
+              {
+                "prompt": "P0",
+                "form": "campaign",
+                "interface": "raw_completion",
+                "status": "recorded",
+                "reference_status": "recorded"
+              },
+              {
+                "prompt": "P1",
+                "form": "campaign",
+                "interface": "raw_completion",
+                "status": "recorded",
+                "reference_status": "repetitive"
+              },
+              {
+                "prompt": "P2",
+                "form": "campaign",
+                "interface": "raw_completion",
+                "status": "recorded",
+                "reference_status": "recorded"
+              },
+              {
+                "prompt": "P3",
+                "form": "campaign",
+                "interface": "raw_completion",
+                "status": "recorded",
+                "reference_status": "recorded"
+              },
+              {
+                "prompt": "P4",
+                "form": "campaign",
+                "interface": "chat_template",
+                "status": "recorded",
+                "reference_status": "recorded"
+              },
+              {
+                "prompt": "P5",
+                "form": "campaign",
+                "interface": "chat_template",
+                "status": "recorded",
+                "reference_status": "recorded"
+              },
+              {
+                "prompt": "P6",
+                "form": "campaign",
+                "interface": "chat_template",
+                "status": "recorded",
+                "reference_status": "recorded"
+              },
+              {
+                "prompt": "P0",
+                "form": "pure_greedy",
+                "interface": "raw_completion",
+                "status": "recorded",
+                "reference_status": "recorded"
+              },
+              {
+                "prompt": "P1",
+                "form": "pure_greedy",
+                "interface": "raw_completion",
+                "status": "recorded",
+                "reference_status": "repetitive"
+              },
+              {
+                "prompt": "P2",
+                "form": "pure_greedy",
+                "interface": "raw_completion",
+                "status": "recorded",
+                "reference_status": "recorded"
+              },
+              {
+                "prompt": "P3",
+                "form": "pure_greedy",
+                "interface": "raw_completion",
+                "status": "recorded",
+                "reference_status": "recorded"
+              },
+              {
+                "prompt": "P4",
+                "form": "pure_greedy",
+                "interface": "chat_template",
+                "status": "recorded",
+                "reference_status": "recorded"
+              },
+              {
+                "prompt": "P5",
+                "form": "pure_greedy",
+                "interface": "chat_template",
+                "status": "recorded",
+                "reference_status": "recorded"
+              },
+              {
+                "prompt": "P6",
+                "form": "pure_greedy",
+                "interface": "chat_template",
+                "status": "recorded",
+                "reference_status": "recorded"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -5,6 +5,32 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-17 for the window-GEMV cell withdrawal (tessera#538,
+contract v31). The `lane_eligibility` cells that named the dense window-GEMV
+dispatch are REMOVED, and `scheme.ROUTE_LAUNCHES` no longer carries its three
+dense launches. `1b767a207` left `fp8_route.apply` and `bf16_route.apply`
+making exactly one launch each -- `tessera::window_gemm_dense` /
+`native_window_gemm`, raising rather than falling back -- so the eight cells
+(`tessera_e4m3_k1_dense_sm121_*`, `tessera_bf16_k1_dense_{sm121,gfx1201}_*`)
+published arithmetic the build cannot make. They are withdrawn rather than
+re-tagged: every receipt behind them predates that commit, so naming the
+native GEMM in them would claim a measurement that never ran, and that launch
+sits in `scheme.EXPERIMENTAL_LAUNCHES` precisely because no cell attests it.
+CONSUMER-VISIBLE AND NOT ADDITIVE: dense `TESSERA_E4M3_K1` at `q256 1024` and
+`TESSERA_BF16_K1` at `q256 1792` are no longer `device_qualified` on `sm_121`,
+and `gfx1201` keeps its platform entry with no cells and a null `serve_image`.
+Dense EXPORT is not blocked: `scheme.refuse_unserveable_wire` bounds a dense
+module by the format row's `reader_rate_range_q256`, and only a `routed_moe`
+stack reads `scheme.attested_cells` -- no routed cell moved. What changes is the
+attestation a consumer reads: on those two dense rungs it now reads absence,
+which resolves unattested. The gate that missed this is closed in
+the same commit: each route module owns its `DENSE_LAUNCH` at the emit site and
+`tests/test_serving_contract.py::test_the_dense_launch_table_is_the_launch_apply_makes`
+asserts the table equals it, so the table can no longer outlive the dispatch it
+describes. The lane schema does not move; a v10 reader resolves the withdrawn
+combinations as absent, which is the answer it already defines for them. See
+§3.3 and §4.5.
+
 Re-stamped 2026-09-17 for the reading of contract v29's single-rank KL
 (tessera#514, §3.8). The world-size receipt's 4.26x A4 excess over the BF16
 control at the median |d logprob| is a divergence between two worlds of one
@@ -414,11 +440,11 @@ is the packed pair ALONE, at every M and in both residencies, held by
 reachability rather than by a shape (`tests/test_dense_prefill_native_closure.py`)
 and by a device crosscheck that drives the production load path at prefill
 shapes on TP1 and both TP2 cuts (`tests/native_dense_prefill_cross_check.py`).
-`scheme.ROUTE_LAUNCHES` still lists the retired rows -- the materialised tile
-and the two window-GEMV launches -- for both window routes, so the packaged
-cells' derived `executes` are wider than the dispatch; that divergence is
-recorded with the contract owner rather than fixed here, because retiring a
-launch row moves a packaged cell's bytes. See §3.3.
+`scheme.ROUTE_LAUNCHES` still listed the retired rows -- the materialised tile
+and the two window-GEMV launches -- for both window routes at the time, so the
+packaged cells' derived `executes` were wider than the dispatch. That
+divergence was closed on 2026-09-17 by contract v31 (tessera#538): the rows and
+the cells that derived from them went together. See §3.3.
 
 Re-stamped 2026-09-17 for the dense crosscheck's fixture set. The harness's
 `FIXTURES` are keyed by tree and carry the payload family beside the key, so
@@ -2340,24 +2366,38 @@ their own load-time agreement for the reference path.  The lane stamps
 `native_window_gemm`, a decoder distinct from `torch_window` and
 `window_gemv`, so a census can tell a native serve from a reference one.
 
-**The launch table is wider than the dispatch for these two routes.**  The
-window-GEMV specialisation is still in the tree and still has its own tests,
-but nothing in `src/tessera/serving/` prepares or dispatches it
-(`fp8_gemv.prepare_fp8_gemv` / `streamed_apply`,
-`bf16_route.prepare_bf16_gemv`), so its materialising prefill branch -- decode
-a `[rows, columns]` tile per forward past `GEMV_MAX_M`, then
+**The launch table was wider than the dispatch for these two routes, and is
+not any more (tessera#538, contract v31).**  The window-GEMV specialisation is
+still in the tree and still has its own tests, but nothing in
+`src/tessera/serving/` prepares or dispatches it (`fp8_gemv.prepare_fp8_gemv` /
+`streamed_apply`, `bf16_route.prepare_bf16_gemv`), so its materialising prefill
+branch -- decode a `[rows, columns]` tile per forward past `GEMV_MAX_M`, then
 `torch._scaled_mm` / `torch.mm` -- is reachable from a test and from nothing
-else.  `scheme._window_launches` still publishes that branch and the
-materialised tile as launches of both window routes, and the packaged
-`lane_eligibility` cells derive `executes` from that table, so a reader
-keying reproducibility on `executes` reads a wider set than the binary can
-make.  The affected dense cells are the four `tessera_e4m3_k1_dense_sm121_*`
-cells and the `tessera_bf16_k1_dense_{sm121,gfx1201}_{decode,batch}` cells --
-which is why the 2026-09-13 re-stamp above, `torch.mm` / `torch_window` for
-the two AMD cells, describes the dispatch as it stood before this lane
-landed.  Fixing it means retiring launch rows and their cells together, which
-moves packaged bytes and is the contract owner's call; it is recorded here so
-the table is not read as the dispatch in the meantime.
+else.  `scheme._window_launches` published that branch and the materialised
+tile as launches of both window routes, and the packaged `lane_eligibility`
+cells derive `executes` from that table, so a reader keying reproducibility on
+`executes` read a wider set than the binary can make.  The affected cells were
+the four `tessera_e4m3_k1_dense_sm121_*` and the
+`tessera_bf16_k1_dense_{sm121,gfx1201}_{decode,batch}` -- which is why the
+2026-09-13 re-stamp above, `torch.mm` / `torch_window` for the two AMD cells,
+describes the dispatch as it stood before this lane landed.
+
+Both went on 2026-09-17: `ROUTE_LAUNCHES` carries only the native GEMM for
+`TESSERA_FP8`/`TESSERA_BF16` dense, and the eight cells are withdrawn.  The
+dense attested launch set for those two routes is now EMPTY -- the one launch
+they make is experimental -- which is why the answer was a withdrawal and not
+a re-tag, and why `validate_serving_contract` refuses any dense cell either
+route might be given before a census of the native GEMM exists.  WHAT THIS
+COSTS, stated rather than buried: those rungs stop being `device_qualified`, so
+a consumer reading the contract for what the runtime executes there reads
+absence. It is not an export refusal -- the dense branch of
+`scheme.refuse_unserveable_wire` reads the format row's reader range, not the
+cells -- and saying otherwise would be the same kind of unread claim this issue
+is about.  WHY THE DRIFT WAS INVISIBLE: the
+table was checked against `fp8_gemv.census_expected` and `decode_is_gemv`, a
+second table in a module `fp8_route` does not import, so the check agreed with
+a dead lane.  The tie is now to the live `apply` through each route's
+`DENSE_LAUNCH`.
 
 **The ROUTED window lane serves the same way, and is likewise a candidate.** A
 routed stack reaches the compact intake through ONE predicate,
@@ -3672,17 +3712,19 @@ scored in, the execution modes, the smoke on record, and the population. A
 decode cell is refused -- the confusion #133 is about), and `grade` is
 derived from the entries and checked, like `executes`: `route_only` when
 nothing attests quality in the cell's regime, else `kl_lower_bound`, else
-`kl_full_vocab`. On the shipped table every batch cell is `kl_lower_bound`,
-and every decode cell is `route_only` except the two a decode-regime KL was
-actually scored against: `tessera_e4m3_k1_dense_sm121_decode_streamed`
+`kl_full_vocab`. On the shipped table every decode cell
+is `route_only`. Two were not: `tessera_e4m3_k1_dense_sm121_decode_streamed`
 (`tessera-decode-regime-kl-2026-09-03.md` eager,
-`tessera-compiled-decode-kl-r6-2026-09-04.md` compiled) and, since contract v24,
+`tessera-compiled-decode-kl-r6-2026-09-04.md` compiled) and, from contract v24,
 `tessera_bf16_k1_dense_gfx1201_decode`
-(`tessera-gfx1201-bf16-k1-served-2026-09-13.md`, eager). The BF16 cells record a
-greedy smoke, and so -- since contract v21 -- do the `routed_moe` cells; the two
-gfx1201 cells are the first dense cells whose smoke word is **derived** from a
-`record` rather than asserted beside one. `qualification` is not overloaded with
-the grade.
+(`tessera-gfx1201-bf16-k1-served-2026-09-13.md`, eager) -- and both were scored
+against the dense window-GEMV dispatch, so contract v31 withdrew their cells
+with it (tessera#538). The bounds are not retracted and their receipts stay in
+the tree; what was retracted is the claim that this build executes what they
+measured. Since that withdrawal no cell publishes an asserted smoke word
+either: the `record`-derived ones are the `routed_moe` cells (contract v21) and
+the two gfx1201 cells that were the first dense cells to carry one.
+`qualification` is not overloaded with the grade.
 
 A smoke can also name the **control** it was compared against (schema v7,
 contract v18, #195), because `status` alone was deciding admission and could
@@ -3810,9 +3852,10 @@ publish `recorded`, and it is now the word their own record derives -- 14 rows,
 cycling on the BF16 source too, 0 cycling on the student while the source
 answered. What moved is `attribution` on those two cells, `unattributed` ->
 **`shared_with_reference`**, derived and checked. That is the field that makes
-the residual `repetitive` observation machine-readable, it is what now separates
+the residual `repetitive` observation machine-readable, it is what separated
 these cells from the two dense BF16 cells (`recorded`, `unattributed`, no
-reference arm), and it gives the consumer rule above a real cell to read again.
+reference arm) until contract v31 withdrew those, and it gives the consumer
+rule above a real cell to read again.
 Every row names the **interface** it was taken on, so a consumer reads what the
 measurement actually found: through the checkpoint's own `chat_template.jinja`
 both arms answer with their own EOS; under raw continuation both arms --
@@ -3826,15 +3869,17 @@ exact defect v18 existed to stop.
 **An asserted status.** `record` is nullable, and a cell whose record is `null`
 publishes an **asserted status**: a word a person read off a receipt, which no
 validator can check and which `contract.smoke_status_is_derived` reports
-`False` for. Two cells are in that state -- `tessera_bf16_k1_dense_sm121_decode`
+`False` for. Two cells were in that state -- `tessera_bf16_k1_dense_sm121_decode`
 and `..._batch`. Their receipt (`tessera-bf16-route-served-2026-09-02.md` :83)
 predates the instrument and records one greedy continuation from four census
 arms of the same route: one prompt, no per-completion scoring, no reference
-arm, so there is no per-`(prompt, form)` table to transcribe and nothing here
-invents one. What would give them a derived status is a **measurement**, not an
-edit: `experiments/moe_greedy_smoke.py` run against a serve of that artifact
-with its own tokenizer, and a BF16 reference arm beside it. The six
-`not_recorded` cells never ran a smoke and have nothing to record.
+arm, so there was no per-`(prompt, form)` table to transcribe and nothing here
+invented one. What would have given them a derived status is a **measurement**,
+not an edit: `experiments/moe_greedy_smoke.py` run against a serve of that
+artifact with its own tokenizer, and a BF16 reference arm beside it. Contract
+v31 withdrew both cells with the dispatch they attested (tessera#538), so no
+cell publishes an asserted status today and the rule above is the whole of the
+claim. The remaining cells that ran no smoke have nothing to record.
 
 v9 is **not additive**: a v8 reader must not read a v9 document, because
 `record` is a key its closed `smoke` object does not know and -- the reason the

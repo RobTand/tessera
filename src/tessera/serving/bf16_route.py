@@ -114,6 +114,7 @@ from .window import (PreparedModuleAxis, PreparedWindow, _fingerprint, prepare_w
 
 __all__ = [
     "ACTIVATION_CONTRACT",
+    "DENSE_LAUNCH",
     "GEMM_SYMBOL",
     "STREAMED_APPLY_OP",
     "GEMV_MODULE_NAME",
@@ -137,6 +138,13 @@ __all__ = [
 
 ACTIVATION_CONTRACT = ROUTES[TESSERA_BF16]["activation_contract"]
 GEMM_SYMBOL = ROUTES[TESSERA_BF16]["gemm_symbol"]
+
+#: THE dense launch this route makes, owned where the dispatch is; the BF16
+#: half of ``fp8_route.DENSE_LAUNCH`` and documented there (#538).  ``apply``
+#: unpacks this pair at its one ``emit_route`` call and
+#: ``tests/test_serving_contract.py`` asserts ``scheme.ROUTE_LAUNCHES``' dense
+#: entry for ``TESSERA_BF16`` is exactly this set.
+DENSE_LAUNCH = (WINDOW_GEMM_SYMBOL, DECODER_NATIVE_WINDOW_GEMM)
 
 #: The JIT module name the GEMV load path asks for -- ``ext``'s constant, so the
 #: contract table and the load call cannot drift (the same string ``fp8_gemv`` reads).
@@ -897,7 +905,7 @@ def build_tessera_bf16_method(scheme, prefix: str, mode: str):
                     "(tessera_native missing); refusing to fall back to a "
                     "materialised weight path this build no longer wires")
             y = native.apply(x2.contiguous())
-            symbol, decoder, tile_m = WINDOW_GEMM_SYMBOL, DECODER_NATIVE_WINDOW_GEMM, 0
+            (symbol, decoder), tile_m = DENSE_LAUNCH, 0
             try:
                 emit_route(
                     layer, kind="dense", policy=f"{TESSERA_BF16}:{layer.tessera_mode}",

@@ -278,8 +278,18 @@ def check_census(plan, config, manifest, census, *, runtime_image, checkpoint, c
             symbol = (census_symbol_base(record.get("symbol"))
                       if structure == STRUCTURE_ROUTED_MOE else record.get("symbol"))
             pair = (symbol, record.get("decoder"))
+            # A census record is what a SERVE stamped, so it is compared
+            # against every launch the dispatch can make, not against the
+            # narrower set a lane_eligibility cell may attest -- the same
+            # ``include_experimental`` the census tool's own
+            # ``census_expected`` uses.  Without it the dense window routes'
+            # one launch, the packed native window GEMM, reads as unowned:
+            # it is experimental precisely because no cell attests it
+            # (tessera#538), and a checker that refused it would be refusing
+            # the only thing those routes launch.
             _require(pair in launch_pairs(family, structure=structure,
-                                          regime=regime, mode="resident"),
+                                          regime=regime, mode="resident",
+                                          include_experimental=True),
                      f"{phase}: {name} launch pair {pair} is not owned by its declared {structure} route")
         symbols[phase] = sorted({record["symbol"] for record in observed.values()})
     shape_problems = phase_shape_problems(owner_records, phase_regimes=CENSUS_PHASE_REGIMES,

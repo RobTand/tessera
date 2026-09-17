@@ -39,6 +39,7 @@ from tessera.serving.census import cell_launch_agreement
 from tessera.serving.contract import (
     CENSUS_PHASE_REGIMES, PAYLOAD_FAMILY_BY_ROUTE, load_serving_contract)
 from tessera.serving.runtime_image import pinned_reference
+from withdrawn_cells import withdrawn_cells
 
 #: Two modules of the R1024 census, both phases, verbatim -- including
 #: ``kind``, which the first trim of this fixture dropped and the source
@@ -81,8 +82,42 @@ def _agree(cells, records=None, rungs=None):
 
 
 @pytest.fixture(scope="module")
-def cells():
+def shipped_cells():
+    """What the packaged document publishes today."""
     return load_serving_contract()["lane_eligibility"]["cells"]
+
+
+@pytest.fixture(scope="module")
+def cells(shipped_cells):
+    """The document as it was when these records were the attestation.
+
+    Contract v31 withdrew the four E4M3 dense cells this module joins against
+    (tessera#538): their ``executes`` named the window-GEMV dispatch that
+    ``1b767a207`` retired.  The RECORDS above are still a real serve, and the
+    join they exercise is still the live mechanism, so the replay keeps the
+    cells it was written for -- quoted from v30 in
+    ``tests/withdrawn_cells.py``, outside the published file.  What the shipped
+    document now says about the same records is asserted separately, in
+    ``test_the_shipped_document_no_longer_covers_these_records``.
+    """
+    return list(shipped_cells) + withdrawn_cells()
+
+
+def test_the_shipped_document_no_longer_covers_these_records(shipped_cells):
+    """The consumer-visible half of the withdrawal, on the real records.
+
+    A serve that executed the window-GEMV lane used to resolve to a cell.
+    Against the shipped document it now resolves to nothing -- ``unattested``,
+    the closed-world table's only honest answer for a dispatch no receipt
+    covers -- and NOT to a problem, because absence is not a disagreement.
+    That is the difference between withdrawing a cell and retagging one.
+    """
+    block, problems = _agree(shipped_cells)
+    assert problems == []
+    assert block["agrees"] is None
+    assert block["phases"]["decode"]["unattested"] == 2
+    assert block["phases"]["prefill"]["unattested"] == 2
+    assert block["phases"]["decode"]["cells"] == {}
 
 
 def test_the_served_records_agree_with_the_cells_that_cover_them(cells):
@@ -121,9 +156,13 @@ def test_a_small_batch_gemv_record_is_covered_by_the_batch_cell(cells):
     That is exactly why the cell was wrong: the batch cell published the
     materialised launch alone, which is what a 64-row prefill takes, while the
     contract's batch regime is every M > 1 and the lane serves its own ``gemv``
-    from two rows up.  The DISPATCH fact behind this record is not constructed:
-    ``test_the_launch_tables_regimes_are_the_routes_own_dispatch`` derives it
-    from the routes' own ``decode_is_gemv`` over every M.
+    from two rows up.  The DISPATCH fact behind this record was derived from
+    the routes' own ``decode_is_gemv`` over every M by
+    ``test_the_launch_tables_regimes_are_the_routes_own_dispatch``, which went
+    with the dispatch at contract v31 (tessera#538); the record and the cell it
+    is joined against are both quoted from that era, and the live table is now
+    tied to ``apply`` by
+    ``tests/test_serving_contract.py::test_the_dense_launch_table_is_the_launch_apply_makes``.
 
     Before the correction this record was a refusal on a serve that had done
     nothing wrong, which is worse than the stale value #111 was filed on.

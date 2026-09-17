@@ -181,41 +181,16 @@ _EVIDENCE = {
     # compiled in the r6 population; the resident decode cell has the census
     # alone.  The resident batch cell rests on the 2026-09-02 ``e8-resident``
     # arms; the streamed batch cell on the window-GEMV receipt's arm A.
-    "tessera_e4m3_k1_dense_sm121_decode_resident": _ROUTE_ONLY,
-    "tessera_e4m3_k1_dense_sm121_decode_streamed": {
-        "grade": "kl_lower_bound",
-        "kl": [_bound("decode", ["eager"], DECODE_EAGER),
-               _bound("decode", ["compiled"], DECODE_COMPILED)],
-        "smoke": _NO_SMOKE},
-    "tessera_e4m3_k1_dense_sm121_batch_resident": {
-        "grade": "kl_lower_bound", "kl": [_bound("batch", ["eager", "compiled"], PLUGIN)],
-        "smoke": _NO_SMOKE},
-    "tessera_e4m3_k1_dense_sm121_batch_streamed": {
-        "grade": "kl_lower_bound",
-        "kl": [_bound("batch", ["eager", "compiled"], WINDOW_GEMV)],
-        "smoke": _NO_SMOKE},
-    # gfx1201 (#460, contract v24): the first AMD cells.  Same family, same
-    # rung, a second platform and a second runtime image.  Both regimes carry a
-    # bound scored in their OWN regime -- the decode one from an M = 1 dump,
-    # which is why the decode cell is not ``route_only`` the way its sm_121
-    # twin is -- and both carry the same fourteen-row derived smoke record.
-    # One cell per regime, covering both residencies: the per-residency KL came
-    # back bit-identical in both regimes, so there is nothing for a four-cell
-    # split to publish.
-    "tessera_bf16_k1_dense_gfx1201_decode": {
-        "grade": "kl_lower_bound", "kl": [_bound("decode", ["eager"], GFX1201)],
-        "smoke": _recorded_against_reference(GFX1201, _smoke_record(_GFX1201_SMOKE_TABLE))},
-    "tessera_bf16_k1_dense_gfx1201_batch": {
-        "grade": "kl_lower_bound", "kl": [_bound("batch", ["eager"], GFX1201)],
-        "smoke": _recorded_against_reference(GFX1201, _smoke_record(_GFX1201_SMOKE_TABLE))},
-    # BF16 (q1792): prefill KL under an ``--enforce-eager`` serve, both
-    # residencies; the receipt records an identical greedy continuation from
-    # all four census arms and does not grade it.
-    "tessera_bf16_k1_dense_sm121_decode": {
-        "grade": "route_only", "kl": [], "smoke": _uncontrolled("recorded", BF16)},
-    "tessera_bf16_k1_dense_sm121_batch": {
-        "grade": "kl_lower_bound", "kl": [_bound("batch", ["eager"], BF16)],
-        "smoke": _uncontrolled("recorded", BF16)},
+    # The six sm_121 dense E4M3/BF16 cells and the two gfx1201 BF16 cells
+    # stood here until contract v31 and were WITHDRAWN with it (tessera#538):
+    # their ``executes`` named the dense window-GEMV dispatch, which
+    # ``1b767a207`` retired, and every receipt behind them was taken before
+    # that commit.  Their measurements are not retracted and stay in the tree
+    # (``tests/test_contract_platform_axis.py`` holds the gfx1201 one to it);
+    # what was retracted is the claim that this build executes what they
+    # measured.  Two consequences show up below: no cell asserts a smoke word
+    # it cannot derive any more, and no decode cell carries a decode-regime
+    # bound.
     # Routed MoE (LFM2.5-8B-A1B, q1024): prefill top-1024 bound, eager,
     # resident; the decode regime has the census alone.  The campaign's greedy
     # smoke was repetitive and the BF16 source repeated identically (MOE_DEBT
@@ -453,12 +428,15 @@ def test_which_cells_publish_a_derived_word_and_which_assert_one(contract):
     """An asserted status is a named state, not a silence (#327).
 
     A cell with no record publishes a word nothing here can check, and
-    ``smoke_status_is_derived`` is what says so.  The two BF16 cells are in that
-    state because their receipt predates the instrument -- one greedy
+    ``smoke_status_is_derived`` is what says so.  The two dense BF16 cells were
+    in that state -- their receipt predates the instrument: one greedy
     continuation from four census arms of the same route, no per-completion
-    scoring, no reference arm -- and no test invents a record they did not
-    measure.  The claim pinned here is the RULE, not the roster: a cell has a
-    derived word exactly when it carries the record to derive it from.
+    scoring, no reference arm -- and no test invented a record they did not
+    measure.  Contract v31 withdrew them with the dispatch they attested
+    (tessera#538), so the roster is now empty and the RULE is the whole claim:
+    a cell has a derived word exactly when it carries the record to derive it
+    from.  The empty list below is asserted rather than skipped, so the day a
+    cell publishes an underivable word it lands here.
     """
     for cell in contract["lane_eligibility"]["cells"]:
         smoke = cell["evidence"]["smoke"]
@@ -466,30 +444,31 @@ def test_which_cells_publish_a_derived_word_and_which_assert_one(contract):
     asserted = sorted(cell["id"] for cell in contract["lane_eligibility"]["cells"]
                       if cell["evidence"]["smoke"]["status"] != "not_recorded"
                       and not smoke_status_is_derived(cell["evidence"]["smoke"]))
-    assert asserted == ["tessera_bf16_k1_dense_sm121_batch",
-                        "tessera_bf16_k1_dense_sm121_decode"], (
+    assert asserted == [], (
         "a cell publishing a smoke word with no record to derive it from is the defect #327 "
         "closed; if a new one appears, give it a record or say here why it cannot have one")
 
 
-def test_the_routed_moe_cells_are_distinguishable_from_the_bf16_cells_that_never_cycled(contract):
+def test_the_routed_moe_smoke_carries_the_record_its_word_is_derived_from(contract):
     """What a consumer at the pin reads (#327).
 
-    Under contract v21 the two routed-MoE cells' smoke was byte-identical to the
-    two dense BF16 cells' -- same status, same `unattributed`, same null control
-    -- while seven of its fourteen completions ended in a cycle and none of the
-    BF16 smoke did.  The record and the attribution it derives are what tell
-    them apart now, in fields a gate reads and not in prose.
+    Under contract v21 the two routed-MoE cells' smoke was byte-identical to
+    the two dense BF16 cells' -- same status, same ``unattributed``, same null
+    control -- while seven of its fourteen completions ended in a cycle and
+    none of the BF16 smoke did.  The record and the attribution it derives are
+    what tell them apart, in fields a gate reads and not in prose.
+
+    The BF16 half of that contrast was withdrawn at contract v31 (tessera#538),
+    so what is left to pin is the positive side: the record is there, the
+    attribution is derived from it, and no cell anywhere publishes the
+    ``unattributed``-with-no-record shape the contrast was about.
     """
     cells = _cells(contract)
     moe = [cells[cid]["evidence"]["smoke"] for cid in
            ("tessera_e4m3_k1_routed_moe_sm121_decode_resident",
             "tessera_e4m3_k1_routed_moe_sm121_batch_resident")]
-    bf16 = [cells[cid]["evidence"]["smoke"] for cid in
-            ("tessera_bf16_k1_dense_sm121_decode", "tessera_bf16_k1_dense_sm121_batch")]
-    for smoke in moe + bf16:
-        assert smoke["status"] == "recorded"
     for smoke in moe:
+        assert smoke["status"] == "recorded"
         assert smoke["attribution"] == "shared_with_reference"
         cycled = [row for row in smoke["record"]["rows"] if row["status"] == "repetitive"]
         assert len(cycled) == 7
@@ -506,9 +485,9 @@ def test_the_routed_moe_cells_are_distinguishable_from_the_bf16_cells_that_never
         answered = [row for row in smoke["record"]["rows"] if row["status"] == "recorded"]
         assert {row["interface"] for row in answered} == {"raw_completion", "chat_template"}
         assert len([row for row in answered if row["interface"] == "chat_template"]) == 6
-    for smoke in bf16:
-        assert smoke["attribution"] == "unattributed" and smoke["record"] is None
-    assert [s["attribution"] for s in moe] != [s["attribution"] for s in bf16]
+    assert not [cell["id"] for cell in contract["lane_eligibility"]["cells"]
+                if cell["evidence"]["smoke"]["status"] != "not_recorded"
+                and cell["evidence"]["smoke"]["record"] is None]
 
 
 def test_which_decode_cells_carry_a_decode_regime_bound(contract):
@@ -527,8 +506,12 @@ def test_which_decode_cells_carry_a_decode_regime_bound(contract):
     with_decode_kl = sorted(
         cell["id"] for cell in contract["lane_eligibility"]["cells"]
         if cell["regime"] == "decode" and cell["evidence"]["kl"])
-    assert with_decode_kl == ["tessera_bf16_k1_dense_gfx1201_decode",
-                              "tessera_e4m3_k1_dense_sm121_decode_streamed"]
+    # Both of them -- the sm_121 window-GEMV lane's and the gfx1201
+    # ``torch_window`` lane's -- were scored against the dense dispatch that
+    # ``1b767a207`` retired, and contract v31 withdrew their cells with it
+    # (tessera#538).  No decode cell carries a bound today.  The list is
+    # asserted, not skipped: the next decode-regime dump has to land here.
+    assert with_decode_kl == []
     for cell in contract["lane_eligibility"]["cells"]:
         for entry in cell["evidence"]["kl"]:
             assert entry["regime"] == cell["regime"], cell["id"]
@@ -564,8 +547,13 @@ def test_the_grammar_is_exported_for_a_consumer(contract):
 
 # --- the validator refuses what a gate could not read ------------------------
 
-BATCH = "tessera_e4m3_k1_dense_sm121_batch_resident"
-DECODE = "tessera_e4m3_k1_dense_sm121_decode_resident"
+#: The two cells the refusals below are driven on: one graded
+#: ``kl_lower_bound`` with a KL entry to mutate, one ``route_only`` with none.
+#: They were the E4M3 resident pair until contract v31 withdrew it
+#: (tessera#538); the E2M1x2 dense pair is the same shape and its launch was
+#: never the window-GEMV lane's, so the mutations read identically.
+BATCH = "tessera_e2m1_k2_dense_sm121_batch"
+DECODE = "tessera_e2m1_k2_dense_sm121_decode"
 
 
 def test_a_cell_without_evidence_is_refused(contract):
