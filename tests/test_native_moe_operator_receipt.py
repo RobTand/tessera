@@ -304,13 +304,17 @@ def _fake_whole_lifecycle(monkeypatch, *, bad_decode=False):
                   "wire_record_sha256": dense.identity_sha256(member["wire"]["record"])} for member in panel["members"]])
     for key in ("native_tensors", "scheme", "config"):
         panel[key + "_sha256"] = dense.identity_sha256(operator[key])
-    prepared = {"layer": layer, "operator": operator, "runtime": copy.deepcopy(panel["runtime"]),
+    # This fixture runs without vLLM: the layer is a bare module and there is no
+    # runtime runner to hold, which is the world-of-one shape (nothing to
+    # reduce, and `apply_whole` is substituted below).
+    prepared = {"owner": moe.WholeOwner(layer=layer, runner=None), "operator": operator,
+                "runtime": copy.deepcopy(panel["runtime"]),
                 "distributed": {"world_size": 1, "rank": 0, "init_method": None,
                                 "timeout_seconds": None},
                 "workspace": copy.deepcopy(panel["workspace"]), "workspace_pointers": (None,)}
     calls = []
-    def apply(actual, tensors):
-        assert actual is layer
+    def apply(owner, tensors):
+        assert owner.layer is layer
         m = tensors["input"].shape[0]
         calls.append(("apply", m))
         emit_route(layer, **operator["declared_route"], shape=f"M{m}:N256:K256", state="served", reason=None)
