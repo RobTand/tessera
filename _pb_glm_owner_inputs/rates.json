@@ -1,0 +1,47 @@
+[
+  {
+    "argv": ["_pb_glm_owner_inputs/run-rate.sh"],
+    "cwd": "/home/rob/tmp/tessera-glm-owner-inputs-20260917",
+    "tags": ["x86"],
+    "demand": {"cpu": 4, "mem_gb": 8},
+    "progress_phases": ["rebind=900"],
+    "env": {
+      "PY": "/home/rob/venvs/pq-cpu312-tessera-4c384e60/bin/python",
+      "OUT": "/mnt/shared/tessera-measurements/glm-canonical-census-20260908/routed-owner-inputs-layer3-20260917",
+      "RATE": "a4",
+      "FORMAT": "TESSERA_E2M1_K2_R896",
+      "EXPORT": "/mnt/shared/tessera-measurements/glm-canonical-census-20260908/first-artifact-exports/a4/merged-4c384e60",
+      "BUNDLE": "/mnt/shared/dq-runs/glm-first-artifact-claude-20260914/controls/a4/manifest.json"
+    }
+  },
+  {
+    "argv": ["_pb_glm_owner_inputs/run-rate.sh"],
+    "cwd": "/home/rob/tmp/tessera-glm-owner-inputs-20260917",
+    "tags": ["x86"],
+    "demand": {"cpu": 4, "mem_gb": 8},
+    "progress_phases": ["rebind=900"],
+    "env": {
+      "PY": "/home/rob/venvs/pq-cpu312-tessera-4c384e60/bin/python",
+      "OUT": "/mnt/shared/tessera-measurements/glm-canonical-census-20260908/routed-owner-inputs-layer3-20260917",
+      "RATE": "a8",
+      "FORMAT": "TESSERA_E4M3_K1_R1024",
+      "EXPORT": "/mnt/shared/tessera-measurements/glm-canonical-census-20260908/first-artifact-exports/a8/merged-b426d18893",
+      "BUNDLE": "/mnt/shared/dq-runs/glm-first-artifact-claude-20260914/controls/a8/manifest.json"
+    }
+  },
+  {
+    "argv": ["_pb_glm_owner_inputs/run-rate.sh"],
+    "cwd": "/home/rob/tmp/tessera-glm-owner-inputs-20260917",
+    "tags": ["x86"],
+    "demand": {"cpu": 4, "mem_gb": 8},
+    "progress_phases": ["rebind=900"],
+    "env": {
+      "PY": "/home/rob/venvs/pq-cpu312-tessera-4c384e60/bin/python",
+      "OUT": "/mnt/shared/tessera-measurements/glm-canonical-census-20260908/routed-owner-inputs-layer3-20260917",
+      "RATE": "a16",
+      "FORMAT": "TESSERA_BF16_K1_R1024",
+      "EXPORT": "/mnt/shared/tessera-measurements/glm-canonical-census-20260908/first-artifact-exports/a16/merged-b426d18893",
+      "BUNDLE": "/mnt/shared/dq-runs/glm-first-artifact-claude-20260914/controls/a16/manifest.json"
+    }
+  }
+]
