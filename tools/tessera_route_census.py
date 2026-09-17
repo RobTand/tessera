@@ -441,6 +441,85 @@ def _git_head(path):
         return None
 
 
+def memory_budget_kwargs(args):
+    """The engine's memory budget, assembled where a test can read it.
+
+    ``--gpu-memory-utilization`` is a fraction of the DEVICE's total memory, and
+    vLLM sizes the KV cache to FILL whatever that fraction leaves after weights
+    and activation -- so on a device whose allocator is capped below the
+    fraction, the KV fill is what reaches the cap and the model's own kernels
+    OOM.  That is not a hypothesis: the two-layer mixed dense census on
+    ``denseA8A16-layers0-1-20260917`` asked for 24.0 GiB on sparklina, the
+    a4cap plugin verified that exact 24.0 GiB fraction, vLLM then computed
+    17.26 GiB of KV from it, and the attention kernel died 23.30 GiB into the
+    cap (``-20260917T055226Z``).  A bound on the KV cache itself is the fix,
+    and it is the flag the served campaign's own launcher already carries.  At
+    the default 0 nothing is added, so a command line written before this
+    argument builds the engine it always did.
+    """
+    kwargs = {"gpu_memory_utilization": args.gpu_memory_utilization}
+    if args.kv_cache_memory_bytes:
+        kwargs["kv_cache_memory_bytes"] = args.kv_cache_memory_bytes
+    return kwargs
+
+
+def scheduler_kwargs(args):
+    """The engine's concurrency limit, assembled where a test can read it.
+
+    vLLM builds the hybrid model's Mamba block cache out of the same KV budget,
+    so bounding the KV cache bounds that cache too -- and compiled mode refuses
+    before capture when ``max_num_seqs`` exceeds the blocks available, which is
+    not a statement about the device.  Measured on sparklina at 1 GiB of KV:
+    123 Mamba blocks against vLLM's default ``max_num_seqs`` of 256, so
+    ``--compiled`` refused with ``ValueError: max_num_seqs (256) exceeds
+    available Mamba cache blocks (123)`` and measured no graph at all.  The
+    limit is vLLM's own scheduler field, and 0 leaves the engine's default.
+    """
+    kwargs = {}
+    if args.max_num_seqs:
+        kwargs["max_num_seqs"] = args.max_num_seqs
+    return kwargs
+
+
+def required_decoder_coverage(tessera_by_phase, required):
+    """Did the decoder this arm exists to measure take every module?
+
+    THE HOLE THIS CLOSES.  The per-module check in ``main`` compares each
+    record's ``(symbol, decoder)`` pair against the pairs its route OWNS, and a
+    route that still publishes a materialised fallback owns that pair too.  So
+    a receipt can be green with every module on the fallback, and
+    ``lane_engagement.all_required_engaged`` is ``null`` when nothing was
+    required -- which is what every census written before this argument said.
+    Naming the decoder makes the claim a value read by a gate: every Tessera
+    module, in both driven phases, must report it; and a named decoder that
+    took zero modules is the same refusal from the other side, which is issue
+    #104's shape one field over.
+
+    Emitted whether or not anything was required, so a receipt written without
+    the argument still says so instead of leaving a reader to infer it.
+    """
+    block = {"required": list(required), "phases": {}}
+    problems = []
+    for phase in sorted(tessera_by_phase):
+        records = tessera_by_phase[phase]
+        counts = collections.Counter(r.get("decoder") for r in records.values())
+        seen = dict(sorted(counts.items(), key=lambda item: str(item[0])))
+        block["phases"][phase] = {"modules": len(records), "decoders": seen}
+        if not required:
+            continue
+        for decoder in required:
+            if not counts.get(decoder):
+                problems.append(
+                    f"{phase}: no module reports required decoder {decoder!r}; saw {seen!r}")
+        off_decoder = sorted(name for name, r in records.items()
+                             if r.get("decoder") not in required)
+        if off_decoder:
+            problems.append(
+                f"{phase}: {len(off_decoder)} module(s) do not report a required decoder "
+                f"{sorted(required)!r}, e.g. {off_decoder[:3]}")
+    return block, problems
+
+
 def parse_args(argv=None, env=None):
     """Resolve the explicit runtime context before importing a serving runtime."""
     from tessera.serving.topology import add_topology_arguments, validate_topology_arguments
@@ -460,7 +539,25 @@ def parse_args(argv=None, env=None):
                     help="number of Tessera modules the checkpoint declares")
     ap.add_argument("--prompt-tokens", type=int, default=64)
     ap.add_argument("--gpu-memory-utilization", type=float, default=0.3)
+    ap.add_argument("--kv-cache-memory-bytes", type=int, default=0, metavar="BYTES",
+                    help="bound the engine's KV cache to this many bytes, inside the budget "
+                         "--gpu-memory-utilization already names. vLLM sizes the KV cache to "
+                         "FILL whatever that fraction leaves after weights and activation, so "
+                         "on a serve whose torch allocator is capped below the fraction the KV "
+                         "fill is what reaches the cap: the two-layer mixed dense census asked "
+                         "for 24.0 GiB on a 121.63 GiB device and vLLM computed 17.26 GiB of KV "
+                         "from it, which OOM'd the model's own attention kernel 23.30 GiB into a "
+                         "24.00 GiB cap. 0 (the default) leaves vLLM to size it, which is what "
+                         "every receipt written before this flag did.")
     ap.add_argument("--max-model-len", type=int, default=1024)
+    ap.add_argument("--max-num-seqs", type=int, default=0, metavar="N",
+                    help="cap the engine's concurrent sequences; 0 leaves vLLM's default "
+                         "(256) alone. A bounded KV cache also bounds the Mamba block cache "
+                         "vLLM builds from the same budget, and compiled mode refuses before "
+                         "capture when max_num_seqs exceeds the available Mamba blocks: the "
+                         "two-layer mixed dense census held 123 blocks at 1 GiB of KV, so "
+                         "compiled capture refused at the default 256 rather than measuring "
+                         "a graph.")
     ap.add_argument("--compiled", action="store_true",
                     help="load with enforce_eager=False (vLLM's default compiled forward + CUDA "
                          "graphs) instead of eager; the route records then carry M='*' because "
@@ -484,6 +581,14 @@ def parse_args(argv=None, env=None):
                          "by default an artifact that DECLARES which lane it was built for is "
                          "believed, so the requirement travels with the bytes rather than with a "
                          "shell history")
+    ap.add_argument("--require-decoder", action="append", default=None, metavar="DECODER",
+                    help="a decoder EVERY Tessera module must report, in both driven phases "
+                         "(e.g. native_window_gemm). Repeatable. Without it the per-module check "
+                         "only asks that a record's (symbol, decoder) pair be one its route OWNS, "
+                         "and a route that still publishes a materialised fallback owns that pair "
+                         "too -- so a green receipt can describe a serve in which the launch the "
+                         "arm exists to measure never ran. A named decoder that takes zero "
+                         "modules is the same refusal from the other side (issue #104).")
     add_topology_arguments(ap)
     ap.add_argument("--tessera-commit", default=None,
                     help="the host's `git rev-parse HEAD` for the Tessera checkout under test; "
@@ -494,6 +599,12 @@ def parse_args(argv=None, env=None):
     # topology mistake found after two 85-160 s loads is one found at the cost
     # of the run.
     validate_topology_arguments(ap, args)
+    # A byte count, refused where it is typed: a negative budget would reach the
+    # engine as a nonsense cap, and a census is two 85-160 s model loads.
+    if args.kv_cache_memory_bytes < 0:
+        ap.error("--kv-cache-memory-bytes must be >= 0 (0 leaves vLLM to size the cache)")
+    if args.max_num_seqs < 0:
+        ap.error("--max-num-seqs must be >= 0 (0 leaves vLLM's own default)")
     from tessera.serving.contract import require_runtime_image
     from tessera.serving.runtime_image import RuntimeImageError, declared_reference
 
@@ -693,7 +804,7 @@ def main() -> int:
     # the engine's own default -- so a command line written before the topology
     # group existed builds the same engine it always did.
     llm = LLM(model=args.model, enforce_eager=not args.compiled, max_model_len=args.max_model_len,
-              gpu_memory_utilization=args.gpu_memory_utilization, seed=0,
+              seed=0, **memory_budget_kwargs(args), **scheduler_kwargs(args),
               **topology_kwargs(args))
 
     # CHECKPOINT NAMES ARE NOT MODULE NAMES, and this join is made in module
@@ -889,6 +1000,15 @@ def main() -> int:
     engagement["declared_by_artifact"] = manifest_lanes
     problems.extend(engagement_problems)
 
+    # THE DECODER, NAMED RATHER THAN LEFT TO A READER.  ``lane_engagement``
+    # answers a lane question and reports ``all_required_engaged: null`` when
+    # the census was told of none, so a receipt can be green while every module
+    # took a route's fallback.  ``--require-decoder`` turns "the native decoder
+    # ran" into the thing the exit status is computed from.
+    decoder_coverage, decoder_problems = required_decoder_coverage(
+        tessera_by_phase, list(args.require_decoder or ()))
+    problems.extend(decoder_problems)
+
     # WHAT THE CONTRACT SAYS THIS SERVE EXECUTES, against what it executed.
     # ``lane_eligibility`` cells publish ``executes`` since schema v4 (#111), a
     # value DERIVED from the dispatch table -- which proves the document agrees
@@ -914,6 +1034,15 @@ def main() -> int:
         "quant_method": qc.get("quant_method"),
         "compiled": bool(args.compiled),
         "runtime": {"image": args.runtime_image, "execution_mode": args.execution_mode},
+        # WHAT THE ENGINE WAS ALLOWED TO SPEND, and whether the KV cache was
+        # bounded separately from the fraction that leaves room for it.  A
+        # receipt whose budget is inferred from whoever typed the command is
+        # exactly the gap that OOM'd the run this flag was added for.
+        "memory_budget": memory_budget_kwargs(args),
+        # The other half of the engine's configured shape: a capped KV budget
+        # also caps the Mamba block cache, and a concurrency limit above the
+        # blocks available is a capture refusal rather than a measurement.
+        "scheduler": scheduler_kwargs(args),
         # WHERE THAT SCOPE CAME FROM.  The image above is a join key of every
         # cell this receipt resolves; this says which mechanism established it
         # and carries the launcher's record verbatim, so a reader can redo the
@@ -947,6 +1076,9 @@ def main() -> int:
         "elapsed_s": round(time.time() - t0, 1),
         "histogram": histogram,
         "lane_engagement": engagement,
+        # The decoder half of the same question, and the one a fallback cannot
+        # pass: emitted whether or not anything was named.
+        "decoder_coverage": decoder_coverage,
         "lane_refusals": refusals,
         "records": phases,
         # Which declared target each record was joined to.  For a dense
