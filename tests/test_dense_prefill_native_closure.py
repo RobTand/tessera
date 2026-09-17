@@ -10,8 +10,12 @@ residencies.  The materialising prefill branch therefore survives as an orphan,
 and "production does not materialise a dense weight tile" is a claim about
 REACHABILITY -- the shape a grep cannot hold and a green suite cannot show.
 
-Each test below fails on the pre-substitution source (``origin/master`` at the
-time of writing): the route imports ``fp8_gemv`` and branches on
+Each test below fails on the pre-substitution source
+``afdda3dcbc4c8f5be7b9f1b4eaf95de64b01a44a`` -- the commit before
+``908767d89`` ("dense native window lane") -- which is a NAMED commit and not
+whatever ``master`` holds now: the lane has been on master since, so a branch
+pointer would name the native source and the pair below would be untestable.
+On that commit the route imports ``fp8_gemv`` and branches on
 ``layer.tessera_gemv`` / ``layer.tessera_prepared``, ``apply`` reaches
 ``torch._scaled_mm``, and the load path expands the wire through
 ``parse_tessera_blob_for_scheme``.  They pass on the native-lane source.  That
