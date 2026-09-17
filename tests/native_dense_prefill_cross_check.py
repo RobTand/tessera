@@ -47,6 +47,15 @@ one the mixed-fixture serve and the A16 TP1 run used):
       python3 /work/tests/native_dense_prefill_cross_check.py --merge /tmp/report.json \
         /tmp/tp1.json /tmp/tp2-0.json /tmp/tp2-1.json'
 
+WHICH FIXTURES.  ``--fixture`` names a tree and ``--family`` names a payload
+family; with neither, every fixture in the table runs.  The GLM pair is the
+artifact the dense lane is held to now -- ``--fixture GLM_A8 --fixture GLM_A16``
+is 96 arms (two families, two modules each, eight M, and the three rank cuts
+TP1 / TP2 rank 0 / TP2 rank 1) -- while the small pair the lane landed against
+stays selectable beside it, because one key is one tree and the two families
+are no longer the same thing as the two artifacts.  ``--preflight`` resolves
+whichever set is selected and needs no device.
+
 RANKS ARE REAL, so one process is ONE rank of the world it declares.  The
 production load path registers a ``BasevLLMParameter``, whose constructor asks
 the process-global tensor-parallel group for this rank; a harness that never
@@ -99,13 +108,28 @@ REPO = HERE.parents[1]
 sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "tests"))
 
-#: The two dense fixtures, by family.  Each names a config group and the
-#: container tensor beside it, and locates the tree through
-#: ``tests/box_artifacts.py`` -- the one home for the roots this repository
-#: reads but does not own -- with this harness's own override on top.  A box
-#: that keeps them elsewhere says so; nothing here spells a path.
+#: The dense fixtures, by KEY -- a key is a tree, and the ``family`` field is
+#: the route that serves it.  The two are separate because one family has more
+#: than one artifact: the small modules the lane landed against and the real
+#: GLM layer-0 export the lane is held to now, side by side, so the old
+#: comparison stays runnable without standing in for the new one.
+#:
+#: Each entry names a config group and the container tensor beside it, and
+#: locates the tree through ``tests/box_artifacts.py`` -- the one home for the
+#: roots this repository reads but does not own -- with this harness's own
+#: override on top.  A box that keeps them elsewhere says so; nothing here
+#: spells a path.
+#:
+#: ``GLM_A8``/``GLM_A16`` are layer 0 of the canonical-census first-artifact
+#: exports: one merged container per arm, 120 shards, and the harness reads
+#: only the single shard the index maps each ``wire_bytes`` tensor to.  Both
+#: carry the same geometry -- gate_up ``24576x4096`` with roles
+#: ``gate_proj``/``up_proj`` at 12288 rows each, down ``4096x12288`` -- at
+#: ``q256`` 1024, and differ in the payload family (E4M3 vs BF16) exactly as
+#: the small pair did.
 FIXTURES = {
     "TESSERA_FP8": {
+        "family": "TESSERA_FP8",
         "env": "TESSERA_A8_DENSE_FIXTURE",
         "artifact": ("shared_runs", "derivatives", "mixedA4A8A16-layers0-4-20260916"),
         "modules": (
@@ -118,6 +142,7 @@ FIXTURES = {
         ),
     },
     "TESSERA_BF16": {
+        "family": "TESSERA_BF16",
         "env": "TESSERA_A16_DENSE_FIXTURE",
         "artifact": ("shared_runs", "bf16", "qwen0.6b-bf16-r7-plugin"),
         "modules": (
@@ -129,7 +154,39 @@ FIXTURES = {
              "parallel": "row"},
         ),
     },
+    "GLM_A8": {
+        "family": "TESSERA_FP8",
+        "env": "TESSERA_GLM_A8_DENSE_FIXTURE",
+        "artifact": ("measurements", "glm-canonical-census-20260908",
+                     "first-artifact-exports", "a8", "merged-b426d18893"),
+        "modules": (
+            {"group": "tessera_model_language_model_layers_0_mlp_gate_up_proj",
+             "tensor": "model.language_model.layers.0.mlp.gate_up_proj.wire_bytes",
+             "parallel": "column"},
+            {"group": "tessera_model_language_model_layers_0_mlp_down_proj",
+             "tensor": "model.language_model.layers.0.mlp.down_proj.wire_bytes",
+             "parallel": "row"},
+        ),
+    },
+    "GLM_A16": {
+        "family": "TESSERA_BF16",
+        "env": "TESSERA_GLM_A16_DENSE_FIXTURE",
+        "artifact": ("measurements", "glm-canonical-census-20260908",
+                     "first-artifact-exports", "a16", "merged-b426d18893"),
+        "modules": (
+            {"group": "tessera_model_language_model_layers_0_mlp_gate_up_proj",
+             "tensor": "model.language_model.layers.0.mlp.gate_up_proj.wire_bytes",
+             "parallel": "column"},
+            {"group": "tessera_model_language_model_layers_0_mlp_down_proj",
+             "tensor": "model.language_model.layers.0.mlp.down_proj.wire_bytes",
+             "parallel": "row"},
+        ),
+    },
 }
+
+#: The payload families the fixtures cover, derived from the fixtures
+#: themselves so a new artifact of an existing family needs no edit here.
+FAMILIES = tuple(sorted({spec["family"] for spec in FIXTURES.values()}))
 
 #: The M set the prefill arms walk.  See the module docstring for the shape
 #: each value is at.
@@ -490,7 +547,7 @@ def _drive_route(family: str, scheme, declared, blob: bytes, parallel: str,
     return got, layer, probe
 
 
-def _arm(family: str, module: dict, declared, scheme, blob: bytes, parallel: str,
+def _arm(fixture: str, family: str, module: dict, declared, scheme, blob: bytes, parallel: str,
          tp_rank: int, tp_size: int, m: int, mode: str, report: dict):
     import torch
 
@@ -509,7 +566,7 @@ def _arm(family: str, module: dict, declared, scheme, blob: bytes, parallel: str
     got, layer, probe = _drive_route(family, scheme, declared, blob, parallel,
                                      tp_rank, tp_size, x, mode)
     entry = {
-        "family": family, "group": module["group"], "mode": mode,
+        "fixture": fixture, "family": family, "group": module["group"], "mode": mode,
         "tp_rank": tp_rank, "tp_size": tp_size, "parallel": parallel, "m": m,
         "shape": [int(v) for v in got.shape],
         "native_calls": probe["native_calls"],
@@ -559,7 +616,7 @@ def _arm(family: str, module: dict, declared, scheme, blob: bytes, parallel: str
     return passed
 
 
-def _refusal_arms(family: str, module: dict, declared, blob: bytes, report: dict):
+def _refusal_arms(fixture: str, family: str, module: dict, declared, blob: bytes, report: dict):
     """A real wire under a declaration that does not match it must refuse."""
     from tessera.serving.scheme import parse_compact_blob_for_scheme
 
@@ -572,7 +629,8 @@ def _refusal_arms(family: str, module: dict, declared, blob: bytes, report: dict
     }
     ok = True
     for label, wrong in cases.items():
-        entry = {"family": family, "group": module["group"], "refusal": label}
+        entry = {"fixture": fixture, "family": family, "group": module["group"],
+                 "refusal": label}
         try:
             parse_compact_blob_for_scheme(blob, wrong, "crosscheck", device="cpu")
         except ValueError as exc:
@@ -593,13 +651,13 @@ def _refusal_arms(family: str, module: dict, declared, blob: bytes, report: dict
     return ok
 
 
-def _arm_id(family: str, group: str, tp_size: int, tp_rank: int, m: int) -> tuple:
+def _arm_id(fixture: str, group: str, tp_size: int, tp_rank: int, m: int) -> tuple:
     """One arm's identity: the tuple a report declares and a merge matches."""
-    return (str(family), str(group), int(tp_size), int(tp_rank), int(m))
+    return (str(fixture), str(group), int(tp_size), int(tp_rank), int(m))
 
 
 def _entry_id(entry: dict) -> tuple:
-    return _arm_id(entry["family"], entry["group"], entry["tp_size"],
+    return _arm_id(entry["fixture"], entry["group"], entry["tp_size"],
                    entry["tp_rank"], entry["m"])
 
 
@@ -643,10 +701,10 @@ def _merged(selected, paths, m_set) -> dict:
             observed[key] = entry
 
     worlds = sorted({entry["tp_size"] for entry in observed.values()})
-    groups = {family: [module["group"] for module in spec["modules"]]
-              for family, spec in selected.items()}
-    wanted = {(family, group, world, rank, m)
-              for family, module_groups in groups.items()
+    groups = {fixture: [module["group"] for module in spec["modules"]]
+              for fixture, spec in selected.items()}
+    wanted = {(fixture, group, world, rank, m)
+              for fixture, module_groups in groups.items()
               for group in module_groups
               for world in worlds
               for rank in range(world)
@@ -666,7 +724,7 @@ def _merged(selected, paths, m_set) -> dict:
     refusals, seen = [], set()
     for report in reports:
         for entry in report["refusals"]:
-            key = (entry["family"], entry["group"], entry["refusal"])
+            key = (entry["fixture"], entry["group"], entry["refusal"])
             if key not in seen:
                 seen.add(key)
                 refusals.append(entry)
@@ -692,7 +750,7 @@ def _merged(selected, paths, m_set) -> dict:
         "tp_groups": tp_groups, "device_counts": device_counts,
         "tp_group_fallbacks": fallback,
         "arms": [observed[key] for key in sorted(observed)],
-        "refusals": sorted(refusals, key=lambda entry: (entry["family"], entry["group"],
+        "refusals": sorted(refusals, key=lambda entry: (entry["fixture"], entry["group"],
                                                         entry["refusal"])),
         "arms_total": len(observed), "arms_expected_total": len(wanted),
         "all_arms_passed": all(entry.get("passed") for entry in observed.values()),
@@ -710,14 +768,16 @@ def _preflight(selected) -> dict:
     name", and the device run is what remains for the numerics.
     """
     out = {"fixtures": [], "refusals": [], "ok": True}
-    for family, spec in selected.items():
+    for fixture, spec in selected.items():
+        family = spec["family"]
         root = _fixture_root(spec)
         for module in spec["modules"]:
             blob = _read_wire(root, module["tensor"])
             _, declared = _declared(root, module["group"], blob, module["group"])
             if declared["family"] != family:
                 _failure(f"{module['group']} declares {declared['family']}, not {family}")
-            out["ok"] = _refusal_arms(family, module, declared, blob, out) and out["ok"]
+            out["ok"] = _refusal_arms(fixture, family, module, declared, blob,
+                                      out) and out["ok"]
             plans = []
             for parallel, tp_rank, tp_size in (
                     (module["parallel"], 0, 1),
@@ -728,7 +788,8 @@ def _preflight(selected) -> dict:
                               "shard_rows": int(plan.shard_rows),
                               "shard_columns": int(plan.shard_columns)})
             out["fixtures"].append({
-                "family": family, "root": str(root), "group": module["group"],
+                "fixture": fixture, "family": family, "root": str(root),
+                "group": module["group"],
                 "tensor": module["tensor"], "bytes": len(blob),
                 "rows": int(declared["rows"]), "columns": int(declared["columns"]),
                 "q256": int(declared["q256"]), "parallel": module["parallel"],
@@ -739,8 +800,11 @@ def _preflight(selected) -> dict:
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument("--family", action="append", choices=sorted(FIXTURES),
-                        help="restrict to a family; repeatable (default: both)")
+    parser.add_argument("--fixture", action="append", choices=sorted(FIXTURES),
+                        help="restrict to a fixture key; repeatable (default: all)")
+    parser.add_argument("--family", action="append", choices=sorted(FAMILIES),
+                        help="restrict to a payload family; repeatable "
+                             "(default: every family)")
     parser.add_argument("--m", type=int, action="append",
                         help=f"batch sizes (default: {' '.join(map(str, DEFAULT_M))})")
     parser.add_argument("--mode", default="streamed", choices=("streamed", "resident"),
@@ -755,8 +819,9 @@ def main(argv=None) -> int:
                                        "a '{rank}' in the path is filled per process")
     args = parser.parse_args(argv)
 
-    selected = {family: spec for family, spec in FIXTURES.items()
-                if not args.family or family in args.family}
+    selected = {fixture: spec for fixture, spec in FIXTURES.items()
+                if (not args.fixture or fixture in args.fixture)
+                and (not args.family or spec["family"] in args.family)}
     if args.merge:
         report = _merged(selected, args.merge, args.m or DEFAULT_M)
     elif args.preflight:
@@ -795,16 +860,17 @@ def main(argv=None) -> int:
         except Exception as exc:  # noqa: BLE001 -- recorded, not swallowed
             report["vllm"] = f"unavailable: {type(exc).__name__}: {exc}"
         ok = True
-        for family, spec in selected.items():
+        for fixture, spec in selected.items():
+            family = spec["family"]
             root = _fixture_root(spec)
             for module in spec["modules"]:
                 blob = _read_wire(root, module["tensor"])
                 scheme, declared = _declared(root, module["group"], blob, module["group"])
-                ok = _refusal_arms(family, module, declared, blob, report) and ok
+                ok = _refusal_arms(fixture, family, module, declared, blob, report) and ok
                 for m in (args.m or DEFAULT_M):
                     report["expected_arms"].append(
-                        _arm_id(family, module["group"], world, rank, m))
-                    ok = _arm(family, module, declared, scheme, blob,
+                        _arm_id(fixture, module["group"], world, rank, m))
+                    ok = _arm(fixture, family, module, declared, scheme, blob,
                               module["parallel"], rank, world, m,
                               args.mode, report) and ok
         report["all_arms_passed"] = bool(ok)

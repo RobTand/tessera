@@ -18,32 +18,40 @@ import pytest
 import native_dense_prefill_cross_check as cc
 
 #: The fixtures' own group names, so a fabricated table has the right rows.
+#: Keyed by FIXTURE, with the payload family beside it: the arm identity is the
+#: tree, because two trees serve one family now.
 GROUPS = {
-    "TESSERA_FP8": ("tessera_model_language_model_layers_3_mlp_shared_experts_gate_up_proj",
-                    "tessera_model_language_model_layers_3_mlp_shared_experts_down_proj"),
-    "TESSERA_BF16": ("tessera_model_layers_0_mlp_gate_up_proj",
-                     "tessera_model_layers_0_mlp_down_proj"),
+    "TESSERA_FP8": ("TESSERA_FP8",
+                    ("tessera_model_language_model_layers_3_mlp_shared_experts_gate_up_proj",
+                     "tessera_model_language_model_layers_3_mlp_shared_experts_down_proj")),
+    "TESSERA_BF16": ("TESSERA_BF16",
+                     ("tessera_model_layers_0_mlp_gate_up_proj",
+                      "tessera_model_layers_0_mlp_down_proj")),
 }
 M = (0, 1)
-SELECTED = {family: {"modules": [{"group": group} for group in groups]}
-            for family, groups in GROUPS.items()}
+SELECTED = {fixture: {"family": family,
+                      "modules": [{"group": group} for group in groups]}
+            for fixture, (family, groups) in GROUPS.items()}
 
 
-def _arm(family, group, world, rank, m, passed=True):
-    return {"family": family, "group": group, "tp_size": world, "tp_rank": rank, "m": m,
+def _arm(fixture, family, group, world, rank, m, passed=True):
+    return {"fixture": fixture, "family": family, "group": group,
+            "tp_size": world, "tp_rank": rank, "m": m,
             "passed": passed, "native_calls": 1, "materialiser_calls": [],
             "shape": [m, 4096]}
 
 
 def _report(world, rank, drop=(), passed=True):
-    arms = [_arm(family, group, world, rank, m, passed=passed)
-            for family, groups in GROUPS.items() for group in groups for m in M
-            if (family, group, m) not in drop]
-    expected = [[family, group, world, rank, m]
-                for family, groups in GROUPS.items() for group in groups for m in M]
-    refusals = [{"family": family, "group": group, "refusal": label, "refused": True,
+    arms = [_arm(fixture, family, group, world, rank, m, passed=passed)
+            for fixture, (family, groups) in GROUPS.items() for group in groups for m in M
+            if (fixture, group, m) not in drop]
+    expected = [[fixture, group, world, rank, m]
+                for fixture, (_family, groups) in GROUPS.items()
+                for group in groups for m in M]
+    refusals = [{"fixture": fixture, "family": family, "group": group,
+                 "refusal": label, "refused": True,
                  "named_the_mismatch": True, "message": "sidecar scheme declares ..."}
-                for family, groups in GROUPS.items() for group in groups
+                for fixture, (family, groups) in GROUPS.items() for group in groups
                 for label in ("family", "rung")]
     return {"device": "device", "torch": "torch", "vllm": "vllm", "mode": "streamed",
             "world_size": world, "tp_rank": rank, "arms": arms,
@@ -100,3 +108,34 @@ def test_a_red_arm_does_not_merge_green(tmp_path):
     merged = cc._merged(SELECTED, paths, M)
     assert merged["all_arms_passed"] is False
     assert any(not arm["passed"] for arm in merged["arms"])
+
+
+def test_a_fixture_key_names_a_tree_and_the_family_names_a_route():
+    """Two artifacts, one family: the key cannot be the family any more.
+
+    The small modules the lane landed against and the GLM layer-0 export are
+    both served by their family's route, so a table keyed by family could hold
+    only one of them at a time -- and the one it dropped would be the artifact
+    the lane is held to now.
+    """
+    from collections import Counter
+
+    counts = Counter(spec["family"] for spec in cc.FIXTURES.values())
+    assert counts["TESSERA_BF16"] >= 2 and counts["TESSERA_FP8"] >= 2, counts
+    assert any(key != spec["family"] for key, spec in cc.FIXTURES.items())
+    assert set(cc.FAMILIES) == set(counts)
+    for spec in cc.FIXTURES.values():
+        assert spec["family"] in cc.FAMILIES
+
+
+def test_the_glm_fixtures_are_named_through_box_artifacts():
+    """No literal box path: the shared measurement root owns the address."""
+    import box_artifacts
+
+    for key in ("GLM_A8", "GLM_A16"):
+        spec = cc.FIXTURES[key]
+        root_key = spec["artifact"][0]
+        assert root_key in box_artifacts.ROOTS
+        resolved = box_artifacts.path(*spec["artifact"])
+        assert resolved is not None and str(resolved).startswith(
+            str(box_artifacts.root(root_key)))
