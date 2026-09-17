@@ -472,6 +472,32 @@ def test_the_fp4_quantiser_still_launches_the_operator_for_a_real_batch(monkeypa
     assert calls[0]["swizzled"] is True and calls[0]["global_scale_numel"] == 1
 
 
+@pytest.mark.parametrize("columns", (16, 32, 80, 1024))
+def test_the_empty_fp4_scale_grid_keeps_the_operators_padded_column_count(monkeypatch, columns):
+    """The empty scale is the layout's own grid, not ``K // 16``.
+
+    The swizzled scale grid is ``round_up(K // 16, 4)`` columns -- the tensor
+    core's minimum tile pads the scale axis to a 4-column multiple -- so a K
+    the operator ACCEPTS (it checks ``K % 16 == 0``) but that is not a multiple
+    of 64 has a wider grid than one unit per 16 columns: K = 16 gives 4, K = 32
+    gives 4 and K = 80 gives 8, against ``K // 16`` of 1, 2 and 5.  Pre-fix this
+    case read ``(0, 5)`` for K = 80 while the operator's own view is ``(0, 8)``.
+
+    ``vllm._custom_ops.create_fp4_scale_tensor`` is the derivation, read on the
+    pinned image: it allocates ``(round_up(m, 128), round_up(n // 16, 4) // 4)``
+    int32, and the ``float8_e4m3fn`` view of it is four times as wide.
+    """
+    from tessera.serving import native_ops
+
+    calls = _fp4_op_spy(monkeypatch)
+    packed, scale = native_ops.native_fp4_quant(
+        _FakeFp4Activation(0, columns), _FakeGlobalScale())
+    assert calls == [], "a zero-token activation must not launch the FP4 quantiser"
+    assert (tuple(packed.shape), packed.dtype) == ((0, columns // 2), torch.uint8)
+    assert (tuple(scale.shape), scale.dtype) == (
+        (0, -(-columns // 64) * 4), torch.float8_e4m3fn)
+
+
 class _FakeGlobalScale:
     """One float32 value on the activation's device, as the route passes it."""
 

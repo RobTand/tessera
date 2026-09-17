@@ -216,9 +216,14 @@ def native_fp4_quant(x: torch.Tensor,
     empty answer is an empty packed tensor beside an empty swizzled-scale
     tensor: ``M_padded = round_up(0, 128) = 0``, the row axis the layout pads.
     Its COLUMN count keeps the shape THIS binding hands back -- the operator's
-    swizzled view as ``float8_e4m3fn``, one scale unit per 16 input columns
-    (K = 1024: 64), not the raw operator's narrower ``uint8`` view.  With zero
-    rows the tensor has no elements either way, and the downstream FP4 GEMM
+    swizzled scale as ``float8_e4m3fn``, one scale unit per 16 input columns.
+    That view is the WIDE one: the operator allocates the scale as ``int32``,
+    four packed e4m3 scales per word (``vllm._custom_ops``'s
+    ``create_fp4_scale_tensor``: ``(round_up(m, 128), round_up(K // 16, 4) // 4)``
+    int32), so the float8 view has FOUR TIMES the columns of the int32 tensor
+    over the same bytes.  The uint8 tensor of ``(m, K // 16)`` is the
+    NON-swizzled branch, which this binding never takes.  With zero rows the
+    tensor has no elements either way, and the downstream FP4 GEMM
     short-circuits at M = 0 as the FP8 one does.  The ``_load_native_ops``
     attestation above this path is what makes the operator's absence a refusal
     rather than an ``AttributeError``; this function still asks for the
@@ -237,7 +242,13 @@ def native_fp4_quant(x: torch.Tensor,
         raise TypeError("native FP4 quantization requires a float32 global scale, got "
                         f"{input_global_scale.dtype}")
     if x.shape[0] == 0:
+        # ``round_up(K // 16, 4)`` scale columns, which is ``ceil(K / 64) * 4``:
+        # the swizzled layout pads the scale grid to a 4-column multiple, so a K
+        # that is a multiple of 16 but not of 64 (K = 16, 32, 80 ...) has a wider
+        # scale grid than ``K // 16``.  The row axis is what the layout pads to
+        # 128, and it is zero here.
+        scale_columns = -(-x.shape[1] // 64) * 4
         return (x.new_empty((0, x.shape[1] // 2), dtype=torch.uint8),
-                x.new_empty((0, x.shape[1] // 16), dtype=torch.float8_e4m3fn))
+                x.new_empty((0, scale_columns), dtype=torch.float8_e4m3fn))
     packed, scale_factors = torch.ops._C.scaled_fp4_quant(x, input_global_scale, True)
     return packed, scale_factors.view(torch.float8_e4m3fn)
