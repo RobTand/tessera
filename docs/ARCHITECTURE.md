@@ -5,6 +5,33 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-16 for the routed window lane's intake predicate
+(`moe_route.compact_window_lane`).  The construction-time identity and the
+loader ownership were one question asked in two places, and their shared rule
+admitted the compact lane only at `tp_size == 2` for BF16: a research-selected
+BF16 stack at TP1 was constructed non-native and walked into the materialising
+branch and vLLM's backend oracle.  One function now answers both call sites,
+the A16 arm admits TP1 and TP2 under the research-selected config, and a family
+this builder does not serve answers False instead of being admitted.  TP1/TP2
+here is what `_require_research_parallel_contract` ACCEPTS -- config
+acceptance, and separately the lane's own DEVICE proof, not a qualification.
+Construction-level evidence: PB action `0a02b919…` (14 passed, CPU, no
+device), with the pre-fix failure recorded as `moe_route.py:738` ->
+`select_unquantized_moe_backend`.  Device evidence for the component: the
+canonical stock-oracle crosscheck runs the A16 folded-BF16 arms at TP1 and both
+TP2 cuts on the fixture's own layer-4 containers on a GB10 (sm_121) in the
+pinned image, all arms bounded, and measures the dispatch rather than inferring
+it -- `native_calls=2 selected_path_calls=0 monolithic_calls=0`, no
+selected-expert decode resident, both `apply_router_weight_on_input`
+placements, against a decoded reference that is never the native path's own
+bundles.  The same command fails at construction on base `fc66925`
+(`prefix-fail.log`).  That is a component proof: it shows the lane is reached
+and agrees with the stock oracle on real wires at TP1 and TP2.  It is NOT a
+TP1 serve -- no whole model has been served at TP1, so no end-to-end TP1
+serving, routed-cell, rung or performance claim is made -- and only the
+container's own 48 GiB cgroup cap was enforced in that run; the physical
+memory floor was observed, not armed.  The routed cells still name the stock
+dispatch and the pair stays in `scheme.EXPERIMENTAL_LAUNCHES`.
 Re-stamped 2026-09-16 for the served-cell selection the export gate reads
 (tessera#456, tessera#135). `scheme.attested_cells` selected every
 `lane_eligibility` cell of a `(family, structure)` pair, so a cell stating the
@@ -2072,8 +2099,18 @@ their own load-time agreement for the reference path.  The lane stamps
 `window_gemv`, so a census can tell a native serve from a reference one.
 
 **The ROUTED window lane serves the same way, and is likewise a candidate.** A
-routed stack whose family is FP8 (`TESSERA_E4M3_K1`) or BF16
-(`TESSERA_BF16_K1`) runs the compact intake -- one
+routed stack reaches the compact intake through ONE predicate,
+`moe_route.compact_window_lane`: `TESSERA_E4M3_K1` (FP8) takes it at every
+world size, and `TESSERA_BF16_K1` takes it only under an explicit
+research-selected config, at TP1 and TP2 -- the world sizes
+`_require_research_parallel_contract` accepts, which is config acceptance and
+not device qualification -- because compressed BF16 has no
+production expert route (`scheme.MOE_BUILDERS` names FP8 and NVFP4, and
+`refuse_a_family_with_no_expert_route` refuses the stack at the builder's front
+door before any fused-MoE import).  An unsupported BF16 stack is therefore
+refused by name, never handed to a materialiser, and a family this builder does
+not serve is answered False rather than admitted through this lane.  The lane
+runs one
 `scheme.parse_compact_tessera_expert_blob` per projection -- into a
 preallocated per-expert axis (`native_window_moe.WindowUnitAxis`) and applies
 the two-stage grouped kernels (`window_gemm_grouped`, wrapped by

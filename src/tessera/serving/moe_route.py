@@ -644,6 +644,49 @@ def _bind_module_prefix(layer, prefix: str) -> bool:
     return True
 
 
+def compact_window_lane(family: str, compact_ready: bool, *, tp_size: int,
+                        research_selected) -> bool:
+    """ONE home for the routed window lane's own predicate.
+
+    The construction-time identity (``native_route``) and the loader's
+    ownership (``incremental``) are one question asked in two places, and for
+    every input this builder can be reached with the two said the same thing.
+    What their shared rule did NOT do was admit the compact lane below TP2 for
+    BF16: a research-selected A16 stack at TP1 was constructed non-native --
+    straight into the materialising branch and vLLM's backend oracle
+    (``moe_route.py:738``) -- while nothing filled a compact lane for it.  One
+    home now answers both call sites, and the A16 arm admits TP1 as well as
+    TP2, so the identity and the intake cannot be moved apart.  Whoever moves
+    this rule moves it here.
+
+    FP8 takes the compact lane at every world size: the shared reader cuts its
+    windows per rank and the wire is TP-agnostic.  Compressed BF16 has no
+    production expert route at all (``scheme.MOE_BUILDERS`` names FP8 and
+    NVFP4; ``refuse_a_family_with_no_expert_route`` is asked at the builder's
+    front door, and the builder's carve-out admits BF16 only with an explicit
+    research-selected config), so its only admission is that config, whose
+    folded arithmetic is the bundle's contract.  That route's parallel contract
+    ACCEPTS TP1 and TP2 only (``_require_research_parallel_contract`` refuses
+    anything else) and it now takes the compact lane at both; acceptance by
+    config is not device qualification, which the research route still owes.
+    ``compact_ready`` is whether this build publishes the shared reader;
+    without it nothing takes the compact lane and the FP8 route keeps its
+    materialising branch.
+    """
+    if not compact_ready:
+        return False
+    if family == TESSERA_FP8:
+        return True
+    if family not in (TESSERA_FP8, TESSERA_BF16):
+        # This builder serves FP8 and the research-selected BF16 carve-out;
+        # another family's stack belongs to its own builder
+        # (``scheme.MOE_BUILDERS`` names each family's route).  Do not admit a
+        # lane nothing here serves: an unsupported family answers False, and
+        # whatever refuses it by name does so where the family is decided.
+        return False
+    return research_selected is not None and int(tp_size) in (1, 2)
+
+
 def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
                              research_selected: ResearchSelectedMoeConfig | None = None):
     """Construct the vLLM fused-MoE method serving a Tessera expert stack.
@@ -725,8 +768,9 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
             from . import scheme as _scheme
             self._compact_ready = getattr(
                 _scheme, "parse_compact_tessera_expert_blob", None) is not None
-            native_route = (self._compact_ready
-                            and (family == TESSERA_FP8 or self._tp_size == 2))
+            native_route = compact_window_lane(
+                family, self._compact_ready, tp_size=self._tp_size,
+                research_selected=research_selected)
             if not native_route:
                 if family == TESSERA_BF16:
                     if research_selected is None:
@@ -848,12 +892,11 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
             # The wires: one padded row per (expert, projection), the group's
             # declared stride wide, each with its own loader.  The compact
             # intake replaces the padded staging wherever the shared reader is
-            # published: the FP8 candidate route at every tp size, and the
-            # research-selected TP2 route.
-            from . import scheme as _scheme
-            incremental = (self._compact_ready
-                           and (family == TESSERA_FP8
-                                or (research_selected is not None and self._tp_size == 2)))
+            # published -- the same predicate the constructor used, so the
+            # identity and the intake cannot disagree.
+            incremental = compact_window_lane(
+                family, self._compact_ready, tp_size=self._tp_size,
+                research_selected=research_selected)
             if incremental:
                 # Stock constructs every owner before loading any weight. Keep
                 # loader names/device anchors, without full-checkpoint staging.
