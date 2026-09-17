@@ -20,6 +20,10 @@ world above one is bound from a live `torch.distributed` group
 the runtime's own final all-reduce at that cut. The LFM owner's record, wire
 and sidecar are unchanged field for field.
 
+A request may also split the source out of the tensor file -- one CPU
+`source_path` read per member, renders/phase/bias on the device -- and the
+source and render proof tensors are released before the timed region (§2.5).
+
 A member's name is the producer's own spelling -- the role's
 `<owner>.<expert>.w1` or the projection's `<owner>.<expert>.gate_proj`,
 resolved through `MOE_SHARD_PROJECTIONS` -- and its source container is the
@@ -1786,6 +1790,22 @@ the whole container, so `w13` declares `2N` rows and `w2` `N` columns whatever
 the serving world is, while the cut is the loader's. `create_weights` is what
 refuses a partition width that is not exactly `intermediate_size // tp`.
 
+**One shared source on the host, and no proof tensors inside the timed region.**
+A routed owner's source containers are the whole unit per member, and the
+harness reads them for two CPU facts only: the wire's sealed
+`identity["source"]` and the member's declared geometry.  A request may
+therefore name a separate ONE-file `source_path`, read with `safetensors`'s own
+reader one member at a time on the CPU, while `tensors_path` carries the
+renders, the captured routing bias and the phase tensors on the device; the
+legacy monolithic request names only `tensors_path` and is unchanged key for
+key, which is the LFM lane.  The wire decode runs on the TARGET the render
+lives on, not on whichever device the source happened to be read into.  Once
+every member is qualified, the source and render proof tensors are released
+(`release_verification_tensors`) before the timed region and the owner's own
+bytes are re-checked after the release, so a benchmark pays for the phases, the
+bias and the loaded owner rather than for the 13.5 GiB source and 6.75 GiB of
+renders it only had to prove.
+
 **A member name is the producer's, and each width belongs to its own claim.**
 The harness's grammar spells a member by its ROLE
 (`<owner>.<expert>.w1`), while a checkpoint whose source tensors are named by
@@ -1802,6 +1822,11 @@ the wire identity binds -- while its `rendered_weight` record and the panel's
 `check_member_geometries` refuses a rank-local source or a module-wide render
 before CUDA; at a world of one the two geometries are the same list, so the LFM
 TP1 owner's records are unchanged field for field.
+
+The two checks meet in one place: the shared source is read on the host, so the
+device requirement is the RENDER's alone (`_require_source_tensor` accepts the
+host copy the shared file yields), while `check_member_geometries` still binds
+the container to the module's width and the render to this rank's cut.
 
 **The operator receipt names a standalone factory context, not an engine.**
 This harness prices ONE routed owner built with the factory under test: it has
