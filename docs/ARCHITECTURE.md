@@ -20,6 +20,11 @@ world above one is bound from a live `torch.distributed` group
 the runtime's own final all-reduce at that cut. The LFM owner's record, wire
 and sidecar are unchanged field for field.
 
+The runner that owns that reduction is carried beside the routed layer
+(`WholeOwner`) rather than registered inside it, and the callsite a receipt
+names is derived from the module the probe wraps and the method it counts, so
+the printed site cannot drift from the object whose calls were counted.
+
 Re-stamped 2026-09-16 for the routed window lane's intake predicate
 (`moe_route.compact_window_lane`).  The construction-time identity and the
 loader ownership were one question asked in two places, and their shared rule
@@ -1786,13 +1791,18 @@ describe a cut nobody makes, and `_check_prepared` refuses a rank-local shape
 the panel's own `runtime_binding.member_shapes` does not declare.
 `runtime.collective` states which reduction this owner REQUIRES
 (`tensor_model_parallel_all_reduce` at
-`vllm.fused_moe.runner.moe_runner:_maybe_reduce_final_output`) and what the
-layer's own config says about skipping it.  That is a requirement, not
+`vllm.model_executor.layers.fused_moe.runner.moe_runner:_maybe_reduce_final_output`,
+the module the probe wraps with the method it counts) and what the layer's own
+config says about skipping it.  That is a requirement, not
 evidence: the expert method returns routed output only, so `apply_whole` hands
 the partial to the runtime's own `_maybe_reduce_final_output`, and
 `observe_output_collective` counts real calls at the name the runner module
 imports (`moe_runner.py:15`; the reduction is at `:477`), requiring exactly one
 call per priced apply above a world of one and none at a world of one.
+The runner is carried BESIDE the layer (`WholeOwner`), never as an attribute of
+it: the runner already holds the layer as its `routed_experts` child, so a
+parent reference on the child would register a cycle that `.to()`, `.train()`
+and `state_dict()` would walk, and `verify_owner_topology` refuses one.
 `receipt.latency_scope` is built from that COUNT, never from the config flag,
 and names the per-phase counts it saw. `receipt.resources` carries `rank`,
 `world_size` and every other rank's

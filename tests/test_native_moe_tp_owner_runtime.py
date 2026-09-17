@@ -261,9 +261,14 @@ def test_the_collective_is_counted_at_the_runner_callsite_or_refused():
     ran", because a silent zero is exactly how a config-only claim would look.
     """
     assert moe.RUNTIME_COLLECTIVE_MODULE.endswith("fused_moe.runner.moe_runner")
+    # The site is the module the probe wraps, plus the method it counts: one
+    # definition, so the name a receipt prints cannot drift from the object
+    # whose calls are counted.
     assert moe.RUNTIME_COLLECTIVE_SITE == (
-        "vllm.fused_moe.runner.moe_runner:_maybe_reduce_final_output")
-    assert moe.RUNTIME_COLLECTIVE_SITE.split(":")[1] == "_maybe_reduce_final_output"
+        "vllm.model_executor.layers.fused_moe.runner.moe_runner"
+        ":_maybe_reduce_final_output")
+    assert moe.RUNTIME_COLLECTIVE_SITE == (
+        f"{moe.RUNTIME_COLLECTIVE_MODULE}:{moe.RUNTIME_COLLECTIVE_METHOD}")
     try:
         import vllm.model_executor.layers.fused_moe.runner.moe_runner  # noqa: F401
     except ImportError:
@@ -274,7 +279,7 @@ def test_the_collective_is_counted_at_the_runner_callsite_or_refused():
     pytest.skip("the runtime is importable here; the device lane counts the real call")
 
 
-def _fake_layer(*, world, runner=None):
+def _fake_owner(*, world, runner=None):
     from types import SimpleNamespace
 
     class _Layer:
@@ -282,9 +287,7 @@ def _fake_layer(*, world, runner=None):
 
     layer = _Layer()
     layer.moe_config = SimpleNamespace(moe_parallel_config=SimpleNamespace(tp_size=world))
-    if runner is not None:
-        layer.tessera_runner = runner
-    return layer
+    return moe.WholeOwner(layer=layer, runner=runner)
 
 
 def test_a_routed_partial_reaches_the_runtimes_own_reduction_or_refuses():
@@ -299,16 +302,70 @@ def test_a_routed_partial_reaches_the_runtimes_own_reduction_or_refuses():
                             lambda self, hidden, trunc: (reached.append(trunc), hidden * 2)[1]})()
     partial = torch.ones(2, 3, dtype=torch.bfloat16)
     # At a world of one nothing is reduced and the tensor is returned as-is.
-    single = _fake_layer(world=1, runner=runner)
+    single = _fake_owner(world=1, runner=runner)
     assert moe.reduce_routed_output(single, partial) is partial
     assert reached == []
     # Above one the runtime's own seam is invoked on the routed partial.
-    split = _fake_layer(world=2, runner=runner)
+    split = _fake_owner(world=2, runner=runner)
     out = moe.reduce_routed_output(split, partial)
     assert reached == [None] and out is not partial and bool((out == 2).all())
     # A runtime with no such seam refuses; it does not silently return half.
     with pytest.raises(ValueError, match="late all-reduce"):
-        moe.reduce_routed_output(_fake_layer(world=2), partial)
+        moe.reduce_routed_output(_fake_owner(world=2), partial)
+
+
+def _torch_owner(*, register_parent=False):
+    """A real parent/child module pair, in the runtime's own shape."""
+    import torch.nn as nn
+
+    class _Child(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.weight = nn.Parameter(torch.zeros(1, dtype=torch.bfloat16))
+
+    layer = _Child()
+    runner = nn.Module()
+    runner.routed_experts = layer
+    if register_parent:
+        # The defect root caught: an nn.Module attribute is a REGISTERED child,
+        # so the runner would hang inside the layer it owns.
+        layer.tessera_runner = runner
+    return layer, runner
+
+
+def test_the_runner_is_kept_beside_the_layer_that_it_owns():
+    """The owner holds both; neither is a registered child of the other."""
+    import torch
+    layer, runner = _torch_owner()
+    owner = moe.WholeOwner(layer=layer, runner=runner)
+    moe.verify_owner_topology(owner)
+    assert list(layer.modules()) == [layer]
+    assert layer._modules == {}
+    assert set(layer.state_dict()) == {"weight"}
+    # .to() over the layer must not walk back up into the runner.
+    moved = layer.to(torch.device("cpu"))
+    assert list(moved.modules()) == [moved]
+
+
+def test_a_runner_registered_inside_its_own_layer_is_refused():
+    """The cycle root reviewed: .to()/.state_dict() would recurse through it."""
+    layer, runner = _torch_owner(register_parent=True)
+    assert runner in list(layer.modules())
+    with pytest.raises(ValueError, match="registered inside the layer it owns"):
+        moe.verify_owner_topology(moe.WholeOwner(layer=layer, runner=runner))
+
+
+def test_the_owner_releases_the_runner_when_it_is_dropped():
+    """No back-reference keeps the pair alive: cleanup is the holder's."""
+    import gc
+    import weakref
+
+    layer, runner = _torch_owner()
+    owner = moe.WholeOwner(layer=layer, runner=runner)
+    registry = weakref.ref(runner)
+    del owner, runner, layer
+    gc.collect()
+    assert registry() is None
 
 
 @pytest.mark.parametrize("tp", [1, 2])

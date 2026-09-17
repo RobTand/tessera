@@ -35,11 +35,16 @@ MODE_RESIDENT = "resident"
 #: it uses.  A whole-owner receipt prices one apply including this; a local
 #: matmul priced as the module is the leaf timing this refuses to be.
 RUNTIME_COLLECTIVE_OP = "tensor_model_parallel_all_reduce"
-RUNTIME_COLLECTIVE_SITE = "vllm.fused_moe.runner.moe_runner:_maybe_reduce_final_output"
 #: The name the runtime's runner module imports and calls.  The probe wraps the
 #: module attribute, because that is the object the reduction actually invokes.
 RUNTIME_COLLECTIVE_MODULE = "vllm.model_executor.layers.fused_moe.runner.moe_runner"
 RUNTIME_COLLECTIVE_ATTR = "tensor_model_parallel_all_reduce"
+RUNTIME_COLLECTIVE_METHOD = "_maybe_reduce_final_output"
+#: The site a receipt prints is DERIVED from the module the probe wraps and the
+#: method the runner publishes, so the named callsite cannot drift from the
+#: object whose calls are counted (it did: the site said `vllm.fused_moe.runner`,
+#: an import path this runtime does not have).
+RUNTIME_COLLECTIVE_SITE = f"{RUNTIME_COLLECTIVE_MODULE}:{RUNTIME_COLLECTIVE_METHOD}"
 ROLE_ORDER = ("w1", "w3", "w2")
 
 #: Where each geometry keeps the width its own members actually carry.
@@ -1014,6 +1019,37 @@ def verify_native_configuration(layer, shape, routing, max_tokens, *, wire, rank
         raise ValueError("factory selected unsupported monolithic execution")
 
 
+@dataclasses.dataclass(frozen=True)
+class WholeOwner:
+    """A routed layer and the runtime RUNNER that owns its output reduction.
+
+    Two fields rather than an attribute on the layer, because the relationship
+    is the other way round: the runner holds this layer as its
+    ``routed_experts`` child.  Hanging the parent off the child would register
+    the runner as a submodule of its own submodule -- a cycle every ``.to()``,
+    ``.train()`` and ``state_dict()`` walk would follow -- so the runner is kept
+    here instead, which is also the strong reference the receipt needs: the
+    expert method returns a partial sum, and only this owner can reduce it.
+    """
+    layer: object
+    runner: object
+
+
+def verify_owner_topology(owner):
+    """Refuse a runner registered inside the layer it owns, or a mismatch."""
+    import torch
+    layer, runner = owner.layer, owner.runner
+    if not isinstance(runner, torch.nn.Module):
+        return
+    if isinstance(layer, torch.nn.Module) and any(child is runner for child in layer.modules()):
+        raise ValueError(
+            "the runtime runner is registered inside the layer it owns; that cycle makes "
+            ".to()/.train()/state_dict() recurse and the late all-reduce unreachable")
+    holder = getattr(runner, "routed_experts", None)
+    if holder is not None and holder is not layer:
+        raise ValueError("the runtime runner owns a different routed layer than the one prepared")
+
+
 def _build_layer(scheme, shape, routing, *, unit, device, bias, wire, selected=None):
     """Use the same FusedMoEFactory arguments as the stock model, at its own cut."""
     import torch
@@ -1034,10 +1070,9 @@ def _build_layer(scheme, shape, routing, *, unit, device, bias, wire, selected=N
         swiglu_limit=routing.get("swiglu_limit"), tp_size=int(shape.get("tensor_parallel", 1)),
         reduce_results=True, ckpt_names=("w1", "w2", "w3"))
     # The expert method computes routed output only; the RUNNER owns the final
-    # all-reduce, so the receipt keeps it rather than reimplementing it.
-    layer = runner.routed_experts.to(device)
-    layer.tessera_runner = runner
-    return layer
+    # all-reduce, so the receipt keeps it -- beside the layer, never registered
+    # as a child of it.
+    return WholeOwner(layer=runner.routed_experts.to(device), runner=runner)
 
 
 def prepare_native_moe_operator(member_inputs, tensors, phase_tensors, *, unit, shape, routing,
@@ -1122,8 +1157,10 @@ def prepare_native_moe_operator(member_inputs, tensors, phase_tensors, *, unit, 
     device = phase_tensors["prefill"]["input"].device
     if max(v["input"].shape[0] for v in phase_tensors.values()) > serving_config["document"]["engine_args"]["max_num_batched_tokens"]:
         raise ValueError("actual phase exceeds the explicit serving scheduler token limit")
-    layer = _build_layer(scheme, shape, routing, unit=unit, device=device, bias=bias, wire=wire,
+    owner = _build_layer(scheme, shape, routing, unit=unit, device=device, bias=bias, wire=wire,
                          selected=selected)
+    verify_owner_topology(owner)
+    layer = owner.layer
     with torch.no_grad():
         loaded = list(layer.load_weights(wires))
         if len(loaded) != len(wires):
@@ -1140,7 +1177,7 @@ def prepare_native_moe_operator(member_inputs, tensors, phase_tensors, *, unit, 
     with torch.inference_mode():
         for phase in PHASES:
             for _ in range(warmup_iterations):
-                apply_whole(layer, phase_tensors[phase])
+                apply_whole(owner, phase_tensors[phase])
         torch.cuda.synchronize()
     if phase_identities(phase_tensors) != initial_tensors or dense._native_tensors(layer) != native_before:
         raise ValueError("native preparation mutated input or loaded expert tensors")
@@ -1193,11 +1230,11 @@ def prepare_native_moe_operator(member_inputs, tensors, phase_tensors, *, unit, 
             config["moe_config"].get("skip_final_all_reduce"),
         "world_size": int(world)}
     runtime["source"]["routed_harness_sha256"] = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
-    return {"layer": layer, "operator": operator, "runtime": runtime, "distributed": distributed,
+    return {"owner": owner, "operator": operator, "runtime": runtime, "distributed": distributed,
             "workspace": workspace, "workspace_pointers": pointers}
 
 
-def apply_whole(layer, tensors):
+def apply_whole(owner, tensors):
     """One whole routed owner's apply, INCLUDING the runtime's reduction.
 
     The expert method returns routed output only: the runner owns the final
@@ -1206,12 +1243,13 @@ def apply_whole(layer, tensors):
     alone at a world above one prices this rank's partial sum and calls it the
     module, which is exactly the leaf timing a whole-owner receipt must not be.
     """
+    layer = owner.layer
     hidden = layer.quant_method.apply(layer, tensors["input"], tensors["topk_weights"],
                                       tensors["topk_ids"], None, None)
-    return reduce_routed_output(layer, hidden)
+    return reduce_routed_output(owner, hidden)
 
 
-def reduce_routed_output(layer, hidden):
+def reduce_routed_output(owner, hidden):
     """Hand a routed partial to the RUNTIME's own late reduction, or refuse.
 
     At a world of one there is nothing to reduce and the tensor is returned
@@ -1219,11 +1257,11 @@ def reduce_routed_output(layer, hidden):
     the runtime's own seam is called; a build that no longer publishes it is a
     refusal rather than a harness reimplementation of the serving arithmetic.
     """
+    layer, runner = owner.layer, owner.runner
     parallel = getattr(getattr(layer, "moe_config", None), "moe_parallel_config", None)
     world = int(getattr(parallel, "tp_size", 1) or 1)
     if world <= 1:
         return hidden
-    runner = getattr(layer, "tessera_runner", None)
     reduce_final = getattr(runner, "_maybe_reduce_final_output", None)
     if not callable(reduce_final):
         raise ValueError(
@@ -1447,7 +1485,9 @@ def _check_phase_tensors(panel, phase_tensors):
 
 def _check_prepared(prepared, panel):
     dense._require_eager_context()
-    operator, layer = prepared["operator"], prepared["layer"]
+    operator, owner = prepared["operator"], prepared["owner"]
+    verify_owner_topology(owner)
+    layer = owner.layer
     execution = panel["runtime"]["execution"]
     if int(prepared["distributed"]["world_size"]) != int(execution["tensor_parallel"]):
         raise ValueError("prepared world size differs from the panel's execution record")
@@ -1505,7 +1545,8 @@ def measure_prepared_operator(prepared, panel, phase_tensors, *, warmup_iteratio
     distributed = prepared["distributed"]
     if bind_owner_rank(distributed) != (int(distributed["rank"]), int(distributed["world_size"])):
         raise ValueError("the live group moved under a prepared owner")
-    layer = prepared["layer"]
+    owner = prepared["owner"]
+    layer = owner.layer
     observations, resource_phases = {}, {}
     with torch.inference_mode():
         for phase in PHASES:
@@ -1521,7 +1562,7 @@ def measure_prepared_operator(prepared, panel, phase_tensors, *, warmup_iteratio
             # must show none, either way from what ran rather than what the
             # config intended.
             with observe_output_collective() as collective_calls:
-                output = apply_whole(layer, tensors)
+                output = apply_whole(owner, tensors)
             torch.cuda.synchronize()
             collective = agree_output_across_ranks(output, distributed=distributed,
                                                    where=phase + " routed output")
@@ -1565,13 +1606,13 @@ def measure_prepared_operator(prepared, panel, phase_tensors, *, warmup_iteratio
                 _check_phase_tensors(panel, phase_tensors)
                 if resource_collector is None:
                     observations[phase]["measurement"] = dense.time_apply(
-                        lambda phase=phase: apply_whole(layer, phase_tensors[phase]),
+                        lambda phase=phase: apply_whole(owner, phase_tensors[phase]),
                         warmup_iterations=warmup_iterations, iterations=iterations)
                 else:
                     # Warm the allocator with real applies, but do not price
                     # calls while CUPTI memory/API collection is active.
                     for _ in range(warmup_iterations):
-                        apply_whole(layer, phase_tensors[phase])
+                        apply_whole(owner, phase_tensors[phase])
                     torch.cuda.synchronize()
                 _check_prepared(prepared, panel)
                 _check_phase_tensors(panel, phase_tensors)
@@ -1583,7 +1624,7 @@ def measure_prepared_operator(prepared, panel, phase_tensors, *, warmup_iteratio
                     _check_prepared(prepared, panel)
                     _check_phase_tensors(panel, phase_tensors)
                     output, allocation = resource_collector.observe_apply(
-                        lambda phase=phase: apply_whole(layer, phase_tensors[phase]),
+                        lambda phase=phase: apply_whole(owner, phase_tensors[phase]),
                         phase, device=phase_tensors[phase]["input"].device.index)
                     error = dense.compare_tensors(output, phase_tensors[phase]["reference_output"], **panel["numerics"])
                     if error["status"] != "passed" or read_route(layer) != observations[phase]["route"]:
@@ -1640,11 +1681,11 @@ def time_after_resource_collection(prepared, panel, phase_tensors, receipt, *, c
             _check_prepared(prepared, panel)
             _check_phase_tensors(panel, phase_tensors)
             receipt["phases"][phase]["measurement"] = dense.time_apply(
-                lambda phase=phase: apply_whole(prepared["layer"], phase_tensors[phase]),
+                lambda phase=phase: apply_whole(prepared["owner"], phase_tensors[phase]),
                 warmup_iterations=warmup_iterations, iterations=iterations)
             _check_prepared(prepared, panel)
             _check_phase_tensors(panel, phase_tensors)
-            if read_route(prepared["layer"]) != receipt["phases"][phase]["route"]:
+            if read_route(prepared["owner"].layer) != receipt["phases"][phase]["route"]:
                 raise ValueError(f"{phase}: native route changed during decision timing")
     receipt["status"] = "timing_admissible"
     receipt["timing_scope"] = "cuda_events_after_resource_collector_stop"
@@ -1697,14 +1738,14 @@ def profile_prepared_operator(prepared, panel, phase_tensors, *, output_prefix,
     for phase in PHASES:
         # Both phases already passed the strict unprofiled gate. Profiler
         # instrumentation may map extra libraries of its own after entry.
-        if dense._native_tensors(prepared["layer"]) != prepared["operator"]["native_tensors"]:
+        if dense._native_tensors(prepared["owner"].layer) != prepared["operator"]["native_tensors"]:
             raise ValueError("native tensors changed before profiling")
         if dense.observe_arithmetic() != panel["runtime"]["arithmetic"]:
             raise ValueError("arithmetic changed before profiling")
         _check_phase_tensors(panel, phase_tensors)
         with torch.inference_mode(), profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
                                              record_shapes=True, profile_memory=True) as prof:
-            output = apply_whole(prepared["layer"], phase_tensors[phase])
+            output = apply_whole(prepared["owner"], phase_tensors[phase])
             torch.cuda.synchronize()
         numerics = dense.compare_tensors(output, phase_tensors[phase]["reference_output"], **panel["numerics"])
         if numerics["status"] != "passed":
