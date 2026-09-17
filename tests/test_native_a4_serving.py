@@ -19,6 +19,8 @@ from pathlib import Path
 import numpy as np
 import torch
 
+import box_artifacts
+
 try:
     import pytest
 except ImportError:  # the stock serve image runs the gate without pytest
@@ -29,7 +31,11 @@ from tessera.errors import GrammarError
 from tessera.kernel_a4 import A4Unit, a4_quantize_activation, a4_span2_gemm
 from tessera.serving.native_a4 import prepare_a4_unit, a4_dense_apply
 
-DATA = Path(os.environ.get("TESSERA_A4_WIRE_DIR", "/mnt/shared/astra-native-a4/data"))
+#: The shared A4 wire fixtures, resolved through ``box_artifacts`` so the path
+#: lives in the one module allowed to name a box's address space
+#: (``tests/test_box_artifacts.py`` holds that rule); ``TESSERA_A4_WIRE_DIR``
+#: still overrides it.
+DATA = box_artifacts.path("a4_wires")
 PREFIX = "model.language_model.layers.3.mlp.experts"
 LAYER = "layers_3"
 TP = 2

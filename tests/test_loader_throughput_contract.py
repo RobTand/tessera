@@ -107,6 +107,13 @@ def _facts(metadata) -> dict:
 
 
 def test_memo_does_not_change_any_corpus_verdict():
+    # ``tessera.unit_artifact`` imports torch at module scope, so this ONE test
+    # cannot run in the bytes-only CI job even though the module around it can.
+    # The rest of this file stays torch-free and keeps its pure coverage; a
+    # module-scope import here would skip the whole file instead.
+    pytest.importorskip(
+        "torch", reason="tessera.unit_artifact reads unit metadata through torch"
+    )
     from tessera.unit_artifact import parse_unit_metadata
 
     assert CORPUS, "the legacy corpus is the population this test speaks about"
@@ -135,7 +142,18 @@ def test_memo_does_not_change_any_corpus_verdict():
 
 
 def _a4_wire_blob() -> bytes:
-    """The Tessera artifact inside one expert projection's fused container."""
+    """The Tessera artifact inside one expert projection's fused container.
+
+    Reading a ``.safetensors`` shard needs a framework, and this suite's is
+    torch, so the bytes-only CI job has no way to reach this fixture.  The
+    absence of the *dependency* skips exactly as the absence of the box
+    artifact below does; a module-scope import would have skipped the whole
+    file, including the digest-path contract tests that need no torch.
+    """
+    pytest.importorskip(
+        "torch", reason="reading a safetensors shard needs a framework"
+    )
+    pytest.importorskip("safetensors", reason="the shard reader itself")
     index_path = box_artifacts.skip_now("a4_export", "model.safetensors.index.json")
     weight_map = json.loads(Path(index_path).read_text())["weight_map"]
     tensor = A4_TENSOR.format(projection="gate_proj")

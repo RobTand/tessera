@@ -11,10 +11,18 @@
 #   bash experiments/small_a4_serve.sh rank1   # on sparklina
 set -euo pipefail
 
+TS=${TS:-$(cd "$(dirname "$0")/.." && pwd)}
 IMAGE=localhost/prismaquant/spark-vllm-nccl230@sha256:a5424378322071f4c33e63d1372a2bb028e46b03f0da0e5edb0cdd7418e2cebb
 MODEL=${MODEL:-/mnt/shared/tessera-runs/moe/glm53-4layer-a4-e2m1x2-q896-l2}
 ROLE=${1:?rank0|rank1}
 NAME="a4-small-${ROLE}"
+
+# Gated like every other wrapper here that starts a container (issue #100):
+# this one names an explicit digest, so the gate verifies that digest against
+# the daemon's RepoDigests and stamps what actually ran rather than trusting the
+# literal above.
+source "$TS/experiments/runtime_image.sh"
+runtime_image_require "$IMAGE" || exit 2
 
 if [ "$ROLE" = "rank0" ]; then
   RANK=0; HOST_IP=192.168.100.1; PEER_IP=192.168.100.2; PORT=8000
