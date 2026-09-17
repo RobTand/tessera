@@ -31,7 +31,11 @@ def _fake_docker(tmp_path, record):
     (fake / "docker").write_text(
         "#!/usr/bin/env bash\n"
         'case "$1" in\n'
-        "  image) printf 'sha256:%s\\t[\"%s\"]\\n' \"$FAKE_LOCAL_ID\" \"$FAKE_PINNED\"; exit 0 ;;\n"
+        "  image) if [ \"$3\" = \"$FAKE_PINNED\" ]; then\n"
+        "           printf 'sha256:%s\\t[\"%s\"]\\n' \"$FAKE_LOCAL_ID\" \"$FAKE_PINNED\";\n"
+        "         else\n"
+        "           printf 'sha256:%s\\t[\"vllm/vllm-openai@sha256:%064d\"]\\n' \"$FAKE_LOCAL_ID\" 0;\n"
+        "         fi; exit 0 ;;\n"
         "  ps) exit 0 ;;\n"
         '  run) printf "%s\\n" "$@" >> "$FAKE_RUN_RECORD"; exit 0 ;;\n'
         "esac\n"
@@ -54,16 +58,17 @@ def _tree(tmp_path):
 
 def _run(tmp_path, root, *, request=None, panel=None, out=None, mode="prepare",
          world=2, rank=0, rendezvous="tcp://box-a:29500", image=PINNED, extra_env=None):
-    fake = _fake_docker(tmp_path, tmp_path / "docker-run.txt")
+    record = tmp_path / f"docker-run-{len(list(tmp_path.glob('docker-run-*.txt')))}.txt"
+    fake = _fake_docker(tmp_path, record)
     env = dict(os.environ,
                PATH=f"{fake}:{os.environ['PATH']}",
                FAKE_PINNED=PINNED, FAKE_LOCAL_ID="sha256:" + "aa" * 32,
-               FAKE_RUN_RECORD=str(tmp_path / "docker-run.txt"),
+               FAKE_RUN_RECORD=str(record),
                SERVE_LOCK=str(tmp_path / "serve.lock"),
                TMPDIR=box_artifacts.scratch_tmpdir())
     env.update(RANK=str(rank), WORLD=str(world), RATE="a16", MODE=mode,
                REQUEST=str(request or root / "requests" / "a16-tp2.json"),
-               OUT=str(out or root / "receipts" / "a16-tp2-rank%d.json" % rank))
+               OUT=str(out or root / "receipts" / ("a16-tp2-rank%d.json" % rank)))
     if panel is not None:
         env["PANEL"] = str(panel)
     if rendezvous is not None:
@@ -149,7 +154,9 @@ def test_the_request_world_must_be_the_process_that_runs_it(tmp_path):
 def test_an_unpinned_image_never_reaches_the_container(tmp_path):
     root = _tree(tmp_path)
     _write_request(root)
-    proc, runs = _run(tmp_path, root, image="vllm/vllm-openai:latest")
+    repository = PINNED.partition("@")[0]
+    assert ":" not in repository, "the pin is a digest reference on a bare repository"
+    proc, runs = _run(tmp_path, root, image=f"{repository}:latest")
     assert proc.returncode == 2, proc.stdout + proc.stderr
     assert runs == []
 
@@ -167,6 +174,9 @@ def test_both_ranks_run_every_mode_through_the_gated_wrapper(tmp_path, mode, ran
     assert "--request /workspace/tessera/requests/a16-tp2.json" in argv
     assert "--out /receipts/a16-tp2-rank%d.json" % rank in argv
     if mode == "prepare":
+        # The harness CLI requires exactly one of --prepare/--panel, so prepare
+        # has to actually pass it rather than rely on the panel's absence.
+        assert "--prepare" in argv
         assert "--panel" not in argv and "--profile" not in argv
     if mode == "panel":
         assert "--panel /workspace/tessera/panels/a16-tp2.json" in argv
@@ -175,3 +185,37 @@ def test_both_ranks_run_every_mode_through_the_gated_wrapper(tmp_path, mode, ran
     # The aggregate cap is the container's own limit, and the tree is read-only.
     assert "--memory=32g" in argv and "--memory-swap=32g" in argv
     assert any(part.endswith(":/workspace/tessera:ro") for part in runs)
+    # The request's wire and tensor paths live on the shared mount.
+    assert "/mnt/shared:/mnt/shared:ro" in runs
+
+
+def test_a_fresh_output_directory_is_created_before_it_is_resolved(tmp_path):
+    root = _tree(tmp_path)
+    _write_request(root)
+    out = root / "receipts" / "a16" / "tp2" / "rank0.json"
+    proc, runs = _run(tmp_path, root, out=out)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "--out /receipts/rank0.json" in " ".join(runs)
+
+
+def test_a_resource_library_is_forwarded_and_must_be_on_the_shared_mount(tmp_path):
+    root = _tree(tmp_path)
+    _write_request(root)
+    library = Path("/mnt/shared/tessera-measurements/libcollector.so")
+    proc, runs = _run(tmp_path, root, extra_env={"RESOURCE_LIBRARY": str(library)})
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert f"--resource-library {library}" in " ".join(runs)
+    proc, runs = _run(tmp_path, root, extra_env={"RESOURCE_LIBRARY": str(tmp_path / "lib.so")})
+    assert proc.returncode == 2 and "must be on /mnt/shared" in proc.stderr
+    assert runs == []
+
+
+def test_world_one_requires_the_four_field_block_the_harness_accepts(tmp_path):
+    root = _tree(tmp_path)
+    path = root / "requests" / "a16-tp1.json"
+    path.write_text(json.dumps({"schema": "tessera.native_moe_request.v1",
+                                "distributed": {"world_size": 1, "rank": 0,
+                                                "init_method": None}}))
+    proc, runs = _run(tmp_path, root, request=path, world=1, rank=0, rendezvous=None)
+    assert proc.returncode == 2 and "four-field single-rank block" in proc.stderr
+    assert runs == []

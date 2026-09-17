@@ -17,10 +17,12 @@
 #       panel   (the priced whole-owner apply) |
 #       profile (separate-process Torch profiler replay against the same panel).
 #
-# Caps: HARNESS_MEM_GB is the AGGREGATE host+GPU budget, because on GB10 one
-# 128 GB pool is shared by both.  It is the container's own limit, so the
-# harness cannot quietly exceed it, and HARNESS_CPUS/HARNESS_THREADS keep the
-# action inside the reservation it was admitted under.
+# Caps, and what each one actually bounds: HARNESS_MEM_GB is the container's
+# HOST memory limit (cgroup), nothing else -- it is not a GPU cap.  The GPU side
+# is bounded by the pinned image's own budget knobs and published per rank in
+# the receipt's `resources`; HARNESS_CPUS/HARNESS_THREADS keep the action inside
+# the reservation it was admitted under.  No flag here is claimed to bound the
+# device.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
@@ -75,16 +77,19 @@ if world > 1:
                  f"this process is {world}/{rank}")
     if block.get("init_method") != os.environ["RENDEZVOUS"]:
         sys.exit("the request's rendezvous is not this run's")
-elif block not in (None, {"world_size": 1, "rank": 0, "init_method": None}):
-    sys.exit("a world of one takes the declared single-rank block")
+elif block is None or sorted(block) != ["init_method", "rank", "timeout_seconds", "world_size"] \
+        or block["world_size"] != 1 or block["rank"] != 0 or block["init_method"] is not None:
+    sys.exit("a world of one takes the declared four-field single-rank block "
+             "(world_size, rank, init_method, timeout_seconds)")
 PY
 
 MEM_GB=${HARNESS_MEM_GB:-32}
 CPUS=${HARNESS_CPUS:-8}
 THREADS=${HARNESS_THREADS:-8}
 SHM_GB=${HARNESS_SHM_GB:-8}
-OUTDIR="$(cd "$(dirname "$OUT")" && pwd)"
-mkdir -p "$OUTDIR"
+OUTDIR="$(dirname "$OUT")"
+mkdir -p "$OUTDIR" || refuse "cannot create $OUTDIR"
+OUTDIR="$(cd "$OUTDIR" && pwd)"
 
 IMAGE=${1:-${GLM_OWNER_IMAGE:-}}
 [ -n "$IMAGE" ] || refuse "name the serving image (arg 1 or GLM_OWNER_IMAGE); the pin is not copied here"
@@ -97,8 +102,16 @@ trap serve_lock_release EXIT
 
 IN_CONTAINER_REQUEST="/workspace/tessera${REQUEST#$ROOT}"
 ARGS=(--request "$IN_CONTAINER_REQUEST" --out "/receipts/$(basename "$OUT")")
-[ -n "$PANEL" ] && ARGS+=(--panel "/workspace/tessera${PANEL#$ROOT}")
+if [ "$MODE" = prepare ]; then
+  ARGS+=(--prepare)
+else
+  ARGS+=(--panel "/workspace/tessera${PANEL#$ROOT}")
+fi
 [ "$MODE" = profile ] && ARGS+=(--profile)
+if [ -n "${RESOURCE_LIBRARY:-}" ]; then
+  case "$RESOURCE_LIBRARY" in /mnt/shared/*) ;; *) refuse "RESOURCE_LIBRARY must be on /mnt/shared";; esac
+  ARGS+=(--resource-library "$RESOURCE_LIBRARY")
+fi
 ARGS+=(--warmup-iterations "${WARMUP_ITERATIONS:-8}" --iterations "${ITERATIONS:-32}")
 
 printf 'window: rate=%s world=%s rank=%s mode=%s mem=%sg cpus=%s threads=%s out=%s\n' \
@@ -114,7 +127,7 @@ done \
 docker run --rm --gpus all --network host --ipc host \
   --memory="${MEM_GB}g" --memory-swap="${MEM_GB}g" --shm-size="${SHM_GB}g" \
   --cpus="$CPUS" --pids-limit=512 --ulimit memlock=-1 --ulimit stack=67108864 \
-  -v "$ROOT":/workspace/tessera:ro -v "$OUTDIR":/receipts \
+  -v "$ROOT":/workspace/tessera:ro -v "$OUTDIR":/receipts -v /mnt/shared:/mnt/shared:ro \
   "${IMAGE_ENV[@]}" -e TESSERA_SERVE_MODE=resident \
   -e OMP_NUM_THREADS="$THREADS" -e MKL_NUM_THREADS="$THREADS" -e OPENBLAS_NUM_THREADS="$THREADS" \
   -e PYTHONPATH=/workspace/tessera/src:/workspace/tessera \
