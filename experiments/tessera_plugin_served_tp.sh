@@ -69,13 +69,29 @@ tp_fabric_env() {
 # The docker arguments both containers share.  The RoCE devices are passed
 # through (--device /dev/infiniband); --ipc host is what lets the two vLLM
 # worker processes share memory with the driver.
+#
+# --ulimit memlock is not hygiene here, it is what makes the RoCE devices above
+# usable at all.  A container inherits the docker daemon's RLIMIT_MEMLOCK, not
+# the host's, and on both Sparks the daemon's is 8 MB while the hosts are
+# unlimited.  NCCL's IB transport registers its per-channel proxy buffers with
+# ibv_reg_mr; the kernel charges those pinned pages against RLIMIT_MEMLOCK and
+# returns ENOMEM above it, which is the exact errno tessera#550 reports.
+# Measured on the pinned image over these two RoCE devices, six interleaved
+# trials per arm of a two-rank NCCL all-reduce: without the flag 0/6 reached a
+# collective, every rank dying in wrap_ibv_reg_mr_iova2 with "Cannot allocate
+# memory"; with it 6/6 completed, both ranks reporting "Using network IB" with
+# no sockets fallback.  --ulimit stack raises the same daemon's 8 MB default.
+#
+# Scope, so the next reader does not over-read this: the flag removes a ceiling
+# this launcher would otherwise hit.  It is not a fix for tessera#550's recorded
+# failures, which ran under a driver that already set both flags and IPC_LOCK.
 tp_docker_args() {
   local envs=() kv
   while IFS= read -r kv; do [ -n "$kv" ] && envs+=(-e "$kv"); done < <(tp_fabric_env)
   while IFS= read -r kv; do [ -n "$kv" ] && envs+=(-e "$kv"); done \
     <<<"${RUNTIME_IMAGE_CONTAINER_ENV:-}"
   printf '%s\n' --rm --network host --ipc host --device /dev/infiniband \
-    --gpus all \
+    --gpus all --ulimit memlock=-1:-1 --ulimit stack=67108864 \
     -v "$TS/src":/tessera/src:ro -v "$TS/pyproject.toml":/tessera/pyproject.toml:ro \
     -v "$TS/tools":/tessera/tools:ro -v "$TS/tests":/tessera/tests:ro \
     -v "$EXT":/ext -v /mnt/shared:/mnt/shared \
