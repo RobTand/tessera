@@ -554,6 +554,38 @@ def test_name_rule_refuses_a_quantized_checkpoint_instead_of_charging_its_scales
     assert classify("model.layers.0.mlp.down_proj.weight", units, dtype="torch.bfloat16") == "fixed"
 
 
+def test_the_name_rule_refuses_a_canonical_module_whose_candidate_it_cannot_name(
+        monkeypatch, worker_module):
+    # Regression, tessera#478. The dtype guard fires only on a leaf the rule
+    # already calls a candidate -- weight, w13_weight, w2_weight. A quantized
+    # checkpoint that renames its weight instead of retyping it (compressed-
+    # tensors' weight_packed, a Tessera cached unit's own parameters) names no
+    # candidate under that canonical module at all, so the rule labelled every
+    # format-sized byte in it "fixed", charged them to fixed_resident, and
+    # nothing refused. The precondition is a checkpoint whose candidate bytes
+    # are exactly the leaves this rule names; a canonical module where it names
+    # none is a module it did not classify.
+    def cuda(dtype):
+        return SimpleNamespace(device=SimpleNamespace(type="cuda"), dtype=dtype)
+    unit = "model.layers.0.mlp.gate_up_proj"
+    parameters = [(unit + ".weight_packed", cuda("torch.uint8")),
+                  (unit + ".weight_scale", cuda("torch.float8_e4m3fn"))]
+    model = SimpleNamespace(named_parameters=lambda **kwargs: list(parameters),
+                            named_buffers=lambda **kwargs: [])
+    monkeypatch.setattr(worker_module, "claim",
+                        lambda: (None, {"canonical_modules": [unit]}))
+    worker = worker_module.ResourceCaptureWorker()
+    worker.model_runner = SimpleNamespace(model=model)
+    with pytest.raises(RuntimeError, match="names no candidate"):
+        list(worker._resource_owners())
+    # The source-float checkpoint this rule was written for is unchanged.
+    parameters[:] = [(unit + ".weight", cuda("torch.bfloat16")),
+                     (unit + ".bias", cuda("torch.bfloat16"))]
+    assert [(row.owner_id, row.category) for row in worker._resource_owners()] == [
+        ("model:parameter:" + unit + ".weight", "candidate"),
+        ("model:parameter:" + unit + ".bias", "fixed")]
+
+
 def test_reference_owner_rule_runs_without_a_checkpoint_key_in_the_plan(worker_module):
     # Regression: reference_candidate_tensor_ids used to be gated on
     # plan["reference_checkpoint"] or plan["artifact_checkpoint"], neither of
