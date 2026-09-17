@@ -68,23 +68,16 @@ CHARGED_CELLS = (("fixed", "resident"), ("candidate", "resident"),
 # what the seven terms compose.
 LIFETIME_CLASSES = ("resident", "activation", "scratch", "non_step")
 
-# The two domains whose closure check is implemented here. The other four are
-# stated as what is missing, never closed by the presence of an argument: a
-# domain that closes because a caller passed a truthy object is ``qualified:
-# true`` spelled differently, and this schema does not have that field.
-IMPLEMENTED_DOMAINS = ("history_join", "external_closure")
+# The domains whose closure check is implemented here. The other two are stated
+# as what is missing, never closed by the presence of an argument: a domain that
+# closes because a caller passed a truthy object is ``qualified: true`` spelled
+# differently, and this schema does not have that field.
+IMPLEMENTED_DOMAINS = ("worker_startup", "history_join", "external_closure", "cache_capacity")
 
 _UNIMPLEMENTED_DOMAINS = {
-    "worker_startup":
-        "the recorder is proven to attach before CUDA initialization (the replay "
-        "refuses a capture that did not), but no capture yet runs inside the "
-        "engine's own worker process, so startup is not covered end to end",
     "provenance_admission":
         "no check here recomputes the runtime provenance relation; the "
         "consumer's admission is what closes this domain, and it refuses today",
-    "cache_capacity":
-        "no check here recomputes pool sizes and resolved limits from the raw "
-        "worker records with views deduplicated by physical backing generation",
     "timing_partition":
         "no check here recomposes the measured step from ordered native apply "
         "intervals, and it needs a device with no other work on it, which no "
@@ -92,6 +85,109 @@ _UNIMPLEMENTED_DOMAINS = {
 }
 
 _ISSUES_REASON = "the raw ledger carries unresolved issues"
+
+_WORKER_STARTUP_REASON = (
+    "no rank's resident-after-load observation closes this domain: it needs exactly one worker "
+    "startup record from this capture's own worker process, naming this capture's rank, with a "
+    "locked workspace, an allocator sample covering the receipt's resident plus its workspace "
+    "slots, and fixed-owned resident rows that sum to exactly the receipt's figure")
+
+_CACHE_CAPACITY_REASON = (
+    "no admission-eligible KV observation closes this domain: the domain needs exactly one "
+    "record from a read-only pass naming this capture's rank and run identity, deduplicated "
+    "physical backings that do not overlap, a unique extent equal to their own bytes, and "
+    "kv-owned resident rows that sum to exactly that extent")
+
+
+def _owned_resident_bytes(ledger, owner_class):
+    """The ledger's never-freed rows of one owner class, in bytes.
+
+    ``observed_categories`` is already sorted and deduplicated by the replay, so
+    a row belongs to exactly one class or to none; a row of neither this class
+    nor another is unclassified and has already blocked the partition.
+    """
+    return sum(row["bytes"] for row in ledger["torch_allocations"]
+               if list(row["observed_categories"]) == [owner_class]
+               and row["free_completed_index"] is None)
+
+
+def worker_startup_closed(ledger):
+    """Whether this capture's own resident-after-load observation closes it.
+
+    The same equalities the consumer recomputes, checked here so the partition
+    it reads declares the state its own observations support.  The receipt's
+    figure is not derived from the ledger in this function: it is the
+    independently produced routed-owner receipt's number, and the ledger's
+    fixed-owned rows are required to agree with it.
+    """
+    records = ledger.get("worker_startup_records")
+    if not records or len(records) != 1:
+        return False
+    record = records[0]
+    identity = ledger.get("identity") or {}
+    if identity.get("rank") is not None and record["rank"] != identity["rank"]:
+        return False
+    if record["workspace_locked"] is not True:
+        return False
+    if record["memory_allocated_bytes"] < (record["receipt_resident_bytes"]
+                                           + record["workspace_resident_bytes"]):
+        return False
+    return _owned_resident_bytes(ledger, "fixed") == record["receipt_resident_bytes"]
+
+
+def cache_capacity_closed(ledger):
+    """Whether an admission-eligible KV observation closes it.
+
+    The pool is the engine's and the observation is the runtime's own read-only
+    record: the block manager's resolved ``num_blocks``, one page geometry per
+    cache group and the deduplicated physical backings, with the ledger's
+    kv-owned resident rows required to sum to that same extent.  A hybrid or
+    multi-group config therefore compares its actual backings rather than
+    assuming every group's blocks are identical, and the record's
+    ``runtime_admission`` is required because the intrusive pass sets it false.
+    """
+    records = ledger.get("kv_observations")
+    if not records or len(records) != 1:
+        return False
+    record = records[0]
+    identity = ledger.get("identity") or {}
+    if identity.get("rank") is not None and record.get("rank") != identity["rank"]:
+        return False
+    run = record.get("run_identity") or {}
+    for name in ("configuration_sha256", "model_sha256", "runtime_manifest_sha256"):
+        if identity.get(name) is not None and run.get(name) != identity[name]:
+            return False
+    if record.get("runtime_admission") is not True:
+        return False
+    admission = record.get("admission_evidence") or {}
+    if admission.get("read_only") is not True or admission.get("snapshot_count") != 0:
+        return False
+    limits = record["resolved_limits"]
+    if limits["max_num_batched_tokens"] < 1 or limits["max_num_seqs"] < 1:
+        return False
+    pages = record["group_page_size_bytes"]
+    if not pages or any(page < 1 for page in pages):
+        return False
+    if record["num_blocks"] < 0:
+        return False
+    storage_set = record["storage"]
+    storages = storage_set["storages"]
+    if bool(storages) != bool(record["num_blocks"]):
+        return False
+    spans = []
+    for row in storages:
+        if (row["device_type"] != "cuda" or row["address"] < 1 or row["bytes"] < 1
+                or not row["owners"]):
+            return False
+        spans.append((row["device_type"], row["device_id"], row["address"],
+                      row["address"] + row["bytes"]))
+    ordered = sorted(spans)
+    for first, second in zip(ordered, ordered[1:]):
+        if (first[0], first[1]) == (second[0], second[1]) and first[3] > second[2]:
+            return False
+    if storage_set["unique_physical_storage_bytes"] != sum(row["bytes"] for row in storages):
+        return False
+    return _owned_resident_bytes(ledger, "kv") == storage_set["unique_physical_storage_bytes"]
 
 # The fields each declared member carries, and the one execution coordinate this
 # producer can stamp a partition scope for. Restated here rather than imported:
@@ -321,7 +417,7 @@ def qualify_domains(ledger):
     on ``refused`` and ``open`` alike; the distinction is for the person reading
     the report.
 
-    This function takes the ledger and nothing else. Four of the six domains
+    This function takes the ledger and nothing else. Two of the six domains
     have no implemented closure check, and they say so rather than closing when
     a caller supplies an artifact — an unread argument is not evidence.
     """
@@ -360,6 +456,20 @@ def qualify_domains(ledger):
     else:
         domains["external_closure"] = _domain(
             True, ["external_native_peak_bytes", "cuda_argument_domains"], None)
+
+    # The two observations whose shapes are defined: this rank's
+    # resident-after-load sample and the engine's own KV pool, each closed on
+    # the equalities the consumer recomputes from the same ledger.
+    if issues:
+        for name in ("worker_startup", "cache_capacity"):
+            domains[name] = _domain(False, [], _ISSUES_REASON, refused=True)
+    else:
+        domains["worker_startup"] = _domain(
+            True, ["worker_startup_records"], None) if worker_startup_closed(ledger) else _domain(
+            False, [], _WORKER_STARTUP_REASON)
+        domains["cache_capacity"] = _domain(
+            True, ["kv_observations"], None) if cache_capacity_closed(ledger) else _domain(
+            False, [], _CACHE_CAPACITY_REASON)
 
     for name, reason in _UNIMPLEMENTED_DOMAINS.items():
         domains[name] = _domain(False, [], reason)
@@ -664,6 +774,16 @@ def assemble_full_engine_resource_report(ledger, *, reference, workload,
             f"scope is never projected over it")
 
     partition = derive_partition(ledger)
+    # A per-rank observation is only meaningful for the run that measured it.
+    # The consumer binds both records to ``identity.run``, so a report that
+    # carries either one without a rank-scoped run identity is refused here
+    # rather than handed over with nothing to check the rank against.
+    run_identity = ledger.get("identity") or {}
+    if ledger.get("worker_startup_records") or ledger.get("kv_observations"):
+        if run_identity.get("rank") is None or run_identity.get("world_size") is None:
+            raise ValueError(
+                "per-rank observations require a rank-scoped run identity (rank and "
+                "world_size), or a consumer cannot bind the record to the run that measured it")
     # Checkpoint rows carry members the consumer's schema does not name (the
     # checkpoint's own census counts and the pageable-host observations). They
     # are carried beside the checkpoints as a named artifact rather than inside

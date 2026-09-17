@@ -16,8 +16,9 @@ from types import SimpleNamespace
 from vllm.v1.worker.gpu_worker import Worker
 
 from experiments.full_engine_bootstrap import claim
-from experiments.full_engine_resources import TensorOwner, BlasWorkspaceObserver
-from experiments.full_engine_kv import kv_config_value, kv_configuration_observation, inspect_worker_kv
+from experiments.full_engine_resources import TensorOwner, BlasWorkspaceObserver, worker_startup_record
+from experiments.full_engine_kv import (kv_config_value, kv_configuration_observation, inspect_worker_kv,
+                                        admission_evidence, kv_observation_record)
 from experiments.full_engine_timing_boundaries import resolve_apply_boundaries, observe_apply_boundaries
 
 
@@ -499,12 +500,98 @@ class ResourceCaptureWorker(Worker):
         if self._resource_armed:
             raise RuntimeError("resource workload was already armed")
         self._resource_checkpoint("ready_for_workload")
+        self._resource_write_startup_sample()
         if self._resource_native_boundaries is not None:
             self._resource_native_patches = observe_apply_boundaries(self._resource_native_boundaries, self._resource_observe_apply)
             self._resource_native_patches.__enter__()
         self._resource_armed = True
         return {"pid": os.getpid(), "startup_execute_calls": self._resource_startup_calls,
                 "scope": "subsequent execution belongs to the explicit observation workload"}
+
+    def _resource_write_startup_sample(self):
+        """This rank's resident-after-load sample, when the plan names its receipt.
+
+        The consumer's ``worker_startup_records`` shape needs three inputs and
+        none of them is derivable from the others: the run's own rank, the
+        routed-owner receipt's independent ``resources.resident_bytes``, and the
+        runtime's own locked ``tessera.native_moe_workspace.v1`` record. The
+        sample is taken here, at arm, because that is the interval the contract
+        names -- after ``process_weights_after_loading`` and after
+        ``lock_workspace()``, before the observation workload runs. A plan that
+        named the receipt but whose engine has no native-MoE workspace, or whose
+        identity carries no rank, writes a named refusal beside an empty record
+        list so the domain stays open with the reason rather than closing on a
+        made-up workspace.
+        """
+        receipt = self._resource_plan.get("routed_owner_receipt")
+        if receipt is None:
+            return
+        identity = self._resource_plan.get("identity") or {}
+        rank, world_size = identity.get("rank"), identity.get("world_size")
+        payload = {"schema": "tessera.full_engine_worker_startup_observation.v1",
+                   "rank": rank, "world_size": world_size, "records": [],
+                   "receipt": {"path": receipt["path"], "sha256": receipt["sha256"],
+                               "schema": receipt["schema"], "resident_bytes": receipt["resident_bytes"]}}
+        try:
+            if rank is None or world_size is None:
+                raise ValueError("the plan identity carries no rank/world, so a per-rank "
+                                 "startup sample cannot bind to the run that measured it")
+            from experiments.bench_native_operator import observe_workspace
+            from vllm.v1.worker.workspace import lock_workspace
+            import torch
+            lock_workspace()
+            workspace, _ = observe_workspace()
+            payload["records"] = [worker_startup_record(
+                torch, workspace, rank=int(rank), receipt_resident_bytes=int(receipt["resident_bytes"]),
+                scope=("this rank's torch.cuda.memory_allocated() sampled at arm, after "
+                       "process_weights_after_loading and after lock_workspace(), beside the "
+                       "routed-owner receipt's own residency"))]
+            payload["workspace"] = workspace
+        except Exception as exc:
+            payload["skipped"] = f"{type(exc).__name__}: {exc}"
+        path = Path(self._resource_plan["output_directory"]) / "worker-startup.json"
+        path.write_text(json.dumps(payload, sort_keys=True, indent=2) + "\n")
+
+    def _resource_write_kv_observation(self, directory):
+        """The resource pass's own KV view, as the capacity witness.
+
+        This record is deliberately NOT the one that closes ``cache_capacity``:
+        the recorder is attached and synchronized snapshots have already altered
+        execution, so its pass evidence reports ``read_only: false`` and the
+        projected ``runtime_admission`` follows. What it is for is the two-pass
+        join's capacity comparison -- the read-only pass must have been
+        configured with the same ``num_blocks`` and page geometry, and that
+        equality is checked against this record rather than assumed.
+        """
+        # A capture whose plan carries no identity writes the same named refusal
+        # rather than raising: the ledger is already written and preserved, and
+        # a missing rank is an observation that was not taken, not a crash.
+        identity = self._resource_plan.get("identity") or {}
+        payload = {"schema": "tessera.full_engine_worker_kv_observation.v1", "records": []}
+        rank, world_size = identity.get("rank"), identity.get("world_size")
+        try:
+            # A capture that never reached `initialize_from_config` has no KV
+            # description at all; that is a refusal with a reason, not a crash.
+            observed = getattr(self, "_resource_kv_description", None)
+            if not isinstance(observed, dict) or "storage" not in observed:
+                raise ValueError("this capture's KV description carries no deduplicated "
+                                 "physical storage, so it cannot be a capacity witness")
+            if rank is None or world_size is None:
+                raise ValueError("the plan identity carries no rank/world, so a per-rank KV "
+                                 "record cannot bind to the run that measured it")
+            evidence = admission_evidence(mode="resources",
+                                          process_id=self._resource_recorder.process_id,
+                                          recorder_attached=True,
+                                          snapshot_count=self._resource_recorder.snapshot_count)
+            payload["records"] = [kv_observation_record(
+                observed, evidence=evidence, rank=int(rank), world_size=int(world_size),
+                run_identity=identity,
+                scope=("intrusive resource pass's own KV view; timing- and admission-ineligible, "
+                       "kept as the capacity witness a separate read-only pass is compared with"))]
+        except Exception as exc:
+            payload["skipped"] = f"{type(exc).__name__}: {exc}"
+        (Path(directory) / "kv-observation.json").write_text(
+            json.dumps(payload, sort_keys=True, indent=2) + "\n")
 
     def resource_capture_finish(self):
         if self._resource_plan.get("qualification_prefix"):
@@ -550,6 +637,7 @@ class ResourceCaptureWorker(Worker):
                                                 executed_steps=self._resource_calls,
                                                 measured_runtime_sha256=hashlib.sha256(json.dumps(runtime,
                                                     sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest())
+        self._resource_write_kv_observation(directory)
         (directory / "post-native-package.json").write_text(json.dumps(runtime["loaded_package"], sort_keys=True, indent=2) + "\n")
         (directory / "runtime-observation.json").write_text(json.dumps(runtime, sort_keys=True, indent=2) + "\n")
         (directory / "worker-observations.json").write_text(json.dumps({

@@ -89,6 +89,16 @@ def _identity(value):
             raise ValueError(f"identity.{name}: expected SHA-256")
     _int(value.get("device_id"), "identity.device_id")
     _text(value.get("device_uuid"), "identity.device_uuid")
+    # The rank scope is optional and all-or-nothing: a scalar capture names only
+    # the device it observed, while a capture that names a rank names the world
+    # it belongs to, so a per-rank charge binds to the run that measured it.
+    if ("rank" in value) != ("world_size" in value):
+        raise ValueError("identity carries rank and world_size together or not at all")
+    if "rank" in value:
+        rank = _int(value["rank"], "identity.rank", 0)
+        world = _int(value["world_size"], "identity.world_size", 1)
+        if rank >= world:
+            raise ValueError(f"identity.rank {rank} is outside identity.world_size {world}")
     return json.loads(_json_bytes(value))
 
 
@@ -309,6 +319,16 @@ class FullEngineResourceRecorder:
             raise RuntimeError("resource recorder is closed")
         if os.getpid() != self.process_id or threading.get_ident() != self._thread:
             raise RuntimeError("resource recorder crossed its process/thread boundary")
+
+    @property
+    def snapshot_count(self):
+        """How many synchronized snapshots this intrusive pass actually took.
+
+        The KV observation's pass evidence needs the number, not a claim about
+        it: a pass with no recorder attached and no snapshots is the read-only
+        one, and this counter is what a resource pass reports as its own.
+        """
+        return len(self._checkpoints)
 
     def snapshot(self, label, *, owners=()):
         if label == "capture_end":
@@ -721,6 +741,41 @@ def _cupti_coverage(raw, segment_operations, issues):
     if unknown:
         issues.append("unattributed external/static/unsupported CUDA memory records")
     return unknown, argument_domains
+
+
+#: The workspace record the engine's own ``WorkspaceManager`` is observed as.
+WORKSPACE_SCHEMA = "tessera.native_moe_workspace.v1"
+
+
+def worker_startup_record(torch_module, workspace, *, rank, receipt_resident_bytes, scope):
+    """This rank's resident-after-load sample, in the consumer's own field set.
+
+    The consumer checks the allocator's own sample against the routed-owner
+    receipt and against the ledger's fixed-owned resident rows, so the three
+    numbers travel together and none is derived from another here: the caller
+    supplies the receipt's own ``resources.resident_bytes``, the runtime
+    supplies the locked workspace record, and ``torch.cuda.memory_allocated()``
+    is sampled now -- after ``process_weights_after_loading`` and after
+    ``lock_workspace()``, which is the interval the contract names.
+
+    The record carries exactly the fields the consumer names and nothing else,
+    because that observation is the one closed shape in the envelope.
+    """
+    if not isinstance(workspace, dict) or workspace.get("schema") != WORKSPACE_SCHEMA:
+        raise ValueError("worker startup requires the runtime's own workspace record")
+    if workspace.get("locked") is not True:
+        raise ValueError("worker startup sample must be taken after the workspace is locked")
+    rank = int(rank)
+    receipt_resident_bytes = int(receipt_resident_bytes)
+    resident = int(workspace["resident_bytes"])
+    if rank < 0 or receipt_resident_bytes < 0 or resident < 0:
+        raise ValueError("worker startup sample carries a negative rank or byte count")
+    return {"memory_allocated_bytes": int(torch_module.cuda.memory_allocated()),
+            "rank": rank,
+            "receipt_resident_bytes": receipt_resident_bytes,
+            "scope": str(scope),
+            "workspace_locked": True,
+            "workspace_resident_bytes": resident}
 
 
 def analyze_engine_resource_ledger(raw):
