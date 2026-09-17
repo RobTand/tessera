@@ -26,6 +26,11 @@ resolved through `MOE_SHARD_PROJECTIONS` -- and its source container is the
 module's width at every world while its render is this rank's cut
 (`member_unit_spellings`, `check_member_geometries`; §2.5).
 
+The operator receipt also names its own context, so a factory observation is
+never read as an engine one: it is
+`standalone_factory_context_not_full_engine`, with no KV cache to charge
+(`operator_context_scope`; §2.5).
+
 The runner that owns that reduction is carried beside the routed layer
 (`WholeOwner`) rather than registered inside it, and the callsite a receipt
 names is derived from the module the probe wraps and the method it counts, so
@@ -1788,6 +1793,18 @@ the wire identity binds -- while its `rendered_weight` record and the panel's
 `check_member_geometries` refuses a rank-local source or a module-wide render
 before CUDA; at a world of one the two geometries are the same list, so the LFM
 TP1 owner's records are unchanged field for field.
+
+**The operator receipt names a standalone factory context, not an engine.**
+This harness prices ONE routed owner built with the factory under test: it has
+no engine scheduler and owns no KV cache, so `fixed_KV`, the engine's own fixed
+resident/activation/scratch terms and served capacity cannot be charged from
+its receipt.  `resolve_serving_config` stamps the scope
+(`standalone_factory_context_not_full_engine`), `operator_context_scope`
+refuses a config that relabels it, and the receipt's `resources` block carries
+both the scope and that refusal as `engine_scope`.  The stock-engine capture
+(`experiments/capture_full_engine_resources.py`, `experiments/full_engine_kv.py`,
+`experiments/full_engine_worker.py`) owns those observations; the two are
+separate producers and neither's numbers may be composed with the other's.
 
 **Two stacks need the explicit selected owner, and one must not have it.** A
 compressed BF16 expert stack has no production builder

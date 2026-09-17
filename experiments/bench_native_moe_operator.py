@@ -45,6 +45,13 @@ RUNTIME_COLLECTIVE_METHOD = "_maybe_reduce_final_output"
 #: object whose calls are counted (it did: the site said `vllm.fused_moe.runner`,
 #: an import path this runtime does not have).
 RUNTIME_COLLECTIVE_SITE = f"{RUNTIME_COLLECTIVE_MODULE}:{RUNTIME_COLLECTIVE_METHOD}"
+#: The context one operator receipt is produced in, and the reason no engine
+#: term may be charged from it.  This process constructs the routed owner with
+#: the factory under test and runs captured phases through it: there is no
+#: engine scheduler and no KV cache here, so `fixed_KV` and the full-engine
+#: fixed terms come from the stock-engine capture
+#: (`experiments/capture_full_engine_resources.py`), never from this receipt.
+OPERATOR_CONTEXT_SCOPE = "standalone_factory_context_not_full_engine"
 ROLE_ORDER = ("w1", "w3", "w2")
 
 #: Where each geometry keeps the width its own members actually carry.
@@ -949,10 +956,34 @@ def resolve_serving_config(path, runtime_image, *, tensor_parallel):
         kernel_config=KernelConfig(**args["kernel_config"]),
         compilation_config=CompilationConfig(mode=CompilationMode.NONE, cudagraph_mode=CUDAGraphMode.NONE))
     return config, {"file_sha256": hashlib.sha256(raw).hexdigest(), "document": document,
-        "scope": "standalone_factory_context_not_full_engine",
+        "scope": OPERATOR_CONTEXT_SCOPE,
         "resolved": {key: _plain(getattr(config, key)) for key in
                      ("scheduler_config", "cache_config", "parallel_config", "kernel_config",
                       "compilation_config", "device_config")}}
+
+
+def operator_context_scope(serving_config):
+    """Name the context an operator receipt came from, in the receipt itself.
+
+    A whole-owner receipt prices ONE routed owner in a standalone factory
+    context.  That context has no engine scheduler and owns no KV cache, so it
+    cannot answer a full-engine question: `fixed_KV`, the engine's own fixed
+    resident/activation/scratch terms and the served capacity are the
+    stock-engine capture's to observe
+    (`experiments/capture_full_engine_resources.py`, `experiments/full_engine_kv.py`),
+    and a consumer that charged them from this receipt would be composing terms
+    from two different environments.  The scope is checked rather than echoed,
+    so a receipt cannot be relabelled into an engine observation by editing a
+    config.
+    """
+    scope = serving_config["scope"]
+    if scope != OPERATOR_CONTEXT_SCOPE:
+        raise ValueError(
+            f"an operator receipt may only be produced in {OPERATOR_CONTEXT_SCOPE}, not {scope!r}")
+    return {"context_scope": scope,
+            "engine_scope": "standalone factory context: no engine scheduler and no KV cache, so "
+                            "fixed_KV and the full-engine fixed terms cannot be charged from this "
+                            "receipt; the stock-engine capture observes those"}
 
 
 def verify_routing_bias(routing, bias):
@@ -1713,6 +1744,7 @@ def measure_prepared_operator(prepared, panel, phase_tensors, *, warmup_iteratio
                 "resident_bytes": dense._resident_bytes(layer), "phases": resource_phases,
                 "workspace_resident_bytes": prepared["workspace"]["resident_bytes"],
                 "workspace_sha256": dense.identity_sha256(prepared["workspace"]),
+                **operator_context_scope(prepared["operator"]["serving_config"]),
                 "unknown": ["native_and_library_scratch_outside_torch_allocator", "fixed_and_full_model_resources"]}}
 
 

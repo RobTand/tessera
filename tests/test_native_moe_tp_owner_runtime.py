@@ -460,6 +460,32 @@ def test_the_serving_config_builds_the_owners_own_cut(monkeypatch, tensor_parall
         path.unlink()
 
 
+def test_the_operator_receipt_names_a_standalone_context_and_owns_no_kv(monkeypatch):
+    """The receipt's context is named, because no engine term may come from it.
+
+    The operator bench builds ONE routed owner with the factory under test:
+    no engine scheduler, no KV cache, no served capacity.  The scope travels
+    with the serving config into the operator and the receipt states it, and
+    the full-engine terms come from the stock-engine capture
+    (`experiments/capture_full_engine_resources.py`) instead.  Charging
+    `fixed_KV` here would compose two environments' numbers into one budget.
+    """
+    path, document = _stock_config_runtime(monkeypatch, tensor_parallel=1)
+    try:
+        _config, identity = moe.resolve_serving_config(path, document["runtime_image"],
+                                                       tensor_parallel=1)
+    finally:
+        path.unlink()
+    assert identity["scope"] == moe.OPERATOR_CONTEXT_SCOPE
+    block = moe.operator_context_scope(identity)
+    assert block["context_scope"] == "standalone_factory_context_not_full_engine"
+    assert "fixed_KV" in block["engine_scope"] and "no KV cache" in block["engine_scope"]
+    # A config that relabelled this context as an engine one is refused rather
+    # than echoed into a receipt.
+    with pytest.raises(ValueError, match="may only be produced in"):
+        moe.operator_context_scope({**identity, "scope": "full_engine"})
+
+
 def test_the_distributed_declaration_must_agree_with_the_geometry():
     tp2 = _glm_shape(2, A8)
     with pytest.raises(ValueError, match="no distributed block"):
