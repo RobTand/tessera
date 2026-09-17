@@ -319,6 +319,95 @@ def _record(shape, dtype="torch.bfloat16"):
             "content_sha256": _sha(str(shape) + dtype)}
 
 
+def _small_a8_shape(tp, hidden=64, inter=32, experts=2):
+    return {"experts": experts, "hidden_size": hidden, "intermediate_size": inter,
+            "top_k": 2, "format": A8}
+
+
+def _a8_unit(rows, cols, name, seed, q256=1024):
+    """One real E4M3 wire, encoded here rather than imported from a sibling test."""
+    export = pytest.importorskip("tessera.export")
+    alphabet = pytest.importorskip("tessera.alphabet")
+    generator = torch.Generator().manual_seed(seed)
+    weight = (torch.randn(rows, cols, generator=generator) * 0.02).contiguous()
+    exported, _unit, _forests = export.encode_linear_planes(
+        weight, grid=alphabet.E4M3_GRID, q256=q256, name=name, verify=False)
+    return exported.blob
+
+
+def _expected_rank_render(blob, scheme, group, role_name, rank, world, *, rows_axis):
+    """The rank-local render, derived in PLAIN tensor arithmetic.
+
+    ``slice_unit`` promises the shard decodes to exactly ``decode(parent)[r0:r1,
+    c0:c1]``.  The expectation here is a plain slice of the whole decode, so the
+    arm tests the trellis-aware cut against ordinary slicing rather than against
+    itself.
+    """
+    from tessera.serving.moe_route import _packed_group_shard_plan
+    from tessera.unit_artifact import read_unit_artifact
+    plan = _packed_group_shard_plan(scheme, group, "unit", rank, world)
+    role = plan.role(role_name)
+    whole = read_unit_artifact(blob, "cpu").bfloat16()
+    return whole[role.lo:role.hi, :] if rows_axis else whole[:, role.lo:role.hi]
+
+
+@pytest.mark.parametrize("tp,rank", [(1, 0), (2, 0), (2, 1)])
+def test_each_members_cut_decodes_to_this_ranks_own_render(tp, rank):
+    """The TP cut the loader makes IS what this rank's PWC member holds.
+
+    A whole container compared against a rank-local render compares two
+    different widths; the seam is ``shard_parsed_roles`` on the group's own
+    plan, which at TP1 is the parent object and above it a real cut.
+    """
+    hidden, inter, experts = 64, 32, 2
+    shape = _small_a8_shape(tp, hidden, inter, experts)
+    wire = moe.owner_wire(shape)
+    from tessera.fused import pack_fused
+    from tessera.serving.scheme import MOE_SHARD_PROJECTIONS
+    blobs, members, tensors = {}, [], {}
+    for expert in range(experts):
+        for role, rows, cols, seed, group, rows_axis in (
+                ("w1", inter, hidden, 100 + expert, "w13", True),
+                ("w3", inter, hidden, 200 + expert, "w13", True),
+                ("w2", hidden, inter, 300 + expert, "w2", False)):
+            unit = f"unit.{expert}.{role}"
+            blob = _a8_unit(rows, cols, role, seed)
+            blobs[unit] = (blob, group, role, rows_axis)
+            members.append({"unit": unit, "expert": expert, "role": role, "format": A8,
+                            "blob": blob, "record": {}})
+    strides = {"w13": 0, "w2": 0}
+    for unit, (blob, group, role, _axis) in blobs.items():
+        strides[group] = max(strides[group], len(pack_fused(
+            [(MOE_SHARD_PROJECTIONS[role], moe._declared_member_rows(shape, role), blob)])))
+    scheme = moe.owner_scheme(shape, wire, strides=strides, unit="unit")
+    for unit, (blob, group, role, rows_axis) in blobs.items():
+        expected = _expected_rank_render(blob, scheme, group, MOE_SHARD_PROJECTIONS[role],
+                                         rank, tp, rows_axis=rows_axis)
+        tensors["source_weight/" + unit] = expected.clone()
+        tensors["rendered_weight/" + unit] = expected.clone()
+    # The real seam accepts every member at this rank...
+    moe.verify_rank_local_member_renders(members, tensors, shape, scheme, unit="unit",
+                                         rank=rank, world=tp)
+    # ...and refuses a render whose VALUES differ.
+    first = members[0]["unit"]
+    bad = dict(tensors)
+    bad["rendered_weight/" + first] = tensors["rendered_weight/" + first] + 1.0
+    with pytest.raises(ValueError, match="decode differs"):
+        moe.verify_rank_local_member_renders(members, bad, shape, scheme, unit="unit",
+                                             rank=rank, world=tp)
+    if tp == 2:
+        # ...and at a world above one, refuses the WHOLE container -- the
+        # comparison that would have passed while the cut was never made.
+        from tessera.unit_artifact import read_unit_artifact
+        bad = dict(tensors)
+        bad["rendered_weight/" + first] = read_unit_artifact(blobs[first][0], "cpu").bfloat16()
+        assert bad["rendered_weight/" + first].shape != \
+            tensors["rendered_weight/" + first].shape
+        with pytest.raises(ValueError, match="decode differs"):
+            moe.verify_rank_local_member_renders(members, bad, shape, scheme, unit="unit",
+                                                 rank=rank, world=tp)
+
+
 def _owner_panel(tp, format_name, route_symbol, decoder):
     """A frozen GLM whole-owner panel at this cut, for the validator only.
 

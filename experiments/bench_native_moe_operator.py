@@ -558,6 +558,45 @@ def owner_scheme(shape, wire, *, strides, unit):
                    "roles": [[MOE_SHARD_PROJECTIONS["w2"], k]]}}}, unit)
 
 
+def verify_rank_local_member_renders(member_inputs, tensors, shape, scheme, *, unit, rank, world):
+    """Every original container decodes to THIS rank's own PWC render.
+
+    The artifact holds the WHOLE unit -- a Tessera checkpoint is
+    tensor-parallel agnostic -- so what this rank must hold is the cut the
+    loader will make, taken through the loader's own seam:
+    ``sharding.shard_parsed_roles`` on the group's own plan, which asks
+    ``tessera.layout.can_shard`` and calls ``slice_unit``.  Comparing the whole
+    container against a rank-local render would compare two different widths
+    and pass only at a world of one.
+
+    At ``tp_size == 1`` the plan is whole, the seam returns the SAME parsed
+    object and ``slice_unit`` is never reached, so this is the whole decode the
+    receipt has always made.
+    """
+    from tessera import unit_artifact
+    from tessera.serving.moe_route import _packed_group_shard_plan
+    from tessera.serving.scheme import MOE_SHARD_PROJECTIONS
+    from tessera.serving.sharding import shard_parsed_roles
+    plans = {group: _packed_group_shard_plan(scheme, group, unit, rank, world)
+             for group in ("w13", "w2")}
+    for member in member_inputs:
+        role = member["role"]
+        projection = MOE_SHARD_PROJECTIONS[role]
+        group = "w2" if role == "w2" else "w13"
+        source = tensors["source_weight/" + member["unit"]]
+        rendered = tensors["rendered_weight/" + member["unit"]]
+        parsed = unit_artifact.parse_unit_artifact(member["blob"], str(source.device))
+        piece = shard_parsed_roles([(projection, parsed)], plans[group])[0][1]
+        decoded = unit_artifact.reconstruct_unit(piece.unit, piece.forests, piece.code).bfloat16()
+        # One statement, not two: the tensor this rank's PWC holds IS the
+        # expectation, shape and bytes together.  Restating the width from the
+        # geometry would be a second home for the same fact, which is the class
+        # of defect this seam exists to close.
+        if dense.tensor_identity(decoded) != dense.tensor_identity(rendered):
+            raise ValueError("original wire decode differs from the actual PWC member render")
+        del decoded
+
+
 def _plain(value):
     """Observe configuration values without unstable repr/address fallbacks."""
     import torch
@@ -937,8 +976,7 @@ def prepare_native_moe_operator(member_inputs, tensors, phase_tensors, *, unit, 
     import torch
     from tessera.cached_unit import verify_cached_unit, tensor_identity as producer_tensor_identity
     from tessera.fused import pack_fused
-    from tessera.serving.scheme import MOE_SHARD_PROJECTIONS, validate_tessera_moe_scheme
-    from tessera.unit_artifact import read_unit_artifact
+    from tessera.serving.scheme import MOE_SHARD_PROJECTIONS
     from vllm.v1.worker.workspace import lock_workspace
     shape = validate_shape(shape)
     wire = owner_wire(shape)
@@ -990,9 +1028,6 @@ def prepare_native_moe_operator(member_inputs, tensors, phase_tensors, *, unit, 
             raise ValueError(
                 f"wire recipe {recipe['grid']} q{recipe['q256']} is not the owner's "
                 f"{wire['grid']} q{wire['q256']}")
-        decoded = read_unit_artifact(original, device=str(source.device)).bfloat16()
-        if dense.tensor_identity(decoded) != dense.tensor_identity(rendered):
-            raise ValueError("original wire decode differs from the actual PWC member render")
         projection = MOE_SHARD_PROJECTIONS[member["role"]]
         # The container is the WHOLE unit this rank's rank of the artifact
         # carries: the cut is the loader's, and the rows a container frames are
@@ -1006,8 +1041,9 @@ def prepare_native_moe_operator(member_inputs, tensors, phase_tensors, *, unit, 
         members[-1].update(shape=list(source.shape), source_weight=dense.tensor_identity(source),
             rendered_weight=dense.tensor_identity(rendered), wire_sha256=hashlib.sha256(original).hexdigest(),
             wire_record_sha256=dense.identity_sha256(record))
-        del decoded
     scheme = owner_scheme(shape, wire, strides=strides, unit=unit)
+    verify_rank_local_member_renders(member_inputs, tensors, shape, scheme, unit=unit,
+                                     rank=rank, world=world)
     device = phase_tensors["prefill"]["input"].device
     if max(v["input"].shape[0] for v in phase_tensors.values()) > serving_config["document"]["engine_args"]["max_num_batched_tokens"]:
         raise ValueError("actual phase exceeds the explicit serving scheduler token limit")
