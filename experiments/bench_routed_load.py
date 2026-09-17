@@ -1,10 +1,24 @@
 #!/usr/bin/env python3
-"""Routed-expert load bench: the research-selected packed intake on real wires.
+"""Routed-expert load bench: each family's own expert intake on real wires.
 
 This is the instrument for tessera#501. It calls the load path vLLM calls --
 ``moe_route._RankLocalPackedIntake`` at TP2, ``prepare_tessera_packed_moe_experts``
 at TP1 -- on fixed expert wires read from a Tessera checkpoint, with no vLLM,
 and records what the load costs in time and in device memory.
+
+TWO ARMS, DISPATCHED ON THE SIDECAR'S FAMILY, because the two routes hold
+different things.  The research-selected packed intake (``TESSERA_FP8`` /
+``TESSERA_BF16``) keeps rank-local wire planes on an expert axis.  The NVFP4
+routed builder (``TESSERA_NVFP4``, tessera#492/#507) preallocates the stock
+modelopt tile per layer in ``create_weights`` and decodes each expert's wire
+into its slot, dropping the planes -- so its footprint is the tile set, and
+``--layers all`` over a whole body answers what one rank's routed experts
+occupy.  The NVFP4 arm streams a layer at a time with a bounded read-ahead (a
+42-layer GLM-5.3-Flash A4 body is ~142 GiB of wire), guards the host
+``MemAvailable`` floor and memory PSI so a load that cannot fit reports
+instead of hanging the box, and stops before
+``process_weights_after_loading``: it measures the INTAKE, not the runtime's
+kernel-format swizzle, and not an engine, a KV cache or an activation peak.
 
 Two modes:
 
@@ -42,6 +56,8 @@ import hashlib
 import json
 import os
 import platform
+import queue
+import re
 import statistics
 import subprocess
 import sys
@@ -50,6 +66,20 @@ import time
 from pathlib import Path
 
 MOE_UNITS = (("w13", 0, "gate_proj"), ("w13", 1, "up_proj"), ("w2", 0, "down_proj"))
+
+#: The NVFP4 routed arm loads through the runtime's OWN shard vocabulary
+#: (``scheme.MOE_GROUP_SHARDS``: ``w13`` is ``("w1", "w3")``, ``w2`` is
+#: ``("w2",)``), because that is what ``nvfp4_moe_route._load_wire`` resolves
+#: through ``SHARD_TO_GROUP``.  Each entry is ``(shard_id, projection)``.
+NVFP4_SHARDS = (("w1", "gate_proj"), ("w3", "up_proj"), ("w2", "down_proj"))
+
+#: The stock modelopt parameter set ``create_weights`` allocates.  These tensors
+#: ARE the NVFP4 route's resident state: the tile is preallocated per layer and
+#: each expert's wire is decoded into its slot, so the planes never accumulate.
+NVFP4_TILES = ("w13_weight", "w2_weight", "w13_weight_scale", "w2_weight_scale",
+               "w13_weight_scale_2", "w2_weight_scale_2", "w13_input_scale", "w2_input_scale")
+
+_EXPERT_WIRE = re.compile(r"layers\.(\d+)\.mlp\.experts\.\d+\.gate_proj\.wire$")
 
 
 # --------------------------------------------------------------------------
@@ -166,6 +196,409 @@ def _walk(torch, obj, path, records, tensors, dump_experts, experts):
         _walk(torch, fields[name], f"{path}.{name}", records, tensors, dump_experts, experts)
 
 
+# --------------------------------------------------------------------------
+# the NVFP4 routed arm (tessera#492, tessera#507)
+# --------------------------------------------------------------------------
+
+def _checkpoint_index(data: Path, layers):
+    """``{layer: (directory, weight_map)}`` for a merged checkpoint or a parts root."""
+    direct = data / "model.safetensors.index.json"
+    if direct.is_file():
+        weight_map = json.loads(direct.read_text())["weight_map"]
+        return {layer: (data, weight_map) for layer in layers}
+    wanted, found = set(layers), {}
+    for entry in sorted(data.iterdir()):
+        index = entry / "model.safetensors.index.json"
+        if not index.is_file():
+            continue
+        weight_map = json.loads(index.read_text())["weight_map"]
+        present = {int(m.group(1)) for key in weight_map for m in [_EXPERT_WIRE.search(key)] if m}
+        for layer in present & wanted:
+            found[layer] = (entry, weight_map)
+    return found
+
+
+def _moe_layers(data: Path):
+    """Every layer whose experts carry Tessera wires, ascending.
+
+    Read off the checkpoint rather than off ``num_hidden_layers``: a passthrough
+    expert stack has no wire to load and is not this route's intake.  GLM-5.3-
+    Flash A4 has 42 of them (layers 3 to 44); its MTP layer 45 carries stock
+    ``.weight`` experts and is named in the config's ``ignore``.
+    """
+    direct = data / "model.safetensors.index.json"
+    sources = ([direct] if direct.is_file()
+               else [entry / "model.safetensors.index.json" for entry in sorted(data.iterdir())])
+    layers = set()
+    for index in sources:
+        if not index.is_file():
+            continue
+        for key in json.loads(index.read_text())["weight_map"]:
+            match = _EXPERT_WIRE.search(key)
+            if match:
+                layers.add(int(match.group(1)))
+    return sorted(layers)
+
+
+def _quantization_config(directory: Path):
+    """A merged checkpoint spells it ``config.json``, a part ``tessera_part_config.json``."""
+    for name in ("config.json", "tessera_part_config.json"):
+        path = directory / name
+        if path.is_file():
+            return json.loads(path.read_text())["quantization_config"]
+    raise SystemExit(f"{directory}: no config.json or tessera_part_config.json")
+
+
+def _expert_scheme(directory: Path, layer: int):
+    """``(raw scheme, validated declaration)`` for one expert stack."""
+    from tessera.serving.scheme import validate_tessera_moe_scheme
+
+    target = _target(layer)
+    groups = _quantization_config(directory)["config_groups"]
+    match = [group for group in groups.values() if group.get("targets") == [target]]
+    if len(match) != 1:
+        raise SystemExit(f"{target}: {len(match)} config groups")
+    return match[0]["scheme"], dict(validate_tessera_moe_scheme(match[0]["scheme"], target))
+
+
+def _family(data: Path, layers):
+    """The family the first named layer's sidecar declares."""
+    if not layers:
+        raise SystemExit("no layers to load")
+    index = _checkpoint_index(data, layers[:1])
+    if layers[0] not in index:
+        raise SystemExit(f"layer {layers[0]}: no expert wires under {data}")
+    return _expert_scheme(index[layers[0]][0], layers[0])[1]["family"]
+
+
+def _read_layer(directory: Path, weight_map, layer: int, experts: int):
+    """One layer's expert wires and A-side scales, read into RAM.
+
+    A layer at a time, never the whole model: the 42-layer A4 body is ~142 GiB
+    of wire, and the point of the measurement is to watch device memory while
+    the layers arrive.
+    """
+    import torch
+    from safetensors import safe_open
+
+    target = _target(layer)
+    wanted = {}
+    for expert in range(experts):
+        for shard, projection in NVFP4_SHARDS:
+            for suffix in ("wire", "input_global_scale"):
+                key = f"{target}.{expert}.{projection}.{suffix}"
+                if key not in weight_map:
+                    raise SystemExit(f"{key}: not in the checkpoint index")
+                wanted.setdefault(weight_map[key], []).append((expert, shard, suffix, key))
+    held, wire_bytes = {}, 0
+    for name, keys in sorted(wanted.items()):
+        with safe_open(str(directory / name), framework="pt", device="cpu") as handle:
+            for expert, shard, suffix, key in keys:
+                tensor = handle.get_tensor(key).contiguous().clone()
+                if suffix == "wire":
+                    if tensor.dtype != torch.uint8:
+                        raise SystemExit(f"{key}: expected uint8 wire, found {tensor.dtype}")
+                    wire_bytes += int(tensor.numel())
+                held[(expert, shard, suffix)] = tensor
+    return held, wire_bytes
+
+
+def _layer_stream(index, layers, experts, read_ahead: int):
+    """Yield ``(layer, held, wire_bytes)`` with a bounded read-ahead.
+
+    The reader fills the next layer while the current one decodes, so the load
+    never waits on the mount and never holds more than ``read_ahead + 1``
+    layers of wire.
+    """
+    pending: "queue.Queue" = queue.Queue(maxsize=max(1, read_ahead))
+
+    def produce():
+        try:
+            for layer in layers:
+                directory, weight_map = index[layer]
+                pending.put((layer, *_read_layer(directory, weight_map, layer, experts)))
+        except BaseException as exc:            # noqa: BLE001 -- re-raised in the consumer
+            pending.put(exc)
+        else:
+            pending.put(None)
+
+    threading.Thread(target=produce, daemon=True).start()
+    while True:
+        item = pending.get()
+        if item is None:
+            return
+        if isinstance(item, BaseException):
+            raise item
+        yield item
+
+
+def _host_pressure():
+    """``(MemAvailable bytes, memory PSI full avg10)``.
+
+    On GB10 the GPU allocates out of host memory, so this is the number that
+    decides whether a load finishes or takes the box down with it: in
+    tessera#501 an A8 load reached 112 of 166 shards and hung both Sparks.
+    """
+    available = 0
+    for line in Path("/proc/meminfo").read_text().splitlines():
+        if line.startswith("MemAvailable:"):
+            available = int(line.split()[1]) * 1024
+            break
+    stalled = 0.0
+    try:
+        for line in Path("/proc/pressure/memory").read_text().splitlines():
+            if line.startswith("full"):
+                stalled = float(line.split("avg10=")[1].split()[0])
+    except OSError:
+        pass
+    return available, stalled
+
+
+def _stub_vllm_oracle():
+    """vLLM's ``oracle.nvfp4`` seam, stubbed as the route's own tests stub it.
+
+    WHAT RUNS FOR REAL AND WHAT DOES NOT.  Everything the route owns runs:
+    ``create_weights`` allocates the stock modelopt parameter set,
+    ``_load_wire`` parses each full container, cuts it to this rank through
+    ``sharding.shard_parsed_roles`` and decodes it into the expert's slot.
+    What is stubbed is the runtime's: the backend oracle, the kernel, and the
+    finalize-time ``convert_to_nvfp4_moe_kernel_format`` swizzle.  So this arm
+    measures the INTAKE and stops before ``process_weights_after_loading``.
+    Vendoring the runtime is forbidden (AGENTS.md), which is why the seam is a
+    stub here and the load-and-execute contract is measured on the pinned image
+    by ``experiments/nvfp4_moe_route_load_probe.py`` instead.
+    """
+    import enum
+    import types
+
+    import torch
+
+    names = ("vllm", "vllm.model_executor", "vllm.model_executor.layers",
+             "vllm.model_executor.layers.fused_moe",
+             "vllm.model_executor.layers.fused_moe.fused_moe_method_base",
+             "vllm.model_executor.layers.fused_moe.oracle",
+             "vllm.model_executor.layers.fused_moe.oracle.nvfp4",
+             "vllm.model_executor.layers.quantization",
+             "vllm.model_executor.layers.quantization.utils",
+             "vllm.model_executor.layers.quantization.utils.quant_utils",
+             "vllm.model_executor.utils")
+    already = [name for name in names if name in sys.modules]
+    modules = {name: types.ModuleType(name) for name in names}
+    sys.modules.update(modules)
+    base = modules["vllm.model_executor.layers.fused_moe.fused_moe_method_base"]
+
+    class Base:
+        def __init__(self, moe):
+            self.moe, self.moe_kernel, self.moe_quant_config = moe, None, None
+
+        @property
+        def is_monolithic(self):
+            return False
+
+    base.FusedMoEMethodBase = Base
+    oracle = modules["vllm.model_executor.layers.fused_moe.oracle.nvfp4"]
+    oracle.NvFp4MoeBackend = enum.Enum("NvFp4MoeBackend", ["FLASHINFER_CUTLASS", "MARLIN"])
+    experts_cls = types.SimpleNamespace(is_monolithic=lambda: False)
+    oracle.select_nvfp4_moe_backend = lambda **kwargs: (
+        oracle.NvFp4MoeBackend.FLASHINFER_CUTLASS, experts_cls)
+    oracle.convert_to_nvfp4_moe_kernel_format = lambda **kwargs: tuple(
+        kwargs[key] for key in ("w13", "w13_scale", "w13_scale_2", "a13_scale",
+                                "w2", "w2_scale", "w2_scale_2", "a2_scale"))
+    oracle.make_nvfp4_moe_quant_config = lambda **kwargs: kwargs
+    oracle.make_nvfp4_moe_kernel = lambda **kwargs: types.SimpleNamespace(
+        fused_experts=types.SimpleNamespace(process_weights_after_loading=lambda layer: None))
+    quant = modules["vllm.model_executor.layers.quantization.utils.quant_utils"]
+    quant.kNvfp4Static, quant.kNvfp4Dynamic = object(), object()
+    utils = modules["vllm.model_executor.utils"]
+    utils.set_weight_attrs = lambda param, attrs: [setattr(param, k, v) for k, v in attrs.items()]
+    utils.replace_parameter = lambda layer, name, value: setattr(
+        layer, name, torch.nn.Parameter(value, requires_grad=False))
+    return {"stubbed": sorted(names), "was_already_imported": already}
+
+
+def _nvfp4_layer(rank: int, tp_size: int, experts: int, topk: int, swiglu_limit: float):
+    """The ``RoutedExperts`` surface the route reads, as the route's tests build it."""
+    import types
+
+    import torch
+
+    layer = torch.nn.Module()
+    layer.moe_config = types.SimpleNamespace(
+        is_act_and_mul=True, experts_per_token=topk,
+        moe_parallel_config=types.SimpleNamespace(
+            tp_size=tp_size, tp_rank=rank, ep_size=1, dp_size=1, pcp_size=1, sp_size=1,
+            use_ep=False, enable_eplb=False))
+    layer.activation = "silu"
+    layer.global_num_experts = experts
+    layer.expert_map = None
+    layer.apply_router_weight_on_input = False
+    layer._expert_routing_tables = lambda: None
+    layer.swiglu_limit = swiglu_limit
+    return layer
+
+
+def _nvfp4_resident(layer) -> int:
+    """The stock tile set this layer holds: the route's resident state."""
+    return sum(getattr(layer, name).numel() * getattr(layer, name).element_size()
+               for name in NVFP4_TILES)
+
+
+def _child_nvfp4(args, torch, device, layers, experts, out) -> int:
+    """Load every named layer's experts through the NVFP4 routed builder.
+
+    Each layer's prepared state is the stock tile set, held exactly as vLLM
+    holds it until ``process_weights_after_loading``.  Nothing is finalized and
+    no layer is dropped, so ``resident_final`` is what one rank's routed
+    experts occupy once the last layer has loaded.
+    """
+    from tessera.serving import nvfp4_moe_route
+
+    seam = _stub_vllm_oracle()
+    data = Path(args.data)
+    index = _checkpoint_index(data, layers)
+    missing = [layer for layer in layers if layer not in index]
+    if missing:
+        raise SystemExit(f"no expert wires for layer(s) {missing[:8]} under {data}")
+    tp_size = 1 if args.config == "tp1" else 2
+    rank = 1 if args.config == "tp2r1" else 0
+    floor = int(args.guard_floor_gib * (1 << 30))
+
+    units, held_layers = [], {}
+    resident = wire_total = 0
+    stopped = None
+    torch.cuda.synchronize()
+    torch.cuda.reset_peak_memory_stats()
+    baseline = _allocator(torch)
+    sampler = _StackSampler() if args.profile == "sample" else None
+    profiler, profiler_state, profiled = None, "off", 0
+    if args.profile == "torch":
+        from torch.profiler import ProfilerActivity, profile
+
+        profiler = profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA])
+        profiler_state = "armed"
+    load_start = time.time()
+    if sampler is not None:
+        sampler.start()
+    for layer, wires, wire_bytes in _layer_stream(index, layers, experts, args.read_ahead):
+        wire_total += wire_bytes
+        directory, _map = index[layer]
+        scheme, declared = _expert_scheme(directory, layer)
+        if int(declared["experts"]) != experts:
+            raise SystemExit(f"layer {layer}: the sidecar declares {declared['experts']} "
+                             f"experts, the run asked for {experts}")
+        hidden, inter = int(declared["hidden_size"]), int(declared["intermediate_size"])
+        holder = _nvfp4_layer(rank, tp_size, experts, args.topk, args.swiglu_limit)
+        method = nvfp4_moe_route.build_tessera_nvfp4_moe_method(
+            scheme, _target(layer), "resident", holder)
+        torch.cuda.synchronize()
+        start = time.perf_counter()
+        # vLLM builds its model under a default-device context; without one,
+        # ``create_weights``' bare ``torch.zeros`` lands the tiles on the host,
+        # every unit still "succeeds", and the footprint reads as nearly zero.
+        with torch.device(device):
+            method.create_weights(holder, experts, hidden, inter // tp_size, torch.bfloat16)
+        torch.cuda.synchronize()
+        create_seconds = time.perf_counter() - start
+        for name in ("w13_weight", "w2_weight"):
+            if getattr(holder, name).device.type != "cuda":
+                raise SystemExit(f"layer {layer}: {name} was allocated on "
+                                 f"{getattr(holder, name).device}, not {device}")
+        held_layers[layer] = holder
+        layer_resident = _nvfp4_resident(holder)
+        resident += layer_resident
+        units.append({"layer": layer, "phase": "create_weights", "seconds": create_seconds,
+                      "layer_resident": int(layer_resident),
+                      "resident_cumulative": int(resident), **_allocator(torch)})
+        for expert in range(experts):
+            available, stalled = _host_pressure()
+            if available < floor or stalled >= args.guard_psi:
+                stopped = {"why": "host memory guard", "layer": layer, "expert": expert,
+                           "mem_available": available, "psi_full_avg10": stalled,
+                           "floor_bytes": floor, "psi_limit": args.guard_psi}
+                break
+            for shard, _projection in NVFP4_SHARDS:
+                group = "w2" if shard == "w2" else "w13"
+                wire = wires.pop((expert, shard, "wire"))
+                scale = wires.pop((expert, shard, "input_global_scale"))
+                param = holder.w2_wire if group == "w2" else holder.w13_wire
+                if profiler_state == "armed":
+                    profiler.__enter__()
+                    profiler_state = "running"
+                torch.cuda.synchronize()
+                start = time.perf_counter()
+                param.weight_loader(param, wire, "wire", shard, expert, return_success=True)
+                torch.cuda.synchronize()
+                seconds = time.perf_counter() - start
+                if profiler_state == "running":
+                    profiled += 1
+                    if profiled == args.profile_units:
+                        profiler.__exit__(None, None, None)
+                        _export_torch_profile(profiler, out, profiled)
+                        profiler_state = "exported"
+                scale_param = (holder.w2_input_global_scale if group == "w2"
+                               else holder.w13_input_global_scale)
+                scale_param.weight_loader(scale_param, scale, "input_global_scale", shard, expert)
+                units.append({"layer": layer, "expert": expert, "group": group, "shard": shard,
+                              "wire_bytes": int(wire.numel()), "seconds": seconds,
+                              "resident_cumulative": int(resident), **_allocator(torch)})
+                del wire, scale
+            if args.stop_after and len(units) >= args.stop_after:
+                stopped = {"why": "stop_after", "layer": layer, "expert": expert}
+                break
+        del wires
+        if stopped is not None:
+            break
+    load_seconds = time.time() - load_start
+    if sampler is not None:
+        sampler.finish(out / "sample.collapsed")
+    if profiler_state == "running":
+        profiler.__exit__(None, None, None)
+        _export_torch_profile(profiler, out, max(profiled, 1))
+
+    # The decode wrote real bytes, or it did not: a zero tile is what a stubbed
+    # or misrouted decode leaves behind, and the joined per-expert global is the
+    # multiplier the kernel would be handed.
+    evidence = {}
+    for layer in dict.fromkeys([layers[0], layers[-1]]):
+        holder = held_layers.get(layer)
+        if holder is None:
+            continue
+        evidence[str(layer)] = {
+            "w13_weight_nonzero_fraction": float((holder.w13_weight[0] != 0).float().mean()),
+            "w2_weight_nonzero_fraction": float((holder.w2_weight[0] != 0).float().mean()),
+            "w13_weight_scale_2_expert0": holder.w13_weight_scale_2[0].tolist(),
+            "w2_weight_scale_2_expert0": float(holder.w2_weight_scale_2[0]),
+            "w13_input_global_scale_all_finite": bool(
+                torch.isfinite(holder.w13_input_global_scale).all()),
+            "tile_shapes": {name: list(getattr(holder, name).shape) for name in NVFP4_TILES},
+            "tile_devices": sorted({str(getattr(holder, name).device) for name in NVFP4_TILES}),
+        }
+    available, stalled = _host_pressure()
+    summary = {
+        "arm": "nvfp4_routed_intake", "family": "TESSERA_NVFP4", "config": args.config,
+        "src": str(Path(args.src).resolve()), "data": str(data),
+        "layers_requested": layers, "layers_loaded": sorted(held_layers),
+        "experts": experts, "tp_size": tp_size, "tp_rank": rank,
+        "wire_bytes_loaded": int(wire_total), "load_seconds": load_seconds,
+        "baseline": baseline, "final": _allocator(torch),
+        "resident_final": int(resident),
+        "resident_per_layer": int(resident // max(len(held_layers), 1)),
+        "unit_seconds": _unit_seconds(units), "stopped_early": stopped,
+        "vllm_seam": seam, "evidence": evidence,
+        "scope": ("Expert intake only: create_weights and _load_wire, on one rank. "
+                  "NOT process_weights_after_loading (the runtime's kernel-format "
+                  "swizzle), no engine, no KV cache, no activation peak, no "
+                  "non-expert weights, no collective buffers."),
+        "mem_available_end": available, "psi_full_avg10_end": stalled,
+        "host": platform.node(), "torch": torch.__version__,
+        "alloc_conf": os.environ.get("PYTORCH_CUDA_ALLOC_CONF"),
+        "t_start": load_start, "t_end": time.time(),
+    }
+    (out / "units.jsonl").write_text("".join(json.dumps(u) + "\n" for u in units))
+    (out / "summary.json").write_text(json.dumps(summary, indent=1, sort_keys=True))
+    return 1 if (stopped or {}).get("why") == "host memory guard" else 0
+
+
 class _StackSampler(threading.Thread):
     """Samples the main thread's Python stack at a fixed rate, in process."""
 
@@ -228,10 +661,16 @@ def child(args) -> int:
         raise SystemExit(f"tessera imported from {tessera.__file__}, not {src}")
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    layers = [int(x) for x in args.layers.split(",")]
-    experts = int(args.experts)
     data = Path(args.data)
+    layers = (_moe_layers(data) if args.layers == "all"
+              else [int(x) for x in args.layers.split(",")])
+    experts = int(args.experts)
     device = torch.device("cuda", torch.cuda.current_device())
+    # Each family's own builder owns its intake: the NVFP4 route decodes into a
+    # preallocated stock tile, the research-selected packed route keeps wire
+    # planes on an expert axis.  Dispatch on what the sidecar declares.
+    if _family(data, layers) == "TESSERA_NVFP4":
+        return _child_nvfp4(args, torch, device, layers, experts, out)
     t_read = time.time()
     wires = _load_wires(data, layers, experts)
     read_seconds = time.time() - t_read
@@ -617,10 +1056,23 @@ def main(argv=None) -> int:
     c.add_argument("--stop-after", type=int, default=0)
     for q in (p, c):
         q.add_argument("--data", required=True)
-        q.add_argument("--layers", default="3,40")
+        q.add_argument("--layers", default="3,40",
+                       help="comma-separated layer indices, or 'all' for every layer whose "
+                            "experts carry Tessera wires")
         q.add_argument("--experts", type=int, default=288)
         q.add_argument("--dump-experts", type=int, default=4)
         q.add_argument("--out", required=True)
+        # NVFP4 routed arm
+        q.add_argument("--read-ahead", type=int, default=1,
+                       help="layers of expert wire read ahead of the decode (NVFP4 arm)")
+        q.add_argument("--guard-floor-gib", type=float, default=16.0,
+                       help="stop and report when host MemAvailable falls below this")
+        q.add_argument("--guard-psi", type=float, default=20.0,
+                       help="stop and report when memory PSI full avg10 reaches this")
+        q.add_argument("--topk", type=int, default=8,
+                       help="experts per token the layer stub declares (GLM-5.3-Flash: 8)")
+        q.add_argument("--swiglu-limit", type=float, default=10.0,
+                       help="the clamp the layer stub carries (GLM-5.3-Flash: 10.0)")
     args = parser.parse_args(argv)
     return parent(args) if args.mode == "parent" else child(args)
 

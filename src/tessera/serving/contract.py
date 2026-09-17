@@ -194,8 +194,16 @@ REQUIRES_PLUGIN = "tessera"
 CENSUS_PHASE_REGIMES: Mapping[str, str] = MappingProxyType(
     {"prefill": "batch", "decode": "decode"})
 
-_ROUTE_STATUSES = frozenset({"backed", "backed_with_serve_flag", "unbacked"})
-_QUALIFICATIONS = frozenset({"device_qualified", "compile_only"})
+#: The ``route_status`` values a cell may carry when a DEVICE ran the route.
+#: ``unbacked`` is this document's word for "no serve exists here", so it is
+#: deliberately not one of them: v10 (#456) lets a ``compile_only`` cell carry
+#: it and refuses it beside either of these.
+BACKED_ROUTE_STATUSES = frozenset({"backed", "backed_with_serve_flag"})
+_ROUTE_STATUSES = BACKED_ROUTE_STATUSES | {"unbacked"}
+#: The qualification a cell carries when a DEVICE ran the route, as against
+#: ``compile_only``, which says a toolchain accepted the code.
+DEVICE_QUALIFICATION = "device_qualified"
+_QUALIFICATIONS = frozenset({DEVICE_QUALIFICATION, "compile_only"})
 
 #: The closed grammar of a cell's ``predicates`` (#134).  A predicate narrows
 #: the cell to units for which ``fact op value`` holds, and it is a
@@ -1834,6 +1842,48 @@ def cell_predicates(cell: Mapping[str, Any],
         seen.add((fact, op))
         out.append((str(fact), str(op), value))
     return tuple(out)
+
+
+def cell_is_device_backed(cell: Mapping[str, Any],
+                          where: str = "lane_eligibility cell") -> bool:
+    """Does this cell attest a SERVE, or only a toolchain fact?
+
+    A cell states two facts that answer two questions: ``qualification`` says
+    who ran it -- ``device_qualified``, or ``compile_only`` for a toolchain that
+    only accepted the code -- and ``route_status`` says whether a serve exists
+    at all, with ``unbacked`` as this document's word for no.  v10 (#456)
+    already refuses the document that states the contradiction
+    (``compile_only`` beside a backed status, because a compile receipt cannot
+    carry a device's claim); this predicate is the reader's half of the same
+    rule.  A reader resolving "what has this build SERVED" must select on both
+    facts -- reading every cell of a ``(family, structure)`` pair as a receipt
+    is how a platform's first compiled-but-unserved route would admit rungs no
+    device ever ran.
+
+    FAILS CLOSED.  A cell missing either field, or naming a value outside the
+    closed sets :func:`validate_serving_contract` publishes, raises rather than
+    returning ``False``.  "cannot tell" is not "not backed": a reader that
+    quietly answered ``False`` would make an unreadable document
+    indistinguishable from the weaker fact, and the difference between the two
+    is the whole reason this predicate exists.  A caller reading a table the
+    validator has not seen (a test's copy, a staged contract) therefore gets the
+    answer the validator would give -- a refusal, by name.
+    """
+    qualification = cell.get("qualification")
+    if qualification not in _QUALIFICATIONS:
+        raise ValueError(
+            f"{where} states qualification {qualification!r}, which is not one of "
+            f"{sorted(_QUALIFICATIONS)}. A cell's qualification says whether a DEVICE ran "
+            "the route; this build cannot read an unknown value as served or as not served, "
+            "and guessing either way would answer a question the document did not.")
+    route_status = cell.get("route_status")
+    if route_status not in _ROUTE_STATUSES:
+        raise ValueError(
+            f"{where} states route_status {route_status!r}, which is not one of "
+            f"{sorted(_ROUTE_STATUSES)}. Whether a serve exists is the fact a consumer "
+            "selecting served cells reads, so a value outside the closed set is refused "
+            "rather than counted on the served side or the unserved one.")
+    return qualification == DEVICE_QUALIFICATION and route_status in BACKED_ROUTE_STATUSES
 
 
 def refuse_unevaluated_predicates(cell: Mapping[str, Any],
