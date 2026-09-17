@@ -336,6 +336,17 @@ the reference path and are not reached from a serve. This is an experimental
 lane: no runtime-contract cell, rung, grade, qualification or ship gate
 moves, and the packaged contract is not promoted. See §3.3.
 
+Re-stamped 2026-09-16 for the dense prefill closure. The dispatched dense set
+is the packed pair ALONE, at every M and in both residencies, held by
+reachability rather than by a shape (`tests/test_dense_prefill_native_closure.py`)
+and by a device crosscheck that drives the production load path at prefill
+shapes on TP1 and both TP2 cuts (`tests/native_dense_prefill_cross_check.py`).
+`scheme.ROUTE_LAUNCHES` still lists the retired rows -- the materialised tile
+and the two window-GEMV launches -- for both window routes, so the packaged
+cells' derived `executes` are wider than the dispatch; that divergence is
+recorded with the contract owner rather than fixed here, because retiring a
+launch row moves a packaged cell's bytes. See §3.3.
+
 Re-stamped 2026-09-13 for the census's world (#470): `tools/tessera_route_census.py`
 takes the topology it is run at (`src/tessera/serving/topology.py`), runs its
 per-module checks on every rank instead of `apply_model(...)[0]`, and sums the
@@ -2092,11 +2103,37 @@ reference decoders stay in the tree and are the **test oracle**: the dense
 lane's equivalence (decoded codes/scales, both families, M tails, TP cuts
 with history, actual wires) is held by PB-run tests
 (`tests/test_window_gemm.py`, `tests/test_compact_loader.py`,
-`tests/test_serving_native_window.py`), and the retained
+`tests/test_serving_native_window.py`), by the reachability proof that no dense
+serve can reach a materialiser -- `create_weights` /
+`process_weights_after_loading` / `apply` are the roots and no retired symbol
+is reachable from them (`tests/test_dense_prefill_native_closure.py`) -- and by
+a device crosscheck of the production load path at prefill shapes, M
+0/1/8/9/17/64/129/512 on TP1 and both TP2 cuts, against the retained
+reference product (`tests/native_dense_prefill_cross_check.py`, run directly
+in the pinned image because it drives vLLM).  The retained
 `prepare_tessera_fp8_module`/`prepare_tessera_bf16_module` preparations keep
 their own load-time agreement for the reference path.  The lane stamps
 `native_window_gemm`, a decoder distinct from `torch_window` and
 `window_gemv`, so a census can tell a native serve from a reference one.
+
+**The launch table is wider than the dispatch for these two routes.**  The
+window-GEMV specialisation is still in the tree and still has its own tests,
+but nothing in `src/tessera/serving/` prepares or dispatches it
+(`fp8_gemv.prepare_fp8_gemv` / `streamed_apply`,
+`bf16_route.prepare_bf16_gemv`), so its materialising prefill branch -- decode
+a `[rows, columns]` tile per forward past `GEMV_MAX_M`, then
+`torch._scaled_mm` / `torch.mm` -- is reachable from a test and from nothing
+else.  `scheme._window_launches` still publishes that branch and the
+materialised tile as launches of both window routes, and the packaged
+`lane_eligibility` cells derive `executes` from that table, so a reader
+keying reproducibility on `executes` reads a wider set than the binary can
+make.  The affected dense cells are the four `tessera_e4m3_k1_dense_sm121_*`
+cells and the `tessera_bf16_k1_dense_{sm121,gfx1201}_{decode,batch}` cells --
+which is why the 2026-09-13 re-stamp above, `torch.mm` / `torch_window` for
+the two AMD cells, describes the dispatch as it stood before this lane
+landed.  Fixing it means retiring launch rows and their cells together, which
+moves packaged bytes and is the contract owner's call; it is recorded here so
+the table is not read as the dispatch in the meantime.
 
 **The ROUTED window lane serves the same way, and is likewise a candidate.** A
 routed stack reaches the compact intake through ONE predicate,
