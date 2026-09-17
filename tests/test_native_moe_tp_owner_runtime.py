@@ -334,7 +334,7 @@ def _torch_owner(*, register_parent=False):
 
 
 def test_the_runner_is_kept_beside_the_layer_that_it_owns():
-    """The owner holds both; neither is a registered child of the other."""
+    """The runner owns the layer; the layer never registers its parent."""
     import torch
     layer, runner = _torch_owner()
     owner = moe.WholeOwner(layer=layer, runner=runner)
