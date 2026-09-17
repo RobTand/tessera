@@ -20,6 +20,7 @@ from experiments.full_engine_resource_partition import (
     worker_startup_closed)
 from experiments.full_engine_resources import _identity, worker_startup_record
 from experiments.report_full_engine_resources import first_existing, join_observation_passes
+from experiments.capture_full_engine_resources import read_routed_owner_receipt
 
 #: The consumer's own exact field set, restated here rather than imported: the
 #: consumer is another repository and a shape that drifts silently is exactly
@@ -273,7 +274,7 @@ def test_the_join_binds_one_run_and_allows_two_different_processes():
     assert notes["read_only_pass"]["process_id"] is None or isinstance(
         notes["read_only_pass"]["process_id"], int)
     assert notes["capacity_witness"]["num_blocks"] == 4
-    assert "two processes" in notes["scope"]
+    assert "process ids" in notes["scope"] and "never" in notes["scope"]
 
 
 def test_the_join_refuses_a_second_pass_from_a_different_run_or_rank_or_pool():
@@ -311,3 +312,24 @@ def test_first_existing_prefers_the_sidecar_that_exists(tmp_path):
     earlier.parent.mkdir()
     earlier.write_text("{}")
     assert first_existing(earlier, later) == earlier
+
+
+def test_a_startup_receipt_from_another_rank_is_refused(tmp_path):
+    import hashlib
+    receipt = {"schema": "tessera.native_moe_operator_receipt.v1",
+               "resources": {"status": "incomplete", "rank": 1, "world_size": 2,
+                             "resident_bytes": 4096}}
+    path = tmp_path / "receipt.json"
+    path.write_text(json.dumps(receipt))
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    with pytest.raises(ValueError, match="is rank 1/2"):
+        read_routed_owner_receipt(path, digest, rank=0, world_size=2)
+    with pytest.raises(ValueError, match="declared digest"):
+        read_routed_owner_receipt(path, "b" * 64, rank=1, world_size=2)
+    parsed = read_routed_owner_receipt(path, digest, rank=1, world_size=2)
+    assert parsed["resident_bytes"] == 4096
+    receipt["schema"] = "something-else"
+    path.write_text(json.dumps(receipt))
+    with pytest.raises(ValueError, match="must be"):
+        read_routed_owner_receipt(path, hashlib.sha256(path.read_bytes()).hexdigest(),
+                                  rank=1, world_size=2)

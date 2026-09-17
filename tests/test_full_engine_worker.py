@@ -1,5 +1,6 @@
 """CPU control-flow tests; stock GPU startup remains separately qualified."""
 import importlib
+import json
 import os
 import sys
 from types import SimpleNamespace
@@ -563,3 +564,124 @@ def test_reference_owner_rule_runs_without_a_checkpoint_key_in_the_plan(worker_m
     assert "reference_checkpoint" not in source
     assert "artifact_checkpoint" not in source
     assert "reference_candidate_tensor_ids(model, self._resource_native_boundaries)" in source
+
+
+_OBSERVATION_DIGEST = "a" * 64
+
+
+def _observation_plan(tmp_path, *, receipt=None, rank=0, world_size=2):
+    identity = {"schema": "tessera.full_engine_resource_identity.v1",
+                "model_sha256": _OBSERVATION_DIGEST, "configuration_sha256": _OBSERVATION_DIGEST,
+                "runtime_manifest_sha256": _OBSERVATION_DIGEST,
+                "assignment_sha256": _OBSERVATION_DIGEST,
+                "canonical_units_sha256": _OBSERVATION_DIGEST,
+                "workload_sha256": _OBSERVATION_DIGEST,
+                "device_id": 0, "device_uuid": "fixture"}
+    if rank is not None:
+        identity.update(rank=rank, world_size=world_size)
+    plan = {"output_directory": str(tmp_path), "identity": identity}
+    if receipt is not None:
+        plan["routed_owner_receipt"] = receipt
+    return plan
+
+
+def _observation_worker(worker_module, monkeypatch, plan):
+    monkeypatch.setattr(worker_module, "claim", lambda: (SimpleNamespace(), plan))
+    return worker_module.ResourceCaptureWorker()
+
+
+def test_a_plan_with_no_receipt_emits_no_startup_sample_at_all(monkeypatch, worker_module, tmp_path):
+    # Nothing to bind ``receipt_resident_bytes`` to means nothing to write: the
+    # domain stays open because no sidecar claims it closed.
+    worker = _observation_worker(worker_module, monkeypatch, _observation_plan(tmp_path))
+    worker._resource_write_startup_sample()
+    assert not (tmp_path / "worker-startup.json").exists()
+
+
+def test_a_startup_sample_without_a_rank_writes_a_named_refusal(monkeypatch, worker_module, tmp_path):
+    receipt = {"path": "/fixture/receipt.json", "sha256": _OBSERVATION_DIGEST,
+               "schema": "tessera.native_moe_operator_receipt.v1", "resident_bytes": 4096}
+    plan = _observation_plan(tmp_path, receipt=receipt, rank=None)
+    worker = _observation_worker(worker_module, monkeypatch, plan)
+    worker._resource_write_startup_sample()
+    payload = json.loads((tmp_path / "worker-startup.json").read_text())
+    assert payload["records"] == [] and "no rank/world" in payload["skipped"]
+    assert payload["receipt"]["resident_bytes"] == 4096
+
+
+def test_the_resource_pass_writes_its_own_kv_view_as_the_capacity_witness(
+        monkeypatch, worker_module, tmp_path):
+    # The intrusive pass's own record is honest about itself: the recorder is
+    # attached and has snapshotted, so the projected runtime_admission is False
+    # and it can only serve as the witness a read-only pass is compared with.
+    worker = _observation_worker(worker_module, monkeypatch, _observation_plan(tmp_path))
+    worker._resource_recorder = SimpleNamespace(process_id=os.getpid(), snapshot_count=7)
+    worker._resource_kv_description = {
+        "num_blocks": 4, "group_page_size_bytes": [1024],
+        "resolved_limits": {"max_model_len": 4096, "max_num_seqs": 4,
+                            "max_num_batched_tokens": 1024, "tensor_parallel_size": 2},
+        "storage": {"storages": [{"device_type": "cuda", "device_id": 0, "address": 4096,
+                                  "bytes": 8192, "owners": ["kv_caches[0]"]}],
+                    "unique_physical_storage_bytes": 8192, "scope": "fixture"}}
+    worker._resource_write_kv_observation(tmp_path)
+    record = json.loads((tmp_path / "kv-observation.json").read_text())["records"][0]
+    assert record["runtime_admission"] is False
+    assert record["admission_evidence"] == {
+        "schema": "tessera.full_engine_kv_pass_evidence.v1", "mode": "resources",
+        "process_id": os.getpid(), "recorder_attached": True, "snapshot_count": 7,
+        "read_only": False,
+        "reason": ("intrusive observation pass: the resource recorder is attached and "
+                   "synchronized allocator snapshots alter execution, so this record is "
+                   "timing- and admission-ineligible")}
+    assert (record["rank"], record["world_size"]) == (0, 2)
+
+
+def test_a_kv_description_without_dedup_backings_writes_a_named_refusal(
+        monkeypatch, worker_module, tmp_path):
+    worker = _observation_worker(worker_module, monkeypatch, _observation_plan(tmp_path))
+    worker._resource_recorder = SimpleNamespace(process_id=os.getpid(), snapshot_count=0)
+    worker._resource_kv_description = {"num_blocks": 4}  # no "storage" block
+    worker._resource_write_kv_observation(tmp_path)
+    payload = json.loads((tmp_path / "kv-observation.json").read_text())
+    assert payload["records"] == [] and "no deduplicated" in payload["skipped"]
+
+
+def test_a_plan_with_no_identity_writes_a_named_refusal_never_a_crash(
+        monkeypatch, worker_module, tmp_path):
+    # Regression: the emission ran after the ledger was already written, so a
+    # bare KeyError here would have failed a capture whose real work succeeded.
+    # A missing rank is an observation that was not taken, not a crash.
+    worker = _observation_worker(worker_module, monkeypatch, {"output_directory": str(tmp_path)})
+    worker._resource_recorder = SimpleNamespace(process_id=os.getpid(), snapshot_count=0)
+    worker._resource_kv_description = {
+        "num_blocks": 4, "group_page_size_bytes": [1024],
+        "resolved_limits": {"max_model_len": 4096, "max_num_seqs": 4,
+                            "max_num_batched_tokens": 1024, "tensor_parallel_size": 2},
+        "storage": {"storages": [], "unique_physical_storage_bytes": 0, "scope": "fixture"}}
+    worker._resource_write_kv_observation(tmp_path)
+    payload = json.loads((tmp_path / "kv-observation.json").read_text())
+    assert payload["records"] == [] and "no rank/world" in payload["skipped"]
+
+
+def test_a_receipt_with_no_identity_writes_a_named_refusal_never_a_crash(
+        monkeypatch, worker_module, tmp_path):
+    receipt = {"path": "/fixture/receipt.json", "sha256": _OBSERVATION_DIGEST,
+               "schema": "tessera.native_moe_operator_receipt.v1", "resident_bytes": 4096}
+    plan = {"output_directory": str(tmp_path), "routed_owner_receipt": receipt}
+    worker = _observation_worker(worker_module, monkeypatch, plan)
+    worker._resource_write_startup_sample()
+    payload = json.loads((tmp_path / "worker-startup.json").read_text())
+    assert payload["records"] == [] and "no rank/world" in payload["skipped"]
+
+
+def test_a_capture_that_never_initialized_kv_writes_a_named_refusal(
+        monkeypatch, worker_module, tmp_path):
+    # Regression: a worker whose KV cache was never initialized has no
+    # description attribute at all, and reading it eagerly failed a capture
+    # whose real work had already been written to disk.
+    worker = _observation_worker(worker_module, monkeypatch, _observation_plan(tmp_path))
+    worker._resource_recorder = SimpleNamespace(process_id=os.getpid(), snapshot_count=0)
+    assert not hasattr(worker, "_resource_kv_description")
+    worker._resource_write_kv_observation(tmp_path)
+    payload = json.loads((tmp_path / "kv-observation.json").read_text())
+    assert payload["records"] == [] and "no deduplicated" in payload["skipped"]

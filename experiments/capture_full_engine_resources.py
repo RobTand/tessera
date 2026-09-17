@@ -52,6 +52,40 @@ def audit_core(manifest_path):
 
 CALIBRATION_WIDTH = 512
 
+RECEIPT_SCHEMA = "tessera.native_moe_operator_receipt.v1"
+
+
+def read_routed_owner_receipt(path, expected_sha256, *, rank, world_size):
+    """The one independent number a startup record cannot derive from itself.
+
+    ``worker_startup_records[0].receipt_resident_bytes`` is the routed-owner
+    receipt's own ``resources.resident_bytes``, and the consumer checks it
+    against the ledger's fixed-owned resident rows rather than trusting either
+    side. The receipt therefore has to be a real artifact of the same rank of
+    the same world; a receipt from another rank is a different rank's charge and
+    is refused here rather than relabelled.
+    """
+    path = Path(path)
+    if digest(path) != expected_sha256:
+        raise ValueError("routed-owner receipt bytes differ from the declared digest")
+    receipt = json.loads(path.read_text())
+    if receipt.get("schema") != RECEIPT_SCHEMA:
+        raise ValueError(f"startup receipt must be {RECEIPT_SCHEMA}, not {receipt.get('schema')!r}")
+    resources = receipt.get("resources")
+    if type(resources) is not dict:
+        raise ValueError("routed-owner receipt carries no resources block")
+    if resources.get("rank") != rank or resources.get("world_size") != world_size:
+        raise ValueError(
+            f"routed-owner receipt is rank {resources.get('rank')}/{resources.get('world_size')} "
+            f"and this capture is {rank}/{world_size}")
+    resident = resources.get("resident_bytes")
+    if type(resident) is not int or resident < 0:
+        raise ValueError("routed-owner receipt resources.resident_bytes must be a non-negative integer")
+    return {"path": str(path.resolve()), "sha256": expected_sha256, "schema": RECEIPT_SCHEMA,
+            "rank": rank, "world_size": world_size, "resident_bytes": resident,
+            "scope": "the routed-owner receipt's own resources.resident_bytes, checked against "
+                     "the ledger's fixed-owned resident rows by the report consumer"}
+
 
 def read_calibration_prompt(path, expected_sha256):
     """Return the canonical first calibration row and its fixture identity.
@@ -114,6 +148,24 @@ def prepare(args):
     by_id = {row["unit_id"]: row for row in roster}
     mode = getattr(args, "observation_mode", "resources")
     prefix_only = getattr(args, "qualify_first_native_prefix", False)
+    world_size, rank = args.world_size, args.rank
+    if world_size < 1 or rank < 0 or rank >= world_size:
+        raise ValueError(f"rank {rank} is not inside a world of {world_size}")
+    configured_tp = config["engine_args"].get("tensor_parallel_size", 1)
+    if world_size != configured_tp:
+        raise ValueError(
+            f"--world-size {world_size} differs from the selected engine's tensor_parallel_size "
+            f"{configured_tp}; one capture observes one rank of the world the configuration runs")
+    if mode == "kv":
+        if not getattr(args, "all_units", False) or args.unit:
+            raise ValueError("the read-only KV pass reads the complete roster's plan identity; "
+                             "require --all-units without a partial --unit selection")
+        if args.calibration is None:
+            raise ValueError("the read-only KV pass must carry the same calibration workload as "
+                             "the resource pass it is joined with, so its run identity matches")
+        if getattr(args, "reference_proof", None) is not None or prefix_only:
+            raise ValueError("the read-only KV pass takes neither an original-wire reference nor "
+                             "a first-native prefix; it is a stock engine's own KV observation")
     if prefix_only and (mode != "resources" or not args.all_units or args.unit):
         raise ValueError("first-native prefix qualification requires resource mode and the complete native roster")
     units = roster if getattr(args, "all_units", False) else [by_id[name] for name in args.unit]
@@ -164,15 +216,26 @@ def prepare(args):
     if len(uuid) != 1:
         raise ValueError("resource observer requires exactly one visible GPU")
     args.output.mkdir(parents=True, exist_ok=False)
+    # The rank scope travels in the plan identity so every downstream record --
+    # the ledger, the startup sample, the KV observation -- binds to the rank
+    # that measured it rather than to a world total.
+    receipt = None
+    if args.receipt is not None:
+        if mode != "resources":
+            raise ValueError("a routed-owner receipt belongs to the intrusive resource pass that "
+                             "samples resident-after-load memory")
+        receipt = read_routed_owner_receipt(args.receipt, args.receipt_sha256,
+                                            rank=rank, world_size=world_size)
     plan = {"schema": "tessera.stock_engine_resource_observer_plan.v1",
             "identity": {"schema": "tessera.full_engine_resource_identity.v1",
                 "model_sha256": canonical_hash(source), "configuration_sha256": digest(args.config),
                 "runtime_manifest_sha256": digest(args.core_manifest),
                 "assignment_sha256": canonical_hash(assignment),
                 "canonical_units_sha256": canonical_hash(roster), "workload_sha256": canonical_hash(workload),
-                "device_id": 0, "device_uuid": uuid[0]},
-            "collector_library": str(args.collector.resolve()),
-            "collector_library_sha256": digest(args.collector),
+                "device_id": 0, "device_uuid": uuid[0],
+                "rank": rank, "world_size": world_size},
+            "collector_library": str(args.collector.resolve()) if args.collector is not None else None,
+            "collector_library_sha256": digest(args.collector) if args.collector is not None else None,
             "output_directory": str(args.output.resolve()), "model": str(args.model.resolve()),
             "selected_configuration": config, "runtime_evidence_sha256": digest(args.runtime_evidence),
             "runtime_evidence": str(args.runtime_evidence.resolve()),
@@ -188,6 +251,8 @@ def prepare(args):
             "scope": "intrusive raw resource capture; no timing, fixed-resource or release admission"}
     plan["observation_mode"] = mode
     plan["unit_boundary"] = "native_apply" if args.all_units else "module_forward"
+    if receipt is not None:
+        plan["routed_owner_receipt"] = receipt
     if prefix_only:
         plan["qualification_prefix"] = workload["resource_qualification"]
         plan["scope"] = "bounded first-native resource prefix qualification; incomplete engine capture, no admission"
@@ -203,6 +268,14 @@ def prepare(args):
         plan["timing_samples"] = args.timing_samples
         plan["observer_engine_args"] = {"worker_cls": "experiments.full_engine_timing_worker.TimingCaptureWorker"}
         plan["scope"] = "profiled all-native-unit event partition; observer qualification, no admitted timing or fixed-resource price"
+    elif mode == "kv":
+        # A stock engine and a stock worker: nothing is installed, no recorder
+        # is claimed, no snapshot is taken. That is what makes this pass the
+        # read-only half of the two-pass pair.
+        plan["read_only_kv"] = True
+        plan["observer_engine_args"] = {}
+        plan["scope"] = ("read-only stock-engine KV observation; no resource recorder, no "
+                         "synchronized snapshot, no timing claim")
     if args.workspaces is not None:
         plan["blas_workspace_observer"] = {"path": str(args.workspaces.resolve()),
                                           "sha256": digest(args.workspaces)}
@@ -218,9 +291,14 @@ def prepare(args):
     if mode == "resources":
         env.update({"TESSERA_ENGINE_RESOURCE_PLAN": str(path.resolve()),
                     "PYTHONPATH": str(root / "experiments/resource_bootstrap") + os.pathsep + str(root)})
-    else:
+    elif mode == "timings":
         env.pop("TESSERA_ENGINE_RESOURCE_PLAN", None)
         env.update({"TESSERA_ENGINE_TIMING_PLAN": str(path.resolve()), "PYTHONPATH": str(root)})
+    else:
+        # kv: the plan travels through the run-plan argument only; no bootstrap
+        # module may attach to a read-only pass.
+        env.pop("TESSERA_ENGINE_RESOURCE_PLAN", None)
+        env.update({"PYTHONPATH": str(root)})
     os.execve(sys.executable, [sys.executable, "-m", "experiments.capture_full_engine_resources",
                              "--run-plan", str(path.resolve())], env)
 
@@ -233,6 +311,8 @@ def run(plan_path):
     from vllm import LLM, SamplingParams
     llm = LLM(model=plan["model"], seed=0,
               **plan["selected_configuration"]["engine_args"], **plan["observer_engine_args"])
+    if plan.get("read_only_kv"):
+        return run_read_only_kv(llm, plan, plan_path, started, audit_before)
     if plan.get("observation_mode") == "timings":
         return run_timings(llm, plan, plan_path, started, audit_before)
     armed = llm.collective_rpc("resource_capture_arm")
@@ -262,6 +342,52 @@ def run(plan_path):
     (output / "run.json").write_text(json.dumps(result, sort_keys=True, indent=2) + "\n")
     print(json.dumps({"artifact": str(output / "run.json"), "sha256": digest(output / "run.json"),
                       "worker_count": len(workers), "admission": "not_implemented"}), flush=True)
+
+
+def run_read_only_kv(llm, plan, plan_path, started, audit_before):
+    """The read-only half of the two-pass pair: one stock engine's own KV view.
+
+    Nothing is installed and no snapshot is taken, so the pass evidence this
+    writes reports ``read_only: true`` and the projected ``runtime_admission``
+    follows. The record binds the same run identity the intrusive resource pass
+    carries, because the two are only the same run if the digests agree -- their
+    process ids and their pointers are each pass's own and are never compared.
+    """
+    from experiments.full_engine_kv import (admission_evidence, kv_observation_record,
+                                             read_only_kv_observation)
+    output = Path(plan["output_directory"])
+    workers = llm.collective_rpc(read_only_kv_observation)
+    audit_after = audit_core(plan["core_manifest"])
+    if len(workers) != 1:
+        raise ValueError("the read-only KV pass observes exactly one worker's KV pool")
+    identity = plan["identity"]
+    evidence = admission_evidence(mode="kv", process_id=workers[0]["process_id"],
+                                  recorder_attached=False, snapshot_count=0)
+    record = kv_observation_record(
+        workers[0]["observation"], evidence=evidence, rank=identity["rank"],
+        world_size=identity["world_size"], run_identity=identity,
+        scope=("stock engine's own resolved KV descriptors and deduplicated physical "
+               "backings, read by a worker RPC that attaches nothing and takes no snapshot"))
+    observation_path = output / "kv-observation.json"
+    observation_path.write_text(json.dumps(
+        {"schema": "tessera.full_engine_read_only_kv_pass.v1",
+         "records": [record], "plan_sha256": digest(plan_path),
+         "observer_worker_process_id": workers[0]["process_id"]},
+        sort_keys=True, indent=2) + "\n")
+    result = {"schema": "tessera.stock_engine_read_only_kv_run.v1", "scope": plan["scope"],
+              "plan_sha256": digest(plan_path), "started_unix": started, "finished_unix": time.time(),
+              "core_audit_before": audit_before, "core_audit_after": audit_after,
+              "kv_observation": {"path": str(observation_path),
+                                 "sha256": digest(observation_path),
+                                 "runtime_admission": record["runtime_admission"]},
+              "runtime_admission": record["runtime_admission"],
+              "full_model_fixed_resources_complete": False, "timings": None,
+              "admission": "not_implemented"}
+    (output / "run.json").write_text(json.dumps(result, sort_keys=True, indent=2) + "\n")
+    print(json.dumps({"artifact": str(output / "run.json"), "sha256": digest(output / "run.json"),
+                      "kv_observation_sha256": result["kv_observation"]["sha256"],
+                      "runtime_admission": record["runtime_admission"],
+                      "admission": "not_implemented"}), flush=True)
 
 
 def run_timings(llm, plan, plan_path, started, audit_before):
@@ -321,21 +447,35 @@ def main():
     parser.add_argument("--owner-rule", type=Path)
     parser.add_argument("--unit", action="append", default=[])
     parser.add_argument("--all-units", action="store_true")
-    parser.add_argument("--observation-mode", choices=("resources", "timings"), default="resources")
+    parser.add_argument("--observation-mode", choices=("resources", "timings", "kv"), default="resources",
+                        help="resources: intrusive ledger pass; timings: profiled event partition; "
+                             "kv: read-only stock-engine KV pass")
     parser.add_argument("--timing-samples", type=int, default=1)
     parser.add_argument("--reference-proof", type=Path)
     parser.add_argument("--qualify-first-native-prefix", action="store_true")
+    parser.add_argument("--rank", type=int, default=0, help="the rank this capture observes")
+    parser.add_argument("--world-size", type=int, default=1, help="the tensor-parallel world it belongs to")
+    parser.add_argument("--receipt", type=Path,
+                        help="the routed-owner receipt whose resources.resident_bytes the startup sample binds to")
+    parser.add_argument("--receipt-sha256", help="the declared digest of --receipt")
     parser.add_argument("--artifact", action="store_true",
                         help="observe a served Tessera artifact; roster and assignment come from its serving manifest")
     args = parser.parse_args()
     if args.run_plan:
         run(args.run_plan)
     else:
-        required = ("config", "model", "collector", "core_manifest", "runtime_evidence", "output")
+        required = (("config", "model", "core_manifest", "runtime_evidence", "output")
+                    if args.observation_mode == "kv"
+                    else ("config", "model", "collector", "core_manifest", "runtime_evidence", "output"))
         if any(getattr(args, name) is None for name in required) or (args.census is None) != args.artifact:
             parser.error("prepare requires all input, runtime, collector and output paths, and a census "
                          "unless --artifact selects the manifest roster")
-        if not args.unit and not args.all_units:
+        if (args.receipt is None) != (args.receipt_sha256 is None):
+            parser.error("--receipt and --receipt-sha256 travel together")
+        if args.observation_mode == "kv":
+            if not args.all_units:
+                parser.error("the read-only KV pass requires --all-units to name the plan identity it shares")
+        elif not args.unit and not args.all_units:
             parser.error("select at least one canonical --unit")
         prepare(args)
 
