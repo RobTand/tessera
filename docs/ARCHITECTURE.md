@@ -1563,6 +1563,15 @@ pages from block-table width, and checks an externally supplied capacity
 expectation. The resource worker preserves those observations before refusing
 a mismatch. Passing capacity checks is neither served-concurrency validation
 nor full-model resource admission.
+`--observation-mode kv` makes that read-only inspection an actual pass:
+a stock engine, a stock worker and one RPC that attaches nothing and takes no
+synchronized snapshot, writing a record whose pass evidence says
+`read_only: true`. The intrusive pass writes its own KV record too, with
+`read_only: false`, and the report's join binds the two to one run identity and
+one configured capacity while never comparing their pointers. `--rank` and
+`--world-size` travel in the plan identity, so a per-rank charge binds to the
+rank that measured it; `--receipt` supplies the routed-owner receipt whose own
+`resources.resident_bytes` the startup sample is checked against.
 Observer settings and incomplete raw captures cannot qualify a served model.
 
 Its distinct `tessera.full_engine_raw_resource_ledger.v1` schema never emits a
@@ -1611,16 +1620,23 @@ six `qualification_gaps` as six named **domains** — `worker_startup`,
 evidence or its own reason. `refused` means the evidence exists and contradicts
 the model; `open` means it was never observed. Both block.
 
-Only two domains have an implemented closure check — `history_join` reads
-`unattributed_external_records` and `external_closure` reads
-`external_native_peak_bytes`, and both go `refused` on unresolved ledger
-`issues`. The other four state that no check exists rather than closing.
-`qualify_domains` takes the ledger and nothing else, so no caller can close a
-domain by supplying an artifact nobody reads; a domain that closed because an
-argument was truthy would be `qualified: true` under another name.
-`worker_startup` is the subtle case: the replay refuses a capture whose recorder
-attached after CUDA initialization, which proves that half, but nothing yet
-proves the recorder ran inside the engine's own worker process.
+Four domains have an implemented closure check — `history_join` reads
+`unattributed_external_records`, `external_closure` reads
+`external_native_peak_bytes`, `worker_startup` recomputes its equalities from
+`worker_startup_records` and `cache_capacity` recomputes them from
+`kv_observations` — and all four go `refused` on unresolved ledger `issues`.
+The other two state that no check exists rather than closing. `qualify_domains`
+takes the ledger and nothing else, so no caller can close a domain by supplying
+an artifact nobody reads; a domain that closed because an argument was truthy
+would be `qualified: true` under another name. `worker_startup` needs two
+independent sides: the replay refuses a capture whose recorder attached after
+CUDA initialization, which proves that half, and the sample itself must have
+been taken in the engine's own worker process after `lock_workspace()`, with the
+ledger's `fixed`-owned never-freed rows summing to exactly the routed-owner
+receipt's own `resources.resident_bytes`. `cache_capacity` may only close on a
+**read-only** pass's record: the intrusive resource pass marks its own record
+timing- and admission-ineligible, and that record serves as the capacity witness
+the two passes are compared with instead.
 
 Every composition term names the domains it depends on, and a term whose domains
 are not all closed is null and listed in `scope.unavailable_terms`. Nothing is
@@ -1650,20 +1666,22 @@ is disclosed conservatism, not permission to charge one extent twice. The frozen
 producer schema is `docs/design/full_engine_resource_report.md`; the consumer
 that must independently recompute it is PrismaQuant's, per its
 `docs/design/runtime_fixed_resource_admission.md`.
-**The four unclosable domains are v1's largest gap, and the envelope says so.**
-`worker_startup`, `provenance_admission`, `cache_capacity` and `timing_partition`
-carry a state but v1 emits no observation a consumer can read them out of, so a
-consumer that independently recomputes holds all four open whatever the report
-claims — and `fixed_resident`, `candidate_resident`, `fixed_activation`,
-`candidate_activation` and `fixed_KV` can never become numbers. The scalar
-composition cannot complete at v1 even on a perfect capture; only
-`fixed_scratch` and `candidate_scratch` are reachable. `observations` therefore
-names each owed member and sets it to null — `worker_startup_records`,
-`runtime_provenance_relation`, `kv_observations`, `timing_captures`,
-`owner_views`, `observer_qualification` — named and null rather than absent, so
-a consumer can tell "not observed" from "not carried". Every id in a domain's
-`evidence` must name a member `observations` carries, and assembly refuses
-otherwise; `derived` does not restate `partition`'s `domains`.
+**Two domains are still unclosable, and the envelope says which.** The two
+observation members `worker_startup_records` and `kv_observations` now have a
+producer and a closure check, so `fixed_resident`, `candidate_resident`,
+`fixed_activation`, `candidate_activation` and `fixed_KV` are reachable from a
+capture that actually observed them. `provenance_admission` and
+`timing_partition` still carry a state without an observation a consumer can
+read them out of, so a consumer that independently recomputes holds those two
+open whatever the report claims, and every timing price with them.
+`observations` still names each owed member — `runtime_provenance_relation`,
+`timing_captures`, `owner_views`, `observer_qualification` are carried as null,
+while the two startup/KV members carry their records when a pass observed them
+and an explicit empty list with the refusal's reason beside it when it did not —
+named rather than absent, so a consumer can tell "not observed" from "not
+carried". Every id in a domain's `evidence` must name a member `observations`
+carries, and assembly refuses otherwise; `derived` does not restate
+`partition`'s `domains`.
 
 `derive_partition` takes the ledger and nothing else. It once accepted a
 caller-supplied `domains` mapping so the arithmetic was testable, recording
