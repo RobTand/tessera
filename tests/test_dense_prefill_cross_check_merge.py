@@ -41,21 +41,31 @@ def _arm(fixture, family, group, world, rank, m, passed=True):
             "shape": [m, 4096]}
 
 
-def _report(world, rank, drop=(), passed=True):
+def _refusal(fixture, family, group, label):
+    return {"fixture": fixture, "family": family, "group": group,
+            "refusal": label, "refused": True,
+            "named_the_mismatch": True, "message": "sidecar scheme declares ..."}
+
+
+def _roster(drop=()):
+    """The refusal arms every rank carries, one per module and label."""
+    return [_refusal(fixture, family, group, label)
+            for fixture, (family, groups) in GROUPS.items() for group in groups
+            for label in cc.REFUSAL_LABELS
+            if (fixture, group, label) not in drop]
+
+
+def _report(world, rank, drop=(), passed=True, refusals=None):
     arms = [_arm(fixture, family, group, world, rank, m, passed=passed)
             for fixture, (family, groups) in GROUPS.items() for group in groups for m in M
             if (fixture, group, m) not in drop]
     expected = [[fixture, group, world, rank, m]
                 for fixture, (_family, groups) in GROUPS.items()
                 for group in groups for m in M]
-    refusals = [{"fixture": fixture, "family": family, "group": group,
-                 "refusal": label, "refused": True,
-                 "named_the_mismatch": True, "message": "sidecar scheme declares ..."}
-                for fixture, (family, groups) in GROUPS.items() for group in groups
-                for label in ("family", "rung")]
     return {"device": "device", "torch": "torch", "vllm": "vllm", "mode": "streamed",
             "world_size": world, "tp_rank": rank, "arms": arms,
-            "expected_arms": expected, "refusals": refusals}
+            "expected_arms": expected,
+            "refusals": _roster() if refusals is None else refusals}
 
 
 def _write(tmp_path, reports):
@@ -108,6 +118,84 @@ def test_a_red_arm_does_not_merge_green(tmp_path):
     merged = cc._merged(SELECTED, paths, M)
     assert merged["all_arms_passed"] is False
     assert any(not arm["passed"] for arm in merged["arms"])
+
+
+def test_the_refusal_roster_is_deduplicated_and_complete(tmp_path):
+    """The join dedupes refusals over a roster it also REQUESTS, not a list.
+
+    Every rank carries the same arms, so the joined table is the request.  The
+    verdict is read off that requested roster rather than off whatever the
+    deduplicated list happened to hold.
+    """
+    paths = _write(tmp_path, {"tp1": _report(1, 0), "tp2r0": _report(2, 0),
+                              "tp2r1": _report(2, 1)})
+    merged = cc._merged(SELECTED, paths, M)
+    expected = len(SELECTED) * 2 * len(cc.REFUSAL_LABELS)
+    assert merged["refusals_total"] == expected
+    assert merged["refusals_expected_total"] == expected
+    assert merged["all_refusals_passed"]
+
+
+def test_a_missing_refusal_arm_is_refused(tmp_path):
+    """An arm dropped from every rank used to merge green.
+
+    Before this gate the join only deduplicated: seven of eight refusal arms --
+    or none at all -- still satisfied ``all()`` over the smaller set, so a
+    refusal that never ran was indistinguishable from one that passed.
+    """
+    short = _roster(drop=(("TESSERA_BF16", GROUPS["TESSERA_BF16"][1][1], "rung"),))
+    assert len(short) == 8 - 1, short
+    paths = _write(tmp_path, {"tp1": _report(1, 0, refusals=short),
+                              "tp2r0": _report(2, 0, refusals=short),
+                              "tp2r1": _report(2, 1, refusals=short)})
+    with pytest.raises(SystemExit, match="refusal arms the request names"):
+        cc._merged(SELECTED, paths, M)
+
+
+def test_a_report_with_no_refusals_is_refused(tmp_path):
+    """Eight empty lists are not a green refusal roster."""
+    paths = _write(tmp_path, {"tp1": _report(1, 0, refusals=[]),
+                              "tp2r0": _report(2, 0, refusals=[]),
+                              "tp2r1": _report(2, 1, refusals=[])})
+    with pytest.raises(SystemExit, match="carries 0 of 8 refusal arms"):
+        cc._merged(SELECTED, paths, M)
+
+
+def test_a_rank_that_dropped_its_refusals_is_refused(tmp_path):
+    """Every rank runs every refusal, so one rank's silence fails by name."""
+    paths = _write(tmp_path, {"tp1": _report(1, 0, refusals=[]),
+                              "tp2r0": _report(2, 0), "tp2r1": _report(2, 1)})
+    with pytest.raises(SystemExit, match="tp1.json carries 0 of 8 refusal arms"):
+        cc._merged(SELECTED, paths, M)
+
+
+def test_a_refusal_arm_outside_the_request_is_refused(tmp_path):
+    """A rank that ran some other roster is named, not folded into the join."""
+    extra = _roster() + [_refusal("GLM_A8", "TESSERA_FP8", "unrequested_group", "family")]
+    paths = _write(tmp_path, {"tp1": _report(1, 0, refusals=extra),
+                              "tp2r0": _report(2, 0, refusals=extra),
+                              "tp2r1": _report(2, 1, refusals=extra)})
+    with pytest.raises(SystemExit, match="undeclared"):
+        cc._merged(SELECTED, paths, M)
+
+
+def test_an_empty_fixture_family_cross_is_refused_by_name():
+    """``--fixture GLM_A8 --family TESSERA_BF16`` intersects nothing.
+
+    A key is a tree and a family is a route, so the two filters are not
+    independent: the cross is empty, and every mode used to report it green
+    with a table of zero arms.  The refusal names the request that selected
+    nothing.  No device and no box artifact is touched -- the refusal happens
+    before anything is resolved, which is why it runs here.
+    """
+    assert cc._select(["GLM_A8"], ["TESSERA_BF16"]) == {}
+    assert cc._select(["GLM_A8"], ["TESSERA_FP8"])["GLM_A8"]["family"] == "TESSERA_FP8"
+    with pytest.raises(SystemExit, match="the selection is empty"):
+        cc.main(["--fixture", "GLM_A8", "--family", "TESSERA_BF16", "--preflight"])
+    with pytest.raises(SystemExit, match="the selection is empty"):
+        cc._preflight({})
+    with pytest.raises(SystemExit, match="the selection is empty"):
+        cc._merged({}, ["whatever.json"], M)
 
 
 def test_a_fixture_key_names_a_tree_and_the_family_names_a_route():
