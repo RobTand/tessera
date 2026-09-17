@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import argparse
 from contextlib import ExitStack
+import errno
 import hashlib
 import json
 import os
@@ -92,16 +93,35 @@ def dump(path: Path, value) -> None:
     fsync_directory(path.parent)
 
 
-def fsync_directory(path: Path) -> None:
-    """Make a rename in ``path`` survive a crash, where the platform allows it."""
+#: The errno values that mean "this filesystem cannot sync a directory", as
+#: opposed to a failure to make the rename durable.  Nothing else is swallowed:
+#: an EIO, EACCES, EPERM or ENOSPC here is a genuine failure to commit the
+#: publication, and reporting progress anyway would claim a durability that
+#: does not exist.  A filesystem in this set is named in the artifact instead
+#: (``directory_sync: unsupported_by_filesystem``), so a reader can see that
+#: the rename was not made crash-durable rather than inferring it.
+UNSUPPORTED_DIRECTORY_SYNC_ERRNOS = frozenset(
+    {errno.EINVAL, errno.ENOSYS, errno.ENOTSUP, errno.EOPNOTSUPP})
+
+
+def fsync_directory(path: Path) -> str:
+    """Make a rename in ``path`` survive a crash, or say the FS cannot.
+
+    Returns ``"fsync"`` when the directory was synced and
+    ``"unsupported_by_filesystem"`` when the platform refuses it in the one way
+    that means the operation is undefined there.  Every other ``OSError``
+    propagates: a failed directory sync is a failed publication, and the caller
+    must not report it as committed.
+    """
+    handle = os.open(str(path), os.O_RDONLY)
     try:
-        handle = os.open(str(path), os.O_RDONLY)
-    except OSError:
-        return
-    try:
-        os.fsync(handle)
-    except OSError:
-        pass
+        try:
+            os.fsync(handle)
+        except OSError as exc:
+            if exc.errno not in UNSUPPORTED_DIRECTORY_SYNC_ERRNOS:
+                raise
+            return "unsupported_by_filesystem"
+        return "fsync"
     finally:
         os.close(handle)
 
@@ -291,10 +311,21 @@ def streamed_safetensors(path: Path, tensors: list, read, *, check, progress=Non
         raise
     digest = sha256_file(partial)
     os.replace(partial, path)
-    fsync_directory(path.parent)
+    try:
+        directory_sync = fsync_directory(path.parent)
+    except OSError as exc:
+        # The rename HAS happened, so this says what is true rather than what
+        # the pre-rename refusal says: the verified candidate is the file at
+        # ``path`` now, but the publication is not durable and nothing is
+        # reported as committed.
+        print(f"{path}: the verified candidate was renamed into place but its directory could "
+              f"not be synced ({exc}); the publication is not durable and no progress is "
+              f"reported", file=sys.stderr, flush=True)
+        raise
     written = {"path": str(path), "sha256": digest, "device_bytes": offset,
                "header_bytes": 8 + len(blob), "tensors": len(tensors),
-               "published_after": "candidate flushed, fsynced and verified in place"}
+               "published_after": "candidate flushed, fsynced and verified in place",
+               "directory_sync": directory_sync}
     if progress is not None:
         progress(len(tensors), str(path))
     return written

@@ -259,3 +259,77 @@ def test_a_durable_record_is_replaced_atomically(tmp_path):
     assert json.loads(path.read_bytes()) == {"n": 2}
     assert first != path.read_bytes()
     assert not list(tmp_path.glob("receipt.json.tmp*")), "the candidate is not left behind"
+
+
+def _directory_only_fsync(failure):
+    """The real ``os.fsync``, except that a directory gets ``failure()``."""
+    import os
+    import stat
+
+    real = os.fsync
+
+    def fsync(fd):
+        if stat.S_ISDIR(os.fstat(fd).st_mode):
+            raise failure()
+        return real(fd)
+
+    return fsync
+
+
+def test_a_filesystem_that_cannot_sync_a_directory_is_named_not_swallowed(tmp_path, monkeypatch):
+    """An unsupported directory sync is a policy, not a silent success.
+
+    The one errno set that means "this filesystem defines no directory fsync"
+    is reported back to the caller and recorded in the artifact; a genuine
+    failure (EIO here) is not in that set and propagates instead.
+    """
+    import errno
+
+    monkeypatch.setattr(inputs.os, "fsync",
+                        _directory_only_fsync(lambda: OSError(errno.EINVAL, "unsupported")))
+    assert inputs.fsync_directory(tmp_path) == "unsupported_by_filesystem"
+    monkeypatch.setattr(inputs.os, "fsync",
+                        _directory_only_fsync(lambda: OSError(errno.EIO, "planted io")))
+    with pytest.raises(OSError, match="planted io"):
+        inputs.fsync_directory(tmp_path)
+
+
+def test_a_failed_directory_sync_is_never_reported_as_committed(tmp_path, monkeypatch):
+    """The regression: a rename that is not durable must not commit progress.
+
+    The candidate is already renamed at this point, so the failure is reported
+    for what it is -- the verified file is in place and the publication is not
+    durable -- and ``progress`` is never called.  Claiming the previous file was
+    left untouched would be false here: a rename has happened.
+    """
+    import errno
+
+    values, plan = _tensors()
+    seen = []
+    monkeypatch.setattr(inputs.os, "fsync",
+                        _directory_only_fsync(lambda: OSError(errno.EIO, "planted dirsync io")))
+    with pytest.raises(OSError, match="planted dirsync io"):
+        inputs.streamed_safetensors(
+            tmp_path / "streamed.safetensors", plan, lambda key: values[key],
+            check=lambda path, header: None,
+            progress=lambda count, key: seen.append((count, key)))
+    assert seen == [], "a publication that is not durable is not committed work"
+    assert (tmp_path / "streamed.safetensors").is_file(), \
+        "the rewritten file is in place; the report says so instead of claiming otherwise"
+
+
+def test_an_unsupported_directory_sync_still_publishes_and_names_the_policy(tmp_path, monkeypatch):
+    """Where the filesystem defines no directory fsync, the rename still stands."""
+    import errno
+
+    values, plan = _tensors()
+    seen = []
+    monkeypatch.setattr(inputs.os, "fsync",
+                        _directory_only_fsync(lambda: OSError(errno.ENOTSUP, "unsupported")))
+    written = inputs.streamed_safetensors(
+        tmp_path / "streamed.safetensors", plan, lambda key: values[key],
+        check=lambda path, header: None,
+        progress=lambda count, key: seen.append((count, key)))
+    assert written["directory_sync"] == "unsupported_by_filesystem"
+    assert seen == [(len(plan), written["path"])]
+    assert Path(written["path"]).is_file()
