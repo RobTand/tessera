@@ -36,8 +36,22 @@ def _add_dense(case, target, members, *, family=TESSERA_BF16, grid="BF16", q256=
     manifest["totals"]["modules"] += 1
     manifest["totals"]["units"] += len(roles)
     for phase, regime in (("decode", "decode"), ("prefill", "batch")):
-        symbol, decoder = sorted(launch_pairs(family, structure="dense", regime=regime,
-                                             mode="resident"))[0]
+        # ``include_experimental``: this fixture writes a census RECORD, which
+        # is what a serve stamped, and the dense launch both window routes make
+        # is the packed native window GEMM -- experimental, because no
+        # lane_eligibility cell attests it (tessera#538).  The attested view is
+        # empty for these families and this line took its first element.
+        pairs = sorted(launch_pairs(family, structure="dense", regime=regime,
+                                    mode="resident"))
+        if not pairs:
+            # The attested view is EMPTY for the window families since contract
+            # v31 (tessera#538): their one dense launch is the packed native
+            # window GEMM, which no lane_eligibility cell attests.  A census
+            # record is what a serve stamped, so it falls back to the full
+            # table rather than to nothing.
+            pairs = sorted(launch_pairs(family, structure="dense", regime=regime,
+                                        mode="resident", include_experimental=True))
+        symbol, decoder = pairs[0]
         census["records"][phase][target] = {"kind": "dense", "state": "served",
             "policy": family + ":resident", "contract": route["activation_contract"],
             "symbol": symbol, "decoder": decoder,
@@ -149,8 +163,17 @@ def _add_row_sliced_dense(case, target=ROW_SLICED, *, family=TESSERA_BF16, grid=
     manifest["totals"]["units"] += len(roles)
     owner = vllm_module_name(entry, target)
     for phase, regime in (("decode", "decode"), ("prefill", "batch")):
-        symbol, decoder = sorted(launch_pairs(family, structure="dense", regime=regime,
-                                             mode="resident"))[0]
+        pairs = sorted(launch_pairs(family, structure="dense", regime=regime,
+                                    mode="resident"))
+        if not pairs:
+            # Same fallback, same reason as ``_add_dense`` above: since contract
+            # v31 (tessera#538) the attested dense view is empty for the window
+            # families, because their one dense launch -- the packed native
+            # window GEMM -- is attested by no lane_eligibility cell.  A census
+            # record is what a serve stamped, so it reads the full table.
+            pairs = sorted(launch_pairs(family, structure="dense", regime=regime,
+                                        mode="resident", include_experimental=True))
+        symbol, decoder = pairs[0]
         census["records"][phase][owner] = {"kind": "dense", "state": "served",
             "policy": family + ":resident", "contract": route["activation_contract"],
             "symbol": symbol, "decoder": decoder,

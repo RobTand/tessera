@@ -1,9 +1,18 @@
 {
-  "what": "The TEN sm_121 cells of contract_version 22, recorded as a digest. They are the first ten elements of lane_eligibility.cells and were the whole array until v24 appended cells on gfx1201.",
+  "what": "The v22 sm_121 cells that SURVIVE at contract_version 31, recorded as a digest. Contract v22 published ten; v31 withdrew six of them (tessera#538) and the four below are what is left, still the first four elements of lane_eligibility.cells.",
   "why_not_the_bytes": "A copy of the array would repeat the runtime image pin, and tests/test_runtime_image_pin.py refuses a second copy of that digest in any file that acts. A hash pins the same bytes without holding the pin.",
-  "source": "src/tessera/serving/runtime_contract.json at contract_version 22 (origin/master 3ec01f26); re-spanned at contract_version 24 (#460) without re-measuring any cell",
-  "lifted_by": "json.JSONDecoder().raw_decode ten times from the byte after the 'cells' array's opening bracket; the span is the bytes those ten elements occupy, separators and whitespace included, with no trailing comma",
-  "cells": 10,
-  "bytes": 19122,
-  "sha256": "dc1473800af8e265817505215c6afa3e5586ac1162bb14027346ce2a1b70e3b3"
+  "source": "src/tessera/serving/runtime_contract.json at contract_version 22 (origin/master 3ec01f26); re-spanned at contract_version 24 (#460) and again at 31 (tessera#538), without re-measuring any surviving cell",
+  "lifted_by": "json.JSONDecoder().raw_decode four times from the byte after the 'cells' array's opening bracket; the span is the bytes those four elements occupy, separators and whitespace included, with no trailing comma",
+  "cells": 4,
+  "bytes": 9611,
+  "sha256": "6398286090251f6d43890025e0bcbbe222df87cc25d396fa5200f6e5376780d7",
+  "withdrawn_at_v31": [
+    "tessera_e4m3_k1_dense_sm121_decode_resident",
+    "tessera_e4m3_k1_dense_sm121_decode_streamed",
+    "tessera_e4m3_k1_dense_sm121_batch_resident",
+    "tessera_e4m3_k1_dense_sm121_batch_streamed",
+    "tessera_bf16_k1_dense_sm121_decode",
+    "tessera_bf16_k1_dense_sm121_batch"
+  ],
+  "withdrawn_why": "They attested the dense window-GEMV lane. Commit 1b767a207 left fp8_route.apply and bf16_route.apply making one launch each -- tessera::window_gemm_dense/native_window_gemm -- so the build could no longer make the arithmetic these cells published, and every receipt behind them predates that commit. A withdrawal is neither an addition nor a re-measurement, so it is named here rather than absorbed into a new digest."
 }

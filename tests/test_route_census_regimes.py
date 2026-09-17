@@ -82,14 +82,28 @@ def test_every_phase_the_census_drives_joins_to_a_cell_of_every_family():
     ``KeyError`` on a loaded box, and a vacuous half of the matrix shows up as
     an absent cell rather than as a guard that passed.
     """
+    from tessera.serving.contract import _FAMILY_TO_ROUTE
+    from tessera.serving.scheme import STRUCTURES, launch_pairs
+
     contract = load_serving_contract()
     block = contract["lane_eligibility"]
     cells = {(cell["family"], cell["regime"]) for cell in block["cells"]}
+    # A family whose route makes NO attested launch cannot have a cell: the
+    # validator derives ``executes`` from the launch table and refuses a cell
+    # that would be empty.  ``TESSERA_BF16_K1`` is in that state since contract
+    # v31 (tessera#538) -- its dense route's one launch is experimental -- so
+    # requiring a cell of it would require publishing one nothing can derive.
+    # The families are partitioned rather than filtered, and both halves are
+    # asserted, so a family cannot fall out of the join by going quiet.
     families = {entry["family"] for entry in contract["formats"]}
     assert families, "no family is published; the join below would be vacuous"
+    launchable = {family for family in families
+                  if any(launch_pairs(_FAMILY_TO_ROUTE[family], structure=structure)
+                         for structure in STRUCTURES)}
+    assert launchable, "no family makes an attested launch; the join is vacuous"
     missing = sorted(
         (family, phase, CENSUS_PHASE_REGIMES[phase])
-        for family in families
+        for family in launchable
         for phase in CENSUS_PHASE_REGIMES
         if (family, CENSUS_PHASE_REGIMES[phase]) not in cells
     )
@@ -97,6 +111,9 @@ def test_every_phase_the_census_drives_joins_to_a_cell_of_every_family():
         "the census drives a phase whose regime has no cell for these families: "
         f"{missing}; a per-(family, regime) expectation would be vacuous there"
     )
+    for family in families - launchable:
+        assert not [c for c in block["cells"] if c["family"] == family], (
+            f"{family} publishes a cell while its route makes no attested launch")
 
 
 #: The two ranks' route traces from the two-rank GLM-5.3-Flash 4-layer stub
@@ -149,6 +166,14 @@ def test_every_route_the_two_rank_stub_served_joins_to_a_cell():
                        and cell["activation_contract"] == entry["contract"]
                        and mode in cell_residency_modes(cell)
                        and launch in cell["executes"]]
+            if structure == "dense" and family in ("TESSERA_E4M3_K1", "TESSERA_BF16_K1"):
+                # Contract v31 withdrew these families' dense cells with the
+                # dispatch they attested (tessera#538), so the stub's dense
+                # records join to nothing.  Asserted rather than skipped: the
+                # day a dense cell is published for either family, this branch
+                # stops being the one that runs.
+                assert not matched, f"{path.name}: {entry} joins to {matched}"
+                continue
             assert matched, f"{path.name}: {entry} joins to no sm_121 cell"
             seen.add((family, structure, regime))
         per_rank.append(seen)
@@ -215,11 +240,20 @@ def _tool():
 
 
 def _record(m, **over):
-    """One served resident-FP8 dense record whose forward ran ``m`` rows."""
-    return dict({"kind": "dense", "policy": "TESSERA_FP8:resident",
-                 "symbol": "torch._scaled_mm", "decoder": "torch_window",
+    """One served resident dense record whose forward ran ``m`` rows.
+
+    It was a ``TESSERA_FP8:resident`` record until contract v31 withdrew that
+    family's dense cells (tessera#538); the shape-and-regime matcher under test
+    is family-blind, and the E2M1x2 dense pair is the cell that still covers a
+    resident dense record in both regimes with one launch.  That "one launch in
+    both regimes" is the property this fixture needs: it is what makes a
+    miscounted decode observation invisible downstream, which is the defect
+    these tests pin.
+    """
+    return dict({"kind": "dense", "policy": "TESSERA_NVFP4:resident",
+                 "symbol": "torch._scaled_mm", "decoder": "native_span2",
                  "shape": f"M{m}:N64:K64", "state": "served",
-                 "contract": "fp8_per_token_dynamic"}, **over)
+                 "contract": "e2m1_group16_ue4m3_static"}, **over)
 
 
 def _records(batch_m, decode_m):
@@ -233,7 +267,7 @@ def _agreement(records):
     return cell_launch_agreement(
         records, cells=contract["lane_eligibility"]["cells"],
         phase_regimes=CENSUS_PHASE_REGIMES, platform="sm_121",
-        rungs_by_module={_MODULE: 1024}, families_by_route=PAYLOAD_FAMILY_BY_ROUTE,
+        rungs_by_module={_MODULE: 896}, families_by_route=PAYLOAD_FAMILY_BY_ROUTE,
         runtime_image=contract["versions"]["default_serve_image"], execution_mode="eager")
 
 

@@ -27,6 +27,8 @@ import types
 
 import pytest
 
+from tessera.serving.scheme import WINDOW_GEMM_SYMBOL
+
 torch = pytest.importorskip("torch")
 
 from tessera.serving import bf16_route as route                      # noqa: E402
@@ -193,30 +195,31 @@ def test_gemv_symbol_and_module_name_are_the_kernel_and_contract_values():
 
 
 def test_the_census_expectations_come_from_the_route():
-    """What each REGIME may report, in the contract's words for a regime.
+    """What each REGIME may report, and since tessera#538 it is ONE launch.
 
     ``decode`` is the one-row forward and ``batch`` is every M > 1
     (``contract.CENSUS_PHASE_REGIMES``), which is the vocabulary a census
-    record is stamped in.  So:
+    record is stamped in.  This function derives its answer from
+    ``scheme.ROUTE_LAUNCHES``, and that table used to carry the window-GEMV
+    lane's three dense rows: the lane's own ``gemv`` in both regimes, the torch
+    window decode in both, and the kernel-decoded tile under the stock GEMM in
+    ``batch`` alone.
 
-    * both regimes may report the lane's own ``gemv`` -- one row always takes
-      it, and so does the two-row tile on any unit the lane prepared;
-    * both may report the torch window decode, which is what a unit the lane
-      did not prepare runs at any M;
-    * only ``batch`` may report the kernel-decoded tile under the stock GEMM,
-      the branch ``decode_is_gemv`` refuses -- above the lane's max M, or from
-      three rows up on a rate-1 column.  Neither can happen at one row.
+    ``1b767a207`` left ``bf16_route.apply`` making one launch -- the packed native window
+    GEMM, at every M and in both residencies -- and contract v31 dropped the
+    retired rows from the table, so the expectation a census compares a served
+    record against is now that one pair.  Asserted as EQUALITY, because the
+    defect this whole file is about was an expectation wider than the dispatch.
 
-    ``batch`` used to be pinned WITHOUT the GEMV, which was the kernel's word
-    for decode (M <= ``GEMV_MAX_M``) read into the contract's: true of the
-    64-row prefill the census drives, false of the regime it stands for.
+    A note on where this function lives, which the equality makes visible: it
+    still belongs to ``bf16_route``, and ``bf16_route.apply`` does not import it.  The census tool
+    reads it all the same, so it is right about the serve and housed in the
+    wrong module; moving it is follow-up, not part of the withdrawal.
     """
+    expected = {(WINDOW_GEMM_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_GEMM)}
     go = route.census_expected(compiled=False)
-    for regime in ("decode", "batch"):
-        assert (route.GEMV_SYMBOL, telemetry.DECODER_WINDOW_GEMV) in go[regime]
-        assert (route.GEMM_SYMBOL, telemetry.DECODER_TORCH_WINDOW) in go[regime]
-    assert (route.GEMM_SYMBOL, telemetry.DECODER_WINDOW_GEMV) in go["batch"]
-    assert (route.GEMM_SYMBOL, telemetry.DECODER_WINDOW_GEMV) not in go["decode"]
+    assert go["decode"] == expected
+    assert go["batch"] == expected
     gc = route.census_expected(compiled=True)
     assert (route.COMPILED_SYMBOL, route.COMPILED_DECODER) in gc["decode"]
     assert (route.COMPILED_SYMBOL, route.COMPILED_DECODER) in gc["batch"]

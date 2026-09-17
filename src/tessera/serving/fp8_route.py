@@ -52,6 +52,7 @@ from .window import (PreparedModuleAxis, PreparedWindow, _fingerprint, prepare_w
 
 __all__ = [
     "ACTIVATION_CONTRACT",
+    "DENSE_LAUNCH",
     "PreparedTesseraFp8Module",
     "PreparedTesseraFp8Batch",
     "prepare_tessera_fp8_module",
@@ -60,6 +61,20 @@ __all__ = [
 
 ACTIVATION_CONTRACT = ROUTES[TESSERA_FP8]["activation_contract"]
 GEMM_SYMBOL = ROUTES[TESSERA_FP8]["gemm_symbol"]
+
+#: THE dense launch this route makes, owned where the dispatch is.  ``apply``
+#: below unpacks this pair at its one ``emit_route`` call, so the route cannot
+#: stamp a launch this constant does not name, and
+#: ``tests/test_serving_contract.py`` asserts ``scheme.ROUTE_LAUNCHES``' dense
+#: entry for ``TESSERA_FP8`` is exactly this set.
+#:
+#: That tie is the one #538 was missing.  Until it existed the launch table was
+#: checked against ``fp8_gemv.census_expected`` -- a second table, in a module
+#: this route no longer imports -- so when ``1b767a207`` retired the
+#: decode-to-global branches and left one launch here, the table kept
+#: publishing the window-GEMV lane's three and the ``lane_eligibility`` cells
+#: derived from it kept naming arithmetic the build cannot launch.
+DENSE_LAUNCH = (WINDOW_GEMM_SYMBOL, DECODER_NATIVE_WINDOW_GEMM)
 
 
 class _Fp8Role:
@@ -411,7 +426,7 @@ def build_tessera_fp8_method(scheme, prefix: str, mode: str):
                     "(tessera_native missing); refusing to fall back to a "
                     "materialised weight path this build no longer wires")
             y = native.apply(a_q, a_scale)
-            symbol, decoder, tile_m = WINDOW_GEMM_SYMBOL, DECODER_NATIVE_WINDOW_GEMM, 0
+            (symbol, decoder), tile_m = DENSE_LAUNCH, 0
             try:
                 emit_route(
                     layer, kind="dense", policy=f"{TESSERA_FP8}:{layer.tessera_mode}",
