@@ -251,6 +251,66 @@ def test_a_single_rank_resource_claim_carries_its_own_identity_and_no_peers():
                                 "bound_sha256": dense.identity_sha256(receipt["resources"])}
 
 
+def test_the_collective_is_counted_at_the_runner_callsite_or_refused():
+    """The receipt's collective claim rests on a count, not on a config flag.
+
+    The callsite is the name the runtime's own runner module imports, and the
+    site it names is verified against the pinned image's
+    ``moe_runner.py:15`` (the import) and ``:477`` (the reduction).  Where that
+    module is not importable the probe refuses rather than reporting "nothing
+    ran", because a silent zero is exactly how a config-only claim would look.
+    """
+    assert moe.RUNTIME_COLLECTIVE_MODULE.endswith("fused_moe.runner.moe_runner")
+    assert moe.RUNTIME_COLLECTIVE_SITE == (
+        "vllm.fused_moe.runner.moe_runner:_maybe_reduce_final_output")
+    assert moe.RUNTIME_COLLECTIVE_SITE.split(":")[1] == "_maybe_reduce_final_output"
+    try:
+        import vllm.model_executor.layers.fused_moe.runner.moe_runner  # noqa: F401
+    except ImportError:
+        with pytest.raises((ValueError, ImportError, ModuleNotFoundError)):
+            with moe.observe_output_collective():
+                pass
+        return
+    pytest.skip("the runtime is importable here; the device lane counts the real call")
+
+
+def _fake_layer(*, world, runner=None):
+    from types import SimpleNamespace
+
+    class _Layer:
+        pass
+
+    layer = _Layer()
+    layer.moe_config = SimpleNamespace(moe_parallel_config=SimpleNamespace(tp_size=world))
+    if runner is not None:
+        layer.tessera_runner = runner
+    return layer
+
+
+def test_a_routed_partial_reaches_the_runtimes_own_reduction_or_refuses():
+    """The expert method returns routed output only; the runner reduces it.
+
+    A TP owner priced through the method alone is this rank's partial sum
+    wearing the module's name, so the seam is called, and a runtime that no
+    longer publishes it is a refusal rather than a harness reimplementation.
+    """
+    reached = []
+    runner = type("R", (), {"_maybe_reduce_final_output":
+                            lambda self, hidden, trunc: (reached.append(trunc), hidden * 2)[1]})()
+    partial = torch.ones(2, 3, dtype=torch.bfloat16)
+    # At a world of one nothing is reduced and the tensor is returned as-is.
+    single = _fake_layer(world=1, runner=runner)
+    assert moe.reduce_routed_output(single, partial) is partial
+    assert reached == []
+    # Above one the runtime's own seam is invoked on the routed partial.
+    split = _fake_layer(world=2, runner=runner)
+    out = moe.reduce_routed_output(split, partial)
+    assert reached == [None] and out is not partial and bool((out == 2).all())
+    # A runtime with no such seam refuses; it does not silently return half.
+    with pytest.raises(ValueError, match="late all-reduce"):
+        moe.reduce_routed_output(_fake_layer(world=2), partial)
+
+
 @pytest.mark.parametrize("tp", [1, 2])
 def test_the_execution_record_is_the_owners_own_cut(tp):
     shape = _glm_shape(tp, A8)
@@ -555,7 +615,7 @@ def _owner_panel(tp, format_name, route_symbol, decoder):
         "probe_scope": None, "execution": execution,
         "runtime": {"schema": moe.RUNTIME_SCHEMA, "execution": execution,
             "collective": {"op": moe.RUNTIME_COLLECTIVE_OP, "site": moe.RUNTIME_COLLECTIVE_SITE,
-                "included_in_timed_region": True, "required_by_this_owner": tp > 1,
+                "required_by_this_owner": tp > 1,
                 "runtime_declares_skip_final_all_reduce": False, "world_size": tp}},
         "numerics": {"atol": 2**-6, "rtol": 2**-6}, "phases": phases, "workspace": workspace,
         "workspace_sha256": dense.identity_sha256(workspace),

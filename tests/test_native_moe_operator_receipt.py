@@ -1,6 +1,7 @@
 """CPU boundary tests for the whole-owner receipt; never native GPU evidence."""
 import copy
 import hashlib
+from contextlib import contextmanager
 
 import pytest
 
@@ -166,9 +167,8 @@ def _panel():
         "shape": shape, "members": members, "profile_role_order": list(moe.ROLE_ORDER), "routing": routing,
         "probe_scope": None, "execution": dict(moe.EXECUTION), "runtime": {"schema": moe.RUNTIME_SCHEMA,
             "execution": dict(moe.EXECUTION), "collective": {"op": moe.RUNTIME_COLLECTIVE_OP,
-                "site": moe.RUNTIME_COLLECTIVE_SITE, "included_in_timed_region": True,
-                "required_by_this_owner": False, "runtime_declares_skip_final_all_reduce": False,
-                "world_size": 1}},
+                "site": moe.RUNTIME_COLLECTIVE_SITE, "required_by_this_owner": False,
+                "runtime_declares_skip_final_all_reduce": False, "world_size": 1}},
         "numerics": {"atol": 2**-6, "rtol": 2**-6}, "phases": phases,
         "workspace": workspace, "workspace_sha256": dense.identity_sha256(workspace),
         "runtime_binding": {"member_formats": {m["unit"]: m["format"] for m in members},
@@ -329,6 +329,15 @@ def _fake_whole_lifecycle(monkeypatch, *, bad_decode=False):
     monkeypatch.setattr(moe, "_native_config", lambda layer: config)
     monkeypatch.setattr(moe, "observe_workspace", lambda: (copy.deepcopy(panel["workspace"]), (None,)))
     monkeypatch.setattr(moe, "apply_whole", apply)
+    # The other CPU substitution: this fixture runs without vLLM, so the
+    # runner's own all-reduce callsite cannot be imported, let alone counted.
+    # The probe is replaced by "nothing was called", which is what a world of
+    # one must see; `tests/test_native_moe_tp_owner_runtime.py` covers the
+    # declaration, and the device run is what counts a real call.
+    @contextmanager
+    def _no_collective_calls():
+        yield []
+    monkeypatch.setattr(moe, "observe_output_collective", _no_collective_calls)
     # The one substitution that is not the native lane: this CPU fixture has no
     # device process group, so the live binding is replaced by the declaration
     # the fixture itself makes. `tests/test_native_moe_tp_owner_runtime.py`

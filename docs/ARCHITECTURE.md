@@ -1784,12 +1784,18 @@ this rank loads, the cut axis, the shard range and the world — read off the
 same `_packed_group_shard_plan` the loader cuts with, so the map cannot
 describe a cut nobody makes, and `_check_prepared` refuses a rank-local shape
 the panel's own `runtime_binding.member_shapes` does not declare.
-`runtime.collective` states which op the whole-owner apply includes
+`runtime.collective` states which reduction this owner REQUIRES
 (`tensor_model_parallel_all_reduce` at
-`vllm.fused_moe.runner.moe_runner:_maybe_reduce_final_output`), that it is
-inside the timed region, and that the layer's config does not skip it;
-`receipt.latency_scope` says the samples price one whole-owner apply on this
-rank. `receipt.resources` carries `rank`, `world_size` and every other rank's
+`vllm.fused_moe.runner.moe_runner:_maybe_reduce_final_output`) and what the
+layer's own config says about skipping it.  That is a requirement, not
+evidence: the expert method returns routed output only, so `apply_whole` hands
+the partial to the runtime's own `_maybe_reduce_final_output`, and
+`observe_output_collective` counts real calls at the name the runner module
+imports (`moe_runner.py:15`; the reduction is at `:477`), requiring exactly one
+call per priced apply above a world of one and none at a world of one.
+`receipt.latency_scope` is built from that COUNT, never from the config flag,
+and names the per-phase counts it saw. `receipt.resources` carries `rank`,
+`world_size` and every other rank's
 bound (`per_rank_resource_identity`, gathered with `all_gather_object`) before
 any timing may be attached, so a world above one cannot publish one process's
 allocation as the operator's. No field is a placeholder zero.

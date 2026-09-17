@@ -36,6 +36,10 @@ MODE_RESIDENT = "resident"
 #: matmul priced as the module is the leaf timing this refuses to be.
 RUNTIME_COLLECTIVE_OP = "tensor_model_parallel_all_reduce"
 RUNTIME_COLLECTIVE_SITE = "vllm.fused_moe.runner.moe_runner:_maybe_reduce_final_output"
+#: The name the runtime's runner module imports and calls.  The probe wraps the
+#: module attribute, because that is the object the reduction actually invokes.
+RUNTIME_COLLECTIVE_MODULE = "vllm.model_executor.layers.fused_moe.runner.moe_runner"
+RUNTIME_COLLECTIVE_ATTR = "tensor_model_parallel_all_reduce"
 ROLE_ORDER = ("w1", "w3", "w2")
 
 #: Where each geometry keeps the width its own members actually carry.
@@ -1029,7 +1033,11 @@ def _build_layer(scheme, shape, routing, *, unit, device, bias, wire, selected=N
         e_score_correction_bias=bias, routed_scaling_factor=routing["routed_scaling_factor"],
         swiglu_limit=routing.get("swiglu_limit"), tp_size=int(shape.get("tensor_parallel", 1)),
         reduce_results=True, ckpt_names=("w1", "w2", "w3"))
-    return runner.routed_experts.to(device)
+    # The expert method computes routed output only; the RUNNER owns the final
+    # all-reduce, so the receipt keeps it rather than reimplementing it.
+    layer = runner.routed_experts.to(device)
+    layer.tessera_runner = runner
+    return layer
 
 
 def prepare_native_moe_operator(member_inputs, tensors, phase_tensors, *, unit, shape, routing,
@@ -1173,10 +1181,13 @@ def prepare_native_moe_operator(member_inputs, tensors, phase_tensors, *, unit, 
     # the local matmul and calling it the module's latency would be a leaf
     # timing wearing a whole-owner's name.  The declaration is read off the
     # config the layer actually carries, not asserted.
+    # What the runtime DECLARES about this owner's output reduction.  This is a
+    # requirement, not evidence that the collective ran: the callsite is
+    # counted during the priced apply, and that count is what the receipt's
+    # `latency_scope` is built from.
     runtime["collective"] = {
         "op": RUNTIME_COLLECTIVE_OP,
         "site": RUNTIME_COLLECTIVE_SITE,
-        "included_in_timed_region": True,
         "required_by_this_owner": world > 1,
         "runtime_declares_skip_final_all_reduce":
             config["moe_config"].get("skip_final_all_reduce"),
@@ -1187,8 +1198,67 @@ def prepare_native_moe_operator(member_inputs, tensors, phase_tensors, *, unit, 
 
 
 def apply_whole(layer, tensors):
-    return layer.quant_method.apply(layer, tensors["input"], tensors["topk_weights"],
-                                    tensors["topk_ids"], None, None)
+    """One whole routed owner's apply, INCLUDING the runtime's reduction.
+
+    The expert method returns routed output only: the runner owns the final
+    all-reduce (`moe_runner._maybe_reduce_final_output`, and the method's own
+    docstring says so at ``NATIVE-MOE-RUNTIME-BOUNDARY``).  Calling the method
+    alone at a world above one prices this rank's partial sum and calls it the
+    module, which is exactly the leaf timing a whole-owner receipt must not be.
+    """
+    hidden = layer.quant_method.apply(layer, tensors["input"], tensors["topk_weights"],
+                                      tensors["topk_ids"], None, None)
+    return reduce_routed_output(layer, hidden)
+
+
+def reduce_routed_output(layer, hidden):
+    """Hand a routed partial to the RUNTIME's own late reduction, or refuse.
+
+    At a world of one there is nothing to reduce and the tensor is returned
+    unchanged, which is what keeps the TP1 receipt byte-identical.  Above one,
+    the runtime's own seam is called; a build that no longer publishes it is a
+    refusal rather than a harness reimplementation of the serving arithmetic.
+    """
+    parallel = getattr(getattr(layer, "moe_config", None), "moe_parallel_config", None)
+    world = int(getattr(parallel, "tp_size", 1) or 1)
+    if world <= 1:
+        return hidden
+    runner = getattr(layer, "tessera_runner", None)
+    reduce_final = getattr(runner, "_maybe_reduce_final_output", None)
+    if not callable(reduce_final):
+        raise ValueError(
+            "this runtime no longer publishes the routed runner's own late all-reduce "
+            "(_maybe_reduce_final_output); a TP owner cannot be priced without it and the "
+            "harness does not reimplement the serving arithmetic")
+    return reduce_final(hidden, None)
+
+
+@contextmanager
+def observe_output_collective():
+    """Count REAL calls at the runner's own all-reduce callsite.
+
+    ``moe_runner`` imports the symbol into its own namespace, so the name to
+    wrap is the one the reduction actually calls.  A config flag says what the
+    runtime intends; this says what ran, and it is the count the receipt keeps.
+    """
+    import importlib
+    module = importlib.import_module(RUNTIME_COLLECTIVE_MODULE)
+    if not hasattr(module, RUNTIME_COLLECTIVE_ATTR):
+        raise ValueError(
+            f"the routed runner no longer imports {RUNTIME_COLLECTIVE_ATTR}; the callsite "
+            "this receipt counts has moved and is not being observed")
+    original = getattr(module, RUNTIME_COLLECTIVE_ATTR)
+    calls: "list[int]" = []
+
+    def counted(*args, **kwargs):
+        calls.append(1)
+        return original(*args, **kwargs)
+
+    setattr(module, RUNTIME_COLLECTIVE_ATTR, counted)
+    try:
+        yield calls
+    finally:
+        setattr(module, RUNTIME_COLLECTIVE_ATTR, original)
 
 
 def phase_identities(phase_tensors):
@@ -1319,11 +1389,9 @@ def validate_panel(panel):
     # out of the timed call, is a different measurement with the same name.
     world = int(runtime["execution"]["tensor_parallel"])
     collective = runtime.get("collective")
-    dense._fields(collective, ("op", "site", "included_in_timed_region",
-        "required_by_this_owner", "runtime_declares_skip_final_all_reduce", "world_size"),
-        "runtime collective")
+    dense._fields(collective, ("op", "site", "required_by_this_owner",
+        "runtime_declares_skip_final_all_reduce", "world_size"), "runtime collective")
     if (collective["op"] != RUNTIME_COLLECTIVE_OP or collective["site"] != RUNTIME_COLLECTIVE_SITE
-            or collective["included_in_timed_region"] is not True
             or type(collective["required_by_this_owner"]) is not bool
             or collective["required_by_this_owner"] != (world > 1)
             or type(collective["world_size"]) is not int or collective["world_size"] != world
@@ -1448,10 +1516,22 @@ def measure_prepared_operator(prepared, panel, phase_tensors, *, warmup_iteratio
             torch.cuda.synchronize()
             torch.cuda.reset_peak_memory_stats()
             before = torch.cuda.memory_allocated()
-            output = apply_whole(layer, tensors)
+            # Counted at the runner's own callsite during THIS apply.  A world
+            # above one must show exactly one reduction and a world of one
+            # must show none, either way from what ran rather than what the
+            # config intended.
+            with observe_output_collective() as collective_calls:
+                output = apply_whole(layer, tensors)
             torch.cuda.synchronize()
             collective = agree_output_across_ranks(output, distributed=distributed,
                                                    where=phase + " routed output")
+            expected_calls = 1 if int(distributed["world_size"]) > 1 else 0
+            if len(collective_calls) != expected_calls:
+                raise ValueError(
+                    f"{phase}: the runtime's own output reduction ran "
+                    f"{len(collective_calls)} time(s) and this owner needs {expected_calls} at "
+                    f"world size {distributed['world_size']}")
+            collective["callsite_calls"] = len(collective_calls)
             peak = max(0, torch.cuda.max_memory_allocated() - before)
             route = read_route(layer)
             wanted = expected["expected_route"]
@@ -1515,12 +1595,23 @@ def measure_prepared_operator(prepared, panel, phase_tensors, *, warmup_iteratio
                     _check_phase_tensors(panel, phase_tensors)
         _check_prepared(prepared, panel)
     status = ("resources_observed" if resource_collector is not None else "timing_admissible") if passed else "numerical_refused"
+    # Derived from the counted callsite, never from the config's intent: a
+    # receipt may only say its samples include the output collective when the
+    # runtime actually reduced on every phase it priced.
+    observed_inclusion = passed and all(
+        observations[phase].get("collective", {}).get("callsite_calls") == 1 for phase in PHASES)
     return {"schema": RECEIPT_SCHEMA, "status": status,
             "panel": panel, "panel_sha256": dense.identity_sha256(panel), "runtime": prepared["runtime"],
             "runtime_sha256": dense.identity_sha256(prepared["runtime"]), "operator": prepared["operator"],
             "latency_scope": {"kind": "one_whole_owner_apply", "per_rank": True,
-                "includes_output_collective":
-                    bool(prepared["runtime"]["collective"]["required_by_this_owner"]),
+                "includes_output_collective": observed_inclusion,
+                "collective_callsite": RUNTIME_COLLECTIVE_SITE,
+                "collective_calls_per_phase": {
+                    phase: observations[phase].get("collective", {}).get("callsite_calls")
+                    for phase in PHASES},
+                "collective_evidence": "counted at the runtime runner's own imported symbol "
+                                       "during the priced apply, and required to be 1 at a "
+                                       "world above one and 0 at a world of one",
                 "collective": prepared["runtime"]["collective"]["op"],
                 "never": "a sum of leaf timings, or a local matmul priced as the module"},
             "phases": observations, "resources": {"status": "incomplete", "scope": "torch_allocator_observation",
