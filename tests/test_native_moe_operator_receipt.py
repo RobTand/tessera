@@ -293,6 +293,11 @@ def _fake_whole_lifecycle(monkeypatch, *, bad_decode=False):
         ("shape", "routing", "profile_role_order", "routing_capture_sha256", "serving_config_sha256")}
     operator.update(native_tensors=dense._native_tensors(layer), scheme={"fixture": "CPU_ONLY"}, config=config,
         declared_route=panel["phases"]["prefill"]["expected_route"],
+        # This fixture runs without vLLM, so the serving document is reduced to
+        # the one thing the receipt reads from it: the CONTEXT scope.  The
+        # engine-side resolution is `resolve_serving_config`'s and is exercised
+        # in `tests/test_native_moe_tp_owner_runtime.py`.
+        serving_config={"scope": moe.OPERATOR_CONTEXT_SCOPE},
         phases={phase: {"transport": panel["phases"][phase]["transport"]} for phase in moe.PHASES},
         member_map=[{"unit": member["unit"], "expert": member["expert"], "role": member["role"],
                      "format": member["format"], "container_shape": list(member["shape"]),

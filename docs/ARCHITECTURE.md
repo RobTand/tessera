@@ -5,6 +5,27 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-17 for the census's engine budget and its decoder claim
+(§4.5g). A receipt said nothing about what the engine was allowed to spend, and
+the tool could not bound the KV cache at all: `--gpu-memory-utilization` is a
+fraction of the DEVICE's total and vLLM fills whatever it leaves with KV, so on
+a serve whose allocator is capped below that fraction the KV fill is what
+reaches the cap. Measured on sparklina over
+`denseA8A16-layers0-1-20260917`: the a4cap plugin verified the requested 24.0
+GiB fraction exactly (0.197327678710216 of 130593964032 B), vLLM computed 17.26
+GiB of KV from a 121.63 GiB device, and the model's own attention kernel OOM'd
+23.30 GiB into the 24.00 GiB cap. The tool now takes
+`--kv-cache-memory-bytes` (bound the cache inside the fraction),
+`--max-num-seqs` (the concurrent-sequence limit, which a bounded KV budget also
+bounds through the Mamba block cache that vLLM builds from it) and
+`--require-decoder` (name the launch the arm exists to measure, so a route's
+materialised fallback cannot pass), and publishes `memory_budget`, `scheduler`
+and `decoder_coverage`. Every one of those is ADDITIVE WITHIN
+`tessera.serving.route_census/2`, so a command line written before the
+arguments builds the engine it always did and writes the receipt it always
+did. No wire, route, launch row, cell, rung, grade, qualification or packaged
+contract moves.
+
 Re-stamped 2026-09-17 for the GLM routed owner's runtime path (§2.5). The
 whole-owner receipt at `experiments/bench_native_moe_operator.py` no longer
 carries a hardcoded family, rung, tensor-parallel degree or route: the owner's
@@ -19,6 +40,21 @@ world above one is bound from a live `torch.distributed` group
 (`bind_owner_rank`) with an explicit tcp rendezvous, and the operator requires
 the runtime's own final all-reduce at that cut. The LFM owner's record, wire
 and sidecar are unchanged field for field.
+
+A request may also split the source out of the tensor file -- one CPU
+`source_path` read per member, renders/phase/bias on the device -- and the
+source and render proof tensors are released before the timed region (§2.5).
+
+A member's name is the producer's own spelling -- the role's
+`<owner>.<expert>.w1` or the projection's `<owner>.<expert>.gate_proj`,
+resolved through `MOE_SHARD_PROJECTIONS` -- and its source container is the
+module's width at every world while its render is this rank's cut
+(`member_unit_spellings`, `check_member_geometries`; §2.5).
+
+The operator receipt also names its own context, so a factory observation is
+never read as an engine one: it is
+`standalone_factory_context_not_full_engine`, with no KV cache to charge
+(`operator_context_scope`; §2.5).
 
 The runner that owns that reduction is carried beside the routed layer
 (`WholeOwner`) rather than registered inside it, and the callsite a receipt
@@ -1793,6 +1829,56 @@ the whole container, so `w13` declares `2N` rows and `w2` `N` columns whatever
 the serving world is, while the cut is the loader's. `create_weights` is what
 refuses a partition width that is not exactly `intermediate_size // tp`.
 
+**One shared source on the host, and no proof tensors inside the timed region.**
+A routed owner's source containers are the whole unit per member, and the
+harness reads them for two CPU facts only: the wire's sealed
+`identity["source"]` and the member's declared geometry.  A request may
+therefore name a separate ONE-file `source_path`, read with `safetensors`'s own
+reader one member at a time on the CPU, while `tensors_path` carries the
+renders, the captured routing bias and the phase tensors on the device; the
+legacy monolithic request names only `tensors_path` and is unchanged key for
+key, which is the LFM lane.  The wire decode runs on the TARGET the render
+lives on, not on whichever device the source happened to be read into.  Once
+every member is qualified, the source and render proof tensors are released
+(`release_verification_tensors`) before the timed region and the owner's own
+bytes are re-checked after the release, so a benchmark pays for the phases, the
+bias and the loaded owner rather than for the 13.5 GiB source and 6.75 GiB of
+renders it only had to prove.
+
+**A member name is the producer's, and each width belongs to its own claim.**
+The harness's grammar spells a member by its ROLE
+(`<owner>.<expert>.w1`), while a checkpoint whose source tensors are named by
+projection writes `<owner>.<expert>.gate_proj`.  Both name one member, and the
+producer's spelling is the one kept: the wire record's own `identity.unit` is
+checked against the member's unit at preparation, so a member renamed to the
+harness's vocabulary could no longer be verified against the wire it names.
+`member_unit_spellings` therefore admits either name and resolves the role
+through `MOE_SHARD_PROJECTIONS`, the table the loader already uses, rather than
+a second spelling table.  The member's `shape` and its `source_weight` record
+are the SOURCE container's -- the module's width at every world, which is what
+the wire identity binds -- while its `rendered_weight` record and the panel's
+`runtime_binding.member_shapes` are this rank's own cut.
+`check_member_geometries` refuses a rank-local source or a module-wide render
+before CUDA; at a world of one the two geometries are the same list, so the LFM
+TP1 owner's records are unchanged field for field.
+
+The two checks meet in one place: the shared source is read on the host, so the
+device requirement is the RENDER's alone (`_require_source_tensor` accepts the
+host copy the shared file yields), while `check_member_geometries` still binds
+the container to the module's width and the render to this rank's cut.
+
+**The operator receipt names a standalone factory context, not an engine.**
+This harness prices ONE routed owner built with the factory under test: it has
+no engine scheduler and owns no KV cache, so `fixed_KV`, the engine's own fixed
+resident/activation/scratch terms and served capacity cannot be charged from
+its receipt.  `resolve_serving_config` stamps the scope
+(`standalone_factory_context_not_full_engine`), `operator_context_scope`
+refuses a config that relabels it, and the receipt's `resources` block carries
+both the scope and that refusal as `engine_scope`.  The stock-engine capture
+(`experiments/capture_full_engine_resources.py`, `experiments/full_engine_kv.py`,
+`experiments/full_engine_worker.py`) owns those observations; the two are
+separate producers and neither's numbers may be composed with the other's.
+
 **Two stacks need the explicit selected owner, and one must not have it.** A
 compressed BF16 expert stack has no production builder
 (`scheme.MOE_BUILDERS`), and the production FP8 expert builder is TP1-only;
@@ -3106,6 +3192,16 @@ which used to skip unknown fields. The block is read on both sides:
   lane refusal is a value on the layer (`telemetry.note_lane_refusal`), so
   the receipt says *why* the lane took nothing instead of leaving it on
   stderr.
+- **Serve time, one field over.** `--require-decoder` is the same refusal for
+  the launch rather than the lane: every Tessera module in both driven phases
+  must report the named decoder, and a named decoder that took zero modules is
+  refused from the other side. Without it the per-module check only asks that a
+  record's `(symbol, decoder)` pair be one its route OWNS -- and a route that
+  still publishes a materialised fallback owns that pair too, so a green
+  receipt can describe a serve in which the native decoder never ran. The
+  `decoder_coverage` block is written whether or not anything was named, so a
+  reader can tell "nothing was required" from "everything required was
+  measured".
 - **After the fact.** `tools/tessera_lane_preflight.py` answers the same
   question from the bytes of a checkpoint somebody else built, over every
   unit, and exits non-zero. It decides each unit through
@@ -3962,6 +4058,17 @@ prefixed with the rank that wrote it, and module names are namespaced
 `rank{r}/{name}` where engagement and agreement counts would otherwise collapse
 across ranks; `--expect-modules` is checked per rank, since every rank builds a
 module for every declared target.
+
+The same convention carries the engine's shape three keys further:
+`memory_budget` (the fraction, and the KV byte bound when one was named),
+`scheduler` (the concurrent-sequence limit when one was named) and
+`decoder_coverage` (the decoders named by `--require-decoder`, the count each
+took per phase, and the problems when one took none). They are written
+unconditionally so the receipt states the budget it was taken under instead of
+leaving it to whoever typed the command; the first two are empty or
+fraction-only on an unbounded command line, and `decoder_coverage.required` is
+`[]`, which is how a gate tells "nothing was required" from "everything
+required was measured".
 
 `experiments/tessera_plugin_served_tp.sh` drives two boxes: a ray head here, a
 ray worker over ssh on the other, one engine at tensor parallel 2. It refuses

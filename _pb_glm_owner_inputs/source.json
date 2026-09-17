@@ -1,0 +1,15 @@
+[
+  {
+    "argv": ["_pb_glm_owner_inputs/run-source.sh"],
+    "cwd": "/home/rob/tmp/tessera-glm-owner-inputs-20260917",
+    "tags": ["x86"],
+    "demand": {"cpu": 4, "mem_gb": 8},
+    "progress_phases": ["source=900"],
+    "env": {
+      "PY": "/home/rob/venvs/pq-cpu312-tessera-4c384e60/bin/python",
+      "OUT": "/mnt/shared/tessera-measurements/glm-canonical-census-20260908/routed-owner-inputs-layer3-20260917",
+      "EXPORT": "/mnt/shared/tessera-measurements/glm-canonical-census-20260908/first-artifact-exports/a4/merged-4c384e60",
+      "BUNDLE": "/mnt/shared/dq-runs/glm-first-artifact-claude-20260914/controls/a4/manifest.json"
+    }
+  }
+]

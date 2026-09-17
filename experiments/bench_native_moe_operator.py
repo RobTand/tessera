@@ -45,6 +45,13 @@ RUNTIME_COLLECTIVE_METHOD = "_maybe_reduce_final_output"
 #: object whose calls are counted (it did: the site said `vllm.fused_moe.runner`,
 #: an import path this runtime does not have).
 RUNTIME_COLLECTIVE_SITE = f"{RUNTIME_COLLECTIVE_MODULE}:{RUNTIME_COLLECTIVE_METHOD}"
+#: The context one operator receipt is produced in, and the reason no engine
+#: term may be charged from it.  This process constructs the routed owner with
+#: the factory under test and runs captured phases through it: there is no
+#: engine scheduler and no KV cache here, so `fixed_KV` and the full-engine
+#: fixed terms come from the stock-engine capture
+#: (`experiments/capture_full_engine_resources.py`), never from this receipt.
+OPERATOR_CONTEXT_SCOPE = "standalone_factory_context_not_full_engine"
 ROLE_ORDER = ("w1", "w3", "w2")
 
 #: Where each geometry keeps the width its own members actually carry.
@@ -549,6 +556,48 @@ def _declared_member_rows(shape, role):
     return _declared_member_shape(shape, role)[0]
 
 
+def member_unit_spellings(owner_unit, expert, role):
+    """Every name ONE member role is written under, across the two vocabularies.
+
+    This harness's grammar names a member by its ROLE
+    (``<owner>.<expert>.w1``), and a producer whose source checkpoint names the
+    same member by its PROJECTION (``<owner>.<expert>.gate_proj``) writes the
+    name the export wrote.  That name is not cosmetic: the wire record's own
+    ``identity.unit`` is checked against the member's unit in
+    ``prepare_native_moe_operator``, so a member renamed to the role spelling
+    could no longer be verified against the wire it names.  The role is
+    resolved through the one table the loader uses (``MOE_SHARD_PROJECTIONS``)
+    rather than a second spelling table here.
+    """
+    from tessera.serving.scheme import MOE_SHARD_PROJECTIONS
+    return (f"{owner_unit}.{expert}.{role}",
+            f"{owner_unit}.{expert}.{MOE_SHARD_PROJECTIONS[role]}")
+
+
+def check_member_geometries(shape, member, source_shape, rendered_shape):
+    """One member's two widths, each checked where its own claim lives.
+
+    The SOURCE container is the MODULE's: a Tessera checkpoint is
+    tensor-parallel agnostic, every rank is handed the whole unit, and the wire
+    identity binds it there whatever world serves it.  The RENDER is this
+    rank's own cut of that container, which is the width the loader will hold.
+    Comparing one against the other's geometry passes at TP1, where the cut is
+    the whole, and cannot pass at TP2 -- so the two are named separately and a
+    rank-local source or a module-wide render is a refusal rather than a
+    silently different measurement.
+    """
+    declared = _declared_member_shape(shape, member["role"])
+    rank_local = _member_shape(shape, member["role"])
+    if list(source_shape) != declared:
+        raise ValueError(
+            f"{member['unit']}: source container geometry {list(source_shape)} is not the "
+            f"module's {declared}")
+    if list(rendered_shape) != rank_local:
+        raise ValueError(
+            f"{member['unit']}: rendered geometry {list(rendered_shape)} is not this rank's "
+            f"cut {rank_local}")
+
+
 def owner_member_map(shape, scheme, *, unit, rank, world):
     """The exact slice of every member role THIS rank loads, per role.
 
@@ -632,9 +681,12 @@ def verify_rank_local_member_renders(member_inputs, tensors, shape, scheme, *, u
         role = member["role"]
         projection = MOE_SHARD_PROJECTIONS[role]
         group = "w2" if role == "w2" else "w13"
-        source = tensors["source_weight/" + member["unit"]]
         rendered = tensors["rendered_weight/" + member["unit"]]
-        parsed = unit_artifact.parse_unit_artifact(member["blob"], str(source.device))
+        # The decode happens on the TARGET the render lives on -- the device
+        # that will run the operator.  The source container is a CPU artifact
+        # in the shared-source request and reading its device here would parse
+        # the wire on the host and compare it against a device tensor.
+        parsed = unit_artifact.parse_unit_artifact(member["blob"], str(rendered.device))
         piece = shard_parsed_roles([(projection, parsed)], plans[group])[0][1]
         decoded = unit_artifact.reconstruct_unit(piece.unit, piece.forests, piece.code).bfloat16()
         # One statement, not two: the tensor this rank's PWC holds IS the
@@ -907,10 +959,34 @@ def resolve_serving_config(path, runtime_image, *, tensor_parallel):
         kernel_config=KernelConfig(**args["kernel_config"]),
         compilation_config=CompilationConfig(mode=CompilationMode.NONE, cudagraph_mode=CUDAGraphMode.NONE))
     return config, {"file_sha256": hashlib.sha256(raw).hexdigest(), "document": document,
-        "scope": "standalone_factory_context_not_full_engine",
+        "scope": OPERATOR_CONTEXT_SCOPE,
         "resolved": {key: _plain(getattr(config, key)) for key in
                      ("scheduler_config", "cache_config", "parallel_config", "kernel_config",
                       "compilation_config", "device_config")}}
+
+
+def operator_context_scope(serving_config):
+    """Name the context an operator receipt came from, in the receipt itself.
+
+    A whole-owner receipt prices ONE routed owner in a standalone factory
+    context.  That context has no engine scheduler and owns no KV cache, so it
+    cannot answer a full-engine question: `fixed_KV`, the engine's own fixed
+    resident/activation/scratch terms and the served capacity are the
+    stock-engine capture's to observe
+    (`experiments/capture_full_engine_resources.py`, `experiments/full_engine_kv.py`),
+    and a consumer that charged them from this receipt would be composing terms
+    from two different environments.  The scope is checked rather than echoed,
+    so a receipt cannot be relabelled into an engine observation by editing a
+    config.
+    """
+    scope = serving_config["scope"]
+    if scope != OPERATOR_CONTEXT_SCOPE:
+        raise ValueError(
+            f"an operator receipt may only be produced in {OPERATOR_CONTEXT_SCOPE}, not {scope!r}")
+    return {"context_scope": scope,
+            "engine_scope": "standalone factory context: no engine scheduler and no KV cache, so "
+                            "fixed_KV and the full-engine fixed terms cannot be charged from this "
+                            "receipt; the stock-engine capture observes those"}
 
 
 def verify_routing_bias(routing, bias):
@@ -1078,8 +1154,15 @@ def _build_layer(scheme, shape, routing, *, unit, device, bias, wire, selected=N
 def prepare_native_moe_operator(member_inputs, tensors, phase_tensors, *, unit, shape, routing,
                                 runtime_image, execution, profile_role_order, serving_config, routing_capture_sha256,
                                 phase_transport, routing_bias=None, warmup_iterations=8,
-                                selected=None, distributed=None):
-    """Verify all original PWC wires, then load one complete native owner."""
+                                selected=None, distributed=None, source_reader=None):
+    """Verify all original PWC wires, then load one complete native owner.
+
+    ``source_reader`` is the shared-source request's per-unit reader.  The
+    source containers then arrive on the CPU one member at a time and the
+    ``tensors`` mapping carries only the renders, the bias and the phase
+    tensors; a legacy monolithic request passes no reader and keeps every tensor
+    in one CUDA file, unchanged.
+    """
     import torch
     from tessera.cached_unit import verify_cached_unit, tensor_identity as producer_tensor_identity
     from tessera.fused import pack_fused
@@ -1109,18 +1192,30 @@ def prepare_native_moe_operator(member_inputs, tensors, phase_tensors, *, unit, 
     validate_phase_values(phase_tensors, shape, routing, require_references=False)
     expected_tensor_names = {f"{kind}/{member['unit']}" for member in member_inputs
                              for kind in ("source_weight", "rendered_weight")}
+    if source_reader is not None:
+        expected_tensor_names = {f"rendered_weight/{member['unit']}" for member in member_inputs}
     if set(tensors) != expected_tensor_names:
-        raise ValueError("source/render tensor roster differs from the complete owner")
+        raise ValueError("source/render tensor roster differs from the complete owner"
+                         if source_reader is None else
+                         "render tensor roster differs from the complete owner")
     members, wires, strides = [], [], {"w13": 0, "w2": 0}
     for member in member_inputs:
         dense._fields(member, ("unit", "expert", "role", "format", "blob", "record"), "member input")
         original, record = member["blob"], member["record"]
-        source = tensors["source_weight/" + member["unit"]]
+        source = (tensors["source_weight/" + member["unit"]] if source_reader is None
+                  else source_reader(member["unit"]))
         rendered = tensors["rendered_weight/" + member["unit"]]
-        for value in (source, rendered):
-            dense._require_cuda_tensor(value)
-            if list(value.shape) != _member_shape(shape, member["role"]):
-                raise ValueError("expert-role tensor geometry differs from its owner")
+        # The render IS this rank's resident tensor, so it must be the compute
+        # device's.  The source container is read only to re-derive the wire's
+        # sealed identity and to frame the member's declared geometry -- both
+        # CPU facts -- so a shared source stays on the host instead of being
+        # copied to the device to be hashed back.
+        dense._require_cuda_tensor(rendered)
+        _require_source_tensor(source)
+        # The source is the container the module frames; the render is this
+        # rank's cut of it.  Checked together, because the two agree only at a
+        # world of one and the wire identity below binds the container.
+        check_member_geometries(shape, member, source.shape, rendered.shape)
         identity = record["identity"]
         if identity["unit"] != member["unit"].removesuffix(".weight"):
             raise ValueError("wire producer unit differs from its declared member")
@@ -1304,7 +1399,7 @@ def phase_identities(phase_tensors):
             for phase, values in phase_tensors.items()}
 
 
-def request_tensor_roster(routing, members):
+def request_tensor_roster(routing, members, *, shared_source=False):
     """The safetensors keys this request must carry, from its own declarations.
 
     A live selection bias is declared under the geometry's own spelling --
@@ -1312,14 +1407,112 @@ def request_tensor_roster(routing, members):
     owner -- and either declaration means the payload has to be there.  Asking
     only the LFM name is how a GLM request would have passed the roster check
     and then been refused (or worse, checked against nothing) one step later.
+
+    ``shared_source`` is the split request: the source containers live in ONE
+    file of their own, so this roster no longer carries them and
+    :func:`shared_source_roster` is what the source file is checked against.
+    The legacy LFM request has no source file and is unchanged key for key.
     """
     names = {f"{phase}.{key}" for phase in PHASES for key in TENSOR_KEYS}
-    names.update(f"{kind}/{member['unit']}" for member in members
-                 for kind in ("source_weight", "rendered_weight"))
+    names.update(f"rendered_weight/{member['unit']}" for member in members)
+    if not shared_source:
+        names.update(f"source_weight/{member['unit']}" for member in members)
     protocol = routing["source_protocol"]
     if protocol.get("selection_bias") is not None or protocol.get("correction_bias") is not None:
         names.add("routing_bias")
     return names
+
+
+def shared_source_roster(members):
+    """The keys the ONE shared source container must carry, one per member."""
+    return {f"source_weight/{member['unit']}" for member in members}
+
+
+@contextmanager
+def open_shared_source(path):
+    """Read one shared CPU source container, one member at a time.
+
+    The source tensors are the WHOLE container per member, and the only two
+    things the harness does with them are CPU facts: re-derive the wire's
+    sealed ``identity["source"]`` and frame the member's declared geometry.
+    Copying a layer's source to the device to hash it back is redundant work,
+    and a per-rank, per-rate request that carries the whole source in its own
+    GPU tensor file duplicates it once for every rate and every rank.
+
+    ``safe_open`` is the format's own reader and it is opened once here; one
+    member is materialized per ``read`` and the process holds that unit rather
+    than the file.  This is not a cache: nothing is retained between reads, and
+    the handle is closed with the context.
+    """
+    from safetensors import safe_open
+    with safe_open(str(path), framework="pt", device="cpu") as handle:
+        yield SharedSourceFile(keys=frozenset(handle.keys()),
+                               read=lambda unit: handle.get_tensor(f"source_weight/{unit}"))
+
+
+@dataclasses.dataclass(frozen=True)
+class SharedSourceFile:
+    """One opened shared source container: its roster and a per-unit reader."""
+
+    keys: frozenset
+    read: object
+
+
+def validate_shared_source(source, members):
+    """The shared file carries exactly this owner's members, and nothing else."""
+    expected = frozenset(shared_source_roster(members))
+    if source.keys != expected:
+        missing = sorted(expected - source.keys)
+        extra = sorted(source.keys - expected)
+        raise ValueError(
+            f"shared source roster is not this owner's members (missing {missing[:2]}, "
+            f"extra {extra[:2]})")
+    return source
+
+
+def _require_source_tensor(tensor):
+    """The shared source arrives on the CPU; a legacy request keeps it on CUDA.
+
+    Both are accepted because the two request shapes are different inputs, not
+    two device policies for one input: the shared file is read on the host, and
+    a legacy monolithic request is already resident on the compute device.
+    Either way the tensor is the container's own bf16 2-D bytes.
+    """
+    import torch
+    if (tensor.device.type not in ("cpu", "cuda") or tensor.dtype != torch.bfloat16
+            or tensor.ndim != 2):
+        raise ValueError("source container must be an actual 2-D BF16 tensor on the CPU or device")
+
+
+def release_verification_tensors(tensors, members):
+    """Drop the source/render PROOF tensors once every member is qualified.
+
+    ``prepare_native_moe_operator`` verifies each wire against the actual
+    source slice and each container against this rank's own render, and after
+    that neither tensor is read again: the owner holds the loaded wire
+    containers, the phases hold their own inputs and reference outputs, and the
+    captured routing bias is the layer's.  Keeping the verification population
+    alive through the timed measurement would charge every benchmark for the
+    renders it only had to prove.
+
+    Nothing here is a claim about the owner: the caller's own identity check
+    (``dense._native_tensors``) is what establishes the owner's bytes did not
+    move.  This returns the evidence of what was dropped, so a receipt can say
+    what the process released and what it kept.
+    """
+    dropped = {"tensors": [], "bytes": 0}
+    for kind in ("source_weight/", "rendered_weight/"):
+        for member in members:
+            key = kind + member["unit"]
+            value = tensors.pop(key, None)
+            if value is None:
+                continue
+            dropped["tensors"].append(key)
+            dropped["bytes"] += value.numel() * value.element_size()
+    dropped["tensors"].sort()
+    return {"scope": "source and render verification tensors released after qualification",
+            "dropped_bytes": dropped["bytes"], "dropped_tensors": len(dropped["tensors"]),
+            "retained": sorted(tensors)}
 
 
 def validate_panel(panel):
@@ -1384,14 +1577,22 @@ def validate_panel(panel):
     for member in panel["members"]:
         dense._fields(member, ("unit", "expert", "role", "format", "shape", "source_weight",
                                "rendered_weight", "activation", "wire"), "panel member")
+        # The member's `shape` is its SOURCE container's, which is the module's
+        # at every world; the rank's own cut is the `runtime_binding`'s
+        # separate statement (`member_shapes`), which `_check_prepared` reads
+        # against the plan.  A name is accepted in either vocabulary -- the
+        # harness's role spelling or the projection the producer wrote -- and
+        # the role is resolved through the loader's own table.
+        declared = _declared_member_shape(shape, member["role"])
         geometry = _member_shape(shape, member["role"])
-        if (member["unit"] != f"{panel['unit']}.{member['expert']}.{member['role']}"
-                or member["shape"] != geometry or binding["member_shapes"][member["unit"]] != geometry
+        if (member["unit"] not in member_unit_spellings(panel["unit"], member["expert"], member["role"])
+                or member["shape"] != declared
+                or binding["member_shapes"][member["unit"]] != geometry
                 or binding["member_formats"][member["unit"]] != panel["format"]):
             raise ValueError("member name/shape/format differs from its explicit owner role")
         dense._sha(binding["member_operator_identity_sha256"][member["unit"]], "member joint identity")
-        for key in ("source_weight", "rendered_weight"):
-            tensor_record(member[key], geometry, ("torch.bfloat16",), key)
+        tensor_record(member["source_weight"], declared, ("torch.bfloat16",), "source_weight")
+        tensor_record(member["rendered_weight"], geometry, ("torch.bfloat16",), "rendered_weight")
         if member["activation"].get("clip_enabled") is not False or member["activation"].get("input_global_scale") is not None:
             raise ValueError("whole MoE requires dynamic unclipped member activations")
         wire = member["wire"]
@@ -1661,6 +1862,7 @@ def measure_prepared_operator(prepared, panel, phase_tensors, *, warmup_iteratio
                 "resident_bytes": dense._resident_bytes(layer), "phases": resource_phases,
                 "workspace_resident_bytes": prepared["workspace"]["resident_bytes"],
                 "workspace_sha256": dense.identity_sha256(prepared["workspace"]),
+                **operator_context_scope(prepared["operator"]["serving_config"]),
                 "unknown": ["native_and_library_scratch_outside_torch_allocator", "fixed_and_full_model_resources"]}}
 
 
@@ -1790,7 +1992,7 @@ def main(argv=None):
     if args.profile and args.prepare:
         parser.error("--profile requires --panel")
     request = json.loads(args.request.read_text())
-    request_optional = {"distributed", "research_selected_moe"} & set(request)
+    request_optional = {"distributed", "research_selected_moe", "source_path"} & set(request)
     dense._fields(request, ("schema", "unit", "members", "shape", "routing", "execution", "runtime_image",
         "tensors_path", "profile_role_order", "routing_capture_sha256", "phases", "serving_config_path",
         *request_optional), "request")
@@ -1812,7 +2014,7 @@ def main(argv=None):
         path = Path(request[key])
         return path if path.is_absolute() else args.request.parent / path
     protected = {args.request.resolve(), *(artifact(key).resolve() for key in
-                  ("serving_config_path", "tensors_path"))}
+                  ("serving_config_path", "tensors_path", "source_path") if key in request)}
     for member in request["members"]:
         for key in ("wire_path", "wire_record_path"):
             path = Path(member[key])
@@ -1845,11 +2047,19 @@ def main(argv=None):
     def run():
         nonlocal collector_finished
         from safetensors.torch import load_file
+        # One shared source container (optional) is the split request: the
+        # source is a CPU artifact read one member at a time, and this file
+        # carries the renders, the captured bias and the phase tensors.  A
+        # legacy monolithic request names only tensors_path and is unchanged.
+        shared_source_path = request.get("source_path")
         tensors = load_file(str(artifact("tensors_path")), device="cuda")
         phase_tensors = {phase: {key: tensors[f"{phase}.{key}"] for key in TENSOR_KEYS} for phase in PHASES}
-        expected_names = request_tensor_roster(request["routing"], request["members"])
+        expected_names = request_tensor_roster(request["routing"], request["members"],
+                                              shared_source=shared_source_path is not None)
         if set(tensors) != expected_names:
-            raise ValueError("request safetensors roster differs from the complete routed owner")
+            raise ValueError("request safetensors roster differs from the complete routed owner"
+                             if shared_source_path is None else
+                             "render/phase tensor roster differs from the complete routed owner")
         member_inputs = []
         for member in request["members"]:
             dense._fields(member, ("unit", "expert", "role", "format", "wire_path", "wire_record_path"), "request member")
@@ -1862,15 +2072,34 @@ def main(argv=None):
         dense._fields(request["phases"], PHASES, "request phases")
         for phase in PHASES:
             dense._fields(request["phases"][phase], ("transport",), "request phase")
-        prepared = prepare_native_moe_operator(member_inputs,
-            {key: value for key, value in tensors.items() if key.startswith(("source_weight/", "rendered_weight/"))},
-            phase_tensors, unit=request["unit"], shape=request["shape"], routing=request["routing"],
-            runtime_image=request["runtime_image"], execution=request["execution"],
-            profile_role_order=request["profile_role_order"], serving_config=serving_config,
-            routing_capture_sha256=request["routing_capture_sha256"], routing_bias=tensors.get("routing_bias"),
-            phase_transport={phase: request["phases"][phase]["transport"] for phase in PHASES},
-            warmup_iterations=args.warmup_iterations, selected=request_selected,
-            distributed=request_distributed)
+
+        def prepare(source_reader=None):
+            return prepare_native_moe_operator(member_inputs,
+                {key: value for key, value in tensors.items()
+                 if key.startswith(("source_weight/", "rendered_weight/"))},
+                phase_tensors, unit=request["unit"], shape=request["shape"], routing=request["routing"],
+                runtime_image=request["runtime_image"], execution=request["execution"],
+                profile_role_order=request["profile_role_order"], serving_config=serving_config,
+                routing_capture_sha256=request["routing_capture_sha256"],
+                routing_bias=tensors.get("routing_bias"),
+                phase_transport={phase: request["phases"][phase]["transport"] for phase in PHASES},
+                warmup_iterations=args.warmup_iterations, selected=request_selected,
+                distributed=request_distributed, source_reader=source_reader)
+
+        if shared_source_path is None:
+            prepared = prepare()
+        else:
+            with open_shared_source(artifact("source_path")) as source:
+                validate_shared_source(source, request["members"])
+                prepared = prepare(source.read)
+        # Qualification is over: the source containers and the renders were read
+        # to prove the wires, not to serve, so releasing them here keeps the
+        # verification temporaries out of the timed measurement.  The owner's
+        # own bytes are re-checked below and again by the priced path.
+        released = release_verification_tensors(tensors, request["members"])
+        native_after_release = dense._native_tensors(prepared["owner"].layer)
+        if native_after_release != prepared["operator"]["native_tensors"]:
+            raise ValueError("releasing the verification tensors changed the native owner")
         if collector_library_sha256 is not None:
             prepared["runtime"]["resource_collector"] = {
                 "library_sha256": collector_library_sha256,
@@ -1884,7 +2113,8 @@ def main(argv=None):
                       "scheme_sha256": prepared["operator"]["scheme_sha256"],
                       "workspace": prepared["workspace"],
                       "workspace_sha256": dense.identity_sha256(prepared["workspace"]),
-                      "runtime_sha256": dense.identity_sha256(prepared["runtime"])}
+                      "runtime_sha256": dense.identity_sha256(prepared["runtime"]),
+                      "verification_tensors_released": released}
         else:
             if args.profile:
                 args.out.parent.mkdir(parents=True, exist_ok=True)
