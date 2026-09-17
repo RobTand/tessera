@@ -576,11 +576,30 @@ def test_the_name_rule_refuses_a_canonical_module_whose_candidate_it_cannot_name
                         lambda: (None, {"canonical_modules": [unit]}))
     worker = worker_module.ResourceCaptureWorker()
     worker.model_runner = SimpleNamespace(model=model)
+    # The refusal is raised out of the model census, before this generator
+    # reaches the kv_caches and runtime-root branches that import torch, so
+    # the bytes-only lane runs this case rather than skipping it.
     with pytest.raises(RuntimeError, match="names no candidate"):
         list(worker._resource_owners())
-    # The source-float checkpoint this rule was written for is unchanged.
-    parameters[:] = [(unit + ".weight", cuda("torch.bfloat16")),
-                     (unit + ".bias", cuda("torch.bfloat16"))]
+
+
+def test_the_name_rule_still_classifies_the_source_float_checkpoint_it_was_written_for(
+        monkeypatch, worker_module):
+    # The other side of the precondition: an unquantized canonical module names
+    # its candidate, so the rule runs and labels exactly what it labelled
+    # before. Draining the generator walks the kv branch, which imports torch.
+    pytest.importorskip("torch")
+    def cuda(dtype):
+        return SimpleNamespace(device=SimpleNamespace(type="cuda"), dtype=dtype)
+    unit = "model.layers.0.mlp.gate_up_proj"
+    model = SimpleNamespace(
+        named_parameters=lambda **kwargs: [(unit + ".weight", cuda("torch.bfloat16")),
+                                           (unit + ".bias", cuda("torch.bfloat16"))],
+        named_buffers=lambda **kwargs: [])
+    monkeypatch.setattr(worker_module, "claim",
+                        lambda: (None, {"canonical_modules": [unit]}))
+    worker = worker_module.ResourceCaptureWorker()
+    worker.model_runner = SimpleNamespace(model=model)
     assert [(row.owner_id, row.category) for row in worker._resource_owners()] == [
         ("model:parameter:" + unit + ".weight", "candidate"),
         ("model:parameter:" + unit + ".bias", "fixed")]
