@@ -418,3 +418,65 @@ def test_the_fp8_quantiser_still_refuses_a_non_device_activation(monkeypatch):
     with pytest.raises(NativeKernelUnavailableError, match="2-D CUDA tensor"):
         native_ops.native_fp8_quant(empty)
     assert calls == []
+
+
+# --- the W4A4 binding carries the same defect (measured on the pinned image) --
+
+class _FakeFp4Activation(_FakeActivation):
+    """A BF16 activation whose ``dtype`` the FP4 checks can read."""
+
+    dtype = torch.bfloat16
+
+
+def _fp4_op_spy(monkeypatch):
+    """Replace ``scaled_fp4_quant`` with a recorder for one test."""
+    calls = []
+
+    def _record(x, global_scale, swizzled):
+        calls.append({"input_shape": tuple(x.shape), "swizzled": swizzled,
+                      "global_scale_numel": int(global_scale.numel())})
+        return (torch.empty(0, dtype=torch.uint8), torch.empty(0, dtype=torch.float8_e4m3fn))
+
+    monkeypatch.setattr(torch, "ops", types.SimpleNamespace(
+        _C=types.SimpleNamespace(scaled_fp4_quant=_record)))
+    return calls
+
+
+def test_the_fp4_quantiser_allocates_an_empty_batch_and_never_launches(monkeypatch):
+    """M = 0 is an allocation for the A4 side too: the same sticky-error shape.
+
+    ``scaled_fp4_quant`` was measured on the pinned image (2026-09-17) leaving
+    ``cudaErrorInvalidValue`` pending at a zero-token batch, surfacing at the
+    next checked launch -- the defect ``native_fp8_quant`` was fixed for.  The
+    empty answer is the swizzled layout's own arithmetic with zero padded rows.
+    """
+    from tessera.serving import native_ops
+
+    calls = _fp4_op_spy(monkeypatch)
+    packed, scale = native_ops.native_fp4_quant(
+        _FakeFp4Activation(0, 1024), _FakeGlobalScale())
+    assert calls == [], "a zero-token activation must not launch the FP4 quantiser"
+    assert (tuple(packed.shape), packed.dtype) == ((0, 512), torch.uint8)
+    # K = 1024: the swizzled view this binding hands back has one scale unit per
+    # 16 input columns; the row axis is zero, so the tensor holds no elements.
+    assert (tuple(scale.shape), scale.dtype) == ((0, 64), torch.float8_e4m3fn)
+
+
+def test_the_fp4_quantiser_still_launches_the_operator_for_a_real_batch(monkeypatch):
+    """One token is still one launch, with the operator's own swizzled layout."""
+    from tessera.serving import native_ops
+
+    calls = _fp4_op_spy(monkeypatch)
+    native_ops.native_fp4_quant(_FakeFp4Activation(4, 1024), _FakeGlobalScale())
+    assert [c["input_shape"] for c in calls] == [(4, 1024)]
+    assert calls[0]["swizzled"] is True and calls[0]["global_scale_numel"] == 1
+
+
+class _FakeGlobalScale:
+    """One float32 value on the activation's device, as the route passes it."""
+
+    device = torch.device("cuda")
+    dtype = torch.float32
+
+    def numel(self) -> int:
+        return 1

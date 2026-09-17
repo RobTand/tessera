@@ -207,6 +207,22 @@ def native_fp4_quant(x: torch.Tensor,
 
     Produces the native 128x4 scale-factor layout the ``_scaled_mm`` FP4 route
     expects, without going through vLLM's Python convenience wrapper.
+
+    AN EMPTY BATCH IS ALLOCATED, NEVER LAUNCHED -- the same defect the FP8
+    binding above carries, measured on the pinned image for this operator
+    (2026-09-17): a zero-token activation reaches ``scaled_fp4_quant``, the
+    call returns, and the next CHECKED launch in the process raises
+    ``CUDA error: invalid argument``.  Zero rows have no scale factors, so the
+    empty answer is an empty packed tensor beside an empty swizzled-scale
+    tensor: ``M_padded = round_up(0, 128) = 0``, the row axis the layout pads.
+    Its COLUMN count keeps the shape THIS binding hands back -- the operator's
+    swizzled view as ``float8_e4m3fn``, one scale unit per 16 input columns
+    (K = 1024: 64), not the raw operator's narrower ``uint8`` view.  With zero
+    rows the tensor has no elements either way, and the downstream FP4 GEMM
+    short-circuits at M = 0 as the FP8 one does.  The ``_load_native_ops``
+    attestation above this path is what makes the operator's absence a refusal
+    rather than an ``AttributeError``; this function still asks for the
+    operator by the name that attestation checks.
     """
     if x.device.type != "cuda" or x.dim() != 2:
         raise NativeKernelUnavailableError("native FP4 quantization requires a 2-D CUDA tensor")
@@ -220,5 +236,8 @@ def native_fp4_quant(x: torch.Tensor,
     if input_global_scale.dtype != torch.float32:
         raise TypeError("native FP4 quantization requires a float32 global scale, got "
                         f"{input_global_scale.dtype}")
+    if x.shape[0] == 0:
+        return (x.new_empty((0, x.shape[1] // 2), dtype=torch.uint8),
+                x.new_empty((0, x.shape[1] // 16), dtype=torch.float8_e4m3fn))
     packed, scale_factors = torch.ops._C.scaled_fp4_quant(x, input_global_scale, True)
     return packed, scale_factors.view(torch.float8_e4m3fn)
