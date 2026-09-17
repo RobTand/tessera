@@ -21,8 +21,8 @@ The findings:
    delta that is added error is 0.7% (CI [-1.6%, +3.0%]), so any error the sharded path adds is
    at most about 1% of the quantization-noise variance at 95%.
 3. **The mechanism is the runtime's quantizers responding to a BF16-ulp perturbation.** On the
-   pinned image's `scaled_fp4_quant` with the checkpoint's static globals, the exact TP2
-   partial-sum rounding flips about 1% of E2M1 codes, leaves the quantizer's error variance
+   pinned image's `scaled_fp4_quant` with the checkpoint's static globals, a partial-sum
+   rounding of the form TP2 performs flips about 1% of E2M1 codes, leaves the quantizer's error variance
    unchanged to 0.1%, and grows the perturbation's own power 72-87x. The per-token E4M3
    quantizer flips 2.5% of codes at 26x. BF16, with no quantizer, is 1x by construction. That
    is why the TP-vs-TP divergence of a quantized checkpoint is larger than a BF16 control's at
@@ -109,8 +109,8 @@ pinned image (`pb-514-reroll-probe.sh`, result
 routes bind to -- `scaled_fp4_quant` with a static global through
 `native_ops.native_fp4_quant`, `dynamic_per_token_scaled_fp8_quant` through
 `native_ops.native_fp8_quant` -- an activation and its TP2-rounded twin. The perturbation is the
-exact TP2 arithmetic, `bf16(bf16(y1) + bf16(y2))` against `bf16(y1 + y2)` for a random split of
-the fp32 pre-sum; it touches 23.2% of elements by one BF16 ulp. The activations are synthetic,
+arithmetic of the form TP2 performs, `bf16(bf16(y1) + bf16(y2))` against `bf16(y1 + y2)` for a random split of
+the fp32 pre-sum; it touches 23.2% of elements by one BF16 ulp. The perturbation's existence and size on the stub are measured (dB above); its form is modelled here. The activations are synthetic,
 calibrated so the draw's amax matches the checkpoint's static global (983.04 for
 `layers.1.mlp.shared_experts.gate_up_proj`, 28.29 for `down_proj`; `global = 6 * 448 / amax`).
 512 rows, two draws (Gaussian and Student-t with 4 degrees of freedom), two units.
