@@ -31,6 +31,11 @@ WORKSPACE_SCHEMA = "tessera.native_moe_workspace.v1"
 OWNER_WIRE_SCHEMA = "tessera.native_moe_owner_wire.v1"
 FORMAT = "TESSERA_E4M3_K1_R1024"
 MODE_RESIDENT = "resident"
+#: The one place vLLM's own runner reduces a routed owner's output, and the op
+#: it uses.  A whole-owner receipt prices one apply including this; a local
+#: matmul priced as the module is the leaf timing this refuses to be.
+RUNTIME_COLLECTIVE_OP = "tensor_model_parallel_all_reduce"
+RUNTIME_COLLECTIVE_SITE = "vllm.fused_moe.runner.moe_runner:_maybe_reduce_final_output"
 ROLE_ORDER = ("w1", "w3", "w2")
 
 #: Where each geometry keeps the width its own members actually carry.
@@ -517,17 +522,52 @@ def _member_shape(shape, role):
     return [k, n] if role == "w2" else [n, k]
 
 
-def _declared_member_rows(shape, role):
-    """The rows the WHOLE container frames for one expert role.
+def _declared_member_shape(shape, role):
+    """The shape the WHOLE container frames for one expert role.
 
     A Tessera checkpoint holds one whole unit per role whatever world serves
     it (``sharding``: the artifact is tensor-parallel agnostic), so these are
-    the MODULE's rows.  ``_member_shape`` is this rank's slice of them, and
-    the two agree at TP1, where the slice is the whole.
+    the MODULE's dimensions.  ``_member_shape`` is this rank's slice of them,
+    and the two agree at TP1, where the slice is the whole.
     """
     if role == "w2":
-        return shape["hidden_size"]
-    return shape["intermediate_size"]
+        return [shape["hidden_size"], shape["intermediate_size"]]
+    return [shape["intermediate_size"], shape["hidden_size"]]
+
+
+def _declared_member_rows(shape, role):
+    """The rows the WHOLE container frames for one expert role."""
+    return _declared_member_shape(shape, role)[0]
+
+
+def owner_member_map(shape, scheme, *, unit, rank, world):
+    """The exact slice of every member role THIS rank loads, per role.
+
+    A unit name is not enough for a consumer that has to check per-rank
+    ownership: the container holds the MODULE's rows and the loader takes a
+    range of them, so the range is a fact of the run.  Read off the same plan
+    the cut uses -- one home, so a member map cannot describe a cut the loader
+    does not make.
+    """
+    from tessera.serving.moe_route import _packed_group_shard_plan
+    from tessera.serving.scheme import MOE_SHARD_PROJECTIONS
+    from tessera.serving.sharding import AXIS_COLUMNS
+    entries = {}
+    for role in ROLE_ORDER:
+        group = "w2" if role == "w2" else "w13"
+        plan = _packed_group_shard_plan(scheme, group, unit, rank, world)
+        shard = plan.role(MOE_SHARD_PROJECTIONS[role])
+        declared = _declared_member_shape(shape, role)
+        if plan.axis == AXIS_COLUMNS:
+            local = [declared[0], shard.hi - shard.lo]
+        elif plan.axis is None:
+            local = list(declared)
+        else:
+            local = [shard.hi - shard.lo, declared[1]]
+        entries[role] = {"container_shape": list(declared), "rank_local_shape": local,
+                         "axis": plan.axis, "shard_lo": shard.lo, "shard_hi": shard.hi,
+                         "shards": shard.shards, "rank": int(rank), "world_size": int(world)}
+    return entries
 
 
 def owner_scheme(shape, wire, *, strides, unit):
@@ -865,8 +905,32 @@ def resolve_serving_config(path, runtime_image, *, tensor_parallel):
 
 
 def verify_routing_bias(routing, bias):
+    """The captured selection bias, in whichever grammar the protocol declares.
+
+    LFM's protocol block carries the whole tensor record (``selection_bias``);
+    PQ's GLM block carries the mandatory FP32 correction bias as
+    ``{dtype, content_sha256}``, which is an IDENTITY rather than a tensor.
+    Both are checked against the payload this process was handed: for GLM the
+    declared dtype and digest must be the supplied tensor's own bytes, and it
+    must be as wide as the captured source's expert count.  Nothing here
+    rebuilds the record from the declaration -- a block whose protocol and
+    payload disagree is a different mixture, not a cheaper one.
+    """
     import torch
-    expected = routing["source_protocol"]["selection_bias"]
+    protocol = routing["source_protocol"]
+    if "correction_bias" in protocol:
+        declared = protocol["correction_bias"]
+        dense._fields(declared, ("content_sha256", "dtype"), "source correction bias")
+        width = GLM_SOURCE_FACTS["n_routed_experts"]
+        if (bias is None or str(bias.dtype) != declared["dtype"]
+                or list(bias.shape) != [width] or not bool(torch.isfinite(bias).all())):
+            raise ValueError(
+                f"the captured correction bias must be the source's {declared['dtype']} "
+                f"[{width}] tensor with finite values")
+        if dense.tensor_identity(bias)["content_sha256"] != declared["content_sha256"]:
+            raise ValueError("the supplied correction bias is not the captured source's bytes")
+        return bias
+    expected = protocol["selection_bias"]
     if expected is None:
         if bias is not None:
             raise ValueError("unexpected routing bias")
@@ -1044,6 +1108,9 @@ def prepare_native_moe_operator(member_inputs, tensors, phase_tensors, *, unit, 
     scheme = owner_scheme(shape, wire, strides=strides, unit=unit)
     verify_rank_local_member_renders(member_inputs, tensors, shape, scheme, unit=unit,
                                      rank=rank, world=world)
+    geometry = owner_member_map(shape, scheme, unit=unit, rank=rank, world=world)
+    member_map = [{"unit": member["unit"], "expert": member["expert"], "role": member["role"],
+                   "format": member["format"], **geometry[member["role"]]} for member in members]
     device = phase_tensors["prefill"]["input"].device
     if max(v["input"].shape[0] for v in phase_tensors.values()) > serving_config["document"]["engine_args"]["max_num_batched_tokens"]:
         raise ValueError("actual phase exceeds the explicit serving scheduler token limit")
@@ -1090,7 +1157,7 @@ def prepare_native_moe_operator(member_inputs, tensors, phase_tensors, *, unit, 
             f"the native owner dispatched {observed_route!r}, which is not this "
             f"{wire['family']}/{wire['grid']} owner's own route")
     route = {key: observed_route[key] for key in dense.ROUTE_KEYS}
-    operator = {"members": members, "shape": shape, "routing": routing,
+    operator = {"members": members, "member_map": member_map, "shape": shape, "routing": routing,
                 "profile_role_order": list(profile_role_order), "routing_capture_sha256": routing_capture_sha256,
                 "serving_config_sha256": serving_config["file_sha256"], "serving_config": serving_config,
                 "phases": {phase: {"transport": phase_transport[phase]} for phase in PHASES},
@@ -1100,6 +1167,20 @@ def prepare_native_moe_operator(member_inputs, tensors, phase_tensors, *, unit, 
                 "declared_route": route}
     runtime = dense.observe_runtime(runtime_image)
     runtime.update(schema=RUNTIME_SCHEMA, execution=owner_execution(shape))
+    # The timed call is one whole-owner apply on THIS rank.  At a world above
+    # one the runtime's own runner all-reduces the routed output before
+    # returning it, and that collective is inside the timed region -- pricing
+    # the local matmul and calling it the module's latency would be a leaf
+    # timing wearing a whole-owner's name.  The declaration is read off the
+    # config the layer actually carries, not asserted.
+    runtime["collective"] = {
+        "op": RUNTIME_COLLECTIVE_OP,
+        "site": RUNTIME_COLLECTIVE_SITE,
+        "included_in_timed_region": True,
+        "required_by_this_owner": world > 1,
+        "runtime_declares_skip_final_all_reduce":
+            config["moe_config"].get("skip_final_all_reduce"),
+        "world_size": int(world)}
     runtime["source"]["routed_harness_sha256"] = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
     return {"layer": layer, "operator": operator, "runtime": runtime, "distributed": distributed,
             "workspace": workspace, "workspace_pointers": pointers}
@@ -1113,6 +1194,25 @@ def apply_whole(layer, tensors):
 def phase_identities(phase_tensors):
     return {phase: {key: dense.tensor_identity(value) for key, value in values.items()}
             for phase, values in phase_tensors.items()}
+
+
+def request_tensor_roster(routing, members):
+    """The safetensors keys this request must carry, from its own declarations.
+
+    A live selection bias is declared under the geometry's own spelling --
+    ``selection_bias`` for LFM, ``correction_bias`` for a GLM ``noaux_tc``
+    owner -- and either declaration means the payload has to be there.  Asking
+    only the LFM name is how a GLM request would have passed the roster check
+    and then been refused (or worse, checked against nothing) one step later.
+    """
+    names = {f"{phase}.{key}" for phase in PHASES for key in TENSOR_KEYS}
+    names.update(f"{kind}/{member['unit']}" for member in members
+                 for kind in ("source_weight", "rendered_weight"))
+    protocol = routing["source_protocol"]
+    if protocol.get("selection_bias") is not None or protocol.get("correction_bias") is not None:
+        names.add("routing_bias")
+    return names
+
 
 def validate_panel(panel):
     """Check the independently frozen whole-owner join before CUDA execution."""
@@ -1214,6 +1314,21 @@ def validate_panel(panel):
     if (runtime.get("schema") != RUNTIME_SCHEMA
             or dense.identity_sha256(runtime.get("execution")) != dense.identity_sha256(owner_execution(shape))):
         raise ValueError("runtime manifest differs from whole MoE execution")
+    # This owner's own output reduction, and that it is inside the priced
+    # region.  A panel that priced a partial sum, or that left the collective
+    # out of the timed call, is a different measurement with the same name.
+    world = int(runtime["execution"]["tensor_parallel"])
+    collective = runtime.get("collective")
+    dense._fields(collective, ("op", "site", "included_in_timed_region",
+        "required_by_this_owner", "runtime_declares_skip_final_all_reduce", "world_size"),
+        "runtime collective")
+    if (collective["op"] != RUNTIME_COLLECTIVE_OP or collective["site"] != RUNTIME_COLLECTIVE_SITE
+            or collective["included_in_timed_region"] is not True
+            or type(collective["required_by_this_owner"]) is not bool
+            or collective["required_by_this_owner"] != (world > 1)
+            or type(collective["world_size"]) is not int or collective["world_size"] != world
+            or collective["runtime_declares_skip_final_all_reduce"] is not False):
+        raise ValueError("runtime collective differs from this owner's own reduction")
     dense._fields(panel["numerics"], ("atol", "rtol"), "numerics")
     for key, value in panel["numerics"].items():
         dense._number(value, key)
@@ -1287,6 +1402,17 @@ def _check_prepared(prepared, panel):
                          "wire_record_sha256": dense.identity_sha256(member["wire"]["record"])} for member in panel["members"]]
     if operator["members"] != expected_members:
         raise ValueError("native original-wire members differ from independent panel")
+    # The member map is the producer's plan's answer for this rank; the panel's
+    # `member_shapes` is the consumer's independent statement of what this rank
+    # holds.  They are two repositories' answers to one question, so a
+    # disagreement is refused here rather than reconciled downstream.
+    binding = panel["runtime_binding"]
+    for entry in operator.get("member_map", ()):
+        if entry["rank_local_shape"] != binding["member_shapes"].get(entry["unit"]):
+            raise ValueError(
+                f"{entry['unit']}: the rank-local slice this rank plans to load is "
+                f"{entry['rank_local_shape']} and the panel declares this rank's member "
+                f"{binding['member_shapes'].get(entry['unit'])}")
     workspace, pointers = observe_workspace()
     if workspace != panel["workspace"] or pointers != prepared["workspace_pointers"]:
         raise ValueError("runtime workspace layout or process storage changed after preparation")
@@ -1392,7 +1518,14 @@ def measure_prepared_operator(prepared, panel, phase_tensors, *, warmup_iteratio
     return {"schema": RECEIPT_SCHEMA, "status": status,
             "panel": panel, "panel_sha256": dense.identity_sha256(panel), "runtime": prepared["runtime"],
             "runtime_sha256": dense.identity_sha256(prepared["runtime"]), "operator": prepared["operator"],
+            "latency_scope": {"kind": "one_whole_owner_apply", "per_rank": True,
+                "includes_output_collective":
+                    bool(prepared["runtime"]["collective"]["required_by_this_owner"]),
+                "collective": prepared["runtime"]["collective"]["op"],
+                "never": "a sum of leaf timings, or a local matmul priced as the module"},
             "phases": observations, "resources": {"status": "incomplete", "scope": "torch_allocator_observation",
+                "rank": int(prepared["distributed"]["rank"]),
+                "world_size": int(prepared["distributed"]["world_size"]), "peers": None,
                 "resident_bytes": dense._resident_bytes(layer), "phases": resource_phases,
                 "workspace_resident_bytes": prepared["workspace"]["resident_bytes"],
                 "workspace_sha256": dense.identity_sha256(prepared["workspace"]),
@@ -1428,6 +1561,33 @@ def time_after_resource_collection(prepared, panel, phase_tensors, receipt, *, c
 
 
 attach_resource_trace = dense.attach_resource_trace
+
+
+def per_rank_resource_identity(receipt, distributed):
+    """This rank's resource bound, plus every other rank's, or a refusal.
+
+    A collector measures one process.  A whole-owner resource claim is
+    therefore per RANK, and a run that priced its own rank's bound and called
+    it the operator's would be claiming a number it never saw.  The peers are
+    gathered, not assumed, and their identities are carried in the receipt.
+    """
+    world = int(distributed["world_size"])
+    record = {"rank": int(distributed["rank"]), "world_size": world,
+              "bound_sha256": dense.identity_sha256(receipt["resources"])}
+    if world == 1:
+        return {"self": record, "peers": []}
+    import torch
+    gathered = [None] * world
+    torch.distributed.all_gather_object(gathered, record)
+    if any(not isinstance(entry, dict) or "rank" not in entry for entry in gathered):
+        raise ValueError("a peer returned no resource identity")
+    peers = sorted((entry for entry in gathered if entry["rank"] != record["rank"]),
+                   key=lambda entry: entry["rank"])
+    if [entry["rank"] for entry in peers] != [r for r in range(world) if r != record["rank"]]:
+        raise ValueError(
+            "a whole-owner resource claim at a world above one requires every rank's own "
+            "bound; this group returned " + repr([entry.get("rank") for entry in gathered]))
+    return {"self": record, "peers": peers}
 
 
 def profile_prepared_operator(prepared, panel, phase_tensors, *, output_prefix,
@@ -1555,10 +1715,7 @@ def main(argv=None):
         from safetensors.torch import load_file
         tensors = load_file(str(artifact("tensors_path")), device="cuda")
         phase_tensors = {phase: {key: tensors[f"{phase}.{key}"] for key in TENSOR_KEYS} for phase in PHASES}
-        expected_names = {f"{phase}.{key}" for phase in PHASES for key in TENSOR_KEYS}
-        expected_names.update(f"{kind}/{m['unit']}" for m in request["members"] for kind in ("source_weight", "rendered_weight"))
-        if request["routing"]["source_protocol"]["selection_bias"] is not None:
-            expected_names.add("routing_bias")
+        expected_names = request_tensor_roster(request["routing"], request["members"])
         if set(tensors) != expected_names:
             raise ValueError("request safetensors roster differs from the complete routed owner")
         member_inputs = []
@@ -1612,6 +1769,9 @@ def main(argv=None):
             if not args.prepare:
                 attach_resource_trace(result, trace)
                 if result["status"] == "resources_observed" and result["resources"]["status"] == "complete_operator_bound":
+                    # Per-rank, and every rank's, before the bound may be priced.
+                    result["resources"].update(
+                        per_rank_resource_identity(result, request_distributed))
                     time_after_resource_collection(prepared, json.loads(args.panel.read_text()), phase_tensors,
                         result, collector=collector, warmup_iterations=args.warmup_iterations, iterations=args.iterations)
         args.out.write_text(json.dumps(result, sort_keys=True, indent=2, allow_nan=False) + "\n")

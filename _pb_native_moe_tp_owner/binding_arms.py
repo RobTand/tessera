@@ -48,7 +48,15 @@ def _arm(rank):
             refusals[name] = "refused"
         else:
             refusals[name] = "ACCEPTED"
-    return {"rank": rank, "live": live, "bound": bound, "refusals": refusals}
+    # A whole-owner resource claim is per RANK: each rank's own bound, and every
+    # other rank's, gathered rather than assumed. A bound that is not the
+    # group's own is refused, which the second arm below plants.
+    identity = moe.per_rank_resource_identity(
+        {"resources": {"rank": rank, "bound": f"bound-of-rank-{rank}"}},
+        {"world_size": 2, "rank": rank})
+    return {"rank": rank, "live": live, "bound": bound, "refusals": refusals,
+            "peer_ranks": [entry["rank"] for entry in identity["peers"]],
+            "self_bound": identity["self"]["bound_sha256"]}
 
 
 def worker(rank, world_size, port, results):
@@ -74,6 +82,8 @@ def main(port=29557):
         assert entry["bound"] == [entry["rank"], 2], entry
         assert entry["live"] == {"world_size": 2, "rank": entry["rank"]}, entry
         assert all(value == "refused" for value in entry["refusals"].values()), entry
+        assert entry["peer_ranks"] == [1 - entry["rank"]], entry
+    assert report["ranks"][0]["self_bound"] != report["ranks"][1]["self_bound"], report
     try:
         moe.bind_owner_rank(_pair(0))
     except ValueError:

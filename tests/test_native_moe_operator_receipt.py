@@ -164,7 +164,11 @@ def _panel():
                  "num_lanes": 1, "locked": True, "slots": [{"index": 0, "allocation": None}], "resident_bytes": 0}
     panel = {"schema": moe.PANEL_SCHEMA, "unit": "model.layers.1.feed_forward.experts", "format": moe.FORMAT,
         "shape": shape, "members": members, "profile_role_order": list(moe.ROLE_ORDER), "routing": routing,
-        "probe_scope": None, "execution": dict(moe.EXECUTION), "runtime": {"schema": moe.RUNTIME_SCHEMA, "execution": dict(moe.EXECUTION)},
+        "probe_scope": None, "execution": dict(moe.EXECUTION), "runtime": {"schema": moe.RUNTIME_SCHEMA,
+            "execution": dict(moe.EXECUTION), "collective": {"op": moe.RUNTIME_COLLECTIVE_OP,
+                "site": moe.RUNTIME_COLLECTIVE_SITE, "included_in_timed_region": True,
+                "required_by_this_owner": False, "runtime_declares_skip_final_all_reduce": False,
+                "world_size": 1}},
         "numerics": {"atol": 2**-6, "rtol": 2**-6}, "phases": phases,
         "workspace": workspace, "workspace_sha256": dense.identity_sha256(workspace),
         "runtime_binding": {"member_formats": {m["unit"]: m["format"] for m in members},
@@ -290,6 +294,11 @@ def _fake_whole_lifecycle(monkeypatch, *, bad_decode=False):
     operator.update(native_tensors=dense._native_tensors(layer), scheme={"fixture": "CPU_ONLY"}, config=config,
         declared_route=panel["phases"]["prefill"]["expected_route"],
         phases={phase: {"transport": panel["phases"][phase]["transport"]} for phase in moe.PHASES},
+        member_map=[{"unit": member["unit"], "expert": member["expert"], "role": member["role"],
+                     "format": member["format"], "container_shape": list(member["shape"]),
+                     "rank_local_shape": list(member["shape"]), "axis": None, "shard_lo": 0,
+                     "shard_hi": member["shape"][0], "shards": 1, "rank": 0, "world_size": 1}
+                    for member in panel["members"]],
         members=[{**{key: member[key] for key in ("unit", "expert", "role", "format", "shape", "source_weight", "rendered_weight")},
                   "wire_sha256": member["wire"]["blob_sha256"],
                   "wire_record_sha256": dense.identity_sha256(member["wire"]["record"])} for member in panel["members"]])

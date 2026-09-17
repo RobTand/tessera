@@ -264,10 +264,10 @@ def test_a_non_integer_geometry_coordinate_refuses_before_width_arithmetic(key, 
 # construction plus the native decode are the GPU qualification step named
 # there.
 #
-# `verify_routing_bias` still reads `source_protocol["selection_bias"]` while
-# PQ's GLM protocol carries `correction_bias`; the cross-repository payload
-# test below is what connects the two spellings, and the request-path
-# translation is owed by the allocator/consumer bridge that follows.
+# `verify_routing_bias` reads whichever spelling the protocol block declares --
+# `selection_bias` for LFM, `correction_bias` for a GLM `noaux_tc` owner -- and
+# checks it against the payload this process was handed, so the cross-repository
+# payload test below drives the REQUEST path rather than a hand translation.
 # --------------------------------------------------------------------------
 
 def _pq_owner_view(tp, format_name, unit=GLM_UNIT):
@@ -443,13 +443,18 @@ def test_the_producer_reads_the_bias_under_the_consumers_glm_spelling(monkeypatc
 
     # The producer's own bias check accepts the translated payload.
     assert moe.verify_routing_bias(producer_routing, bias) is bias
-    # NOTE: this passes only because the translated routing keeps `topk_method`,
-    # which is what the producer's width rule keys on. A real request built by
-    # the LFM route drops that field, and then the width falls back to 32 and a
-    # 288-wide GLM bias is refused -- `verify_routing_bias:538` still reads
-    # `source_protocol["selection_bias"]` while PQ's GLM protocol carries
-    # `correction_bias`. The translation is therefore exercised here, and the
-    # request-path wiring remains a named seam for the next brief.
+    # The REQUEST path takes PQ's spelling directly: `verify_routing_bias`
+    # reads `correction_bias` when the protocol declares it, checks the
+    # declared dtype and digest against the payload this process was handed,
+    # and holds it to the captured source's 288 experts. No translation step
+    # is needed at the call site, so nothing can drop `topk_method` on the way.
+    request_routing = _glm_routing()
+    request_routing["source_protocol"]["correction_bias"] = {
+        "dtype": producer_protocol["selection_bias"]["dtype"],
+        "content_sha256": producer_protocol["selection_bias"]["content_sha256"]}
+    assert moe.verify_routing_bias(request_routing, bias) is bias
+    assert "routing_bias" in moe.request_tensor_roster(request_routing, [
+        {"unit": "u.0.w1"}, {"unit": "u.0.w3"}, {"unit": "u.0.w2"}])
 
     # And it refuses a bias that is not the captured one, which is the point of
     # translating rather than passing the name through.
@@ -457,6 +462,10 @@ def test_the_producer_reads_the_bias_under_the_consumers_glm_spelling(monkeypatc
     with pytest.raises(ValueError) as caught:
         moe.verify_routing_bias(producer_routing, other)
     assert "captured source" in str(caught.value), str(caught.value)
+    # Under PQ's own spelling the same wrong tensor is refused by the digest.
+    with pytest.raises(ValueError) as caught:
+        moe.verify_routing_bias(request_routing, other)
+    assert "not the captured source's bytes" in str(caught.value), str(caught.value)
 
     # The producer's width rule follows the geometry's own expert count: 288
     # for GLM, not the LFM 32.

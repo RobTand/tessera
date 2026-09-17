@@ -63,6 +63,66 @@ def _glm_routing():
                 "expert_bias_affects": "selection_only", "norm_topk_prob": True}}
 
 
+def _pq_bias_block(bias):
+    """PrismaQuant's GLM spelling: the FP32 bias's dtype and content digest."""
+    record = dense.tensor_identity(bias)
+    return {"dtype": record["dtype"], "content_sha256": record["content_sha256"]}
+
+
+def _routing_with_correction_bias(bias, block=None):
+    routing = _glm_routing()
+    routing["source_protocol"]["correction_bias"] = block or _pq_bias_block(bias)
+    return routing
+
+
+def test_the_glm_correction_bias_block_is_checked_against_the_actual_payload():
+    """PQ's identity pair reaches the payload check, and is what refuses.
+
+    The cross-repository fact is that the two sides spell one captured object
+    in two grammars: PQ stores ``{content_sha256, dtype}`` and this receipt
+    checks the tensor it was handed.  The translation is therefore a CHECK --
+    the declared dtype and digest must be the supplied bytes -- and nothing
+    here rebuilds a record from the declaration.
+    """
+    bias = torch.zeros(288, dtype=torch.float32)
+    routing = _routing_with_correction_bias(bias)
+    assert set(routing["source_protocol"]["correction_bias"]) == {"content_sha256", "dtype"}
+    assert moe.verify_routing_bias(routing, bias) is bias
+
+    # Another tensor's digest is a different mixture, refused by name.
+    with pytest.raises(ValueError, match="not the captured source's bytes"):
+        moe.verify_routing_bias(routing, torch.ones(288, dtype=torch.float32))
+    # A protocol that declares one dtype and a payload that is another.
+    with pytest.raises(ValueError, match="must be the source's"):
+        moe.verify_routing_bias(
+            _routing_with_correction_bias(bias, {"dtype": "torch.bfloat16",
+                                                 "content_sha256": _sha("elsewhere")}),
+            bias)
+    # The bias is the captured source's expert count, not the LFM 32.
+    with pytest.raises(ValueError, match="must be the source's"):
+        moe.verify_routing_bias(routing, torch.zeros(32, dtype=torch.float32))
+    # And a declared bias with no payload is a refusal, not an inference.
+    with pytest.raises(ValueError):
+        moe.verify_routing_bias(routing, None)
+
+
+def test_the_request_roster_carries_the_geometrys_own_bias_payload():
+    """The roster rule reads both spellings, so a GLM request needs its bias."""
+    members = [{"unit": "unit.0.w1"}, {"unit": "unit.0.w3"}, {"unit": "unit.0.w2"}]
+    bias = torch.zeros(288, dtype=torch.float32)
+    glm_roster = moe.request_tensor_roster(_routing_with_correction_bias(bias), members)
+    assert "routing_bias" in glm_roster
+    assert {f"prefill.{key}" for key in moe.TENSOR_KEYS} <= glm_roster
+    assert {"source_weight/unit.0.w1", "rendered_weight/unit.0.w2"} <= glm_roster
+    # The LFM spelling keeps its own answer, and a protocol that declares no
+    # bias requires no payload.
+    lfm = {"source_protocol": {"selection_bias": dense.tensor_identity(
+        torch.zeros(32, dtype=torch.float32))}}
+    assert "routing_bias" in moe.request_tensor_roster(lfm, members)
+    assert "routing_bias" not in moe.request_tensor_roster(
+        {"source_protocol": {"selection_bias": None}}, members)
+
+
 def _routes(*families):
     from tessera.serving.scheme import ROUTES
     return {family: ROUTES[family] for family in families}
@@ -146,6 +206,49 @@ def test_the_route_record_geometry_is_the_ranks_own_gate_up_stack(tp):
     """N is this rank's ``2 * N_local`` and K the hidden size, which is what
     ``moe_route.create_weights`` stores as ``tessera_rows``/``tessera_columns``."""
     assert moe.owner_route_shape(_glm_shape(tp, A8)) == f"N{2 * 2048 // tp}:K4096"
+
+
+@pytest.mark.parametrize("tp,rank", [(1, 0), (2, 0), (2, 1)])
+def test_the_member_map_names_the_exact_slice_this_rank_loads(tp, rank):
+    """A unit name is not enough: a consumer needs the range, not the module.
+
+    The map is read off the same plan the loader cuts with, so it cannot
+    describe a cut nobody makes, and it is what a consumer joins to the panel's
+    own statement of this rank's member shapes.
+    """
+    shape = _glm_shape(tp, A8)
+    wire = moe.owner_wire(shape)
+    scheme = moe.owner_scheme(shape, wire, strides={"w13": 4215596, "w2": 4219628},
+                              unit=GLM_UNIT)
+    mapping = moe.owner_member_map(shape, scheme, unit=GLM_UNIT, rank=rank, world=tp)
+    local = 2048 // tp
+    # At a world of one there is nothing to cut: the plan's axis is None and the
+    # "slice" is the module itself, which is why the TP1 receipt is unchanged.
+    assert mapping["w1"]["axis"] == ("row" if tp > 1 else None)
+    assert mapping["w1"]["container_shape"] == [2048, 4096]
+    assert mapping["w1"]["rank_local_shape"] == [local, 4096]
+    assert [mapping["w1"]["shard_lo"], mapping["w1"]["shard_hi"]] == [rank * local,
+                                                                      (rank + 1) * local]
+    assert mapping["w1"]["shards"] == tp
+    assert mapping["w3"]["rank_local_shape"] == mapping["w1"]["rank_local_shape"]
+    assert mapping["w2"]["axis"] == ("column" if tp > 1 else None)
+    assert mapping["w2"]["container_shape"] == [4096, 2048]
+    assert mapping["w2"]["rank_local_shape"] == [4096, local]
+    assert {entry["rank"] for entry in mapping.values()} == {rank}
+    assert {entry["world_size"] for entry in mapping.values()} == {tp}
+    # Every mapped role lands on exactly the rank-local member this rank's PWC
+    # holds, which is the join the consumer needs.
+    for role, entry in mapping.items():
+        assert entry["rank_local_shape"] == moe._member_shape(shape, role)
+
+
+def test_a_single_rank_resource_claim_carries_its_own_identity_and_no_peers():
+    """At a world of one the per-rank bound IS the whole-owner bound."""
+    receipt = {"resources": {"status": "complete_operator_bound", "scope": "torch_allocator_observation"}}
+    identity = moe.per_rank_resource_identity(receipt, {"world_size": 1, "rank": 0})
+    assert identity["peers"] == []
+    assert identity["self"] == {"rank": 0, "world_size": 1,
+                                "bound_sha256": dense.identity_sha256(receipt["resources"])}
 
 
 @pytest.mark.parametrize("tp", [1, 2])
@@ -450,7 +553,10 @@ def _owner_panel(tp, format_name, route_symbol, decoder):
     panel = {"schema": moe.PANEL_SCHEMA, "unit": GLM_UNIT, "format": format_name, "shape": shape,
         "members": members, "profile_role_order": list(moe.ROLE_ORDER), "routing": routing,
         "probe_scope": None, "execution": execution,
-        "runtime": {"schema": moe.RUNTIME_SCHEMA, "execution": execution},
+        "runtime": {"schema": moe.RUNTIME_SCHEMA, "execution": execution,
+            "collective": {"op": moe.RUNTIME_COLLECTIVE_OP, "site": moe.RUNTIME_COLLECTIVE_SITE,
+                "included_in_timed_region": True, "required_by_this_owner": tp > 1,
+                "runtime_declares_skip_final_all_reduce": False, "world_size": tp}},
         "numerics": {"atol": 2**-6, "rtol": 2**-6}, "phases": phases, "workspace": workspace,
         "workspace_sha256": dense.identity_sha256(workspace),
         "runtime_binding": {"member_formats": {m["unit"]: m["format"] for m in members},
