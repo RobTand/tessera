@@ -1778,6 +1778,22 @@ pinned sm_121 image and a two-box `tcp://` rendezvous, and they are the GPU
 qualification step that follows. A CPU pass here is a statement about what the
 harness resolves, never a device result.
 
+**What the receipt carries for a per-rank consumer.** `operator.member_map`
+names, per member, the container shape the artifact holds, the rank-local shape
+this rank loads, the cut axis, the shard range and the world — read off the
+same `_packed_group_shard_plan` the loader cuts with, so the map cannot
+describe a cut nobody makes, and `_check_prepared` refuses a rank-local shape
+the panel's own `runtime_binding.member_shapes` does not declare.
+`runtime.collective` states which op the whole-owner apply includes
+(`tensor_model_parallel_all_reduce` at
+`vllm.fused_moe.runner.moe_runner:_maybe_reduce_final_output`), that it is
+inside the timed region, and that the layer's config does not skip it;
+`receipt.latency_scope` says the samples price one whole-owner apply on this
+rank. `receipt.resources` carries `rank`, `world_size` and every other rank's
+bound (`per_rank_resource_identity`, gathered with `all_gather_object`) before
+any timing may be attached, so a world above one cannot publish one process's
+allocation as the operator's. No field is a placeholder zero.
+
 ## 3. Bytes: priced == served
 
 Every artifact the exporter writes has exactly one legal length: the encoder
