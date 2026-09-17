@@ -144,6 +144,121 @@ def inspect_worker_kv(worker, expectations=None, *, received=None):
     return result
 
 
+KV_OBSERVATION_SCHEMA = "tessera.full_engine_kv_observation.v1"
+
+
+def read_only_kv_observation(worker):
+    """Supported worker RPC: the engine's own KV descriptors and backings.
+
+    Runs in the worker process with **no** resource recorder attached and takes
+    no synchronized snapshot, so this is the read-only pass of the two-pass
+    pair. It returns its own process id beside the observation because the pass
+    evidence has to name the process that observed, not the launcher that asked
+    -- the launcher's pid is the same for every rank and would make two ranks'
+    records indistinguishable.
+    """
+    import os
+
+    return {"process_id": os.getpid(), "observation": inspect_worker_kv(worker)}
+
+#: The digests the two passes of one report must share. They are the run
+#: identity's own fields, so a read-only KV pass and the intrusive resource pass
+#: are the same run only if these agree; everything else about the two passes
+#: (their process ids, their capture digests, their pointers) is expected to
+#: differ and is never compared.
+COMMON_RUN_DIGESTS = ("assignment_sha256", "canonical_units_sha256",
+                      "configuration_sha256", "model_sha256",
+                      "runtime_manifest_sha256", "workload_sha256")
+
+
+def admission_evidence(*, mode, process_id, recorder_attached, snapshot_count):
+    """What a KV observation's pass actually did, as the reason for its flag.
+
+    ``runtime_admission`` is not a field the producer gets to assert: the
+    intrusive resource pass synchronizes the device for allocator snapshots,
+    which alters execution and is explicitly timing- and admission-ineligible,
+    while the read-only worker RPC attaches nothing and takes none.  The caller
+    reports what its own pass did and this decides the flag, so a record cannot
+    claim admission eligibility without naming the read-only pass that earned
+    it.
+    """
+    snapshot_count = int(snapshot_count)
+    if snapshot_count < 0:
+        raise ValueError("snapshot_count must not be negative")
+    read_only = not recorder_attached and snapshot_count == 0
+    return {"schema": "tessera.full_engine_kv_pass_evidence.v1",
+            "mode": str(mode), "process_id": int(process_id),
+            "recorder_attached": bool(recorder_attached),
+            "snapshot_count": snapshot_count, "read_only": read_only,
+            "reason": ("read-only worker RPC: no resource recorder attached and no allocator "
+                       "snapshots taken" if read_only else
+                       "intrusive observation pass: the resource recorder is attached and "
+                       "synchronized allocator snapshots alter execution, so this record is "
+                       "timing- and admission-ineligible")}
+
+
+def kv_observation_record(observed, *, evidence, rank, world_size, run_identity, scope):
+    """One rank's KV observation, in the shape the report consumer recomputes from.
+
+    The record is the observer's OWN resolved descriptors and deduplicated
+    physical backings, projected only where the consumer names a coordinate:
+    ``num_blocks``, one ``group_page_size_bytes`` per cache group,
+    ``resolved_limits``, the ``storage`` block with each backing's ``owners``,
+    and the pass evidence.  Every other observed coordinate travels as evidence.
+
+    The record binds the run it belongs to (rank, world size, the run identity's
+    digests) because a per-rank charge is only meaningful for the run that
+    measured it, and ``runtime_admission`` comes from the evidence rather than
+    from this call's arguments.
+    """
+    if not isinstance(observed, dict) or "storage" not in observed:
+        raise ValueError("kv observation requires the observer's own record")
+    rank, world_size = int(rank), int(world_size)
+    if world_size < 1 or rank < 0 or rank >= world_size:
+        raise ValueError(f"kv observation rank {rank} is outside world {world_size}")
+    missing = [name for name in COMMON_RUN_DIGESTS if name not in (run_identity or {})]
+    if missing:
+        raise ValueError(f"kv observation run identity is missing {sorted(missing)}")
+    storage = observed["storage"]
+    rows = []
+    for row in storage["storages"]:
+        # The consumer reads exactly these five fields per backing; a row that
+        # carries anything else is a second spelling of the same pool.
+        if set(row) != {"address", "bytes", "device_id", "device_type", "owners"}:
+            raise ValueError("kv storage row is not the observer's own deduplicated backing")
+        rows.append({name: row[name] for name in
+                     ("address", "bytes", "device_id", "device_type", "owners")})
+    limits = observed["resolved_limits"]
+    return {
+        "schema": KV_OBSERVATION_SCHEMA,
+        "rank": rank, "world_size": world_size,
+        "run_identity": {name: run_identity[name] for name in COMMON_RUN_DIGESTS},
+        "process_id": int(evidence["process_id"]),
+        # Derived from the evidence, never passed beside it.
+        "runtime_admission": bool(evidence["read_only"]),
+        "admission_evidence": dict(evidence),
+        "num_blocks": int(observed["num_blocks"]),
+        "group_page_size_bytes": [int(page) for page in observed["group_page_size_bytes"]],
+        "resolved_limits": {"max_num_batched_tokens": int(limits["max_num_batched_tokens"]),
+                            "max_num_seqs": int(limits["max_num_seqs"]),
+                            "max_model_len": int(limits["max_model_len"]),
+                            "tensor_parallel_size": int(limits["tensor_parallel_size"])},
+        "scope": scope,
+        "storage": {"storages": rows,
+                    "unique_physical_storage_bytes": int(storage["unique_physical_storage_bytes"]),
+                    "scope": storage.get("scope")},
+        # Evidence the consumer keeps but does not recompute a term from.
+        "tensors": observed.get("tensors"),
+        "received": observed.get("received"),
+        "runner_resolved": observed.get("runner_resolved"),
+        "kernel_block_sizes": observed.get("kernel_block_sizes"),
+        "capacity_policy": observed.get("capacity_policy"),
+        "group_details": observed.get("group_details"),
+        "capacity_assertions": observed.get("capacity_assertions"),
+        "received_argument_scope": observed.get("received_argument_scope"),
+    }
+
+
 def check_kv_capacity(observed, expected):
     """Check the external first-model capacity contract without admitting prices."""
     if expected.get("schema") != "tessera.first_model_kv_capacity_expectations.v1":
@@ -185,4 +300,3 @@ def check_kv_capacity(observed, expected):
             "expectations_sha256": hashlib.sha256(json.dumps(expected, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest(),
             "passed": all(row["passed"] for row in checks), "served_concurrency_verified": False,
             "full_model_fixed_resources_complete": False}
-

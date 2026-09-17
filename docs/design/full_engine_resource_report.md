@@ -89,23 +89,39 @@ establish rather than what is absent:
 
 ### What is checked today, and what only states its absence
 
-Two of the six have an implemented closure check: `history_join` reads
-`unattributed_external_records`, and `external_closure` reads
-`external_native_peak_bytes`. Both also go `refused` when the ledger carries
-unresolved `issues`.
+Four of the six have an implemented closure check: `history_join` reads
+`unattributed_external_records`, `external_closure` reads
+`external_native_peak_bytes`, `worker_startup` recomputes its equalities from
+`worker_startup_records`, and `cache_capacity` recomputes them from
+`kv_observations`. All four also go `refused` when the ledger carries unresolved
+`issues`.
 
-The other four — `worker_startup`, `provenance_admission`, `cache_capacity`,
-`timing_partition` — have **no implemented check**, and `qualify_domains` states
-that as their reason rather than closing them. It takes the ledger and nothing
-else, so no caller can close a domain by supplying an artifact nobody reads. A
-domain that closes because an argument was truthy is `qualified: true` spelled
-differently, and this schema does not have that field.
+The other two — `provenance_admission` and `timing_partition` — have **no
+implemented check**, and `qualify_domains` states that as their reason rather
+than closing them. It takes the ledger and nothing else, so no caller can close a
+domain by supplying an artifact nobody reads. A domain that closes because an
+argument was truthy is `qualified: true` spelled differently, and this schema
+does not have that field.
 
-`worker_startup` is the subtle one. The replay refuses outright a capture whose
-recorder attached after CUDA initialization, so reaching a parsed ledger does
-prove that half. It does **not** prove the recorder ran inside the engine's own
-worker process, which is the other half of what this domain must establish and
-is the work #399 still owes.
+`worker_startup` is the subtle one, and it needs two independent sides before it
+closes. The replay refuses outright a capture whose recorder attached after CUDA
+initialization, so reaching a parsed ledger does prove that half; the other half
+is that the sample was taken in the engine's own worker process after
+`process_weights_after_loading` and after `lock_workspace()`, and that the
+ledger's `fixed`-owned, never-freed rows sum to exactly the routed-owner
+receipt's own `resources.resident_bytes`. Neither side is trusted about the
+other: the sample is the engine's, the figure is an independently produced
+artifact's, and the equality is what ties them together.
+
+`cache_capacity` has the same two-sided shape and one extra condition. The
+physical backings are the runtime's own deduplicated storages, re-added by the
+consumer, and the ledger's `kv`-owned, never-freed rows must sum to that same
+extent. Unlike the startup sample this record may only come from a **read-only**
+pass: the intrusive resource pass sets `runtime_admission` false and says in its
+own pass evidence that its synchronized snapshots are timing- and
+admission-ineligible, so the record that closes the domain comes from a stock
+engine's own worker RPC. The intrusive pass's record is still carried, as the
+capacity witness the two passes are compared with.
 
 A domain is `refused`, not `open`, when the evidence exists and contradicts the
 model — overlapping candidate execution, a physical extent claimed twice, a
@@ -360,31 +376,37 @@ its face — `"synthetic CPU-only parser fixture, not a GPU measurement"` — an
 report built from it carries that scope. A positive *real* report additionally
 needs the qualified original measurements on the named hardware.
 
-### The four unclosable domains, and what v1 does not observe
+### The observations that still have no emitting producer
 
-This is the largest known gap in v1 and it is stated here rather than left for a
-consumer to discover. `worker_startup`, `provenance_admission`, `cache_capacity`
-and `timing_partition` carry a state, but v1 emits **no observation a consumer
-can read them out of** — no worker-startup record, no runtime provenance
-relation, no KV or pool observation, no timing capture, no stream or launch
-record. A consumer that independently recomputes therefore holds all four open
-whatever the report claims, and `fixed_resident`, `candidate_resident`,
-`fixed_activation`, `candidate_activation` and `fixed_KV` can never become
-numbers. **The scalar composition cannot complete at v1 even on a perfect
-capture**; only `fixed_scratch` and `candidate_scratch` are reachable.
+`worker_startup_records` and `kv_observations` now have both a producer and a
+closure check, so `fixed_resident`, `candidate_resident`, `fixed_activation`,
+`candidate_activation` and `fixed_KV` are reachable from a capture that actually
+observed them. Two observation members remain owed, and with them
+`provenance_admission` and `timing_partition`: `runtime_provenance_relation` and
+`timing_captures`. A consumer that independently recomputes therefore holds
+those two open whatever the report claims, and every timing price with them.
 
-Three of the consumer design's negative tests are unreachable for the same
-reason — altered cache capacity, missing timing tail, overlapping streams — and
-`derived.terms.fixed_kv` is a declared term with nothing to recompute it from.
+The two domains additionally carry coordinates the producer cannot invent: the
+provenance relation needs this run's manifests bound to the native runs they are
+related to, and the timing partition needs ordered native apply intervals with
+directly measured adjacent gaps. Both are stated here rather than left for a
+consumer to discover.
+
+The consumer design's remaining unreachable negative tests are the timing ones —
+a missing timing tail, overlapping streams — because no timing capture is
+emitted yet. The cache-capacity negative tests are reachable now: an altered
+pool, an overlapping backing or an intrusive-pass record all refuse the domain
+rather than closing it.
 
 `step_intervals` and `step_coverage` are carried the same way and for the same
 reason: a capture that declared no step says `unobserved` rather than carrying
 nothing, because a missing key cannot be told from a forgotten one.
 
-So `observations` names each owed member explicitly and sets it to null:
-`worker_startup_records`, `runtime_provenance_relation`, `kv_observations`,
-`timing_captures`, `owner_views`, `observer_qualification`. **Named and null,
-never absent** — a consumer must be able to tell "this capture did not observe
+So `observations` names each owed member explicitly: `runtime_provenance_relation`,
+`timing_captures`, `owner_views` and `observer_qualification` are carried as
+null, and `worker_startup_records` and `kv_observations` carry their records when
+a pass observed them and an explicit empty list (with the refusal's reason beside
+it) when it did not. **Named, never absent** — a consumer must be able to tell "this capture did not observe
 it" from "the producer forgot to carry it", and a missing key says neither.
 Closing any of those four domains means first emitting its member here.
 
@@ -482,8 +504,35 @@ implemented; it closes no domain and admits nothing. #399 and PrismaQuant #420
 both remain open until a report with closed domains is recomputed and accepted by
 a consumer that never ran producer code. Three things are owed before a real
 capture derives a number: allocation-site ownership for a row no checkpoint sees,
-the four unclosable domains' observation members, and the consumer's matching
+the two unclosable domains' observation members, and the consumer's matching
 off-step filter.
+
+### How the two observations are actually produced
+
+One rank's capture is two passes on the same box and the same configured run;
+each pass is its own process, and nothing about their pointers is ever compared.
+
+1. **The intrusive resource pass** runs the ledger and the startup sample:
+   `python -m experiments.capture_full_engine_resources --config ... --model ...
+   --census ... --collector ... --core-manifest ... --runtime-evidence ...
+   --output <resource-capture> --calibration ... --calibration-sha256 ...
+   --all-units --rank R --world-size W --receipt <routed-owner-receipt>
+   --receipt-sha256 ...`. It writes `worker-<pid>/capture.json` (the ledger),
+   `worker-startup.json` beside the plan (taken at arm, after
+   `lock_workspace()`), and `worker-<pid>/kv-observation.json` -- its own KV
+   view, whose pass evidence says `read_only: false` and which therefore serves
+   only as the capacity witness.
+2. **The read-only KV pass** boots a stock engine with a stock worker and one
+   worker RPC: the same command with `--observation-mode kv` and no `--collector`
+   or `--receipt`, writing `<kv-capture>/kv-observation.json` with
+   `read_only: true`. Its plan identity must be byte-identical to the resource
+   pass's, which is why the two invocations share every identity-bearing input.
+3. **The report** binds them: `python -m experiments.report_full_engine_resources
+   --capture-dir <resource-capture> --output <report> --kv-observation
+   <kv-capture>/kv-observation.json`. The join refuses a second pass from a
+   different run, a different rank or a differently configured pool, and records
+   in its own artifact that the two were different processes whose pointer
+   identities were never compared.
 
 ## Observing a served Tessera artifact
 
