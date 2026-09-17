@@ -310,10 +310,12 @@ def test_a4_a8_and_a16_each_reach_the_whole_owner_validator(format_name):
     assert view["format"] == format_name
     assert {m["format"] for m in members} == {format_name}
 
-    # The producer's own field set is the contract: hand it the geometry fields
-    # the consumer declares, with no owner-view keys added.
-    producer_shape = {k: v for k, v in shape.items()
-                      if k in moe.GLM_SHAPE_FIELDS}
+    # A real request carries the owner's FORMAT beside the geometry, because a
+    # whole routed owner holds one format for all of its members; the shape the
+    # consumer prepared has it, so the producer's roster check reads the same
+    # rung rather than the module constant.
+    producer_shape = {k: v for k, v in shape.items() if k in moe.GLM_SHAPE_FIELDS}
+    producer_shape["format"] = format_name
     member_inputs = [{**m, "blob": b"", "record": {}} for m in members]
     assert len(moe.validate_member_order_public(member_inputs, producer_shape)) == 288 * 3
     # And the rung the producer reads for the wire is the OWNER's, not E4M3 R1024.
@@ -334,6 +336,7 @@ def test_the_declared_tensor_parallel_reaches_the_whole_receipt_execution_check(
     execution = pq.owner_execution(shape, format_name="TESSERA_E4M3_K1_R1024")
     assert execution["tensor_parallel"] == tp
     producer_shape = {k: v for k, v in shape.items() if k in moe.GLM_SHAPE_FIELDS}
+    producer_shape["format"] = "TESSERA_E4M3_K1_R1024"
     # The owner's own record is accepted...
     assert moe.validate_execution(execution, list(moe.ROLE_ORDER), shape=producer_shape) is None
     # ...and the LFM TP1 record is refused for a TP2 owner.
@@ -341,9 +344,56 @@ def test_the_declared_tensor_parallel_reaches_the_whole_receipt_execution_check(
         with pytest.raises(ValueError) as caught:
             moe.validate_execution(dict(moe.EXECUTION), list(moe.ROLE_ORDER), shape=producer_shape)
         assert "tensor-parallel" in str(caught.value), str(caught.value)
-    # The member widths the producer prices are the rank's own.
+    # The member widths both sides price are the rank's own -- 2048//tp -- and
+    # they are carried under each side's own spelling. The producer's roster
+    # view puts the rank-local width in `intermediate_size` (`_roster_shape`
+    # divides there); PQ's view keeps the FULL declared `intermediate_size` and
+    # carries the rank-local width separately as `rank_local_intermediate`
+    # (`_shape_for_roster` / `rank_local_intermediate`), which is the key its
+    # member geometry reads at `_expect_member_roster`. Comparing the two
+    # `intermediate_size` keys compares a rank-local width against a declared
+    # source width, so the keys that mean the same thing must be the ones
+    # compared.
     producer_view = moe._roster_shape(producer_shape)
-    assert producer_view["intermediate_size"] == view["intermediate_size"] == 2048 // tp
+    rank_local = 2048 // tp
+    assert producer_view["intermediate_size"] == view["rank_local_intermediate"] == rank_local
+    # ...and PQ's declared geometry is untouched by its own derived view: the
+    # full source width is still declared, and stripping the view's derived
+    # keys returns the declared geometry. `format` is one of those derived
+    # keys, so the comparison is against the geometry without it -- the shape
+    # the caller prepared carries the owner's format, which the view does not
+    # declare.
+    assert shape["intermediate_size"] == 2048
+    assert view["intermediate_size"] == 2048
+    declared = {k: v for k, v in shape.items() if k != "format"}
+    assert pq.geometry_only(view) == declared
+    assert pq.geometry_family(pq.geometry_only(view)) == "glm53_next_routed_stack_v1"
+
+    # The rank-local width is not a statement about the values: it must reach
+    # the actual member tensor shapes both sides expect. The producer's member
+    # geometry and PQ's member geometry are read from their real helpers, and
+    # PQ's roster check is driven with members carrying exactly those shapes.
+    member_shapes = {role: moe._member_shape(producer_shape, role) for role in moe.ROLE_ORDER}
+    member_roster = [{**m, "shape": list(member_shapes[m["role"]])} for m in members]
+    assert pq._member_roster(GLM_UNIT, member_roster, shape) == member_roster
+    for role in ("w1", "w3"):
+        assert member_shapes[role] == [rank_local, 4096]
+    assert member_shapes["w2"] == [4096, rank_local]
+    # A w1 carrying a width the rank does not declare is refused -- otherwise
+    # the keys above could agree while the actual member shapes did not. The
+    # negative has to be built from THIS rank's own width: for TP1 the full
+    # 2048 IS the rank-local width, so a full-width w1 is valid there and only
+    # the TP2 case is a mismatch.
+    planted = 2048 if tp == 2 else rank_local + 1
+    wrong = [{**m, "shape": [planted, 4096]} if m["role"] == "w1"
+             else {**m, "shape": list(member_shapes[m["role"]])} for m in members]
+    with pytest.raises(ValueError):
+        pq._member_roster(GLM_UNIT, wrong, shape)
+
+    # PRECURSOR: this asserts the CONTRACT's rank-local geometry, not a
+    # runnable owner. `resolve_serving_config:504-519` still refuses to build a
+    # `tensor_parallel_size=2` ParallelConfig, so no TP2 owner reaches the
+    # runtime; that seam is named above this test.
 
 
 # --------------------------------------------------------------------------
@@ -374,9 +424,11 @@ def test_the_producer_reads_the_bias_under_the_consumers_glm_spelling(monkeypatc
     assert "correction_bias" in source and "selection_bias" not in source
     assert set(source["correction_bias"]) == {"content_sha256", "dtype"}
 
-    # The producer's field is `selection_bias`, and it compares against the
-    # TENSOR it was given (tensor_record identity), so the translation has to
-    # carry both the field name and the object.
+    # The producer's field is `selection_bias`, and it compares the FULL tensor
+    # record (shape, dtype, logical_bytes, content digest) against the tensor it
+    # was given, so the translation carries the record `tensor_identity`
+    # produces -- not the digest-and-dtype pair PQ stores, which is a different
+    # schema and is exactly what `tensor_record` refuses.
     bias = torch.zeros(288, dtype=torch.float32)
     producer_protocol = {
         "router_class": source["router_class"],
@@ -385,12 +437,26 @@ def test_the_producer_reads_the_bias_under_the_consumers_glm_spelling(monkeypatc
         "normalization_epsilon": source["normalization_epsilon"],
         "expert_bias_affects": source["expert_bias_affects"],
     }
+    # The two schemas are NOT interchangeable, and that is the cross-repository
+    # fact this test exists to record: PQ stores {content_sha256, dtype} and the
+    # producer requires {shape, dtype, logical_bytes, content_sha256}. A request
+    # builder must materialize the tensor record.
+    assert set(producer_protocol["selection_bias"]) == {
+        "shape", "dtype", "logical_bytes", "content_sha256"}
+    # The translation keeps `topk_method`, which is what the producer's width
+    # rule keys on; dropping it would size the bias at the LFM 32 and refuse the
+    # 288-wide GLM tensor. That is a real request-path hazard, recorded below.
     producer_routing = {**routing, "source_protocol": producer_protocol}
-    producer_routing.pop("swiglu_limit", None), producer_routing.pop("n_group", None)
-    producer_routing.pop("topk_group", None), producer_routing.pop("topk_method", None)
 
     # The producer's own bias check accepts the translated payload.
     assert moe.verify_routing_bias(producer_routing, bias) is bias
+    # NOTE: this passes only because the translated routing keeps `topk_method`,
+    # which is what the producer's width rule keys on. A real request built by
+    # the LFM route drops that field, and then the width falls back to 32 and a
+    # 288-wide GLM bias is refused -- `verify_routing_bias:538` still reads
+    # `source_protocol["selection_bias"]` while PQ's GLM protocol carries
+    # `correction_bias`. The translation is therefore exercised here, and the
+    # request-path wiring remains a named seam for the next brief.
 
     # And it refuses a bias that is not the captured one, which is the point of
     # translating rather than passing the name through.

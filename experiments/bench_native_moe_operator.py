@@ -295,25 +295,26 @@ def validate_glm_shape(shape):
     measurement, not a fact about the model. The returned dict therefore keeps
     whatever owner-view keys the caller attached.
     """
-    dense._fields(shape, GLM_SHAPE_FIELDS, "shape")
+    declared = {key: shape[key] for key in GLM_SHAPE_FIELDS if key in shape}
+    dense._fields(declared, GLM_SHAPE_FIELDS, "shape")
     for key in ("geometry_version", "n_routed_experts", "top_k", "hidden_size",
                 "intermediate_size", "shared_experts", "n_group", "topk_group",
                 "tensor_parallel"):
         if type(shape[key]) is not int or shape[key] < 1:
             raise ValueError(f"GLM owner {key} must be a positive integer, not {shape[key]!r}")
-    if shape["geometry_version"] != GLM_GEOMETRY_VERSION:
+    if declared["geometry_version"] != GLM_GEOMETRY_VERSION:
         raise ValueError(f"GLM owner geometry version {shape['geometry_version']!r} is not {GLM_GEOMETRY_VERSION}")
     for key, expected in GLM_SOURCE_FACTS.items():
         if shape[key] != expected:
             raise ValueError(
                 f"GLM owner {key} is {shape[key]!r}, and this captured source is {expected!r}")
-    if shape["tensor_parallel"] not in (1, 2):
+    if declared["tensor_parallel"] not in (1, 2):
         raise ValueError(f"GLM owner tensor_parallel {shape['tensor_parallel']!r} is outside the supported cuts")
-    if shape["tensor_parallel_cut_axis"] != "intermediate":
+    if declared["tensor_parallel_cut_axis"] != "intermediate":
         raise ValueError("GLM owner declares a tensor-parallel cut this operator does not implement")
-    if shape["intermediate_size"] % shape["tensor_parallel"]:
+    if declared["intermediate_size"] % declared["tensor_parallel"]:
         raise ValueError("GLM owner intermediate is not divisible by its TP cut")
-    if shape["top_k"] > shape["n_routed_experts"]:
+    if declared["top_k"] > declared["n_routed_experts"]:
         raise ValueError("GLM owner top_k exceeds its expert count")
     return dict(shape)  # keeps any owner-view keys the caller attached
 
