@@ -11,7 +11,7 @@ census alone. Current scope and limitations are in
 and the [campaign receipt §§7–9](measurements/tessera-lfm-campaign-2026-09-04.md#7-full-model-route-census-completed-at-2105-utc).
 The historical body remains intact; it is not the current release checklist.
 
-Status: **decisions**, 2026-09-01; sections 1 and 3 **superseded 2026-09-02**
+Status: **decisions**, 2026-09-01; sections 1 and 3 **superseded 2026-09-02**; the span-2 NVFP4 decoder's extension entry and load path are **retired 2026-09-16** (A4 whole-weight expansion; see ARCHITECTURE.md §3.3)
 by the Tessera serving plugin (`docs/measurements/tessera-serving-plugin-2026-09-02.md`).
 The superseded text is kept: it is the decision the plugin replaced, and the
 reasoning in it is why the plugin looks the way it does.
@@ -658,7 +658,7 @@ families:
 | family | grid | reader range (q256) | step | what bounds it |
 |---|---|---|---|---|
 | `TESSERA_E4M3_K1` | `E4M3` | **[256, 2048]** | 1 | the trellis grammar's shaped domain at both ends: code rate 1..8 over an 8-bit-native alphabet. Continuous — 120 of 120 in-range probes accepted, no interior gap. |
-| `TESSERA_E2M1_K2` | `E2M1x2` | **[896, 896]** | 1 | *above*, the same grammar (rate 7 of arity-2 native 8, so q256 ≤ 896); *below*, the native decoder, which serves the span-2 TCQ body only — under 896 `wire_recipe` writes a WINDOW body and `ops.prepare_tessera_module` refuses it by name. |
+| `TESSERA_E2M1_K2` | `E2M1x2` | **[896, 896]** | 1 | *above*, the same grammar (rate 7 of arity-2 native 8, so q256 ≤ 896); *below*, the native decoder, which serves the span-2 TCQ body only — under 896 `wire_recipe` writes a WINDOW body and the NVFP4 route refuses it by name at the same load seam. (The refusal was `ops.prepare_tessera_module`'s until the A4 whole-weight expansion was retired 2026-09-16; the A4 lane keeps it.) |
 
 So E4M3's published set was two orders of magnitude too narrow and E2M1x2's
 single point was exactly right, for a reason nobody had written down.
@@ -807,8 +807,10 @@ frontier encodes constantly. In both the `--stock-twin` is what gets served.
 it — is kept as a deliberate disagreement**, pinned by a test rather than
 resolved. They are not two statements of one fact: `ROUTES["grids"]` says what
 the decoder *holds* (the NVFP4 decoder is arity-parametric — `arity` is a
-runtime scalar into `tessera_nvfp4_decode_span2_out`, and
-`lane_planes.build_anchor_values` reads it off the forest's grid), while
+runtime scalar into the span-2 decode kernel, retired as
+`tessera_nvfp4_decode_span2_out` on 2026-09-16 and now
+`tessera.kernel_a4`'s, and `lane_planes.build_anchor_values` reads it off the
+forest's grid), while
 `formats[]` says what has been *measured through* it. That is the same pair of
 claims `tensor_parallel` already separates as `max_world_size` beside
 `loader_axes`. Deleting `E2M1` would delete a true statement about the decoder;
@@ -966,15 +968,19 @@ v5 or v6 reader ignores a new top-level key and no value it already read has
 moved. (It was authored against v5 and landed after §12 took v6; the renumber
 is bookkeeping -- the block, not the integer, is the claim, and PrismaQuant's
 `contract_answer()` over the v6 and v7 payloads is byte-identical.)
-One entry today, the span-2 NVFP4 decoder.
+One entry today (two before 2026-09-16): the window GEMV. The span-2 NVFP4
+decoder's entry was removed with the A4 whole-weight expansion — nothing under
+`tessera.serving` loads that library any more, and a table entry for it would
+publish a `.so` no serve can map.
 
-**It is a glob, not a basename, and the rule is a value.** `ext.py` JIT-builds
-the module under a name carrying a build-identity hash, so the library on disk
-is `tessera_nvfp4_<identity>.so` and **no exact basename exists to publish**. A
-consumer must therefore know whether the published string is a stem, a prefix or
-a pattern — so the entry carries `module_name_prefix`, `filename_glob`, and
-`match: "basename_fnmatch"`, which names the rule a gate applies. Prose saying
-"this is a prefix" is exactly the kind of field principle 14 refuses.
+**It is a glob, not a basename, and the rule is a value.** An entry whose
+module name carries a build-identity hash has no exact basename to publish, so
+a consumer must know whether the published string is a stem, a prefix or a
+pattern — the entry therefore carries `module_name_prefix`, `filename_glob`,
+and `match: "basename_fnmatch"`, which names the rule a gate applies. (The
+retired NVFP4 loader was the hashed-name case; the surviving window name is
+exact, and the field's meaning is unchanged.) Prose saying "this is a prefix"
+is exactly the kind of field principle 14 refuses.
 
 **`when_unavailable` replaces the `optional: true` the issue proposed.**
 `optional` conflates "this build may not have compiled it" with "the route runs

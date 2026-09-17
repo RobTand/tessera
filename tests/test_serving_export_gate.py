@@ -289,9 +289,9 @@ def test_the_route_vocabulary_and_the_published_set_disagree_on_purpose():
     are the same two claims ``tensor_parallel`` already separates:
     ``max_world_size`` (attested) beside ``loader_axes`` (what the loader
     does).  The NVFP4 decoder is arity-parametric all the way down to the
-    kernel: ``arity`` is a runtime scalar into
-    ``tessera_nvfp4_decode_span2_out``, ``csrc/tessera_nvfp4.cu`` admits
-    ``1..4`` and derives ``steps = rows / arity``, its value base is
+    kernel: ``arity`` is a runtime scalar into the span-2 decode (the retired
+    ``tessera_nvfp4_decode_span2_out``, now ``tessera.kernel_a4``'s, which
+    admits ``1..4`` and derives ``steps = rows / arity``), its value base is
     ``(label * points + point) * arity`` and it emits one row per ``a`` in
     ``0..arity``; on the host side ``lane_planes.build_anchor_values`` and
     ``build_subset_values`` read the same number off the forest's grid.  So
@@ -317,7 +317,7 @@ def test_the_route_vocabulary_and_the_published_set_disagree_on_purpose():
 def test_the_route_table_names_the_body_its_own_loader_refuses_by_name():
     """One table for the body, read by the producer and enforced by the routes.
 
-    ``ops.prepare_tessera_module`` refuses anything but the span-2 TCQ body and
+    the A4 lane refuses anything but the span-2 TCQ body and
     ``fp8_route`` anything but the window body; those two are the enforcement,
     and ``ROUTES`` is where the producer reads the same fact instead of keeping
     a third copy in the exporter.

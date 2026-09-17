@@ -105,10 +105,35 @@ def refuse_dirty_slack(raw: np.ndarray, used: int, what: str) -> None:
     seven bit comparisons.
     """
     if raw.size > used and raw[used:].any():
-        raise GrammarError(
-            f"{what}: non-zero pad bits after {used} content bits; the encoding "
-            "must be canonical and slack is not a covert channel"
-        )
+        _dirty_slack(what, used)
+
+
+def _dirty_slack(what: str, used: int) -> None:
+    raise GrammarError(
+        f"{what}: non-zero pad bits after {used} content bits; the encoding "
+        "must be canonical and slack is not a covert channel"
+    )
+
+
+def _refuse_packed_slack(packed: np.ndarray, used: int, what: str) -> None:
+    """``refuse_dirty_slack``'s rule, read off the PACKED bytes.
+
+    Same claim, same authority, same message: the slack after ``used`` content
+    bits is every bit from there on -- the low bits of the last content byte
+    plus every bit of any trailing byte.  The bit-domain spelling of the rule
+    needs the plane expanded to one byte per bit to look at a handful of
+    them; this spelling does not, which is what lets ``unpack_body`` reach its
+    CUDA fast path without a host expansion and ``unpack_uniform`` turn packed
+    fields into values without one.  ``tests/test_wire_slack.py`` holds the
+    two spellings to each other on both sides of the boundary.
+    """
+    used_bytes, rem = divmod(used, 8)
+    if rem and used_bytes < packed.size:
+        if packed[used_bytes] & ((1 << (8 - rem)) - 1):
+            _dirty_slack(what, used)
+        used_bytes += 1
+    if used_bytes < packed.size and packed[used_bytes:].any():
+        _dirty_slack(what, used)
 
 
 def _from_bits(bits: np.ndarray, width: int) -> np.ndarray:
@@ -131,15 +156,29 @@ def pack_uniform(values: torch.Tensor, width: int) -> bytes:
 
 
 def unpack_uniform(data: bytes, count: int, width: int, device=None) -> torch.Tensor:
-    raw = np.unpackbits(np.frombuffer(data, dtype=np.uint8), bitorder="big")
-    bits = raw[: count * width]
-    if bits.size != count * width:
+    packed = np.frombuffer(data, dtype=np.uint8)
+    total = count * width
+    if packed.size * 8 < total:
         raise GrammarError(
-            f"need {count * width} bits for {count} elements of {width} bits, "
-            f"the plane holds {bits.size}"
+            f"need {total} bits for {count} elements of {width} bits, "
+            f"the plane holds {packed.size * 8}"
         )
-    refuse_dirty_slack(raw, count * width, "plane")
-    return torch.from_numpy(_from_bits(bits, width)).to(device or "cpu")
+    _refuse_packed_slack(packed, total, "plane")
+    # A width the packed byte already carries is read off that byte instead of
+    # through an eight-bytes-per-bit expansion and back (the scale plane is
+    # the largest such field on a routed load: 524 288 four-bit refinement
+    # words per expert container).  Any other width still takes the bit path.
+    if width == 8:
+        values = packed[:count].astype(np.int64)
+    elif width == 4:
+        values = np.empty(packed.size * 2, dtype=np.int64)
+        values[0::2] = packed >> 4
+        values[1::2] = packed & 0xF
+        values = values[:count]
+    else:
+        bits = np.unpackbits(packed, bitorder="big")[:total]
+        values = _from_bits(bits, width)
+    return torch.from_numpy(values).to(device or "cpu")
 
 
 def _column_to_bits(column: np.ndarray, rate: int, span: int) -> np.ndarray:
@@ -257,11 +296,16 @@ def unpack_body(
             f"{rows} positions is not a whole number of span-{span} super-symbols"
         )
     total = sum(_body_bits(rate, rows, span) for rate in rates)
-    raw = np.unpackbits(np.frombuffer(data, dtype=np.uint8), bitorder="big")
-    bits = raw[:total]
-    if bits.size != total:
-        raise GrammarError(f"BODY needs {total} bits, the plane holds {bits.size}")
-    refuse_dirty_slack(raw, total, "BODY")
+    # The size and canonical-slack refusals read the PACKED plane, for both
+    # paths: the CUDA kernel takes these bytes directly and expands them on
+    # the device, so expanding them on the host first (``np.unpackbits`` made
+    # one byte per bit of the largest plane, then threw it away) was a second
+    # full pass over every routed expert container for a check the packed
+    # bytes already answer.
+    packed = np.frombuffer(data, dtype=np.uint8)
+    if packed.size * 8 < total:
+        raise GrammarError(f"BODY needs {total} bits, the plane holds {packed.size * 8}")
+    _refuse_packed_slack(packed, total, "BODY")
     # uint8, not int64: a plane position carries at most 3 bits, and the replay
     # is a bandwidth-bound elementwise chain over the BODY plane.  Eight bytes
     # per three bits made every pass in the decoder read 8x what it needed.
@@ -282,6 +326,8 @@ def unpack_body(
                 raise
         else:
             return unpack_body_cuda(data, rates, rows, target, span)
+    raw = np.unpackbits(packed, bitorder="big")
+    bits = raw[:total]
     out = np.zeros((rows, len(rates)), dtype=np.uint8 if widest <= 8 else np.int32)
     cursor = 0
     for column, rate in enumerate(rates):

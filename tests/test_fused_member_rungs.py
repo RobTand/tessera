@@ -11,7 +11,7 @@ all, and nothing crossed the two halves.
 WHY THE HEADER WAS THE RIGHT ONE.  The decoders read each role from that role's
 OWN manifest: ``fp8_route``/``bf16_route`` call ``prepare_window`` on each
 role's ``body_bits``/``rates``/``window_bits``/``window_codes`` and concatenate,
-and ``ops.prepare_tessera_module`` packs each role's own
+and the A4 route packs each role's own
 ``rate``/``arity``/``memory``/``half`` scalars and decodes into that role's row
 slice.  What is genuinely a module fact is the family (vLLM builds one method
 per module) and, on NVFP4, the shared global -- and the global is carried by an

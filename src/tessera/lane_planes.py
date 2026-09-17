@@ -24,7 +24,9 @@ __all__ = [
     "build_history_lut", "build_anchor_values", "build_subset_values",
     "build_span2_luts", "pack_window_planes", "build_window_values",
     "pack_unit_for_kernel", "build_subset_nibbles", "lut_scale_bytes",
-    "prepare_span2_planes",
+    "prepare_span2_planes", "require_no_post_decode_transforms",
+    "require_no_completion_plane", "require_select_plane_multiple",
+    "require_select_plane_rows", "require_window_geometry",
 ]
 
 
@@ -233,26 +235,42 @@ def native_select_plane_admission(parsed) -> "tuple[int, int] | None":
     return rows, arity * select_plane_codes_per_byte(int(getattr(unit, "span", 1)))
 
 
-def require_native_select_plane_admission(parsed) -> None:
+def require_select_plane_multiple(*, rows: int, multiple: int) -> None:
     """Refuse, by name, a native span-2 decode whose rows are not a whole
-    number of select columns (``native_select_plane_admission``).
+    number of select columns.
 
     Names the rank-local rows, the multiple the plane needs, and the fallback
     that does serve the cut, so the operator acts on the cut rather than on a
-    byte count in someone else's module."""
+    byte count in someone else's module.  The facts are named so the compact
+    preparer (``tessera.compact_prep``) refuses exactly this cut with exactly
+    these words.
+    """
+    if int(rows) % int(multiple):
+        raise GrammarError(
+            f"the native span-2 decoder packs "
+            f"{SELECT_PLANE_SUPER_SYMBOLS_PER_BYTE} super-symbols to a byte per "
+            f"column; this rank's unit is {int(rows)} rows, which is not a whole number of "
+            f"that column ({int(multiple)} rows = arity * 8 * span), so the select plane "
+            f"cannot be packed. Serve at a tensor_parallel_size that lands on the "
+            f"boundary, or take the torch fallback, which decodes codes and serves "
+            f"this cut."
+        )
+
+
+def require_select_plane_rows(*, rows: int, arity: int, span: int) -> None:
+    """``require_select_plane_multiple`` from the geometry that derives it."""
+    require_select_plane_multiple(
+        rows=rows, multiple=int(arity) * select_plane_codes_per_byte(int(span)))
+
+
+def require_native_select_plane_admission(parsed) -> None:
+    """Refuse, by name, a native span-2 decode whose rows are not a whole
+    number of select columns (``native_select_plane_admission``)."""
     admission = native_select_plane_admission(parsed)
     if admission is None:
         return
     rows, multiple = admission
-    if rows % multiple:
-        raise GrammarError(
-            f"the native span-2 decoder packs "
-            f"{SELECT_PLANE_SUPER_SYMBOLS_PER_BYTE} super-symbols to a byte per "
-            f"column; this rank's unit is {rows} rows, which is not a whole number of "
-            f"that column ({multiple} rows = arity * 8 * span), so the select plane "
-            f"cannot be packed. Serve at a tensor_parallel_size that lands on the "
-            f"boundary, or take the torch fallback, which decodes codes and serves "
-            f"this cut.")
+    require_select_plane_multiple(rows=rows, multiple=multiple)
 
 
 def pack_scale_nibbles(scale_refine: torch.Tensor, rows: int, cols: int, half: int = 16) -> torch.Tensor:
@@ -403,6 +421,26 @@ def build_span2_luts(
     return label_lut, subset_lut
 
 
+def require_window_geometry(window_bits: int, rates) -> None:
+    """The wire's window-width and rate rules, before a plane is packed.
+
+    ONE home: ``pack_window_planes`` states them and the compact window
+    repack (``tessera.compact_prep``) refuses the same bytes with the same
+    words -- a rate wider than the window would read a window's worth of bits
+    from the wrong place and decode to plausible wrong weights.
+    """
+    if not 1 <= int(window_bits) <= WINDOW_BITS_MAX:
+        raise GrammarError(
+            f"window_bits {window_bits} outside 1..{WINDOW_BITS_MAX}, the widest "
+            "window the wire carries"
+        )
+    rates = tuple(rates)
+    if rates and max(rates) > int(window_bits):
+        raise GrammarError(
+            f"rate {max(rates)} does not fit a {window_bits}-bit window"
+        )
+
+
 def pack_window_planes(
     body_bits: torch.Tensor,
     rates: "tuple[int, ...]",
@@ -457,15 +495,7 @@ def pack_window_planes(
     device = body_bits.device
     if len(rates) != cols:
         raise GrammarError(f"{len(rates)} rates for {cols} columns")
-    if not 1 <= window_bits <= WINDOW_BITS_MAX:
-        raise GrammarError(
-            f"window_bits {window_bits} outside 1..{WINDOW_BITS_MAX}, the widest "
-            "window the wire carries"
-        )
-    if max(rates) > window_bits:
-        raise GrammarError(
-            f"rate {max(rates)} does not fit a {window_bits}-bit window"
-        )
+    require_window_geometry(window_bits, rates)
     if initial_state is not None:
         if initial_state.numel() != cols:
             raise GrammarError(
@@ -567,6 +597,16 @@ def _window_code_table(codes: torch.Tensor, grid, device) -> torch.Tensor:
 
 
 def _require_no_post_decode_transforms(unit) -> None:
+    """``require_no_post_decode_transforms`` for a unit object."""
+    require_no_post_decode_transforms(
+        release_positions=int(unit.release_index.numel()),
+        diagonals=unit.diagonals is not None,
+        rotation=unit.rotation,
+    )
+
+
+def require_no_post_decode_transforms(*, release_positions: int, diagonals: bool,
+                                      rotation) -> None:
     """Refuse the three operations no GEMV on this lane applies.
 
     A released position is overwritten from the RELEASE plane, diagonals are
@@ -577,26 +617,36 @@ def _require_no_post_decode_transforms(unit) -> None:
 
     One rule, one home: the window branch stated these first and the TCQ
     branch did not state them at all, which is how a span-2 unit with a
-    rotation packed and served silently.
+    rotation packed and served silently.  The facts are named rather than
+    read off a unit so the compact preparer (``tessera.compact_prep``), which
+    holds verified bytes and no expanded unit, refuses exactly these bytes
+    with exactly these words.
     """
-    if unit.release_index.numel():
+    if release_positions:
         raise GrammarError(
             "this unit has released positions, which overwrite decoded codes "
             "from the RELEASE plane; the kernel lane reads no such plane"
         )
-    if unit.diagonals is not None:
+    if diagonals:
         raise GrammarError(
             "this unit carries diagonals; undoing them is a rank-1 factor "
             "outside the GEMV, which the kernel lane does not apply"
         )
-    if unit.rotation is not RotationState.NONE:
+    if RotationState(rotation) is not RotationState.NONE:
         raise GrammarError(
-            f"this unit is rotated ({unit.rotation.name}); undoing the rotation "
-            "is a basis change the kernel lane does not apply"
+            f"this unit is rotated ({RotationState(rotation).name}); undoing the "
+            "rotation is a basis change the kernel lane does not apply"
         )
 
 
 def _require_no_completion_plane(unit, forest: AnchorForest) -> None:
+    """``require_no_completion_plane`` for a unit object."""
+    require_no_completion_plane(
+        rates=unit.rates, rate=forest.rate, cap=forest.cap,
+        limit=getattr(unit, "completion_limit", None))
+
+
+def require_no_completion_plane(*, rates, rate: int, cap: int, limit, memo: "dict | None" = None) -> None:
     """Refuse a TCQ unit whose wire carries a COMPLETION plane.
 
     A column at body rate ``R`` under the grid's cap may spend up to
@@ -615,16 +665,18 @@ def _require_no_completion_plane(unit, forest: AnchorForest) -> None:
     the limit alone would pass exactly the unit the reader recovers.  A
     full-rate unit (``R == cap``) has no completion axis and passes at any
     limit; that is the shipping span-2 wire.
+
+    The facts are named rather than read off a unit so the compact preparer
+    refuses exactly these bytes with exactly these words.
     """
     from .grammar import completion_widths
 
-    limit = getattr(unit, "completion_limit", None)
-    written = max(completion_widths(tuple(unit.rates), forest.cap, limit), default=0)
+    written = max(completion_widths(tuple(rates), cap, limit, memo=memo), default=0)
     if written:
         raise GrammarError(
             f"this unit carries a COMPLETION plane {written} level"
-            f"{'s' if written != 1 else ''} deep (rate {forest.rate} under a cap "
-            f"of {forest.cap}, completion_limit={limit}); the span-2 kernel lane "
+            f"{'s' if written != 1 else ''} deep (rate {rate} under a cap "
+            f"of {cap}, completion_limit={limit}); the span-2 kernel lane "
             "reads no such plane -- it would serve every position at its anchor "
             "(blocks[anchor][0]) and drop the descendants the plane selects, "
             "which is not reconstruct_unit(unit). Encode at completion=0, or "

@@ -108,7 +108,6 @@ def test_the_kernel_sources_resolve_as_package_resources():
     from tessera.serving import ext
     for package, name in (
         ("tessera.serving", "csrc/window_gemv.cu"),
-        ("tessera.serving", "csrc/tessera_nvfp4.cu"),
     ):
         assert resources.files(package).joinpath(name).is_file(), f"{package}: {name}"
     for entry in ext.NATIVE_EXTENSIONS:

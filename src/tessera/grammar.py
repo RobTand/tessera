@@ -126,7 +126,8 @@ def forest_plane_bytes(
 
 
 def completion_widths(
-    rates: "tuple[int, ...]", cap: int = C_FULL_BITS, limit: "int | None" = None
+    rates: "tuple[int, ...]", cap: int = C_FULL_BITS, limit: "int | None" = None,
+    memo: "dict | None" = None,
 ) -> "tuple[int, ...]":
     """Bits the COMPLETION plane spends per column at an encoded depth.
 
@@ -137,16 +138,29 @@ def completion_widths(
     ``limit=None`` means "as deep as each rate allows" and reproduces the
     ceiling exactly, which is why every full-depth artifact is unaffected.
     """
+    if memo is not None:
+        table = memo.get("__completion_widths")
+        if table is not None:
+            key = (cap, limit, _rates_signature(rates))
+            stored = table.get(key)
+            if stored is not None and stored[1] == rates:
+                return stored[0]
     caps = tuple(completion_capacity(rate, cap) for rate in rates)
     if limit is None:
-        return caps
-    if limit < 0:
+        result = caps
+    elif limit < 0:
         raise GrammarError(f"completion limit {limit} is negative")
-    return tuple(min(limit, c) for c in caps)
+    else:
+        result = tuple(min(limit, c) for c in caps)
+    if memo is not None:
+        table = memo.setdefault("__completion_widths", {})
+        table[(cap, limit, _rates_signature(rates))] = (result, rates)
+    return result
 
 
 def completion_limit_from_elements(
-    elements: int, rates: "tuple[int, ...]", steps: int, cap: int = C_FULL_BITS
+    elements: int, rates: "tuple[int, ...]", steps: int, cap: int = C_FULL_BITS,
+    memo: "dict | None" = None,
 ) -> "int | None":
     """Recover the depth a unit was written at from its declared plane size.
 
@@ -155,13 +169,25 @@ def completion_limit_from_elements(
     ``limit``, so the depth is recoverable without a new schema field.  A reader
     that instead assumed the ceiling would mis-slice every shallow unit.
     """
+    table = None
+    if memo is not None:
+        table = memo.get("__completion_limit")
+        if table is not None:
+            key = (elements, steps, cap, _rates_signature(rates))
+            stored = table.get(key)
+            if stored is not None and stored[1] == rates:
+                return stored[0]
     caps = [completion_capacity(rate, cap) for rate in rates]
     ceiling = max(caps, default=0)
     if steps <= 0 or not caps:
         return None if elements == 0 else _unrecoverable(elements, steps)
     for limit in range(ceiling + 1):
         if sum(min(limit, c) for c in caps) * steps == elements:
-            return None if limit == ceiling else limit
+            result = None if limit == ceiling else limit
+            if memo is not None:
+                table = memo.setdefault("__completion_limit", {})
+                table[(elements, steps, cap, _rates_signature(rates))] = (result, rates)
+            return result
     return _unrecoverable(elements, steps)
 
 
@@ -205,6 +231,28 @@ def descendant_set_size(completion: int) -> int:
     return 1 << completion
 
 
+#: ``range`` membership keeps the *original* domain semantics exactly --
+#: equality against each integer, so an integral-valued float is accepted and
+#: a fractional one refused -- while being O(1) for real ints instead of the
+#: linear tuple scan that was 0.57 s of a 5 s wire profile.  It is derived from
+#: ``LEGAL_RATES`` and only used when the tuple is the contiguous range; the
+#: tuple itself stays the fallback, and the refusal message still formats the
+#: tuple.
+_LEGAL_RANGE = None
+if LEGAL_RATES and tuple(range(LEGAL_RATES[0], LEGAL_RATES[-1] + 1)) == LEGAL_RATES:
+    _LEGAL_RANGE = range(LEGAL_RATES[0], LEGAL_RATES[-1] + 1)
+
+
+def _rates_signature(rates: "tuple[int, ...]") -> tuple:
+    """A cheap, exact-checkable key for a rate schedule.
+
+    ``hash`` of a 4,096-int tuple is O(columns), so it is computed once per
+    lookup and the stored schedule is compared in full on a hit: a digest
+    collision cannot make two different schedules share a memo entry.
+    """
+    return (len(rates), hash(rates))
+
+
 def _check_rate(rate: int, cap: "int | None" = C_FULL_BITS) -> None:
     """Bound a rate.  ``cap=None`` defers the *upper* bound, deliberately.
 
@@ -222,10 +270,16 @@ def _check_rate(rate: int, cap: "int | None" = C_FULL_BITS) -> None:
         raise GrammarError(f"rate {rate} is below the shaped domain (min 1)")
     if cap is None:
         return
-    legal = LEGAL_RATES if cap == C_FULL_BITS else tuple(range(1, cap + 1))
-    if rate not in legal:
+    if cap == C_FULL_BITS:
+        legal = (rate in _LEGAL_RANGE) if _LEGAL_RANGE is not None \
+            else (rate in LEGAL_RATES)
+        domain = LEGAL_RATES
+    else:
+        legal = rate in range(1, cap + 1)
+        domain = tuple(range(1, cap + 1))
+    if not legal:
         raise GrammarError(
-            f"rate {rate} outside the shaped domain {legal} "
+            f"rate {rate} outside the shaped domain {domain} "
             "(max_trellis_rate = native - 1)"
         )
 
@@ -354,11 +408,25 @@ def rate_set(root: Fraction, cap: "int | None" = C_FULL_BITS) -> tuple[int, ...]
 
 
 def validate_rate_schedule(
-    rates: tuple[int, ...], root: Fraction, cap: "int | None" = C_FULL_BITS
+    rates: tuple[int, ...], root: Fraction, cap: "int | None" = C_FULL_BITS,
+    memo: "dict | None" = None,
 ) -> None:
-    """Raise unless every rate is legal for ``cap`` and the quota is exact."""
+    """Raise unless every rate is legal for ``cap`` and the quota is exact.
+
+    ``memo`` is an optional **caller-owned** dict: same ``(rates, root, cap)``
+    means the same verdict, so a loader that sees one geometry on every expert
+    of a layer pays this walk once.  Only the success path is remembered; a
+    refusal is re-derived (and re-raised) every time it is met.
+    """
     if not rates:
         raise GrammarError("empty rate schedule")
+    if memo is not None:
+        table = memo.get("__schedule_ok")
+        if table is not None:
+            key = (root, cap, _rates_signature(rates))
+            stored = table.get(key)
+            if stored is not None and stored[0] == rates:
+                return
     for rate in rates:
         _check_rate(rate, cap)
     total = sum(rates)
@@ -368,6 +436,9 @@ def validate_rate_schedule(
             f"inexact quota: schedule sums to {total} bits, "
             f"root {root} over {len(rates)} columns requires {exact}"
         )
+    if memo is not None:
+        table = memo.setdefault("__schedule_ok", {})
+        table[(root, cap, _rates_signature(rates))] = (rates,)
 
 
 def require_column_groups(cols: int, half: int) -> None:

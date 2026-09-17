@@ -124,11 +124,10 @@ def _assigned_in_scope(tree: ast.AST, target: str, before: int) -> ast.expr | No
 def _producible_name(expr: ast.expr | None, tree: ast.AST, lineno: int) -> str | None:
     """A module name this call site can produce, or ``None`` if unreadable.
 
-    A literal gives the name exactly.  An f-string gives its leading constant
-    segment plus a placeholder for what varies -- which is the whole point:
-    ``ext`` builds ``f"{NVFP4_MODULE_PREFIX}{identity}"``, so no exact basename
-    exists and the contract publishes a glob.  A bare name is resolved one hop
-    to its assignment.
+    A literal gives the name exactly (the window loader spells
+    ``name="tessera_window_gemv"`` as a literal for exactly this reader).  An
+    f-string gives its leading constant segment plus a placeholder for what
+    varies.  A bare name is resolved one hop to its assignment.
     """
     if isinstance(expr, ast.Constant) and isinstance(expr.value, str):
         return expr.value
@@ -215,17 +214,19 @@ def test_the_contract_publishes_exactly_what_this_build_loads():
     assert contract["native_extensions"] == list(ext.NATIVE_EXTENSIONS)
 
 
-def test_the_published_prefix_is_the_constant_the_load_path_asks_for():
-    """Not "agrees with": the same object.
+def test_the_published_name_is_the_constant_the_load_path_asks_for():
+    """Not "agrees with": the same name.
 
-    ``_load_locked`` interpolates ``NVFP4_MODULE_PREFIX`` into the module name,
-    so a rename moves the contract with it.  This test reads the source rather
-    than the value, because a second literal spelled the same way would pass a
-    value comparison and be exactly the drift this closes.
+    ``kernel_window_gemv._ext`` spells the module ``name="tessera_window_gemv"``
+    as a LITERAL (so this contract reader can read it statically), and the
+    table publishes ``WINDOW_GEMV_MODULE_NAME``.  Both the literal and the
+    constant are asserted here, so a rename on either side is red rather than
+    a table and a load path that quietly differ.
     """
-    source = (SRC / "tessera" / "serving" / "ext.py").read_text(encoding="utf-8")
-    assert 'module_name = f"{NVFP4_MODULE_PREFIX}{identity}"' in source
-    assert ext.NATIVE_EXTENSIONS[0]["module_name_prefix"] == ext.NVFP4_MODULE_PREFIX
+    source = (SRC / "tessera" / "kernel_window_gemv.py").read_text(encoding="utf-8")
+    assert 'name="tessera_window_gemv"' in source
+    assert ext.NATIVE_EXTENSIONS[0]["module_name_prefix"] == ext.WINDOW_GEMV_MODULE_NAME
+    assert ext.WINDOW_GEMV_MODULE_NAME == "tessera_window_gemv"
 
 
 def test_the_glob_matches_the_library_torch_actually_writes():
@@ -234,33 +235,35 @@ def test_the_glob_matches_the_library_torch_actually_writes():
     from torch.utils import cpp_extension
 
     entry = ext.NATIVE_EXTENSIONS[0]
-    built = f"{entry['module_name_prefix']}{'0' * 64}{cpp_extension.LIB_EXT}"
+    built = f"{entry['module_name_prefix']}{cpp_extension.LIB_EXT}"
     assert fnmatch.fnmatch(built, entry["filename_glob"])
-    # And an exact-stem reading would match nothing, which is why ``match`` is
-    # published as a value instead of left to a consumer's guess.
-    assert not fnmatch.fnmatch(built, entry["module_name_prefix"].rstrip("_") + ".so")
+    # The window module name carries no build-identity hash, so the exact file
+    # IS the published name plus the suffix.
+    assert entry["filename_glob"] == ext.WINDOW_GEMV_MODULE_NAME + "*.so"
 
 
-def test_the_fallback_the_table_publishes_is_the_one_the_route_takes():
-    """``when_unavailable`` is what the route gates on, not a parallel note."""
+def test_the_fallback_the_table_publishes_is_the_window_lane_s():
+    """``when_unavailable`` is what the window lanes' preparation gates on."""
     pytest.importorskip("torch")
     from tessera.serving.lane import MODE_RESIDENT, MODE_STREAMED
-    from tessera.serving.telemetry import DECODERS
+    from tessera.serving.telemetry import DECODERS, DECODER_TORCH_WINDOW
 
-    assert ext.substitutes_when_unavailable(MODE_RESIDENT) is True
-    assert ext.substitutes_when_unavailable(MODE_STREAMED) is False
+    assert ext.substitutes_when_unavailable(
+        MODE_RESIDENT, ext.WINDOW_GEMV_MODULE_NAME) is True
+    assert ext.substitutes_when_unavailable(
+        MODE_STREAMED, ext.WINDOW_GEMV_MODULE_NAME) is True
     behaviours = ext.NATIVE_EXTENSIONS[0]["when_unavailable"]
-    assert behaviours[MODE_RESIDENT]["decoder"] in DECODERS
-    # The value the resident fallback actually stamps on its route record.
-    from tessera.serving.telemetry import DECODER_TORCH_STOCK
-    assert behaviours[MODE_RESIDENT]["decoder"] == DECODER_TORCH_STOCK
-    source = (SRC / "tessera" / "serving" / "nvfp4_route.py").read_text(encoding="utf-8")
-    assert "allow_torch_fallback=substitutes_when_unavailable(self._mode)" in source
+    for mode in (MODE_RESIDENT, MODE_STREAMED):
+        assert behaviours[mode]["decoder"] in DECODERS
+        assert behaviours[mode]["decoder"] == DECODER_TORCH_WINDOW
+    # The lane the entry is for: the FP8 and BF16 routes' streamed preparation
+    # loads it through ``fp8_gemv``'s module name constant.
+    assert ext.NATIVE_EXTENSIONS[0]["routes"] == ["TESSERA_FP8", "TESSERA_BF16"]
 
 
 def test_an_unknown_residency_is_a_refusal_not_a_default():
     with pytest.raises(ValueError, match="publishes no behaviour for residency"):
-        ext.substitutes_when_unavailable("hybrid")
+        ext.substitutes_when_unavailable("hybrid", ext.WINDOW_GEMV_MODULE_NAME)
 
 
 # --- the list cannot go quietly short -----------------------------------------
@@ -481,79 +484,17 @@ def test_native_source_path_resolves_every_published_source_and_nothing_else():
         ext.native_source_path("tessera_absent")
 
 
-# ---------------------- the identity names the build's compiler (issue #242) --
-#
-# torch's JIT loader picks its CUDA compiler by ONE rule
-# (torch/utils/cpp_extension._write_ninja_file): ``PYTORCH_NVCC`` when set,
-# else ``cpp_extension.CUDA_HOME/bin/nvcc``.  ``$NVCC``/PATH is not consulted.
-# The build identity must hash the compiler that rule selects, or two builds
-# with different toolkits share a module name -- and an ``NVCC``-only change
-# renames a build whose compiler did not move.  No compilation is needed to
-# pin the selection: fake toolkits with executable ``bin/nvcc`` scripts are
-# enough for ``_compiler_identity`` to resolve and version.
+# ---------------------- an explicit toolkit chosen after torch's import ------
 
 
 def _fake_toolkit(tmp_path, name: str, version: str):
-    import os
-
+    """A directory shaped like a CUDA toolkit, with an executable ``bin/nvcc``."""
     root = tmp_path / name
     (root / "bin").mkdir(parents=True)
     nvcc = root / "bin" / "nvcc"
     nvcc.write_text(f"#!/bin/sh\necho 'fake nvcc {version}'\n")
     nvcc.chmod(0o755)
     return root
-
-
-def test_the_identity_hashes_the_compiler_the_build_will_invoke(tmp_path, monkeypatch):
-    import os
-
-    torch = pytest.importorskip("torch")   # collectable without it (tessera#309)
-    from torch.utils import cpp_extension
-
-    a = _fake_toolkit(tmp_path, "cuda-a", "A")
-    b = _fake_toolkit(tmp_path, "cuda-b", "B")
-    source = ext.native_source_path(ext.NVFP4_MODULE_PREFIX)
-    platform = "sm_121"
-
-    monkeypatch.delenv("PYTORCH_NVCC", raising=False)
-    monkeypatch.setenv("NVCC", str(b / "bin" / "nvcc"))      # NOT torch's selector
-    monkeypatch.setattr(cpp_extension, "CUDA_HOME", str(a))  # torch's selector
-
-    ident_a, payload_a = ext._build_identity(torch, source=source, platform=platform)
-    assert payload_a["nvcc"]["path"] == os.path.realpath(str(a / "bin" / "nvcc")), (
-        "the identity must hash the compiler torch's loader selects "
-        "(cpp_extension.CUDA_HOME/bin/nvcc), not $NVCC or PATH")
-
-    # a CUDA_HOME change IS a compiler change and must move the identity ...
-    monkeypatch.setattr(cpp_extension, "CUDA_HOME", str(b))
-    ident_b, payload_b = ext._build_identity(torch, source=source, platform=platform)
-    assert payload_b["nvcc"]["path"] == os.path.realpath(str(b / "bin" / "nvcc"))
-    assert ident_a != ident_b
-
-    # ... and PYTORCH_NVCC is the loader's first choice, over CUDA_HOME
-    monkeypatch.setenv("PYTORCH_NVCC", str(a / "bin" / "nvcc"))
-    _, payload_p = ext._build_identity(torch, source=source, platform=platform)
-    assert payload_p["nvcc"]["path"] == os.path.realpath(str(a / "bin" / "nvcc"))
-
-
-def test_an_nvcc_only_environment_change_does_not_rename_the_build(tmp_path, monkeypatch):
-    """``$NVCC`` moves nothing torch's loader reads, so it must move nothing
-    in the identity either -- pre-#242 it renamed the build namespace while
-    the compiler stayed put."""
-    torch = pytest.importorskip("torch")   # collectable without it (tessera#309)
-    from torch.utils import cpp_extension
-
-    a = _fake_toolkit(tmp_path, "cuda-a", "A")
-    b = _fake_toolkit(tmp_path, "cuda-b", "B")
-    source = ext.native_source_path(ext.NVFP4_MODULE_PREFIX)
-    monkeypatch.delenv("PYTORCH_NVCC", raising=False)
-    monkeypatch.setattr(cpp_extension, "CUDA_HOME", str(a))
-
-    monkeypatch.setenv("NVCC", str(a / "bin" / "nvcc"))
-    one, _ = ext._build_identity(torch, source=source, platform="sm_121")
-    monkeypatch.setenv("NVCC", str(b / "bin" / "nvcc"))
-    two, _ = ext._build_identity(torch, source=source, platform="sm_121")
-    assert one == two
 
 
 # -------- an explicit toolkit chosen after torch's import (issue #298) -------

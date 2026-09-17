@@ -20,6 +20,38 @@ per-module "latest record" cannot answer, and the one a served KL needs
 answered before it can claim to have measured a decode-path kernel
 (tessera#102, ``_RouteTrace``).  It is off by default and eager-only.
 
+Since tessera#509 each histogram entry also names the modules it counted
+(``module_names``, sorted, real prefixes only), reports how many distinct
+modules had no usable prefix (``unnamed_modules``, plus
+``dispatches_without_prefix``), and the file header carries its own ``rank``,
+``world_size``, ``rank_source`` and ``platform``.  ``modules`` stays what it
+always counted -- distinct named prefixes plus distinct unnamed objects, so a
+legacy consumer sees the same number -- but it is now equal to
+``len(module_names) + unnamed_modules`` and therefore checkable against the
+names beside it.  Before this, an entry's ``modules`` was the size of a set
+whose members the file never wrote (an unnamed layer was counted by
+``hex(id(layer))``), so a consumer could compare module COUNTS and nothing
+else: two modules that swapped contracts left the histogram identical.  A
+complete per-module identity requires ``unnamed_modules == 0``.  The headers
+are read from ``torch.distributed`` when it is initialized and are JSON
+``null`` with ``rank_source: "unavailable"`` when it is not, because a
+defaulted rank 0 is indistinguishable from a real one.  The object identity
+that keeps two unnamed modules distinct is a bare ``id``, never a reference:
+telemetry does not keep a module -- and through it, its weights -- alive after
+the model is unloaded.  The rank identity is observed once and kept for the
+trace's lifetime -- the atexit flush runs after
+``destroy_process_group()``, so re-reading there would erase it -- and a later
+observation that disagrees is reported as ``rank_conflict`` instead of being
+adopted.  Nothing is queried per dispatch.  The header's ``platform`` is READ
+from the token already latched at model build, never probed for: the plugin
+writes this file at IMPORT, in the API-server process, before vLLM forks the
+engine core, so a device probe there would initialise CUDA in the wrong
+process.  Until it is latched the header says ``""``, the same "does not say"
+the per-route records use.  Both additions are
+additive: ``schema`` is unchanged, no field was renamed or removed, and a
+reader that knows only the histogram still reads exactly what it read before.
+``identity_version`` is compared for equality -- see its definition.
+
 This is Gridbook's ``nvfp4_activation_contract`` telemetry, reduced to the
 Tessera routes and owned here.  The attribute prefix is ``_tessera_route_``
 (Gridbook's is ``_cb_route_``): the two records must never be mistaken for one
@@ -50,6 +82,10 @@ __all__ = [
     "DECODER_TORCH_STOCK",
     "DECODER_TORCH_WINDOW",
     "DECODER_WINDOW_GEMV",
+    "DECODER_NATIVE_WINDOW_GEMM",
+    "DECODER_NATIVE_SPAN2_GEMM",
+    "DECODER_NATIVE_SPAN2_GROUPED",
+    "DECODER_NATIVE_WINDOW_MOE_COMPACT",
     "ATTR_PREFIX",
     "ROUTE_TRACE_ENV",
     "ROUTE_TRACE_SCHEMA",
@@ -62,12 +98,14 @@ __all__ = [
     "BF16_ACTIVATION_CONTRACT",
     "emit_route",
     "record_platform",
+    "latched_platform",
     "reset_platform_for_tests",
     "read_route",
     "note_lane_refusal",
     "read_lane_refusal",
     "LANE_REFUSAL_ATTR",
     "route_shape",
+    "IDENTITY_VERSION",
 ]
 
 #: Stamped on every record so a served route can be compared against a priced
@@ -100,8 +138,28 @@ DECODER_TORCH_WINDOW = "torch_window"
 #: that did not run, the same defect the ``torch_materialize_stock`` value
 #: exists to prevent on the NVFP4 route.
 DECODER_WINDOW_GEMV = "window_gemv"
+#: The dense native window GEMM (``serving.native_window``): the compact
+#: loader's ``WindowGemvUnit`` decoded inside the packed bitstream GEMM, with
+#: no weight tile produced anywhere -- not at load, not per forward.  A
+#: distinct value because no other decoder ran, and a census that read
+#: ``torch_window`` here would claim one.
+DECODER_NATIVE_WINDOW_GEMM = "native_window_gemm"
+#: The native A4 lanes (``tessera.kernel_a4``): the span-2 GEMM decodes the
+#: compact loader's packed planes in-kernel -- densely, and per selected expert
+#: in the grouped form.  Distinct from ``native_span2``, which names the
+#: load-time span-2 DECODE into a stock tile.
+DECODER_NATIVE_SPAN2_GEMM = "native_span2_gemm"
+DECODER_NATIVE_SPAN2_GROUPED = "native_span2_grouped"
+#: The compact window MoE adapter (``tessera.native_window_moe``): routed
+#: experts served from the loader's packed ``WindowGemvUnit``s with no decoded
+#: tile.  FP8 keeps the per-token native A quant, BF16 keeps the row-scale
+#: epilogue, and the folded BF16 arithmetic is a distinct numerical variant on
+#: the bundle -- never relabelled into another contract here.
+DECODER_NATIVE_WINDOW_MOE_COMPACT = "native_window_moe_compact"
 DECODERS = frozenset((DECODER_NATIVE_SPAN2, DECODER_TORCH_STOCK, DECODER_TORCH_WINDOW,
-                      DECODER_WINDOW_GEMV))
+                      DECODER_WINDOW_GEMV, DECODER_NATIVE_WINDOW_GEMM,
+                      DECODER_NATIVE_SPAN2_GEMM, DECODER_NATIVE_SPAN2_GROUPED,
+                      DECODER_NATIVE_WINDOW_MOE_COMPACT))
 
 ATTR_PREFIX = "_tessera_route_"
 
@@ -111,6 +169,20 @@ ATTR_PREFIX = "_tessera_route_"
 #: Read once, at import, which is what latches it for the process.
 ROUTE_TRACE_ENV = "TESSERA_ROUTE_TRACE"
 ROUTE_TRACE_SCHEMA = "tessera.route_trace/1"
+
+#: Version of the ADDITIVE identity block this file writes: entry
+#: ``module_names`` / ``unnamed_modules`` / ``dispatches_without_prefix``, and
+#: the header's ``rank`` / ``world_size`` / ``rank_source`` / ``platform``.
+#: ``schema`` stays ``tessera.route_trace/1`` because nothing was removed or
+#: renamed: a reader that knows only the histogram still reads exactly what it
+#: read before, and a reader that wants per-module identity checks this number
+#: instead of guessing from the presence of a field.
+#:
+#: ``== IDENTITY_VERSION`` is the only supported comparison.  A consumer must
+#: NOT treat a future ``> 1`` as if it had v1 semantics: the fields it knows
+#: may have been redefined, and reading an unknown version with known names is
+#: how a schema silently changes meaning under a caller.
+IDENTITY_VERSION = 1
 
 #: The record's field names, in report order.  The census reads exactly these.
 ROUTE_FIELDS = (
@@ -181,6 +253,21 @@ def record_platform() -> str:
     return _PLATFORM
 
 
+def latched_platform() -> str:
+    """The platform token IF it has already been latched; ``""`` otherwise.
+
+    READ-ONLY by contract, and deliberately not :func:`record_platform`: the
+    route trace's header is written from ``flush()``, which the plugin runs at
+    IMPORT -- in the API-server process, before vLLM forks the engine core --
+    and again from the atexit flush.  A device probe there would either
+    initialise CUDA in a process that must never have it, or freeze ``""``
+    before the engine core had a device to name, and the header would then be
+    wrong in both processes.  The probe stays where it belongs: eagerly, at
+    model build, in ``lane.build_tessera_method``.
+    """
+    return _PLATFORM or ""
+
+
 def reset_platform_for_tests() -> None:
     """Forget the cached token (tests only)."""
     global _PLATFORM
@@ -240,6 +327,27 @@ def route_shape(x2, rows, cols) -> str:
     """
     m = "*" if torch.compiler.is_compiling() else str(int(x2.shape[0]))
     return f"M{m}:N{int(rows)}:K{int(cols)}"
+
+
+def _process_rank():
+    """``(rank, world_size, source)`` for THIS process, never a fabricated one.
+
+    Read at snapshot time only -- never per dispatch, and never per forward.
+    ``torch.distributed`` is initialized in the engine-core process before the
+    first forward, so a real serve reports its real rank and world size.  A
+    process that never joined a group reports ``(None, None, "unavailable")``
+    rather than a plausible-looking ``0``: a defaulted rank is
+    indistinguishable from a genuine rank 0, which is precisely the confusion
+    a consumer binding a trace file to a rank has to avoid (tessera#509).
+    """
+    try:
+        import torch.distributed as dist
+
+        if dist.is_available() and dist.is_initialized():
+            return int(dist.get_rank()), int(dist.get_world_size()), "torch.distributed"
+    except Exception:  # noqa: BLE001 -- metadata must never break a serve
+        pass
+    return None, None, "unavailable"
 
 
 def emit_route(layer, *, kind: str, policy: str, symbol: str, tile_m: int = 0,
@@ -328,6 +436,16 @@ class _RouteTrace:
         self._lock = threading.Lock()
         self._counts: dict[tuple, list] = {}
         self._dirty = False
+        #: The FIRST rank/world/source observed while distributed was
+        #: initialized, kept for the trace's whole lifetime.  ``None`` until
+        #: observed -- reported as JSON null with an "unavailable" source, never
+        #: guessed.  Never rewritten: ``dist.destroy_process_group()`` runs
+        #: before the atexit flush, and a header that went null there would
+        #: throw away the only identity the counts in this file ever had.
+        self._rank_identity = None
+        #: A LATER observation that disagrees with the cached one.  Recorded and
+        #: reported, never adopted: the counts belong to the first identity.
+        self._rank_conflict = None
         # Write NOW: the point of failure for a mis-set path must be the
         # serve's startup, loudly, and not a silent no-op discovered when the
         # receipt is being written.  ``emit_route`` swallows exceptions by
@@ -364,27 +482,102 @@ class _RouteTrace:
             return
         key = (values["policy"], values["shape"], values["symbol"],
                values["decoder"], values["contract"], values["kind"])
-        module = getattr(layer, "prefix", "") or hex(id(layer))
+        # A layer's prefix, when it HAS one.  Anything else -- missing, empty,
+        # or not a string -- is UNNAMED: it is never given a made-up name, and
+        # it is never sorted into the same list as real prefixes (which would
+        # compare a str against whatever else arrived).
+        #
+        # The object's own ``id`` is kept PRIVATELY, in the count, and is never
+        # written to the file.  That preserves what the pre-#509 ``modules``
+        # counted -- one per distinct unnamed object, because that was
+        # ``len(set(layer.prefix or hex(id(layer))))`` -- so a legacy consumer
+        # sees the same number it always saw.  Collapsing every unnamed layer
+        # into one bucket would have been a silent SEMANTIC change in the
+        # backwards-compatible direction I claimed, and a rarer but real
+        # miscount: two unknown modules would read as one.
+        prefix = getattr(layer, "prefix", None)
+        named = prefix if isinstance(prefix, str) and prefix else None
         with self._lock:
             entry = self._counts.get(key)
             if entry is None:
-                entry = self._counts[key] = [0, set()]
+                entry = self._counts[key] = [0, set(), set(), 0]
             entry[0] += 1
-            entry[1].add(module)
+            if named is None:
+                # The private id only, exactly as the pre-#509 count did: a
+                # trace must never hold a reference to a module (and through
+                # it, to GPU weights) for telemetry.  The consequence is the
+                # legacy one and it is bounded: two unnamed layers whose
+                # lifetimes DO NOT OVERLAP can share a freed address and be
+                # counted once.  Any unnamed module already fails per-module
+                # qualification (unnamed_modules must be 0), so this cannot
+                # turn an unqualified run into a qualified one -- it can only
+                # understate how much was unnamed, which the presence of
+                # unnamed_modules itself reports.
+                entry[2].add(id(layer))
+                entry[3] += 1
+            else:
+                entry[1].add(named)
             self._dirty = True
 
     # -- readout -----------------------------------------------------------
+    def _identity(self):
+        """The rank identity for this trace: observed once, then stable.
+
+        The observation is re-taken at snapshot time (once per flush, never per
+        dispatch), but a non-null identity is never replaced.  That matters
+        because the last write a serve makes is the atexit flush, which runs
+        AFTER ``torch.distributed.destroy_process_group()``: re-reading there
+        would report null and erase the identity the counts were recorded
+        under.  A later observation that *disagrees* is reported as
+        ``rank_conflict`` rather than silently adopted.
+        """
+        if self._rank_identity is not None and self._rank_identity[2] != "unavailable":
+            observed = _process_rank()
+            if observed[0] is not None and (observed[0], observed[1]) != (
+                    self._rank_identity[0], self._rank_identity[1]):
+                self._rank_conflict = {"rank": observed[0],
+                                       "world_size": observed[1],
+                                       "source": observed[2]}
+            return self._rank_identity
+        observed = _process_rank()
+        if observed[0] is not None:
+            self._rank_identity = observed
+        return self._rank_identity or observed
+
     def snapshot(self) -> dict:
         with self._lock:
-            entries = [
-                {"policy": policy, "shape": shape, "symbol": symbol,
-                 "decoder": decoder, "contract": contract, "kind": kind,
-                 "launches": count, "modules": len(modules)}
-                for (policy, shape, symbol, decoder, contract, kind),
-                    (count, modules) in sorted(self._counts.items())
-            ]
+            entries = []
+            for (policy, shape, symbol, decoder, contract, kind), (
+                    count, names, unnamed, unprefixed) in sorted(self._counts.items()):
+                named = sorted(names)
+                entries.append({
+                    "policy": policy, "shape": shape, "symbol": symbol,
+                    "decoder": decoder, "contract": contract, "kind": kind,
+                    "launches": count,
+                    # The count is the SAME fact as the names plus the number
+                    # of unnamed modules, always, and it is unchanged from the
+                    # pre-#509 meaning: distinct named prefixes plus distinct
+                    # unnamed objects.
+                    "modules": len(named) + len(unnamed),
+                    "module_names": named,
+                    "unnamed_modules": len(unnamed),
+                    "dispatches_without_prefix": unprefixed,
+                })
+        rank, world_size, rank_source = self._identity()
         return {
             "schema": ROUTE_TRACE_SCHEMA,
+            "identity_version": IDENTITY_VERSION,
+            # The header's own identity, so binding a trace to a rank is a read
+            # and not an inference from the file's path.
+            "rank": rank,
+            "world_size": world_size,
+            "rank_source": rank_source,
+            "rank_conflict": self._rank_conflict,
+            # READ the latched token, never probe for one: this runs at PLUGIN
+            # IMPORT, in the API-server process, before vLLM forks the engine
+            # core.  A device probe here is a CUDA initialisation in the wrong
+            # process (or a frozen "" in the right one) for a header field.
+            "platform": latched_platform(),
             "pid": os.getpid(),
             "started_utc": self.started_utc,
             "flushed_utc": datetime.now(timezone.utc).isoformat(),
@@ -392,7 +585,18 @@ class _RouteTrace:
             "note": ("launches counted per module per served dispatch; a "
                      "shape of M* means the record was written while "
                      "torch.compile was tracing, where one graph serves every "
-                     "M and a count is not a launch count"),
+                     "M and a count is not a launch count.  Since "
+                     f"identity_version {IDENTITY_VERSION} each entry also "
+                     "names the modules it counted (module_names, sorted).  "
+                     "module_names holds real prefixes ONLY: a layer with no "
+                     "usable prefix is unnamed, reported as the count "
+                     "unnamed_modules (with dispatches_without_prefix for how "
+                     "many dispatches came from them) and never given a made-"
+                     "up name.  'modules' is len(module_names) + "
+                     "unnamed_modules, which is the same number it carried "
+                     "before this version.  A complete per-module identity "
+                     "needs unnamed_modules == 0; otherwise the names present "
+                     "are exact and the rest are honestly unknown."),
             "entries": entries,
         }
 

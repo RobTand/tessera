@@ -7,6 +7,18 @@ alphabet the 2^L table snaps to changed -- decoded to an ordinary
 has.  There is no weight-side hardware format to satisfy and nothing to pack:
 on this grid a code IS a bf16 bit pattern, so the table gather yields the tile.
 
+HOW IT LOADS AND RUNS NOW.  The compact reader validates the container and
+the sidecar facts (`scheme.parse_compact_blob_for_scheme`) and expands no
+weight plane; each role is cut to this rank off the layer's ``ShardPlan`` and
+frozen into ``window_gemm.PreparedWindowGemm``, whose table gather and bf16
+``tl.dot`` decode in registers/shared memory -- there is no materialised bf16
+tile in either residency.  The route stamps ``(tessera::window_gemm_dense,
+native_window_gemm)``.  ``prepare_tessera_bf16_module`` and the torch window
+decode stay as the reference the PB tests hold the lane to
+(``tessera.decode.materialize_bf16``), no longer reached from a serve.  The row
+scale rule below is unchanged: the bundle applies it on the fp32 accumulator,
+one bf16 cast at the end.
+
 WHY THE FAMILY EXISTS.  The window body's error over the E4M3 alphabet
 saturates at ~0.022 out-space from R = 6 upward -- the floor is the
 *alphabet's* resolution, not the trellis's -- while the identical body over
@@ -89,12 +101,14 @@ import torch
 
 from .compile_identity import note_traced_dispatch
 from .ext import WINDOW_GEMV_MODULE_NAME
-from .lane import MODE_RESIDENT, MODE_STREAMED, MODES
-from .scheme import (ROUTES, TESSERA_BF16, WINDOW_GEMV_SYMBOL, launch_pairs,
-                     parse_tessera_blob_for_scheme, validate_tessera_scheme)
-from .sharding import plan_shard_for_layer, require_axis_supported, shard_parsed_roles
-from .telemetry import (DECODER_TORCH_WINDOW, DECODER_WINDOW_GEMV, emit_route,
-                        note_lane_refusal, route_shape)
+from .lane import MODES
+from .native_window import prepare_dense_native_module
+from .scheme import (ROUTES, TESSERA_BF16, WINDOW_GEMM_SYMBOL, WINDOW_GEMV_SYMBOL,
+                     launch_pairs, parse_compact_blob_for_scheme,
+                     validate_tessera_scheme)
+from .sharding import plan_shard_for_layer, require_axis_supported
+from .telemetry import (DECODER_NATIVE_WINDOW_GEMM, DECODER_TORCH_WINDOW,
+                        DECODER_WINDOW_GEMV, emit_route, route_shape)
 from .window import (PreparedModuleAxis, PreparedWindow, _fingerprint, prepare_window,
                      require_expert_ids)
 
@@ -759,8 +773,8 @@ def census_expected(*, compiled: bool, platform=None):
     regimes in one graph and stamps the combined pair (plus the torch pair
     where no GEMV lane was prepared).
     """
-    decode = launch_pairs(TESSERA_BF16, regime="decode")
-    batch = launch_pairs(TESSERA_BF16, regime="batch")
+    decode = launch_pairs(TESSERA_BF16, regime="decode", include_experimental=True)
+    batch = launch_pairs(TESSERA_BF16, regime="batch", include_experimental=True)
     if compiled:
         combined = {(COMPILED_SYMBOL, COMPILED_DECODER)}
         pairs = {"decode": combined | batch, "batch": combined | batch}
@@ -831,87 +845,38 @@ def build_tessera_bf16_method(scheme, prefix: str, mode: str):
             layer.tessera_activation_contract = ACTIVATION_CONTRACT
 
         def process_weights_after_loading(self, layer) -> None:
-            """Parse the container, prepare and verify every role, decode or keep."""
+            """Parse the container compactly and freeze this rank's packed bundles.
+
+            The compact reader runs the same container/role/digest/slack checks
+            through the same helpers as the materialising one and expands no
+            weight plane; each role is cut to this rank off the layer's plan
+            and frozen into a ``PreparedWindowGemm`` (the value family: a bf16
+            table, the fp32 row scale on the epilogue).  No reference decode
+            runs here -- the retained ``prepare_tessera_bf16_module`` path
+            stays as the test oracle.
+            """
             blob = layer.wire_bytes.data
             if blob.device.type != "cpu":
                 blob = blob.cpu()
-            roles = parse_tessera_blob_for_scheme(blob.contiguous().numpy().tobytes(), scheme, prefix)
-            # This rank's slice of every role; identity at TP=1.
-            roles = shard_parsed_roles(roles, layer.tessera_shard_plan)
             device = layer.wire_bytes.device
             if device.type != "cuda":
                 device = torch.device("cuda")
-            prepared = prepare_tessera_bf16_module(roles, device=device)
-            layer.tessera_prepared = prepared
+            roles = parse_compact_blob_for_scheme(
+                blob.contiguous().numpy().tobytes(), scheme, prefix, device=device)
+            prepared = prepare_dense_native_module(
+                roles, layer.tessera_shard_plan, family=TESSERA_BF16, device=device)
+            layer.tessera_native = prepared
             layer.tessera_decoder = prepared.decoder
             layer.tessera_roles = prepared.role_names
             # The epilogue factor, kept as ``[rows]`` fp32 and broadcast over
             # the GEMM's fp32 output rows.  NOT folded into the tile, and not
-            # narrowed: see the module docstring.
+            # narrowed: see the module docstring.  The same fp32 expression the
+            # reference decoder applies.
             layer.register_buffer("row_scale", prepared.row_scale().contiguous(),
                                   persistent=False)
             del layer.wire_bytes
-            if self._mode == MODE_RESIDENT:
-                layer.register_buffer("weight_bf16", prepared.decode(), persistent=False)
-                layer.tessera_prepared = None
-                layer.tessera_gemv = None
-            else:
-                # Streamed: the decode-regime lane reads the repacked wire
-                # directly, verified bit-exact against the torch decoder's
-                # tile above.  Where it cannot be prepared -- a rate or window
-                # the lane refuses, a shard start state, no CUDA, no toolchain
-                # -- the module serves through the torch planes exactly as
-                # before.  An ineligible unit is the designed fallback, not a
-                # surprise, so it stays silent; a unit the lane SHOULD read
-                # that fails to build warns, like the FP8 route's lane.
-                holder = None
-                # Cleared on every load so a re-prepared module cannot carry a
-                # stale refusal, then set below if the lane refuses: the census
-                # reads it as a value, which is the half a stderr warning
-                # cannot give it (issue #104).
-                note_lane_refusal(layer, GEMV_MODULE_NAME, None)
-                try:
-                    # The PARSED object, not the bare unit: the published
-                    # predicate reads the grid too (#264).
-                    refusals = {name: gemv_refusal_for_unit(parsed)
-                                for name, parsed in roles}
-                    named = sorted(f"{n} ({r})" for n, r in refusals.items() if r)
-                    if named:
-                        # NOT an exception path: this route's lane simply does
-                        # not apply to these bytes, which is why the state used
-                        # to leave no trace at all (issue #104).
-                        note_lane_refusal(layer, GEMV_MODULE_NAME,
-                                          "; ".join(named))
-                    else:
-                        holder = prepare_bf16_gemv(
-                            roles, device=device,
-                            expected=(prepared.decode(), prepared.row_scale()))
-                except Exception as exc:  # noqa: BLE001 -- the probe itself is soft
-                    import sys as _sys
-                    print(f"[tessera-serving] WARNING: {prefix}: the window GEMV lane "
-                          f"did not prepare ({type(exc).__name__}: {exc}); serving streamed "
-                          "through the torch window decode instead",
-                          file=_sys.stderr, flush=True)
-                    note_lane_refusal(layer, GEMV_MODULE_NAME, f"{type(exc).__name__}: {exc}")
-                layer.tessera_gemv = holder
-                if holder is not None:
-                    # The torch planes' job is done: the dispatch decodes
-                    # prefill through the lane's kernel decode, so keeping
-                    # them would hold the wire twice.
-                    layer.tessera_prepared = None
-                    layer.tessera_decoder = DECODER_WINDOW_GEMV
-            # streamed without a GEMV lane: the prepared planes stay; the tile
-            # is decoded per forward
-            #
-            # The same trace-time lane the FP8 route declares (issue #91):
-            # ``apply`` below branches on ``tessera_gemv``, so this module's
-            # forward contains either ``tessera::bf16_streamed_apply`` or a
-            # window decode plus ``torch.mm``, over byte-identical sources.
-            # vLLM's compile-cache key sees neither unless it is declared.
-            note_traced_dispatch(
-                prefix,
-                STREAMED_APPLY_OP
-                if getattr(layer, "tessera_gemv", None) is not None else GEMM_SYMBOL)
+            # One graph, one op, declared here: the FP8 route's rule (#91).
+            note_traced_dispatch(prefix, WINDOW_GEMM_SYMBOL)
 
         # -- forward ----------------------------------------------------
         def apply(self, layer, x: torch.Tensor, bias: Optional[torch.Tensor] = None) -> torch.Tensor:
@@ -919,37 +884,20 @@ def build_tessera_bf16_method(scheme, prefix: str, mode: str):
             x2 = x.reshape(-1, orig[-1])
             if x2.dtype != torch.bfloat16:
                 x2 = x2.to(torch.bfloat16)
-            if layer.tessera_mode == MODE_RESIDENT:
-                b = layer.weight_bf16
-                # ``out_dtype=torch.float32`` hands out the bf16 mainloop's own
-                # accumulator instead of a bf16 truncation of it, so the row scale
-                # multiplies the sum and the result is rounded once.  Rounding to
-                # bf16 first and scaling after would put a second rounding between
-                # the GEMM and the answer -- which is most of what not folding the
-                # scale into the tile was bought to avoid.
-                y = torch.mm(x2.contiguous(), b.t(), out_dtype=torch.float32)
-                y = (y * layer.row_scale).to(torch.bfloat16)
-                symbol, decoder, tile_m = GEMM_SYMBOL, DECODER_TORCH_WINDOW, 0
-            elif getattr(layer, "tessera_gemv", None) is None:
-                b = layer.tessera_prepared.decode()
-                # The same epilogue as the resident path above.
-                y = torch.mm(x2.contiguous(), b.t(), out_dtype=torch.float32)
-                y = (y * layer.row_scale).to(torch.bfloat16)
-                symbol, decoder, tile_m = GEMM_SYMBOL, DECODER_TORCH_WINDOW, 0
-            else:
-                holder = layer.tessera_gemv
-                tensors, meta, rows, cols = holder.op_args()
-                y = streamed_apply(x2.contiguous(), tensors, meta, rows, cols)
-                if torch.compiler.is_compiling():
-                    # One graph serves every M: no single path's symbol is
-                    # true of every launch, so the record stamps the pair the
-                    # route owns, never a value read off the token dim.
-                    symbol, decoder, tile_m = COMPILED_SYMBOL, COMPILED_DECODER, 0
-                elif decode_is_gemv(holder, int(x2.shape[0])):
-                    symbol, decoder, tile_m = GEMV_SYMBOL, DECODER_WINDOW_GEMV, m_tile(
-                        int(x2.shape[0]))
-                else:
-                    symbol, decoder, tile_m = GEMM_SYMBOL, DECODER_WINDOW_GEMV, 0
+            # The packed native GEMM: bf16 x, fp32 accumulate inside, the row
+            # scale on the fp32 epilogue, one bf16 cast.  ``tessera_native``
+            # is set by ``process_weights_after_loading`` or the module does
+            # not serve; the materialised/decode-per-forward branches this
+            # replaced are retired with the decode-to-global paths (the
+            # reference decoders and the window GEMV specialization stay).
+            native = getattr(layer, "tessera_native", None)
+            if native is None:
+                raise RuntimeError(
+                    f"{prefix}: the Tessera BF16 module was not prepared "
+                    "(tessera_native missing); refusing to fall back to a "
+                    "materialised weight path this build no longer wires")
+            y = native.apply(x2.contiguous())
+            symbol, decoder, tile_m = WINDOW_GEMM_SYMBOL, DECODER_NATIVE_WINDOW_GEMM, 0
             try:
                 emit_route(
                     layer, kind="dense", policy=f"{TESSERA_BF16}:{layer.tessera_mode}",

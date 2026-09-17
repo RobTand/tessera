@@ -77,9 +77,13 @@ def test_the_packaged_contract_validates_at_v27(contract):
     ``TESSERA_E2M1_K2`` cells and leaves ``tensor_parallel`` at a world of 1.
     v29 (#506, #514) raises ``tensor_parallel`` to a world of 2 on a named
     world-size receipt and publishes ``kv_head_replication`` (#330); no lane
-    field moves, so both are additive for a v10 lane reader.
+    field moves, so both are additive for a v10 lane reader.  v30 (the A4
+    whole-weight-expansion retirement) REMOVES one ``native_extensions``
+    entry and moves no lane field: the extension list is a loadable-library
+    table a fingerprint reads, every cell and rung stays byte for byte, and
+    the retired decoder's historical receipts keep naming it.
     """
-    assert int(contract["contract_version"]) == 29
+    assert int(contract["contract_version"]) == 30
     assert "activation_quantizers" in contract
     assert all("structures" in entry for entry in contract["formats"])
     assert contract["lane_eligibility"]["schema"] == LANE_ELIGIBILITY_SCHEMA

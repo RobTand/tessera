@@ -38,11 +38,14 @@ import torch
 
 from .ext import substitutes_when_unavailable
 from .lane import MODE_RESIDENT, MODE_STREAMED, MODES
-from .ops import PreparedTesseraModule, prepare_tessera_module  # noqa: F401  (re-export)
-from .scheme import GROUP_SIZE, ROUTES, TESSERA_NVFP4, parse_tessera_blob_for_scheme, \
-    validate_tessera_scheme
+import dataclasses
+
+from ..kernel_a4 import a4_quantize_activation, a4_span2_gemm
+from .scheme import (A4_DENSE_GEMM_SYMBOL, GROUP_SIZE, ROUTES, TESSERA_NVFP4,
+                     parse_compact_blob_for_scheme, parse_tessera_blob_for_scheme,
+                     validate_tessera_scheme)
 from .sharding import plan_shard_for_layer, require_axis_supported, shard_parsed_roles
-from .telemetry import emit_route, route_shape
+from .telemetry import DECODER_NATIVE_SPAN2_GEMM, emit_route, route_shape
 
 __all__ = [
     "ACTIVATION_CONTRACT",
@@ -179,44 +182,76 @@ def build_tessera_nvfp4_method(scheme, prefix: str, mode: str):
             blob = layer.wire_bytes.data
             if blob.device.type != "cpu":
                 blob = blob.cpu()
-            roles = parse_tessera_blob_for_scheme(blob.contiguous().numpy().tobytes(), scheme, prefix)
-            # Every rank parsed the whole container; each takes its own slice
-            # of every role before preparation, so ``prepare_tessera_module``
-            # sees exactly what it sees at TP=1: whole units of this rank's
-            # geometry.  Identity at TP=1.
-            roles = shard_parsed_roles(roles, layer.tessera_shard_plan)
             device = layer.wire_bytes.device
             if device.type != "cuda":
                 device = torch.device("cuda")
-            # The pure-torch decoder can stand in only where ONE decode, at
-            # load, is the whole job: the streamed residency decodes inside a
-            # traced forward, where it cannot run.  Read from the table the
-            # runtime contract PUBLISHES (``ext.NATIVE_EXTENSIONS``'s
-            # ``when_unavailable``) rather than compared here, so the document
-            # and the executed behaviour are one artifact.  On the native path
-            # this also holds the decoder to ``materialize_stock`` byte for
-            # byte and refuses the module by ``prefix`` on any difference --
-            # the same gate the FP8 and BF16 routes stand behind (#130).
-            prepared = prepare_tessera_module(
-                roles, device=device,
-                allow_torch_fallback=substitutes_when_unavailable(self._mode),
-                prefix=prefix)
-            layer.tessera_prepared = prepared
-            layer.tessera_decoder = prepared.decoder
-            layer.tessera_roles = prepared.role_names
+            # The compact reader: the same verified bytes, rank-local packed
+            # planes, no parent-plane expansion and no decoded stock tile at
+            # any point.  Its plan cuts are the parsed path's own
+            # (``LayerShard.role``), and every structural/digest refusal the
+            # materialising reader makes is made by the metadata pass here.
+            from ..fused import shared_lut_global
+            from .native_a4 import prepare_a4_unit
+
+            # The shared owner's factored validator: the same framing, role
+            # list and per-role byte-fact comparison (grid/body/plane/q256/
+            # rows/columns/span) the parsed reader makes, through the
+            # metadata pass so no weight plane is expanded.
+            members = parse_compact_blob_for_scheme(
+                blob.contiguous().numpy().tobytes(), scheme, prefix, device=device)
+            plan = layer.tessera_shard_plan
+            names = [name for name, _wire in members]
+            units = []
+            for name, member in members:
+                shard = plan.role(name)
+                if plan.axis == "row":
+                    rows, cols = (shard.lo, shard.hi), None
+                elif plan.axis == "column":
+                    rows, cols = None, (shard.lo, shard.hi)
+                else:
+                    rows = cols = None
+                units.append(prepare_a4_unit(member, rows=rows, cols=cols))
+            # A fused module carries ONE weight global in the stock tile: move
+            # every role's 16-entry table onto the shared value with the exact
+            # binade shift the stock lane uses (``fused.shared_lut_global``),
+            # so the epilogue stays one scalar per role.
+            if len(units) > 1:
+                shared, moved = shared_lut_global(
+                    # raw uint8 bytes: shared_lut_global's contract.  The
+                    # metadata table is a CPU tensor, so every moved table is
+                    # moved onto the unit's device here -- a CPU table
+                    # installed into a CUDA unit is the startup failure the
+                    # first small serve hit, and the byte reinterpretation
+                    # stays exactly the moved bytes.
+                    [wire.metadata.scale_lut.view(torch.uint8)
+                     for _name, wire in members],
+                    [float(wire.metadata.manifest.scale_plane.global_scale)
+                     for _name, wire in members],
+                    names)
+                devices = {unit.select.device for unit in units}
+                if len(devices) != 1:
+                    raise ValueError(
+                        f"{prefix}: the fused roles are on different devices: {devices}")
+                device = devices.pop()
+                units = [
+                    dataclasses.replace(
+                        unit,
+                        lut_bytes=table.to(device).view(torch.uint8)
+                        .view(torch.float8_e4m3fn).contiguous(),
+                        global_scale=float(shared))
+                    for unit, table in zip(units, moved)
+                ]
+            gs_tensor = layer.trellis_input_global_scale.data.to(device)
+            layer.tessera_a4_units = units
+            layer.tessera_a4_epilogues = [unit.epilogue_for(gs_tensor) for unit in units]
+            layer.tessera_decoder = DECODER_NATIVE_SPAN2_GEMM
+            layer.tessera_symbol = A4_DENSE_GEMM_SYMBOL
+            layer.tessera_roles = names
             # Derived, never accepted: the module's shared global over the A-side scale.
-            layer.tessera_global_scale_real = prepared.global_scale
-            layer.tessera_epilogue_scale = float(prepared.global_scale) / gs
+            layer.tessera_global_scale_real = units[0].global_scale
+            layer.tessera_epilogue_scale = float(units[0].global_scale) / gs
             native_ops.require_native_fp4_quant(f"{prefix}: the Tessera NVFP4 route's A side")
             del layer.wire_bytes
-            if self._mode == MODE_RESIDENT:
-                packed, scales = prepared.decode()
-                layer.register_buffer("weight_fp4", packed.view(torch.float4_e2m1fn_x2),
-                                      persistent=False)
-                layer.register_buffer("scale_b", blocked_scales(scales.view(torch.float8_e4m3fn)),
-                                      persistent=False)
-                layer.tessera_prepared = None
-            # streamed: the prepared planes stay; the tile is decoded per forward
 
         # -- forward ----------------------------------------------------
         def apply(self, layer, x: torch.Tensor, bias: Optional[torch.Tensor] = None) -> torch.Tensor:
@@ -224,24 +259,22 @@ def build_tessera_nvfp4_method(scheme, prefix: str, mode: str):
             x2 = x.reshape(-1, orig[-1])
             if x2.dtype != torch.bfloat16:
                 x2 = x2.to(torch.bfloat16)
+            # One quantization for every role of the fused module (one A-side
+            # static global, the checkpoint's own), then one fused packed GEMM
+            # per role; the roles' LUT tables and globals stay per role.
             gs = layer.trellis_input_global_scale.data.reshape(())
-            a_q, a_scale = native_ops.native_fp4_quant(x2.contiguous(), gs)
-            if a_q.dtype == torch.uint8:
-                a_q = a_q.view(torch.float4_e2m1fn_x2)
-            if layer.tessera_mode == MODE_RESIDENT:
-                b = layer.weight_fp4
-                scale_b = layer.scale_b
-            else:
-                packed, scales = layer.tessera_prepared.decode()
-                b = packed.view(torch.float4_e2m1fn_x2)
-                scale_b = blocked_scales(scales.view(torch.float8_e4m3fn))
-            y = torch._scaled_mm(a_q, b.t(), scale_a=a_scale, scale_b=scale_b,
-                                 out_dtype=torch.bfloat16)
-            y = y * layer.tessera_epilogue_scale
+            packed, scales = a4_quantize_activation(x2.contiguous(), gs)
+            outs = [
+                a4_span2_gemm(packed, scales, unit, epilogue,
+                              out_dtype=torch.bfloat16)
+                for unit, epilogue in zip(layer.tessera_a4_units,
+                                          layer.tessera_a4_epilogues)
+            ]
+            y = outs[0] if len(outs) == 1 else torch.cat(outs, dim=-1)
             try:
                 emit_route(
                     layer, kind="dense", policy=f"{TESSERA_NVFP4}:{layer.tessera_mode}",
-                    symbol=GEMM_SYMBOL, tile_m=0,
+                    symbol=getattr(layer, "tessera_symbol", GEMM_SYMBOL), tile_m=0,
                     shape=route_shape(x2, layer.tessera_rows, layer.tessera_columns),
                     contract=layer.tessera_activation_contract, state="served", reason=None,
                     decoder=layer.tessera_decoder,

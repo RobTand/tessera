@@ -41,6 +41,7 @@ from __future__ import annotations
 
 import hashlib
 import struct
+import threading
 from dataclasses import dataclass
 
 from .errors import PlaneLayoutError, SchemaError, TruncationError
@@ -191,6 +192,17 @@ def plane_ranges(
     return ranges
 
 
+#: Regions at least this large have their per-plane checks (including the
+#: content digests) run on one short-lived worker thread while the whole-region
+#: payload digest is computed on the calling thread.  The checks, their order
+#: of precedence and every message are unchanged -- only their wall time
+#: overlaps, and the payload digest is still compared before any per-plane
+#: failure is raised.  ``hashlib`` releases the GIL for buffers this size, so
+#: the two SHA-256 streams actually run at once.  A loader profile showed the
+#: two passes as 4.4 s of a 15 s wire (loader-memory/FIRST-CAUSE-throughput.md).
+_PARALLEL_DIGEST_MIN_BYTES = 1 << 20
+
+
 def verify_plane_region(
     manifest: Manifest, terminal: TerminalRecord, plane_region: bytes
 ) -> bytes:
@@ -208,57 +220,88 @@ def verify_plane_region(
     whole-artifact digest compares against it without hashing the region a
     second time (tessera#503).
     """
-    digest = hashlib.sha256(plane_region).digest()
-    if digest != terminal.payload_digest:
+    region = memoryview(plane_region)
+    order = {kind: index for index, kind in enumerate(manifest.plane_order)}
+    failure: dict = {}
+
+    def _verify_planes() -> None:
+        # ``plane_ranges`` is evaluated inside here on purpose: a malformed
+        # manifest/terminal must not raise before the payload digest has been
+        # compared, and anything it raises is held until the caller has run
+        # that comparison -- the original precedence, verbatim.
+        try:
+            ranges = list(plane_ranges(manifest, terminal))
+            for descriptor, offset, content, total in ranges:
+                chunk = region[offset:offset + total]
+                if len(chunk) != total:
+                    raise TruncationError(
+                        f"{descriptor.kind.name}: region holds {len(chunk)} of {total} bytes"
+                    )
+                if any(chunk[content:]):
+                    raise PlaneLayoutError(
+                        f"{descriptor.kind.name}: non-zero alignment padding; the "
+                        "encoding must be canonical"
+                    )
+                # Sub-byte slack too: a 1-bit plane whose count is not a multiple of 8
+                # leaves pad bits inside the final content byte.  MSB-first packing puts
+                # them in the low bits.  Unconstrained, they are the same canonicality
+                # hole as the alignment bytes above, one byte earlier.
+                #
+                # The low-bit mask is only correct for MSB-first packing, and it is
+                # unconditional.  ``PlaneDescriptor`` now refuses to hold any other bit
+                # order (see ``planes.py``), so this cannot be reached -- it is kept as
+                # the local statement of what the mask below assumes, because a future
+                # bit order would have to change this line and would otherwise pass a
+                # verifier that was silently checking the wrong end of the byte.
+                if descriptor.bit_order is not BitOrder.MSB_FIRST:
+                    raise PlaneLayoutError(
+                        f"{descriptor.kind.name}: pad-bit canonicality is defined for "
+                        f"MSB-first packing only, not {descriptor.bit_order.name}"
+                    )
+                bits = terminal.plane_elements[
+                    order[descriptor.kind]
+                ] * descriptor.element_bits
+                slack = (-bits) % 8
+                if slack and content:
+                    if chunk[content - 1] & ((1 << slack) - 1):
+                        raise PlaneLayoutError(
+                            f"{descriptor.kind.name}: non-zero pad bits in the final "
+                            "content byte; the encoding must be canonical"
+                        )
+                count = terminal.plane_elements[order[descriptor.kind]]
+                if count == descriptor.element_count:
+                    if hashlib.sha256(chunk).digest() != descriptor.content_digest:
+                        raise SchemaError(
+                            f"{descriptor.kind.name}: bytes do not match the plane's "
+                            "declared content digest"
+                        )
+        except BaseException as exc:  # noqa: BLE001 -- re-raised on the caller
+            failure["error"] = exc
+
+    worker = None
+    payload_ok = False
+    try:
+        if len(plane_region) >= _PARALLEL_DIGEST_MIN_BYTES:
+            worker = threading.Thread(target=_verify_planes, daemon=True)
+            worker.start()
+        digest = hashlib.sha256(region).digest()
+        payload_ok = digest == terminal.payload_digest
+    finally:
+        # Unconditional: a failure in the caller's own hash (MemoryError, an
+        # interrupt) must not leave the worker running.  No check moves; the
+        # payload comparison below still runs before any plane-level error is
+        # re-raised.
+        if worker is not None:
+            worker.join()
+    if not payload_ok:
         raise SchemaError(
             f"terminal {terminal.slot_id!r}: plane-region bytes do not match "
             "the declared payload digest"
         )
-    order = {kind: index for index, kind in enumerate(manifest.plane_order)}
-    for descriptor, offset, content, total in plane_ranges(manifest, terminal):
-        chunk = plane_region[offset : offset + total]
-        if len(chunk) != total:
-            raise TruncationError(
-                f"{descriptor.kind.name}: region holds {len(chunk)} of {total} bytes"
-            )
-        if any(chunk[content:]):
-            raise PlaneLayoutError(
-                f"{descriptor.kind.name}: non-zero alignment padding; the "
-                "encoding must be canonical"
-            )
-        # Sub-byte slack too: a 1-bit plane whose count is not a multiple of 8
-        # leaves pad bits inside the final content byte.  MSB-first packing puts
-        # them in the low bits.  Unconstrained, they are the same canonicality
-        # hole as the alignment bytes above, one byte earlier.
-        #
-        # The low-bit mask is only correct for MSB-first packing, and it is
-        # unconditional.  ``PlaneDescriptor`` now refuses to hold any other bit
-        # order (see ``planes.py``), so this cannot be reached -- it is kept as
-        # the local statement of what the mask below assumes, because a future
-        # bit order would have to change this line and would otherwise pass a
-        # verifier that was silently checking the wrong end of the byte.
-        if descriptor.bit_order is not BitOrder.MSB_FIRST:
-            raise PlaneLayoutError(
-                f"{descriptor.kind.name}: pad-bit canonicality is defined for "
-                f"MSB-first packing only, not {descriptor.bit_order.name}"
-            )
-        bits = terminal.plane_elements[
-            order[descriptor.kind]
-        ] * descriptor.element_bits
-        slack = (-bits) % 8
-        if slack and content:
-            if chunk[content - 1] & ((1 << slack) - 1):
-                raise PlaneLayoutError(
-                    f"{descriptor.kind.name}: non-zero pad bits in the final "
-                    "content byte; the encoding must be canonical"
-                )
-        count = terminal.plane_elements[order[descriptor.kind]]
-        if count == descriptor.element_count:
-            if hashlib.sha256(chunk).digest() != descriptor.content_digest:
-                raise SchemaError(
-                    f"{descriptor.kind.name}: bytes do not match the plane's "
-                    "declared content digest"
-                )
+    if worker is None:
+        _verify_planes()
+    if "error" in failure:
+        raise failure["error"]
     return digest
 
 

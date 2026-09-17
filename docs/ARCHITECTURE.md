@@ -97,13 +97,12 @@ number the packer measures against and the admission asks for, and
 ``lane_planes.require_native_select_plane_admission`` -- called from
 ``prepare_span2_planes``, the native seam -- refuses the cut by name and by
 rows.  It stays OUT of ``serving.sharding``'s cutter deliberately: the
-``when_unavailable`` torch fallback decodes codes rather than these planes, so
-that cut is one the fallback still serves, and a refusal at the cutter would
-take it away.  ``ops.prepare_tessera_module`` therefore resolves the decoder
-BEFORE it packs a role: on the fallback it packs nothing and builds the tile
-through ``materialize_stock`` alone (``ops._prepare_torch_fallback``).  It had
-packed every role for the native decoder first and chosen the fallback after,
-so the fallback refused the very cut it serves, for planes it never reads
+``when_unavailable`` torch-materialised reference decodes codes rather than
+these planes, so that cut is one the stock decode still serves, and a refusal
+at the cutter would take it away.  The retired ``ops.prepare_tessera_module``
+resolved the decoder BEFORE it packed a role for exactly this reason; since the
+A4 retirement the admission lives at the native seam alone and the stock
+reference asset in the tests decodes the same cut
 (``tests/test_lane_planes_refusals.py``, CPU).  The window body has no requirement at all --
 ``pack_window_planes`` carries a per-column offset table and starts every
 column on its own byte -- and is unchanged.
@@ -265,6 +264,50 @@ ROCm image, both name the one launch the rate grammar leaves at this rung
 fourteen-row record with a BF16 reference arm. `gfx1151` still has no cell.
 Receipt: `docs/measurements/tessera-gfx1201-bf16-k1-served-2026-09-13.md`.
 See §4.5f.
+
+Re-stamped 2026-09-16 for the **multilevel integration**: the A4 native lanes
+and the routed window native lane are one tree, and the A4 whole-weight
+expansion is retired in the same tree (its own commit). The two lines bring no
+divergent copy of anything they share — the compact reader, the scheme dispatch
+table, the census tokens and the residency model are single. Checked, not
+asserted: relative to the A4 baseline `d98c8dc`, the only source movement in
+the A4 route is 27 deleted lines (`decode_expert_tile`, its `__all__` entry and
+the `nvfp4_route` re-export); `native_a4.py`/`kernel_a4.py` are byte-identical,
+and the window lane's files are byte-identical to their authoring branch
+`30fb2bf`. Nothing about activation semantics moves with the integration: the
+packaged `activation_quantizers`, every `lane_eligibility` cell, `formats` and
+`tensor_parallel` are byte-identical to the A4 baseline, and the only contract
+movement is the retired `native_extensions` entry with its version bump (29 ->
+30). Each family keeps the quantizer, scale grouping and accumulation order its
+own route already published — no route order was changed to satisfy a kernel
+test. The routed window lane joins as an EXPERIMENTAL pair, and a mixed
+A4/A8/A16 served census is still pending. See §3.3.
+
+Re-stamped 2026-09-16 for the A4 whole-weight-expansion retirement. The A4
+lanes decode the compact loader's packed planes in-kernel; the superseded
+expansion — `serving/ops.py` (span-2 decode custom ops, `PreparedTesseraModule`,
+the pure-torch fallback and the load-time reference cross-check),
+`serving/csrc/tessera_nvfp4.cu`, the `tessera_nvfp4_` native-extension entry,
+`nvfp4_moe_route.decode_expert_tile` and the `nvfp4_route` re-export — is
+deleted. The independent oracle (`materialize_stock`/`scaled_fp4_quant`/
+`torch._scaled_mm`) is preserved under tests (`tests/nvfp4_reference.py`) and
+experiments; the useful window GEMV and the shared toolchain/extension table
+remain. The packaged `native_extensions` now describes exactly the one library
+that is still loadable (`tessera_window_gemv`), `contract_version` moves 29 ->
+30 with a changelog entry, and no cell, rung, platform, grade or historical
+receipt moves: the A4/experimental pairs stay experimental launches. See §3.3
+and §5.2.
+
+Re-stamped 2026-09-16 for the dense native window lane. The FP8 and BF16
+dense routes load through the compact reader and serve a packed bitstream
+GEMM (`tessera.window_gemm`, one functional custom op
+`tessera::window_gemm_dense`; `serving/native_window.py`), stamping the new
+`native_window_gemm` decoder and the `tessera::window_gemm_dense` symbol,
+with the launch table (`scheme.ROUTE_LAUNCHES`) carrying the pair for both
+routes. The materialising preparations and the torch window decode stay as
+the reference path and are not reached from a serve. This is an experimental
+lane: no runtime-contract cell, rung, grade, qualification or ship gate
+moves, and the packaged contract is not promoted. See §3.3.
 
 Re-stamped 2026-09-13 for the census's world (#470): `tools/tessera_route_census.py`
 takes the topology it is run at (`src/tessera/serving/topology.py`), runs its
@@ -1978,26 +2021,79 @@ These are producer evidence and tests only. They do not promote a recipe,
 open an eligibility cell, or replace the source-matched served measurements
 required for the PrismaQuant campaign bridge.
 
-### 3.3 The native decode is held to the reference at load
+### 3.3 The native decode is held to the reference — in tests, since the A4 retirement
 
-The NVFP4 route was the one route whose decoder reached generation
-unchallenged: the FP8 and BF16 routes have always decoded once at load and
-refused on inequality with `tessera.decode.materialize_*`, while the span-2
-route prepared the module and returned (tessera#130).
-`ops.prepare_tessera_module` now decodes the module once through the same
-native op the forward runs, and holds both uint8 planes to what
+**Historical (until 2026-09-16).** The NVFP4 route was the one route whose
+decoder reached generation unchallenged: the FP8 and BF16 routes have always
+decoded once at load and refused on inequality with
+`tessera.decode.materialize_*`, while the span-2 route prepared the module and
+returned (tessera#130). From then until the A4 retirement,
+`ops.prepare_tessera_module` decoded the module once through the same native op
+the forward ran and held both uint8 planes to what
 `tessera.stock.materialize_stock` writes for the same roles on the moved LUT
-tables and the shared global (`_torch_fallback_tile`, the same reference the
-resident fallback substitutes) -- `torch.equal`, no tolerance, because the
-reference is bit-exact. A difference refuses the module at load naming the
-vLLM prefix, the role, how many bytes of how many differ, and the first
-differing tile (row, role row, group-16 column block), so a refusal says
-where the decoder went wrong rather than only that it did
-(`_require_reference_agreement`, `src/tessera/serving/ops.py`). It runs in
-both residencies and takes no operator knob, because the other two routes
-take none. It is vacuous on the resident fallback, where the substitute IS
-the reference and there is nothing independent to hold it to. What it costs
-per module at load is not measured.
+tables and the shared global (`_torch_fallback_tile`) — `torch.equal`, no
+tolerance, because the reference is bit-exact. A difference refused the module
+at load naming the vLLM prefix, the role, how many bytes of how many differed,
+and the first differing tile (row, role row, group-16 column block)
+(`_require_reference_agreement`, `src/tessera/serving/ops.py`).
+
+**What replaced it.** The A4 lanes decode the compact loader's packed planes
+in-kernel (`tessera.kernel_a4`: `a4_span2_gemm` dense,
+`a4_span2_grouped_gemm` routed), and the whole-weight expansion —
+`serving/ops.py`, `csrc/tessera_nvfp4.cu`, the decode custom ops, the
+pure-torch fallback and the load-time cross-check — is retired. Holding a
+decoder to the reference moved from a load cost to a **test obligation**:
+`tests/nvfp4_reference.py` keeps the stock pair as a test asset (no serving
+code), and the A4 lane suites plus
+`tests/test_span2_start_state.py`/`tests/test_lane_planes_refusals.py` hold
+the native decode and `slice_unit`'s row property to it under PrismaBuild.
+The retired production functions have no production callers or package
+imports; the independent oracle (`tessera.stock.materialize_stock` +
+`scaled_fp4_quant` + `torch._scaled_mm`) stays under tests and experiments,
+which is where it was already the A4 owner's contract. Loading no longer
+spends a per-module reference decode, which is what
+`NATIVE-ACCEPTANCE`'s startup clause required.
+
+**The dense FP8 and BF16 routes now serve a compact native lane, and that
+lane does NOT decode the reference at load.**  The startup cost §3.3 measures
+elsewhere is exactly what `NATIVE-ACCEPTANCE` forbids on a routed load: the
+compact reader (`unit_artifact.parse_unit_metadata`) validates structure,
+digests, canonical padding, sub-byte slack, profile, rates, geometry, plane
+ranges and the shard record, and `compact_prep` repacks the rank-local planes
+from the packed bits -- no expanded parent, no `materialize_*` call.  The
+reference decoders stay in the tree and are the **test oracle**: the dense
+lane's equivalence (decoded codes/scales, both families, M tails, TP cuts
+with history, actual wires) is held by PB-run tests
+(`tests/test_window_gemm.py`, `tests/test_compact_loader.py`,
+`tests/test_serving_native_window.py`), and the retained
+`prepare_tessera_fp8_module`/`prepare_tessera_bf16_module` preparations keep
+their own load-time agreement for the reference path.  The lane stamps
+`native_window_gemm`, a decoder distinct from `torch_window` and
+`window_gemv`, so a census can tell a native serve from a reference one.
+
+**The ROUTED window lane serves the same way, and is likewise a candidate.** A
+routed stack whose family is FP8 (`TESSERA_E4M3_K1`) or BF16
+(`TESSERA_BF16_K1`) runs the compact intake -- one
+`scheme.parse_compact_tessera_expert_blob` per projection -- into a
+preallocated per-expert axis (`native_window_moe.WindowUnitAxis`) and applies
+the two-stage grouped kernels (`window_gemm_grouped`, wrapped by
+`native_window_moe.NativeWindowMoE`: gathered routed rows in, activation, down
+projection, routing weights, routed output only).  The activation is `silu`
+with the model's SwiGLU clamp (`swiglu_limit` / vLLM's `gemm1_clamp_limit`)
+reproduced on the fp32 accumulators -- gate saturated at `+limit`, up branch at
+`+-limit`, the arithmetic vLLM's own `silu_and_mul` performs; `swiglu_alpha`,
+`swiglu_beta` and another activation still refuse.  It stamps `moe_route.py`'s
+`native_window_moe_compact` decoder and the
+`tessera.native_window_moe.NativeWindowMoE.__call__` symbol, published as an
+EXPERIMENTAL pair (`scheme.EXPERIMENTAL_LAUNCHES`) rather than as a cell, so
+the routed `lane_eligibility` cells keep naming the attested stock dispatch.
+The evidence so far is numerical -- the PB receipt `b3dfb9b0…` (55 passed, 13
+device-allocated, one GB10) plus stage-by-stage comparison against stock
+`scaled_mm`/`fused_experts` -- and a two-node serve of this lane has NOT run,
+so nothing is promoted: the shared-expert combination stays the runner's
+(`SharedExpertsOrder.NO_OVERLAP`), no internal MK kernel is claimed, and the
+family's activation contract (quantizer, scale grouping, accumulation order)
+is the one the family already publishes.
 
 ### 3.4 Declared weight transforms are refused at the materialisation boundary
 
@@ -2142,7 +2238,7 @@ full-depth unit reads its limit back as `None`
 Full-rate units (`R == cap`, the shipping span-2 wire) have no completion
 axis and pack unchanged at any limit; the window branch is untouched because
 a window body has no completion axis by grammar. `prepare_span2_planes`, the
-native decoder's entry (`serving/ops.py`), packs through the same function
+native lane's entry (`lane_planes`), packs through the same function
 and inherits the refusal. Decoding the plane in the kernel is a
 `measurement-needed` follow-up, not part of this refusal.
 `tests/test_lane_planes_refusals.py` holds the reproduction (CPU).
@@ -2971,39 +3067,74 @@ Which families have a production expert route is `scheme.MOE_BUILDERS`, and
 `TesseraConfig.get_quant_method` dispatches a `routed_moe` stack to its
 family's builder off that table exactly as a Linear is dispatched off
 `ROUTES`. Two families have one. `TESSERA_FP8` is the route above.
-`TESSERA_NVFP4` is `tessera.serving.nvfp4_moe_route` (tessera#492): one
-E2M1x2 container per expert projection, parsed and verified whole, cut to
-the rank by `sharding.shard_parsed_roles` on the group's plan (rows of `w13`,
-columns of `w2`), decoded once at load through `stock.materialize_stock`
-after a per-expert `fused.shared_lut_global` join of the gate and up globals,
-into exactly the modelopt NVFP4 parameter set vLLM's `ModelOptNvFp4FusedMoE`
-builds (`w13_weight`/`w2_weight` packed nibbles, group-16 ue4m3
-`*_weight_scale`, per-expert `*_weight_scale_2` MULTIPLIER, per-expert
-`*_input_scale`), and from `process_weights_after_loading` onward it IS that
-class: `convert_to_nvfp4_moe_kernel_format`, `make_nvfp4_moe_quant_config`,
-`make_nvfp4_moe_kernel` over the backend the runtime's own
-`select_nvfp4_moe_backend` picks -- on sm121 under GLM's `swiglu_limit` a
-clamp-capable flashinfer CUTLASS backend
-(`docs/measurements/nvfp4-moe-oracle-2026-09-02.md`), the receipt that used
-to be the reason the family had no builder and is now what the builder
-relies on. The static A side is a checkpoint fact: the exporter writes
-`experts.{e}.{proj}.input_global_scale` beside each wire (capacity over amax,
-the dense route's `trellis_input_global_scale` quantity, from
-`--input-scales`), the loader inverts it once into modelopt's
-`input_scale`, and a stack missing any refuses rather than quantising at
-1.0. FlashInfer's CUTLASS finalizer then collapses the per-expert values to
-ONE per projection group -- `amax_for_moe_activation_quant` takes the max of
-the loader's reciprocal, so the executed global scale is the SMALLEST
-per-expert `input_global_scale`, i.e. the layer's LARGEST calibrated amax --
-and broadcasts it to every expert; the per-expert tensors the method reads are
-what a per-expert price describes, and priced == served only when the amax
-spread is zero. This route decodes every expert wire once at load through
-`materialize_stock` (the load probe's `route_record.decoder` is
-`torch_materialize_stock`), never through the native span-2 planes, so a row
-cut of an expert container needs only `slice_unit`'s super-symbol boundary; the
-select plane's byte (see the re-stamp above) is the dense route's NATIVE
-decoder's requirement, refused by name at
-`lane_planes.require_native_select_plane_admission`. A builder is a
+`TESSERA_NVFP4` is `tessera.serving.nvfp4_moe_route` (tessera#492),
+NATIVE since the A4 serving integration: one E2M1x2 container per expert
+projection is read by the shared compact validator
+(`scheme.parse_compact_tessera_expert_blob`, the same refusals as the
+materialising reader, no weight-plane expansion), cut to the rank by the
+group's plan (rows of `w13`, columns of `w2`), and prepared into
+`kernel_a4`'s bundle per (group, role) on an `A4ExpertAxis` --
+`serving/native_a4.py` -- with the gate/up LUT tables joined by
+`fused.shared_lut_global` under the fused tile's one global.  No stock
+NVFP4 tile is built at load or in a forward and no expanded expert pool is
+resident: the compact planes ride through residency and the fused decode
+happens in the kernel.  The expert intake writes each projection's prepared planes
+**directly into that expert's preallocated axis slot** the moment the wire
+arrives (`A4ExpertAxis.destination`/`set_lut_bytes`/`set_global`), so no
+per-wire output tensor exists and `finish` copies nothing; only the 16-byte
+LUT table and its scalar global wait in `_ExpertIntake.pending` for the mate
+(the fused tile's shared global), which keeps arbitrary wire order legal and
+the join semantics exactly the stock lane's.  That direct destination is what
+removes the per-wire point-plane allocation the ml19 runtime showed pooling
+288 dead 20 MiB blocks.  The loader's parse is bounded and owned by the
+load too: the two mandated SHA-256 passes over a wire overlap (per-plane
+checks on one short-lived worker thread, the whole-region payload digest on
+the caller, payload-digest precedence unchanged), the geometry-keyed
+derivations that are constant across a layer (encoder-profile pair, rate
+schedule, completion depth, shard granularity) are memoised in a
+caller-owned per-layer dict whose keys carry the full rate schedule, and the
+byte-reversed word view is built once per wire for all three packers.  The
+staging is bounded and owned by the
+load: the per-wire packed-plane transfers fill caller-owned reusable buffers
+(`compact_prep._plane_u8`, `kernel_bits._plane_words`; one scratch dict per
+`_ExpertIntake`, never module-global) instead of allocating a fresh device
+tensor per wire, and `A4ExpertAxis` allocates its stacked planes once on the
+first `put` and copies each expert into its own slot, so `finish` copies
+nothing and no per-expert temporaries are retained.  That staging is what
+keeps a load under the runtime's `max_split_size_mb=20` allocator context
+from churning dead CUDA slabs; the measured before/after is
+`docs/measurements/tessera-a4-loader-staging-20260916.md`.  The stock
+modelopt names stay registered as
+ZERO-SIZE anchors whose loader refuses checkpoint bytes, so a stock tensor
+in a Tessera stack is still refused by name while the 4.5-bpp pool is never
+allocated.  `apply` is the native two-stage pipeline: separate grouped
+gate/up calls (per-role tables and globals intact), vLLM's own
+`apply_moe_activation` for the layer's activation, the down grouped call on
+the per-route rows under a second static scale, and the router weights
+applied only in the final combine; shared experts are the runner's and are
+never recomputed here.  The method's protocol is MODULAR BY ITS OWN
+DEFINITION: `is_monolithic` is False, and neither `experts_cls` nor
+`moe_kernel` is owned (the base class delegates `is_monolithic` to a
+selected stock class when one is present, which is exactly the ownership
+this lane refuses); `get_fused_moe_quant_config` carries the model's swiglu
+alphas and no stock tensors.  The static A side is a checkpoint fact: the
+exporter writes `experts.{e}.{proj}.input_global_scale` beside each wire
+(capacity over amax, the dense route's `trellis_input_global_scale`
+quantity, from `--input-scales`), a stack missing any refuses rather than
+quantising at 1.0, and the selected backend's aggregation is preserved
+unchanged -- ONE scalar per layer/projection, the max of the loader's
+reciprocal (the layer's largest calibrated amax) broadcast to every expert,
+from `amax_for_moe_activation_quant` via
+`is_global_sf_supported_for_nvfp4_backend`, per the scale review; the
+per-expert tensors are what a per-expert price describes, and priced ==
+served only when the amax spread is zero.  The executed symbols are the
+native ones (`scheme.A4_GROUPED_GEMM_SYMBOL`,
+`telemetry.DECODER_NATIVE_SPAN2_GROUPED`), published as EXPERIMENTAL pairs
+(`scheme.experimental_launch_pairs`) so a census accepts the candidate while
+`launch_pairs` keeps the cell validator on the attested dispatch -- no
+qualification is promoted by this change.
+
+A builder is a
 dispatch fact and not a served qualification: the
 `routed_moe` cells for this family are `lane_eligibility`'s to publish from a
 container receipt. Contract v28 publishes two, at q256 896, eager and resident,
@@ -4684,14 +4815,13 @@ measure full-model quality or qualify routed MoE, TP2, or a runtime contract cel
 
 ### 5.2 What the wheel ships besides Python
 
-Three non-Python files are opened at run time, and each is declared in
+Two non-Python files are opened at run time, and each is declared in
 `[tool.setuptools.package-data]` because an editable install reads the tree
 and would never notice one missing:
 
 | File | Opened by | Why it is in the wheel |
 |---|---|---|
 | `tessera/serving/runtime_contract.json` | `contract.contract_path()` through `importlib.resources`, by the plugin at load and by the producer preflight | the attested-cell table (§3, §4.4d); repo-root arithmetic is refused so a wheel, an editable install and a checkout read the same bytes |
-| `tessera/serving/csrc/tessera_nvfp4.cu` | the NVFP4 route's JIT build (`ext.py`) | the span-2 decoder |
 | `tessera/serving/csrc/window_gemv.cu` | `tessera.kernel_window_gemv._ext`, which `serving/fp8_gemv.py` and `bf16_route.py` load through; the loader resolves the path from `ext.NATIVE_EXTENSIONS[].source` via `ext.native_source_path`, so the published `source` and the compiled file are one inode | the window-body GEMV. Until #134 a second, byte-identical copy at `tessera/csrc/window_gemv.cu` was the one compiled while this one was the one published; `tests/test_serving_fp8_gemv.py::test_the_published_source_is_the_file_the_loader_compiles` now captures the JIT call and asserts `samefile` |
 
 `tests/test_packaging.py` refuses either half of that table on its own: a
@@ -4864,12 +4994,11 @@ boolean:
   different numeric object than the native one. The resident NVFP4 route
   decodes once at load and may substitute `tessera.stock.materialize_stock`;
   the window GEMV substitutes the torch window decode in both residencies.
-- `refused` -- no serve exists. The streamed NVFP4 route decodes inside a
-  traced forward whose data-dependent shapes the substitute cannot run, so it
-  refuses instead of serving something else (`ops.prepare_tessera_module`).
-  A module also refuses at load, in either residency, when the native decode
-  disagrees with the reference (§3.3): a build that exists and is wrong is
-  not a serve.
+- `refused` -- no serve exists. The retired streamed NVFP4 route decoded
+  inside a traced forward whose data-dependent shapes the substitute could not
+  run, so it refused instead of serving something else; with the A4 retirement
+  the native lane requires its kernels outright (fail closed on an absent
+  backend), which is the same refusal reached earlier.
 
 The decoder that actually ran is the `decoder` field on every route record
 (`telemetry.py`), which is how a fingerprint tells a native serve from a

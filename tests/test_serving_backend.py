@@ -208,11 +208,12 @@ def test_the_cuda_window_gemv_flags_are_byte_for_byte_what_they_were():
     ]
 
 
-def test_the_cuda_nvfp4_flag_is_byte_for_byte_what_it_was():
-    """``serving.ext`` has always passed the single-argument spelling."""
-    from tessera.serving.ext import _offload_flags
+def test_the_cuda_offload_flag_is_byte_for_byte_what_it_was():
+    """The joined spelling the JIT lanes pass is the one-argument form."""
+    from tessera.serving import backend
 
-    assert _offload_flags("sm_121") == ["-gencode=arch=compute_121,code=sm_121"]
+    assert backend.offload_flags("sm_121", joined=True) == [
+        "-gencode=arch=compute_121,code=sm_121"]
 
 
 # --------------------------------------------------------------------------
@@ -556,20 +557,6 @@ def test_the_hipified_source_is_ignored_by_git():
     """
     ignored = (ROOT / ".gitignore").read_text(encoding="utf-8")
     assert "src/tessera/serving/csrc/*.hip" in ignored
-
-
-def test_the_build_identity_is_keyed_on_the_platform_not_the_capability():
-    """``(12, 0)`` named gfx1201 and sm_120 alike; the token names one."""
-    torch = pytest.importorskip("torch")   # collectable without it (tessera#309)
-    from tessera.serving import ext
-
-    source = ext.native_source_path(ext.NVFP4_MODULE_PREFIX)
-    amd, payload = ext._build_identity(torch, source=source, platform="gfx1201")
-    nvidia, _ = ext._build_identity(torch, source=source, platform="sm_120")
-    assert payload["platform"] == "gfx1201"
-    assert "capability" not in payload
-    assert amd != nvidia
-    assert json.dumps(payload, sort_keys=True)   # the payload still serialises
 
 
 # --------------------------------------------------------------------------

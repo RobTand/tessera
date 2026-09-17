@@ -1,80 +1,47 @@
-"""JIT loader for the Tessera span-2 NVFP4 decoder (``csrc/tessera_nvfp4.cu``).
+"""Toolchain resolution and the published extension table (no loader of its own).
 
-The NVFP4 route needs one native operator: turn a Tessera span-2 wire's planes
-into the native NVFP4 tile -- nibble-packed E2M1 codes plus per-16 E4M3 block
-scales -- so that ``torch._scaled_mm`` serves it with no format-specific
-mainloop.  The kernel is CUDA compiled by ``torch.utils.cpp_extension.load``;
-no tile-language kernel appears on the serving path (Tessera's own Triton GEMV
-is the *oracle side* of this port and stays in ``tessera.kernel``; nothing here
-imports it).
+The package builds **one** JIT extension today: the window-body GEMV
+(``csrc/window_gemv.cu``), asked for by ``tessera.kernel_window_gemv`` and
+published here as the ``tessera_window_gemv`` entry the runtime contract and
+the window lanes' predicates read.  This module owns the parts every JIT build
+in the package shares -- finding an ``nvcc``, a ``ninja`` and the CUDA include
+directories without guessing, and the vocabulary the contract publishes
+(``NATIVE_EXTENSIONS``, the fallback statuses, the lane field lists) -- plus
+the CUDA-resolve helpers ``backend.py`` and the window loader call.
 
-The module keeps its own symbol namespace, its own ABI schema and its own
-build-identity hash, so a stale build directory is a named error and never a
-silently wrong decode.  Importing the plugin neither compiles nor claims this
-format: a caller asks for it, at weight load.
+The span-2 NVFP4 decoder and its loader (``tessera_nvfp4.cu``,
+``get_tessera_ext``) were RETIRED with the A4 whole-weight expansion: the A4
+lanes now decode the compact loader's packed planes in-kernel
+(``tessera.kernel_a4``), and the independent correctness oracle --
+``tessera.stock.materialize_stock`` on a parsed unit -- lives in the tests, not
+in a serving path.  Historical receipts that name ``native_span2`` remain
+history; nothing here publishes that decoder as loadable.
 
-BUILD DIRECTORY.  ``torch.utils.cpp_extension`` resolves its own root from
-``TORCH_EXTENSIONS_DIR`` (else ``~/.cache/torch_extensions``); the identity is
-in the MODULE NAME, so two source or toolchain revisions never share a ninja
-workspace.  ``TESSERA_EXT_DIR`` overrides the root outright, for a run that
-wants the builds somewhere the container persists.
-
-TARGET.  The build is pinned to the LIVE device's compute capability rather
-than inheriting ``TORCH_CUDA_ARCH_LIST``: the stock vLLM base image ships a
-list that omits 12.1, which would leave a GB10 running from PTX JIT or a
-mismatched SASS target.  A host with no visible GPU therefore has no defensible
-target and reports the module unavailable.
-
-TOOLCHAIN.  The build needs an ``nvcc`` and a ``ninja``, and finding them is
-not always the operator's job: ``torch.utils.cpp_extension`` resolves
-``CUDA_HOME`` to ``/usr/local/cuda`` whenever that path merely EXISTS and stops
-searching, so a box whose ``update-alternatives`` link points at a PARTIAL
-install (``doc/``, ``targets/``, no ``bin/nvcc`` -- which is how a second CUDA
-lands beside a first) fails every build with ``nvcc: not found`` while a
-complete toolkit sits one directory away.  :func:`_resolve_cuda_home` finishes
-the search torch starts, and prefers the toolkit whose version matches the one
-torch itself was built against.  It corrects ``cpp_extension.CUDA_HOME`` as
-well as the environment, because ``load()`` reads that module global and it is
-frozen at import.  ``CUDA_HOME``/``CUDA_PATH`` set in the
-environment always wins: an operator naming a toolkit is a decision, not a
-guess to be second-guessed.  Winning means being ADOPTED into that same frozen
-global, not merely returned -- a root selected after torch's import was
-reported as chosen while the previously frozen one kept compiling (issue
-#298) -- and it is adopted whether or not it holds a compiler, so a refusal
-never hands the build back to the toolkit the operator displaced.  Only what
-the resolver RETURNS is gated on completeness.  ``ninja`` is looked for beside
-``sys.executable`` when it is not on ``PATH``, because a venv invoked by
+TOOLCHAIN.  Finding ``nvcc``/``ninja`` is not always the operator's job: torch
+freezes ``cpp_extension.CUDA_HOME`` at import and resolves it to
+``/usr/local/cuda`` whenever that path merely EXISTS, so a box whose
+``update-alternatives`` link points at a PARTIAL install fails every build with
+``nvcc: not found`` while a complete toolkit sits one directory away.
+:func:`_resolve_cuda_home` finishes the search torch starts, prefers the
+toolkit whose version matches the one torch was built against, and ADOPTS what
+it selects into the frozen global (an operator's own
+``CUDA_HOME``/``CUDA_PATH`` always wins).  ``_resolve_ninja`` looks beside
+``sys.executable`` when ``PATH`` does not carry one, because a venv invoked by
 absolute path (every non-login ssh) has its own ``bin`` off ``PATH``.
-
-FALLBACK.  There is one, and it is explicit: ``tessera.stock.materialize_stock``
-produces the same tile in pure torch, and ``ops.prepare_tessera_module`` uses it
-when this extension cannot build -- but only for the RESIDENT residency, where
-the decode happens once at load.  The streamed residency decodes inside a
-traced forward, where the pure-torch path's data-dependent shapes cannot run,
-and refuses instead.  Which decoder ran is recorded on every route record
-(``telemetry.ROUTE_FIELDS``'s ``decoder``), so a receipt can never claim the
-native route for a fallback serve.
+:func:`toolchain_report` is the public probe: a test that skips on a missing
+toolchain has to tell "no compiler on this box" from "the compiler is here and
+the build broke".
 """
 from __future__ import annotations
 
-import hashlib
-import json
 import os
-import shlex
 import shutil
-import subprocess
 import sys
-import sysconfig
-import threading
 
-from . import backend as backend_module
 from ..kernel_roster import SUPPORTED_RATES, WINDOW_BITS_SUPPORTED
 
 __all__ = [
-    "TESSERA_NVFP4_ABI_SCHEMA",
     "NATIVE_EXTENSIONS",
-    "NVFP4_MODULE_PREFIX",
-    "NVFP4_SOURCE",
     "WINDOW_GEMV_MODULE_NAME",
     "WINDOW_GEMV_SOURCE",
     "FALLBACK_REFUSED",
@@ -84,30 +51,13 @@ __all__ = [
     "LANE_FIELDS",
     "LANE_REQUIREMENT_FIELDS",
     "WINDOW_GEMV_LANE",
-    "NVFP4_LANE",
     "NativeKernelUnavailableError",
-    "StaleExtensionError",
     "IncompleteInstallError",
     "csrc_dir",
     "native_source_path",
-    "get_tessera_ext",
-    "require_tessera_ext",
-    "reset_for_tests",
     "substitutes_when_unavailable",
     "toolchain_report",
 ]
-
-#: Bumped whenever the pybind signature changes.  The loader refuses a module
-#: whose ``tessera_nvfp4_abi_schema()`` disagrees.
-TESSERA_NVFP4_ABI_SCHEMA = 1
-
-_SYMBOLS = ("tessera_nvfp4_decode_span2_out", "tessera_nvfp4_abi_schema")
-
-#: The module name ``_load_locked`` builds, WITHOUT the build identity it
-#: appends.  A constant rather than a literal in the f-string because the
-#: runtime contract publishes it: the table a fingerprint reads and the name
-#: the load path asks for are one string, so they cannot drift.
-NVFP4_MODULE_PREFIX = "tessera_nvfp4_"
 
 #: The window-body GEMV's JIT module name, asked for by
 #: ``tessera.kernel_window_gemv`` (``load(name="tessera_window_gemv", ...)``).
@@ -117,14 +67,13 @@ NVFP4_MODULE_PREFIX = "tessera_nvfp4_"
 #: on either side is a test failure rather than a quietly short table.
 WINDOW_GEMV_MODULE_NAME = "tessera_window_gemv"
 
-#: The sources, relative to this package -- the form the contract publishes, so
-#: a consumer resolves it the same way ``csrc_dir`` does.  Each is the ONE
+#: The source, relative to this package -- the form the contract publishes, so
+#: a consumer resolves it the same way ``csrc_dir`` does.  It is the ONE
 #: file of that name in the package: the loader that JIT-builds it resolves
 #: the same entry through :func:`native_source_path`, so the published path
 #: and the built path are one inode, not two copies kept equal by a test
 #: (#134: the window GEMV was built from ``tessera/csrc/`` and published from
 #: ``tessera/serving/csrc/``).
-NVFP4_SOURCE = "csrc/tessera_nvfp4.cu"
 WINDOW_GEMV_SOURCE = "csrc/window_gemv.cu"
 
 #: How a consumer turns ``filename_glob`` into a decision: ``fnmatch`` it
@@ -159,12 +108,6 @@ LANE_FIELDS = ("decoder", "requires")
 LANE_REQUIREMENT_FIELDS = ("column_rates", "window_bits", "body", "plane",
                            "release_overrides", "diagonals", "rotation",
                            "start_state", "grid_arities")
-
-#: The NVFP4 span-2 decoder's lane.  It publishes no ``requires`` block: its
-#: eligibility is the route's own -- grid, body, span and rung, all already
-#: published in ``formats[]`` -- and there is no further per-unit predicate,
-#: so an empty one would be a claim rather than an absence.
-NVFP4_LANE = {"decoder": "native_span2"}
 
 #: The window GEMV's lane, and the reason this block exists.
 #:
@@ -248,24 +191,25 @@ WINDOW_GEMV_LANE = {
 #:
 #: WHY NOT ``optional``.  "This build may not have compiled it" and "the route
 #: runs correctly without it" are two facts, and the second one differs by
-#: RESIDENCY: the resident mode decodes once at load and may substitute
-#: ``tessera.stock.materialize_stock``, while the streamed mode decodes inside
-#: a traced forward where that path's data-dependent shapes cannot run and
-#: refuses instead (``ops.prepare_tessera_module``).  A fingerprint whose job
-#: is to tell a native serve from a fallback serve needs the substitute's NAME
-#: -- the value the route stamps in ``telemetry``'s ``decoder`` field -- not a
-#: boolean that says only "absence is survivable somewhere".
+#: RESIDENCY: a lane that prepares at load may substitute its named torch
+#: decoder, while a lane that decodes inside a traced forward refuses.  A
+#: fingerprint whose job is to tell a native serve from a fallback serve needs
+#: the substitute's NAME -- the value the route stamps in ``telemetry``'s
+#: ``decoder`` field -- not a boolean that says only "absence is survivable
+#: somewhere".
 #:
 #: WHAT BELONGS HERE.  An entry iff the ``.so`` can be resident in a SERVING
 #: process, i.e. some module reachable from ``tessera.serving`` loads it.
-#: ``tessera.kernel_window_gemv`` builds ``tessera_window_gemv``; nothing under
-#: ``tessera/serving/`` reached it until the streamed FP8 route wired it in
-#: (issue #10), so it was producer-side and the second entry below did not
-#: exist.  ``tests/test_serving_native_extensions.py`` decides that by walking
-#: the import graph, so the day a route loads it the table goes red rather
-#: than staying quietly short.
+#: ``tessera.kernel_window_gemv`` builds ``tessera_window_gemv`` and the
+#: streamed window lanes reach it (issue #10).
+#: ``tests/test_serving_native_extensions.py`` decides that by walking the
+#: import graph, so the day a route loads another one the table goes red
+#: rather than staying quietly short.  The span-2 NVFP4 decoder's entry was
+#: removed at retirement: nothing under ``tessera.serving`` loads that ``.so``
+#: any more, and a table that kept it would publish a library no serve can
+#: map.
 #:
-#: THE GEMV ENTRY'S FALLBACK READS DIFFERENTLY FROM THE NVFP4 ONE.  Both modes
+#: THE GEMV ENTRY'S FALLBACK.  Both modes
 #: substitute the torch window decode (``torch_window``) without the library:
 #: streamed serves the same bytes through decode + ``_scaled_mm`` (slower, the
 #: bytes the load-time cross-check verified), and resident never needed the
@@ -277,25 +221,6 @@ WINDOW_GEMV_LANE = {
 #: census histogram tells a substituted serve from a native one without the
 #: decoder field having to.
 NATIVE_EXTENSIONS = [
-    {
-        # The load path's own constant; the built library is
-        # ``<module name>.so`` (``torch.utils.cpp_extension.LIB_EXT``), and
-        # the module name carries a build-identity hash, so the file on disk
-        # is ``tessera_nvfp4_<identity>.so`` and NO exact basename exists to
-        # publish.
-        "module_name_prefix": NVFP4_MODULE_PREFIX,
-        "filename_glob": NVFP4_MODULE_PREFIX + "*.so",
-        "match": MATCH_BASENAME_FNMATCH,
-        "source": NVFP4_SOURCE,
-        "loaded_by": "tessera.serving.ext",
-        "routes": ["TESSERA_NVFP4"],
-        "lane": NVFP4_LANE,
-        "when_unavailable": {
-            "resident": {"status": FALLBACK_SUBSTITUTED,
-                         "decoder": "torch_materialize_stock"},
-            "streamed": {"status": FALLBACK_REFUSED, "decoder": None},
-        },
-    },
     {
         # The window GEMV's module name is EXACT (no identity hash), so the
         # glob is the name with a ``*`` the validator's meaning-check
@@ -325,8 +250,7 @@ NATIVE_EXTENSIONS = [
 ]
 
 
-def substitutes_when_unavailable(mode: str,
-                                 module_name_prefix: str = NVFP4_MODULE_PREFIX) -> bool:
+def substitutes_when_unavailable(mode: str, module_name_prefix: str) -> bool:
     """May a serve in residency ``mode`` decode without this extension?
 
     The routes gate on this rather than on a mode comparison of their own, so
@@ -345,10 +269,6 @@ def substitutes_when_unavailable(mode: str,
                 f"it declares {sorted(entry['when_unavailable'])}")
         return behaviour["status"] == FALLBACK_SUBSTITUTED
     raise ValueError(f"no native extension is declared with prefix {module_name_prefix!r}")
-
-_NVCC_HINT = ("install the CUDA toolkit (nvcc) in the serving environment and make sure a "
-              "GPU is visible, then restart; the extension builds on first use")
-
 
 def _nvcc_root(nvcc: str) -> str:
     """The toolkit root holding ``bin/nvcc``."""
@@ -510,9 +430,8 @@ def _repair_include_path(cuda_home: str | None) -> list[str]:
 
     Measured cause: the pinned GLM serving image (``glm53-mia-sm121``) ships
     ``nvcc`` and ``ninja`` but no ``cusparse.h`` under ``/usr/local/cuda``,
-    while a matching one sits in ``nvidia/cu13/include`` -- so the STREAMED
-    NVFP4 residency, which has no pure-torch fallback by design, could not
-    build on the very image that serves it.
+    while a matching one sits in ``nvidia/cu13/include`` -- so the streamed
+    JIT lanes could not build on the very image that serves them.
     """
     if not cuda_home:
         return []
@@ -558,6 +477,24 @@ def _repair_include_path(cuda_home: str | None) -> list[str]:
     return [shim]
 
 
+def _nvcc_for_build() -> "str | None":
+    """The CUDA compiler command torch's JIT loader will actually invoke.
+
+    Resolved by the loader's own rule (``torch/utils/cpp_extension``,
+    ``_write_ninja_file``): ``PYTORCH_NVCC`` when set, else
+    ``CUDA_HOME/bin/nvcc`` from the ``cpp_extension.CUDA_HOME`` module global
+    that ``load()`` reads.  NEVER ``$NVCC`` or a bare ``nvcc`` from PATH --
+    the loader consults neither, so hashing them named a compiler the build
+    did not run and missed the one it did (issue #242).  ``_resolve_cuda_home``
+    ADOPTS the toolkit it selects into that same frozen global, which is what
+    makes this answer and the build's compiler one thing.
+    """
+    if "PYTORCH_NVCC" in os.environ:
+        return os.environ.get("PYTORCH_NVCC")
+    home = _torch_cuda_home()
+    return os.path.join(home, "bin", "nvcc") if home else None
+
+
 def _resolve_ninja() -> str | None:
     """``ninja`` on PATH, or the one beside this interpreter (put on PATH)."""
     found = shutil.which("ninja")
@@ -581,7 +518,7 @@ def toolchain_report(torch=None) -> dict[str, object]:
     becomes true.  It ADOPTS what it finds -- ``os.environ["CUDA_HOME"]``,
     ``cpp_extension.CUDA_HOME`` and ``PATH`` -- because a report that a
     compiler exists somewhere the build will not look is worth nothing.  Call
-    it before :func:`get_tessera_ext`, which is where that matters.
+    it before a JIT lane prepares, which is where that matters.
     """
     if torch is None:
         try:
@@ -598,28 +535,12 @@ def toolchain_report(torch=None) -> dict[str, object]:
         "complete": bool(cuda_home and ninja),
     }
 
-_ext = None
-_tried = False
-_lock = threading.Lock()
-
-
 class IncompleteInstallError(FileNotFoundError):
     """The package is installed without its CUDA sources (a packaging defect)."""
 
 
-class StaleExtensionError(RuntimeError):
-    """A built module does not satisfy the current call contract."""
-
-
 class NativeKernelUnavailableError(RuntimeError):
     """The native operator is unavailable and no substitute may be selected."""
-
-
-def reset_for_tests() -> None:
-    """Forget the load attempt (tests only)."""
-    global _ext, _tried
-    with _lock:
-        _ext, _tried = None, False
 
 
 def csrc_dir() -> str:
@@ -661,243 +582,3 @@ def _require_csrc(*names: str) -> str:
             "This is a packaging defect, not a missing CUDA toolchain -- reinstall tessera or "
             "install from a checkout.")
     return d
-
-
-def _sha256_file(path: str) -> str:
-    digest = hashlib.sha256()
-    with open(path, "rb") as stream:
-        for block in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
-def _target_platform(module: str) -> str:
-    """The platform token this build is pinned to -- ``sm_121`` or ``gfx1201``.
-
-    The token, not the compute capability: on ROCm torch
-    ``get_device_capability()`` answers with the GCN major/minor, and gfx1201
-    answers ``(12, 0)`` -- NVIDIA sm_120's tuple.  A build keyed on that
-    tuple would be shared by two platforms, so
-    :func:`tessera.serving.backend.platform_token` is the only spelling here
-    (it reads ``gcnArchName`` on HIP and the capability on CUDA).
-
-    ``TESSERA_PLATFORM_TOKEN`` overrides it for a build that targets a device
-    this box does not have; :func:`_load_locked` then refuses to hand the
-    module to a caller.
-    """
-    import torch
-
-    from .backend import platform_token
-
-    try:
-        return platform_token(torch=torch)
-    except Exception as exc:  # noqa: BLE001 -- one diagnosis for every cause
-        raise RuntimeError(
-            f"cannot determine which architecture to compile {module} for "
-            f"({type(exc).__name__}: {exc}); the build targets the live device instead of "
-            "inheriting TORCH_CUDA_ARCH_LIST, so a visible GPU is required at build time "
-            "unless TESSERA_PLATFORM_TOKEN names the target") from exc
-
-
-def _offload_flags(token: str) -> list[str]:
-    """The flags that pin this build to a single target.
-
-    On CUDA one ``-gencode``, architecture-GENERIC (no ``a`` suffix): the
-    decoder uses no architecture-conditional tensor-core instruction, and an
-    ``a`` binary refuses to load on any other capability at all.  On HIP one
-    ``--offload-arch``, which is also what stops torch fanning the build out
-    over every architecture in the ROCm wheel.
-    """
-    from .backend import offload_flags
-
-    return offload_flags(token, joined=True)
-
-
-def _nvcc_for_build() -> "str | None":
-    """The CUDA compiler command torch's JIT loader will actually invoke.
-
-    Resolved by the loader's own rule (``torch/utils/cpp_extension``,
-    ``_write_ninja_file``): ``PYTORCH_NVCC`` when set, else
-    ``CUDA_HOME/bin/nvcc`` from the ``cpp_extension.CUDA_HOME`` module global
-    that ``load()`` reads.  NEVER ``$NVCC`` or a bare ``nvcc`` from PATH --
-    the loader consults neither, so hashing them named a compiler the build
-    did not run and missed the one it did (issue #242).
-    """
-    if "PYTORCH_NVCC" in os.environ:
-        return os.environ.get("PYTORCH_NVCC")
-    home = _torch_cuda_home()
-    return os.path.join(home, "bin", "nvcc") if home else None
-
-
-def _compiler_identity(command: str | None) -> dict[str, object]:
-    """Best-effort identity for a compiler command, without using a shell."""
-    if not command:
-        return {"argv": [], "path": None, "version": None}
-    try:
-        argv = shlex.split(os.fspath(command))
-    except ValueError as exc:
-        return {"argv": [os.fspath(command)], "path": None, "version": f"{type(exc).__name__}: {exc}"}
-    if not argv:
-        return {"argv": [], "path": None, "version": None}
-    resolved = shutil.which(argv[0])
-    if resolved is None and os.path.isfile(argv[0]):
-        resolved = os.path.abspath(argv[0])
-    if resolved is None:
-        return {"argv": argv, "path": None, "version": "not found"}
-    try:
-        result = subprocess.run([resolved, *argv[1:], "--version"], check=False,
-                                capture_output=True, text=True, timeout=10)
-        version = f"exit={result.returncode}: {(result.stdout or result.stderr).strip()}"
-    except (OSError, subprocess.SubprocessError) as exc:
-        version = f"{type(exc).__name__}: {exc}"
-    return {"argv": argv, "path": os.path.realpath(resolved), "version": version}
-
-
-def _build_identity(torch, *, source: str, platform: str,
-                    extra_includes: list[str] | None = None):
-    """Source/toolchain identity for this module's JIT build.
-
-    Keyed on the PLATFORM TOKEN, never on the compute capability: gfx1201 and
-    sm_120 both report ``(12, 0)``, so a capability-keyed identity would give
-    an AMD build and an NVIDIA build the same module name and the same build
-    directory.
-    """
-    payload = {
-        "extra_includes": list(extra_includes or []),
-        "abi_schema": TESSERA_NVFP4_ABI_SCHEMA,
-        "source_sha256": _sha256_file(source),
-        "platform": platform,
-        "torch": getattr(torch, "__version__", None),
-        "torch_cuda": getattr(getattr(torch, "version", None), "cuda", None),
-        "python_soabi": sysconfig.get_config_var("SOABI"),
-        "cxx": _compiler_identity(os.environ.get("CXX") or "c++"),
-        # The compiler the BUILD selects, by the build's own rule -- not
-        # $NVCC/PATH, which torch's loader never reads (issue #242).
-        "nvcc": _compiler_identity(_nvcc_for_build()),
-        "symbols": list(_SYMBOLS),
-    }
-    raw = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
-    return hashlib.sha256(raw).hexdigest(), payload
-
-
-def _require_probed_platform(torch, token: str, what: str, build_dir: "str | None") -> None:
-    """Refuse a module built for a platform this process is not running.
-
-    ``TESSERA_PLATFORM_TOKEN`` exists so a box can COMPILE for a device it
-    does not have -- gfx1151 on a gfx1201 box is the RDNA3.5 build gate.  The
-    build is the point; the library is not servable here, and returning it
-    would be a claim about arithmetic made from a fact about a compiler.  The
-    refusal names both tokens and where the library landed, so the gate can
-    cite it.
-    """
-    from .backend import PlatformMismatchError, probed_platform_token
-
-    probed = probed_platform_token(torch=torch)
-    if probed == token:
-        return
-    raise PlatformMismatchError(
-        f"{what} was built for {token} ({backend_module.PLATFORM_TOKEN_ENV}) but this "
-        f"process's device is {probed}; a build for an absent device is a compile gate, "
-        f"never a serving path"
-        + (f" (library under {build_dir})" if build_dir else ""))
-
-
-def get_tessera_ext():
-    """The Tessera NVFP4 decode module, or ``None`` when it cannot build.
-
-    ``None`` is a capability-probe result.  Serving code calls
-    :func:`require_tessera_ext` (or takes the named fallback), so that a
-    missing toolchain never silently selects a different arithmetic.
-    """
-    if _tried:
-        return _ext
-    with _lock:
-        if _tried:
-            return _ext
-        return _load_locked()
-
-
-def require_tessera_ext(operation: str = "this operation"):
-    """The module, or :class:`NativeKernelUnavailableError`."""
-    ext = get_tessera_ext()
-    if ext is None:
-        raise NativeKernelUnavailableError(
-            f"{operation} requires Tessera's span-2 NVFP4 decode CUDA extension "
-            f"(tessera_nvfp4.cu), but it is unavailable. To enable the native path: {_NVCC_HINT}.")
-    return ext
-
-
-def _load_locked():
-    global _ext, _tried
-    build_dir = None
-    try:
-        import torch
-        from torch.utils.cpp_extension import load
-
-        # Before anything else: make the toolchain findable.  A box with a
-        # complete CUDA one directory off torch's guess used to report the
-        # kernel "unavailable", which is a claim about the FORMAT made from a
-        # fact about a symlink.
-        cuda_home = _resolve_cuda_home(torch)
-        _resolve_ninja()
-        extra_includes = _repair_include_path(cuda_home)
-        source = native_source_path(NVFP4_MODULE_PREFIX)
-        token = _target_platform("the Tessera NVFP4 decoder (tessera_nvfp4.cu)")
-        identity, _payload = _build_identity(torch, source=source, platform=token,
-                                             extra_includes=extra_includes)
-        module_name = f"{NVFP4_MODULE_PREFIX}{identity}"
-        root = os.environ.get("TESSERA_EXT_DIR")
-        kwargs = {}
-        if root:
-            build_dir = os.path.join(root, "tessera_nvfp4", identity)
-            os.makedirs(build_dir, exist_ok=True)
-            kwargs["build_directory"] = build_dir
-        if extra_includes:
-            kwargs["extra_include_paths"] = extra_includes
-        backend_module.pin_build_arch(token, torch)   # one token, not two (see backend.py)
-        if backend_module.backend(torch) == "hip":
-            # Torch hipifies the .cu before compiling it and writes the .hip
-            # beside the source it was handed -- inside the checkout.  Asking
-            # it not to keep the intermediate removes that file once the build
-            # is done; .gitignore is the belt for a build that died first.
-            kwargs["keep_intermediates"] = False
-        mod = load(name=module_name, sources=[source],
-                   extra_cuda_cflags=["-O3", *_offload_flags(token)], verbose=False, **kwargs)
-        missing = [s for s in _SYMBOLS if not hasattr(mod, s)]
-        if missing:
-            raise StaleExtensionError(
-                f"the module loaded for tessera_nvfp4.cu from {getattr(mod, '__file__', '?')} is "
-                f"missing {missing}; every required symbol is {list(_SYMBOLS)}. Clear its build "
-                "directory (or set a fresh TESSERA_EXT_DIR) and restart.")
-        if mod.tessera_nvfp4_abi_schema() != TESSERA_NVFP4_ABI_SCHEMA:
-            raise StaleExtensionError(
-                f"the module loaded for tessera_nvfp4.cu reports ABI schema "
-                f"{mod.tessera_nvfp4_abi_schema()}, this build needs {TESSERA_NVFP4_ABI_SCHEMA}; "
-                "clear its build directory and restart.")
-        mod.__tessera_jit_identity__ = identity
-        mod.__tessera_jit_platform__ = token
-        mod.__tessera_jit_abi_schema__ = TESSERA_NVFP4_ABI_SCHEMA
-        _require_probed_platform(torch, token, "tessera_nvfp4.cu", build_dir)
-        _ext = mod
-    except StaleExtensionError as exc:
-        print(f"[tessera-serving] ERROR: incompatible NVFP4 decode extension -- {exc}",
-              file=sys.stderr, flush=True)
-        _ext = None
-    except backend_module.PlatformMismatchError as exc:
-        print(f"[tessera-serving] ERROR: NVFP4 decode extension not for this device -- {exc}",
-              file=sys.stderr, flush=True)
-        _ext = None
-    except IncompleteInstallError as exc:
-        print(f"[tessera-serving] ERROR: broken tessera install -- {exc}", file=sys.stderr, flush=True)
-        _ext = None
-    except Exception as exc:  # noqa: BLE001 -- the probe itself is soft
-        found = backend_module.toolchain_report()
-        print(f"[tessera-serving] WARNING: NVFP4 decode extension unavailable "
-              f"({type(exc).__name__}: {exc}). Toolchain found: "
-              f"{found['backend']} compiler={found['compiler']} "
-              f"ninja={found['ninja']}. To build it: {_NVCC_HINT}.",
-              file=sys.stderr, flush=True)
-        _ext = None
-    finally:
-        _tried = True
-    return _ext

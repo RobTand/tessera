@@ -205,3 +205,361 @@ def test_a_compiled_forward_can_emit_without_killing_the_serve(tracing):
     _emit(layer, shape="M1:N1024:K2048")
     assert [e["launches"] for e in trace.snapshot()["entries"]] == [1], \
         "eager counting after a compiled capture is unchanged"
+
+
+# --- tessera#509: per-module identity beside the counts ---------------------
+
+def _by_contract(entries):
+    return {e["contract"]: e for e in entries}
+
+
+def test_each_entry_names_the_modules_it_counted(tracing):
+    """The count and the names are one fact, so both must be readable."""
+    trace, _path = tracing
+    _emit(_Layer("model.layers.0.mlp.down_proj"))
+    _emit(_Layer("model.layers.1.mlp.down_proj"))
+    entries = trace.snapshot()["entries"]
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry["launches"] == 2
+    assert entry["module_names"] == ["model.layers.0.mlp.down_proj",
+                                     "model.layers.1.mlp.down_proj"]
+    assert entry["modules"] == len(entry["module_names"]) == 2
+    assert entry["dispatches_without_prefix"] == 0
+
+
+def test_the_routed_builder_names_its_layer_and_two_routed_layers_stay_two(tracing):
+    """THE ROUTED-LANE REGRESSION, from the first two-rank serve.
+
+    vLLM's fused MoE takes ``prefix`` as a constructor argument and stores no
+    attribute, so the routed layer reached ``emit_route`` with no ``prefix``
+    and every routed dispatch was counted UNNAMED -- a missing module identity.
+    In the traced fixture the two routed layers happened to hold DIFFERENT
+    policies (FP8 on layer 3, BF16 on layer 4) and so landed in different
+    entries by accident; two modules of the SAME policy and shape would not,
+    because the entry key is policy+shape+symbol+decoder+contract.  The builder
+    binds the name it was given, so two routed layers of one policy are two
+    named modules, and their swap moves names rather than leaving a histogram.
+    """
+    from tessera.serving import moe_route
+
+    l3 = _Layer(None)      # vLLM's fused MoE: no prefix attribute value at all
+    l4 = _Layer(None)
+    assert moe_route._bind_module_prefix(l3, "language_model.model.layers.3.mlp.experts")
+    assert moe_route._bind_module_prefix(l4, "language_model.model.layers.4.mlp.experts")
+
+    trace, _path = tracing
+    _emit(l3, kind="moe", policy="TESSERA_FP8:resident", symbol="native", decoder="d")
+    _emit(l4, kind="moe", policy="TESSERA_FP8:resident", symbol="native", decoder="d")
+    entry = trace.snapshot()["entries"][0]
+    assert entry["module_names"] == ["language_model.model.layers.3.mlp.experts",
+                                     "language_model.model.layers.4.mlp.experts"]
+    assert entry["unnamed_modules"] == 0 and entry["dispatches_without_prefix"] == 0
+    assert entry["modules"] == 2
+
+
+def test_binding_a_prefix_never_overwrites_a_real_one_or_invents_one():
+    """Only a layer with no name of its own is named; ours is never merged
+    with vLLM's, and an empty/foreign name is left exactly as found."""
+    from tessera.serving import moe_route
+
+    theirs = _Layer("model.layers.7.mlp.experts")            # a legit vLLM fact
+    assert not moe_route._bind_module_prefix(theirs, "language_model.model.layers.3.mlp.experts")
+    assert theirs.prefix == "model.layers.7.mlp.experts"
+
+    blank = _Layer("")
+    assert moe_route._bind_module_prefix(blank, "model.layers.3.mlp.experts")
+    assert blank.prefix == "model.layers.3.mlp.experts"
+
+    # a builder prefix that is not a usable name binds nothing (the collector
+    # would treat it as unnamed anyway -- say so here rather than pretend).
+    for bad in ("", None, 7):
+        layer = _Layer(None)
+        assert not moe_route._bind_module_prefix(layer, bad)
+        assert getattr(layer, "prefix", None) is None
+
+
+def test_a_repeated_prefix_counts_once_but_launches_every_time(tracing):
+    trace, _path = tracing
+    layer = _Layer("model.layers.0.mlp.down_proj")
+    _emit(layer)
+    _emit(layer)
+    entry = trace.snapshot()["entries"][0]
+    assert entry["launches"] == 2
+    assert entry["module_names"] == ["model.layers.0.mlp.down_proj"]
+    assert entry["modules"] == 1
+
+
+def test_swapped_contracts_leave_the_histogram_identical_and_move_the_names(tmp_path):
+    """THE NEGATIVE REGRESSION for #509.
+
+    Two modules, two contracts, one dispatch each.  Their swap leaves the
+    histogram (contract -> launches) byte-identical -- which is exactly how
+    this defect hid -- while the per-entry module lists swap with them.  A
+    consumer that can only read counts cannot pass this test; that is the
+    point of the change.
+    """
+    a = _Layer("model.layers.0.mlp.experts.0.gate_proj")
+    b = _Layer("model.layers.0.mlp.experts.0.up_proj")
+
+    def histogram(entries):
+        return sorted((e["contract"], e["launches"]) for e in entries)
+
+    def named(entries):
+        return {e["contract"]: e["module_names"] for e in entries}
+
+    # Two independent runs, because the swap is a property of a whole serve
+    # and mutating one trace in place would be the test reaching into the
+    # object it is measuring.  ``start_route_trace`` is the public install.
+    try:
+        first = telemetry.start_route_trace(tmp_path / "first.json")
+        _emit(a, contract="e2m1_group16_ue4m3_static")
+        _emit(b, contract="fp8_per_token_dynamic")
+        before_histogram = histogram(first.snapshot()["entries"])
+        before_named = named(first.snapshot()["entries"])
+
+        second = telemetry.start_route_trace(tmp_path / "second.json")
+        _emit(a, contract="fp8_per_token_dynamic")
+        _emit(b, contract="e2m1_group16_ue4m3_static")
+        after_histogram = histogram(second.snapshot()["entries"])
+        after_named = named(second.snapshot()["entries"])
+    finally:
+        telemetry.stop_route_trace()
+
+    assert before_histogram == after_histogram, \
+        "the fixture must not change the histogram, or it tests nothing"
+    assert before_named != after_named, \
+        "a swapped contract must move a module name between entries"
+    assert (before_named["e2m1_group16_ue4m3_static"]
+            == ["model.layers.0.mlp.experts.0.gate_proj"])
+    assert (after_named["e2m1_group16_ue4m3_static"]
+            == ["model.layers.0.mlp.experts.0.up_proj"])
+
+
+def test_unnamed_modules_keep_their_count_and_never_get_a_name(tracing):
+    """The backwards-compat regression root caught in be9d9c2.
+
+    Pre-#509 ``modules`` was ``len(set(layer.prefix or hex(id(layer))))``: two
+    DISTINCT unnamed objects counted as two.  Collapsing them into one named
+    bucket would have made two unknown modules read as one -- a semantic change
+    dressed as an additive one.  So the private object identity is kept for the
+    COUNT only, the names list stays real prefixes only, and a consumer can
+    tell complete identity (``unnamed_modules == 0``) from partial.
+    """
+    trace, _path = tracing
+    first, second = _Layer(None), _Layer(None)
+    _emit(first)
+    _emit(first)
+    _emit(second)
+    entry = trace.snapshot()["entries"][0]
+    assert entry["modules"] == 2, "two unnamed modules must still count as two"
+    assert entry["unnamed_modules"] == 2
+    assert entry["dispatches_without_prefix"] == 3
+    assert entry["module_names"] == []
+    assert not any(name.startswith("0x") or name == "<unprefixed>"
+                   for name in entry["module_names"]), \
+        "an object id and a placeholder are both non-identities"
+
+
+def test_a_prefix_that_is_not_a_usable_string_is_unnamed(tracing):
+    """No mixed-type sort, and no invented name for a broken prefix."""
+    trace, _path = tracing
+    # Held in a list, as real layers are: the private id set counts distinct
+    # LIVE objects, and two temporaries in a loop can share a freed address
+    # (the documented legacy limitation, not something this test should pin).
+    layers = [_Layer(bad) for bad in (None, "", 17, ["model.layers.0"])]
+    for layer in layers:
+        _emit(layer)
+    entry = trace.snapshot()["entries"][0]
+    assert entry["module_names"] == []
+    assert entry["unnamed_modules"] == 4
+    assert entry["modules"] == 4
+
+
+def test_modules_is_always_names_plus_unnamed(tracing):
+    trace, _path = tracing
+    _emit(_Layer("model.layers.0.mlp.down_proj"))
+    _emit(_Layer("model.layers.1.mlp.down_proj"))
+    _emit(_Layer(None))
+    entry = trace.snapshot()["entries"][0]
+    assert entry["modules"] == len(entry["module_names"]) + entry["unnamed_modules"]
+    assert entry["module_names"] == ["model.layers.0.mlp.down_proj",
+                                     "model.layers.1.mlp.down_proj"]
+    assert entry["unnamed_modules"] == 1
+
+
+def test_module_names_are_sorted_and_independent_of_arrival_order(tracing):
+    trace, _path = tracing
+    for prefix in ("z.module", "a.module", "m.module"):
+        _emit(_Layer(prefix))
+    names = trace.snapshot()["entries"][0]["module_names"]
+    assert names == sorted(names) == ["a.module", "m.module", "z.module"]
+
+
+def test_the_header_states_its_own_rank_world_and_platform(tracing, monkeypatch):
+    """Uninitialized distributed state is reported as absent, never as rank 0."""
+    trace, _path = tracing
+    snapshot = trace.snapshot()
+    # Equality against the literal, not the constant: a consumer supports the
+    # versions it was written against, so bumping the version must make a
+    # reader revisit this instead of inheriting v1 semantics silently.
+    assert snapshot["identity_version"] == 1 == telemetry.IDENTITY_VERSION
+    assert snapshot["rank"] is None and snapshot["world_size"] is None
+    assert snapshot["rank_source"] == "unavailable"
+    # The platform token is the SAME value the route records carry, including
+    # "" for a process that never latched one (here: no CUDA, no token).  An
+    # empty token is honest; inventing a platform would not be.
+    assert isinstance(snapshot["platform"], str)
+
+    import torch.distributed as dist
+    monkeypatch.setattr(dist, "is_available", lambda: True)
+    monkeypatch.setattr(dist, "is_initialized", lambda: True)
+    monkeypatch.setattr(dist, "get_rank", lambda: 1)
+    monkeypatch.setattr(dist, "get_world_size", lambda: 2)
+    snapshot = trace.snapshot()
+    assert (snapshot["rank"], snapshot["world_size"]) == (1, 2)
+    assert snapshot["rank_source"] == "torch.distributed"
+    assert snapshot["rank_conflict"] is None
+
+
+def _fake_dist(monkeypatch, rank, world):
+    import torch.distributed as dist
+    monkeypatch.setattr(dist, "is_available", lambda: True)
+    monkeypatch.setattr(dist, "is_initialized", lambda: True)
+    monkeypatch.setattr(dist, "get_rank", lambda: rank)
+    monkeypatch.setattr(dist, "get_world_size", lambda: world)
+
+
+def test_the_observed_rank_survives_destroy_process_group(tracing, monkeypatch):
+    """The atexit flush runs AFTER teardown; it must not null the header.
+
+    Regression: reading the rank at every flush meant
+    ``destroy_process_group()`` turned a correctly-bound trace into an
+    anonymous one on the very write that makes it durable.
+    """
+    trace, _path = tracing
+    _fake_dist(monkeypatch, 1, 2)
+    _emit(_Layer("model.layers.0.mlp.down_proj"))     # so the flush writes
+    assert (trace.snapshot()["rank"], trace.snapshot()["world_size"]) == (1, 2)
+
+    import torch.distributed as dist
+    monkeypatch.setattr(dist, "is_initialized", lambda: False)   # destroyed
+    trace.flush()
+    payload = json.loads(_path.read_text())
+    assert (payload["rank"], payload["world_size"]) == (1, 2)
+    assert payload["rank_source"] == "torch.distributed"
+    assert payload["rank_conflict"] is None
+
+
+def test_a_later_conflicting_identity_is_reported_not_adopted(tracing, monkeypatch):
+    trace, _path = tracing
+    _fake_dist(monkeypatch, 1, 2)
+    trace.snapshot()
+    _fake_dist(monkeypatch, 0, 2)
+    snapshot = trace.snapshot()
+    assert (snapshot["rank"], snapshot["world_size"]) == (1, 2), \
+        "the counts belong to the identity they were recorded under"
+    assert snapshot["rank_conflict"] == {"rank": 0, "world_size": 2,
+                                        "source": "torch.distributed"}
+
+
+def test_a_served_dispatch_does_not_probe_the_rank(tracing, monkeypatch):
+    """The identity is read at snapshot time, never on the counting path.
+
+    200 dispatches in a burst must not cost 200 probes.  The flusher thread
+    ticks at one hertz, so one probe arriving from it during the burst is the
+    instrument working, not a per-dispatch query.
+    """
+    trace, _path = tracing
+    probes = []
+    real = telemetry._process_rank
+    monkeypatch.setattr(
+        telemetry, "_process_rank",
+        lambda: (probes.append(1), real())[1])
+    for _ in range(200):
+        _emit(_Layer("model.layers.0.mlp.down_proj"))
+    assert len(probes) <= 1, f"200 dispatches caused {len(probes)} rank probes"
+
+
+def test_starting_a_trace_never_probes_the_device(tmp_path, monkeypatch):
+    """The header READS the latched platform; a trace never probes hardware.
+
+    ``start_route_trace`` runs at PLUGIN IMPORT -- in the API-server process,
+    before vLLM forks the engine core -- and ``flush`` runs again from atexit.
+    A device probe on either path would initialise CUDA in the process that
+    must not have it, or freeze ``""`` before the engine core could name its
+    device.  The probe belongs to model build (``lane.build_tessera_method``),
+    eagerly; the header only reads the result.
+    """
+    from tessera.serving import backend
+
+    probes = []
+
+    def boom(*args, **kwargs):
+        probes.append(1)
+        raise AssertionError("the route trace probed this process's device")
+
+    monkeypatch.setattr(telemetry, "_PLATFORM", None)
+    monkeypatch.setattr(backend, "platform_of_this_process", boom)
+
+    path = tmp_path / "trace" / "startup.json"
+    trace = telemetry.start_route_trace(path)
+    try:
+        assert probes == [], "starting a trace probed the device"
+        assert trace.snapshot()["platform"] == ""
+        assert json.loads(path.read_text())["platform"] == ""
+
+        # What model build does: latch the real token.  The header follows it,
+        # because it reads the latch instead of holding its own answer.
+        monkeypatch.setattr(telemetry, "_PLATFORM", "sm_121")
+        assert trace.snapshot()["platform"] == "sm_121"
+    finally:
+        telemetry.stop_route_trace()
+
+
+def test_the_trace_never_keeps_an_unnamed_module_alive(tracing):
+    """Telemetry must not retain a module -- and through it, GPU weights.
+
+    The private id is a number, not a reference.  The cost is documented
+    (non-overlapping lifetimes can share a freed address); the benefit is that
+    a trace cannot pin a model after it is unloaded.
+    """
+    import gc
+    import weakref
+
+    trace, _path = tracing
+    layer = _Layer(None)
+    _emit(layer)
+    ref = weakref.ref(layer)
+    del layer
+    gc.collect()
+    assert ref() is None, "the trace kept an unnamed module alive"
+    entry = trace.snapshot()["entries"][0]
+    assert entry["unnamed_modules"] == 1 and entry["module_names"] == []
+
+
+def test_a_legacy_file_stays_histogram_only_and_is_never_upgraded(tracing):
+    """A pre-#509 file still reads as what it always was: a histogram.
+
+    It carries no ``module_names`` and no header identity, and nothing here
+    invents them for it -- a legacy trace must stay honestly
+    histogram-only rather than be upgraded into an identity claim it never
+    made.
+    """
+    trace, _path = tracing
+    _emit(_Layer("model.layers.0.mlp.down_proj"))
+    payload = trace.snapshot()
+    legacy_fields = {"policy", "shape", "symbol", "decoder", "contract",
+                     "kind", "launches", "modules"}
+    entry = payload["entries"][0]
+    assert legacy_fields <= set(entry), \
+        "every field a pre-#509 reader reads must survive unchanged"
+    assert entry["launches"] == 1 and entry["policy"] == "TESSERA_FP8:streamed"
+    # What a legacy FILE contains, reconstructed from the fields it had: the
+    # new metadata is absent, and nothing in this change supplies it on read.
+    legacy_payload = {"schema": payload["schema"], "pid": 1,
+                      "entries": [{k: entry[k] for k in legacy_fields}]}
+    assert "identity_version" not in legacy_payload
+    assert "rank" not in legacy_payload and "platform" not in legacy_payload
+    assert "module_names" not in legacy_payload["entries"][0]
+    assert legacy_payload["entries"][0]["modules"] == 1

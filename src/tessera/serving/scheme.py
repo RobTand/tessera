@@ -91,6 +91,14 @@ __all__ = [
     "ROUTE_LAUNCHES",
     "LAUNCH_FIELDS",
     "WINDOW_GEMV_SYMBOL",
+    "WINDOW_GEMM_SYMBOL",
+    "A4_DENSE_GEMM_SYMBOL",
+    "A4_GROUPED_GEMM_SYMBOL",
+    "WINDOW_MOE_COMPACT_SYMBOL",
+    "EXPERIMENTAL_LAUNCHES",
+    "experimental_launch_pairs",
+    "parse_compact_blob_for_scheme",
+    "parse_compact_tessera_expert_blob",
     "MOE_GEMM_SYMBOL",
     "moe_census_symbol_base",
     "eager_regime_problem",
@@ -229,7 +237,7 @@ MOE_BUILDERS: dict[str, tuple[str, str]] = {
 #:
 #: ``body``/``span`` name the trellis body the route's decoder reads, and they
 #: are the same fact its own module already refuses by name at load
-#: (``ops.prepare_tessera_module`` for NVFP4, ``fp8_route`` for FP8,
+#: (``nvfp4_route`` for NVFP4, ``fp8_route`` for FP8,
 #: ``bf16_route`` for BF16).  They are written here because the PRODUCER needs
 #: them too: ``refuse_unserveable_wire`` is the export-time half of the same
 #: rule, and the exporter used to carry its own copy in an if/elif -- a third
@@ -406,6 +414,27 @@ def eager_regime_problem(shape: Any, regime: Any) -> "str | None":
 #: ``executes`` entry without importing the kernel -- the same reason
 #: ``gemm_symbol`` is a ``ROUTES`` field and not a literal in the route module.
 WINDOW_GEMV_SYMBOL = "tessera_window_gemv::gemv"
+#: The dense native window GEMM: the functional custom op the compact
+#: loader's ``WindowGemvUnit`` is served through (``tessera.window_gemm``
+#: behind ``serving.native_window``).  Same spelling rule as the GEMV's:
+#: the census compares the route record against this table.
+WINDOW_GEMM_SYMBOL = "tessera::window_gemm_dense"
+
+#: The native lanes' own spellings, in the module that executes them, so a
+#: route owner reports the same string the code does.  All four pairs below
+#: are EXPERIMENTAL: the dispatch can make these launches and the routes'
+#: census expectation must know them, while no ``lane_eligibility`` cell
+#: attests any of them (``EXPERIMENTAL_LAUNCHES``).  A pair leaves that set
+#: when a receipt earns it a cell.
+#: A4 (E2M1/span-2) dense: ``tessera.kernel_a4.a4_span2_gemm``.
+A4_DENSE_GEMM_SYMBOL = "tessera.kernel_a4.a4_span2_gemm"
+#: A4 routed experts: ``tessera.kernel_a4.a4_span2_grouped_gemm``.
+A4_GROUPED_GEMM_SYMBOL = "tessera.kernel_a4.a4_span2_grouped_gemm"
+#: Window routed experts: ``tessera.native_window_moe``'s adapter call, the
+#: compact FP8 MoE lane (and its BF16 research sibling).  The folded BF16
+#: arithmetic is a distinct numerical variant carried on the bundle and is
+#: never folded into the dense row-scale-epilogue contract.
+WINDOW_MOE_COMPACT_SYMBOL = "tessera.native_window_moe.NativeWindowMoE.__call__"
 #: The entry point the expert route calls. Its recorded backend suffix is
 #: selected by vLLM at runtime and remains in the census receipt.
 MOE_GEMM_SYMBOL = "vllm.fused_moe.modular_kernel"
@@ -417,6 +446,17 @@ _DECODER_NATIVE_SPAN2 = "native_span2"
 _DECODER_TORCH_WINDOW = "torch_window"
 _DECODER_WINDOW_GEMV = "window_gemv"
 _DECODER_TORCH_STOCK = "torch_materialize_stock"
+_DECODER_NATIVE_WINDOW_GEMM = "native_window_gemm"
+#: The native A4 lanes: the span-2 GEMM decodes the packed planes in-kernel
+#: (dense) and the grouped form does it per selected expert.  Distinct from
+#: ``native_span2`` (the load-time span-2 DECODE) and from ``torch_window``.
+_DECODER_NATIVE_SPAN2_GEMM = "native_span2_gemm"
+_DECODER_NATIVE_SPAN2_GROUPED = "native_span2_grouped"
+#: The compact window MoE adapter: routed experts served from the loader's
+#: packed ``WindowGemvUnit``s with no decoded tile; FP8 keeps the per-token
+#: native A quant, BF16 keeps the row-scale epilogue (or its distinct folded
+#: variant on the bundle).
+_DECODER_NATIVE_WINDOW_MOE_COMPACT = "native_window_moe_compact"
 
 _ALL_REGIMES = ("batch", "decode")
 _ALL_MODES = ("resident", "streamed")
@@ -425,6 +465,25 @@ _ALL_MODES = ("resident", "streamed")
 #: import graph flat; ``test_the_launch_tables_lane_is_the_published_extension``
 #: ties it to ``ext.WINDOW_GEMV_MODULE_NAME``.
 _WINDOW_GEMV_LANE = "tessera_window_gemv"
+
+
+def _dense_native_window_launch() -> tuple[dict, ...]:
+    """The compact loader's native window GEMM, one launch for both routes.
+
+    ``serving.native_window`` prepares each dense role from the verified wire
+    (``tessera.compact_prep.prepare_window_compact``) and runs the packed
+    bitstream GEMM through one functional custom op; it serves every M in both
+    residencies and needs no extension lane, so it carries no ``lane`` and is
+    not a ``when_lane_absent`` fallback.  A BF16 unit is the value family and
+    an E4M3 unit is the fp8 family; the two routes differ in their epilogue
+    only, and this launch is the dense half both publish.
+    """
+    return (
+        {"symbol": WINDOW_GEMM_SYMBOL, "decoder": _DECODER_NATIVE_WINDOW_GEMM,
+         "regimes": _ALL_REGIMES, "modes": _ALL_MODES, "lane": None,
+         "structures": (STRUCTURE_DENSE,),
+         "when_lane_absent": False},
+    )
 
 
 def _window_launches(gemm_symbol: str) -> tuple[dict, ...]:
@@ -482,6 +541,14 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
          "regimes": _ALL_REGIMES, "modes": _ALL_MODES, "lane": None,
          "structures": (STRUCTURE_DENSE,),
          "when_lane_absent": True},
+        # The native A4 dense GEMM (experimental): the compact loader's packed
+        # span-2 planes decoded in-kernel by tessera.kernel_a4, no materialised
+        # stock tile.  No lane and no fallback flag -- it is a launch, and
+        # EXPERIMENTAL_LAUNCHES keeps it out of the contract validator's view.
+        {"symbol": A4_DENSE_GEMM_SYMBOL, "decoder": _DECODER_NATIVE_SPAN2_GEMM,
+         "regimes": _ALL_REGIMES, "modes": _ALL_MODES, "lane": None,
+         "structures": (STRUCTURE_DENSE,),
+         "when_lane_absent": False},
         # The expert stack (tessera#492): decoded ONCE at load through the
         # stock materialiser into the modelopt NVFP4 parameter set, then
         # every forward, at any M, hands the runtime's modular fused-MoE
@@ -490,19 +557,51 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
         {"symbol": MOE_GEMM_SYMBOL, "decoder": _DECODER_TORCH_STOCK,
          "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": None,
          "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": True},
+        # The native A4 routed GEMM (experimental, resident like every expert
+        # stack): the grouped form over the compact loader's planes.
+        {"symbol": A4_GROUPED_GEMM_SYMBOL, "decoder": _DECODER_NATIVE_SPAN2_GROUPED,
+         "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": None,
+         "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": False},
     ),
-    TESSERA_FP8: _window_launches(ROUTES[TESSERA_FP8]["gemm_symbol"]) + (
+    TESSERA_FP8: _dense_native_window_launch() + _window_launches(
+        ROUTES[TESSERA_FP8]["gemm_symbol"]) + (
         {"symbol": MOE_GEMM_SYMBOL, "decoder": _DECODER_TORCH_STOCK,
          "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": None,
          "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": True},
+        # The compact window MoE adapter (experimental): routed experts served
+        # from the loader's packed units, no decoded tile.  The folded BF16
+        # arithmetic is a bundle property and a distinct numerical variant;
+        # this launch relabels neither contract.
+        {"symbol": WINDOW_MOE_COMPACT_SYMBOL, "decoder": _DECODER_NATIVE_WINDOW_MOE_COMPACT,
+         "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": None,
+         "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": False},
     ),
-    TESSERA_BF16: _window_launches(ROUTES[TESSERA_BF16]["gemm_symbol"]),
+    TESSERA_BF16: _dense_native_window_launch() + _window_launches(
+        ROUTES[TESSERA_BF16]["gemm_symbol"]),
 }
+
+
+#: Launches the DISPATCH can make that the packaged runtime contract does not
+#: attest.  The dense native window GEMM is experimental: it serves, and the
+#: routes' census expectation must know it, but no ``lane_eligibility`` cell
+#: names it and no contract version was promoted for it.  ``route_launches``
+#: therefore leaves these out by default -- the cell validator and every
+#: contract reader see exactly the attested dispatch -- and the routes'
+#: ``census_expected`` opts in with ``include_experimental=True`` so a served
+#: record is compared against what the build can really launch.  A pair leaves
+#: this set when a receipt earns it a cell.
+EXPERIMENTAL_LAUNCHES = frozenset({
+    (WINDOW_GEMM_SYMBOL, _DECODER_NATIVE_WINDOW_GEMM),
+    (A4_DENSE_GEMM_SYMBOL, _DECODER_NATIVE_SPAN2_GEMM),
+    (A4_GROUPED_GEMM_SYMBOL, _DECODER_NATIVE_SPAN2_GROUPED),
+    (WINDOW_MOE_COMPACT_SYMBOL, _DECODER_NATIVE_WINDOW_MOE_COMPACT),
+})
 
 
 def route_launches(route: str, *, structure: str = STRUCTURE_DENSE,
                    regime: str | None = None, mode: str | None = None,
-                   lanes: "tuple[str, ...] | None" = None) -> tuple[dict, ...]:
+                   lanes: "tuple[str, ...] | None" = None,
+                   include_experimental: bool = False) -> tuple[dict, ...]:
     """The launches ``route`` makes for a structure, narrowed by its conditions.
 
     ``structure`` defaults to dense for existing Linear callers. Other axes
@@ -534,6 +633,9 @@ def route_launches(route: str, *, structure: str = STRUCTURE_DENSE,
             f"{structure!r} is not a structure this package serves ({list(STRUCTURES)})")
     kept = []
     for launch in ROUTE_LAUNCHES[route]:
+        if (not include_experimental
+                and (launch["symbol"], launch["decoder"]) in EXPERIMENTAL_LAUNCHES):
+            continue
         if structure not in launch["structures"]:
             continue
         if regime is not None and regime not in launch["regimes"]:
@@ -557,6 +659,19 @@ def route_launches(route: str, *, structure: str = STRUCTURE_DENSE,
 def launch_pairs(route: str, **narrow) -> set:
     """``{(symbol, decoder)}`` for :func:`route_launches` -- the census's shape."""
     return {(l["symbol"], l["decoder"]) for l in route_launches(route, **narrow)}
+
+
+def experimental_launch_pairs(route: str, **narrow) -> set:
+    """The pairs a route can report that no contract cell attests.
+
+    How a native-lane owner reports its actual candidate: add these to the
+    route's ``census_expected`` (or call ``launch_pairs(...,
+    include_experimental=True)`` there) and a census accepts the candidate
+    pair, while ``launch_pairs``' default view keeps the cell validator on the
+    attested dispatch.  Empty for a route with no experimental lane.
+    """
+    return (launch_pairs(route, include_experimental=True, **narrow)
+            - launch_pairs(route, **narrow))
 
 
 def moe_census_symbol_base(symbol: str) -> str:
@@ -1456,6 +1571,71 @@ def validate_tessera_moe_scheme(scheme: Mapping, target: str) -> dict:
     }
 
 
+def _declared_members(blob: bytes, declared: Mapping, target: str,
+                      expect_bytes: "int | None" = None):
+    """The container's members against the declared role list, framing checked.
+
+    Shared by the materialising and compact readers: the exact-length
+    ``wire_bytes`` check (dense side), the fused framing, and the role list
+    comparison are one question asked before either reader touches a unit.
+    """
+    from tessera import fused
+
+    if expect_bytes is not None and len(blob) != expect_bytes:
+        raise ValueError(
+            f"tessera target {target!r}: scheme declares wire_bytes={expect_bytes} but "
+            f"the loaded blob is {len(blob)} bytes")
+    members = fused.parse_fused(bytes(blob))
+    if [(m.name, m.rows) for m in members] != declared["roles"]:
+        raise ValueError(
+            f"tessera target {target!r}: the container holds roles "
+            f"{[(m.name, m.rows) for m in members]} but the scheme declares {declared['roles']}")
+    return members
+
+
+def _per_weight_q256(root: int, arity: int, target: str, name: str) -> int:
+    """The sidecar rung, from the manifest's per-CODE root rate.
+
+    The manifest's root rate is per CODE and a code covers ``arity`` weights
+    (``export.encode_linear_planes`` writes ``q256 * grid.arity``); the scheme
+    speaks per weight, as the exporter's CLI and ``wire_recipe`` do.  ONE home
+    for the divisibility refusal the materialising reader and the compact one
+    both apply.
+    """
+    if root % int(arity):
+        raise ValueError(
+            f"tessera target {target!r} role {name!r}: root_q256={root} is not a whole "
+            f"per-weight rate over an arity-{int(arity)} grid")
+    return root // int(arity)
+
+
+def _role_expected(declared: Mapping, member, member_q256: int) -> dict:
+    """What the sidecar promises THIS role -- its own rung, not the module's."""
+    return {"grid": declared["grid"], "body": declared["body"], "plane": declared["plane"],
+            "q256": int(member_q256), "rows": member.rows,
+            "columns": declared["columns"],
+            "span": ROUTES[declared["family"]]["span"]}
+
+
+def _require_role_facts(actual: Mapping, expected: Mapping, target: str, name: str) -> None:
+    """Refuse a wire whose byte facts are not the sidecar's declaration.
+
+    ONE home for the comparison: the materialising reader builds ``actual``
+    off a ``ParsedUnit`` and the compact reader off ``ParsedMetadata``
+    (``compact_prep.CompactWire.role_facts``), and both come through here, so
+    the two can never describe one wire differently.  The sidecar carries no
+    span field, so there is nothing to compare the wire's span against except
+    the span the route itself reads: a span mismatch was refused nowhere until
+    this comparison named it (neither ``validate_tessera_scheme`` nor the
+    prepare gates checked it).
+    """
+    if actual != expected:
+        raise ValueError(
+            f"tessera target {target!r} role {name!r}: the wire is {actual} but the "
+            f"sidecar scheme declares {expected}; refusing rather than serving bytes no "
+            "receipt describes")
+
+
 def _parse_container(blob: bytes, declared: Mapping, target: str, device="cpu",
                      expect_bytes: "int | None" = None) -> list:
     """One ``tessera.fused`` container against one normalised group.
@@ -1468,52 +1648,23 @@ def _parse_container(blob: bytes, declared: Mapping, target: str, device="cpu",
     at the caller, so it passes ``None`` rather than a number it would have to
     invent.
     """
-    from tessera import fused, unit_artifact
+    from tessera import unit_artifact
 
-    if expect_bytes is not None and len(blob) != expect_bytes:
-        raise ValueError(
-            f"tessera target {target!r}: scheme declares wire_bytes={expect_bytes} but "
-            f"the loaded blob is {len(blob)} bytes")
-    members = fused.parse_fused(bytes(blob))
-    if [(m.name, m.rows) for m in members] != declared["roles"]:
-        raise ValueError(
-            f"tessera target {target!r}: the container holds roles "
-            f"{[(m.name, m.rows) for m in members]} but the scheme declares {declared['roles']}")
+    members = _declared_members(blob, declared, target, expect_bytes)
     parsed = []
     for member, member_q256 in zip(members, declared["role_q256"]):
         unit = unit_artifact.parse_unit_artifact(member.blob, device=device)
         geometry = unit.manifest.geometry
-        # The manifest's root rate is per CODE; a code covers ``arity`` weights
-        # (``export.encode_linear_planes`` writes ``q256 * grid.arity``).  The
-        # scheme speaks per weight, as the exporter's CLI and ``wire_recipe`` do.
-        root = int(unit.manifest.branch.root_q256)
-        if root % unit.grid.arity:
-            raise ValueError(
-                f"tessera target {target!r} role {member.name!r}: root_q256={root} is not a whole "
-                f"per-weight rate over an arity-{unit.grid.arity} grid")
         actual = {
             "grid": unit.grid.name, "body": unit.body.name,
-            "plane": unit.manifest.scale_plane.kind.name, "q256": root // unit.grid.arity,
+            "plane": unit.manifest.scale_plane.kind.name,
+            "q256": _per_weight_q256(int(unit.manifest.branch.root_q256),
+                                     unit.grid.arity, target, member.name),
             "rows": geometry.rows, "columns": geometry.columns,
-            # The sidecar carries no span field, so there is nothing to compare
-            # the wire's span against except the span the route itself reads:
-            # a span mismatch was refused nowhere until this comparison named
-            # it (neither this function nor validate_tessera_scheme checked
-            # it, and the prepare_* gates below did not either).
             "span": int(unit.manifest.span),
         }
-        # THIS ROLE's rung, not the module's: the sidecar carries one per role
-        # (``FUSED_MODULE_FIELDS``), so the member the reader parsed is compared
-        # against the rate the sidecar promised for THAT member.
-        expected = {"grid": declared["grid"], "body": declared["body"], "plane": declared["plane"],
-                    "q256": int(member_q256), "rows": member.rows,
-                    "columns": declared["columns"],
-                    "span": ROUTES[declared["family"]]["span"]}
-        if actual != expected:
-            raise ValueError(
-                f"tessera target {target!r} role {member.name!r}: the wire is {actual} but the "
-                f"sidecar scheme declares {expected}; refusing rather than serving bytes no "
-                "receipt describes")
+        _require_role_facts(actual, _role_expected(declared, member, member_q256),
+                            target, member.name)
         parsed.append((member.name, unit))
     return parsed
 
@@ -1523,6 +1674,78 @@ def parse_tessera_blob_for_scheme(blob: bytes, scheme: Mapping, target: str, dev
     scheme declared.  Returns ``[(role, ParsedUnit)]`` in stacking order."""
     declared = validate_tessera_scheme(scheme, target)
     return _parse_container(blob, declared, target, device, expect_bytes=declared["wire_bytes"])
+
+
+def _parse_compact_container(blob: bytes, declared: Mapping, target: str,
+                             device="cuda", expect_bytes: "int | None" = None,
+                             memo: "dict | None" = None) -> list:
+    """The compact reader's half of ``_parse_container``: same questions, no
+    expanded plane.
+
+    Same container framing and role list (``_declared_members``), same
+    per-member rung/geometry/body/grid comparison built through
+    ``_per_weight_q256`` / ``_role_expected`` / ``_require_role_facts``, and
+    the same refusals -- through ``unit_artifact.parse_unit_metadata``, so no
+    weight plane is expanded and no reference decode runs.  Returns
+    ``[(role, CompactWire)]`` in stacking order.  One home for both the dense
+    and the expert compact adapters, exactly as ``_parse_container`` is for
+    the materialising ones.
+    """
+    from tessera.compact_prep import parse_compact_wire
+
+    members = _declared_members(blob, declared, target, expect_bytes)
+    out = []
+    for member, member_q256 in zip(members, declared["role_q256"]):
+        wire = parse_compact_wire(member.blob, device=device, name=member.name,
+                                  memo=memo)
+        meta = wire.metadata
+        actual = {
+            "grid": meta.grid.name, "body": meta.body.name,
+            "plane": meta.manifest.scale_plane.kind.name,
+            "q256": _per_weight_q256(int(meta.manifest.branch.root_q256),
+                                     meta.grid.arity, target, member.name),
+            "rows": meta.rows, "columns": meta.columns,
+            "span": int(meta.span),
+        }
+        _require_role_facts(actual, _role_expected(declared, member, member_q256),
+                            target, member.name)
+        out.append((member.name, wire))
+    return out
+
+
+def parse_compact_blob_for_scheme(blob: bytes, scheme: Mapping, target: str,
+                                  device="cuda") -> list:
+    """The compact twin of ``parse_tessera_blob_for_scheme``: a module's fused
+    container, validated against the scheme it declares, with no weight plane
+    expanded and no reference decode.  ``[(role, CompactWire)]``.
+
+    (It imports ``compact_prep``, which imports torch, so it lives here as a
+    function and the module stays torch-free at import.)
+    """
+    declared = validate_tessera_scheme(scheme, target)
+    return _parse_compact_container(blob, declared, target, device,
+                                    expect_bytes=declared["wire_bytes"])
+
+
+def parse_compact_tessera_expert_blob(blob: bytes, declared_role: Mapping, target: str,
+                                      device="cpu", memo: "dict | None" = None) -> list:
+    """The compact twin of ``parse_tessera_expert_blob``, signature for signature.
+
+    ``declared_role`` is one entry of :func:`expert_role_declarations`.  The
+    length check is the group's ``wire_stride`` (an expert's blob is as long as
+    its own manifest made it) and ``fused.parse_fused`` is what refuses a blob
+    that does not END where the caller said it does -- the same two checks, in
+    the same order, with the same words as the materialising reader.  Returns
+    ``[(role, CompactWire)]``.
+    """
+    stride = int(declared_role["wire_stride"])
+    if len(blob) > stride:
+        raise ValueError(
+            f"tessera target {target!r}: the expert blob is {len(blob)} bytes, longer than the "
+            f"group's declared wire_stride={stride} -- the parameter row it was copied into "
+            "ends before the blob does, so this is truncated data rather than a shorter read")
+    return _parse_compact_container(blob, declared_role, target, device,
+                                    expect_bytes=None, memo=memo)
 
 
 def expert_role_declarations(declared_group: Mapping) -> "list[dict]":

@@ -107,6 +107,21 @@ ROOTS: dict[str, Root] = {
             "kl_tool.py and kl_estimator.py, the untracked served-KL instrument",
             opt_in=True,
         ),
+        Root(
+            "a4_export",
+            "TESSERA_A4_EXPORT_DIR",
+            "/mnt/shared/tessera-measurements/glm-canonical-census-20260908/"
+            "first-artifact-exports/a4/merged-4c384e60",
+            "the routed A4 TP2 checkpoint whose expert wires the compact loader "
+            "is held to",
+        ),
+        Root(
+            "a4_wires",
+            "TESSERA_A4_WIRE_DIR",
+            "/mnt/shared/astra-native-a4/data",
+            "the A4 span-2 wire fixtures the kernel and serving gates read "
+            "(the per-role *_wire.bin files and a4-config.json)",
+        ),
     )
 }
 
