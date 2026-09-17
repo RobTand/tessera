@@ -171,7 +171,7 @@ def test_a_rank_that_dropped_its_refusals_is_refused(tmp_path):
 
 def test_a_refusal_arm_outside_the_request_is_refused(tmp_path):
     """A rank that ran some other roster is named, not folded into the join."""
-    extra = _roster() + [_refusal("GLM_A8", "TESSERA_FP8", "unrequested_group", "family")]
+    extra = _roster() + [_refusal("TESSERA_FP8", "TESSERA_FP8", "unrequested_group", "family")]
     paths = _write(tmp_path, {"tp1": _report(1, 0, refusals=extra),
                               "tp2r0": _report(2, 0, refusals=extra),
                               "tp2r1": _report(2, 1, refusals=extra)})
@@ -196,6 +196,51 @@ def test_an_empty_fixture_family_cross_is_refused_by_name():
         cc._preflight({})
     with pytest.raises(SystemExit, match="the selection is empty"):
         cc._merged({}, ["whatever.json"], M)
+
+
+def test_a_red_refusal_in_a_later_rank_is_not_swallowed(tmp_path):
+    """Dedup keeps one entry per arm; the verdict is read from EVERY occurrence.
+
+    The join used to keep the first report's entry for an arm and read the
+    verdict off it, so a green ``rung`` refusal from rank 0 hid a red one for
+    the same arm from rank 1 and the merge stayed green.
+    """
+    key = ("TESSERA_BF16", GROUPS["TESSERA_BF16"][1][1], "rung")
+    late = _report(2, 1)
+    for entry in late["refusals"]:
+        if (entry["fixture"], entry["group"], entry["refusal"]) == key:
+            entry.update(refused=False, named_the_mismatch=False,
+                         message="accepted a wire the declaration does not match")
+    paths = _write(tmp_path, {"tp1": _report(1, 0), "tp2r0": _report(2, 0),
+                              "tp2r1": late})
+    merged = cc._merged(SELECTED, paths, M)
+    assert merged["all_refusals_passed"] is False
+    assert [failure["report"] for failure in merged["refusal_failures"]] == [paths[2]]
+    kept = [entry for entry in merged["refusals"]
+            if (entry["fixture"], entry["group"], entry["refusal"]) == key]
+    assert kept and kept[0]["refused"] is False, "the red occurrence is the one kept"
+    assert cc.main(["--merge", *paths, "--mset", "0", "--mset", "1",
+                    "--fixture", "TESSERA_FP8", "--fixture", "TESSERA_BF16"]) == 1
+
+
+def test_a_duplicate_refusal_arm_in_one_report_is_refused(tmp_path):
+    """Two verdicts for one arm are not a roster, and a set would hide them."""
+    duplicated = _roster() + [_refusal("TESSERA_FP8", "TESSERA_FP8",
+                                       GROUPS["TESSERA_FP8"][1][0], "family")]
+    paths = _write(tmp_path, {"tp1": _report(1, 0, refusals=duplicated),
+                              "tp2r0": _report(2, 0), "tp2r1": _report(2, 1)})
+    with pytest.raises(SystemExit, match="more than once"):
+        cc._merged(SELECTED, paths, M)
+
+
+def test_a_refusal_stamped_with_the_other_family_is_refused(tmp_path):
+    """A refusal of the other family's wire is not a refusal of this one."""
+    wrong = [dict(entry, family="TESSERA_BF16") if entry["fixture"] == "TESSERA_FP8"
+             else entry for entry in _roster()]
+    paths = _write(tmp_path, {"tp1": _report(1, 0, refusals=wrong),
+                              "tp2r0": _report(2, 0), "tp2r1": _report(2, 1)})
+    with pytest.raises(SystemExit, match="is stamped family"):
+        cc._merged(SELECTED, paths, M)
 
 
 def test_a_fixture_key_names_a_tree_and_the_family_names_a_route():

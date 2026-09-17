@@ -711,7 +711,11 @@ def _merged(selected, paths, m_set) -> dict:
 
     The refusal arms are held to that same shape: every rank carries one per
     selected module and label, so a rank that dropped them is named here
-    instead of quietly shrinking the roster ``all()`` then read.
+    instead of quietly shrinking the roster ``all()`` then read.  EVERY
+    OCCURRENCE is read before the join collapses the roster: dedup keeps one
+    entry per arm for the reader -- a red one, if any rank had one -- but the
+    verdict comes from all of them, because a first rank's green must not
+    stand in for a later rank's red for the same arm.
     """
     selected = _require_selected(selected, "the merge's request")
     reports = []
@@ -736,8 +740,14 @@ def _merged(selected, paths, m_set) -> dict:
                        for fixture, spec in selected.items()
                        for module in spec["modules"]
                        for label in REFUSAL_LABELS}
+    # One family per key: a refusal entry that names the other family is a
+    # refusal of a wire this request never selected, which would otherwise
+    # count as this one's.
+    family_of = {fixture: spec["family"] for fixture, spec in selected.items()}
 
     observed: dict = {}
+    failing_refusals: list = []
+    red_refusals: dict = {}
     for report, path in zip(reports, paths):
         here = {_entry_id(entry) for entry in report["arms"]}
         declared = {tuple(row) for row in report["expected_arms"]}
@@ -752,8 +762,30 @@ def _merged(selected, paths, m_set) -> dict:
             if key in observed:
                 _failure(f"arm {key} appears in more than one input report")
             observed[key] = entry
-        carried = {(entry["fixture"], entry["group"], entry["refusal"])
-                   for entry in report["refusals"]}
+        carried = set()
+        for entry in report["refusals"]:
+            key = (entry["fixture"], entry["group"], entry["refusal"])
+            if key in carried:
+                _failure(f"{path} carries the refusal arm {key} more than once; two "
+                         f"verdicts for one arm are not a roster, and a set over these "
+                         f"entries would have masked the duplicate")
+            carried.add(key)
+            if entry.get("family") != family_of.get(entry["fixture"]):
+                _failure(f"{path}: the refusal arm {key} is stamped family "
+                         f"{entry.get('family')!r}, but the fixture {entry['fixture']!r} "
+                         f"carries {family_of.get(entry['fixture'])!r}")
+            # EVERY OCCURRENCE COUNTS, and it is recorded HERE rather than read
+            # off the join below: deduplicating to one entry per arm and asking
+            # that one entry let an earlier rank's green stand in for a later
+            # rank's red for the same arm.
+            if not (entry.get("refused") and entry.get("named_the_mismatch")):
+                failing_refusals.append({
+                    "report": path, "fixture": entry["fixture"],
+                    "group": entry["group"], "refusal": entry["refusal"],
+                    "family": entry.get("family"), "refused": entry.get("refused"),
+                    "named_the_mismatch": entry.get("named_the_mismatch"),
+                    "message": entry.get("message")})
+                red_refusals.setdefault(key, dict(entry, failed_in=path))
         missing_refusals = sorted(wanted_refusals - carried)
         undeclared_refusals = sorted(carried - wanted_refusals)
         if missing_refusals or undeclared_refusals:
@@ -790,7 +822,9 @@ def _merged(selected, paths, m_set) -> dict:
             key = (entry["fixture"], entry["group"], entry["refusal"])
             if key not in seen:
                 seen.add(key)
-                refusals.append(entry)
+                # A red occurrence anywhere is the entry kept, so the roster a
+                # reader sees cannot show a green arm that failed elsewhere.
+                refusals.append(red_refusals.get(key, entry))
     # Every rank carried the whole roster, so the joined table IS that roster;
     # the verdict is read off it rather than off whatever the lists held.  This
     # mirror of the arms' own ``absent`` check names a refusal that no rank ran
@@ -828,8 +862,11 @@ def _merged(selected, paths, m_set) -> dict:
         "arms_total": len(observed), "arms_expected_total": len(wanted),
         "refusals_total": len(by_roster),
         "refusals_expected_total": len(wanted_refusals),
+        "refusal_failures": sorted(failing_refusals,
+                                   key=lambda entry: (entry["report"], entry["fixture"],
+                                                      entry["group"], entry["refusal"])),
         "all_arms_passed": all(entry.get("passed") for entry in observed.values()),
-        "all_refusals_passed": all(
+        "all_refusals_passed": not failing_refusals and all(
             by_roster[key].get("refused") and by_roster[key].get("named_the_mismatch")
             for key in sorted(wanted_refusals)),
     }
