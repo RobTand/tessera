@@ -443,8 +443,6 @@ MOE_GEMM_SYMBOL = "vllm.fused_moe.modular_kernel"
 #: ``telemetry``, which imports torch; ``tests/test_serving_contract.py`` ties
 #: every one of them to ``telemetry.DECODERS`` where torch is installed.
 _DECODER_NATIVE_SPAN2 = "native_span2"
-_DECODER_TORCH_WINDOW = "torch_window"
-_DECODER_WINDOW_GEMV = "window_gemv"
 _DECODER_TORCH_STOCK = "torch_materialize_stock"
 _DECODER_NATIVE_WINDOW_GEMM = "native_window_gemm"
 #: The native A4 lanes: the span-2 GEMM decodes the packed planes in-kernel
@@ -460,11 +458,12 @@ _DECODER_NATIVE_WINDOW_MOE_COMPACT = "native_window_moe_compact"
 
 _ALL_REGIMES = ("batch", "decode")
 _ALL_MODES = ("resident", "streamed")
-#: The extension whose ``lane`` block gates the two window launches below.
-#: Spelled here rather than imported from ``ext`` to keep this module's
-#: import graph flat; ``test_the_launch_tables_lane_is_the_published_extension``
-#: ties it to ``ext.WINDOW_GEMV_MODULE_NAME``.
-_WINDOW_GEMV_LANE = "tessera_window_gemv"
+#: No launch in this table names a lane since #538: the only launch that did
+#: was the dense window-GEMV lane's, and the dispatch that made it was retired
+#: by ``1b767a207``.  ``lane`` stays a ``LAUNCH_FIELDS`` field -- the narrowing
+#: in :func:`route_launches` is about the shape of a launch, not about which
+#: launches exist today -- and ``ext.WINDOW_GEMV_MODULE_NAME`` remains the home
+#: of the extension's name for the load path that still builds it.
 
 
 def _dense_native_window_launch() -> tuple[dict, ...]:
@@ -481,50 +480,6 @@ def _dense_native_window_launch() -> tuple[dict, ...]:
     return (
         {"symbol": WINDOW_GEMM_SYMBOL, "decoder": _DECODER_NATIVE_WINDOW_GEMM,
          "regimes": _ALL_REGIMES, "modes": _ALL_MODES, "lane": None,
-         "structures": (STRUCTURE_DENSE,),
-         "when_lane_absent": False},
-    )
-
-
-def _window_launches(gemm_symbol: str) -> tuple[dict, ...]:
-    """The three launches a WINDOW-body route makes, given its GEMM.
-
-    The FP8 and BF16 routes differ in their alphabet, their tile and their
-    GEMM; they do not differ in this shape, and writing it twice is how the
-    second one would quietly stop matching the first.
-
-    The two lane launches are separated by M through :func:`regime_of_m`, and
-    ``tests/test_serving_contract.py`` derives both ``regimes`` fields below
-    from the routes' own ``decode_is_gemv`` rather than trusting them.
-    """
-    return (
-        # The materialised tile.  ``when_lane_absent`` is the ``elif
-        # getattr(layer, "tessera_gemv", None) is None`` branch both routes
-        # take, as a value: in ``resident`` mode there is no lane to be absent
-        # from and this is simply the launch, and in ``streamed`` mode it is
-        # what runs on a unit the lane did not prepare.  M does not enter it.
-        {"symbol": gemm_symbol, "decoder": _DECODER_TORCH_WINDOW,
-         "regimes": _ALL_REGIMES, "modes": _ALL_MODES, "lane": None,
-         "structures": (STRUCTURE_DENSE,),
-         "when_lane_absent": True},
-        # The same GEMM over a tile the LANE's kernel decoded: the branch
-        # ``decode_is_gemv`` refuses.  Every forward it can run on has M > 1 --
-        # M above ``GEMV_MAX_M``, or M >= 3 on a unit with a rate-1 column,
-        # which has no 8-row lane -- so it is a BATCH launch and cannot occur
-        # at one row.
-        {"symbol": gemm_symbol, "decoder": _DECODER_WINDOW_GEMV,
-         "regimes": ("batch",), "modes": ("streamed",), "lane": _WINDOW_GEMV_LANE,
-         "structures": (STRUCTURE_DENSE,),
-         "when_lane_absent": False},
-        # The lane's own op, in BOTH regimes.  One row always takes it (the
-        # rate-1 refusal starts at the 4-row tile), and so does the two-row
-        # tile, on every unit the lane prepared: ``items_key(2)`` is the 1-key
-        # table, which a rate-1 column has.  So the batch regime -- every
-        # M > 1 forward, not only a first prefill -- launches the GEMV too,
-        # and a cell that says otherwise is right about a 64-row prefill and
-        # wrong about the runtime.
-        {"symbol": WINDOW_GEMV_SYMBOL, "decoder": _DECODER_WINDOW_GEMV,
-         "regimes": _ALL_REGIMES, "modes": ("streamed",), "lane": _WINDOW_GEMV_LANE,
          "structures": (STRUCTURE_DENSE,),
          "when_lane_absent": False},
     )
@@ -563,8 +518,14 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
          "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": None,
          "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": False},
     ),
-    TESSERA_FP8: _dense_native_window_launch() + _window_launches(
-        ROUTES[TESSERA_FP8]["gemm_symbol"]) + (
+    # The dense half is ONE launch: ``fp8_route.apply`` runs the packed native
+    # window GEMM for every M and both residencies and raises rather than fall
+    # back, so the route's own ``DENSE_LAUNCH`` is this set and
+    # ``tests/test_serving_contract.py`` asserts the equality.  The window-GEMV
+    # lane's three launches stood here until #538 and were retired from the
+    # dispatch by ``1b767a207``; a table that outlived its dispatch is what let
+    # the published ``lane_eligibility`` cells go on naming them.
+    TESSERA_FP8: _dense_native_window_launch() + (
         {"symbol": MOE_GEMM_SYMBOL, "decoder": _DECODER_TORCH_STOCK,
          "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": None,
          "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": True},
@@ -576,8 +537,8 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
          "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": None,
          "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": False},
     ),
-    TESSERA_BF16: _dense_native_window_launch() + _window_launches(
-        ROUTES[TESSERA_BF16]["gemm_symbol"]),
+    # Same shape as the FP8 dense half above, and for the same reason.
+    TESSERA_BF16: _dense_native_window_launch(),
 }
 
 

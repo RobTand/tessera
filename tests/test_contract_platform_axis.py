@@ -51,7 +51,7 @@ def _mutated(contract, mutate):
 # What the packaged document says
 
 
-def test_the_packaged_contract_validates_at_v27(contract):
+def test_the_packaged_contract_validates_at_v31(contract):
     """v25 adds a top-level block; v26 and v27 do not move the lane schema either.
 
     The rule the v24 changelog entry states, pinned here so each bump has to
@@ -82,8 +82,17 @@ def test_the_packaged_contract_validates_at_v27(contract):
     entry and moves no lane field: the extension list is a loadable-library
     table a fingerprint reads, every cell and rung stays byte for byte, and
     the retired decoder's historical receipts keep naming it.
+
+    v31 (tessera#538) is the first bump in this run that is NOT additive and
+    still does not move the lane schema: it WITHDRAWS eight dense cells whose
+    ``executes`` named the retired window-GEMV dispatch, and nulls gfx1201's
+    ``serve_image`` because a platform with no cells attests no image.  A v10
+    reader resolves every remaining cell with the code it already has and reads
+    the withdrawn combinations as absent, which is the answer the schema
+    already defines for them; what changed is the ANSWER, not the grammar, so
+    the schema string stays and the changelog carries the consumer warning.
     """
-    assert int(contract["contract_version"]) == 30
+    assert int(contract["contract_version"]) == 31
     assert "activation_quantizers" in contract
     assert all("structures" in entry for entry in contract["formats"])
     assert contract["lane_eligibility"]["schema"] == LANE_ELIGIBILITY_SCHEMA
@@ -129,121 +138,112 @@ def test_tessera_16_is_the_amd_lane_and_the_quantized_families_are_unbacked(cont
         assert entry["executes"]["TESSERA_E2M1_K2"] is None, key
 
 
-def test_gfx1201_has_cells_and_gfx1151_still_has_none(contract):
-    """A cell is a device receipt, so the two AMD entries differ by who ran.
+def test_neither_amd_platform_carries_a_cell_and_both_say_so(contract):
+    """A cell is a device receipt, and gfx1201's was withdrawn at v31.
 
-    gfx1201 receipts were taken on an RX 9070 XT under WSL2 (#460), so that
-    platform carries cells and names the image they were taken under.  Nobody
-    here owns a Strix Halo part, so gfx1151 still carries none and its
-    ``serve_image`` is still ``null`` -- which is the v10 state, not a gap: the
-    entry already says BF16 is backed there and the quantized families are not.
+    gfx1201 carried two BF16 cells from #460 -- an RX 9070 XT under WSL2, the
+    2026-09-13 receipt -- and they named ``torch.mm``/``torch_window``, the
+    retired dense window-GEMV dispatch.  The receipt was taken three days
+    before ``1b767a207`` retired it, so there is nothing on that platform that
+    covers what the build launches today (tessera#538).  Nobody here owns a
+    Strix Halo part, so gfx1151 never had one.
+
+    Both entries therefore read the way v10 defines for a platform with no
+    receipts -- ``serve_image: null`` -- which is not a gap: each entry still
+    says BF16 is backed there and the quantized families are not.  That is the
+    sentence the platform table exists to be able to form.
     """
     block = contract["lane_eligibility"]
     served = {cell["platform"] for cell in block["cells"]}
-    assert served == {"sm_121", "gfx1201"}
-    assert block["platforms"]["gfx1151"]["serve_image"] is None
-    assert block["platforms"]["gfx1201"]["serve_image"] is not None
+    assert served == {"sm_121"}
+    for platform in ("gfx1151", "gfx1201"):
+        assert block["platforms"][platform]["serve_image"] is None, platform
+        assert block["platforms"][platform]["executes"]["TESSERA_BF16_K1"] == (
+            "bf16_unquantized"), platform
 
 
-def test_the_gfx1201_serve_image_is_one_its_own_cells_attest(contract):
-    """v10's rule, on the platform this bump turns on."""
-    block = contract["lane_eligibility"]
-    attested = {cell["runtime"]["image"] for cell in block["cells"]
-                if cell["platform"] == "gfx1201"}
-    assert len(attested) == 1
-    assert block["platforms"]["gfx1201"]["serve_image"] in attested
+def test_a_platform_with_no_cells_may_not_name_a_serve_image(contract):
+    """v10's rule, driven on the platform the withdrawal emptied.
 
-
-def test_the_gfx1201_cells_are_the_bf16_lane_only(contract):
-    """Tessera-16 is the AMD lane, and the cells say only that.
-
-    Two cells, one per regime, each covering both residencies through its
-    serve flag: the residency is the axis that decides which launch a regime
-    makes, and at this rung it decides nothing (rung 1792 is rate 7 and the
-    window-GEMV lane serves rates 1, 2 and 4, so it refuses in both).  The
-    per-residency KL receipts came back bit-identical, so there is no
-    distinction here for a four-cell split to publish.
+    It used to be checked the other way round -- gfx1201 had cells, so its
+    ``serve_image`` had to be one of them.  With the cells gone the live half
+    of the rule is the refusal, so it is driven rather than asserted about a
+    state: put the ROCm digest back on a platform no cell attests and the
+    document must refuse.
     """
-    cells = [c for c in contract["lane_eligibility"]["cells"]
-             if c["platform"] == "gfx1201"]
-    assert [c["id"] for c in cells] == ["tessera_bf16_k1_dense_gfx1201_decode",
-                                        "tessera_bf16_k1_dense_gfx1201_batch"]
-    for cell in cells:
-        assert cell["family"] == "TESSERA_BF16_K1"
-        assert cell["structure"] == "dense"
-        assert cell["rungs_q256"] == [1792]
-        assert cell["activation_contract"] == "bf16_unquantized"
-        assert cell["qualification"] == "device_qualified"
-        assert cell["route_status"] == "backed_with_serve_flag"
-        assert cell["requires_plugin"] == "tessera"
-        assert cell["requires_serve_flags"] == ["TESSERA_SERVE_MODE=resident|streamed"]
-        assert cell["executes"] == [{"symbol": "torch.mm", "decoder": "torch_window"}]
+    payload = _mutated(contract, lambda c: c["lane_eligibility"]["platforms"]["gfx1201"]
+                       .__setitem__("serve_image", "example.invalid/rocm@sha256:" + "0" * 64))
+    with pytest.raises(ValueError, match="no cell on this platform attests any image"):
+        validate_serving_contract(payload)
 
 
-def test_the_gfx1201_cells_carry_a_bound_scored_in_their_own_regime(contract):
-    """The grade is read off the entries, and each entry is this cell's regime.
+def test_the_withdrawn_gfx1201_receipt_is_still_on_the_tree(contract):
+    """The measurement outlives the cell, and is where the digest now lives.
 
-    A prefill-scored bound written into a decode cell is what
-    ``cell_evidence`` refuses by name, and it is the reason a decode-regime
-    dump was taken rather than the prefill number being reused.
+    Withdrawing the two gfx1201 cells does not retract what was measured on
+    2026-09-13; it retracts the claim that today's build executes it.  The
+    receipt stays in the tree, carries the ROCm image digest the platform entry
+    no longer names, and is what a re-attestation would be compared against.
     """
-    cells = [c for c in contract["lane_eligibility"]["cells"]
-             if c["platform"] == "gfx1201"]
-    for cell in cells:
-        evidence = cell["evidence"]
-        assert evidence["grade"] == "kl_lower_bound"
-        assert len(evidence["kl"]) == 1
-        entry = evidence["kl"][0]
-        assert entry["kind"] == "topk_intersection_lower_bound"
-        assert entry["top_k"] == 1024
-        assert entry["regime"] == cell["regime"]
-        assert entry["execution_modes"] == ["eager"]
-        assert entry["receipt"].startswith("docs/measurements/tessera-gfx1201-")
+    receipt = ROOT / "docs/measurements/tessera-gfx1201-bf16-k1-served-2026-09-13.md"
+    assert receipt.is_file()
+    assert "sha256:0461258dfe253a3e0baca9c62804a4b41a21ab445b2624b6fca0d51711e14000" in (
+        receipt.read_text(encoding="utf-8"))
+    assert not [c for c in contract["lane_eligibility"]["cells"]
+                if c["platform"] == "gfx1201"]
 
 
 # --------------------------------------------------------------------------
 # Nothing already attested moved
 
 
-def test_the_ten_sm121_cells_are_byte_identical_to_v22():
-    """A version bump may add a cell; it may not edit a receipt.
+def test_the_surviving_v22_sm121_cells_are_byte_identical(contract):
+    """A version bump may add a cell and may WITHDRAW one; it may not edit one.
 
-    The fixture records the SHA-256 of the TEN sm_121 elements as they were
-    lifted out of the v22 document by exact offsets, so this compares BYTES --
+    The fixture records the SHA-256 of the v22 ``sm_121`` elements that survive,
+    lifted out of the document by exact offsets, so this compares BYTES --
     whitespace, key order and all -- not a re-serialization that could
-    normalize away a real edit.  It is the ten elements and no longer the
-    whole array, because v24 appends cells on a second platform: hashing the
-    array would make every later platform's arrival look like an edit to
-    sm_121's receipts, which is the one thing this test exists to catch.  The
-    span is taken by decoding exactly ten elements from the array's opening
-    bracket, so the ten must also still be FIRST and contiguous.
+    normalize away a real edit.  It is a span of the first elements rather than
+    the whole array because later versions append cells on other scopes:
+    hashing the array would make every arrival look like an edit, which is the
+    one thing this test exists to catch.
 
-    It is a digest and not a copy of the array on purpose: the array holds the
-    runtime image pin, and ``tests/test_runtime_image_pin.py`` refuses a second
-    copy of that digest in any file that acts.  A hash pins the same bytes
-    without holding the pin, which is the whole argument that test is making.
+    It was ten cells until contract v31, which withdrew six of them
+    (tessera#538).  A withdrawal is neither an addition nor a re-measurement,
+    so it is not allowed to arrive as a quietly regenerated digest: the fixture
+    names the ids it dropped, and the assertions below check that every named
+    id is really gone and that no other v22 cell went with them.  Regenerate
+    this digest only when a receipt was deliberately re-measured; change the
+    span only beside a ``withdrawn_at_v31``-style list saying what left and why.
     """
     raw = CONTRACT.read_text(encoding="utf-8")
+    recorded = json.loads(FIXTURE.read_text(encoding="utf-8"))
     marker = '"cells": ['
     start = raw.index(marker) + len(marker)
     decoder = json.JSONDecoder()
     end, span = start, []
-    for _ in range(10):
+    for _ in range(recorded["cells"]):
         while raw[end] in " \n\r\t,":
             end += 1
         value, end = decoder.raw_decode(raw, end)
         span.append(value)
     lifted = raw[start:end].encode("utf-8")
-    recorded = json.loads(FIXTURE.read_text(encoding="utf-8"))
-    assert [cell["platform"] for cell in span] == ["sm_121"] * 10, (
-        "the ten v22 cells are no longer the first ten elements of the array; "
+    assert [cell["platform"] for cell in span] == ["sm_121"] * recorded["cells"], (
+        "the surviving v22 cells are no longer the first elements of the array; "
         "this span is what the fixture's digest was taken over")
-    assert len(span) == recorded["cells"] == 10
     assert len(lifted) == recorded["bytes"], (
-        "the v22 sm_121 cells changed length; a version bump must not edit a receipt")
+        "the surviving v22 sm_121 cells changed length; a version bump must not "
+        "edit a receipt")
     assert hashlib.sha256(lifted).hexdigest() == recorded["sha256"], (
-        "the v22 sm_121 cells changed bytes at the same length; regenerate the "
-        "fixture only if a receipt was deliberately re-measured")
+        "the surviving v22 sm_121 cells changed bytes at the same length; "
+        "regenerate the fixture only if a receipt was deliberately re-measured")
+
+    # The withdrawal itself, stated rather than absorbed into the digest.
+    present = {cell["id"] for cell in contract["lane_eligibility"]["cells"]}
+    withdrawn = set(recorded["withdrawn_at_v31"])
+    assert len(withdrawn) == 6
+    assert not (present & withdrawn), sorted(present & withdrawn)
+    assert {cell["id"] for cell in span} <= present
 
 
 def test_no_shipped_cell_is_compile_only(contract):

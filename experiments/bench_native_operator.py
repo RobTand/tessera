@@ -392,7 +392,14 @@ def prepare_native_operator(blob, record, source_weight, rendered_weight, *, uni
     if len(families) != 1:
         raise ValueError("wire has no unique dense serving owner")
     family = families[0]
-    launches = launch_pairs(family, structure=STRUCTURE_DENSE, mode="resident")
+    # ``include_experimental``: the dense launch this build makes is the packed
+    # native window GEMM, and it is EXPERIMENTAL -- no lane_eligibility cell
+    # attests it, which is why contract v31 withdrew the cells that named the
+    # retired lane rather than re-pointing them (tessera#538).  A bench declares
+    # what the dispatch does, not what a cell attests, so it reads the full
+    # table; the attested view is empty here and would name no route at all.
+    launches = launch_pairs(family, structure=STRUCTURE_DENSE, mode="resident",
+                            include_experimental=True)
     if len(launches) != 1:
         raise ValueError("resident dense declaration does not identify one native route")
     declared_symbol, declared_decoder = next(iter(launches))

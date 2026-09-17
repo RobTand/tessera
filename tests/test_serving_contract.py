@@ -53,36 +53,10 @@ def _dense_runtime_image() -> str:
     return found[0]
 
 
-#: The same placeholder for the gfx1201 image.  A second serve image entered
-#: the document with the first AMD cells (#460): the ROCm build is a different
-#: runtime from the packaged sm_121 pin, and the LAWS table reads it from the
-#: receipt that records it for the same reason the dense one does.
-_GFX1201_IMAGE_FROM_RECEIPT = "<the image the gfx1201 receipt records>"
-
-
-def _gfx1201_runtime_image() -> str:
-    """The ROCm vLLM image the two gfx1201 cells were measured on.
-
-    Read from ``docs/measurements/tessera-gfx1201-bf16-k1-served-2026-09-13.md``
-    rather than copied here.  The reference is spelled without a registry port
-    because ``runtime_image._DIGEST_REFERENCE``'s repository charset has no
-    ``:`` in it, so ``host:5000/...`` is a reference the gate cannot pin; the
-    receipt says so at length.
-    """
-    receipt = ROOT / "docs/measurements/tessera-gfx1201-bf16-k1-served-2026-09-13.md"
-    found = sorted(set(re.findall(
-        r"192\.168\.1\.107/prismaquant/vllm-rocm@sha256:[0-9a-f]{64}",
-        receipt.read_text())))
-    assert len(found) == 1, found
-    return found[0]
-
-
 def _resolved(laws: dict[str, object]) -> dict[str, object]:
     runtime = laws["runtime"]
     if runtime["image"] is _DENSE_IMAGE_FROM_RECEIPT:
         laws = {**laws, "runtime": {**runtime, "image": _dense_runtime_image()}}
-    elif runtime["image"] is _GFX1201_IMAGE_FROM_RECEIPT:
-        laws = {**laws, "runtime": {**runtime, "image": _gfx1201_runtime_image()}}
     return laws
 
 
@@ -93,22 +67,16 @@ def _resolved(laws: dict[str, object]) -> dict[str, object]:
 _DENSE_RUNTIME = {"image": _DENSE_IMAGE_FROM_RECEIPT, "execution_modes": ["eager", "compiled"],
                   "vllm": "0.28.0", "torch": "2.13.0+cu130"}
 
-#: The eight preserved dense cells the served Tessera receipts cover:
-#: Qwen3-0.6B on the E2M1x2 cap wire (q256 = 896), on the E4M3 window wire
-#: (q256 = 1024) and on the BF16 window wire (q256 = 1792), every dense Linear,
-#: eager and compiled -- the 2026-09-02 receipts for the six that were here
-#: before, plus ``/home/rob/tessera-runs/ts104/census-R1024-readable.json``
-#: (2026-09-03, streamed, eager) for what the E4M3 wire executes once the
-#: window-GEMV lane is reachable.  Widening ANY value here without a new
-#: receipt is the failure this pins.
+#: The dense cells the served Tessera receipts still cover: Qwen3-0.6B on the
+#: E2M1x2 cap wire (q256 = 896), every dense Linear, eager and compiled
+#: (2026-09-02 receipts).  Widening ANY value here without a new receipt is the
+#: failure this pins.
 #:
-#: The E4M3 family carries FOUR cells because its launches differ by RESIDENCY:
-#: both window routes set ``layer.tessera_gemv = None`` in ``resident``, so the
-#: lane exists in ``streamed`` alone and the decode regime executes two
-#: different things under one rung (#111).  The other two families execute one
-#: launch in both residencies and keep one cell per regime -- and BF16 keeps
-#: the torch decode because its attested rung 1792 is root 7, outside the
-#: lane's rates, so its own GEMV lane is unreachable there.
+#: The E4M3 and BF16 dense cells stood here until contract v31 and are listed in
+#: ``_WITHDRAWN_CELL_IDS`` below with the reason.  The E2M1 pair survives because
+#: its launch never was the window-GEMV lane's: ``nvfp4_route`` decodes span-2 at
+#: load and runs ``torch._scaled_mm`` on the materialised tile, which is what it
+#: still does.
 _CELL_LAWS: dict[str, dict[str, object]] = {
     "tessera_e2m1_k2_dense_sm121_decode": {
         "platform": "sm_121", "family": "TESSERA_E2M1_K2", "structure": "dense",
@@ -126,84 +94,6 @@ _CELL_LAWS: dict[str, dict[str, object]] = {
         "regime": "batch", "rungs_q256": [896],
         "activation_contract": "e2m1_group16_ue4m3_static",
         "executes": [{"symbol": "torch._scaled_mm", "decoder": "native_span2"}],
-        "route_status": "backed_with_serve_flag", "qualification": "device_qualified",
-        "requires_plugin": "tessera",
-        "requires_serve_flags": ["TESSERA_SERVE_MODE=resident|streamed"],
-        "predicates": [],
-        "runtime": _DENSE_RUNTIME,
-    },
-    "tessera_e4m3_k1_dense_sm121_decode_resident": {
-        "platform": "sm_121", "family": "TESSERA_E4M3_K1", "structure": "dense",
-        "regime": "decode", "rungs_q256": [1024],
-        "activation_contract": "fp8_per_token_dynamic",
-        "executes": [{"symbol": "torch._scaled_mm", "decoder": "torch_window"}],
-        "route_status": "backed_with_serve_flag", "qualification": "device_qualified",
-        "requires_plugin": "tessera",
-        "requires_serve_flags": ["TESSERA_SERVE_MODE=resident"],
-        "predicates": [],
-        "runtime": _DENSE_RUNTIME,
-    },
-    # THE CELL THE CENSUS BOUGHT.  Before #111 this rung's decode regime
-    # published the materialised pair, in every case, on a document whose own
-    # receipt records ``tessera_window_gemv::gemv`` on 112 of 112 modules.
-    "tessera_e4m3_k1_dense_sm121_decode_streamed": {
-        "platform": "sm_121", "family": "TESSERA_E4M3_K1", "structure": "dense",
-        "regime": "decode", "rungs_q256": [1024],
-        "activation_contract": "fp8_per_token_dynamic",
-        "executes": [{"symbol": "tessera_window_gemv::gemv", "decoder": "window_gemv"}],
-        "route_status": "backed_with_serve_flag", "qualification": "device_qualified",
-        "requires_plugin": "tessera",
-        "requires_serve_flags": ["TESSERA_SERVE_MODE=streamed"],
-        "predicates": [],
-        "runtime": _DENSE_RUNTIME,
-    },
-    "tessera_e4m3_k1_dense_sm121_batch_resident": {
-        "platform": "sm_121", "family": "TESSERA_E4M3_K1", "structure": "dense",
-        "regime": "batch", "rungs_q256": [1024],
-        "activation_contract": "fp8_per_token_dynamic",
-        "executes": [{"symbol": "torch._scaled_mm", "decoder": "torch_window"}],
-        "route_status": "backed_with_serve_flag", "qualification": "device_qualified",
-        "requires_plugin": "tessera",
-        "requires_serve_flags": ["TESSERA_SERVE_MODE=resident"],
-        "predicates": [],
-        "runtime": _DENSE_RUNTIME,
-    },
-    # TWO LAUNCHES, because the batch regime is every M > 1 forward and not
-    # only a first prefill (``contract.CENSUS_PHASE_REGIMES`` says so in its
-    # own words).  The census drives a 64-row prefill, where the tile comes
-    # off the lane's kernel decode under ``torch._scaled_mm`` (112 of 112 in
-    # the R1024 receipt) -- but the same regime holds the 2-to-8-row forwards,
-    # where the lane serves its own ``gemv`` exactly as it does at one row.
-    # Publishing the prefill launch alone was #111's defect one regime over:
-    # true of the shape the census drove, false of the runtime.
-    "tessera_e4m3_k1_dense_sm121_batch_streamed": {
-        "platform": "sm_121", "family": "TESSERA_E4M3_K1", "structure": "dense",
-        "regime": "batch", "rungs_q256": [1024],
-        "activation_contract": "fp8_per_token_dynamic",
-        "executes": [{"symbol": "tessera_window_gemv::gemv", "decoder": "window_gemv"},
-                     {"symbol": "torch._scaled_mm", "decoder": "window_gemv"}],
-        "route_status": "backed_with_serve_flag", "qualification": "device_qualified",
-        "requires_plugin": "tessera",
-        "requires_serve_flags": ["TESSERA_SERVE_MODE=streamed"],
-        "predicates": [],
-        "runtime": _DENSE_RUNTIME,
-    },
-    "tessera_bf16_k1_dense_sm121_decode": {
-        "platform": "sm_121", "family": "TESSERA_BF16_K1", "structure": "dense",
-        "regime": "decode", "rungs_q256": [1792],
-        "activation_contract": "bf16_unquantized",
-        "executes": [{"symbol": "torch.mm", "decoder": "torch_window"}],
-        "route_status": "backed_with_serve_flag", "qualification": "device_qualified",
-        "requires_plugin": "tessera",
-        "requires_serve_flags": ["TESSERA_SERVE_MODE=resident|streamed"],
-        "predicates": [],
-        "runtime": _DENSE_RUNTIME,
-    },
-    "tessera_bf16_k1_dense_sm121_batch": {
-        "platform": "sm_121", "family": "TESSERA_BF16_K1", "structure": "dense",
-        "regime": "batch", "rungs_q256": [1792],
-        "activation_contract": "bf16_unquantized",
-        "executes": [{"symbol": "torch.mm", "decoder": "torch_window"}],
         "route_status": "backed_with_serve_flag", "qualification": "device_qualified",
         "requires_plugin": "tessera",
         "requires_serve_flags": ["TESSERA_SERVE_MODE=resident|streamed"],
@@ -259,34 +149,28 @@ for _regime in ("decode", "batch"):
             "execution_modes": ["eager"],
             "vllm": "0.28.1rc1.dev397+gfd4a15126.d20260904", "torch": "2.13.0+cu130"}}
 
-#: The toolchain the gfx1201 receipt records, verbatim: vLLM 0.30.0.dev0 and
-#: torch 2.11.0+rocm7.2.4.git5fbd98f3, transcribed from the census receipt
-#: header rather than from a summary -- two reports of this run disagreed
-#: about whether the vLLM string carried a ``+rocm714`` suffix, and the one
-#: the container printed is the one that counts.
-_GFX1201_RUNTIME = {"image": _GFX1201_IMAGE_FROM_RECEIPT,
-                    "execution_modes": ["eager", "compiled"],
-                    "vllm": "0.30.0.dev0", "torch": "2.11.0+rocm7.2.4.git5fbd98f3"}
-
-# The first cells this document carries on a platform that is not sm_121
-# (#460).  Qwen3-0.6B on the BF16 window wire (q256 = 1792) on an RX 9070 XT
-# under WSL2, every dense Linear, eager and compiled.  Two cells and not four:
-# the measured KL is bit-identical per residency in both regimes, so residency
-# decides nothing here and one cell per regime covers ``resident|streamed``,
-# exactly as the sm_121 BF16 pair does.  The launch is the torch decode in
-# every arm, because rung 1792 is root 7 and the window-GEMV lane publishes
-# rates 1, 2 and 4 -- the same refusal that keeps the sm_121 BF16 cells on
-# ``torch.mm``, reached on a second device.
-for _regime in ("decode", "batch"):
-    _CELL_LAWS[f"tessera_bf16_k1_dense_gfx1201_{_regime}"] = {
-        "platform": "gfx1201", "family": "TESSERA_BF16_K1", "structure": "dense",
-        "regime": _regime, "rungs_q256": [1792],
-        "activation_contract": "bf16_unquantized",
-        "executes": [{"symbol": "torch.mm", "decoder": "torch_window"}],
-        "route_status": "backed_with_serve_flag", "qualification": "device_qualified",
-        "requires_plugin": "tessera",
-        "requires_serve_flags": ["TESSERA_SERVE_MODE=resident|streamed"],
-        "predicates": [], "runtime": _GFX1201_RUNTIME}
+#: WITHDRAWN at contract v31 (tessera#538).  These eight cells attested the
+#: dense window-GEMV lane: ``torch._scaled_mm``/``torch_window``,
+#: ``tessera_window_gemv::gemv``/``window_gemv`` and ``torch.mm``/``torch_window``.
+#: ``1b767a207`` left ``fp8_route.apply`` and ``bf16_route.apply`` making one
+#: launch each -- ``tessera::window_gemm_dense``/``native_window_gemm``, raising
+#: rather than falling back -- so from that commit the build could not make the
+#: arithmetic they published, and their own receipts (2026-09-02, -09-03,
+#: -09-13) were all taken before it.  Retagging them would claim a measurement
+#: that never ran, so they are removed rather than re-pointed.  The ids are kept
+#: here, not only in the changelog, because a test reads them: a withdrawal must
+#: be a deliberate, named act, and a cell that quietly comes back under one of
+#: these ids has to face this list.
+_WITHDRAWN_CELL_IDS = frozenset({
+    "tessera_e4m3_k1_dense_sm121_decode_resident",
+    "tessera_e4m3_k1_dense_sm121_decode_streamed",
+    "tessera_e4m3_k1_dense_sm121_batch_resident",
+    "tessera_e4m3_k1_dense_sm121_batch_streamed",
+    "tessera_bf16_k1_dense_sm121_decode",
+    "tessera_bf16_k1_dense_sm121_batch",
+    "tessera_bf16_k1_dense_gfx1201_decode",
+    "tessera_bf16_k1_dense_gfx1201_batch",
+})
 
 
 @pytest.fixture(scope="module")
@@ -341,14 +225,36 @@ def test_a_cell_exists_exactly_where_a_receipt_does(contract):
     where it belongs, because it is the failure a route module is most tempting
     to commit the day it is written.
     """
+    from tessera.serving.contract import _FAMILY_TO_ROUTE
+    from tessera.serving.scheme import STRUCTURES, launch_pairs
+
     for family, rungs in _FAMILY_RUNGS.items():
         cells = [c for c in contract["lane_eligibility"]["cells"] if c["family"] == family]
-        if rungs:
+        # THE THIRD CASE, added with contract v31 (tessera#538).  A rung is
+        # attested by a container receipt -- the wire loads and reads back --
+        # while a CELL states what the runtime executes on it.  The two came
+        # apart when the dense window-GEMV dispatch was retired: the BF16
+        # family's 2026-09-02 receipt still covers q256 1792, and there is no
+        # attested launch left for a dense cell to name.  So "attests a rung"
+        # buys a cell only where the route makes an attested launch, and where
+        # it makes none a cell is not merely unnecessary, it is refused by
+        # ``_validate_cell_executes``.
+        route = _FAMILY_TO_ROUTE[family]
+        launchable = any(launch_pairs(route, structure=structure)
+                         for structure in STRUCTURES)
+        if rungs and launchable:
             assert cells, f"{family} attests {rungs} but publishes no lane_eligibility cell"
-        else:
+        elif not rungs:
             assert not cells, (
                 f"{family} publishes a lane_eligibility cell but attests no rung; absence "
                 "resolves unattested and is never invented into a cell")
+        elif not cells:
+            # The state the withdrawal left BF16 in: an attested wire, no
+            # attested dispatch, and therefore no cell.  Asserted rather than
+            # passed over, so the day a launch returns this branch stops being
+            # the one that runs.
+            assert not any(launch_pairs(route, structure=structure)
+                           for structure in STRUCTURES), family
 
 
 def test_a_cell_cannot_attest_a_rung_the_family_does_not_publish(contract):
@@ -591,14 +497,25 @@ def test_the_launch_table_is_spelled_in_the_vocabulary_the_serve_stamps():
 
 
 def test_the_launch_tables_lane_is_the_published_extension():
-    """A launch may only name a lane this build publishes an extension for."""
+    """A launch may only name a lane this build publishes an extension for.
+
+    No launch names one since contract v31 (tessera#538): the only launch that
+    ever did was the dense window-GEMV lane's, and the dispatch that made it
+    was retired by ``1b767a207``.  The loop below is therefore vacuous on this
+    tree and would silently stay vacuous if the rule broke, so it is stated
+    both ways -- the rule, and the fact that today there is nothing to apply it
+    to.  A lane launch returning without an extension entry fails here; a lane
+    launch returning at all has to change the count.
+    """
     from tessera.serving import ext
     from tessera.serving.scheme import ROUTE_LAUNCHES
 
     published = {e["module_name_prefix"] for e in ext.NATIVE_EXTENSIONS if e.get("lane")}
+    lane_launches = 0
     for route, launches in ROUTE_LAUNCHES.items():
         for launch in launches:
             if launch["lane"] is not None:
+                lane_launches += 1
                 assert launch["lane"] in published, launch
                 # And the extension must say it serves that route.  The
                 # window GEMV published TESSERA_FP8 alone while
@@ -608,90 +525,122 @@ def test_the_launch_tables_lane_is_the_published_extension():
                 assert route in next(
                     e["routes"] for e in ext.NATIVE_EXTENSIONS
                     if e["module_name_prefix"] == launch["lane"]), (route, launch["lane"])
+    assert lane_launches == 0, (
+        "a launch names an extension lane again; the rule above now has "
+        "something to say and this count has to be raised deliberately")
+    assert published, "ext still publishes lane-bearing extensions; only the LAUNCH went"
 
 
-def test_the_routes_census_expectation_is_the_launch_table():
-    """The routes' own ``census_expected`` and a cell's ``executes`` are one table.
+def test_the_dense_launch_table_is_the_launch_apply_makes(monkeypatch):
+    """THE DEFECT tessera#538 IS ABOUT, and the check that catches it.
 
-    Two spellings of "what this route may launch" is how the census tool and
-    the contract came to disagree about one runtime.  Both sides read
-    ``scheme.ROUTE_LAUNCHES`` now, so this asserts the derivation rather than
-    a copy of the answer.
+    ``scheme.ROUTE_LAUNCHES`` is hand-written and the dispatch does not read
+    it, so the only thing that ever tied the two together was a second table.
+    Until this test that second table was ``fp8_gemv.census_expected`` and
+    ``decode_is_gemv`` -- and ``fp8_route`` does not import ``fp8_gemv``, so
+    when ``1b767a207`` retired the decode-to-global branches and left ``apply``
+    making one launch, the check compared a table against a table in a module
+    the dispatch no longer runs.  It agreed.  The published ``lane_eligibility``
+    cells derived from that table went on naming
+    ``torch._scaled_mm``/``torch_window`` and
+    ``tessera_window_gemv::gemv``/``window_gemv``, arithmetic the build cannot
+    launch, and nothing refused them.
 
-    The lane's op is in BOTH regimes.  It used to be pinned to ``decode``
-    alone, which is the KERNEL's word for M <= ``GEMV_MAX_M`` read into a
-    table written in the CONTRACT's, where ``decode`` is the one-row forward
-    and ``batch`` is every M > 1 -- so the two-row tile, which the lane serves,
-    fell in a regime the table said the lane never touched.
+    The tie is now to the LIVE route module: each of ``fp8_route`` and
+    ``bf16_route`` owns a ``DENSE_LAUNCH`` pair which its ``apply`` unpacks at
+    its one ``emit_route`` call, so a route cannot stamp a launch the constant
+    does not name, and this asserts the table's dense entry IS that set --
+    equality, so a launch the dispatch cannot make fails as loudly as a missing
+    one.
+
+    ON ``origin/master`` THIS FAILS: the table carried the retired lane's three
+    dense launches beside the native GEMM while ``apply`` made only the GEMM.
     """
     pytest.importorskip("torch")
-    from tessera.serving import bf16_route, fp8_gemv
-    from tessera.serving.scheme import TESSERA_BF16, TESSERA_FP8, launch_pairs
+    from tessera.serving import bf16_route, fp8_route, scheme, telemetry
+    from tessera.serving.scheme import (STRUCTURE_DENSE, TESSERA_BF16, TESSERA_FP8,
+                                        WINDOW_GEMM_SYMBOL, launch_pairs)
 
-    for module, route in ((fp8_gemv, TESSERA_FP8), (bf16_route, TESSERA_BF16)):
-        eager = module.census_expected(compiled=False)
+    for module, route in ((fp8_route, TESSERA_FP8), (bf16_route, TESSERA_BF16)):
+        assert module.DENSE_LAUNCH == (WINDOW_GEMM_SYMBOL,
+                                       telemetry.DECODER_NATIVE_WINDOW_GEMM)
+        assert launch_pairs(route, structure=STRUCTURE_DENSE,
+                            include_experimental=True) == {module.DENSE_LAUNCH}, route
         for regime in ("decode", "batch"):
-            assert eager[regime] == launch_pairs(
-                route, regime=regime, include_experimental=True), (route, regime)
-            assert (module.GEMV_SYMBOL, "window_gemv") in eager[regime], (route, regime)
-        # ...and the launch only the materialised path makes is batch-only:
-        # ``decode_is_gemv`` is unconditionally true at one row, so a one-row
-        # forward on a prepared lane cannot report the kernel-decoded tile
-        # under the stock GEMM.
-        assert (module.GEMM_SYMBOL, "window_gemv") in eager["batch"]
-        assert (module.GEMM_SYMBOL, "window_gemv") not in eager["decode"]
+            for mode in ("resident", "streamed"):
+                assert launch_pairs(route, structure=STRUCTURE_DENSE, regime=regime,
+                                    mode=mode, include_experimental=True) == {
+                    module.DENSE_LAUNCH}, (route, regime, mode)
+
+    # ...and it BITES.  Put back a launch no ``apply`` makes -- the shape the
+    # table was in before this commit -- and the check fails.  The DRIVER is
+    # mutated; nothing about ``DENSE_LAUNCH`` or the assertion above moves.
+    revived = dict(scheme.ROUTE_LAUNCHES)
+    revived[TESSERA_FP8] = scheme.ROUTE_LAUNCHES[TESSERA_FP8] + (
+        {"symbol": "torch._scaled_mm", "decoder": "torch_window",
+         "regimes": ("batch", "decode"), "modes": ("resident", "streamed"),
+         "lane": None, "structures": (STRUCTURE_DENSE,), "when_lane_absent": True},)
+    monkeypatch.setattr(scheme, "ROUTE_LAUNCHES", revived)
+    assert launch_pairs(TESSERA_FP8, structure=STRUCTURE_DENSE,
+                        include_experimental=True) != {fp8_route.DENSE_LAUNCH}
 
 
-def test_the_launch_tables_regimes_are_the_routes_own_dispatch():
-    """``ROUTE_LAUNCHES`` regimes, derived from ``decode_is_gemv`` and nothing else.
+def test_a_cell_naming_a_launch_the_build_cannot_make_is_refused(contract):
+    """The document half of the same rule, on the packaged file.
 
-    THE DEFECT THIS PINS.  The table is hand-written and the dispatch does not
-    read it, so until this test the only thing tying the two together was a
-    serve -- and a serve only ever drove two shapes, one row and sixty-four.
-    Both of the table's first errors lived in the gap: a launch conditioned on
-    a rate set (unreachable at one row, so dead) and a batch regime published
-    without the GEMV (unreachable at sixty-four rows, so invisible).  Both are
-    the failure #111 is about, and both are ruled out by quantifying over
-    every M the dispatch distinguishes rather than the two anyone drove.
+    A cell's ``executes`` is derived from the launch table, so once the table
+    stops carrying the retired lane the validator refuses any cell that still
+    names it -- which is what makes the v31 withdrawal fail closed rather than
+    linger.  Driving it with the exact pair the withdrawn E4M3 cells published
+    shows the refusal is about the LAUNCH and not about a well-formedness rule
+    the mutation happens to trip.
+    """
+    revived = copy.deepcopy(contract)
+    cell = next(c for c in revived["lane_eligibility"]["cells"]
+                if c["family"] == "TESSERA_E4M3_K1" and c["structure"] == "routed_moe"
+                and c["regime"] == "decode")
+    cell["structure"] = "dense"
+    cell["id"] = "tessera_e4m3_k1_dense_sm121_decode_resident"
+    cell["executes"] = [{"symbol": "torch._scaled_mm", "decoder": "torch_window"}]
+    with pytest.raises(ValueError, match="but the TESSERA_FP8 route makes"):
+        validate_serving_contract(revived)
 
-    ``decode_is_gemv`` depends on M only through ``_m_tile(M)`` (1, 2, 4, 8)
-    and the ``M > GEMV_MAX_M`` test, so ``range(1, GEMV_MAX_M + 2)`` visits
-    every class it has.  ``rate_one`` is the unit's other axis and both values
-    are tried; the assertion is EXACT equality per regime, so a launch the
-    dispatch cannot make fails as loudly as one it can.
+
+def test_no_published_dense_cell_names_a_launch_the_build_cannot_make(contract):
+    """The published cells read against the DISPATCH, not against the table.
+
+    ``test_every_cell_executes_a_launch_its_route_can_make`` compares cells to
+    ``ROUTE_LAUNCHES``; #538 is the case where BOTH drifted together, so a
+    second reference is needed.  This one is the literal pair ``apply`` emits.
+    It names nothing this branch introduced, so it runs to this assertion on
+    ``master`` too -- where it fails, listing the eight stale cells.
     """
     pytest.importorskip("torch")
-    import types
+    from tessera.serving.scheme import TESSERA_BF16, TESSERA_FP8, WINDOW_GEMM_SYMBOL
+    from tessera.serving.telemetry import DECODER_NATIVE_WINDOW_GEMM
 
-    from tessera.serving import bf16_route, ext, fp8_gemv, telemetry
-    from tessera.serving.scheme import (TESSERA_BF16, TESSERA_FP8, WINDOW_GEMM_SYMBOL,
-                                        launch_pairs, regime_of_m)
+    window = {"TESSERA_E4M3_K1": TESSERA_FP8, "TESSERA_BF16_K1": TESSERA_BF16}
+    made = {(WINDOW_GEMM_SYMBOL, DECODER_NATIVE_WINDOW_GEMM)}
+    stale = {}
+    for cell in contract["lane_eligibility"]["cells"]:
+        if cell["structure"] != "dense" or cell["family"] not in window:
+            continue
+        pairs = {(e["symbol"], e["decoder"]) for e in cell["executes"]}
+        if pairs - made:
+            stale[cell["id"]] = sorted(pairs - made)
+    assert not stale, stale
 
-    for module, route in ((fp8_gemv, TESSERA_FP8), (bf16_route, TESSERA_BF16)):
-        seen: dict[str, set] = {"decode": set(), "batch": set()}
-        # The native packed GEMM the compact loader prepares: one launch for
-        # every M, both residencies, no extension lane.  It is in the table in
-        # both regimes, so the derivation adds it to both.
-        seen["decode"].add((WINDOW_GEMM_SYMBOL,
-                            telemetry.DECODER_NATIVE_WINDOW_GEMM))
-        seen["batch"].add((WINDOW_GEMM_SYMBOL,
-                           telemetry.DECODER_NATIVE_WINDOW_GEMM))
-        for m in range(1, module.GEMV_MAX_M + 2):
-            for rate_one in (False, True):
-                holder = types.SimpleNamespace(rate_one=rate_one)
-                # The two pairs ``apply``'s RETAINED lane branch stamps, by the
-                # same predicate it stamps them on: the native path above is
-                # what a serve takes, and these stay derived so the reference
-                # lane's table cannot drift from it.
-                pair = ((module.GEMV_SYMBOL, telemetry.DECODER_WINDOW_GEMV)
-                        if module.decode_is_gemv(holder, m)
-                        else (module.GEMM_SYMBOL, telemetry.DECODER_WINDOW_GEMV))
-                seen[regime_of_m(m)].add(pair)
-        for regime, pairs in seen.items():
-            assert pairs == launch_pairs(
-                route, regime=regime, mode="streamed",
-                lanes=(ext.WINDOW_GEMV_MODULE_NAME,),
-                include_experimental=True), (route, regime)
+
+def test_no_withdrawn_cell_has_come_back(contract):
+    """A withdrawal is a named act, not a gap somebody can refill quietly.
+
+    ``_WITHDRAWN_CELL_IDS`` records what contract v31 removed and why; a cell
+    reappearing under one of those ids has to change this list, and that change
+    is where the question "on which receipt?" gets asked.
+    """
+    present = {cell["id"] for cell in contract["lane_eligibility"]["cells"]}
+    assert not (present & _WITHDRAWN_CELL_IDS)
+    assert not (set(_CELL_LAWS) & _WITHDRAWN_CELL_IDS)
 
 
 def test_every_cell_executes_a_launch_its_route_can_make(contract):
