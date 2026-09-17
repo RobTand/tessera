@@ -5,6 +5,23 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-17 for the reading of contract v29's single-rank KL
+(tessera#514, §3.8). The world-size receipt's 4.26x A4 excess over the BF16
+control at the median |d logprob| is a divergence between two worlds of one
+quantized checkpoint, not error the sharded path adds: against the BF16
+reference the A4 stub's KL is the same at TP1 and TP2 (0.07471 vs 0.07484,
+ratio 1.0017, 95% CI [0.990, 1.014]), the TP2 delta re-draws 18.9% of the
+quantization noise, and its added-error share is 0.7% (CI [-1.6%, +3.0%]),
+all from the receipt's own four payloads
+(`experiments/results/glm53_a4_stub_tp2_reference_kl_514.json`,
+`docs/measurements/tessera-glm53-a4-stub-tp2-excess-resolved-2026-09-17.md`).
+On the pinned image's own operators a TP2-sized perturbation flips about 1%
+of E2M1 codes and 2.5% of E4M3 codes and leaves each quantizer's error
+variance unchanged to 0.5%, while its own power grows 72-87x through the E2M1
+quantizer and 26x through the E4M3 one -- which is why a TP-vs-TP comparison
+on a quantized checkpoint grows and the reference KL does not. Nothing in the
+contract moves; the receipt keeps `route_only`.
+
 Re-stamped 2026-09-17 for the census's engine budget and its decoder claim
 (§4.5g). A receipt said nothing about what the engine was allowed to spend, and
 the tool could not bound the KV cache at all: `--gpu-memory-utilization` is a
@@ -2751,7 +2768,20 @@ grade, which may only be `route_only`, because every arm compares a
 checkpoint with itself at another world size and never with its reference.
 The receipt is `docs/measurements/tessera-glm53-a4-stub-tp2-world-size-2026-09-15.md`
 (the A4 excess over the BF16 control is 4.26x at the median shared-id
-|d logprob| and 1.11x at the p99, tessera#514). The traces cut E2M1_K2 on
+|d logprob| and 1.11x at the p99, tessera#514). **Read that excess as a
+divergence, not as added error.** On a quantized checkpoint a TP2-vs-TP1
+comparison re-draws quantization noise: the TP2 partial-sum rounding is a
+BF16-ulp perturbation that flips activation codes near decision boundaries,
+and a flip re-draws that element's error without changing its distribution.
+Against the BF16 reference the A4 stub's KL is the same at both worlds
+(0.07471 vs 0.07484, ratio 1.0017, 95% CI [0.990, 1.014]); the TP2 delta is
+a re-draw of 18.9% of the quantization noise with an added-error share of
+0.7% (CI [-1.6%, +3.0%]), and it is uncorrelated with the BF16 control's
+delta. The number that gates a served world is the KL against the reference
+at that world, which `route_only` already defers to served validation
+(`experiments/results/glm53_a4_stub_tp2_reference_kl_514.json`,
+`docs/measurements/tessera-glm53-a4-stub-tp2-excess-resolved-2026-09-17.md`).
+The traces cut E2M1_K2 on
 both axes, E4M3_K1 on rows and BF16_K1 on columns; the other axis of each is
 `loader_axes`' word and no trace's.
 

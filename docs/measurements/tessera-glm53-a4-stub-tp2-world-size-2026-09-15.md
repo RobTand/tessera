@@ -156,3 +156,15 @@ BF16 control's are 0.026 and 0.025.
   `dq-runs/glm-first-artifact-claude-20260914/tp2-equivalence-20260915/`, in `kl-tp1-tp2/`,
   `kl-bf16/` and `kl-a4-tp1-rerun/`. The npz sha256 values in the committed table identify them.
 - Serve driver and comparison script: `tp1-kl.sh` and `tp-equivalence.py` in the same directory.
+
+## Resolution of the A4 excess (appended 2026-09-17)
+
+The cause the table above left open is settled in
+`docs/measurements/tessera-glm53-a4-stub-tp2-excess-resolved-2026-09-17.md`, from the same four
+`kl_tool` payloads this page names. Read against the BF16 TP1 stub as the reference, the A4 stub
+is at the same distance on one rank and on two: renormalized shared-support KL 0.07471 at TP1 and
+0.07484 at TP2 (ratio 1.0017, 95% CI [0.990, 1.014]; top-1024 lower bound 0.017920 on both). The
+TP2-vs-TP1 delta is a re-draw of 18.9% of the quantization noise, with an added-error share of
+0.7% (CI [-1.6%, +3.0%]). The 4.26x median excess above is therefore a divergence between two
+worlds of one quantized checkpoint, not error the sharded path adds. The grade stays
+`route_only`; nothing in this page changes.

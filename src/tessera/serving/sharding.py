@@ -51,8 +51,11 @@ WHAT IS ATTESTED, AND WHAT IS ONLY ATTEMPTED.  ``runtime_contract.json``'s
 ``tensor_parallel.units[].max_world_size`` is 2 for every family since v29,
 each unit naming the world-size receipt that covers it: two two-rank serves of
 the GLM-5.3-Flash stub, a route trace per rank, and a KL against a single-rank
-arm (tessera#514), graded ``route_only``.  A wider world is something this build
-will attempt and nothing has measured.  What is published beside it is
+arm (tessera#514), graded ``route_only``.  That KL's A4 excess over the BF16
+control (4.26x at the median) is re-drawn quantization noise, not added error:
+against the BF16 reference the A4 stub sits at the same KL on one rank and on
+two (ratio 1.0017, docs/measurements/tessera-glm53-a4-stub-tp2-excess-resolved-2026-09-17.md).
+A wider world is something this build will attempt and nothing has measured.  What is published beside it is
 ``loader_axes``, which is ``ROUTE_TP_AXES`` -- a statement about what this
 build's loader DOES, checked against this module so the two cannot drift -- and
 ``kv_head_replication``, checked against :data:`KV_REPLICAS_ATTRIBUTE`.  That
