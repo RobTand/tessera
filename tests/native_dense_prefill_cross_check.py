@@ -90,10 +90,20 @@ each declaration with ``validate_tessera_scheme`` and builds every rank's plan,
 which is the plumbing a device run would otherwise fail on first.  That mode
 is CPU work and goes through PrismaBuild like every other CPU action.
 
-BOUNDS.  The fixtures are two small dense modules (the widest is 4096x4096),
-so the arms are bounded by construction; ``--m`` caps the batch and the whole
+BOUNDS.  The small fixtures are two dense modules (the widest is 4096x4096) and
+the GLM fixtures are layer 0 of a 120-shard export read one shard at a time, so
+the arms are bounded by construction; ``--mset`` caps the batch and the whole
 run is one bounded process.  Tolerances are the chosen screens the route tests
 use, not composed bounds, and they are printed with every arm.
+
+WHY THE BATCH FLAG IS NOT ``--m``.  A device run goes through
+``python3 -m torch.distributed.run``, whose parser sits in FRONT of this
+harness's, and ``--m`` is an ambiguous abbreviation of its own options
+(``--max-restarts``, ``--monitor-interval``, ``--module``, ``--master-addr``,
+``--master-port``): measured on the pinned image, ``--m 0`` after the script
+path is refused with ``error: ambiguous option: --m`` before this module's
+parser ever sees it, while ``--mset`` passes through.  The flag is spelled
+``--mset`` so the documented device command works.
 """
 from __future__ import annotations
 
@@ -810,14 +820,23 @@ def _preflight(selected) -> dict:
     return out
 
 
-def main(argv=None) -> int:
+def _parser() -> argparse.ArgumentParser:
+    """This harness's own CLI, kept separate so a test can read its spellings.
+
+    A device run puts ``torch.distributed.run`` in front of this parser, and
+    torchrun resolves some option-like tokens before this module's ``argv``
+    exists (see the module docstring on ``--mset``).  That is a property of the
+    SPELLINGS, so the spellings are reachable without running ``main``.
+    """
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--fixture", action="append", choices=sorted(FIXTURES),
                         help="restrict to a fixture key; repeatable (default: all)")
     parser.add_argument("--family", action="append", choices=sorted(FAMILIES),
                         help="restrict to a payload family; repeatable "
                              "(default: every family)")
-    parser.add_argument("--m", type=int, action="append",
+    # NOT ``--m``: see the module docstring.  torchrun in front of this parser
+    # refuses it as an ambiguous abbreviation of its own options.
+    parser.add_argument("--mset", type=int, action="append", dest="mset",
                         help=f"batch sizes (default: {' '.join(map(str, DEFAULT_M))})")
     parser.add_argument("--mode", default="streamed", choices=("streamed", "resident"),
                         help="the declared residency (default: streamed)")
@@ -829,13 +848,18 @@ def main(argv=None) -> int:
                         help="join per-rank device reports into one table and check it")
     parser.add_argument("--json", help="write the report here as well as to stdout; "
                                        "a '{rank}' in the path is filled per process")
+    return parser
+
+
+def main(argv=None) -> int:
+    parser = _parser()
     args = parser.parse_args(argv)
 
     selected = {fixture: spec for fixture, spec in FIXTURES.items()
                 if (not args.fixture or fixture in args.fixture)
                 and (not args.family or spec["family"] in args.family)}
     if args.merge:
-        report = _merged(selected, args.merge, args.m or DEFAULT_M)
+        report = _merged(selected, args.merge, args.mset or DEFAULT_M)
     elif args.preflight:
         report = _preflight(selected)
     else:
@@ -879,7 +903,7 @@ def main(argv=None) -> int:
                 blob = _read_wire(root, module["tensor"])
                 scheme, declared = _declared(root, module["group"], blob, module["group"])
                 ok = _refusal_arms(fixture, family, module, declared, blob, report) and ok
-                for m in (args.m or DEFAULT_M):
+                for m in (args.mset or DEFAULT_M):
                     report["expected_arms"].append(
                         _arm_id(fixture, module["group"], world, rank, m))
                     ok = _arm(fixture, family, module, declared, scheme, blob,

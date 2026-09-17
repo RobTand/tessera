@@ -80,7 +80,7 @@ def test_the_full_three_rank_table_merges(tmp_path):
 
 def test_a_rank_that_stopped_mid_table_is_refused(tmp_path):
     """Every rank declares what it will drive, so a short table is a failure."""
-    dropped = ("TESSERA_FP8", GROUPS["TESSERA_FP8"][0], 1)
+    dropped = ("TESSERA_FP8", GROUPS["TESSERA_FP8"][1][0], 1)
     paths = _write(tmp_path, {"tp1": _report(1, 0, drop=(dropped,)),
                               "tp2r0": _report(2, 0), "tp2r1": _report(2, 1)})
     with pytest.raises(SystemExit, match="ran 7 of 8 arms it declared"):
@@ -139,3 +139,33 @@ def test_the_glm_fixtures_are_named_through_box_artifacts():
         resolved = box_artifacts.path(*spec["artifact"])
         assert resolved is not None and str(resolved).startswith(
             str(box_artifacts.root(root_key)))
+
+
+def test_no_harness_option_is_a_torchrun_abbreviation():
+    """The batch flag cannot be ``--m``: torchrun parses in front of this CLI.
+
+    Measured on the pinned image: ``torch.distributed.run ... <script> --m 0``
+    is refused with ``error: ambiguous option: --m`` (it abbreviates
+    ``--max-restarts``, ``--monitor-interval``, ``--module``, ``--master-addr``
+    and ``--master-port``) before the harness's own parser sees the argument,
+    while ``--mset`` passes through.  A harness whose documented device command
+    cannot run is a harness nobody can run, so the spelling is pinned here.
+
+    The spellings are read out of the SOURCE rather than off ``_parser()``, so
+    the test names the defect on the revision that had it instead of failing on
+    a missing attribute.
+    """
+    import ast
+    from pathlib import Path
+
+    tree = ast.parse(Path(cc.__file__).read_text())
+    options = {node.args[0].value
+               for node in ast.walk(tree)
+               if isinstance(node, ast.Call)
+               and isinstance(node.func, ast.Attribute)
+               and node.func.attr == "add_argument"
+               and node.args
+               and isinstance(node.args[0], ast.Constant)}
+    assert "--mset" in options
+    assert "--m" not in options
+    assert "--fixture" in options and "--family" in options
