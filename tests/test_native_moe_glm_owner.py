@@ -253,27 +253,21 @@ def test_a_non_integer_geometry_coordinate_refuses_before_width_arithmetic(key, 
 
 
 # --------------------------------------------------------------------------
-# PRECURSOR ONLY, and it must not be read as producer coverage.
+# GEOMETRY AND CONTRACT, NOT A DEVICE RESULT.
 #
-# Root read the actual Tessera runtime path and these tests do NOT establish a
-# runnable A4/A16/TP2 owner. What they establish is narrower: the geometry and
-# routing contracts, and that a GLM owner's shape/roster/execution record reach
-# the producer's own validators. Everything below that line is still TP1- and
-# E4M3-shaped, and each seam is named with its line in
-# docs/ARCHITECTURE.md so the next brief starts from the real gap:
+# These tests establish the geometry and routing contracts, and that a GLM
+# owner's shape/roster/execution record reach the producer's own validators.
+# They do not run a device: the harness's own runtime path -- the owner's
+# format becoming a family/grid/rung, a TP2 serving config, a real rank, and a
+# panel the validator accepts at that family -- is
+# `tests/test_native_moe_tp_owner_runtime.py`'s, and the CUDA layer
+# construction plus the native decode are the GPU qualification step named
+# there.
 #
-#   resolve_serving_config:504-519   refuses tensor_parallel_size != 1 and
-#                                    builds ParallelConfig(tensor_parallel_size=1)
-#   prepare scheme  :~670            hardcodes TESSERA_FP8 / "E4M3" / q256 1024
-#                                    and shape["experts"]
-#   declared route  :~712            "policy": "TESSERA_FP8:resident"
-#   runtime exec    :715             runtime.update(execution=dict(EXECUTION))
-#   panel validator :827             identity_sha256(runtime["execution"]) == EXECUTION
-#   verify_routing_bias:538          reads source_protocol["selection_bias"] while
-#                                    PQ's GLM protocol carries "correction_bias"
-#
-# A real cross-repository payload test for the bias translation is owed; until
-# it exists, the GLM protocol has two spellings and no test that connects them.
+# `verify_routing_bias` still reads `source_protocol["selection_bias"]` while
+# PQ's GLM protocol carries `correction_bias`; the cross-repository payload
+# test below is what connects the two spellings, and the request-path
+# translation is owed by the allocator/consumer bridge that follows.
 # --------------------------------------------------------------------------
 
 def _pq_owner_view(tp, format_name, unit=GLM_UNIT):
@@ -298,13 +292,12 @@ def _pq_owner_view(tp, format_name, unit=GLM_UNIT):
 @pytest.mark.parametrize("format_name", ["TESSERA_E2M1_K2_R896", "TESSERA_E4M3_K1_R1024",
                                          "TESSERA_BF16_K1_R1024"])
 def test_a4_a8_and_a16_each_reach_the_whole_owner_validator(format_name):
-    """PRECURSOR: the CONTRACT accepts these families; the runtime does not yet.
+    """The contract accepts these families, and the roster carries the format.
 
     This checks the geometry/routing contract and the roster's format
-    parameterization. It does NOT show that a real A4/A8/A16 owner runs: the
-    scheme, declared route and runtime manifest on the path below are still
-    E4M3/TP1 literal (see the seam list above the tests). Do not read this
-    test's name as producer coverage.
+    parameterization. It does not run a device: what the harness then RESOLVES
+    from that format -- family, grid, rung, sidecar and route -- is asserted in
+    `tests/test_native_moe_tp_owner_runtime.py`.
     """
     pq, shape, view, members = _pq_owner_view(1, format_name)
     assert view["format"] == format_name
@@ -325,12 +318,11 @@ def test_a4_a8_and_a16_each_reach_the_whole_owner_validator(format_name):
 
 @pytest.mark.parametrize("tp", [1, 2])
 def test_the_declared_tensor_parallel_reaches_the_whole_receipt_execution_check(tp):
-    """PRECURSOR: the execution RECORD accepts TP2; the runtime does not yet.
+    """The execution RECORD the harness stamps is this geometry's own cut.
 
-    `validate_execution` and the panel's execution check are now geometry-aware.
-    That is necessary and not sufficient: `resolve_serving_config:504-519` still
-    refuses to build a TP2 ParallelConfig, so no TP2 owner can reach this
-    validator in a real run. This test fixes the record, not the runtime.
+    `validate_execution`, the prepared operator's runtime manifest and the
+    panel's execution check all read `owner_execution(shape)`, so a TP2 owner
+    is stamped TP2 and can no longer be relabelled with the LFM record.
     """
     pq, shape, view, members = _pq_owner_view(tp, "TESSERA_E4M3_K1_R1024")
     execution = pq.owner_execution(shape, format_name="TESSERA_E4M3_K1_R1024")
@@ -390,10 +382,11 @@ def test_the_declared_tensor_parallel_reaches_the_whole_receipt_execution_check(
     with pytest.raises(ValueError):
         pq._member_roster(GLM_UNIT, wrong, shape)
 
-    # PRECURSOR: this asserts the CONTRACT's rank-local geometry, not a
-    # runnable owner. `resolve_serving_config:504-519` still refuses to build a
-    # `tensor_parallel_size=2` ParallelConfig, so no TP2 owner reaches the
-    # runtime; that seam is named above this test.
+    # This asserts the CONTRACT's rank-local geometry, not a device result. The
+    # rank-local member rows a request carries and the module rows a container
+    # frames are separated in the harness by `_declared_member_rows`, and
+    # `tests/test_native_moe_tp_owner_runtime.py` covers that split and the
+    # TP2 serving config that reaches it.
 
 
 # --------------------------------------------------------------------------

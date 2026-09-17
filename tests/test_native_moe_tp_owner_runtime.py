@@ -1,0 +1,410 @@
+"""The whole GLM routed owner's RUNTIME path, on CPU: config, route and world.
+
+CPU only, and deliberately so: this file fixes what the harness RESOLVES --
+the family/grid/rung its format names, the sidecar the loader must accept, the
+execution record, the rank-local route geometry, and the world the owner binds
+to -- before any device exists.  What it does not exercise is the CUDA layer
+construction and the native decode; those are named where the substitution is
+installed (``_stock_config_runtime``) and are the GPU qualification step, not
+an assertion here.
+
+No shape-only expectation lives here: every resolver is the harness's own, the
+sidecar goes through the plugin's real ``validate_tessera_moe_scheme``, and the
+binding reads a real ``torch.distributed`` group when one exists.
+"""
+from __future__ import annotations
+
+import copy
+import hashlib
+import json
+from pathlib import Path
+
+import pytest
+
+torch = pytest.importorskip("torch")
+from experiments import bench_native_moe_operator as moe
+from experiments import bench_native_operator as dense
+
+GLM_UNIT = "model.language_model.layers.3.mlp.experts"
+A4 = "TESSERA_E2M1x2_K2_R896"
+A8 = "TESSERA_E4M3_K1_R1024"
+A16 = "TESSERA_BF16_K1_R1024"
+
+
+def _sha(value):
+    return hashlib.sha256(value.encode()).hexdigest()
+
+
+def _glm_shape(tp, format_name, unit=GLM_UNIT):
+    return {"geometry_version": 1, "geometry_id": "glm53_next_routed_stack_v1",
+            "source_id": "glm5_next", "n_routed_experts": 288, "top_k": 8,
+            "hidden_size": 4096, "intermediate_size": 2048, "shared_experts": 1,
+            "n_group": 1, "topk_group": 1, "topk_method": "noaux_tc",
+            "scoring_func": "sigmoid", "norm_topk_prob": True,
+            "routed_scaling_factor": 2.5, "swiglu_limit": 10.0, "gated": True,
+            "tensor_parallel": tp, "tensor_parallel_cut_axis": "intermediate",
+            "format": format_name}
+
+
+def _glm_routing():
+    return {"activation": "silu", "scoring_func": "sigmoid", "renormalize": True,
+            "routed_scaling_factor": 2.5, "apply_router_weight_on_input": False,
+            "expert_map": None, "input_dtype": "torch.bfloat16",
+            "topk_weights_dtype": "torch.float32", "topk_ids_dtype": "torch.int32",
+            "device": "cuda:0",
+            "weights_contract": "post_renormalization_and_routed_scaling",
+            "swiglu_limit": 10.0, "n_group": 1, "topk_group": 1, "topk_method": "noaux_tc",
+            "source_protocol": {"router_class": "Glm5NextTopKRouter",
+                "router_source_sha256": _sha("CPU source fixture"),
+                "scoring_func": "sigmoid", "topk_method": "noaux_tc",
+                "normalization_epsilon": 1e-6,
+                "correction_bias": {"content_sha256": _sha("CPU bias fixture"),
+                                    "dtype": "torch.float32"},
+                "expert_bias_affects": "selection_only", "norm_topk_prob": True}}
+
+
+def _routes(*families):
+    from tessera.serving.scheme import ROUTES
+    return {family: ROUTES[family] for family in families}
+
+
+@pytest.mark.parametrize("format_name,family,grid,q256", [
+    (A4, "TESSERA_NVFP4", "E2M1x2", 896),
+    (A8, "TESSERA_FP8", "E4M3", 1024),
+    (A16, "TESSERA_BF16", "BF16", 1024),
+])
+def test_the_owner_format_names_its_family_grid_and_rung(format_name, family, grid, q256):
+    """The family is the ROUTE the grid resolves to, not a name carved off."""
+    wire = moe.owner_wire(_glm_shape(1, format_name))
+    route = _routes(family)[family]
+    assert (wire["family"], wire["grid"], wire["q256"]) == (family, grid, q256)
+    assert (wire["body"], wire["plane"]) == (route["body"], route["plane"])
+    assert wire["activation_contract"] == route["activation_contract"]
+    assert wire["policy"] == family + ":resident"
+    # An A4 owner is not an A8 owner: family, rung and tile all differ.
+    assert moe.owner_wire(_glm_shape(1, A4)) != moe.owner_wire(_glm_shape(1, A8))
+
+
+def test_an_unknown_or_unparseable_format_is_refused():
+    with pytest.raises(ValueError):
+        moe.owner_wire(_glm_shape(1, "TESSERA_NOTAGRID_K1_R1024"))
+    with pytest.raises(ValueError, match="Tessera format name"):
+        moe.owner_wire(_glm_shape(1, "E4M3_K1_R1024"))
+
+
+@pytest.mark.parametrize("format_name,family", [(A4, "TESSERA_NVFP4"), (A8, "TESSERA_FP8"),
+                                                (A16, "TESSERA_BF16")])
+@pytest.mark.parametrize("tp", [1, 2])
+def test_the_sidecar_the_loader_gets_is_the_owners_own_recipe(format_name, family, tp):
+    """The real plugin validator accepts the real scheme at the owner's rung.
+
+    ``wire_stride`` is this rank's container width, so it is built from the
+    rank-local member rows; the geometry the sidecar declares is the MODULE's,
+    because a Tessera checkpoint is tensor-parallel agnostic.
+    """
+    from tessera.serving.scheme import validate_tessera_moe_scheme
+    shape = _glm_shape(tp, format_name)
+    wire = moe.owner_wire(shape)
+    strides = {"w13": 4215596 if family == "TESSERA_FP8" else 4231984,
+               "w2": 4219628 if family == "TESSERA_FP8" else 4236016}
+    scheme = moe.owner_scheme(shape, wire, strides=strides, unit=GLM_UNIT)
+    assert (scheme["family"], scheme["grid"]) == (family, wire["grid"])
+    assert scheme["hidden_size"] == 4096
+    # The sidecar describes the whole module at every world: the rank-local cut
+    # is the loader's, and ``create_weights`` refuses a partition width that is
+    # not exactly ``intermediate_size // tp``.
+    assert scheme["intermediate_size"] == 2048
+    assert scheme["groups"]["w13"]["rows"] == 2 * 2048
+    assert [rows for _name, rows in scheme["groups"]["w13"]["roles"]] == [2048, 2048]
+    assert [group["q256"] for group in scheme["groups"].values()] == [wire["q256"]] * 2
+    # Feeding it back through the plugin's own front door accepts it too, which
+    # is what stops this test from asserting a sidecar the loader would refuse.
+    assert validate_tessera_moe_scheme(
+        {key: value for key, value in scheme.items() if key != "structure"},
+        GLM_UNIT)["family"] == family
+
+
+@pytest.mark.parametrize("tp", [1, 2])
+def test_the_rank_local_member_rows_are_the_cut_and_the_container_rows_are_not(tp):
+    shape = _glm_shape(tp, A8)
+    for role in moe.ROLE_ORDER:
+        rows = moe._member_shape(shape, role)[0]
+        declared = moe._declared_member_rows(shape, role)
+        if role == "w2":
+            # The down projection is cut along its COLUMNS, so its row count is
+            # the hidden size at every world and the container's framing is the
+            # same number this rank's tensor has.
+            assert (rows, declared) == (4096, 4096)
+        else:
+            assert declared == 2048
+            assert rows == 2048 // tp
+            assert (rows == declared) is (tp == 1)
+
+
+@pytest.mark.parametrize("tp", [1, 2])
+def test_the_route_record_geometry_is_the_ranks_own_gate_up_stack(tp):
+    """N is this rank's ``2 * N_local`` and K the hidden size, which is what
+    ``moe_route.create_weights`` stores as ``tessera_rows``/``tessera_columns``."""
+    assert moe.owner_route_shape(_glm_shape(tp, A8)) == f"N{2 * 2048 // tp}:K4096"
+
+
+@pytest.mark.parametrize("tp", [1, 2])
+def test_the_execution_record_is_the_owners_own_cut(tp):
+    shape = _glm_shape(tp, A8)
+    execution = moe.owner_execution(shape)
+    assert execution["tensor_parallel"] == tp
+    assert moe.validate_execution(execution, list(moe.ROLE_ORDER), shape=shape) is None
+    if tp == 2:
+        with pytest.raises(ValueError, match="tensor-parallel"):
+            moe.validate_execution(dict(moe.EXECUTION), list(moe.ROLE_ORDER), shape=shape)
+    # An LFM owner's record is untouched: the same dict, field for field.
+    lfm = {"experts": 32, "hidden_size": 256, "intermediate_size": 128, "top_k": 4}
+    assert moe.owner_execution(lfm) == moe.EXECUTION
+
+
+def _stock_config_runtime(monkeypatch, *, tensor_parallel):
+    """CPU substitution at the stock config-construction boundary.
+
+    Named, and only this boundary: the object the engine builds from
+    ``engine_args`` is a ``SimpleNamespace`` here instead of a real
+    ``VllmConfig``.  Everything the harness checks about the document and about
+    the cut is real.
+    """
+    import sys
+    from types import ModuleType, SimpleNamespace
+    module = ModuleType("vllm.config")
+    for name in ("CacheConfig", "ParallelConfig", "SchedulerConfig", "KernelConfig",
+                 "CompilationConfig"):
+        setattr(module, name, lambda **kwargs: SimpleNamespace(**kwargs))
+    module.VllmConfig = lambda **kwargs: SimpleNamespace(**kwargs, device_config={})
+    compilation = ModuleType("vllm.config.compilation")
+    compilation.CompilationMode = SimpleNamespace(NONE="none")
+    compilation.CUDAGraphMode = SimpleNamespace(NONE="none")
+    monkeypatch.setitem(sys.modules, "vllm.config", module)
+    monkeypatch.setitem(sys.modules, "vllm.config.compilation", compilation)
+    monkeypatch.setattr(moe, "_plain",
+                        lambda value: vars(value) if isinstance(value, SimpleNamespace) else value)
+    monkeypatch.setenv("TESSERA_SERVE_MODE", "resident")
+    source = Path(__file__).resolve().parents[1] / "experiments/configs/lfm25_first_model_clean_20260907.json"
+    document = json.loads(source.read_text())
+    document["engine_args"]["tensor_parallel_size"] = tensor_parallel
+    path = source.parent / f".owner-tp{tensor_parallel}.json"
+    path.write_text(json.dumps(document))
+    return path, document
+
+
+@pytest.mark.parametrize("tensor_parallel", [1, 2])
+def test_the_serving_config_builds_the_owners_own_cut(monkeypatch, tensor_parallel):
+    path, document = _stock_config_runtime(monkeypatch, tensor_parallel=tensor_parallel)
+    try:
+        config, identity = moe.resolve_serving_config(path, document["runtime_image"],
+                                                      tensor_parallel=tensor_parallel)
+        assert config.parallel_config.tensor_parallel_size == tensor_parallel
+        assert identity["resolved"]["parallel_config"]["tensor_parallel_size"] == tensor_parallel
+        # The document is not a place to discover the world: a cut the owner did
+        # not declare is refused, in both directions.
+        with pytest.raises(ValueError, match="scope"):
+            moe.resolve_serving_config(path, document["runtime_image"],
+                                       tensor_parallel=1 if tensor_parallel == 2 else 2)
+        with pytest.raises(ValueError):
+            moe.resolve_serving_config(path, document["runtime_image"], tensor_parallel=4)
+    finally:
+        path.unlink()
+
+
+def test_the_distributed_declaration_must_agree_with_the_geometry():
+    tp2 = _glm_shape(2, A8)
+    with pytest.raises(ValueError, match="no distributed block"):
+        moe.owner_distributed(tp2, None)
+    block = {"world_size": 2, "rank": 1, "init_method": "tcp://10.0.0.1:29501",
+             "timeout_seconds": 120}
+    assert moe.owner_distributed(tp2, block) == block
+    # The world size is the owner's, and a rank outside it is not a choice.
+    with pytest.raises(ValueError, match="world_size"):
+        moe.owner_distributed(tp2, {**block, "world_size": 1})
+    with pytest.raises(ValueError, match="rank"):
+        moe.owner_distributed(tp2, {**block, "rank": 2})
+    # A world of two cannot meet at a temp file, and a TP1 owner takes no block.
+    with pytest.raises(ValueError, match="tcp://"):
+        moe.owner_distributed(tp2, {**block, "init_method": "file:///tmp/rendezvous"})
+    assert moe.owner_distributed(_glm_shape(1, A8), None) == {
+        "world_size": 1, "rank": 0, "init_method": None, "timeout_seconds": None}
+
+
+def test_binding_reads_the_live_group_and_refuses_a_mismatch():
+    """No group, or the wrong one, is a refusal -- never an assumed rank 0."""
+    world = {"world_size": 1, "rank": 0, "init_method": None, "timeout_seconds": None}
+    if not torch.distributed.is_initialized():
+        with pytest.raises(ValueError, match="no distributed world"):
+            moe.bind_owner_rank(world)
+        with pytest.raises(ValueError, match="no distributed world"):
+            moe.bind_owner_rank({"world_size": 2, "rank": 1, "init_method": "tcp://x:1",
+                                 "timeout_seconds": 1})
+        return
+    assert moe.bind_owner_rank(world) == (0, 1)
+    with pytest.raises(ValueError, match="live world is rank"):
+        moe.bind_owner_rank({**world, "world_size": 2, "rank": 1})
+    with pytest.raises(ValueError, match="live world is rank"):
+        moe.bind_owner_rank({**world, "rank": 1, "world_size": 2})
+
+
+def test_the_owner_route_set_comes_from_the_plugins_own_launch_table():
+    """The panel's admissible route is the plugin's, per family and per world.
+
+    ``TESSERA_NVFP4`` has a routed launch table row (its production expert
+    builder serves a world above one); ``TESSERA_BF16`` has none, because its
+    expert wire is reachable only through the explicit selected owner.  Both
+    statements are the plugin's, read here rather than restated.
+    """
+    materialising = ("vllm.fused_moe.modular_kernel", "torch_materialize_stock")
+    a4 = moe.owner_launch_pairs(moe.owner_wire(_glm_shape(1, A4)), world=1)
+    assert a4 and all(len(pair) == 2 for pair in a4)
+    assert materialising in a4
+    # The backend suffix a served record carries is not a second route.
+    assert moe.census_symbol_base("vllm.fused_moe.modular_kernel:FLASHINFER_CUTLASS") == materialising[0]
+    a16 = moe.owner_launch_pairs(moe.owner_wire(_glm_shape(1, A16)), world=1)
+    assert materialising not in a16
+    assert {decoder for _symbol, decoder in a16} == {
+        "research_selected_torch_window_folded_bf16",
+        "research_selected_triton_window_folded_bf16"}
+
+
+def test_a_tp2_fp8_owner_has_no_production_launch_to_declare():
+    """At TP2 the FP8 production builder is out of scope, and so is its pair."""
+    wire = moe.owner_wire(_glm_shape(2, A8))
+    pairs = moe.owner_launch_pairs(wire, world=2)
+    assert ("vllm.fused_moe.modular_kernel", "torch_materialize_stock") not in pairs
+    assert ("vllm.fused_moe.modular_kernel", "research_selected_triton_window") in pairs
+    assert ("vllm.fused_moe.modular_kernel", "research_selected_torch_window") in pairs
+    # A world of one keeps the production pair: that lane is what TP1 has run.
+    assert ("vllm.fused_moe.modular_kernel", "torch_materialize_stock") in \
+        moe.owner_launch_pairs(wire, world=1)
+    # A compressed BF16 expert stack has no production builder at any world.
+    bf16 = moe.owner_launch_pairs(moe.owner_wire(_glm_shape(1, A16)), world=1)
+    assert ("vllm.fused_moe.modular_kernel", "research_selected_triton_window_folded_bf16") in bf16
+    assert ("vllm.fused_moe.modular_kernel", "torch_materialize_stock") not in bf16
+
+
+def test_the_selected_block_is_required_exactly_where_no_production_owner_exists():
+    a8_tp1, a8_tp2 = _glm_shape(1, A8), _glm_shape(2, A8)
+    a16, a4_tp2 = _glm_shape(1, A16), _glm_shape(2, A4)
+    block = {"schema": "tessera.research_selected_moe.v1", "max_experts_per_chunk": 8,
+             "decode_backend": "triton", "expected_tensor_parallel_size": 2}
+    # A8 at TP1 is the production lane and takes no block.
+    assert moe.owner_research_selected(a8_tp1, moe.owner_wire(a8_tp1), None) is None
+    # A8 at TP2 has no production owner; the block is required...
+    with pytest.raises(ValueError, match="research_selected_moe"):
+        moe.owner_research_selected(a8_tp2, moe.owner_wire(a8_tp2), None)
+    # ...and must declare this owner's own cut.
+    selected = moe.owner_research_selected(a8_tp2, moe.owner_wire(a8_tp2), block)
+    assert selected.expected_tensor_parallel_size == 2
+    with pytest.raises(ValueError, match="expected_tensor_parallel_size"):
+        moe.owner_research_selected(a8_tp2, moe.owner_wire(a8_tp2),
+                                    {**block, "expected_tensor_parallel_size": 1})
+    # A16's expert route exists only under the explicit block, at any world.
+    with pytest.raises(ValueError, match="research_selected_moe"):
+        moe.owner_research_selected(a16, moe.owner_wire(a16), None)
+    assert moe.owner_research_selected(a16, moe.owner_wire(a16),
+                                       {**block, "expected_tensor_parallel_size": 1}) is not None
+    # A4 keeps its own production builder, which serves TP2: attaching the block
+    # to it would name a target the block does not serve.
+    with pytest.raises(ValueError, match="does not serve"):
+        moe.owner_research_selected(a4_tp2, moe.owner_wire(a4_tp2), block)
+
+
+def _record(shape, dtype="torch.bfloat16"):
+    import math
+    return {"shape": shape, "dtype": dtype,
+            "logical_bytes": math.prod(shape) * moe.DTYPE_BYTES[dtype],
+            "content_sha256": _sha(str(shape) + dtype)}
+
+
+def _owner_panel(tp, format_name, route_symbol, decoder):
+    """A frozen GLM whole-owner panel at this cut, for the validator only.
+
+    Tensor RECORDS only: this panel never claims those bytes were rendered, and
+    the canonical fixture's own wires are what a device run consumes.
+    """
+    from tessera.serving.scheme import ROUTES
+    shape = moe.validate_shape(_glm_shape(tp, format_name))
+    wire = moe.owner_wire(shape)
+    members = []
+    for expert in range(288):
+        for role in moe.ROLE_ORDER:
+            geometry = moe._member_shape(shape, role)
+            record = {"blob_sha256": _sha(f"{GLM_UNIT}.{expert}.{role}"), "blob_bytes": 100}
+            members.append({"unit": f"{GLM_UNIT}.{expert}.{role}", "expert": expert, "role": role,
+                            "format": format_name, "shape": geometry,
+                            "source_weight": _record(geometry),
+                            "rendered_weight": _record(geometry),
+                            "activation": {"clip_enabled": False, "input_global_scale": None},
+                            "wire": {**record, "record": dict(record)}})
+    route = {"kind": "moe", "policy": wire["policy"], "decoder": decoder,
+             "contract": ROUTES[wire["family"]]["activation_contract"], "symbol": route_symbol}
+    routing = _glm_routing()
+    phases = {}
+    for phase, m in (("prefill", 8), ("decode", 1)):
+        phases[phase] = {"m": m, "expected_route": route, "transport": {}}
+        for key in moe.TENSOR_KEYS:
+            width = shape["top_k"] if key in ("topk_ids", "topk_weights") else shape["hidden_size"]
+            dtype = routing[key + "_dtype"] if key in ("input", "topk_ids", "topk_weights") \
+                else "torch.bfloat16"
+            phases[phase][key] = _record([m, width], dtype)
+        for key in ("topk_ids", "topk_weights"):
+            phases[phase]["transport"][key] = {"source": dict(phases[phase][key]),
+                                               "supplied": dict(phases[phase][key]),
+                                               "operation": "identity"}
+    workspace = {"schema": moe.WORKSPACE_SCHEMA, "owner": "vllm.WorkspaceManager",
+                 "num_ubatches": 1, "num_lanes": 1, "locked": True,
+                 "slots": [{"index": 0, "allocation": None}], "resident_bytes": 0}
+    execution = moe.owner_execution(shape)
+    panel = {"schema": moe.PANEL_SCHEMA, "unit": GLM_UNIT, "format": format_name, "shape": shape,
+        "members": members, "profile_role_order": list(moe.ROLE_ORDER), "routing": routing,
+        "probe_scope": None, "execution": execution,
+        "runtime": {"schema": moe.RUNTIME_SCHEMA, "execution": execution},
+        "numerics": {"atol": 2**-6, "rtol": 2**-6}, "phases": phases, "workspace": workspace,
+        "workspace_sha256": dense.identity_sha256(workspace),
+        "runtime_binding": {"member_formats": {m["unit"]: m["format"] for m in members},
+            "member_shapes": {m["unit"]: m["shape"] for m in members},
+            "member_operator_identity_sha256": {m["unit"]: _sha(m["unit"] + "joint")
+                                                for m in members},
+            "operator_route": route["symbol"]}}
+    for key in ("routing_capture_sha256", "source_sha256", "calibration_sha256", "cost_sha256",
+                "probe_identity_sha256", "native_tensors_sha256", "scheme_sha256", "config_sha256",
+                "serving_config_sha256"):
+        panel[key] = _sha(key)
+    return panel
+
+
+@pytest.mark.parametrize("tp,format_name,symbol,decoder", [
+    (1, A8, "vllm.fused_moe.modular_kernel:FLASHINFER_CUTLASS", "torch_materialize_stock"),
+    (2, A4, "vllm.fused_moe.modular_kernel:FLASHINFER_CUTLASS", "torch_materialize_stock"),
+    (2, A8, "vllm.fused_moe.modular_kernel:TRITON_REF", "research_selected_triton_window"),
+    (1, A16, "vllm.fused_moe.modular_kernel:TRITON_REF",
+     "research_selected_triton_window_folded_bf16"),
+])
+def test_a_glm_owner_panel_validates_at_its_own_family_and_cut(tp, format_name, symbol, decoder):
+    panel = _owner_panel(tp, format_name, symbol, decoder)
+    assert moe.validate_panel(panel) == panel
+
+
+@pytest.mark.parametrize("mutation", ["policy", "rung", "execution", "decoder", "symbol"])
+def test_the_panel_refuses_a_route_from_another_family_or_cut(mutation):
+    """The literals this harness used to carry cannot come back silently."""
+    panel = _owner_panel(2, A4, "vllm.fused_moe.modular_kernel:FLASHINFER_CUTLASS",
+                         "torch_materialize_stock")
+    route = panel["phases"]["prefill"]["expected_route"]
+    if mutation == "policy":
+        route["policy"] = "TESSERA_FP8:resident"
+    elif mutation == "rung":
+        panel["shape"]["format"] = A8
+    elif mutation == "execution":
+        panel["execution"] = dict(moe.EXECUTION)
+        panel["runtime"]["execution"] = dict(moe.EXECUTION)
+    elif mutation == "decoder":
+        route["decoder"] = "native_window_moe_compact"
+    else:
+        route["symbol"] = "vllm.fused_moe.modular_kernel:"
+        panel["runtime_binding"]["operator_route"] = route["symbol"]
+    with pytest.raises(ValueError):
+        moe.validate_panel(copy.deepcopy(panel))

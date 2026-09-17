@@ -1,0 +1,45 @@
+{
+  "engine_args": {
+    "data_parallel_size": 1,
+    "dtype": "bfloat16",
+    "enable_chunked_prefill": true,
+    "enable_expert_parallel": false,
+    "enable_prefix_caching": true,
+    "enforce_eager": true,
+    "gpu_memory_utilization": 0.35,
+    "kernel_config": {
+      "moe_backend": "auto"
+    },
+    "max_model_len": 2048,
+    "max_num_batched_tokens": 2048,
+    "max_num_seqs": 8,
+    "pipeline_parallel_size": 1,
+    "tensor_parallel_size": 2
+  },
+  "environment": {
+    "TESSERA_SERVE_MODE": "resident"
+  },
+  "model_family": "GLM-5.3-Flash routed experts",
+  "qualification": {
+    "cell_promotion": false,
+    "model_served": false,
+    "release_qualified": false,
+    "runtime_status": "research_whole_owner_receipt_factory_context_only",
+    "scope": "This document supplies the whole-operator factory context for a two-rank GLM routed-owner receipt. It does not instantiate or measure a complete engine, allocate KV, or promote a runtime cell."
+  },
+  "runtime_identity": {
+    "actual_container_image_id": "record_separately_in_each_execution_receipt",
+    "plugin_install": "separate_pinned_source_install_into_official_base",
+    "runtime_image_semantics": "immutable_container_reference_with_nccl_2_30_7_for_sm_121"
+  },
+  "runtime_image": "localhost/prismaquant/spark-vllm-nccl230@sha256:a5424378322071f4c33e63d1372a2bb028e46b03f0da0e5edb0cdd7418e2cebb",
+  "schema": "tessera.first_model_serving_config.v1",
+  "selection": {
+    "authority": "explicit research configuration authored for the GLM routed-owner receipt",
+    "date": "2026-09-17",
+    "new_explicit_choice": {
+      "tensor_parallel_size": 2
+    },
+    "scope": "The world size is the owner's own declared cut; the harness refuses a document whose tensor_parallel_size disagrees with the geometry it is pricing."
+  }
+}

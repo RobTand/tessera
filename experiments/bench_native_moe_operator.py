@@ -28,7 +28,9 @@ RECEIPT_SCHEMA = "tessera.native_moe_operator_receipt.v1"
 REQUEST_SCHEMA = "tessera.native_moe_request.v1"
 RUNTIME_SCHEMA = "tessera.native_moe_runtime.v1"
 WORKSPACE_SCHEMA = "tessera.native_moe_workspace.v1"
+OWNER_WIRE_SCHEMA = "tessera.native_moe_owner_wire.v1"
 FORMAT = "TESSERA_E4M3_K1_R1024"
+MODE_RESIDENT = "resident"
 ROLE_ORDER = ("w1", "w3", "w2")
 
 #: Where each geometry keeps the width its own members actually carry.
@@ -37,12 +39,120 @@ def _parse_owner_format(name):
 
     The returned family is the base grid the wire recipe reports
     (``E2M1``/``E4M3``/``BF16``), which is what ``identity["recipe"]["grid"]``
-    carries -- not the family label from the format name alone.
+    carries -- not the family label from the format name alone.  The base is
+    spelled as the checkpoint vocabulary spells it, so the multi-grid NVFP4
+    wire's ``E2M1x2`` is one grid name here rather than a second parse.
     """
-    match = re.fullmatch(r"TESSERA_([A-Z0-9]+)_K([0-9]+)_R([0-9]+)", name or "")
+    match = re.fullmatch(r"TESSERA_([A-Za-z0-9]+)_K([0-9]+)_R([0-9]+)", name or "")
     if match is None:
         raise ValueError(f"owner format {name!r} is not a Tessera format name")
     return match.group(1), int(match.group(3))
+
+
+def owner_wire(shape):
+    """The one route this owner's members are, read from its own format name.
+
+    A whole routed owner holds exactly one format, and that format names the
+    grid and the rung its members are encoded at; the family, body, plane and
+    activation contract follow from that grid through the plugin's own
+    ``ROUTES`` table.  Nothing here is a second copy of that table: a grid no
+    route decodes, or one more than one route holds, is refused by
+    ``route_for_grid`` in its own words.
+    """
+    name = _owner_format(shape)
+    grid, rung = _parse_owner_format(name)
+    from tessera.serving.scheme import ROUTES, route_for_grid
+    family = route_for_grid(grid)
+    if family is None:
+        raise ValueError(f"owner format {name!r} names grid {grid!r}, and this build has "
+                         "no route that decodes it")
+    route = ROUTES[family]
+    return {"schema": OWNER_WIRE_SCHEMA, "format": name, "family": family, "grid": grid,
+            "q256": rung, "body": route["body"], "plane": route["plane"],
+            "activation_contract": route["activation_contract"], "mode": MODE_RESIDENT,
+            "policy": f"{family}:{MODE_RESIDENT}"}
+
+
+def selected_window_decoder(backend, family):
+    """The decoder ``moe_route`` stamps for an explicitly selected expert owner.
+
+    Written out here because the panel is the independent statement of what
+    the route must report, and the selected owner's decoder is not in
+    ``scheme.ROUTE_LAUNCHES`` -- no contract cell attests it.  The spelling is
+    ``moe_route.py:943``'s, including the folded-BF16 suffix.
+    """
+    return (f"research_selected_{backend}_window"
+            + ("_folded_bf16" if family == "TESSERA_BF16" else ""))
+
+
+def owner_needs_selected(wire, world):
+    """Does this stack need the explicit selected owner, or its own builder?"""
+    return wire["family"] == "TESSERA_BF16" or (wire["family"] == "TESSERA_FP8"
+                                                and int(world) > 1)
+
+
+def census_symbol_base(symbol):
+    """``scheme.moe_census_symbol_base`` -- the launch entry point without its
+    runtime-selected backend suffix.  Comparison only; receipts keep the exact
+    symbol.  Imported here because that module imports torch."""
+    from tessera.serving.scheme import moe_census_symbol_base
+    return moe_census_symbol_base(symbol)
+
+
+def owner_launch_pairs(wire, *, world=1):
+    """``{(symbol, decoder)}`` this owner's route may honestly report.
+
+    Read from the plugin's own launch table so the panel and the route cannot
+    drift apart, plus the selected owner's decoders where one is required --
+    both backends the versioned block admits, because which one an operator
+    declares is the operator's choice.  The symbol is compared on its BASE: a
+    served record carries the runtime-selected backend as a suffix, and that
+    choice is the runtime's, not a second route.
+    """
+    from tessera.serving.scheme import MOE_GEMM_SYMBOL, launch_pairs
+    pairs = set(launch_pairs(wire["family"], structure="routed_moe", include_experimental=True))
+    if wire["family"] == "TESSERA_FP8" and int(world) > 1:
+        # The production FP8 expert builder is TP1-only -- its `create_weights`
+        # compares this rank's partition width against a TP1 geometry -- so at a
+        # world above one its launch is not reachable and is not a pair a panel
+        # may declare.
+        pairs.discard((MOE_GEMM_SYMBOL, "torch_materialize_stock"))
+    if owner_needs_selected(wire, world):
+        for backend in ("torch", "triton"):
+            pairs.add((MOE_GEMM_SYMBOL, selected_window_decoder(backend, wire["family"])))
+    return pairs
+
+
+def owner_research_selected(shape, wire, request_block):
+    """The explicit selected-owner block this stack needs, or None.
+
+    Two stacks need one and one must not have one.  A compressed BF16 expert
+    stack has no production builder at all, and the production FP8 expert
+    builder exceeds its TP1 scope past one rank; both take the versioned
+    ``research_selected_moe`` owner.  A family with its own expert builder
+    (``TESSERA_NVFP4``) keeps it -- the selected block refuses to name a
+    target it does not serve, so attaching one to an A4 owner is a refusal
+    rather than a wider admission.
+    """
+    from tessera.moe_execution import ResearchSelectedMoeConfig
+    family, world = wire["family"], int(shape.get("tensor_parallel", 1))
+    needs = owner_needs_selected(wire, world)
+    if request_block is None:
+        if needs:
+            raise ValueError(
+                f"{family} routed experts at TP{world} require the explicit "
+                "research_selected_moe block: this stack has no production expert owner "
+                "at this cut, and a production owner is not a fallback for it")
+        return None
+    selected = ResearchSelectedMoeConfig.from_checkpoint(request_block)
+    if not ResearchSelectedMoeConfig.applies_to(wire):
+        raise ValueError(f"research_selected_moe does not serve a {wire['family']}/{wire['grid']} "
+                         "stack; this owner takes its own production builder")
+    if selected.expected_tensor_parallel_size != world:
+        raise ValueError(
+            "research_selected_moe declares expected_tensor_parallel_size="
+            f"{selected.expected_tensor_parallel_size}, and this owner declares TP{world}")
+    return selected
 
 
 def _owner_format(shape):
@@ -329,15 +439,39 @@ def validate_execution(execution, role_order, *, shape=None):
     a TP2 owner stamped with the TP1 record would have misdeclared its own
     execution (root review of 266f80e52f).
     """
-    expected = EXECUTION
-    if shape is not None and is_glm_geometry(shape):
-        expected = {**EXECUTION, "tensor_parallel": shape["tensor_parallel"],
-                    "tensor_parallel_cut_axis": shape["tensor_parallel_cut_axis"]}
+    expected = owner_execution(shape)
     if dense.identity_sha256(execution) != dense.identity_sha256(expected):
         raise ValueError("only complete routed eager resident EP1 with external top-k is supported, "
                          "at this geometry's own tensor-parallel size")
     if role_order != list(ROLE_ORDER):
         raise ValueError("explicit profile role order must be w1 gate, w3 up, w2 down")
+
+
+def owner_execution(shape):
+    """The execution record this owner runs, from the geometry it declares.
+
+    One home for the record, so the validator, the prepared operator and the
+    frozen panel cannot disagree about which cut was measured.  ``EXECUTION``
+    remains the LFM owner's record, field for field.
+    """
+    if shape is not None and is_glm_geometry(shape):
+        return {**EXECUTION, "tensor_parallel": shape["tensor_parallel"],
+                "tensor_parallel_cut_axis": shape["tensor_parallel_cut_axis"]}
+    return dict(EXECUTION)
+
+
+def owner_route_shape(shape):
+    """The ``M:N:K`` a served record carries for THIS rank.
+
+    ``N`` is the rank-local gate/up stack (``2 * intermediate // tp``) and
+    ``K`` is the hidden size, which is what ``moe_route.create_weights`` stores
+    on the layer the route record reads (``layer.tessera_rows``/
+    ``tessera_columns``).  At TP1 this is the whole module and the string is
+    unchanged.
+    """
+    return ("N" + str(2 * shape["intermediate_size"] // shape["tensor_parallel"])
+            + ":K" + str(shape["hidden_size"])) if is_glm_geometry(shape) else (
+                "N" + str(2 * shape["intermediate_size"]) + ":K" + str(shape["hidden_size"]))
 
 
 def validate_member_order_public(members, shape):
@@ -381,6 +515,47 @@ def _member_shape(shape, role):
     roster = _roster_shape(shape)
     n, k = roster["intermediate_size"], roster["hidden_size"]
     return [k, n] if role == "w2" else [n, k]
+
+
+def _declared_member_rows(shape, role):
+    """The rows the WHOLE container frames for one expert role.
+
+    A Tessera checkpoint holds one whole unit per role whatever world serves
+    it (``sharding``: the artifact is tensor-parallel agnostic), so these are
+    the MODULE's rows.  ``_member_shape`` is this rank's slice of them, and
+    the two agree at TP1, where the slice is the whole.
+    """
+    if role == "w2":
+        return shape["hidden_size"]
+    return shape["intermediate_size"]
+
+
+def owner_scheme(shape, wire, *, strides, unit):
+    """The sidecar the loader validates these containers against.
+
+    Every module fact comes from the owner's own wire: family, grid, body,
+    plane and rung are read once by ``owner_wire`` and carried here, so an A4,
+    A8 or A16 owner is the same code path at its own recipe rather than a
+    branch.  The geometry is the module's, for the reason ``_declared_member_rows``
+    gives; ``wire_stride`` is the maximum container this rank was handed,
+    which is the width the parameter rows are copied into.
+    """
+    from tessera.serving.scheme import MOE_SHARD_PROJECTIONS, validate_tessera_moe_scheme
+    n, k = shape["intermediate_size"], shape["hidden_size"]
+    # The roster's own expert key: the two geometries spell the count
+    # differently and the sidecar is the roster's, the same view
+    # ``validate_member_order`` walks.
+    experts = _roster_shape(shape)["experts"]
+    return validate_tessera_moe_scheme({
+        "family": wire["family"], "structure": "routed_moe", "grid": wire["grid"],
+        "body": wire["body"], "plane": wire["plane"], "experts": experts,
+        "groups": {
+            "w13": {"rows": 2 * n, "columns": k, "q256": wire["q256"],
+                    "wire_stride": strides["w13"],
+                    "roles": [[MOE_SHARD_PROJECTIONS[role], n] for role in ROLE_ORDER[:2]]},
+            "w2": {"rows": k, "columns": n, "q256": wire["q256"],
+                   "wire_stride": strides["w2"],
+                   "roles": [[MOE_SHARD_PROJECTIONS["w2"], k]]}}}, unit)
 
 
 def _plain(value):
@@ -444,19 +619,130 @@ def observe_workspace():
 
 
 @contextmanager
-def native_runtime_context(vllm_config):
-    """The actual TP1 context plus the engine's ordinary workspace owner."""
+def native_runtime_context(vllm_config, *, distributed=None):
+    """The actual context at this owner's own world size, plus its workspace.
+
+    One rank keeps the engine's stand-alone context unchanged, so an LFM
+    owner's context is the one it has always been.  A world above one needs
+    the explicit meeting point ``owner_distributed`` validated and the
+    ordinary ``initialize_model_parallel`` at that world: the harness never
+    invents a rendezvous, and a group of two that quietly became two groups
+    of one would price half a module and call it the whole.
+    """
     import torch
-    with dense.native_runtime_context(vllm_config):
-        from vllm.v1.worker.workspace import (
-            init_workspace_manager, is_workspace_manager_initialized, reset_workspace_manager)
-        if is_workspace_manager_initialized():
-            raise ValueError("routed receipt requires a fresh workspace owner")
-        init_workspace_manager(torch.device("cuda", torch.cuda.current_device()), num_ubatches=1, num_lanes=1)
+    distributed = distributed or {"world_size": 1, "rank": 0, "init_method": None,
+                                  "timeout_seconds": None}
+    if int(distributed["world_size"]) == 1:
+        with dense.native_runtime_context(vllm_config):
+            yield from _workspace_context(torch)
+        return
+    from datetime import timedelta
+    from vllm.config import set_current_vllm_config
+    from vllm.distributed import (init_distributed_environment, initialize_model_parallel,
+        destroy_model_parallel, destroy_distributed_environment)
+    if torch.distributed.is_initialized():
+        raise ValueError("standalone native receipt requires a fresh distributed context")
+    torch.cuda.set_device(0)   # one visible device per explicitly configured host
+    timeout = timedelta(seconds=int(distributed["timeout_seconds"]))
+    with set_current_vllm_config(vllm_config, check_compile=False):
         try:
-            yield
+            init_distributed_environment(world_size=int(distributed["world_size"]),
+                rank=int(distributed["rank"]), local_rank=0,
+                distributed_init_method=distributed["init_method"], backend="nccl",
+                timeout=timeout)
+            initialize_model_parallel(int(distributed["world_size"]), 1)
+            yield from _workspace_context(torch)
         finally:
-            reset_workspace_manager()
+            destroy_model_parallel()
+            destroy_distributed_environment()
+
+
+def _workspace_context(torch):
+    """The engine's ordinary workspace owner, fresh, at one ubatch and lane."""
+    from vllm.v1.worker.workspace import (
+        init_workspace_manager, is_workspace_manager_initialized, reset_workspace_manager)
+    if is_workspace_manager_initialized():
+        raise ValueError("routed receipt requires a fresh workspace owner")
+    init_workspace_manager(torch.device("cuda", torch.cuda.current_device()),
+                           num_ubatches=1, num_lanes=1)
+    try:
+        yield
+    finally:
+        reset_workspace_manager()
+
+
+def owner_distributed(shape, block):
+    """The world this owner runs in, and the meeting point a world of two needs.
+
+    The declaration is explicit and versioned, and it must agree with the
+    geometry: a receipt's world size is not something to discover at run time.
+    """
+    declared = int(shape["tensor_parallel"]) if is_glm_geometry(shape) else 1
+    if block is None:
+        if declared != 1:
+            raise ValueError(f"this owner declares TP{declared} and carries no distributed block; "
+                             "a world above one needs an explicit rank and meeting point")
+        return {"world_size": 1, "rank": 0, "init_method": None, "timeout_seconds": None}
+    dense._fields(block, ("world_size", "rank", "init_method", "timeout_seconds"), "distributed")
+    if type(block["world_size"]) is not int or block["world_size"] != declared:
+        raise ValueError(f"distributed declares world_size={block['world_size']!r} and this "
+                         f"geometry declares TP{declared}")
+    if type(block["rank"]) is not int or not 0 <= block["rank"] < declared:
+        raise ValueError(f"distributed rank {block['rank']!r} is not one of 0..{declared - 1}")
+    if not isinstance(block["init_method"], str) or not block["init_method"].startswith("tcp://"):
+        raise ValueError("distributed init_method must be an explicit tcp:// rendezvous: a "
+                         "world of two cannot meet at a temp file")
+    dense._integer(block["timeout_seconds"], "distributed.timeout_seconds")
+    return dict(block)
+
+
+def bind_owner_rank(distributed):
+    """The live group's own answer, checked against the declared one.
+
+    Asked of ``torch.distributed``, never of the configuration: an owner that
+    cannot name its rank must refuse rather than assume rank 0, and an owner
+    whose live group disagrees with its declaration is a mismatch, not a
+    choice to make.
+    """
+    import torch
+    if not torch.distributed.is_available() or not torch.distributed.is_initialized():
+        raise ValueError("no distributed world is initialized: a routed owner refuses rather "
+                         "than assume which rank it is")
+    live_world = int(torch.distributed.get_world_size())
+    live_rank = int(torch.distributed.get_rank())
+    if live_world != int(distributed["world_size"]) or live_rank != int(distributed["rank"]):
+        raise ValueError(
+            f"the live world is rank {live_rank} of {live_world} and this owner declared rank "
+            f"{distributed['rank']} of {distributed['world_size']}")
+    if live_world < 1 or not 0 <= live_rank < live_world:
+        raise ValueError(f"the live world reports an impossible rank {live_rank} of {live_world}")
+    return live_rank, live_world
+
+
+def agree_output_across_ranks(value, *, distributed, where):
+    """Every rank's RETURNED tensor is the whole module's output, or refuse.
+
+    At TP>1 each rank computes a partial sum over the intermediate dimension
+    and the runtime's own runner all-reduces it before returning.  Comparing
+    what the ranks returned is what separates "the collective ran inside this
+    operator" from "each rank measured its own half": two different partials
+    are each finite and plausible, so a tolerance would not tell them apart.
+    """
+    import torch
+    if int(distributed["world_size"]) == 1:
+        return {"world_size": 1, "checked": False, "reason": "single_rank_owner"}
+    local = value.detach().to(torch.float32).contiguous()
+    gathered = [torch.empty_like(local) for _ in range(int(distributed["world_size"]))]
+    torch.distributed.all_gather(gathered, local)
+    identity = dense.tensor_identity(gathered[0])
+    for rank, other in enumerate(gathered[1:], start=1):
+        if dense.tensor_identity(other) != identity:
+            raise ValueError(
+                f"{where}: rank {rank}'s returned output differs from rank 0's, so the "
+                "runtime's final all-reduce did not run inside this operator")
+    return {"world_size": int(distributed["world_size"]), "checked": True,
+            "output_sha256": identity["content_sha256"],
+            "detail": "every rank returned the reduced whole-module output"}
 
 
 def _native_config(layer):
@@ -474,15 +760,22 @@ def _native_config(layer):
             "is_monolithic": bool(method.is_monolithic)}
 
 
-def resolve_serving_config(path, runtime_image):
+def resolve_serving_config(path, runtime_image, *, tensor_parallel):
     """Derive the factory context from explicit versioned engine settings.
 
     This config supplies the whole-operator factory only. It does not claim
     to instantiate or measure the complete engine or its KV allocations.
+
+    ``tensor_parallel`` is the OWNER's declared cut, and the document has to
+    say the same thing: a configuration is not a place to discover the world
+    size the receipt will claim.
     """
     import os
     from vllm.config import (VllmConfig, CacheConfig, ParallelConfig,
         SchedulerConfig, KernelConfig, CompilationConfig)
+    dense._integer(tensor_parallel, "tensor_parallel")
+    if tensor_parallel not in (1, 2):
+        raise ValueError(f"a routed owner's tensor-parallel cut is 1 or 2, not {tensor_parallel}")
     path = Path(path)
     raw = path.read_bytes()
     document = json.loads(raw)
@@ -502,11 +795,15 @@ def resolve_serving_config(path, runtime_image):
     if (args["dtype"] != "bfloat16" or args["enforce_eager"] is not True
             or args["enable_expert_parallel"] is not False
             or any(type(args[key]) is not int or args[key] != 1 for key in
-                   ("data_parallel_size", "pipeline_parallel_size", "tensor_parallel_size"))
+                   ("data_parallel_size", "pipeline_parallel_size"))
+            or type(args["tensor_parallel_size"]) is not int
+            or args["tensor_parallel_size"] not in (1, 2)
+            or args["tensor_parallel_size"] != tensor_parallel
             or args["kernel_config"] != {"moe_backend": "auto"}
-            or document["environment"] != {"TESSERA_SERVE_MODE": "resident"}
-            or os.environ.get("TESSERA_SERVE_MODE") != "resident"):
-        raise ValueError("serving configuration is outside resident eager BF16 TP1/EP1 scope")
+            or document["environment"] != {"TESSERA_SERVE_MODE": MODE_RESIDENT}
+            or os.environ.get("TESSERA_SERVE_MODE") != MODE_RESIDENT):
+        raise ValueError(
+            f"serving configuration is outside resident eager BF16 TP{tensor_parallel}/EP1 scope")
     for key in ("max_model_len", "max_num_batched_tokens", "max_num_seqs"):
         dense._integer(args[key], key)
     from vllm.config.compilation import CompilationMode, CUDAGraphMode
@@ -517,8 +814,8 @@ def resolve_serving_config(path, runtime_image):
         cache_config=CacheConfig(gpu_memory_utilization=args["gpu_memory_utilization"],
             kv_cache_memory_bytes=args.get("kv_cache_memory_bytes"),
             enable_prefix_caching=args["enable_prefix_caching"]),
-        parallel_config=ParallelConfig(tensor_parallel_size=1, pipeline_parallel_size=1,
-            data_parallel_size=1, enable_expert_parallel=False),
+        parallel_config=ParallelConfig(tensor_parallel_size=args["tensor_parallel_size"],
+            pipeline_parallel_size=1, data_parallel_size=1, enable_expert_parallel=False),
         kernel_config=KernelConfig(**args["kernel_config"]),
         compilation_config=CompilationConfig(mode=CompilationMode.NONE, cudagraph_mode=CUDAGraphMode.NONE))
     return config, {"file_sha256": hashlib.sha256(raw).hexdigest(), "document": document,
@@ -547,70 +844,110 @@ def verify_routing_bias(routing, bias):
     return bias
 
 
-def verify_native_configuration(layer, shape, routing, max_tokens):
+def verify_native_configuration(layer, shape, routing, max_tokens, *, wire, rank=None, world=None):
     """Validate the factory's observed owner instead of trusting its arguments."""
     expected = {"renormalize": routing["renormalize"], "scoring_func": routing["scoring_func"],
         "routed_scaling_factor": routing["routed_scaling_factor"], "apply_router_weight_on_input": False,
         "expert_map": None, "global_num_experts": shape["experts"], "local_num_experts": shape["experts"],
         "top_k": shape["top_k"], "use_grouped_topk": True, "num_expert_group": 1, "topk_group": 1,
-        "custom_routing_function": None, "swiglu_limit": None, "swiglu_alpha": None, "swiglu_beta": None,
-        "is_fused_checkpoint_transposed": False, "tessera_mode": "resident", "tessera_family": "TESSERA_FP8"}
+        "custom_routing_function": None, "swiglu_limit": routing.get("swiglu_limit"),
+        "swiglu_alpha": None, "swiglu_beta": None,
+        "is_fused_checkpoint_transposed": False, "tessera_mode": MODE_RESIDENT,
+        "tessera_family": wire["family"]}
     for key, value in expected.items():
         if dense.identity_sha256(_plain(getattr(layer, key))) != dense.identity_sha256(value):
-            raise ValueError("factory actual " + key + " differs from supported routed owner")
+            raise ValueError("factory actual " + key + " differs from supported routed owner "
+                             f"(expected {value!r})")
     if getattr(layer.activation, "value", layer.activation) != routing["activation"]:
         raise ValueError("factory actual activation differs from captured operator")
     verify_routing_bias(routing, layer.e_score_correction_bias)
+    world = int(world) if world is not None else int(shape.get("tensor_parallel", 1))
     config = layer.moe_config
     config_expected = {"num_experts": shape["experts"], "num_local_experts": shape["experts"],
         "num_logical_experts": shape["experts"], "experts_per_token": shape["top_k"],
         "hidden_dim": shape["hidden_size"], "intermediate_size": shape["intermediate_size"],
-        "intermediate_size_per_partition": shape["intermediate_size"], "max_num_tokens": max_tokens,
+        "intermediate_size_per_partition": shape["intermediate_size"] // world,
+        "max_num_tokens": max_tokens,
         "has_bias": False, "is_lora_enabled": False}
     for key, value in config_expected.items():
         if dense.identity_sha256(_plain(getattr(config, key))) != dense.identity_sha256(value):
-            raise ValueError("factory actual MoE " + key + " differs from serving configuration")
+            raise ValueError("factory actual MoE " + key + " differs from serving configuration "
+                             f"(expected {value!r})")
     import torch
     device = torch.device(config.device)
     device_index = device.index if device.index is not None else torch.cuda.current_device()
     if str(config.in_dtype) != routing["input_dtype"] or device.type != "cuda" or device_index != 0:
         raise ValueError("factory actual dtype/device differs from captured operator")
-    for key in ("tp_size", "ep_size", "dp_size", "pcp_size", "sp_size"):
+    for key in ("ep_size", "dp_size", "pcp_size", "sp_size"):
         value = getattr(config.moe_parallel_config, key)
         if type(value) is not int or value != 1:
-            raise ValueError("factory actual parallel configuration is outside TP1/EP1")
+            raise ValueError("factory actual parallel configuration is outside EP1/DP1/PCP1/SP1")
+    parallel_world = getattr(config.moe_parallel_config, "tp_size")
+    parallel_rank = getattr(config.moe_parallel_config, "tp_rank")
+    if (type(parallel_world) is not int or parallel_world != world
+            or type(parallel_rank) is not int or parallel_rank != (0 if rank is None else int(rank))
+            or not 0 <= parallel_rank < parallel_world):
+        raise ValueError(
+            f"factory actual tensor-parallel coordinates are rank {parallel_rank} of "
+            f"{parallel_world}, and this owner is rank {rank} of {world}")
+    if world > 1:
+        # The routed output of one rank is a partial sum over the intermediate
+        # dimension; the runtime's MoERunner all-reduces it unless the config
+        # says the model reduces later.  A TP owner whose output is not reduced
+        # inside the operator is a half-answer, not a cheaper one.
+        if getattr(config, "skip_final_all_reduce", None) is not False:
+            raise ValueError(
+                "a TP" + str(world) + " routed owner requires the runtime's own final "
+                "all-reduce (skip_final_all_reduce False); without it this rank returns "
+                "its own partial sum and the operator is not the whole module")
+        if getattr(config, "is_sequence_parallel", False) is not False:
+            raise ValueError("sequence-parallel execution owns its own reduction; "
+                             "this operator measures the stock late all-reduce")
     if layer.quant_method.is_monolithic:
         raise ValueError("factory selected unsupported monolithic execution")
 
 
-def _build_layer(scheme, shape, routing, *, unit, device, bias):
-    """Use the same FusedMoEFactory arguments as the stock LFM2-MoE model."""
+def _build_layer(scheme, shape, routing, *, unit, device, bias, wire, selected=None):
+    """Use the same FusedMoEFactory arguments as the stock model, at its own cut."""
     import torch
     from vllm.model_executor.layers.fused_moe import FusedMoEFactory
     from tessera.serving.config import TesseraConfig
-    config = TesseraConfig.from_config({"quant_method": "tessera", "format": "tessera", "ignore": [],
-        "config_groups": {"native_receipt_experts": {"format": "TESSERA", "targets": [unit], "scheme": scheme}}})
+    document = {"quant_method": "tessera", "format": "tessera", "ignore": [],
+        "config_groups": {"native_receipt_experts": {"format": "TESSERA", "targets": [unit],
+                                                     "scheme": scheme}}}
+    if selected is not None:
+        document["research_selected_moe"] = selected.as_checkpoint()
+    config = TesseraConfig.from_config(document)
     runner = FusedMoEFactory(num_experts=shape["experts"], top_k=shape["top_k"],
         hidden_size=shape["hidden_size"], intermediate_size=shape["intermediate_size"],
         params_dtype=torch.bfloat16, renormalize=routing["renormalize"], quant_config=config,
         use_grouped_topk=True, num_expert_group=1, topk_group=1, prefix=unit,
         enable_eplb=False, num_redundant_experts=0, scoring_func=routing["scoring_func"],
         e_score_correction_bias=bias, routed_scaling_factor=routing["routed_scaling_factor"],
-        ckpt_names=("w1", "w2", "w3"))
+        swiglu_limit=routing.get("swiglu_limit"), tp_size=int(shape.get("tensor_parallel", 1)),
+        reduce_results=True, ckpt_names=("w1", "w2", "w3"))
     return runner.routed_experts.to(device)
 
 
 def prepare_native_moe_operator(member_inputs, tensors, phase_tensors, *, unit, shape, routing,
                                 runtime_image, execution, profile_role_order, serving_config, routing_capture_sha256,
-                                phase_transport, routing_bias=None, warmup_iterations=8):
+                                phase_transport, routing_bias=None, warmup_iterations=8,
+                                selected=None, distributed=None):
     """Verify all original PWC wires, then load one complete native owner."""
     import torch
     from tessera.cached_unit import verify_cached_unit, tensor_identity as producer_tensor_identity
     from tessera.fused import pack_fused
-    from tessera.serving.scheme import MOE_SHARD_PROJECTIONS, TESSERA_FP8, validate_tessera_moe_scheme
+    from tessera.serving.scheme import MOE_SHARD_PROJECTIONS, validate_tessera_moe_scheme
     from tessera.unit_artifact import read_unit_artifact
     from vllm.v1.worker.workspace import lock_workspace
     shape = validate_shape(shape)
+    wire = owner_wire(shape)
+    declared_world = int(shape.get("tensor_parallel", 1))
+    distributed = owner_distributed(shape, distributed)
+    rank, world = bind_owner_rank(distributed)
+    if int(world) != declared_world:
+        raise ValueError(f"the bound owner is {int(world)} ranks wide and this geometry declares "
+                         f"TP{declared_world}")
     validate_execution(execution, profile_role_order, shape=shape)
     validate_member_order(member_inputs, shape)
     validate_routing(routing, glm=is_glm_geometry(shape))
@@ -646,19 +983,21 @@ def prepare_native_moe_operator(member_inputs, tensors, phase_tensors, *, unit, 
             raise ValueError("wire source differs from the actual source member")
         accepted = verify_cached_unit(original, record, identity)
         recipe, manifest = identity["recipe"], accepted.manifest
-        # The rung is the OWNER's, read from its format name, not a constant:
-        # an A4/A16 owner is a different recipe and was unreachable while this
-        # compared against E4M3 K1 R1024 in every case.
-        owner_family, owner_rung = _parse_owner_format(_owner_format(shape))
-        if (recipe["grid"] != owner_family or recipe["q256"] != owner_rung):
+        # The grid and rung are the OWNER's, read from its format name, not
+        # constants: an A4/A16 owner is a different recipe and was unreachable
+        # while this compared against E4M3 K1 R1024 in every case.
+        if (recipe["grid"] != wire["grid"] or recipe["q256"] != wire["q256"]):
             raise ValueError(
                 f"wire recipe {recipe['grid']} q{recipe['q256']} is not the owner's "
-                f"{owner_family} q{owner_rung}")
+                f"{wire['grid']} q{wire['q256']}")
         decoded = read_unit_artifact(original, device=str(source.device)).bfloat16()
         if dense.tensor_identity(decoded) != dense.tensor_identity(rendered):
             raise ValueError("original wire decode differs from the actual PWC member render")
         projection = MOE_SHARD_PROJECTIONS[member["role"]]
-        container = pack_fused([(projection, source.shape[0], original)])
+        # The container is the WHOLE unit this rank's rank of the artifact
+        # carries: the cut is the loader's, and the rows a container frames are
+        # the module's, not this rank's slice of them.
+        container = pack_fused([(projection, _declared_member_rows(shape, member["role"]), original)])
         group = "w2" if member["role"] == "w2" else "w13"
         strides[group] = max(strides[group], len(container))
         wires.append((f"{member['expert']}.{member['role']}.wire",
@@ -668,17 +1007,12 @@ def prepare_native_moe_operator(member_inputs, tensors, phase_tensors, *, unit, 
             rendered_weight=dense.tensor_identity(rendered), wire_sha256=hashlib.sha256(original).hexdigest(),
             wire_record_sha256=dense.identity_sha256(record))
         del decoded
-    n, k = shape["intermediate_size"], shape["hidden_size"]
-    scheme = validate_tessera_moe_scheme({"family": TESSERA_FP8, "structure": "routed_moe",
-        "grid": "E4M3", "body": "WINDOW", "plane": "CHANNEL", "experts": shape["experts"],
-        "groups": {"w13": {"rows": 2*n, "columns": k, "q256": 1024, "wire_stride": strides["w13"],
-                              "roles": [[MOE_SHARD_PROJECTIONS[role], n] for role in ROLE_ORDER[:2]]},
-                   "w2": {"rows": k, "columns": n, "q256": 1024, "wire_stride": strides["w2"],
-                            "roles": [[MOE_SHARD_PROJECTIONS["w2"], k]]}}}, unit)
+    scheme = owner_scheme(shape, wire, strides=strides, unit=unit)
     device = phase_tensors["prefill"]["input"].device
     if max(v["input"].shape[0] for v in phase_tensors.values()) > serving_config["document"]["engine_args"]["max_num_batched_tokens"]:
         raise ValueError("actual phase exceeds the explicit serving scheduler token limit")
-    layer = _build_layer(scheme, shape, routing, unit=unit, device=device, bias=bias)
+    layer = _build_layer(scheme, shape, routing, unit=unit, device=device, bias=bias, wire=wire,
+                         selected=selected)
     with torch.no_grad():
         loaded = list(layer.load_weights(wires))
         if len(loaded) != len(wires):
@@ -686,7 +1020,8 @@ def prepare_native_moe_operator(member_inputs, tensors, phase_tensors, *, unit, 
         layer.quant_method.process_weights_after_loading(layer)
     del wires
     verify_native_configuration(layer, shape, routing,
-        serving_config["document"]["engine_args"]["max_num_batched_tokens"])
+        serving_config["document"]["engine_args"]["max_num_batched_tokens"],
+        wire=wire, rank=rank, world=world)
     # Warm actual phases before the panel freezes lazy native libraries and
     # the runtime's preexisting workspace. No output comparison or price here.
     initial_tensors = phase_identities(phase_tensors)
@@ -703,19 +1038,34 @@ def prepare_native_moe_operator(member_inputs, tensors, phase_tensors, *, unit, 
     config = _native_config(layer)
     if config["is_monolithic"]:
         raise ValueError("native runtime selected unsupported monolithic execution")
+    # The route this owner ACTUALLY dispatched, read back from the runtime's own
+    # record made during warmup -- never composed here from the arguments, which
+    # is how a compact lane would have been stamped with a backend suffix its
+    # record does not carry.
+    from tessera.serving.telemetry import read_route
+    observed_route = read_route(layer)
+    if (not isinstance(observed_route, dict) or observed_route.get("state") != "served"
+            or observed_route.get("reason") is not None
+            or observed_route.get("policy") != wire["policy"]
+            or observed_route.get("contract") != wire["activation_contract"]
+            or (census_symbol_base(observed_route.get("symbol") or ""), observed_route.get("decoder"))
+            not in owner_launch_pairs(wire, world=world)):
+        raise ValueError(
+            f"the native owner dispatched {observed_route!r}, which is not this "
+            f"{wire['family']}/{wire['grid']} owner's own route")
+    route = {key: observed_route[key] for key in dense.ROUTE_KEYS}
     operator = {"members": members, "shape": shape, "routing": routing,
-        "profile_role_order": list(profile_role_order), "routing_capture_sha256": routing_capture_sha256,
-        "serving_config_sha256": serving_config["file_sha256"], "serving_config": serving_config,
-        "phases": {phase: {"transport": phase_transport[phase]} for phase in PHASES},
-        "scheme": scheme, "scheme_sha256": dense.identity_sha256(scheme), "native_tensors": native_before,
-        "config": config, "config_sha256": dense.identity_sha256(config),
-        "declared_route": {"kind": "moe", "policy": "TESSERA_FP8:resident",
-            "symbol": "vllm.fused_moe.modular_kernel:" + layer.tessera_backend,
-            "decoder": layer.tessera_decoder, "contract": layer.tessera_activation_contract}}
+                "profile_role_order": list(profile_role_order), "routing_capture_sha256": routing_capture_sha256,
+                "serving_config_sha256": serving_config["file_sha256"], "serving_config": serving_config,
+                "phases": {phase: {"transport": phase_transport[phase]} for phase in PHASES},
+                "owner_wire": wire, "scheme": scheme, "scheme_sha256": dense.identity_sha256(scheme),
+                "native_tensors": native_before,
+                "config": config, "config_sha256": dense.identity_sha256(config),
+                "declared_route": route}
     runtime = dense.observe_runtime(runtime_image)
-    runtime.update(schema=RUNTIME_SCHEMA, execution=dict(EXECUTION))
+    runtime.update(schema=RUNTIME_SCHEMA, execution=owner_execution(shape))
     runtime["source"]["routed_harness_sha256"] = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
-    return {"layer": layer, "operator": operator, "runtime": runtime,
+    return {"layer": layer, "operator": operator, "runtime": runtime, "distributed": distributed,
             "workspace": workspace, "workspace_pointers": pointers}
 
 
@@ -825,12 +1175,15 @@ def validate_panel(panel):
         for n in (*slot["shape"], *slot["stride"], slot["storage_bytes"], slot["logical_bytes"], slot["storage_offset"]):
             dense._integer(n, "workspace dimension", 0)
     runtime = panel["runtime"]
-    if runtime.get("schema") != RUNTIME_SCHEMA or dense.identity_sha256(runtime.get("execution")) != dense.identity_sha256(EXECUTION):
+    if (runtime.get("schema") != RUNTIME_SCHEMA
+            or dense.identity_sha256(runtime.get("execution")) != dense.identity_sha256(owner_execution(shape))):
         raise ValueError("runtime manifest differs from whole MoE execution")
     dense._fields(panel["numerics"], ("atol", "rtol"), "numerics")
     for key, value in panel["numerics"].items():
         dense._number(value, key)
     dense._fields(panel["phases"], PHASES, "phases")
+    wire = owner_wire(shape)
+    panel_pairs = owner_launch_pairs(wire, world=shape.get("tensor_parallel", 1))
     for phase, item in panel["phases"].items():
         dense._fields(item, ("m", *TENSOR_KEYS, "transport", "expected_route"), phase)
         dense._integer(item["m"], phase + ".m")
@@ -849,10 +1202,13 @@ def validate_panel(panel):
                 raise ValueError("phase transport does not preserve captured routing identity")
         route = item["expected_route"]
         dense._fields(route, dense.ROUTE_KEYS, "route")
-        if (route["kind"] != "moe" or route["policy"] != "TESSERA_FP8:resident"
-                or route["decoder"] != "torch_materialize_stock" or route["contract"] != "fp8_per_token_dynamic"
-                or not isinstance(route["symbol"], str) or not route["symbol"].startswith("vllm.fused_moe.modular_kernel:")
-                or route["symbol"] == "vllm.fused_moe.modular_kernel:"
+        symbol_base = census_symbol_base(route["symbol"]) if isinstance(route["symbol"], str) else None
+        if (route["kind"] != "moe" or route["policy"] != wire["policy"]
+                or route["contract"] != wire["activation_contract"]
+                or not isinstance(route["symbol"], str)
+                or (symbol_base, route["decoder"])
+                not in panel_pairs
+                or route["symbol"] == str(symbol_base) + ":"
                 or route["symbol"] != binding["operator_route"]):
             raise ValueError("route differs from native whole MoE binding")
     if panel["phases"]["prefill"]["expected_route"] != panel["phases"]["decode"]["expected_route"]:
@@ -873,6 +1229,10 @@ def _check_phase_tensors(panel, phase_tensors):
 def _check_prepared(prepared, panel):
     dense._require_eager_context()
     operator, layer = prepared["operator"], prepared["layer"]
+    execution = panel["runtime"]["execution"]
+    if int(prepared["distributed"]["world_size"]) != int(execution["tensor_parallel"]):
+        raise ValueError("prepared world size differs from the panel's execution record")
+    bind_owner_rank(prepared["distributed"])
     if prepared["runtime"] != panel["runtime"] or dense.observe_arithmetic() != panel["runtime"]["arithmetic"]:
         raise ValueError("actual runtime/arithmetic differs from independent panel")
     dense._check_native_library_scope(panel["runtime"])
@@ -912,6 +1272,9 @@ def measure_prepared_operator(prepared, panel, phase_tensors, *, warmup_iteratio
     dense._fields(phase_tensors, PHASES, "phase tensors")
     _check_phase_tensors(panel, phase_tensors)
     _check_prepared(prepared, panel)
+    distributed = prepared["distributed"]
+    if bind_owner_rank(distributed) != (int(distributed["rank"]), int(distributed["world_size"])):
+        raise ValueError("the live group moved under a prepared owner")
     layer = prepared["layer"]
     observations, resource_phases = {}, {}
     with torch.inference_mode():
@@ -925,12 +1288,15 @@ def measure_prepared_operator(prepared, panel, phase_tensors, *, warmup_iteratio
             before = torch.cuda.memory_allocated()
             output = apply_whole(layer, tensors)
             torch.cuda.synchronize()
+            collective = agree_output_across_ranks(output, distributed=distributed,
+                                                   where=phase + " routed output")
             peak = max(0, torch.cuda.max_memory_allocated() - before)
             route = read_route(layer)
             wanted = expected["expected_route"]
             if (not isinstance(route, dict) or any(route.get(k) != v for k, v in wanted.items())
                     or route.get("state") != "served" or route.get("reason") is not None
-                    or route.get("shape") != f"M{expected['m']}:N{2*panel['shape']['intermediate_size']}:K{panel['shape']['hidden_size']}"):
+                    or route.get("shape")
+                    != "M" + str(expected["m"]) + ":" + owner_route_shape(panel["shape"])):
                 raise ValueError(f"{phase}: actual route differs from independent panel")
             qdq_error = dense.compare_tensors(qdq, tensors["reference_qdq"], **panel["numerics"])
             error = dense.compare_tensors(output, tensors["reference_output"], **panel["numerics"])
@@ -943,7 +1309,8 @@ def measure_prepared_operator(prepared, panel, phase_tensors, *, warmup_iteratio
                 "transport": expected["transport"],
                 "reference_qdq": dense.tensor_identity(tensors["reference_qdq"]), "qdq": dense.tensor_identity(qdq),
                 "qdq_numerics": qdq_error, "reference_output": dense.tensor_identity(tensors["reference_output"]),
-                "output": dense.tensor_identity(output), "route": route, "numerics": error, "measurement": None}
+                "output": dense.tensor_identity(output), "route": route, "numerics": error,
+                "collective": collective, "measurement": None}
             resource_phases[phase] = {"input_bytes": x.untyped_storage().nbytes(),
                 "output_bytes": output.untyped_storage().nbytes(), "torch_peak_increment_bytes": peak}
             del output, qdq
@@ -1095,10 +1462,24 @@ def main(argv=None):
     if args.profile and args.prepare:
         parser.error("--profile requires --panel")
     request = json.loads(args.request.read_text())
+    request_optional = {"distributed", "research_selected_moe"} & set(request)
     dense._fields(request, ("schema", "unit", "members", "shape", "routing", "execution", "runtime_image",
-        "tensors_path", "profile_role_order", "routing_capture_sha256", "phases", "serving_config_path"), "request")
+        "tensors_path", "profile_role_order", "routing_capture_sha256", "phases", "serving_config_path",
+        *request_optional), "request")
     if request["schema"] != REQUEST_SCHEMA:
         raise ValueError("native request schema unsupported")
+    # The owner's own geometry decides its world, its route and its recipe; all
+    # three are resolved before anything is loaded, and a mismatch between the
+    # request's explicit blocks and that geometry is a refusal here rather
+    # than a surprise at construction.
+    request_shape = validate_shape(request["shape"])
+    request_wire = owner_wire(request_shape)
+    request_execution = owner_execution(request_shape)
+    if dense.identity_sha256(request["execution"]) != dense.identity_sha256(request_execution):
+        raise ValueError("request execution record differs from this geometry's own")
+    request_distributed = owner_distributed(request_shape, request.get("distributed"))
+    request_selected = owner_research_selected(request_shape, request_wire,
+                                               request.get("research_selected_moe"))
     def artifact(key):
         path = Path(request[key])
         return path if path.is_absolute() else args.request.parent / path
@@ -1163,7 +1544,8 @@ def main(argv=None):
             profile_role_order=request["profile_role_order"], serving_config=serving_config,
             routing_capture_sha256=request["routing_capture_sha256"], routing_bias=tensors.get("routing_bias"),
             phase_transport={phase: request["phases"][phase]["transport"] for phase in PHASES},
-            warmup_iterations=args.warmup_iterations)
+            warmup_iterations=args.warmup_iterations, selected=request_selected,
+            distributed=request_distributed)
         if collector_library_sha256 is not None:
             prepared["runtime"]["resource_collector"] = {
                 "library_sha256": collector_library_sha256,
@@ -1172,6 +1554,7 @@ def main(argv=None):
         if args.prepare:
             result = {"schema": "tessera.native_moe_preflight.v1", "status": "untimed_preparation",
                       "operator": prepared["operator"], "runtime": prepared["runtime"],
+                      "distributed": prepared["distributed"],
                       "native_tensors_sha256": dense.identity_sha256(prepared["operator"]["native_tensors"]),
                       "scheme_sha256": prepared["operator"]["scheme_sha256"],
                       "workspace": prepared["workspace"],
@@ -1209,8 +1592,10 @@ def main(argv=None):
                       (collector is None or result["resources"]["status"] == "complete_operator_bound"))
         return 0 if args.prepare or admissible else 2
     try:
-        vllm_config, serving_config = resolve_serving_config(artifact("serving_config_path"), request["runtime_image"])
-        with native_runtime_context(vllm_config):
+        vllm_config, serving_config = resolve_serving_config(
+            artifact("serving_config_path"), request["runtime_image"],
+            tensor_parallel=request_execution["tensor_parallel"])
+        with native_runtime_context(vllm_config, distributed=request_distributed):
             return run()
     finally:
         # Refused preparation/measurement keeps the raw failure trace too.

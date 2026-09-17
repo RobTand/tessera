@@ -5,6 +5,21 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-17 for the GLM routed owner's runtime path (§2.5). The
+whole-owner receipt at `experiments/bench_native_moe_operator.py` no longer
+carries a hardcoded family, rung, tensor-parallel degree or route: the owner's
+format name is resolved through `scheme.route_for_grid` to a family, grid,
+body, plane and activation contract (`owner_wire`), the sidecar the loader
+validates is built from that wire at the module's own geometry
+(`owner_scheme`), the serving document's `tensor_parallel_size` must equal the
+geometry's (`resolve_serving_config`), the execution record is the geometry's
+own (`owner_execution`), and the panel's route must be a pair the plugin's
+launch table admits for that family at that world (`owner_launch_pairs`). A
+world above one is bound from a live `torch.distributed` group
+(`bind_owner_rank`) with an explicit tcp rendezvous, and the operator requires
+the runtime's own final all-reduce at that cut. The LFM owner's record, wire
+and sidecar are unchanged field for field.
+
 Re-stamped 2026-09-16 for the routed window lane's intake predicate
 (`moe_route.compact_window_lane`).  The construction-time identity and the
 loader ownership were one question asked in two places, and their shared rule
@@ -1721,6 +1736,47 @@ Even complete operator scratch evidence leaves full-engine fixed allocations,
 KV capacity and cross-operator workspace composition unresolved. Separate
 Torch-profiler replay and explicit artifact publication retain evidence; this
 research boundary does not promote a runtime cell or qualify a release.
+
+**The owner's own route, rung and cut.** A whole routed owner holds one format,
+and that format is the only place its recipe is read. `owner_wire` splits
+`TESSERA_<grid>_K<arity>_R<q256>` and resolves the grid through
+`scheme.route_for_grid`, so `TESSERA_E2M1x2_K2_R896` (A4,
+`TESSERA_NVFP4`/TCQ/LUT), `TESSERA_E4M3_K1_R1024` (A8, `TESSERA_FP8`/WINDOW/
+CHANNEL) and `TESSERA_BF16_K1_R1024` (A16, `TESSERA_BF16`) are the same code
+path at their own recipe rather than three branches. The sidecar handed to the
+loader is `scheme.validate_tessera_moe_scheme` over that wire, at the MODULE's
+geometry: a Tessera checkpoint is tensor-parallel agnostic and every rank loads
+the whole container, so `w13` declares `2N` rows and `w2` `N` columns whatever
+the serving world is, while the cut is the loader's. `create_weights` is what
+refuses a partition width that is not exactly `intermediate_size // tp`.
+
+**Two stacks need the explicit selected owner, and one must not have it.** A
+compressed BF16 expert stack has no production builder
+(`scheme.MOE_BUILDERS`), and the production FP8 expert builder is TP1-only;
+both take the versioned `research_selected_moe` block, which is a request field
+here and must declare this owner's own `expected_tensor_parallel_size`. A family
+with its own expert builder (`TESSERA_NVFP4`) keeps it — the selected block
+refuses to name a target it does not serve, so attaching one to an A4 owner is
+a refusal rather than a wider admission. A world above one needs an explicit
+`distributed` block (world size, rank, a `tcp://` rendezvous, a timeout);
+`bind_owner_rank` then reads the live group and refuses a mismatch, an
+uninitialized world, or a rank outside it, rather than assuming rank 0. At
+`tp_size > 1` the operator additionally requires the runtime's own late
+all-reduce (`MoERunner._maybe_reduce_final_output`; the factory is built with
+`reduce_results=True` and `verify_native_configuration` refuses a config that
+skips it), so the routed output a rank returns is the whole module's, not that
+rank's partial sum over the intermediate dimension. Comparing the returned
+tensors across ranks is what makes that checkable rather than asserted.
+
+**What is CPU-contract and what is device work.** The resolvers, the sidecar,
+the serving document's cut, the distributed declaration, a real two-rank
+`bind_owner_rank` on gloo, and the frozen panel's route are all exercised on
+CPU (`tests/test_native_moe_tp_owner_runtime.py`,
+`_pb_native_moe_tp_owner/binding_arms.py`). The CUDA layer construction, the
+native decode, and the measured whole-operator apply are NOT: they need the
+pinned sm_121 image and a two-box `tcp://` rendezvous, and they are the GPU
+qualification step that follows. A CPU pass here is a statement about what the
+harness resolves, never a device result.
 
 ## 3. Bytes: priced == served
 
