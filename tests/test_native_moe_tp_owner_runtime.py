@@ -390,6 +390,17 @@ def _stock_config_runtime(monkeypatch, *, tensor_parallel):
     ``VllmConfig``.  Everything the harness checks about the document and about
     the cut is real.
     """
+    _stock_vllm_config_stubs(monkeypatch)
+    source = Path(__file__).resolve().parents[1] / "experiments/configs/lfm25_first_model_clean_20260907.json"
+    document = json.loads(source.read_text())
+    document["engine_args"]["tensor_parallel_size"] = tensor_parallel
+    path = source.parent / f".owner-tp{tensor_parallel}.json"
+    path.write_text(json.dumps(document))
+    return path, document
+
+
+def _stock_vllm_config_stubs(monkeypatch):
+    """The named CPU substitution: vLLM's config classes, nothing else."""
     import sys
     from types import ModuleType, SimpleNamespace
     module = ModuleType("vllm.config")
@@ -405,12 +416,29 @@ def _stock_config_runtime(monkeypatch, *, tensor_parallel):
     monkeypatch.setattr(moe, "_plain",
                         lambda value: vars(value) if isinstance(value, SimpleNamespace) else value)
     monkeypatch.setenv("TESSERA_SERVE_MODE", "resident")
-    source = Path(__file__).resolve().parents[1] / "experiments/configs/lfm25_first_model_clean_20260907.json"
-    document = json.loads(source.read_text())
-    document["engine_args"]["tensor_parallel_size"] = tensor_parallel
-    path = source.parent / f".owner-tp{tensor_parallel}.json"
-    path.write_text(json.dumps(document))
-    return path, document
+
+
+@pytest.mark.parametrize("tensor_parallel", [1, 2])
+def test_the_committed_glm_documents_declare_their_own_cut(monkeypatch, tensor_parallel):
+    """The window's own documents, one per world, at the geometry's own cut.
+
+    These are the files a two-box run passes as ``serving_config_path``.  The
+    document does not get to choose the world: it declares the cut the geometry
+    already carries, and the other world is refused.
+    """
+    _stock_vllm_config_stubs(monkeypatch)
+    root = Path(__file__).resolve().parents[1]
+    path = root / f"experiments/configs/glm53_routed_owner_tp{tensor_parallel}_20260917.json"
+    document = json.loads(path.read_text())
+    shape = _glm_shape(tensor_parallel, A8)
+    assert document["engine_args"]["tensor_parallel_size"] == shape["tensor_parallel"]
+    config, identity = moe.resolve_serving_config(path, document["runtime_image"],
+                                                  tensor_parallel=shape["tensor_parallel"])
+    assert config.parallel_config.tensor_parallel_size == shape["tensor_parallel"]
+    assert identity["resolved"]["parallel_config"]["tensor_parallel_size"] == shape["tensor_parallel"]
+    other = 1 if tensor_parallel == 2 else 2
+    with pytest.raises(ValueError, match="scope"):
+        moe.resolve_serving_config(path, document["runtime_image"], tensor_parallel=other)
 
 
 @pytest.mark.parametrize("tensor_parallel", [1, 2])
