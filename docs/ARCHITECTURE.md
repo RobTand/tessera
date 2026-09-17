@@ -378,6 +378,15 @@ cells' derived `executes` are wider than the dispatch; that divergence is
 recorded with the contract owner rather than fixed here, because retiring a
 launch row moves a packaged cell's bytes. See §3.3.
 
+Re-stamped 2026-09-17 for the dense crosscheck's fixture set. The harness's
+`FIXTURES` are keyed by tree and carry the payload family beside the key, so
+the canonical-census GLM layer-0 exports (`a8`/`a16`, `merged-b426d18893`) can
+be driven beside the small modules the lane landed against instead of
+replacing them; the shared measurement tree is a declared
+`tests/box_artifacts.py` root (`TESSERA_MEASUREMENTS_DIR`) rather than a path
+inside the test file. Nothing about the wire, a route, a launch row, a cell,
+a rung, a grade, a qualification or the packaged contract moves. See §3.3.
+
 Re-stamped 2026-09-13 for the census's world (#470): `tools/tessera_route_census.py`
 takes the topology it is run at (`src/tessera/serving/topology.py`), runs its
 per-module checks on every rank instead of `apply_model(...)[0]`, and sums the
@@ -2238,7 +2247,13 @@ is reachable from them (`tests/test_dense_prefill_native_closure.py`) -- and by
 a device crosscheck of the production load path at prefill shapes, M
 0/1/8/9/17/64/129/512 on TP1 and both TP2 cuts, against the retained
 reference product (`tests/native_dense_prefill_cross_check.py`, run directly
-in the pinned image because it drives vLLM).  The retained
+in the pinned image because it drives vLLM).  The crosscheck's fixtures are
+keyed by TREE rather than by family, because one family has more than one
+artifact: the small modules the lane landed against and layer 0 of the
+canonical-census first-artifact exports (`a8`/`a16`, `merged-b426d18893`,
+gate_up `24576x4096` with `gate_proj`/`up_proj` at 12288 rows each and down
+`4096x12288`, both at `q256` 1024) stay selectable side by side, and each tree
+is read through its single index-mapped shard rather than whole.  The retained
 `prepare_tessera_fp8_module`/`prepare_tessera_bf16_module` preparations keep
 their own load-time agreement for the reference path.  The lane stamps
 `native_window_gemm`, a decoder distinct from `torch_window` and

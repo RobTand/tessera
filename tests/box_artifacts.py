@@ -112,6 +112,14 @@ ROOTS: dict[str, Root] = {
             opt_in=True,
         ),
         Root(
+            "measurements",
+            "TESSERA_MEASUREMENTS_DIR",
+            "/mnt/shared/tessera-measurements",
+            "the shared measurement tree both boxes mount: the canonical-census "
+            "export bundles (the a4/a8/a16 merged artifacts) and the dated "
+            "receipts beside them",
+        ),
+        Root(
             "a4_export",
             "TESSERA_A4_EXPORT_DIR",
             "/mnt/shared/tessera-measurements/glm-canonical-census-20260908/"
