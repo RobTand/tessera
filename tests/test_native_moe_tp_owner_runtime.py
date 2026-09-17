@@ -662,8 +662,8 @@ def _owner_panel(tp, format_name, route_symbol, decoder, member_unit=None):
     Tensor RECORDS only: this panel never claims those bytes were rendered, and
     the canonical fixture's own wires are what a device run consumes.
 
-    ``member_unit`` names a member from its expert and role; it defaults to the
-    harness's role spelling, and the GLM regression passes the projection the
+    ``member_unit`` names a member from its role and expert; it defaults to the
+    harness's role spelling and the GLM regression passes the projection the
     producer itself wrote (``experts.<e>.gate_proj``), because one member has
     two spellings and the wire keeps whichever one its producer used.
     """
@@ -674,11 +674,15 @@ def _owner_panel(tp, format_name, route_symbol, decoder, member_unit=None):
     members = []
     for expert in range(288):
         for role in moe.ROLE_ORDER:
+            # The member's own `shape` is its SOURCE container's -- the module's
+            # width at every world -- while the render is this rank's cut and
+            # the binding declares that cut separately.
+            declared = moe._declared_member_shape(shape, role)
             geometry = moe._member_shape(shape, role)
             record = {"blob_sha256": _sha(f"{GLM_UNIT}.{expert}.{role}"), "blob_bytes": 100}
             members.append({"unit": name_of(expert, role), "expert": expert, "role": role,
-                            "format": format_name, "shape": geometry,
-                            "source_weight": _record(geometry),
+                            "format": format_name, "shape": declared,
+                            "source_weight": _record(declared),
                             "rendered_weight": _record(geometry),
                             "activation": {"clip_enabled": False, "input_global_scale": None},
                             "wire": {**record, "record": dict(record)}})
@@ -711,7 +715,7 @@ def _owner_panel(tp, format_name, route_symbol, decoder, member_unit=None):
         "numerics": {"atol": 2**-6, "rtol": 2**-6}, "phases": phases, "workspace": workspace,
         "workspace_sha256": dense.identity_sha256(workspace),
         "runtime_binding": {"member_formats": {m["unit"]: m["format"] for m in members},
-            "member_shapes": {m["unit"]: m["shape"] for m in members},
+            "member_shapes": {m["unit"]: moe._member_shape(shape, m["role"]) for m in members},
             "member_operator_identity_sha256": {m["unit"]: _sha(m["unit"] + "joint")
                                                 for m in members},
             "operator_route": route["symbol"]}}
@@ -757,11 +761,11 @@ def test_the_panel_refuses_a_route_from_another_family_or_cut(mutation):
 
 
 # --------------------------------------------------------------------------
-# One member, two vocabularies.  The producer of the layer-3 request inputs
-# writes units under their PROJECTION (the name the census and the wire record
-# carry), while this harness's grammar spells the same member by its role, so
-# the panel validator has to resolve one from the other through the loader's
-# own table (root review of e63579ffb, 2026-09-17).
+# One member, two vocabularies; one container, two widths.  The producer of
+# the layer-3 request inputs writes units under their PROJECTION and hands the
+# whole source container beside a rank-local render, so these are the two
+# harness readings that stood between real artifacts and a priced TP2 receipt
+# (root review of e63579ffb, 2026-09-17).
 # --------------------------------------------------------------------------
 
 def _glm_projection_unit(expert, role):
@@ -792,3 +796,54 @@ def test_a_member_named_by_its_projection_reaches_the_panel_validator():
         f"{GLM_UNIT}.0.up_proj", f"{GLM_UNIT}.0.gate_proj")
     with pytest.raises(ValueError, match="member name/shape/format"):
         moe.validate_panel(copy.deepcopy(panel))
+
+
+def test_the_panel_binds_the_source_at_the_module_and_the_render_at_the_rank():
+    """TP2 is where the two widths differ, and both must be named.
+
+    The source container is the module's at every world; the render is this
+    rank's cut.  Checking both against one geometry passes at TP1, so each
+    direction is refused here at TP2 -- a rank-local source and a module-wide
+    render are each the wrong tensor for their own claim.
+    """
+    panel = _owner_panel(2, A4, "vllm.fused_moe.modular_kernel:FLASHINFER_CUTLASS",
+                         "torch_materialize_stock")
+    member = panel["members"][0]
+    declared = moe._declared_member_shape(panel["shape"], member["role"])
+    rank_local = moe._member_shape(panel["shape"], member["role"])
+    assert declared == [2048, 4096] and rank_local == [1024, 4096]
+    assert member["shape"] == declared
+    assert member["source_weight"]["shape"] == declared
+    assert member["rendered_weight"]["shape"] == rank_local
+    assert panel["runtime_binding"]["member_shapes"][member["unit"]] == rank_local
+    wrong = copy.deepcopy(panel)
+    wrong["members"][0]["source_weight"] = _record(rank_local)
+    with pytest.raises(ValueError, match="source_weight"):
+        moe.validate_panel(wrong)
+    wrong = copy.deepcopy(panel)
+    wrong["members"][0]["rendered_weight"] = _record(declared)
+    with pytest.raises(ValueError, match="rendered_weight"):
+        moe.validate_panel(wrong)
+    wrong = copy.deepcopy(panel)
+    wrong["runtime_binding"]["member_shapes"][member["unit"]] = declared
+    with pytest.raises(ValueError, match="member name/shape/format"):
+        moe.validate_panel(wrong)
+
+
+def test_the_prepare_seam_names_the_source_and_the_render_widths_separately():
+    """The shape check the operator runs before CUDA, on plain shapes.
+
+    Same pair of facts as the panel's, at the point the tensors are handed in,
+    so a rank-local source is refused before the wire identity below can be
+    compared against a geometry the artifact does not have.
+    """
+    shape = moe.validate_shape(_glm_shape(2, A4))
+    member = {"unit": f"{GLM_UNIT}.0.gate_proj", "expert": 0, "role": "w1"}
+    declared = moe._declared_member_shape(shape, "w1")
+    rank_local = moe._member_shape(shape, "w1")
+    assert declared == [2048, 4096] and rank_local == [1024, 4096]
+    assert moe.check_member_geometries(shape, member, declared, rank_local) is None
+    with pytest.raises(ValueError, match="source container geometry"):
+        moe.check_member_geometries(shape, member, rank_local, rank_local)
+    with pytest.raises(ValueError, match="rendered geometry"):
+        moe.check_member_geometries(shape, member, declared, declared)

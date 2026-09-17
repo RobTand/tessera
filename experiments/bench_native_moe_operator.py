@@ -567,6 +567,30 @@ def member_unit_spellings(owner_unit, expert, role):
             f"{owner_unit}.{expert}.{MOE_SHARD_PROJECTIONS[role]}")
 
 
+def check_member_geometries(shape, member, source_shape, rendered_shape):
+    """One member's two widths, each checked where its own claim lives.
+
+    The SOURCE container is the MODULE's: a Tessera checkpoint is
+    tensor-parallel agnostic, every rank is handed the whole unit, and the wire
+    identity binds it there whatever world serves it.  The RENDER is this
+    rank's own cut of that container, which is the width the loader will hold.
+    Comparing one against the other's geometry passes at TP1, where the cut is
+    the whole, and cannot pass at TP2 -- so the two are named separately and a
+    rank-local source or a module-wide render is a refusal rather than a
+    silently different measurement.
+    """
+    declared = _declared_member_shape(shape, member["role"])
+    rank_local = _member_shape(shape, member["role"])
+    if list(source_shape) != declared:
+        raise ValueError(
+            f"{member['unit']}: source container geometry {list(source_shape)} is not the "
+            f"module's {declared}")
+    if list(rendered_shape) != rank_local:
+        raise ValueError(
+            f"{member['unit']}: rendered geometry {list(rendered_shape)} is not this rank's "
+            f"cut {rank_local}")
+
+
 def owner_member_map(shape, scheme, *, unit, rank, world):
     """The exact slice of every member role THIS rank loads, per role.
 
@@ -1137,8 +1161,10 @@ def prepare_native_moe_operator(member_inputs, tensors, phase_tensors, *, unit, 
         rendered = tensors["rendered_weight/" + member["unit"]]
         for value in (source, rendered):
             dense._require_cuda_tensor(value)
-            if list(value.shape) != _member_shape(shape, member["role"]):
-                raise ValueError("expert-role tensor geometry differs from its owner")
+        # The source is the container the module frames; the render is this
+        # rank's cut of it.  Checked together, because the two agree only at a
+        # world of one and the wire identity below binds the container.
+        check_member_geometries(shape, member, source.shape, rendered.shape)
         identity = record["identity"]
         if identity["unit"] != member["unit"].removesuffix(".weight"):
             raise ValueError("wire producer unit differs from its declared member")
@@ -1402,17 +1428,22 @@ def validate_panel(panel):
     for member in panel["members"]:
         dense._fields(member, ("unit", "expert", "role", "format", "shape", "source_weight",
                                "rendered_weight", "activation", "wire"), "panel member")
+        # The member's `shape` is its SOURCE container's, which is the module's
+        # at every world; the rank's own cut is the `runtime_binding`'s
+        # separate statement (`member_shapes`), which `_check_prepared` reads
+        # against the plan.  A name is accepted in either vocabulary -- the
+        # harness's role spelling or the projection the producer wrote -- and
+        # the role is resolved through the loader's own table.
+        declared = _declared_member_shape(shape, member["role"])
         geometry = _member_shape(shape, member["role"])
-        # A name is accepted in either vocabulary -- the harness's role spelling
-        # or the projection the producer wrote -- and the role is resolved
-        # through the loader's own table rather than a second spelling here.
         if (member["unit"] not in member_unit_spellings(panel["unit"], member["expert"], member["role"])
-                or member["shape"] != geometry or binding["member_shapes"][member["unit"]] != geometry
+                or member["shape"] != declared
+                or binding["member_shapes"][member["unit"]] != geometry
                 or binding["member_formats"][member["unit"]] != panel["format"]):
             raise ValueError("member name/shape/format differs from its explicit owner role")
         dense._sha(binding["member_operator_identity_sha256"][member["unit"]], "member joint identity")
-        for key in ("source_weight", "rendered_weight"):
-            tensor_record(member[key], geometry, ("torch.bfloat16",), key)
+        tensor_record(member["source_weight"], declared, ("torch.bfloat16",), "source_weight")
+        tensor_record(member["rendered_weight"], geometry, ("torch.bfloat16",), "rendered_weight")
         if member["activation"].get("clip_enabled") is not False or member["activation"].get("input_global_scale") is not None:
             raise ValueError("whole MoE requires dynamic unclipped member activations")
         wire = member["wire"]

@@ -21,9 +21,10 @@ the runtime's own final all-reduce at that cut. The LFM owner's record, wire
 and sidecar are unchanged field for field.
 
 A member's name is the producer's own spelling -- the role's
-`<owner>.<expert>.w1` or the projection's `<owner>.<expert>.gate_proj` -- and
-the role is resolved through `MOE_SHARD_PROJECTIONS`, the table the loader
-already uses (`member_unit_spellings`; §2.5).
+`<owner>.<expert>.w1` or the projection's `<owner>.<expert>.gate_proj`,
+resolved through `MOE_SHARD_PROJECTIONS` -- and its source container is the
+module's width at every world while its render is this rank's cut
+(`member_unit_spellings`, `check_member_geometries`; §2.5).
 
 The runner that owns that reduction is carried beside the routed layer
 (`WholeOwner`) rather than registered inside it, and the callsite a receipt
@@ -1771,15 +1772,22 @@ the whole container, so `w13` declares `2N` rows and `w2` `N` columns whatever
 the serving world is, while the cut is the loader's. `create_weights` is what
 refuses a partition width that is not exactly `intermediate_size // tp`.
 
-**A member name is the producer's.** The harness's grammar spells a member by
-its ROLE (`<owner>.<expert>.w1`), while a checkpoint whose source tensors are
-named by projection writes `<owner>.<expert>.gate_proj`.  Both name one member,
-and the producer's spelling is the one kept: the wire record's own
-`identity.unit` is checked against the member's unit at preparation, so a
-member renamed to the harness's vocabulary could no longer be verified against
-the wire it names.  `member_unit_spellings` therefore admits either name and
-resolves the role through `MOE_SHARD_PROJECTIONS`, the table the loader already
-uses, rather than a second spelling table.
+**A member name is the producer's, and each width belongs to its own claim.**
+The harness's grammar spells a member by its ROLE
+(`<owner>.<expert>.w1`), while a checkpoint whose source tensors are named by
+projection writes `<owner>.<expert>.gate_proj`.  Both name one member, and the
+producer's spelling is the one kept: the wire record's own `identity.unit` is
+checked against the member's unit at preparation, so a member renamed to the
+harness's vocabulary could no longer be verified against the wire it names.
+`member_unit_spellings` therefore admits either name and resolves the role
+through `MOE_SHARD_PROJECTIONS`, the table the loader already uses, rather than
+a second spelling table.  The member's `shape` and its `source_weight` record
+are the SOURCE container's -- the module's width at every world, which is what
+the wire identity binds -- while its `rendered_weight` record and the panel's
+`runtime_binding.member_shapes` are this rank's own cut.
+`check_member_geometries` refuses a rank-local source or a module-wide render
+before CUDA; at a world of one the two geometries are the same list, so the LFM
+TP1 owner's records are unchanged field for field.
 
 **Two stacks need the explicit selected owner, and one must not have it.** A
 compressed BF16 expert stack has no production builder
