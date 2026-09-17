@@ -3,7 +3,7 @@
 #
 # One file, 864 source_weight/<unit> keys, reused by every rate and every rank
 # -- A4/A8/A16 quantize one checkpoint, so the source bytes are the same for
-# all three.  Written streamed: 14.45 GiB in memory would be the whole layer.
+# all three.  Written streamed: 13.50 GiB in memory would be the whole layer.
 #
 # Inputs (pbrun --env):
 #   PY        the pool interpreter on the target box

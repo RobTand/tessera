@@ -75,22 +75,59 @@ def canonical_sha256(value) -> str:
 
 
 def dump(path: Path, value) -> None:
+    """Write one JSON artifact durably, or leave the previous one alone.
+
+    Flush and fsync the candidate, then rename it over the destination and
+    fsync the directory, so "the record is written" is true when this returns
+    and a reader either sees the old artifact or the complete new one.
+    """
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = Path(str(path) + ".tmp")
-    temporary.write_text(json.dumps(value, sort_keys=True, indent=2, allow_nan=False) + "\n")
+    with temporary.open("w") as stream:
+        stream.write(json.dumps(value, sort_keys=True, indent=2, allow_nan=False) + "\n")
+        stream.flush()
+        os.fsync(stream.fileno())
     os.replace(temporary, path)
+    fsync_directory(path.parent)
+
+
+def fsync_directory(path: Path) -> None:
+    """Make a rename in ``path`` survive a crash, where the platform allows it."""
+    try:
+        handle = os.open(str(path), os.O_RDONLY)
+    except OSError:
+        return
+    try:
+        os.fsync(handle)
+    except OSError:
+        pass
+    finally:
+        os.close(handle)
 
 
 def commit_progress(units: int, phase: str, unit: str | None = None) -> bool:
-    """The action-progress record, or a no-op when this was not admitted.
+    """Say how much work is COMMITTED, through PrismaBuild's own channel.
 
-    Ten lines held byte for byte against the worker's reader (prismabuild's
-    ``test_progress_reporting_is_reachable_from_any_action``): the channel is
-    two environment variables and one atomic file, so an action sealed under a
-    phase policy can say it is working from inside a container that cannot see
-    the fleet mount.
+    The worker names its helper in ``PRISMABUILD_ACTION_PROGRESS_HELPER``, and
+    that helper is the supported channel -- it knows the declared phase names
+    and refuses a typo where the report is made rather than quietly by the
+    watcher.  The ten-line file write below it is the documented fallback for
+    an action that cannot see the fleet mount (a pinned container), held byte
+    for byte against the worker's reader.
+
+    Both are no-ops when this action was not admitted under a phase policy, so
+    callers report unconditionally -- and only for work that is already
+    durable.  A report is a claim that the unit is on disk, not that a loop
+    reached it.
     """
+    helper = os.environ.get("PRISMABUILD_ACTION_PROGRESS_HELPER")
+    if helper:
+        import runpy
+
+        commit = runpy.run_path(helper)["commit"]
+        commit(units, phase)
+        return True
     path = os.environ.get("PRISMABUILD_ACTION_PROGRESS_PATH")
     token = os.environ.get("PRISMABUILD_ACTION_PROGRESS_TOKEN")
     if not path or not token:
@@ -201,13 +238,24 @@ def streamed_safetensors(path: Path, tensors: list, read, *, check, progress=Non
     """Write ``tensors`` -- ``(key, torch dtype str, shape, nbytes)`` -- streamed.
 
     ``safetensors`` has no streaming writer: ``serialize_file`` takes the whole
-    population as a mapping, and 864 source slices of this layer are 14.45 GiB.
+    population as a mapping, and 864 source slices of this layer are 13.50 GiB (14.50 GB).
     The container is simple and fully determined by the plan -- an 8-byte
     little-endian header length, that many bytes of JSON, then one contiguous
     region whose per-tensor offsets are known before any byte is read -- so the
     header is written from the plan and the payload is copied in one unit at a
     time.  Nothing here is trusted: ``check`` re-reads what was written through
     ``safetensors`` itself and must agree.
+
+    The order is the whole point, and it is the order the artifact's own claims
+    need: the candidate is written to a partial file, flushed and fsynced,
+    CHECKED in that partial form, and only then renamed over the destination --
+    with the directory fsynced.  A destination that already holds a good file
+    is therefore never replaced by an unverified candidate, and a failed check
+    leaves the previous artifact untouched and the rejected candidate on disk
+    as evidence.  ``progress`` is called once, after the rename, so a phase
+    watcher is told about work that is durable rather than about work a loop
+    reached.  A partial file is not a checkpoint: it is not resumable, and
+    nothing here reports it as one.
     """
     import torch
 
@@ -223,7 +271,7 @@ def streamed_safetensors(path: Path, tensors: list, read, *, check, progress=Non
     with partial.open("wb") as stream:
         stream.write(struct.pack("<Q", len(blob)))
         stream.write(blob)
-        for index, (key, dtype, shape, length) in enumerate(tensors, start=1):
+        for key, dtype, shape, length in tensors:
             value = read(key)
             if str(value.dtype) != dtype or list(value.shape) != list(shape):
                 raise SystemExit(f"{key}: source tensor is not the plan's {dtype} {list(shape)}")
@@ -231,12 +279,24 @@ def streamed_safetensors(path: Path, tensors: list, read, *, check, progress=Non
             if raw.nbytes != length:
                 raise SystemExit(f"{key}: {raw.nbytes} payload bytes, not {length}")
             stream.write(raw.tobytes())
-            if progress is not None:
-                progress(index, key)
+        stream.flush()
+        os.fsync(stream.fileno())
+    try:
+        check(partial, header)
+    except BaseException:
+        # The destination is untouched and the rejected candidate stays where a
+        # reader can look at it.  Say so, because the next step is a person.
+        print(f"candidate refused; it is retained at {partial} and {path} was not replaced",
+              flush=True)
+        raise
+    digest = sha256_file(partial)
     os.replace(partial, path)
-    written = {"path": str(path), "sha256": sha256_file(path), "device_bytes": offset,
-               "header_bytes": 8 + len(blob), "tensors": len(tensors)}
-    check(path, header)
+    fsync_directory(path.parent)
+    written = {"path": str(path), "sha256": digest, "device_bytes": offset,
+               "header_bytes": 8 + len(blob), "tensors": len(tensors),
+               "published_after": "candidate flushed, fsynced and verified in place"}
+    if progress is not None:
+        progress(len(tensors), str(path))
     return written
 
 
@@ -267,8 +327,8 @@ def remaining_inputs() -> dict:
     }
 
 
-def wire_producer_provenance(served: dict, seals: dict, current: dict) -> dict:
-    """Which producer wrote these wires, stated so it cannot be misread.
+def preflight_producer_provenance(served: dict, manifest: dict, members: list) -> dict:
+    """Which producer wrote these wires, settled BEFORE any output exists.
 
     ``encoder_source_sha256`` is a seal over the ENTIRE producer package,
     serving files included, so a record re-derived under a newer pin would
@@ -280,6 +340,10 @@ def wire_producer_provenance(served: dict, seals: dict, current: dict) -> dict:
     FIXTURE id, which is behaviour rather than provenance and is what
     ``resumable`` compares; it agrees here, which is why the wire can be
     consumed at all.
+
+    Every part of that is a property of the export and its records, so it is
+    checkable before the first record is written.  Refusing here is what keeps
+    a refusal from leaving half a rate's records on disk.
     """
     declared = served["cached_units"].get("historical_producer")
     if declared is None:
@@ -287,15 +351,36 @@ def wire_producer_provenance(served: dict, seals: dict, current: dict) -> dict:
             "this export declares no historical producer, so these records cannot be bound "
             "to the package that wrote the wires; refusing to present this process's seal "
             "as the wire's provenance")
-    carried_source, carried_fixture = seals["encoder_source_sha256"], seals["encoder_fixture_id"]
+    seals = {}
+    for member in members:
+        identity = manifest["units"][member["unit"]]["identity"]
+        pair = (identity["encoder_source_sha256"], identity["encoder_fixture_id"])
+        seals.setdefault(pair, []).append(member["unit"])
+    if len(seals) != 1:
+        raise SystemExit(
+            "the export's own records do not agree on one producer: "
+            + "; ".join(f"{pair[0][:12]}...x{len(units)} (first {units[0]})"
+                        for pair, units in sorted(seals.items())))
+    (carried_source, carried_fixture), units = next(iter(seals.items()))
     if carried_source != declared["source_sha256"]:
         raise SystemExit(
-            f"the records carry encoder_source_sha256 {carried_source} and the export declares "
-            f"{declared['source_sha256']} for the package that wrote these wires")
+            f"{units[0]}: the records carry encoder_source_sha256 {carried_source} and the "
+            f"export declares {declared['source_sha256']} for the package that wrote these wires")
+    return {"carried_encoder_source_sha256": carried_source,
+            "carried_encoder_fixture_id": carried_fixture,
+            "sealed_records": len(members)}
+
+
+def wire_producer_provenance(served: dict, preflight: dict, current: dict) -> dict:
+    """The preflight's answer, written into the receipt.  Reports; never refuses."""
+    declared = served["cached_units"]["historical_producer"]
+    carried_source = preflight["carried_encoder_source_sha256"]
+    carried_fixture = preflight["carried_encoder_fixture_id"]
     return {
         "historical_producer": dict(declared),
         "carried_encoder_source_sha256": carried_source,
         "carried_encoder_fixture_id": carried_fixture,
+        "sealed_records_agreeing": preflight["sealed_records"],
         "current_process_encoder_source_sha256": current["encoder_source_sha256"],
         "current_process_encoder_fixture_id": current["encoder_fixture_id"],
         "restamped_with_the_current_encoder": False,
@@ -365,10 +450,12 @@ def source_mode(args) -> int:
             safe_open(str(Path(args.model) / shard), framework="pt", device="cpu"))
             for shard in shards}
         def progress(count: int, key: str) -> None:
-            # Durable means written: the byte is in the file before this says so.
-            if count % 64 == 0 or count == len(tensors):
-                commit_progress(count, "source", key)
-                print(f"source {count}/{len(tensors)} {key}", flush=True)
+            # Called once, after the candidate was verified in place, renamed
+            # and the directory fsynced.  A 13.50 GiB container has no partial
+            # durable state to report, so this is the only honest number and
+            # the phase allowance has to cover the whole write.
+            commit_progress(count, "source", key)
+            print(f"source published {count}/{count} {key}", flush=True)
 
         written = streamed_safetensors(Path(args.out) / "layer3-routed-owner-source.safetensors",
                                        tensors, read, check=check, progress=progress)
@@ -440,6 +527,10 @@ def rate_mode(args) -> int:
     manifest = bundle_manifest(served, args.bundle)
     if not Path(args.source_file).is_file():
         raise SystemExit(f"the shared source file is absent: {args.source_file}")
+    # Every provenance claim this rate will make is a property of the export
+    # and its records, so it is settled here -- before the first record is
+    # written -- rather than after 864 of them are on disk.
+    provenance = preflight_producer_provenance(served, manifest, members)
 
     block = served["activation_aware"]
     settings = {key: value for key, value in block.items() if key not in ("hessian", "note")}
@@ -454,7 +545,6 @@ def rate_mode(args) -> int:
     from tessera.encoder_identity import encoder_fixture_id
 
     records, wire_inputs, rebound, wire_bytes = {}, [], 0, 0
-    seals = None
     try:
         with safe_open(str(args.source_file), framework="pt", device="cpu") as source_handle:
             keys = set(source_handle.keys())
@@ -475,14 +565,6 @@ def rate_mode(args) -> int:
                     raise SystemExit(
                         f"{unit}: re-derived identity differs from the sealed receipt in "
                         f"{differing}; refusing to emit a record the export did not write")
-                # One seal for the whole rate: a member whose record named a different
-                # producer package would be a second provenance claim inside one run.
-                observed_seals = {key: identity[key]
-                                  for key in ("encoder_source_sha256", "encoder_fixture_id")}
-                if seals is None:
-                    seals = observed_seals
-                elif seals != observed_seals:
-                    raise SystemExit(f"{unit}: the record's producer seals differ from this rate's")
                 blob = (wire_dir / sealed["file"]).read_bytes()
                 observed = sha256_bytes(blob)
                 if observed != sealed["blob_sha256"] or len(blob) != sealed["blob_bytes"]:
@@ -523,8 +605,8 @@ def rate_mode(args) -> int:
         "hessian_identity": served["cached_units"]["hessian_identity"],
         "members": len(wire_inputs), "wire_bytes": wire_bytes,
         "wire_producer_provenance": wire_producer_provenance(
-            served, seals, {"encoder_source_sha256": this_source_seal(),
-                            "encoder_fixture_id": encoder_fixture_id().hex()}),
+            served, provenance, {"encoder_source_sha256": this_source_seal(),
+                                 "encoder_fixture_id": encoder_fixture_id().hex()}),
         "members_file": {"path": str(members_path), "sha256": sha256_file(members_path)},
         "member_records": records,
         "verified": {"identity_rederived_equals_the_sealed_receipt": rebound,

@@ -69,33 +69,48 @@ def _provenance_served(seal="a4" * 32):
     return {"cached_units": {"historical_producer": {"package": "/pkg", "source_sha256": seal}}}
 
 
+def _sealed_manifest(units, source_seal="a4" * 32, fixture="03" * 32):
+    return {"units": {unit: {"identity": {"encoder_source_sha256": source_seal,
+                                          "encoder_fixture_id": fixture}}
+                      for unit in units}}
+
+
 def test_the_records_keep_the_producer_that_wrote_the_wire():
     """A newer pin's seal is reported, never stamped into an old wire's record."""
     served = _provenance_served()
-    carried = {"encoder_source_sha256": "a4" * 32, "encoder_fixture_id": "03" * 32}
+    settled = inputs.preflight_producer_provenance(
+        served, _sealed_manifest(["u.0.w1", "u.0.w2"]), [{"unit": "u.0.w1"}, {"unit": "u.0.w2"}])
     current = {"encoder_source_sha256": "59" * 32, "encoder_fixture_id": "03" * 32}
-    block = inputs.wire_producer_provenance(served, carried, current)
+    block = inputs.wire_producer_provenance(served, settled, current)
     assert block["carried_encoder_source_sha256"] == "a4" * 32
     assert block["current_process_encoder_source_sha256"] == "59" * 32
     assert block["restamped_with_the_current_encoder"] is False
     assert block["carried_source_seal_is_this_processes"] is False
     assert block["carried_encoder_fixture_id"] == block["current_process_encoder_fixture_id"]
+    assert block["sealed_records_agreeing"] == 2
 
 
-def test_a_record_whose_seal_is_not_the_declared_producer_is_refused():
+def test_a_record_whose_seal_is_not_the_declared_producer_is_refused_before_any_output():
     served = _provenance_served()
     with pytest.raises(SystemExit, match="the records carry encoder_source_sha256"):
-        inputs.wire_producer_provenance(
-            served, {"encoder_source_sha256": "59" * 32, "encoder_fixture_id": "03" * 32},
-            {"encoder_source_sha256": "59" * 32, "encoder_fixture_id": "03" * 32})
+        inputs.preflight_producer_provenance(
+            served, _sealed_manifest(["u.0.w1"], source_seal="59" * 32), [{"unit": "u.0.w1"}])
 
 
 def test_an_export_with_no_declared_producer_is_refused():
     with pytest.raises(SystemExit, match="no historical producer"):
-        inputs.wire_producer_provenance(
-            {"cached_units": {}},
-            {"encoder_source_sha256": "a4" * 32, "encoder_fixture_id": "03" * 32},
-            {"encoder_source_sha256": "59" * 32, "encoder_fixture_id": "03" * 32})
+        inputs.preflight_producer_provenance(
+            {"cached_units": {}}, _sealed_manifest(["u.0.w1"]), [{"unit": "u.0.w1"}])
+
+
+def test_records_that_disagree_on_one_producer_are_refused():
+    served = _provenance_served()
+    manifest = _sealed_manifest(["u.0.w1"])
+    manifest["units"]["u.0.w2"] = {"identity": {"encoder_source_sha256": "a4" * 32,
+                                                "encoder_fixture_id": "04" * 32}}
+    with pytest.raises(SystemExit, match="do not agree on one producer"):
+        inputs.preflight_producer_provenance(
+            served, manifest, [{"unit": "u.0.w1"}, {"unit": "u.0.w2"}])
 
 
 def _write_bundle(tmp_path: Path, value) -> Path:
@@ -188,3 +203,59 @@ def test_the_streamed_writer_refuses_a_tensor_that_is_not_the_plan(tmp_path):
         inputs.streamed_safetensors(tmp_path / "out.safetensors", plan,
                                     lambda key: values[key], check=lambda path, header: None)
     assert not (tmp_path / "out.safetensors").exists()
+
+
+def test_a_candidate_that_fails_its_check_never_replaces_the_previous_file(tmp_path):
+    """A refusal must leave the last good artifact where a reader finds it.
+
+    The destination is only ever replaced after the candidate has been flushed,
+    fsynced and verified IN PLACE, so a verification failure leaves the prior
+    container untouched and retains the rejected candidate beside it.  This is
+    the ordering the previous writer got backwards: it renamed first and
+    checked the destination afterwards, so a bad candidate could overwrite a
+    good one.
+    """
+    values, plan = _tensors()
+    destination = tmp_path / "source.safetensors"
+    destination.write_bytes(b"the previous, accepted container\n")
+    with pytest.raises(SystemExit, match="planted refusal"):
+        inputs.streamed_safetensors(
+            destination, plan, lambda key: values[key],
+            check=lambda path, header: (_ for _ in ()).throw(
+                SystemExit(f"{path}: planted refusal")))
+    assert destination.read_bytes() == b"the previous, accepted container\n"
+    partials = sorted(tmp_path.glob("source.safetensors.partial-*"))
+    assert len(partials) == 1, partials
+    assert partials[0].stat().st_size > 0, "the rejected candidate is retained as evidence"
+
+
+def test_progress_is_reported_only_after_the_candidate_is_published(tmp_path):
+    """The phase watcher hears about durable work, not about a loop position.
+
+    Verification runs on the partial file; the report is made once, after the
+    rename, and names a path that is the verified container.  A counter that
+    advanced before the fsync would let a stalled write keep a phase alive
+    while no reader could use the file.
+    """
+    values, plan = _tensors()
+    seen = []
+    written = inputs.streamed_safetensors(
+        tmp_path / "streamed.safetensors", plan, lambda key: values[key],
+        check=lambda path, header: seen.append(("check", path.name)),
+        progress=lambda count, key: seen.append(("progress", count, Path(key).name)))
+    assert [entry[0] for entry in seen] == ["check", "progress"], seen
+    assert seen[-1] == ("progress", len(plan), "streamed.safetensors")
+    assert Path(written["path"]).is_file()
+    assert written["sha256"] == inputs.sha256_file(tmp_path / "streamed.safetensors")
+
+
+def test_a_durable_record_is_replaced_atomically(tmp_path):
+    """``dump`` publishes by rename, so a reader sees old or whole-new bytes."""
+    path = tmp_path / "receipt.json"
+    inputs.dump(path, {"n": 1})
+    first = path.read_bytes()
+    assert json.loads(first) == {"n": 1}
+    inputs.dump(path, {"n": 2})
+    assert json.loads(path.read_bytes()) == {"n": 2}
+    assert first != path.read_bytes()
+    assert not list(tmp_path.glob("receipt.json.tmp*")), "the candidate is not left behind"
