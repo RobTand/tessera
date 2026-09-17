@@ -621,12 +621,24 @@ def _refusal_arms(fixture: str, family: str, module: dict, declared, blob: bytes
     from tessera.serving.scheme import parse_compact_blob_for_scheme
 
     other = "TESSERA_BF16" if family == "TESSERA_FP8" else "TESSERA_FP8"
+    # Both wrong declarations are DERIVED from the wire's own facts.  The rung
+    # arm used to hard-code the wrong rung as ``896`` for the FP8 family and
+    # ``1024`` for the BF16 one -- which is a mismatch for the small Qwen BF16
+    # fixture (q256 1792) and NOT a mismatch for a BF16 wire that is itself at
+    # q256 1024, where the arm then accepted the wire it was built to refuse.
+    # A rung offset cannot collide with the wire's own rung; the family arm
+    # carries the other family's grid and leaves the rung alone.
+    wrong_rung = int(declared["q256"]) - 128
     cases = {
         "family": dict(declared, family=other,
-                       grid=("BF16" if other == "TESSERA_BF16" else "E4M3"),
-                       q256=(1792 if other == "TESSERA_BF16" else 1024)),
-        "rung": dict(declared, q256=(896 if family == "TESSERA_FP8" else 1024)),
+                       grid=("BF16" if other == "TESSERA_BF16" else "E4M3")),
+        "rung": dict(declared, q256=wrong_rung),
     }
+    for label, wrong in cases.items():
+        if all(wrong.get(field) == declared.get(field)
+               for field in ("family", "grid", "q256")):
+            _failure(f"{module['group']}: the {label} refusal arm matches the wire it "
+                     f"is built to refuse")
     ok = True
     for label, wrong in cases.items():
         entry = {"fixture": fixture, "family": family, "group": module["group"],
