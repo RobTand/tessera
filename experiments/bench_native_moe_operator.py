@@ -1,8 +1,14 @@
 """Original-wire whole-expert research receipts, never summed leaf timings.
 
-The supported owner is one complete 32-expert E4M3 K1 R1024 stack. Actual
-captured routing tensors enter the existing resident/eager/TP1/EP1 method
-unchanged; selecting experts is outside this operator's measured scope.
+The supported owners are versioned: an LFM 32-expert E4M3 K1 R1024 stack
+(unchanged), and GLM-5.3-Flash's 288-expert top-8 stack under its own captured
+routing -- `noaux_tc` selection with a live FP32 correction bias,
+`norm_topk_prob`, routed scale 2.5 and the SwiGLU clamp the served kernels read.
+Actual captured routing tensors enter the existing resident/eager method
+unchanged; selecting experts is outside this operator's measured scope. The
+GLM geometry declares its tensor-parallel cut, and the receipt prices the
+rank-local widths that cut produces; a TP1 owner and a TP2 rank-local owner are
+different geometries with different member shapes, never one averaged price.
 """
 from __future__ import annotations
 
@@ -23,6 +29,31 @@ RUNTIME_SCHEMA = "tessera.native_moe_runtime.v1"
 WORKSPACE_SCHEMA = "tessera.native_moe_workspace.v1"
 FORMAT = "TESSERA_E4M3_K1_R1024"
 ROLE_ORDER = ("w1", "w3", "w2")
+
+#: Where each geometry keeps the width its own members actually carry.
+def _roster_shape(shape):
+    if is_glm_geometry(shape):
+        return {**shape, "experts": shape["n_routed_experts"],
+                "intermediate_size": shape["intermediate_size"] // shape["tensor_parallel"]}
+    return dict(shape)
+
+
+def is_glm_geometry(shape):
+    """One predicate, read by producer and consumer alike."""
+    return (isinstance(shape, dict) and "geometry_version" in shape
+            and shape.get("source_id") == GLM_SOURCE_ID)
+
+
+GLM_SOURCE_ID = "glm5_next"
+GLM_GEOMETRY_VERSION = 1
+#: The frozen source facts a GLM owner must state. Values the served route reads
+#: are compared, so a stack that is not this source cannot be priced as it.
+GLM_SOURCE_FACTS = {
+    "n_routed_experts": 288, "top_k": 8, "scoring_func": "sigmoid",
+    "topk_method": "noaux_tc", "norm_topk_prob": True, "routed_scaling_factor": 2.5,
+    "swiglu_limit": 10.0, "n_group": 1, "topk_group": 1, "gated": True,
+    "shared_experts": 1, "intermediate_size": 2048, "hidden_size": 4096,
+}
 EXECUTION = {"owner_kind": "complete_routed_moe", "mode": "resident",
              "execution_mode": "eager", "tensor_parallel": 1, "expert_parallel": 1,
              "include_router": False, "topk_selection": "external",
@@ -42,14 +73,34 @@ def tensor_record(record, shape, dtypes, where):
     dense._sha(record["content_sha256"], where)
 
 
-def validate_routing(routing):
-    dense._fields(routing, ("activation", "scoring_func", "renormalize", "routed_scaling_factor",
-        "apply_router_weight_on_input", "expert_map", "input_dtype", "topk_weights_dtype",
-        "topk_ids_dtype", "device", "weights_contract", "source_protocol"), "routing")
+GLM_ROUTING_FIELDS = ("activation", "scoring_func", "renormalize", "routed_scaling_factor",
+    "apply_router_weight_on_input", "expert_map", "input_dtype", "topk_weights_dtype",
+    "topk_ids_dtype", "device", "weights_contract", "source_protocol", "swiglu_limit",
+    "n_group", "topk_group", "topk_method")
+
+
+def validate_routing(routing, *, glm=False):
+    if glm:
+        dense._fields(routing, GLM_ROUTING_FIELDS, "routing")
+        if routing["topk_method"] != GLM_SOURCE_FACTS["topk_method"]:
+            raise ValueError(f"GLM owner top-k method is {routing['topk_method']!r}, and this source is "
+                             f"{GLM_SOURCE_FACTS['topk_method']!r}")
+        if routing["swiglu_limit"] != GLM_SOURCE_FACTS["swiglu_limit"]:
+            raise ValueError(f"GLM owner SwiGLU clamp is {routing['swiglu_limit']!r}, and this source is "
+                             f"{GLM_SOURCE_FACTS['swiglu_limit']!r}")
+        if routing["routed_scaling_factor"] != GLM_SOURCE_FACTS["routed_scaling_factor"]:
+            raise ValueError(f"GLM owner routed scale is {routing['routed_scaling_factor']!r}, and this "
+                             f"source is {GLM_SOURCE_FACTS['routed_scaling_factor']!r}")
+        if routing["n_group"] != GLM_SOURCE_FACTS["n_group"] or routing["topk_group"] != GLM_SOURCE_FACTS["topk_group"]:
+            raise ValueError("GLM owner group selection differs from the captured source")
+    else:
+        dense._fields(routing, ("activation", "scoring_func", "renormalize", "routed_scaling_factor",
+            "apply_router_weight_on_input", "expert_map", "input_dtype", "topk_weights_dtype",
+            "topk_ids_dtype", "device", "weights_contract", "source_protocol"), "routing")
     if (routing["activation"] != "silu" or routing["scoring_func"] != "sigmoid"
             or type(routing["renormalize"]) is not bool
             or type(routing["routed_scaling_factor"]) not in (int, float)
-            or routing["routed_scaling_factor"] != 1.0
+            or (not glm and routing["routed_scaling_factor"] != 1.0)
             or routing["apply_router_weight_on_input"] is not False
             or routing["expert_map"] is not None
             or routing["input_dtype"] != "torch.bfloat16"
@@ -57,19 +108,54 @@ def validate_routing(routing):
             or routing["topk_ids_dtype"] not in ("torch.int32", "torch.int64")
             or routing["device"] != "cuda:0"
             or routing["weights_contract"] != "post_renormalization_and_routed_scaling"):
-        raise ValueError("routing is outside the captured external-topk LFM scope")
+        raise ValueError("routing is outside the captured external-topk LFM scope" if not glm
+                         else "routing is outside the captured external-topk GLM scope")
+    if glm:
+        # GLM's routed scale is 2.5, applied post-renormalization; the LFM
+        # unit-scale rule below is a different capture and does not apply.
+        pass
+    elif routing["routed_scaling_factor"] != 1:
+        raise ValueError("LFM routing requires the unit routed scale")
     protocol = routing["source_protocol"]
-    dense._fields(protocol, ("router_class", "router_source_sha256", "selection_bias",
-                            "normalization_epsilon", "expert_bias_affects"), "source routing protocol")
-    if not isinstance(protocol["router_class"], str) or not protocol["router_class"]:
-        raise ValueError("source router class is missing")
-    dense._sha(protocol["router_source_sha256"], "router source")
-    if (type(protocol["normalization_epsilon"]) is not float
-            or protocol["normalization_epsilon"] != 1e-6
-            or protocol["expert_bias_affects"] != "selection_only"):
-        raise ValueError("unsupported source routing normalization or bias protocol")
-    if protocol["selection_bias"] is not None:
-        tensor_record(protocol["selection_bias"], [32], ("torch.bfloat16", "torch.float32"), "selection bias")
+    if glm:
+        # GLM's selection rule is `noaux_tc`: the correction bias is live FP32
+        # and takes part in the selection, and the top-k weights are
+        # renormalized before the routed scale is applied. Both are read here
+        # rather than assumed, because a receipt that priced a different
+        # mixture would still say "GLM" in its own metadata.
+        dense._fields(protocol, ("router_class", "router_source_sha256", "scoring_func",
+                                "topk_method", "normalization_epsilon", "correction_bias",
+                                "expert_bias_affects", "norm_topk_prob"), "source routing protocol")
+        if not isinstance(protocol["router_class"], str) or not protocol["router_class"]:
+            raise ValueError("source router class is missing")
+        dense._sha(protocol["router_source_sha256"], "router source")
+        if (type(protocol["normalization_epsilon"]) is not float
+                or protocol["normalization_epsilon"] != 1e-6
+                or protocol["expert_bias_affects"] != "selection_only"):
+            raise ValueError("unsupported source routing normalization or bias protocol")
+        if protocol["scoring_func"] != "sigmoid" or protocol["topk_method"] != GLM_SOURCE_FACTS["topk_method"]:
+            raise ValueError("GLM source protocol names a different selection rule")
+        if protocol["norm_topk_prob"] is not True:
+            raise ValueError("GLM owner requires norm_topk_prob: the served route applies normalized "
+                             "top-k weights before the routed scale")
+        correction = protocol["correction_bias"]
+        if correction is not None:
+            dense._fields(correction, ("content_sha256", "dtype"), "correction bias")
+            dense._sha(correction["content_sha256"], "source correction bias")
+            if correction["dtype"] != "torch.float32":
+                raise ValueError("GLM correction bias is the source's FP32 bias, not a cast")
+    else:
+        dense._fields(protocol, ("router_class", "router_source_sha256", "selection_bias",
+                                "normalization_epsilon", "expert_bias_affects"), "source routing protocol")
+        if not isinstance(protocol["router_class"], str) or not protocol["router_class"]:
+            raise ValueError("source router class is missing")
+        dense._sha(protocol["router_source_sha256"], "router source")
+        if (type(protocol["normalization_epsilon"]) is not float
+                or protocol["normalization_epsilon"] != 1e-6
+                or protocol["expert_bias_affects"] != "selection_only"):
+            raise ValueError("unsupported source routing normalization or bias protocol")
+        if protocol["selection_bias"] is not None:
+            tensor_record(protocol["selection_bias"], [32], ("torch.bfloat16", "torch.float32"), "selection bias")
     dense.identity_sha256(routing)
     return routing
 
@@ -138,11 +224,48 @@ def validate_phase_values(phase_tensors, shape, routing, *, require_references):
 
 
 def validate_shape(shape):
+    """The versioned owner geometry; LFM's shape is unchanged, field for field."""
+    if is_glm_geometry(shape):
+        return validate_glm_shape(shape)
     dense._fields(shape, ("experts", "hidden_size", "intermediate_size", "top_k"), "shape")
     for key, value in shape.items():
         dense._integer(value, "shape." + key)
     if shape["experts"] != 32 or shape["top_k"] > shape["experts"]:
         raise ValueError("only a complete 32-expert owner with valid top-k is supported")
+    return dict(shape)
+
+
+GLM_SHAPE_FIELDS = ("geometry_version", "geometry_id", "source_id", "n_routed_experts",
+                    "top_k", "hidden_size", "intermediate_size", "shared_experts", "n_group",
+                    "topk_group", "topk_method", "scoring_func", "norm_topk_prob",
+                    "routed_scaling_factor", "swiglu_limit", "gated", "tensor_parallel",
+                    "tensor_parallel_cut_axis")
+
+
+def validate_glm_shape(shape):
+    """GLM-5.3-Flash's routed stack, with the coordinates the route reads checked.
+
+    `intermediate_size` is the SOURCE width; the rank-local width the members
+    carry is `intermediate_size // tensor_parallel`, because the serving route
+    cuts that axis (`nvfp4_moe_route.py:374-381`). Stating it once, here, is
+    what keeps the producer's member shapes and the consumer's expectation from
+    being two independent readings of the same cut.
+    """
+    dense._fields(shape, GLM_SHAPE_FIELDS, "shape")
+    if shape["geometry_version"] != GLM_GEOMETRY_VERSION:
+        raise ValueError(f"GLM owner geometry version {shape['geometry_version']!r} is not {GLM_GEOMETRY_VERSION}")
+    for key, expected in GLM_SOURCE_FACTS.items():
+        if shape[key] != expected:
+            raise ValueError(
+                f"GLM owner {key} is {shape[key]!r}, and this captured source is {expected!r}")
+    if shape["tensor_parallel"] not in (1, 2):
+        raise ValueError(f"GLM owner tensor_parallel {shape['tensor_parallel']!r} is outside the supported cuts")
+    if shape["tensor_parallel_cut_axis"] != "intermediate":
+        raise ValueError("GLM owner declares a tensor-parallel cut this operator does not implement")
+    if shape["intermediate_size"] % shape["tensor_parallel"]:
+        raise ValueError("GLM owner intermediate is not divisible by its TP cut")
+    if shape["top_k"] > shape["n_routed_experts"]:
+        raise ValueError("GLM owner top_k exceeds its expert count")
     return dict(shape)
 
 
@@ -155,9 +278,11 @@ def validate_execution(execution, role_order):
 
 def validate_member_order(members, shape):
     """The declared sequence is semantic; sorting member names is forbidden."""
-    validate_shape(shape)
-    if not isinstance(members, list) or len(members) != shape["experts"] * len(ROLE_ORDER):
-        raise ValueError("the owner must bind all 96 expert-role members")
+    shape = validate_shape(shape)
+    expected_members = _roster_shape(shape)["experts"] * len(ROLE_ORDER)
+    if not isinstance(members, list) or len(members) != expected_members:
+        raise ValueError(
+            f"the owner must bind all {expected_members} expert-role members")
     units = set()
     for index, member in enumerate(members):
         if not isinstance(member, dict):
@@ -176,7 +301,8 @@ def validate_member_order(members, shape):
 
 
 def _member_shape(shape, role):
-    n, k = shape["intermediate_size"], shape["hidden_size"]
+    roster = _roster_shape(shape)
+    n, k = roster["intermediate_size"], roster["hidden_size"]
     return [k, n] if role == "w2" else [n, k]
 
 
@@ -332,7 +458,10 @@ def verify_routing_bias(routing, bias):
         if bias is not None:
             raise ValueError("unexpected routing bias")
         return None
-    if bias is None or bias.dtype != torch.float32 or list(bias.shape) != [32] or not bool(torch.isfinite(bias).all()):
+    width = expected.get("width") if isinstance(expected, dict) else None
+    if width is None:
+        width = GLM_SOURCE_FACTS["n_routed_experts"] if routing.get("topk_method") == GLM_SOURCE_FACTS["topk_method"] else 32
+    if bias is None or bias.dtype != torch.float32 or list(bias.shape) != [width] or not bool(torch.isfinite(bias).all()):
         raise ValueError("captured selection bias must supply actual FP32 factory values")
     source_dtype = getattr(torch, expected["dtype"].removeprefix("torch."))
     original = bias.to(source_dtype)
@@ -407,7 +536,7 @@ def prepare_native_moe_operator(member_inputs, tensors, phase_tensors, *, unit, 
     validate_execution(execution, profile_role_order)
     shape = validate_shape(shape)
     validate_member_order(member_inputs, shape)
-    validate_routing(routing)
+    validate_routing(routing, glm=is_glm_geometry(shape))
     dense._integer(warmup_iterations, "warmup_iterations")
     dense._sha(routing_capture_sha256, "routing_capture_sha256")
     dense._fields(phase_transport, PHASES, "phase transport")
@@ -518,7 +647,7 @@ def phase_identities(phase_tensors):
             for phase, values in phase_tensors.items()}
 
 def validate_panel(panel):
-    """Check the independently frozen 96-member join before CUDA execution."""
+    """Check the independently frozen whole-owner join before CUDA execution."""
     source_fields = ("source_execution", "source_execution_qualification_sha256")
     optional = source_fields if isinstance(panel, dict) and any(key in panel for key in source_fields) else ()
     dense._fields(panel, ("schema", "unit", "format", "shape", "members", "profile_role_order",
@@ -552,7 +681,7 @@ def validate_panel(panel):
     shape = validate_shape(panel["shape"])
     validate_execution(panel["execution"], panel["profile_role_order"])
     validate_member_order(panel["members"], shape)
-    validate_routing(panel["routing"])
+    validate_routing(panel["routing"], glm=is_glm_geometry(shape))
     for key in ("routing_capture_sha256", "source_sha256", "calibration_sha256", "cost_sha256",
                 "probe_identity_sha256", "native_tensors_sha256", "scheme_sha256", "config_sha256",
                 "serving_config_sha256", "workspace_sha256"):
