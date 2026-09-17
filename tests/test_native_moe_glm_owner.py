@@ -16,6 +16,9 @@ import copy
 import pytest
 
 from experiments import bench_native_moe_operator as moe
+from experiments.bench_native_operator import tensor_identity as dense_tensor_identity
+
+GLM_UNIT = "model.language_model.layers.3.mlp.experts"
 
 
 def _glm_shape(**overrides):
@@ -211,3 +214,192 @@ def test_the_shared_glm_contract_matches_prismaquants_consumer():
     assert set(pq.GLM_SHAPE_FIELDS) == set(moe.GLM_SHAPE_FIELDS)
     assert set(pq.GLM_SOURCE_GEOMETRY) | {"geometry_version", "tensor_parallel",
                                           "tensor_parallel_cut_axis"} == set(moe.GLM_SHAPE_FIELDS)
+
+
+def test_a_missing_or_inconsistent_renormalization_capture_refuses():
+    """The consumer's cross-check, mirrored: the producer must refuse it too.
+
+    Root review found both sides accepted `correction_bias=None`, which reads as
+    a source without a bias, and `renormalize=False` while the source protocol
+    said `norm_topk_prob=True`. `noaux_tc` selects on the bias and the served
+    route normalizes before applying the routed scale, so neither capture
+    describes this model.
+    """
+    routing = _glm_routing()
+    routing["source_protocol"] = {**routing["source_protocol"], "correction_bias": None}
+    with pytest.raises(ValueError) as caught:
+        moe.validate_routing(routing, glm=True)
+    assert "correction bias" in str(caught.value), str(caught.value)
+
+    for renormalize, norm_topk_prob in ((False, True), (True, False)):
+        routing = _glm_routing(renormalize=renormalize)
+        routing["source_protocol"] = {**routing["source_protocol"],
+                                      "norm_topk_prob": norm_topk_prob}
+        with pytest.raises(ValueError) as caught:
+            moe.validate_routing(routing, glm=True)
+        message = str(caught.value)
+        assert "renormalize" in message or "norm_topk_prob" in message, message
+
+
+@pytest.mark.parametrize("key,value", [
+    ("geometry_version", True), ("geometry_version", 1.0), ("tensor_parallel", True),
+    ("tensor_parallel", 1.0), ("n_routed_experts", True), ("top_k", 8.0),
+])
+def test_a_non_integer_geometry_coordinate_refuses_before_width_arithmetic(key, value):
+    """`True` is an int and `1.0 == 1`; neither may become a slice bound."""
+    with pytest.raises(ValueError) as caught:
+        moe.validate_shape(_glm_shape(**{key: value}))
+    assert key in str(caught.value), str(caught.value)
+
+
+# --------------------------------------------------------------------------
+# PRECURSOR ONLY, and it must not be read as producer coverage.
+#
+# Root read the actual Tessera runtime path and these tests do NOT establish a
+# runnable A4/A16/TP2 owner. What they establish is narrower: the geometry and
+# routing contracts, and that a GLM owner's shape/roster/execution record reach
+# the producer's own validators. Everything below that line is still TP1- and
+# E4M3-shaped, and each seam is named with its line in
+# docs/ARCHITECTURE.md so the next brief starts from the real gap:
+#
+#   resolve_serving_config:504-519   refuses tensor_parallel_size != 1 and
+#                                    builds ParallelConfig(tensor_parallel_size=1)
+#   prepare scheme  :~670            hardcodes TESSERA_FP8 / "E4M3" / q256 1024
+#                                    and shape["experts"]
+#   declared route  :~712            "policy": "TESSERA_FP8:resident"
+#   runtime exec    :715             runtime.update(execution=dict(EXECUTION))
+#   panel validator :827             identity_sha256(runtime["execution"]) == EXECUTION
+#   verify_routing_bias:538          reads source_protocol["selection_bias"] while
+#                                    PQ's GLM protocol carries "correction_bias"
+#
+# A real cross-repository payload test for the bias translation is owed; until
+# it exists, the GLM protocol has two spellings and no test that connects them.
+# --------------------------------------------------------------------------
+
+def _pq_owner_view(tp, format_name, unit=GLM_UNIT):
+    """Build a GLM owner the way PQ's producer does, through PQ's own helpers."""
+    pq = pytest.importorskip("prismaquant.native_moe_panel")
+    validated = pq.validate_geometry({
+        "geometry_version": pq.GEOMETRY_VERSION, "geometry_id": "glm53_next_routed_stack_v1",
+        "source_id": "glm5_next", "n_routed_experts": 288, "top_k": 8,
+        "hidden_size": 4096, "intermediate_size": 2048, "shared_experts": 1,
+        "n_group": 1, "topk_group": 1, "topk_method": "noaux_tc",
+        "scoring_func": "sigmoid", "norm_topk_prob": True,
+        "routed_scaling_factor": 2.5, "swiglu_limit": 10.0, "gated": True,
+        "tensor_parallel": tp, "tensor_parallel_cut_axis": pq.GLM_TP_CUT_AXIS})
+    shape = {**validated, "format": format_name}
+    view = pq._shape_for_roster(shape)
+    members = [{"unit": f"{unit}.{expert}.{role}", "expert": expert, "role": role,
+                "format": format_name}
+               for expert in range(view["experts"]) for role in ("w1", "w3", "w2")]
+    return pq, shape, view, members
+
+
+@pytest.mark.parametrize("format_name", ["TESSERA_E2M1_K2_R896", "TESSERA_E4M3_K1_R1024",
+                                         "TESSERA_BF16_K1_R1024"])
+def test_a4_a8_and_a16_each_reach_the_whole_owner_validator(format_name):
+    """PRECURSOR: the CONTRACT accepts these families; the runtime does not yet.
+
+    This checks the geometry/routing contract and the roster's format
+    parameterization. It does NOT show that a real A4/A8/A16 owner runs: the
+    scheme, declared route and runtime manifest on the path below are still
+    E4M3/TP1 literal (see the seam list above the tests). Do not read this
+    test's name as producer coverage.
+    """
+    pq, shape, view, members = _pq_owner_view(1, format_name)
+    assert view["format"] == format_name
+    assert {m["format"] for m in members} == {format_name}
+
+    # The producer's own field set is the contract: hand it the geometry fields
+    # the consumer declares, with no owner-view keys added.
+    producer_shape = {k: v for k, v in shape.items()
+                      if k in moe.GLM_SHAPE_FIELDS}
+    member_inputs = [{**m, "blob": b"", "record": {}} for m in members]
+    assert len(moe.validate_member_order_public(member_inputs, producer_shape)) == 288 * 3
+    # And the rung the producer reads for the wire is the OWNER's, not E4M3 R1024.
+    assert moe._parse_owner_format(format_name) == ("E2M1", 896) if "E2M1" in format_name \
+        else moe._parse_owner_format(format_name)[1] == 1024
+
+
+@pytest.mark.parametrize("tp", [1, 2])
+def test_the_declared_tensor_parallel_reaches_the_whole_receipt_execution_check(tp):
+    """PRECURSOR: the execution RECORD accepts TP2; the runtime does not yet.
+
+    `validate_execution` and the panel's execution check are now geometry-aware.
+    That is necessary and not sufficient: `resolve_serving_config:504-519` still
+    refuses to build a TP2 ParallelConfig, so no TP2 owner can reach this
+    validator in a real run. This test fixes the record, not the runtime.
+    """
+    pq, shape, view, members = _pq_owner_view(tp, "TESSERA_E4M3_K1_R1024")
+    execution = pq.owner_execution(shape, format_name="TESSERA_E4M3_K1_R1024")
+    assert execution["tensor_parallel"] == tp
+    producer_shape = {k: v for k, v in shape.items() if k in moe.GLM_SHAPE_FIELDS}
+    # The owner's own record is accepted...
+    assert moe.validate_execution(execution, list(moe.ROLE_ORDER), shape=producer_shape) is None
+    # ...and the LFM TP1 record is refused for a TP2 owner.
+    if tp == 2:
+        with pytest.raises(ValueError) as caught:
+            moe.validate_execution(dict(moe.EXECUTION), list(moe.ROLE_ORDER), shape=producer_shape)
+        assert "tensor-parallel" in str(caught.value), str(caught.value)
+    # The member widths the producer prices are the rank's own.
+    producer_view = moe._roster_shape(producer_shape)
+    assert producer_view["intermediate_size"] == view["intermediate_size"] == 2048 // tp
+
+
+# --------------------------------------------------------------------------
+# The cross-repository payload translation root asked for: PQ's GLM protocol
+# spells the correction bias `correction_bias`; the producer's
+# `verify_routing_bias:538` reads `source_protocol["selection_bias"]`. Those are
+# two spellings of one captured object across the boundary, and until this test
+# nothing connected them -- so a real GLM panel would have been refused (or
+# worse, compared the wrong tensor) with no test saying so.
+# --------------------------------------------------------------------------
+
+def test_the_producer_reads_the_bias_under_the_consumers_glm_spelling(monkeypatch):
+    """A PQ-shaped GLM protocol must reach the producer's bias check intact.
+
+    This is a payload-translation test, not a geometry test: it builds the
+    routing document in PRISMAQUANT's shape (where the field is
+    `correction_bias`, carrying a content digest and dtype), converts it the way
+    a real request must, and then drives the producer's own
+    `verify_routing_bias` against an actual FP32 tensor. Both the translation
+    and the comparison are exercised, so the missing link is visible.
+    """
+    import torch
+
+    pq = pytest.importorskip("prismaquant.native_moe_panel")
+    routing = _glm_routing()
+    source = routing["source_protocol"]
+    # PQ's shape, verbatim: correction_bias, a digest + dtype, no tensor.
+    assert "correction_bias" in source and "selection_bias" not in source
+    assert set(source["correction_bias"]) == {"content_sha256", "dtype"}
+
+    # The producer's field is `selection_bias`, and it compares against the
+    # TENSOR it was given (tensor_record identity), so the translation has to
+    # carry both the field name and the object.
+    bias = torch.zeros(288, dtype=torch.float32)
+    producer_protocol = {
+        "router_class": source["router_class"],
+        "router_source_sha256": source["router_source_sha256"],
+        "selection_bias": dense_tensor_identity(bias),
+        "normalization_epsilon": source["normalization_epsilon"],
+        "expert_bias_affects": source["expert_bias_affects"],
+    }
+    producer_routing = {**routing, "source_protocol": producer_protocol}
+    producer_routing.pop("swiglu_limit", None), producer_routing.pop("n_group", None)
+    producer_routing.pop("topk_group", None), producer_routing.pop("topk_method", None)
+
+    # The producer's own bias check accepts the translated payload.
+    assert moe.verify_routing_bias(producer_routing, bias) is bias
+
+    # And it refuses a bias that is not the captured one, which is the point of
+    # translating rather than passing the name through.
+    other = torch.ones(288, dtype=torch.float32)
+    with pytest.raises(ValueError) as caught:
+        moe.verify_routing_bias(producer_routing, other)
+    assert "captured source" in str(caught.value), str(caught.value)
+
+    # The producer's width rule follows the geometry's own expert count: 288
+    # for GLM, not the LFM 32.
+    with pytest.raises(ValueError):
+        moe.verify_routing_bias(producer_routing, torch.zeros(32, dtype=torch.float32))
