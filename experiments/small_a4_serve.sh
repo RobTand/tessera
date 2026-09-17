@@ -20,9 +20,18 @@ NAME="a4-small-${ROLE}"
 # Gated like every other wrapper here that starts a container (issue #100):
 # this one names an explicit digest, so the gate verifies that digest against
 # the daemon's RepoDigests and stamps what actually ran rather than trusting the
-# literal above.
+# literal above.  The digest is a deliberate research pin, not a default.
 source "$TS/experiments/runtime_image.sh"
 runtime_image_require "$IMAGE" || exit 2
+
+# What a process INSIDE needs to check its own image against (#132): the
+# reference the daemon resolved, never the literal above.  Injected AFTER this
+# wrapper's own -e flags below so nothing here can forge it, which is what makes
+# the cross-check a check on the launcher rather than on its argument list.
+imgenv=()
+while IFS= read -r _kv; do
+  [ -n "$_kv" ] && imgenv+=(-e "$_kv")
+done <<<"${RUNTIME_IMAGE_CONTAINER_ENV:-}"
 
 if [ "$ROLE" = "rank0" ]; then
   RANK=0; HOST_IP=192.168.100.1; PEER_IP=192.168.100.2; PORT=8000
@@ -37,6 +46,7 @@ exec docker run --rm --gpus all --name "$NAME" \
   -e OMP_NUM_THREADS=8 -e PYTHONPATH=/work/src \
   -e TESSERA_SERVE_MODE=resident \
   -v "$PWD":/work:ro -v /mnt/shared:/mnt/shared:ro \
+  ${imgenv[@]+"${imgenv[@]}"} \
   --entrypoint bash "$IMAGE" -lc "
     python3 -m vllm.entrypoints.openai.api_server \
       --model '$MODEL' \
