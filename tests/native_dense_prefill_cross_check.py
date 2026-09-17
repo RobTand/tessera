@@ -100,13 +100,14 @@ sys.path.insert(0, str(REPO / "src"))
 sys.path.insert(0, str(REPO / "tests"))
 
 #: The two dense fixtures, by family.  Each names a config group and the
-#: container tensor beside it; the paths are box artifacts with an override, so
-#: a box that keeps them elsewhere says so instead of skipping silently.
+#: container tensor beside it, and locates the tree through
+#: ``tests/box_artifacts.py`` -- the one home for the roots this repository
+#: reads but does not own -- with this harness's own override on top.  A box
+#: that keeps them elsewhere says so; nothing here spells a path.
 FIXTURES = {
     "TESSERA_FP8": {
         "env": "TESSERA_A8_DENSE_FIXTURE",
-        "default": "/mnt/shared/tessera-runs/derivatives/"
-                   "mixedA4A8A16-layers0-4-20260916",
+        "artifact": ("shared_runs", "derivatives", "mixedA4A8A16-layers0-4-20260916"),
         "modules": (
             {"group": "tessera_model_language_model_layers_3_mlp_shared_experts_gate_up_proj",
              "tensor": "model.language_model.layers.3.mlp.shared_experts.gate_up_proj.wire_bytes",
@@ -118,7 +119,7 @@ FIXTURES = {
     },
     "TESSERA_BF16": {
         "env": "TESSERA_A16_DENSE_FIXTURE",
-        "default": "/mnt/shared/tessera-runs/bf16/qwen0.6b-bf16-r7-plugin",
+        "artifact": ("shared_runs", "bf16", "qwen0.6b-bf16-r7-plugin"),
         "modules": (
             {"group": "tessera_model_layers_0_mlp_gate_up_proj",
              "tensor": "model.layers.0.mlp.gate_up_proj.wire_bytes",
@@ -147,13 +148,31 @@ def _failure(message: str):
 
 
 def _fixture_root(spec) -> Path:
+    """This box's tree for one family, the same way every other gate asks.
+
+    The root comes from ``box_artifacts`` (env variable or documented default);
+    this harness's own variable overrides it for a tree kept somewhere else.
+    An absent tree fails with the sentence ``box_artifacts`` writes, which
+    names the root and the variable that moves it.
+    """
     import os
 
-    root = Path(os.environ.get(spec["env"]) or spec["default"])
+    import box_artifacts
+
+    override = os.environ.get(spec["env"], "")
+    if override:
+        root = Path(override)
+    else:
+        key, *parts = spec["artifact"]
+        base = box_artifacts.root(key)
+        if base is None:
+            _failure(box_artifacts.reason(key))
+        root = base.joinpath(*parts)
     if not (root / "config.json").is_file():
         _failure(
-            f"{spec['env']} / its documented default resolves to {root}, which has no "
-            "config.json; the dense fixture this crosscheck prices against is missing"
+            f"{box_artifacts.reason(spec['artifact'][0], root)}"
+            f" -- and {root} has no config.json; the dense fixture this crosscheck "
+            f"prices against is missing (this harness's override is {spec['env']})"
         )
     return root
 
