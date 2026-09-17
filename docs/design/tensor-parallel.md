@@ -10,8 +10,13 @@ each unit naming a world-size receipt: two two-rank serves of the GLM-5.3-Flash
 graded `route_only`
 (`docs/measurements/tessera-glm53-a4-stub-tp2-world-size-2026-09-15.md`,
 tessera#514). Beside it the contract publishes `loader_axes`, which is what the
-loader *does*, and `kv_head_replication`. The text below was written before that
-serve and is kept as the design record.
+loader *does*, and `kv_head_replication`. **Update 2026-09-17:** the A4 stub's
+4.26x median excess over the BF16 control in that KL is re-drawn quantization
+noise, not error the sharded path adds: against the BF16 reference the A4 stub's
+KL is the same at TP1 and TP2 (ratio 1.0017, 95% CI [0.990, 1.014]), and the
+share of the TP2 delta that is added error is 0.7% (CI [-1.6%, +3.0%])
+(`docs/measurements/tessera-glm53-a4-stub-tp2-excess-resolved-2026-09-17.md`).
+The text below was written before that serve and is kept as the design record.
 
 ## The claim
 

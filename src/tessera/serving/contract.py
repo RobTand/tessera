@@ -62,6 +62,10 @@ among the families those traces executed, and the KL against a single-rank arm
 -- and a unit above 1 without one is refused by name
 (``_validate_tensor_parallel``).  Since v29 the three families are at 2 on the
 GLM-5.3-Flash stub serves (tessera#506, tessera#514), graded ``route_only``.
+Read the receipt's ``excess_over_control`` as a DIVERGENCE, not as added error:
+on a quantized checkpoint a TP2-vs-TP1 comparison re-draws quantization noise
+that the reference KL does not see move (tessera#514's resolution,
+``experiments/results/glm53_a4_stub_tp2_reference_kl_514.json``).
 Beside it, ``loader_axes`` says what this build's
 LOADER does with a shard on each axis, which is a different question with a
 different answer -- the E4M3 family cuts both axes, the E2M1x2 family cuts
@@ -597,7 +601,11 @@ SINGLE_RANK_KL_READINGS = ("abs_dlogprob", "renormalized_kl", "topk_kl_lower_bou
 
 #: The quantized arm's excess over the control, as ratios the validator
 #: DERIVES from the two arms' metrics at two decimals.  A typed ratio that
-#: disagrees with the numbers beside it is refused.
+#: disagrees with the numbers beside it is refused.  It is a divergence
+#: between two worlds of one checkpoint: on the A4 stub the 4.26x median
+#: excess is quantization noise re-drawn by the TP2 partial-sum rounding, and
+#: the checkpoint's KL against its BF16 reference is the same at both worlds
+#: (tessera#514, experiments/results/glm53_a4_stub_tp2_reference_kl_514.json).
 SINGLE_RANK_KL_EXCESS = ("abs_dlogprob_p50", "abs_dlogprob_p99")
 
 

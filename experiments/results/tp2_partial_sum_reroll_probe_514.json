@@ -1,0 +1,206 @@
+{
+ "schema": "tessera.tp2_partial_sum_reroll_probe/1",
+ "issue": "tessera#514",
+ "activations": "SYNTHETIC draws calibrated to the checkpoint's static global (amax = 6*448/global); no hidden state of the stub is captured here",
+ "perturbation": "x_tp1 = bf16(y1+y2), x_tp2 = bf16(bf16(y1)+bf16(y2)), random split of the fp32 pre-sum",
+ "device": "NVIDIA GB10",
+ "capability": [
+  12,
+  1
+ ],
+ "torch": "2.13.0+cu130",
+ "vllm": "0.28.1rc1.dev397+gfd4a15126.d20260904",
+ "python": "3.12.3",
+ "rows": 512,
+ "seed": 514,
+ "cells": [
+  {
+   "unit": "layers.1.mlp.shared_experts.gate_up_proj",
+   "K": 4096,
+   "global_scale": 983.04,
+   "amax": 2.734375,
+   "draw": "gaussian",
+   "quantizers": {
+    "e2m1_group16_ue4m3_static": {
+     "nibble_order": "low_first",
+     "dequant_check_mse_chosen_vs_other": [
+      0.0022197195794433355,
+      0.4901312589645386
+     ],
+     "flip_fraction": 0.010362625122070312,
+     "perturbed_element_fraction": 0.23238706588745117,
+     "perturbation_rms_over_x_rms": 0.0026702736504375935,
+     "err_var_tp1": 0.0022204502020031214,
+     "err_var_tp2": 0.0022214811760932207,
+     "err_var_ratio_tp2_over_tp1": 1.0004643201828003,
+     "reroll_fraction": 0.03425431251525879,
+     "amplification": 87.0295181274414,
+     "delta_rms_over_err_rms": 0.26176968216896057
+    },
+    "fp8_per_token_dynamic": {
+     "flip_fraction": 0.024651050567626953,
+     "perturbed_element_fraction": 0.23238706588745117,
+     "perturbation_rms_over_x_rms": 0.0026702736504375935,
+     "err_var_tp1": 0.00017255282728001475,
+     "err_var_tp2": 0.00017323860083706677,
+     "err_var_ratio_tp2_over_tp1": 1.0039743185043335,
+     "reroll_fraction": 0.13201963901519775,
+     "amplification": 26.112226486206055,
+     "delta_rms_over_err_rms": 0.5143604278564453
+    },
+    "bf16_unquantized": {
+     "flip_fraction": 0.23238706588745117,
+     "perturbed_element_fraction": 0.23238706588745117,
+     "perturbation_rms_over_x_rms": 0.0026702736504375935,
+     "err_var_tp1": 6.768967182324559e-07,
+     "err_var_tp2": 1.2378360452203196e-06,
+     "err_var_ratio_tp2_over_tp1": 1.8286926746368408,
+     "reroll_fraction": 0.9090826362371445,
+     "amplification": 1.0,
+     "delta_rms_over_err_rms": 1.6071088314056396
+    }
+   }
+  },
+  {
+   "unit": "layers.1.mlp.shared_experts.gate_up_proj",
+   "K": 4096,
+   "global_scale": 983.04,
+   "amax": 2.734375,
+   "draw": "student_t4",
+   "quantizers": {
+    "e2m1_group16_ue4m3_static": {
+     "nibble_order": "low_first",
+     "dequant_check_mse_chosen_vs_other": [
+      6.636556645389646e-05,
+      0.01575670763850212
+     ],
+     "flip_fraction": 0.009599685668945312,
+     "perturbed_element_fraction": 0.2320117950439453,
+     "perturbation_rms_over_x_rms": 0.002673813607543707,
+     "err_var_tp1": 6.638791091972962e-05,
+     "err_var_tp2": 6.642069638473913e-05,
+     "err_var_ratio_tp2_over_tp1": 1.0004938840866089,
+     "reroll_fraction": 0.03199112415313721,
+     "amplification": 75.48413848876953,
+     "delta_rms_over_err_rms": 0.25297656655311584
+    },
+    "fp8_per_token_dynamic": {
+     "flip_fraction": 0.025902271270751953,
+     "perturbed_element_fraction": 0.2320117950439453,
+     "perturbation_rms_over_x_rms": 0.002673813607543707,
+     "err_var_tp1": 5.349285856937058e-06,
+     "err_var_tp2": 5.372979103412945e-06,
+     "err_var_ratio_tp2_over_tp1": 1.0044292211532593,
+     "reroll_fraction": 0.1403639316558838,
+     "amplification": 26.739492416381836,
+     "delta_rms_over_err_rms": 0.5304270386695862
+    },
+    "bf16_unquantized": {
+     "flip_fraction": 0.2320117950439453,
+     "perturbed_element_fraction": 0.2320117950439453,
+     "perturbation_rms_over_x_rms": 0.002673813607543707,
+     "err_var_tp1": 2.167287327381473e-08,
+     "err_var_tp2": 3.991060992802886e-08,
+     "err_var_ratio_tp2_over_tp1": 1.8415006399154663,
+     "reroll_fraction": 0.9099248424172401,
+     "amplification": 1.0,
+     "delta_rms_over_err_rms": 1.611531138420105
+    }
+   }
+  },
+  {
+   "unit": "layers.1.mlp.shared_experts.down_proj",
+   "K": 2048,
+   "global_scale": 28.294737,
+   "amax": 94.99999946986607,
+   "draw": "gaussian",
+   "quantizers": {
+    "e2m1_group16_ue4m3_static": {
+     "nibble_order": "low_first",
+     "dequant_check_mse_chosen_vs_other": [
+      3.3838717937469482,
+      750.905029296875
+     ],
+     "flip_fraction": 0.01026153564453125,
+     "perturbed_element_fraction": 0.23219871520996094,
+     "perturbation_rms_over_x_rms": 0.0026678622234612703,
+     "err_var_tp1": 3.384889841079712,
+     "err_var_tp2": 3.3843159675598145,
+     "err_var_ratio_tp2_over_tp1": 0.9998304843902588,
+     "reroll_fraction": 0.03353524208068848,
+     "amplification": 85.0528564453125,
+     "delta_rms_over_err_rms": 0.2589649260044098
+    },
+    "fp8_per_token_dynamic": {
+     "flip_fraction": 0.02517223358154297,
+     "perturbed_element_fraction": 0.23219871520996094,
+     "perturbation_rms_over_x_rms": 0.0026678622234612703,
+     "err_var_tp1": 0.2637326717376709,
+     "err_var_tp2": 0.2646551728248596,
+     "err_var_ratio_tp2_over_tp1": 1.003497838973999,
+     "reroll_fraction": 0.1335020661354065,
+     "amplification": 26.430444717407227,
+     "delta_rms_over_err_rms": 0.5171777009963989
+    },
+    "bf16_unquantized": {
+     "flip_fraction": 0.23219871520996094,
+     "perturbed_element_fraction": 0.23219871520996094,
+     "perturbation_rms_over_x_rms": 0.0026678622234612703,
+     "err_var_tp1": 0.0010324736358597875,
+     "err_var_tp2": 0.00188791926484555,
+     "err_var_ratio_tp2_over_tp1": 1.8285399675369263,
+     "reroll_fraction": 0.909945473074913,
+     "amplification": 1.0,
+     "delta_rms_over_err_rms": 1.607790231704712
+    }
+   }
+  },
+  {
+   "unit": "layers.1.mlp.shared_experts.down_proj",
+   "K": 2048,
+   "global_scale": 28.294737,
+   "amax": 94.99999946986607,
+   "draw": "student_t4",
+   "quantizers": {
+    "e2m1_group16_ue4m3_static": {
+     "nibble_order": "low_first",
+     "dequant_check_mse_chosen_vs_other": [
+      0.08187928795814514,
+      19.372962951660156
+     ],
+     "flip_fraction": 0.009305953979492188,
+     "perturbed_element_fraction": 0.23187637329101562,
+     "perturbation_rms_over_x_rms": 0.002672967966645956,
+     "err_var_tp1": 0.08190951496362686,
+     "err_var_tp2": 0.08185078203678131,
+     "err_var_ratio_tp2_over_tp1": 0.999282956123352,
+     "reroll_fraction": 0.03059399127960205,
+     "amplification": 72.22069549560547,
+     "delta_rms_over_err_rms": 0.24731431901454926
+    },
+    "fp8_per_token_dynamic": {
+     "flip_fraction": 0.026289939880371094,
+     "perturbed_element_fraction": 0.23187637329101562,
+     "perturbation_rms_over_x_rms": 0.002672967966645956,
+     "err_var_tp1": 0.00654261652380228,
+     "err_var_tp2": 0.006563004571944475,
+     "err_var_ratio_tp2_over_tp1": 1.003116250038147,
+     "reroll_fraction": 0.14198869466781616,
+     "amplification": 26.825077056884766,
+     "delta_rms_over_err_rms": 0.5333099365234375
+    },
+    "bf16_unquantized": {
+     "flip_fraction": 0.23187637329101562,
+     "perturbed_element_fraction": 0.23187637329101562,
+     "perturbation_rms_over_x_rms": 0.002672967966645956,
+     "err_var_tp1": 2.6518957383814268e-05,
+     "err_var_tp2": 4.9166377721121535e-05,
+     "err_var_ratio_tp2_over_tp1": 1.854008674621582,
+     "reroll_fraction": 0.9125503599643707,
+     "amplification": 1.0,
+     "delta_rms_over_err_rms": 1.61736261844635
+    }
+   }
+  }
+ ]
+}

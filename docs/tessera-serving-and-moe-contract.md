@@ -1342,5 +1342,9 @@ record. Tensor parallelism was not attested at v28 (`max_world_size` stayed 1,
 although that receipt is a two-rank serve); v29 raises every family to 2 on a
 world-size receipt that adds a KL against a single-rank arm
 (`docs/measurements/tessera-glm53-a4-stub-tp2-world-size-2026-09-15.md`,
-tessera#514), still `route_only`. The stub's attention backend refuses graph
-mode, so no compiled forward is attested.
+tessera#514), still `route_only`. That receipt's A4 excess over the BF16
+control is a re-draw of quantization noise, not added error: the A4 stub's KL
+against the BF16 reference is the same at both worlds
+(`docs/measurements/tessera-glm53-a4-stub-tp2-excess-resolved-2026-09-17.md`).
+The stub's attention backend refuses graph mode, so no compiled forward is
+attested.
