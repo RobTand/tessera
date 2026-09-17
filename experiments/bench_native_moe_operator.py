@@ -45,6 +45,13 @@ RUNTIME_COLLECTIVE_METHOD = "_maybe_reduce_final_output"
 #: object whose calls are counted (it did: the site said `vllm.fused_moe.runner`,
 #: an import path this runtime does not have).
 RUNTIME_COLLECTIVE_SITE = f"{RUNTIME_COLLECTIVE_MODULE}:{RUNTIME_COLLECTIVE_METHOD}"
+#: The context one operator receipt is produced in, and the reason no engine
+#: term may be charged from it.  This process constructs the routed owner with
+#: the factory under test and runs captured phases through it: there is no
+#: engine scheduler and no KV cache here, so `fixed_KV` and the full-engine
+#: fixed terms come from the stock-engine capture
+#: (`experiments/capture_full_engine_resources.py`), never from this receipt.
+OPERATOR_CONTEXT_SCOPE = "standalone_factory_context_not_full_engine"
 ROLE_ORDER = ("w1", "w3", "w2")
 
 #: Where each geometry keeps the width its own members actually carry.
@@ -549,6 +556,48 @@ def _declared_member_rows(shape, role):
     return _declared_member_shape(shape, role)[0]
 
 
+def member_unit_spellings(owner_unit, expert, role):
+    """Every name ONE member role is written under, across the two vocabularies.
+
+    This harness's grammar names a member by its ROLE
+    (``<owner>.<expert>.w1``), and a producer whose source checkpoint names the
+    same member by its PROJECTION (``<owner>.<expert>.gate_proj``) writes the
+    name the export wrote.  That name is not cosmetic: the wire record's own
+    ``identity.unit`` is checked against the member's unit in
+    ``prepare_native_moe_operator``, so a member renamed to the role spelling
+    could no longer be verified against the wire it names.  The role is
+    resolved through the one table the loader uses (``MOE_SHARD_PROJECTIONS``)
+    rather than a second spelling table here.
+    """
+    from tessera.serving.scheme import MOE_SHARD_PROJECTIONS
+    return (f"{owner_unit}.{expert}.{role}",
+            f"{owner_unit}.{expert}.{MOE_SHARD_PROJECTIONS[role]}")
+
+
+def check_member_geometries(shape, member, source_shape, rendered_shape):
+    """One member's two widths, each checked where its own claim lives.
+
+    The SOURCE container is the MODULE's: a Tessera checkpoint is
+    tensor-parallel agnostic, every rank is handed the whole unit, and the wire
+    identity binds it there whatever world serves it.  The RENDER is this
+    rank's own cut of that container, which is the width the loader will hold.
+    Comparing one against the other's geometry passes at TP1, where the cut is
+    the whole, and cannot pass at TP2 -- so the two are named separately and a
+    rank-local source or a module-wide render is a refusal rather than a
+    silently different measurement.
+    """
+    declared = _declared_member_shape(shape, member["role"])
+    rank_local = _member_shape(shape, member["role"])
+    if list(source_shape) != declared:
+        raise ValueError(
+            f"{member['unit']}: source container geometry {list(source_shape)} is not the "
+            f"module's {declared}")
+    if list(rendered_shape) != rank_local:
+        raise ValueError(
+            f"{member['unit']}: rendered geometry {list(rendered_shape)} is not this rank's "
+            f"cut {rank_local}")
+
+
 def owner_member_map(shape, scheme, *, unit, rank, world):
     """The exact slice of every member role THIS rank loads, per role.
 
@@ -907,10 +956,34 @@ def resolve_serving_config(path, runtime_image, *, tensor_parallel):
         kernel_config=KernelConfig(**args["kernel_config"]),
         compilation_config=CompilationConfig(mode=CompilationMode.NONE, cudagraph_mode=CUDAGraphMode.NONE))
     return config, {"file_sha256": hashlib.sha256(raw).hexdigest(), "document": document,
-        "scope": "standalone_factory_context_not_full_engine",
+        "scope": OPERATOR_CONTEXT_SCOPE,
         "resolved": {key: _plain(getattr(config, key)) for key in
                      ("scheduler_config", "cache_config", "parallel_config", "kernel_config",
                       "compilation_config", "device_config")}}
+
+
+def operator_context_scope(serving_config):
+    """Name the context an operator receipt came from, in the receipt itself.
+
+    A whole-owner receipt prices ONE routed owner in a standalone factory
+    context.  That context has no engine scheduler and owns no KV cache, so it
+    cannot answer a full-engine question: `fixed_KV`, the engine's own fixed
+    resident/activation/scratch terms and the served capacity are the
+    stock-engine capture's to observe
+    (`experiments/capture_full_engine_resources.py`, `experiments/full_engine_kv.py`),
+    and a consumer that charged them from this receipt would be composing terms
+    from two different environments.  The scope is checked rather than echoed,
+    so a receipt cannot be relabelled into an engine observation by editing a
+    config.
+    """
+    scope = serving_config["scope"]
+    if scope != OPERATOR_CONTEXT_SCOPE:
+        raise ValueError(
+            f"an operator receipt may only be produced in {OPERATOR_CONTEXT_SCOPE}, not {scope!r}")
+    return {"context_scope": scope,
+            "engine_scope": "standalone factory context: no engine scheduler and no KV cache, so "
+                            "fixed_KV and the full-engine fixed terms cannot be charged from this "
+                            "receipt; the stock-engine capture observes those"}
 
 
 def verify_routing_bias(routing, bias):
@@ -1119,8 +1192,10 @@ def prepare_native_moe_operator(member_inputs, tensors, phase_tensors, *, unit, 
         rendered = tensors["rendered_weight/" + member["unit"]]
         for value in (source, rendered):
             dense._require_cuda_tensor(value)
-            if list(value.shape) != _member_shape(shape, member["role"]):
-                raise ValueError("expert-role tensor geometry differs from its owner")
+        # The source is the container the module frames; the render is this
+        # rank's cut of it.  Checked together, because the two agree only at a
+        # world of one and the wire identity below binds the container.
+        check_member_geometries(shape, member, source.shape, rendered.shape)
         identity = record["identity"]
         if identity["unit"] != member["unit"].removesuffix(".weight"):
             raise ValueError("wire producer unit differs from its declared member")
@@ -1384,14 +1459,22 @@ def validate_panel(panel):
     for member in panel["members"]:
         dense._fields(member, ("unit", "expert", "role", "format", "shape", "source_weight",
                                "rendered_weight", "activation", "wire"), "panel member")
+        # The member's `shape` is its SOURCE container's, which is the module's
+        # at every world; the rank's own cut is the `runtime_binding`'s
+        # separate statement (`member_shapes`), which `_check_prepared` reads
+        # against the plan.  A name is accepted in either vocabulary -- the
+        # harness's role spelling or the projection the producer wrote -- and
+        # the role is resolved through the loader's own table.
+        declared = _declared_member_shape(shape, member["role"])
         geometry = _member_shape(shape, member["role"])
-        if (member["unit"] != f"{panel['unit']}.{member['expert']}.{member['role']}"
-                or member["shape"] != geometry or binding["member_shapes"][member["unit"]] != geometry
+        if (member["unit"] not in member_unit_spellings(panel["unit"], member["expert"], member["role"])
+                or member["shape"] != declared
+                or binding["member_shapes"][member["unit"]] != geometry
                 or binding["member_formats"][member["unit"]] != panel["format"]):
             raise ValueError("member name/shape/format differs from its explicit owner role")
         dense._sha(binding["member_operator_identity_sha256"][member["unit"]], "member joint identity")
-        for key in ("source_weight", "rendered_weight"):
-            tensor_record(member[key], geometry, ("torch.bfloat16",), key)
+        tensor_record(member["source_weight"], declared, ("torch.bfloat16",), "source_weight")
+        tensor_record(member["rendered_weight"], geometry, ("torch.bfloat16",), "rendered_weight")
         if member["activation"].get("clip_enabled") is not False or member["activation"].get("input_global_scale") is not None:
             raise ValueError("whole MoE requires dynamic unclipped member activations")
         wire = member["wire"]
@@ -1661,6 +1744,7 @@ def measure_prepared_operator(prepared, panel, phase_tensors, *, warmup_iteratio
                 "resident_bytes": dense._resident_bytes(layer), "phases": resource_phases,
                 "workspace_resident_bytes": prepared["workspace"]["resident_bytes"],
                 "workspace_sha256": dense.identity_sha256(prepared["workspace"]),
+                **operator_context_scope(prepared["operator"]["serving_config"]),
                 "unknown": ["native_and_library_scratch_outside_torch_allocator", "fixed_and_full_model_resources"]}}
 
 
