@@ -20,6 +20,10 @@ world above one is bound from a live `torch.distributed` group
 the runtime's own final all-reduce at that cut. The LFM owner's record, wire
 and sidecar are unchanged field for field.
 
+A request may also split the source out of the tensor file -- one CPU
+`source_path` read per member, renders/phase/bias on the device -- and the
+source and render proof tensors are released before the timed region (§2.5).
+
 The runner that owns that reduction is carried beside the routed layer
 (`WholeOwner`) rather than registered inside it, and the callsite a receipt
 names is derived from the module the probe wraps and the method it counts, so
@@ -1774,6 +1778,22 @@ geometry: a Tessera checkpoint is tensor-parallel agnostic and every rank loads
 the whole container, so `w13` declares `2N` rows and `w2` `N` columns whatever
 the serving world is, while the cut is the loader's. `create_weights` is what
 refuses a partition width that is not exactly `intermediate_size // tp`.
+
+**One shared source on the host, and no proof tensors inside the timed region.**
+A routed owner's source containers are the whole unit per member, and the
+harness reads them for two CPU facts only: the wire's sealed
+`identity["source"]` and the member's declared geometry.  A request may
+therefore name a separate ONE-file `source_path`, read with `safetensors`'s own
+reader one member at a time on the CPU, while `tensors_path` carries the
+renders, the captured routing bias and the phase tensors on the device; the
+legacy monolithic request names only `tensors_path` and is unchanged key for
+key, which is the LFM lane.  The wire decode runs on the TARGET the render
+lives on, not on whichever device the source happened to be read into.  Once
+every member is qualified, the source and render proof tensors are released
+(`release_verification_tensors`) before the timed region and the owner's own
+bytes are re-checked after the release, so a benchmark pays for the phases, the
+bias and the loaded owner rather than for the 13.5 GiB source and 6.75 GiB of
+renders it only had to prove.
 
 **Two stacks need the explicit selected owner, and one must not have it.** A
 compressed BF16 expert stack has no production builder

@@ -643,6 +643,14 @@ def test_each_members_cut_decodes_to_this_ranks_own_render(tp, rank):
     with pytest.raises(ValueError, match="decode differs"):
         moe.verify_rank_local_member_renders(members, bad, shape, scheme, unit="unit",
                                              rank=rank, world=tp)
+    # The decode runs on the TARGET the render lives on, so the source entry is
+    # not what decides where the wire is parsed: a shared-source request has no
+    # source tensor in this mapping at all, and the check must still work.
+    without_source = {key: value for key, value in tensors.items()
+                      if not key.startswith("source_weight/")}
+    assert not any(key.startswith("source_weight/") for key in without_source)
+    moe.verify_rank_local_member_renders(members, without_source, shape, scheme, unit="unit",
+                                         rank=rank, world=tp)
     if tp == 2:
         # ...and at a world above one, refuses the WHOLE container -- the
         # comparison that would have passed while the cut was never made.
