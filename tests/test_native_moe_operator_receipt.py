@@ -1,6 +1,7 @@
 """CPU boundary tests for the whole-owner receipt; never native GPU evidence."""
 import copy
 import hashlib
+from contextlib import contextmanager
 
 import pytest
 
@@ -164,7 +165,10 @@ def _panel():
                  "num_lanes": 1, "locked": True, "slots": [{"index": 0, "allocation": None}], "resident_bytes": 0}
     panel = {"schema": moe.PANEL_SCHEMA, "unit": "model.layers.1.feed_forward.experts", "format": moe.FORMAT,
         "shape": shape, "members": members, "profile_role_order": list(moe.ROLE_ORDER), "routing": routing,
-        "probe_scope": None, "execution": dict(moe.EXECUTION), "runtime": {"schema": moe.RUNTIME_SCHEMA, "execution": dict(moe.EXECUTION)},
+        "probe_scope": None, "execution": dict(moe.EXECUTION), "runtime": {"schema": moe.RUNTIME_SCHEMA,
+            "execution": dict(moe.EXECUTION), "collective": {"op": moe.RUNTIME_COLLECTIVE_OP,
+                "site": moe.RUNTIME_COLLECTIVE_SITE, "required_by_this_owner": False,
+                "runtime_declares_skip_final_all_reduce": False, "world_size": 1}},
         "numerics": {"atol": 2**-6, "rtol": 2**-6}, "phases": phases,
         "workspace": workspace, "workspace_sha256": dense.identity_sha256(workspace),
         "runtime_binding": {"member_formats": {m["unit"]: m["format"] for m in members},
@@ -290,16 +294,27 @@ def _fake_whole_lifecycle(monkeypatch, *, bad_decode=False):
     operator.update(native_tensors=dense._native_tensors(layer), scheme={"fixture": "CPU_ONLY"}, config=config,
         declared_route=panel["phases"]["prefill"]["expected_route"],
         phases={phase: {"transport": panel["phases"][phase]["transport"]} for phase in moe.PHASES},
+        member_map=[{"unit": member["unit"], "expert": member["expert"], "role": member["role"],
+                     "format": member["format"], "container_shape": list(member["shape"]),
+                     "rank_local_shape": list(member["shape"]), "axis": None, "shard_lo": 0,
+                     "shard_hi": member["shape"][0], "shards": 1, "rank": 0, "world_size": 1}
+                    for member in panel["members"]],
         members=[{**{key: member[key] for key in ("unit", "expert", "role", "format", "shape", "source_weight", "rendered_weight")},
                   "wire_sha256": member["wire"]["blob_sha256"],
                   "wire_record_sha256": dense.identity_sha256(member["wire"]["record"])} for member in panel["members"]])
     for key in ("native_tensors", "scheme", "config"):
         panel[key + "_sha256"] = dense.identity_sha256(operator[key])
-    prepared = {"layer": layer, "operator": operator, "runtime": copy.deepcopy(panel["runtime"]),
+    # This fixture runs without vLLM: the layer is a bare module and there is no
+    # runtime runner to hold, which is the world-of-one shape (nothing to
+    # reduce, and `apply_whole` is substituted below).
+    prepared = {"owner": moe.WholeOwner(layer=layer, runner=None), "operator": operator,
+                "runtime": copy.deepcopy(panel["runtime"]),
+                "distributed": {"world_size": 1, "rank": 0, "init_method": None,
+                                "timeout_seconds": None},
                 "workspace": copy.deepcopy(panel["workspace"]), "workspace_pointers": (None,)}
     calls = []
-    def apply(actual, tensors):
-        assert actual is layer
+    def apply(owner, tensors):
+        assert owner.layer is layer
         m = tensors["input"].shape[0]
         calls.append(("apply", m))
         emit_route(layer, **operator["declared_route"], shape=f"M{m}:N256:K256", state="served", reason=None)
@@ -318,6 +333,21 @@ def _fake_whole_lifecycle(monkeypatch, *, bad_decode=False):
     monkeypatch.setattr(moe, "_native_config", lambda layer: config)
     monkeypatch.setattr(moe, "observe_workspace", lambda: (copy.deepcopy(panel["workspace"]), (None,)))
     monkeypatch.setattr(moe, "apply_whole", apply)
+    # The other CPU substitution: this fixture runs without vLLM, so the
+    # runner's own all-reduce callsite cannot be imported, let alone counted.
+    # The probe is replaced by "nothing was called", which is what a world of
+    # one must see; `tests/test_native_moe_tp_owner_runtime.py` covers the
+    # declaration, and the device run is what counts a real call.
+    @contextmanager
+    def _no_collective_calls():
+        yield []
+    monkeypatch.setattr(moe, "observe_output_collective", _no_collective_calls)
+    # The one substitution that is not the native lane: this CPU fixture has no
+    # device process group, so the live binding is replaced by the declaration
+    # the fixture itself makes. `tests/test_native_moe_tp_owner_runtime.py`
+    # covers the real reading of a live group.
+    monkeypatch.setattr(moe, "bind_owner_rank",
+                        lambda distributed: (int(distributed["rank"]), int(distributed["world_size"])))
     monkeypatch.setattr(dense, "represented_native_input", lambda layer, x: x.clone())
     monkeypatch.setattr(dense, "time_apply", time)
     monkeypatch.setattr(torch.cuda, "synchronize", lambda: None)
@@ -410,12 +440,19 @@ def _factory_configuration_fixture():
             num_logical_experts=32, experts_per_token=4, hidden_dim=256, intermediate_size=128,
             intermediate_size_per_partition=128, max_num_tokens=2048, has_bias=False, is_lora_enabled=False,
             in_dtype=torch.bfloat16, device=torch.device("cuda:0"),
-            moe_parallel_config=NS(tp_size=1, ep_size=1, dp_size=1, pcp_size=1, sp_size=1)))
+            moe_parallel_config=NS(tp_size=1, tp_rank=0, ep_size=1, dp_size=1, pcp_size=1,
+                                   sp_size=1, use_ep=False, enable_eplb=False)))
     return layer, shape, routing
 
 
+def _factory_wire(shape):
+    """The owner's own wire, from the same format the fixture declares."""
+    return moe.owner_wire({**shape, "format": moe.FORMAT})
+
+
 def test_factory_observed_configuration_agrees_with_requested_scope():
-    moe.verify_native_configuration(*_factory_configuration_fixture(), 2048)
+    layer, shape, routing = _factory_configuration_fixture()
+    moe.verify_native_configuration(layer, shape, routing, 2048, wire=_factory_wire(shape))
 
 
 @pytest.mark.parametrize("name,value", [("renormalize", False), ("top_k", True), ("use_grouped_topk", False),
@@ -425,7 +462,7 @@ def test_factory_actual_routing_or_owner_drift_refuses(name, value):
     layer, shape, routing = _factory_configuration_fixture()
     setattr(layer, name, value)
     with pytest.raises(ValueError):
-        moe.verify_native_configuration(layer, shape, routing, 2048)
+        moe.verify_native_configuration(layer, shape, routing, 2048, wire=_factory_wire(shape))
 
 
 @pytest.mark.parametrize("name,value", [("max_num_tokens", 512), ("has_bias", True), ("is_lora_enabled", True),
@@ -434,7 +471,7 @@ def test_factory_actual_scheduler_bias_dtype_device_drift_refuses(name, value):
     layer, shape, routing = _factory_configuration_fixture()
     setattr(layer.moe_config, name, value)
     with pytest.raises(ValueError):
-        moe.verify_native_configuration(layer, shape, routing, 2048)
+        moe.verify_native_configuration(layer, shape, routing, 2048, wire=_factory_wire(shape))
 
 
 def test_probe_subset_scope_remains_explicit_and_joins_the_panel_calibration():
@@ -475,11 +512,13 @@ def test_explicit_kv_capacity_enters_actual_factory_config_and_identity(monkeypa
     _fake_serving_config_runtime(monkeypatch)
     source = Path(__file__).resolve().parents[1] / 'experiments/configs/lfm25_first_model_clean_20260907.json'
     document = json.loads(source.read_text())
-    old, old_identity = moe.resolve_serving_config(source, document['runtime_image'])
+    old, old_identity = moe.resolve_serving_config(source, document['runtime_image'],
+                                                   tensor_parallel=1)
     document['engine_args']['kv_cache_memory_bytes'] = 412286976
     path = tmp_path / 'explicit-kv.json'
     path.write_text(json.dumps(document))
-    actual, identity = moe.resolve_serving_config(path, document['runtime_image'])
+    actual, identity = moe.resolve_serving_config(path, document['runtime_image'],
+                                                  tensor_parallel=1)
     assert actual.cache_config.kv_cache_memory_bytes == 412286976
     assert identity['resolved']['cache_config']['kv_cache_memory_bytes'] == 412286976
     assert identity['file_sha256'] != old_identity['file_sha256']
@@ -498,4 +537,4 @@ def test_invalid_explicit_kv_capacity_refuses_before_factory(monkeypatch, tmp_pa
     path = tmp_path / 'invalid-kv.json'
     path.write_text(json.dumps(document))
     with pytest.raises(ValueError):
-        moe.resolve_serving_config(path, document['runtime_image'])
+        moe.resolve_serving_config(path, document['runtime_image'], tensor_parallel=1)
