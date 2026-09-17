@@ -118,7 +118,7 @@ from export_tessera_serving import (  # noqa: E402
     fused_module, module_scheme_key,
     packed_expert_stacks, project_expert_plan, quantizable,
 )
-from tessera.serving_parts import source_identity  # noqa: E402
+from tessera.serving_parts import SOURCE_ROSTER_FIELDS, source_roster_identity  # noqa: E402
 
 #: ``TESSERA_<BASE>_K<arity>_R<rung>`` -- the allocator's format spelling.
 FORMAT = re.compile(r"^TESSERA_(?P<base>[A-Z0-9]+)_K(?P<arity>\d+)_R(?P<rung>\d+)$")
@@ -191,6 +191,67 @@ def parse_entry(qname: str, entry) -> tuple:
     return ("other", str(label))
 
 
+def refuse_non_tessera_choices(other: dict) -> None:
+    """One home for the refusal of a quantised choice no Tessera wire serves."""
+    if not other:
+        return
+    counts = collections.Counter(other.values())
+    sample = sorted(other)[:5]
+    raise PlanError(
+        f"{len(other)} unit(s) carry a non-Tessera QUANTISED choice "
+        f"({dict(counts)}); the Tessera plugin serves TESSERA_* wires only, so one "
+        f"checkpoint cannot hold these and a Tessera wire at the same time.  Units, "
+        f"first five: {sample}.  BF16 is not in this count -- a BF16 choice is a plain "
+        f"BF16 module and is planned as one.")
+
+
+def carried_projection(config: dict):
+    """The carried expert projection, schema-checked, or ``None`` without one."""
+    carried = (config.get("__prismaquant__") or {}).get("tessera_expert_projection")
+    if carried is None:
+        return None
+    if not isinstance(carried, dict) or carried.get("schema") != "prismaquant.tessera_expert_projection.v1":
+        raise PlanError("unreadable carried Tessera expert projection")
+    producer = carried.get("producer", {})
+    request = carried.get("request")
+    if not isinstance(request, dict) or producer.get("schema") != "tessera.expert_projection.v1":
+        raise PlanError("carried projection lacks the producer request/answer")
+    return carried
+
+
+def refuse_before_source(config: dict, research_input) -> None:
+    """Every refusal the layer_config and explicit inputs decide on their own.
+
+    Runs before the planner opens the source checkpoint, so a plan that cannot
+    be written fails in seconds, not after a pass over the source.  The GLM-5.3
+    A4 control read all 642.7 GB of its checkpoint and then refused on its
+    research MoE target, which these inputs alone decide (tessera#523).  The
+    checks that need the source still run where they did.
+    """
+    carried_projection(config)
+    choices = {qname: parse_entry(qname, entry) for qname, entry in config.items()
+               if not qname.startswith("__")}
+    refuse_non_tessera_choices({qname: payload for qname, (kind, payload) in choices.items()
+                                if kind == "other"})
+    # Router BF16 is a disposition, not an exporter override: GateLinear never
+    # asks a quantization method to load it and the exporter refuses that key.
+    for qname, (kind, _payload) in sorted(choices.items()):
+        if MOE_ROUTER.fullmatch(qname + ".weight") and kind != "bf16":
+            raise PlanError(f"{qname}: an immutable MoE router must remain BF16")
+    if research_input is None:
+        return
+    # A selected stack's scheme is the scheme of the allocation entries for its
+    # members, so no such entry means ``require_targets`` below cannot pass.
+    # An allocation with no Tessera entry at all is left to that call, which
+    # names the missing routed target itself.
+    schemes = [{"family": family_for(grid_for_name(payload[0])), "grid": payload[0]}
+               for kind, payload in choices.values() if kind == "tessera"]
+    if schemes and not any(research_input.config.applies_to(scheme) for scheme in schemes):
+        raise PlanError("research_selected_moe names no routed target it serves "
+                        "(TESSERA_FP8/E4M3 or TESSERA_BF16/BF16): no allocation entry takes "
+                        "either, so no planned expert stack can")
+
+
 def body_weights(model: Path) -> dict:
     """Producer-classified dense and unpacked logical body weights."""
     _shards, dense, _packed, routed = quantizable(model)
@@ -211,15 +272,19 @@ def model_plan_context(model: Path, config: dict, *, research_selected: bool = F
     members = {stack: [name for expert in experts.values() for name, _shape in expert.values()]
                for stack, experts in stacks.items()}
     layouts = {stack: MOE_SOURCE_UNPACKED for stack in stacks}
-    carried = (config.get("__prismaquant__") or {}).get("tessera_expert_projection")
+    carried = carried_projection(config)
     if carried is not None:
-        if not isinstance(carried, dict) or carried.get("schema") != "prismaquant.tessera_expert_projection.v1":
-            raise PlanError("unreadable carried Tessera expert projection")
-        producer = carried.get("producer", {})
-        request = carried.get("request")
-        if not isinstance(request, dict) or producer.get("schema") != "tessera.expert_projection.v1":
-            raise PlanError("carried projection lacks the producer request/answer")
-        if producer.get("source") != source_identity(model):
+        producer, request = carried["producer"], carried["request"]
+        # Bind the projection to this checkpoint's config and tensor roster,
+        # not its payload digests: every output below is recomputed from
+        # headers and config.json, and the exporter's partition stamps, their
+        # merge and the cached-unit intake bind the bytes they read
+        # (tessera#523).  Hashing the payloads here read the whole checkpoint
+        # before planning started.
+        source = producer.get("source")
+        if (not isinstance(source, dict)
+                or {field: source.get(field) for field in SOURCE_ROSTER_FIELDS}
+                != source_roster_identity(model)):
             raise PlanError("carried expert projection source identity disagrees with this checkpoint")
         current = project_expert_plan({**dense, **packed, **routed},
                     json.loads((model / "config.json").read_text()), request,
@@ -350,15 +415,7 @@ def build(config: dict, shapes: dict, *, cover: str, allow_disagreement: bool,
             bf16.append(qname)
         else:
             other[qname] = payload
-    if other:
-        counts = collections.Counter(other.values())
-        sample = sorted(other)[:5]
-        raise PlanError(
-            f"{len(other)} unit(s) carry a non-Tessera QUANTISED choice "
-            f"({dict(counts)}); the Tessera plugin serves TESSERA_* wires only, so one "
-            f"checkpoint cannot hold these and a Tessera wire at the same time.  Units, "
-            f"first five: {sample}.  BF16 is not in this count -- a BF16 choice is a plain "
-            f"BF16 module and is planned as one.")
+    refuse_non_tessera_choices(other)
 
     priced_layers = sorted({layer_of(q) for q in tessera} | {layer_of(q) for q in bf16})
     all_layers = sorted({layer_of(t[: -len(".weight")]) for t in shapes})
@@ -604,17 +661,14 @@ def main(argv=None):
     if args.research_selected_moe_json is not None:
         from tessera.moe_execution import ResearchSelectedMoeInput
         research_input = ResearchSelectedMoeInput.read(args.research_selected_moe_json)
+    refuse_before_source(config, research_input)
     shapes, stack_members, layouts = model_plan_context(
         args.model, config, research_selected=research_input is not None)
     if args.cover != "as-allocated" and stack_members:
         raise PlanError("broadcast-by-role cannot extrapolate routed expert stacks; use as-allocated")
+    # The refusal for a router the allocation quantised is in
+    # ``refuse_before_source``; this set is the filter it leaves behind.
     routers = {name for name in shapes if MOE_ROUTER.fullmatch(name)}
-    for name in routers:
-        qname = name[:-len(".weight")]
-        if qname in config and parse_entry(qname, config[qname])[0] != "bf16":
-            raise PlanError(f"{qname}: an immutable MoE router must remain BF16")
-    # Router BF16 is a disposition, not an exporter override: GateLinear never
-    # asks a quantization method to load it and the exporter refuses that key.
     allocation = {name: entry for name, entry in config.items()
                   if name + ".weight" not in routers}
     shapes = {name: shape for name, shape in shapes.items() if name not in routers}

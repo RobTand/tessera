@@ -478,3 +478,195 @@ def test_the_exporters_gate_carries_the_structure_into_the_override_record():
     assert [(r["target"], r["structure"], r["q256"]) for r in stamped] == \
         [("stack.probe", STRUCTURE_ROUTED_MOE, 1536)]
     assert "routed_moe" in stamped[0]["refusal"]
+
+
+def _with_the_weaker_fact(contract: dict, *, structure: str) -> dict:
+    """The table with every ``structure`` cell moved to the weaker fact.
+
+    ``qualification: compile_only`` beside ``route_status: unbacked`` is the one
+    combination the contract validator permits for a compile receipt (#456), so
+    the result still validates: it is a legal document attesting a toolchain and
+    no serve.
+    """
+    import copy
+
+    doc = copy.deepcopy(contract)
+    for cell in doc["lane_eligibility"]["cells"]:
+        if cell["structure"] == structure:
+            cell["qualification"] = "compile_only"
+            cell["route_status"] = "unbacked"
+    return doc
+
+
+def _routed_cell_plan(cell: dict) -> tuple[str, int]:
+    """``(grid, q256)`` a stack of this cell's family is planned on."""
+    return ("E2M1x2" if cell["family"] == "TESSERA_E2M1_K2" else "E4M3",
+            int(cell["rungs_q256"][0]))
+
+
+def test_a_compile_only_cell_is_not_a_serve_the_export_gate_can_read(monkeypatch):
+    """#456's weaker fact must not be read as a serve by the gate that reads serves.
+
+    ``validate_serving_contract`` permits a cell to say ``compile_only`` with
+    ``route_status: unbacked`` -- a compile receipt proves a toolchain fact and
+    a backed route needs a device -- and refuses ``compile_only`` beside a
+    backed status.  What nothing stopped was a READER: a selector that keyed on
+    ``(family, structure)`` alone read every one of those cells as a receipt,
+    so downgrading the whole routed-MoE table left the export gate admitting
+    rungs no device ever ran and writing those cell ids into ``attested_by``.
+
+    The mutated document is legal on purpose: this is the shape a table has the
+    day a route is compiled for a platform before anyone serves it there, and
+    the gate has to refuse it on the strength of the fact the cell states, not
+    on the strength of the document being malformed.
+    """
+    from tessera.serving import contract as contract_module
+    from tessera.serving.contract import load_serving_contract, validate_serving_contract
+    from tessera.serving.scheme import STRUCTURE_ROUTED_MOE, attested_cells
+
+    packaged = load_serving_contract()
+    routed = [cell for cell in packaged["lane_eligibility"]["cells"]
+              if cell["structure"] == STRUCTURE_ROUTED_MOE]
+    assert routed, "test premise: the packaged table publishes routed_moe cells"
+
+    downgraded = _with_the_weaker_fact(packaged, structure=STRUCTURE_ROUTED_MOE)
+    validate_serving_contract(downgraded)
+
+    for cell in routed:
+        assert attested_cells(cell["family"], STRUCTURE_ROUTED_MOE, downgraded) == []
+        grid_name, rung = _routed_cell_plan(cell)
+        recipe = wire_recipe(GRIDS[grid_name], rung)
+        with pytest.raises(ValueError) as caught:
+            refuse_unserveable_wire(grid_name, rung, recipe.body.name, recipe.scale_plane.name,
+                                    family=route_for_grid(grid_name), span=recipe.span,
+                                    target="stack.probe", structure=STRUCTURE_ROUTED_MOE,
+                                    contract=downgraded)
+        assert cell["id"] in str(caught.value), str(caught.value)
+        assert "compile_only" in str(caught.value), str(caught.value)
+
+    # The same table through the exporter's own entry point: ``check_recipe``
+    # is what a producer runs, and it refuses before the first encode.
+    monkeypatch.setattr(contract_module, "load_serving_contract", lambda: downgraded)
+    with pytest.raises(SystemExit) as caught:
+        EXPORT.check_recipe(GRIDS["E2M1x2"], 896, where="stack.probe",
+                            structure=STRUCTURE_ROUTED_MOE)
+    assert "tessera_e2m1_k2_routed_moe_sm121_decode_resident" in str(caught.value), \
+        str(caught.value)
+
+
+def test_only_the_device_backed_cells_rungs_admit_a_routed_stack():
+    """A mixed table serves the rung a device ran and refuses the one it did not.
+
+    The packaged table cannot show this: both E4M3 routed-MoE cells attest the
+    same rung and both are device receipts.  This copy gives the batch cell a
+    second rung and the weaker fact, so one stack rung is served and the other
+    is only compilable.  The admitted set is the device-backed cell's alone: the
+    refusal names that cell and offers the only honest way to the other rung
+    ("serve the rung and publish the cell"), which is what a compile receipt is
+    not.
+    """
+    import copy
+
+    from tessera.serving.contract import load_serving_contract, validate_serving_contract
+    from tessera.serving.scheme import STRUCTURE_ROUTED_MOE, attested_cells
+
+    served_rung, compiled_rung = 1024, 1536
+    doc = copy.deepcopy(load_serving_contract())
+    for row in doc["formats"]:
+        if row["family"] == "TESSERA_E4M3_K1":
+            row["attested_rungs_q256"] = sorted(set(row["attested_rungs_q256"]) | {compiled_rung})
+            row["candidate_rungs_q256"] = list(row["attested_rungs_q256"])
+            # ``attested_wire`` stamps every attested rung (#55), so the added
+            # rung gets a copy of the shipped stamp.  This fixture is about which
+            # CELL a reader counts, not about what a stamp transcribes: the
+            # route's body, span and plane are the route's, and
+            # ``tests/test_serving_attested_wire.py`` holds the shipped stamps to
+            # the exporter's own output.
+            row["attested_wire"] = [dict(stamp) for stamp in row["attested_wire"]] + [
+                {**row["attested_wire"][0], "q256": compiled_rung}]
+    moved = False
+    for cell in doc["lane_eligibility"]["cells"]:
+        if (cell["family"], cell["structure"]) != ("TESSERA_E4M3_K1", STRUCTURE_ROUTED_MOE):
+            continue
+        if cell["regime"] == "batch":
+            cell["rungs_q256"] = [compiled_rung]
+            cell["qualification"] = "compile_only"
+            cell["route_status"] = "unbacked"
+            moved = True
+    assert moved, "test premise: the packaged table publishes a batch routed cell"
+    validate_serving_contract(doc)
+
+    selected = attested_cells("TESSERA_E4M3_K1", STRUCTURE_ROUTED_MOE, doc)
+    assert [cell["regime"] for cell in selected] == ["decode"], selected
+    assert all(compiled_rung not in cell["rungs_q256"] for cell in selected)
+
+    served = wire_recipe(GRIDS["E4M3"], served_rung)
+    assert refuse_unserveable_wire(
+        "E4M3", served_rung, served.body.name, served.scale_plane.name,
+        family="TESSERA_FP8", span=served.span, target="stack.probe",
+        structure=STRUCTURE_ROUTED_MOE, contract=doc) == "TESSERA_FP8"
+
+    compiled = wire_recipe(GRIDS["E4M3"], compiled_rung)
+    with pytest.raises(ValueError) as caught:
+        refuse_unserveable_wire(
+            "E4M3", compiled_rung, compiled.body.name, compiled.scale_plane.name,
+            family="TESSERA_FP8", span=compiled.span, target="stack.probe",
+            structure=STRUCTURE_ROUTED_MOE, contract=doc)
+    message = str(caught.value)
+    assert "tessera_e4m3_k1_routed_moe_sm121_decode_resident" in message, message
+    assert "[1024]" in message, message
+    assert "tessera_e4m3_k1_routed_moe_sm121_batch_resident" not in message, message
+    assert "serve the rung and publish the cell" in message, message
+
+
+def test_the_packaged_table_still_admits_every_device_qualified_rung():
+    """The guard against over-refusing: every packaged cell is a device receipt."""
+    from tessera.serving.contract import load_serving_contract
+    from tessera.serving.scheme import STRUCTURE_ROUTED_MOE, attested_cells
+
+    packaged = load_serving_contract()
+    for family in ("TESSERA_E4M3_K1", "TESSERA_E2M1_K2"):
+        declared = [cell for cell in packaged["lane_eligibility"]["cells"]
+                    if (cell["family"], cell["structure"]) == (family, STRUCTURE_ROUTED_MOE)]
+        assert declared and all(cell["qualification"] == "device_qualified"
+                                for cell in declared), declared
+        assert attested_cells(family, STRUCTURE_ROUTED_MOE, packaged) == declared, family
+        for cell in declared:
+            grid_name, rung = _routed_cell_plan(cell)
+            recipe = wire_recipe(GRIDS[grid_name], rung)
+            assert refuse_unserveable_wire(
+                grid_name, rung, recipe.body.name, recipe.scale_plane.name,
+                family=route_for_grid(grid_name), span=recipe.span, target="stack.probe",
+                structure=STRUCTURE_ROUTED_MOE, contract=packaged) == \
+                route_for_grid(grid_name)
+
+
+def test_a_cell_whose_facts_cannot_be_read_is_refused_not_assumed(monkeypatch):
+    """``cannot tell`` is not ``not backed``: the selector refuses the cell by name.
+
+    A caller may hand the selector a table the validator has not seen (a test, a
+    staged contract).  Answering False for a missing or unknown
+    ``qualification``/``route_status`` would read as "compiled, not served" and
+    make an unreadable document indistinguishable from a weaker receipt, so the
+    selector refuses instead.
+    """
+    import copy
+
+    from tessera.serving.contract import load_serving_contract
+    from tessera.serving.scheme import STRUCTURE_ROUTED_MOE, attested_cells
+
+    doc = copy.deepcopy(load_serving_contract())
+    cell = next(c for c in doc["lane_eligibility"]["cells"]
+                if c["structure"] == STRUCTURE_ROUTED_MOE)
+    del cell["qualification"]
+    with pytest.raises(ValueError, match="qualification"):
+        attested_cells(cell["family"], STRUCTURE_ROUTED_MOE, doc)
+
+    cell["qualification"] = "device_qualified_v2"
+    with pytest.raises(ValueError, match="qualification"):
+        attested_cells(cell["family"], STRUCTURE_ROUTED_MOE, doc)
+
+    cell["qualification"] = "device_qualified"
+    cell["route_status"] = "backed_with_serve_flag_v2"
+    with pytest.raises(ValueError, match="route_status"):
+        attested_cells(cell["family"], STRUCTURE_ROUTED_MOE, doc)

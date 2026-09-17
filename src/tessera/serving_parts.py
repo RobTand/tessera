@@ -174,11 +174,41 @@ def source_identity(source: Path) -> dict:
                 tensors[tensor] = name
     if not tensors:
         raise ValueError("source has no safetensors tensors")
+    return {"config_sha256": sha256_file(source / "config.json"),
+            "auxiliary_sha256": _auxiliary_sha256(source),
+            "files": {name: sha256_file(source / name) for name in files},
+            "tensors": tensors}
+
+
+def _auxiliary_sha256(source: Path) -> dict:
+    """The small non-tensor files every source identity binds, by name."""
     auxiliary = sorted({p for pattern in ("*.json", "*.txt", "*.jinja", "*.model")
                         for p in source.glob(pattern)})
-    return {"config_sha256": sha256_file(source / "config.json"),
-            "auxiliary_sha256": {p.name: sha256_file(p) for p in auxiliary},
-            "files": {name: sha256_file(source / name) for name in files},
+    return {p.name: sha256_file(p) for p in auxiliary}
+
+
+#: The :func:`source_identity` fields that bind a checkpoint's configuration
+#: and tensor roster without reading a shard payload (tessera#523).
+SOURCE_ROSTER_FIELDS = ("config_sha256", "auxiliary_sha256", "tensors")
+
+
+def source_roster_identity(source: Path) -> dict:
+    """:func:`source_identity` restricted to :data:`SOURCE_ROSTER_FIELDS`.
+
+    Reads the safetensors headers, ``config.json`` and the auxiliary files,
+    never the tensor payloads, so it costs seconds where the whole identity
+    reads the entire checkpoint.  Use it where every decision depends only on
+    names, shapes and configuration -- the planner's carried-projection check
+    -- and leave byte binding to the checks that read the bytes: the
+    partition stamps and their merge, and the cached-unit intake.  A source
+    with no ``config.json`` records ``config_sha256: None``, which never
+    equals a whole identity's digest.
+    """
+    source = Path(source)
+    tensors = source_inventory(source)
+    config_path = source / "config.json"
+    return {"config_sha256": sha256_file(config_path) if config_path.exists() else None,
+            "auxiliary_sha256": _auxiliary_sha256(source),
             "tensors": tensors}
 
 
@@ -243,8 +273,21 @@ def _expected_outputs(owned: set[str], modules: dict) -> set[str]:
         for role in module["roles"]:
             consumed.add(role.get("source_tensor", role["tensor"]))
         if module.get("structure") == "routed_moe":
-            outputs.update(r["tensor"].removesuffix(".weight") + ".wire"
-                           for r in module["roles"])
+            for role in module["roles"]:
+                stem = role["tensor"].removesuffix(".weight")
+                outputs.add(stem + ".wire")
+                # The NVFP4 routed builder reads one A-side scale per expert
+                # projection, ``experts.{e}.{proj}.input_global_scale`` -- the
+                # same quantity the dense route reads as
+                # ``trellis_input_global_scale`` (``nvfp4_moe_route``
+                # :107-109, :328-331), written beside each wire by
+                # ``export_tessera_serving`` (:2356-2371).  The role declares
+                # the scale exactly when the export wrote one, so expect it
+                # from the declaration rather than from the family: a role
+                # that declares a scale and wrote none is as broken as a
+                # missing wire, and this set is what proves it.
+                if "input_global_scale" in role:
+                    outputs.add(stem + ".input_global_scale")
         else:
             outputs.add(name + ".wire_bytes")
             if module["family"] == "TESSERA_NVFP4":

@@ -20,6 +20,44 @@ CPU, no device), with the pre-fix failure recorded as `moe_route.py:738` ->
 `select_unquantized_moe_backend`.  This is a dispatch fact, not a
 qualification: no native A16 TP1 serve has run, the routed cells still name the
 stock dispatch, and the pair stays in `scheme.EXPERIMENTAL_LAUNCHES`.
+Re-stamped 2026-09-16 for the served-cell selection the export gate reads
+(tessera#456, tessera#135). `scheme.attested_cells` selected every
+`lane_eligibility` cell of a `(family, structure)` pair, so a cell stating the
+weaker fact the validator permits -- `qualification: compile_only` beside
+`route_status: unbacked` -- was read as a receipt, and its `rungs_q256` admitted
+a routed stack no device had ever run, with the same ids written into the
+manifest's `attested_by`. The selector now requires a device-backed cell
+(`contract.cell_is_device_backed`) and refuses a cell whose `qualification` or
+`route_status` is outside the published sets instead of answering either way for
+it; `refuse_unserveable_wire` names the cells it excluded, so "no cell" and "a
+cell that is not a receipt" are two sentences. No published cell moves: every
+cell in `runtime_contract.json` is `device_qualified` and
+`backed_with_serve_flag`, so no shipped rung is newly refused.
+
+Re-stamped 2026-09-15 for torch 2.13 on the fused LUT swap passes
+(tessera#486, tessera#519). `lut_swap_refusal` now admits fits on torch 2.13,
+the GLM census image's release, as well as on 2.11. 2.13's `Reduce.cuh` keeps
+2.11's CUDA float32 `sum` order, and in the census image the replica matches
+`torch.sum` bitwise in 906 of 906 cases. There the census wires re-encode byte
+for byte with all 160 fits on the fused passes, at 0.452 s a unit against
+1.182 on the reference
+(`docs/measurements/tessera486-lut-torch213-2026-09-15.md`).
+
+Re-stamped 2026-09-15 for the fused LUT swap passes (tessera#486, stage 2).
+`encode._fit_lut`'s swap refinement now takes `lut_fused.swap_passes_fused`
+on a CUDA device whenever `fused_available()` holds and `lut_swap_refusal`
+names nothing: float32 targets, weights, table and grid on one device, 128 to
+33,333,331 live halves, torch 2.11 or 2.13 and the native caching allocator.
+The passes make one host sync a pass instead of one a trial.
+`TESSERA_LUT_FUSED=0` runs `_lut_swap_passes_reference`, the unchanged loop,
+on every fit. The contract is identity with that loop: the same bytes, the
+same table floats and the same accept/reject sequence, exact ties included,
+because every trial cost is the float torch's CUDA `sum` returns
+(`tests/test_lut_fused.py`). A tripwire holds the replica to torch on every
+fit and hands a fit it disagrees on back to the reference. On the same
+binary the encoder does 3.93x the work per second and 4.49x the work per
+joule at `B=32`, and the GLM census wires re-encode byte for byte
+(`docs/measurements/tessera486-fused-lut-2026-09-15.md`).
 
 Re-stamped 2026-09-15 for contract v29's tensor-parallel attestation
 (tessera#506, tessera#514). `tensor_parallel.units[].max_world_size` is 2 for
@@ -91,10 +129,15 @@ expert container to its rank on the group's shard plan (contract v26 moves
 `loader_axes.row` from the sharded-off-the-table value to one the span-2
 select pad reads), and contract v27 adds the additive `structures` list to
 every format row so a consumer can tell a dense-only format from one with an
-expert route. A builder is a dispatch fact, not a served qualification: the
-`routed_moe` cells for the NVFP4 family are still unpublished, so a routed
-E2M1x2 export needs `--allow-unserveable` until a container receipt exists
-(§5.7 has the route, §7 the cells).
+expert route. A builder is a dispatch fact, not a served qualification; the
+qualification arrived later, in contract v28: the two `routed_moe` cells
+`tessera_e2m1_k2_routed_moe_sm121_{decode,batch}_resident` publish q256 896,
+eager and resident, from a two-rank served census of the GLM-5.3-Flash 4-layer
+stub, both `route_only` with no smoke record (tessera#506, the re-stamp above).
+A routed E2M1x2 export at that one rung therefore passes the export serving gate
+without `--allow-unserveable` and names both cells; a routed stack at any other
+rung still needs the override. `route_only` is a route census, not a full-model
+quality or native-kernel qualification (§5.7 has the route, §7 the cells).
 
 Re-stamped 2026-09-14 for the research packed-expert load's expert axis
 (tessera#501). `PreparedWindowAxis` and `PreparedModuleAxis`
@@ -1855,10 +1898,20 @@ encoder's device kernels fell from 608 to 103.9 per unit-column and its
 device time from 1.101 to 0.280 ms per unit-column. On the same binary,
 throughput rose 1.96x at `B=32` and 3.07x at `B=8`, for 1.82x and 2.47x the
 parameters per joule. Host launches and syncs did not move (103.9 and 11.45
-per unit-column). The encoder still draws 35-37 % of the 140 W envelope, and
-fused `B=8` is within 4 % of fused `B=32`. The bound is now `_fit_lut`'s swap
-loop, which makes one host sync per trial
-(`docs/measurements/tessera486-fused-tcq-2026-09-14.md`). The fused window
+per unit-column). That stage left the encoder at 35-37 % of the 140 W
+envelope, with fused `B=8` within 4 % of fused `B=32`, and bound by
+`_fit_lut`'s swap loop, which made one host sync per trial
+(`docs/measurements/tessera486-fused-tcq-2026-09-14.md`). Since tessera#486's
+second stage those passes run fused (`lut_fused.swap_passes_fused`): one host
+sync a pass, and the reference loop's bytes and table floats. On the same
+fixture, device kernels and host launches fell 78 %, to 22.9 per
+unit-column, host syncs from 11.45 to 1.69 and device time from 0.280 to
+0.137 ms. On the same binary, throughput rose 3.93x at `B=32` and 3.49x at
+`B=8`, for 4.49x and 4.79x the parameters per joule, and the GLM
+routed-expert units encode 2.49x faster. The encoder draws 27-30 % of the
+envelope, so the host is still the bound, and fused `B=32` has 1.18x the
+throughput of fused `B=8` (`docs/measurements/tessera486-fused-lut-2026-09-15.md`).
+The fused window
 body is tiled over an L2-bounded column width
 (`window_viterbi._layout`, width 32 at L=14), so a wider call there is more
 tiles of the same width and the gain is per-call overhead only; the numbers
@@ -2601,8 +2654,14 @@ contract attests as its own structure, so `scheme.refuse_unserveable_wire`
 takes `structure` and, for `routed_moe`, first refuses a route
 `MOE_BUILDERS` has no builder for (`refuse_a_family_with_no_expert_route`,
 the one home for that rule at plan, gate and load) and then reads the
-union of `rungs_q256` over the `lane_eligibility` cells of that structure
-(`scheme.attested_cells`) rather than the row's range. The exporter reads
+union of `rungs_q256` over the DEVICE-BACKED `lane_eligibility` cells of that
+structure (`scheme.attested_cells`) rather than the row's range. A cell is
+selected on the facts it states about itself -- `qualification` and
+`route_status` (`contract.cell_is_device_backed`) -- because the validator
+permits a cell to attest a toolchain and no serve (`compile_only` beside
+`unbacked`, v10/#456); such a cell is named in the refusal instead of being
+counted, since counting it was how a compiled-but-unserved route would have
+admitted rungs no device ran. The exporter reads
 the source's shapes before the plan so it knows which plan entries are
 stacks, refuses a stack at a rung only the dense route reads by the cells'
 ids, stamps `structure` on every `serving_gate` override, and writes
@@ -4061,7 +4120,11 @@ The rules, all of them derived rather than transcribed:
 - **`qualification: compile_only` may only carry `route_status: unbacked`.** A
   compile receipt proves a toolchain fact; a backed route needs a device.
   This moves nothing shipped: every v22 cell is `device_qualified` and
-  `backed_with_serve_flag`.
+  `backed_with_serve_flag`. The reader's half of the same rule is
+  `contract.cell_is_device_backed`, and `scheme.attested_cells` applies it: the
+  export gate and a manifest's `attested_by` read device-backed cells only, so
+  a cell that states the weaker fact is named in a refusal rather than counted
+  as a receipt (re-stamp above, 2026-09-16).
 - **A platform's `serve_image` is one of its own receipts** — an image at
   least one of *its* cells attests, and `null` exactly when it has no cells.
   `versions.default_serve_image` must be some platform's `serve_image`.
