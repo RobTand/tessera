@@ -24,6 +24,17 @@ A request may also split the source out of the tensor file -- one CPU
 `source_path` read per member, renders/phase/bias on the device -- and the
 source and render proof tensors are released before the timed region (§2.5).
 
+A member's name is the producer's own spelling -- the role's
+`<owner>.<expert>.w1` or the projection's `<owner>.<expert>.gate_proj`,
+resolved through `MOE_SHARD_PROJECTIONS` -- and its source container is the
+module's width at every world while its render is this rank's cut
+(`member_unit_spellings`, `check_member_geometries`; §2.5).
+
+The operator receipt also names its own context, so a factory observation is
+never read as an engine one: it is
+`standalone_factory_context_not_full_engine`, with no KV cache to charge
+(`operator_context_scope`; §2.5).
+
 The runner that owns that reduction is carried beside the routed layer
 (`WholeOwner`) rather than registered inside it, and the callsite a receipt
 names is derived from the module the probe wraps and the method it counts, so
@@ -1794,6 +1805,40 @@ every member is qualified, the source and render proof tensors are released
 bytes are re-checked after the release, so a benchmark pays for the phases, the
 bias and the loaded owner rather than for the 13.5 GiB source and 6.75 GiB of
 renders it only had to prove.
+
+**A member name is the producer's, and each width belongs to its own claim.**
+The harness's grammar spells a member by its ROLE
+(`<owner>.<expert>.w1`), while a checkpoint whose source tensors are named by
+projection writes `<owner>.<expert>.gate_proj`.  Both name one member, and the
+producer's spelling is the one kept: the wire record's own `identity.unit` is
+checked against the member's unit at preparation, so a member renamed to the
+harness's vocabulary could no longer be verified against the wire it names.
+`member_unit_spellings` therefore admits either name and resolves the role
+through `MOE_SHARD_PROJECTIONS`, the table the loader already uses, rather than
+a second spelling table.  The member's `shape` and its `source_weight` record
+are the SOURCE container's -- the module's width at every world, which is what
+the wire identity binds -- while its `rendered_weight` record and the panel's
+`runtime_binding.member_shapes` are this rank's own cut.
+`check_member_geometries` refuses a rank-local source or a module-wide render
+before CUDA; at a world of one the two geometries are the same list, so the LFM
+TP1 owner's records are unchanged field for field.
+
+The two checks meet in one place: the shared source is read on the host, so the
+device requirement is the RENDER's alone (`_require_source_tensor` accepts the
+host copy the shared file yields), while `check_member_geometries` still binds
+the container to the module's width and the render to this rank's cut.
+
+**The operator receipt names a standalone factory context, not an engine.**
+This harness prices ONE routed owner built with the factory under test: it has
+no engine scheduler and owns no KV cache, so `fixed_KV`, the engine's own fixed
+resident/activation/scratch terms and served capacity cannot be charged from
+its receipt.  `resolve_serving_config` stamps the scope
+(`standalone_factory_context_not_full_engine`), `operator_context_scope`
+refuses a config that relabels it, and the receipt's `resources` block carries
+both the scope and that refusal as `engine_scope`.  The stock-engine capture
+(`experiments/capture_full_engine_resources.py`, `experiments/full_engine_kv.py`,
+`experiments/full_engine_worker.py`) owns those observations; the two are
+separate producers and neither's numbers may be composed with the other's.
 
 **Two stacks need the explicit selected owner, and one must not have it.** A
 compressed BF16 expert stack has no production builder
