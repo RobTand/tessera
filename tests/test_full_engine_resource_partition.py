@@ -552,9 +552,12 @@ def test_partial_step_coverage_leaves_the_same_row_unclassified():
 
 
 def test_an_unclassified_row_nulls_the_off_step_price_but_not_its_count():
-    # A row with no owner could be an off-step transient too, so the peak over
-    # the ones that are identified is not the peak. The count stays readable
-    # regardless, so the hazard is visible before there is a price on it.
+    # This row has no owner and it is live while the declared step runs, so it
+    # is a row some term would charge if it knew which -- it is not an off-step
+    # transient, and since tessera#478 nothing treats it as one. The off-step
+    # price still goes null, because a price is published only from a partition
+    # that classifies every row it charges; the count stays readable regardless,
+    # so the hazard is visible before there is a price on it.
     startup = _raw("load-staging", 900, 0, 1, ["fixed"], "outside_units", [])
     blocker = _raw("no-owner", 6, 3, 8, [], "outside_units", [])
     partition = derive_partition(
@@ -573,6 +576,59 @@ def test_an_off_step_price_needs_the_same_join_a_scratch_term_needs():
     assert derive_partition(ledger)["non_step_transient_peak_bytes"] == 900
     ledger["issues"] = ["dropped CUPTI buffer"]
     assert derive_partition(ledger)["non_step_transient_peak_bytes"] is None
+
+
+def test_an_off_step_row_with_no_owner_does_not_null_the_terms_that_never_read_it():
+    # Regression, tessera#478. A startup transient allocated and freed between
+    # two checkpoints is in no checkpoint census, so it carries no owner
+    # category at all. Its lifetime is decided without one: complete step
+    # coverage plus its own liveness prove it is live during no declared step,
+    # and no composition term charges such a row -- `_compose_terms` selects
+    # over the classified rows, `uncharged_allocations` reads the same list,
+    # and the off-step peak sweeps lifetimes. Nulling all seven terms for a
+    # field no term reads refuses on missing information rather than on a
+    # contradiction. On the a5 capture that ordering alone is 19,828 of 21,104
+    # unclassified rows and 79.5 GB of 80.2 GB.
+    startup = _raw("load-staging", 900, 0, 1, [], "outside_units", [])
+    step_row = _raw("in-step", 6, 3, 8, ["fixed"], "outside_units", [])
+    partition = derive_partition(
+        _synthetic_ledger(906, [startup, step_row], steps=[(2, 9)]))
+    assert partition["unclassified_allocations"] == []
+    assert [row["allocation_id"] for row in partition["non_step_allocations"]] == ["load-staging"]
+    # The row is off-step and unowned, and it says both rather than claiming a class.
+    assert partition["non_step_allocations"][0]["owner_class"] is None
+    assert partition["scope"]["non_step_allocation_count"] == 1
+    # Before this ordering both of these were None.
+    assert partition["terms"]["fixed_scratch"] == 6
+    assert partition["non_step_transient_peak_bytes"] == 900
+
+
+def test_an_owner_is_still_required_wherever_a_term_charges_the_row():
+    # The other half of the same rule, and the half tessera#478 asked to change
+    # and does not get: a row some term charges has to name which term, so a
+    # "shared" boundary tensor carried out of a unit stays unclassified and
+    # nulls every term. "shared" supplies no invariance, and nothing here
+    # invents one for it.
+    boundary = _raw("native:g:1:input", 512, 3, 8, ["shared"], "escapes_unit", ["g"])
+    step_row = _raw("in-step", 6, 3, 8, ["fixed"], "outside_units", [])
+    partition = derive_partition(
+        _synthetic_ledger(518, [boundary, step_row], steps=[(2, 9)]))
+    assert [row["allocation_id"] for row in partition["unclassified_allocations"]] \
+        == ["native:g:1:input"]
+    assert partition["unclassified_allocations"][0]["reason"] == "no single supported owner category"
+    assert all(term is None for term in partition["terms"].values())
+
+
+def test_an_unowned_row_live_during_a_step_is_unclassified_not_off_step():
+    # The fail-closed direction the off-step exemption must not widen into. This
+    # row has no owner and it is live while a declared step runs, so it is one
+    # of the rows a term would charge if it knew which, and every term stays
+    # null.
+    inside = _raw("step-scratch", 6, 3, 8, [], "outside_units", [])
+    partition = derive_partition(_synthetic_ledger(6, [inside], steps=[(2, 9)]))
+    assert partition["non_step_allocations"] == []
+    assert partition["scope"]["unclassified_allocation_count"] == 1
+    assert all(term is None for term in partition["terms"].values())
 
 
 def test_the_report_carries_the_steps_a_consumer_reproduces_the_filter_from(ledger):

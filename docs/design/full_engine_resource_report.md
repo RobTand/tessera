@@ -1,7 +1,8 @@
 # Full-engine resource report: the frozen producer schema
 
 Status: producer contract for #399, 2026-09-12; step-boundary derivation added
-the same day. **Admission stays closed until a
+the same day; off-step rows classified without an owner class, 2026-09-17
+(tessera#478). **Admission stays closed until a
 consumer recomputes this report and agrees with it.** This document freezes the
 schema; it does not claim a measurement. No GPU, served, latency, quality or
 capacity measurement was run for this document.
@@ -159,6 +160,19 @@ has neither an owner nor a lifetime — so it could belong to any term, and no
 term is complete while one exists. `derived.scope.unclassified_allocation_count`
 carries the count and `partition.unclassified_allocations` names every row.
 
+**An owner class is required exactly where a term reads one.** The classifier
+asks the lifetime question first, because its answer decides whether the
+ownership question is one the composition asks at all. A row proven live during
+no declared engine step is charged by no term, so no term reads its owner class:
+it is off-step on its lifetime alone, and its `owner_class` is `null` when no
+census saw it. Every other row needs a class, because a term that charges it
+needs the invariance the class asserts. Nulling the whole partition for a field
+no term reads refuses on an absence of information rather than on a
+contradiction, and that population dominates a real capture: 19,828 of the a5
+capture's 21,104 unclassified rows, 79.5 GB of its 80.2 GB, are rows no
+checkpoint census saw and that its own complete step coverage proves live during
+no step (tessera#478).
+
 ### A classified allocation that no term charges
 
 The classifier produces nine `(owner, lifetime)` cells and the composition
@@ -298,11 +312,11 @@ producer **and** consumer change.
 ### The second blocker on the same rows: ownership
 
 Removing the lifetime blocker does not make a real capture derive a scratch
-term, because the same rows have a second, independent gap and it is not this
-one. `observed_categories` is populated in `_checkpoint_owners`, which walks the
-allocations that are **live at a checkpoint**. A row allocated and freed strictly
-between two checkpoints is never in that set, carries no category, and is
-unclassified for want of an owner whatever its lifetime says.
+term, because the rows a term charges have a second, independent gap and it is
+not this one. `observed_categories` is populated in `_checkpoint_owners`, which
+walks the allocations that are **live at a checkpoint**. A row allocated and
+freed strictly between two checkpoints is never in that set and carries no
+category.
 
 That is not a hypothetical. The banked fixture's own intra-unit allocation
 (`0:4608:1`, 512 bytes, `inside_unit`) carries `observed_categories: []` and is
@@ -310,6 +324,16 @@ unclassified today for a reason that has nothing to do with step boundaries. On
 a live engine every genuine scratch row — unit-local and step-local alike — is in
 that position, so `fixed_scratch` and `candidate_scratch` stay null even with
 complete step coverage.
+
+The same gap does **not** block the off-step population, and since tessera#478 it
+no longer nulls the terms through it. An off-step row is charged by no term, so
+the owner class it lacks is a field nothing in the composition reads; it is
+named in `partition.non_step_allocations` with `owner_class: null` and priced in
+`derived.non_step_transient_peak_bytes`, exactly as an owned off-step row is.
+What that ordering changes on the a5 capture is 19,828 rows and 79.5 GB of the
+80.2 GB unclassified total; what stays unclassified is the 1,276 rows some term
+would charge — 899 unowned in-step transients, and the 370 `shared` boundary
+tensors and runtime roots below.
 
 What a declared boundary does unblock is the population that **spans** a
 checkpoint while sitting outside every unit: a buffer live at `execute:N:begin`,
@@ -323,13 +347,23 @@ terms depend on `worker_startup`. So this population stops **blocking** the
 scratch terms without itself becoming expressible at v1. That is the honest
 shape of the change: it removes a blocker, it does not close a domain.
 
-Closing the rest needs an owner for a row that no checkpoint sees. Torch's
+Closing the rest needs an owner for a row that no checkpoint sees, and a
+supported class for the rows a census does see and labels `shared`. Torch's
 history already carries per-allocation `frames`, and
 `full_engine_native_owners.checkpoint_site_owners` already matches a validated
 rule against them — but it walks `live` at a checkpoint and assigns `shared`,
 which is not an owner class. Extending allocation-site attribution to every row,
 with a rule that can name `fixed` or `candidate`, is the owed input. It is a
 separate issue with its own evidence requirements and it is **not** solved here.
+
+Neither is the `shared` label itself. The native apply's boundary tensors and
+the persistent runtime roots are observed, and what they lack is not a name but
+an invariance: whether their bytes move with the selected assignment is a
+property of a **set** of assignments, and one capture observes one. Labelling
+them `fixed` or `candidate` from a single capture would write a claim no
+observation supports, so they stay unclassified and keep nulling the terms they
+would be charged to. The boundary ledger that resolves them is v2 work on both
+sides of the schema.
 
 The composition can exceed the measured instantaneous peak, because independent
 maxima need not coincide. That is disclosed conservatism. It is not permission to
