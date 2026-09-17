@@ -177,11 +177,26 @@ def require_native_fp4_quant(context: str) -> None:
 
 
 def native_fp8_quant(x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
-    """Per-token dynamic E4M3 quantization through vLLM's native CUDA op."""
+    """Per-token dynamic E4M3 quantization through vLLM's native CUDA op.
+
+    AN EMPTY BATCH IS ALLOCATED, NEVER LAUNCHED.  The registered operator
+    derives its launch grid from the token count, so a zero-token activation
+    asks for an empty grid: the launch fails with ``cudaErrorInvalidValue`` and
+    leaves the error STICKY in the context.  ``torch.cuda.synchronize()`` does
+    not report it, so the next checked CUDA call anywhere in this process --
+    in a serve, an unrelated op -- raises "CUDA error: invalid argument".  A
+    zero-token activation has nothing to scale, so its codes are an empty
+    ``[0, K]`` tensor beside an empty ``[0, 1]`` scale and allocating those is
+    the whole operation.  Measured on the pinned image (a5424378..., torch
+    2.13, vLLM 0.28.1rc1), K = 2048 and K = 4096, 2026-09-17; the same defect
+    is in ``vllm._custom_ops.scaled_fp8_quant``, which this module bypasses.
+    """
     if x.device.type != "cuda" or x.dim() != 2:
         raise NativeKernelUnavailableError("native FP8 quantization requires a 2-D CUDA tensor")
-    out = torch.empty(x.shape, dtype=torch.float8_e4m3fn, device=x.device)
-    scale = torch.empty((x.shape[0], 1), dtype=torch.float32, device=x.device)
+    out = x.new_empty(x.shape, dtype=torch.float8_e4m3fn)
+    scale = x.new_empty((x.shape[0], 1), dtype=torch.float32)
+    if x.shape[0] == 0:
+        return out, scale
     torch.ops._C.dynamic_per_token_scaled_fp8_quant(out, x, scale, None)
     return out, scale
 

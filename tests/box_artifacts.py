@@ -31,7 +31,11 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-import pytest
+# ``pytest`` is imported by the two helpers that hand a test a marker or a
+# skip, NOT here: a device harness that resolves the same roots runs under
+# ``python3`` in the pinned image, which carries no pytest, and a module whose
+# defaults are the one home for these roots must be readable there.  Reading a
+# root needs nothing but the environment.
 
 #: Every skip reason this module issues starts with this sentence.  It is a
 #: declared marker, not a classification: ``conftest`` matches the prefix it
@@ -186,11 +190,15 @@ def present(key: str, *parts: str) -> bool:
 def require(key: str, *parts: str):
     """A ``skipif`` marker for one box artifact, with this module's reason."""
 
+    import pytest
+
     return pytest.mark.skipif(not present(key, *parts), reason=reason(key, path(key, *parts)))
 
 
 def require_module(key: str, *parts: str) -> Path:
     """The artifact, or a module-level skip carrying this module's reason."""
+
+    import pytest
 
     target = path(key, *parts)
     if target is None or not target.exists():
@@ -200,6 +208,8 @@ def require_module(key: str, *parts: str) -> Path:
 
 def skip_now(key: str, *parts: str) -> Path:
     """The artifact, or an in-test skip carrying this module's reason."""
+
+    import pytest
 
     target = path(key, *parts)
     if target is None or not target.exists():
