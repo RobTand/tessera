@@ -106,7 +106,9 @@ printf 'window: rate=%s world=%s rank=%s mode=%s mem=%sg cpus=%s threads=%s out=
 # The image the launcher resolved, declared into the container so a process
 # inside checks the reference rather than believing its own command line.
 IMAGE_ENV=()
-while IFS= read -r line; do [ -n "$line" ] && IMAGE_ENV+=(-e "$line"); done \
+while IFS= read -r line; do
+  if [ -n "$line" ]; then IMAGE_ENV+=(-e "$line"); fi
+done \
   <<< "${RUNTIME_IMAGE_CONTAINER_ENV:-}"
 
 docker run --rm --gpus all --network host --ipc host \

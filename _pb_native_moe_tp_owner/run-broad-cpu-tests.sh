@@ -37,6 +37,7 @@ PYTHONPATH="${EXTRACT:+$EXTRACT:}$TREE/src:$TREE" \
   tests/test_native_moe_tp_owner_runtime.py \
   tests/test_native_moe_glm_owner.py \
   tests/test_native_moe_operator_receipt.py \
+  tests/test_glm_routed_owner_window.py \
   tests/test_native_operator_receipt.py \
   tests/test_serving_moe_route.py \
   tests/test_serving_moe_scheme.py \
