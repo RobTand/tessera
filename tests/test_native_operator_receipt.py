@@ -84,7 +84,14 @@ def _panel_fixture():
              "joint_operator_identity_sha256": _json_sha(operator), "joint_operator_identity": operator,
              "wire": {"blob_sha256": blob_sha, "blob_bytes": 4096, "record": record},
              "execution": execution, "runtime": runtime, "native_tensors_sha256": _json_sha(native),
-             "scheme_sha256": _json_sha(scheme), "numerics": {"atol": 0.0, "rtol": 0.0}, "phases": phases}
+             "scheme_sha256": _json_sha(scheme), "numerics": {"atol": 0.0, "rtol": 0.0},
+             "numerics_derivation": {"schema": "prismaquant.native_gemm_tolerance.v1",
+                                     "bound": "(4*u_bf16 + 2*K*u_fp32) * max_j sum_i |qx_i||w_ij|",
+                                     "u_bf16": 2.0 ** -9, "u_fp32": 2.0 ** -24, "k": 256,
+                                     "coefficient": 0.0, "operand_magnitude": 0.0},
+             # BF16 does not quantise its input, so the producer's stamp is None.
+             "activation_quantizer_attestation": None,
+             "phases": phases}
     return panel, observed_operator, weight, tensors
 
 
@@ -111,6 +118,45 @@ def test_valid_frozen_panel_is_accepted_without_mutation():
     assert panel == frozen
 
 
+def test_panel_carrying_an_unattested_dynamic_scale_stamp_is_accepted():
+    """A panel carrying the dynamic-scale stamp: a scale derived from x, said so.
+
+    Regression for the refusal that blocked the 49-cell re-freeze.  The producer
+    has emitted "numerics_derivation" and "activation_quantizer_attestation"
+    since 2026-09-13; this validator listed neither, and refused every panel on
+    an exact field-set check -- after the CLI had already loaded tensors to CUDA
+    and prepared the operator, since the check runs inside
+    measure_prepared_operator.
+
+    The fixture keeps its BF16 format, route and phase metadata and only carries
+    the stamp, so this checks that the field is accepted and returned unchanged.
+    It is not a complete frozen fp8 panel, and PrismaQuant's consume gate, not
+    this one, is what judges whether a stamp suits the contract.
+    """
+    panel, _, _, _ = _panel_fixture()
+    panel["activation_quantizer_attestation"] = {
+        "schema": "prismaquant.activation_quantizer_attestation.v1",
+        "activation_contract": None, "quantizer": "per_token_absmax",
+        "status": "unattested_dynamic_scale", "attests": None,
+        "does_not_attest": ["activation_to_code_rounding"],
+        "why": "the scale is derived from x, so no static table addresses it"}
+    frozen = copy.deepcopy(panel)
+    assert _module().validate_panel(panel) == frozen
+
+
+def test_panel_omitting_the_whole_derived_group_is_accepted():
+    """The qualification scripts in experiments/ build panels without either field.
+
+    They have no honest source for a tolerance derivation, so the pair is a
+    group this validator accepts or refuses together.  Pinning "both absent is
+    fine" is what keeps a later tightening from silently breaking them.
+    """
+    panel, _, _, _ = _panel_fixture()
+    del panel["numerics_derivation"], panel["activation_quantizer_attestation"]
+    frozen = copy.deepcopy(panel)
+    assert _module().validate_panel(panel) == frozen
+
+
 @pytest.mark.parametrize("mutation", [
     lambda p: p.update(unexpected=True),
     lambda p: p.update(shape=[True, 256]),
@@ -124,6 +170,8 @@ def test_valid_frozen_panel_is_accepted_without_mutation():
     lambda p: p["phases"]["decode"]["reference_qdq"].update(shape=[1, 128]),
     lambda p: p["phases"]["prefill"].update(m=True),
     lambda p: p.update(native_tensors_sha256="not a SHA256"),
+    lambda p: p.pop("activation_quantizer_attestation"),
+    lambda p: p.pop("numerics_derivation"),
 ])
 def test_panel_scope_and_frozen_identity_mismatch_refuse(mutation):
     panel, _, _, _ = _panel_fixture()

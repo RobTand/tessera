@@ -84,10 +84,22 @@ def _tensor_record(value, shape, name):
 
 def validate_panel(panel):
     """Validate the frozen narrow scope before importing CUDA/vLLM."""
+    # PrismaQuant's freeze emits a derivation for the tolerances and an
+    # attestation for the activation quantizer; the qualification scripts in
+    # this directory build their own panels and emit neither.  Both are
+    # therefore accepted as a group and never read here: the panel travels
+    # verbatim into receipt["panel"], and PrismaQuant's consume is the gate
+    # that judges the attestation.  A *partial* pair is refused, because that
+    # is the shape a producer bug emits.  Membership is by key, so the null
+    # attestation a format that does not quantise its input carries counts.
+    derived = ("numerics_derivation", "activation_quantizer_attestation")
+    optional = derived if isinstance(panel, dict) and any(key in panel for key in derived) else ()
     _fields(panel, ("schema", "unit", "format", "shape", "source_sha256", "calibration_sha256",
                     "cost_sha256", "probe_identity_sha256", "joint_operator_identity_sha256",
                     "joint_operator_identity", "wire", "execution", "runtime",
-                    "native_tensors_sha256", "scheme_sha256", "numerics", "phases"), "panel")
+                    "native_tensors_sha256", "scheme_sha256", "numerics",
+                    *optional,
+                    "phases"), "panel")
     if panel["schema"] != PANEL_SCHEMA:
         raise ValueError("panel schema unsupported")
     # Equality alone admits True == 1 and 0 == False.
