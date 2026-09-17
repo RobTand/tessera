@@ -15,6 +15,12 @@ import copy
 
 import pytest
 
+# The bench modules below reach the native wire, which needs torch.  The
+# bytes-only CI job installs pytest alone, so this module refuses collection
+# there rather than running a test whose subject cannot be imported; the
+# sibling owner-runtime and operator-receipt modules carry the same guard.
+torch = pytest.importorskip("torch")
+
 from experiments import bench_native_moe_operator as moe
 from experiments.bench_native_operator import tensor_identity as dense_tensor_identity
 
