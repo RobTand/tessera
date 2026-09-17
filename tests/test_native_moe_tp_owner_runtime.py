@@ -656,21 +656,27 @@ def test_each_members_cut_decodes_to_this_ranks_own_render(tp, rank):
                                                  rank=rank, world=tp)
 
 
-def _owner_panel(tp, format_name, route_symbol, decoder):
+def _owner_panel(tp, format_name, route_symbol, decoder, member_unit=None):
     """A frozen GLM whole-owner panel at this cut, for the validator only.
 
     Tensor RECORDS only: this panel never claims those bytes were rendered, and
     the canonical fixture's own wires are what a device run consumes.
+
+    ``member_unit`` names a member from its expert and role; it defaults to the
+    harness's role spelling, and the GLM regression passes the projection the
+    producer itself wrote (``experts.<e>.gate_proj``), because one member has
+    two spellings and the wire keeps whichever one its producer used.
     """
     from tessera.serving.scheme import ROUTES
     shape = moe.validate_shape(_glm_shape(tp, format_name))
     wire = moe.owner_wire(shape)
+    name_of = member_unit or (lambda expert, role: f"{GLM_UNIT}.{expert}.{role}")
     members = []
     for expert in range(288):
         for role in moe.ROLE_ORDER:
             geometry = moe._member_shape(shape, role)
             record = {"blob_sha256": _sha(f"{GLM_UNIT}.{expert}.{role}"), "blob_bytes": 100}
-            members.append({"unit": f"{GLM_UNIT}.{expert}.{role}", "expert": expert, "role": role,
+            members.append({"unit": name_of(expert, role), "expert": expert, "role": role,
                             "format": format_name, "shape": geometry,
                             "source_weight": _record(geometry),
                             "rendered_weight": _record(geometry),
@@ -747,4 +753,42 @@ def test_the_panel_refuses_a_route_from_another_family_or_cut(mutation):
         route["symbol"] = "vllm.fused_moe.modular_kernel:"
         panel["runtime_binding"]["operator_route"] = route["symbol"]
     with pytest.raises(ValueError):
+        moe.validate_panel(copy.deepcopy(panel))
+
+
+# --------------------------------------------------------------------------
+# One member, two vocabularies.  The producer of the layer-3 request inputs
+# writes units under their PROJECTION (the name the census and the wire record
+# carry), while this harness's grammar spells the same member by its role, so
+# the panel validator has to resolve one from the other through the loader's
+# own table (root review of e63579ffb, 2026-09-17).
+# --------------------------------------------------------------------------
+
+def _glm_projection_unit(expert, role):
+    from tessera.serving.scheme import MOE_SHARD_PROJECTIONS
+    return f"{GLM_UNIT}.{expert}.{MOE_SHARD_PROJECTIONS[role]}"
+
+
+def test_a_member_named_by_its_projection_reaches_the_panel_validator():
+    """The producer's spelling is a name, not a rename of the wire.
+
+    A GLM census writes ``experts.<e>.gate_proj``; the harness's own grammar
+    writes ``experts.<e>.w1``.  They are the same member, and the wire record's
+    ``identity.unit`` is checked against the member's own unit, so a panel
+    built from the producer's names is the only panel those artifacts can be
+    priced from -- it must validate, and a name pointing at another role must
+    still be refused.
+    """
+    panel = _owner_panel(2, A4, "vllm.fused_moe.modular_kernel:FLASHINFER_CUTLASS",
+                         "torch_materialize_stock", member_unit=_glm_projection_unit)
+    assert [m["unit"] for m in panel["members"][:3]] == [
+        f"{GLM_UNIT}.0.gate_proj", f"{GLM_UNIT}.0.up_proj", f"{GLM_UNIT}.0.down_proj"]
+    assert panel["members"][0]["role"] == "w1"
+    assert moe.validate_panel(panel) == panel
+    # ...and the role is resolved, not merely "some projection": swapping the
+    # gate and up names between two members leaves them unique and names each
+    # role with the other's projection, which is refused.
+    panel["members"][0]["unit"], panel["members"][1]["unit"] = (
+        f"{GLM_UNIT}.0.up_proj", f"{GLM_UNIT}.0.gate_proj")
+    with pytest.raises(ValueError, match="member name/shape/format"):
         moe.validate_panel(copy.deepcopy(panel))

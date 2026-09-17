@@ -549,6 +549,24 @@ def _declared_member_rows(shape, role):
     return _declared_member_shape(shape, role)[0]
 
 
+def member_unit_spellings(owner_unit, expert, role):
+    """Every name ONE member role is written under, across the two vocabularies.
+
+    This harness's grammar names a member by its ROLE
+    (``<owner>.<expert>.w1``), and a producer whose source checkpoint names the
+    same member by its PROJECTION (``<owner>.<expert>.gate_proj``) writes the
+    name the export wrote.  That name is not cosmetic: the wire record's own
+    ``identity.unit`` is checked against the member's unit in
+    ``prepare_native_moe_operator``, so a member renamed to the role spelling
+    could no longer be verified against the wire it names.  The role is
+    resolved through the one table the loader uses (``MOE_SHARD_PROJECTIONS``)
+    rather than a second spelling table here.
+    """
+    from tessera.serving.scheme import MOE_SHARD_PROJECTIONS
+    return (f"{owner_unit}.{expert}.{role}",
+            f"{owner_unit}.{expert}.{MOE_SHARD_PROJECTIONS[role]}")
+
+
 def owner_member_map(shape, scheme, *, unit, rank, world):
     """The exact slice of every member role THIS rank loads, per role.
 
@@ -1385,7 +1403,10 @@ def validate_panel(panel):
         dense._fields(member, ("unit", "expert", "role", "format", "shape", "source_weight",
                                "rendered_weight", "activation", "wire"), "panel member")
         geometry = _member_shape(shape, member["role"])
-        if (member["unit"] != f"{panel['unit']}.{member['expert']}.{member['role']}"
+        # A name is accepted in either vocabulary -- the harness's role spelling
+        # or the projection the producer wrote -- and the role is resolved
+        # through the loader's own table rather than a second spelling here.
+        if (member["unit"] not in member_unit_spellings(panel["unit"], member["expert"], member["role"])
                 or member["shape"] != geometry or binding["member_shapes"][member["unit"]] != geometry
                 or binding["member_formats"][member["unit"]] != panel["format"]):
             raise ValueError("member name/shape/format differs from its explicit owner role")
