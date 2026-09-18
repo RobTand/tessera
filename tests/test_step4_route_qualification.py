@@ -26,7 +26,7 @@ def observation(libraries):
     return {"base": {"native_libraries": libraries}}
 
 
-def entry(decoder, *, launches=1, modules=1, shape="512", contract=CONTRACT):
+def entry(decoder, *, launches=1, modules=1, shape="M512:N6144:K1024", contract=CONTRACT):
     return {"policy": "TESSERA_NVFP4:resident", "shape": shape,
             "symbol": "torch._scaled_mm", "decoder": decoder, "contract": contract,
             "kind": "dense", "launches": launches, "modules": modules}
@@ -102,13 +102,36 @@ def test_an_entry_without_a_decoder_or_launches_refuses():
         trace_decoders_by_contract(trace({"contract": CONTRACT, "decoder": NATIVE_DECODER}), CONTRACT)
 
 
-def test_modules_are_the_widest_key_not_a_sum_across_shapes():
-    # One module serving a prefill and a decode shape appears under two keys;
+def test_one_module_served_at_two_token_counts_is_counted_once():
+    # One module serving a prefill and a decode call appears under two keys;
     # adding them would claim twice as many modules as the artifact has.
     totals = trace_decoders_by_contract(
-        trace(entry(NATIVE_DECODER, shape="512", modules=1),
-              entry(NATIVE_DECODER, shape="1", modules=1)), CONTRACT)
+        trace(entry(NATIVE_DECODER, shape="M512:N6144:K1024", modules=1),
+              entry(NATIVE_DECODER, shape="M1:N6144:K1024", modules=1)), CONTRACT)
     assert totals[NATIVE_DECODER] == {"launches": 2, "modules": 1, "entries": 2}
+
+
+def test_modules_with_different_geometries_are_added_within_one_token_count():
+    # Three modules of different N:K served in the same forward are three
+    # modules, not one.  Taking the widest key here returned 28 where the
+    # 2026-09-18 capture's fp8 contract had 110 (this is that bug's test).
+    totals = trace_decoders_by_contract(
+        trace(entry(NATIVE_DECODER, shape="M512:N6144:K1024", modules=1),
+              entry(NATIVE_DECODER, shape="M512:N1024:K3072", modules=1),
+              entry(NATIVE_DECODER, shape="M512:N2048:K1024", modules=1),
+              entry(NATIVE_DECODER, shape="M1:N6144:K1024", modules=1)), CONTRACT)
+    assert totals[NATIVE_DECODER]["modules"] == 3
+
+
+def test_a_record_written_under_compile_tracing_is_refused_not_counted():
+    with pytest.raises(QualificationRefused, match="torch.compile tracing"):
+        trace_decoders_by_contract(trace(entry(NATIVE_DECODER, shape="M*:N6144:K1024")), CONTRACT)
+
+
+def test_an_entry_without_a_shape_refuses():
+    with pytest.raises(QualificationRefused, match="names no shape"):
+        trace_decoders_by_contract(
+            trace({"contract": CONTRACT, "decoder": NATIVE_DECODER, "launches": 1}), CONTRACT)
 
 
 def test_fewer_modules_than_the_artifact_assigns_refuses():

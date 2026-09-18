@@ -93,11 +93,25 @@ def trace_decoders_by_contract(route_trace, contract):
     carries the six key fields plus ``launches`` (one per module per served
     dispatch) and ``modules`` (how many distinct modules reported the key).  An
     entry that names no decoder is not a decoder this may silently drop.
+
+    COUNTING MODULES IS NOT A MAX AND NOT A SUM.  A key is
+    ``(policy, shape, symbol, decoder, contract, kind)`` and ``shape`` carries
+    both the call's M and the module's ``N:K``, so one module appears under one
+    key per M it served: taking the max across all keys undercounts (it returns
+    the biggest single N:K group), and summing across all keys overcounts (it
+    adds the same module once per M).  Within ONE M every module of the
+    contract appears exactly once, so the count is the sum within an M group,
+    maximised over the M groups.  Measured on the 2026-09-18 capture: the fp8
+    contract reports 110 modules per M group (the artifact's own count) where a
+    max over keys returned 28.  ``M*`` is the trace's own marker for a record
+    written while ``torch.compile`` was tracing, where a count is not a launch
+    count, and it is refused rather than counted.
     """
     entries = route_trace.get("entries")
     if entries is None:
         raise QualificationRefused("route trace carries no entries; the dispatch leg is not verified")
     totals = {}
+    per_m = {}
     seen_contract = False
     for entry in entries:
         if entry.get("contract") != contract:
@@ -110,14 +124,22 @@ def trace_decoders_by_contract(route_trace, contract):
         if "launches" not in entry:
             raise QualificationRefused(
                 f"route-trace entry on {contract} counts no launches: {entry!r}")
+        shape = entry.get("shape")
+        if not isinstance(shape, str) or not shape:
+            raise QualificationRefused(
+                f"route-trace entry on {contract} names no shape: {entry!r}")
+        token = shape.split(":")[0]
+        if token == "M*":
+            raise QualificationRefused(
+                f"route-trace entry on {contract} was written under torch.compile tracing "
+                f"({shape}), where a count is not a launch count: {entry!r}")
         bucket = totals.setdefault(decoder, {"launches": 0, "modules": 0, "entries": 0})
         bucket["launches"] += int(entry["launches"])
         bucket["entries"] += 1
-        # NOT a sum: one module that serves both a prefill and a decode shape
-        # appears under two keys, and adding them would report twice as many
-        # modules as the artifact has.  The widest single key is how many
-        # distinct modules were seen dispatching on this decoder.
-        bucket["modules"] = max(bucket["modules"], int(entry.get("modules", 0)))
+        group = per_m.setdefault((decoder, token), 0)
+        per_m[(decoder, token)] = group + int(entry.get("modules", 0))
+    for (decoder, _token), count in per_m.items():
+        totals[decoder]["modules"] = max(totals[decoder]["modules"], count)
     if not seen_contract:
         raise QualificationRefused(
             f"route trace records no dispatch on {contract}; the capture never served the route it prices")
