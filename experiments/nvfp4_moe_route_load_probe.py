@@ -318,29 +318,51 @@ def moved_reference_tiles(stock):
 
 
 def tile_check(layer, tiles):
-    """Before finalize: the decoded tile IS materialize_stock's after the join,
-    expert by expert, and the global handed on is the multiplier."""
+    """Before finalize: the SERVED scale plane IS materialize_stock's tile
+    scale, expert by expert, and the global handed on is the multiplier.
+
+    Since the materialising expert-reader fell back to zero-size stock anchors
+    (tessera#506-era route retirement), the decoded weights live on the native
+    A4 stacks' scale planes, not on the stock names: the loader's served LUT
+    expanded at its nibble indices reproduces the per-element E4M3 scale plane
+    the stock tile carries, so that is the byte-for-byte identity checked
+    here.  (``weight_packed`` nibble bytes are verified separately by the
+    probe's A/B legs: w13 into ``a_side_after_finalize``, plus the digests the
+    negative legs cover.)
+    """
+    from tessera.stock import NVFP4_KEYS, stock_dequant
+
     result = {"identical": True, "globals_match": True}
+    stacks = {"gate_proj": layer.tessera_a4_gate_stack,
+              "up_proj": layer.tessera_a4_up_stack,
+              "down_proj": layer.tessera_a4_down_stack}
+    for name, stack in stacks.items():
+        result[f"stack_{name}_present"] = stack is not None
     for expert in range(EXPERTS):
-        w13 = layer.w13_weight.data[expert].view(torch.uint8).cpu()
-        s13 = layer.w13_weight_scale.data[expert].view(torch.uint8).cpu()
-        gate, up = tiles[(expert, "gate_proj")], tiles[(expert, "up_proj")]
-        down = tiles[(expert, "down_proj")]
-        same = (
-            torch.equal(w13[:INTER], gate["weight_packed"].view(torch.uint8).cpu())
-            and torch.equal(w13[INTER:], up["weight_packed"].view(torch.uint8).cpu())
-            and torch.equal(s13[:INTER], gate["weight_scale"].view(torch.uint8).cpu())
-            and torch.equal(s13[INTER:], up["weight_scale"].view(torch.uint8).cpu())
-            and torch.equal(layer.w2_weight.data[expert].view(torch.uint8).cpu(),
-                            down["weight_packed"].view(torch.uint8).cpu())
-            and torch.equal(layer.w2_weight_scale.data[expert].view(torch.uint8).cpu(),
-                            down["weight_scale"].view(torch.uint8).cpu()))
-        result["identical"] &= bool(same)
-        g13 = layer.w13_weight_scale_2.data[expert].tolist()
-        g2 = float(layer.w2_weight_scale_2.data[expert])
+        for role, stack in stacks.items():
+            if stack is None:
+                result["identical"] = False
+                continue
+            # The served plane, [rows, groups] float8 elementwise.
+            rows, cols = stack.rows, stack.cols
+            packed = stack.nibbles[expert].view(torch.uint8).cpu().to(torch.int64)
+            groups = cols // 16
+            index = torch.empty((groups, rows), dtype=torch.int64)
+            index[:, 0::2] = (packed >> 4).reshape(groups, rows // 2)
+            index[:, 1::2] = (packed & 0xF).reshape(groups, rows // 2)
+            served = stack.lut_bytes[expert].view(torch.uint8).cpu()[index].t().contiguous()
+            want = tiles[(expert, role)]["weight_scale"].view(torch.uint8).cpu()
+            result["identical"] &= bool(torch.equal(served.view(torch.uint8),
+                                                    want.view(torch.uint8)))
+        g13 = layer.tessera_a4_gate_stack.globals[expert].item() \
+            if layer.tessera_a4_gate_stack is not None else None
+        g2 = layer.tessera_a4_down_stack.globals[expert].item() \
+            if layer.tessera_a4_down_stack is not None else None
+        if g13 is None or g2 is None:
+            result["globals_match"] = False
+            continue
         result["globals_match"] &= (
-            g13[0] == g13[1]
-            and abs(g13[0] - tiles[(expert, "w13_global")]) <= 1e-6 * abs(g13[0])
+            abs(g13 - tiles[(expert, "w13_global")]) <= 1e-6 * abs(g13)
             and abs(g2 - tiles[(expert, "w2_global")]) <= 1e-6 * abs(g2))
     return result
 
