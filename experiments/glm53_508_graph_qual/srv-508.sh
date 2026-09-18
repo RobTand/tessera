@@ -67,8 +67,8 @@ up)
   printf '%s\n' "EAGER=$EAGER $SERVE_ARGS" > "$OUT/engine-args-EAGER$EAGER.txt"
   inner="$EXT/serve-inner.sh"
   { echo "set -e"; printf '%s\n' "$PREP"
-    [ -n "$COMPILATION_JSON" ] && printf 'extra="--compilation-config %s"\n' "$COMPILATION_JSON"
-    printf 'exec vllm serve %s %s $extra\n' "$MODEL" "$SERVE_ARGS"; } > "$inner"
+    [ -n "$COMPILATION_JSON" ] && printf "extra=(\"--compilation-config\" '%s')\n" "${COMPILATION_JSON#%\"}"
+    printf 'exec vllm serve %s %s "''${extra[@]}"\n' "$MODEL" "$SERVE_ARGS"; } > "$inner"
   mapfile -t a < <(docker_args)
   docker run -d --name $NAME "${a[@]}" "${ENVS[@]}" \
     --entrypoint bash $IMG /ext/serve-inner.sh
