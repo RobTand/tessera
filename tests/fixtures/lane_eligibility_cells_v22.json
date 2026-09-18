@@ -1,9 +1,9 @@
 {
-  "bytes": 9731,
+  "bytes": 9589,
   "cells": 4,
   "lifted_by": "json.JSONDecoder().raw_decode four times from the byte after the 'cells' array's opening bracket; the span is the bytes those four elements occupy, separators and whitespace included, with no trailing comma",
-  "sha256": "d5d80cb2649dd7c57b3000e22a747c309782957d12e3a449bed8b05970bcb3a2",
-  "source": "src/tessera/serving/runtime_contract.json at contract_version 22 (origin/master 3ec01f26); re-spanned at contract_version 24 (#460) and again at 31 (tessera#538), without re-measuring any surviving cell; re-spanned at 32 (tessera#506 leg 2) when the E2M1_K2 dense cells' rungs_q256 widened to the full trellis domain, again without re-measuring \u2014 the two E4M3 routed cells in the span are untouched",
+  "sha256": "1d3f6cd98f42aaaff219012e5ca964b716a8543fc530a08ade531687e2158335",
+  "source": "src/tessera/serving/runtime_contract.json at contract_version 22 (origin/master 3ec01f26); re-spanned at contract_version 24 (#460) and again at 31 (tessera#538), without re-measuring any surviving cell; re-spanned at 32 (tessera#506 leg 2) when the E2M1_K2 dense cells' rungs_q256 widened to the full trellis domain, again without re-measuring \u2014 the two E4M3 routed cells in the span are untouched; re-spanned a second time at 32 (tessera#560 D2) when the dense widen was reverted to [896] for lack of a dense receipt",
   "what": "The v22 sm_121 cells that SURVIVE at contract_version 32, recorded as a digest. Contract v22 published ten; v31 withdrew six of them (tessera#538) and the four below are what is left, still the first four elements of lane_eligibility.cells.",
   "why_not_the_bytes": "A copy of the array would repeat the runtime image pin, and tests/test_runtime_image_pin.py refuses a second copy of that digest in any file that acts. A hash pins the same bytes without holding the pin.",
   "withdrawn_at_v31": [

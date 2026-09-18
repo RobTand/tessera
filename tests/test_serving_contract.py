@@ -80,7 +80,7 @@ _DENSE_RUNTIME = {"image": _DENSE_IMAGE_FROM_RECEIPT, "execution_modes": ["eager
 _CELL_LAWS: dict[str, dict[str, object]] = {
     "tessera_e2m1_k2_dense_sm121_decode": {
         "platform": "sm_121", "family": "TESSERA_E2M1_K2", "structure": "dense",
-        "regime": "decode", "rungs_q256": [128, 256, 384, 512, 640, 768, 896],
+        "regime": "decode", "rungs_q256": [896],
         "activation_contract": "e2m1_group16_ue4m3_static",
         "executes": [{"symbol": "torch._scaled_mm", "decoder": "native_span2"}],
         "route_status": "backed_with_serve_flag", "qualification": "device_qualified",
@@ -91,7 +91,7 @@ _CELL_LAWS: dict[str, dict[str, object]] = {
     },
     "tessera_e2m1_k2_dense_sm121_batch": {
         "platform": "sm_121", "family": "TESSERA_E2M1_K2", "structure": "dense",
-        "regime": "batch", "rungs_q256": [128, 256, 384, 512, 640, 768, 896],
+        "regime": "batch", "rungs_q256": [896],
         "activation_contract": "e2m1_group16_ue4m3_static",
         "executes": [{"symbol": "torch._scaled_mm", "decoder": "native_span2"}],
         "route_status": "backed_with_serve_flag", "qualification": "device_qualified",

@@ -315,15 +315,7 @@
     "family": "TESSERA_E2M1_K2",
     "structure": "dense",
     "regime": "decode",
-    "rungs_q256": [
-     128,
-     256,
-     384,
-     512,
-     640,
-     768,
-     896
-    ],
+    "rungs_q256": [896],
     "activation_contract": "e2m1_group16_ue4m3_static",
     "executes": [
      {
@@ -363,15 +355,7 @@
     "family": "TESSERA_E2M1_K2",
     "structure": "dense",
     "regime": "batch",
-    "rungs_q256": [
-     128,
-     256,
-     384,
-     512,
-     640,
-     768,
-     896
-    ],
+    "rungs_q256": [896],
     "activation_contract": "e2m1_group16_ue4m3_static",
     "executes": [
      {
