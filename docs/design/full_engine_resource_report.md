@@ -546,7 +546,14 @@ or the BLAS workspace, which any change of assignment tests — or whose unit
 changed family across the pair. An agreed site whose unit kept its family stays
 `pending_548`, saying so. When the rosters are not supplied,
 `unit_family_changed` is `null` and every unit-naming site stays pending: the
-comparison was not made, which is not the same as it having passed. Each view's `reason`
+comparison was not made, which is not the same as it having passed.
+
+Sites are matched across the pair on the exact owner string the census emitted.
+One kind does not survive that: a BLAS workspace owner carries the cuBLAS
+handle address (`torch.cublas:handle=<address>:stream=0`), a different number
+in every process, so each capture's workspace is present in one capture only
+and stays `pending_548`. Matching a workspace across captures needs a key the
+census does not emit today. Each view's `reason`
 names both `capture_sha256` digests, because agreement is evidence for those
 two captures and not for every assignment. The record travels inside the
 `owner_views` observation (`observations.owner_views.boundary_classification`,

@@ -109,6 +109,14 @@ def unit_families(roster, identity):
 def pending_sites(ledger):
     """``{owner: bytes}`` over the rows the derivation left ``pending_548``.
 
+    Matching is by the exact owner string, which is what the census emitted and
+    the only key both captures share. One kind does not survive it: a BLAS
+    workspace owner embeds the cuBLAS handle address
+    (``torch.cublas:handle=<address>:stream=0``), which is a different number
+    in every process, so its site is present in one capture only and stays
+    unclassified. That is reported rather than papered over -- matching a
+    workspace across captures needs a key the census does not emit today.
+
     A site's bytes are the sum of the distinct allocation rows its owner names
     in this capture. For a native boundary tensor that is one row, because the
     v2 row rule makes ``(unit_id, invocation, kind)`` unique; for a runner root
