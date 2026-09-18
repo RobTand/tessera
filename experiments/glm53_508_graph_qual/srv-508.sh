@@ -10,7 +10,7 @@ set -uo pipefail
 TS=${TS:-/home/rob/tmp/tessera-508-graph-qual-20260918}
 MODEL=${MODEL:-/mnt/shared/tessera-runs/moe/glm53-4layer-a4-e2m1x2-q896-l2}
 IMG=${IMG:-localhost/prismaquant/spark-vllm-nccl230@sha256:a5424378322071f4c33e63d1372a2bb028e46b03f0da0e5edb0cdd7418e2cebb}
-EXPECT_TREE=02bf6f195c8e6aa5e3b5bd557b8f3ad4c9e046f5
+# EXPECT_TREE: optional pin; unset records HEAD. Base of this branch: 02bf6f195
 NAME=t508-stub
 EXT=/home/rob/tmp/t508-serve/ext
 DIR=/home/rob/tmp/t508-serve
@@ -59,7 +59,9 @@ wait_ready() {
 case "${1:-}" in
 up)
   [ "$(hostname)" = sparky ] || { echo "sparky only (tess#508 brief)"; exit 2; }
-  [ "$(git -C "$TS" rev-parse HEAD)" = "$EXPECT_TREE" ] || { echo "tree is not $EXPECT_TREE; set EXPECT_TREE"; exit 2; }
+  if [ -n "${EXPECT_TREE:-}" ]; then
+    [ "$(git -C "$TS" rev-parse HEAD)" = "$EXPECT_TREE" ] || { echo "tree is not $EXPECT_TREE"; exit 2; }
+  fi
   if docker ps -q --filter name=$NAME | grep -q .; then echo "$NAME up; run: $0 down"; exit 2; fi
   mkdir -p "$EXT" "$OUT" "$DIR/logs"
   printf '%s\n' "EAGER=$EAGER $SERVE_ARGS" > "$OUT/engine-args-EAGER$EAGER.txt"
