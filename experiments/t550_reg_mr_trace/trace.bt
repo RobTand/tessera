@@ -1,0 +1,70 @@
+// tessera#550: trace the kernel side of ibv_reg_mr for a TP2 NCCL/RoCE serve (v2).
+// Records every ib_umem_get (addr, size, access, result) and prints, with a kernel
+// stack, any error return from the functions between uverbs and the HCA, plus the
+// silent -ENOMEM sources: IOVA allocation, longterm-pin migration, page isolation.
+// Run as root: bpftrace --unsafe -B none -o OUT trace.bt
+BEGIN { printf("trace start %s\n", strftime("%Y-%m-%dT%H:%M:%S", nsecs)); }
+
+kfunc:ib_umem_get { @ua[tid] = args.addr; @us[tid] = args.size; @uacc[tid] = args.access; }
+kretfunc:ib_umem_get {
+  $r = (int64)retval;
+  if ($r < 0 && $r > -4096) {
+    printf("%s ib_umem_get ERR pid=%d tid=%d comm=%s addr=0x%lx size=%lu access=0x%x ret=%d caps=0x%lx map_count=%d pinned_vm=%ld rlim_memlock=%ld\n",
+           strftime("%H:%M:%S.%f", nsecs), pid, tid, comm, @ua[tid], @us[tid], @uacc[tid], $r,
+           curtask->cred->cap_effective.val, curtask->mm->map_count, curtask->mm->pinned_vm.counter, curtask->signal->rlim[8].rlim_cur);
+    system("/home/rob/tmp/t550snap.sh %d %d", pid, tid);
+  } else {
+    printf("%s ib_umem_get ok pid=%d tid=%d comm=%s addr=0x%lx size=%lu access=0x%x\n",
+           strftime("%H:%M:%S.%f", nsecs), pid, tid, comm, @ua[tid], @us[tid], @uacc[tid]);
+    @umem_ok_bytes = hist(@us[tid]);
+  }
+  delete(@ua[tid]); delete(@us[tid]); delete(@uacc[tid]);
+}
+
+// ---- any syscall returning -ENOMEM (settles kernel vs userspace origin; names the syscall)
+tracepoint:raw_syscalls:sys_exit /args.ret == -12/ { printf("%s SYSCALL ENOMEM pid=%d tid=%d comm=%s nr=%ld\n", strftime("%H:%M:%S.%f", nsecs), pid, tid, comm, args.id); }
+
+// ---- GUP / longterm pin
+kretprobe:pin_user_pages_fast /(int32)retval < 0/ { printf("%s pin_user_pages_fast ERR pid=%d comm=%s ret=%d\n%s\n", strftime("%H:%M:%S.%f", nsecs), pid, comm, (int32)retval, kstack); }
+kretprobe:__gup_longterm_locked /(int64)retval < 0/ { printf("%s __gup_longterm_locked ERR pid=%d comm=%s ret=%d\n", strftime("%H:%M:%S.%f", nsecs), pid, comm, (int64)retval); }
+kretprobe:try_grab_folio /(int32)retval != 0/ { printf("%s try_grab_folio ERR pid=%d comm=%s ret=%d\n%s\n", strftime("%H:%M:%S.%f", nsecs), pid, comm, (int32)retval, kstack); }
+kretprobe:collect_longterm_unpinnable_folios /retval != 0/ { printf("%s collect_longterm_unpinnable_folios pid=%d comm=%s collected=%lu\n%s\n", strftime("%H:%M:%S.%f", nsecs), pid, comm, retval, kstack); }
+kretprobe:migrate_longterm_unpinnable_folios /(int32)retval != -11/ { printf("%s migrate_longterm_unpinnable_folios pid=%d comm=%s ret=%d\n", strftime("%H:%M:%S.%f", nsecs), pid, comm, (int32)retval); }
+kprobe:start_isolate_page_range { @isolate_calls[comm] = count(); printf("%s start_isolate_page_range pid=%d comm=%s\n%s\n", strftime("%H:%M:%S.%f", nsecs), pid, comm, kstack); }
+kprobe:migrate_pages {
+  @migrate_pages_calls[comm] = count();
+  @mp_seen[comm]++;
+  if (@mp_seen[comm] <= 20) { printf("%s migrate_pages CALLED pid=%d comm=%s\n%s\n", strftime("%H:%M:%S.%f", nsecs), pid, comm, kstack); }
+}
+
+// ---- DMA / IOMMU / IOVA
+kretprobe:dma_map_sgtable /(int32)retval != 0/ { printf("%s dma_map_sgtable ERR pid=%d comm=%s ret=%d\n%s\n", strftime("%H:%M:%S.%f", nsecs), pid, comm, (int32)retval, kstack); }
+kretprobe:__dma_map_sg_attrs /(int32)retval < 0/ { printf("%s __dma_map_sg_attrs ERR pid=%d comm=%s ret=%d\n", strftime("%H:%M:%S.%f", nsecs), pid, comm, (int32)retval); }
+kretprobe:iommu_dma_map_sg /(int32)retval < 0/ { printf("%s iommu_dma_map_sg ERR pid=%d comm=%s ret=%d\n%s\n", strftime("%H:%M:%S.%f", nsecs), pid, comm, (int32)retval, kstack); }
+kretprobe:iommu_dma_alloc_iova /retval == 0/ { printf("%s iommu_dma_alloc_iova ERR (0) pid=%d comm=%s\n%s\n", strftime("%H:%M:%S.%f", nsecs), pid, comm, kstack); }
+kprobe:iommu_dma_alloc_iova { $d = (struct device *)arg3; @idev[tid] = str($d->kobj.name); @iova_dma_limit[str($d->kobj.name), arg2] = count(); }
+kretprobe:iommu_dma_alloc_iova /retval != 0/ { @iova_by_dev[@idev[tid]] = hist(retval >> 12); @iova_min_by_dev[@idev[tid]] = min(retval >> 12); delete(@idev[tid]); }
+kprobe:alloc_iova { @ia_size[tid] = arg1; @ia_limit[tid] = arg2; }
+kretprobe:alloc_iova /retval == 0/ { printf("%s alloc_iova NULL pid=%d comm=%s size=%lu limit_pfn=0x%lx\n%s\n", strftime("%H:%M:%S.%f", nsecs), pid, comm, @ia_size[tid], @ia_limit[tid], kstack); }
+kretprobe:alloc_iova /retval != 0/ { $i = (struct iova *)retval; @iova_pfn_lo = hist($i->pfn_lo); @iova_pfn_min = min($i->pfn_lo); @iova_pfn_max = max($i->pfn_hi); }
+kretprobe:__alloc_and_insert_iova_range /(int32)retval != 0/ { printf("%s __alloc_and_insert_iova_range ERR pid=%d comm=%s ret=%d size=%lu limit_pfn=0x%lx\n", strftime("%H:%M:%S.%f", nsecs), pid, comm, (int32)retval, @ia_size[tid], @ia_limit[tid]); }
+kretprobe:iommu_map_sg /(int64)retval < 0/ { printf("%s iommu_map_sg ERR pid=%d comm=%s ret=%d\n%s\n", strftime("%H:%M:%S.%f", nsecs), pid, comm, (int64)retval, kstack); }
+kretprobe:__arm_lpae_alloc_pages /retval == 0/ { printf("%s __arm_lpae_alloc_pages NULL pid=%d comm=%s\n%s\n", strftime("%H:%M:%S.%f", nsecs), pid, comm, kstack); }
+kretprobe:swiotlb_tbl_map_single /retval == 0xffffffffffffffff/ { printf("%s swiotlb_tbl_map_single ERR pid=%d comm=%s\n%s\n", strftime("%H:%M:%S.%f", nsecs), pid, comm, kstack); }
+tracepoint:dma:dma_map_sg_err { printf("%s tracepoint dma_map_sg_err pid=%d comm=%s\n", strftime("%H:%M:%S.%f", nsecs), pid, comm); }
+
+// ---- mlx5
+kprobe:reg_create { @reg_create_calls = count(); }
+kprobe:alloc_cacheable_mr { @alloc_cacheable_calls = count(); }
+kretprobe:mlx5_ib_reg_user_mr /(int64)retval < 0 && (int64)retval > -4096/ { printf("%s mlx5_ib_reg_user_mr ERR pid=%d comm=%s ret=%d\n", strftime("%H:%M:%S.%f", nsecs), pid, comm, (int64)retval); }
+kretprobe:create_real_mr /(int64)retval < 0 && (int64)retval > -4096/ { printf("%s create_real_mr ERR pid=%d comm=%s ret=%d\n", strftime("%H:%M:%S.%f", nsecs), pid, comm, (int64)retval); }
+kretprobe:alloc_cacheable_mr /(int64)retval < 0 && (int64)retval > -4096/ { printf("%s alloc_cacheable_mr ERR pid=%d comm=%s ret=%d\n", strftime("%H:%M:%S.%f", nsecs), pid, comm, (int64)retval); }
+kretprobe:reg_create /(int64)retval < 0 && (int64)retval > -4096/ { printf("%s reg_create ERR pid=%d comm=%s ret=%d\n%s\n", strftime("%H:%M:%S.%f", nsecs), pid, comm, (int64)retval, kstack); }
+kretprobe:mlx5_mr_cache_alloc /(int64)retval < 0 && (int64)retval > -4096/ { printf("%s mlx5_mr_cache_alloc ERR pid=%d comm=%s ret=%d\n%s\n", strftime("%H:%M:%S.%f", nsecs), pid, comm, (int64)retval, kstack); }
+kretprobe:mlx5_core_create_mkey /(int32)retval != 0/ { printf("%s mlx5_core_create_mkey ERR pid=%d comm=%s ret=%d\n%s\n", strftime("%H:%M:%S.%f", nsecs), pid, comm, (int32)retval, kstack); }
+kretprobe:mlx5r_umr_update_mr_pas /(int32)retval != 0/ { printf("%s mlx5r_umr_update_mr_pas ERR pid=%d comm=%s ret=%d\n%s\n", strftime("%H:%M:%S.%f", nsecs), pid, comm, (int32)retval, kstack); }
+kretprobe:mlx5r_umr_post_send_wait /(int32)retval != 0/ { printf("%s mlx5r_umr_post_send_wait ERR pid=%d comm=%s ret=%d\n", strftime("%H:%M:%S.%f", nsecs), pid, comm, (int32)retval); }
+kretprobe:ib_uverbs_reg_mr /(int32)retval != 0/ { printf("%s ib_uverbs_reg_mr ERR pid=%d comm=%s ret=%d\n", strftime("%H:%M:%S.%f", nsecs), pid, comm, (int32)retval); }
+kprobe:mlx5_cmd_out_err { printf("%s mlx5_cmd_out_err CALLED pid=%d comm=%s opcode=0x%x\n%s\n", strftime("%H:%M:%S.%f", nsecs), pid, comm, arg1, kstack); }
+
+END { clear(@idev); clear(@ua); clear(@us); clear(@uacc); clear(@ia_size); clear(@ia_limit); clear(@mp_seen); printf("trace end %s\n", strftime("%Y-%m-%dT%H:%M:%S", nsecs)); }
