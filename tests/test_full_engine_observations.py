@@ -25,8 +25,9 @@ from experiments.capture_full_engine_resources import read_routed_owner_receipt
 #: The consumer's own exact field set, restated here rather than imported: the
 #: consumer is another repository and a shape that drifts silently is exactly
 #: what this test exists to catch.
-WORKER_STARTUP_FIELDS = ("memory_allocated_bytes", "rank", "receipt_resident_bytes",
-                         "scope", "workspace_locked", "workspace_resident_bytes")
+WORKER_STARTUP_FIELDS = ("memory_allocated_bytes", "memory_reserved_bytes", "rank",
+                          "receipt_resident_bytes", "scope", "workspace_locked",
+                          "workspace_resident_bytes")
 KV_STORAGE_FIELDS = ("address", "bytes", "device_id", "device_type", "owners")
 
 _DIGEST = "a" * 64
@@ -123,12 +124,14 @@ def test_the_read_only_rpc_names_the_process_that_observed(monkeypatch):
 
 
 def test_a_startup_sample_needs_the_runtimes_own_locked_workspace():
-    torch_stub = SimpleNamespace(cuda=SimpleNamespace(memory_allocated=lambda: 9000))
+    torch_stub = SimpleNamespace(cuda=SimpleNamespace(memory_allocated=lambda: 9000,
+                                                     memory_reserved=lambda: 12000))
     record = worker_startup_record(torch_stub, _workspace(resident=4096), rank=0,
                                    receipt_resident_bytes=2048, scope="fixture")
     assert tuple(sorted(record)) == tuple(sorted(WORKER_STARTUP_FIELDS))
     assert record["workspace_resident_bytes"] == 4096
     assert record["memory_allocated_bytes"] == 9000
+    assert record["memory_reserved_bytes"] == 12000
     with pytest.raises(ValueError, match="workspace record"):
         worker_startup_record(torch_stub, {"schema": "other"}, rank=0,
                               receipt_resident_bytes=2048, scope="fixture")
@@ -168,8 +171,10 @@ def _startup_ledger(record=None, fixed=2048):
     return ledger
 
 
-def _startup_record(rank=0, receipt=2048, workspace=1024, allocated=4096, locked=True):
-    return {"rank": rank, "memory_allocated_bytes": allocated, "receipt_resident_bytes": receipt,
+def _startup_record(rank=0, receipt=2048, workspace=1024, allocated=4096, reserved=8192,
+                    locked=True):
+    return {"rank": rank, "memory_allocated_bytes": allocated,
+            "memory_reserved_bytes": reserved, "receipt_resident_bytes": receipt,
             "workspace_resident_bytes": workspace, "workspace_locked": locked, "scope": "fixture"}
 
 
