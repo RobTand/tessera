@@ -251,7 +251,11 @@ def test_the_assembler_refuses_per_rank_observations_without_a_rank_scoped_ident
     from experiments.full_engine_resources import analyze_engine_resource_ledger
     ledger = analyze_engine_resource_ledger(raw)
     assert "rank" not in ledger["identity"]
-    ledger["worker_startup_records"] = [_startup_record()]
+    # Old-shape records without a reserved sample: this test predates the
+    # D37 witness and exercises rank binding only, not the allocator binding.
+    record = _startup_record()
+    del record["memory_reserved_bytes"]
+    ledger["worker_startup_records"] = [record]
     members = {"reference": {"canonical_census": "synthetic", "runtime_binding": "synthetic",
                              "selected_rows": ["synthetic"]},
                "workload": {"calibration": "synthetic", "prompt_ids": ["synthetic"],
