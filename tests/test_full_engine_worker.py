@@ -736,3 +736,68 @@ def test_a_capture_that_never_initialized_kv_writes_a_named_refusal(
     worker._resource_write_kv_observation(tmp_path)
     payload = json.loads((tmp_path / "kv-observation.json").read_text())
     assert payload["records"] == [] and "no deduplicated" in payload["skipped"]
+
+
+# --- the dense artifact's resident-after-load sample (tessera#399) ------------
+
+
+def _dense_manifest(model, *, roles=("model.q.weight", "model.k.weight"),
+                    family="TESSERA_NVFP4"):
+    """A served manifest on disk, and the plan whose roster it must agree with."""
+    import hashlib
+    manifest = {"modules": {"model.qkv": {"family": family,
+                                          "roles": [{"tensor": name} for name in roles],
+                                          "resident_bytes_resident_mode": 512}},
+                "totals": {"resident_mode_bytes": 512}}
+    body = json.dumps(manifest).encode()
+    model.mkdir(parents=True, exist_ok=True)
+    (model / "tessera_serving_manifest.json").write_bytes(body)
+    return hashlib.sha256(body).hexdigest()
+
+
+def _dense_plan(tmp_path, *, module="model.qkv", family="TESSERA_NVFP4",
+                members=("model.q.weight", "model.k.weight"), manifest_sha256=None):
+    model = tmp_path / "artifact"
+    return {"model": str(model), "output_directory": str(tmp_path),
+            "identity": {"rank": 0, "world_size": 1},
+            "artifact_checkpoint": {"manifest_sha256": manifest_sha256},
+            "canonical_roster": [{"unit_id": "g:model.qkv", "module": module,
+                                  "family": family, "members": list(members)}]}
+
+
+@pytest.mark.parametrize("roster,fragment", [
+    (dict(members=("model.q.weight",)), "declares roles"),
+    (dict(family="TESSERA_FP8"), "is TESSERA_NVFP4, the roster says TESSERA_FP8"),
+    (dict(module="model.absent"), "names no manifest module model.absent"),
+])
+def test_a_dense_startup_sample_refuses_a_manifest_that_disagrees_with_the_roster(
+        worker_module, tmp_path, roster, fragment):
+    # The two namespaces meet only through the roster row, so a manifest whose
+    # module carries other role tensors, another family, or no such module at
+    # all is a refusal with a reason beside the ledger -- never a sample.
+    pytest.importorskip("torch")
+    digest = _dense_manifest(tmp_path / "artifact")
+    plan = _dense_plan(tmp_path, manifest_sha256=digest, **roster)
+    worker = object.__new__(worker_module.ResourceCaptureWorker)
+    worker._resource_plan = plan
+    worker.device = "cuda:0"
+    worker._resource_write_dense_startup_sample()
+    payload = json.loads((tmp_path / "worker-startup.json").read_text())
+    assert payload["dense"] is None
+    assert payload["skipped"].startswith("ValueError:")
+    assert fragment in payload["skipped"]
+    assert payload["rank"] == 0 and payload["world_size"] == 1
+
+
+def test_a_dense_startup_sample_refuses_a_manifest_whose_bytes_are_not_the_plans(
+        worker_module, tmp_path):
+    pytest.importorskip("torch")
+    _dense_manifest(tmp_path / "artifact")
+    plan = _dense_plan(tmp_path, manifest_sha256="f" * 64)
+    worker = object.__new__(worker_module.ResourceCaptureWorker)
+    worker._resource_plan = plan
+    worker.device = "cuda:0"
+    worker._resource_write_dense_startup_sample()
+    payload = json.loads((tmp_path / "worker-startup.json").read_text())
+    assert payload["dense"] is None
+    assert "differ from the plan's artifact checkpoint" in payload["skipped"]

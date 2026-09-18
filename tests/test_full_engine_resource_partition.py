@@ -228,7 +228,7 @@ def test_the_report_keeps_the_seven_members_and_the_synthetic_marker(ledger):
     report = assemble_full_engine_resource_report(
         ledger, **_members())
     assert set(report) == set(REPORT_MEMBERS) | {"schema"}
-    assert report["schema"] == "tessera.full_engine_resource_report.v1"
+    assert report["schema"] == "tessera.full_engine_resource_report.v2"
     # A synthetic capture is never laundered into an artifact that looks measured.
     assert report["identity"]["fixture_provenance"] == ledger["fixture_provenance"]
     # Nothing is admitted today: derived is a claim, and it claims nothing.
@@ -651,3 +651,334 @@ def test_no_caller_can_hand_the_classifier_a_table_of_steps():
     # ``qualified: true`` spelled a third way.
     import inspect
     assert list(inspect.signature(classify_allocations).parameters) == ["ledger"]
+
+
+# --- the derived ownership views (tessera#399) --------------------------------
+#
+# The classifier reads a derived view where the census left a row unowned. The
+# view is an observation the report carries, so everything below is built as
+# the ledger member a consumer reads, never as an argument to the classifier.
+
+
+def _owner_views(views, *, dense=None):
+    """An ownership observation carrying one view per named allocation."""
+    from experiments.full_engine_ownership import (
+        OWNERSHIP_OBSERVATION_SCHEMA, OWNER_VIEWS_SCHEMA)
+    rows = [{"allocation_id": key, "class": None, "unit": None, "rule": None,
+             "reason": None, "site": None, **value} for key, value in views.items()]
+    return {"schema": OWNERSHIP_OBSERVATION_SCHEMA,
+            "views": {"schema": OWNER_VIEWS_SCHEMA, "views": rows},
+            "dense_startup_check": dense}
+
+
+def _dense_record(ledger_bytes=512, manifest_bytes=512, *, memory_allocated_bytes=4096,
+                  live=512, outside=(), closed=True):
+    """A dense startup check whose FLAG says closed; the numbers are the evidence."""
+    from experiments.full_engine_ownership import DENSE_STARTUP_CHECK_SCHEMA
+    units = {"u0": {"family": "TESSERA_FP8",
+                    "ledger_candidate_resident_bytes": ledger_bytes,
+                    "manifest_resident_bytes_resident_mode": manifest_bytes,
+                    "difference_bytes": ledger_bytes - manifest_bytes,
+                    "agree": ledger_bytes == manifest_bytes}}
+    return {"schema": DENSE_STARTUP_CHECK_SCHEMA, "units": units, "units_checked": 1,
+            "units_disagreeing": [], "candidate_units_outside_manifest": list(outside),
+            "manifest_unpriced_resident_bytes": max(0, ledger_bytes - manifest_bytes),
+            "memory_allocated_bytes": memory_allocated_bytes,
+            "ledger_live_bytes_at_ready_for_workload": live,
+            "allocator_sample_bounds_ledger": True, "closed": closed}
+
+
+def test_the_classifier_charges_a_row_to_the_class_and_unit_its_view_names():
+    row = _raw("derived", 6, 3, 8, [], "outside_units", [])
+    ledger = _synthetic_ledger(6, [row], steps=[(2, 9)])
+    ledger["owner_views"] = _owner_views({"derived": {"class": "candidate", "unit": "u0",
+                                                      "rule": "site:plugin"}})
+    classified, unclassified, non_step = classify_allocations(ledger)
+    assert unclassified == [] and non_step == []
+    assert classified[0]["owner_class"] == "candidate" and classified[0]["unit"] == "u0"
+    assert derive_partition(ledger)["terms"]["candidate_scratch"] == {"u0": 6}
+
+
+def test_an_observer_row_is_named_in_full_and_charged_to_no_serve_term():
+    # The observation's own cost is not the serve's to pay for, and it is not
+    # silently dropped either: it is listed with its bytes and its site.
+    observer = _raw("observer-row", 6, 3, 8, ["fixed"], "outside_units", [])
+    serve = _raw("in-step", 6, 3, 8, ["fixed"], "outside_units", [])
+    ledger = _synthetic_ledger(12, [observer, serve], steps=[(2, 9)])
+    site = {"file": "/observer/experiments/full_engine_worker.py", "name": "snapshot",
+            "line": 3, "package": "observer", "relative": "experiments/full_engine_worker.py"}
+    ledger["owner_views"] = _owner_views({"observer-row": {"class": "observer",
+                                                           "rule": "site:observer",
+                                                           "site": site}})
+    from experiments.full_engine_resource_partition import observer_allocations
+    classified, unclassified, non_step = classify_allocations(ledger)
+    assert [row["allocation_id"] for row in classified] == ["in-step"]
+    assert unclassified == [] and non_step == []
+    listed = observer_allocations(ledger)
+    assert [row["allocation_id"] for row in listed] == ["observer-row"]
+    assert listed[0] == {"allocation_id": "observer-row", "bytes": 6, "allocate_index": 3,
+                         "free_completed_index": 8, "site": site}
+    partition = derive_partition(ledger)
+    assert partition["scope"]["observer_allocation_count"] == 1
+    assert [row["allocation_id"] for row in partition["observer_allocations"]] == ["observer-row"]
+    assert partition["terms"]["fixed_scratch"] == 6
+
+
+def test_no_row_is_an_observer_row_without_a_derived_view():
+    from experiments.full_engine_resource_partition import observer_allocations
+    row = _raw("a", 6, 3, 8, ["fixed"], "outside_units", [])
+    assert observer_allocations(_synthetic_ledger(6, [row], steps=[(2, 9)])) == []
+
+
+def test_a_row_pending_tessera_548_is_unclassified_under_the_rule_that_abstained():
+    # The reason a consumer reads names the rule, not just the absence.
+    row = _raw("boundary", 6, 3, 8, ["shared"], "outside_units", [])
+    ledger = _synthetic_ledger(6, [row], steps=[(2, 9)])
+    ledger["owner_views"] = _owner_views({"boundary": {
+        "rule": "pending_548",
+        "reason": "census shared (native boundary tensor); assignment invariance is "
+                  "tessera#548's two-assignment measurement"}})
+    _, unclassified, _ = classify_allocations(ledger)
+    assert len(unclassified) == 1
+    assert unclassified[0]["reason"].startswith("pending_548:")
+    assert "tessera#548" in unclassified[0]["reason"]
+    assert all(term is None for term in derive_partition(ledger)["terms"].values())
+
+
+def test_a_closed_join_cites_the_ownership_observation_it_now_rests_on(ledger):
+    assert qualify_domains(ledger)["history_join"]["evidence"] == [
+        "unattributed_external_records", "checkpoints"]
+    ledger["owner_views"] = _owner_views({})
+    assert "owner_views" in qualify_domains(ledger)["history_join"]["evidence"]
+
+
+# --- worker_startup, closed by a dense artifact's own manifest -----------------
+
+
+def test_a_dense_startup_check_that_agrees_per_unit_closes_worker_startup():
+    from experiments.full_engine_resource_partition import dense_startup_closed
+    row = _raw("a", 6, 3, 8, ["candidate"], "inside_unit", ["u"])
+    led = _synthetic_ledger(6, [row])
+    led["owner_views"] = _owner_views({}, dense=_dense_record())
+    assert dense_startup_closed(led) is True
+    domain = qualify_domains(led)["worker_startup"]
+    assert domain["state"] == "closed"
+    assert domain["evidence"] == ["owner_views", "worker_startup_records"]
+
+
+def test_a_dense_startup_check_is_recomputed_from_its_numbers_not_read_off_its_flag():
+    # The record says closed and lists no disagreeing unit; its own two
+    # numbers differ by one byte, and that is what decides.
+    from experiments.full_engine_resource_partition import (
+        dense_startup_closed, dense_startup_refused)
+    row = _raw("a", 6, 3, 8, ["candidate"], "inside_unit", ["u"])
+    led = _synthetic_ledger(6, [row])
+    led["owner_views"] = _owner_views({}, dense=_dense_record(ledger_bytes=513, closed=True))
+    assert led["owner_views"]["dense_startup_check"]["closed"] is True
+    assert dense_startup_closed(led) is False
+    assert dense_startup_refused(led) is True
+    domain = qualify_domains(led)["worker_startup"]
+    assert domain["state"] == "refused" and domain["evidence"] == []
+    assert "1 of 1 units differ from the manifest" in domain["reason"]
+
+
+@pytest.mark.parametrize("record,fragment", [
+    (dict(outside=["u9"]), "candidate units outside the manifest"),
+    (dict(memory_allocated_bytes=1, live=512), "allocator sample at arm is below"),
+])
+def test_a_dense_startup_check_that_contradicts_the_ledger_refuses(record, fragment):
+    from experiments.full_engine_resource_partition import dense_startup_closed
+    row = _raw("a", 6, 3, 8, ["candidate"], "inside_unit", ["u"])
+    led = _synthetic_ledger(6, [row])
+    led["owner_views"] = _owner_views({}, dense=_dense_record(**record))
+    assert dense_startup_closed(led) is False
+    assert fragment in qualify_domains(led)["worker_startup"]["reason"]
+
+
+# --- provenance_admission, closed by the runtime provenance relation ----------
+
+
+def _relation(checks):
+    return {"schema": "tessera.full_engine_runtime_provenance_relation.v1",
+            "checks": checks, "complete": all(check["agree"] for check in checks)}
+
+
+def test_a_runtime_provenance_relation_whose_equalities_all_agree_closes_the_domain():
+    from experiments.full_engine_resource_partition import provenance_admission_closed
+    led = _synthetic_ledger(6, [])
+    led["runtime_provenance_relation"] = _relation(
+        [{"name": "image_id", "values": {"launch": "sha256:a", "installer": "sha256:a"},
+          "agree": True}])
+    assert provenance_admission_closed(led) is True
+    domain = qualify_domains(led)["provenance_admission"]
+    assert domain["state"] == "closed" and domain["evidence"] == ["runtime_provenance_relation"]
+
+
+def test_a_check_that_claims_agreement_over_a_missing_value_does_not_close():
+    # A missing value never agrees, whatever the record says about it.
+    from experiments.full_engine_resource_partition import (
+        provenance_admission_closed, provenance_admission_refused)
+    led = _synthetic_ledger(6, [])
+    led["runtime_provenance_relation"] = _relation(
+        [{"name": "image_id", "values": {"launch": "sha256:a", "installer": "sha256:a"},
+          "agree": True},
+         {"name": "core_files_unchanged", "values": {"installer": None, "manifest": 7},
+          "agree": True}])
+    assert provenance_admission_closed(led) is False
+    assert provenance_admission_refused(led) is True
+    domain = qualify_domains(led)["provenance_admission"]
+    assert domain["state"] == "refused"
+    assert "core_files_unchanged" in domain["reason"]
+    assert "image_id" not in domain["reason"]
+
+
+def test_a_relation_with_no_check_in_it_closes_nothing():
+    from experiments.full_engine_resource_partition import provenance_admission_closed
+    led = _synthetic_ledger(6, [])
+    led["runtime_provenance_relation"] = _relation([])
+    assert provenance_admission_closed(led) is False
+
+
+# --- timing_partition, closed by a same-run timing observation ----------------
+
+
+def _timing_record(*, established=True, checks=None, identity=None, terms=None):
+    return {"schema": "tessera.full_engine_timing_observation.v1",
+            "run_identity": {} if identity is None else identity,
+            "qualification": {"stream_coverage": {"passed": True}} if checks is None else checks,
+            "partition": {"established": established,
+                          "reason": None if established else "failed qualification: step_shape",
+                          "terms": terms}}
+
+
+def test_a_same_run_timing_observation_closes_the_timing_partition():
+    from experiments.full_engine_resource_partition import (
+        derive_timing_terms, timing_partition_closed)
+    good = _raw("a", 6, 2, 9, ["candidate"], "inside_unit", ["u"])
+    led = _synthetic_ledger(6, [good], steps=[(2, 9)])
+    led["identity"] = {"configuration_sha256": "a" * 64, "model_sha256": "b" * 64}
+    led["timing_captures"] = _timing_record(
+        identity={"configuration_sha256": "a" * 64, "model_sha256": "b" * 64},
+        terms={"prefill": {"whole_step_ms": [5.0]}})
+    assert timing_partition_closed(led) is True
+    partition = derive_partition(led)
+    assert partition["domains"]["timing_partition"]["state"] == "closed"
+    assert partition["domains"]["timing_partition"]["evidence"] == ["timing_captures"]
+    assert derive_timing_terms(led, partition) == {"prefill": {"whole_step_ms": [5.0]}}
+
+
+@pytest.mark.parametrize("record,fragment", [
+    (dict(identity={"configuration_sha256": "z" * 64}), None),
+    (dict(established=False), "did not establish its partition"),
+    (dict(checks={"step_shape": {"passed": False}}), "failed qualification: step_shape"),
+])
+def test_a_timing_observation_that_does_not_qualify_refuses_the_domain(record, fragment):
+    from experiments.full_engine_resource_partition import (
+        derive_timing_terms, timing_partition_closed, timing_partition_refused)
+    led = _synthetic_ledger(0, [])
+    led["identity"] = {"configuration_sha256": "a" * 64}
+    led["timing_captures"] = _timing_record(**record)
+    assert timing_partition_closed(led) is False
+    assert timing_partition_refused(led) is True
+    domain = qualify_domains(led)["timing_partition"]
+    assert domain["state"] == "refused" and domain["evidence"] == []
+    if fragment is not None:
+        assert fragment in domain["reason"]
+    assert derive_timing_terms(led, derive_partition(led)) is None
+
+
+# --- the derived verdict, the fixed-resource statement and the report ---------
+
+
+def _partition_shape(states=None, **scope):
+    fields = {"expressible": True, "unclassified_allocation_count": 0,
+              "uncharged_allocation_count": 0}
+    fields.update(scope)
+    return {"domains": {name: {"state": (states or {}).get(name, "closed")}
+                        for name in DOMAIN_NAMES},
+            "scope": fields}
+
+
+def test_admission_is_admitted_only_when_every_domain_closed_and_every_term_priced():
+    from experiments.full_engine_resource_partition import derive_admission
+    admission = derive_admission(_partition_shape())
+    assert admission["verdict"] == "admitted" and admission["reason"] is None
+    assert admission["closed"] == list(DOMAIN_NAMES)
+    assert admission["open"] == [] and admission["refused"] == []
+    assert set(admission["domains"]) == set(DOMAIN_NAMES)
+
+
+@pytest.mark.parametrize("states,scope,fragment", [
+    ({"timing_partition": "open"}, {}, "open domains: timing_partition"),
+    ({"worker_startup": "refused"}, {}, "refused domains: worker_startup"),
+    (None, {"expressible": False, "unclassified_allocation_count": 3},
+     "3 unclassified allocations"),
+    (None, {"expressible": False, "uncharged_allocation_count": 2},
+     "2 uncharged allocations"),
+])
+def test_admission_is_refused_with_the_names_and_counts_that_refused_it(states, scope, fragment):
+    from experiments.full_engine_resource_partition import derive_admission
+    admission = derive_admission(_partition_shape(states, **scope))
+    assert admission["verdict"] == "refused"
+    assert fragment in admission["reason"]
+
+
+def test_the_fixed_resource_statement_is_inexpressible_while_a_term_is_unavailable(ledger):
+    from experiments.full_engine_resource_partition import derive_fixed_resources
+    partition = derive_partition(ledger)
+    statement = derive_fixed_resources(partition)
+    assert statement["state"] == "inexpressible"
+    assert statement["unavailable_terms"] == partition["scope"]["unavailable_terms"]
+    assert statement["terms"] == partition["terms"]
+    assert statement["scalar_budget_bytes"] is None
+    assert statement["placement_obligation"] == \
+        "max(scalar_budget_bytes, non_step_transient_peak_bytes)"
+    assert statement["invariance"] == partition["scope"]["invariance"]
+
+
+def test_the_report_is_v2_and_derived_carries_the_verdict_terms_and_timing(ledger):
+    report = assemble_full_engine_resource_report(ledger, **_members())
+    assert report["schema"] == "tessera.full_engine_resource_report.v2"
+    derived = report["derived"]
+    assert derived["admission"]["verdict"] == "refused"
+    assert derived["admission"]["open"]
+    assert derived["fixed_resources"]["state"] == "inexpressible"
+    # Null while the domain is open: the terms are the observation's, never a
+    # recomposition from anything else.
+    assert derived["timing_terms"] is None
+    assert report["partition"]["scope"]["observer_allocation_count"] == 0
+
+
+def test_the_observation_field_set_is_unchanged_from_v1(ledger):
+    # v2 adds derived members and a partition member; the observations a
+    # consumer reads are the same set, so nothing it already parses moved.
+    report = assemble_full_engine_resource_report(ledger, **_members())
+    assert report["schema"] == "tessera.full_engine_resource_report.v2"
+    assert set(report["observations"]) == {
+        "capture_sha256", "torch_allocations", "checkpoints", "cuda_argument_domains",
+        "unattributed_external_records", "external_native_peak_bytes",
+        "torch_observed_live_peak_bytes", "torch_observed_live_peak_scope",
+        "step_intervals", "step_coverage", "issues", "worker_startup_records",
+        "runtime_provenance_relation", "kv_observations", "timing_captures",
+        "owner_views", "observer_qualification", "artifacts"}
+
+
+def test_the_worker_startup_reason_names_the_bytes_the_manifest_does_not_price():
+    # A refusal that says only "they differ" sends the reader to the code. This
+    # one says how many bytes and where the rows carrying them are listed.
+    led = _synthetic_ledger(0, [])
+    led["owner_views"] = _owner_views({}, dense=_dense_record(ledger_bytes=576, closed=True))
+    reason = qualify_domains(led)["worker_startup"]["reason"]
+    assert "1 of 1 units differ from the manifest" in reason
+    assert "64 resident bytes the manifest does not price" in reason
+    assert "owner_views.dense_startup_check.units[*].resident_rows" in reason
+
+
+def test_a_ledger_below_the_manifest_refuses_without_claiming_unpriced_bytes():
+    from experiments.full_engine_resource_partition import dense_startup_closed
+    led = _synthetic_ledger(0, [])
+    led["owner_views"] = _owner_views({}, dense=_dense_record(ledger_bytes=256, closed=True))
+    assert dense_startup_closed(led) is False
+    reason = qualify_domains(led)["worker_startup"]["reason"]
+    assert "1 of 1 units differ from the manifest" in reason
+    assert "does not price" not in reason
