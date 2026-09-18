@@ -46,10 +46,24 @@ def kv_configuration_observation(worker, received):
     values = {name: kv_config_value(getattr(cache, name)) for name in policy_fields if hasattr(cache, name)}
     groups = getattr(resolved, "kv_cache_groups", [])
     # The original descriptor projection remains readable by earlier consumers.
+    # The stock KVCacheTensor spells its layer list ``layers`` (with a
+    # ``layer_stride``) in vLLM 0.28.1rc1 and ``shared_by`` (no stride) in the
+    # attested 0.28.0; the projection reads whichever the runtime's own
+    # dataclass carries and records the field names it read, and the generic
+    # ``received``/``runner_resolved`` dumps beside it keep the exact shape.
+    # No capacity check reads this projection.
+    descriptor_fields = sorted({name for tensor in received.kv_cache_tensors
+                                for name in ([field.name for field in dataclasses.fields(tensor)]
+                                             if dataclasses.is_dataclass(tensor) else vars(tensor))})
     return {"num_blocks": received.num_blocks,
-            "tensors": [{"size": tensor.size, "layers": tensor.layers,
-                         "layer_stride": tensor.layer_stride, "block_stride": tensor.block_stride,
+            "tensors": [{"size": tensor.size,
+                         "layers": list(getattr(tensor, "layers", getattr(tensor, "shared_by", []))),
+                         "layer_stride": getattr(tensor, "layer_stride", None),
+                         "block_stride": tensor.block_stride,
                          "offset": tensor.offset} for tensor in received.kv_cache_tensors],
+            "descriptor_fields": descriptor_fields,
+            "descriptor_layers_field": ("layers" if any(hasattr(t, "layers") for t in received.kv_cache_tensors)
+                                        else "shared_by"),
             "received": kv_config_value(received) if dataclasses.is_dataclass(received) else None,
             "runner_resolved": kv_config_value(resolved),
             "group_page_size_bytes": [kv_config_value(group.kv_cache_spec.page_size_bytes) for group in groups],

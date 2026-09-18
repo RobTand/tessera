@@ -44,7 +44,7 @@ def test_same_run_partition_preserves_direct_gaps_and_async_copy(evidence):
     result = analyze_profile_partition(*evidence)
     assert result["status"] == "observed_same_run_partition", result
     assert result["timings"] is None
-    assert result["admission"] == "not_implemented"
+    assert result["admission"] is None and "full_engine_timing_observation" in result["pricing_scope"]
     for step in result["steps"]:
         assert step["fixed_gap_sum_ms"] == 3.0
         assert step["observed_stream_ids"] == [7, 8]
@@ -149,4 +149,4 @@ def test_gpu_annotation_projection_cannot_duplicate_or_replace_cpu_range(evidenc
         events.append(dict(cpu_ranges[0]))
     result = analyze_profile_partition(capture, profile)
     assert result["status"] == ("observed_same_run_partition" if cpu_range_state == "unique" else "incomplete"), result
-    assert result["timings"] is None and result["admission"] == "not_implemented"
+    assert result["timings"] is None and result["admission"] is None

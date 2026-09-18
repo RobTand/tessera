@@ -5,6 +5,14 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-18 for the full-engine derivation layer (tessera#399,
+§2.4): allocation ownership by declared rule (`owner_views`), all six partition
+domains checked, `derived.admission` / `fixed_resources` / `timing_terms`
+derived rather than hard-set, the timing observation record, and report schema
+v2. Two named holds keep every resource term null on the mixed3 captures: the
+tessera#548 shared rows and the exporter's manifest resident figure, which
+omits the BF16 `row_scale` and the NVFP4 global scale.
+
 Re-stamped 2026-09-17 for the window-GEMV cell withdrawal (tessera#538,
 contract v31). The `lane_eligibility` cells that named the dense window-GEMV
 dispatch are REMOVED, and `scheme.ROUTE_LAUNCHES` no longer carries its three
@@ -1654,10 +1662,12 @@ rank that measured it; `--receipt` supplies the routed-owner receipt whose own
 Observer settings and incomplete raw captures cannot qualify a served model.
 
 Its distinct `tessera.full_engine_raw_resource_ledger.v1` schema never emits a
-fixed-resource object or timings: `fixed_resources` and `timings` remain null,
-`admission` is `not_implemented`, and
-`full_model_fixed_resources_complete` remains false even when the restricted
-raw ledger reconciles. Neither a whole-engine peak nor supplied operator
+fixed-resource object or timings: `fixed_resources` and `timings` remain null
+there, `admission` is null beside a `pricing_scope` naming the partition report
+as the one place admission, fixed resources and timing terms are derived
+(`derived.admission`, `derived.fixed_resources`, `derived.timing_terms`,
+tessera#399), and `full_model_fixed_resources_complete` remains false even when
+the restricted raw ledger reconciles. Neither a whole-engine peak nor supplied operator
 medians are converted into fixed costs. Runtime provenance, complete external
 and host/UMA ownership, stream/timing attribution, and an explicitly bound
 shared attention/recurrent cache-capacity policy require further engine
@@ -1687,9 +1697,17 @@ stream may carry other work. Copy work overlapping native units refuses. The
 sum must recompose the whole interval within only binary32 representation
 rounding. Raw files survive an incomplete partition and the launcher then fails.
 `observed_same_run_partition` describes observed coverage, not profiler health,
-observer overhead qualification or a fixed timing price. Complete collection,
-overhead, runtime/assignment admission and full memory ownership remain explicit
-qualification gaps; `timings` stays null and admission remains unimplemented.
+observer overhead qualification or a fixed timing price. `timings` and
+`admission` stay null in the timing run record. `experiments/
+full_engine_timing_observation.py` builds one
+`tessera.full_engine_timing_observation.v1` record per timing pass from the
+arms, the launcher's host compute-process census and the worker's NVML census
+at arm and finish, with seven named checks (`single_worker`, `identical_tokens`,
+`arms_complete`, `step_shape`, `stream_coverage`, `gpu_operation_counts_agree`,
+`device_exclusivity`) and `partition.established` only when all pass; its terms
+are per phase and per sample, observer overhead (partition minus control whole
+step) is disclosed per sample and never subtracted, and the partition report's
+`timing_partition` domain closes on that record alone (tessera#399).
 
 `experiments/full_engine_resource_partition.py` derives the resource partition
 from that raw ledger without relaxing any of its gates. It restates the ledger's
@@ -1699,23 +1717,38 @@ six `qualification_gaps` as six named **domains** — `worker_startup`,
 evidence or its own reason. `refused` means the evidence exists and contradicts
 the model; `open` means it was never observed. Both block.
 
-Four domains have an implemented closure check — `history_join` reads
-`unattributed_external_records`, `external_closure` reads
+All six domains have an implemented closure check (tessera#399, 2026-09-18) —
+`history_join` reads `unattributed_external_records`, `external_closure` reads
 `external_native_peak_bytes`, `worker_startup` recomputes its equalities from
-`worker_startup_records` and `cache_capacity` recomputes them from
-`kv_observations` — and all four go `refused` on unresolved ledger `issues`.
-The other two state that no check exists rather than closing. `qualify_domains`
-takes the ledger and nothing else, so no caller can close a domain by supplying
-an artifact nobody reads; a domain that closed because an argument was truthy
-would be `qualified: true` under another name. `worker_startup` needs two
-independent sides: the replay refuses a capture whose recorder attached after
-CUDA initialization, which proves that half, and the sample itself must have
-been taken in the engine's own worker process after `lock_workspace()`, with the
-ledger's `fixed`-owned never-freed rows summing to exactly the routed-owner
-receipt's own `resources.resident_bytes`. `cache_capacity` may only close on a
-**read-only** pass's record: the intrusive resource pass marks its own record
-timing- and admission-ineligible, and that record serves as the capacity witness
-the two passes are compared with instead.
+`worker_startup_records` or, for a dense artifact, from
+`owner_views.dense_startup_check`, `cache_capacity` recomputes them from
+`kv_observations`, `provenance_admission` recomputes the
+`runtime_provenance_relation`'s named equality checks (identity digests,
+configuration, core manifest and file count, image id, plugin installer
+evidence, module identity, collector and workspace libraries) and refuses a
+relation whose `complete` disagrees with its own checks, and `timing_partition`
+closes on exactly one timing observation naming the ledger's served object
+(configuration, model, assignment, canonical units, runtime manifest — the
+timing pass declares its own workload, whose digest travels with the terms),
+`partition.established` and every check passed — and all six go `refused` on
+unresolved ledger `issues`. `qualify_domains` takes the ledger and nothing
+else, so no caller can close a domain by supplying an artifact nobody reads; a
+domain that closed because an argument was truthy would be `qualified: true`
+under another name. `worker_startup` needs two independent sides: the replay
+refuses a capture whose recorder attached after CUDA initialization, which
+proves that half, and the sample itself must have been taken in the engine's
+own worker process after `lock_workspace()`, with the ledger's `fixed`-owned
+never-freed rows summing to exactly the routed-owner receipt's own
+`resources.resident_bytes`. A dense artifact's second side is its own
+`tessera_serving_manifest.json`: the ledger's candidate-owned resident rows per
+unit must **equal** the manifest's `resident_bytes_resident_mode`, and a
+disagreeing unit lists its rows by census owner or site rather than being
+absorbed (on the mixed3 capture two layer-0 units disagree because the exporter
+prices the FP8 per-row scale but not the BF16 `row_scale` nor the NVFP4 global
+scale — an export-side finding, and the domain refuses). `cache_capacity` may
+only close on a **read-only** pass's record: the intrusive resource pass marks
+its own record timing- and admission-ineligible, and that record serves as the
+capacity witness the two passes are compared with instead.
 
 Every composition term names the domains it depends on, and a term whose domains
 are not all closed is null and listed in `scope.unavailable_terms`. Nothing is
@@ -1724,8 +1757,13 @@ tolerance becomes a fixed charge. Transient maxima come from a simultaneous
 allocation/free sweep over the declared interval — a sum of per-allocation
 maxima is not a peak, and neither is a difference of two independent peaks. An
 allocation whose observed category is `shared`, `unknown`, absent or plural is
-unclassified and named in `unclassified_allocations`; ownership is never
-inferred from a pointer or from what is left over. **One unclassified
+unclassified and named in `unclassified_allocations` unless a declared
+ownership rule (`experiments/full_engine_ownership.py` `RULES`: the census,
+history order before model load, the allocation site's package — plugin route
+module, vLLM, image, observer — and the tessera#548 abstention for shared rows
+after load) gives it exactly one owner; the rule and the site travel with the
+row in `owner_views`, an `observer` row is charged to nothing, and ownership is
+never inferred from a pointer or from what is left over. **One unclassified
 allocation nulls every term**, whatever the domains say — such a row has neither
 owner nor lifetime, so it could belong to any term. An allocation freed with no
 unit interval containing either end is unclassified for that reason: charging it
@@ -1745,22 +1783,20 @@ is disclosed conservatism, not permission to charge one extent twice. The frozen
 producer schema is `docs/design/full_engine_resource_report.md`; the consumer
 that must independently recompute it is PrismaQuant's, per its
 `docs/design/runtime_fixed_resource_admission.md`.
-**Two domains are still unclosable, and the envelope says which.** The two
-observation members `worker_startup_records` and `kv_observations` now have a
-producer and a closure check, so `fixed_resident`, `candidate_resident`,
-`fixed_activation`, `candidate_activation` and `fixed_KV` are reachable from a
-capture that actually observed them. `provenance_admission` and
-`timing_partition` still carry a state without an observation a consumer can
-read them out of, so a consumer that independently recomputes holds those two
-open whatever the report claims, and every timing price with them.
-`observations` still names each owed member — `runtime_provenance_relation`,
-`timing_captures`, `owner_views`, `observer_qualification` are carried as null,
-while the two startup/KV members carry their records when a pass observed them
-and an explicit empty list with the refusal's reason beside it when it did not —
-named rather than absent, so a consumer can tell "not observed" from "not
-carried". Every id in a domain's `evidence` must name a member `observations`
-carries, and assembly refuses otherwise; `derived` does not restate
-`partition`'s `domains`.
+**Every owed observation now has a producer, and the envelope says what still
+holds terms null.** `worker_startup_records`, `kv_observations`,
+`runtime_provenance_relation`, `timing_captures` and `owner_views` each carry a
+record when a pass observed it and an explicit null or empty list with the
+refusal's reason when it did not — named rather than absent, so a consumer can
+tell "not observed" from "not carried"; `observer_qualification` is still
+carried as null. On the 2026-09-18 mixed3 captures `history_join`,
+`external_closure`, `provenance_admission`, `cache_capacity` and
+`timing_partition` close; the `pending_548` shared rows (358) stay unclassified
+by rule and the dense manifest disagreement refuses `worker_startup`, so the
+resource terms are null and `derived.timing_terms` is carried — a partially
+expressible `derived`. Every id in a domain's `evidence` must name a member
+`observations` carries, and assembly refuses otherwise; `derived` does not
+restate `partition`'s `domains`.
 
 `derive_partition` takes the ledger and nothing else. It once accepted a
 caller-supplied `domains` mapping so the arithmetic was testable, recording
@@ -1802,9 +1838,13 @@ than projected over** — the partition stamps one composite topology, and a
 report whose scope contradicts its own declaration is what that stamp used to
 produce. `fixture_provenance` is carried from the capture through the
 ledger into `identity`, so an artifact derived from a synthetic fixture cannot
-read as a measurement. Admission stays closed: on the only ledger fixture that
-exists, every composition term is null and the scalar budget is null, and no
-serving gate reads this partition.
+read as a measurement. `derived.admission` is a derived verdict —
+`admitted` only when no domain is open or refused and every term is
+expressible — and on every real capture to date it is `refused` with its reason
+(the tessera#548 rows; the dense manifest disagreement); the report schema is
+`tessera.full_engine_resource_report.v2`, which the PrismaQuant consumer pinned
+to v1 refuses until its own change teaches it, and no serving gate reads this
+partition.
 
 ### 2.5 Whole routed receipts preserve the actual expert owner
 

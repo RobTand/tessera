@@ -24,7 +24,10 @@ def test_storage_aliases_are_counted_once_without_fixed_resource_admission(captu
     assert result["fixed_resources"] is None
     assert result["timings"] is None
     assert result["full_model_fixed_resources_complete"] is False
-    assert result["admission"] == "not_implemented"
+    # The raw ledger states no verdict: admission is derived downstream, by
+    # the partition report, and the ledger says where (tessera#399).
+    assert result["admission"] is None
+    assert "derived.admission" in result["pricing_scope"]
 
 
 def test_native_boundary_owners_are_observed_again_after_output_creation():
@@ -483,3 +486,189 @@ def test_a_step_count_that_disagrees_with_the_intervals_carried_refuses():
     raw["step_coverage"]["declared"] = 2
     ledger = analyze_engine_resource_ledger(raw)
     assert any("declared step count disagrees" in issue for issue in ledger["issues"])
+
+
+# --- the replay-time ownership derivation (tessera#399) -----------------------
+
+SITE = "/img/site-packages"
+
+#: The run's own inventories, in the shape ``report_full_engine_resources.
+#: ownership_evidence`` assembles. The roster is empty because this fixture has
+#: no canonical unit; the site rules do not read it.
+OWNERSHIP_EVIDENCE = {
+    "plugin_package_path": SITE + "/tessera",
+    "plugin_files": {"decode.py"},
+    "vllm_root": SITE + "/vllm",
+    "vllm_files": {"v1/worker/gpu_model_runner.py"},
+    "observer_roots": [],
+    "observer_libraries": [],
+    "plugin_jit_prefix": None,
+    "jit_cache_prefixes": [],
+    "inventory_digests": {"core_manifest_sha256": "m" * 64},
+    "roster": [],
+    "dense_startup": None,
+}
+
+
+def _unowned_engine_transient(raw):
+    """The banked capture with one row the census does not own, sited in vLLM.
+
+    The 1024-byte storage at 4608 is the only allocation this fixture leaves
+    live at a checkpoint under a unit. Dropping its census owner is what a
+    stock-engine transient looks like to the replay: live at a checkpoint, no
+    owner, and an allocation site that says which package asked for the bytes.
+    """
+    history = raw["torch_snapshot"]["device_traces"][0]
+    history[6]["frames"] = [{"filename": SITE + "/vllm/v1/worker/gpu_model_runner.py",
+                             "name": "execute_model", "line": 10}]
+    unit_end = next(row for row in raw["checkpoints"] if row["label"] == "unit_end")
+    unit_end["owners"] = [owner for owner in unit_end["owners"]
+                          if owner["owner_id"] != "unit.output"]
+    for checkpoint in raw["checkpoints"]:
+        checkpoint["history_prefix_sha256"] = _digest(history[:checkpoint["trace_index"]])
+    return raw
+
+
+def test_without_the_run_inventories_an_unowned_live_row_is_still_an_issue(capture):
+    from experiments.full_engine_resources import analyze_engine_resource_ledger
+    result = analyze_engine_resource_ledger(_unowned_engine_transient(copy.deepcopy(capture)))
+    assert "unowned allocation live at checkpoint: 0:4608:2" in result["issues"]
+    assert result["status"] == "incomplete"
+    assert result["owner_views"] is None
+
+
+def test_a_declared_rule_places_the_row_the_census_left_unowned(capture):
+    from experiments.full_engine_resources import analyze_engine_resource_ledger
+    result = analyze_engine_resource_ledger(_unowned_engine_transient(copy.deepcopy(capture)),
+                                            OWNERSHIP_EVIDENCE)
+    assert result["issues"] == [], result["issues"]
+    assert result["status"] == "observed_raw_ledger"
+    assert result["owner_views"]["schema"] == "tessera.full_engine_ownership_observation.v1"
+    views = {view["allocation_id"]: view
+             for view in result["owner_views"]["views"]["views"]}
+    assert (views["0:4608:2"]["class"], views["0:4608:2"]["rule"]) == ("fixed", "site:vllm")
+    assert views["0:4608:2"]["site"]["package"] == "vllm"
+    assert views["0:4608:2"]["site"]["relative"] == "v1/worker/gpu_model_runner.py"
+    # Observed ownership is repeated, never rewritten.
+    assert views["0:4096:1"]["rule"] == "census"
+    assert result["torch_allocations"][0]["observed_categories"] == ["fixed"]
+
+
+def test_the_derivation_leaves_a_row_no_rule_places_null_and_counted(capture):
+    from experiments.full_engine_resources import analyze_engine_resource_ledger
+    result = analyze_engine_resource_ledger(_unowned_engine_transient(copy.deepcopy(capture)),
+                                            OWNERSHIP_EVIDENCE)
+    summary = result["owner_views"]["views"]["summary"]
+    assert summary["by_rule"] == {"census": 1, "none": 1, "site:vllm": 1}
+    assert summary["null_views"] == 1 and summary["null_bytes"] == 512
+    assert sum(summary["by_rule"].values()) == len(result["torch_allocations"])
+
+
+def test_the_derivation_carries_its_witnesses_and_its_external_classification(capture):
+    from experiments.full_engine_resources import analyze_engine_resource_ledger
+    result = analyze_engine_resource_ledger(_unowned_engine_transient(copy.deepcopy(capture)),
+                                            OWNERSHIP_EVIDENCE)
+    observation = result["owner_views"]
+    assert observation["boundary_geometry_witness"]["cells"] == []
+    assert observation["transient_gap_witness"]["steps"] == {}
+    assert observation["dense_startup_check"] is None
+    assert observation["external_records"]["record_count"] == 0
+    assert result["unattributed_external_records"] == []
+    assert result["external_native_peak_bytes"] == 0
+
+
+def test_the_raw_ledger_prices_nothing_and_says_where_each_price_is_derived(capture):
+    from experiments.full_engine_resources import analyze_engine_resource_ledger
+    result = analyze_engine_resource_ledger(capture, OWNERSHIP_EVIDENCE)
+    assert result["admission"] is None
+    assert result["fixed_resources"] is None and result["timings"] is None
+    for member in ("derived.admission", "derived.fixed_resources", "derived.timing_terms"):
+        assert member in result["pricing_scope"]
+
+
+# --- the runtime provenance relation -----------------------------------------
+
+
+def _provenance_inputs():
+    """Every value populated and equal; each test takes one of them away."""
+    from experiments.full_engine_resources import IDENTITY_HASHES
+    identity = {name: "a" * 64 for name in IDENTITY_HASHES}
+    plan = {"identity": dict(identity), "collector_library_sha256": "c" * 64,
+            "runtime_evidence_sha256": "e" * 64,
+            "workload": {"calibration": {"sha256": "w" * 64}}}
+    launch = {"configuration_sha256": "a" * 64, "image_id": "sha256:abc", "image": "registry/x",
+              "source_commit": "deadbeef"}
+    per_job = {"core_manifest_sha256": "a" * 64, "core_files_unchanged": 7,
+               "launcher_declared_image_id": "sha256:abc", "plugin_source_sha256": "p" * 64,
+               "tessera_version": "0.1", "vllm_version": "0.20", "upstream_commit": "u" * 40}
+    runtime_observation = {
+        "configuration_sha256": "a" * 64,
+        "execution": {"configuration_sha256": "a" * 64},
+        "actual_execution": {"graph_mode": "eager"},
+        "loaded_package": {"installer_evidence_sha256": "e" * 64,
+                           "package_files_unchanged_from_installer": True,
+                           "module_identity_errors": [],
+                           "package_path": SITE + "/tessera"},
+        "instrumentation": {"resource_collector": {"library_sha256": "c" * 64}}}
+    return identity, plan, launch, per_job, runtime_observation
+
+
+def _relation(**overrides):
+    from experiments.full_engine_resources import runtime_provenance_relation
+    identity, plan, launch, per_job, runtime_observation = _provenance_inputs()
+    arguments = {"plan": plan, "launch": launch, "per_job": per_job,
+                 "runtime_observation": runtime_observation, "core_file_count": 7}
+    arguments.update(overrides)
+    return runtime_provenance_relation(identity, **arguments)
+
+
+def test_a_relation_whose_every_equality_agrees_is_complete():
+    relation = _relation()
+    assert relation["schema"] == "tessera.full_engine_runtime_provenance_relation.v1"
+    assert relation["complete"] is True
+    assert all(check["agree"] for check in relation["checks"])
+    assert {check["name"] for check in relation["checks"]} >= {
+        "image_id", "core_files_unchanged", "runtime_manifest_sha256:installer",
+        "plugin_installer_evidence", "resource_collector_sha256"}
+    assert relation["core"]["file_count"] == 7
+
+
+def test_one_differing_digest_names_itself_and_refuses_the_relation():
+    _identity, plan, _launch, _per_job, _runtime = _provenance_inputs()
+    plan["identity"]["model_sha256"] = "z" * 64
+    relation = _relation(plan=plan)
+    assert relation["complete"] is False
+    failed = [check["name"] for check in relation["checks"] if not check["agree"]]
+    assert failed == ["model_sha256"]
+
+
+def test_a_missing_value_never_agrees():
+    _identity, _plan, launch, _per_job, _runtime = _provenance_inputs()
+    launch["image_id"] = None
+    relation = _relation(launch=launch)
+    assert relation["complete"] is False
+    check = next(row for row in relation["checks"] if row["name"] == "image_id")
+    assert check["agree"] is False
+    assert check["values"] == {"launch": None, "installer": "sha256:abc"}
+
+
+def test_a_worker_that_reports_a_module_identity_error_refuses_the_relation():
+    _identity, _plan, _launch, _per_job, runtime = _provenance_inputs()
+    runtime["loaded_package"]["module_identity_errors"] = ["tessera.decode"]
+    relation = _relation(runtime_observation=runtime)
+    assert relation["complete"] is False
+    check = next(row for row in relation["checks"]
+                 if row["name"] == "plugin_module_identity_errors")
+    assert check["agree"] is False
+
+
+def test_a_blas_workspace_observer_the_plan_declared_is_checked_too():
+    _identity, plan, _launch, _per_job, runtime = _provenance_inputs()
+    plan["blas_workspace_observer"] = {"path": "/observer/libblas.so", "sha256": "b" * 64}
+    runtime["instrumentation"]["blas_workspace_observer"] = {"library_sha256": "b" * 64}
+    relation = _relation(plan=plan, runtime_observation=runtime)
+    assert relation["complete"] is True
+    assert "blas_workspace_observer_sha256" in {check["name"] for check in relation["checks"]}
+    # Without either side the check is not invented.
+    assert "blas_workspace_observer_sha256" not in {check["name"]
+                                                    for check in _relation()["checks"]}
