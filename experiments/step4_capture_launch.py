@@ -25,11 +25,25 @@ the stock image refuses the ``tessera`` quantization method and the plugin image
 is where that census can run at all -- but it is NOT fed to the capture:
 ``capture_full_engine_resources.main`` makes ``--census`` and ``--artifact``
 mutually exclusive, because a served artifact carries its roster in
-``tessera_serving_manifest.json``.  And ``--observation-mode timings`` is not
-offered: ``prepare()`` scopes artifact observation to ``resources`` ("artifact
-observation requires the complete manifest roster (--all-units) in resource
-mode"), and lifting that is the #399 derivation layer's decision, not a
-launcher's.
+``tessera_serving_manifest.json``.
+
+THE THREE PASSES (tessera#399).  ``--observation-mode`` selects which of the
+capture CLI's passes runs in the container: ``resources`` (the intrusive
+ledger pass, the default), ``kv`` (the read-only stock-engine KV pass that
+closes ``cache_capacity`` when joined with it) and ``timings`` (the profiled
+all-native-unit event partition, ``--timing-samples`` interleaved arm pairs).
+``prepare()`` admits an artifact into every pass since the #399 derivation
+layer; each pass gets its own fresh ``--out`` and the same configuration
+document, so the three ledgers share one ``configuration_sha256`` and the
+report joins them by it.  The kv pass runs a stock worker, so it carries no
+worker census: its route trace is recorded and the qualification record says
+``qualified: false`` with that reason rather than passing on half a proof.
+
+``--preflight-only`` stops after the JIT proof and an observer load smoke
+(both collector libraries ``dlopen``ed and their entry symbols resolved, the
+observer modules imported from ``/tessera``, the stock runner's stream hooks
+located) and writes ``observer-preflight.json``.  It exists so a new image or
+a new tree is refused in minutes, before a capture is spent on it.
 """
 from __future__ import annotations
 
@@ -190,6 +204,13 @@ def main() -> int:
     parser.add_argument("--with-census", action="store_true",
                         help="also run the construction census in the plugin image; it is recorded, "
                              "not consumed (--census and --artifact are mutually exclusive)")
+    parser.add_argument("--observation-mode", choices=("resources", "kv", "timings"), default="resources",
+                        help="which capture pass runs: the intrusive ledger, the read-only KV pass, "
+                             "or the profiled timing partition")
+    parser.add_argument("--timing-samples", type=int, default=1,
+                        help="timings only: interleaved control/partition arm pairs")
+    parser.add_argument("--preflight-only", action="store_true",
+                        help="JIT proof plus observer load smoke in the pinned image; no engine, no capture")
     parser.add_argument("--timeout-s", type=int, default=3600)
     parser.add_argument("--census-timeout-s", type=int, default=900)
     args = parser.parse_args()
@@ -240,12 +261,17 @@ def main() -> int:
     ext_host = args.jit_dir / ("tessera-ext-readonly" if args.jit_readonly else "tessera-ext")
     ext_host.mkdir(parents=True, exist_ok=True)
 
+    # Every sample also lists the compute processes the driver sees on the
+    # device (host pids): the timing observation's device-exclusivity witness
+    # reads this log over the arms' spans, at this cadence, and says so.
     vitals = subprocess.Popen(
         ["bash", "-c",
-         'while true; do printf "%s MemAvailable_kB=%s gpu_W=%s gpu_used_MiB=%s\\n" '
+         'while true; do printf "%s MemAvailable_kB=%s gpu_W=%s gpu_used_MiB=%s compute_apps=%s\\n" '
          '"$(date -u +%FT%TZ)" "$(awk \'/MemAvailable/{print $2}\' /proc/meminfo)" '
          '"$(nvidia-smi --query-gpu=power.draw --format=csv,noheader,nounits | head -1)" '
-         '"$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits | head -1)"; sleep 5; done'],
+         '"$(nvidia-smi --query-gpu=memory.used --format=csv,noheader,nounits | head -1)" '
+         '"$(nvidia-smi --query-compute-apps=pid,process_name --format=csv,noheader,nounits '
+         '| tr -d " " | paste -sd";" -)"; sleep 5; done'],
         stdout=(out / "host-vitals.log").open("wb"), stderr=subprocess.STDOUT)
     phases = []
     try:
@@ -272,29 +298,40 @@ def main() -> int:
                 census_out / "census.log", args.census_timeout_s))
 
         capture_out = out / "capture"
+        mode = args.observation_mode
         capture_argv = ["--config", str(args.serving_config), "--model", str(args.artifact),
-                        "--collector", str(args.collector), "--core-manifest", str(args.core_manifest),
+                        "--core-manifest", str(args.core_manifest),
                         "--runtime-evidence", "/out/per-job-runtime.json",
                         "--output", "/out/capture", "--artifact", "--all-units",
-                        "--observation-mode", "resources"]
-        if args.workspaces is not None:
+                        "--observation-mode", mode]
+        if mode != "kv":
+            # The read-only pass loads no collector: a stock engine and a stock
+            # worker are what make it the read-only half of the two-pass pair.
+            capture_argv += ["--collector", str(args.collector)]
+        if mode == "resources" and args.workspaces is not None:
             capture_argv += ["--workspaces", str(args.workspaces)]
+        if mode == "timings":
+            capture_argv += ["--timing-samples", str(args.timing_samples)]
         if args.calibration is not None:
             capture_argv += ["--calibration", str(args.calibration),
                              "--calibration-sha256", digest(args.calibration)]
+        driver_argv = ["--out", "/out", "--capture-output", "/out/capture",
+                       "--route-trace", "/out/route-trace.json",
+                       "--expected-fp4-modules", str(fp4_module_count(args.artifact)),
+                       "--observation-mode", mode]
+        if args.preflight_only:
+            driver_argv.append("--preflight-only")
         entry = ["/tessera/experiments/full_engine_plugin_install.py",
                  "--evidence-dir", "/out", "--base-reference", base,
                  "--launcher-image-id", image_id,
                  "--launcher-image-inspect", "/out/launcher-image-inspect.json",
                  "--source-tree", "/tessera", "--source-commit", args.source_commit,
                  "--core-manifest", str(args.core_manifest), "--",
-                 "python3", "-u", "/control/step4_capture_driver.py", "--out", "/out",
-                 "--capture-output", "/out/capture", "--route-trace", "/out/route-trace.json",
-                 "--expected-fp4-modules", str(fp4_module_count(args.artifact)), "--",
+                 "python3", "-u", "/control/step4_capture_driver.py", *driver_argv, "--",
                  *capture_argv]
         shutil.copy2(args.control / "step4_capture_driver.py", out / "step4_capture_driver.py")
         shutil.copy2(args.control / "step4_route_qualification.py", out / "step4_route_qualification.py")
-        phases.append(run_phase("capture", docker_command(
+        phases.append(run_phase("preflight" if args.preflight_only else "capture", docker_command(
             name="step4-capture-" + uuid.uuid4().hex[:12], image_id=image_id, mounts=mounts,
             environment=environment, out_host=out, jit_host=args.jit_dir,
             ext_host=ext_host, ext_readonly=args.jit_readonly, entry=entry),
@@ -305,17 +342,30 @@ def main() -> int:
 
     after = gpu_sample()
     returncode = max(phase["returncode"] for phase in phases)
+    qualification = out / "native-route-qualification.json"
+    qualified = False
+    if returncode == 0 and qualification.exists():
+        qualified = json.loads(qualification.read_text()).get("qualified") is True
+    scopes = {
+        "resources": "raw resource observation of a served artifact; no timing, fixed-resource "
+                     "or release admission, and the census is recorded rather than consumed",
+        "kv": "read-only stock-engine KV observation of a served artifact; no recorder, no "
+              "snapshot, no timing claim, and no route proof (a stock worker carries no census)",
+        "timings": "profiled all-native-unit event partition of a served artifact; observer "
+                   "qualification only, no admitted timing or fixed-resource price"}
     summary = {"schema": "tessera.step4_capture_launch.v1", "out": str(out),
                "hostname": os.uname().nodename, "image": base, "image_id": image_id,
                "configuration_sha256": configuration_sha256, "artifact": str(args.artifact),
                "source_commit": args.source_commit, "jit_dir": str(args.jit_dir),
                "jit_readonly": args.jit_readonly, "ext_dir": str(ext_host), "phases": phases,
+               "observation_mode": args.observation_mode, "preflight_only": args.preflight_only,
+               "timing_samples": args.timing_samples if args.observation_mode == "timings" else None,
                "gpu_before": before, "gpu_after": after,
                "wall_seconds": round(sum(phase["seconds"] for phase in phases), 3),
                "returncode": returncode,
-               "qualified": returncode == 0 and (out / "native-route-qualification.json").exists(),
-               "scope": "raw resource observation of a served artifact; no timing, fixed-resource "
-                        "or release admission, and the census is recorded rather than consumed"}
+               "qualified": qualified,
+               "scope": ("JIT proof and observer load smoke only; no engine ran"
+                         if args.preflight_only else scopes[args.observation_mode])}
     (out / "launch-summary.json").write_text(json.dumps(summary, indent=2, sort_keys=True) + "\n")
     print(json.dumps({k: summary[k] for k in ("returncode", "qualified", "wall_seconds", "out")}),
           flush=True)
