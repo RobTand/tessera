@@ -28,6 +28,10 @@ from experiments.full_engine_snapshot_codec import (
     CanonicalHistoryPrefix, SnapshotFramePool, canonical_snapshot_digest,
     compact_capture, expand_capture,
 )
+from experiments.full_engine_ownership import (
+    boundary_geometry_witness, dense_startup_check, derive_owner_views,
+    external_record_views, ownership_observation, transient_gap_witness,
+)
 
 CAPTURE_SCHEMA = "tessera.full_engine_resource_capture.v1"
 LEDGER_SCHEMA = "tessera.full_engine_raw_resource_ledger.v1"
@@ -743,6 +747,129 @@ def _cupti_coverage(raw, segment_operations, issues):
     return unknown, argument_domains
 
 
+_EXTERNAL_ISSUE = "unattributed external/static/unsupported CUDA memory records"
+
+
+def _derive_ownership(result, raw, rows, frames_by_index, unowned_live, unknown,
+                      intervals, steps, by_label, evidence):
+    """Attach the derived ownership observation and re-raise only what it left.
+
+    The census's issues are recomputed over census AND derivation: a row live
+    at a checkpoint with no observed owner is an issue only when no declared
+    rule placed it either, and the external-record issue is replaced by the
+    named count of records no source evidence resolved.
+    """
+    issues = result["issues"]
+    views, summary = derive_owner_views(rows, frames_by_index, checkpoint_index=by_label,
+                                        roster=evidence["roster"], evidence=evidence)
+    view_of = {view["allocation_id"]: view for view in views}
+    issues.extend("unowned allocation live at checkpoint: " + row["allocation_id"]
+                  for row in unowned_live if view_of[row["allocation_id"]]["class"] is None)
+    trace = raw["cupti_trace"]
+    markers = sorted((marker["timestamp_ns"], marker["name"]) for marker in trace["markers"])
+    cupti_by_label = {checkpoint["label"]: checkpoint["cupti_timestamp_ns"]
+                      for checkpoint in raw["checkpoints"]}
+    unit_windows = [(cupti_by_label[interval["begin_checkpoint"]],
+                     cupti_by_label[interval["end_checkpoint"]], interval["unit_id"])
+                    for interval in raw["unit_intervals"]]
+    external = external_record_views(unknown, markers=markers, unit_windows=unit_windows,
+                                     evidence=evidence)
+    if _EXTERNAL_ISSUE in issues:
+        issues.remove(_EXTERNAL_ISSUE)
+    if external["unresolved"]:
+        issues.append(f"unresolved external CUDA memory records: {len(external['unresolved'])}")
+    result["unattributed_external_records"] = external["unresolved"]
+    result["external_native_peak_bytes"] = external["external_native_peak_bytes"]
+    witness_steps = [(step_id, begin, end) for begin, end, step_id in steps]
+    result["owner_views"] = ownership_observation(
+        views=views, summary=summary, evidence=evidence, external_records=external,
+        geometry_witness=boundary_geometry_witness(rows, evidence["roster"], witness_steps),
+        transient_witness=transient_gap_witness(rows, views, intervals, evidence["roster"],
+                                                witness_steps),
+        dense_startup_check=dense_startup_check(rows, views, evidence.get("dense_startup"),
+                                                ready_index=by_label.get("ready_for_workload")))
+
+
+PROVENANCE_RELATION_SCHEMA = "tessera.full_engine_runtime_provenance_relation.v1"
+
+
+def runtime_provenance_relation(identity, *, plan, launch, per_job, runtime_observation,
+                                core_file_count):
+    """Bind one capture's identity to the runtime tables its run attested.
+
+    Every check is an equality between two values the record carries, so a
+    consumer recomputes ``complete`` from the record alone: the configuration
+    digest as the ledger, the plan, the launcher and the worker each saw it;
+    the vLLM core manifest digest as the ledger and the installer saw it; the
+    image id the launcher declared and the one the installer ran under; the
+    plugin package the worker loaded against the installer's roster and
+    evidence digest; the observer libraries the worker loaded against the plan.
+    ``complete`` is true only when every check agrees; a missing value is a
+    failed check, never a pass.
+    """
+    loaded = runtime_observation.get("loaded_package") or {}
+    instrumentation = runtime_observation.get("instrumentation") or {}
+    workspace = plan.get("blas_workspace_observer") or {}
+    checks = []
+
+    def check(name, values, agree=None):
+        present = [value for value in values.values() if value is not None]
+        checks.append({"name": name, "values": values,
+                       "agree": (len(present) == len(values) and len(set(map(json.dumps, present))) == 1)
+                       if agree is None else bool(agree)})
+
+    plan_identity = plan.get("identity") or {}
+    for name in IDENTITY_HASHES:
+        check(name, {"ledger": identity.get(name), "plan": plan_identity.get(name)})
+    check("configuration_sha256:launch_and_worker",
+          {"ledger": identity.get("configuration_sha256"),
+           "launch": launch.get("configuration_sha256"),
+           "worker_observation": runtime_observation.get("configuration_sha256"),
+           "worker_execution": (runtime_observation.get("execution") or {}).get("configuration_sha256")})
+    check("runtime_manifest_sha256:installer",
+          {"ledger": identity.get("runtime_manifest_sha256"),
+           "installer": per_job.get("core_manifest_sha256")})
+    check("core_files_unchanged",
+          {"installer": per_job.get("core_files_unchanged"), "manifest": core_file_count})
+    check("image_id", {"launch": launch.get("image_id"),
+                       "installer": per_job.get("launcher_declared_image_id")})
+    check("plugin_installer_evidence",
+          {"worker": loaded.get("installer_evidence_sha256"),
+           "plan": plan.get("runtime_evidence_sha256")})
+    check("plugin_package_files_unchanged_from_installer",
+          {"worker": loaded.get("package_files_unchanged_from_installer")},
+          agree=loaded.get("package_files_unchanged_from_installer") is True)
+    check("plugin_module_identity_errors",
+          {"worker": loaded.get("module_identity_errors")},
+          agree=loaded.get("module_identity_errors") == [])
+    check("resource_collector_sha256",
+          {"worker": (instrumentation.get("resource_collector") or {}).get("library_sha256"),
+           "plan": plan.get("collector_library_sha256")})
+    if workspace or instrumentation.get("blas_workspace_observer"):
+        check("blas_workspace_observer_sha256",
+              {"worker": (instrumentation.get("blas_workspace_observer") or {}).get("library_sha256"),
+               "plan": workspace.get("sha256")})
+    return {
+        "schema": PROVENANCE_RELATION_SCHEMA,
+        "identity": dict(identity),
+        "image": {"declared": launch.get("image"), "id": launch.get("image_id")},
+        "plugin": {"source_sha256": per_job.get("plugin_source_sha256"),
+                   "source_commit": launch.get("source_commit"),
+                   "package_path": loaded.get("package_path"),
+                   "tessera_version": per_job.get("tessera_version")},
+        "core": {"vllm_version": per_job.get("vllm_version"),
+                 "upstream_commit": per_job.get("upstream_commit"),
+                 "manifest_sha256": per_job.get("core_manifest_sha256"),
+                 "file_count": core_file_count},
+        "calibration_sha256": ((plan.get("workload") or {}).get("calibration") or {}).get("sha256"),
+        "actual_execution": runtime_observation.get("actual_execution"),
+        "checks": checks,
+        "complete": all(check["agree"] for check in checks),
+        "scope": ("equalities between values this record carries, recomputable by a consumer; "
+                  "complete only when every one agrees, and a missing value never agrees"),
+    }
+
+
 #: The workspace record the engine's own ``WorkspaceManager`` is observed as.
 WORKSPACE_SCHEMA = "tessera.native_moe_workspace.v1"
 
@@ -778,24 +905,49 @@ def worker_startup_record(torch_module, workspace, *, rank, receipt_resident_byt
             "workspace_resident_bytes": resident}
 
 
-def analyze_engine_resource_ledger(raw):
+#: What the raw ledger's three price-shaped fields mean. The replay never
+#: prices: ``admission``, ``fixed_resources`` and ``timings`` are derived by
+#: ``full_engine_resource_partition`` from this ledger's classified lifetimes,
+#: its domain evidence and the timing observation joined to it, and they live
+#: in the report's ``derived`` member. They are carried here as null with this
+#: scope so a reader of the ledger alone cannot mistake absence for a verdict.
+PRICING_SCOPE = ("the raw ledger replays and reconciles; admission, fixed resources and "
+                 "timings are derived by the partition report (derived.admission, "
+                 "derived.fixed_resources, derived.timing_terms) from this ledger's own "
+                 "classified event lifetimes and domain evidence")
+
+
+def analyze_engine_resource_ledger(raw, ownership_evidence=None):
     """Replay captured allocation events; never construct fixed resource prices.
 
     ``observed_raw_ledger`` means only this restricted raw ledger reconciled.
-    Every result explicitly leaves engine admission, timing and external/context
-    closure unavailable. Additional supplied peak/time fields are not prices.
+    Admission, timing and fixed resources are derived downstream, by the
+    partition, from what this replay classified; this function carries them
+    null under ``pricing_scope`` rather than stating a verdict of its own.
+
+    ``ownership_evidence`` is the run's own inventory (see
+    ``report_full_engine_resources.ownership_evidence``): with it, every
+    replayed allocation gets a derived owner view from the declared rules in
+    ``full_engine_ownership`` and every unmatched CUPTI record is classified
+    by its source library, both carried under ``owner_views``; the
+    "unowned allocation live at checkpoint" and external-record issues are
+    then raised only for what no rule placed. Without it, the replay behaves
+    as before and every unowned row is an issue.
     """
     result = {"schema": LEDGER_SCHEMA, "scope": "full_engine_raw_resource_ledger",
-              "status": "incomplete", "admission": "not_implemented",
+              "status": "incomplete", "admission": None,
               "fixed_resources": None, "timings": None,
+              "pricing_scope": PRICING_SCOPE,
               "full_model_fixed_resources_complete": False,
               "external_native_peak_bytes": None,
               "issues": [], "torch_allocations": [], "checkpoints": [],
               "escaping_allocation_ids": [], "unattributed_external_records": [],
+              "owner_views": None,
               "fixture_provenance": None,
               "step_intervals": None, "step_coverage": None,
               "qualification_gaps": list(QUALIFICATION_GAPS)}
     issues = result["issues"]
+    frames_by_index, unowned_live = {}, []
     try:
         raw = expand_capture(raw)
         if raw["schema"] != CAPTURE_SCHEMA:
@@ -956,6 +1108,7 @@ def analyze_engine_resource_ledger(raw):
                        "_owner_categories": {}}
                 live[address] = row
                 rows.append(row)
+                frames_by_index[index] = event.get("frames") or []
                 peak = max(peak, sum(r["bytes"] for r in live.values()))
             elif action in ("free_requested", "free_completed"):
                 address, size = _int(event["addr"], "free address", 1), _int(event["size"], "free bytes", 1)
@@ -989,7 +1142,7 @@ def analyze_engine_resource_ledger(raw):
             if row["lifetime_scope"] == "escapes_unit":
                 result["escaping_allocation_ids"].append(row["allocation_id"])
             if row["allocation_id"] in checkpoint_live and not row["observed_owners"] and row["lifetime_scope"] != "inside_unit":
-                issues.append("unowned allocation live at checkpoint: " + row["allocation_id"])
+                unowned_live.append(row)
             if len(row["observed_categories"]) > 1:
                 issues.append("allocation ownership category changed: " + row["allocation_id"])
             row["observed_owners"] = sorted(row["observed_owners"])
@@ -1001,7 +1154,14 @@ def analyze_engine_resource_ledger(raw):
         result["torch_allocations"] = rows
         result["torch_observed_live_peak_bytes"] = peak
         result["torch_observed_live_peak_scope"] = "requested_allocation_bytes_excluding_allocator_rounding"
-        result["unattributed_external_records"], result["cuda_argument_domains"] = _cupti_coverage(raw, segment_operations, issues)
+        unknown, result["cuda_argument_domains"] = _cupti_coverage(raw, segment_operations, issues)
+        result["unattributed_external_records"] = unknown
+        if ownership_evidence is None:
+            issues.extend("unowned allocation live at checkpoint: " + row["allocation_id"]
+                          for row in unowned_live)
+        else:
+            _derive_ownership(result, raw, rows, frames_by_index, unowned_live, unknown,
+                              intervals, steps, by_label, ownership_evidence)
         result["status"] = "incomplete" if issues else "observed_raw_ledger"
     except (KeyError, TypeError, ValueError, IndexError) as exc:
         issues.append(str(exc))

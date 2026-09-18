@@ -14,6 +14,8 @@ import subprocess
 import sys
 import time
 
+from experiments.full_engine_resources import PRICING_SCOPE
+
 
 def digest(path):
     result = hashlib.sha256()
@@ -175,8 +177,21 @@ def prepare(args):
         assignment = {"schema": "tessera.source_bf16_observer_assignment.v1",
                       "source_sha256": canonical_hash(source),
                       "units": {row["unit_id"]: "source_bf16" for row in roster}}
-    elif not args.all_units or args.unit or mode != "resources" or prefix_only:
-        raise ValueError("artifact observation requires the complete manifest roster (--all-units) in resource mode")
+    elif not args.all_units or args.unit or prefix_only:
+        # tessera#399: an artifact is observed by all three passes -- the
+        # intrusive resource ledger, the read-only KV pass and the profiled
+        # timing partition -- on its complete manifest roster. The three share
+        # one plan identity (configuration, model, roster, workload), which is
+        # what lets the report join them; a partial roster or a first-native
+        # prefix would give the joined passes different identities.
+        raise ValueError("artifact observation requires the complete manifest roster (--all-units) "
+                         "without a partial --unit selection or a first-native prefix")
+    elif mode == "timings" and not isinstance(config.get("capacity_assertions"), dict):
+        # The timing worker asserts the KV capacity before its first step and
+        # refuses a run whose runner resolves another; a configuration document
+        # that declares none gives it nothing to assert against.
+        raise ValueError("timing observation of an artifact requires capacity_assertions in the "
+                         "selected configuration document")
     reference = None
     if getattr(args, "reference_proof", None) is not None:
         if artifact is not None:
@@ -271,9 +286,20 @@ def prepare(args):
     elif mode == "kv":
         # A stock engine and a stock worker: nothing is installed, no recorder
         # is claimed, no snapshot is taken. That is what makes this pass the
-        # read-only half of the two-pass pair.
+        # read-only half of the two-pass pair. Its one RPC is a function, and
+        # the stock engine's msgspec transport refuses a function unless the
+        # pickle fallback is allowed: the same observer-only transport setting
+        # the original-wire launcher records (docs/measurements/original-layer2-
+        # wire-checkpoint-2026-09-07.md), in a network-disabled container, kept
+        # in the plan's observer environment and never in the configuration
+        # document, whose digest it does not touch.
         plan["read_only_kv"] = True
         plan["observer_engine_args"] = {}
+        plan["observer_environment"] = dict(plan["observer_environment"],
+                                            VLLM_ALLOW_INSECURE_SERIALIZATION="1")
+        plan["observer_environment_note"] = ("VLLM_ALLOW_INSECURE_SERIALIZATION=1 is the RPC transport "
+                                             "for the read-only pass's function callback; it installs "
+                                             "nothing in the worker and is outside the configuration digest")
         plan["scope"] = ("read-only stock-engine KV observation; no resource recorder, no "
                          "synchronized snapshot, no timing claim")
     if args.workspaces is not None:
@@ -338,10 +364,10 @@ def run(plan_path):
                     for response in responses],
         "qualification_prefix": plan.get("qualification_prefix"),
         "full_model_fixed_resources_complete": False, "timings": None,
-        "admission": "not_implemented"}
+        "admission": None, "pricing_scope": PRICING_SCOPE}
     (output / "run.json").write_text(json.dumps(result, sort_keys=True, indent=2) + "\n")
     print(json.dumps({"artifact": str(output / "run.json"), "sha256": digest(output / "run.json"),
-                      "worker_count": len(workers), "admission": "not_implemented"}), flush=True)
+                      "worker_count": len(workers), "admission": None, "pricing_scope": PRICING_SCOPE}), flush=True)
 
 
 def run_read_only_kv(llm, plan, plan_path, started, audit_before):
@@ -382,12 +408,12 @@ def run_read_only_kv(llm, plan, plan_path, started, audit_before):
                                  "runtime_admission": record["runtime_admission"]},
               "runtime_admission": record["runtime_admission"],
               "full_model_fixed_resources_complete": False, "timings": None,
-              "admission": "not_implemented"}
+              "admission": None, "pricing_scope": PRICING_SCOPE}
     (output / "run.json").write_text(json.dumps(result, sort_keys=True, indent=2) + "\n")
     print(json.dumps({"artifact": str(output / "run.json"), "sha256": digest(output / "run.json"),
                       "kv_observation_sha256": result["kv_observation"]["sha256"],
                       "runtime_admission": record["runtime_admission"],
-                      "admission": "not_implemented"}), flush=True)
+                      "admission": None, "pricing_scope": PRICING_SCOPE}), flush=True)
 
 
 def run_timings(llm, plan, plan_path, started, audit_before):
@@ -423,10 +449,10 @@ def run_timings(llm, plan, plan_path, started, audit_before):
               "core_audit_before": audit_before, "core_audit_after": audit_core(plan["core_manifest"]),
               "warmup_tokens": warmup_tokens, "arms": arms, "timings": None,
               "partition_coverage_verified": coverage_verified,
-              "full_model_fixed_resources_complete": False, "admission": "not_implemented"}
+              "full_model_fixed_resources_complete": False, "admission": None, "pricing_scope": PRICING_SCOPE}
     path = Path(plan["output_directory"]) / "run.json"
     path.write_text(json.dumps(result, sort_keys=True, indent=2) + "\n")
-    print(json.dumps({"artifact": str(path), "sha256": digest(path), "admission": "not_implemented"}), flush=True)
+    print(json.dumps({"artifact": str(path), "sha256": digest(path), "admission": None, "pricing_scope": PRICING_SCOPE}), flush=True)
     if not coverage_verified:
         raise RuntimeError("all-unit profiler/event partition remains incomplete; retained raw timing run: " + str(path))
 
