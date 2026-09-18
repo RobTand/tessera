@@ -9,9 +9,11 @@ supports, and ``fixed`` is the direction that hands a serving gate a charge
 that silently moves with the menu.
 
 This module builds the only thing that can answer it: **the two captures'
-matched site bytes, side by side**. It refuses a pair that changed more than
-the assignment, it matches sites by the owner string the census emitted, and
-it writes **no verdict**. The classification record carries the two capture
+matched site bytes, side by side**. It refuses a pair that did not hold the
+runtime, the workload and the device fixed, or that ran one assignment twice;
+it records the digests a substitution necessarily moves instead of requiring
+them equal; it matches sites by the owner string the census emitted; and it
+writes **no verdict**. The classification record carries the two capture
 identities and the two byte figures per site, so the rule in
 ``full_engine_ownership`` and PrismaQuant's independent recomputation read the
 same numbers and can disagree; a producer that carried its own answer would be
@@ -35,16 +37,35 @@ BOUNDARY_CLASSIFICATION_SCHEMA = "tessera.full_engine_boundary_classification.v1
 #: observation, so nothing in it says which rows are still unclassified.
 LEDGER_SCHEMA_V2 = "tessera.full_engine_raw_resource_ledger.v2"
 
-#: What tessera#548 holds equal across the pair. ``configuration_sha256`` is
-#: NOT among them: the configuration document names the artifact, so a
-#: substitution necessarily changes its digest. What must not move is the
-#: runtime, the canonical roster the units are named in, the served model and
-#: the workload the bytes were observed under.
-HELD_FIXED = ("model_sha256", "runtime_manifest_sha256", "canonical_units_sha256",
-              "workload_sha256")
+#: What tessera#548 holds equal across the pair: the runtime the bytes were
+#: observed under, the workload that drove them, and the device they were
+#: measured on. These are the coordinates a substitution does not touch, so
+#: they are the ones a refusal can be built from.
+HELD_FIXED = ("runtime_manifest_sha256", "workload_sha256", "device_uuid")
 
 #: The one input the pair changes.
 CHANGED_INPUT = "assignment_sha256"
+
+#: Coordinates that move WITH the assignment and are recorded, never required
+#: equal. ``model_sha256`` hashes the served artifact and
+#: ``canonical_units_sha256`` hashes the roster, whose rows carry each unit's
+#: family, so a substitution changes both by construction; ``configuration_
+#: sha256`` hashes the document that names the artifact. Requiring any of them
+#: equal refuses every real substitution, which is the measurement.
+#:
+#: That leaves matchability to be established rather than asserted: two rosters
+#: with different digests may still name the same units. This module does not
+#: take the roster's word for it -- it matches site by site on the owner string
+#: the census emitted, and ``sites_in_both`` is the measured overlap. A site
+#: only one capture names is carried with that fact and classifies nothing.
+FOLLOWS_THE_ASSIGNMENT = ("configuration_sha256", "canonical_units_sha256", "model_sha256")
+
+#: The runtime sections the capture's provenance relation states, compared when
+#: both ledgers carry one. Identity fixes the core manifest digest; the serving
+#: image and the installed plugin tree are outside it, so a pair that carries
+#: the relation is checked against it and a pair that does not says the check
+#: did not run rather than implying it passed.
+RUNTIME_PROVENANCE_SECTIONS = ("core", "image", "plugin")
 
 #: The rule a pending row's owner string is read by; the same four kinds the
 #: derivation names when it abstains.
@@ -90,6 +111,25 @@ def pending_sites(ledger):
     return sites
 
 
+def _runtime_provenance_agreement(first, second):
+    """The runtime sections both ledgers state and agree on, or ``None``.
+
+    Refuses a pair whose stated runtime differs on any section it carries. A
+    ledger with no relation yields ``None``: the check did not run, which is a
+    different fact from the check passing.
+    """
+    relations = [first.get("runtime_provenance_relation"), second.get("runtime_provenance_relation")]
+    if not all(isinstance(relation, dict) for relation in relations):
+        return None
+    compared = [name for name in RUNTIME_PROVENANCE_SECTIONS
+                if name in relations[0] or name in relations[1]]
+    differing = [name for name in compared if relations[0].get(name) != relations[1].get(name)]
+    if differing:
+        raise ValueError("the two captures state different runtimes; these sections of the "
+                         "provenance relation differ: " + ", ".join(differing))
+    return sorted(compared)
+
+
 def _identity(ledger):
     identity = ledger.get("identity")
     if not isinstance(identity, dict):
@@ -112,11 +152,15 @@ def boundary_classification(first, second):
         raise ValueError("a pair is two distinct captures, each naming its own capture_sha256")
     differing = [name for name in HELD_FIXED if identities[0].get(name) != identities[1].get(name)]
     if differing:
-        raise ValueError("the pair did not hold the runtime, roster, model and workload fixed; "
+        raise ValueError("the pair did not hold the runtime, the workload and the device fixed; "
                          "these differ: " + ", ".join(differing))
     if identities[0].get(CHANGED_INPUT) == identities[1].get(CHANGED_INPUT):
         raise ValueError("both captures ran one assignment, so nothing was substituted; "
                          "#548 needs two")
+    runtime_agreed = _runtime_provenance_agreement(first, second)
+    differing_identity = sorted(name for name in set(identities[0]) | set(identities[1])
+                                if name != "schema"
+                                and identities[0].get(name) != identities[1].get(name))
     sites = []
     for owner in sorted(set(tables[0]) | set(tables[1])):
         present = [digest for digest, table in zip(digests, tables) if owner in table]
@@ -132,12 +176,17 @@ def boundary_classification(first, second):
                      for identity, digest, table in zip(identities, digests, tables)],
         "changed_input": CHANGED_INPUT,
         "held_fixed": list(HELD_FIXED),
+        "follows_the_assignment": list(FOLLOWS_THE_ASSIGNMENT),
+        "differing_identity": differing_identity,
+        "runtime_provenance_agreed": runtime_agreed,
         "sites": sites,
         "sites_in_both": sum(1 for site in sites if len(site["present_in"]) == 2),
         "scope": ("the bytes each still-unclassified shared site carried in two captures that "
-                  "differ in the selected assignment and nothing else; a comparison, not a "
-                  "verdict, and evidence for these two captures rather than for every "
-                  "assignment"),
+                  "hold the runtime, the workload and the device fixed and differ in the "
+                  "selected assignment; the artifact, configuration and roster digests move "
+                  "with that choice and are listed in differing_identity rather than held "
+                  "equal. A comparison, not a verdict, and evidence for these two captures "
+                  "rather than for every assignment"),
     }
 
 

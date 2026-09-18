@@ -510,10 +510,22 @@ eugr one) until that measurement exists for the capture.
 
 **The measurement, when it exists** (tessera#548, 2026-09-18):
 `experiments/full_engine_boundary_classification.py` compares two captures that
-differ in `assignment_sha256` and agree on `model_sha256`,
-`runtime_manifest_sha256`, `canonical_units_sha256` and `workload_sha256` — a
-pair failing any of those is refused, because it cannot separate "these bytes
-do not depend on the assignment" from "nothing about the run changed". The
+differ in `assignment_sha256` and agree on `runtime_manifest_sha256`,
+`workload_sha256` and `device_uuid` — a pair failing any of those is refused,
+because it cannot separate "these bytes do not depend on the assignment" from
+"nothing about the run changed". Three identity coordinates are deliberately
+**not** held equal: `model_sha256` digests the served artifact,
+`canonical_units_sha256` digests the roster whose rows carry each unit's
+family, and `configuration_sha256` digests the document naming the artifact,
+so a substitution moves all three by construction and requiring them equal
+would refuse every real pair. They are listed in the record's
+`differing_identity` instead, and matchability is measured rather than
+asserted: sites are matched on the owner string the census emitted, and
+`sites_in_both` is the observed overlap. When both ledgers carry a
+`runtime_provenance_relation`, its `image`, `plugin` and `core` sections must
+agree as well and `runtime_provenance_agreed` names the ones compared; a pair
+without the relation records `null` there, because a check that did not run is
+not a check that passed. The
 `tessera.full_engine_boundary_classification.v1` record it writes carries the
 two capture identities and, per site, the bytes each capture observed under
 that owner string. It carries **no verdict**: the two rules that read it —

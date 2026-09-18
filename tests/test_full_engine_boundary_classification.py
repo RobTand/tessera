@@ -16,8 +16,11 @@ from experiments.full_engine_ownership import RULES, derive_owner_views
 
 LEDGER_V2 = "tessera.full_engine_raw_resource_ledger.v2"
 
-#: Everything a capture's identity fixes. #548 holds the runtime, the roster
-#: and the workload equal and changes one input: the selected assignment.
+#: What a capture's identity fixes. #548 holds the runtime and the workload
+#: equal and changes the selected assignment. Three other coordinates move
+#: WITH that change and are recorded rather than required equal: the served
+#: checkpoint's digest, the configuration document that names it, and the
+#: canonical roster digest, which hashes each unit's family.
 FIRST_IDENTITY = {
     "model_sha256": "m" * 64,
     "configuration_sha256": "c" * 64,
@@ -25,9 +28,11 @@ FIRST_IDENTITY = {
     "assignment_sha256": "1" * 64,
     "canonical_units_sha256": "u" * 64,
     "workload_sha256": "w" * 64,
+    "device_uuid": "GPU-fixture",
 }
 SECOND_IDENTITY = dict(FIRST_IDENTITY, assignment_sha256="2" * 64,
-                       configuration_sha256="d" * 64)
+                       configuration_sha256="d" * 64, model_sha256="n" * 64,
+                       canonical_units_sha256="v" * 64)
 
 BOUNDARY = "native:l:model.layers.0.self_attn.o_proj:0:input.x"
 ROOT = "runner:input_batch.token_ids_cpu"
@@ -84,11 +89,58 @@ def test_the_classification_names_both_captures_and_carries_no_verdict():
     assert "class" not in site and "verdict" not in site and "fixed" not in site
 
 
-def test_a_pair_that_changed_more_than_the_assignment_is_refused():
+def test_a_pair_that_changed_the_workload_is_refused():
     first, second = _pair([_row("0:1:1", BOUNDARY, 4096)], [_row("0:9:1", BOUNDARY, 4096)])
     second["identity"] = dict(SECOND_IDENTITY, workload_sha256="x" * 64)
     with pytest.raises(ValueError, match="workload_sha256"):
         boundary_classification(first, second)
+
+
+def test_a_pair_that_ran_a_different_runtime_or_device_is_refused():
+    for coordinate in ("runtime_manifest_sha256", "device_uuid"):
+        first, second = _pair([_row("0:1:1", BOUNDARY, 4096)], [_row("0:9:1", BOUNDARY, 4096)])
+        second["identity"] = dict(SECOND_IDENTITY, **{coordinate: "x" * 64})
+        with pytest.raises(ValueError, match=coordinate):
+            boundary_classification(first, second)
+
+
+def test_the_digests_a_substitution_moves_are_recorded_not_refused():
+    # The served checkpoint, the configuration naming it and the canonical
+    # roster digest (which hashes each unit's family) all move when the
+    # assignment does. Requiring them equal would refuse every real
+    # substitution; they are listed instead, so a reader sees what changed.
+    first, second = _pair([_row("0:1:1", BOUNDARY, 4096)], [_row("0:9:1", BOUNDARY, 4096)])
+    record = boundary_classification(first, second)
+    assert record["differing_identity"] == ["assignment_sha256", "canonical_units_sha256",
+                                            "configuration_sha256", "model_sha256"]
+
+
+def test_a_pair_whose_runtime_provenance_disagrees_is_refused():
+    first, second = _pair([_row("0:1:1", BOUNDARY, 4096)], [_row("0:9:1", BOUNDARY, 4096)])
+    first["runtime_provenance_relation"] = {"image": {"id": "sha256:aa"}, "plugin": {"x": 1},
+                                            "core": {"y": 2}}
+    second["runtime_provenance_relation"] = {"image": {"id": "sha256:bb"}, "plugin": {"x": 1},
+                                             "core": {"y": 2}}
+    with pytest.raises(ValueError, match="image"):
+        boundary_classification(first, second)
+
+
+def test_an_agreeing_runtime_provenance_is_recorded_as_checked():
+    first, second = _pair([_row("0:1:1", BOUNDARY, 4096)], [_row("0:9:1", BOUNDARY, 4096)])
+    relation = {"image": {"id": "sha256:aa"}, "plugin": {"x": 1}, "core": {"y": 2}}
+    first["runtime_provenance_relation"] = dict(relation)
+    second["runtime_provenance_relation"] = dict(relation)
+    record = boundary_classification(first, second)
+    assert record["runtime_provenance_agreed"] == ["core", "image", "plugin"]
+
+
+def test_a_pair_with_no_runtime_provenance_says_the_check_did_not_run():
+    first, second = _pair([_row("0:1:1", BOUNDARY, 4096)], [_row("0:9:1", BOUNDARY, 4096)])
+    record = boundary_classification(first, second)
+    # Identity fixes the core manifest and the device; the image and the plugin
+    # tree are outside it, so a pair without the relation says so rather than
+    # implying a check that never ran.
+    assert record["runtime_provenance_agreed"] is None
 
 
 def test_a_pair_under_one_assignment_is_not_a_substitution():
