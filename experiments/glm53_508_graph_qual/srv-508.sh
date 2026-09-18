@@ -65,10 +65,12 @@ up)
   if docker ps -q --filter name=$NAME | grep -q .; then echo "$NAME up; run: $0 down"; exit 2; fi
   mkdir -p "$EXT" "$OUT" "$DIR/logs"
   printf '%s\n' "EAGER=$EAGER $SERVE_ARGS" > "$OUT/engine-args-EAGER$EAGER.txt"
+  inner="$EXT/serve-inner.sh"
+  { echo "set -e"; printf '%s\n' "$PREP"
+    printf 'exec vllm serve %s %s\n' "$MODEL" "$SERVE_ARGS"; } > "$inner"
   mapfile -t a < <(docker_args)
   docker run -d --name $NAME "${a[@]}" "${ENVS[@]}" \
-    --entrypoint bash $IMG -c "$(printf '%q' "$PREP
-exec vllm serve $MODEL $SERVE_ARGS")"
+    --entrypoint bash $IMG /ext/serve-inner.sh
   # MemAvailable watchdog: this arm only (no TP peer), 16 GiB floor + PSI full avg10 >= 20.
   systemd-run --user --unit t508-memwd-$(date +%s) --collect \
     /home/rob/tmp/glm-a4-stub-serve/mem-watchdog.sh $NAME $(hostname) $NAME 16
