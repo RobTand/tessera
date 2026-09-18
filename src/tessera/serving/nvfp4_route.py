@@ -41,7 +41,8 @@ from .lane import MODE_RESIDENT, MODE_STREAMED, MODES
 import dataclasses
 
 from ..kernel_a4 import a4_quantize_activation, a4_span2_gemm
-from .scheme import (A4_DENSE_GEMM_SYMBOL, GROUP_SIZE, ROUTES, TESSERA_NVFP4,
+from .scheme import (A4_DENSE_GEMM_SYMBOL, GROUP_SIZE, ROUTES, STRUCTURE_DENSE,
+                     TESSERA_NVFP4, launch_pairs,
                      parse_compact_blob_for_scheme, parse_tessera_blob_for_scheme,
                      validate_tessera_scheme)
 from .sharding import plan_shard_for_layer, require_axis_supported, shard_parsed_roles
@@ -51,10 +52,38 @@ __all__ = [
     "ACTIVATION_CONTRACT",
     "blocked_scales",
     "build_tessera_nvfp4_method",
+    "census_expected",
 ]
 
 ACTIVATION_CONTRACT = ROUTES[TESSERA_NVFP4]["activation_contract"]
 GEMM_SYMBOL = ROUTES[TESSERA_NVFP4]["gemm_symbol"]
+
+
+def census_expected(*, compiled: bool = False, platform=None) -> dict:
+    """The ``(symbol, decoder)`` pairs an NVFP4 dense module may report, by regime.
+
+    Owned here -- the dispatch lives here -- and read by the route census, so
+    a new path updates the expectation where the path was added rather than in
+    a second spelling in the tool (the ownership rule ``fp8_gemv`` and
+    ``bf16_route`` already follow).  ``apply`` stamps the fused pair
+    ``(a4_span2_gemm, native_span2_gemm)`` on every forward at every M in both
+    residencies; the retired ``(torch._scaled_mm, native_span2)`` pair stays in
+    the table's default view because the shipped dense cells' ``executes``
+    still name the launches their receipts ran, not because this dispatch can
+    still make it.  ``compiled`` changes nothing: one fused launch has nothing
+    to combine into an ``a+b`` symbol, and the stamp is unconditional on
+    tracing.  Per ``(platform, family)`` (#457): the dense payload family is
+    the route's own ``TESSERA_E2M1_K2``.
+    """
+    del compiled  # documented above: one launch has nothing to combine
+    decode = launch_pairs(TESSERA_NVFP4, structure=STRUCTURE_DENSE,
+                          regime="decode", include_experimental=True)
+    batch = launch_pairs(TESSERA_NVFP4, structure=STRUCTURE_DENSE,
+                         regime="batch", include_experimental=True)
+    from .census import platform_expectation
+
+    return platform_expectation("TESSERA_E2M1_K2", platform,
+                                {"decode": decode, "batch": batch})
 
 #: cuBLAS block-scaling tile.  Not tunable -- it is the hardware's layout.
 _SF_ROW_TILE = 128
