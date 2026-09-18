@@ -90,9 +90,21 @@ def gpu_sample() -> dict:
     if len(rows) != 1:
         raise SystemExit("this launcher requires exactly one visible GPU")
     uid, power, used, temperature = (item.strip() for item in rows[0].split(","))
-    return {"uuid": uid, "power_w": float(power), "memory_used_mib": float(used),
-            "temperature_c": float(temperature), "envelope_w": 140.0,
-            "envelope_fraction": round(float(power) / 140.0, 3)}
+
+    def number(text):
+        # On GB10 several of these read ``[N/A]``: the GPU shares the host's
+        # memory pool, so ``memory.used`` has nothing device-local to report.
+        # Recording the absence is the honest value; inventing 0.0 would make a
+        # missing measurement look like an idle one.
+        try:
+            return float(text)
+        except ValueError:
+            return None
+
+    watts = number(power)
+    return {"uuid": uid, "power_w": watts, "memory_used_mib": number(used),
+            "temperature_c": number(temperature), "envelope_w": 140.0,
+            "envelope_fraction": None if watts is None else round(watts / 140.0, 3)}
 
 
 def image_declaration(tessera_tree: Path, base: str, configuration_sha256: str, out: Path) -> dict:
