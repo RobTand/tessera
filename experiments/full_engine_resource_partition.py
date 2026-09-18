@@ -692,16 +692,30 @@ def timing_partition_closed(ledger):
     record = _timing(ledger)
     if record is None:
         return False
-    identity = ledger.get("identity") or {}
-    run = record.get("run_identity") or {}
-    for name in ("configuration_sha256", "model_sha256", "runtime_manifest_sha256", "workload_sha256"):
-        if identity.get(name) is not None and run.get(name) != identity[name]:
-            return False
+    if _timing_identity_disagreements(ledger, record):
+        return False
     partition = record.get("partition") or {}
     checks = record.get("qualification") or {}
     if partition.get("established") is not True or not checks:
         return False
     return all(check.get("passed") is True for check in checks.values())
+
+
+#: The digests that name the served object a timing observation must share
+#: with the memory pass: the configuration, the model, the assignment, the
+#: canonical units and the runtime manifest. The workload is deliberately not
+#: among them -- the timing pass declares its own (identical-token control and
+#: partition arms on the calibration prompt) and its digest travels with the
+#: terms, so a reader knows which workload the prices are for.
+TIMING_BOUND_IDENTITY = ("configuration_sha256", "model_sha256", "assignment_sha256",
+                         "canonical_units_sha256", "runtime_manifest_sha256")
+
+
+def _timing_identity_disagreements(ledger, record):
+    identity = ledger.get("identity") or {}
+    run = record.get("run_identity") or {}
+    return [name for name in TIMING_BOUND_IDENTITY
+            if identity.get(name) is not None and run.get(name) != identity[name]]
 
 
 def timing_partition_refused(ledger):
@@ -715,9 +729,16 @@ def _timing_reason(ledger):
     failed = [name for name, check in (record.get("qualification") or {}).items()
               if check.get("passed") is not True]
     reason = (record.get("partition") or {}).get("reason")
+    differing = _timing_identity_disagreements(ledger, record)
+    if differing and (record.get("partition") or {}).get("established") is True and not failed:
+        return ("the timing observation names a different served object: "
+                + ", ".join(f"{name} (ledger {str(ledger['identity'][name])[:12]}, timing "
+                            f"{str((record.get('run_identity') or {}).get(name))[:12]})"
+                            for name in differing))
     return ("the timing observation did not establish its partition"
             + (f": {reason}" if reason else "")
-            + (f"; failed qualification: {', '.join(failed)}" if failed else ""))
+            + (f"; failed qualification: {', '.join(failed)}" if failed else "")
+            + (f"; run identity differs on: {', '.join(differing)}" if differing else ""))
 
 
 def _domain(closed, evidence, reason, refused=False):
@@ -963,6 +984,9 @@ def derive_fixed_resources(partition):
     }
 
 
+TIMING_TERMS_SCHEMA = "tessera.full_engine_timing_terms.v1"
+
+
 def derive_timing_terms(ledger, partition):
     """The timing terms, or ``None`` while ``timing_partition`` is not closed.
 
@@ -974,7 +998,16 @@ def derive_timing_terms(ledger, partition):
         return None
     record = ledger["timing_captures"]
     terms = record["partition"]["terms"]
-    return {name: dict(value) for name, value in terms.items()}
+    run = record.get("run_identity") or {}
+    return {"schema": TIMING_TERMS_SCHEMA,
+            # The timing pass's own workload, not the memory pass's: the
+            # prices below are for these tokens and this step shape.
+            "workload_sha256": run.get("workload_sha256"),
+            "timing_samples": record.get("timing_samples"),
+            "phases": {name: dict(value) for name, value in terms.items()},
+            "scope": ("the timing observation's partition terms restated by name, per phase and "
+                      "per sample; bound to this ledger's served object by " + ", ".join(TIMING_BOUND_IDENTITY)
+                      + "; observer overhead is disclosed in the observation and never subtracted")}
 
 
 def _compose(terms):

@@ -1727,7 +1727,9 @@ All six domains have an implemented closure check (tessera#399, 2026-09-18) —
 configuration, core manifest and file count, image id, plugin installer
 evidence, module identity, collector and workspace libraries) and refuses a
 relation whose `complete` disagrees with its own checks, and `timing_partition`
-closes on exactly one timing observation with the ledger's run identity,
+closes on exactly one timing observation naming the ledger's served object
+(configuration, model, assignment, canonical units, runtime manifest — the
+timing pass declares its own workload, whose digest travels with the terms),
 `partition.established` and every check passed — and all six go `refused` on
 unresolved ledger `issues`. `qualify_domains` takes the ledger and nothing
 else, so no caller can close a domain by supplying an artifact nobody reads; a

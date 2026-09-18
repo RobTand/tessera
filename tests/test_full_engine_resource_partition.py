@@ -856,19 +856,31 @@ def test_a_same_run_timing_observation_closes_the_timing_partition():
         derive_timing_terms, timing_partition_closed)
     good = _raw("a", 6, 2, 9, ["candidate"], "inside_unit", ["u"])
     led = _synthetic_ledger(6, [good], steps=[(2, 9)])
-    led["identity"] = {"configuration_sha256": "a" * 64, "model_sha256": "b" * 64}
+    led["identity"] = {"configuration_sha256": "a" * 64, "model_sha256": "b" * 64,
+                       "workload_sha256": "m" * 64}
+    # The timing pass declares its own workload (identical-token control and
+    # partition arms), so its workload digest differs from the memory pass's
+    # by design; it must still bind to the same served object.
     led["timing_captures"] = _timing_record(
-        identity={"configuration_sha256": "a" * 64, "model_sha256": "b" * 64},
+        identity={"configuration_sha256": "a" * 64, "model_sha256": "b" * 64,
+                  "workload_sha256": "t" * 64},
         terms={"prefill": {"whole_step_ms": [5.0]}})
+    led["timing_captures"]["timing_samples"] = 1
     assert timing_partition_closed(led) is True
     partition = derive_partition(led)
     assert partition["domains"]["timing_partition"]["state"] == "closed"
     assert partition["domains"]["timing_partition"]["evidence"] == ["timing_captures"]
-    assert derive_timing_terms(led, partition) == {"prefill": {"whole_step_ms": [5.0]}}
+    terms = derive_timing_terms(led, partition)
+    assert terms["schema"] == "tessera.full_engine_timing_terms.v1"
+    assert terms["phases"] == {"prefill": {"whole_step_ms": [5.0]}}
+    assert terms["workload_sha256"] == "t" * 64 and terms["timing_samples"] == 1
 
 
 @pytest.mark.parametrize("record,fragment", [
-    (dict(identity={"configuration_sha256": "z" * 64}), None),
+    (dict(identity={"configuration_sha256": "z" * 64}),
+     "names a different served object: configuration_sha256"),
+    (dict(identity={"configuration_sha256": "a" * 64, "assignment_sha256": "y" * 64}),
+     "assignment_sha256"),
     (dict(established=False), "did not establish its partition"),
     (dict(checks={"step_shape": {"passed": False}}), "failed qualification: step_shape"),
 ])
@@ -876,7 +888,7 @@ def test_a_timing_observation_that_does_not_qualify_refuses_the_domain(record, f
     from experiments.full_engine_resource_partition import (
         derive_timing_terms, timing_partition_closed, timing_partition_refused)
     led = _synthetic_ledger(0, [])
-    led["identity"] = {"configuration_sha256": "a" * 64}
+    led["identity"] = {"configuration_sha256": "a" * 64, "assignment_sha256": "s" * 64}
     led["timing_captures"] = _timing_record(**record)
     assert timing_partition_closed(led) is False
     assert timing_partition_refused(led) is True

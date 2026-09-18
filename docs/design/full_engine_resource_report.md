@@ -125,13 +125,19 @@ from the checks; a relation whose `complete` says true over a disagreeing check
 refuses.
 
 `timing_partition` closes on exactly one `timing_captures` record of schema
-`tessera.full_engine_timing_observation.v1` whose run identity digests equal the
-ledger's, whose `partition.established` is true, and every one of whose
-qualification checks (`single_worker`, `identical_tokens`, `arms_complete`,
-`step_shape`, `stream_coverage`, `gpu_operation_counts_agree`,
-`device_exclusivity`) passed. The record is the timing pass's own; the domain
-recomputes nothing about timings itself and `derived.timing_terms` restates the
-record's per-sample terms.
+`tessera.full_engine_timing_observation.v1` that names the same served object
+as the ledger — equal `configuration_sha256`, `model_sha256`,
+`assignment_sha256`, `canonical_units_sha256` and `runtime_manifest_sha256`
+(`TIMING_BOUND_IDENTITY`) — whose `partition.established` is true, and every
+one of whose qualification checks (`single_worker`, `identical_tokens`,
+`arms_complete`, `step_shape`, `stream_coverage`, `gpu_operation_counts_agree`,
+`device_exclusivity`) passed. The workload digest is deliberately not bound:
+the timing pass declares its own workload (identical-token control and
+partition arms on the calibration prompt), and its digest travels with the
+terms. The record is the timing pass's own; the domain recomputes nothing
+about timings itself and `derived.timing_terms`
+(`tessera.full_engine_timing_terms.v1`: `workload_sha256`, `timing_samples`,
+`phases`) restates the record's per-phase, per-sample terms.
 
 `worker_startup` is the subtle one, and it needs two independent sides before it
 closes. The replay refuses outright a capture whose recorder attached after CUDA
@@ -501,8 +507,8 @@ carries the timing observation's terms while the resource terms stay null — a
 partially expressible `derived`, which is a valid report.
 
 The two once-unreachable negative tests are reachable now: a timing record
-whose identity digests differ from the ledger's, or whose `established` is
-false, refuses `timing_partition`; an altered pool, an overlapping backing or an
+that names a different served object, or whose `established` is false,
+refuses `timing_partition`; an altered pool, an overlapping backing or an
 intrusive-pass record refuses `cache_capacity`.
 
 `step_intervals` and `step_coverage` are carried the same way and for the same
