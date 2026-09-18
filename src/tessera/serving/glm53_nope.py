@@ -53,10 +53,14 @@ def require_stock_runtime() -> None:
 def _config_reason(config) -> str | None:
     # Isolated attention graph equality does not qualify the hybrid model's
     # whole-engine graph path: the matched stub differs by 0.67253 logprob nats.
-    if (not config.model_config.enforce_eager
-            or config.compilation_config.mode != CompilationMode.NONE
-            or config.compilation_config.cudagraph_mode != CUDAGraphMode.NONE):
-        return "Tessera GLM53 NoPE is eager-only; require --enforce-eager with compilation and CUDA graphs disabled"
+    # #508 bisection: TESSERA_RESEARCH_GLM53_NOPE_GRAPHS=1 lifts only the
+    # eager-only leg (research opt-in; every other gate still fires).
+    import os
+    if not os.environ.get("TESSERA_RESEARCH_GLM53_NOPE_GRAPHS"):
+        if (not config.model_config.enforce_eager
+                or config.compilation_config.mode != CompilationMode.NONE
+                or config.compilation_config.cudagraph_mode != CUDAGraphMode.NONE):
+            return "Tessera GLM53 NoPE is eager-only; require --enforce-eager with compilation and CUDA graphs disabled"
     hf = config.model_config.hf_text_config
     expected = dict(model_type="glm5_next_text", kv_lora_rank=512,
                     qk_nope_head_dim=256, qk_rope_head_dim=0,
