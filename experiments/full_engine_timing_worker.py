@@ -18,6 +18,7 @@ class TimingCaptureWorker(Worker):
         self._timing_recorder = None
         self._timing_boundaries = None
         self._timing_kv = None
+        self._timing_exclusivity = None
         super().__init__(*args, **kwargs)
 
     def load_model(self, *args, **kwargs):
@@ -39,8 +40,10 @@ class TimingCaptureWorker(Worker):
         if type(sample) is not int or not 0 <= sample < self._timing_plan["timing_samples"]:
             raise ValueError("timing sample is outside the explicit plan")
         directory = Path(self._timing_plan["output_directory"]) / f"worker-{os.getpid()}" / f"sample-{sample}-{arm}"
+        self._timing_exclusivity = {"at_arm": device_processes(self.device)}
         self._timing_recorder = FullEngineTimingRecorder(self._timing_boundaries, arm=arm, output=directory)
-        return {"pid": os.getpid(), "arm": arm, "sample": sample, "native_units": len(self._timing_boundaries)}
+        return {"pid": os.getpid(), "arm": arm, "sample": sample, "native_units": len(self._timing_boundaries),
+                "device_processes_at_arm": self._timing_exclusivity["at_arm"]}
 
     def execute_model(self, scheduler_output):
         if self._timing_recorder is not None:
@@ -64,7 +67,48 @@ class TimingCaptureWorker(Worker):
             result = full_engine_runtime_observation(self._timing_plan)
             result["source"]["full_engine_timing_worker_sha256"] = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
             result["kv_configuration"] = self._timing_kv
+            # One runtime observation per worker directory, beside the arms,
+            # in the file the step-4 route qualification binds the mapped
+            # decode library to; every arm's capture.json embeds its own copy.
+            path = Path(self._timing_plan["output_directory"]) / f"worker-{os.getpid()}" / "runtime-observation.json"
+            if not path.exists():
+                path.parent.mkdir(parents=True, exist_ok=True)
+                with path.open("x") as stream:
+                    json.dump(result, stream, sort_keys=True, indent=2)
             return result
-        result = self._timing_recorder.finish(identity=self._timing_plan["identity"], runtime=runtime)
+        exclusivity = dict(self._timing_exclusivity, at_finish=device_processes(self.device),
+                           own_pid=os.getpid(),
+                           scope=("NVML compute-process census of this device at arm and at finish; pids "
+                                  "are the driver's namespace, so the count and its constancy are the "
+                                  "witness, not pid equality with own_pid; a foreign process alive only "
+                                  "between the two samples is not seen here"))
+        result = self._timing_recorder.finish(identity=self._timing_plan["identity"], runtime=runtime,
+                                              exclusivity=exclusivity)
         self._timing_recorder = None
         return result
+
+
+def device_processes(device):
+    """The compute processes NVML lists on ``device``, or the reason it cannot say.
+
+    ``available: False`` is a recorded absence, never an empty census.
+    """
+    try:
+        import pynvml
+    except ImportError as exc:
+        return {"available": False, "error": f"pynvml unavailable: {exc}", "processes": None}
+    try:
+        pynvml.nvmlInit()
+        try:
+            index = device.index if hasattr(device, "index") and device.index is not None else 0
+            handle = pynvml.nvmlDeviceGetHandleByIndex(index)
+            rows = pynvml.nvmlDeviceGetComputeRunningProcesses(handle)
+            processes = [{"pid": int(row.pid),
+                          "used_gpu_memory_bytes": (None if row.usedGpuMemory is None else int(row.usedGpuMemory))}
+                         for row in rows]
+            return {"available": True, "device_index": index, "processes": processes,
+                    "count": len(processes)}
+        finally:
+            pynvml.nvmlShutdown()
+    except Exception as exc:  # noqa: BLE001 -- the absence is the record
+        return {"available": False, "error": f"{type(exc).__name__}: {exc}", "processes": None}

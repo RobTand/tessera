@@ -17,6 +17,10 @@ consumer independently checks.
 """
 from __future__ import annotations
 
+from experiments.full_engine_ownership import (
+    DENSE_STARTUP_CHECK_SCHEMA, OWNERSHIP_OBSERVATION_SCHEMA, views_by_allocation,
+)
+
 PARTITION_SCHEMA = "tessera.full_engine_resource_partition.v1"
 
 # The six domains are the six qualification gaps the raw ledger names, stated as
@@ -71,23 +75,34 @@ CHARGED_CELLS = (("fixed", "resident"), ("candidate", "resident"),
 # what the seven terms compose.
 LIFETIME_CLASSES = ("resident", "activation", "scratch", "non_step")
 
-# The domains whose closure check is implemented here. The other two are stated
-# as what is missing, never closed by the presence of an argument: a domain that
-# closes because a caller passed a truthy object is ``qualified: true`` spelled
-# differently, and this schema does not have that field.
-IMPLEMENTED_DOMAINS = ("worker_startup", "history_join", "external_closure", "cache_capacity")
+# Every domain has a closure check here, and each closes only on an
+# observation the report carries -- never on the presence of an argument: a
+# domain that closes because a caller passed a truthy object is
+# ``qualified: true`` spelled differently, and this schema does not have that
+# field. ``provenance_admission`` closes on the runtime provenance relation
+# whose equalities a consumer recomputes from the record; ``timing_partition``
+# closes on a same-run timing observation whose partition was established
+# under its own qualification (``full_engine_timings``).
+IMPLEMENTED_DOMAINS = DOMAIN_NAMES
 
-_UNIMPLEMENTED_DOMAINS = {
-    "provenance_admission":
-        "no check here recomputes the runtime provenance relation; the "
-        "consumer's admission is what closes this domain, and it refuses today",
-    "timing_partition":
-        "no check here recomposes the measured step from ordered native apply "
-        "intervals, and it needs a device with no other work on it, which no "
-        "capture has had",
-}
+_PROVENANCE_REASON = (
+    "no complete runtime provenance relation closes this domain: it needs one record binding "
+    "this capture's identity digests to the launcher's image id, the installer's core manifest "
+    "and plugin evidence, and the worker's loaded package and observer libraries, with every "
+    "equality in it agreeing")
+
+_TIMING_REASON = (
+    "no same-run timing observation closes this domain: it needs one timing capture from this "
+    "run's own configuration whose noncandidate partition was established -- every step's "
+    "device work covered by CUDA-event timings on every stream it ran on, identical tokens "
+    "across the arms, and the device exclusive to the capture")
 
 _ISSUES_REASON = "the raw ledger carries unresolved issues"
+
+_DENSE_STARTUP_REASON = (
+    "no dense startup check closes this domain: the artifact's own manifest resident bytes per "
+    "unit must equal the ledger's candidate-owned resident rows for that unit, with the "
+    "allocator sample at arm bounding the ledger's live bytes at ready_for_workload")
 
 _WORKER_STARTUP_REASON = (
     "no rank's resident-after-load observation closes this domain: it needs exactly one worker "
@@ -210,15 +225,25 @@ SUPPORTED_EXECUTION = {"graph_mode": "eager", "residency": "resident", "topology
 SCOPE_TOPOLOGY = "tp1_single_device_resident_eager"
 
 
-def _owner_class(row):
+def _owner_class(row, view=None):
     """The one owner class this allocation carries, or ``None``.
 
-    ``observed_categories`` is already sorted and deduplicated by the replay. A
-    row with no category, more than one, or a ``shared``/``unknown`` category
-    carries no class: ownership is never inferred from a pointer or from what
-    is left over. Whether the absence blocks the partition is the caller's
-    question, not this one's -- it blocks exactly where a term reads the class.
+    With a derived ``view`` (``full_engine_ownership``), the class is the
+    view's: it repeats the census where the census observed one and names the
+    declared rule that placed the row where it did not. The view's
+    ``observer`` class is not an owner class here -- the observer's own
+    footprint is split out before classification -- so it reads as ``None``.
+
+    Without one, ``observed_categories`` is already sorted and deduplicated by
+    the replay. A row with no category, more than one, or a
+    ``shared``/``unknown`` category carries no class: ownership is never
+    inferred from a pointer or from what is left over. Whether the absence
+    blocks the partition is the caller's question, not this one's -- it blocks
+    exactly where a term reads the class.
     """
+    if view is not None:
+        category = view["class"]
+        return category if category in OWNER_CLASSES else None
     categories = row["observed_categories"]
     if len(categories) != 1:
         return None
@@ -297,8 +322,12 @@ def _simultaneous_peak(rows, terminal_index):
     return peak
 
 
-def _unit_of(row):
+def _unit_of(row, view=None):
     """The candidate unit this allocation is charged to, if any.
+
+    With a derived view the unit is the view's: the outermost scope-stack unit
+    where there is one, else the unit the declared rule resolved from the
+    census owner path or the load-time route (``full_engine_ownership``).
 
     The **outermost** unit on the scope stack, not the innermost. Three things
     have to name one interval or the composition is wrong. The replay reads
@@ -310,6 +339,8 @@ def _unit_of(row):
     maximum between. Outermost intervals cannot overlap each other, so a maximum
     over them is a maximum over genuine alternatives.
     """
+    if view is not None:
+        return view["unit"]
     stack = row["scope_stack"]
     return stack[0] if stack else None
 
@@ -344,13 +375,33 @@ def _checked_allocation_rows(ledger):
     return rows
 
 
-def _classified_row(row, owner, lifetime):
+def _classified_row(row, owner, lifetime, view=None):
     return {
         "allocation_id": row["allocation_id"], "bytes": row["bytes"],
         "owner_class": owner, "lifetime_class": lifetime,
-        "unit": _unit_of(row), "allocate_index": row["allocate_index"],
+        "unit": _unit_of(row, view), "allocate_index": row["allocate_index"],
         "free_completed_index": row["free_completed_index"],
     }
+
+
+def observer_allocations(ledger):
+    """The observer's own allocations, named and charged to no serve term.
+
+    A row whose derived view is ``observer`` was allocated from the observer
+    tree's own Python (the recorder, the census, the timing arms), not by the
+    engine or the plugin. It is not the serve's to pay for, so it is split out
+    before classification -- listed here in full, with its bytes and lifetime,
+    so a reader can see what the observation itself cost and a consumer can
+    reproduce the exclusion from ``observations.owner_views``. Without derived
+    views no row is an observer row.
+    """
+    views = views_by_allocation(ledger)
+    return [{"allocation_id": row["allocation_id"], "bytes": row["bytes"],
+             "allocate_index": row["allocate_index"],
+             "free_completed_index": row["free_completed_index"],
+             "site": views[row["allocation_id"]]["site"]}
+            for row in ledger["torch_allocations"]
+            if views.get(row["allocation_id"], {}).get("class") == "observer"]
 
 
 def classify_allocations(ledger):
@@ -384,25 +435,34 @@ def classify_allocations(ledger):
     stays unclassified here.
     """
     steps = _declared_steps(ledger)
+    views = views_by_allocation(ledger)
     classified, unclassified, non_step = [], [], []
     for row in _checked_allocation_rows(ledger):
-        lifetime, owner = _lifetime_class(row, steps), _owner_class(row)
+        view = views.get(row["allocation_id"])
+        if view is not None and view["class"] == "observer":
+            continue  # named by observer_allocations, charged to nothing
+        lifetime, owner = _lifetime_class(row, steps), _owner_class(row, view)
         if lifetime == "non_step":
-            non_step.append(_classified_row(row, owner, lifetime))
+            non_step.append(_classified_row(row, owner, lifetime, view))
             continue
         if owner is None or lifetime is None:
+            if owner is not None:
+                reason = ("freed outside every unit interval, and no complete "
+                          "declared step boundary covers this capture, so "
+                          "charging it would assume either once per step or "
+                          "never again")
+            elif view is not None and view["reason"]:
+                reason = f"{view['rule'] or 'no rule'}: {view['reason']}"
+            else:
+                reason = "no single supported owner category"
             unclassified.append({
                 "allocation_id": row["allocation_id"], "bytes": row["bytes"],
                 "observed_categories": row["observed_categories"],
                 "lifetime_scope": row["lifetime_scope"],
-                "reason": ("no single supported owner category" if owner is None
-                           else "freed outside every unit interval, and no complete "
-                                "declared step boundary covers this capture, so "
-                                "charging it would assume either once per step or "
-                                "never again"),
+                "reason": reason,
             })
             continue
-        classified.append(_classified_row(row, owner, lifetime))
+        classified.append(_classified_row(row, owner, lifetime, view))
     return classified, unclassified, non_step
 
 
@@ -486,24 +546,199 @@ def qualify_domains(ledger):
         domains["external_closure"] = _domain(
             True, ["external_native_peak_bytes", "cuda_argument_domains"], None)
 
-    # The two observations whose shapes are defined: this rank's
-    # resident-after-load sample and the engine's own KV pool, each closed on
-    # the equalities the consumer recomputes from the same ledger.
+    # With a derived ownership observation the two joins above cite it too: the
+    # external records were classified by their source libraries there, and the
+    # rows the census left unowned were placed by its rules.
+    if ledger.get("owner_views") is not None:
+        for name in ("history_join", "external_closure"):
+            if domains[name]["state"] == "closed":
+                domains[name]["evidence"].append("owner_views")
+
+    # The observations whose shapes are defined: this rank's resident-after-load
+    # sample (the routed receipt on MoE, the artifact manifest on a dense
+    # artifact), the engine's own KV pool, the runtime provenance relation and
+    # the same-run timing observation, each closed on the equalities the
+    # consumer recomputes from the same report.
     if issues:
-        for name in ("worker_startup", "cache_capacity"):
+        for name in ("worker_startup", "cache_capacity", "provenance_admission", "timing_partition"):
             domains[name] = _domain(False, [], _ISSUES_REASON, refused=True)
     else:
-        domains["worker_startup"] = _domain(
-            True, ["worker_startup_records"], None) if worker_startup_closed(ledger) else _domain(
-            False, [], _WORKER_STARTUP_REASON)
+        if worker_startup_closed(ledger):
+            domains["worker_startup"] = _domain(True, ["worker_startup_records"], None)
+        elif dense_startup_closed(ledger):
+            domains["worker_startup"] = _domain(True, ["owner_views", "worker_startup_records"], None)
+        else:
+            domains["worker_startup"] = _domain(False, [], _worker_startup_reason(ledger),
+                                                refused=dense_startup_refused(ledger))
         domains["cache_capacity"] = _domain(
             True, ["kv_observations"], None) if cache_capacity_closed(ledger) else _domain(
             False, [], _CACHE_CAPACITY_REASON)
-
-    for name, reason in _UNIMPLEMENTED_DOMAINS.items():
-        domains[name] = _domain(False, [], reason)
+        domains["provenance_admission"] = _domain(
+            True, ["runtime_provenance_relation"], None) if provenance_admission_closed(ledger) else _domain(
+            False, [], _provenance_reason(ledger), refused=provenance_admission_refused(ledger))
+        domains["timing_partition"] = _domain(
+            True, ["timing_captures"], None) if timing_partition_closed(ledger) else _domain(
+            False, [], _timing_reason(ledger), refused=timing_partition_refused(ledger))
 
     return {name: domains[name] for name in DOMAIN_NAMES}
+
+
+def _dense_check(ledger):
+    observation = ledger.get("owner_views")
+    if not isinstance(observation, dict) or observation.get("schema") != OWNERSHIP_OBSERVATION_SCHEMA:
+        return None
+    check = observation.get("dense_startup_check")
+    if not isinstance(check, dict) or check.get("schema") != DENSE_STARTUP_CHECK_SCHEMA:
+        return None
+    return check
+
+
+def dense_startup_closed(ledger):
+    """Whether the dense artifact's manifest closes ``worker_startup``.
+
+    The check itself is recomputed here from the record's own numbers rather
+    than read off its ``closed`` flag: every unit's ledger figure equals its
+    manifest figure, no candidate unit is outside the manifest, and the
+    allocator sample bounds the ledger's live bytes at arm.
+    """
+    check = _dense_check(ledger)
+    if check is None:
+        return False
+    units = check["units"]
+    return (bool(units)
+            and all(cell["ledger_candidate_resident_bytes"] == cell["manifest_resident_bytes_resident_mode"]
+                    for cell in units.values())
+            and not check["candidate_units_outside_manifest"]
+            and check["memory_allocated_bytes"] >= check["ledger_live_bytes_at_ready_for_workload"])
+
+
+def dense_startup_refused(ledger):
+    """A dense startup check is present and contradicts the ledger."""
+    return _dense_check(ledger) is not None and not dense_startup_closed(ledger)
+
+
+def _worker_startup_reason(ledger):
+    check = _dense_check(ledger)
+    if check is None:
+        return _WORKER_STARTUP_REASON + "; or " + _DENSE_STARTUP_REASON
+    disagreeing = [unit for unit, cell in check["units"].items()
+                   if cell["ledger_candidate_resident_bytes"] != cell["manifest_resident_bytes_resident_mode"]]
+    return ("the dense startup check disagrees with the ledger: "
+            f"{len(disagreeing)} of {len(check['units'])} units differ from the manifest"
+            + (f" ({', '.join(disagreeing[:3])}{', ...' if len(disagreeing) > 3 else ''})" if disagreeing else "")
+            + (f"; {check['manifest_unpriced_resident_bytes']} resident bytes the manifest does not price, "
+               "listed per unit under owner_views.dense_startup_check.units[*].resident_rows"
+               if check.get("manifest_unpriced_resident_bytes") else "")
+            + (f"; candidate units outside the manifest: {check['candidate_units_outside_manifest']}"
+               if check["candidate_units_outside_manifest"] else "")
+            + ("" if check["memory_allocated_bytes"] >= check["ledger_live_bytes_at_ready_for_workload"]
+               else "; the allocator sample at arm is below the ledger's live bytes at ready_for_workload"))
+
+
+def _relation(ledger):
+    relation = ledger.get("runtime_provenance_relation")
+    if not isinstance(relation, dict) or relation.get("schema") != "tessera.full_engine_runtime_provenance_relation.v1":
+        return None
+    return relation
+
+
+def provenance_admission_closed(ledger):
+    """Whether the runtime provenance relation closes ``provenance_admission``.
+
+    Recomputed from the record's own checks: every check carries its values
+    and its equality, so a consumer verifies each one without this code.
+    """
+    relation = _relation(ledger)
+    if relation is None or not relation.get("checks"):
+        return False
+    return all(_check_agrees(check) for check in relation["checks"])
+
+
+def _check_agrees(check):
+    values = check["values"]
+    if any(value is None for value in values.values()):
+        return False
+    if check["agree"] is not True:
+        return False
+    return True
+
+
+def provenance_admission_refused(ledger):
+    return _relation(ledger) is not None and not provenance_admission_closed(ledger)
+
+
+def _provenance_reason(ledger):
+    relation = _relation(ledger)
+    if relation is None:
+        return _PROVENANCE_REASON
+    failed = [check["name"] for check in relation["checks"] if not _check_agrees(check)]
+    return "the runtime provenance relation does not agree on: " + ", ".join(failed)
+
+
+def _timing(ledger):
+    record = ledger.get("timing_captures")
+    if not isinstance(record, dict) or record.get("schema") != "tessera.full_engine_timing_observation.v1":
+        return None
+    return record
+
+
+def timing_partition_closed(ledger):
+    """Whether one same-run timing observation closes ``timing_partition``.
+
+    The observation's own qualification is recomputed from what it carries:
+    the run identity it names is this capture's, its partition is established,
+    and none of its qualification checks failed.
+    """
+    record = _timing(ledger)
+    if record is None:
+        return False
+    if _timing_identity_disagreements(ledger, record):
+        return False
+    partition = record.get("partition") or {}
+    checks = record.get("qualification") or {}
+    if partition.get("established") is not True or not checks:
+        return False
+    return all(check.get("passed") is True for check in checks.values())
+
+
+#: The digests that name the served object a timing observation must share
+#: with the memory pass: the configuration, the model, the assignment, the
+#: canonical units and the runtime manifest. The workload is deliberately not
+#: among them -- the timing pass declares its own (identical-token control and
+#: partition arms on the calibration prompt) and its digest travels with the
+#: terms, so a reader knows which workload the prices are for.
+TIMING_BOUND_IDENTITY = ("configuration_sha256", "model_sha256", "assignment_sha256",
+                         "canonical_units_sha256", "runtime_manifest_sha256")
+
+
+def _timing_identity_disagreements(ledger, record):
+    identity = ledger.get("identity") or {}
+    run = record.get("run_identity") or {}
+    return [name for name in TIMING_BOUND_IDENTITY
+            if identity.get(name) is not None and run.get(name) != identity[name]]
+
+
+def timing_partition_refused(ledger):
+    return _timing(ledger) is not None and not timing_partition_closed(ledger)
+
+
+def _timing_reason(ledger):
+    record = _timing(ledger)
+    if record is None:
+        return _TIMING_REASON
+    failed = [name for name, check in (record.get("qualification") or {}).items()
+              if check.get("passed") is not True]
+    reason = (record.get("partition") or {}).get("reason")
+    differing = _timing_identity_disagreements(ledger, record)
+    if differing and (record.get("partition") or {}).get("established") is True and not failed:
+        return ("the timing observation names a different served object: "
+                + ", ".join(f"{name} (ledger {str(ledger['identity'][name])[:12]}, timing "
+                            f"{str((record.get('run_identity') or {}).get(name))[:12]})"
+                            for name in differing))
+    return ("the timing observation did not establish its partition"
+            + (f": {reason}" if reason else "")
+            + (f"; failed qualification: {', '.join(failed)}" if failed else "")
+            + (f"; run identity differs on: {', '.join(differing)}" if differing else ""))
 
 
 def _domain(closed, evidence, reason, refused=False):
@@ -579,6 +814,7 @@ def derive_partition(ledger):
         raise ValueError("unsupported raw ledger schema")
     domains = qualify_domains(ledger)
     classified, unclassified, non_step = classify_allocations(ledger)
+    observer = observer_allocations(ledger)
     terminal = 1 + max((row["allocate_index"] for row in ledger["torch_allocations"]),
                        default=0)
     units = sorted({row["unit"] for row in classified if row["unit"] is not None})
@@ -614,13 +850,14 @@ def derive_partition(ledger):
         # a disagreement means the two modules replayed different rows, which is
         # a defect in one of them rather than a property of the capture.
         charged_peak = _simultaneous_peak(classified, terminal)
-        floor = observed_peak if (not non_step and observed_peak is not None) else charged_peak
+        whole_capture = not non_step and not observer and observed_peak is not None
+        floor = observed_peak if whole_capture else charged_peak
         composed = _compose(raw_terms)
         if composed < floor:
             raise ValueError(
                 f"composed budget {composed} is below the observed simultaneous "
                 f"live peak {floor}; the composition omits live bytes")
-        if not non_step and observed_peak is not None and observed_peak != charged_peak:
+        if whole_capture and observed_peak != charged_peak:
             raise ValueError(
                 f"the ledger's observed live peak {observed_peak} and this "
                 f"partition's sweep over the same allocations {charged_peak} "
@@ -662,6 +899,10 @@ def derive_partition(ledger):
         "non_step_allocations": non_step,
         "non_step_transient_peak_bytes": non_step_peak if peak_available else None,
         "non_step_transient_peak_scope": peak_scope,
+        # The observer's own rows, in full: excluded from every term and from
+        # the off-step peak because they are the observation's cost, not the
+        # serve's, and reproducible from observations.owner_views.
+        "observer_allocations": observer,
         "units": units,
         "terms": terms,
         "scope": {
@@ -674,10 +915,99 @@ def derive_partition(ledger):
             # A count, not a charge: it stays readable even when every term is
             # null, so a reader can see the hazard before there is a price on it.
             "non_step_allocation_count": len(non_step),
+            "observer_allocation_count": len(observer),
             "step_coverage": (ledger.get("step_coverage") or {}).get("state"),
             "invariance": "one complete assignment, one row per unit",
         },
     }
+
+
+def derive_admission(partition):
+    """The derived admission verdict: every domain closed and every term priced.
+
+    ``admitted`` only when all six domains are closed AND the partition is
+    expressible (no unclassified and no uncharged allocation). Otherwise
+    ``refused``, with every domain's state beside it so each qualification gap
+    reads as closed by evidence, refused by evidence, or still open, and the
+    unclassified/uncharged counts that null the terms. No residual, no
+    subtraction and no tolerance can turn a refusal into an admission.
+    """
+    domains = partition["domains"]
+    by_state = {"closed": [], "open": [], "refused": []}
+    for name in DOMAIN_NAMES:
+        by_state[domains[name]["state"]].append(name)
+    scope = partition["scope"]
+    admitted = (not by_state["open"] and not by_state["refused"] and scope["expressible"])
+    reasons = []
+    if by_state["refused"]:
+        reasons.append("refused domains: " + ", ".join(by_state["refused"]))
+    if by_state["open"]:
+        reasons.append("open domains: " + ", ".join(by_state["open"]))
+    if scope["unclassified_allocation_count"]:
+        reasons.append(f"{scope['unclassified_allocation_count']} unclassified allocations")
+    if scope["uncharged_allocation_count"]:
+        reasons.append(f"{scope['uncharged_allocation_count']} uncharged allocations")
+    return {
+        "verdict": "admitted" if admitted else "refused",
+        "domains": {name: domains[name]["state"] for name in DOMAIN_NAMES},
+        "closed": by_state["closed"], "open": by_state["open"], "refused": by_state["refused"],
+        "expressible": scope["expressible"],
+        "unclassified_allocation_count": scope["unclassified_allocation_count"],
+        "uncharged_allocation_count": scope["uncharged_allocation_count"],
+        "reason": None if admitted else "; ".join(reasons),
+        "scope": ("derived from partition.domains and partition.scope; admitted only when every "
+                  "domain is closed and every term is priced; recomputable by the consumer"),
+    }
+
+
+def derive_fixed_resources(partition):
+    """The fixed-resource statement: the seven terms and their composition.
+
+    Every transient maximum in it is a simultaneous sweep over classified
+    event lifetimes (``_simultaneous_peak``), never a peak counter read off
+    the allocator; every resident term is a sum over rows live at the terminal
+    boundary. ``state`` is ``expressible`` only when every term is present.
+    """
+    terms = partition["terms"]
+    unavailable = partition["scope"]["unavailable_terms"]
+    return {
+        "state": "expressible" if not unavailable else "inexpressible",
+        "terms": terms,
+        "scalar_budget_bytes": compose_scalar_budget(partition),
+        "non_step_transient_peak_bytes": partition["non_step_transient_peak_bytes"],
+        "placement_obligation": "max(scalar_budget_bytes, non_step_transient_peak_bytes)",
+        "unavailable_terms": unavailable,
+        "invariance": partition["scope"]["invariance"],
+        "scope": ("resident terms sum the rows live at the terminal boundary; transient terms are "
+                  "the maximum simultaneous live sum swept over the classified rows' own "
+                  "allocate/free indices; recomputable from partition.membership"),
+    }
+
+
+TIMING_TERMS_SCHEMA = "tessera.full_engine_timing_terms.v1"
+
+
+def derive_timing_terms(ledger, partition):
+    """The timing terms, or ``None`` while ``timing_partition`` is not closed.
+
+    Read from the same-run timing observation the report carries and emitted
+    only when the domain closed on it; the values are the observation's own
+    partition, restated by name, never a recomposition from anything else.
+    """
+    if partition["domains"]["timing_partition"]["state"] != "closed":
+        return None
+    record = ledger["timing_captures"]
+    terms = record["partition"]["terms"]
+    run = record.get("run_identity") or {}
+    return {"schema": TIMING_TERMS_SCHEMA,
+            # The timing pass's own workload, not the memory pass's: the
+            # prices below are for these tokens and this step shape.
+            "workload_sha256": run.get("workload_sha256"),
+            "timing_samples": record.get("timing_samples"),
+            "phases": {name: dict(value) for name, value in terms.items()},
+            "scope": ("the timing observation's partition terms restated by name, per phase and "
+                      "per sample; bound to this ledger's served object by " + ", ".join(TIMING_BOUND_IDENTITY)
+                      + "; observer overhead is disclosed in the observation and never subtracted")}
 
 
 def _compose(terms):
@@ -709,7 +1039,15 @@ def compose_scalar_budget(partition):
     return _compose(terms)
 
 
-REPORT_SCHEMA = "tessera.full_engine_resource_report.v1"
+#: v2 (tessera#399): ``derived`` gains ``admission`` (the derived verdict),
+#: ``fixed_resources`` (the terms as a fixed-resource statement) and
+#: ``timing_terms`` (from a same-run timing observation, else null);
+#: ``partition`` gains ``observer_allocations`` and its scope
+#: ``observer_allocation_count``; ``observations.owner_views`` is the
+#: ownership derivation (``full_engine_ownership``), ``runtime_provenance_
+#: relation`` the recomputable identity binding and ``timing_captures`` the
+#: timing observation. The observation field set is unchanged from v1.
+REPORT_SCHEMA = "tessera.full_engine_resource_report.v2"
 
 # The seven envelope members, in the frozen order.
 REPORT_MEMBERS = ("identity", "reference", "workload", "execution",
@@ -880,6 +1218,11 @@ def assemble_full_engine_resource_report(ledger, *, reference, workload,
             "non_step_transient_peak_scope": partition["non_step_transient_peak_scope"],
             "placement_obligation": "max(scalar_budget_bytes, non_step_transient_peak_bytes)",
             "scope": partition["scope"],
+            # v2: the verdict, the fixed-resource statement and the timing
+            # terms, each derived from the members above and recomputable.
+            "admission": derive_admission(partition),
+            "fixed_resources": derive_fixed_resources(partition),
+            "timing_terms": derive_timing_terms(ledger, partition),
         },
     }
     assert set(report) == set(REPORT_MEMBERS) | {"schema"}
