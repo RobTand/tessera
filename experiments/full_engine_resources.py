@@ -758,7 +758,7 @@ _EXTERNAL_ISSUE = "unattributed external/static/unsupported CUDA memory records"
 
 
 def _derive_ownership(result, raw, rows, frames_by_index, unowned_live, unknown,
-                      intervals, steps, by_label, evidence):
+                      intervals, steps, by_label, evidence, boundary_classification=None):
     """Attach the derived ownership observation and re-raise only what it left.
 
     The census's issues are recomputed over census AND derivation: a row live
@@ -772,7 +772,9 @@ def _derive_ownership(result, raw, rows, frames_by_index, unowned_live, unknown,
     # it publishes no ownership observation either.
     boundary_rows(rows)
     views, summary = derive_owner_views(rows, frames_by_index, checkpoint_index=by_label,
-                                        roster=evidence["roster"], evidence=evidence)
+                                        roster=evidence["roster"], evidence=evidence,
+                                        boundary_classification=boundary_classification,
+                                        capture_sha256=result["capture_sha256"])
     view_of = {view["allocation_id"]: view for view in views}
     issues.extend("unowned allocation live at checkpoint: " + row["allocation_id"]
                   for row in unowned_live if view_of[row["allocation_id"]]["class"] is None)
@@ -798,7 +800,8 @@ def _derive_ownership(result, raw, rows, frames_by_index, unowned_live, unknown,
         transient_witness=transient_gap_witness(rows, views, intervals, evidence["roster"],
                                                 witness_steps),
         dense_startup_check=dense_startup_check(rows, views, evidence.get("dense_startup"),
-                                                ready_index=by_label.get("ready_for_workload")))
+                                                ready_index=by_label.get("ready_for_workload")),
+        boundary_classification=boundary_classification)
     result["schema"] = LEDGER_SCHEMA_V2
 
 
@@ -929,7 +932,7 @@ PRICING_SCOPE = ("the raw ledger replays and reconciles; admission, fixed resour
                  "classified event lifetimes and domain evidence")
 
 
-def analyze_engine_resource_ledger(raw, ownership_evidence=None):
+def analyze_engine_resource_ledger(raw, ownership_evidence=None, boundary_classification=None):
     """Replay captured allocation events; never construct fixed resource prices.
 
     ``observed_raw_ledger`` means only this restricted raw ledger reconciled.
@@ -945,6 +948,12 @@ def analyze_engine_resource_ledger(raw, ownership_evidence=None):
     "unowned allocation live at checkpoint" and external-record issues are
     then raised only for what no rule placed. Without it, the replay behaves
     as before and every unowned row is an issue.
+
+    ``boundary_classification`` is tessera#548's two-capture comparison, when
+    this capture is one of the pair it names. With it, a census-shared site
+    whose bytes agree across both captures is derived ``fixed`` and one whose
+    bytes move is derived ``candidate``; without it every such row stays
+    ``pending_548``, because one capture observes one assignment.
     """
     result = {"schema": LEDGER_SCHEMA, "scope": "full_engine_raw_resource_ledger",
               "status": "incomplete", "admission": None,
@@ -1173,7 +1182,8 @@ def analyze_engine_resource_ledger(raw, ownership_evidence=None):
                           for row in unowned_live)
         else:
             _derive_ownership(result, raw, rows, frames_by_index, unowned_live, unknown,
-                              intervals, steps, by_label, ownership_evidence)
+                              intervals, steps, by_label, ownership_evidence,
+                              boundary_classification)
         result["status"] = "incomplete" if issues else "observed_raw_ledger"
     except (KeyError, TypeError, ValueError, IndexError) as exc:
         issues.append(str(exc))

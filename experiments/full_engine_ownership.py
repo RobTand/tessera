@@ -35,6 +35,7 @@ the boundary tensors it computes the within-capture cross-family geometry
 witness #548 asked for and carries it as an observation.
 """
 from collections import Counter
+import json
 from pathlib import PurePosixPath
 
 OWNER_VIEWS_SCHEMA = "tessera.full_engine_owner_views.v1"
@@ -108,6 +109,23 @@ RULES = {
                      "(the PYTHONPATH roots outside site-packages); the observer's own footprint, "
                      "charged to no serve term and reported as such",
         "basis": "allocation-site file under an observer root from the worker's recorded sys.path",
+    },
+    "two_capture:agreed": {
+        "class": "fixed",
+        "statement": "a census-shared site whose matched bytes are identical in both captures of "
+                     "tessera#548's two-assignment measurement: the selected assignment changed "
+                     "and these bytes did not",
+        "basis": "equal site bytes across the two captures named in the boundary classification; "
+                 "evidence for THOSE TWO captures, never a universal invariance, and "
+                 "consumer-recomputable from the classification's own byte columns",
+    },
+    "two_capture:moved": {
+        "class": "candidate",
+        "statement": "a census-shared site whose matched bytes differ between the two captures: "
+                     "its bytes move with the selected assignment, so it is a candidate resource "
+                     "and owes a unit",
+        "basis": "differing site bytes across the two captures named in the boundary "
+                 "classification; consumer-recomputable from the same byte columns",
     },
     "pending_548": {
         "class": None,
@@ -236,15 +254,68 @@ def _unit_from_owner_path(owners, by_module):
     return units.pop() if len(units) == 1 else None
 
 
-def derive_owner_views(rows, frames_by_index, *, checkpoint_index, roster, evidence):
+def _two_capture_sites(classification, capture_sha256):
+    """``{owner: site}`` from a boundary classification that names this capture.
+
+    A classification of two OTHER captures says nothing about this one's rows,
+    so reading it here would be borrowing evidence. It is refused by name
+    rather than ignored (tessera#548).
+    """
+    if classification is None:
+        return None
+    named = [capture["capture_sha256"] for capture in classification["captures"]]
+    if capture_sha256 not in named:
+        raise ValueError("the boundary classification names captures " + ", ".join(named)
+                         + ", not this one: " + str(capture_sha256))
+    return {site["owner"]: site for site in classification["sites"]}, named
+
+
+def _apply_two_capture(view, owners, sites, named, stack):
+    """Classify one ``pending_548`` row from the two captures' matched bytes.
+
+    Every shared site the row carries has to be present in both captures and
+    has to agree, or the row keeps the class the measurement did not give it.
+    A row whose sites disagree with each other is not averaged: the first
+    moving site makes the row a candidate, because bytes that move with the
+    assignment are what a candidate charge is.
+    """
+    both = ", ".join(named)
+    matched = [sites[owner] for owner in owners if owner in sites]
+    if not matched or any(len(site["present_in"]) != 2 for site in matched):
+        view["reason"] = (view["reason"] + "; the two-capture classification of " + both
+                          + " matches this site in one capture only, so it is neither agreed "
+                            "nor moved")
+        return
+    moved = [site for site in matched if len(set(site["bytes"].values())) != 1]
+    if not moved:
+        view["class"], view["rule"] = "fixed", "two_capture:agreed"
+        view["reason"] = ("the same bytes in both captures " + both
+                          + "; evidence for those two captures, not for every assignment")
+        return
+    view["class"], view["rule"] = "candidate", "two_capture:moved"
+    unit = next((site["unit"] for site in moved if site["unit"]), None) or (stack[0] if stack else None)
+    view["unit"] = unit
+    view["reason"] = ("the bytes moved between the two captures " + both
+                      + ": " + json.dumps(moved[0]["bytes"], sort_keys=True)
+                      + ("" if unit else "; the owner names no unit, so this candidate still "
+                                         "owes a unit"))
+
+
+def derive_owner_views(rows, frames_by_index, *, checkpoint_index, roster, evidence,
+                       boundary_classification=None, capture_sha256=None):
     """One view per replayed allocation, from the declared rules.
 
     ``rows`` are the replay's allocation rows (observed ownership already
     attached); ``frames_by_index`` maps ``allocate_index`` to the history
     frames; ``checkpoint_index`` maps checkpoint labels to trace indices;
     ``roster`` is the plan's canonical roster; ``evidence`` the inventories
-    :func:`site_package` reads. Returns ``(views, summary)``.
+    :func:`site_package` reads. ``boundary_classification`` is tessera#548's
+    two-capture comparison, when one exists for this capture: without it every
+    census-shared row allocated after the model stays ``pending_548``, which is
+    the honest state of a single capture. Returns ``(views, summary)``.
     """
+    two_capture = _two_capture_sites(boundary_classification, capture_sha256)
+    sites, named = two_capture if two_capture is not None else (None, ())
     by_module, by_family = _roster_index(roster)
     before_load = checkpoint_index.get("before_model_load")
     ready = checkpoint_index.get("ready_for_workload")
@@ -279,6 +350,8 @@ def derive_owner_views(rows, frames_by_index, *, checkpoint_index, roster, evide
                         else "library cache buffer")
                 view["reason"] = (f"census shared ({kind}); assignment invariance is tessera#548's "
                                   "two-assignment measurement")
+                if sites is not None:
+                    _apply_two_capture(view, owners, sites, named, stack)
         elif not categories:
             if package == "plugin":
                 view["class"], view["rule"] = "candidate", "site:plugin"
@@ -721,7 +794,7 @@ OWNERSHIP_OBSERVATION_SCHEMA = "tessera.full_engine_ownership_observation.v1"
 
 
 def ownership_observation(*, views, summary, evidence, external_records, geometry_witness,
-                          transient_witness, dense_startup_check):
+                          transient_witness, dense_startup_check, boundary_classification=None):
     """The one ``owner_views`` observation the report carries.
 
     Everything the derivation produced travels under the observation name the
@@ -738,6 +811,12 @@ def ownership_observation(*, views, summary, evidence, external_records, geometr
         "boundary_geometry_witness": geometry_witness,
         "transient_gap_witness": transient_witness,
         "dense_startup_check": dense_startup_check,
+        # tessera#548's comparison travels INSIDE this observation rather than
+        # beside it: the report's `observations` key set is what the consumer
+        # pins, and the numbers a consumer must recompute the two_capture rule
+        # from have to arrive with the views that rule wrote. Null when this
+        # capture has no pair, which is the honest state of one capture.
+        "boundary_classification": boundary_classification,
         "scope": ("replay-time ownership derivation over one capture: derived views beside the "
                   "census's observed ownership, external CUDA records by source library, and "
                   "the witnesses the rules rest on; nothing here rewrites an observed field"),

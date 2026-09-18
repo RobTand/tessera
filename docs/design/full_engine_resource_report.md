@@ -506,7 +506,26 @@ The `pending_548` rows — shared allocations made after `before_model_load`
 (boundary tensors, runner roots, the BLAS workspace, the flashinfer workspace),
 whose owner the tessera#548 two-assignment measurement decides — stay
 unclassified with that reason (358 on the 2026-09-18 mixed3 capture, 360 on the
-eugr one). The TCQ replay tables are built once per distinct trellis and are a
+eugr one) until that measurement exists for the capture.
+
+**The measurement, when it exists** (tessera#548, 2026-09-18):
+`experiments/full_engine_boundary_classification.py` compares two captures that
+differ in `assignment_sha256` and agree on `model_sha256`,
+`runtime_manifest_sha256`, `canonical_units_sha256` and `workload_sha256` — a
+pair failing any of those is refused, because it cannot separate "these bytes
+do not depend on the assignment" from "nothing about the run changed". The
+`tessera.full_engine_boundary_classification.v1` record it writes carries the
+two capture identities and, per site, the bytes each capture observed under
+that owner string. It carries **no verdict**: the two rules that read it —
+`two_capture:agreed` (equal bytes → `fixed`) and `two_capture:moved` (bytes
+differ → `candidate`, and the view names the unit or says it still owes one) —
+are recomputable by the consumer from the same byte columns, and a site present
+in only one capture stays `pending_548` with that reason. Each view's `reason`
+names both `capture_sha256` digests, because agreement is evidence for those
+two captures and not for every assignment. The record travels inside the
+`owner_views` observation (`observations.owner_views.boundary_classification`,
+null for an unpaired capture), so the `observations` key set does not grow and
+the numbers arrive with the views they decided. The TCQ replay tables are built once per distinct trellis and are a
 per-family presence cost the terms have no home for; they are attributed to a
 unit only when its family has exactly one unit, and otherwise stay unattributed
 with that reason. And the dense manifest figure disagrees with the ledger on two

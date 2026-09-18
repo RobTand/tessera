@@ -717,3 +717,33 @@ def test_two_allocations_under_one_boundary_key_refuse_the_v2_ledger(capture):
     # is published from a ledger whose boundary rows are ambiguous.
     assert result["schema"] == "tessera.full_engine_raw_resource_ledger.v1"
     assert result["owner_views"] is None
+
+
+def test_the_ownership_observation_carries_the_two_capture_comparison(capture):
+    from experiments.full_engine_resources import analyze_engine_resource_ledger
+    solo = analyze_engine_resource_ledger(_unowned_engine_transient(copy.deepcopy(capture)),
+                                          OWNERSHIP_EVIDENCE)
+    # One capture observes one assignment, so the comparison is null and every
+    # census-shared site keeps the class the measurement has not given it.
+    assert solo["owner_views"]["boundary_classification"] is None
+    record = {"schema": "tessera.full_engine_boundary_classification.v1",
+              "captures": [{"capture_sha256": solo["capture_sha256"]},
+                           {"capture_sha256": "b" * 64}],
+              "sites": []}
+    paired = analyze_engine_resource_ledger(_unowned_engine_transient(copy.deepcopy(capture)),
+                                            OWNERSHIP_EVIDENCE, record)
+    # The numbers the two_capture rule was applied to travel with the views it
+    # wrote, so a consumer recomputes the same comparison instead of trusting it.
+    assert paired["owner_views"]["boundary_classification"] == record
+
+
+def test_a_comparison_of_two_other_captures_is_refused(capture):
+    from experiments.full_engine_resources import analyze_engine_resource_ledger
+    record = {"schema": "tessera.full_engine_boundary_classification.v1",
+              "captures": [{"capture_sha256": "b" * 64}, {"capture_sha256": "c" * 64}],
+              "sites": []}
+    result = analyze_engine_resource_ledger(_unowned_engine_transient(copy.deepcopy(capture)),
+                                            OWNERSHIP_EVIDENCE, record)
+    assert any("names captures" in issue for issue in result["issues"]), result["issues"]
+    assert result["schema"] == "tessera.full_engine_raw_resource_ledger.v1"
+    assert result["owner_views"] is None
