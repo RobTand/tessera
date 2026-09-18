@@ -228,7 +228,7 @@ def test_the_report_keeps_the_seven_members_and_the_synthetic_marker(ledger):
     report = assemble_full_engine_resource_report(
         ledger, **_members())
     assert set(report) == set(REPORT_MEMBERS) | {"schema"}
-    assert report["schema"] == "tessera.full_engine_resource_report.v1"
+    assert report["schema"] == "tessera.full_engine_resource_report.v2"
     # A synthetic capture is never laundered into an artifact that looks measured.
     assert report["identity"]["fixture_provenance"] == ledger["fixture_provenance"]
     # Nothing is admitted today: derived is a claim, and it claims nothing.

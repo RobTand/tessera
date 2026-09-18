@@ -125,6 +125,20 @@ def _digest(path):
     return result.hexdigest()
 
 
+def allocator_config_of(plan):
+    """The bound allocator segment policy, or None when the plan binds none.
+
+    Reads the selected configuration's environment block -- the document the
+    capture's configuration_sha256 digests. A plan written before the binding
+    carries no key and yields None, so v1-era captures assemble with null
+    witness fields rather than refusing.
+    """
+    selected = plan.get("selected_configuration") if isinstance(plan, dict) else None
+    environment = selected.get("environment") if isinstance(selected, dict) else None
+    value = environment.get("PYTORCH_CUDA_ALLOC_CONF") if isinstance(environment, dict) else None
+    return value if type(value) is str and value else None
+
+
 def declared_members(plan):
     """The reference, workload and execution coordinates one plan declares."""
     roster = plan["canonical_roster"]
@@ -202,7 +216,8 @@ def main():
                               "records": len(records)})
     artifacts.append(join)
     report = assemble_full_engine_resource_report(ledger, reference=reference, workload=workload,
-                                                  execution=execution, artifacts=artifacts)
+                                                  execution=execution, artifacts=artifacts,
+                                                  allocator_config=allocator_config_of(plan))
     args.output.mkdir(parents=True, exist_ok=True)
     (args.output / "ledger.json").write_text(json.dumps(ledger, sort_keys=True, indent=1) + "\n")
     report_path = args.output / "report.json"

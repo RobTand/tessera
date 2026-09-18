@@ -2,10 +2,11 @@
 
 Status: producer contract for #399, 2026-09-12; step-boundary derivation added
 the same day; off-step rows classified without an owner class, 2026-09-17
-(tessera#478). **Admission stays closed until a
-consumer recomputes this report and agrees with it.** This document freezes the
-schema; it does not claim a measurement. No GPU, served, latency, quality or
-capacity measurement was run for this document.
+(tessera#478); reservation witness and allocator binding (v2), 2026-09-18
+(tessera#558, the PrismaQuant D37 ship-gate leg). **Admission stays closed
+until a consumer recomputes this report and agrees with it.** This document
+freezes the schema; it does not claim a measurement. No GPU, served, latency,
+quality or capacity measurement was run for this document.
 
 The consumer half is PrismaQuant `docs/design/runtime_fixed_resource_admission.md`
 (merged 2026-09-08, issue #420). That document specifies what the consumer must
@@ -36,7 +37,8 @@ constraint. Admission is PrismaQuant's by design.
 
 ## Schema identity
 
-`tessera.full_engine_resource_report.v1` — a new closed schema, distinct from
+`tessera.full_engine_resource_report.v2` — v1 plus the reservation witness
+and the allocator binding below. v1 was a new closed schema, distinct from
 `tessera.full_engine_resource_capture.v1` (raw capture) and
 `tessera.full_engine_raw_resource_ledger.v1` (the replay this report is built
 on). A field this document does not name is a refusal, not an extension.
@@ -380,6 +382,38 @@ GB10 host/UMA backings, where GPU-addressable bytes, CPU RSS and pinned pages ca
 name the same physical storage. A report outside that scope refuses rather than
 projecting; neither rank sums nor rank maxima may be written into v2 scalar
 fields.
+
+## The reservation witness and the allocator binding (v2, tessera#558)
+
+The allocator's search charges the allocated-block composition; the ship gate
+enforces the reserved device extent and publishes the reservation slack as a
+witness (PrismaQuant D37, RobTand/prismaquant#718). v2 carries both, beside
+the seven-term composition and under the same recomputation rule: the consumer
+recomputes every number from `observations` and admits nothing on
+disagreement.
+
+* The worker samples `torch.cuda.memory_reserved()` beside
+  `torch.cuda.memory_allocated()` at arm, after `process_weights_after_loading`
+  and after `lock_workspace()`, and refuses a reserved sample below the
+  allocated one. The slack is never stored in the sample; it is derived in the
+  report, one rule in one home.
+* `derived.reserved_peak_bytes` is the maximum reserved sample over the
+  startup records; `derived.reservation_slack_peak_bytes` is that peak minus
+  the allocated sample at the same record, and a negative slack is a
+  contradiction, refused rather than witnessed. `derived.reservation_witness`
+  names the source record and states the scope: one load-point sample per
+  rank, not a run-long reserved series.
+* `observations.allocator_config` binds the `PYTORCH_CUDA_ALLOC_CONF` the
+  reservation is a function of. The capture configuration's `environment`
+  block must name it -- including `"unset"` -- or `prepare` refuses, so
+  `configuration_sha256` moves when the policy moves, and the launcher
+  enforces the bound value into the worker environment (`"unset"` means
+  absent, never the literal string). A claimed witness without the binding is
+  refused at assembly; an unbound capture without a claim carries nulls, so
+  v1-era artifacts stay readable.
+
+No priced term moves with v2, and no domain gate changes: the witness is
+published beside the composition, not inside it.
 
 ## Invariance is scoped to one assignment
 
