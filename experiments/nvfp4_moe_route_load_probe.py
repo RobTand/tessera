@@ -460,17 +460,24 @@ def positive_leg(device, tokens, q256, build=None, layer_name=LAYER, x_scale=1.0
         record[f"{name}_dtype"] = str(tensor.dtype)
     # What the kernel was handed for the A side: the FlashInfer backends collapse
     # the per-expert static scales to ONE per group (the max input_scale, i.e.
-    # the smallest capacity/amax).  Read it from the runtime, never re-derived.
-    a13 = layer.w13_input_scale.detach().float().reshape(-1)
-    a2 = layer.w2_input_scale.detach().float().reshape(-1)
+    # the smallest capacity/amax) and finalize freezes them on
+    # ``tessera_a4_gs13``/``gs2`` -- the stock ``*_input_scale`` names are
+    # zero-size anchors since the materialising reader retired, never filled.
+    # Read them from the finalized runtime, never re-derived.
+    gs13_f = float(layer.tessera_a4_gs13)
+    gs2_f = float(layer.tessera_a4_gs2)
+    given13 = sorted({v for (e, n), v in scales.items() if n != "down_proj"})
+    given2 = sorted({v for (e, n), v in scales.items() if n == "down_proj"})
     record["a_side_after_finalize"] = {
-        "w13_input_scale_unique": sorted(set(a13.tolist())),
-        "w2_input_scale_unique": sorted(set(a2.tolist())),
-        "w13_input_global_scale_given": sorted({v for (e, n), v in scales.items() if n != "down_proj"}),
-        "w2_input_global_scale_given": sorted({v for (e, n), v in scales.items() if n == "down_proj"}),
-        "collapsed_to_one_per_group": bool(a13.unique().numel() == 1 and a2.unique().numel() == 1)}
-    a1_gscale = 1.0 / float(a13.max())
-    a2_gscale = 1.0 / float(a2.max())
+        "gs13_frozen": gs13_f, "gs2_frozen": gs2_f,
+        "w13_input_global_scale_given": given13,
+        "w2_input_global_scale_given": given2,
+        "collapsed_to_one_per_group": True}
+    # gs is frozen as 1/max(input_scale) with modelopt's input_scale the
+    # reciprocal of the given tessera globals, so the quantiser scalar the
+    # probes below reference is its reciprocal.
+    a1_gscale = 1.0 / gs13_f
+    a2_gscale = 1.0 / gs2_f
     record["a_side_after_finalize"]["a1_gscale"] = a1_gscale
     record["a_side_after_finalize"]["a2_gscale"] = a2_gscale
     record["tessera"] = {"decoder": getattr(layer, "tessera_decoder", None),
@@ -507,7 +514,8 @@ def positive_leg(device, tokens, q256, build=None, layer_name=LAYER, x_scale=1.0
         (torch.cat([(x.float() @ deq[(e, "gate_proj")].t()).abs().reshape(-1)
                     for e in range(EXPERTS)]) > SWIGLU_LIMIT).float().mean())
     record["resident_bytes"] = {
-        name: getattr(layer, name).numel() * getattr(layer, name).element_size()
+        name: (getattr(layer, name).numel() * getattr(layer, name).element_size()
+               if hasattr(layer, name) else 0)
         for name in ("w13_weight", "w2_weight", "w13_weight_scale", "w2_weight_scale",
                      "w13_weight_scale_2", "w2_weight_scale_2", "w13_input_scale",
                      "w2_input_scale")}
