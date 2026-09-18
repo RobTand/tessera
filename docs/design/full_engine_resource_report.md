@@ -532,7 +532,21 @@ that owner string. It carries **no verdict**: the two rules that read it —
 `two_capture:agreed` (equal bytes → `fixed`) and `two_capture:moved` (bytes
 differ → `candidate`, and the view names the unit or says it still owes one) —
 are recomputable by the consumer from the same byte columns, and a site present
-in only one capture stays `pending_548` with that reason. Each view's `reason`
+in only one capture stays `pending_548` with that reason.
+
+**Agreement only counts where the substitution could have moved the bytes.** A
+per-Linear substitution changes a few units' families and leaves the rest
+alone, so a native boundary tensor of an untouched unit carries identical bytes
+in both captures *by construction*; reading that as `fixed` would charge a
+serving gate for bytes that move the moment the menu does. Each site therefore
+carries `unit_family` (per capture, from each capture's own canonical roster,
+checked against its `canonical_units_sha256`) and `unit_family_changed`, and
+`two_capture:agreed` fires only for a site that names no unit — a runner root
+or the BLAS workspace, which any change of assignment tests — or whose unit
+changed family across the pair. An agreed site whose unit kept its family stays
+`pending_548`, saying so. When the rosters are not supplied,
+`unit_family_changed` is `null` and every unit-naming site stays pending: the
+comparison was not made, which is not the same as it having passed. Each view's `reason`
 names both `capture_sha256` digests, because agreement is evidence for those
 two captures and not for every assignment. The record travels inside the
 `owner_views` observation (`observations.owner_views.boundary_classification`,

@@ -9,6 +9,7 @@ names, and nothing here makes it a universal invariance.
 """
 import pytest
 
+from experiments.capture_full_engine_resources import canonical_hash
 from experiments.full_engine_boundary_classification import (
     BOUNDARY_CLASSIFICATION_SCHEMA, boundary_classification,
 )
@@ -21,20 +22,35 @@ LEDGER_V2 = "tessera.full_engine_raw_resource_ledger.v2"
 #: WITH that change and are recorded rather than required equal: the served
 #: checkpoint's digest, the configuration document that names it, and the
 #: canonical roster digest, which hashes each unit's family.
+#: The substitution moves ONE unit's family and leaves the other alone, which
+#: is what a real per-Linear substitution does and what makes the agreement of
+#: an untouched unit's boundary tensor uninformative.
+FIRST_ROSTER = [
+    {"unit_id": "l:model.layers.0.self_attn.o_proj", "module": "model.layers.0.self_attn.o_proj",
+     "members": ["model.layers.0.self_attn.o_proj.weight"], "family": "TESSERA_E2M1"},
+    {"unit_id": "g:model.layers.0.mlp.gate_up_proj", "module": "model.layers.0.mlp.gate_up_proj",
+     "members": ["model.layers.0.mlp.gate_proj.weight"], "family": "TESSERA_E4M3"},
+]
+SECOND_ROSTER = [dict(FIRST_ROSTER[0], family="TESSERA_BF16"), dict(FIRST_ROSTER[1])]
+
 FIRST_IDENTITY = {
     "model_sha256": "m" * 64,
     "configuration_sha256": "c" * 64,
     "runtime_manifest_sha256": "r" * 64,
     "assignment_sha256": "1" * 64,
-    "canonical_units_sha256": "u" * 64,
+    "canonical_units_sha256": canonical_hash(FIRST_ROSTER),
     "workload_sha256": "w" * 64,
     "device_uuid": "GPU-fixture",
 }
 SECOND_IDENTITY = dict(FIRST_IDENTITY, assignment_sha256="2" * 64,
                        configuration_sha256="d" * 64, model_sha256="n" * 64,
-                       canonical_units_sha256="v" * 64)
+                       canonical_units_sha256=canonical_hash(SECOND_ROSTER))
+ROSTERS = (FIRST_ROSTER, SECOND_ROSTER)
 
+#: A boundary tensor of the unit the substitution moved, and one of a unit it
+#: left alone.
 BOUNDARY = "native:l:model.layers.0.self_attn.o_proj:0:input.x"
+UNTOUCHED = "native:g:model.layers.0.mlp.gate_up_proj:0:input.x"
 ROOT = "runner:input_batch.token_ids_cpu"
 
 
@@ -159,9 +175,9 @@ def test_a_v1_ledger_carries_no_views_and_cannot_be_compared():
 
 # --- the rule ----------------------------------------------------------------
 
-def test_a_site_with_the_same_bytes_in_both_captures_is_evidence_for_fixed():
+def test_an_agreed_site_whose_unit_changed_family_is_evidence_for_fixed():
     first, second = _pair([_row("0:1:1", BOUNDARY, 4096)], [_row("0:9:1", BOUNDARY, 4096)])
-    record = boundary_classification(first, second)
+    record = boundary_classification(first, second, rosters=ROSTERS)
     view, = _views(first["torch_allocations"], record)
     assert (view["class"], view["rule"]) == ("fixed", "two_capture:agreed")
     # The report has to say which two captures the agreement is evidence for.
@@ -169,9 +185,49 @@ def test_a_site_with_the_same_bytes_in_both_captures_is_evidence_for_fixed():
     assert RULES["two_capture:agreed"]["class"] == "fixed"
 
 
+def test_an_agreed_site_whose_unit_kept_its_family_tests_nothing():
+    # The substitution did not touch this unit, so its boundary tensor could
+    # not have moved. Reading that as evidence of a fixed charge would make
+    # every untouched unit fixed by construction -- the charge would then move
+    # silently with the menu, which is the failure #548 exists to prevent.
+    first, second = _pair([_row("0:1:1", UNTOUCHED, 4096)], [_row("0:9:1", UNTOUCHED, 4096)])
+    record = boundary_classification(first, second, rosters=ROSTERS)
+    site, = record["sites"]
+    assert site["unit_family"] == {"a" * 64: "TESSERA_E4M3", "b" * 64: "TESSERA_E4M3"}
+    assert site["unit_family_changed"] is False
+    view, = _views(first["torch_allocations"], record)
+    assert view["class"] is None and view["rule"] == "pending_548"
+    assert "kept its family" in view["reason"]
+
+
+def test_an_agreed_site_that_names_no_unit_is_evidence_for_fixed():
+    # A runner root is not per-unit, so any change of assignment tests it.
+    first, second = _pair([_row("0:1:1", ROOT, 512)], [_row("0:9:1", ROOT, 512)])
+    record = boundary_classification(first, second, rosters=ROSTERS)
+    site, = record["sites"]
+    assert site["unit_family"] is None and site["unit_family_changed"] is None
+    view, = _views(first["torch_allocations"], record)
+    assert (view["class"], view["rule"]) == ("fixed", "two_capture:agreed")
+
+
+def test_without_the_rosters_an_agreed_unit_site_cannot_be_read_as_fixed():
+    first, second = _pair([_row("0:1:1", BOUNDARY, 4096)], [_row("0:9:1", BOUNDARY, 4096)])
+    record = boundary_classification(first, second)
+    site, = record["sites"]
+    assert record["rosters_read"] is False and site["unit_family_changed"] is None
+    view, = _views(first["torch_allocations"], record)
+    assert view["class"] is None and view["rule"] == "pending_548"
+
+
+def test_a_roster_that_is_not_the_captures_own_is_refused():
+    first, second = _pair([_row("0:1:1", BOUNDARY, 4096)], [_row("0:9:1", BOUNDARY, 4096)])
+    with pytest.raises(ValueError, match="canonical_units_sha256"):
+        boundary_classification(first, second, rosters=(SECOND_ROSTER, SECOND_ROSTER))
+
+
 def test_a_site_whose_bytes_move_is_a_candidate_that_owes_a_unit():
     first, second = _pair([_row("0:1:1", BOUNDARY, 4096)], [_row("0:9:1", BOUNDARY, 8192)])
-    record = boundary_classification(first, second)
+    record = boundary_classification(first, second, rosters=ROSTERS)
     view, = _views(first["torch_allocations"], record)
     assert (view["class"], view["rule"]) == ("candidate", "two_capture:moved")
     assert view["unit"] == "l:model.layers.0.self_attn.o_proj"

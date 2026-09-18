@@ -29,6 +29,7 @@ import argparse
 import json
 from pathlib import Path
 
+from experiments.capture_full_engine_resources import canonical_hash
 from experiments.full_engine_ownership import _parse_boundary_owner, views_by_allocation
 
 BOUNDARY_CLASSIFICATION_SCHEMA = "tessera.full_engine_boundary_classification.v1"
@@ -88,6 +89,23 @@ def site_unit(owner):
     return None if parsed is None else parsed[0]
 
 
+def unit_families(roster, identity):
+    """``{unit_id: family}`` from a capture's OWN canonical roster.
+
+    The roster is checked against the identity digest the capture computed over
+    it (``canonical_units_sha256 = canonical_hash(roster)``, see
+    ``capture_full_engine_resources``), so a roster from another run cannot be
+    read in beside a capture's rows. Without this the family comparison would
+    be an assertion about a run rather than a reading of it.
+    """
+    digest = canonical_hash(roster)
+    if digest != identity.get("canonical_units_sha256"):
+        raise ValueError("this roster is not the one the capture hashed: canonical_units_sha256 "
+                         + str(identity.get("canonical_units_sha256")) + " but the roster hashes "
+                         + digest)
+    return {row["unit_id"]: row.get("family") for row in roster}
+
+
 def pending_sites(ledger):
     """``{owner: bytes}`` over the rows the derivation left ``pending_548``.
 
@@ -137,13 +155,23 @@ def _identity(ledger):
     return identity
 
 
-def boundary_classification(first, second):
+def boundary_classification(first, second, rosters=None):
     """The two captures' matched site bytes, with no verdict.
 
     Refuses a pair that is not the measurement #548 asks for: both ledgers are
     v2, every held-fixed identity coordinate agrees, and the assignment digest
     differs. A pair that fails any of those cannot separate "these bytes do not
     depend on the assignment" from "nothing about the run changed".
+
+    ``rosters`` is the two captures' own canonical rosters, and without them
+    this record cannot say whether a site's unit was one of the ones the
+    substitution moved. That matters because a per-Linear substitution moves a
+    few units and leaves the rest alone: a boundary tensor of an untouched unit
+    agrees across the pair **by construction**, and reading that as "fixed"
+    would charge a serving gate for bytes that move the moment the menu does.
+    Each site therefore carries ``unit_family`` (per capture) and
+    ``unit_family_changed`` -- ``None`` for a site naming no unit, and ``None``
+    when the rosters were not read, which the rule treats as untested.
     """
     identities = [_identity(first), _identity(second)]
     tables = [pending_sites(first), pending_sites(second)]
@@ -161,12 +189,23 @@ def boundary_classification(first, second):
     differing_identity = sorted(name for name in set(identities[0]) | set(identities[1])
                                 if name != "schema"
                                 and identities[0].get(name) != identities[1].get(name))
+    families = None
+    if rosters is not None:
+        families = [unit_families(roster, identity)
+                    for roster, identity in zip(rosters, identities)]
     sites = []
     for owner in sorted(set(tables[0]) | set(tables[1])):
         present = [digest for digest, table in zip(digests, tables) if owner in table]
-        sites.append({"owner": owner, "kind": site_kind(owner), "unit": site_unit(owner),
+        unit = site_unit(owner)
+        unit_family = None
+        changed = None
+        if unit is not None and families is not None:
+            unit_family = {digest: table.get(unit) for digest, table in zip(digests, families)}
+            changed = len(set(unit_family.values())) != 1
+        sites.append({"owner": owner, "kind": site_kind(owner), "unit": unit,
                       "bytes": {digest: table[owner] for digest, table in zip(digests, tables)
                                 if owner in table},
+                      "unit_family": unit_family, "unit_family_changed": changed,
                       "present_in": present})
     return {
         "schema": BOUNDARY_CLASSIFICATION_SCHEMA,
@@ -181,6 +220,10 @@ def boundary_classification(first, second):
         "runtime_provenance_agreed": runtime_agreed,
         "sites": sites,
         "sites_in_both": sum(1 for site in sites if len(site["present_in"]) == 2),
+        "rosters_read": families is not None,
+        "units_that_changed_family": (None if families is None else
+                                      sorted(unit for unit in set(families[0]) | set(families[1])
+                                             if families[0].get(unit) != families[1].get(unit))),
         "scope": ("the bytes each still-unclassified shared site carried in two captures that "
                   "hold the runtime, the workload and the device fixed and differ in the "
                   "selected assignment; the artifact, configuration and roster digests move "
@@ -190,21 +233,49 @@ def boundary_classification(first, second):
     }
 
 
+def _tally(sites):
+    """``{kind: count}`` -- what the classification actually separated."""
+    counts = {}
+    for site in sites:
+        counts[site["kind"]] = counts.get(site["kind"], 0) + 1
+    return counts
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--first", type=Path, required=True,
                         help="ledger.json of the first capture (v2 boundary ledger)")
     parser.add_argument("--second", type=Path, required=True,
                         help="ledger.json of the substitution capture")
+    parser.add_argument("--first-plan", type=Path, default=None,
+                        help="observer-plan.json of the first capture; its canonical_roster is "
+                             "read (and checked against the capture's own identity digest) so a "
+                             "site can say whether its unit was one the substitution moved")
+    parser.add_argument("--second-plan", type=Path, default=None,
+                        help="observer-plan.json of the substitution capture")
     parser.add_argument("--output", type=Path, required=True)
     args = parser.parse_args()
+    plans = (args.first_plan, args.second_plan)
+    if any(plan is None for plan in plans) and any(plan is not None for plan in plans):
+        raise SystemExit("a family comparison needs BOTH captures' plans, or neither")
+    rosters = (None if plans[0] is None else
+               tuple(json.loads(plan.read_text())["canonical_roster"] for plan in plans))
     record = boundary_classification(json.loads(args.first.read_text()),
-                                     json.loads(args.second.read_text()))
+                                     json.loads(args.second.read_text()), rosters=rosters)
     args.output.write_text(json.dumps(record, indent=2, sort_keys=True) + "\n")
-    agreed = sum(1 for site in record["sites"]
-                 if len(site["present_in"]) == 2 and len(set(site["bytes"].values())) == 1)
-    print(json.dumps({"sites": len(record["sites"]), "sites_in_both": record["sites_in_both"],
-                      "sites_agreeing": agreed, "output": str(args.output)}, sort_keys=True))
+    matched = [site for site in record["sites"] if len(site["present_in"]) == 2]
+    agreed = [site for site in matched if len(set(site["bytes"].values())) == 1]
+    moved = [site for site in matched if len(set(site["bytes"].values())) != 1]
+    print(json.dumps({
+        "sites": len(record["sites"]), "sites_in_both": record["sites_in_both"],
+        "sites_agreeing": len(agreed), "sites_moving": len(moved),
+        "rosters_read": record["rosters_read"],
+        "units_that_changed_family": (None if record["units_that_changed_family"] is None
+                                      else len(record["units_that_changed_family"])),
+        "agreeing_by_kind": _tally(agreed), "moving_by_kind": _tally(moved),
+        "agreeing_on_a_unit_that_kept_its_family": sum(
+            1 for site in agreed if site["unit"] and not site["unit_family_changed"]),
+        "output": str(args.output)}, sort_keys=True))
     return 0
 
 

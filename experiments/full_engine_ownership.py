@@ -112,12 +112,14 @@ RULES = {
     },
     "two_capture:agreed": {
         "class": "fixed",
-        "statement": "a census-shared site whose matched bytes are identical in both captures of "
-                     "tessera#548's two-assignment measurement: the selected assignment changed "
-                     "and these bytes did not",
-        "basis": "equal site bytes across the two captures named in the boundary classification; "
-                 "evidence for THOSE TWO captures, never a universal invariance, and "
-                 "consumer-recomputable from the classification's own byte columns",
+        "statement": "a census-shared site the substitution could have moved -- it names no unit, "
+                     "or its unit changed family between the two captures -- whose matched bytes "
+                     "are identical in both: the assignment changed and these bytes did not",
+        "basis": "equal site bytes across the two captures named in the boundary classification, "
+                 "on a site whose unit changed family there or which names no unit; a site whose "
+                 "unit kept its family agrees by construction and stays pending_548. Evidence for "
+                 "THOSE TWO captures, never a universal invariance, and consumer-recomputable "
+                 "from the classification's own byte and family columns",
     },
     "two_capture:moved": {
         "class": "candidate",
@@ -288,9 +290,25 @@ def _apply_two_capture(view, owners, sites, named, stack):
         return
     moved = [site for site in matched if len(set(site["bytes"].values())) != 1]
     if not moved:
+        # Agreement is only evidence where the substitution could have moved
+        # the bytes. A per-Linear substitution touches a few units: a boundary
+        # tensor of a unit whose family did not change agrees BY CONSTRUCTION,
+        # and calling that fixed would charge a serving gate for bytes that
+        # move the moment the menu does -- the failure this measurement exists
+        # to prevent. A site naming no unit (a runner root, the BLAS
+        # workspace) is tested by any change of assignment, so it still counts.
+        untested = [site for site in matched
+                    if site.get("unit") and not site.get("unit_family_changed")]
+        if untested:
+            view["reason"] = (view["reason"] + "; the bytes agree across " + both
+                              + " but this site's unit kept its family ("
+                              + json.dumps(untested[0].get("unit_family"), sort_keys=True)
+                              + "), so the substitution never tested it")
+            return
         view["class"], view["rule"] = "fixed", "two_capture:agreed"
         view["reason"] = ("the same bytes in both captures " + both
-                          + "; evidence for those two captures, not for every assignment")
+                          + ", on a site the substitution did move or that names no unit; "
+                            "evidence for those two captures, not for every assignment")
         return
     view["class"], view["rule"] = "candidate", "two_capture:moved"
     unit = next((site["unit"] for site in moved if site["unit"]), None) or (stack[0] if stack else None)
