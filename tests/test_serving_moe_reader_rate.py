@@ -77,9 +77,9 @@ def _nvfp4_moe(q256, experts=4, hidden=128, inter=64, **over):
 
 @pytest.mark.parametrize("q256", TRELLIS_DOMAIN_RUNGS)
 def test_every_rung_of_the_trellis_domain_loads(q256):
-    """RED UNTIL the measured range publishes: each in-domain rung normalises
-    through the scheme gate the loader runs per expert stack, and today the
-    six below the cap are refused with the published [896, 896] span."""
+    """GREEN SINCE contract v32: each in-domain rung normalises through the
+    scheme gate the loader runs per expert stack, and the packaged range
+    publishes the whole trellis domain [128, 896] step 128."""
     norm = S.validate_tessera_scheme(_nvfp4_moe(q256), "m")
     assert norm["structure"] == S.STRUCTURE_ROUTED_MOE and norm["experts"] == 4
     w13, w2 = norm["groups"]["w13"], norm["groups"]["w2"]

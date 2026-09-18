@@ -411,7 +411,7 @@ def test_a_routed_stack_is_gated_against_the_routed_moe_cells_not_the_dense_rang
 def test_a_routed_e2m1x2_stack_at_q896_passes_the_gate_without_an_override():
     """#506 leg 2: the routed E2M1_K2 stack is attested over the full domain.
 
-    Leg 2 widens the four routed_moe cells from the single rung 896 to the
+    Leg 2 widens the two routed_moe cells from the single rung 896 to the
     whole trellis-shaped domain [128, 896] step 128, each rung carried by a
     real load-probe receipt.  Until contract v28 no cell named
     an NVFP4 expert stack exported only under ``--allow-unserveable`` with the
@@ -643,17 +643,13 @@ def test_the_packaged_table_still_admits_every_device_qualified_rung():
         assert attested_cells(family, STRUCTURE_ROUTED_MOE, packaged) == declared, family
         for cell in declared:
             grid_name, rung = _routed_cell_plan(cell)
-            recipe = wire_recipe(GRIDS[grid_name], rung)
             # The served body on the NVFP4 route is TCQ at every reader rung
-            # (v32); a sub-cap cell would resolve its recipe to WINDOW, so
-            # resolve what the actual wire carries the way the exporter does
-            # (served_recipe) before handing the gate a recipe.
-            from importlib.util import spec_from_file_location
+            # (v32), so hand the gate what the actual wire carries the way
+            # the exporter does (served_recipe), not the research default.
             served = EXPORT.served_recipe(GRIDS[grid_name], rung)
-            recipe = recipe if recipe.body == served.body else served
             assert refuse_unserveable_wire(
-                grid_name, rung, recipe.body.name, recipe.scale_plane.name,
-                family=route_for_grid(grid_name), span=recipe.span, target="stack.probe",
+                grid_name, rung, served.body.name, served.scale_plane.name,
+                family=route_for_grid(grid_name), span=served.span, target="stack.probe",
                 structure=STRUCTURE_ROUTED_MOE, contract=packaged) == \
                 route_for_grid(grid_name)
 

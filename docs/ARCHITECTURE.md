@@ -5,6 +5,25 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-18 for contract v32's full-domain routed E2M1_K2 rates
+(tessera#506, leg 2). The `TESSERA_E2M1_K2` reader range widens from the
+single rung [896, 896] to the trellis domain [128, 896] step 128, and the two
+`routed_moe` cells (`tessera_e2m1_k2_routed_moe_sm121_{decode,batch}_resident`)
+widen with it, so a routed E2M1x2 export at any in-domain rung passes the
+export serving gate without `--allow-unserveable` and names both cells in
+`attested_by`; off-domain rungs (64 below the grammar, 1024 above the cap,
+off-step 448/700 inside it) stay refused. The attestation is the seven-rung
+green load receipt (PB action
+`a186d7bc6f1f111d856ee734d7c3359eb957d116ec82ba92a087961d748c2092`: every rung
+loads byte-identical through `TesseraNvFp4MoEMethod` on GB10, resident), with
+the rung-896 control (`de8bc7dada4e...`) and the CPU encode receipt behind it;
+the v32 changelog entry names all three receipts and states the cell scope.
+Served stacks below the cap carry the span-2 TCQ spelling (`served_recipe`
+promotes the research WINDOW default because the route decodes TCQ only) --
+necessary, measured-worse (1.36-1.43x vs 1.06-1.10x EXL3 at 2.5-3.5 bpp,
+`docs/tessera-one-format.md` §4), and stamped per rung in `attested_wire`.
+Both cells stay `route_only` with smoke `not_recorded`.
+
 Re-stamped 2026-09-18 for the full-engine derivation layer (tessera#399,
 §2.4): allocation ownership by declared rule (`owner_views`), all six partition
 domains checked, `derived.admission` / `fixed_resources` / `timing_terms`
@@ -213,7 +232,10 @@ leg 1). `lane_eligibility` publishes
 and resident, on the image a two-rank serve of the GLM-5.3-Flash 4-layer stub
 ran (`docs/measurements/tessera-glm53-a4-stub-tp2-served-2026-09-14.md`), so a
 routed E2M1x2 export at q896 passes the export serving gate without
-`--allow-unserveable` and names both cells in `attested_by`. Both cells grade
+`--allow-unserveable` and names both cells in `attested_by`. (Contract v32,
+tessera#506 leg 2 -- the 2026-09-18 re-stamp above -- widens both cells to the
+full trellis domain [128, 896] step 128, so every in-domain rung now passes on
+the same terms.) Both cells grade
 `route_only` with no smoke record. `tensor_parallel` does not move: every
 family's `max_world_size` stays 1, although the same receipt is a two-rank
 route census of all three families (§3.8).
@@ -252,10 +274,12 @@ expert route. A builder is a dispatch fact, not a served qualification; the
 qualification arrived later, in contract v28: the two `routed_moe` cells
 `tessera_e2m1_k2_routed_moe_sm121_{decode,batch}_resident` publish q256 896,
 eager and resident, from a two-rank served census of the GLM-5.3-Flash 4-layer
-stub, both `route_only` with no smoke record (tessera#506, the re-stamp above).
-A routed E2M1x2 export at that one rung therefore passes the export serving gate
-without `--allow-unserveable` and names both cells; a routed stack at any other
-rung still needs the override. `route_only` is a route census, not a full-model
+stub, both `route_only` with no smoke record (tessera#506, the re-stamp above;
+contract v32, tessera#506 leg 2 -- the 2026-09-18 re-stamp at the top --
+widens both cells to the full trellis domain [128, 896] step 128).
+A routed E2M1x2 export at an in-domain rung therefore passes the export serving gate
+without `--allow-unserveable` and names both cells; a routed stack at a rung
+outside the domain still needs the override. `route_only` is a route census, not a full-model
 quality or native-kernel qualification (§5.7 has the route, §7 the cells).
 
 Re-stamped 2026-09-14 for the research packed-expert load's expert axis
@@ -3539,8 +3563,10 @@ A builder is a
 dispatch fact and not a served qualification: the
 `routed_moe` cells for this family are `lane_eligibility`'s to publish from a
 container receipt. Contract v28 publishes two, at q256 896, eager and resident,
-on the two-rank stub serve's image; an NVFP4 stack at any other rung exports
-only under `--allow-unserveable`. Compressed BF16-family expert wires have only the
+on the two-rank stub serve's image; contract v32 (tessera#506 leg 2, the
+2026-09-18 re-stamp at the top) widens both to the full trellis domain
+[128, 896] step 128, so an NVFP4 stack at an in-domain rung exports without
+`--allow-unserveable` and only an off-domain rung needs the override. Compressed BF16-family expert wires have only the
 explicit research-selected folded route above; plain source BF16 passthrough
 uses `quantization_config.ignore`. Both production routes refuse, by name:
 expert parallelism and EPLB (the stride invariant needs every expert's blob

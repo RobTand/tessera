@@ -27,8 +27,14 @@ WHAT THIS SCRIPT MAY WRITE IS WHAT THE PLUGIN PUBLISHES A DECODE FOR.
 override against the packaged ``runtime_contract.json`` before the first
 encode, so a wire the pinned runtime cannot read is refused at export rather
 than at load (#41).  The encoder is untouched: ``wire_recipe`` still writes
-the sub-cap window body and every research encode of it still runs.  The
-override is ``--allow-unserveable``, and it is stamped into the manifest.
+the sub-cap window body and every research encode of it still runs.  What a
+SERVED stack carries is a spelling above it -- ``served_recipe`` promotes
+every NVFP4 rung to the span-2 TCQ body the route decodes, because a sub-cap
+rung served through the WINDOW recipe would be unreadable by the one decoder
+the route has.  That promotion is necessary and measured-worse (TCQ span-2 at
+1.36-1.43x EXL3 at 2.5-3.5 bpp against window L=12 at 1.06-1.10x,
+``docs/tessera-one-format.md`` §4); ``served_recipe``'s docstring states both.
+The override is ``--allow-unserveable``, and it is stamped into the manifest.
 
 The checkpoint declares ``quantization_config.quant_method: "tessera"``, which
 is what selects the plugin: there is no serve flag to enable it, only
@@ -160,7 +166,6 @@ from tessera.export import (  # noqa: E402
     DEFAULT_CODE, DEFAULT_LDLQ_BLOCK, DEFAULT_LDLQ_SIGMA, TCQ_RECIPE,
     ActivationSource, encode_linear_planes, wire_recipe)
 from tessera.manifest import BodyKind  # noqa: E402
-from tessera.export import WireRecipe  # noqa: E402
 from tessera.fused import pack_fused, shared_input_global_scale, shared_lut_global  # noqa: E402
 from tessera.serving.contract import (  # noqa: E402
     PAYLOAD_FAMILY_BY_ROUTE, classify_construction, construction_entry,
@@ -461,13 +466,25 @@ def served_recipe(grid, q256):
 
     On the FP8 and BF16 routes the recipe IS the served wire, so this is the
     plain ``wire_recipe`` there.
+
+    The TCQ promotion below the cap is necessary AND measured-worse, and both
+    halves are stated here rather than left to the reader: necessary because
+    the route decodes TCQ only (a sub-cap rung served through the WINDOW
+    recipe would be unreadable by the one decoder the route has -- the round-5
+    red run proved it); measured-worse because the recipe table's WINDOW
+    default was chosen on the frontier (``docs/tessera-one-format.md`` §4:
+    E2M1x2 TCQ span-2 at 1.401x/1.357x/1.431x EXL3 at 2.5/3.0/3.5 bpp against
+    window L=12 at 1.056x/1.061x/1.098x).  Every newly published sub-cap rung
+    therefore serves the costlier of the two wires, on purpose and in the open.
     """
     recipe = wire_recipe(grid, q256)
     if family_for(grid) == NVFP4 and recipe.body is not BodyKind.TCQ:
-        recipe = WireRecipe(body=BodyKind.TCQ, span=TCQ_RECIPE.span,
-                            scale_plane=recipe.scale_plane,
-                            window_sigma=recipe.window_sigma,
-                            channel_sigma=recipe.channel_sigma)
+        # Verified field by field: the only non-TCQ NVFP4 recipe is
+        # E2M1X2_SUBCAP_RECIPE (LUT plane, default seed, no sigmas, and a
+        # WINDOW table width a TCQ body must not carry), so the promotion
+        # below IS TCQ_RECIPE -- no rebuild, and a grid whose sub-cap recipe
+        # ever differs in plane or sigmas needs the rebuild restored.
+        return TCQ_RECIPE
     return recipe
 
 
@@ -487,12 +504,15 @@ def module_scheme_key(grid, q256: int) -> tuple:
     had no Tessera export at all.
 
     The body and the plane are DERIVED from the rung here rather than assumed
-    constant, because ``wire_recipe`` picks them per rung: ``E2M1x2`` writes the
-    window body below the coset cap and the TCQ body at it.  Two such members
-    would decode on two different decoders, and this key separates them, so the
-    relaxation cannot let a mixed-body group through the back door.  (Every
-    sub-cap ``E2M1x2`` rung is refused by ``check_recipe`` before this anyway;
-    the key does not rely on that.)
+    constant, because the served recipe picks them per rung: ``served_recipe``
+    promotes every NVFP4 rung to the span-2 TCQ body the route decodes (the
+    research ``wire_recipe`` default below the coset cap is still the window
+    body, which is why this key reads the served spelling rather than the
+    research one).  Two members resolving to different served bodies would
+    decode on two different decoders, and this key separates them, so the
+    relaxation cannot let a mixed-body group through the back door.  (A rung
+    no served spelling covers is refused by ``check_recipe`` before this
+    anyway; the key does not rely on that.)
     """
     recipe = served_recipe(grid, q256)
     return (family_for(grid), grid.name, recipe.body.name, recipe.scale_plane.name)
