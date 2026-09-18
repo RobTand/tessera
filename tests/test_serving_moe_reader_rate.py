@@ -22,15 +22,11 @@ the rungs it can read are the integral-root ones, ``q256 % 128 == 0`` on arity
 readable by this reader; it is refused with the reason recorded, not padded
 over.
 
-This file is the RED half of that change.  The parametrised test pins the
-seven rungs as the domain the reader must cover; today the six below the cap
-are refused by the scheme gate with "outside the rungs this build's decoder
-reads for TESSERA_E2M1_K2 -- [896, 896]", and 896 -- the one published rung --
-passes, which is also this fixture's control: a malformed fixture would fail
-all seven on geometry, not six on the rung and one green.  When the measured
-range publishes, all seven go green without this file changing, and the
-refusals below stay refused: outside the domain at both ends, and off-step in
-the middle.
+GREEN SINCE contract v32: the measured range publishes [128, 896] step 128
+and all seven rungs load; the receipts behind them are the seven
+single-rank GPU proofs named in the changelog (PB action
+a186d7bc6f1f111d856ee734d7c3359eb957d116ec82ba92a087961d748c2092).  The
+refusals below the domain, above the cap, and off the step stay refused.
 """
 from __future__ import annotations
 
