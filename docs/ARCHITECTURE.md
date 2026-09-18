@@ -1661,7 +1661,10 @@ rank that measured it; `--receipt` supplies the routed-owner receipt whose own
 `resources.resident_bytes` the startup sample is checked against.
 Observer settings and incomplete raw captures cannot qualify a served model.
 
-Its distinct `tessera.full_engine_raw_resource_ledger.v1` schema never emits a
+Its distinct raw-ledger schema — `tessera.full_engine_raw_resource_ledger.v1`
+for a replay without the ownership derivation, `…v2` for one with it
+(tessera#548: non-null `owner_views` and one boundary row per
+`(unit_id, invocation, kind)`) — never emits a
 fixed-resource object or timings: `fixed_resources` and `timings` remain null
 there, `admission` is null beside a `pricing_scope` naming the partition report
 as the one place admission, fixed resources and timing terms are derived

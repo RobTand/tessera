@@ -40,9 +40,17 @@ constraint. Admission is PrismaQuant's by design.
 ## Schema identity
 
 `tessera.full_engine_resource_report.v2` — a closed schema, distinct from
-`tessera.full_engine_resource_capture.v1` (raw capture) and
-`tessera.full_engine_raw_resource_ledger.v1` (the replay this report is built
-on). v2 (2026-09-18, tessera#399) adds three `derived` members — `admission`,
+`tessera.full_engine_resource_capture.v1` (raw capture) and the replay this
+report is built on, which is `tessera.full_engine_raw_resource_ledger.v1`
+without the ownership derivation and `…v2` with it. The v2 raw ledger
+(2026-09-18, tessera#548) is the v1 rows plus exactly the two things #548
+names: a non-null `owner_views` observation, and the native boundary tensors
+carried one allocation row per `(unit_id, invocation, kind)`, with a collision
+on that key refusing the ledger rather than publishing an ambiguous boundary
+row (`full_engine_ownership.boundary_rows`). The version is set from the
+derivation having run (`full_engine_resources._derive_ownership`), never
+declared beside it, so "the schema says v2" and "the observation is present"
+are one fact. v2 (2026-09-18, tessera#399) adds three `derived` members — `admission`,
 `fixed_resources`, `timing_terms` — and one `partition` member,
 `observer_allocations`; every v1 member keeps its name and meaning, and the
 seven-member envelope and the `observations` key set are unchanged. A consumer
@@ -498,7 +506,59 @@ The `pending_548` rows — shared allocations made after `before_model_load`
 (boundary tensors, runner roots, the BLAS workspace, the flashinfer workspace),
 whose owner the tessera#548 two-assignment measurement decides — stay
 unclassified with that reason (358 on the 2026-09-18 mixed3 capture, 360 on the
-eugr one). The TCQ replay tables are built once per distinct trellis and are a
+eugr one) until that measurement exists for the capture.
+
+**The measurement, when it exists** (tessera#548, 2026-09-18):
+`experiments/full_engine_boundary_classification.py` compares two captures that
+differ in `assignment_sha256` and agree on `runtime_manifest_sha256`,
+`workload_sha256` and `device_uuid` — a pair failing any of those is refused,
+because it cannot separate "these bytes do not depend on the assignment" from
+"nothing about the run changed". Three identity coordinates are deliberately
+**not** held equal: `model_sha256` digests the served artifact,
+`canonical_units_sha256` digests the roster whose rows carry each unit's
+family, and `configuration_sha256` digests the document naming the artifact,
+so a substitution moves all three by construction and requiring them equal
+would refuse every real pair. They are listed in the record's
+`differing_identity` instead, and matchability is measured rather than
+asserted: sites are matched on the owner string the census emitted, and
+`sites_in_both` is the observed overlap. When both ledgers carry a
+`runtime_provenance_relation`, its `image`, `plugin` and `core` sections must
+agree as well and `runtime_provenance_agreed` names the ones compared; a pair
+without the relation records `null` there, because a check that did not run is
+not a check that passed. The
+`tessera.full_engine_boundary_classification.v1` record it writes carries the
+two capture identities and, per site, the bytes each capture observed under
+that owner string. It carries **no verdict**: the two rules that read it —
+`two_capture:agreed` (equal bytes → `fixed`) and `two_capture:moved` (bytes
+differ → `candidate`, and the view names the unit or says it still owes one) —
+are recomputable by the consumer from the same byte columns, and a site present
+in only one capture stays `pending_548` with that reason.
+
+**Agreement only counts where the substitution could have moved the bytes.** A
+per-Linear substitution changes a few units' families and leaves the rest
+alone, so a native boundary tensor of an untouched unit carries identical bytes
+in both captures *by construction*; reading that as `fixed` would charge a
+serving gate for bytes that move the moment the menu does. Each site therefore
+carries `unit_family` (per capture, from each capture's own canonical roster,
+checked against its `canonical_units_sha256`) and `unit_family_changed`, and
+`two_capture:agreed` fires only for a site that names no unit — a runner root
+or the BLAS workspace, which any change of assignment tests — or whose unit
+changed family across the pair. An agreed site whose unit kept its family stays
+`pending_548`, saying so. When the rosters are not supplied,
+`unit_family_changed` is `null` and every unit-naming site stays pending: the
+comparison was not made, which is not the same as it having passed.
+
+Sites are matched across the pair on the exact owner string the census emitted.
+One kind does not survive that: a BLAS workspace owner carries the cuBLAS
+handle address (`torch.cublas:handle=<address>:stream=0`), a different number
+in every process, so each capture's workspace is present in one capture only
+and stays `pending_548`. Matching a workspace across captures needs a key the
+census does not emit today. Each view's `reason`
+names both `capture_sha256` digests, because agreement is evidence for those
+two captures and not for every assignment. The record travels inside the
+`owner_views` observation (`observations.owner_views.boundary_classification`,
+null for an unpaired capture), so the `observations` key set does not grow and
+the numbers arrive with the views they decided. The TCQ replay tables are built once per distinct trellis and are a
 per-family presence cost the terms have no home for; they are attributed to a
 unit only when its family has exactly one unit, and otherwise stay unattributed
 with that reason. And the dense manifest figure disagrees with the ledger on two

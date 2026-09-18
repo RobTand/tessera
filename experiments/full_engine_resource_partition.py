@@ -23,6 +23,16 @@ from experiments.full_engine_ownership import (
 
 PARTITION_SCHEMA = "tessera.full_engine_resource_partition.v1"
 
+#: The raw ledger versions this partition reads. v2 is the tessera#548 boundary
+#: ledger: the same allocation row shape, plus a non-null ownership observation
+#: and one boundary row per ``(unit_id, invocation, kind)``. The partition
+#: arithmetic is identical on both -- what v2 adds is read through
+#: ``observations.owner_views``, which a v1 ledger carries as null -- so a
+#: version this module does not name is still refused rather than assumed
+#: compatible.
+SUPPORTED_LEDGER_SCHEMAS = ("tessera.full_engine_raw_resource_ledger.v1",
+                            "tessera.full_engine_raw_resource_ledger.v2")
+
 # The six domains are the six qualification gaps the raw ledger names, stated as
 # what each must establish rather than as what is absent.
 DOMAIN_NAMES = ("worker_startup", "history_join", "external_closure",
@@ -810,7 +820,7 @@ def derive_partition(ledger):
     :func:`assemble_full_engine_resource_report` refuses a declared coordinate
     that disagrees rather than stamping this one over it.
     """
-    if ledger["schema"] != "tessera.full_engine_raw_resource_ledger.v1":
+    if ledger["schema"] not in SUPPORTED_LEDGER_SCHEMAS:
         raise ValueError("unsupported raw ledger schema")
     domains = qualify_domains(ledger)
     classified, unclassified, non_step = classify_allocations(ledger)

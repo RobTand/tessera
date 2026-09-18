@@ -235,6 +235,11 @@ def main():
                         help="the attested vLLM core manifest (default: the plan's core_manifest path)")
     parser.add_argument("--without-ownership", action="store_true",
                         help="replay without the ownership derivation (the pre-#399 ledger)")
+    parser.add_argument("--boundary-classification", type=Path,
+                        help="tessera#548's two-capture comparison, built by "
+                             "experiments/full_engine_boundary_classification.py from this "
+                             "capture's ledger and the substitution capture's; without it every "
+                             "census-shared site stays pending_548")
     args = parser.parse_args()
     plan = json.loads((args.capture_dir / "observer-plan.json").read_text())
     run = json.loads((args.capture_dir / "run.json").read_text())
@@ -269,7 +274,13 @@ def main():
         evidence = ownership_evidence(plan=plan, runtime_observation=runtime_observation,
                                       per_job=per_job, core_manifest=core_manifest, launch=launch,
                                       jit_preflight=jit_preflight, dense_startup=dense_startup)
-    ledger = analyze_engine_resource_ledger(raw, evidence)
+    classification = None
+    if args.boundary_classification is not None:
+        classification = json.loads(args.boundary_classification.read_text())
+        if args.without_ownership:
+            raise ValueError("a boundary classification is read by the ownership derivation; "
+                             "--without-ownership replays without it")
+    ledger = analyze_engine_resource_ledger(raw, evidence, classification)
     if evidence is not None and ledger.get("identity") is not None:
         ledger["runtime_provenance_relation"] = runtime_provenance_relation(
             ledger["identity"], plan=plan, launch=launch, per_job=per_job,

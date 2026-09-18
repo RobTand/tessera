@@ -129,9 +129,20 @@ def test_the_composition_takes_maxima_over_candidates_and_sums_resident(ledger):
 
 
 def test_the_partition_refuses_a_foreign_schema(ledger):
-    ledger["schema"] = "tessera.full_engine_raw_resource_ledger.v2"
+    # v2 became a version this module reads (tessera#548), so the refusal is
+    # demonstrated on a version nothing here names. A ledger version is not
+    # assumed forward-compatible because its number is larger.
+    ledger["schema"] = "tessera.full_engine_raw_resource_ledger.v3"
     with pytest.raises(ValueError, match="unsupported raw ledger schema"):
         derive_partition(ledger)
+
+
+def test_the_partition_reads_the_v2_boundary_ledger(ledger):
+    # tessera#548: the v2 ledger is the v1 rows plus the ownership observation
+    # and the boundary row rule. The partition arithmetic is the same on both,
+    # so accepting v2 is what lets a report carry a non-null owner_views at all.
+    ledger["schema"] = "tessera.full_engine_raw_resource_ledger.v2"
+    assert derive_partition(ledger)["schema"] == "tessera.full_engine_resource_partition.v1"
 
 
 def test_the_scope_stays_tp1_single_device(ledger):
