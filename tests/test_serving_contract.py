@@ -80,7 +80,7 @@ _DENSE_RUNTIME = {"image": _DENSE_IMAGE_FROM_RECEIPT, "execution_modes": ["eager
 _CELL_LAWS: dict[str, dict[str, object]] = {
     "tessera_e2m1_k2_dense_sm121_decode": {
         "platform": "sm_121", "family": "TESSERA_E2M1_K2", "structure": "dense",
-        "regime": "decode", "rungs_q256": [896],
+        "regime": "decode", "rungs_q256": [128, 256, 384, 512, 640, 768, 896],
         "activation_contract": "e2m1_group16_ue4m3_static",
         "executes": [{"symbol": "torch._scaled_mm", "decoder": "native_span2"}],
         "route_status": "backed_with_serve_flag", "qualification": "device_qualified",
@@ -91,7 +91,7 @@ _CELL_LAWS: dict[str, dict[str, object]] = {
     },
     "tessera_e2m1_k2_dense_sm121_batch": {
         "platform": "sm_121", "family": "TESSERA_E2M1_K2", "structure": "dense",
-        "regime": "batch", "rungs_q256": [896],
+        "regime": "batch", "rungs_q256": [128, 256, 384, 512, 640, 768, 896],
         "activation_contract": "e2m1_group16_ue4m3_static",
         "executes": [{"symbol": "torch._scaled_mm", "decoder": "native_span2"}],
         "route_status": "backed_with_serve_flag", "qualification": "device_qualified",
@@ -110,7 +110,7 @@ _CELL_LAWS: dict[str, dict[str, object]] = {
 #: (``docs/measurements/tessera-bf16-route-served-2026-09-02.md``); an empty
 #: list here remains the honest state for a family without a receipt, and is
 #: deliberately not the same thing as an absent family.
-_FAMILY_RUNGS = {"TESSERA_E2M1_K2": [896], "TESSERA_E4M3_K1": [1024],
+_FAMILY_RUNGS = {"TESSERA_E2M1_K2": [128, 256, 384, 512, 640, 768, 896], "TESSERA_E4M3_K1": [1024],
                  "TESSERA_BF16_K1": [1792]}
 
 # The full LFM receipt pins this measured pair, not a capability-derived roster.
@@ -138,7 +138,7 @@ TP2_STUB_RECEIPT = "docs/measurements/tessera-glm53-a4-stub-tp2-served-2026-09-1
 for _regime in ("decode", "batch"):
     _CELL_LAWS[f"tessera_e2m1_k2_routed_moe_sm121_{_regime}_resident"] = {
         "platform": "sm_121", "family": "TESSERA_E2M1_K2", "structure": "routed_moe",
-        "regime": _regime, "rungs_q256": [896],
+        "regime": _regime, "rungs_q256": [128, 256, 384, 512, 640, 768, 896],
         "activation_contract": "e2m1_group16_ue4m3_static",
         "executes": [{"symbol": "vllm.fused_moe.modular_kernel", "decoder": "torch_materialize_stock"}],
         "route_status": "backed_with_serve_flag", "qualification": "device_qualified",
@@ -297,7 +297,11 @@ def test_every_cell_names_a_rung_its_family_attests(contract):
 #: domain at both ends on E4M3, and on E2M1x2 the grammar above plus the native
 #: decoder's span-2-TCQ-only support below.
 _READER_RATES = {
-    "TESSERA_E2M1_K2": ("E2M1x2", [896, 896], 1),
+    # tessera#506 leg 2: the full trellis-shaped domain. Whole-rate rungs of
+    # rate 1..7 over the arity-2 grid -- q256 128..896 step 128 (one forest
+    # per span-2 unit; off-step rungs like 448 resolve to a mixed-rate
+    # schedule the preparer refuses by name, so the step is the honest bound).
+    "TESSERA_E2M1_K2": ("E2M1x2", [128, 896], 128),
     "TESSERA_E4M3_K1": ("E4M3", [256, 2048], 1),
     # ``experiments/bf16_reader_rate_range.py``: 25 rungs, every integer rate
     # 1..16 plus nine of the non-integer rungs a Bresenham schedule makes, each
@@ -378,7 +382,7 @@ def test_the_reader_grid_resolves_by_route_AND_grid(contract):
     assert reader_rate_grid("TESSERA_FP8", "E4M3", contract) == (
         "TESSERA_E4M3_K1", 256, 2048, 1)
     assert reader_rate_grid("TESSERA_NVFP4", "E2M1x2", contract) == (
-        "TESSERA_E2M1_K2", 896, 896, 1)
+        "TESSERA_E2M1_K2", 128, 896, 128)
     assert reader_rate_grid("TESSERA_NVFP4", "E2M1", contract) is None, (
         "the arity-1 E2M1 grid has no published range and must not borrow one")
     assert reader_rate_grid("TESSERA_FP8", "E2M1x2", contract) is None
@@ -452,7 +456,8 @@ def test_the_table_adds_only_the_measured_moe_scope_without_expert_parallelism(c
         assert cell["runtime"]["execution_modes"] == ["eager"]
     assert len(moe) == 4
     assert sorted((family, rungs) for family, rungs, _ in by_family) == [
-        ("TESSERA_E2M1_K2", (896,)), ("TESSERA_E4M3_K1", (1024,))]
+        ("TESSERA_E2M1_K2", (128, 256, 384, 512, 640, 768, 896)),
+        ("TESSERA_E4M3_K1", (1024,))]
     assert all(regimes == {"decode", "batch"} for regimes in by_family.values())
     assert contract["expert_parallel"]["units"] == []
 
@@ -1070,7 +1075,7 @@ def _foreign_requires_plugin(c):
 
 
 def _unpublished_rung(c):
-    c["lane_eligibility"]["cells"][0]["rungs_q256"] = [512]
+    c["lane_eligibility"]["cells"][0]["rungs_q256"] = [700]
 
 
 @pytest.mark.parametrize("mutate, match", [

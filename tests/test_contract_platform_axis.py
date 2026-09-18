@@ -92,7 +92,7 @@ def test_the_packaged_contract_validates_at_v31(contract):
     already defines for them; what changed is the ANSWER, not the grammar, so
     the schema string stays and the changelog carries the consumer warning.
     """
-    assert int(contract["contract_version"]) == 31
+    assert int(contract["contract_version"]) == 32
     assert "activation_quantizers" in contract
     assert all("structures" in entry for entry in contract["formats"])
     assert contract["lane_eligibility"]["schema"] == LANE_ELIGIBILITY_SCHEMA

@@ -2425,11 +2425,27 @@ def _validate_cell_executes(cell: Mapping[str, Any], route: str, entry: Mapping[
     wires = {int(w["q256"]): w for w in entry["attested_wire"]}
     # The family's own published terminal rate, so a rung above what this
     # family can encode raises here rather than resolving to a rate set.
-    cap = int(entry["native_terminal_q256"]) // 256
+    # The cell rungs are per WEIGHT and the bresenham schedule is per CODE: a
+    # code covers ``arity`` weights (export.encode_linear_planes writes
+    # ``q256 * grid.arity``; scheme._per_weight_q256 reads it back), so both
+    # the cap and the rung resolve onto the per-code root.  Resolving the
+    # per-weight rung directly broke at the shaped domain's floor: an arity-2
+    # rung below q256 256 is a full unit at rate 1 per code, not the
+    # sub-1-per-column rate rate_set would have to refuse.
+    from fractions import Fraction
+
+    from ..alphabet import SERIALISABLE_GRIDS
+    arity = next((g for g in SERIALISABLE_GRIDS.values() if g.name == str(entry["grid"])), None)
+    if arity is None:
+        raise ValueError(
+            f"{where}: formats grid {entry['grid']!r} names no serialisable grid this "
+            "package holds; a cell's rate set cannot be derived for it")
+    ar = int(arity.arity)
+    cap = int(entry["native_terminal_q256"]) * ar // 256
     modes = cell_residency_modes(cell, where)
     want: set = set()
     for rung in cell["rungs_q256"]:
-        rates = rate_set(root_from_q256(int(rung)), cap=cap)
+        rates = rate_set(Fraction(int(rung) * ar, 256), cap=cap)
         lanes = _lanes_a_rung_reaches(route, contract, wires[int(rung)], rates,
                                       str(entry["grid"]))
         for mode in modes:
