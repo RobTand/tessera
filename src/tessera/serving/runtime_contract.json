@@ -379,7 +379,8 @@
       "top_k": 1024,
       "regime": "batch",
       "execution_modes": ["eager", "compiled"],
-      "receipt": "docs/measurements/tessera-serving-plugin-2026-09-02.md"
+      "receipt": "docs/measurements/tessera-serving-plugin-2026-09-02.md",
+      "q256": 896
      }
     ],
      "smoke": {

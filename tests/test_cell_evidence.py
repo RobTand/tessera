@@ -174,7 +174,11 @@ _EVIDENCE = {
     # decode-regime KL and no greedy smoke on record.
     "tessera_e2m1_k2_dense_sm121_decode": _ROUTE_ONLY,
     "tessera_e2m1_k2_dense_sm121_batch": {
-        "grade": "kl_lower_bound", "kl": [_bound("batch", ["eager", "compiled"], PLUGIN)],
+        # D2b (tessera#560): the entry stamps the rung the receipt measured --
+        # q896, the only rung this cell publishes -- because a top-k
+        # intersection bound scored at one rung bounds nothing at another.
+        "grade": "kl_lower_bound",
+        "kl": [{**_bound("batch", ["eager", "compiled"], PLUGIN), "q256": 896}],
         "smoke": _NO_SMOKE},
     # E4M3 (q1024).  The decode regime has a KL only where the window-GEMV
     # lane was under test -- the streamed cell -- eager on 2026-09-03 and
@@ -643,6 +647,26 @@ def test_the_same_receipt_and_mode_cannot_be_counted_twice(contract):
     evidence = {"grade": "kl_lower_bound", "kl": [entry, entry], "smoke": _NO_SMOKE}
     with pytest.raises(ValueError, match="repeats"):
         validate_serving_contract(_with_evidence(contract, BATCH, evidence))
+
+
+def test_a_kl_entry_may_stamp_the_rung_its_receipt_measured(contract):
+    """D2b (tessera#560): the receipt's scope travels with the entry.
+
+    A KL bound scored at one rung bounds nothing at another (a top-k
+    intersection bound is rate-dependent), so an entry may name the rung its
+    receipt measured in ``q256`` -- and when it does, the rung must be one the
+    cell publishes.  The dense batch cell stamps the 896 rung its 2026-09-02
+    receipt measured; a stamp outside the cell's rungs is refused.
+    """
+    stamped = {**_bound("batch", ["eager", "compiled"], PLUGIN), "q256": 896}
+    doc = _with_evidence(contract, BATCH, {
+        "grade": "kl_lower_bound", "kl": [stamped], "smoke": _NO_SMOKE})
+    validate_serving_contract(doc)
+    assert cell_evidence(_cells(doc)[BATCH], BATCH)["kl"] == [stamped]
+    outside = {**_bound("batch", ["eager", "compiled"], PLUGIN), "q256": 768}
+    with pytest.raises(ValueError, match="q256=768"):
+        validate_serving_contract(_with_evidence(contract, BATCH, {
+            "grade": "kl_lower_bound", "kl": [outside], "smoke": _NO_SMOKE}))
 
 
 @pytest.mark.parametrize("smoke, match", [

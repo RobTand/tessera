@@ -83,9 +83,10 @@ def _scheme_for(grid: PayloadGrid, q256: int, rows: int = 64, columns: int = 64)
 
     Built from the exporter's own ``family_for`` and from ``served_recipe``,
     so it is the dict ``main`` puts in ``config_groups`` and not a paraphrase:
-    on the NVFP4 route the served body is TCQ at every reader rung (v32), and
-    the plain ``wire_recipe`` resolves WINDOW below the cap for research/stock
-    work only.
+    the default structure here is dense, so on the NVFP4 route the served
+    body is the ``wire_recipe`` spelling -- WINDOW below the cap (D2b,
+    tessera#560), TCQ at it -- while a ``routed_moe`` stack is promoted to
+    TCQ at every reader rung (v32).
     """
     recipe = EXPORT.served_recipe(grid, q256)
     return {"family": EXPORT.family_for(grid), "structure": "dense", "grid": grid.name,
@@ -126,7 +127,23 @@ def test_every_rung_the_exporter_accepts_is_one_the_loader_accepts(name):
     else:
         _family, low, high, step = published
         assert accepted, f"{name} publishes [{low}, {high}] and the exporter accepted nothing"
-        assert accepted == [q for q in _probes(grid) if reader_accepts(q, low, high, step)]
+        # D2b (tessera#560): the range is the reader's, but the served BODY is
+        # per rung -- a dense sub-cap E2M1x2 rung keeps the WINDOW recipe,
+        # which the NVFP4 route has no decoder for, so the exporter refuses it
+        # while the row still publishes it.  The expected set meets the range
+        # with the route's own body: the loader's table (ROUTES) supplies the
+        # body and span, the recipe table the per-rung spelling -- never the
+        # exporter's choice, which is what is under test.
+        route = route_for_grid(name)
+        exp_body, exp_span = ROUTES[route]["body"], ROUTES[route]["span"]
+        expected = []
+        for q256 in _probes(grid):
+            if not reader_accepts(q256, low, high, step):
+                continue
+            served = wire_recipe(grid, q256)
+            if served.body.name == exp_body and served.span == exp_span:
+                expected.append(q256)
+        assert accepted == expected
 
 
 def test_the_gate_accepts_the_two_rungs_the_contract_actually_publishes():
@@ -436,6 +453,34 @@ def test_a_routed_e2m1x2_stack_at_q896_passes_the_gate_without_an_override():
     assert stamped == [], "an attested stack is not an override"
 
 
+def test_a_dense_sub_cap_nvfp4_plan_is_refused_without_an_override():
+    """D2b (tessera#560): the row widen must not open dense sub-cap export.
+
+    The widened E2M1_K2 reader row ([128, 896] step 128) is the DENSE reader's
+    range, and a dense module served below the cap keeps the WINDOW recipe
+    ``wire_recipe`` resolves -- which the NVFP4 route has no decoder for, so
+    the export gate refuses it without ``--allow-unserveable`` exactly as
+    before v32.  Only a ``routed_moe`` stack is promoted to the span-2 TCQ
+    body the seven-rung load receipt covers, and it passes at the same rung.
+    """
+    from tessera.manifest import BodyKind
+    from tessera.serving.scheme import STRUCTURE_ROUTED_MOE
+
+    grid = GRIDS["E2M1x2"]
+    assert EXPORT.served_recipe(grid, 768).body is BodyKind.WINDOW
+    assert EXPORT.served_recipe(
+        grid, 768, structure=STRUCTURE_ROUTED_MOE).body is BodyKind.TCQ
+    with pytest.raises(SystemExit) as caught:
+        EXPORT.check_recipe(grid, 768, where="dense.probe")
+    assert "no in-forward decoder" in str(caught.value), str(caught.value)
+    stamped: list = []
+    assert EXPORT.check_recipe(grid, 768, where="dense.probe",
+                               allow_unserveable=True, overrides=stamped) is not None
+    assert [(r["grid"], r["q256"]) for r in stamped] == [("E2M1x2", 768)]
+    assert EXPORT.check_recipe(grid, 768, where="stack.probe",
+                               structure=STRUCTURE_ROUTED_MOE) is not None
+
+
 def test_a_structure_no_cell_attests_is_refused_by_name():
     """Three refusals, in the order the facts are established.
 
@@ -649,7 +694,8 @@ def test_the_packaged_table_still_admits_every_device_qualified_rung():
             # resolve what the actual wire carries the way the exporter does
             # (served_recipe) before handing the gate a recipe.
             from importlib.util import spec_from_file_location
-            served = EXPORT.served_recipe(GRIDS[grid_name], rung)
+            served = EXPORT.served_recipe(GRIDS[grid_name], rung,
+                                          structure=STRUCTURE_ROUTED_MOE)
             recipe = recipe if recipe.body == served.body else served
             assert refuse_unserveable_wire(
                 grid_name, rung, recipe.body.name, recipe.scale_plane.name,

@@ -445,25 +445,33 @@ def family_for(grid) -> str:
     return FP8 if grid.name == "E4M3" else NVFP4
 
 
-def served_recipe(grid, q256):
+def served_recipe(grid, q256, structure=STRUCTURE_DENSE):
     """The wire a SERVED unit carries on ``grid`` at ``q256``.
 
-    The route decides the body, and on ``TESSERA_NVFP4`` that is span-2 TCQ at
-    EVERY readable rung, not just the cap: the contract's ``attested_wire``
-    stamps ``tcq``/``span 2`` across the whole reader range (contract v32,
-    tessera#506 leg 2) and ``prepare_span2_compact`` takes a TCQ unit only, so
-    a sub-cap rung served through the WINDOW recipe (what ``wire_recipe``
-    resolves below the cap for research/stock work) would be unreadable by the
-    one decoder the route has.  The recipe table keeps its WINDOW default --
-    research encodes and the stock twin are untouched -- and the span-2 TCQ
-    wire is the served spelling above it exactly as ``_resolve_recipe``
-    resolves a caller that names TCQ over a window recipe.
+    The route decides the body, and on ``TESSERA_NVFP4`` a ``routed_moe``
+    stack carries span-2 TCQ at EVERY readable rung, not just the cap: the
+    contract's ``attested_wire`` stamps ``tcq``/``span 2`` across the whole
+    reader range (contract v32, tessera#506 leg 2) and
+    ``prepare_span2_compact`` takes a TCQ unit only, so a sub-cap rung served
+    through the WINDOW recipe (what ``wire_recipe`` resolves below the cap
+    for research/stock work) would be unreadable by the one decoder the
+    route has.  The recipe table keeps its WINDOW default -- research
+    encodes and the stock twin are untouched -- and the span-2 TCQ wire is
+    the served spelling above it exactly as ``_resolve_recipe`` resolves a
+    caller that names TCQ over a window recipe.
+
+    A DENSE module keeps the ``wire_recipe`` spelling at every rung (D2b,
+    tessera#560): the seven-rung load receipt covers the MoE kernel only,
+    never the dense ``native_span2`` path, so promoting dense sub-cap to TCQ
+    would serve an unmeasured decoder.  Below the cap that is the WINDOW
+    body, which the route refuses at export.
 
     On the FP8 and BF16 routes the recipe IS the served wire, so this is the
     plain ``wire_recipe`` there.
     """
     recipe = wire_recipe(grid, q256)
-    if family_for(grid) == NVFP4 and recipe.body is not BodyKind.TCQ:
+    if (structure == STRUCTURE_ROUTED_MOE and family_for(grid) == NVFP4
+            and recipe.body is not BodyKind.TCQ):
         recipe = WireRecipe(body=BodyKind.TCQ, span=TCQ_RECIPE.span,
                             scale_plane=recipe.scale_plane,
                             window_sigma=recipe.window_sigma,
@@ -471,7 +479,7 @@ def served_recipe(grid, q256):
     return recipe
 
 
-def module_scheme_key(grid, q256: int) -> tuple:
+def module_scheme_key(grid, q256: int, structure: str = STRUCTURE_DENSE) -> tuple:
     """The facts every role of one vLLM-fused module must agree on.
 
     NOT ``(grid, q256)`` (#37).  vLLM builds one quant method per module, so
@@ -494,7 +502,7 @@ def module_scheme_key(grid, q256: int) -> tuple:
     sub-cap ``E2M1x2`` rung is refused by ``check_recipe`` before this anyway;
     the key does not rely on that.)
     """
-    recipe = served_recipe(grid, q256)
+    recipe = served_recipe(grid, q256, structure)
     return (family_for(grid), grid.name, recipe.body.name, recipe.scale_plane.name)
 
 
@@ -541,7 +549,7 @@ def check_recipe(grid, q256: int, where: "str | None" = None, *,
     encode.  The override record carries the structure for the same reason
     the refusal does.
     """
-    recipe = served_recipe(grid, q256)
+    recipe = served_recipe(grid, q256, structure)
     target = where or f"--grid {grid.name} --q256 {q256}"
     if research_selected is not None and structure == STRUCTURE_ROUTED_MOE:
         try:
@@ -662,7 +670,8 @@ def _unrouted_refusal(verdicts, architectures) -> str:
             lines.append(f"    ... and {len(rows) - 12} more")
     return "\n".join(lines)
 
-def check_lanes(lanes, grid, q256: int, where: "str | None" = None) -> None:
+def check_lanes(lanes, grid, q256: int, where: "str | None" = None,
+                structure: str = STRUCTURE_DENSE) -> None:
     """Refuse the plan unless every requested LANE can read this rung's wire.
 
     The second half of the export-time seam, and the half #104 says was
@@ -681,7 +690,7 @@ def check_lanes(lanes, grid, q256: int, where: "str | None" = None) -> None:
     """
     if not lanes:
         return
-    recipe = served_recipe(grid, q256)
+    recipe = served_recipe(grid, q256, structure)
     target = where or f"--grid {grid.name} --q256 {q256}"
     for lane in lanes:
         try:
@@ -1721,7 +1730,8 @@ def main():
                              research_selected=(research_execution.config
                                                 if research_execution is not None else None),
                              research_records=research_gate_records)
-                check_lanes(required_lanes, g, int(spec["q256"]), where=name)
+                check_lanes(required_lanes, g, int(spec["q256"]), where=name,
+                            structure=structure)
                 overrides[name] = (g, int(spec["q256"]))
                 if "source_layout" in spec:
                     source_layout_overrides[name] = spec["source_layout"]
@@ -2347,7 +2357,8 @@ def main():
                     for unit in expert_units[name]:
                         stack_spec = stack_plan[unit["stack"]]
                         unit_grid, unit_q256 = stack_spec["grid"], stack_spec["q256"]
-                        unit_recipe = served_recipe(unit_grid, unit_q256)
+                        unit_recipe = served_recipe(unit_grid, unit_q256,
+                                                      STRUCTURE_ROUTED_MOE)
                         source_weight = None
                         if intake is not None:
                             exported, blob, cache_record, payload, own_global = intake.take(shard, name, unit)
@@ -2627,7 +2638,7 @@ def main():
     # the other side.
     for stack, spec in stack_plan.items():
         stack_record = moe_records[stack]
-        recipe = served_recipe(spec["grid"], spec["q256"])
+        recipe = served_recipe(spec["grid"], spec["q256"], STRUCTURE_ROUTED_MOE)
         groups = {}
         for group in MOE_GROUPS:
             lengths = stack_record["group_blob_bytes"][group]
