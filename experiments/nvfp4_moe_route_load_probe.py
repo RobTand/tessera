@@ -74,10 +74,16 @@ def _encode(weight, name, q256):
     from tessera.alphabet import E2M1_GRID, tuple_grid
     from tessera.export import DEFAULT_CODE, encode_linear_planes
     from tessera.fused import pack_fused
+    from tessera.manifest import BodyKind
     from tessera.stock import materialize_stock
 
+    # The served body is TCQ at every reader rung (tessera#506 leg 2): the
+    # plain wire_recipe resolves WINDOW below the cap, which is the
+    # research/stock wire and not the wire the sidecar declares.  The probe,
+    # like the exporter, asks the encoder for the served body.
     exported, unit, forests = encode_linear_planes(
-        weight.contiguous(), grid=tuple_grid(E2M1_GRID, 2), q256=q256, name=name, verify=False)
+        weight.contiguous(), grid=tuple_grid(E2M1_GRID, 2), q256=q256, name=name,
+        body=BodyKind.TCQ, verify=False)
     blob = pack_fused([(name, weight.shape[0], exported.blob)])
     return blob, materialize_stock(unit, forests, DEFAULT_CODE)
 
@@ -574,7 +580,9 @@ def _wrong_expert_count(wires, scheme):
 
 
 def _wrong_rung(wires, scheme):
-    scheme["groups"]["w2"]["q256"] = 768
+    # 768 is in-domain since v32 ([128, 896] step 128); above the cap is the
+    # shape that is still refused.  (tessera#506 leg 2)
+    scheme["groups"]["w2"]["q256"] = 1024
 
 
 def _drop_an_input_scale(wires, scheme):
