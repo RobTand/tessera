@@ -46,9 +46,10 @@ on). v2 (2026-09-18, tessera#399) adds three `derived` members — `admission`,
 `fixed_resources`, `timing_terms` — and one `partition` member,
 `observer_allocations`; every v1 member keeps its name and meaning, and the
 seven-member envelope and the `observations` key set are unchanged. A consumer
-pinned to v1 refuses a v2 report by its schema string, and that is the intended
-boundary: the PrismaQuant consumer learns v2 in its own change, never by this
-producer's say-so. A field this document does not name is a refusal, not an
+pinned to v1 refuses a v2 report by its schema string — PrismaQuant's
+`read_full_engine_resource_report` raises on an unsupported `schema` before it
+reads any field — and that is the intended boundary: the PrismaQuant consumer
+learns v2 in its own change, never by this producer's say-so. A field this document does not name is a refusal, not an
 extension.
 
 Refusing inputs, in the reader before any arithmetic: unknown fields, missing
