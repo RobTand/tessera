@@ -40,9 +40,17 @@ constraint. Admission is PrismaQuant's by design.
 ## Schema identity
 
 `tessera.full_engine_resource_report.v2` — a closed schema, distinct from
-`tessera.full_engine_resource_capture.v1` (raw capture) and
-`tessera.full_engine_raw_resource_ledger.v1` (the replay this report is built
-on). v2 (2026-09-18, tessera#399) adds three `derived` members — `admission`,
+`tessera.full_engine_resource_capture.v1` (raw capture) and the replay this
+report is built on, which is `tessera.full_engine_raw_resource_ledger.v1`
+without the ownership derivation and `…v2` with it. The v2 raw ledger
+(2026-09-18, tessera#548) is the v1 rows plus exactly the two things #548
+names: a non-null `owner_views` observation, and the native boundary tensors
+carried one allocation row per `(unit_id, invocation, kind)`, with a collision
+on that key refusing the ledger rather than publishing an ambiguous boundary
+row (`full_engine_ownership.boundary_rows`). The version is set from the
+derivation having run (`full_engine_resources._derive_ownership`), never
+declared beside it, so "the schema says v2" and "the observation is present"
+are one fact. v2 (2026-09-18, tessera#399) adds three `derived` members — `admission`,
 `fixed_resources`, `timing_terms` — and one `partition` member,
 `observer_allocations`; every v1 member keeps its name and meaning, and the
 seven-member envelope and the `observations` key set are unchanged. A consumer

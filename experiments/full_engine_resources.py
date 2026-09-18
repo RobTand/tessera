@@ -29,12 +29,19 @@ from experiments.full_engine_snapshot_codec import (
     compact_capture, expand_capture,
 )
 from experiments.full_engine_ownership import (
-    boundary_geometry_witness, dense_startup_check, derive_owner_views,
+    boundary_geometry_witness, boundary_rows, dense_startup_check, derive_owner_views,
     external_record_views, ownership_observation, transient_gap_witness,
 )
 
 CAPTURE_SCHEMA = "tessera.full_engine_resource_capture.v1"
 LEDGER_SCHEMA = "tessera.full_engine_raw_resource_ledger.v1"
+#: tessera#548. The v2 raw ledger is the v1 ledger plus the two things #548
+#: names: a non-null ownership observation, and native boundary tensors carried
+#: one row per ``(unit_id, invocation, kind)`` in the allocation row shape. The
+#: version is set from the derivation actually running, never declared beside
+#: it: a reader that sees v2 and a reader that sees ``owner_views`` learn the
+#: same fact, and neither can be true here without the other.
+LEDGER_SCHEMA_V2 = "tessera.full_engine_raw_resource_ledger.v2"
 IDENTITY_SCHEMA = "tessera.full_engine_resource_identity.v1"
 IDENTITY_HASHES = ("model_sha256", "configuration_sha256", "runtime_manifest_sha256",
                    "assignment_sha256", "canonical_units_sha256", "workload_sha256")
@@ -760,6 +767,10 @@ def _derive_ownership(result, raw, rows, frames_by_index, unowned_live, unknown,
     named count of records no source evidence resolved.
     """
     issues = result["issues"]
+    # tessera#548's row rule, checked before anything is derived from the rows:
+    # a ledger whose boundary keys collide cannot be a v2 boundary ledger, and
+    # it publishes no ownership observation either.
+    boundary_rows(rows)
     views, summary = derive_owner_views(rows, frames_by_index, checkpoint_index=by_label,
                                         roster=evidence["roster"], evidence=evidence)
     view_of = {view["allocation_id"]: view for view in views}
@@ -788,6 +799,7 @@ def _derive_ownership(result, raw, rows, frames_by_index, unowned_live, unknown,
                                                 witness_steps),
         dense_startup_check=dense_startup_check(rows, views, evidence.get("dense_startup"),
                                                 ready_index=by_label.get("ready_for_workload")))
+    result["schema"] = LEDGER_SCHEMA_V2
 
 
 PROVENANCE_RELATION_SCHEMA = "tessera.full_engine_runtime_provenance_relation.v1"

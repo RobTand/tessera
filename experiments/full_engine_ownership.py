@@ -347,6 +347,32 @@ def _parse_boundary_owner(owner):
     return unit_id, invocation, kind
 
 
+#: tessera#548's row rule for the v2 boundary ledger. Every native boundary
+#: tensor the worker observes is one allocation row in the ``_ALLOCATION_FIELDS``
+#: shape, keyed by the ``(unit_id, invocation, kind)`` its owner string names.
+#: Two rows under one key is not a smaller defect than a missing row: the ledger
+#: could no longer say which storage that boundary is, and a two-capture
+#: comparison would be matching one key against two different byte figures.
+def boundary_rows(rows):
+    """``{(unit_id, invocation, kind): row}`` over the native boundary owners.
+
+    Raises when one key names two allocations, which refuses the v2 ledger
+    rather than publishing an ambiguous boundary row.
+    """
+    index = {}
+    for row in rows:
+        for owner in row["observed_owners"]:
+            parsed = _parse_boundary_owner(owner)
+            if parsed is None:
+                continue
+            if parsed in index and index[parsed]["allocation_id"] != row["allocation_id"]:
+                raise ValueError(
+                    "two allocations carry one native boundary (unit, invocation, kind): "
+                    + owner)
+            index[parsed] = row
+    return index
+
+
 def _layer_of(module):
     parts = module.split(".")
     if "layers" in parts:

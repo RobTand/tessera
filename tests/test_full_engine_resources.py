@@ -672,3 +672,48 @@ def test_a_blas_workspace_observer_the_plan_declared_is_checked_too():
     # Without either side the check is not invented.
     assert "blas_workspace_observer_sha256" not in {check["name"]
                                                     for check in _relation()["checks"]}
+
+
+# --- tessera#548: the v2 boundary ledger ------------------------------------
+
+def _duplicate_boundary_key(raw):
+    """Two live storages under one ``native:(unit, invocation, kind)`` owner.
+
+    The banked capture leaves one storage owned at ``startup`` (4096) and a
+    second one at ``unit_end`` (4608). Naming both with one boundary owner --
+    one entry per checkpoint, so the existing within-checkpoint duplicate
+    check is not what fires -- is what a recorder defect would look like: the
+    ledger can no longer say which storage that boundary is, which is the
+    ambiguity the v2 row rule exists to refuse.
+    """
+    for checkpoint in raw["checkpoints"]:
+        owner = dict(checkpoint["owners"][-1], owner_id="native:l:fixture:0:input.x",
+                     category="shared")
+        checkpoint["owners"] = [owner]
+    return raw
+
+
+def test_the_ownership_derivation_makes_it_a_v2_boundary_ledger(capture):
+    from experiments.full_engine_resources import analyze_engine_resource_ledger
+    derived = analyze_engine_resource_ledger(_unowned_engine_transient(copy.deepcopy(capture)),
+                                             OWNERSHIP_EVIDENCE)
+    # tessera#548: v2 IS the ownership observation being present. A consumer
+    # reading the schema string learns exactly what it learns from the
+    # observation, and neither can be true without the other.
+    assert derived["schema"] == "tessera.full_engine_raw_resource_ledger.v2"
+    assert derived["owner_views"] is not None
+    raw = analyze_engine_resource_ledger(_unowned_engine_transient(copy.deepcopy(capture)))
+    assert raw["schema"] == "tessera.full_engine_raw_resource_ledger.v1"
+    assert raw["owner_views"] is None
+
+
+def test_two_allocations_under_one_boundary_key_refuse_the_v2_ledger(capture):
+    from experiments.full_engine_resources import analyze_engine_resource_ledger
+    result = analyze_engine_resource_ledger(
+        _duplicate_boundary_key(copy.deepcopy(capture)), OWNERSHIP_EVIDENCE)
+    assert any("native:l:fixture:0:input.x" in issue for issue in result["issues"]), result["issues"]
+    assert result["status"] == "incomplete"
+    # No v2 claim survives a violated row rule, and no ownership observation
+    # is published from a ledger whose boundary rows are ambiguous.
+    assert result["schema"] == "tessera.full_engine_raw_resource_ledger.v1"
+    assert result["owner_views"] is None
