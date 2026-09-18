@@ -61,6 +61,7 @@
     "tensor_parallel_size": 1
   },
   "environment": {
+    "PYTORCH_CUDA_ALLOC_CONF": "unset",
     "TESSERA_SERVE_MODE": "resident"
   },
   "model_family": "LFM2.5-8B-A1B",
