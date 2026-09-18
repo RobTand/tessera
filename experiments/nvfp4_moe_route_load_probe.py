@@ -443,14 +443,15 @@ def positive_leg(device, tokens, q256, build=None, layer_name=LAYER, x_scale=1.0
     loaded = load(layer, wires)
     record["loaded_param_names"] = sorted(set(loaded))
     record["load_calls"] = len(loaded)
-    # BEFORE finalize: the tile is the stock pair and the globals are multipliers.
-    # (The FlashInfer backends reorder [w1,w3] -> [w3,w1] and swizzle the block
-    # scales at finalize, so this is the last point the bytes are comparable.)
-    record["tile_is_materialize_stock_byte_for_byte"] = tile_check(layer, tiles)
     record["input_global_scale_loaded"] = {
         "w13": layer.w13_input_global_scale.data.tolist(),
         "w2": layer.w2_input_global_scale.data.tolist()}
     method.process_weights_after_loading(layer)
+    # The served A4 stacks exist only after finalize (the route retires the
+    # materialised stock anchors for zero-size ones in the same commit that
+    # freezes the shared globals in), so the byte-for-byte identity check runs
+    # AFTER it -- against the served stacks, not the stock params.
+    record["tile_is_materialize_stock_byte_for_byte"] = tile_check(layer, tiles)
     record["params_after_load"] = sorted(n for n, _ in layer.named_parameters())
     for name in ("w13_weight", "w2_weight", "w13_weight_scale", "w2_weight_scale",
                  "w13_weight_scale_2", "w2_weight_scale_2", "w13_input_scale", "w2_input_scale"):
