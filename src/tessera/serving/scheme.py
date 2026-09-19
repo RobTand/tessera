@@ -755,12 +755,16 @@ def _refuse_an_unreadable_rung(route: str, grid: str, q256: int, target: str) ->
     ``q256`` in [256, 2048] -- so the contract says continuous, not a list of
     the two rungs anyone had built.  On ``E2M1x2`` the same grammar caps the
     top at 896 (rate 7 of arity-2 native 8).  The bottom is the served set,
-    not the grammar: the native decoder serves the span-2 TCQ body only, and
+    not the grammar: the routed path serves the span-2 TCQ body only, and
     a rung is published when a served spelling of it has been taken through
     this load path and measured (contract v32 publishes the whole trellis
-    domain [128, 896] step 128 on that basis; the research ``wire_recipe``
-    default below the cap is still the WINDOW body, which this route does
-    not serve -- see ``experiments.export_tessera_serving.served_recipe``).
+    domain [128, 896] step 128 on that basis -- the E2M1_K2 reader row, not
+    the dense cells, which stay at [896] for lack of a dense-decoder receipt
+    (tessera#560 D2); the research ``wire_recipe`` default below the cap is
+    still the WINDOW body, which the routed path promotes to TCQ at export
+    for ``STRUCTURE_ROUTED_MOE`` only -- see
+    ``experiments.export_tessera_serving.served_recipe`` -- while a dense
+    module keeps WINDOW and is refused there).
     """
     from .contract import reader_accepts, reader_rate_grid
 
@@ -904,10 +908,12 @@ def refuse_unserveable_wire(grid: str, q256: int, body: str, plane: str,
     default below the cap -- while the contract published ``E2M1x2`` as the
     single point 896, so a legal low-rate unit encoded fine and was refused at
     LOAD, hours later, on the operator rather than at export on the exporter.
-    (Contract v32 publishes the trellis domain [128, 896] step 128, and served
-    stacks below the cap carry the span-2 TCQ spelling -- see
-    ``experiments.export_tessera_serving.served_recipe`` -- but the shape of
-    the failure this gate exists for is unchanged.)
+    (Contract v32 publishes the trellis domain [128, 896] step 128 on the
+    E2M1_K2 reader row, and served ROUTED stacks below the cap carry the
+    span-2 TCQ spelling -- see
+    ``experiments.export_tessera_serving.served_recipe`` -- while a dense
+    module keeps the WINDOW body and stays refused here exactly as before;
+    the shape of the failure this gate exists for is unchanged.)
 
     This is principle 9's one carve-out for a producer-side refusal: a MEASURED
     platform fact -- the pinned runtime has no native route for these bytes --

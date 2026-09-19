@@ -643,9 +643,11 @@ def test_the_packaged_table_still_admits_every_device_qualified_rung():
         assert attested_cells(family, STRUCTURE_ROUTED_MOE, packaged) == declared, family
         for cell in declared:
             grid_name, rung = _routed_cell_plan(cell)
-            # The served body on the NVFP4 route is TCQ at every reader rung
-            # (v32), so hand the gate what the actual wire carries the way
-            # the exporter does (served_recipe), not the research default.
+            # The served body for a routed_moe stack on the NVFP4 route is
+            # TCQ at every reader rung (v32; a dense module keeps the WINDOW
+            # recipe below the cap per D2b, tessera#560), so hand the gate
+            # what the actual wire carries the way the exporter does
+            # (served_recipe), not the research default.
             served = EXPORT.served_recipe(GRIDS[grid_name], rung)
             assert refuse_unserveable_wire(
                 grid_name, rung, served.body.name, served.scale_plane.name,

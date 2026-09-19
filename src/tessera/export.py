@@ -1495,11 +1495,13 @@ def wire_recipe(grid: PayloadGrid, q256: "int | None" = None) -> WireRecipe:
     * **E2M1x2 below the cap** (``q256 < tcq_cap_q256(grid)``, 3.5 body bits
       per weight): ``E2M1X2_SUBCAP_RECIPE`` -- the window body over LUT16,
       L=12.  1.06-1.10x EXL3 at 2.5-3.5 bpp where the coset trellis is
-      1.36-1.43x.  This is the RESEARCH default the table records: a SERVED
-      stack below the cap carries the span-2 TCQ spelling instead
-      (``experiments.export_tessera_serving.served_recipe`` promotes it,
-      because the route decodes TCQ only), measurably worse and stated there.
-      Nothing here moves for research encodes or the stock twin.
+      1.36-1.43x.  This is the RESEARCH default the table records: a served
+      ROUTED stack below the cap carries the span-2 TCQ spelling instead
+      (``experiments.export_tessera_serving.served_recipe`` promotes it to TCQ
+      for ``STRUCTURE_ROUTED_MOE`` only, because the routed path decodes TCQ
+      only), measurably worse and stated there.  A DENSE module keeps this
+      WINDOW spelling at every rung, and below the cap the route refuses it
+      at export.  Nothing here moves for research encodes or the stock twin.
     * **E2M1x2 at the cap** and **E2M1**: ``TCQ_RECIPE``.  At the cap the
       structured coset table beats the window on the wire at L=12 (1.170x
       against 1.244x) and at L=14 (1.21x): the window pays the table's

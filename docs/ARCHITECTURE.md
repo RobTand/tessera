@@ -18,8 +18,11 @@ green load receipt (PB action
 loads byte-identical through `TesseraNvFp4MoEMethod` on GB10, resident), with
 the rung-896 control (`de8bc7dada4e...`) and the CPU encode receipt behind it;
 the v32 changelog entry names all three receipts and states the cell scope.
-Served stacks below the cap carry the span-2 TCQ spelling (`served_recipe`
-promotes the research WINDOW default because the route decodes TCQ only) --
+Served ROUTED stacks below the cap carry the span-2 TCQ spelling
+(`served_recipe` promotes the research WINDOW default to TCQ for
+`STRUCTURE_ROUTED_MOE` only, because the routed path decodes TCQ only; a
+dense module keeps WINDOW below the cap and is refused at export --
+tessera#560 D2b) --
 necessary, measured-worse (1.36-1.43x vs 1.06-1.10x EXL3 at 2.5-3.5 bpp,
 `docs/tessera-one-format.md` §4), and stamped per rung in `attested_wire`.
 Both cells stay `route_only` with smoke `not_recorded`.
