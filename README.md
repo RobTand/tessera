@@ -127,7 +127,7 @@ precision differ:
 
 | Family | Stored construction | Matrix-multiply format | Currently attested root rate |
 |---|---|---|---|
-| **Tessera NVFP4** | Span-2 trellis over E2M1 pairs; LUT16 block scales | NVFP4 weights and activations (**W4A4**) | `q256=896`: 3.5 body bits/weight; approximately 4.0 with the scale plane |
+| **Tessera NVFP4** | Span-2 trellis over E2M1 pairs; LUT16 block scales | NVFP4 weights and activations (**W4A4**) | dense `q256=896` (≈4.0 bits/weight with the scale plane); routed experts additionally `128..896` step 128 |
 | **Tessera FP8** | Window trellis; E4M3 table; per-row scales | FP8 weights and activations (**W8A8**) | `q256=1024`: 4 body bits/weight, plus overhead |
 | **Tessera BF16** | Window trellis; BF16 table; per-row scales | BF16 weights and activations (**W16A16**) | `q256=1792`: 7 body bits/weight, plus overhead |
 
@@ -139,8 +139,9 @@ losslessly.
 The FP8 reader accepts root rates from 1 to 8, and the BF16 reader from 1 to
 16, on the q256 grid. Those are format capabilities. The serving evidence is
 narrower: the packaged contract currently attests the rungs above. The
-NVFP4 serving decoder accepts only its listed rung, although the encoder
-also implements other E2M1 constructions.
+NVFP4 serving decoder accepts only its listed rungs — routed experts at
+`128..896` step 128, dense only `896` — although the encoder also implements
+other E2M1 constructions.
 
 The code owns these choices:
 [`wire_recipe`](https://github.com/RobTand/tessera/blob/v0.1.0/src/tessera/export.py)
