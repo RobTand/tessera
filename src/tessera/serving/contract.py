@@ -2211,7 +2211,10 @@ def cell_evidence(cell: Mapping[str, Any], where: str = "lane_eligibility cell",
     full-vocabulary KL, ``regime`` the CELL'S OWN regime (a prefill bound
     written into a decode cell is the confusion this field exists to refuse),
     ``execution_modes`` a non-empty distinct subset of the cell's, ``receipt``
-    a repository path. ``smoke`` is ``{status, receipt, attribution, control}`` with ``status``
+    a repository path. A ``kl`` entry may stamp the rung its receipt measured
+    in ``q256`` -- a KL bound scored at one rung bounds nothing at another --
+    and when it does the rung must be one the cell publishes. ``smoke`` is
+    ``{status, receipt, attribution, control}`` with ``status``
     from :data:`EVIDENCE_SMOKE_STATUSES` and a receipt exactly when a smoke
     was recorded. ``artifact`` is null when no encoder comparison was
     recorded, otherwise the historical artifact and its single-unit screen.
@@ -2239,7 +2242,8 @@ def cell_evidence(cell: Mapping[str, Any], where: str = "lane_eligibility cell",
     for i, entry in enumerate(entries):
         spot = f"{at}.kl[{i}]"
         _require_keys(entry, spot,
-                      required={"kind", "top_k", "regime", "execution_modes", "receipt"})
+                      required={"kind", "top_k", "regime", "execution_modes", "receipt"},
+                      optional={"q256"})
         kind = entry["kind"]
         if kind not in EVIDENCE_KL_KINDS:
             raise ValueError(f"{spot}.kind {kind!r} is not one of {list(EVIDENCE_KL_KINDS)}")
@@ -2277,12 +2281,31 @@ def cell_evidence(cell: Mapping[str, Any], where: str = "lane_eligibility cell",
                     f"({list(cell_modes)}); a KL under a mode the census never joined attests "
                     "a runtime this cell does not scope")
         receipt = _require_receipt_path(entry["receipt"], spot)
-        key = (kind, top_k, regime, tuple(sorted(modes)), receipt)
+        stamp = entry.get("q256")
+        if stamp is not None:
+            # The rung the receipt measured, travelling with the entry: a top-K
+            # intersection bound is rate-dependent, so a stamp outside the
+            # cell's own rungs claims a measurement the cell does not publish.
+            if not _is_int(stamp) or int(stamp) <= 0:
+                raise ValueError(
+                    f"{spot}.q256 must be a positive integer rung when present, "
+                    f"got {stamp!r}")
+            published = [int(r) for r in (cell.get("rungs_q256") or [])]
+            if int(stamp) not in published:
+                raise ValueError(
+                    f"{spot}.q256={int(stamp)} is not one of the rungs this cell "
+                    f"publishes ({sorted(published)}): a KL scored at a rung the "
+                    "cell does not name bounds nothing the cell serves")
+            stamp = int(stamp)
+        key = (kind, top_k, regime, tuple(sorted(modes)), receipt, stamp)
         if key in seen:
             raise ValueError(f"{spot} repeats an entry; the field is a set of receipts")
         seen.add(key)
-        parsed_kl.append({"kind": kind, "top_k": top_k, "regime": regime,
-                          "execution_modes": list(modes), "receipt": receipt})
+        parsed = {"kind": kind, "top_k": top_k, "regime": regime,
+                  "execution_modes": list(modes), "receipt": receipt}
+        if stamp is not None:
+            parsed["q256"] = stamp
+        parsed_kl.append(parsed)
     smoke = payload["smoke"]
     _require_keys(smoke, f"{at}.smoke",
                   required={"status", "receipt", "attribution", "control", "record"})

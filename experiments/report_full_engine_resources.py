@@ -194,6 +194,20 @@ def _digest(path):
     return result.hexdigest()
 
 
+def allocator_config_of(plan):
+    """The bound allocator segment policy, or None when the plan binds none.
+
+    Reads the selected configuration's environment block -- the document the
+    capture's configuration_sha256 digests. A plan written before the binding
+    carries no key and yields None, so v1-era captures assemble with null
+    witness fields rather than refusing.
+    """
+    selected = plan.get("selected_configuration") if isinstance(plan, dict) else None
+    environment = selected.get("environment") if isinstance(selected, dict) else None
+    value = environment.get("PYTORCH_CUDA_ALLOC_CONF") if isinstance(environment, dict) else None
+    return value if type(value) is str and value else None
+
+
 def declared_members(plan):
     """The reference, workload and execution coordinates one plan declares."""
     roster = plan["canonical_roster"]
@@ -235,6 +249,11 @@ def main():
                         help="the attested vLLM core manifest (default: the plan's core_manifest path)")
     parser.add_argument("--without-ownership", action="store_true",
                         help="replay without the ownership derivation (the pre-#399 ledger)")
+    parser.add_argument("--boundary-classification", type=Path,
+                        help="tessera#548's two-capture comparison, built by "
+                             "experiments/full_engine_boundary_classification.py from this "
+                             "capture's ledger and the substitution capture's; without it every "
+                             "census-shared site stays pending_548")
     args = parser.parse_args()
     plan = json.loads((args.capture_dir / "observer-plan.json").read_text())
     run = json.loads((args.capture_dir / "run.json").read_text())
@@ -269,7 +288,13 @@ def main():
         evidence = ownership_evidence(plan=plan, runtime_observation=runtime_observation,
                                       per_job=per_job, core_manifest=core_manifest, launch=launch,
                                       jit_preflight=jit_preflight, dense_startup=dense_startup)
-    ledger = analyze_engine_resource_ledger(raw, evidence)
+    classification = None
+    if args.boundary_classification is not None:
+        classification = json.loads(args.boundary_classification.read_text())
+        if args.without_ownership:
+            raise ValueError("a boundary classification is read by the ownership derivation; "
+                             "--without-ownership replays without it")
+    ledger = analyze_engine_resource_ledger(raw, evidence, classification)
     if evidence is not None and ledger.get("identity") is not None:
         ledger["runtime_provenance_relation"] = runtime_provenance_relation(
             ledger["identity"], plan=plan, launch=launch, per_job=per_job,
@@ -320,7 +345,8 @@ def main():
                       "launch_dir": str(launch_dir), "sources": evidence_sources,
                       "ownership_derived": evidence is not None})
     report = assemble_full_engine_resource_report(ledger, reference=reference, workload=workload,
-                                                  execution=execution, artifacts=artifacts)
+                                                  execution=execution, artifacts=artifacts,
+                                                  allocator_config=allocator_config_of(plan))
     args.output.mkdir(parents=True, exist_ok=True)
     (args.output / "ledger.json").write_text(json.dumps(ledger, sort_keys=True, indent=1) + "\n")
     report_path = args.output / "report.json"

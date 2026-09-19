@@ -83,9 +83,10 @@ def _scheme_for(grid: PayloadGrid, q256: int, rows: int = 64, columns: int = 64)
 
     Built from the exporter's own ``family_for`` and from ``served_recipe``,
     so it is the dict ``main`` puts in ``config_groups`` and not a paraphrase:
-    on the NVFP4 route the served body is TCQ at every reader rung (v32), and
-    the plain ``wire_recipe`` resolves WINDOW below the cap for research/stock
-    work only.
+    the default structure here is dense, so on the NVFP4 route the served
+    body is the ``wire_recipe`` spelling -- WINDOW below the cap (D2b,
+    tessera#560), TCQ at it -- while a ``routed_moe`` stack is promoted to
+    TCQ at every reader rung (v32).
     """
     recipe = EXPORT.served_recipe(grid, q256)
     return {"family": EXPORT.family_for(grid), "structure": "dense", "grid": grid.name,
@@ -126,7 +127,23 @@ def test_every_rung_the_exporter_accepts_is_one_the_loader_accepts(name):
     else:
         _family, low, high, step = published
         assert accepted, f"{name} publishes [{low}, {high}] and the exporter accepted nothing"
-        assert accepted == [q for q in _probes(grid) if reader_accepts(q, low, high, step)]
+        # D2b (tessera#560): the range is the reader's, but the served BODY is
+        # per rung -- a dense sub-cap E2M1x2 rung keeps the WINDOW recipe,
+        # which the NVFP4 route has no decoder for, so the exporter refuses it
+        # while the row still publishes it.  The expected set meets the range
+        # with the route's own body: the loader's table (ROUTES) supplies the
+        # body and span, the recipe table the per-rung spelling -- never the
+        # exporter's choice, which is what is under test.
+        route = route_for_grid(name)
+        exp_body, exp_span = ROUTES[route]["body"], ROUTES[route]["span"]
+        expected = []
+        for q256 in _probes(grid):
+            if not reader_accepts(q256, low, high, step):
+                continue
+            served = wire_recipe(grid, q256)
+            if served.body.name == exp_body and served.span == exp_span:
+                expected.append(q256)
+        assert accepted == expected
 
 
 def test_the_gate_accepts_the_two_rungs_the_contract_actually_publishes():
@@ -295,16 +312,17 @@ def test_the_route_vocabulary_and_the_published_set_disagree_on_purpose():
     whether to make them agree.  They are not two statements of one fact, they
     are the same two claims ``tensor_parallel`` already separates:
     ``max_world_size`` (attested) beside ``loader_axes`` (what the loader
-    does).  The NVFP4 decoder is arity-parametric all the way down to the
-    kernel: ``arity`` is a runtime scalar into the span-2 decode (the retired
-    ``tessera_nvfp4_decode_span2_out``, now ``tessera.kernel_a4``'s, which
-    admits ``1..4`` and derives ``steps = rows / arity``), its value base is
-    ``(label * points + point) * arity`` and it emits one row per ``a`` in
-    ``0..arity``; on the host side ``lane_planes.build_anchor_values`` and
-    ``build_subset_values`` read the same number off the forest's grid.  So
-    ``("E2M1", "E2M1x2")`` is a true statement about what the route can hold,
-    and it is a statement about the compiled decoder, not about a Python
-    helper that happens to be general.
+    does).  The serving span-2 decode is arity-2 only: ``tessera.kernel_a4``
+    refuses any other arity at ``build_code_nibbles`` (``kernel_a4.py:201``),
+    ``A4UnitStack._check`` (``:269``) and ``A4Unit._check`` (``:375``), and the
+    dense serving path runs through it (``nvfp4_route.py:43,268``), so an
+    arity-1 wire is refused below the route table as well as above it (the old
+    arity-scalar ``tessera_nvfp4`` CUDA decode is retired; ``csrc/`` holds only
+    ``window_gemv.cu``).  On the host side ``lane_planes.build_anchor_values``
+    and ``build_subset_values`` still read the arity off the forest's grid, so
+    ``("E2M1", "E2M1x2")`` is a true statement about what the route table can
+    hold and the encoder can write -- not about what the compiled decoder
+    reads.
     The contract's silence on ``E2M1`` is a true statement about what has been
     taken through the decoder and measured: no arity-1 checkpoint has.
 
@@ -434,6 +452,34 @@ def test_a_routed_e2m1x2_stack_at_q896_passes_the_gate_without_an_override():
     assert EXPORT.check_recipe(GRIDS["E2M1x2"], 896, where="stack.probe",
                                structure=STRUCTURE_ROUTED_MOE, overrides=stamped) is not None
     assert stamped == [], "an attested stack is not an override"
+
+
+def test_a_dense_sub_cap_nvfp4_plan_is_refused_without_an_override():
+    """D2b (tessera#560): the row widen must not open dense sub-cap export.
+
+    The widened E2M1_K2 reader row ([128, 896] step 128) is the DENSE reader's
+    range, and a dense module served below the cap keeps the WINDOW recipe
+    ``wire_recipe`` resolves -- which the NVFP4 route has no decoder for, so
+    the export gate refuses it without ``--allow-unserveable`` exactly as
+    before v32.  Only a ``routed_moe`` stack is promoted to the span-2 TCQ
+    body the seven-rung load receipt covers, and it passes at the same rung.
+    """
+    from tessera.manifest import BodyKind
+    from tessera.serving.scheme import STRUCTURE_ROUTED_MOE
+
+    grid = GRIDS["E2M1x2"]
+    assert EXPORT.served_recipe(grid, 768).body is BodyKind.WINDOW
+    assert EXPORT.served_recipe(
+        grid, 768, structure=STRUCTURE_ROUTED_MOE).body is BodyKind.TCQ
+    with pytest.raises(SystemExit) as caught:
+        EXPORT.check_recipe(grid, 768, where="dense.probe")
+    assert "no in-forward decoder" in str(caught.value), str(caught.value)
+    stamped: list = []
+    assert EXPORT.check_recipe(grid, 768, where="dense.probe",
+                               allow_unserveable=True, overrides=stamped) is not None
+    assert [(r["grid"], r["q256"]) for r in stamped] == [("E2M1x2", 768)]
+    assert EXPORT.check_recipe(grid, 768, where="stack.probe",
+                               structure=STRUCTURE_ROUTED_MOE) is not None
 
 
 def test_a_structure_no_cell_attests_is_refused_by_name():
@@ -648,7 +694,8 @@ def test_the_packaged_table_still_admits_every_device_qualified_rung():
             # recipe below the cap per D2b, tessera#560), so hand the gate
             # what the actual wire carries the way the exporter does
             # (served_recipe), not the research default.
-            served = EXPORT.served_recipe(GRIDS[grid_name], rung)
+            served = EXPORT.served_recipe(GRIDS[grid_name], rung,
+                                          structure=STRUCTURE_ROUTED_MOE)
             assert refuse_unserveable_wire(
                 grid_name, rung, served.body.name, served.scale_plane.name,
                 family=route_for_grid(grid_name), span=served.span, target="stack.probe",

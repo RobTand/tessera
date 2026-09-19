@@ -56,6 +56,36 @@ CALIBRATION_WIDTH = 512
 
 RECEIPT_SCHEMA = "tessera.native_moe_operator_receipt.v1"
 
+#: The allocator segment policy the reserved extent is a function of, bound in
+#: the configuration document's ``environment`` block. ``"unset"`` is an
+#: explicit value meaning the capture ran with no ``PYTORCH_CUDA_ALLOC_CONF``
+#: in its worker environment -- never a default the launcher fills in
+#: silently, and never the literal string handed to the worker.
+ALLOCATOR_POLICY_KEY = "PYTORCH_CUDA_ALLOC_CONF"
+UNSET_ALLOCATOR_POLICY = "unset"
+
+
+def require_allocator_policy(config):
+    """Read the bound allocator segment policy, or refuse it by name.
+
+    Reserved minus allocated is a function of the allocation sequence and the
+    allocator's segment policy, so a reservation witness transfers from a
+    capture to a serve only when this value is equal. The configuration digest
+    (``configuration_sha256``) is taken over the file that carries it, so the
+    binding moves when the policy moves. This is the one home of the
+    config-grammar rule: :func:`prepare` calls it before any input is read,
+    and the report side enforces the same binding through
+    ``allocator_config_of`` plus the assembler's refusal of an unbound claim.
+    """
+    environment = config.get("environment") if isinstance(config, dict) else None
+    value = environment.get(ALLOCATOR_POLICY_KEY) if isinstance(environment, dict) else None
+    if type(value) is not str or not value:
+        raise ValueError(
+            f"selected configuration names no {ALLOCATOR_POLICY_KEY} in its environment "
+            "block: the reserved-extent witness transfers only under an equal allocator "
+            "segment policy, so the bound value -- including \"unset\" -- is required")
+    return value
+
 
 def read_routed_owner_receipt(path, expected_sha256, *, rank, world_size):
     """The one independent number a startup record cannot derive from itself.
@@ -115,6 +145,9 @@ def prepare(args):
     if "torch" in sys.modules or "vllm" in sys.modules:
         raise RuntimeError("prepare process imported Torch/vLLM before bootstrap")
     config = json.loads(args.config.read_text())
+    # First, before any input is read: the allocator policy binds the
+    # reservation witness, and an unbound configuration cannot produce one.
+    allocator_policy = require_allocator_policy(config)
     artifact = None
     if args.artifact:
         # A served Tessera artifact carries its own roster and assignment in
@@ -313,6 +346,11 @@ def prepare(args):
     root = Path(__file__).resolve().parents[1]
     env = os.environ.copy()
     env.update(config["environment"])
+    # The worker's effective policy is the bound one, exactly: "unset" means
+    # the variable is absent from the worker environment, never the literal
+    # string, so a capture that claims "unset" cannot have run under a policy.
+    if allocator_policy == UNSET_ALLOCATOR_POLICY:
+        env.pop(ALLOCATOR_POLICY_KEY, None)
     env.update(plan["observer_environment"])
     if mode == "resources":
         env.update({"TESSERA_ENGINE_RESOURCE_PLAN": str(path.resolve()),
