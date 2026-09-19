@@ -1294,14 +1294,16 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
             try:
                 x2 = x.reshape(-1, x.shape[-1])
                 native = self._native is not None
+                symbol = (WINDOW_MOE_COMPACT_SYMBOL if native
+                          else f"{GEMM_SYMBOL}:{layer.tessera_backend}")
                 emit_route(
                     layer, kind="moe", policy=f"{family}:{layer.tessera_mode}",
-                    symbol=(WINDOW_MOE_COMPACT_SYMBOL if native
-                            else f"{GEMM_SYMBOL}:{layer.tessera_backend}"), tile_m=0,
+                    symbol=symbol, tile_m=0,
                     shape=route_shape(x2, layer.tessera_rows, layer.tessera_columns),
                     contract=layer.tessera_activation_contract, state="served", reason=None,
                     decoder=(DECODER_NATIVE_WINDOW_MOE_COMPACT if native
-                             else layer.tessera_decoder))
+                             else layer.tessera_decoder),
+                    kernel_schedule=symbol)
             except Exception:  # noqa: BLE001 -- telemetry never breaks a request
                 pass
 
