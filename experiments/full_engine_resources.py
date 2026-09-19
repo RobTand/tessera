@@ -900,6 +900,14 @@ def worker_startup_record(torch_module, workspace, *, rank, receipt_resident_byt
     is sampled now -- after ``process_weights_after_loading`` and after
     ``lock_workspace()``, which is the interval the contract names.
 
+    ``torch.cuda.memory_reserved()`` is sampled beside it, at the same call:
+    the reserved device extent is what the D37 ship gate enforces, and the
+    reservation slack (reserved minus allocated) is a function of the
+    allocation sequence and the allocator's segment policy, so the sample is
+    meaningless without the bound ``PYTORCH_CUDA_ALLOC_CONF`` the report
+    carries beside it. The slack itself is derived in the report, never
+    stored here: one rule, one home.
+
     The record carries exactly the fields the consumer names and nothing else,
     because that observation is the one closed shape in the envelope.
     """
@@ -912,7 +920,17 @@ def worker_startup_record(torch_module, workspace, *, rank, receipt_resident_byt
     resident = int(workspace["resident_bytes"])
     if rank < 0 or receipt_resident_bytes < 0 or resident < 0:
         raise ValueError("worker startup sample carries a negative rank or byte count")
-    return {"memory_allocated_bytes": int(torch_module.cuda.memory_allocated()),
+    allocated = int(torch_module.cuda.memory_allocated())
+    reserved = int(torch_module.cuda.memory_reserved())
+    if allocated < 0 or reserved < 0:
+        raise ValueError("worker startup sample carries a negative allocator sample")
+    if reserved < allocated:
+        raise ValueError(
+            f"worker startup sample carries reserved bytes {reserved} below allocated "
+            f"bytes {allocated}: the reserved extent is the pool the allocations "
+            "come from, so this contradicts the allocator")
+    return {"memory_allocated_bytes": allocated,
+            "memory_reserved_bytes": reserved,
             "rank": rank,
             "receipt_resident_bytes": receipt_resident_bytes,
             "scope": str(scope),

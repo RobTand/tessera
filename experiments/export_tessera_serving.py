@@ -27,8 +27,17 @@ WHAT THIS SCRIPT MAY WRITE IS WHAT THE PLUGIN PUBLISHES A DECODE FOR.
 override against the packaged ``runtime_contract.json`` before the first
 encode, so a wire the pinned runtime cannot read is refused at export rather
 than at load (#41).  The encoder is untouched: ``wire_recipe`` still writes
-the sub-cap window body and every research encode of it still runs.  The
-override is ``--allow-unserveable``, and it is stamped into the manifest.
+the sub-cap window body and every research encode of it still runs.  What a
+served ROUTED stack carries is a spelling above it -- ``served_recipe``
+promotes every NVFP4 rung to the span-2 TCQ body the routed path decodes, for
+``STRUCTURE_ROUTED_MOE`` only, because a sub-cap rung served through the
+WINDOW recipe would be unreadable by the one decoder that path has; a DENSE
+module keeps the ``wire_recipe`` spelling (WINDOW below the cap), which the
+route refuses at export (tessera#560 D2b).  That promotion is necessary and
+measured-worse (TCQ span-2 at
+1.36-1.43x EXL3 at 2.5-3.5 bpp against window L=12 at 1.06-1.10x,
+``docs/tessera-one-format.md`` §4); ``served_recipe``'s docstring states both.
+The override is ``--allow-unserveable``, and it is stamped into the manifest.
 
 The checkpoint declares ``quantization_config.quant_method: "tessera"``, which
 is what selects the plugin: there is no serve flag to enable it, only
@@ -157,8 +166,9 @@ from tessera.bf16_route import BF16_FAMILY  # noqa: E402
 from tessera.container import SCHEMA_MINOR  # noqa: E402
 from tessera.layout import tp_agnostic_at_minor  # noqa: E402
 from tessera.export import (  # noqa: E402
-    DEFAULT_CODE, DEFAULT_LDLQ_BLOCK, DEFAULT_LDLQ_SIGMA,
+    DEFAULT_CODE, DEFAULT_LDLQ_BLOCK, DEFAULT_LDLQ_SIGMA, TCQ_RECIPE,
     ActivationSource, encode_linear_planes, wire_recipe)
+from tessera.manifest import BodyKind  # noqa: E402
 from tessera.fused import pack_fused, shared_input_global_scale, shared_lut_global  # noqa: E402
 from tessera.serving.contract import (  # noqa: E402
     PAYLOAD_FAMILY_BY_ROUTE, classify_construction, construction_entry,
@@ -445,7 +455,55 @@ def family_for(grid) -> str:
     return FP8 if grid.name == "E4M3" else NVFP4
 
 
-def module_scheme_key(grid, q256: int) -> tuple:
+def served_recipe(grid, q256, structure=STRUCTURE_DENSE):
+    """The wire a SERVED unit carries on ``grid`` at ``q256``.
+
+    The route decides the body, and on ``TESSERA_NVFP4`` a ``routed_moe``
+    stack carries span-2 TCQ at EVERY readable rung, not just the cap: the
+    contract's ``attested_wire`` stamps ``tcq``/``span 2`` across the whole
+    reader range (contract v32, tessera#506 leg 2) and
+    ``prepare_span2_compact`` takes a TCQ unit only, so a sub-cap rung served
+    through the WINDOW recipe (what ``wire_recipe`` resolves below the cap
+    for research/stock work) would be unreadable by the one decoder the
+    routed path has.  The recipe table keeps its WINDOW default -- research
+    encodes and the stock twin are untouched -- and the span-2 TCQ wire is
+    the served spelling above it exactly as ``_resolve_recipe`` resolves a
+    caller that names TCQ over a window recipe.
+
+    A DENSE module keeps the ``wire_recipe`` spelling at every rung (D2b,
+    tessera#560): the seven-rung load receipt covers the MoE kernel only,
+    never the dense ``native_span2`` path, so promoting dense sub-cap to TCQ
+    would serve an unmeasured decoder.  Below the cap that is the WINDOW
+    body, which the route refuses at export.
+
+    On the FP8 and BF16 routes the recipe IS the served wire, so this is the
+    plain ``wire_recipe`` there.
+
+    The TCQ promotion below the cap is necessary AND measured-worse, and both
+    halves are stated here rather than left to the reader: necessary because
+    the routed path decodes TCQ only (a sub-cap rung served through the
+    WINDOW recipe would be unreadable by the one decoder the routed path
+    has -- the round-5 red run proved it); measured-worse because the recipe
+    table's WINDOW default was chosen on the frontier
+    (``docs/tessera-one-format.md`` §4: E2M1x2 TCQ span-2 at 1.401x/1.357x/1.431x
+    EXL3 at 2.5/3.0/3.5 bpp against window L=12 at 1.056x/1.061x/1.098x).
+    Every newly published sub-cap ROUTED rung therefore serves the costlier
+    of the two wires, on purpose and in the open.
+    """
+    recipe = wire_recipe(grid, q256)
+    if (structure == STRUCTURE_ROUTED_MOE and family_for(grid) == NVFP4
+            and recipe.body is not BodyKind.TCQ):
+        # Verified field by field: the only non-TCQ NVFP4 recipe is
+        # E2M1X2_SUBCAP_RECIPE (LUT plane, default seed, no sigmas, and a
+        # WINDOW table width a TCQ body must not carry), so the promotion
+        # below IS TCQ_RECIPE -- no rebuild, and a grid whose sub-cap recipe
+        # ever differs in plane or sigmas needs the rebuild restored.
+        return TCQ_RECIPE
+    return recipe
+    return recipe
+
+
+def module_scheme_key(grid, q256: int, structure: str = STRUCTURE_DENSE) -> tuple:
     """The facts every role of one vLLM-fused module must agree on.
 
     NOT ``(grid, q256)`` (#37).  vLLM builds one quant method per module, so
@@ -461,14 +519,18 @@ def module_scheme_key(grid, q256: int) -> tuple:
     had no Tessera export at all.
 
     The body and the plane are DERIVED from the rung here rather than assumed
-    constant, because ``wire_recipe`` picks them per rung: ``E2M1x2`` writes the
-    window body below the coset cap and the TCQ body at it.  Two such members
-    would decode on two different decoders, and this key separates them, so the
-    relaxation cannot let a mixed-body group through the back door.  (Every
-    sub-cap ``E2M1x2`` rung is refused by ``check_recipe`` before this anyway;
-    the key does not rely on that.)
+    constant, because the served recipe picks them per rung: ``served_recipe``
+    promotes every NVFP4 rung to the span-2 TCQ body the routed path decodes,
+    for ``STRUCTURE_ROUTED_MOE`` (the research ``wire_recipe`` default below
+    the coset cap is still the window body, which is why this key reads the
+    served spelling rather than the research one).  Two members resolving to
+    different served bodies would decode on two different decoders, and this
+    key separates them, so the relaxation cannot let a mixed-body group
+    through the back door.  (A rung no served spelling covers -- a dense
+    sub-cap rung keeps WINDOW and is refused -- is refused by ``check_recipe``
+    before this anyway; the key does not rely on that.)
     """
-    recipe = wire_recipe(grid, q256)
+    recipe = served_recipe(grid, q256, structure)
     return (family_for(grid), grid.name, recipe.body.name, recipe.scale_plane.name)
 
 
@@ -515,7 +577,7 @@ def check_recipe(grid, q256: int, where: "str | None" = None, *,
     encode.  The override record carries the structure for the same reason
     the refusal does.
     """
-    recipe = wire_recipe(grid, q256)
+    recipe = served_recipe(grid, q256, structure)
     target = where or f"--grid {grid.name} --q256 {q256}"
     if research_selected is not None and structure == STRUCTURE_ROUTED_MOE:
         try:
@@ -636,7 +698,8 @@ def _unrouted_refusal(verdicts, architectures) -> str:
             lines.append(f"    ... and {len(rows) - 12} more")
     return "\n".join(lines)
 
-def check_lanes(lanes, grid, q256: int, where: "str | None" = None) -> None:
+def check_lanes(lanes, grid, q256: int, where: "str | None" = None,
+                structure: str = STRUCTURE_DENSE) -> None:
     """Refuse the plan unless every requested LANE can read this rung's wire.
 
     The second half of the export-time seam, and the half #104 says was
@@ -655,7 +718,7 @@ def check_lanes(lanes, grid, q256: int, where: "str | None" = None) -> None:
     """
     if not lanes:
         return
-    recipe = wire_recipe(grid, q256)
+    recipe = served_recipe(grid, q256, structure)
     target = where or f"--grid {grid.name} --q256 {q256}"
     for lane in lanes:
         try:
@@ -1695,7 +1758,8 @@ def main():
                              research_selected=(research_execution.config
                                                 if research_execution is not None else None),
                              research_records=research_gate_records)
-                check_lanes(required_lanes, g, int(spec["q256"]), where=name)
+                check_lanes(required_lanes, g, int(spec["q256"]), where=name,
+                            structure=structure)
                 overrides[name] = (g, int(spec["q256"]))
                 if "source_layout" in spec:
                     source_layout_overrides[name] = spec["source_layout"]
@@ -2321,7 +2385,8 @@ def main():
                     for unit in expert_units[name]:
                         stack_spec = stack_plan[unit["stack"]]
                         unit_grid, unit_q256 = stack_spec["grid"], stack_spec["q256"]
-                        unit_recipe = wire_recipe(unit_grid, unit_q256)
+                        unit_recipe = served_recipe(unit_grid, unit_q256,
+                                                      STRUCTURE_ROUTED_MOE)
                         source_weight = None
                         if intake is not None:
                             exported, blob, cache_record, payload, own_global = intake.take(shard, name, unit)
@@ -2335,7 +2400,7 @@ def main():
                                 scale_plane=unit_recipe.scale_plane))
                             exported, unit_artifact_, _forests = encode_linear_planes(
                                 weight, grid=unit_grid, q256=unit_q256,
-                                name=unit["tensor"], verify=not args.no_verify, **extra)
+                                body=unit_recipe.body, name=unit["tensor"], verify=not args.no_verify, **extra)
                             extra.clear()
                             parse_unit_artifact(exported.blob, device=args.device)
                             blob = pack_fused([(unit["projection"], exported.rows, exported.blob)])
@@ -2419,7 +2484,7 @@ def main():
             family = family_for(grid)
             # The module-level facts, which the grouping key already proved every
             # member shares.  The RATE is read per member below.
-            recipe = wire_recipe(grid, plan[members[0]][1])
+            recipe = served_recipe(grid, plan[members[0]][1])
             rungs = [int(plan[m][1]) for m in members]
             roles = []
             role_records = []
@@ -2432,7 +2497,7 @@ def main():
             for part in partitions[module]:
                 member = part.tensor
                 member_grid, q256, source_rows, _mc = plan[member]
-                member_recipe = wire_recipe(member_grid, q256)
+                member_recipe = served_recipe(member_grid, q256)
                 whole = part.row_offset == 0 and part.rows == source_rows
                 unit_name = member if whole else f"{member}[{part.row_offset}:{part.row_offset + part.rows}]"
                 weight = weights_cache[member][part.row_offset: part.row_offset + part.rows]
@@ -2448,7 +2513,7 @@ def main():
                                                  scale_plane=member_recipe.scale_plane))
                     exported, unit, forests = encode_linear_planes(
                         weight, grid=member_grid, q256=q256, name=unit_name,
-                        verify=not args.no_verify, **extra)
+                        body=member_recipe.body, verify=not args.no_verify, **extra)
                     extra.clear()
                     parsed = parse_unit_artifact(exported.blob, device=args.device)
                     stock_code = DEFAULT_CODE
@@ -2626,7 +2691,7 @@ def main():
     # the other side.
     for stack, spec in stack_plan.items():
         stack_record = moe_records[stack]
-        recipe = wire_recipe(spec["grid"], spec["q256"])
+        recipe = served_recipe(spec["grid"], spec["q256"], STRUCTURE_ROUTED_MOE)
         groups = {}
         for group in MOE_GROUPS:
             lengths = stack_record["group_blob_bytes"][group]

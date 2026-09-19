@@ -64,6 +64,7 @@ def test_replay_table_bytes_matches_the_attested_load_tables():
     7 (``q256 * arity / 256``), whose ``[4, 2**(R-1)]`` subset table is
     ``[4, 64]`` int64 and whose memory-6 code transition tables are
     ``[2, 64]`` int64 -- exactly the ledger's three unowned rows."""
+    pytest.importorskip("torch")
     import torch
 
     from tessera.alphabet import E2M1_GRID, tuple_grid, build_forest

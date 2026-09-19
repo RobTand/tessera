@@ -74,10 +74,16 @@ def _encode(weight, name, q256):
     from tessera.alphabet import E2M1_GRID, tuple_grid
     from tessera.export import DEFAULT_CODE, encode_linear_planes
     from tessera.fused import pack_fused
+    from tessera.manifest import BodyKind
     from tessera.stock import materialize_stock
 
+    # The served body is TCQ at every reader rung (tessera#506 leg 2): the
+    # plain wire_recipe resolves WINDOW below the cap, which is the
+    # research/stock wire and not the wire the sidecar declares.  The probe,
+    # like the exporter, asks the encoder for the served body.
     exported, unit, forests = encode_linear_planes(
-        weight.contiguous(), grid=tuple_grid(E2M1_GRID, 2), q256=q256, name=name, verify=False)
+        weight.contiguous(), grid=tuple_grid(E2M1_GRID, 2), q256=q256, name=name,
+        body=BodyKind.TCQ, verify=False)
     blob = pack_fused([(name, weight.shape[0], exported.blob)])
     return blob, materialize_stock(unit, forests, DEFAULT_CODE)
 
@@ -318,29 +324,51 @@ def moved_reference_tiles(stock):
 
 
 def tile_check(layer, tiles):
-    """Before finalize: the decoded tile IS materialize_stock's after the join,
-    expert by expert, and the global handed on is the multiplier."""
+    """Before finalize: the SERVED scale plane IS materialize_stock's tile
+    scale, expert by expert, and the global handed on is the multiplier.
+
+    Since the materialising expert-reader fell back to zero-size stock anchors
+    (tessera#506-era route retirement), the decoded weights live on the native
+    A4 stacks' scale planes, not on the stock names: the loader's served LUT
+    expanded at its nibble indices reproduces the per-element E4M3 scale plane
+    the stock tile carries, so that is the byte-for-byte identity checked
+    here.  (``weight_packed`` nibble bytes are verified separately by the
+    probe's A/B legs: w13 into ``a_side_after_finalize``, plus the digests the
+    negative legs cover.)
+    """
+    from tessera.stock import NVFP4_KEYS, stock_dequant
+
     result = {"identical": True, "globals_match": True}
+    stacks = {"gate_proj": layer.tessera_a4_gate_stack,
+              "up_proj": layer.tessera_a4_up_stack,
+              "down_proj": layer.tessera_a4_down_stack}
+    for name, stack in stacks.items():
+        result[f"stack_{name}_present"] = stack is not None
     for expert in range(EXPERTS):
-        w13 = layer.w13_weight.data[expert].view(torch.uint8).cpu()
-        s13 = layer.w13_weight_scale.data[expert].view(torch.uint8).cpu()
-        gate, up = tiles[(expert, "gate_proj")], tiles[(expert, "up_proj")]
-        down = tiles[(expert, "down_proj")]
-        same = (
-            torch.equal(w13[:INTER], gate["weight_packed"].view(torch.uint8).cpu())
-            and torch.equal(w13[INTER:], up["weight_packed"].view(torch.uint8).cpu())
-            and torch.equal(s13[:INTER], gate["weight_scale"].view(torch.uint8).cpu())
-            and torch.equal(s13[INTER:], up["weight_scale"].view(torch.uint8).cpu())
-            and torch.equal(layer.w2_weight.data[expert].view(torch.uint8).cpu(),
-                            down["weight_packed"].view(torch.uint8).cpu())
-            and torch.equal(layer.w2_weight_scale.data[expert].view(torch.uint8).cpu(),
-                            down["weight_scale"].view(torch.uint8).cpu()))
-        result["identical"] &= bool(same)
-        g13 = layer.w13_weight_scale_2.data[expert].tolist()
-        g2 = float(layer.w2_weight_scale_2.data[expert])
+        for role, stack in stacks.items():
+            if stack is None:
+                result["identical"] = False
+                continue
+            # The served plane, [rows, groups] float8 elementwise.
+            rows, cols = stack.rows, stack.cols
+            packed = stack.nibbles[expert].view(torch.uint8).cpu().to(torch.int64)
+            groups = cols // 16
+            index = torch.empty((groups, rows), dtype=torch.int64)
+            index[:, 0::2] = (packed >> 4).reshape(groups, rows // 2)
+            index[:, 1::2] = (packed & 0xF).reshape(groups, rows // 2)
+            served = stack.lut_bytes[expert].view(torch.uint8).cpu()[index].t().contiguous()
+            want = tiles[(expert, role)]["weight_scale"].view(torch.uint8).cpu()
+            result["identical"] &= bool(torch.equal(served.view(torch.uint8),
+                                                    want.view(torch.uint8)))
+        g13 = layer.tessera_a4_gate_stack.globals[expert].item() \
+            if layer.tessera_a4_gate_stack is not None else None
+        g2 = layer.tessera_a4_down_stack.globals[expert].item() \
+            if layer.tessera_a4_down_stack is not None else None
+        if g13 is None or g2 is None:
+            result["globals_match"] = False
+            continue
         result["globals_match"] &= (
-            g13[0] == g13[1]
-            and abs(g13[0] - tiles[(expert, "w13_global")]) <= 1e-6 * abs(g13[0])
+            abs(g13 - tiles[(expert, "w13_global")]) <= 1e-6 * abs(g13)
             and abs(g2 - tiles[(expert, "w2_global")]) <= 1e-6 * abs(g2))
     return result
 
@@ -421,14 +449,15 @@ def positive_leg(device, tokens, q256, build=None, layer_name=LAYER, x_scale=1.0
     loaded = load(layer, wires)
     record["loaded_param_names"] = sorted(set(loaded))
     record["load_calls"] = len(loaded)
-    # BEFORE finalize: the tile is the stock pair and the globals are multipliers.
-    # (The FlashInfer backends reorder [w1,w3] -> [w3,w1] and swizzle the block
-    # scales at finalize, so this is the last point the bytes are comparable.)
-    record["tile_is_materialize_stock_byte_for_byte"] = tile_check(layer, tiles)
     record["input_global_scale_loaded"] = {
         "w13": layer.w13_input_global_scale.data.tolist(),
         "w2": layer.w2_input_global_scale.data.tolist()}
     method.process_weights_after_loading(layer)
+    # The served A4 stacks exist only after finalize (the route retires the
+    # materialised stock anchors for zero-size ones in the same commit that
+    # freezes the shared globals in), so the byte-for-byte identity check runs
+    # AFTER it -- against the served stacks, not the stock params.
+    record["tile_is_materialize_stock_byte_for_byte"] = tile_check(layer, tiles)
     record["params_after_load"] = sorted(n for n, _ in layer.named_parameters())
     for name in ("w13_weight", "w2_weight", "w13_weight_scale", "w2_weight_scale",
                  "w13_weight_scale_2", "w2_weight_scale_2", "w13_input_scale", "w2_input_scale"):
@@ -437,17 +466,24 @@ def positive_leg(device, tokens, q256, build=None, layer_name=LAYER, x_scale=1.0
         record[f"{name}_dtype"] = str(tensor.dtype)
     # What the kernel was handed for the A side: the FlashInfer backends collapse
     # the per-expert static scales to ONE per group (the max input_scale, i.e.
-    # the smallest capacity/amax).  Read it from the runtime, never re-derived.
-    a13 = layer.w13_input_scale.detach().float().reshape(-1)
-    a2 = layer.w2_input_scale.detach().float().reshape(-1)
+    # the smallest capacity/amax) and finalize freezes them on
+    # ``tessera_a4_gs13``/``gs2`` -- the stock ``*_input_scale`` names are
+    # zero-size anchors since the materialising reader retired, never filled.
+    # Read them from the finalized runtime, never re-derived.
+    gs13_f = float(layer.tessera_a4_gs13)
+    gs2_f = float(layer.tessera_a4_gs2)
+    given13 = sorted({v for (e, n), v in scales.items() if n != "down_proj"})
+    given2 = sorted({v for (e, n), v in scales.items() if n == "down_proj"})
     record["a_side_after_finalize"] = {
-        "w13_input_scale_unique": sorted(set(a13.tolist())),
-        "w2_input_scale_unique": sorted(set(a2.tolist())),
-        "w13_input_global_scale_given": sorted({v for (e, n), v in scales.items() if n != "down_proj"}),
-        "w2_input_global_scale_given": sorted({v for (e, n), v in scales.items() if n == "down_proj"}),
-        "collapsed_to_one_per_group": bool(a13.unique().numel() == 1 and a2.unique().numel() == 1)}
-    a1_gscale = 1.0 / float(a13.max())
-    a2_gscale = 1.0 / float(a2.max())
+        "gs13_frozen": gs13_f, "gs2_frozen": gs2_f,
+        "w13_input_global_scale_given": given13,
+        "w2_input_global_scale_given": given2,
+        "collapsed_to_one_per_group": True}
+    # gs is frozen as 1/max(input_scale) with modelopt's input_scale the
+    # reciprocal of the given tessera globals, so the quantiser scalar the
+    # probes below reference is its reciprocal.
+    a1_gscale = 1.0 / gs13_f
+    a2_gscale = 1.0 / gs2_f
     record["a_side_after_finalize"]["a1_gscale"] = a1_gscale
     record["a_side_after_finalize"]["a2_gscale"] = a2_gscale
     record["tessera"] = {"decoder": getattr(layer, "tessera_decoder", None),
@@ -484,7 +520,8 @@ def positive_leg(device, tokens, q256, build=None, layer_name=LAYER, x_scale=1.0
         (torch.cat([(x.float() @ deq[(e, "gate_proj")].t()).abs().reshape(-1)
                     for e in range(EXPERTS)]) > SWIGLU_LIMIT).float().mean())
     record["resident_bytes"] = {
-        name: getattr(layer, name).numel() * getattr(layer, name).element_size()
+        name: (getattr(layer, name).numel() * getattr(layer, name).element_size()
+               if hasattr(layer, name) else 0)
         for name in ("w13_weight", "w2_weight", "w13_weight_scale", "w2_weight_scale",
                      "w13_weight_scale_2", "w2_weight_scale_2", "w13_input_scale",
                      "w2_input_scale")}
@@ -543,7 +580,9 @@ def _wrong_expert_count(wires, scheme):
 
 
 def _wrong_rung(wires, scheme):
-    scheme["groups"]["w2"]["q256"] = 768
+    # 768 is in-domain since v32 ([128, 896] step 128); above the cap is the
+    # shape that is still refused.  (tessera#506 leg 2)
+    scheme["groups"]["w2"]["q256"] = 1024
 
 
 def _drop_an_input_scale(wires, scheme):
