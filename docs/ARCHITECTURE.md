@@ -5,6 +5,16 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-19 for the manifest resident fix (tessera#557): the
+exporter prices every resident row -- the BF16 `row_scale`, the NVFP4
+`trellis_input_global_scale`, and the memoised trellis tables the NVFP4 load
+pins per trellis -- so the mixed3 capture re-derived over the fixed figures
+closes `worker_startup` (112 of 112 units, 0 unpriced bytes; PB action
+`46163222517b`). Per-module pricing of the shared tables is exact for one
+NVFP4 unit per trellis and refuses by exact inequality otherwise; the shared
+term that prices them once is still owed. The tessera#548 shared rows keep
+every resource term null on the mixed3 captures.
+
 Re-stamped 2026-09-18 for the full-engine derivation layer (tessera#399,
 §2.4): allocation ownership by declared rule (`owner_views`), all six partition
 domains checked, `derived.admission` / `fixed_resources` / `timing_terms`
@@ -1746,9 +1756,10 @@ never-freed rows summing to exactly the routed-owner receipt's own
 `tessera_serving_manifest.json`: the ledger's candidate-owned resident rows per
 unit must **equal** the manifest's `resident_bytes_resident_mode`, and a
 disagreeing unit lists its rows by census owner or site rather than being
-absorbed (on the mixed3 capture two layer-0 units disagree because the exporter
-prices the FP8 per-row scale but not the BF16 `row_scale` nor the NVFP4 global
-scale — an export-side finding, and the domain refuses). `cache_capacity` may
+absorbed (tessera#557: the manifest prices the tile, the per-row scales, the
+NVFP4 A-side scalar and the load-pinned trellis tables, and the mixed3
+capture re-derived over those figures closes; per-module pricing of the
+shared tables is exact for one NVFP4 unit per trellis). `cache_capacity` may
 only close on a **read-only** pass's record: the intrusive resource pass marks
 its own record timing- and admission-ineligible, and that record serves as the
 capacity witness the two passes are compared with instead.
