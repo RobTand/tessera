@@ -22,6 +22,7 @@ from __future__ import annotations
 import json
 
 import pytest
+import torch
 
 from tessera.serving import bf16_route
 from tessera.serving.census import LANE_ENGAGEMENT_SCHEMA, decoder_histogram, lane_engagement
@@ -195,9 +196,12 @@ class _Unit:
 
 
 def test_the_bf16_lane_gate_names_its_reason():
-    """This route's lane did not RAISE when it did not apply -- it just took the
-    fallback -- so there was nothing for a receipt to aggregate.  The verdict
-    is unchanged; what is new is that it comes with the reason."""
+    """The GEMV lane's verdict comes with the reason, not just the refusal.
+
+    The predicate survives the fallback it used to annotate (tessera#543):
+    the packed native GEMM is the dense dispatch now, and this verdict is
+    what the GEMV lane's own preparation and the census read instead of a
+    parked layer note."""
     assert bf16_route.gemv_refusal_for_unit(_Unit((4, 4))) is None
     assert bf16_route.gemv_eligible_for_unit(_Unit((4, 4)))
     rate = bf16_route.gemv_refusal_for_unit(_Unit((3, 4)))
@@ -224,14 +228,105 @@ def test_a_lane_refusal_is_a_value_on_the_layer_not_a_stderr_line():
     assert telemetry.read_lane_refusal(layer) is None
 
 
-def test_the_routes_record_the_refusal_where_they_take_the_fallback():
-    """The wiring, pinned by source: both streamed routes must note the refusal
-    on the path that substitutes the torch decode."""
-    from pathlib import Path
+def _install_vllm_stubs(monkeypatch):
+    """The five vLLM names the route builders import, as inert stand-ins.
 
-    root = Path(__file__).resolve().parents[1] / "src" / "tessera" / "serving"
-    for name in ("fp8_route.py", "bf16_route.py"):
-        assert "note_lane_refusal(layer," in (root / name).read_text(), name
+    The builders import ``LinearMethodBase`` and the parameter factories at
+    construction; nothing here constructs an engine, so stubs are exact for
+    the load contract this file pins.  Same shape as the serving-route
+    suites' installers, restated here so this file does not import a
+    CUDA-gated test module for five lines.
+    """
+    import sys
+    import types
+
+    class _LinearMethodBase:
+        pass
+
+    def _param(data, **_kw):
+        return torch.nn.Parameter(data, requires_grad=False)
+
+    linear = types.ModuleType("vllm.model_executor.layers.linear")
+    linear.LinearMethodBase = _LinearMethodBase
+    parameter = types.ModuleType("vllm.model_executor.parameter")
+    parameter.ModelWeightParameter = _param
+    parameter.BasevLLMParameter = _param
+    for name, mod in (("vllm", types.ModuleType("vllm")),
+                      ("vllm.model_executor", types.ModuleType("vllm.model_executor")),
+                      ("vllm.model_executor.layers", types.ModuleType("vllm.model_executor.layers")),
+                      ("vllm.model_executor.layers.linear", linear),
+                      ("vllm.model_executor.parameter", parameter)):
+        monkeypatch.setitem(sys.modules, name, mod)
+
+
+class _UnpreparedLayer(torch.nn.Module):
+    """A vLLM ``LinearBase`` stand-in that went through ``create_weights``
+    but never ``process_weights_after_loading``: the state a load failure
+    leaves behind."""
+
+    tp_rank, tp_size = 0, 1
+
+
+def _unprepared_dense_method(monkeypatch, family, scheme):
+    """A built dense method on a created-but-never-prepared layer (CPU).
+
+    Preparation is skipped, not stubbed: the point is what ``apply`` does
+    when ``process_weights_after_loading`` never ran.
+    """
+    from tessera.serving.lane import build_tessera_method
+
+    _install_vllm_stubs(monkeypatch)
+    method = build_tessera_method(scheme, "test.layer", mode="resident")
+    layer = _UnpreparedLayer()
+    rows, columns = scheme["rows"], scheme["columns"]
+    method.create_weights(layer, input_size_per_partition=columns,
+                          output_partition_sizes=[r for _, r in scheme["roles"]],
+                          input_size=columns, output_size=rows,
+                          params_dtype=torch.bfloat16)
+    assert getattr(layer, "tessera_native", None) is None
+    return method, layer
+
+
+def test_an_unprepared_fp8_module_raises_instead_of_serving_silently(monkeypatch):
+    """The current contract, pinned behaviorally: the packed native GEMM is
+    the one dispatch, so ``apply`` with no prepared bundle raises instead of
+    taking a fallback -- and the loud refusal parks no lane note, because
+    there is no fallback left for a note to annotate."""
+    from tessera.serving import fp8_route, native_ops, telemetry
+    from tessera.serving.scheme import TESSERA_FP8
+
+    monkeypatch.setattr(native_ops, "native_fp8_quant",
+                        lambda x: (torch.zeros(x.shape[0], 64, dtype=torch.uint8),
+                                   torch.ones(x.shape[0], dtype=torch.float32)),
+                        raising=False)
+    method, layer = _unprepared_dense_method(monkeypatch, TESSERA_FP8, {
+        "family": TESSERA_FP8, "grid": "E4M3", "body": "WINDOW", "plane": "CHANNEL",
+        "q256": 1024, "rows": 64, "columns": 128, "wire_bytes": 4096,
+        "roles": [["weight", 64]]})
+    assert type(method).__name__ == "TesseraFp8LinearMethod"
+    x = torch.zeros((2, 128), dtype=torch.bfloat16)
+    with pytest.raises(RuntimeError, match="was not prepared"):
+        method.apply(layer, x)
+    assert telemetry.read_lane_refusal(layer) is None
+    assert fp8_route.DENSE_LAUNCH is not None  # the dispatch the raise guards
+
+
+def test_an_unprepared_bf16_module_raises_instead_of_serving_silently(monkeypatch):
+    """The BF16 half of the contract above: no quantizer is even reached on
+    the way to the raise, which is the behavior the import-closure test used
+    to approximate (tessera#543)."""
+    from tessera.serving import telemetry
+    from tessera.serving.scheme import TESSERA_BF16
+
+    method, layer = _unprepared_dense_method(monkeypatch, TESSERA_BF16, {
+        "family": TESSERA_BF16, "grid": "BF16", "body": "WINDOW", "plane": "CHANNEL",
+        "q256": 1792, "rows": 64, "columns": 128, "wire_bytes": 4096,
+        "roles": [["weight", 64]]})
+    assert type(method).__name__ == "TesseraBf16LinearMethod"
+    x = torch.zeros((2, 128), dtype=torch.bfloat16)
+    with pytest.raises(RuntimeError, match="was not prepared"):
+        method.apply(layer, x)
+    assert telemetry.read_lane_refusal(layer) is None
 
 
 def test_the_census_requires_the_lane_the_artifact_declares():
