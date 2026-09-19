@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-15T05:17:47Z",
+ "generated": "2026-09-18T15:24:26Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -2080,7 +2080,7 @@
     "title": "A route's own JIT kernel extension is inside runtime identity, so no mixed-route native table can be emitted (debt D39, leg a)"
    },
    "567": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "The fp4 render and the fp4 execution are different objects: decide which side is authoritative before any fp4 number is published"
    },
    "568": {
@@ -2104,7 +2104,7 @@
     "title": "Let the prefill sweep run on a table whose fixed charge is refused, by reading none of the refused terms"
    },
    "572": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Past D37 the allocator menu gate refuses every rung the only real runtime table prices: 0 of 16 attested by the pinned Tessera runtime"
    },
    "573": {
@@ -2124,7 +2124,7 @@
     "title": "A route's own kernel extension is not a coordinate of the box (#566)"
    },
    "577": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "The NVFP4 route spends more time scaling its output than computing it: a full M x N read-modify-write to apply one scalar"
    },
    "578": {
@@ -2260,7 +2260,7 @@
     "title": "Retain bounded PWC renders across repeated candidate probes"
    },
    "607": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Give resumed joint preparation a sealed ARC replay frontier"
    },
    "608": {
@@ -2336,7 +2336,7 @@
     "title": "Union two merged Tessera census tables (r1024 A8/A16 + e2m1 A4) into one allocator/export table"
    },
    "624": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "A4 (Tessera E2M1_K2) input_global_scale: the census prices and exports G = 6/amax (legacy policy) while the route's headroom is 448*6/amax"
    },
    "625": {
@@ -2368,32 +2368,304 @@
     "title": "Refuse a Tessera card whose served route trace disagrees with its price"
    },
    "631": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Principle 14 serve-side leg on the compressed-tensors lane: no route telemetry to compare against"
+   },
+   "632": {
+    "state": "CLOSED",
+    "title": "Tessera rungs dropped at TP2 because max_world_size is 1"
+   },
+   "633": {
+    "state": "CLOSED",
+    "title": "Repin Tessera to 4c384e60 (contract v29) so Tessera rungs survive TP2"
+   },
+   "634": {
+    "state": "OPEN",
+    "title": "Three GB10 tests fail because of test order or live host state, not code"
+   },
+   "635": {
+    "state": "CLOSED",
+    "title": "Reseal proof: encoder-only arms from another PQ tree, and the prefix helper from the driver"
+   },
+   "636": {
+    "state": "CLOSED",
+    "title": "Reseal proof: encoder-only arms from another PQ tree, prefix helper from the driver, fused-stage engagement gate"
+   },
+   "637": {
+    "state": "CLOSED",
+    "title": "Campaign plan publishes rows without data_manifest, so partial releases read cold"
+   },
+   "638": {
+    "state": "CLOSED",
+    "title": "Attach every campaign row's data manifest at plan, not only at submit"
+   },
+   "639": {
+    "state": "CLOSED",
+    "title": "selected_anchor_resources charges ~0.19 GiB per anchor-batch slot; encoder measures ~0.43 GiB per slot"
    },
    "64": {
     "state": "CLOSED",
     "title": "Survey PTQ calibration-data literature and practice (docs/research)"
    },
+   "640": {
+    "state": "CLOSED",
+    "title": "Campaign rows load and hash every selected X/H before the first encode"
+   },
+   "641": {
+    "state": "CLOSED",
+    "title": "Census cache build reads the whole wire set to hash blobs the exporter hashes again"
+   },
+   "642": {
+    "state": "CLOSED",
+    "title": "Census cache build: locate and size wires, hash them at export intake"
+   },
+   "643": {
+    "state": "OPEN",
+    "title": "Joint export lane and materialization hash the same wire blob two or three times"
+   },
+   "644": {
+    "state": "CLOSED",
+    "title": "Census union refuses tables resealed under one proof: identity_migration records differ"
+   },
+   "645": {
+    "state": "CLOSED",
+    "title": "Union census tables resealed under one proof"
+   },
+   "646": {
+    "state": "CLOSED",
+    "title": "test_driver_capture_and_plan_bind_one_complete_capture fails on main: plan refuses the test's tmp capture as outside the shared mount"
+   },
+   "647": {
+    "state": "CLOSED",
+    "title": "Stream a campaign row's capture entries instead of prefetching the whole row"
+   },
+   "648": {
+    "state": "CLOSED",
+    "title": "Stream row head: the per-unit seal check sums H on the CPU because the window keeps entries on the host"
+   },
+   "649": {
+    "state": "CLOSED",
+    "title": "A TP2 gold number cannot say what it measured, on what fabric, or who rank 1 was"
+   },
    "65": {
     "state": "CLOSED",
     "title": "Survey rotations, learned codebooks and second-order compensation (docs/research)"
+   },
+   "650": {
+    "state": "CLOSED",
+    "title": "Say what a gold number measured, on what fabric, and who rank 1 was"
+   },
+   "651": {
+    "state": "CLOSED",
+    "title": "Name the test's own root as the mount when the driver plans"
+   },
+   "652": {
+    "state": "CLOSED",
+    "title": "Seal a resumed joint prepare's replay read order"
+   },
+   "653": {
+    "state": "CLOSED",
+    "title": "Route trace: qualify only a complete Tessera#509 identity, per module"
+   },
+   "654": {
+    "state": "CLOSED",
+    "title": "require_stage_settings stamps today's settings for an artifact it never verified, and run-pipeline then reuses the AURA cost on file presence"
+   },
+   "655": {
+    "state": "CLOSED",
+    "title": "AQUA: partial coverage is reported, not refused -- a lane-executed format can reach the DP with no A-side"
+   },
+   "656": {
+    "state": "CLOSED",
+    "title": "Read the prefill frontier's assignment file before reusing it, and publish the document atomically"
+   },
+   "657": {
+    "state": "CLOSED",
+    "title": "The prefill frontier reuses a digest-named assignment file it never read, and writes the artifact in place"
+   },
+   "658": {
+    "state": "CLOSED",
+    "title": "No routed-stack row path for GLM's 288-expert MoE: most of the prefill bill cannot be priced"
+   },
+   "659": {
+    "state": "CLOSED",
+    "title": "File an unverified-reuse admission instead of stamping today's settings onto a pre-guard artifact (#654)"
    },
    "66": {
     "state": "CLOSED",
     "title": "Index docs/research/ in the docs README"
    },
+   "660": {
+    "state": "CLOSED",
+    "title": "Quantizer currency: price, stamp and reuse activation-aware costs under the served operator"
+   },
+   "661": {
+    "state": "CLOSED",
+    "title": "[P2] Joint checkpoint memory: read with json.load and an interner, and seal the normalized identity without a second graph"
+   },
+   "662": {
+    "state": "CLOSED",
+    "title": "[P2] The joint loader's checkpoint parse and identity seal need ~21 GiB of transient memory on the 7.2 GB merged checkpoint"
+   },
+   "663": {
+    "state": "CLOSED",
+    "title": "Campaign scope identity, per-cell AQUA coverage, and the campaign A-side caller"
+   },
+   "664": {
+    "state": "CLOSED",
+    "title": "Campaign AQUA: submit the A-side, with the coverage gate on the command line"
+   },
+   "665": {
+    "state": "CLOSED",
+    "title": "tools/gold_engine_options.py cannot express backends the allocator requires or the documented KV byte bound"
+   },
+   "666": {
+    "state": "CLOSED",
+    "title": "gold engine options: an explicit KV byte bound and a wider --moe-backend menu (#665)"
+   },
+   "667": {
+    "state": "CLOSED",
+    "title": "Price a whole routed MoE owner per rank: per-rank vectors, rank budgets in the search, GLM-288 geometry"
+   },
+   "668": {
+    "state": "CLOSED",
+    "title": "Bounded capture: the CPU cap and the device envelope are one number in every caller, and a fresh run is uncapped"
+   },
+   "669": {
+    "state": "CLOSED",
+    "title": "Bounded capture: hold the CPU cap and the device envelope apart in every caller, and cap every GPU command"
+   },
    "67": {
     "state": "CLOSED",
     "title": "Add a sanctioned research-grade cost acceptance path, and the full-menu allocation study it enables"
+   },
+   "670": {
+    "state": "CLOSED",
+    "title": "An empty NVFP4 activation batch leaves cudaErrorInvalidValue sticky in the CUDA context"
+   },
+   "671": {
+    "state": "CLOSED",
+    "title": "An empty NVFP4 activation batch is allocated, never launched"
+   },
+   "672": {
+    "state": "CLOSED",
+    "title": "Selected-wire manifests collide on one fixed filename when allocations share wires"
+   },
+   "673": {
+    "state": "CLOSED",
+    "title": "Publish immutable selected wire manifests by content digest"
+   },
+   "674": {
+    "state": "CLOSED",
+    "title": "Allow explicitly unverified reuse of named historical encoder seals"
+   },
+   "675": {
+    "state": "CLOSED",
+    "title": "Support explicitly unverified historical encoder seals in joint preparation"
+   },
+   "676": {
+    "state": "CLOSED",
+    "title": "Pinned Tessera contract reports an empty runtime_commit, so the pin-equality conjunct is decided on a value the contract never supplied"
+   },
+   "677": {
+    "state": "CLOSED",
+    "title": "The 49-row v2 runtime table no longer binds on main: 'native row operator binding operator_route: evidence mismatch' stops the prefill frontier sweep that ran on 2026-09-13"
+   },
+   "678": {
+    "state": "CLOSED",
+    "title": "Joint-AURA resume reports no committed units for its whole head phase (P1)"
+   },
+   "679": {
+    "state": "CLOSED",
+    "title": "docs: D37's re-emission is not mechanical, and says why"
    },
    "68": {
     "state": "CLOSED",
     "title": "Pilot fused rotation (SKIP) and fixed-CB LDLQ feedback (validated on held-out rows)"
    },
+   "680": {
+    "state": "CLOSED",
+    "title": "docs: D37 claims the v2 table's re-emission is mechanical; it has not been since 2026-09-13 (P3)"
+   },
+   "681": {
+    "state": "OPEN",
+    "title": "pq309 native-MoE driver cannot reach the GLM TP>1 preparation it is meant to exercise (P2)"
+   },
+   "682": {
+    "state": "OPEN",
+    "title": "_qualified_quality_members unpickles the whole production cache twice per panel, unprofiled (P3)"
+   },
+   "683": {
+    "state": "CLOSED",
+    "title": "submit-joint hardcodes an 1800 s head allowance that a resume cannot meet (P2)"
+   },
+   "684": {
+    "state": "CLOSED",
+    "title": "tools: let the caller size submit-joint's head allowance"
+   },
+   "685": {
+    "state": "CLOSED",
+    "title": "Every qualification receipt written under encoder reuse is refused by its own replay (P0)"
+   },
+   "686": {
+    "state": "CLOSED",
+    "title": "Accept the reuse fields the receipt writer's own code emits"
+   },
+   "687": {
+    "state": "OPEN",
+    "title": "A reader-only producer change costs the whole qualification journal; consider a second closed source transition (P2, decision)"
+   },
+   "688": {
+    "state": "OPEN",
+    "title": "Joint prepare cannot be published as unit-scoped quanta, so a 36,423-unit qualification is one indivisible PB action (P2)"
+   },
+   "689": {
+    "state": "CLOSED",
+    "title": "docs: D37's re-freeze was blocked on a Tessera harness field set, and say so"
+   },
    "69": {
     "state": "CLOSED",
     "title": "Export tier-2 per-expert split stacks, with completeness and footprint accounting"
+   },
+   "690": {
+    "state": "CLOSED",
+    "title": "D37 says the fp8 re-freeze needs no Tessera change; it needed one, and could not run at all"
+   },
+   "691": {
+    "state": "CLOSED",
+    "title": "D37 says the panel fix needs no pin bump; the freeze mounts a frozen producer tree, so it does need one"
+   },
+   "692": {
+    "state": "CLOSED",
+    "title": "docs: the freeze mounts a frozen producer tree, so tessera#546 is not sufficient alone"
+   },
+   "693": {
+    "state": "CLOSED",
+    "title": "Joint-AURA prepare is single-threaded: 9 of 10 threads do zero work, 3.01 TB read = 5.1x the model"
+   },
+   "694": {
+    "state": "CLOSED",
+    "title": "Report the units a joint prepare's head walk resolves (#678)"
+   },
+   "695": {
+    "state": "CLOSED",
+    "title": "Require an owner class exactly where a composition term reads one"
+   },
+   "696": {
+    "state": "CLOSED",
+    "title": "The Tessera menu refusal names its own cause; the D37 pair is one measurement"
+   },
+   "697": {
+    "state": "CLOSED",
+    "title": "Owner asked before lifetime: a row no composition term charges nulls every full-engine term"
+   },
+   "698": {
+    "state": "CLOSED",
+    "title": "A PWC resident quantum is as wide as its admitted bytes, and prices each file once (#693)"
+   },
+   "699": {
+    "state": "OPEN",
+    "title": "TESSERA_DEV_PIN_ANSWER owes a re-transcription at the next Tessera pin bump (contract v31 withdrew 8 dense cells)"
    },
    "7": {
     "state": "CLOSED",
@@ -2403,17 +2675,141 @@
     "state": "CLOSED",
     "title": "Onboard the Qwen3-30B-A3B producer profile (contract-aligned)"
    },
+   "700": {
+    "state": "CLOSED",
+    "title": "Charge an anchor-batch slot the encoder working set it holds (#639)"
+   },
+   "701": {
+    "state": "CLOSED",
+    "title": "Bind the A4 input_global_scale policy to the artifact, not just its values (#624)"
+   },
+   "702": {
+    "state": "CLOSED",
+    "title": "Decide D39 leg (b) on its merits: one full-engine observation, and why (#570)"
+   },
+   "703": {
+    "state": "CLOSED",
+    "title": "Record and pin the D39 leg (b) decision: one full-engine observation, and why option B is refused as a design"
+   },
+   "704": {
+    "state": "CLOSED",
+    "title": "Refuse a compressed-tensors card whose served routes disagree with its price"
+   },
+   "705": {
+    "state": "OPEN",
+    "title": "Retain two instruments before their stale branches are deleted: the TR3 repeated-window logits diagnostic (#468) and the reader byte-unpack A/B harness"
+   },
+   "706": {
+    "state": "OPEN",
+    "title": "route.sweep reads NOT VERIFIED on every packed-MoE compressed-tensors artifact: no MoE method class has been observed"
+   },
+   "707": {
+    "state": "CLOSED",
+    "title": "PrismaBuild residency-map reader for the stage tier"
+   },
+   "708": {
+    "state": "CLOSED",
+    "title": "Read PrismaBuild's stage tier through its residency map"
+   },
+   "709": {
+    "state": "OPEN",
+    "title": "AQUA: render-conditioned activation term lever exists on a branch, 75 commits behind main with 3 conflicts"
+   },
    "71": {
     "state": "CLOSED",
     "title": "Validate fixed-CB LDLQ on genuinely fresh text (VALIDATED-PENDING-SERVED)"
+   },
+   "710": {
+    "state": "CLOSED",
+    "title": "--residency stage is accepted by submit-allocation/export/aqua but only the joint entry point reads a stage (review of #708)"
+   },
+   "711": {
+    "state": "OPEN",
+    "title": "Joint run/prepare anchor loader spends ~60 NFS LOOKUPs per cell on per-cell realpath: ~1 h single-threaded before any GPU work"
+   },
+   "712": {
+    "state": "CLOSED",
+    "title": "Say which activation arithmetic priced a native cell, and refuse when none is bound"
+   },
+   "713": {
+    "state": "CLOSED",
+    "title": "Joint replay guard compares the retained plan's combined bound with the cgroup cap alone: the GLM-5.3-Flash run stage refused after a 9.9 h prepare"
+   },
+   "714": {
+    "state": "CLOSED",
+    "title": "Bound the joint replay by the sum of its two envelopes, not the cgroup cap alone"
+   },
+   "715": {
+    "state": "CLOSED",
+    "title": "Panel activation stamp drops the attested table's generated.image scope; no fp4 price may publish until it carries it"
+   },
+   "716": {
+    "state": "CLOSED",
+    "title": "No production entry point binds the served activation quantizer: every fp4 priced path refuses unbound"
+   },
+   "717": {
+    "state": "OPEN",
+    "title": "3 of 7 TESSERA_E2M1_K2 cells refuse on a one-code flip of the post-layernorm input (q/k/v_proj)"
+   },
+   "718": {
+    "state": "CLOSED",
+    "title": "Design: version the PACT transient charge boundary so a real runtime table can reach the allocator (D37)"
+   },
+   "719": {
+    "state": "CLOSED",
+    "title": "Say which image attested the rounding rule, and refuse a cell that ran in another"
    },
    "72": {
     "state": "CLOSED",
     "title": "Add the flag-gated LDLQ production encoder mode"
    },
+   "720": {
+    "state": "CLOSED",
+    "title": "Record the ruling that a driver change never invalidates an attestation"
+   },
+   "721": {
+    "state": "CLOSED",
+    "title": "Panel execution-scope record says the driver is 'left for a gate that can establish it'; Rob ruled a driver change is a no-op"
+   },
+   "722": {
+    "state": "OPEN",
+    "title": "tessera_joint_aura run intake: a serial 36k-unit render-origin walk over NFS runs 20\u2013100 min before any GPU work"
+   },
+   "723": {
+    "state": "OPEN",
+    "title": "Serving pin vllm/vllm-openai@sha256:61fc8a89\u2026 is a manifest LIST; runtime_provenance demands a platform manifest hashing to the pin, so both cannot hold"
+   },
+   "724": {
+    "state": "CLOSED",
+    "title": "D37: version the PACT transient charge boundary"
+   },
+   "725": {
+    "state": "OPEN",
+    "title": "joint prepare: 7.4 h for 198k cells \u2014 profile budget and ranked fixes (hashing chunk size, double parse, serial identity binding)"
+   },
+   "726": {
+    "state": "CLOSED",
+    "title": "Version the PACT transient charge boundary and charge the allocated composition (D37)"
+   },
+   "727": {
+    "state": "CLOSED",
+    "title": "run stage: pre-install render proof compares against the meta skeleton"
+   },
+   "728": {
+    "state": "CLOSED",
+    "title": "Run stage: compare the prepared render proof with the installed source, and carry the fix to the sealed GLM-5.3-Flash prepare"
+   },
+   "729": {
+    "state": "CLOSED",
+    "title": "Flush the dispatcher summary before spawning pbrun"
+   },
    "73": {
     "state": "CLOSED",
     "title": "LDLQ: batch encode+feedback across identical-shape expert units"
+   },
+   "730": {
+    "state": "CLOSED",
+    "title": "Dispatcher: pbrun's stderr lands glued to the buffered [submit] line under redirection"
    },
    "74": {
     "state": "CLOSED",
@@ -3982,7 +4378,7 @@
     "title": "Fuse explicit research selected expert window decode"
    },
    "426": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Add explicit research TP2 packed selected-expert ownership"
    },
    "427": {
@@ -4210,7 +4606,7 @@
     "title": "E2M1 K1 is encodable, priceable and unreadable: no reader range can be published for it"
    },
    "478": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Owner classification nulls every full-engine term: \"shared\" boundary tensors and two disagreeing owner rules"
    },
    "479": {
@@ -4350,7 +4746,7 @@
     "title": "Qualify whole-engine CUDA graphs for the GLM53 NoPE backend (serving is eager-only today)"
    },
    "509": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Route trace names no modules, so a consumer can compare only a contract histogram"
    },
    "51": {
@@ -4366,7 +4762,7 @@
     "title": "Publish routed E2M1_K2 R896 cells on the two-rank stub serve (contract v28)"
    },
    "512": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "test_the_span2_kernel_lane_refuses_a_shard fails on master: lane_planes.py:144 refuses the shard before the start-state refusal"
    },
    "513": {
@@ -4374,32 +4770,204 @@
     "title": "Refuse a nonzero word in a zero-width COMPLETION plane again (#504 follow-up)"
    },
    "514": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "GLM53 NoPE TP2: A4 stub diverges from TP1 about 4\u00d7 more than the BF16 stub at the median"
    },
    "515": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Fuse the coset TCQ trellis into three Triton launches (#486 stage 1)"
    },
    "516": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Hold the span-2 shard test to the lane 800fbb821 shipped (#512)"
+   },
+   "517": {
+    "state": "CLOSED",
+    "title": "Attest a world of two for the three Tessera families on a receipt (#506)"
+   },
+   "518": {
+    "state": "CLOSED",
+    "title": "Fuse _fit_lut's swap passes into one host sync a pass (#486 stage 2)"
+   },
+   "519": {
+    "state": "CLOSED",
+    "title": "Admit torch 2.13 to the fused LUT swap passes"
    },
    "52": {
     "state": "CLOSED",
     "title": "kernel_window_gemv branches on the token dim in Python and has no compiled arm in its tests"
    },
+   "520": {
+    "state": "CLOSED",
+    "title": "Record torch 2.13 on the fused LUT swap passes"
+   },
+   "521": {
+    "state": "OPEN",
+    "title": "`live_payloads` observation races the parallel cached intake"
+   },
+   "522": {
+    "state": "CLOSED",
+    "title": "The NVFP4 dense route streams its whole output through memory to apply one scalar"
+   },
+   "523": {
+    "state": "CLOSED",
+    "title": "Planner hashes the whole source checkpoint before planning a carried expert projection"
+   },
+   "524": {
+    "state": "CLOSED",
+    "title": "Plan a carried projection without hashing the source, and refuse input-only errors first"
+   },
+   "525": {
+    "state": "OPEN",
+    "title": "Fold the NVFP4 dense route's epilogue scalar into the GEMM's alpha (do not merge: contract v30 + numerics decision pending)"
+   },
+   "526": {
+    "state": "CLOSED",
+    "title": "Serving-part merge never expected the routed NVFP4 A-side scales, so every NVFP4 MoE part fails its written-coverage check"
+   },
+   "527": {
+    "state": "CLOSED",
+    "title": "No footprint instrument for the NVFP4 routed intake: the A4 body has no measured per-rank fit"
+   },
+   "528": {
+    "state": "CLOSED",
+    "title": "Expect the routed NVFP4 A-side scales at merge"
+   },
+   "529": {
+    "state": "CLOSED",
+    "title": "Measure what one rank holds: the NVFP4 routed intake's per-rank footprint"
+   },
    "53": {
     "state": "CLOSED",
     "title": "The route census guards contract_for but not decoder_for, so a new family KeyErrors mid-run"
+   },
+   "530": {
+    "state": "CLOSED",
+    "title": "Correct the stale NVFP4 routed-cell claim in the system map"
+   },
+   "531": {
+    "state": "CLOSED",
+    "title": "Read a cell's own qualification before counting it as a serve"
+   },
+   "532": {
+    "state": "CLOSED",
+    "title": "Native routed-expert window operators, and retire the A4 whole-weight expansion"
+   },
+   "533": {
+    "state": "CLOSED",
+    "title": "A16 TP1 compact lane: one predicate decides the routed window lane's intake"
+   },
+   "534": {
+    "state": "CLOSED",
+    "title": "Whole routed owner: read the route, rung, cut and world from the owner"
+   },
+   "535": {
+    "state": "CLOSED",
+    "title": "Dense streamed prefill: device-validated native table (96/96, 8/8) and the empty-batch quantiser fix"
+   },
+   "536": {
+    "state": "CLOSED",
+    "title": "serving: an empty FP4 activation batch is allocated, never launched"
+   },
+   "537": {
+    "state": "CLOSED",
+    "title": "Dense crosscheck: fixture keys are trees, and the GLM exports join them"
+   },
+   "538": {
+    "state": "CLOSED",
+    "title": "Retiring the dense window-GEMV lane leaves the published lane_eligibility cells describing a dispatch the build cannot make"
+   },
+   "539": {
+    "state": "CLOSED",
+    "title": "GLM-288 routed owner: layer-3 request inputs, and the member-name/TP2-width harness fixes"
    },
    "54": {
     "state": "CLOSED",
     "title": "BF16 reach optimum is per-unit (0.5x-1.5x of the rate law) and the production encode moves it; the default rule regresses down_proj 2-23% on out"
    },
+   "540": {
+    "state": "CLOSED",
+    "title": "Read the routed owner's source from one shared CPU file, and release the proof tensors"
+   },
+   "541": {
+    "state": "CLOSED",
+    "title": "Emit the two checked full-engine observations and close their domains"
+   },
+   "542": {
+    "state": "CLOSED",
+    "title": "The census can state the engine shape it is run under"
+   },
+   "543": {
+    "state": "OPEN",
+    "title": "Master is red on two gates: the dense window routes no longer call note_lane_refusal"
+   },
+   "544": {
+    "state": "CLOSED",
+    "title": "BF16 route's epilogue runs two eager pointwise passes at the memory ceiling, exceeding its own GEMM at every M (P1)"
+   },
+   "545": {
+    "state": "OPEN",
+    "title": "Attest the fused A4-dense and window-GEMM launches with a served census, then bump the pin (P1)"
+   },
+   "546": {
+    "state": "CLOSED",
+    "title": "Accept the panel fields PrismaQuant's freeze has emitted since 2026-09-12"
+   },
+   "547": {
+    "state": "CLOSED",
+    "title": "Classify an off-step allocation by its lifetime, and refuse the name rule where it names no candidate"
+   },
+   "548": {
+    "state": "OPEN",
+    "title": "Classify the native boundary tensors and runtime roots, which need two assignments and a v2 boundary ledger"
+   },
+   "549": {
+    "state": "CLOSED",
+    "title": "Read tessera#514's A4 TP2 excess against the BF16 reference: re-drawn noise, not added error"
+   },
    "55": {
     "state": "CLOSED",
     "title": "runtime_contract attests TESSERA_BF16_K1 at q256 1792 on pinned-wire bytes the reach term now moves; attested rungs carry no encoder identity"
+   },
+   "550": {
+    "state": "CLOSED",
+    "title": "GB10 TP2 NCCL/RoCE reg_mr ENOMEM: 1 success in ~13 runs; sockets work and are bit-identical"
+   },
+   "551": {
+    "state": "CLOSED",
+    "title": "Withdraw the window-GEMV lane_eligibility cells and tie the launch table to the dispatch (#538)"
+   },
+   "552": {
+    "state": "OPEN",
+    "title": "Cached-producer H-retention test asserts a sequential invariant over a thread-pool intake: flakes on multi-CPU workers"
+   },
+   "553": {
+    "state": "CLOSED",
+    "title": "Lift the container memlock ceiling on the two-box RoCE launcher (#550)"
+   },
+   "554": {
+    "state": "CLOSED",
+    "title": "Prove the fp4 decode extension before a capture prices its allocations (#399)"
+   },
+   "555": {
+    "state": "OPEN",
+    "title": "The fp4 activation table must be generated on the GLM-5.3 campaign serving image before any GLM fp4 route-class cell can admit"
+   },
+   "556": {
+    "state": "CLOSED",
+    "title": "Derive ownership, admission and the timing partition from the step-4 ledger (#399)"
+   },
+   "557": {
+    "state": "OPEN",
+    "title": "Runtime manifest omits BF16 row_scale and NVFP4 trellis_input_global_scale, so worker_startup refuses on 2 units / 20,484 B"
+   },
+   "558": {
+    "state": "OPEN",
+    "title": "v2 full-engine report must emit the reserved peak and the reservation slack, and the configuration document must carry PYTORCH_CUDA_ALLOC_CONF (D37 ship-gate leg)"
+   },
+   "559": {
+    "state": "OPEN",
+    "title": "Measure whether a shared site's bytes move with the assignment (#548)"
    },
    "56": {
     "state": "CLOSED",

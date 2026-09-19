@@ -10,11 +10,80 @@ import hashlib
 import json
 from pathlib import Path
 
-from experiments.full_engine_resources import analyze_engine_resource_ledger
+from experiments.full_engine_resources import (
+    analyze_engine_resource_ledger, runtime_provenance_relation,
+)
 from experiments.full_engine_resource_partition import assemble_full_engine_resource_report
 from experiments.full_engine_kv import COMMON_RUN_DIGESTS
 
 JOIN_SCHEMA = "tessera.full_engine_observation_join.v1"
+
+#: The launcher's container environment names the roots the ownership rules
+#: read: the observer tree on ``PYTHONPATH``, the plugin JIT extension dir and
+#: the stock runtime's JIT caches. Read from the launch summary's own docker
+#: argv, never assumed.
+_JIT_CACHE_ENV = ("TRITON_CACHE_DIR", "TORCH_EXTENSIONS_DIR")
+
+
+def _container_environment(launch):
+    """``{name: value}`` from the docker ``--env`` arguments of the capture phase."""
+    environment = {}
+    for phase in launch.get("phases") or ():
+        if phase.get("phase") != "capture":
+            continue
+        argv = phase.get("command") or ()
+        for index, item in enumerate(argv[:-1]):
+            if item in ("-e", "--env") and "=" in argv[index + 1]:
+                name, _, value = argv[index + 1].partition("=")
+                environment[name] = value
+    return environment
+
+
+def ownership_evidence(*, plan, runtime_observation, per_job, core_manifest, launch,
+                       jit_preflight, dense_startup):
+    """The run's own inventories, in the shape ``full_engine_ownership`` reads.
+
+    Nothing here is inferred from a path string alone: the plugin package path
+    and roster come from the worker's loaded-package record and the installer's
+    file table; the vLLM root and files from the attested core manifest; the
+    observer roots and JIT prefixes from the launcher's recorded container
+    environment; the observer libraries from the plan that loaded them.
+    """
+    loaded = runtime_observation["loaded_package"]
+    environment = _container_environment(launch)
+    observer_roots = [root for root in (environment.get("PYTHONPATH") or "").split(":") if root]
+    if per_job.get("plugin_source_tree") and per_job["plugin_source_tree"] not in observer_roots:
+        observer_roots.append(per_job["plugin_source_tree"])
+    ext_dir = (jit_preflight or {}).get("ext_dir") or environment.get("TESSERA_EXT_DIR")
+    observer_libraries = [plan["collector_library"]]
+    workspace = plan.get("blas_workspace_observer")
+    if isinstance(workspace, dict) and workspace.get("path"):
+        observer_libraries.append(workspace["path"])
+    return {
+        "plugin_package_path": loaded["package_path"],
+        "plugin_files": set(per_job["plugin_files"]),
+        "vllm_root": core_manifest["root"],
+        "vllm_files": set(core_manifest["files"]),
+        "observer_roots": observer_roots,
+        "observer_libraries": observer_libraries,
+        "plugin_jit_prefix": (ext_dir.rstrip("/") + "/tessera_nvfp4/") if ext_dir else None,
+        "jit_cache_prefixes": [environment[name] for name in _JIT_CACHE_ENV if environment.get(name)],
+        "inventory_digests": {
+            "plugin_source_sha256": per_job.get("plugin_source_sha256"),
+            "plugin_installer_evidence_sha256": loaded.get("installer_evidence_sha256"),
+            "core_manifest_sha256": per_job.get("core_manifest_sha256"),
+            "collector_library_sha256": plan.get("collector_library_sha256"),
+            "blas_workspace_observer_sha256": workspace.get("sha256") if isinstance(workspace, dict) else None,
+            "plugin_jit_library_sha256": (jit_preflight or {}).get("library_sha256"),
+        },
+        "roster": plan["canonical_roster"],
+        "dense_startup": dense_startup,
+    }
+
+
+def _read_json(path):
+    path = Path(path)
+    return json.loads(path.read_text()) if path.exists() else None
 
 
 def read_observation_list(path, *keys):
@@ -169,6 +238,22 @@ def main():
     parser.add_argument("--kv-observation", type=Path,
                         help="the READ-ONLY pass's KV observation (default: the worker directory, "
                              "which is the intrusive pass's own record and cannot close the domain)")
+    parser.add_argument("--timing-observation", type=Path,
+                        help="the same-run TIMING pass's observation (timing-observation.json); "
+                             "without it timing_partition stays open and timing_terms null")
+    parser.add_argument("--launch-dir", type=Path,
+                        help="the step-4 launcher output directory holding per-job-runtime.json, "
+                             "launch-summary.json and jit-preflight.json (default: the parent of "
+                             "--capture-dir)")
+    parser.add_argument("--core-manifest", type=Path,
+                        help="the attested vLLM core manifest (default: the plan's core_manifest path)")
+    parser.add_argument("--without-ownership", action="store_true",
+                        help="replay without the ownership derivation (the pre-#399 ledger)")
+    parser.add_argument("--boundary-classification", type=Path,
+                        help="tessera#548's two-capture comparison, built by "
+                             "experiments/full_engine_boundary_classification.py from this "
+                             "capture's ledger and the substitution capture's; without it every "
+                             "census-shared site stays pending_548")
     args = parser.parse_args()
     plan = json.loads((args.capture_dir / "observer-plan.json").read_text())
     run = json.loads((args.capture_dir / "run.json").read_text())
@@ -179,7 +264,47 @@ def main():
         worker_dir = args.capture_dir / worker_dir.name
     capture_path = worker_dir / "capture.json"
     raw = json.loads(capture_path.read_text())
-    ledger = analyze_engine_resource_ledger(raw)
+    launch_dir = args.launch_dir or args.capture_dir.parent
+    runtime_observation = _read_json(worker_dir / "runtime-observation.json")
+    per_job = _read_json(launch_dir / "per-job-runtime.json")
+    launch = _read_json(launch_dir / "launch-summary.json")
+    jit_preflight = _read_json(launch_dir / "jit-preflight.json")
+    core_manifest = _read_json(args.core_manifest or plan["core_manifest"])
+    startup_sidecar = _read_json(first_existing(worker_dir / "worker-startup.json",
+                                                args.capture_dir / "worker-startup.json"))
+    dense_startup = startup_sidecar.get("dense") if isinstance(startup_sidecar, dict) else None
+    evidence_sources = {"runtime_observation": runtime_observation is not None,
+                        "per_job_runtime": per_job is not None, "launch_summary": launch is not None,
+                        "jit_preflight": jit_preflight is not None,
+                        "core_manifest": core_manifest is not None,
+                        "dense_startup": dense_startup is not None}
+    evidence = None
+    if not args.without_ownership:
+        missing = [name for name in ("runtime_observation", "per_job_runtime", "launch_summary",
+                                     "core_manifest") if not evidence_sources[name]]
+        if missing:
+            raise ValueError("ownership derivation needs the run's own inventories; missing: "
+                             + ", ".join(missing) + " (pass --without-ownership for the raw replay)")
+        evidence = ownership_evidence(plan=plan, runtime_observation=runtime_observation,
+                                      per_job=per_job, core_manifest=core_manifest, launch=launch,
+                                      jit_preflight=jit_preflight, dense_startup=dense_startup)
+    classification = None
+    if args.boundary_classification is not None:
+        classification = json.loads(args.boundary_classification.read_text())
+        if args.without_ownership:
+            raise ValueError("a boundary classification is read by the ownership derivation; "
+                             "--without-ownership replays without it")
+    ledger = analyze_engine_resource_ledger(raw, evidence, classification)
+    if evidence is not None and ledger.get("identity") is not None:
+        ledger["runtime_provenance_relation"] = runtime_provenance_relation(
+            ledger["identity"], plan=plan, launch=launch, per_job=per_job,
+            runtime_observation=runtime_observation, core_file_count=len(core_manifest["files"]))
+    timing_records = None
+    if args.timing_observation is not None:
+        timing_records = json.loads(Path(args.timing_observation).read_text())
+        if not isinstance(timing_records, dict):
+            raise ValueError("a timing observation is one record, not a list")
+        ledger["timing_captures"] = timing_records
     # The two observations travel as their own artifacts: the startup record is
     # this pass's own, and the KV record that may close `cache_capacity` comes
     # from a read-only pass, which is a different process by design.  The join
@@ -207,14 +332,18 @@ def main():
                   "run": {"path": str(args.capture_dir / "run.json")}}]
     for name, records, path in (("worker_startup_records", startup_records,
                                  startup_path),
-                                ("kv_observations", kv_records, kv_path)):
+                                ("kv_observations", kv_records, kv_path),
+                                ("timing_captures", timing_records, args.timing_observation)):
         if records is not None:
             path = Path(path)
             artifacts.append({"schema": "tessera.full_engine_observation_artifact.v1",
                               "observation": name, "path": str(path),
                               "sha256": _digest(path) if path.exists() else None,
-                              "records": len(records)})
+                              "records": len(records) if isinstance(records, list) else 1})
     artifacts.append(join)
+    artifacts.append({"schema": "tessera.full_engine_ownership_evidence_sources.v1",
+                      "launch_dir": str(launch_dir), "sources": evidence_sources,
+                      "ownership_derived": evidence is not None})
     report = assemble_full_engine_resource_report(ledger, reference=reference, workload=workload,
                                                   execution=execution, artifacts=artifacts,
                                                   allocator_config=allocator_config_of(plan))
@@ -222,12 +351,28 @@ def main():
     (args.output / "ledger.json").write_text(json.dumps(ledger, sort_keys=True, indent=1) + "\n")
     report_path = args.output / "report.json"
     report_path.write_text(json.dumps(report, sort_keys=True, indent=1) + "\n")
+    derived = report["derived"]
+    views = (ledger.get("owner_views") or {}).get("views") or {}
     summary = {"report": str(report_path), "sha256": _digest(report_path), "ledger_status": ledger["status"],
-               "issues": len(ledger["issues"]), "admission": ledger["admission"],
+               "issues": len(ledger["issues"]),
+               "admission": derived["admission"]["verdict"], "admission_reason": derived["admission"]["reason"],
                "domains": {name: domain["state"] for name, domain in report["partition"]["domains"].items()},
                "step_coverage": report["observations"]["step_coverage"]["state"],
-               "scalar_budget_bytes": report["derived"]["scalar_budget_bytes"],
-               "terms": report["derived"]["terms"]}
+               "allocations": len(ledger["torch_allocations"]),
+               "classified": len(report["partition"]["membership"]),
+               "unclassified": report["partition"]["scope"]["unclassified_allocation_count"],
+               "uncharged": report["partition"]["scope"]["uncharged_allocation_count"],
+               "non_step": report["partition"]["scope"]["non_step_allocation_count"],
+               "observer": report["partition"]["scope"]["observer_allocation_count"],
+               "owner_views": views.get("summary"),
+               "external_records": {key: (ledger["owner_views"]["external_records"][key]
+                                          if key != "unresolved" else len(ledger["owner_views"]["external_records"][key]))
+                                    for key in ("record_count", "external_native_peak_bytes", "unresolved")}
+               if ledger.get("owner_views") else None,
+               "scalar_budget_bytes": derived["scalar_budget_bytes"],
+               "fixed_resources_state": derived["fixed_resources"]["state"],
+               "timing_terms": derived["timing_terms"],
+               "terms": derived["terms"]}
     print(json.dumps(summary, indent=1), flush=True)
 
 

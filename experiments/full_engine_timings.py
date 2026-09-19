@@ -24,6 +24,15 @@ def _finite(value):
     return value
 
 
+#: The per-arm raw records never price. The same-run timing observation
+#: (``full_engine_timing_observation``) derives the partition's terms from the
+#: arms under its own qualification, and the resource report carries them as
+#: ``derived.timing_terms`` once ``timing_partition`` closes on it.
+PRICING_SCOPE = ("the raw timing arm records events and their partition; timing terms and their "
+                 "admission are derived by full_engine_timing_observation from every arm of "
+                 "the run under its qualification, and carried by the resource report")
+
+
 def analyze_profile_partition(capture, profile):
     """Recompute launch ownership and explicit stream coverage from trace bytes.
 
@@ -31,7 +40,7 @@ This does not certify Kineto's collection completeness or observer overhead.
 No kernel-duration sum is subtracted from CUDA-event elapsed time.
     """
     result = {"schema": "tessera.full_engine_timing_partition.v1", "status": "incomplete",
-              "timings": None, "admission": "not_implemented", "issues": [], "steps": [],
+              "timings": None, "admission": None, "pricing_scope": PRICING_SCOPE, "issues": [], "steps": [],
               "qualification_gaps": ["profiler collection health qualification", "observer overhead qualification",
                                      "bound reference assignment and runtime admission", "full-engine resource closure"]}
     try:
@@ -251,7 +260,13 @@ class FullEngineTimingRecorder:
         self.steps.append(step)
         self.current = None
 
-    def finish(self, *, identity, runtime):
+    def finish(self, *, identity, runtime, exclusivity=None):
+        """Close the arm: drain the device, stop the profiler, write the capture.
+
+        ``exclusivity`` is the worker's device-process samples at arm and at
+        finish (``full_engine_timing_worker``): carried in the capture for the
+        timing observation's device-exclusivity witness, never read here.
+        """
         if self.current is not None:
             raise RuntimeError("timing finish encountered an unclosed engine step")
         if self.patches:
@@ -283,8 +298,9 @@ class FullEngineTimingRecorder:
                    "steps": rows, "ranges": self.ranges, "errors": self.errors,
                    "observer_span": {"started_unix_ns": self.started_unix_ns,
                                      "finished_unix_ns": finished_unix_ns},
+                   "exclusivity": exclusivity,
                    "profile_sha256": hashlib.sha256(profile_path.read_bytes()).hexdigest(),
-                   "timings": None, "admission": "not_implemented"}
+                   "timings": None, "admission": None, "pricing_scope": PRICING_SCOPE}
         (self.output / "capture.json").write_text(json.dumps(capture, sort_keys=True, indent=2) + "\n")
         partition = analyze_profile_partition(capture, json.loads(profile_path.read_text()))
         (self.output / "partition.json").write_text(json.dumps(partition, sort_keys=True, indent=2) + "\n")

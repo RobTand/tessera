@@ -573,6 +573,8 @@ class ResourceCaptureWorker(Worker):
         """
         receipt = self._resource_plan.get("routed_owner_receipt")
         if receipt is None:
+            if self._resource_plan.get("artifact_checkpoint") is not None:
+                self._resource_write_dense_startup_sample()
             return
         identity = self._resource_plan.get("identity") or {}
         rank, world_size = identity.get("rank"), identity.get("world_size")
@@ -598,6 +600,79 @@ class ResourceCaptureWorker(Worker):
         except Exception as exc:
             payload["skipped"] = f"{type(exc).__name__}: {exc}"
         path = Path(self._resource_plan["output_directory"]) / "worker-startup.json"
+        path.write_text(json.dumps(payload, sort_keys=True, indent=2) + "\n")
+
+    def _resource_write_dense_startup_sample(self):
+        """A served dense artifact's resident-after-load sample (tessera#399).
+
+        A dense artifact has no routed-owner receipt and no native-MoE
+        workspace, so the MoE shape above cannot be taken. What a dense artifact
+        does carry is an independent, export-side statement of what each module
+        keeps resident in this serve mode: ``resident_bytes_resident_mode`` in
+        its own ``tessera_serving_manifest.json``, whose digest the plan already
+        binds. The sample records that figure per canonical unit (summed over
+        the unit's member modules) beside this rank's
+        ``torch.cuda.memory_allocated()`` at arm -- after
+        ``process_weights_after_loading``, before the workload -- and the replay
+        compares the ledger's candidate-owned resident rows per unit with it.
+        Nothing is derived from the ledger here; two independent numbers travel
+        together so a reader can see which one a disagreement indicts.
+        """
+        import torch
+        plan = self._resource_plan
+        identity = plan.get("identity") or {}
+        checkpoint = plan["artifact_checkpoint"]
+        payload = {"schema": "tessera.full_engine_worker_startup_observation.v1",
+                   "rank": identity.get("rank"), "world_size": identity.get("world_size"),
+                   "records": [], "dense": None,
+                   "receipt": None,
+                   "skipped_moe_shape": "dense artifact: no routed-owner receipt and no native-MoE workspace"}
+        try:
+            manifest_path = Path(plan["model"]) / "tessera_serving_manifest.json"
+            manifest_bytes = manifest_path.read_bytes()
+            manifest_sha256 = hashlib.sha256(manifest_bytes).hexdigest()
+            if manifest_sha256 != checkpoint["manifest_sha256"]:
+                raise ValueError("the served manifest's bytes differ from the plan's artifact checkpoint")
+            manifest = json.loads(manifest_bytes)
+            modules = manifest["modules"]
+            units = {}
+            for row in plan["canonical_roster"]:
+                # The roster names the fused module vLLM builds (the manifest's
+                # key) and its checkpoint members (the manifest's role
+                # tensors); the two namespaces meet only through the row.
+                module = row["module"]
+                if module not in modules:
+                    raise ValueError(f"roster unit {row['unit_id']} names no manifest module {module}")
+                entry = modules[module]
+                roles = {role["tensor"] for role in entry["roles"]}
+                if roles != set(row["members"]):
+                    raise ValueError(f"manifest module {module} declares roles {sorted(roles)}, "
+                                     f"the roster names members {sorted(row['members'])}")
+                if entry["family"] != row["family"]:
+                    raise ValueError(f"manifest module {module} is {entry['family']}, the roster says {row['family']}")
+                units[row["unit_id"]] = {
+                    "module": module, "family": row["family"], "members": list(row["members"]),
+                    "manifest_resident_bytes_resident_mode": int(entry["resident_bytes_resident_mode"])}
+            torch.cuda.synchronize(self.device)
+            payload["dense"] = {
+                "schema": "tessera.full_engine_dense_startup_observation.v1",
+                "rank": identity.get("rank"), "world_size": identity.get("world_size"),
+                "memory_allocated_bytes": int(torch.cuda.memory_allocated(self.device)),
+                "memory_reserved_bytes": int(torch.cuda.memory_reserved(self.device)),
+                "serve_mode": os.environ.get("TESSERA_SERVE_MODE", "resident"),
+                "manifest": {"path": str(manifest_path), "sha256": manifest_sha256,
+                             "resident_mode_bytes_total": int(manifest["totals"]["resident_mode_bytes"]),
+                             "field": "modules.<module>.resident_bytes_resident_mode"},
+                "units": units,
+                "sampled_at": "arm: after process_weights_after_loading, before the observation workload",
+                "scope": ("this rank's allocator-reported live bytes at arm beside the artifact manifest's "
+                          "own per-module resident figure; the replay requires the ledger's candidate-owned "
+                          "resident rows of each unit to equal the manifest figure and the allocator sample "
+                          "to bound every resident row live at ready_for_workload; neither number is derived "
+                          "from the other here")}
+        except Exception as exc:  # noqa: BLE001 -- a refusal with a reason, beside the ledger
+            payload["skipped"] = f"{type(exc).__name__}: {exc}"
+        path = Path(plan["output_directory"]) / "worker-startup.json"
         path.write_text(json.dumps(payload, sort_keys=True, indent=2) + "\n")
 
     def _resource_write_kv_observation(self, directory):

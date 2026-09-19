@@ -16,10 +16,13 @@ semantics and this one is stale.
 
 ## Why the producer may not certify itself
 
-`analyze_engine_resource_ledger` today returns `fixed_resources: None`,
-`timings: None` and `admission: "not_implemented"`, with six named
-`qualification_gaps`. The fix is to **derive** those quantities, not to relax
-those gates.
+`analyze_engine_resource_ledger` returned `fixed_resources: None`,
+`timings: None` and `admission: "not_implemented"` with six named
+`qualification_gaps` until tessera#399 (2026-09-18); it now returns
+`admission: None` beside a `pricing_scope` naming the partition report, and
+`derived.admission`, `derived.fixed_resources` and `derived.timing_terms` are
+**derived** there from the ledger's own classified event lifetimes and domain
+evidence. The fix was to derive those quantities, never to relax the gates.
 
 The safety property that makes derivation admissible is that the producer's
 arithmetic is reproducible from the raw observations by a party that never runs
@@ -37,11 +40,30 @@ constraint. Admission is PrismaQuant's by design.
 
 ## Schema identity
 
-`tessera.full_engine_resource_report.v2` — v1 plus the reservation witness
-and the allocator binding below. v1 was a new closed schema, distinct from
-`tessera.full_engine_resource_capture.v1` (raw capture) and
-`tessera.full_engine_raw_resource_ledger.v1` (the replay this report is built
-on). A field this document does not name is a refusal, not an extension.
+`tessera.full_engine_resource_report.v2` — a closed schema, distinct from
+`tessera.full_engine_resource_capture.v1` (raw capture) and the replay this
+report is built on, which is `tessera.full_engine_raw_resource_ledger.v1`
+without the ownership derivation and `…v2` with it. The v2 raw ledger
+(2026-09-18, tessera#548) is the v1 rows plus exactly the two things #548
+names: a non-null `owner_views` observation, and the native boundary tensors
+carried one allocation row per `(unit_id, invocation, kind)`, with a collision
+on that key refusing the ledger rather than publishing an ambiguous boundary
+row (`full_engine_ownership.boundary_rows`). The version is set from the
+derivation having run (`full_engine_resources._derive_ownership`), never
+declared beside it, so "the schema says v2" and "the observation is present"
+are one fact. v2 (2026-09-18, tessera#399) adds three `derived` members — `admission`,
+`fixed_resources`, `timing_terms` — and one `partition` member,
+`observer_allocations`; every v1 member keeps its name and meaning, and the
+seven-member envelope and the `observations` key set are unchanged. v2
+(2026-09-18, tessera#558) adds three `derived` members —
+`reserved_peak_bytes`, `reservation_slack_peak_bytes`, `reservation_witness` —
+and one `observations` member, `allocator_config`; see "The reservation
+witness and the allocator binding" below. A consumer
+pinned to v1 refuses a v2 report by its schema string — PrismaQuant's
+`read_full_engine_resource_report` raises on an unsupported `schema` before it
+reads any field — and that is the intended boundary: the PrismaQuant consumer
+learns v2 in its own change, never by this producer's say-so. A field this document does not name is a refusal, not an
+extension.
 
 Refusing inputs, in the reader before any arithmetic: unknown fields, missing
 fields, duplicate JSON keys, nonfinite values, negative sizes, booleans where an
@@ -90,21 +112,46 @@ establish rather than what is absent:
 | `cache_capacity` | KV and recurrent views are deduplicated by physical backing generation, pool sizes and resolved limits are recomputed from raw worker records, and the selected capacity policy is bound. |
 | `timing_partition` | Ordered native apply intervals and directly measured adjacent gaps recompose the whole measured step within documented event rounding, with every launch bound to its CPU scope, correlation, stream and device. |
 
-### What is checked today, and what only states its absence
+### What is checked today
 
-Four of the six have an implemented closure check: `history_join` reads
-`unattributed_external_records`, `external_closure` reads
-`external_native_peak_bytes`, `worker_startup` recomputes its equalities from
-`worker_startup_records`, and `cache_capacity` recomputes them from
-`kv_observations`. All four also go `refused` when the ledger carries unresolved
-`issues`.
+All six domains have an implemented closure check in `qualify_domains`, which
+takes the ledger and nothing else, so no caller can close a domain by supplying
+an artifact nobody reads; a domain that closed because an argument was truthy
+would be `qualified: true` spelled differently, and this schema does not have
+that field. `history_join` reads `unattributed_external_records`,
+`external_closure` reads `external_native_peak_bytes`, `worker_startup`
+recomputes its equalities from `worker_startup_records` (routed-owner receipts)
+or from `owner_views.dense_startup_check` (dense artifacts), `cache_capacity`
+recomputes them from `kv_observations`, `provenance_admission` recomputes the
+`runtime_provenance_relation`, and `timing_partition` reads `timing_captures`.
+All six go `refused` when the ledger carries unresolved `issues`.
 
-The other two — `provenance_admission` and `timing_partition` — have **no
-implemented check**, and `qualify_domains` states that as their reason rather
-than closing them. It takes the ledger and nothing else, so no caller can close a
-domain by supplying an artifact nobody reads. A domain that closes because an
-argument was truthy is `qualified: true` spelled differently, and this schema
-does not have that field.
+`provenance_admission` closes on `runtime_provenance_relation`
+(`tessera.full_engine_runtime_provenance_relation.v1`): named equality checks,
+each carrying the values it compared and `agree` — the ledger's identity digests
+against the plan's, the configuration digest the launch recorded against the
+one the worker observed, the core manifest digest and `core_files_unchanged`
+against the manifest's file count, the image id the launch declared against the
+one the installer inspected, the plugin installer evidence digest,
+`package_files_unchanged_from_installer`, `module_identity_errors == []`, and
+the collector and workspace library digests. The domain recomputes `complete`
+from the checks; a relation whose `complete` says true over a disagreeing check
+refuses.
+
+`timing_partition` closes on exactly one `timing_captures` record of schema
+`tessera.full_engine_timing_observation.v1` that names the same served object
+as the ledger — equal `configuration_sha256`, `model_sha256`,
+`assignment_sha256`, `canonical_units_sha256` and `runtime_manifest_sha256`
+(`TIMING_BOUND_IDENTITY`) — whose `partition.established` is true, and every
+one of whose qualification checks (`single_worker`, `identical_tokens`,
+`arms_complete`, `step_shape`, `stream_coverage`, `gpu_operation_counts_agree`,
+`device_exclusivity`) passed. The workload digest is deliberately not bound:
+the timing pass declares its own workload (identical-token control and
+partition arms on the calibration prompt), and its digest travels with the
+terms. The record is the timing pass's own; the domain recomputes nothing
+about timings itself and `derived.timing_terms`
+(`tessera.full_engine_timing_terms.v1`: `workload_sha256`, `timing_samples`,
+`phases`) restates the record's per-phase, per-sample terms.
 
 `worker_startup` is the subtle one, and it needs two independent sides before it
 closes. The replay refuses outright a capture whose recorder attached after CUDA
@@ -115,6 +162,23 @@ ledger's `fixed`-owned, never-freed rows sum to exactly the routed-owner
 receipt's own `resources.resident_bytes`. Neither side is trusted about the
 other: the sample is the engine's, the figure is an independently produced
 artifact's, and the equality is what ties them together.
+
+A dense artifact has no routed-owner receipt; its second side is the artifact's
+own `tessera_serving_manifest.json`, whose digest the plan binds. The worker
+samples `torch.cuda.memory_allocated()` at arm beside each roster unit's
+`resident_bytes_resident_mode`, and the replay (`dense_startup_check`) requires
+the ledger's candidate-owned resident rows per unit to **equal** that figure and
+the allocator sample to bound the ledger's live bytes at `ready_for_workload`.
+A disagreeing unit lists its resident rows by census owner or allocation site
+under `resident_rows`, the total is `manifest_unpriced_resident_bytes`, and the
+domain refuses. The equality is exact by design: on the 2026-09-18 mixed3
+capture 110 of 112 units agree and two do not, because the exporter's formula
+prices per-row scales for FP8 (`export_tessera_serving.py:2546`) but neither the
+BF16 `row_scale` buffer (`:2539`) nor the NVFP4 4-byte
+`trellis_input_global_scale` (`:2520`), and the runtime publishes no table
+naming each family's resident tensors. That is an export-side finding, recorded
+rather than absorbed: a `manifest <= ledger` reformulation would be satisfied by
+any leaked plane.
 
 `cache_capacity` has the same two-sided shape and one extra condition. The
 physical backings are the runtime's own deduplicated storages, re-added by the
@@ -137,6 +201,18 @@ subtraction, and no tolerance may become a fixed charge. A domain left `open`
 subtracts its term from what `derived` may express; it never gets filled in.
 
 ## What `derived` may contain, and the composition
+
+`derived` carries three members beside the terms, each derived from the
+partition and never set by a caller: `admission`
+(`derive_admission(partition)`), a verdict `admitted` | `refused` with its
+reason, admitted only when no domain is open or refused and every term is
+expressible; `fixed_resources` (`derive_fixed_resources(partition)`), the state
+`expressible` | `inexpressible`, the seven terms, the scalar budget, the
+non-step peak, `unavailable_terms`, the invariance scope and the pricing scope;
+and `timing_terms` (`derive_timing_terms(ledger, partition)`), the timing
+observation's per-phase, per-sample terms restated, null unless
+`timing_partition` is closed. No residual, no median subtraction and no
+tolerance enters any of the three.
 
 Per the consumer's scalar adapter:
 
@@ -444,39 +520,104 @@ its face — `"synthetic CPU-only parser fixture, not a GPU measurement"` — an
 report built from it carries that scope. A positive *real* report additionally
 needs the qualified original measurements on the named hardware.
 
-### The observations that still have no emitting producer
+### Every owed observation has a producer; what still holds terms null
 
-`worker_startup_records` and `kv_observations` now have both a producer and a
-closure check, so `fixed_resident`, `candidate_resident`, `fixed_activation`,
-`candidate_activation` and `fixed_KV` are reachable from a capture that actually
-observed them. Two observation members remain owed, and with them
-`provenance_admission` and `timing_partition`: `runtime_provenance_relation` and
-`timing_captures`. A consumer that independently recomputes therefore holds
-those two open whatever the report claims, and every timing price with them.
+`worker_startup_records`, `kv_observations`, `runtime_provenance_relation`,
+`timing_captures` and `owner_views` all have a producer and a closure check
+(tessera#399, 2026-09-18). `owner_views` is
+`tessera.full_engine_ownership_observation.v1`: one view per Torch allocation —
+`class` (`candidate`, `fixed`, `kv`, `observer` or null), `unit`, the `rule`
+that decided it and the allocation `site` — with the rules declared in
+`full_engine_ownership.RULES` and the evidence they were applied to (the plugin
+package path and file inventory, the vLLM root and file inventory, the observer
+roots and libraries, the plugin JIT prefix, the JIT cache prefixes), beside the
+external CUDA record classes (`plugin_jit_static`, `observer_static`,
+`image_static`, `image_jit_static`, `unit_window_external`,
+`library_external`), the boundary geometry witness, the transient gap witness
+and the dense startup check. An `observer` view is charged to nothing and its
+rows leave the whole-capture peak; a null view is unclassified and named, never
+guessed. `observer_qualification` is still carried as null.
 
-The two domains additionally carry coordinates the producer cannot invent: the
-provenance relation needs this run's manifests bound to the native runs they are
-related to, and the timing partition needs ordered native apply intervals with
-directly measured adjacent gaps. Both are stated here rather than left for a
-consumer to discover.
+What still nulls every resource term on a real capture is named, not filled.
+The `pending_548` rows — shared allocations made after `before_model_load`
+(boundary tensors, runner roots, the BLAS workspace, the flashinfer workspace),
+whose owner the tessera#548 two-assignment measurement decides — stay
+unclassified with that reason (358 on the 2026-09-18 mixed3 capture, 360 on the
+eugr one) until that measurement exists for the capture.
 
-The consumer design's remaining unreachable negative tests are the timing ones —
-a missing timing tail, overlapping streams — because no timing capture is
-emitted yet. The cache-capacity negative tests are reachable now: an altered
-pool, an overlapping backing or an intrusive-pass record all refuse the domain
-rather than closing it.
+**The measurement, when it exists** (tessera#548, 2026-09-18):
+`experiments/full_engine_boundary_classification.py` compares two captures that
+differ in `assignment_sha256` and agree on `runtime_manifest_sha256`,
+`workload_sha256` and `device_uuid` — a pair failing any of those is refused,
+because it cannot separate "these bytes do not depend on the assignment" from
+"nothing about the run changed". Three identity coordinates are deliberately
+**not** held equal: `model_sha256` digests the served artifact,
+`canonical_units_sha256` digests the roster whose rows carry each unit's
+family, and `configuration_sha256` digests the document naming the artifact,
+so a substitution moves all three by construction and requiring them equal
+would refuse every real pair. They are listed in the record's
+`differing_identity` instead, and matchability is measured rather than
+asserted: sites are matched on the owner string the census emitted, and
+`sites_in_both` is the observed overlap. When both ledgers carry a
+`runtime_provenance_relation`, its `image`, `plugin` and `core` sections must
+agree as well and `runtime_provenance_agreed` names the ones compared; a pair
+without the relation records `null` there, because a check that did not run is
+not a check that passed. The
+`tessera.full_engine_boundary_classification.v1` record it writes carries the
+two capture identities and, per site, the bytes each capture observed under
+that owner string. It carries **no verdict**: the two rules that read it —
+`two_capture:agreed` (equal bytes → `fixed`) and `two_capture:moved` (bytes
+differ → `candidate`, and the view names the unit or says it still owes one) —
+are recomputable by the consumer from the same byte columns, and a site present
+in only one capture stays `pending_548` with that reason.
+
+**Agreement only counts where the substitution could have moved the bytes.** A
+per-Linear substitution changes a few units' families and leaves the rest
+alone, so a native boundary tensor of an untouched unit carries identical bytes
+in both captures *by construction*; reading that as `fixed` would charge a
+serving gate for bytes that move the moment the menu does. Each site therefore
+carries `unit_family` (per capture, from each capture's own canonical roster,
+checked against its `canonical_units_sha256`) and `unit_family_changed`, and
+`two_capture:agreed` fires only for a site that names no unit — a runner root
+or the BLAS workspace, which any change of assignment tests — or whose unit
+changed family across the pair. An agreed site whose unit kept its family stays
+`pending_548`, saying so. When the rosters are not supplied,
+`unit_family_changed` is `null` and every unit-naming site stays pending: the
+comparison was not made, which is not the same as it having passed.
+
+Sites are matched across the pair on the exact owner string the census emitted.
+One kind does not survive that: a BLAS workspace owner carries the cuBLAS
+handle address (`torch.cublas:handle=<address>:stream=0`), a different number
+in every process, so each capture's workspace is present in one capture only
+and stays `pending_548`. Matching a workspace across captures needs a key the
+census does not emit today. Each view's `reason`
+names both `capture_sha256` digests, because agreement is evidence for those
+two captures and not for every assignment. The record travels inside the
+`owner_views` observation (`observations.owner_views.boundary_classification`,
+null for an unpaired capture), so the `observations` key set does not grow and
+the numbers arrive with the views they decided. The TCQ replay tables are built once per distinct trellis and are a
+per-family presence cost the terms have no home for; they are attributed to a
+unit only when its family has exactly one unit, and otherwise stay unattributed
+with that reason. And the dense manifest figure disagrees with the ledger on two
+layer-0 units for the export-side reason above, so `worker_startup` refuses
+there. `timing_partition` closes on the same artifact, so `derived.timing_terms`
+carries the timing observation's terms while the resource terms stay null — a
+partially expressible `derived`, which is a valid report.
+
+The two once-unreachable negative tests are reachable now: a timing record
+that names a different served object, or whose `established` is false,
+refuses `timing_partition`; an altered pool, an overlapping backing or an
+intrusive-pass record refuses `cache_capacity`.
 
 `step_intervals` and `step_coverage` are carried the same way and for the same
 reason: a capture that declared no step says `unobserved` rather than carrying
 nothing, because a missing key cannot be told from a forgotten one.
 
-So `observations` names each owed member explicitly: `runtime_provenance_relation`,
-`timing_captures`, `owner_views` and `observer_qualification` are carried as
-null, and `worker_startup_records` and `kv_observations` carry their records when
-a pass observed them and an explicit empty list (with the refusal's reason beside
-it) when it did not. **Named, never absent** — a consumer must be able to tell "this capture did not observe
-it" from "the producer forgot to carry it", and a missing key says neither.
-Closing any of those four domains means first emitting its member here.
+So `observations` names each owed member explicitly: each carries its record
+when a pass observed it, and an explicit null or empty list (with the refusal's
+reason beside it) when it did not. **Named, never absent** — a consumer must be
+able to tell "this capture did not observe it" from "the producer forgot to
+carry it", and a missing key says neither.
 
 **The test seam is gone, not merely recorded.** `derive_partition` once took a
 caller-supplied `domains` mapping, because four domains can never close from a
@@ -575,9 +716,9 @@ capture derives a number: allocation-site ownership for a row no checkpoint sees
 the two unclosable domains' observation members, and the consumer's matching
 off-step filter.
 
-### How the two observations are actually produced
+### How the observations are actually produced
 
-One rank's capture is two passes on the same box and the same configured run;
+One rank's capture is three passes on the same box and the same configured run;
 each pass is its own process, and nothing about their pointers is ever compared.
 
 1. **The intrusive resource pass** runs the ledger and the startup sample:
@@ -595,11 +736,27 @@ each pass is its own process, and nothing about their pointers is ever compared.
    or `--receipt`, writing `<kv-capture>/kv-observation.json` with
    `read_only: true`. Its plan identity must be byte-identical to the resource
    pass's, which is why the two invocations share every identity-bearing input.
-3. **The report** binds them: `python -m experiments.report_full_engine_resources
-   --capture-dir <resource-capture> --output <report> --kv-observation
-   <kv-capture>/kv-observation.json`. The join refuses a second pass from a
+3. **The timing pass** boots a stock engine with the timing worker:
+   `--observation-mode timings --timing-samples N`, one warmup, then per sample
+   a control arm and a partition arm on identical tokens, each written to
+   `worker-<pid>/sample-<n>-{control,partition}/` with its capture, partition
+   and profile. `experiments.full_engine_timing_observation` builds
+   `timing-observation.json` from those arms, the launcher's host
+   compute-process census (`host-vitals.log`) and the worker's NVML census at
+   arm and finish; it exits 3 when the partition is not established, and the
+   step-4 driver refuses the phase on that.
+4. **The report** binds them: `python -m experiments.report_full_engine_resources
+   --capture-dir <resource-capture> --launch-dir <resource-launch>
+   --core-manifest <runtime-inventory> --kv-observation
+   <kv-capture>/kv-observation.json --timing-observation
+   <timing-capture>/timing-observation.json --output <report>`. The ownership
+   evidence is read from the launch directory's own records (the worker's
+   `runtime-observation.json`, `per-job-runtime.json`, `launch-summary.json`,
+   `jit-preflight.json`, the core manifest and the worker startup sample) and
+   listed as an artifact of its own; `--without-ownership` is the explicit
+   opt-out that leaves `owner_views` null. The join refuses a second pass from a
    different run, a different rank or a differently configured pool, and records
-   in its own artifact that the two were different processes whose pointer
+   in its own artifact that the passes were different processes whose pointer
    identities were never compared.
 
 ## Observing a served Tessera artifact
