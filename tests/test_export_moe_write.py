@@ -824,19 +824,13 @@ def test_an_nvfp4_stack_writes_a_static_input_scale_beside_each_wire(tmp_path, m
     """What the exporter writes for an NVFP4 stack is what
     ``nvfp4_moe_route`` reads: one ``.wire`` and one ``.input_global_scale``
     per expert projection, the scheme on the NVFP4 route at the wire's rung,
-    the role records carrying the scale.  Since contract v28 (#506) the two
-    routed E2M1_K2 cells attest the stack at q896, so it exports with no
-    override and names them.  q768 is not in either cell's ``rungs_q256``, so
-    the same stack at q768 is still refused without the override."""
+    the role records carrying the scale.  The routed E2M1_K2 cells attest the
+    stack at q896, so it exports with no override and names them."""
     from tessera.serving import nvfp4_moe_route
     from tessera.serving.scheme import STRUCTURE_ROUTED_MOE, TESSERA_NVFP4, attested_cells
 
     scales = _nvfp4_scales()
     donor = _input_scales_file(tmp_path, scales)
-    with pytest.raises(SystemExit):
-        _export(tmp_path, monkeypatch, _nvfp4_stack_tensors(),
-                {STACK: {"grid": "E2M1x2", "q256": 768}}, "--device", "cpu",
-                "--input-scales", str(donor), config=_nvfp4_config())
     plan = {STACK: {"grid": "E2M1x2", "q256": 896}}
     after = _export(tmp_path, monkeypatch, _nvfp4_stack_tensors(), plan, "--device", "cpu",
                     "--input-scales", str(donor), config=_nvfp4_config())

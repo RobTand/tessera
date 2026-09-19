@@ -512,26 +512,6 @@ def test_the_published_source_is_the_file_the_loader_compiles():
     assert os.path.samefile(built, published), (built, published)
 
 
-def test_the_gemv_fallback_the_table_publishes_is_the_one_the_route_takes():
-    """Both residencies substitute the torch window decode without the .so."""
-    from tessera.serving import ext
-    assert ext.substitutes_when_unavailable(MODE_STREAMED, fp8_gemv.GEMV_MODULE_NAME) is True
-    assert ext.substitutes_when_unavailable(MODE_RESIDENT, fp8_gemv.GEMV_MODULE_NAME) is True
-    entry = next(e for e in ext.NATIVE_EXTENSIONS
-                 if e["module_name_prefix"] == fp8_gemv.GEMV_MODULE_NAME)
-    # Membership, not the whole list: this test is about the FP8 route's
-    # fallback, and pinning the roster is what made the entry read as "no
-    # other route loads this" while ``bf16_route`` loaded it too.
-    assert TESSERA_FP8 in entry["routes"]
-    assert entry["when_unavailable"]["streamed"]["decoder"] in telemetry.DECODERS
-    assert entry["when_unavailable"]["resident"]["decoder"] in telemetry.DECODERS
-    assert entry["when_unavailable"]["streamed"]["decoder"] == telemetry.DECODER_TORCH_WINDOW
-    # The value the fallback actually stamps: the torch window decode, which is
-    # what the route serves without the lane.
-    src = open(route.__file__).read()
-    assert "substitutes_when_unavailable" in src and "fp8_gemv" in src
-
-
 def test_the_census_expectations_come_from_the_route():
     """What each REGIME may report, and since tessera#538 it is ONE launch.
 

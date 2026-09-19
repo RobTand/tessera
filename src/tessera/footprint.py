@@ -14,7 +14,8 @@ is how a bundle figure gets quoted as a checkpoint rate:
    checkpoint rate.
 2. **selected prefix** -- the serving artifact the DP emits. *The only
    quantity a sub-4 claim ever attaches to.*
-3. **encoded resident** -- wire bytes resident in the Gridbook lane.
+3. **encoded resident** -- the wire's own bytes held resident in the serving
+   route.
 4. **expanded resident** -- materialised tiles.
 """
 

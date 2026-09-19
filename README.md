@@ -46,9 +46,10 @@ Tessera gives that tradeoff several connected controls:
 - **Choose the arithmetic as well as the size.** NVFP4 and FP8 routes use
   low-precision weights and activations; the BF16 route keeps activations in
   BF16 while compressing the stored weights.
-- **Keep compression useful after loading.** Dense serving supports keeping
-  either expanded GPU tiles or compressed weights in memory. Eligible small
-  matrix-vector operations can read the compressed representation directly.
+- **Keep compression resident.** The dense routes hold the wire's packed
+  representation in GPU memory and decode it inside the GEMM, so the
+  checkpoint's compression survives into serving instead of being expanded at
+  load.
 - **Make the artifact explain itself.** The wire carries its decoding tables,
   scales, layout, and identity. The parser, byte accountant, and serving
   contract make those choices inspectable.
@@ -99,8 +100,9 @@ weight   = grid_value(code[t]) × row_scale × global_scale
 
 Here `L` is the window width. The stored table and scales fully determine the
 reconstruction. Quantizing the original model is lossy; decoding its Tessera
-artifact is deterministic. Native decoders are checked against the reference
-reconstruction at load time.
+artifact is deterministic. The compact native load path expands no reference
+tile; native decoders are held to the reference reconstruction by the routes'
+test suites, not at load ([architecture §3.3](docs/ARCHITECTURE.md)).
 
 The NVFP4 recipe uses a related construction: a **span-2 trellis over pairs
 of E2M1 values**, with a lookup-table scale plane. It reconstructs the packed
@@ -151,30 +153,13 @@ states which combinations have serving evidence.
 
 ## Serving and memory
 
-A Tessera checkpoint selects `quant_method: "tessera"`. Its vLLM plugin
-provides two dense serving modes:
-
-| Mode | What stays in GPU memory | What happens during inference |
-|---|---|---|
-| **Resident** | Expanded native weights and scales | Decode once at load; reuse the native tiles |
-| **Streamed** | Compressed weights with their prepared tables and scales | Decode into temporary tiles for multiplication; eligible window GEMV kernels read packed weights directly |
-
-Resident mode saves checkpoint space and avoids repeated decoding. Streamed
-mode preserves compression in persistent weight memory, at the cost of
-runtime decoding and temporary storage. “Streamed” means decoding resident
-compressed weights as needed; it does not mean fetching them over a network.
-
-For example, the NVFP4 construction stores about **4.0 bits per weight**
-including its scale plane and expands to the stock **4.5-bit** weight/block-scale
-representation. An FP8 tile occupies eight bits per weight plus row scales;
-a BF16 tile occupies sixteen plus row scales. A smaller checkpoint alone
-therefore does not establish a smaller serving footprint or faster inference.
-
-Direct compressed GEMV is conditional on the route, rate, shape, and available
-kernel. Larger matrix operations can decode to transient tiles and then use
-native matrix multiplication. Route telemetry records which path actually ran.
-Routed mixture-of-experts serving currently supports **resident, eager mode
-only**.
+A Tessera checkpoint selects `quant_method: "tessera"`. The current dense
+routes (**NVFP4, FP8, BF16**) execute packed native weights: the compact
+reader holds the wire's planes in GPU memory and the in-forward GEMM decodes
+them, with no `[rows, columns]` weight tile materialised. `resident` and
+`streamed` prepare the same units; the mode must still be declared explicitly
+(`TESSERA_SERVE_MODE`, no default). Routed mixture-of-experts is **resident,
+eager mode only**.
 
 ## A format you can inspect
 
@@ -192,17 +177,18 @@ Three properties make this useful beyond an isolated quantizer:
   data; canonical padding and legal plane extents are validated. Encoder
   identity records which implementation and settings produced the artifact.
 - **A checked route to execution.** Export admission reads the runtime's
-  contract. Serving compares native reconstruction against the reference,
-  and a route census checks the declared modules against actual dispatch.
+  contract; native decoders are held to the reference by the test suites, and
+  a route census checks the declared modules against actual dispatch.
 
 The schema also supports verifiable shorter terminal prefixes, and the
 sharding machinery can derive rank-local slices from a common encoded unit.
 **Today's exporter writes one terminal per unit**, so shipped checkpoints
-are not truncatable rate ladders. **Serving is attested only at one rank**;
-there is no multi-rank result, and the NVFP4 route refuses row-axis cuts.
+are not truncatable rate ladders. Route-specific sharding geometry and its
+qualification limits are stated in [the architecture](docs/ARCHITECTURE.md)
+and the [runtime contract](src/tessera/serving/runtime_contract.json).
 
 See the [byte-level specification](https://github.com/RobTand/tessera/blob/v0.1.0/docs/schema/prismaquant.tessera.v1.md)
-and [plan-to-serve architecture](https://github.com/RobTand/tessera/blob/v0.1.0/docs/ARCHITECTURE.md)
+and [plan-to-serve architecture](docs/ARCHITECTURE.md)
 for the complete contracts.
 
 ## Measured results
@@ -301,16 +287,13 @@ lower bounds**, not full-vocabulary KL or a general benchmark score.
 
 | Experiment | Recorded result | What it establishes |
 |---|---|---|
-| **Qwen3-0.6B, NVFP4** | Tessera **0.50997** versus PrismaQuant NVFP4 GPTQ+JSO **0.51058**, at equal expanded residency over 4,088 scored positions | Parity on this corpus with **opt-in `ldlq_block=8`**. The default remains 32. A 0.12% margin is not a quality lead. [Receipt](https://github.com/RobTand/tessera/blob/v0.1.0/docs/measurements/tessera-dense4-gap-2026-09-03.md) |
+| **Qwen3-0.6B, NVFP4** | Tessera **0.50997** versus PrismaQuant NVFP4 GPTQ+JSO **0.51058**, at equal expanded residency over 4,088 scored positions | Parity on this corpus with **opt-in `ldlq_block=8`**. A 0.12% margin is not a quality lead. [Receipt](https://github.com/RobTand/tessera/blob/v0.1.0/docs/measurements/tessera-dense4-gap-2026-09-03.md) |
 | **Qwen3-0.6B, BF16 reconstruction** | **0.004923** at roughly **7.13 encoded bits/weight**; identical scores between resident and streamed modes | A compressed BF16-grid artifact served with low measured divergence on this corpus. Quality was measured in **eager** mode; eager and compiled route censuses each covered all 112 declared modules. [Receipt](https://github.com/RobTand/tessera/blob/v0.1.0/docs/measurements/tessera-bf16-route-served-2026-09-02.md) |
 | **LFM2.5-8B-A1B, FP8 routed MoE** | All **22 expert stacks / 2,112 projections** covered in prefill and decode; prefill KL lower bound **0.0832**, upper bound **1.179** at the declared probability floor | Dispatch coverage and a bounded prefill comparison over 4,096 positions. No decode KL. A later controlled chat smoke records coherent answers from both source and student. [Quality receipt](https://github.com/RobTand/tessera/blob/v0.1.0/docs/measurements/tessera-lfm-campaign-2026-09-04.md), [chat smoke](https://github.com/RobTand/tessera/blob/v0.1.0/docs/measurements/moe-smoke-recorded-2026-09-05.md) |
 
-Dense route censuses cover the three families in resident/streamed and
-eager/compiled combinations on a pinned vLLM 0.28.0 image. The MoE evidence
-covers one model, one FP8 rung, resident/eager only, on a separate pinned
-vLLM 0.28.1rc1 image. Compiled dispatch coverage does not imply compiled
-quality measurements. Historical quality results also do not automatically
-qualify fresh artifacts produced by a later encoder; the contract records
+These measured results are historical artifacts and dispatch: compiled
+coverage does not imply compiled quality measurement, and a changed encoder
+or dispatch requires fresh qualification. The contract records
 [that evidence scope](https://github.com/RobTand/tessera/blob/v0.1.0/docs/measurements/encoder-evidence-scope-2026-09-05.md).
 
 **Per-layer rate allocation is gated.** PrismaQuant can propose rates across
@@ -320,9 +303,6 @@ allocation served about **2× worse KL** than its uniform control. Weight-space
 error is useful for screening candidates, but the model's executed output
 is the promotion metric. See
 [the allocation gates](https://github.com/RobTand/tessera/blob/v0.1.0/docs/ARCHITECTURE.md#4-allocation-and-the-uniform-gate).
-
-Serving on other GPU architectures, tensor parallelism above one rank,
-expert parallelism, and compiled or streamed MoE remain unmeasured.
 
 ## Getting started
 
@@ -343,24 +323,21 @@ pip install -e .            # encoder, readers, and plugin entry point
 pip install -e '.[serve]'   # also install vLLM and the Python JIT-build tooling
 ```
 
-Native CUDA routes require a usable **CUDA toolkit with `nvcc`**. The `serve`
-and `kernels` extras supply `ninja`; pip does not supply the CUDA compiler.
-If a native extension is unavailable, the NVFP4 route falls back to torch
-materialization in resident mode and refuses streamed mode. The window GEMV
-route falls back to the torch window decoder. Telemetry names the substitute;
-a fallback is not evidence that the native route ran.
+The `serve` and `kernels` extras supply `ninja`; route-specific compiler
+prerequisites are stated in
+[the architecture's JIT-build section](docs/ARCHITECTURE.md). Native dispatch
+has no materialising fallback.
 
-For an **already exported, admitted dense Tessera checkpoint**, the mode is
-selected when starting vLLM:
+For an **already exported, admitted dense Tessera checkpoint**, declare the
+residency when starting vLLM (see [Serving and memory](#serving-and-memory)):
 
 ```bash
 TESSERA_SERVE_MODE=streamed vllm serve /path/to/tessera-checkpoint
 ```
 
-Use `resident` to expand weights at load. Installing vLLM from its package
-index does not reproduce an attested runtime: the
-[packaged contract](https://github.com/RobTand/tessera/blob/v0.1.0/src/tessera/serving/runtime_contract.json)
-names the exact serving images and supported combinations.
+Installing vLLM from its package index does not reproduce an attested runtime:
+the [packaged contract](src/tessera/serving/runtime_contract.json) names the
+exact serving images and supported combinations.
 
 For encoding and integration, start with the
 [architecture and export pipeline](https://github.com/RobTand/tessera/blob/v0.1.0/docs/ARCHITECTURE.md#2-the-pipeline),
@@ -396,7 +373,9 @@ Hosted CI checks the bytes-only boundary and built-package contents. GPU
 serving coverage requires its own measured population; read the GPU and
 CPU rows together in the suite ledger.
 
-Documentation links are pinned to **v0.1.0**, so they describe the same
-release on GitHub and the Python package index.
+Links to historical measurements and release documents are pinned to
+**v0.1.0**, so they describe the same release on GitHub and the Python package
+index. The current architecture and packaged-contract links are relative to
+this checkout.
 
 **License:** [MIT](https://github.com/RobTand/tessera/blob/v0.1.0/LICENSE).
