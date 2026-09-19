@@ -186,9 +186,11 @@ from tessera.stock import (  # noqa: E402
     FLOAT_QUANTIZED, MIXED_PRECISION, NVFP4_PACK_QUANTIZED, materialize_stock,
     share_global, stock_bytes, vllm_fp4_predicate)
 from tessera.unit_artifact import parse_unit_artifact  # noqa: E402
+from tessera.decode import replay_table_bytes  # noqa: E402
 from tessera.serving_parts import (  # noqa: E402
-    BODY_LAYER, SCHEMA as PART_SCHEMA, export_identity, parse_partition,
-    make_artifact_readable, partition_owner, sha256_file, summarize_modules, validate_explicit_plan)
+    BODY_LAYER, SCHEMA as PART_SCHEMA, dense_resident_bytes_resident_mode, export_identity,
+    parse_partition, make_artifact_readable, partition_owner, sha256_file, summarize_modules,
+    validate_explicit_plan)
 
 
 def save_serving_shard(payload: dict, destination: Path) -> None:
@@ -2487,6 +2489,11 @@ def main():
             roles = []
             role_records = []
             stock_tensors: dict[str, dict] = {}
+            # The distinct trellis-table sets the serving load pins for this
+            # module (tessera#557): one memoised ``(forest, code)`` set per
+            # trellis the module's roles prepare, keyed exactly as the load's
+            # ``lru_cache`` keys them so the count below is the load's count.
+            trellis_keys: set = set()
             for part in partitions[module]:
                 member = part.tensor
                 member_grid, q256, source_rows, _mc = plan[member]
@@ -2508,7 +2515,7 @@ def main():
                         weight, grid=member_grid, q256=q256, name=unit_name,
                         body=member_recipe.body, verify=not args.no_verify, **extra)
                     extra.clear()
-                    parse_unit_artifact(exported.blob, device=args.device)
+                    parsed = parse_unit_artifact(exported.blob, device=args.device)
                     stock_code = DEFAULT_CODE
                 else:
                     from tessera.cached_unit import verify_cached_unit
@@ -2524,6 +2531,14 @@ def main():
                                             q256, accepted.wire_bytes)
                 role = part.role
                 roles.append((role, exported.rows, exported.blob, unit, forests))
+                if family == NVFP4:
+                    # NVFP4 is the TCQ body, so the parsed unit carries the
+                    # forests by rate and the convolutional code the load
+                    # prepares select planes from; every rate's trellis it
+                    # touches pins one table set (served span-2 units carry
+                    # exactly one rate -- the load refuses more).
+                    for rate in parsed.manifest.rates:
+                        trellis_keys.add((parsed.forests[rate], parsed.code))
                 stock_tensors[unit_name] = materialize_stock(unit, forests, stock_code)
                 role_records.append({
                     "tensor": member, "role": role, "rows": exported.rows, "cols": exported.columns,
@@ -2581,8 +2596,15 @@ def main():
                 a_scale = shared_input_global_scale(
                     [input_scales[k] for k in scale_keys], scale_keys)
                 shard_payload[f"{module}.trellis_input_global_scale"] = torch.tensor([a_scale], dtype=torch.float32)
+                # The trellis tables are shared per process (see
+                # ``decode.replay_table_bytes``): per-module pricing is exact
+                # exactly when each trellis is prepared once in the serve.
+                trellis_table_bytes = sum(replay_table_bytes(forest, code)
+                                          for forest, code in trellis_keys)
                 record.update({"shared_global": shared, "input_global_scale": a_scale,
-                               "resident_bytes_resident_mode": rows_total * cols // 2 + rows_total * cols // 16})
+                               "resident_bytes_resident_mode": dense_resident_bytes_resident_mode(
+                                   family, rows_total, cols,
+                                   trellis_table_bytes=trellis_table_bytes)})
                 if twin is not None:
                     moved, divisor = share_global({module_of(m): stock_tensors[m] for m in members})
                     for m in members:
@@ -2598,17 +2620,22 @@ def main():
                     record["twin_shared_divisor"] = divisor
             elif family == BF16:
                 # Resident here is the DECODED tile -- 16 bits a weight, the
-                # source precision.  It is the correctness path and not a size
+                # source precision -- PLUS the fp32-per-row scale the route
+                # keeps beside it (``bf16_route`` registers the prepared
+                # module's ``row_scale`` as a ``[rows]`` buffer after load;
+                # tessera#557).  It is the correctness path and not a size
                 # claim; the product mode is streamed, and the wire it streams
                 # is ``wire_bytes`` above.
-                record["resident_bytes_resident_mode"] = rows_total * cols * 2
+                record["resident_bytes_resident_mode"] = dense_resident_bytes_resident_mode(
+                    family, rows_total, cols)
                 if twin is not None:
                     for m in members:
                         # One tensor, under the ORIGINAL name: the twin is an
                         # ordinary BF16 checkpoint, not a compressed one.
                         twin_payload[m] = stock_tensors[m]["weight"].cpu()
             else:
-                record["resident_bytes_resident_mode"] = rows_total * cols + rows_total * 4
+                record["resident_bytes_resident_mode"] = dense_resident_bytes_resident_mode(
+                    family, rows_total, cols)
                 if twin is not None:
                     for m in members:
                         for key, value in stock_tensors[m].items():

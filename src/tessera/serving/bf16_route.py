@@ -487,11 +487,16 @@ def gemv_refusal_for_unit(unit) -> "str | None":
     """WHY the window GEMV cannot read this unit, or ``None`` if it can.
 
     The reason, not just the verdict, because "ineligible" is the state the
-    whole of issue #104 lived in: this route's load path took the fallback
-    without an exception, so nothing was written down and the census recorded
-    a full house of ``torch_window`` against an empty problem list.  A refusal
-    that names the offending rates is a value ``telemetry.note_lane_refusal``
-    parks on the layer and a receipt aggregates.
+    whole of issue #104 lived in: a load path that took a fallback without an
+    exception left nothing written down, and the census recorded a full house
+    of one decoder against an empty problem list.  The dense routes no longer
+    take that fallback -- the packed native GEMM is the one dispatch and an
+    unprepared module raises rather than serving through another decoder -- so
+    this verdict is returned to the caller (the GEMV lane's own preparation,
+    the census) instead of being parked on the layer: ``telemetry``'s
+    load-time ``note_lane_refusal`` has no fallback left to annotate here,
+    and an empty lane is observed through the census's engagement guard
+    (``serving.census``), which records zero engagement as a problem.
 
     Decided by ``kernel_window_gemv.lane_refusal_for_parsed`` -- the lane's
     own spelling of the ONE decision core every gate runs over the published

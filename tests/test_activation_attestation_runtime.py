@@ -47,12 +47,16 @@ def test_the_runtime_still_emits_every_published_vector(emitted):
     from tessera.serving.contract import contract_path
 
     published = json.loads(contract_path().read_text())["activation_quantizers"]
-    entry = published["platforms"]["sm_121"]["contracts"]["e2m1_group16_ue4m3_static"]
-    differing = [row["id"] for row in entry["vectors"] if emitted[row["id"]] != row]
-    assert not differing, (
-        "this runtime no longer emits the packaged table for " + ", ".join(differing)
-        + "; regenerate it with experiments/attest_activation_quantizer.py, and do "
-        "not widen a consumer's tolerance to absorb the difference")
+    entries = published["platforms"]["sm_121"]
+    assert isinstance(entries, list) and entries, (
+        "sm_121 must publish one attestation per image, not a bare table")
+    matched = [entry["generated"]["image"] for entry in entries
+               if all(emitted[row["id"]] == row
+                      for row in entry["contracts"]["e2m1_group16_ue4m3_static"]["vectors"])]
+    assert matched, (
+        "this runtime reproduces none of the packaged sm_121 attestations; "
+        "regenerate the table with experiments/attest_activation_quantizer.py, "
+        "and do not widen a consumer's tolerance to absorb the difference")
 
 
 def test_the_generated_table_passes_the_packaged_grammar(emitted):
@@ -68,9 +72,10 @@ def test_the_generated_table_passes_the_packaged_grammar(emitted):
         served.setdefault(cell["platform"], set()).add(cell["activation_contract"])
     block = raw["activation_quantizers"]
     fresh = json.loads(json.dumps(block))
-    fresh["platforms"]["sm_121"]["contracts"]["e2m1_group16_ue4m3_static"]["vectors"] = [
+    first = fresh["platforms"]["sm_121"][0]
+    first["contracts"]["e2m1_group16_ue4m3_static"]["vectors"] = [
         emitted[row["id"]] for row in
-        block["platforms"]["sm_121"]["contracts"]["e2m1_group16_ue4m3_static"]["vectors"]]
+        block["platforms"]["sm_121"][0]["contracts"]["e2m1_group16_ue4m3_static"]["vectors"]]
     validate_activation_quantizers(fresh, platforms=sorted(lane["platforms"]),
                                    cell_contracts=served,
                                    require_image=require_runtime_image)

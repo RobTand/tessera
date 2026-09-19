@@ -51,7 +51,7 @@ def _mutated(contract, mutate):
 # What the packaged document says
 
 
-def test_the_packaged_contract_validates_at_v31(contract):
+def test_the_packaged_contract_validates_at_v33(contract):
     """v25 adds a top-level block; v26 and v27 do not move the lane schema either.
 
     The rule the v24 changelog entry states, pinned here so each bump has to
@@ -91,8 +91,21 @@ def test_the_packaged_contract_validates_at_v31(contract):
     the withdrawn combinations as absent, which is the answer the schema
     already defines for them; what changed is the ANSWER, not the grammar, so
     the schema string stays and the changelog carries the consumer warning.
+
+    v33 (tessera#555) changes what a field MEANS outside the lane table and
+    still does not move the lane schema: ``activation_quantizers`` platform
+    entries go from one attestation object to a LIST of one attestation per
+    image the platform publishes, because the fp4 rounding decision belongs to
+    the runtime's compiled operator and two builds of one operator are two
+    objects.  The activation-quantizer schema therefore moves v1 to v2 and a
+    v1 reader fails closed on the name; a v10 lane reader resolves every cell
+    with the code it already has, since no cell, rung, route, launch, grade,
+    KL entry, qualification, TP/EP bound or served byte moves.  The consumer
+    migration is to admit an fp4 cell only under an attestation whose image is
+    the executing one.  NUMBERING NOTE: drafted as v32; PR #560 leg 2 landed
+    its v32 first (routed reader widen), so this change is v33.
     """
-    assert int(contract["contract_version"]) == 32
+    assert int(contract["contract_version"]) == 33
     assert "activation_quantizers" in contract
     assert all("structures" in entry for entry in contract["formats"])
     assert contract["lane_eligibility"]["schema"] == LANE_ELIGIBILITY_SCHEMA

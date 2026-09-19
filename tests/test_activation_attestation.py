@@ -80,8 +80,8 @@ def _check(candidate, lane):
                                    require_image=require_runtime_image)
 
 
-def _vectors(candidate, platform="sm_121"):
-    return candidate["platforms"][platform]["contracts"][CONTRACT_NAME]["vectors"]
+def _vectors(candidate, platform="sm_121", image=0):
+    return candidate["platforms"][platform][image]["contracts"][CONTRACT_NAME]["vectors"]
 
 
 # --- the probe spec --------------------------------------------------------
@@ -227,7 +227,7 @@ def test_a_block_scale_that_is_not_nearest_is_refused(mutable, lane):
 
 
 def test_a_dropped_boundary_is_refused(mutable, lane):
-    contracts = mutable["platforms"]["sm_121"]["contracts"][CONTRACT_NAME]
+    contracts = mutable["platforms"]["sm_121"][0]["contracts"][CONTRACT_NAME]
     contracts["vectors"] = [v for v in contracts["vectors"]
                             if v["id"] != "block_scale_overflow"]
     with pytest.raises(ValueError, match="reaches no probe for"):
@@ -241,7 +241,7 @@ def test_an_unknown_probe_id_is_refused(mutable, lane):
 
 
 def test_a_contract_no_cell_on_the_platform_executes_is_refused(mutable, lane):
-    entry = mutable["platforms"]["sm_121"]["contracts"]
+    entry = mutable["platforms"]["sm_121"][0]["contracts"]
     entry["bf16_unquantized"] = copy.deepcopy(entry[CONTRACT_NAME])
     platforms, served = lane
     served = {p: {c for c in names if c != "bf16_unquantized"}
@@ -259,9 +259,90 @@ def test_a_platform_the_lane_table_does_not_publish_is_refused(mutable, lane):
 
 
 def test_an_unknown_field_is_refused_not_ignored(mutable, lane):
-    mutable["platforms"]["sm_121"]["generated"]["measured_by"] = "someone"
+    mutable["platforms"]["sm_121"][0]["generated"]["measured_by"] = "someone"
     with pytest.raises(ValueError, match=r"carries unknown field\(s\)"):
         _check(mutable, lane)
+
+
+# --- one attestation per image (tessera#555) --------------------------------
+def _v2_block():
+    """The packaged sm_121 entry re-wrapped as a one-image v2 list.
+
+    The packaged contract itself migrates separately; these tests pin the new
+    grammar's rules without waiting for that merge, reading the entry raw so
+    no validation runs before the one under test.
+    """
+    import json
+    from tessera.serving.contract import contract_path
+    raw = json.loads(contract_path().read_text())
+    entry = copy.deepcopy(raw["activation_quantizers"]["platforms"]["sm_121"])
+    if isinstance(entry, list):
+        entry = entry[0]
+    return {"schema": ACTIVATION_QUANTIZER_SCHEMA,
+            "generator": "experiments/attest_activation_quantizer.py",
+            "platforms": {"sm_121": [entry]}}
+
+
+def _v2_lane():
+    return ["sm_121"], {"sm_121": {CONTRACT_NAME}}
+
+
+def _check_v2(candidate):
+    platforms, served = _v2_lane()
+    validate_activation_quantizers(candidate, platforms=platforms,
+                                   cell_contracts=served,
+                                   require_image=require_runtime_image)
+
+
+def test_the_single_image_rewrap_validates():
+    _check_v2(_v2_block())
+
+
+def _second_image(block):
+    """The platform's attestation copied under a second image digest."""
+    other = copy.deepcopy(block["platforms"]["sm_121"][0])
+    other["generated"]["image"] = (
+        "192.168.1.107/prismaquant/glm53-nope-sm121@sha256:" + "c" * 64)
+    block["platforms"]["sm_121"].append(other)
+    return other
+
+
+def test_a_second_image_attestation_is_accepted():
+    block = _v2_block()
+    _second_image(block)
+    _check_v2(block)
+
+
+def test_two_entries_naming_one_image_are_refused():
+    block = _v2_block()
+    block["platforms"]["sm_121"].append(
+        copy.deepcopy(block["platforms"]["sm_121"][0]))
+    with pytest.raises(ValueError, match="already attested on this platform"):
+        _check_v2(block)
+
+
+def test_a_platform_entry_that_is_not_a_list_is_refused():
+    block = _v2_block()
+    block["platforms"]["sm_121"] = block["platforms"]["sm_121"][0]
+    with pytest.raises(ValueError, match="must be a non-empty list"):
+        _check_v2(block)
+
+
+def test_an_empty_attestation_list_is_refused():
+    block = _v2_block()
+    block["platforms"]["sm_121"] = []
+    with pytest.raises(ValueError, match="must be a non-empty list"):
+        _check_v2(block)
+
+
+def test_each_image_s_contracts_are_checked_alone():
+    """The served-contract rule fires per attestation, not per platform."""
+    block = _v2_block()
+    other = _second_image(block)
+    other["contracts"]["bf16_unquantized"] = copy.deepcopy(
+        other["contracts"][CONTRACT_NAME])
+    with pytest.raises(ValueError, match="no cell on this platform executes"):
+        _check_v2(block)
 
 
 # --- what the table actually answered --------------------------------------
