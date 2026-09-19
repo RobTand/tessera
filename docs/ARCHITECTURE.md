@@ -5,6 +5,16 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-19 for the per-image activation table (tessera#555):
+contract v32 carries the fp4 table under a second image -- the GLM-5.3
+campaign serving image, published to the LAN registry for a digest -- because
+two builds of one operator are two objects and the #719 image gate refuses a
+cell executing under an unattested one. The campaign runtime emits
+byte-identical vectors to the stock table, so the lane's patches do not move
+the quantizer; the platform entry is now a list of one attestation per image
+(activation-quantizer schema v2). NUMBERING NOTE: this v32 collides with open
+PR #560's v32; the second to land takes v33.
+
 Re-stamped 2026-09-19 for the manifest resident fix (tessera#557): the
 exporter prices every resident row -- the BF16 `row_scale`, the NVFP4
 `trellis_input_global_scale`, and the memoised trellis tables the NVFP4 load
@@ -4346,7 +4356,11 @@ side was right.
 
 **`activation_quantizers` is the answer, and it is generated.** A top-level
 block, keyed by platform, then by activation contract, carrying probe groups
-and the codes and block-scale bytes the kernel emitted for them:
+and the codes and block-scale bytes the kernel emitted for them. One platform
+holds a LIST of attestations, one per image it publishes (tessera#555, schema
+v2): the rounding decision belongs to the runtime's compiled operator, and a
+consumer admits an fp4 cell only under the attestation whose image is the one
+executing.
 
 - The **inputs** are the repository's. `serving/activation_attestation.py`
   constructs them as BF16 bit patterns and `validate_activation_quantizers`
@@ -4390,6 +4404,18 @@ avoided. So the table attests behaviour at exactly representable global and
 block scales, and says nothing about a non-dyadic used scale, which is what a
 served artifact carries. Closing that needs a bulk differential measurement,
 not a contract table.
+
+**What the campaign image answered** (tessera#555, contract v32): the GLM-5.3
+serving image
+`192.168.1.107/prismaquant/glm53-nope-sm121@sha256:6941847351647ca714bbe7115ce6f627131bf78fc7eff86ddb98b11e6d25b46e`
+(vLLM 0.28.1rc1.dev397+gfd4a15126.d20260904, torch 2.13.0+cu130, GB10, driver
+595.91.07) emits all 11 probe vectors byte-identical to the stock table, so
+the campaign's sparse-MLA/PDL/autotune patches -- Python source only -- do not
+move `scaled_fp4_quant`. The image reached the registry by pushing sparklina's
+local `glm53-nope-sm121:w7`; the contract names the registry digest, never the
+tag. Until a GLM fp4 route-class cell names this image in its runtime scope,
+the attestation stays unreferenced -- published so the gate has something true
+to read, not as an admission.
 
 ### 4.5e Per-operator presence, and the two reasons a quantized route refuses
 
