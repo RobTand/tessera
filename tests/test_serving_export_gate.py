@@ -81,10 +81,14 @@ def _probes(grid: PayloadGrid) -> tuple[int, ...]:
 def _scheme_for(grid: PayloadGrid, q256: int, rows: int = 64, columns: int = 64) -> dict:
     """The sidecar scheme the exporter writes for one single-role module.
 
-    Built from the exporter's own ``family_for`` and from ``wire_recipe``, so
-    it is the dict ``main`` puts in ``config_groups`` and not a paraphrase.
+    Built from the exporter's own ``family_for`` and from ``served_recipe``,
+    so it is the dict ``main`` puts in ``config_groups`` and not a paraphrase:
+    the default structure here is dense, so on the NVFP4 route the served
+    body is the ``wire_recipe`` spelling -- WINDOW below the cap (D2b,
+    tessera#560), TCQ at it -- while a ``routed_moe`` stack is promoted to
+    TCQ at every reader rung (v32).
     """
-    recipe = wire_recipe(grid, q256)
+    recipe = EXPORT.served_recipe(grid, q256)
     return {"family": EXPORT.family_for(grid), "structure": "dense", "grid": grid.name,
             "body": recipe.body.name, "plane": recipe.scale_plane.name, "q256": int(q256),
             "rows": rows, "columns": columns, "wire_bytes": 4096,
@@ -123,7 +127,23 @@ def test_every_rung_the_exporter_accepts_is_one_the_loader_accepts(name):
     else:
         _family, low, high, step = published
         assert accepted, f"{name} publishes [{low}, {high}] and the exporter accepted nothing"
-        assert accepted == [q for q in _probes(grid) if reader_accepts(q, low, high, step)]
+        # D2b (tessera#560): the range is the reader's, but the served BODY is
+        # per rung -- a dense sub-cap E2M1x2 rung keeps the WINDOW recipe,
+        # which the NVFP4 route has no decoder for, so the exporter refuses it
+        # while the row still publishes it.  The expected set meets the range
+        # with the route's own body: the loader's table (ROUTES) supplies the
+        # body and span, the recipe table the per-rung spelling -- never the
+        # exporter's choice, which is what is under test.
+        route = route_for_grid(name)
+        exp_body, exp_span = ROUTES[route]["body"], ROUTES[route]["span"]
+        expected = []
+        for q256 in _probes(grid):
+            if not reader_accepts(q256, low, high, step):
+                continue
+            served = wire_recipe(grid, q256)
+            if served.body.name == exp_body and served.span == exp_span:
+                expected.append(q256)
+        assert accepted == expected
 
 
 def test_the_gate_accepts_the_two_rungs_the_contract_actually_publishes():
@@ -149,7 +169,9 @@ def test_the_sub_cap_window_body_is_refused_at_export_not_at_load():
     # The message names the unit, the rung, the published range and the way out.
     assert "model.layers.0.mlp.down_proj" in message
     assert f"q256={q256}" in message and "E2M1x2" in message
-    assert "[896, 896]" in message
+    # 448 is the OFF-step rung the widened range deliberately does not cover:
+    # one forest per span-2 unit. The refusal names the measured grid.
+    assert "[128, 896] step 128" in message
     assert "legal to ENCODE" in message
 
 
@@ -207,9 +229,11 @@ def test_the_override_is_explicit_and_lands_in_the_manifest_record():
     gone on passing for the wrong reason.  The last assertion below is the
     tooth that says so out loud.
 
-    Shape one, a rung outside a published range: the E2M1x2 sub-cap WINDOW
-    body, which the exporter builds from q256 128 and which the plugin
-    publishes only at the single point 896.  Shape two, a grid the route holds
+    Shape one, a rung outside a published range: an OFF-step E2M1x2 rung.
+    Since v32 the reader covers the whole trellis domain, [128, 896] step 128
+    (whole-rate rungs, one forest per span-2 unit), so 448 (root rate 3.5,
+    a mixed-rate schedule the preparer refuses by name) is the shape's
+    standing example.  Shape two, a grid the route holds
     with no measured range at all: ``E2M1`` -- the kernel admits arity 1 and
     the contract publishes nothing for it, which is item 2's deliberate
     disagreement.  You export either to weigh it, or to serve its
@@ -218,12 +242,12 @@ def test_the_override_is_explicit_and_lands_in_the_manifest_record():
     """
     subcap = grid_for_name("E2M1x2")
     with pytest.raises(SystemExit):
-        EXPORT.check_recipe(subcap, 512, where="subcap.probe")
+        EXPORT.check_recipe(subcap, 448, where="subcap.probe")
     stamped: list = []
-    assert EXPORT.check_recipe(subcap, 512, where="subcap.probe",
+    assert EXPORT.check_recipe(subcap, 448, where="subcap.probe",
                                allow_unserveable=True, overrides=stamped) is not None
     assert [(r["grid"], r["q256"], r["target"])
-            for r in stamped] == [("E2M1x2", 512, "subcap.probe")]
+            for r in stamped] == [("E2M1x2", 448, "subcap.probe")]
     assert "outside the rungs this build's decoder reads" in stamped[0]["refusal"]
 
     grid = grid_for_name("E2M1")
@@ -403,9 +427,11 @@ def test_a_routed_stack_is_gated_against_the_routed_moe_cells_not_the_dense_rang
 
 
 def test_a_routed_e2m1x2_stack_at_q896_passes_the_gate_without_an_override():
-    """#506 leg 1: the routed E2M1_K2 R896 stack is attested, so it exports.
+    """#506 leg 2: the routed E2M1_K2 stack is attested over the full domain.
 
-    Until contract v28 no ``routed_moe`` cell named ``TESSERA_E2M1_K2``, and
+    Leg 2 widens the four routed_moe cells from the single rung 896 to the
+    whole trellis-shaped domain [128, 896] step 128, each rung carried by a
+    real load-probe receipt.  Until contract v28 no cell named
     an NVFP4 expert stack exported only under ``--allow-unserveable`` with the
     refusal stamped in its manifest.  The two cells the two-rank stub serve
     backs are what this gate reads, on the packaged table, with no override.
@@ -414,7 +440,8 @@ def test_a_routed_e2m1x2_stack_at_q896_passes_the_gate_without_an_override():
 
     routed = attested_cells("TESSERA_E2M1_K2", STRUCTURE_ROUTED_MOE)
     assert {cell["regime"] for cell in routed} == {"decode", "batch"}, routed
-    assert all(cell["rungs_q256"] == [896] for cell in routed), routed
+    DOMAIN = [128, 256, 384, 512, 640, 768, 896]
+    assert all(cell["rungs_q256"] == DOMAIN for cell in routed), routed
 
     recipe = wire_recipe(GRIDS["E2M1x2"], 896)
     assert refuse_unserveable_wire(
@@ -425,6 +452,34 @@ def test_a_routed_e2m1x2_stack_at_q896_passes_the_gate_without_an_override():
     assert EXPORT.check_recipe(GRIDS["E2M1x2"], 896, where="stack.probe",
                                structure=STRUCTURE_ROUTED_MOE, overrides=stamped) is not None
     assert stamped == [], "an attested stack is not an override"
+
+
+def test_a_dense_sub_cap_nvfp4_plan_is_refused_without_an_override():
+    """D2b (tessera#560): the row widen must not open dense sub-cap export.
+
+    The widened E2M1_K2 reader row ([128, 896] step 128) is the DENSE reader's
+    range, and a dense module served below the cap keeps the WINDOW recipe
+    ``wire_recipe`` resolves -- which the NVFP4 route has no decoder for, so
+    the export gate refuses it without ``--allow-unserveable`` exactly as
+    before v32.  Only a ``routed_moe`` stack is promoted to the span-2 TCQ
+    body the seven-rung load receipt covers, and it passes at the same rung.
+    """
+    from tessera.manifest import BodyKind
+    from tessera.serving.scheme import STRUCTURE_ROUTED_MOE
+
+    grid = GRIDS["E2M1x2"]
+    assert EXPORT.served_recipe(grid, 768).body is BodyKind.WINDOW
+    assert EXPORT.served_recipe(
+        grid, 768, structure=STRUCTURE_ROUTED_MOE).body is BodyKind.TCQ
+    with pytest.raises(SystemExit) as caught:
+        EXPORT.check_recipe(grid, 768, where="dense.probe")
+    assert "no in-forward decoder" in str(caught.value), str(caught.value)
+    stamped: list = []
+    assert EXPORT.check_recipe(grid, 768, where="dense.probe",
+                               allow_unserveable=True, overrides=stamped) is not None
+    assert [(r["grid"], r["q256"]) for r in stamped] == [("E2M1x2", 768)]
+    assert EXPORT.check_recipe(grid, 768, where="stack.probe",
+                               structure=STRUCTURE_ROUTED_MOE) is not None
 
 
 def test_a_structure_no_cell_attests_is_refused_by_name():
@@ -635,6 +690,14 @@ def test_the_packaged_table_still_admits_every_device_qualified_rung():
         for cell in declared:
             grid_name, rung = _routed_cell_plan(cell)
             recipe = wire_recipe(GRIDS[grid_name], rung)
+            # The served body on the NVFP4 route is TCQ at every reader rung
+            # (v32); a sub-cap cell would resolve its recipe to WINDOW, so
+            # resolve what the actual wire carries the way the exporter does
+            # (served_recipe) before handing the gate a recipe.
+            from importlib.util import spec_from_file_location
+            served = EXPORT.served_recipe(GRIDS[grid_name], rung,
+                                          structure=STRUCTURE_ROUTED_MOE)
+            recipe = recipe if recipe.body == served.body else served
             assert refuse_unserveable_wire(
                 grid_name, rung, recipe.body.name, recipe.scale_plane.name,
                 family=route_for_grid(grid_name), span=recipe.span, target="stack.probe",
