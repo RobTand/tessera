@@ -185,6 +185,12 @@ ROUTE_TRACE_SCHEMA = "tessera.route_trace/1"
 IDENTITY_VERSION = 1
 
 #: The record's field names, in report order.  The census reads exactly these.
+#: Since #573 the record also names the executed kernel schedule where the
+#: dispatch names one (``kernel_schedule``): ``None`` is unobserved, a
+#: nonempty string names the schedule (a CUTLASS tag or, on the fused native
+#: routes, the op node itself).  Absence is never a refusal -- every receipt
+#: in the field predates the stamp -- and a present-but-empty or non-string
+#: value is a defect the consumer refuses, never a placeholder to emit.
 ROUTE_FIELDS = (
     "kind",       # "dense" | "moe"
     "policy",     # "<family>:<residency mode>"
@@ -196,6 +202,7 @@ ROUTE_FIELDS = (
     "reason",     # exact refusal reason; None when served
     "decoder",    # from DECODERS: which decoder produced the weight tile
     "platform",   # the device's own token: "sm_121", "gfx1201"; "" if none
+    "kernel_schedule",  # executed schedule where named; None if unobserved
 )
 
 
@@ -352,7 +359,8 @@ def _process_rank():
 
 def emit_route(layer, *, kind: str, policy: str, symbol: str, tile_m: int = 0,
                shape: str = "", contract: str = "", state: str = "served",
-               reason=None, decoder: str = "", platform: "str | None" = None) -> None:
+               reason=None, decoder: str = "", platform: "str | None" = None,
+               kernel_schedule=None) -> None:
     """Record the latest dispatch route on ``layer``.  Never raises.
 
     TWO-PHASE USE.  Write ``state="error"`` with a reason before a launch and
@@ -363,6 +371,15 @@ def emit_route(layer, *, kind: str, policy: str, symbol: str, tile_m: int = 0,
     The record is the LATEST dispatch, which answers "what does this module
     serve on" and not "what did this serve run".  ``TESSERA_ROUTE_TRACE``
     answers the second question by counting; see ``_RouteTrace``.
+
+    ``kernel_schedule`` names the executed schedule where the dispatch names
+    one (tessera#573): a CUTLASS tag where the mainloop has one, the op node
+    itself on the fused native routes.  Unlike ``platform`` -- a process
+    constant stamped centrally -- it differs per dispatch and must come from
+    the call site.  ``None`` (the default) is unobserved and reads back as
+    ``None``; pass nothing when nothing names one, never a placeholder: the
+    consumer treats missing-or-null as unknown and refuses a present-but-empty
+    or non-string value as a defect.
     """
     try:
         values = {
@@ -375,6 +392,13 @@ def emit_route(layer, *, kind: str, policy: str, symbol: str, tile_m: int = 0,
             # that would each have to remember it; the keyword exists for a
             # test that wants to write a record for another platform.
             "platform": record_platform() if platform is None else str(platform),
+            # THE caller's fact.  Stored verbatim -- no coercion, no
+            # placeholder: a non-string or empty value is a defect the
+            # consumer refuses downstream, and coercing it here would hide
+            # the producer bug behind an honest-looking string.  ``None``
+            # stays ``None`` so records written before #573 read as
+            # unobserved rather than as a claim.
+            "kernel_schedule": kernel_schedule,
         }
         for field in ROUTE_FIELDS:
             setattr(layer, f"{ATTR_PREFIX}{field}", values[field])

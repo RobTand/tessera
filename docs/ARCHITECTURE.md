@@ -4335,7 +4335,19 @@ The following are rules rather than measured values:
   wrote byte-identical records to an `sm_121` serve of the same artifact --
   so either could be joined to the `sm_121` cell and reported as agreement.
   A record written before the stamp carries no `platform` and is joined as it
-  always was; absence is not disagreement. The census tool's platform key is
+  always was; absence is not disagreement. Since #573 the **record also
+  names the executed kernel schedule where the dispatch names one**:
+  `telemetry.ROUTE_FIELDS` gains optional `kernel_schedule`, threaded from
+  each dense/MoE `emit_route(...)` call site (unlike `platform`, which is a
+  process constant stamped centrally). `None` is unobserved -- every receipt
+  in the field predates the stamp, so absence can never be a disagreement --
+  and a present value is the nonempty string the dispatch executed (a CUTLASS
+  tag where the mainloop has one; the op node itself on the fused native
+  routes, e.g. `tessera::window_gemm_dense`). A present-but-empty or
+  non-string value is a producer defect the consumer refuses; nothing is
+  emitted with a placeholder. The census join and every `lane_eligibility`
+  cell are unchanged: the schedule rides the observation for a gate to read,
+  it does not move attestation. The census tool's platform key is
   now `backend.platform_of_this_process()` as well: it used to be
   `f"sm_{capability[0]}{capability[1]}"`, which on gfx1201 mints `sm_120` --
   a real NVIDIA platform. The routes' `census_expected(..., platform=...)`

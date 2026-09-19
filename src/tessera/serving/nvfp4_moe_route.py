@@ -812,12 +812,13 @@ def build_tessera_nvfp4_moe_method(scheme: Mapping, prefix: str, mode: str, laye
         def _record(self, layer, x) -> None:
             try:
                 x2 = x.reshape(-1, x.shape[-1])
+                symbol = layer.tessera_backend
                 emit_route(
                     layer, kind="moe", policy=f"{family}:{layer.tessera_mode}",
-                    symbol=layer.tessera_backend, tile_m=0,
+                    symbol=symbol, tile_m=0,
                     shape=route_shape(x2, layer.tessera_rows, layer.tessera_columns),
                     contract=layer.tessera_activation_contract, state="served", reason=None,
-                    decoder=layer.tessera_decoder)
+                    decoder=layer.tessera_decoder, kernel_schedule=symbol)
             except Exception:  # noqa: BLE001 -- telemetry never breaks a request
                 pass
 
