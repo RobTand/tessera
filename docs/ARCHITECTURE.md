@@ -5,6 +5,28 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-18 for the v2 full-engine resource report (tessera#558,
+the PrismaQuant D37 ship-gate leg). `tessera.full_engine_resource_report.v2`
+carries the reservation witness beside the allocated composition:
+`derived.reserved_peak_bytes` (the maximum `memory_reserved_bytes` over the
+resident-after-load startup samples), `derived.reservation_slack_peak_bytes`
+(reserved minus allocated at that same sample) and
+`derived.reservation_witness` naming the source record, with
+`observations.allocator_config` binding the `PYTORCH_CUDA_ALLOC_CONF` the
+reservation is a function of. The worker samples
+`torch.cuda.memory_reserved()` beside `memory_allocated()` at arm and refuses
+a reserved sample below the allocated one; the capture configuration's
+`environment` block must name the allocator policy (including `"unset"`) or
+`prepare` refuses, so `configuration_sha256` moves when it does; a claimed
+witness without the binding is refused at assembly, and an unbound capture
+without a claim assembles with nulls, so v1-era artifacts stay readable. No
+priced term moves: the witness is published beside the seven-term composition
+the consumer recomputes, and every domain gate is unchanged. The scope states
+what the number is not: one load-point sample per rank, not a run-long
+reserved series. Consumer-side acceptance (prismaquant#718) must read v2
+before the gate can enforce the reserved extent. See Sec. 2.4 and
+`docs/design/full_engine_resource_report.md`.
+
 Re-stamped 2026-09-18 for the full-engine derivation layer (tessera#399,
 §2.4): allocation ownership by declared rule (`owner_views`), all six partition
 domains checked, `derived.admission` / `fixed_resources` / `timing_terms`
