@@ -8,7 +8,8 @@ the code that owns it.
 Re-stamped 2026-09-19 for the per-image activation table (tessera#555):
 contract v32 carries the fp4 table under a second image -- the GLM-5.3
 campaign serving image, published to the LAN registry for a digest -- because
-two builds of one operator are two objects and the #719 image gate refuses a
+two builds of one operator are two objects and the RobTand/prismaquant#719
+image gate refuses a
 cell executing under an unattested one. The campaign runtime emits
 byte-identical vectors to the stock table, so the lane's patches do not move
 the quantizer; the platform entry is now a list of one attestation per image
