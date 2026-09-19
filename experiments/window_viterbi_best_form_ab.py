@@ -80,6 +80,11 @@ ARMS = (("front", None), ("best", None), ("best@w32", 32))
 CONFIGS = [
     ("R3", 14, 3, 1, 4096, 192),
     ("R4", 14, 4, 1, 4096, 64),
+    # tessera#483: the window body's shipping case -- BF16_K1@1792, L=14,
+    # R=7, weighted, at the [1792, 1024] shape the L2-budget sweep measured
+    # (PR #386, PB action f1f6d8a9: 0.436 s steady at width 32).  Run with
+    # --configs R7; the R3/R4 rows stay for the harness's own regression.
+    ("R7", 14, 7, 1, 1792, 1024),
 ]
 ENVELOPE_W = 140.0
 
