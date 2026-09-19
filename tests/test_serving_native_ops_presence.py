@@ -25,7 +25,6 @@ from tessera.serving.ext import NativeKernelUnavailableError
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
-BF16_ROUTE = "tessera.serving.bf16_route"
 NATIVE_OPS = "tessera.serving.native_ops"
 
 
@@ -288,23 +287,83 @@ def _import_closure(start: str) -> set[str]:
     return seen
 
 
-def test_the_bf16_route_never_reaches_native_ops():
-    """W16A16 quantizes nothing, so it must not depend on vLLM's quantizers.
+#: The FP8-quantizer entry points: the per-token quantizer the e4m3 family
+#: runs, and the availability check preparation calls.  A BF16 serve on a
+#: build that registers no quantization operator (ROCm) survives only while
+#: the value family reaches neither.
+_FP8_QUANTIZER_SYMBOLS = ("native_fp8_quant", "require_native_fp8_quant")
+
+
+def test_the_bf16_route_never_calls_the_fp8_quantizer():
+    """W16A16 quantizes nothing, so the BF16 path must never CALL vLLM's FP8
+    quantizer or its availability check (tessera#543).
 
     This is what lets the plugin serve ``TESSERA_BF16_K1`` on a vLLM build
     that registers no quantization operators at all -- a ROCm build -- and it
-    is a STATIC property, not a claim about one execution: the walk reads
-    every import in the closure, including the ones inside functions.
+    is a STATIC property, not a claim about one execution.  The previous
+    revision drew the property as an import-closure prohibition, which the
+    packed native window GEMM broke honestly: ``bf16_route`` prepares through
+    ``native_window``, which shares ``window_gemm`` with the e4m3 family, so
+    the closure reaches ``native_ops`` through imports the value family never
+    executes.  What matters is the call, so the test reads calls:
 
-    ``bf16_route`` is reached by name through ``scheme.ROUTES`` rather than by
-    a written import, so nothing here draws the edge INTO it.  That direction
-    is not what is claimed: the claim is about what the BF16 route can reach
-    once entered, and a module cannot execute an import statement that no file
-    in its closure contains.
+    * the two files the BF16 route owns (``bf16_route.py``,
+      ``native_window.py``) never name either symbol;
+    * ``fp8_route.py`` names both -- the positive control that the search
+      sees the edge it claims is absent above;
+    * in the shared ``window_gemm.py``, every live reference to either
+      symbol sits in the ``else`` of a ``X.family == "value"`` branch --
+      the e4m3 half -- so the value family cannot reach it whatever the
+      imports say.
     """
-    closure = _import_closure(BF16_ROUTE)
-    assert BF16_ROUTE in closure, "the walk found nothing"
-    assert NATIVE_OPS not in closure, sorted(closure)
+    owned = {"bf16_route.py": SRC / "tessera" / "serving" / "bf16_route.py",
+             "native_window.py": SRC / "tessera" / "serving" / "native_window.py"}
+    for name, path in owned.items():
+        source = path.read_text(encoding="utf-8")
+        for symbol in _FP8_QUANTIZER_SYMBOLS:
+            assert symbol not in source, (name, symbol)
+    fp8_source = (SRC / "tessera" / "serving" / "fp8_route.py").read_text(encoding="utf-8")
+    for symbol in _FP8_QUANTIZER_SYMBOLS:
+        assert symbol in fp8_source, symbol
+    shared = (SRC / "tessera" / "window_gemm.py").read_text(encoding="utf-8")
+    tree = ast.parse(shared, filename="window_gemm.py")
+    parents: dict[int, ast.AST] = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parents[id(child)] = node
+    references = [node for node in ast.walk(tree)
+                  if (isinstance(node, ast.Name) and node.id in _FP8_QUANTIZER_SYMBOLS)
+                  or (isinstance(node, ast.Attribute) and node.attr in _FP8_QUANTIZER_SYMBOLS)]
+    assert references, "the walk found no quantizer reference to guard"
+    for node in references:
+        assert _only_behind_a_value_guard(node, parents), ast.dump(node)
+
+
+def _is_value_guard(test: ast.AST) -> bool:
+    """Whether ``test`` is an ``X.family == "value"`` comparison."""
+    return (isinstance(test, ast.Compare) and len(test.ops) == 1
+            and isinstance(test.ops[0], ast.Eq)
+            and isinstance(test.left, ast.Attribute) and test.left.attr == "family"
+            and len(test.comparators) == 1
+            and isinstance(test.comparators[0], ast.Constant)
+            and test.comparators[0].value == "value")
+
+
+def _only_behind_a_value_guard(node: ast.AST, parents: dict[int, ast.AST]) -> bool:
+    """Whether ``node`` executes only on the non-value side of a family split.
+
+    Climbs to every enclosing ``if``: the first ``X.family == "value"``
+    guard met must hold the node in its ``else`` half -- a node in the
+    guard's own body is a value-family call no outer context excuses.
+    Guards about anything else are transparent to this question.
+    """
+    current = node
+    while id(current) in parents:
+        parent = parents[id(current)]
+        if isinstance(parent, ast.If) and _is_value_guard(parent.test):
+            return any(current is stmt for stmt in parent.orelse)
+        current = parent
+    return False
 
 
 def test_the_quantized_routes_do_reach_it():

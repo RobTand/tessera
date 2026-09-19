@@ -43,6 +43,7 @@ __all__ = [
     "require_untransformed",
     "unit_half_scales",
     "fusion_fallbacks",
+    "replay_table_bytes",
 ]
 
 
@@ -347,6 +348,33 @@ def _replay_tables(
             table_next[bit, value] = nxt
             table_sub[bit, value] = sub
     return subsets, table_next, table_sub
+
+
+def replay_table_bytes(forest: AnchorForest, code: ConvCode) -> int:
+    """Resident bytes of the memoised trellis tables for one ``(forest, code)``.
+
+    The serving NVFP4 load path builds its select plane through
+    ``lane_planes`` builders that all bottom out in :func:`_replay_tables`
+    (itself via ``encode._subset_table``): one ``[4, points]`` int64 subset
+    table and two ``[2, states]`` int64 transition tables, allocated once per
+    trellis per process by the ``lru_cache`` above and never freed.  The
+    full-engine ledger therefore charges them to the unit whose load prepared
+    them (tessera#557: 2048 + 1024 + 1024 B on the capture's one NVFP4 unit),
+    and the export manifest prices them beside the module's own planes so the
+    dense startup check's exact per-unit equality can close.
+
+    Measured from the builders on ``"cpu"`` rather than restated: the shapes
+    are a function of the trellis alone, never of the device, so this is the
+    same bytes the load pins on CUDA.  The sharing bound travels with the
+    caller: the cache is per process, so per-module pricing is exact exactly
+    when the module's trellises are prepared once in the serve -- one NVFP4
+    unit per trellis, which holds on every attested capture -- and a serve
+    that shares one trellis across modules refuses the check by exact
+    inequality (fail closed) until a shared term exists to price it once.
+    """
+    subsets, table_next, table_sub = _replay_tables(forest, code, "cpu")
+    return sum(table.numel() * table.element_size()
+               for table in (subsets, table_next, table_sub))
 
 
 def replay_body(
