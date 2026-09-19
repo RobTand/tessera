@@ -754,9 +754,17 @@ def _refuse_an_unreadable_rung(route: str, grid: str, q256: int, target: str) ->
     (code rate 1..8 over an 8-bit-native alphabet) gives a CONTINUOUS
     ``q256`` in [256, 2048] -- so the contract says continuous, not a list of
     the two rungs anyone had built.  On ``E2M1x2`` the same grammar caps the
-    top at 896 (rate 7 of arity-2 native 8) and the native decoder cuts off the
-    bottom: it serves the span-2 TCQ body only, and below 896 the recipe writes
-    a WINDOW body that has no served decode.  One point, and it is a real one.
+    top at 896 (rate 7 of arity-2 native 8).  The bottom is the served set,
+    not the grammar: the routed path serves the span-2 TCQ body only, and
+    a rung is published when a served spelling of it has been taken through
+    this load path and measured (contract v32 publishes the whole trellis
+    domain [128, 896] step 128 on that basis -- the E2M1_K2 reader row, not
+    the dense cells, which stay at [896] for lack of a dense-decoder receipt
+    (tessera#560 D2); the research ``wire_recipe`` default below the cap is
+    still the WINDOW body, which the routed path promotes to TCQ at export
+    for ``STRUCTURE_ROUTED_MOE`` only -- see
+    ``experiments.export_tessera_serving.served_recipe`` -- while a dense
+    module keeps WINDOW and is refused there).
     """
     from .contract import reader_accepts, reader_rate_grid
 
@@ -896,10 +904,16 @@ def refuse_unserveable_wire(grid: str, q256: int, body: str, plane: str,
 
     The producer's output range was wider than the consumer's input range, in
     the one direction nothing checked (#41).  ``export.wire_recipe`` writes the
-    WINDOW body over LUT16 for every sub-cap ``E2M1x2`` unit -- the shipping
-    default below q256 896 -- and the contract publishes ``E2M1x2`` as the
+    WINDOW body over LUT16 for every sub-cap ``E2M1x2`` unit -- the research
+    default below the cap -- while the contract published ``E2M1x2`` as the
     single point 896, so a legal low-rate unit encoded fine and was refused at
     LOAD, hours later, on the operator rather than at export on the exporter.
+    (Contract v32 publishes the trellis domain [128, 896] step 128 on the
+    E2M1_K2 reader row, and served ROUTED stacks below the cap carry the
+    span-2 TCQ spelling -- see
+    ``experiments.export_tessera_serving.served_recipe`` -- while a dense
+    module keeps the WINDOW body and stays refused here exactly as before;
+    the shape of the failure this gate exists for is unchanged.)
 
     This is principle 9's one carve-out for a producer-side refusal: a MEASURED
     platform fact -- the pinned runtime has no native route for these bytes --
@@ -1274,6 +1288,14 @@ def refuse_unreachable_lane(lane: str, *, grid: str, q256: int, rate_cap: int,
     before a single shape is read -- before hours of encoding, which is the
     difference between a refusal and a bill.
 
+    The rate set here is derived PER WEIGHT (``root_from_q256``), while
+    ``contract._validate_cell_executes`` derives a cell's set PER CODE (rung x
+    arity / 256) -- the encoder's own spelling (``export.encode_linear_planes``
+    writes ``q256 * grid.arity``).  The two agree on every arity-1 grid, which
+    is every grid a lane exists for today, so the disagreement is latent; the
+    decision core is still one home (``decide_lane_requirements``), and if a
+    lane ever grows on an arity-2 route the derivation to change is this one.
+
     Every bound comes from the packaged contract (``lane_requirements``),
     never from a constant here: the day the kernel grows a 6-byte lane, the
     contract changes and this follows it.  The DECISION is
@@ -1302,6 +1324,8 @@ def refuse_unreachable_lane(lane: str, *, grid: str, q256: int, rate_cap: int,
         "(for the window GEMV: the torch window decode plus _scaled_mm, same bytes, slower). "
         "What is refused here is only the CLAIM that this artifact exercises the lane.")
 
+    # Per-WEIGHT root (see the docstring): agrees with the per-code spelling in
+    # contract._validate_cell_executes on arity 1, which is every lane's grid.
     rates = rate_set(root_from_q256(q256), cap=int(rate_cap))
     facts = {
         "rates": rates, "window_bits": int(window_bits), "body": str(body),
