@@ -433,7 +433,7 @@ def build_tessera_fp8_method(scheme, prefix: str, mode: str):
                     symbol=symbol, tile_m=tile_m,
                     shape=route_shape(x2, layer.tessera_rows, layer.tessera_columns),
                     contract=layer.tessera_activation_contract, state="served", reason=None,
-                    decoder=decoder,
+                    decoder=decoder, kernel_schedule=symbol,
                 )
             except Exception:  # noqa: BLE001 -- telemetry never breaks a request
                 pass

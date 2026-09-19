@@ -271,13 +271,14 @@ def build_tessera_nvfp4_method(scheme, prefix: str, mode: str):
                                           layer.tessera_a4_epilogues)
             ]
             y = outs[0] if len(outs) == 1 else torch.cat(outs, dim=-1)
+            symbol = getattr(layer, "tessera_symbol", GEMM_SYMBOL)
             try:
                 emit_route(
                     layer, kind="dense", policy=f"{TESSERA_NVFP4}:{layer.tessera_mode}",
-                    symbol=getattr(layer, "tessera_symbol", GEMM_SYMBOL), tile_m=0,
+                    symbol=symbol, tile_m=0,
                     shape=route_shape(x2, layer.tessera_rows, layer.tessera_columns),
                     contract=layer.tessera_activation_contract, state="served", reason=None,
-                    decoder=layer.tessera_decoder,
+                    decoder=layer.tessera_decoder, kernel_schedule=symbol,
                 )
             except Exception:  # noqa: BLE001 -- telemetry never breaks a request
                 pass
