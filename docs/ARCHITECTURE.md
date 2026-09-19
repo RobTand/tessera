@@ -23,7 +23,7 @@ without a claim assembles with nulls, so v1-era artifacts stay readable. No
 priced term moves: the witness is published beside the seven-term composition
 the consumer recomputes, and every domain gate is unchanged. The scope states
 what the number is not: one load-point sample per rank, not a run-long
-reserved series. Consumer-side acceptance (PrismaQuant #718) must read v2
+reserved series. Consumer-side acceptance (prismaquant#718) must read v2
 before the gate can enforce the reserved extent. See Sec. 2.4 and
 `docs/design/full_engine_resource_report.md`.
 
