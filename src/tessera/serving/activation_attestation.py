@@ -59,12 +59,15 @@ __all__ = [
     "probe_coverage",
     "nearest_e2m1_codes",
     "validate_activation_quantizers",
+    "validate_attestation",
 ]
 
 #: The block's own schema string.  It moves when the GRAMMAR moves, which is
 #: the same rule ``lane_eligibility.schema`` follows: a reader that cannot read
 #: this grammar must fail closed on the name rather than half-read the table.
-ACTIVATION_QUANTIZER_SCHEMA = "tessera.activation-quantizer.v1"
+#: v2 is the per-image list: one platform entry holds one attestation per
+#: image it publishes (tessera#555), where v1 held exactly one.
+ACTIVATION_QUANTIZER_SCHEMA = "tessera.activation-quantizer.v2"
 
 #: The largest E2M1 magnitude, and the divisor NVFP4's block scale is defined
 #: by (``block_scale = amax / 6``).  Both are the format's, not a tuning knob.
@@ -418,6 +421,15 @@ def validate_activation_quantizers(block: Any, *, platforms: Iterable[str],
     passed in rather than imported, so this module stays importable with no
     torch and with no cycle back into the validator.
 
+    One platform holds a LIST of attestations, one per image it publishes
+    (tessera#555): the fp4 rounding decision belongs to the runtime's compiled
+    operator, and two builds of one operator are two objects, so each image's
+    table travels under its own ``generated`` block.  A consumer admits a cell
+    only under an attestation whose image is the one executing.  Two entries
+    naming one image is refused -- the second would shadow the first -- as is
+    a platform entry that is not a non-empty list: a reader that cannot read
+    this grammar must fail closed on the schema name, never half-read it.
+
     ABSENCE IS NOT A DEFAULT.  A platform or a contract with no entry
     publishes no attestation at all, and a consumer gate must refuse the
     route rather than fall back to its own model of the arithmetic -- which
@@ -439,24 +451,47 @@ def validate_activation_quantizers(block: Any, *, platforms: Iterable[str],
     if not isinstance(entries, Mapping) or not entries:
         raise ValueError(f"{where}.platforms must be a non-empty object")
     known = set(platforms)
-    for platform, entry in entries.items():
+    for platform, attestations in entries.items():
         at = f"{where}.platforms[{platform!r}]"
         if platform not in known:
             raise ValueError(
                 f"{at} attests a platform lane_eligibility does not publish")
-        _keys(entry, at, frozenset({"generated", "contracts"}))
-        _keys(entry["generated"], at + ".generated", _GENERATED_KEYS)
-        require_image(entry["generated"]["image"], at + ".generated.image")
-        for field in sorted(_GENERATED_KEYS - {"image"}):
-            value = entry["generated"][field]
-            if not isinstance(value, str) or not value:
-                raise ValueError(f"{at}.generated.{field} must be a non-empty string")
+        if not isinstance(attestations, list) or not attestations:
+            raise ValueError(
+                f"{at} must be a non-empty list of one attestation per image "
+                f"the platform publishes, got {type(attestations).__name__}")
         served = set(cell_contracts.get(platform, ()))
-        contracts = entry["contracts"]
-        if not isinstance(contracts, Mapping) or not contracts:
-            raise ValueError(f"{at}.contracts must be a non-empty object")
-        for name, contract in contracts.items():
-            _validate_contract(contract, name, served, f"{at}.contracts[{name!r}]")
+        seen_images: set = set()
+        for index, entry in enumerate(attestations):
+            validate_attestation(entry, served, require_image, f"{at}[{index}]")
+            image = entry["generated"]["image"]
+            if image in seen_images:
+                raise ValueError(
+                    f"{at}[{index}].generated.image {image!r} is already "
+                    "attested on this platform; two entries naming one image "
+                    "is a shadowed attestation, not a second one")
+            seen_images.add(image)
+
+
+def validate_attestation(entry: Any, served: set, require_image, at: str) -> None:
+    """One image's ``{generated, contracts}`` attestation, validated alone.
+
+    The unit the generator's own ``emit`` output checks against before it is
+    merged into a platform's list: a single-image block is valid input to the
+    merge exactly when this passes it.
+    """
+    _keys(entry, at, frozenset({"generated", "contracts"}))
+    _keys(entry["generated"], at + ".generated", _GENERATED_KEYS)
+    require_image(entry["generated"]["image"], at + ".generated.image")
+    for field in sorted(_GENERATED_KEYS - {"image"}):
+        value = entry["generated"][field]
+        if not isinstance(value, str) or not value:
+            raise ValueError(f"{at}.generated.{field} must be a non-empty string")
+    contracts = entry["contracts"]
+    if not isinstance(contracts, Mapping) or not contracts:
+        raise ValueError(f"{at}.contracts must be a non-empty object")
+    for name, contract in contracts.items():
+        _validate_contract(contract, name, served, f"{at}.contracts[{name!r}]")
 
 
 def _validate_contract(contract: Any, name: str, served: set, at: str) -> None:

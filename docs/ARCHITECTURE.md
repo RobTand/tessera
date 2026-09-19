@@ -5,6 +5,26 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-19 for the per-image activation table (tessera#555):
+contract v33 carries the fp4 table under a second image -- the GLM-5.3
+campaign serving image, published to the LAN registry for a digest -- because
+two builds of one operator are two objects and the RobTand/prismaquant#719
+image gate refuses a
+cell executing under an unattested one. The campaign runtime emits
+byte-identical vectors to the stock table, so the lane's patches do not move
+the quantizer; the platform entry is now a list of one attestation per image
+(activation-quantizer schema v2). NUMBERING NOTE: drafted as v32; PR #560
+leg 2 landed its v32 first (routed reader widen), so this change is v33.
+
+Re-stamped 2026-09-19 for the manifest resident fix (tessera#557): the
+exporter prices every resident row -- the BF16 `row_scale`, the NVFP4
+`trellis_input_global_scale`, and the memoised trellis tables the NVFP4 load
+pins per trellis -- so the mixed3 capture re-derived over the fixed figures
+closes `worker_startup` (112 of 112 units, 0 unpriced bytes; PB action
+`46163222517b`). Per-module pricing of the shared tables is exact for one
+NVFP4 unit per trellis and refuses by exact inequality otherwise; the shared
+term that prices them once is still owed. The tessera#548 shared rows keep
+every resource term null on the mixed3 captures.
 Re-stamped 2026-09-18 for contract v32's full-domain routed E2M1_K2 rates
 (tessera#506, leg 2). The `TESSERA_E2M1_K2` reader range widens from the
 single rung [896, 896] to the trellis domain [128, 896] step 128, and the two
@@ -1794,9 +1814,10 @@ never-freed rows summing to exactly the routed-owner receipt's own
 `tessera_serving_manifest.json`: the ledger's candidate-owned resident rows per
 unit must **equal** the manifest's `resident_bytes_resident_mode`, and a
 disagreeing unit lists its rows by census owner or site rather than being
-absorbed (on the mixed3 capture two layer-0 units disagree because the exporter
-prices the FP8 per-row scale but not the BF16 `row_scale` nor the NVFP4 global
-scale — an export-side finding, and the domain refuses). `cache_capacity` may
+absorbed (tessera#557: the manifest prices the tile, the per-row scales, the
+NVFP4 A-side scalar and the load-pinned trellis tables, and the mixed3
+capture re-derived over those figures closes; per-module pricing of the
+shared tables is exact for one NVFP4 unit per trellis). `cache_capacity` may
 only close on a **read-only** pass's record: the intrusive resource pass marks
 its own record timing- and admission-ineligible, and that record serves as the
 capacity witness the two passes are compared with instead.
@@ -4385,7 +4406,11 @@ side was right.
 
 **`activation_quantizers` is the answer, and it is generated.** A top-level
 block, keyed by platform, then by activation contract, carrying probe groups
-and the codes and block-scale bytes the kernel emitted for them:
+and the codes and block-scale bytes the kernel emitted for them. One platform
+holds a LIST of attestations, one per image it publishes (tessera#555, schema
+v2): the rounding decision belongs to the runtime's compiled operator, and a
+consumer admits an fp4 cell only under the attestation whose image is the one
+executing.
 
 - The **inputs** are the repository's. `serving/activation_attestation.py`
   constructs them as BF16 bit patterns and `validate_activation_quantizers`
@@ -4429,6 +4454,18 @@ avoided. So the table attests behaviour at exactly representable global and
 block scales, and says nothing about a non-dyadic used scale, which is what a
 served artifact carries. Closing that needs a bulk differential measurement,
 not a contract table.
+
+**What the campaign image answered** (tessera#555, contract v33): the GLM-5.3
+serving image
+`192.168.1.107/prismaquant/glm53-nope-sm121@sha256:6941847351647ca714bbe7115ce6f627131bf78fc7eff86ddb98b11e6d25b46e`
+(vLLM 0.28.1rc1.dev397+gfd4a15126.d20260904, torch 2.13.0+cu130, GB10, driver
+595.91.07) emits all 11 probe vectors byte-identical to the stock table, so
+the campaign's sparse-MLA/PDL/autotune patches -- Python source only -- do not
+move `scaled_fp4_quant`. The image reached the registry by pushing sparklina's
+local `glm53-nope-sm121:w7`; the contract names the registry digest, never the
+tag. Until a GLM fp4 route-class cell names this image in its runtime scope,
+the attestation stays unreferenced -- published so the gate has something true
+to read, not as an admission.
 
 ### 4.5e Per-operator presence, and the two reasons a quantized route refuses
 

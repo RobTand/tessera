@@ -240,6 +240,40 @@ def export_identity(source: Path, options: dict, runtime_image: str, root: Path,
             "runtime_image": runtime_image, "options": options}
 
 
+def dense_resident_bytes_resident_mode(family: str, rows: int, cols: int,
+                                           *, trellis_table_bytes: int = 0) -> int:
+    """What one dense module keeps resident in resident serve mode (tessera#557).
+
+    The manifest's per-module figure, and the number the dense startup check
+    holds the ledger's candidate-owned resident rows to, exactly.  Every term
+    is a tensor the route keeps after load, named so a disagreement names its
+    bytes:
+
+    * ``TESSERA_NVFP4``: the packed nibbles (``rows * cols // 2``) and the
+      group-16 block scales (``rows * cols // 16``), the ONE fp32 A-side
+      scale the route registers beside them (``+ 4``,
+      ``trellis_input_global_scale``), and the memoised trellis tables the
+      select-plane build pins per trellis (``trellis_table_bytes``, measured
+      by ``tessera.decode.replay_table_bytes`` -- 4096 B on the attested
+      capture's one NVFP4 unit).
+    * ``TESSERA_BF16``: the decoded tile (``rows * cols * 2``) and the
+      fp32-per-row scale the route keeps beside it (``rows * 4``, the
+      ``row_scale`` buffer).
+    * ``TESSERA_FP8``: the tile (``rows * cols``) and its fp32-per-row scale
+      (``rows * 4``).
+
+    A family this reader does not know is refused, not priced at zero: an
+    unpriced resident is exactly the defect this exists to prevent.
+    """
+    if family == "TESSERA_NVFP4":
+        return rows * cols // 2 + rows * cols // 16 + 4 + trellis_table_bytes
+    if family == "TESSERA_BF16":
+        return rows * cols * 2 + rows * 4
+    if family == "TESSERA_FP8":
+        return rows * cols + rows * 4
+    raise ValueError(f"no resident-mode accounting for family {family!r}")
+
+
 def summarize_modules(modules: dict, passthrough_bytes: int, checkpoint_bytes: int) -> dict:
     roles = [role for module in modules.values() for role in module["roles"]]
     params = sum(r["rows"] * r["cols"] for r in roles)

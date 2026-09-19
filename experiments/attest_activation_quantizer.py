@@ -38,7 +38,7 @@ from tessera.serving.activation_attestation import (  # noqa: E402
     ACTIVATION_QUANTIZER_SCHEMA,
     PROBES,
     bf16_value,
-    validate_activation_quantizers,
+    validate_attestation,
 )
 
 #: This script's own repository path, which the block publishes so a reader
@@ -199,25 +199,41 @@ def main(argv=None):
         one = sub.add_parser(name)
         one.add_argument("--platform", required=True)
         one.add_argument("--contract", default="e2m1_group16_ue4m3_static")
+        one.add_argument("--image",
+                         help="the attestation this run checks (verify) or writes "
+                              "(emit). Emit requires it: a table without the image "
+                              "it was taken under is an assertion again. Verify "
+                              "defaults to every attestation the platform "
+                              "publishes and passes when this runtime reproduces "
+                              "any one of them.")
         if name == "emit":
-            one.add_argument("--image", required=True,
-                             help="the digest reference of the image this runs in")
             one.add_argument("--out", required=True)
     args = parser.parse_args(argv)
     if args.contract not in OPERATORS:
         parser.error(f"no operator is bound to activation contract {args.contract!r}")
+    if args.command == "emit" and not args.image:
+        parser.error("emit requires --image, the digest reference of the image this runs in")
 
     packaged = _packaged()
     platforms, served = _lane_facts(packaged)
-    image = getattr(args, "image", None)
+    image = args.image
     if image is None:
-        image = packaged["activation_quantizers"]["platforms"][args.platform][
-            "generated"]["image"]
+        platform_entry = packaged["activation_quantizers"]["platforms"][args.platform]
+        if not isinstance(platform_entry, list) or not platform_entry:
+            print(f"the packaged contract's {args.platform} entry is not a list of one "
+                  "attestation per image; this verifier reads the v2 grammar only",
+                  file=sys.stderr)
+            return 2
+        image = platform_entry[0]["generated"]["image"]
     block = _block(args.platform, image, args.contract)
 
     from tessera.serving.contract import require_runtime_image
-    validate_activation_quantizers(block, platforms=platforms, cell_contracts=served,
-                                   require_image=require_runtime_image)
+    validate_attestation(block["platforms"][args.platform],
+                         served.get(args.platform, set()),
+                         require_image=require_runtime_image,
+                         at=(f"emitted {args.platform} attestation"
+                             if args.command == "emit"
+                             else f"fresh {args.platform} table"))
 
     if args.command == "emit":
         Path(args.out).write_text(json.dumps(block, indent=1) + "\n")
@@ -227,21 +243,44 @@ def main(argv=None):
     if published is None:
         print("the packaged contract publishes no activation_quantizers block", file=sys.stderr)
         return 2
-    fresh = block["platforms"][args.platform]["contracts"][args.contract]
-    old = published["platforms"].get(args.platform, {}).get("contracts", {}).get(args.contract)
-    if old is None:
+    entries = published["platforms"].get(args.platform, [])
+    if not isinstance(entries, list):
+        print(f"the packaged contract's {args.platform} entry is not a list of one "
+              "attestation per image; this verifier reads the v2 grammar only",
+              file=sys.stderr)
+        return 2
+    if args.image is not None:
+        entries = [entry for entry in entries
+                   if entry["generated"]["image"] == args.image]
+        if not entries:
+            print(f"the packaged contract attests no {args.platform} table generated on "
+                  f"{args.image}", file=sys.stderr)
+            return 2
+    matched, differing = [], {}
+    for entry in entries:
+        old = entry.get("contracts", {}).get(args.contract)
+        if old is None:
+            continue
+        fresh = block["platforms"][args.platform]["contracts"][args.contract]
+        if old["vectors"] == fresh["vectors"]:
+            matched.append(entry["generated"]["image"])
+        else:
+            differing[entry["generated"]["image"]] = [
+                f["id"] for f, o in zip(fresh["vectors"], old["vectors"]) if f != o]
+    if matched:
+        print(f"{len(block['platforms'][args.platform]['contracts'][args.contract]['vectors'])} "
+              f"vectors reproduce the packaged table generated on {matched[0]} "
+              f"({block['platforms'][args.platform]['generated']['device']})")
+        return 0
+    if not differing:
         print(f"the packaged contract attests nothing for {args.platform}/{args.contract}",
               file=sys.stderr)
         return 2
-    if old["vectors"] != fresh["vectors"]:
-        differing = [f["id"] for f, o in zip(fresh["vectors"], old["vectors"]) if f != o]
-        print("this runtime no longer emits the published table; regenerate it. "
-              f"differing vectors: {differing or 'the vector set itself moved'}",
-              file=sys.stderr)
-        return 1
-    print(f"{len(fresh['vectors'])} vectors reproduce the packaged table on "
-          f"{block['platforms'][args.platform]['generated']['device']}")
-    return 0
+    first, ids = next(iter(differing.items()))
+    print(f"this runtime no longer emits the packaged table generated on {first}; "
+          f"regenerate it. differing vectors: {ids or 'the vector set itself moved'}",
+          file=sys.stderr)
+    return 1
 
 
 if __name__ == "__main__":
