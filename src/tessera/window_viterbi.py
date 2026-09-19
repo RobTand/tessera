@@ -212,10 +212,14 @@ def fused_available() -> bool:
     (``mul.f32``), and the Triton JIT aborts on gfx1201 with ``couldn't
     allocate output register for constraint 'f'`` -- a backend fatal, not a
     Python exception, so a caller cannot catch it and fall back.  Measured on
-    an RX 9070 XT, ROCm 7.2.4 / Triton 3.7.0 (tessera#472).  A HIP build of
-    ``_mul`` is the lane work, tracked in #481; until one exists this reports
+    an RX 9070 XT, ROCm 7.2.4 / Triton 3.7.0 (tessera#472).  A HIP spelling of
+    ``_mul`` now exists (see :func:`_mul_asm`), but it has no gfx1201
+    compile or bit-identity receipt -- wsl-gpu was offline when it was
+    written, so nothing has executed it -- and until one exists this reports
     the honest answer and the reference Viterbi runs, which on that board is
     byte-identical to the wire GB10 ships for a weights-only encode.
+    Removing this branch is gated on that receipt, not on the spelling's
+    existence (tessera#481).
     """
     if not torch.cuda.is_available():
         return False
@@ -228,26 +232,82 @@ def fused_available() -> bool:
     return True
 
 
+#: The contraction-proof multiply, per backend.
+#:
+#: NVPTX first: ``enable_fp_fusion=False`` reaches ptxas as ``--fmad=false``,
+#: which is enough for scalar fp32 but not for the packed ``mul.rn.f32x2`` /
+#: ``add.rn.f32x2`` the backend emits on Blackwell -- measured, the fused path
+#: returned exactly ``fma(d0, d0, e1)`` where the reference returns
+#: ``(d0*d0) + e1``, one ulp apart on a third of the elements at arity 2.  An
+#: inline-asm multiply is opaque, so every add downstream of it keeps its own
+#: rounding, which is the reference's rounding.
+#:
+#: HIP second: the AMDGCN lane multiply ``v_mul_f32``, opaque for the same
+#: reason, under that backend's register class.  UNVERIFIED: no gfx1201 box
+#: has compiled or run this spelling (wsl-gpu offline 2026-09-19), so
+#: :func:`fused_available` still refuses HIP and no default path reaches it.
+#: The spelling is selected at build time so the first gfx1201 verification
+#: run exercises exactly what a flipped guard would ship -- and so a wrong
+#: guess here can only break that deliberate run, never a default encode.
+_MUL_ASM_NVPTX = ("mul.f32 $0, $1, $2;", "=f,f,f")
+_MUL_ASM_HIP = ("v_mul_f32 $0, $1, $2;", "=v,v,v")
+
+
+def _mul_asm() -> "tuple[str, str]":
+    """The ``(template, constraints)`` pair :func:`_build` compiles for ``_mul``.
+
+    One rule, one home: the backend question is answered here, and ``_build``
+    only splices the answer in.  ``torch.version.hip`` is read with
+    ``getattr`` because a non-ROCm torch may not define the attribute at all.
+    """
+    if getattr(torch.version, "hip", None):
+        return _MUL_ASM_HIP
+    return _MUL_ASM_NVPTX
+
+
 def _build():
     import triton
     import triton.language as tl
 
-    @triton.jit
-    def _mul(a, b):
-        """A multiply no compiler may fold into the add that consumes it.
+    # Two spellings of ONE multiply, selected here -- at build time, in plain
+    # Python -- and never inside the traced body: the Triton JIT refuses a
+    # call to an ordinary function from inside a kernel (``RuntimeError:
+    # Unsupported function referenced``), so the backend rule in ``_mul_asm``
+    # picks which literal-baked definition exists, and the kernels below close
+    # over that name exactly as they always did.  On an NVPTX build the HIP
+    # definition below never executes; on a HIP build the NVPTX one never
+    # does.  See ``_mul_asm`` for why the HIP spelling is still unverified.
+    if _mul_asm() == _MUL_ASM_HIP:
+        @triton.jit
+        def _mul(a, b):
+            """A multiply no compiler may fold into the add that consumes it.
 
-        ``enable_fp_fusion=False`` reaches ptxas as ``--fmad=false``, and for
-        *scalar* fp32 that is enough.  It is not enough here: the NVPTX
-        backend packs this arithmetic into Blackwell's ``mul.rn.f32x2`` /
-        ``add.rn.f32x2``, and the packed pair is contracted anyway --
-        measured, the fused path returned exactly ``fma(d0, d0, e1)`` where
-        the reference returns ``(d0*d0) + e1``, one ulp apart on a third of
-        the elements at arity 2.  An inline-asm multiply is opaque, so every
-        add downstream of it keeps its own rounding, which is the
-        reference's rounding.
-        """
-        return tl.inline_asm_elementwise("mul.f32 $0, $1, $2;", "=f,f,f", [a, b],
-                                         dtype=tl.float32, is_pure=True, pack=1)
+            The AMDGCN lane multiply, opaque for the same reason the NVPTX
+            spelling is opaque (see the ``else`` branch): every add downstream
+            keeps its own rounding, which is the reference's rounding.
+            Whether the AMDGPU backend packs (and contracts) the same way
+            NVPTX does is not known here -- candidate awaiting its gfx1201
+            receipt (tessera#481).
+            """
+            return tl.inline_asm_elementwise("v_mul_f32 $0, $1, $2;", "=v,v,v", [a, b],
+                                             dtype=tl.float32, is_pure=True, pack=1)
+    else:
+        @triton.jit
+        def _mul(a, b):
+            """A multiply no compiler may fold into the add that consumes it.
+
+            ``enable_fp_fusion=False`` reaches ptxas as ``--fmad=false``, and for
+            *scalar* fp32 that is enough.  It is not enough here: the NVPTX
+            backend packs this arithmetic into Blackwell's ``mul.rn.f32x2`` /
+            ``add.rn.f32x2``, and the packed pair is contracted anyway --
+            measured, the fused path returned exactly ``fma(d0, d0, e1)`` where
+            the reference returns ``(d0*d0) + e1``, one ulp apart on a third of
+            the elements at arity 2.  An inline-asm multiply is opaque, so every
+            add downstream of it keeps its own rounding, which is the
+            reference's rounding.
+            """
+            return tl.inline_asm_elementwise("mul.f32 $0, $1, $2;", "=f,f,f", [a, b],
+                                             dtype=tl.float32, is_pure=True, pack=1)
 
     @triton.jit
     def _init(front, ctl, SIZE: tl.constexpr, BS: tl.constexpr, BC: tl.constexpr):

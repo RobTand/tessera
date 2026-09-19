@@ -5,6 +5,11 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-19 for the HIP `_mul` spelling (tessera#481,
+§3.1): `window_viterbi._mul_asm` selects the AMDGCN spelling on a ROCm build,
+still unverified -- wsl-gpu offline -- so `fused_available()` keeps refusing
+HIP and no default path moves.
+
 Re-stamped 2026-09-18 for the full-engine derivation layer (tessera#399,
 §2.4): allocation ownership by declared rule (`owner_views`), all six partition
 domains checked, `derived.admission` / `fixed_resources` / `timing_terms`
@@ -2281,7 +2286,14 @@ encoder: see `docs/measurements/tessera-gfx1201-hessian-divergence-2026-09-13.md
 A HIP `_mul` is lane work under #481, and porting it requires re-running the
 fused-vs-reference bit-identity check *on* gfx1201 rather than inheriting the
 GB10 result. (#460 minted contract v24's AMD cells and closed with #474; the
-kernel port was never part of it, so it carries its own issue.)
+kernel port was never part of it, so it carries its own issue.) Status
+2026-09-19: the HIP spelling exists -- `window_viterbi._mul_asm` answers
+`("v_mul_f32 $0, $1, $2;", "=v,v,v")` on a ROCm build and the NVPTX pair
+otherwise, selected at build time -- but wsl-gpu was offline (stale offer,
+`DESKTOP-P5UOGNJ invalid timestamp`), so no gfx1201 compile or identity
+receipt exists and `fused_available()` still refuses HIP. The guard's removal
+is gated on that receipt, not on the spelling; a wrong guess in the spelling
+can only break the deliberate verification run, never a default encode.
 
 ### 3.2 Exact campaign unit intake (explicit, not a serving qualification)
 
