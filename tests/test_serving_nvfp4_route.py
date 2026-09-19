@@ -395,10 +395,19 @@ def test_route_record_names_the_family_mode_symbol_and_decoder(monkeypatch):
 
 def _create_layer(monkeypatch, mode):
     """The real method and the real ``create_weights``, no forward: what the
-    load hook is driven through for the A-side scale gate below."""
+    load hook is driven through for the A-side scale gate below.
+
+    No runtime op registration here (tessera#561): the scale gate refuses
+    before the container parse, and the op attestation
+    (``require_native_fp4_quant``) runs after it, so neither is reachable
+    from this test -- its ``_no_parse`` guard is the proof, and
+    ``create_weights`` touches no operator.  Registering the real
+    ``scaled_fp4_quant`` needs vLLM installed and turned the CPU-pool
+    population red; the executed-A-side proofs that do need the operator
+    live in ``_drive`` under the CUDA gate.
+    """
     serving_lane.reset_for_tests()
     monkeypatch.setenv(TESSERA_MODE_ENV, mode)
-    _register_runtime_fp4_op()
     _install_vllm_stubs(monkeypatch)
     method = build_tessera_method(_scheme(), "test.layer")
     layer = _Layer()

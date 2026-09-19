@@ -940,7 +940,7 @@ def resolve_serving_config(path, runtime_image, *, tensor_parallel):
             or args["tensor_parallel_size"] not in (1, 2)
             or args["tensor_parallel_size"] != tensor_parallel
             or args["kernel_config"] != {"moe_backend": "auto"}
-            or document["environment"] != {"TESSERA_SERVE_MODE": MODE_RESIDENT}
+            or document["environment"].get("TESSERA_SERVE_MODE") != MODE_RESIDENT
             or os.environ.get("TESSERA_SERVE_MODE") != MODE_RESIDENT):
         raise ValueError(
             f"serving configuration is outside resident eager BF16 TP{tensor_parallel}/EP1 scope")

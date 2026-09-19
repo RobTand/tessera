@@ -1,28 +1,26 @@
-"""The Tessera NVFP4 W4A4 dense route: an E2M1-based wire served as the NVFP4 tile.
+"""The Tessera NVFP4 W4A4 dense route: an E2M1-based wire served natively.
 
 WHAT IT SERVES.  Tessera's 4.0-bpp wire -- the E2M1x2 span-2 coset trellis over
-a 16-entry LUT scale plane -- decoded to the stock NVFP4 tile (nibble-packed
-E2M1 codes, group-16 ue4m3 block scales, one global) and multiplied by
-``torch._scaled_mm``, the same W4A4 mainloop a compressed-tensors NVFP4
-checkpoint runs.  The decoded tile is byte-identical to what
-``tessera.stock.materialize_stock`` writes for such a checkpoint (the stock
-lane vanilla vLLM serves at 4.5 bpw resident), so the numbers this route
-produces are the stock lane's numbers; what changes is the bytes on disk (the
-wire's 4.0) and, in ``streamed`` mode, the bytes resident.
+a 16-entry LUT scale plane -- served by the fused span-2 kernel
+(``tessera.kernel_a4.a4_span2_gemm``), which decodes the compact loader's
+packed planes in-kernel and multiplies by the A-side activations quantised
+under the checkpoint's static global scale, folding each role's epilogue
+scalar into the GEMM.  No materialised stock tile exists on this path at any
+point: the retired ``(torch._scaled_mm, native_span2)`` launch stays in the
+table's default view only because the shipped dense cells' ``executes`` name
+the launches their receipts ran.
 
 FUSED MODULES.  vLLM merges q/k/v and gate/up.  A module's blob is a
 ``tessera.fused`` container of the per-role units in stacking order; each role
-is decoded into its row slice of the tile, and the roles' LUT tables are moved
-onto one shared global by an exact binade shift at load
+is prepared into a native A4 unit holding its packed planes, and the roles'
+LUT tables are moved onto one shared global by an exact binade shift at load
 (``tessera.fused.shared_lut_global``; refused when not exact).  The epilogue
-stays one scalar.
+stays one scalar per role.
 
-RESIDENCY.  ``resident`` decodes once at load and holds the tile (4.5 bpw: the
-stock lane's footprint, the wire's bytes on disk only); ``streamed`` holds the
-prepared planes (the wire's own bytes) and decodes every forward into a
-transient tile the op owns.  The scale plane is decoded WITH the tile in both
-modes -- a streamed module that kept a blocked scale plane resident would hold
-4.5 bpw and call it 4.0.
+RESIDENCY.  The load path prepares the same packed A4 units in both modes --
+no branch on the mode survives there -- and the mode rides the route record's
+policy stamp alone.  The retired decode-once/streamed-decode paragraphs
+described the materialising reader this lane replaced.
 
 THE ACTIVATION SIDE IS PRICED.  The stock arm of the same encoder measured KL
 0.640 against an image-matched BF16 teacher on Qwen3-0.6B
@@ -36,25 +34,52 @@ from typing import Optional
 
 import torch
 
-from .ext import substitutes_when_unavailable
-from .lane import MODE_RESIDENT, MODE_STREAMED, MODES
+from .lane import MODES
 import dataclasses
 
 from ..kernel_a4 import a4_quantize_activation, a4_span2_gemm
-from .scheme import (A4_DENSE_GEMM_SYMBOL, GROUP_SIZE, ROUTES, TESSERA_NVFP4,
-                     parse_compact_blob_for_scheme, parse_tessera_blob_for_scheme,
-                     validate_tessera_scheme)
-from .sharding import plan_shard_for_layer, require_axis_supported, shard_parsed_roles
+from .scheme import (A4_DENSE_GEMM_SYMBOL, GROUP_SIZE, ROUTES, STRUCTURE_DENSE,
+                     TESSERA_NVFP4, launch_pairs,
+                     parse_compact_blob_for_scheme, validate_tessera_scheme)
+from .sharding import plan_shard_for_layer, require_axis_supported
 from .telemetry import DECODER_NATIVE_SPAN2_GEMM, emit_route, route_shape
 
 __all__ = [
     "ACTIVATION_CONTRACT",
     "blocked_scales",
     "build_tessera_nvfp4_method",
+    "census_expected",
 ]
 
 ACTIVATION_CONTRACT = ROUTES[TESSERA_NVFP4]["activation_contract"]
 GEMM_SYMBOL = ROUTES[TESSERA_NVFP4]["gemm_symbol"]
+
+
+def census_expected(*, compiled: bool = False, platform=None) -> dict:
+    """The ``(symbol, decoder)`` pairs an NVFP4 dense module may report, by regime.
+
+    Owned here -- the dispatch lives here -- and read by the route census, so
+    a new path updates the expectation where the path was added rather than in
+    a second spelling in the tool (the ownership rule ``fp8_gemv`` and
+    ``bf16_route`` already follow).  ``apply`` stamps the fused pair
+    ``(a4_span2_gemm, native_span2_gemm)`` on every forward at every M in both
+    residencies; the retired ``(torch._scaled_mm, native_span2)`` pair stays in
+    the table's default view because the shipped dense cells' ``executes``
+    still name the launches their receipts ran, not because this dispatch can
+    still make it.  ``compiled`` changes nothing: one fused launch has nothing
+    to combine into an ``a+b`` symbol, and the stamp is unconditional on
+    tracing.  Per ``(platform, family)`` (#457): the dense payload family is
+    the route's own ``TESSERA_E2M1_K2``.
+    """
+    del compiled  # documented above: one launch has nothing to combine
+    decode = launch_pairs(TESSERA_NVFP4, structure=STRUCTURE_DENSE,
+                          regime="decode", include_experimental=True)
+    batch = launch_pairs(TESSERA_NVFP4, structure=STRUCTURE_DENSE,
+                         regime="batch", include_experimental=True)
+    from .census import platform_expectation
+
+    return platform_expectation("TESSERA_E2M1_K2", platform,
+                                {"decode": decode, "batch": batch})
 
 #: cuBLAS block-scaling tile.  Not tunable -- it is the hardware's layout.
 _SF_ROW_TILE = 128
