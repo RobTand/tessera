@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-19T14:00:17Z",
+ "generated": "2026-09-19T15:13:45Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -2380,7 +2380,7 @@
     "title": "Repin Tessera to 4c384e60 (contract v29) so Tessera rungs survive TP2"
    },
    "634": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Three GB10 tests fail because of test order or live host state, not code"
    },
    "635": {
@@ -2420,7 +2420,7 @@
     "title": "Census cache build: locate and size wires, hash them at export intake"
    },
    "643": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Joint export lane and materialization hash the same wire blob two or three times"
    },
    "644": {
@@ -2588,11 +2588,11 @@
     "title": "docs: D37 claims the v2 table's re-emission is mechanical; it has not been since 2026-09-13 (P3)"
    },
    "681": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "pq309 native-MoE driver cannot reach the GLM TP>1 preparation it is meant to exercise (P2)"
    },
    "682": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "_qualified_quality_members unpickles the whole production cache twice per panel, unprofiled (P3)"
    },
    "683": {
@@ -2724,7 +2724,7 @@
     "title": "--residency stage is accepted by submit-allocation/export/aqua but only the joint entry point reads a stage (review of #708)"
    },
    "711": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Joint run/prepare anchor loader spends ~60 NFS LOOKUPs per cell on per-cell realpath: ~1 h single-threaded before any GPU work"
    },
    "712": {
@@ -2772,7 +2772,7 @@
     "title": "Panel execution-scope record says the driver is 'left for a gate that can establish it'; Rob ruled a driver change is a no-op"
    },
    "722": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "tessera_joint_aura run intake: a serial 36k-unit render-origin walk over NFS runs 20\u2013100 min before any GPU work"
    },
    "723": {
@@ -2944,7 +2944,7 @@
     "title": "Bump the tessera serving-runtime pin to the post-#560 lineage contract"
    },
    "761": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Joint-AURA perf primitives: zero-copy tensor digest, bound reader pair, sealed-prefetch derivation, boundary partition quanta (#725/#737/#738)"
    },
    "762": {
@@ -2968,15 +2968,15 @@
     "title": "Bump the Tessera serving-runtime pin to the post-#560 lineage (contract v32) \u2014 GATED, do not merge before the tessera PRs land"
    },
    "767": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Correctness/env pentad: #717 #578 #634 #681 (+ #753 diagnosed)"
    },
    "768": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Name PB-publishable head-walk verification quanta (#765); pin the #688 whole-roster gap"
    },
    "769": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "I/O salvage: resolve-once head walk (#711, #722 part), single-read bound preparations (#682), single-hash export wires (#643)"
    },
    "77": {
@@ -2988,19 +2988,19 @@
     "title": "Close PQ #560 defect 3: a v1 measured-runtime table prices and budgets nothing"
    },
    "771": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "A dev mode that suspends provenance gating for rapid iteration: the seal returns at the artifact gate, not the run gate"
    },
    "772": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Name PB-publishable head-walk verification quanta (#765 design slice)"
    },
    "773": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "ARCHITECTURE.md names pq-cpu312-tessera-4c384e60 git-commit installs; pin moved and pq-cpu312 has no recorded commit"
    },
    "774": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Land a local pre-submit check for the tessera dev-install provenance pbtest gates on"
    },
    "775": {
@@ -3008,11 +3008,11 @@
     "title": "Frozen native panels record no served-quantizer backend, so a reference_qdq cannot be re-derived"
    },
    "776": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "PRISMAQUANT_DEV_MODE: provenance gates stamp instead of walling (#771)"
    },
    "777": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Remainder 722/753/717/578: #717 probe run, #774 pre-submit guard (no #722/#578 code)"
    },
    "778": {
@@ -3044,24 +3044,72 @@
     "title": "Distributed campaign: per-layer cost joiner (\u00a77)"
    },
    "784": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Build the joint-layer quanta producer (distributed campaign \u00a74)"
    },
    "785": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Joint-layer quanta producer for the distributed campaign"
    },
    "786": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Docs: current-pin interpreter roster (#773) + panel served-quantizer decision record (#775)"
    },
    "787": {
     "state": "OPEN",
     "title": "Producer (#785) vs merged joiner (#783): four wire disagreements block a real-campaign join"
    },
+   "788": {
+    "state": "CLOSED",
+    "title": "Per-quantum runtime: stage A adjoint capture + stage B layer quantum (#778)"
+   },
+   "789": {
+    "state": "CLOSED",
+    "title": "Stage A carries the dev-mode env (#778 follow-up)"
+   },
    "79": {
     "state": "CLOSED",
     "title": "PrismaQuant 0.11.0: learned codebooks in production, platform-agnostic anchored AURA"
+   },
+   "790": {
+    "state": "CLOSED",
+    "title": "Stage A of the distributed campaign must carry the dev-mode env"
+   },
+   "791": {
+    "state": "CLOSED",
+    "title": "The dispatcher's stage-A argv omitted the plan/prepared args the capture CLI requires"
+   },
+   "792": {
+    "state": "CLOSED",
+    "title": "Stage A's argv carries the plan and prepared digests the capture CLI requires (#791)"
+   },
+   "793": {
+    "state": "CLOSED",
+    "title": "The dispatcher never republished a failed stage A: state recorded the attempt as if it were the outcome"
+   },
+   "794": {
+    "state": "CLOSED",
+    "title": "A stage A that did not terminally execute is republished (#793)"
+   },
+   "795": {
+    "state": "CLOSED",
+    "title": "Distributed rows must run inside the qualified campaign container"
+   },
+   "796": {
+    "state": "CLOSED",
+    "title": "Distributed rows run inside the qualified campaign container (#795)"
+   },
+   "797": {
+    "state": "CLOSED",
+    "title": "Dispatcher rows never demanded a GPU; require_cuda_hot_path refused stage A"
+   },
+   "798": {
+    "state": "CLOSED",
+    "title": "Dispatcher rows demand the GPU envelope (#797)"
+   },
+   "799": {
+    "state": "OPEN",
+    "title": "Stage A payload passed the wrong --output-root and the receipt had no default"
    },
    "8": {
     "state": "CLOSED",
@@ -3070,6 +3118,10 @@
    "80": {
     "state": "CLOSED",
     "title": "Fix hybrid linear-attention masking in layer streaming for Qwen3.5/3.6 on transformers >= 5.15"
+   },
+   "800": {
+    "state": "OPEN",
+    "title": "Stage A writes into the plan's sealed output_root (#799)"
    },
    "81": {
     "state": "CLOSED",
@@ -5202,27 +5254,27 @@
     "title": "A .tessera unit can be WRITTEN at a width nothing can serve; the refusal is a bare RuntimeError at load, not a GrammarError at write"
    },
    "560": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "tessera#506 leg 2: full-domain routed rates (reader widen + contract v32)"
    },
    "561": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "test_serving_nvfp4_route A-side gate tests fail where vllm is not installed (P2)"
    },
    "562": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "tessera#560 blocking: revert unreceipted dense widen + scope served TCQ to routed (D2/D2b)"
    },
    "563": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "tessera#560 fix-forward: D1 D3 D4-D9 D11 (docs/changelog/comments + exporter code), post-D2 scoped"
    },
    "564": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Read fused NVFP4 launches from owning routes; unblock #545 census (#545 #548)"
    },
    "565": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "v2 full-engine report: reserved peak + slack + allocator-config binding (#558, D37 leg)"
    },
    "566": {
@@ -5246,7 +5298,7 @@
     "title": "S6b scale groups are cut from the FLATTENED tensor, so a group straddles a row boundary whenever cols % 32"
    },
    "570": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "tessera#561: drive the A-side scale gate without registering the runtime fp4 op"
    },
    "571": {
@@ -5260,6 +5312,10 @@
    "573": {
     "state": "OPEN",
     "title": "Emit kernel_schedule in emit_route records so observed receipt routes name the executed schedule"
+   },
+   "574": {
+    "state": "OPEN",
+    "title": "Emit kernel_schedule in emit_route records (#573)"
    },
    "58": {
     "state": "CLOSED",
