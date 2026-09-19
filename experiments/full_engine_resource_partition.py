@@ -23,6 +23,16 @@ from experiments.full_engine_ownership import (
 
 PARTITION_SCHEMA = "tessera.full_engine_resource_partition.v1"
 
+#: The raw ledger versions this partition reads. v2 is the tessera#548 boundary
+#: ledger: the same allocation row shape, plus a non-null ownership observation
+#: and one boundary row per ``(unit_id, invocation, kind)``. The partition
+#: arithmetic is identical on both -- what v2 adds is read through
+#: ``observations.owner_views``, which a v1 ledger carries as null -- so a
+#: version this module does not name is still refused rather than assumed
+#: compatible.
+SUPPORTED_LEDGER_SCHEMAS = ("tessera.full_engine_raw_resource_ledger.v1",
+                            "tessera.full_engine_raw_resource_ledger.v2")
+
 # The six domains are the six qualification gaps the raw ledger names, stated as
 # what each must establish rather than as what is absent.
 DOMAIN_NAMES = ("worker_startup", "history_join", "external_closure",
@@ -151,6 +161,44 @@ def worker_startup_closed(ledger):
                                            + record["workspace_resident_bytes"]):
         return False
     return _owned_resident_bytes(ledger, "fixed") == record["receipt_resident_bytes"]
+
+
+def reservation_witness(records):
+    """The reserved-extent witness over the startup samples, or ``None``.
+
+    Returns ``(reserved_peak_bytes, reservation_slack_peak_bytes, source)``
+    where the peak is the maximum ``memory_reserved_bytes`` over the records
+    that sample it, the slack is the reserved peak minus the allocated sample
+    at that same record, and the source names the record it came from. ``None``
+    when no record samples the reserved extent: older captures carry no such
+    field, and an unwitnessed peak stays null rather than defaulted.
+
+    This computes from the records and nothing else. Whether the witness may
+    be published -- the bound ``PYTORCH_CUDA_ALLOC_CONF`` it transfers under
+    -- is the assembler's question, not this one's: a claimed witness without
+    that binding is refused where the envelope is built.
+    """
+    claiming = [record for record in (records or [])
+                if isinstance(record, dict) and "memory_reserved_bytes" in record]
+    if not claiming:
+        return None
+    for record in claiming:
+        for name in ("memory_reserved_bytes", "memory_allocated_bytes"):
+            value = record.get(name)
+            if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+                raise ValueError(
+                    f"startup record carries no non-negative integer {name}: "
+                    f"{record.get('rank')!r}")
+    peak = max(claiming, key=lambda record: record["memory_reserved_bytes"])
+    reserved = peak["memory_reserved_bytes"]
+    slack = reserved - peak["memory_allocated_bytes"]
+    if slack < 0:
+        raise ValueError(
+            f"startup record of rank {peak.get('rank')!r} carries reserved bytes "
+            f"{reserved} below its allocated sample {peak['memory_allocated_bytes']}: "
+            "a negative reservation slack contradicts the allocator")
+    return (reserved, slack, {"rank": peak.get("rank"),
+                              "memory_allocated_bytes": peak["memory_allocated_bytes"]})
 
 
 def cache_capacity_closed(ledger):
@@ -810,7 +858,7 @@ def derive_partition(ledger):
     :func:`assemble_full_engine_resource_report` refuses a declared coordinate
     that disagrees rather than stamping this one over it.
     """
-    if ledger["schema"] != "tessera.full_engine_raw_resource_ledger.v1":
+    if ledger["schema"] not in SUPPORTED_LEDGER_SCHEMAS:
         raise ValueError("unsupported raw ledger schema")
     domains = qualify_domains(ledger)
     classified, unclassified, non_step = classify_allocations(ledger)
@@ -1039,14 +1087,15 @@ def compose_scalar_budget(partition):
     return _compose(terms)
 
 
-#: v2 (tessera#399): ``derived`` gains ``admission`` (the derived verdict),
-#: ``fixed_resources`` (the terms as a fixed-resource statement) and
-#: ``timing_terms`` (from a same-run timing observation, else null);
 #: ``partition`` gains ``observer_allocations`` and its scope
 #: ``observer_allocation_count``; ``observations.owner_views`` is the
 #: ownership derivation (``full_engine_ownership``), ``runtime_provenance_
 #: relation`` the recomputable identity binding and ``timing_captures`` the
-#: timing observation. The observation field set is unchanged from v1.
+#: timing observation. The observation field set is otherwise unchanged from v1.
+#: v2 (tessera#558): ``derived`` further gains ``reserved_peak_bytes``,
+#: ``reservation_slack_peak_bytes`` and ``reservation_witness``, and
+#: ``observations`` gains ``allocator_config`` (the bound
+#: PYTORCH_CUDA_ALLOC_CONF).
 REPORT_SCHEMA = "tessera.full_engine_resource_report.v2"
 
 # The seven envelope members, in the frozen order.
@@ -1099,7 +1148,7 @@ def _split_checkpoint_census(checkpoints):
 
 
 def assemble_full_engine_resource_report(ledger, *, reference, workload,
-                                         execution, artifacts=()):
+                                         execution, artifacts=(), allocator_config=None):
     """Assemble the frozen seven-member report envelope for one capture.
 
     ``identity``, ``observations``, ``partition`` and ``derived`` are read or
@@ -1112,6 +1161,13 @@ def assemble_full_engine_resource_report(ledger, *, reference, workload,
     number in it from ``partition`` and ``observations`` and admits nothing on
     disagreement, so nothing here is authoritative because the producer said
     it.
+
+    ``allocator_config`` is the bound PYTORCH_CUDA_ALLOC_CONF the capture's
+    configuration document carries ("unset" when the worker ran without one).
+    The reserved extent is a function of the allocation sequence and the
+    allocator's segment policy, so a reservation witness transfers to a serve
+    only under an equal value: a claimed witness without this binding is
+    refused, and an unbound capture without a witness claim carries nulls.
     """
     declared = {"reference": reference, "workload": workload, "execution": execution}
     for name in _DECLARED_MEMBERS:
@@ -1159,6 +1215,32 @@ def assemble_full_engine_resource_report(ledger, *, reference, workload,
     artifacts = list(artifacts)
     if census is not None:
         artifacts.append(census)
+    # The reservation witness transfers to a serve only under the allocator
+    # segment policy it was measured under. A claimed witness without the
+    # bound value is refused; an unbound capture without a claim carries
+    # nulls, so v1-era artifacts stay readable.
+    if allocator_config is not None and (type(allocator_config) is not str
+                                         or not allocator_config):
+        raise ValueError(
+            "allocator_config must be the bound PYTORCH_CUDA_ALLOC_CONF string, "
+            "including \"unset\", or absent")
+    witnessed = reservation_witness(ledger.get("worker_startup_records"))
+    if witnessed is not None and allocator_config is None:
+        raise ValueError(
+            "report claims a reservation witness without the bound allocator "
+            "config: PYTORCH_CUDA_ALLOC_CONF is required beside reserved_peak_bytes")
+    if witnessed is None:
+        reserved_peak_bytes = reservation_slack_peak_bytes = reservation_witness_record = None
+    else:
+        reserved_peak_bytes, reservation_slack_peak_bytes, source = witnessed
+        reservation_witness_record = {
+            "rank": source["rank"],
+            "memory_allocated_bytes": source["memory_allocated_bytes"],
+            "scope": ("maximum reserved extent over the resident-after-load startup "
+                      "samples at arm; no run-long reserved series is observed, so this "
+                      "witnesses the load point, not the run peak, and it transfers to "
+                      "a serve only under the bound PYTORCH_CUDA_ALLOC_CONF"),
+        }
     report = {
         "schema": REPORT_SCHEMA,
         "identity": {
@@ -1200,6 +1282,10 @@ def assemble_full_engine_resource_report(ledger, *, reference, workload,
             "timing_captures": ledger.get("timing_captures"),
             "owner_views": ledger.get("owner_views"),
             "observer_qualification": ledger.get("observer_qualification"),
+            # The bound allocator segment policy the reservation witness
+            # transfers under. Named and null, never absent, like every other
+            # observation member: "unbound" and "not carried" are two answers.
+            "allocator_config": allocator_config,
             "artifacts": artifacts,
         },
         "partition": partition,
@@ -1217,6 +1303,16 @@ def assemble_full_engine_resource_report(ledger, *, reference, workload,
             "non_step_transient_peak_bytes": partition["non_step_transient_peak_bytes"],
             "non_step_transient_peak_scope": partition["non_step_transient_peak_scope"],
             "placement_obligation": "max(scalar_budget_bytes, non_step_transient_peak_bytes)",
+            # The D37 ship-gate witness: the reserved device extent beside the
+            # allocated composition, with the slack between them. A reader who
+            # takes the budget alone takes a number the allocator's own pool
+            # can exceed; the gate enforces the reserved peak instead. Null
+            # until a bound capture witnesses it; the consumer recomputes both
+            # from observations.worker_startup_records and refuses on
+            # disagreement, like every other number in this member.
+            "reserved_peak_bytes": reserved_peak_bytes,
+            "reservation_slack_peak_bytes": reservation_slack_peak_bytes,
+            "reservation_witness": reservation_witness_record,
             "scope": partition["scope"],
             # v2: the verdict, the fixed-resource statement and the timing
             # terms, each derived from the members above and recomputable.

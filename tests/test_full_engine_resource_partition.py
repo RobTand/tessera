@@ -129,9 +129,20 @@ def test_the_composition_takes_maxima_over_candidates_and_sums_resident(ledger):
 
 
 def test_the_partition_refuses_a_foreign_schema(ledger):
-    ledger["schema"] = "tessera.full_engine_raw_resource_ledger.v2"
+    # v2 became a version this module reads (tessera#548), so the refusal is
+    # demonstrated on a version nothing here names. A ledger version is not
+    # assumed forward-compatible because its number is larger.
+    ledger["schema"] = "tessera.full_engine_raw_resource_ledger.v3"
     with pytest.raises(ValueError, match="unsupported raw ledger schema"):
         derive_partition(ledger)
+
+
+def test_the_partition_reads_the_v2_boundary_ledger(ledger):
+    # tessera#548: the v2 ledger is the v1 rows plus the ownership observation
+    # and the boundary row rule. The partition arithmetic is the same on both,
+    # so accepting v2 is what lets a report carry a non-null owner_views at all.
+    ledger["schema"] = "tessera.full_engine_raw_resource_ledger.v2"
+    assert derive_partition(ledger)["schema"] == "tessera.full_engine_resource_partition.v1"
 
 
 def test_the_scope_stays_tp1_single_device(ledger):
@@ -963,7 +974,9 @@ def test_the_report_is_v2_and_derived_carries_the_verdict_terms_and_timing(ledge
 
 def test_the_observation_field_set_is_unchanged_from_v1(ledger):
     # v2 adds derived members and a partition member; the observations a
-    # consumer reads are the same set, so nothing it already parses moved.
+    # consumer reads gain exactly one key, the bound allocator policy
+    # (#558), so nothing it already parses moved -- additive, and absent
+    # (None) on v1-era captures.
     report = assemble_full_engine_resource_report(ledger, **_members())
     assert report["schema"] == "tessera.full_engine_resource_report.v2"
     assert set(report["observations"]) == {
@@ -972,7 +985,8 @@ def test_the_observation_field_set_is_unchanged_from_v1(ledger):
         "torch_observed_live_peak_bytes", "torch_observed_live_peak_scope",
         "step_intervals", "step_coverage", "issues", "worker_startup_records",
         "runtime_provenance_relation", "kv_observations", "timing_captures",
-        "owner_views", "observer_qualification", "artifacts"}
+        "owner_views", "observer_qualification", "artifacts",
+        "allocator_config"}
 
 
 def test_the_worker_startup_reason_names_the_bytes_the_manifest_does_not_price():

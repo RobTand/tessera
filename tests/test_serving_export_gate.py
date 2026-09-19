@@ -312,16 +312,17 @@ def test_the_route_vocabulary_and_the_published_set_disagree_on_purpose():
     whether to make them agree.  They are not two statements of one fact, they
     are the same two claims ``tensor_parallel`` already separates:
     ``max_world_size`` (attested) beside ``loader_axes`` (what the loader
-    does).  The NVFP4 decoder is arity-parametric all the way down to the
-    kernel: ``arity`` is a runtime scalar into the span-2 decode (the retired
-    ``tessera_nvfp4_decode_span2_out``, now ``tessera.kernel_a4``'s, which
-    admits ``1..4`` and derives ``steps = rows / arity``), its value base is
-    ``(label * points + point) * arity`` and it emits one row per ``a`` in
-    ``0..arity``; on the host side ``lane_planes.build_anchor_values`` and
-    ``build_subset_values`` read the same number off the forest's grid.  So
-    ``("E2M1", "E2M1x2")`` is a true statement about what the route can hold,
-    and it is a statement about the compiled decoder, not about a Python
-    helper that happens to be general.
+    does).  The serving span-2 decode is arity-2 only: ``tessera.kernel_a4``
+    refuses any other arity at ``build_code_nibbles`` (``kernel_a4.py:201``),
+    ``A4UnitStack._check`` (``:269``) and ``A4Unit._check`` (``:375``), and the
+    dense serving path runs through it (``nvfp4_route.py:43,268``), so an
+    arity-1 wire is refused below the route table as well as above it (the old
+    arity-scalar ``tessera_nvfp4`` CUDA decode is retired; ``csrc/`` holds only
+    ``window_gemv.cu``).  On the host side ``lane_planes.build_anchor_values``
+    and ``build_subset_values`` still read the arity off the forest's grid, so
+    ``("E2M1", "E2M1x2")`` is a true statement about what the route table can
+    hold and the encoder can write -- not about what the compiled decoder
+    reads.
     The contract's silence on ``E2M1`` is a true statement about what has been
     taken through the decoder and measured: no arity-1 checkpoint has.
 
