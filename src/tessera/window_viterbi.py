@@ -721,6 +721,13 @@ def _tile(fan: int, low: int, n: int):
 #: one process, which is the only way to measure either of them on a shared
 #: box.  It is a machine knob and never the answer -- both spellings return
 #: identical states and the identical ``sse`` float, which the tests pin.
+#: Measured 2026-09-19 at the shipping case (L=14, R=7, [1792, 1024],
+#: weighted, sparklina): best 3.34x wall / 3.98x work-per-joule over front,
+#: byte-identical, all of it from the width the smaller resident set earns
+#: (512 cols, 2 batches vs 32 and 32 -- the width-held control is 1.003x per
+#: joule).  ``docs/measurements/window-best-form-r7-2026-09-19.md``.  The
+#: default is unchanged: promoting this moves the shipping schedule, which
+#: only Rob prices (tessera#483).
 _BEST_FORM_ENV = "TESSERA_WINDOW_BEST_FORM"
 
 
