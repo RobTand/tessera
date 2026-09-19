@@ -86,7 +86,7 @@ the experts' and not a general one.
 | **Encoder speed** | reference window Viterbi ~30 s / 150 s / 13 min per 2048×4096 at L=12/14/16 | fused Triton Viterbi in flight (worker `a812f218`), bit-exact against the reference, accepted on profiler + power evidence |
 | **PrismaQuant spec** | reads `wire_recipe` (PrismaQuant `b02d8b2`): every accountant takes the recipe; the route is derived from (grid base, plane) with the activation quantiser and capability floor taken by reference from the NVFP4 / FP8_E4M3 registry rows; family bounds follow the body's cap. Shape-dependent terms (CHANNEL rows, window table) are priced exactly where a shape exists and **refused** in the shape-free `FormatSpec` rate | shape-aware `bits_for_shape` on the spec and in every byte gate, so a shape-dependent recipe synthesizes (in flight); then the E4M3 flip |
 | **Measurement** | four harnesses, three protocols (per-channel and per-16 fp32 arms re-implement the encoder). `tessera_frontier.py` carries the Tessera and EXL3 arms; its `COPY_FROM` read the wrong key and silently copied **zero** Gridbook/NVFP4 arms into every frontier JSON on disk — fixed, but not yet re-run, so those comparators are still absent from the stored results | `experiments/tessera_frontier.py`: every (grid, body, plane, rate) point through the production encoder, one JSON, one table, EXL3/Gridbook/NVFP4/FP8 comparators at matched bpp |
-| **Per-grid defaults** | `wire_recipe(grid, q256)`: E4M3 → window over CHANNEL, L=14, every rung; E2M1x2 → window over LUT16, L=12, below its cap (q256 < 896) and the coset trellis at it; E2M1 → the coset trellis. Flipped 2026-09-02 once the kernel lane decoded the body and the fused Viterbi encoded it. | E2M1 under the window body, and L=14 below the E2M1x2 cap, are measurements to run |
+| **Per-grid defaults** | `wire_recipe(grid, q256)`: E4M3 → window over CHANNEL, L=14, every rung; E2M1x2 → window over LUT16, L=12, below its cap (q256 < 896) and the coset trellis at it; E2M1 → the coset trellis. Flipped 2026-09-02 once the kernel lane decoded the body and the fused Viterbi encoded it. These are the RESEARCH defaults the recipe table records. A served ROUTED (`STRUCTURE_ROUTED_MOE`) NVFP4 stack below the cap carries the span-2 TCQ spelling instead (`served_recipe` promotes it: the routed path decodes TCQ only), measurably worse than the WINDOW default it replaces — TCQ span-2 at 1.401×/1.357×/1.431× EXL3 at 2.5/3.0/3.5 bpp against window L=12 at 1.056×/1.061×/1.098× (§4) — necessary, stated, and stamped per rung in the contract's `attested_wire`. A dense module keeps the WINDOW default below the cap and is refused at export (tessera#560 D2b). | E2M1 under the window body, and L=14 below the E2M1x2 cap, are measurements to run |
 
 ## 4. The frontier
 
@@ -294,7 +294,14 @@ at L=14, bit-exact, profiled and powered per principle 15) encodes it at
 1.1 s per 2048×4096 pass at L=14 — the reference took 30 s. `wire_recipe`
 now returns the window body over CHANNEL at L=14 on E4M3 at every rung, the
 window over LUT16 at L=12 on E2M1x2 below its cap, and the coset trellis at
-the E2M1x2 cap and on E2M1.
+the E2M1x2 cap and on E2M1. That is the research spelling. The served spelling
+for a ROUTED NVFP4 stack is span-2 TCQ at EVERY rung including below the cap
+(`experiments/export_tessera_serving.py:served_recipe`, contract v32,
+tessera#506 leg 2, promotion scoped to `STRUCTURE_ROUTED_MOE` by tessera#560
+D2b): the routed path has no WINDOW decode, so the served wire pays
+the TCQ cost the frontier measured (§4: 1.36–1.43× vs 1.06–1.10× EXL3 at
+2.5–3.5 bpp) rather than serving bytes nothing reads. A dense module keeps
+the research WINDOW spelling below the cap and stays refused at export.
 
 The same unit has a second, stock, form (`tessera.stock`, 2026-09-02):
 an E2M1/E2M1x2 unit over a LUT plane *is* the compressed-tensors NVFP4
