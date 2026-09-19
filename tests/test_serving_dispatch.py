@@ -558,8 +558,7 @@ def test_the_mode_is_declared_not_defaulted_and_there_is_no_enable_flag(monkeypa
 
     Gridbook needed ``GRIDBOOK_TESSERA=1`` to reach the lane at all.  Here the
     checkpoint selects the plugin and the only refusal left is the residency,
-    which the plugin will not choose for the operator because it changes the
-    footprint the artifact occupies.
+    which the plugin will not choose for the operator.
     """
     assert not hasattr(lane, "TESSERA_FLAG")
     with pytest.raises(ValueError, match=TESSERA_MODE_ENV):

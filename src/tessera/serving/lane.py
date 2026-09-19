@@ -3,22 +3,17 @@
 ONE FLAG.  The checkpoint selects this plugin (``quantization_config.
 quant_method: "tessera"``), so there is no enable flag to get wrong: if the
 bytes are Tessera's, the plugin serves them.  What the operator does choose is
-the RESIDENCY, ``TESSERA_SERVE_MODE=resident|streamed``:
+the RESIDENCY, ``TESSERA_SERVE_MODE=resident|streamed``, and the plugin will
+not choose it for the operator: an unset mode is a named refusal, not a
+default.  The mode is latched for the process (``flags``) and included in
+vLLM's compile-cache key (``compile_identity``).
 
-* ``resident`` decodes every module once at load and holds its stock tile
-  (4.5 bpw for an NVFP4 module, 8.0 plus one fp32 per row for an FP8 one,
-  16.0 plus one fp32 per row for a BF16 one -- the wire's smaller bytes are
-  then on disk only.  On the BF16 route that is the source precision, so it is
-  the correctness path and not a size claim);
-* ``streamed`` holds the wire's own bytes per module and decodes every forward
-  into a transient tile.
-
-That is a real difference in the footprint the artifact occupies, so the
-plugin will not choose it for the operator: an unset mode is a named refusal,
-not a default.  The mode is latched for the process (``flags``) and folded into
-vLLM's compile-cache key (``compile_identity``), because two modes trace the
-same files into different forwards and would otherwise share one cached
-function.
+WHAT THE MODES PREPARE.  The current dense routes -- NVFP4, FP8 and BF16 --
+prepare the SAME packed native units in both modes: the compact reader expands
+no weight plane and no ``[rows, columns]`` tile is materialised at load or per
+forward, so the mode is a declared dispatch fact rather than a choice between
+an expanded and a compressed weight footprint.  A routed mixture-of-experts
+stack is resident-only and refuses ``streamed``.
 
 WHICH ROUTE a module takes is the CHECKPOINT's fact, not the operator's: the
 scheme's ``family`` (FAMILY = ROUTE, ``scheme.ROUTES``) picks ``TESSERA_NVFP4``
@@ -53,11 +48,9 @@ MODE_STREAMED = "streamed"
 MODES = (MODE_RESIDENT, MODE_STREAMED)
 
 _UNSET_HELP = (
-    "The plugin will not choose a residency for you: 'resident' decodes at load and holds "
-    "each module's stock tile (4.5 bpw for an NVFP4 module, 8.0 plus one fp32 per row for an "
-    "FP8 one -- the wire's bytes are then on disk only) and 'streamed' holds the wire's own "
-    "bytes per module and decodes every forward into a transient tile. The mode changes the "
-    "footprint the artifact actually occupies, so it is declared, not defaulted.")
+    "Select the residency explicitly: 'resident' or 'streamed'. Dense routes prepare "
+    "the same packed native units in both modes; a routed mixture-of-experts stack "
+    "requires 'resident'.")
 
 
 def serve_mode() -> str:

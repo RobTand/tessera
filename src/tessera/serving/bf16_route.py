@@ -2,10 +2,12 @@
 
 WHAT IT SERVES.  Tessera's BF16 wire -- the window body over the CHANNEL scale
 plane, the *identical* body and plane the E4M3 route ships, with only the
-alphabet the 2^L table snaps to changed -- decoded to an ordinary
-``torch.bfloat16`` tensor and multiplied by the BF16 GEMM the runtime already
-has.  There is no weight-side hardware format to satisfy and nothing to pack:
-on this grid a code IS a bf16 bit pattern, so the table gather yields the tile.
+alphabet the 2^L table snaps to changed -- decoded inside the packed native
+window GEMM: the table gather and bf16 ``tl.dot`` run in registers/shared
+memory, not into a materialised tensor handed to a separate GEMM.  There is no
+weight-side hardware format to satisfy and nothing to pack: on this grid a
+code IS a bf16 bit pattern, so the table gather yields the values the dot
+consumes.
 
 HOW IT LOADS AND RUNS NOW.  The compact reader validates the container and
 the sidecar facts (`scheme.parse_compact_blob_for_scheme`) and expands no
@@ -57,41 +59,6 @@ epilogue ``kernel_window_gemv`` applies on its accumulated fp32 output
 (``y_i = s_i * sum_k t_ik x_k``) and the same one ``lane_planes`` builds for
 this plane on the kernel lane, so the three agree on what the wire MEANS
 whatever runs it.
-
-WHAT IT REUSES.  Blob parsing is Tessera's reader (``tessera.unit_artifact``,
-``tessera.fused``), the packing is the wire's own
-(``tessera.lane_planes.pack_window_planes``, through ``window``) and the
-reference decode is ``tessera.decode.materialize_bf16``.  At preparation every
-role is decoded through the in-forward decoder AND through the reference
-decoder and the two are compared element for element; a disagreement refuses
-the module.  The resident mode then holds the values the reference produced.
-The streamed mode holds the packed planes where the window GEMV lane did not
-prepare and the GEMV repack where it did -- verified bit-exact against the
-torch decode at preparation -- and the route record names which engine each
-forward ran.
-
-RESIDENCY.  ``resident`` decodes once at load and holds the bf16 tile plus one
-fp32 per row.  **As a size claim that is nothing at all** -- 16 bits a weight
-is the source precision -- and it is not offered as one: it is the correctness
-path, the tile a stock GEMM consumes with no decoder in the serve.
-``streamed`` holds the wire at the artifact's own 4-8 bpp: the packed window
-planes where the lane did not prepare (decoded each forward into a transient
-tile the op owns) or the window GEMV's repack where it did (read directly in
-the decode regime, kernel-decoded to a transient tile above it).  That is the
-mode the family is a product in.
-
-WHAT IS ATTESTED, AND WHERE IT STOPS.  ``runtime_contract.json``'s
-lane-eligibility table publishes ``TESSERA_BF16_K1`` at ``attested_rungs_q256: [1792]`` and two
-``sm_121`` dense cells (``decode`` and ``batch``), because a container receipt
-covers exactly that: four route censuses on the stock vLLM 0.28 image -- both
-residency
-modes crossed with the eager and the compiled forward -- each recording all 112
-declared modules on this route in both the prefill and the decode shape, plus a
-served KL in both modes against the folded twin vanilla vLLM serves.  Nothing
-else is attested: one rung, one platform, dense structure only, no routed-MoE
-cell and no TP above world size 1.  A cell is added when a receipt exists, not
-when this module does; the receipt is
-``docs/measurements/tessera-bf16-route-served-2026-09-02.md``.
 """
 from __future__ import annotations
 

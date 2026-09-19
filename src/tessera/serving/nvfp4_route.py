@@ -150,9 +150,10 @@ def build_tessera_nvfp4_method(scheme, prefix: str, mode: str):
             # TP>1 it names the axis, and the axis is gated here rather than
             # inside a packer (``sharding.ROUTE_TP_AXES``).  Both axes cut on
             # this route: a ROW shard's start state rides in the select
-            # plane's pad (``lane_planes._thread_start_state``, tessera#492)
-            # and the native decode of every shard is held to
-            # ``materialize_stock`` at load, exactly as a whole unit's is.
+            # plane's pad (``lane_planes._thread_start_state``, tessera#492).
+            # The load path runs no reference decode; the A4 retirement moved
+            # that agreement to the tests' oracle (docs/ARCHITECTURE.md 3.3,
+            # tests/nvfp4_reference.py).
             # The LISTS, not their sums: ``output_partition_sizes`` is the
             # per-member answer and the declared roles are its counterpart, and
             # a fused container's members are cut independently (#32).  The
