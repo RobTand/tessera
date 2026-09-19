@@ -210,11 +210,6 @@ def platform_token(device=0, torch=None) -> str:
     return probed_platform_token(device, torch)
 
 
-def platform_token_is_overridden() -> bool:
-    """Whether this process's token came from the environment, not a device."""
-    return bool(os.environ.get(PLATFORM_TOKEN_ENV))
-
-
 def offload_flags(token: str, *, joined: bool = False) -> list[str]:
     """The compiler flags that pin a build to one platform.
 

@@ -395,17 +395,6 @@ def _keys(payload: Any, where: str, required: frozenset, optional=frozenset()) -
         raise ValueError(f"{where} carries unknown field(s) {unknown}")
 
 
-def _hex_word(value: Any, digits: int, where: str) -> int:
-    if (not isinstance(value, str) or not value.startswith("0x")
-            or len(value) != digits + 2
-            or any(c not in "0123456789abcdef" for c in value[2:])):
-        raise ValueError(
-            f"{where} must be a lowercase 0x-prefixed {digits}-digit hex "
-            f"encoding, got {value!r}"
-        )
-    return int(value, 16)
-
-
 def validate_activation_quantizers(block: Any, *, platforms: Iterable[str],
                                    cell_contracts: Mapping[str, Iterable[str]],
                                    require_image,
