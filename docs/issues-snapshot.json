@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-19T15:22:29Z",
+ "generated": "2026-09-19T15:28:47Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -5310,11 +5310,11 @@
     "title": "Encoder duo: HIP _mul spelling (#481) + R7 best-form evidence (#483); #569 absorbed by #568"
    },
    "573": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Emit kernel_schedule in emit_route records so observed receipt routes name the executed schedule"
    },
    "574": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Emit kernel_schedule in emit_route records (#573)"
    },
    "58": {

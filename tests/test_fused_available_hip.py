@@ -20,7 +20,7 @@ import types
 import torch
 
 from tessera import encode as enc
-from tessera.window_viterbi import fused_available
+from tessera.window_viterbi import _MUL_ASM_HIP, _MUL_ASM_NVPTX, _mul_asm, fused_available
 
 
 def _pretend_cuda(monkeypatch):
@@ -92,3 +92,30 @@ def test_the_cuda_selection_is_unchanged_by_the_hip_guard(monkeypatch):
     vectors = torch.linspace(-1.0, 1.0, 16).unsqueeze(1)
     enc.viterbi_window(targets, vectors, 4, 1, chunk=8)
     assert reached == [1], "the CUDA answer must not change"
+
+
+def test_the_hip_build_selects_the_amdgcn_spelling(monkeypatch):
+    """The backend question has one home, and HIP answers the GCN spelling.
+
+    ``_mul_asm`` is what ``_build`` splices into ``_mul``; on a ROCm build it
+    must answer the AMDGCN lane multiply under that backend's register class,
+    never the NVPTX template whose ``"f"`` constraint aborts the Triton JIT
+    on gfx1201.  Structural only: no box here has compiled this spelling
+    (tessera#481), so compilation and bit-identity stay gated on the gfx1201
+    receipt and ``fused_available`` still refuses HIP.
+    """
+    monkeypatch.setattr(torch.version, "hip", "7.2.4", raising=False)
+    assert _mul_asm() == _MUL_ASM_HIP
+    assert _mul_asm() != _MUL_ASM_NVPTX
+    template, constraints = _mul_asm()
+    assert "v_mul_f32" in template
+    assert "mul.f32" not in template
+
+
+def test_the_cuda_build_keeps_the_nvptx_spelling(monkeypatch):
+    """The default path's multiply is byte-pinned: these are the literals the
+    shipped kernel compiled with, and an edit that moves them moves the
+    rounding contract in ``window_viterbi``'s docstring."""
+    monkeypatch.setattr(torch.version, "hip", None, raising=False)
+    assert _mul_asm() == ("mul.f32 $0, $1, $2;", "=f,f,f")
+    assert _MUL_ASM_NVPTX == ("mul.f32 $0, $1, $2;", "=f,f,f")
