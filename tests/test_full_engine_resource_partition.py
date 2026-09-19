@@ -974,7 +974,9 @@ def test_the_report_is_v2_and_derived_carries_the_verdict_terms_and_timing(ledge
 
 def test_the_observation_field_set_is_unchanged_from_v1(ledger):
     # v2 adds derived members and a partition member; the observations a
-    # consumer reads are the same set, so nothing it already parses moved.
+    # consumer reads gain exactly one key, the bound allocator policy
+    # (#558), so nothing it already parses moved -- additive, and absent
+    # (None) on v1-era captures.
     report = assemble_full_engine_resource_report(ledger, **_members())
     assert report["schema"] == "tessera.full_engine_resource_report.v2"
     assert set(report["observations"]) == {
@@ -983,7 +985,8 @@ def test_the_observation_field_set_is_unchanged_from_v1(ledger):
         "torch_observed_live_peak_bytes", "torch_observed_live_peak_scope",
         "step_intervals", "step_coverage", "issues", "worker_startup_records",
         "runtime_provenance_relation", "kv_observations", "timing_captures",
-        "owner_views", "observer_qualification", "artifacts"}
+        "owner_views", "observer_qualification", "artifacts",
+        "allocator_config"}
 
 
 def test_the_worker_startup_reason_names_the_bytes_the_manifest_does_not_price():

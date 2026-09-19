@@ -520,6 +520,36 @@ def required_decoder_coverage(tessera_by_phase, required):
     return block, problems
 
 
+def expected_pairs(family, regime, kind, *, compiled, platform):
+    """The ``(symbol, decoder)`` pairs a module of ``family`` may report.
+
+    Module level so the census's own tests can read it without driving a
+    serve.  Every set comes from the route that owns the dispatch -- never a
+    second spelling here.  A routed expert stack is not its family's dense
+    route, so ``kind == "moe"`` reads the expert route's set; the NVFP4 native
+    stack's fused pair is experimental, and ``launch_pairs``' default view
+    keeps the cell validator on the attested dispatch.
+    """
+    from tessera.serving import (
+        bf16_route, fp8_gemv, moe_route, nvfp4_moe_route, nvfp4_route)
+    from tessera.serving.scheme import TESSERA_BF16, TESSERA_FP8, TESSERA_NVFP4
+
+    if kind == "moe":
+        if family == TESSERA_NVFP4:
+            return nvfp4_moe_route.census_expected(compiled=compiled, platform=platform)[regime]
+        return moe_route.census_expected(compiled=compiled, platform=platform)[regime]
+    if family == TESSERA_FP8:
+        return fp8_gemv.census_expected(compiled=compiled, platform=platform)[regime]
+    if family == TESSERA_BF16:
+        return bf16_route.census_expected(compiled=compiled, platform=platform)[regime]
+    if family == TESSERA_NVFP4:
+        return nvfp4_route.census_expected(compiled=compiled, platform=platform)[regime]
+    raise KeyError(
+        f"this census has no expectation for {family!r}; a family the plugin serves and "
+        "the census does not know would be counted as a mismatch on every module. Add "
+        "its route above rather than widening the comparison.")
+
+
 def parse_args(argv=None, env=None):
     """Resolve the explicit runtime context before importing a serving runtime."""
     from tessera.serving.topology import add_topology_arguments, validate_topology_arguments
@@ -642,7 +672,7 @@ def main() -> int:
 
     import tessera
     import tessera.serving as serving
-    from tessera.serving import bf16_route, fp8_gemv, fp8_route, moe_route, nvfp4_route
+    from tessera.serving import bf16_route, fp8_route, moe_route, nvfp4_route
     from tessera.serving.census import (
         join_rank_histograms, lane_engagement, phase_histogram, rank_census_record)
     from tessera.serving.contract import (
@@ -678,16 +708,18 @@ def main() -> int:
     contract_for = {TESSERA_NVFP4: nvfp4_route.ACTIVATION_CONTRACT,
                     TESSERA_FP8: fp8_route.ACTIVATION_CONTRACT,
                     TESSERA_BF16: bf16_route.ACTIVATION_CONTRACT}
-    # The decoder each route must have used.  The NVFP4 route's must be
-    # the native span-2 kernel unless the operator explicitly accepted the
-    # fallback.
+    # The decoder each route's retired launch used, kept for the coverage check
+    # below and the ``--allow-fallback-decoder`` escape hatch -- not the
+    # expectation, which ``expected_pairs`` reads from the routes above.  The
+    # NVFP4 dense dispatch stamps the fused pair unconditionally; the old
+    # ``native_span2`` decoder names what the shipped cells' receipts ran.
     decoder_for = {TESSERA_NVFP4: DECODER_NATIVE_SPAN2, TESSERA_FP8: DECODER_TORCH_WINDOW,
                    TESSERA_BF16: DECODER_TORCH_WINDOW}
-    # The GEMM each route invokes, off the route table rather than a literal
-    # here: the two 4/8-bit routes call ``torch._scaled_mm`` and the 16-bit one
-    # calls ``torch.mm`` (there is no scale to hand a scaled GEMM -- the row
-    # scale is an epilogue), and a hardcoded symbol read that as a refusal on
-    # every module of a route it had simply never been told about.
+    # The GEMM each route's retired launch invoked, off the route table rather
+    # than a literal here, kept for the ``--allow-fallback-decoder`` escape
+    # hatch below -- not the expectation, which ``expected_pairs`` reads from
+    # the routes.  The dense NVFP4 dispatch no longer calls this symbol; the
+    # fused kernel does.
     symbol_for = {family: ROUTES[family]["gemm_symbol"] for family in TESSERA_FAMILIES}
     # The streamed FP8 route serves two launches where the lane prepared: the
     # window GEMV, which BOTH regimes may report (the one-row forward always
@@ -695,36 +727,28 @@ def main() -> int:
     # under ``_scaled_mm``, which only the batch regime can -- it is the
     # branch ``decode_is_gemv`` refuses, and every M that refuses is above one
     # row.  Where the lane did not prepare, the torch window decode, at any M.
-    # The streamed BF16 route is the same shape over ``torch.mm``.  The pairs
-    # each regime may report live where the dispatch lives
-    # (``fp8_gemv.census_expected``, ``bf16_route.census_expected``), not in a
-    # second spelling here; every other family reports one pair.
+    # The streamed BF16 route is the same shape over ``torch.mm``.  The NVFP4
+    # dense route stamps its fused ``(a4_span2_gemm, native_span2_gemm)`` pair
+    # at every M, and the native NVFP4 expert stack its grouped pair.  The
+    # pairs each regime may report live where the dispatch lives (the routes'
+    # own ``census_expected``), not in a second spelling here.
     # PER ``(platform, family)``: on a platform whose contract entry executes
     # null for a family, nothing of that family loads, so the expectation is
     # the empty set and any record is a disagreement (``census.platform_
     # expectation``).  On sm_121 and on any platform the contract has not
     # reached, these are the sets they always were.
-    fp8_expected = fp8_gemv.census_expected(compiled=args.compiled, platform=served_platform)
-    bf16_expected = bf16_route.census_expected(compiled=args.compiled, platform=served_platform)
+    #
     # A ROUTED EXPERT STACK IS NOT ITS FAMILY'S DENSE ROUTE.  The stack serves
-    # under the same family (``TESSERA_FP8``, same wire, same activation
-    # contract) and a different dispatch: one materialised launch through
-    # vLLM's modular fused-MoE kernel, in both regimes, with no GEMV lane.
-    # Comparing it against the dense pair set reads a correct serve as a
-    # refusal on every stack, so the expectation is taken from the route that
-    # owns the dispatch -- ``moe_route.census_expected``, which also says why
-    # its symbol is compared without the runtime's backend suffix and why no
-    # contract cell publishes it yet.
-    moe_expected = moe_route.census_expected(compiled=args.compiled, platform=served_platform)
-
+    # under the same family (same wire, same activation contract) and a
+    # different dispatch, so the expectation is taken from the route that owns
+    # it -- ``moe_route.census_expected`` for FP8, ``nvfp4_moe_route`` for the
+    # native NVFP4 stack -- which also says why the FP8 symbol is compared
+    # without the runtime's backend suffix and why no contract cell publishes
+    # the native pairs yet.  ``expected_pairs`` (module level, tested) holds
+    # this routing; the closure below only binds this serve's arguments.
     def _expected(family, regime, kind):
-        if kind == "moe":
-            return moe_expected[regime]
-        if family == TESSERA_FP8:
-            return fp8_expected[regime]
-        if family == TESSERA_BF16:
-            return bf16_expected[regime]
-        return {(symbol_for[family], decoder_for[family])}
+        return expected_pairs(family, regime, kind, compiled=args.compiled,
+                              platform=served_platform)
     missing = sorted(set(TESSERA_FAMILIES) - (set(contract_for) & set(decoder_for)))
     if missing:
         raise SystemExit(

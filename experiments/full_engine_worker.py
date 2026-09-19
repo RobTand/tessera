@@ -558,10 +558,11 @@ class ResourceCaptureWorker(Worker):
     def _resource_write_startup_sample(self):
         """This rank's resident-after-load sample, when the plan names its receipt.
 
-        The consumer's ``worker_startup_records`` shape needs three inputs and
+        The consumer's ``worker_startup_records`` shape needs four inputs and
         none of them is derivable from the others: the run's own rank, the
-        routed-owner receipt's independent ``resources.resident_bytes``, and the
-        runtime's own locked ``tessera.native_moe_workspace.v1`` record. The
+        routed-owner receipt's independent ``resources.resident_bytes``, the
+        runtime's own locked ``tessera.native_moe_workspace.v1`` record, and
+        the allocator's own allocated and reserved samples. The
         sample is taken here, at arm, because that is the interval the contract
         names -- after ``process_weights_after_loading`` and after
         ``lock_workspace()``, before the observation workload runs. A plan that

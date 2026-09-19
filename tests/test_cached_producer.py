@@ -670,21 +670,49 @@ def _calibrated_packed_export(tmp_path, calibrated_wires, monkeypatch, layout, *
 
 
 def _observe_h_consumption(monkeypatch):
-    """Record every H the export reads through the reference owner."""
+    """Record every H the export reads through the reference owner.
+
+    The cached expert intake digests units on a thread pool (tessera#498), so
+    more than one H is legitimately live at once: a worker that has returned
+    from ``__getitem__`` still holds its H in a local while it digests it,
+    while another worker enters ``__getitem__`` for the next unit. The
+    observer therefore records, at each read, how many previously returned Hs
+    are still alive, and keeps the peak -- it never asserts in flight. Two
+    former in-flight asserts were races, not properties of the export
+    (tessera#521, tessera#552):
+
+    - "no earlier H alive at any read" assumes serial intake; the pool owes at
+      most one live H per worker, i.e. at most ``threads - 1`` earlier Hs
+      alive at any read.
+    - ``receipt()["live_payloads"] == 0`` after ``__getitem__`` returned: the
+      counter is set under the owner's lock and this hook runs after that lock
+      is released, so a concurrent worker's read in progress reads back 1.
+
+    The deterministic checks live at the call sites: the recorded peak bounded
+    by the export's own intake thread count, and zero live Hs (plus a
+    quiescent owner counter) once the export has finished. The observer takes
+    its own lock because pool threads append concurrently.
+    """
+    import threading
     import weakref
     from tessera.hessian_capture import ReferenceHessians
 
     original = ReferenceHessians.__getitem__
-    returned, consumed = [], []
+    lock = threading.Lock()
+    owners, returned, consumed = [], [], []
+    peak = [0]
     def observed(self, key):
-        assert all(ref() is None for ref in returned), "export retained an earlier H"
+        with lock:
+            owners.append(self)
+            alive = sum(ref() is not None for ref in returned)
+            peak[0] = max(peak[0], alive)
         result = original(self, key)
-        assert self.receipt()["live_payloads"] == 0
-        consumed.append(key)
-        returned.append(weakref.ref(result))
+        with lock:
+            consumed.append(key)
+            returned.append(weakref.ref(result))
         return result
     monkeypatch.setattr(ReferenceHessians, "__getitem__", observed)
-    return consumed, returned
+    return consumed, returned, peak, owners
 
 
 @pytest.mark.parametrize("identity_mode", ["digested", "committed"])
@@ -695,23 +723,31 @@ def test_calibrated_packed_cached_cli_preserves_originals(tmp_path, calibrated_w
 
     case = _calibrated_packed_export(tmp_path, calibrated_wires, monkeypatch, layout)
     case["argv"].extend(["--cached-hessian-identity", identity_mode])
-    consumed, returned = _observe_h_consumption(monkeypatch)
+    consumed, returned, peak, owners = _observe_h_consumption(monkeypatch)
     case["exporter"].main()
     receipt = json.loads((case["out"] / "tessera_serving_manifest.json").read_text())
     established = receipt["cached_units"]["hessian_identity"]
     assert established["established"] == identity_mode
+    threads = receipt["cached_units"]["intake"]["threads"]
     if identity_mode == "digested":
         # Every unit's H read and digested: the path before tessera#497.
         assert sorted(consumed) == sorted(case["logical"])
         assert established["witness"] is None and established["committed_units_served"] is None
+        # The intake digests on ``threads`` workers holding at most one H
+        # each, so at most ``threads - 1`` earlier Hs are alive at any read.
+        # The bound is read from the export's own intake receipt, not restated
+        # (tessera#521, tessera#552).
+        assert peak[0] <= threads - 1, f"peak {peak[0]} live Hs on {threads} intake threads"
     else:
         # One witness H read; every unit's identity taken from the commitment.
         assert consumed == [established["witness"]["unit"]] and established["witness"]["agreed"]
+        assert peak[0] == 0
         assert established["committed_units_served"] == len(case["logical"])
         assert established["reference"]["document_sha256"] == hashlib.sha256(
             case["handoff"].read_bytes()).hexdigest()
         assert established["reference"]["capture_sha256"] == receipt["activation_aware"]["hessian"]["capture_sha256"]
     assert all(ref() is None for ref in returned)
+    assert owners and all(owner.receipt()["live_payloads"] == 0 for owner in owners)
     with safe_open(str(case["out"] / "model.safetensors"), framework="pt") as handle:
         members = [unit for name in handle.keys() if name.endswith((".wire", ".wire_bytes"))
                    for unit in parse_fused(handle.get_tensor(name).numpy().tobytes())]
@@ -806,10 +842,11 @@ def _identity_run(tmp_path, calibrated_wires, monkeypatch, label, flags, *, hist
     case = _calibrated_packed_export(root, calibrated_wires, monkeypatch, "out_first_chunked",
                                      historical=historical)
     case["argv"].extend(flags)
-    consumed, _returned = _observe_h_consumption(monkeypatch)
+    consumed, _returned, peak, _owners = _observe_h_consumption(monkeypatch)
     case["exporter"].main()
-    # A snapshot: a later run's observer wraps this one and keeps appending.
+    # Snapshots: a later run's observer wraps this one and keeps appending.
     case["consumed"] = list(consumed)
+    case["h_peak_alive"] = peak[0]
     case["receipt"] = json.loads((case["out"] / "tessera_serving_manifest.json").read_text())
     return case
 
@@ -840,6 +877,9 @@ def test_committed_parallel_intake_is_byte_identical_to_digested_serial(
             parallel["receipt"]["cached_units"]["manifest_sha256"]
     # The serial digested run read every H; the parallel committed run read one.
     assert sorted(serial["consumed"]) == sorted(serial["logical"])
+    # Pinned to one intake thread, every read saw zero earlier Hs alive: the
+    # export drops each H before the next (tessera#552, option 1).
+    assert serial["h_peak_alive"] == 0
     witness = parallel["receipt"]["cached_units"]["hessian_identity"]["witness"]
     assert parallel["consumed"] == [witness["unit"]] and witness["agreed"] is True
     intake = parallel["receipt"]["cached_units"]["intake"]
@@ -978,7 +1018,7 @@ def test_committed_intake_consumes_only_the_witness_payload(tmp_path, calibrated
     canonical = json.loads((case["handoff"].parent / "capture_manifest.json").read_text())
     path = case["handoff"].parent / canonical["entries"][target]["path"]
     raw = bytearray(path.read_bytes()); raw[-1] ^= 1; path.write_bytes(raw)
-    consumed, _returned = _observe_h_consumption(monkeypatch)
+    consumed, _returned, _peak, _owners = _observe_h_consumption(monkeypatch)
     if flipped == "witness":
         with pytest.raises(GrammarError, match="checksum"):
             case["exporter"].main()
