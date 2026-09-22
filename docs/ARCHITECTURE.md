@@ -5611,3 +5611,21 @@ version nor the entry point -- and refuses a built wheel whose `Version`
 metadata, whose entry-point value, or whose installed `__version__` is not
 the declared one; and the publish job's tag check reads the same table
 (§5.4).
+
+### Mixed historical cached-unit producers
+
+`tessera.cached_units.v2` closes a selected whole-source roster over explicit
+canonical wire roots and exact historical producer package hashes. Unit
+receipts and wire bytes remain unchanged. Every selected encoder departure
+from the checkpoint seal carries its bound catalog adoption and migration
+proof. PrismaQuant authenticates the completed capture/catalog extension and
+proof semantics before publication; Tessera rechecks the bound documents and
+uses each exact historical package's input-identity factory, followed by the
+unchanged strict cached-wire verifier. Duplicate leaf names are permitted only
+in distinct roots. Symlink roots/files and partial or surplus ownership refuse.
+
+A separately bound served-activation policy records selected A4 executed-group
+scales. These runtime input values do not rewrite the historical wire's
+calibration identity. Export checks the actual fp32 scale file against those
+values. Neither the bundle nor these checks establish serving qualification.
+The v1 single-root/global-producer route is unchanged.

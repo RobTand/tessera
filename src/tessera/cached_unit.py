@@ -24,6 +24,7 @@ from .manifest import BodyKind, ContainerClass, RotationState
 from .unit_artifact import _reach_attrs, build_unit_artifact, encoder_profile_id
 
 CACHE_SCHEMA = "tessera.cached_units.v1"
+ROOTED_CACHE_SCHEMA = "tessera.cached_units.v2"
 INPUT_SCHEMA = "tessera.cached_unit_inputs.v1"
 ENCODING_INPUT_SCHEMA = "tessera.encoding_inputs.v1"
 
@@ -379,7 +380,12 @@ class CachedUnitBundle:
     """Closed unit roster; all filenames/source bindings checked before reads."""
 
     def __init__(self, manifest: dict, directory: Path, expected_units: set[str], source: dict):
-        if set(manifest) != {"schema", "source", "units"} or manifest["schema"] != CACHE_SCHEMA:
+        rooted = manifest.get("schema") == ROOTED_CACHE_SCHEMA
+        fields = {"schema", "source", "units"}
+        if rooted:
+            fields |= {"wire_roots", "unit_roots", "producer_packages",
+                       "reuse_authority", "encoder_adoptions", "served_activation_policy", "served_activations"}
+        if set(manifest) != fields or manifest["schema"] not in (CACHE_SCHEMA, ROOTED_CACHE_SCHEMA):
             raise ValueError("cached unit bundle has an unsupported schema or fields")
         from .serving_parts import SOURCE_PART_SCHEMA, prove_source_part
         if isinstance(source, dict) and source.get("schema") == SOURCE_PART_SCHEMA:
@@ -397,33 +403,202 @@ class CachedUnitBundle:
         units = manifest["units"]
         if not isinstance(units, dict) or set(units) != set(expected_units):
             raise ValueError("cached unit bundle coverage differs from the complete producer plan")
+        self.directory = Path(directory).resolve()
+        self.roots = {"legacy": self.directory}
+        self.unit_roots = dict.fromkeys(units, "legacy")
+        self.producer_packages = {}
+        self.reuse_authority = None
+        self.encoder_adoptions = {}
+        self.served_activation_policy, self.served_activations = None, {}
+        if rooted:
+            self._bind_rooted(manifest, units)
         files = set()
         for key, record in units.items():
             name = _local_filename(record["file"])
-            if name in files:
+            location = (str(self.roots[self.unit_roots[key]]), name)
+            if location in files:
                 raise ValueError(f"duplicate cached unit filename: {name}")
-            files.add(name)
+            files.add(location)
             if record["identity"]["unit"] != key:
                 raise ValueError(f"cached unit coverage key {key} disagrees with receipt")
-        self.directory = Path(directory).resolve()
         self.units = _json_copy(units)
         self.manifest_sha256 = hashlib.sha256(json.dumps(
             manifest, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
 
     def read(self, key: str) -> tuple[bytes, dict]:
         record = self.units[key]
-        path = self.directory / record["file"]
-        if path.is_symlink() or path.resolve().parent != self.directory:
+        root = self.roots[self.unit_roots[key]]
+        path = root / record["file"]
+        if root.resolve() != root or path.is_symlink() or path.resolve().parent != root:
             raise ValueError(f"cached unit filename escapes bundle: {path}")
         return path.read_bytes(), record
 
+    def _bind_rooted(self, manifest, units):
+        roots, owners = manifest["wire_roots"], manifest["unit_roots"]
+        if (not isinstance(roots, dict) or not roots or not isinstance(owners, dict)
+                or set(owners) != set(units) or set(owners.values()) != set(roots)):
+            raise ValueError("cached unit root coverage differs from selected units")
+        resolved = {}
+        for name, spelling in roots.items():
+            path = Path(spelling)
+            if (not isinstance(name, str) or not name or not path.is_absolute()
+                    or str(path) != spelling or path.resolve() != path or not path.is_dir()):
+                raise ValueError("cached unit root must be a canonical existing directory")
+            resolved[name] = path
+        if len(set(resolved.values())) != len(resolved):
+            raise ValueError("cached unit roots alias the same directory")
+        packages = manifest["producer_packages"]
+        seals = {record["identity"]["encoder_source_sha256"] for record in units.values()}
+        if not isinstance(packages, dict) or set(packages) != seals:
+            raise ValueError("cached unit producer coverage differs from selected encoder seals")
+        for seal, package in packages.items():
+            if (not isinstance(seal, str) or len(seal) != 64
+                    or any(c not in '0123456789abcdef' for c in seal)
+                    or not isinstance(package, dict) or set(package) != {"path", "sha256"}
+                    or package["sha256"] != seal or not Path(package["path"]).is_absolute()):
+                raise ValueError("cached unit producer package lacks an exact source binding")
+        authority = manifest["reuse_authority"]
+        if not isinstance(authority, dict) or set(authority) != {
+                "catalog_extension", "candidate_overlay", "encoder_source_proofs",
+                "checkpoint_encoder_source_sha256"}:
+            raise ValueError("rooted cached units need explicit catalog extension authority")
+        for name, schema in (("catalog_extension", "prismaquant.joint_catalog_extension.v1"),
+                             ("candidate_overlay", "prismaquant.t4_adopted_catalog.v1")):
+            if _bound_document(authority[name]).get("schema") != schema:
+                raise ValueError("rooted cached unit authority schema differs")
+        proofs = authority["encoder_source_proofs"]
+        if not isinstance(proofs, list):
+            raise ValueError("rooted cached unit encoder proofs must be explicit bindings")
+        proof_documents = {json.dumps(bound, sort_keys=True): _bound_document(bound) for bound in proofs}
+        if len(proof_documents) != len(proofs):
+            raise ValueError("rooted cached unit encoder proof is duplicated")
+        original = authority["checkpoint_encoder_source_sha256"]
+        adoptions = manifest["encoder_adoptions"]
+        changed = {name for name, record in units.items()
+                   if record["identity"]["encoder_source_sha256"] != original}
+        if not isinstance(adoptions, dict) or set(adoptions) != changed:
+            raise ValueError("rooted cached unit adoption coverage differs")
+        used_proofs = set()
+        for name, adoption in adoptions.items():
+            if (not isinstance(adoption, dict) or adoption.get("schema") !=
+                    "prismaquant.joint_catalog_source_adoption.v1"):
+                raise ValueError("cached unit source adoption schema differs")
+            candidate, reference = adoption["candidate_encoding_identity"], adoption["reference_encoding_identity"]
+            if (candidate != units[name]["identity"] or reference.get("unit") != name
+                    or adoption.get("reference_pair", [None])[0] != name
+                    or reference.get("encoder_source_sha256") != original):
+                raise ValueError("cached unit source adoption identities differ")
+            for field in ("unit", "source", "calibration", "encoder_fixture_id"):
+                if field not in reference or reference[field] != candidate.get(field):
+                    raise ValueError("cached unit source adoption changed " + field)
+            if reference.get("projection") != candidate.get("projection"):
+                raise ValueError("cached unit source adoption changed projection")
+            key = json.dumps(adoption["encoder_source_proof"], sort_keys=True)
+            proof = proof_documents.get(key)
+            if (not proof or proof.get("schema") != "prismaquant.reseal_proof_bundle.v1"
+                    or proof.get("ok") is not True or proof.get("encoder_fixture_id_equal") is not True
+                    or proof.get("pins", {}).get("old", {}).get("encoder_source_sha256") != original
+                    or proof.get("pins", {}).get("new", {}).get("encoder_source_sha256") != candidate["encoder_source_sha256"]
+                    or set((proof.get("fixture_id", {}).get("ids") or {}).values()) != {candidate["encoder_fixture_id"]}):
+                raise ValueError("cached unit encoder source proof does not authorize this adoption")
+            used_proofs.add(key)
+        if used_proofs != set(proof_documents):
+            raise ValueError("rooted cached unit proof roster contains unused authority")
+        policy_bound, served = manifest["served_activation_policy"], manifest["served_activations"]
+        if not isinstance(served, dict) or not set(served) <= set(units):
+            raise ValueError("rooted cached unit served activation coverage differs")
+        if policy_bound is None:
+            added_a4 = any(units[name]["identity"].get("recipe", {}).get("grid") == "E2M1x2"
+                           and units[name]["identity"]["recipe"].get("q256") == 896 for name in adoptions)
+            if served or added_a4:
+                raise ValueError("served activation values lack their bound policy")
+        else:
+            policy = _bound_document(policy_bound)
+            if (policy.get("schema") != "prismaquant.joint_served_activation_policy.v1"
+                    or policy.get("format") != "TESSERA_E2M1_K2_R896"):
+                raise ValueError("rooted cached unit served activation policy schema differs")
+            groups = policy["executed_grouping"]["groups"]
+            index = {name: (key, group) for key, group in groups.items() for name in group["members"]}
+            expected = {}
+            for name in adoptions:
+                recipe = units[name]["identity"].get("recipe", {})
+                if recipe.get("grid") == "E2M1x2" and recipe.get("q256") == 896:
+                    if name not in index:
+                        raise ValueError("selected A4 unit absent from served activation policy")
+                    key, group = index[name]
+                    expected[name] = {"group": key, "input_global_scale": group["input_global_scale"]}
+            if served != expected:
+                raise ValueError("selected served activations differ from bound executed groups")
+        self.served_activation_policy, self.served_activations = policy_bound, _json_copy(served)
+        self.roots, self.unit_roots = resolved, dict(owners)
+        self.producer_packages = _json_copy(packages)
+        self.reuse_authority, self.encoder_adoptions = _json_copy(authority), _json_copy(adoptions)
+
+    def require_served_scales(self, scales):
+        """Check the actual serialized fp32 inputs against priced group values."""
+        import struct
+        for name, value in self.served_activations.items():
+            key = name + ".input_global_scale"
+            expected = struct.unpack("f", struct.pack("f", value["input_global_scale"]))[0]
+            if scales.get(key) != expected:
+                raise ValueError(f"{name}: exported activation scale differs from the bound served policy")
+
+    def load_producers(self):
+        """Hash and load each exact historical producer; never relabel a receipt."""
+        from .historical_producer import load_historical_producer
+        return {seal: load_historical_producer(Path(bound["path"]), bound["sha256"])
+                for seal, bound in self.producer_packages.items()}
+
+
+def _bound_document(bound):
+    if not isinstance(bound, dict) or set(bound) != {"path", "sha256"}:
+        raise ValueError("cached unit authority needs an exact path/SHA256 binding")
+    path = Path(bound["path"])
+    if not path.is_absolute() or path.is_symlink():
+        raise ValueError("cached unit authority must name an absolute regular file")
+    raw = path.read_bytes()
+    if hashlib.sha256(raw).hexdigest() != bound["sha256"]:
+        raise ValueError("cached unit authority SHA256 differs")
+    return json.loads(raw, object_pairs_hook=_unique_json_pairs)
+
+
+class ProducerCachedUnitIdentities:
+    """Keep each historical factory and its H commitment witness separate."""
+
+    def __init__(self, bundle, producers, derive, activation, *, mode="committed"):
+        self.bundle, self.producers = bundle, producers
+        if set(producers) != set(bundle.producer_packages):
+            raise ValueError("cached unit identity producers differ from the bound bundle")
+        self.identities = {
+            seal: CachedUnitIdentity(
+                lambda *args, _producer=producer, **kwargs: derive(_producer, *args, **kwargs),
+                activation, mode=mode)
+            for seal, producer in producers.items()}
+        self.established = "per_producer"
+
+    def producer_for(self, key):
+        seal = self.bundle.units[key]["identity"]["encoder_source_sha256"]
+        return self.producers[seal]
+
+    def __call__(self, weight, unit_name, unit, grid, q256):
+        key = ActivationSource.unit_name(unit_name)
+        seal = self.bundle.units[key]["identity"]["encoder_source_sha256"]
+        return self.identities[seal](weight, unit_name, unit, grid, q256)
+
+    def record(self):
+        return {"schema": "tessera.cached_unit_hessian_identity.by_producer.v1",
+                "producers": {seal: identity.record()
+                              for seal, identity in sorted(self.identities.items())}}
+
+
+def _unique_json_pairs(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate cached unit JSON key: {key}")
+        result[key] = value
+    return result
+
 
 def read_manifest(path: Path) -> dict:
-    def unique(pairs):
-        result = {}
-        for key, value in pairs:
-            if key in result:
-                raise ValueError(f"duplicate cached unit JSON key: {key}")
-            result[key] = value
-        return result
-    return json.loads(Path(path).read_text(), object_pairs_hook=unique)
+    return json.loads(Path(path).read_text(), object_pairs_hook=_unique_json_pairs)
