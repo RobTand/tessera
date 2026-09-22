@@ -1660,6 +1660,15 @@ identity, and patches are restored after observation. Dynamic input and output
 tensor references preserve backings crossing each boundary. For original-wire
 references, native parameters and buffers, including scale storage, are candidate
 owners; tensors also registered outside canonical native modules remain fixed.
+The dense native window owner additionally exposes its frozen packed bundle
+inputs through `PreparedDenseNativeModule.named_tensors()`. The census observes
+those existing references under `model:native:<module>.tessera_native.*`, so
+slotted bundles resolve to the same canonical unit as registered state. This
+adds no buffers, device movement, or allocation; external tensor aliases stay
+fixed, and storage alias conflicts retain the existing refusal. Packed byte
+accounting and fingerprints use the same tensor enumeration. These observations
+repair missing native ownership, not assignment-independent charge admission:
+unclassified allocations still require the existing cross-assignment evidence.
 Conflicting storage aliases still refuse rather than receiving a chosen label. The invocation budget is armed
 by an explicit RPC after engine initialization,
 so stock startup warmup cannot consume the requested workload's observations.
