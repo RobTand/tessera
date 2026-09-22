@@ -1540,6 +1540,11 @@ def validate_panel(panel):
     optional = source_fields if isinstance(panel, dict) and any(key in panel for key in source_fields) else ()
     if isinstance(panel, dict) and "reference_served_quantizer" in panel:
         optional += ("reference_served_quantizer",)
+    if isinstance(panel, dict) and "source_acquisition" in panel:
+        optional += ("source_acquisition",)
+        if (not isinstance(panel["source_acquisition"],dict)
+                or panel["source_acquisition"].get("dev_uncertified") is not True):
+            raise ValueError("source acquisition must retain its DEV uncertified scope")
     raw = isinstance(panel, dict) and panel.get("schema") == RAW_PANEL_SCHEMA
     cost_fields = () if raw else ("cost_sha256", "probe_identity_sha256")
     dense._fields(panel, ("schema", "unit", "format", "shape", "members", "profile_role_order",

@@ -3,7 +3,7 @@
 This producer consumes immutable PQ artifacts; it imports no PrismaQuant code.
 Raw panels name actual execution, never an unmeasured joint distortion table.
 """
-import argparse,copy,hashlib,io,json
+import argparse,copy,hashlib,io,json,os,stat
 from pathlib import Path
 
 
@@ -52,6 +52,7 @@ def freeze(inputs,prepared,source_sha256):
         'workspace_sha256':dense.identity_sha256(prepared['workspace']),'numerics':inputs['numerics'],
         'phases':{phase:{**inputs['phases'][phase],'expected_route':route} for phase in moe.PHASES}}
     if 'reference_served_quantizer' in inputs:panel['reference_served_quantizer']=inputs['reference_served_quantizer']
+    if 'source_acquisition' in inputs:panel['source_acquisition']=copy.deepcopy(inputs['source_acquisition'])
     return moe.validate_panel(copy.deepcopy(panel))
 
 
@@ -69,11 +70,13 @@ def main():
     collector=NativeMemoryCollector(args.resource_library);finished=False
     from experiments import bench_native_moe_operator as moe
     import torch
-    from safetensors import safe_open
     from safetensors.torch import load_file
     inputs=json.loads((root/'inputs.json').read_text());refs=json.loads((root/'weight-references.json').read_text())
     ref_by_name={r['unit']:r for r in refs}
-    serving=origin['spec']['serving_config']
+    from experiments.native_local_inputs import LocalNativeInputs
+    local_inputs=LocalNativeInputs(origin['local_bundle'],os.environ.get('PRISMABUILD_ACTION_KEY'))
+    read_local=local_inputs.read
+    serving=origin['local_serving_config']
     if sha(serving['path'])!=serving['sha256']:raise ValueError('serving configuration changed')
     config,serving_record=moe.resolve_serving_config(serving['path'],inputs['runtime_image'],tensor_parallel=1)
     distributed=moe.owner_distributed(inputs['shape'],None)
@@ -89,20 +92,19 @@ def main():
             phases={phase:{key:tensors[f'{phase}.{key}'] for key in moe.TENSOR_KEYS} for phase in moe.PHASES}
             member_inputs=[]
             for ref in refs:
-                path=Path(ref['render']);size=path.stat().st_size
-                if size>64<<20:raise ValueError('member render exceeds bounded serializer')
-                raw=path.read_bytes()
+                raw=read_local(ref['render'],ref['render_file_sha256'],64<<20)
                 if hashlib.sha256(raw).hexdigest()!=ref['render_file_sha256']:raise ValueError('original PWC render changed')
                 value=torch.load(io.BytesIO(raw),map_location='cpu',weights_only=True)
                 if not isinstance(value,torch.Tensor):raise ValueError('original PWC payload is not a tensor')
                 tensors['rendered_weight/'+ref['unit']]=value.to('cuda')
                 member_inputs.append({key:ref[key] for key in ('unit','expert','role','format','record')})
-                member_inputs[-1]['blob']=Path(ref['wire']).read_bytes()
+                member_inputs[-1]['blob']=read_local(ref['wire'],ref['record']['blob_sha256'],64<<20)
                 if 'input_global_scale' in ref:member_inputs[-1]['input_global_scale']=ref['input_global_scale']
             def source_reader(unit):
                 ref=ref_by_name[unit]
-                with safe_open(ref['source_file'],framework='pt',device='cpu') as handle:
-                    return handle.get_tensor(ref['source_tensor'])
+                bound=ref['source_local']
+                raw=read_local(bound['path'],bound['sha256'],64<<20)
+                return torch.load(io.BytesIO(raw),map_location='cpu',weights_only=True)
             weights={key:value for key,value in tensors.items() if key.startswith('rendered_weight/')}
             prepared=moe.prepare_native_moe_operator(member_inputs,weights,phases,
                 unit=inputs['unit'],shape=inputs['shape'],routing=inputs['routing'],
@@ -139,7 +141,9 @@ def main():
                 'memory_sha256':sha(tracepath),'panel_sha256':sha(args.out/'execution-panel.json')}),flush=True)
             return 0 if receipt['status']=='timing_admissible' else 2
     finally:
-        if not finished:collector.finish(tracepath)
+        try:
+            if not finished:collector.finish(tracepath)
+        finally:local_inputs.close()
 
 
 if __name__=='__main__':raise SystemExit(main())
