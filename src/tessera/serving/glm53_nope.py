@@ -50,6 +50,26 @@ def require_stock_runtime() -> None:
             raise RuntimeError(f"Tessera GLM53 NoPE requires unchanged pinned stock source: {relative}")
 
 
+def _research_sync(site: str) -> None:
+    """#508 bisect: env-gated device sync at a Tessera-owned site.
+
+    An asynchronous CUDA fault surfaces at the next sync; with
+    ``TESSERA_RESEARCH_GLM53_NOPE_SYNC=1`` the Tessera attention sites become
+    sync points, so a fault raised here happened between the previous sync
+    and this site. Skipped while a stream is capturing (a sync is illegal in
+    capture) and unset in every production path.
+    """
+    import os
+    if not os.environ.get("TESSERA_RESEARCH_GLM53_NOPE_SYNC"):
+        return
+    if torch.cuda.is_current_stream_capturing():
+        return
+    try:
+        torch.cuda.synchronize()
+    except Exception as exc:  # noqa: BLE001 -- name the site, then re-raise
+        raise RuntimeError(f"#508 sync site {site}: {exc}") from exc
+
+
 def _config_reason(config) -> str | None:
     # Isolated attention graph equality does not qualify the hybrid model's
     # whole-engine graph path: the matched stub differs by 0.67253 logprob nats.
@@ -122,11 +142,14 @@ class TesseraGLM53NoPEImpl(FlashInferMLASparseSM120Impl):
             raise ValueError("Tessera GLM53 NoPE requires 512 latent / 0 RoPE / fp8_ds_mla")
         # Stock 656-byte records retain 64 BF16 RoPE values. FlashInfer's
         # GLM53_NOPE reader ignores those values, but the writer requires them.
+        _research_sync("kv_cache_update.enter")
         padding = kv_c_normed.new_zeros((kv_c_normed.shape[0], 1, 64))
         super().do_kv_cache_update(kv_c_normed, padding, kv_cache, slot_mapping,
                                    kv_cache_dtype, k_scale)
+        _research_sync("kv_cache_update.exit")
 
     def forward_mqa(self, q, kv_c_and_k_pe_cache, attn_metadata, layer):
+        _research_sync("forward_mqa.enter")
         if isinstance(q, tuple):
             q = torch.cat(q, dim=-1)
         if q.dtype != torch.bfloat16 or q.shape[-1] != 512:
@@ -172,4 +195,5 @@ class TesseraGLM53NoPEImpl(FlashInferMLASparseSM120Impl):
             sparse_mla_top_k_lens=counts.clamp(min=1),
         )
         out.masked_fill_(empty.view(-1, 1, 1, 1), 0.0)
+        _research_sync("forward_mqa.exit")
         return out.squeeze(1), None

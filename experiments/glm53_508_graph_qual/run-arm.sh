@@ -30,6 +30,15 @@ if [ "$up_rc" != 0 ]; then
 fi
 python3 "$HERE/smoke-508.py" "$PORT" "$OUT" "$ARM"; smoke_rc=$?
 echo "arm $ARM: smoke rc=$smoke_rc"
+# PROBES: optional diagnostics after the fixed set ("pad" = exact-length prompts
+# at and between capture sizes; "long" = repeated long prompts). Their records
+# are labelled by arm; they never replace the fixed smoke set.
+for probe in ${PROBES:-}; do
+  case "$probe" in
+    pad)  python3 "$HERE/probe-pad-508.py" "$PORT" "$OUT" "$ARM" > "$OUT/$ARM.pad.txt" 2>&1; echo "arm $ARM: pad probe rc=$?" ;;
+    long) python3 "$HERE/probe-long-508.py" "$PORT" "$OUT" "$ARM" > "$OUT/$ARM.longprobe.txt" 2>&1; echo "arm $ARM: long probe rc=$?" ;;
+  esac
+done
 "$HERE/srv-508.sh" savelogs "$ARM"
 "$HERE/srv-508.sh" status > "$OUT/$ARM.status.txt" 2>&1
 "$HERE/srv-508.sh" down
