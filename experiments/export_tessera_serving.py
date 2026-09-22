@@ -2258,8 +2258,18 @@ def main():
             activation, mode=args.cached_hessian_identity)
         if cached_units.producer_packages:
             from tessera.cached_unit import ProducerCachedUnitIdentities
+            from tessera.historical_producer import load_historical_producer
+            # Hash and load each exact historical producer; never relabel a
+            # receipt.  Loading a package by path lives here, with the
+            # exporter's other dynamic load, and not in ``tessera.cached_unit``:
+            # a src module that imports the path loader puts an unresolvable
+            # read in ``tests/conftest.py``'s import closure, and
+            # ``tools/impacted_tests.py`` then answers ``full`` for every edit
+            # this tree can make.
+            producers = {seal: load_historical_producer(Path(bound["path"]), bound["sha256"])
+                         for seal, bound in cached_units.producer_packages.items()}
             cached_identity = ProducerCachedUnitIdentities(
-                cached_units, cached_units.load_producers(), cached_input_identity,
+                cached_units, producers, cached_input_identity,
                 activation, mode=args.cached_hessian_identity)
 
     input_scales = {}
