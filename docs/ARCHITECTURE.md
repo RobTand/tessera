@@ -5687,3 +5687,25 @@ scales. These runtime input values do not rewrite the historical wire's
 calibration identity. Export checks the actual fp32 scale file against those
 values. Neither the bundle nor these checks establish serving qualification.
 The v1 single-root/global-producer route is unchanged.
+
+Whole cached export also accepts `--source-digest-cache`. It uses the same
+SourceDigestCache fingerprint, quiescence, mutation and corrupt-entry checks
+as partition export. Whole-source identity still verifies the complete index
+and every shard header, always hashes config/auxiliary files, and compares the
+same unchanged identity object with the selected bundle. Missing source hashes
+are computed through the existing affinity-bounded parallel hasher. The cached
+export receipt records which hashes were read or reused; no cache entry is
+inferred from a filename or a prior digest without its original stat fence.
+
+The GLM CPU campaign launcher (`tools/run_glm_cached_cpu_export.py`) is a
+reuse-only wrapper around this same exporter. It requires digest-bound actual
+assignment, PACT result, export plan, selected-manifest receipt, H reference,
+priced scales and routed selection. It does not interpret or certify PACT:
+campaign review must accept that result's scope before submission. The command
+renderer only emits a reviewable PB argument list. It cannot submit a job.
+The launcher forbids encoding, retains all exporter gates, requires fresh output
+and journals cumulative PB progress only after verified source digests or output
+shards are durable. Its 8-CPU/48-GiB proposal is a geometric admission ceiling,
+not a measured full-model peak or a serving qualification claim. Final output
+belongs on mothership's local ZFS; PB-owned staging SSD capacity is not output
+space for this workflow.
