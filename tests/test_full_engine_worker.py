@@ -803,6 +803,14 @@ def test_a_dense_startup_sample_refuses_a_manifest_whose_bytes_are_not_the_plans
     assert "differ from the plan's artifact checkpoint" in payload["skipped"]
 
 
+class _DeclaresNativeBundle:
+    """The dense window routes' declaration (``RESIDENT_ATTRIBUTES``), without vLLM."""
+
+    def resident_tensors(self, layer):
+        from tessera.serving.residency import layer_resident_tensors
+        return layer_resident_tensors(layer, ("tessera_native",))
+
+
 def test_native_prepared_bundles_have_candidate_owners_and_resolve_to_units(monkeypatch, worker_module):
     """The native packed owners are slots, not registered nn.Module buffers."""
     torch = pytest.importorskip("torch")
@@ -818,6 +826,7 @@ def test_native_prepared_bundles_have_candidate_owners_and_resolve_to_units(monk
         rows=2, columns=3, device=torch.device("cpu"), family="e4m3")
     owner = torch.nn.Module()
     owner.tessera_native = prepared
+    owner.quant_method = _DeclaresNativeBundle()
     model = torch.nn.Module()
     model.add_module("dense", owner)
     boundary = {"owner": owner, "boundary": "dense.quant_method.apply"}
@@ -853,6 +862,7 @@ def test_native_prepared_external_alias_stays_fixed(worker_module):
         for value in tensors.values())
     owner, model = torch.nn.Module(), torch.nn.Module()
     owner.tessera_native = prepared
+    owner.quant_method = _DeclaresNativeBundle()
     model.add_module("dense", owner)
     model.register_buffer("external_scale", tensors["scale"])
     ids = worker_module.reference_candidate_tensor_ids(

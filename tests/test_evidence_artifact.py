@@ -10,8 +10,18 @@ from tessera.serving.contract import (
 )
 
 
+#: The artifact the encoder-scope measurement was taken on: the E4M3 dense cells
+#: contract v31 withdrew were minted on ``gbfam/qwen3-0.6b-tessera-e4m3-reach-
+#: gridbook``, and #198's question is whether their runtime receipt still speaks
+#: for bytes a later encoder writes.  The predicate is the SCOPE a cell carries,
+#: not its (family, structure): the v34 E4M3 dense cells (tessera#545) are the
+#: same family and structure and were served on different bytes
+#: (``ts104-gemv-rates/qwen3-0.6b-uniform-R1024``) with no encoder comparison
+#: recorded, so their scope is null -- which ``cell_evidence`` permits by name.
+#: Keying on (family, structure) read them as the historical ones and
+#: subscripted that null.
 def affected(cell):
-    return cell["family"] == "TESSERA_E4M3_K1" and cell["structure"] == "dense"
+    return cell["evidence"]["artifact"] is not None
 
 
 def artifact():
@@ -51,6 +61,28 @@ def test_historical_e4m3_cells_scope_their_encoder_evidence():
         else:
             assert scope is None  # No reproduction measurement was taken for these artifacts.
         assert cell_evidence(cell)["artifact"] == scope
+
+
+def test_the_v34_dense_cells_carry_no_encoder_scope_and_say_so():
+    """The shipped table's answer to #198 for the tessera#545 cells.
+
+    No cell in the shipped document carries an encoder scope today: the four
+    that did were withdrawn at contract v31.  The four dense cells v34 minted
+    are the same (family, structure) as two of them and are NOT their
+    successors -- different artifact, different launch, no re-encode
+    measurement -- so ``evidence.artifact`` is null, and this asserts that
+    rather than leaving the loop above to pass by finding nothing.
+    """
+    doc = load_serving_contract()
+    dense = [cell for cell in doc["lane_eligibility"]["cells"]
+             if cell["structure"] == "dense"
+             and cell["family"] in ("TESSERA_E4M3_K1", "TESSERA_BF16_K1")]
+    assert {cell["id"] for cell in dense} == {
+        "tessera_e4m3_k1_dense_sm121_decode", "tessera_e4m3_k1_dense_sm121_batch",
+        "tessera_bf16_k1_dense_sm121_decode", "tessera_bf16_k1_dense_sm121_batch"}
+    for cell in dense:
+        assert cell["evidence"]["artifact"] is None, cell["id"]
+        assert cell_evidence(cell)["artifact"] is None, cell["id"]
 
 
 def test_missing_artifact_scope_is_not_read_as_current_encoder_evidence():

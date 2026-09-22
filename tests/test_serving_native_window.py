@@ -103,16 +103,24 @@ def test_the_launch_table_publishes_the_native_pair():
     from tessera.serving.scheme import (TESSERA_BF16, TESSERA_FP8,
                                         WINDOW_GEMM_SYMBOL, launch_pairs)
 
+    pair = (WINDOW_GEMM_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_GEMM)
     for route in (TESSERA_FP8, TESSERA_BF16):
         for regime in ("decode", "batch"):
-            # The lane is experimental: it is in the routes' census expectation
-            # (the opt-in the routes' own census_expected takes) and NOT in the
-            # contract validator's default view, so no cell is claimed for it.
-            pairs = launch_pairs(route, regime=regime, include_experimental=True)
-            assert (WINDOW_GEMM_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_GEMM) in pairs, (
-                route, regime, sorted(pairs))
-            assert (WINDOW_GEMM_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_GEMM) not in (
-                launch_pairs(route, regime=regime)), "experimental leak into the attested set"
+            # ATTESTED since contract v34 (tessera#545).  The pair was
+            # experimental -- in the routes' census expectation and out of the
+            # contract validator's default view -- until four served censuses
+            # on the sm_121 serve image put all 112 declared modules on it in
+            # both regimes and both residencies
+            # (docs/measurements/tessera-window-gemm-census-2026-09-21.md).
+            # It left scheme.EXPERIMENTAL_LAUNCHES with the four dense cells
+            # that name it, so the default view and the census opt-in now
+            # agree, which is what the two assertions below say.
+            assert pair in launch_pairs(route, regime=regime), (route, regime)
+            assert pair in launch_pairs(route, regime=regime,
+                                        include_experimental=True), (route, regime)
+            for mode in ("resident", "streamed"):
+                assert pair in launch_pairs(route, regime=regime, mode=mode), (
+                    route, regime, mode)
     assert WINDOW_GEMM_SYMBOL == "tessera::window_gemm_dense"
     assert telemetry.DECODER_NATIVE_WINDOW_GEMM in telemetry.DECODERS
 
