@@ -734,3 +734,22 @@ def test_execution_only_panel_does_not_require_unmeasured_cost_or_probe():
     panel['cost_sha256'] = _sha('must not masquerade as a joint bound panel')
     with pytest.raises(ValueError, match='unknown fields'):
         _module().validate_panel(panel)
+
+
+@pytest.mark.parametrize('bad_output',[False,True])
+def test_execution_receipt_preserves_numerical_gate_without_joint_cost(monkeypatch,bad_output):
+    fixture = _fake_lifecycle(monkeypatch,bad_output=bad_output)
+    _,panel,_,_,trace = fixture
+    joint=panel.pop('joint_operator_identity')
+    for key in ('cost_sha256','probe_identity_sha256','joint_operator_identity_sha256'):
+        panel.pop(key)
+    panel['schema']=_module().RAW_PANEL_SCHEMA
+    panel['operator_identity']={key:joint[key] for key in
+        ('qname','format','source_weight','rendered_weight','activation')}
+    panel['operator_identity_sha256']=_json_sha(panel['operator_identity'])
+    receipt=_measure(fixture)
+    assert receipt['schema']==_module().RAW_RECEIPT_SCHEMA
+    assert receipt['panel']==panel
+    assert ('cost_sha256' not in receipt['panel'])
+    assert receipt['status']==('numerical_refused' if bad_output else 'timing_admissible')
+    assert any(kind=='time' for kind,_ in trace) is (not bad_output)
