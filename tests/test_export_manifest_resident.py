@@ -41,7 +41,7 @@ def test_bf16_manifest_prices_the_row_scale():
 def test_nvfp4_manifest_prices_the_a_side_scale_and_the_trellis_tables():
     """The NVFP4 figure is planes plus the scalar plus the pinned tables."""
     assert dense_resident_bytes_resident_mode(
-        "TESSERA_NVFP4", GATE_ROWS, GATE_COLS, trellis_table_bytes=sum(GATE_TABLES)
+        "TESSERA_NVFP4", GATE_ROWS, GATE_COLS, trellis_table_bytes=sum(GATE_TABLES), decoder="torch_window"
     ) == GATE_NIBBLES + GATE_SCALES + GATE_A_SCALE + sum(GATE_TABLES)
 
 

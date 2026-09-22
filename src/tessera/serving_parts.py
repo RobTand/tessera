@@ -254,7 +254,34 @@ def dense_resident_bytes_resident_mode(family: str, rows: int, cols: int,
     reference decoder; missing native layout must never silently price it.
     """
     if family == "TESSERA_NVFP4":
-        return rows * cols // 2 + rows * cols // 16 + 4 + trellis_table_bytes
+        if decoder == "torch_window":
+            return rows * cols // 2 + rows * cols // 16 + 4 + trellis_table_bytes
+        if decoder != "native" or not native_roles:
+            raise ValueError("native A4 resident accounting requires per-role layout")
+        total, role_rows = 4 + trellis_table_bytes, 0
+        for role in native_roles:
+            count, width = int(role["rows"]), int(role["cols"])
+            rates = tuple(int(rate) for rate in role["rates"])
+            arity, memory, half = (int(role[key]) for key in ("arity", "memory", "half"))
+            if (arity != 2 or half != 16 or count <= 0 or count % (2 * arity * 8)
+                    or width != cols or width % half or len(rates) != width
+                    or len(set(rates)) != 1 or not 1 <= rates[0] <= 8 or memory < 1):
+                raise ValueError("invalid native A4 role layout")
+            steps, pairs = count // arity, count // (2 * arity)
+            points = 1 << (rates[0] - 1)
+            select = width * (pairs // 8 + 1) + 8
+            label = width * (pairs // 4)
+            point = width * (steps * (rates[0] - 1) // 8)
+            nibbles = count * width // (half * 2)
+            lut = int(role["lut_entries"]) if len(native_roles) > 1 else 16
+            if not 1 <= lut <= 16:
+                raise ValueError("invalid native A4 scale table")
+            tables = lut + (1 << (memory + 1)) * 4 + 4 * points * (arity + 1)
+            total += select + label + point + nibbles + tables + 4  # per-role epilogue
+            role_rows += count
+        if role_rows != rows:
+            raise ValueError("native A4 role rows do not cover the fused module")
+        return total
     if family not in ("TESSERA_BF16", "TESSERA_FP8"):
         raise ValueError(f"no resident-mode accounting for family {family!r}")
     if decoder == "torch_window":

@@ -2488,6 +2488,7 @@ def main():
             rungs = [int(plan[m][1]) for m in members]
             roles = []
             role_records = []
+            native_a4_roles = []
             stock_tensors: dict[str, dict] = {}
             # The distinct trellis-table sets the serving load pins for this
             # module (tessera#557): one memoised ``(forest, code)`` set per
@@ -2532,6 +2533,10 @@ def main():
                 role = part.role
                 roles.append((role, exported.rows, exported.blob, unit, forests))
                 if family == NVFP4:
+                    native_a4_roles.append({"rows": exported.rows, "cols": exported.columns,
+                                            "rates": unit.rates, "arity": parsed.grid.arity,
+                                            "memory": parsed.code.memory, "half": unit.half,
+                                            "lut_entries": int(unit.scale_lut.numel())})
                     # NVFP4 is the TCQ body, so the parsed unit carries the
                     # forests by rate and the convolutional code the load
                     # prepares select planes from; every rate's trellis it
@@ -2610,7 +2615,8 @@ def main():
                 record.update({"shared_global": shared, "input_global_scale": a_scale,
                                "resident_bytes_resident_mode": dense_resident_bytes_resident_mode(
                                    family, rows_total, cols,
-                                   trellis_table_bytes=trellis_table_bytes)})
+                                   trellis_table_bytes=trellis_table_bytes,
+                                   native_roles=native_a4_roles)})
                 if twin is not None:
                     moved, divisor = share_global({module_of(m): stock_tensors[m] for m in members})
                     for m in members:

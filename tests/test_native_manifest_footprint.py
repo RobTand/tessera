@@ -37,3 +37,15 @@ def test_manifest_counts_actual_native_kernel_inputs(family, rows, rates):
 def test_current_native_family_refuses_missing_layout():
     with pytest.raises(ValueError, match='native.*layout'):
         dense_resident_bytes_resident_mode('TESSERA_FP8', 512, 3)
+
+
+def test_manifest_prices_measured_native_a4_bundle_not_expanded_nibbles():
+    # 2026-09-22 real native capture, gate_up_proj: two 3072x1024 roles.
+    # Raw candidate persistent rows, independent of the pricing implementation.
+    captured = [1179648, 1179648, 196608, 196608, 99336, 99336, 98304, 98304,
+                2048, 1024, 1024, 512, 512, 512, 512, 256, 256, 16, 16, 4, 4, 4]
+    role = {'rows': 3072, 'cols': 1024, 'rates': (7,) * 1024,
+            'arity': 2, 'memory': 6, 'half': 16, 'lut_entries': 16}
+    assert dense_resident_bytes_resident_mode(
+        'TESSERA_NVFP4', 6144, 1024, native_roles=[role, role],
+        trellis_table_bytes=4096) == sum(captured)
