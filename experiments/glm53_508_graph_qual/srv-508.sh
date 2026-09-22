@@ -7,7 +7,8 @@
 # usage: srv-508.sh up | down | status | savelogs TAG
 set -uo pipefail
 
-TS=${TS:-/home/rob/tmp/tessera-508-graph-qual-20260918}
+# TS: the Tessera tree mounted into the container; defaults to the tree this script lives in.
+TS=${TS:-$(cd "$(dirname "$0")/../.." && pwd)}
 MODEL=${MODEL:-/mnt/shared/tessera-runs/moe/glm53-4layer-a4-e2m1x2-q896-l2}
 IMG=${IMG:-localhost/prismaquant/spark-vllm-nccl230@sha256:a5424378322071f4c33e63d1372a2bb028e46b03f0da0e5edb0cdd7418e2cebb}
 # EXPECT_TREE: optional pin; unset records HEAD. Base of this branch: 02bf6f195
@@ -21,10 +22,13 @@ TP1_UTIL=${TP1_UTIL:-0.45}
 MOE_BACKEND=${MOE_BACKEND:-flashinfer_cutlass}
 EAGER=${EAGER:-1}
 EXTRA_ARGS=${EXTRA_ARGS:-}
+COMPILATION_JSON=${COMPILATION_JSON:-}
+ARM=${ARM:-EAGER$EAGER}
 # Bisect hooks: PIPELINE_CAPTURE_PIN lets the parent disable capture around one
 # op without editing plugin code between serves (see bisect notes in #508).
 ENVS=(-e TESSERA_RESEARCH_GLM53_NOPE=1 -e TESSERA_SERVE_MODE=resident)
-[ -n "${BISECT_ENV:-}" ] && ENVS+=(-e "$BISECT_ENV")
+# BISECT_ENV: whitespace-separated KEY=VALUE entries passed into the container.
+for kv in ${BISECT_ENV:-}; do ENVS+=(-e "$kv"); done
 [ -n "${COMPILATION_MODE:-}" ] && ENVS+=(-e VLLM_COMPILATION_MODE="$COMPILATION_MODE")
 
 PREP='inc="$(python3 -c "import glob; p=sorted(glob.glob(\"/usr/local/lib/python3*/dist-packages/nvidia/cu*/include\")); print(p[0] if p else \"\")")"
@@ -65,6 +69,11 @@ up)
   if docker ps -q --filter name=$NAME | grep -q .; then echo "$NAME up; run: $0 down"; exit 2; fi
   mkdir -p "$EXT" "$OUT" "$DIR/logs"
   printf '%s\n' "EAGER=$EAGER $SERVE_ARGS" > "$OUT/engine-args-EAGER$EAGER.txt"
+  { echo "arm=$ARM"; echo "eager=$EAGER"; echo "serve_args=$SERVE_ARGS"
+    echo "compilation_json=$COMPILATION_JSON"; echo "bisect_env=${BISECT_ENV:-}"
+    echo "image=$IMG"; echo "image_id=$(docker image inspect --format '{{.Id}}' "$IMG")"
+    echo "tree=$TS"; echo "tree_sha=$(git -C "$TS" rev-parse HEAD)"; echo "tree_dirty=$(git -C "$TS" status --porcelain | wc -l)"
+    echo "model=$MODEL"; echo "started=$(date -u +%FT%TZ)"; } > "$OUT/engine-args-$ARM.txt"
   inner="$EXT/serve-inner.sh"
   { echo "set -e"; printf '%s\n' "$PREP"
     [ -n "$COMPILATION_JSON" ] && printf "extra=(\"--compilation-config\" '%s')\n" "${COMPILATION_JSON#%\"}"
