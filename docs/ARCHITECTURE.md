@@ -1,5 +1,16 @@
 # Tessera plan-to-serve architecture
 
+Native operator research receipts may freeze an execution-only panel before
+joint distortion completes. Dense and whole-MoE raw schemas carry original
+wire, source, calibration, tensor, routing and runtime identities but no cost
+or probe digest. Later PQ binding retains the raw receipt verbatim and joins
+only the same measured execution to actual final joint rows. Compact dense
+and grouped owners expose retained tensors to the receipt census; resident
+bytes deduplicate their CUDA storages alongside registered module state.
+Legacy materialisation is not an automatic substitute for compact acquisition.
+A source router protocol records its actual epsilon (GLM `1e-20`, LFM `1e-6`).
+
+
 Allocation, export and serve for Tessera checkpoints: who proposes rungs,
 who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or

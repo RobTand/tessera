@@ -783,3 +783,21 @@ def test_compact_a4_tensor_planes_and_epilogues_are_frozen():
     layer.tessera_a4_epilogues=[]
     with pytest.raises(ValueError,match='epilogue roster'):
         _module()._native_tensors(layer)
+
+
+def test_loaded_route_selects_actual_native_pair_when_history_has_two(monkeypatch):
+    module,blob,record,source,rendered,kwargs,trace=_fake_preparation(monkeypatch)
+    from tessera.serving import lane,scheme
+    build=lane.build_tessera_method
+    expected=('fixture.packed','fixture.packed.decoder')
+    monkeypatch.setattr(scheme,'launch_pairs',lambda *a,**k:{expected,('old.fallback','old.decoder')})
+    def explicit(*a,**k):
+        method=build(*a,**k);process=method.process_weights_after_loading
+        def load(layer):
+            process(layer);layer.tessera_symbol,layer.tessera_decoder=expected
+        method.process_weights_after_loading=load
+        return method
+    monkeypatch.setattr(lane,'build_tessera_method',explicit)
+    actual=module.prepare_native_operator(blob,record,source,rendered,**kwargs)
+    assert actual['operator']['declared_route']['symbol']==expected[0]
+    assert actual['operator']['declared_route']['decoder']==expected[1]

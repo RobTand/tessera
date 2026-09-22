@@ -96,6 +96,8 @@ def validate_panel(panel):
     # attestation a format that does not quantise its input carries counts.
     derived = ("numerics_derivation", "activation_quantizer_attestation")
     optional = derived if isinstance(panel, dict) and any(key in panel for key in derived) else ()
+    if isinstance(panel, dict) and "reference_served_quantizer" in panel:
+        optional += ("reference_served_quantizer",)
     raw = isinstance(panel, dict) and panel.get("schema") == RAW_PANEL_SCHEMA
     binding = (("operator_identity_sha256", "operator_identity") if raw else
                ("cost_sha256", "probe_identity_sha256", "joint_operator_identity_sha256",
@@ -287,6 +289,28 @@ def _native_tensor_items(layer):
             raise ValueError("compact A4 epilogue roster differs")
         result.extend((f"$owner.a4_epilogue.{index}", value)
                       for index, value in enumerate(epilogues))
+    method = getattr(layer, "quant_method", None)
+    packed = getattr(method, "_packed", None)
+    if packed is not None:
+        from tessera.native_window_moe import PackedWindowMoeBundles
+        if not isinstance(packed, PackedWindowMoeBundles):
+            raise ValueError("native receipts require the compact grouped window owner")
+        result.extend(("$owner.moe." + name, value) for name, value in packed.named_tensors())
+    for stage in ("gate", "up", "down"):
+        stack = getattr(layer, f"tessera_a4_{stage}_stack", None)
+        if stack is not None:
+            from tessera.kernel_a4 import A4UnitStack
+            if not isinstance(stack, A4UnitStack):
+                raise ValueError("unsupported compact A4 expert stack")
+            result.extend((f"$owner.a4_moe.{stage}.{field.name}", value)
+                for field in dataclasses.fields(stack)
+                if isinstance(value := getattr(stack, field.name), torch.Tensor))
+            epilogue = getattr(layer, f"tessera_a4_{stage}_epilogues")
+            result.append((f"$owner.a4_moe.{stage}.epilogues", epilogue))
+    for stage in ("gs13", "gs2"):
+        scale = getattr(layer, "tessera_a4_" + stage, None)
+        if scale is not None:
+            result.append(("$owner.a4_moe." + stage, scale))
     return result
 
 
@@ -327,7 +351,9 @@ def represented_native_input(layer, x):
         raise ValueError("unknown native activation owner")
     from tessera.alphabet import E2M1_VALUES
     from tessera.serving.nvfp4_route import blocked_scales, GROUP_SIZE
-    g = layer.trellis_input_global_scale.data.reshape(())
+    scale = (layer.trellis_input_global_scale if hasattr(layer, "trellis_input_global_scale")
+             else layer.tessera_a4_gs13)
+    g = scale.data.reshape(())
     packed, blocked = native_ops.native_fp4_quant(x.contiguous(), g)
     m, k = x.shape
     # Ask the existing owner for the permutation; do not restate its layout.
@@ -435,9 +461,8 @@ def prepare_native_operator(blob, record, source_weight, rendered_weight, *, uni
     # table; the attested view is empty here and would name no route at all.
     launches = launch_pairs(family, structure=STRUCTURE_DENSE, mode="resident",
                             include_experimental=True)
-    if len(launches) != 1:
-        raise ValueError("resident dense declaration does not identify one native route")
-    declared_symbol, declared_decoder = next(iter(launches))
+    if not launches:
+        raise ValueError("resident dense declaration has no native route")
     rows, columns = source_weight.shape
     container = pack_fused([("weight", rows, blob)])
     manifest = accepted.manifest
@@ -467,6 +492,17 @@ def prepare_native_operator(blob, record, source_weight, rendered_weight, *, uni
     # tensors have no version counter; the loader runs with gradients disabled.
     with torch.no_grad():
         method.process_weights_after_loading(layer)
+    # A modern packed A4 owner and its retired materialising route both remain
+    # in the historical launch table. The loaded owner's explicit declaration
+    # selects the actual path, before any measurements; never choose a set's
+    # arbitrary first entry or declare that legacy fallback ran.
+    declared = (getattr(layer, "tessera_symbol", None), getattr(layer, "tessera_decoder", None))
+    candidates = {pair for pair in launches
+                  if all(observed is None or observed == expected
+                         for observed, expected in zip(declared, pair))}
+    if len(candidates) != 1:
+        raise ValueError("loaded owner does not identify one declared native route")
+    declared_symbol, declared_decoder = next(iter(candidates))
     actual_g = float(layer.trellis_input_global_scale.reshape(())) if family == TESSERA_NVFP4 else None
     operator = {"wire_sha256": hashlib.sha256(blob).hexdigest(), "wire_record_sha256": identity_sha256(record),
                 "rendered_weight": tensor_identity(decoded), "activation_contract": layer.tessera_activation_contract,

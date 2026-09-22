@@ -543,3 +543,21 @@ def test_invalid_explicit_kv_capacity_refuses_before_factory(monkeypatch, tmp_pa
     path.write_text(json.dumps(document))
     with pytest.raises(ValueError):
         moe.resolve_serving_config(path, document['runtime_image'], tensor_parallel=1)
+
+
+def test_raw_whole_owner_panel_has_exact_member_execution_identities():
+    import copy
+    module=moe
+    panel=copy.deepcopy(_panel())
+    panel['schema']=module.RAW_PANEL_SCHEMA
+    panel.pop('cost_sha256');panel.pop('probe_identity_sha256')
+    binding=panel['runtime_binding'];binding.pop('member_operator_identity_sha256')
+    binding['member_execution_identity_sha256']={m['unit']:module.dense.identity_sha256(
+        {'qname':m['unit'],**{key:m[key] for key in ('format','source_weight','rendered_weight','activation')}})
+        for m in panel['members']}
+    route=panel['phases']['prefill']['expected_route']
+    binding['operator_route']=module.json.dumps(route,sort_keys=True,separators=(',',':'),allow_nan=False)
+    assert module.validate_panel(panel)==panel
+    binding['member_execution_identity_sha256'][panel['members'][0]['unit']]='0'*64
+    with pytest.raises(ValueError,match='raw member execution'):
+        module.validate_panel(panel)

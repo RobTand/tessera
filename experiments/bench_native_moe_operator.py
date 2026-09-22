@@ -25,6 +25,8 @@ from experiments import bench_native_operator as dense
 
 PANEL_SCHEMA = "tessera.native_moe_panel.v1"
 RECEIPT_SCHEMA = "tessera.native_moe_operator_receipt.v1"
+RAW_PANEL_SCHEMA = "tessera.native_moe_execution_panel.v1"
+RAW_RECEIPT_SCHEMA = "tessera.native_moe_execution_receipt.v1"
 REQUEST_SCHEMA = "tessera.native_moe_request.v1"
 RUNTIME_SCHEMA = "tessera.native_moe_runtime.v1"
 WORKSPACE_SCHEMA = "tessera.native_moe_workspace.v1"
@@ -287,7 +289,7 @@ def validate_routing(routing, *, glm=False):
             raise ValueError("source router class is missing")
         dense._sha(protocol["router_source_sha256"], "router source")
         if (type(protocol["normalization_epsilon"]) is not float
-                or protocol["normalization_epsilon"] != 1e-6
+                or protocol["normalization_epsilon"] != 1e-20
                 or protocol["expert_bias_affects"] != "selection_only"):
             raise ValueError("unsupported source routing normalization or bias protocol")
         if protocol["scoring_func"] != "sigmoid" or protocol["topk_method"] != GLM_SOURCE_FACTS["topk_method"]:
@@ -894,9 +896,12 @@ def _native_config(layer):
               "expert_placement_strategy", "is_fused_checkpoint_transposed")
     return {"layer": {key: _plain(getattr(layer, key)) for key in fields},
             "moe_config": _plain(layer.moe_config), "quant_config": _plain(method.moe_quant_config),
-            "backend": str(getattr(method.fp8_backend, "value", method.fp8_backend)),
-            "experts_class": method.experts_cls.__module__ + "." + method.experts_cls.__qualname__,
-            "kernel_class": type(method.moe_kernel).__module__ + "." + type(method.moe_kernel).__qualname__,
+            "backend": str(getattr(layer, "tessera_backend", getattr(method, "fp8_backend", None))),
+            "experts_class": (None if getattr(method, "experts_cls", None) is None else
+                              method.experts_cls.__module__ + "." + method.experts_cls.__qualname__),
+            "kernel_class": (type(method).__module__ + "." + type(method).__qualname__
+                if getattr(method, "experts_cls", None) is None else
+                type(method.moe_kernel).__module__ + "." + type(method.moe_kernel).__qualname__),
             "is_monolithic": bool(method.is_monolithic)}
 
 
@@ -1200,7 +1205,8 @@ def prepare_native_moe_operator(member_inputs, tensors, phase_tensors, *, unit, 
                          "render tensor roster differs from the complete owner")
     members, wires, strides = [], [], {"w13": 0, "w2": 0}
     for member in member_inputs:
-        dense._fields(member, ("unit", "expert", "role", "format", "blob", "record"), "member input")
+        dense._fields(member, ("unit", "expert", "role", "format", "blob", "record",
+            *(("input_global_scale",) if wire["family"] == "TESSERA_NVFP4" else ())), "member input")
         original, record = member["blob"], member["record"]
         source = (tensors["source_weight/" + member["unit"]] if source_reader is None
                   else source_reader(member["unit"]))
@@ -1239,7 +1245,15 @@ def prepare_native_moe_operator(member_inputs, tensors, phase_tensors, *, unit, 
         strides[group] = max(strides[group], len(container))
         wires.append((f"{member['expert']}.{member['role']}.wire",
                       torch.frombuffer(bytearray(container), dtype=torch.uint8).clone()))
+        if wire["family"] == "TESSERA_NVFP4":
+            scale = member["input_global_scale"]
+            if type(scale) not in (int, float) or not math.isfinite(scale) or scale <= 0:
+                raise ValueError("A4 native member requires its executed positive input scale")
+            wires.append((f"{member['expert']}.{member['role']}.input_global_scale",
+                          torch.tensor(float(scale), dtype=torch.float32)))
         members.append({key: member[key] for key in ("unit", "expert", "role", "format")})
+        if wire["family"] == "TESSERA_NVFP4":
+            members[-1]["input_global_scale"] = float(member["input_global_scale"])
         members[-1].update(shape=list(source.shape), source_weight=dense.tensor_identity(source),
             rendered_weight=dense.tensor_identity(rendered), wire_sha256=hashlib.sha256(original).hexdigest(),
             wire_record_sha256=dense.identity_sha256(record))
@@ -1262,6 +1276,11 @@ def prepare_native_moe_operator(member_inputs, tensors, phase_tensors, *, unit, 
             raise ValueError("native RoutedExperts loader did not consume every member")
         layer.quant_method.process_weights_after_loading(layer)
     del wires
+    if wire["family"] == "TESSERA_NVFP4":
+        for member in members:
+            scale = layer.tessera_a4_gs2 if member["role"] == "w2" else layer.tessera_a4_gs13
+            if float(scale) != member["input_global_scale"]:
+                raise ValueError("runtime executed A4 group scale differs from member identity")
     verify_native_configuration(layer, shape, routing,
         serving_config["document"]["engine_args"]["max_num_batched_tokens"],
         wire=wire, rank=rank, world=world)
@@ -1519,12 +1538,16 @@ def validate_panel(panel):
     """Check the independently frozen whole-owner join before CUDA execution."""
     source_fields = ("source_execution", "source_execution_qualification_sha256")
     optional = source_fields if isinstance(panel, dict) and any(key in panel for key in source_fields) else ()
+    if isinstance(panel, dict) and "reference_served_quantizer" in panel:
+        optional += ("reference_served_quantizer",)
+    raw = isinstance(panel, dict) and panel.get("schema") == RAW_PANEL_SCHEMA
+    cost_fields = () if raw else ("cost_sha256", "probe_identity_sha256")
     dense._fields(panel, ("schema", "unit", "format", "shape", "members", "profile_role_order",
-        "routing", "routing_capture_sha256", "source_sha256", "calibration_sha256", "cost_sha256",
-        "probe_identity_sha256", "probe_scope", "runtime_binding", "execution", "runtime", "native_tensors_sha256",
+        "routing", "routing_capture_sha256", "source_sha256", "calibration_sha256", *cost_fields,
+        "probe_scope", "runtime_binding", "execution", "runtime", "native_tensors_sha256",
         "scheme_sha256", "config_sha256", "serving_config_sha256", "workspace", "workspace_sha256",
         "numerics", "phases", *optional), "panel")
-    if optional:
+    if any(key in panel for key in source_fields):
         source = panel["source_execution"]
         dense._fields(source, ("schema", "modules"), "source execution")
         if (source["schema"] != "prismaquant.joint_aura.source_execution.v1"
@@ -1543,7 +1566,7 @@ def validate_panel(panel):
         qualification = panel["source_execution_qualification_sha256"]
         if qualification is not None:
             dense._sha(qualification, "source execution qualification")
-    if panel["schema"] != PANEL_SCHEMA:
+    if panel["schema"] not in (PANEL_SCHEMA, RAW_PANEL_SCHEMA):
         raise ValueError("whole MoE panel schema unsupported")
     if not isinstance(panel["format"], str) or not panel["format"]:
         raise ValueError("whole MoE panel must name the one format its owner holds")
@@ -1553,8 +1576,8 @@ def validate_panel(panel):
     validate_execution(panel["execution"], panel["profile_role_order"], shape=shape)
     validate_member_order(panel["members"], shape)
     validate_routing(panel["routing"], glm=is_glm_geometry(shape))
-    for key in ("routing_capture_sha256", "source_sha256", "calibration_sha256", "cost_sha256",
-                "probe_identity_sha256", "native_tensors_sha256", "scheme_sha256", "config_sha256",
+    for key in ("routing_capture_sha256", "source_sha256", "calibration_sha256", *cost_fields,
+                "native_tensors_sha256", "scheme_sha256", "config_sha256",
                 "serving_config_sha256", "workspace_sha256"):
         dense._sha(panel[key], key)
     scope = panel["probe_scope"]
@@ -1569,9 +1592,10 @@ def validate_panel(panel):
         for key in ("parent_calibration_sha256", "subset_calibration_sha256"):
             dense._sha(scope[key], key)
     binding = panel["runtime_binding"]
-    dense._fields(binding, ("member_formats", "member_operator_identity_sha256", "member_shapes", "operator_route"), "runtime binding")
+    identity_key = "member_execution_identity_sha256" if raw else "member_operator_identity_sha256"
+    dense._fields(binding, ("member_formats", identity_key, "member_shapes", "operator_route"), "runtime binding")
     names = {member["unit"] for member in panel["members"]}
-    for key in ("member_formats", "member_operator_identity_sha256", "member_shapes"):
+    for key in ("member_formats", identity_key, "member_shapes"):
         if not isinstance(binding[key], dict) or set(binding[key]) != names:
             raise ValueError("runtime binding must include exactly every original member")
     for member in panel["members"]:
@@ -1590,11 +1614,28 @@ def validate_panel(panel):
                 or binding["member_shapes"][member["unit"]] != geometry
                 or binding["member_formats"][member["unit"]] != panel["format"]):
             raise ValueError("member name/shape/format differs from its explicit owner role")
-        dense._sha(binding["member_operator_identity_sha256"][member["unit"]], "member joint identity")
+        dense._sha(binding[identity_key][member["unit"]], "member identity")
+        if raw:
+            identity = {"qname": member["unit"], **{key: member[key] for key in
+                ("format", "source_weight", "rendered_weight", "activation")}}
+            if dense.identity_sha256(identity) != binding[identity_key][member["unit"]]:
+                raise ValueError("raw member execution identity differs")
         tensor_record(member["source_weight"], declared, ("torch.bfloat16",), "source_weight")
         tensor_record(member["rendered_weight"], geometry, ("torch.bfloat16",), "rendered_weight")
-        if member["activation"].get("clip_enabled") is not False or member["activation"].get("input_global_scale") is not None:
-            raise ValueError("whole MoE requires dynamic unclipped member activations")
+        activation = member["activation"]
+        if activation.get("clip_enabled") is not False:
+            raise ValueError("whole MoE refuses clipped member activations")
+        scale = activation.get("input_global_scale")
+        if owner_wire(shape)["family"] == "TESSERA_NVFP4":
+            if type(scale) not in (float, int) or not math.isfinite(scale) or scale <= 0:
+                raise ValueError("whole A4 MoE requires executed positive member scales")
+            stage = "w2" if member["role"] == "w2" else "w13"
+            peers = [m["activation"]["input_global_scale"] for m in panel["members"]
+                     if ("w2" if m["role"] == "w2" else "w13") == stage]
+            if any(value != scale for value in peers):
+                raise ValueError("whole A4 MoE member scales differ within the executed stage")
+        elif scale is not None:
+            raise ValueError("dynamic/identity MoE must not carry static activation scales")
         wire = member["wire"]
         dense._fields(wire, ("blob_sha256", "blob_bytes", "record"), "member wire")
         dense._sha(wire["blob_sha256"], "member wire")
@@ -1667,7 +1708,10 @@ def validate_panel(panel):
                 or (symbol_base, route["decoder"])
                 not in panel_pairs
                 or route["symbol"] == str(symbol_base) + ":"
-                or route["symbol"] != binding["operator_route"]):
+                or binding["operator_route"] not in (
+                    (json.dumps(route, sort_keys=True, separators=(",", ":"), allow_nan=False),)
+                    if raw else (route["symbol"], json.dumps(route, sort_keys=True,
+                        separators=(",", ":"), allow_nan=False)))):
             raise ValueError("route differs from native whole MoE binding")
     if panel["phases"]["prefill"]["expected_route"] != panel["phases"]["decode"]["expected_route"]:
         raise ValueError("whole MoE phases must use the same resident route")
@@ -1709,6 +1753,9 @@ def _check_prepared(prepared, panel):
     expected_members = [{**{key: member[key] for key in ("unit", "expert", "role", "format", "shape", "source_weight", "rendered_weight")},
                          "wire_sha256": member["wire"]["blob_sha256"],
                          "wire_record_sha256": dense.identity_sha256(member["wire"]["record"])} for member in panel["members"]]
+    if owner_wire(panel["shape"])["family"] == "TESSERA_NVFP4":
+        for expected, member in zip(expected_members, panel["members"]):
+            expected["input_global_scale"] = member["activation"]["input_global_scale"]
     if operator["members"] != expected_members:
         raise ValueError("native original-wire members differ from independent panel")
     # The member map is the producer's plan's answer for this rank; the panel's
@@ -1842,7 +1889,7 @@ def measure_prepared_operator(prepared, panel, phase_tensors, *, warmup_iteratio
     # runtime actually reduced on every phase it priced.
     observed_inclusion = passed and all(
         observations[phase].get("collective", {}).get("callsite_calls") == 1 for phase in PHASES)
-    return {"schema": RECEIPT_SCHEMA, "status": status,
+    return {"schema": RAW_RECEIPT_SCHEMA if panel["schema"] == RAW_PANEL_SCHEMA else RECEIPT_SCHEMA, "status": status,
             "panel": panel, "panel_sha256": dense.identity_sha256(panel), "runtime": prepared["runtime"],
             "runtime_sha256": dense.identity_sha256(prepared["runtime"]), "operator": prepared["operator"],
             "latency_scope": {"kind": "one_whole_owner_apply", "per_rank": True,
