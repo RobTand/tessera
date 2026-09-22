@@ -93,6 +93,7 @@ from ..moe_execution import ResearchSelectedMoeConfig
 from ..moe_layout import (W13_PROJECTIONS, MoePacked, unpack_moe_wires,
                           validate_moe_wire_lengths)
 from .lane import MODE_RESIDENT, MODES
+from .residency import named_resident_tensors
 from .scheme import (MOE_GEMM_SYMBOL, MOE_GROUP_SHARDS, MOE_GROUPS, ROUTES,
                      STRUCTURE_ROUTED_MOE, TESSERA_BF16, TESSERA_FP8, launch_pairs, route_launches,
                      moe_census_symbol_base as census_symbol_base,
@@ -1111,6 +1112,20 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
                 gemm1_beta=getattr(layer, "swiglu_beta", None),
                 swiglu_limit=getattr(layer, "swiglu_limit", None),
                 layer=layer)
+
+        # -- residency declaration (#580) -------------------------------
+        def resident_tensors(self, layer):
+            """The grouped bundles this route holds outside registered state.
+
+            The compact ``PackedWindowMoeBundles`` declare their tensors.  A
+            prepared owner that declares no ``named_tensors()`` (the research
+            per-expert ``PackedWindowUnits``) is not walked: its bytes stay
+            uncharged in a capture's report instead of being attributed by a
+            guess.  The stock-decoded path registers ordinary parameters.
+            """
+            packed = getattr(self, "_packed", None)
+            if callable(getattr(packed, "named_tensors", None)):
+                yield from named_resident_tensors(packed, "tessera_packed")
 
         # -- forward ----------------------------------------------------
         def apply(self, layer, x, topk_weights, topk_ids, shared_experts,

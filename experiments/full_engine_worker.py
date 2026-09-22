@@ -94,10 +94,14 @@ def parameter_category(name, canonical_modules, dtype=None):
 
 
 def model_tensor_census(model):
-    """Registered state plus explicit native packed owners, preserving aliases.
+    """Registered state plus every route's declared resident tensors, preserving aliases.
 
-    Only the native owner's public tensor references extend the census; no
-    arbitrary object traversal, new buffers, or runtime allocations occur.
+    A Tessera route keeps its prepared weights outside registered state and
+    declares them through ``quant_method.resident_tensors(layer)``
+    (``tessera.serving.residency``). Only that declaration extends the census:
+    no attribute walk, no new buffers, no runtime allocation. A module whose
+    method declares nothing adds nothing, so an undeclared resident tensor
+    surfaces as an uncharged allocation rather than as a guessed owner.
     """
     for kind, tensors in (("parameter", model.named_parameters(remove_duplicate=False)),
                           ("buffer", model.named_buffers(remove_duplicate=False))):
@@ -106,15 +110,12 @@ def model_tensor_census(model):
     if not hasattr(model, "named_modules"):
         return
     for module_name, module in model.named_modules(remove_duplicate=False):
-        prepared = vars(module).get("tessera_native")
-        if prepared is None:
-            continue
-        from tessera.serving.native_window import PreparedDenseNativeModule
-        if not isinstance(prepared, PreparedDenseNativeModule):
+        declare = getattr(vars(module).get("quant_method"), "resident_tensors", None)
+        if not callable(declare):
             continue
         prefix = module_name + "." if module_name else ""
-        for name, tensor in prepared.named_tensors():
-            yield "native", prefix + "tessera_native." + name, tensor
+        for name, tensor in declare(module):
+            yield "native", prefix + name, tensor
 
 
 def reference_candidate_tensor_ids(model, boundaries):
