@@ -543,3 +543,52 @@ def test_invalid_explicit_kv_capacity_refuses_before_factory(monkeypatch, tmp_pa
     path.write_text(json.dumps(document))
     with pytest.raises(ValueError):
         moe.resolve_serving_config(path, document['runtime_image'], tensor_parallel=1)
+
+
+def test_raw_whole_owner_panel_has_exact_member_execution_identities():
+    import copy
+    module=moe
+    panel=copy.deepcopy(_panel())
+    panel['schema']=module.RAW_PANEL_SCHEMA
+    panel.pop('cost_sha256');panel.pop('probe_identity_sha256')
+    binding=panel['runtime_binding'];binding.pop('member_operator_identity_sha256')
+    binding['member_execution_identity_sha256']={m['unit']:module.dense.identity_sha256(
+        {'qname':m['unit'],**{key:m[key] for key in ('format','source_weight','rendered_weight','activation')}})
+        for m in panel['members']}
+    route=panel['phases']['prefill']['expected_route']
+    binding['operator_route']=module.json.dumps(route,sort_keys=True,separators=(',',':'),allow_nan=False)
+    assert module.validate_panel(panel)==panel
+    binding['member_execution_identity_sha256'][panel['members'][0]['unit']]='0'*64
+    with pytest.raises(ValueError,match='raw member execution'):
+        module.validate_panel(panel)
+
+
+def test_standalone_raw_producer_preserves_independent_member_and_phase_bindings():
+    from experiments.measure_glm_native_execution import freeze
+    panel=_panel()
+    route=panel['phases']['prefill']['expected_route']
+    route.update(decoder='native_window_moe_compact',symbol='tessera.native_window_moe.NativeWindowMoE.__call__')
+    source_execution={'schema':'prismaquant.joint_aura.source_execution.v1',
+                      'modules':{'':{'experts':'eager'}}}
+    inputs={key:copy.deepcopy(panel[key]) for key in ('unit','format','shape','members',
+        'profile_role_order','routing','routing_capture_sha256','serving_config_sha256',
+        'execution','numerics','phases')}
+    for phase in inputs['phases'].values():phase.pop('expected_route')
+    inputs.update(schema='prismaquant.native_moe_inputs.v1',runtime_image='test:immutable',
+        calibration={'calibration_sha256':panel['calibration_sha256']},
+        routing_capture={'source_execution':source_execution})
+    operator={key:copy.deepcopy(inputs[key]) for key in ('shape','routing','profile_role_order',
+        'routing_capture_sha256','serving_config_sha256')}
+    operator.update(declared_route=route,native_tensors=[],scheme_sha256=panel['scheme_sha256'],
+        config_sha256=panel['config_sha256'],members=[])
+    for member in inputs['members']:
+        native={key:member[key] for key in ('unit','expert','role','format','shape','source_weight','rendered_weight')}
+        native.update(wire_sha256=member['wire']['blob_sha256'],wire_record_sha256=dense.identity_sha256(member['wire']['record']))
+        operator['members'].append(copy.deepcopy(native))
+    prepared={'operator':operator,'runtime':{**panel['runtime'],'image':'test:immutable'},'workspace':panel['workspace']}
+    raw=freeze(inputs,prepared,panel['source_sha256'])
+    assert 'cost_sha256' not in raw
+    assert raw['members']==inputs['members']
+    inputs['members'][0]['rendered_weight']['content_sha256']='0'*64
+    with pytest.raises(ValueError,match='member identities'):
+        freeze(inputs,prepared,panel['source_sha256'])

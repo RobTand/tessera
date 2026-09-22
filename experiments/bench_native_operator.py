@@ -16,6 +16,8 @@ from contextlib import contextmanager
 
 PANEL_SCHEMA = "tessera.native_dense_panel.v1"
 RECEIPT_SCHEMA = "tessera.native_dense_operator_receipt.v1"
+RAW_PANEL_SCHEMA = "tessera.native_dense_execution_panel.v1"
+RAW_RECEIPT_SCHEMA = "tessera.native_dense_execution_receipt.v1"
 RUNTIME_SCHEMA = "tessera.native_dense_runtime.v1"
 EXECUTION = {"owner_kind": "single_dense", "mode": "resident",
              "execution_mode": "eager", "tensor_parallel": 1, "bias": False}
@@ -94,13 +96,18 @@ def validate_panel(panel):
     # attestation a format that does not quantise its input carries counts.
     derived = ("numerics_derivation", "activation_quantizer_attestation")
     optional = derived if isinstance(panel, dict) and any(key in panel for key in derived) else ()
+    if isinstance(panel, dict) and "reference_served_quantizer" in panel:
+        optional += ("reference_served_quantizer",)
+    raw = isinstance(panel, dict) and panel.get("schema") == RAW_PANEL_SCHEMA
+    binding = (("operator_identity_sha256", "operator_identity") if raw else
+               ("cost_sha256", "probe_identity_sha256", "joint_operator_identity_sha256",
+                "joint_operator_identity"))
     _fields(panel, ("schema", "unit", "format", "shape", "source_sha256", "calibration_sha256",
-                    "cost_sha256", "probe_identity_sha256", "joint_operator_identity_sha256",
-                    "joint_operator_identity", "wire", "execution", "runtime",
+                    *binding, "wire", "execution", "runtime",
                     "native_tensors_sha256", "scheme_sha256", "numerics",
                     *optional,
                     "phases"), "panel")
-    if panel["schema"] != PANEL_SCHEMA:
+    if panel["schema"] not in (PANEL_SCHEMA, RAW_PANEL_SCHEMA):
         raise ValueError("panel schema unsupported")
     # Equality alone admits True == 1 and 0 == False.
     if identity_sha256(panel["execution"]) != identity_sha256(EXECUTION):
@@ -113,14 +120,16 @@ def validate_panel(panel):
         raise ValueError("shape: [N,K] required")
     for n in shape:
         _integer(n, "shape")
-    for key in ("source_sha256", "calibration_sha256", "cost_sha256", "probe_identity_sha256",
-                "joint_operator_identity_sha256", "native_tensors_sha256", "scheme_sha256"):
+    for key in ("source_sha256", "calibration_sha256", "native_tensors_sha256", "scheme_sha256",
+                *(key for key in binding if key.endswith("sha256"))):
         _sha(panel[key], key)
-    joint = panel["joint_operator_identity"]
-    if identity_sha256(joint) != panel["joint_operator_identity_sha256"]:
+    joint = panel["operator_identity" if raw else "joint_operator_identity"]
+    if raw:
+        _fields(joint, ("qname", "format", "source_weight", "rendered_weight", "activation"), "execution operator identity")
+    if identity_sha256(joint) != panel["operator_identity_sha256" if raw else "joint_operator_identity_sha256"]:
         raise ValueError("joint operator identity SHA256 mismatch")
     if (joint.get("qname") != panel["unit"] or joint.get("format") != panel["format"]
-            or joint.get("probe_identity_sha256") != panel["probe_identity_sha256"]):
+            or (not raw and joint.get("probe_identity_sha256") != panel["probe_identity_sha256"])):
         raise ValueError("joint operator unit/format/probe identity mismatch")
     for key in ("source_weight", "rendered_weight"):
         _tensor_record(joint[key], shape, key)
@@ -255,10 +264,60 @@ def _check_native_library_scope(runtime):
         raise ValueError("native libraries loaded after preparation: " + ", ".join(sorted(unobserved)))
 
 
+def _native_tensor_items(layer):
+    """Registered state plus explicit compact serving owners, never scratch."""
+    import dataclasses
+    import torch
+    result = list(layer.named_parameters()) + list(layer.named_buffers())
+    native = getattr(layer, "tessera_native", None)
+    if native is not None:
+        from tessera.serving.native_window import PreparedDenseNativeModule
+        if not isinstance(native, PreparedDenseNativeModule):
+            raise ValueError("unsupported compact dense native owner")
+        result.extend(("$owner.native." + name, value) for name, value in native.named_tensors())
+    units = getattr(layer, "tessera_a4_units", ())
+    if units:
+        from tessera.kernel_a4 import A4Unit
+        for index, unit in enumerate(units):
+            if not isinstance(unit, A4Unit):
+                raise ValueError("unsupported compact A4 native owner")
+            result.extend((f"$owner.a4.{index}.{field.name}", value)
+                for field in dataclasses.fields(unit)
+                if isinstance(value := getattr(unit, field.name), torch.Tensor))
+        epilogues = getattr(layer, "tessera_a4_epilogues", ())
+        if len(epilogues) != len(units):
+            raise ValueError("compact A4 epilogue roster differs")
+        result.extend((f"$owner.a4_epilogue.{index}", value)
+                      for index, value in enumerate(epilogues))
+    method = getattr(layer, "quant_method", None)
+    packed = getattr(method, "_packed", None)
+    if packed is not None:
+        from tessera.native_window_moe import PackedWindowMoeBundles
+        if not isinstance(packed, PackedWindowMoeBundles):
+            raise ValueError("native receipts require the compact grouped window owner")
+        result.extend(("$owner.moe." + name, value) for name, value in packed.named_tensors())
+    for stage in ("gate", "up", "down"):
+        stack = getattr(layer, f"tessera_a4_{stage}_stack", None)
+        if stack is not None:
+            from tessera.kernel_a4 import A4UnitStack
+            if not isinstance(stack, A4UnitStack):
+                raise ValueError("unsupported compact A4 expert stack")
+            result.extend((f"$owner.a4_moe.{stage}.{field.name}", value)
+                for field in dataclasses.fields(stack)
+                if isinstance(value := getattr(stack, field.name), torch.Tensor))
+            epilogue = getattr(layer, f"tessera_a4_{stage}_epilogues")
+            result.append((f"$owner.a4_moe.{stage}.epilogues", epilogue))
+    for stage in ("gs13", "gs2"):
+        scale = getattr(layer, "tessera_a4_" + stage, None)
+        if scale is not None:
+            result.append(("$owner.a4_moe." + stage, scale))
+    return result
+
+
 def _native_tensors(layer):
     import torch
     result = {name: tensor_identity(value) for name, value in
-              list(layer.named_parameters()) + list(layer.named_buffers())}
+              _native_tensor_items(layer)}
     # NVFP4's externally applied epilogue is a Python scalar, not a buffer.
     for name in ("tessera_epilogue_scale", "tessera_global_scale_real"):
         if hasattr(layer, name):
@@ -270,7 +329,7 @@ def _native_tensors(layer):
 
 def _resident_bytes(layer):
     storages = {}
-    for _name, value in list(layer.named_parameters()) + list(layer.named_buffers()):
+    for _name, value in _native_tensor_items(layer):
         if value.device.type != "cuda":
             raise ValueError("loaded native storage is not CUDA resident")
         storage = value.untyped_storage()
@@ -292,7 +351,9 @@ def represented_native_input(layer, x):
         raise ValueError("unknown native activation owner")
     from tessera.alphabet import E2M1_VALUES
     from tessera.serving.nvfp4_route import blocked_scales, GROUP_SIZE
-    g = layer.trellis_input_global_scale.data.reshape(())
+    scale = (layer.trellis_input_global_scale if hasattr(layer, "trellis_input_global_scale")
+             else layer.tessera_a4_gs13)
+    g = scale.data.reshape(())
     packed, blocked = native_ops.native_fp4_quant(x.contiguous(), g)
     m, k = x.shape
     # Ask the existing owner for the permutation; do not restate its layout.
@@ -305,6 +366,17 @@ def represented_native_input(layer, x):
     codes = torch.stack((packed & 15, packed >> 4), dim=-1).reshape(m, k).long()
     levels = torch.tensor(E2M1_VALUES, device=x.device, dtype=torch.float32)
     return (levels[codes].reshape(m, -1, GROUP_SIZE) * scales.reshape(m, -1, 1) / g).reshape(m, k).to(torch.bfloat16)
+
+
+def native_source_bundle():
+    """Both operator harnesses and resource code from this actual source tree."""
+    root=Path(__file__).parent
+    files={"dense_harness_sha256":Path(__file__),
+        "routed_harness_sha256":root/"bench_native_moe_operator.py",
+        "resource_analysis_sha256":root/"native_operator_resources.py",
+        "resource_collector_source_sha256":root/"csrc/native_operator_resources.cpp"}
+    return {"schema":"tessera.native_operator_source_bundle.v1",
+            **{key:hashlib.sha256(path.read_bytes()).hexdigest() for key,path in files.items()}}
 
 
 def observe_runtime(runtime_image):
@@ -352,14 +424,15 @@ def observe_runtime(runtime_image):
                          "cuda": torch.version.cuda},
             "gpu": {"name": props.name, "uuid": uuid, "capability": [props.major, props.minor],
                     "total_memory": props.total_memory, "driver_version": drivers[uuid]},
-            "source": {"tessera_package_sha256": encoder_source_sha256(),
+            "source": {"native_cohort_bundle":native_source_bundle(),
+                       "tessera_package_sha256": encoder_source_sha256(),
                        "runtime_contract_sha256": hashlib.sha256((package / "serving/runtime_contract.json").read_bytes()).hexdigest(),
                        "harness_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest()},
             "native_libraries": libraries}
 
 
 def prepare_native_operator(blob, record, source_weight, rendered_weight, *, unit, format_name,
-                            runtime_image, input_global_scale=None, execution=None):
+                            runtime_image, input_global_scale=None, execution=None, phase_inputs=None):
     """Actual create/load/process lifecycle; returns facts for freezing a panel.
 
     Original unit bytes are framed once through the existing single-role fused
@@ -400,9 +473,8 @@ def prepare_native_operator(blob, record, source_weight, rendered_weight, *, uni
     # table; the attested view is empty here and would name no route at all.
     launches = launch_pairs(family, structure=STRUCTURE_DENSE, mode="resident",
                             include_experimental=True)
-    if len(launches) != 1:
-        raise ValueError("resident dense declaration does not identify one native route")
-    declared_symbol, declared_decoder = next(iter(launches))
+    if not launches:
+        raise ValueError("resident dense declaration has no native route")
     rows, columns = source_weight.shape
     container = pack_fused([("weight", rows, blob)])
     manifest = accepted.manifest
@@ -432,6 +504,17 @@ def prepare_native_operator(blob, record, source_weight, rendered_weight, *, uni
     # tensors have no version counter; the loader runs with gradients disabled.
     with torch.no_grad():
         method.process_weights_after_loading(layer)
+    # A modern packed A4 owner and its retired materialising route both remain
+    # in the historical launch table. The loaded owner's explicit declaration
+    # selects the actual path, before any measurements; never choose a set's
+    # arbitrary first entry or declare that legacy fallback ran.
+    declared = (getattr(layer, "tessera_symbol", None), getattr(layer, "tessera_decoder", None))
+    candidates = {pair for pair in launches
+                  if all(observed is None or observed == expected
+                         for observed, expected in zip(declared, pair))}
+    if len(candidates) != 1:
+        raise ValueError("loaded owner does not identify one declared native route")
+    declared_symbol, declared_decoder = next(iter(candidates))
     actual_g = float(layer.trellis_input_global_scale.reshape(())) if family == TESSERA_NVFP4 else None
     operator = {"wire_sha256": hashlib.sha256(blob).hexdigest(), "wire_record_sha256": identity_sha256(record),
                 "rendered_weight": tensor_identity(decoded), "activation_contract": layer.tessera_activation_contract,
@@ -442,6 +525,20 @@ def prepare_native_operator(blob, record, source_weight, rendered_weight, *, uni
                     "contract": ROUTES[family]["activation_contract"]},
                 "native_tensors": _native_tensors(layer)}
     operator["source_weight"] = tensor_identity(source_weight)
+    if phase_inputs is not None:
+        _fields(phase_inputs, PHASES, "untimed phase inputs")
+        initial = {phase: tensor_identity(value) for phase, value in phase_inputs.items()}
+        with torch.inference_mode():
+            for phase in PHASES:
+                value = phase_inputs[phase]
+                _require_cuda_tensor(value)
+                if value.shape[1] != columns:
+                    raise ValueError("untimed phase input width differs from owner")
+                method.apply(layer, value)
+            torch.cuda.synchronize()
+        if (initial != {phase: tensor_identity(value) for phase, value in phase_inputs.items()}
+                or _native_tensors(layer) != operator["native_tensors"]):
+            raise ValueError("untimed native initialization changed inputs or weights")
     return {"method": method, "layer": layer, "operator": operator, "runtime": observe_runtime(runtime_image)}
 
 
@@ -470,7 +567,7 @@ def _check_prepared(prepared, panel):
         raise ValueError("scheme is not the declared single dense owner/shape")
     if operator["wire_sha256"] != panel["wire"]["blob_sha256"] or operator["wire_record_sha256"] != identity_sha256(panel["wire"]["record"]):
         raise ValueError("wire identity differs from independent panel")
-    joint = panel["joint_operator_identity"]
+    joint = panel["operator_identity" if panel["schema"] == RAW_PANEL_SCHEMA else "joint_operator_identity"]
     for key in ("source_weight", "rendered_weight"):
         if operator[key] != joint[key]:
             raise ValueError(f"{key} identity differs from joint cost")
@@ -572,7 +669,7 @@ def measure_prepared_operator(prepared, panel, phase_tensors, *, warmup_iteratio
                     _check_phase_tensors(panel, phase_tensors)
         _check_prepared(prepared, panel)
     status = ("resources_observed" if resource_collector is not None else "timing_admissible") if passed else "numerical_refused"
-    return {"schema": RECEIPT_SCHEMA, "status": status,
+    return {"schema": RAW_RECEIPT_SCHEMA if panel["schema"] == RAW_PANEL_SCHEMA else RECEIPT_SCHEMA, "status": status,
             "panel": panel, "panel_sha256": identity_sha256(panel), "runtime": prepared["runtime"],
             "runtime_sha256": identity_sha256(prepared["runtime"]), "operator": prepared["operator"],
             "phases": observations, "resources": {"status": "incomplete", "scope": "torch_allocator_observation",
@@ -734,7 +831,8 @@ def main(argv=None):
         prepared = prepare_native_operator(artifact("wire_path").read_bytes(),
             json.loads(artifact("wire_record_path").read_text()), tensors["source_weight"], tensors["rendered_weight"],
             unit=request["unit"], format_name=request["format"], runtime_image=request["runtime_image"],
-            input_global_scale=request["input_global_scale"], execution=request["execution"])
+            input_global_scale=request["input_global_scale"], execution=request["execution"],
+            phase_inputs={phase: tensors[f"{phase}.input"] for phase in PHASES})
         if collector_library_sha256 is not None:
             prepared["runtime"]["resource_collector"] = {
                 "library_sha256": collector_library_sha256,

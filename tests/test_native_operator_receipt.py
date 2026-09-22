@@ -719,3 +719,96 @@ def test_decision_samples_follow_stopped_resource_collection(monkeypatch):
     assert receipt['status'] == 'timing_admissible'
     assert receipt['timing_scope'] == 'cuda_events_after_resource_collector_stop'
     assert [kind for kind, _ in trace].count('time') == 2
+
+
+def test_execution_only_panel_does_not_require_unmeasured_cost_or_probe():
+    panel, *_ = _panel_fixture()
+    joint = panel.pop('joint_operator_identity')
+    for key in ('cost_sha256', 'probe_identity_sha256', 'joint_operator_identity_sha256'):
+        panel.pop(key)
+    panel['schema'] = _module().RAW_PANEL_SCHEMA
+    panel['operator_identity'] = {key: joint[key] for key in
+        ('qname', 'format', 'source_weight', 'rendered_weight', 'activation')}
+    panel['operator_identity_sha256'] = _json_sha(panel['operator_identity'])
+    assert _module().validate_panel(panel) == panel
+    panel['cost_sha256'] = _sha('must not masquerade as a joint bound panel')
+    with pytest.raises(ValueError, match='unknown fields'):
+        _module().validate_panel(panel)
+
+
+@pytest.mark.parametrize('bad_output',[False,True])
+def test_execution_receipt_preserves_numerical_gate_without_joint_cost(monkeypatch,bad_output):
+    fixture = _fake_lifecycle(monkeypatch,bad_output=bad_output)
+    _,panel,_,_,trace = fixture
+    joint=panel.pop('joint_operator_identity')
+    for key in ('cost_sha256','probe_identity_sha256','joint_operator_identity_sha256'):
+        panel.pop(key)
+    panel['schema']=_module().RAW_PANEL_SCHEMA
+    panel['operator_identity']={key:joint[key] for key in
+        ('qname','format','source_weight','rendered_weight','activation')}
+    panel['operator_identity_sha256']=_json_sha(panel['operator_identity'])
+    receipt=_measure(fixture)
+    assert receipt['schema']==_module().RAW_RECEIPT_SCHEMA
+    assert receipt['panel']==panel
+    assert ('cost_sha256' not in receipt['panel'])
+    assert receipt['status']==('numerical_refused' if bad_output else 'timing_admissible')
+    assert any(kind=='time' for kind,_ in trace) is (not bad_output)
+
+
+def test_packed_native_owner_tensors_are_frozen_beside_registered_buffers():
+    from tessera.serving.native_window import PreparedDenseNativeModule
+    layer=torch.nn.Module();layer.register_buffer('scale_b',torch.ones(4))
+    names=('words','table','codes','native','scale','runs','init_perm','perm')
+    bundle=SimpleNamespace(**{name:torch.arange(8,dtype=torch.int32) for name in names},cols=8)
+    owner=PreparedDenseNativeModule([SimpleNamespace(name='weight',rows=4,bundle=bundle)],
+        rows=4,columns=8,device=torch.device('cpu'),family='e4m3')
+    layer.tessera_native=owner
+    observed=_module()._native_tensors(layer)
+    assert len(observed)==9
+    assert sum(v['logical_bytes'] for v in observed.values())==16+8*32
+    before=copy.deepcopy(observed);bundle.words[0]+=1
+    assert _module()._native_tensors(layer)!=before
+
+
+def test_compact_a4_tensor_planes_and_epilogues_are_frozen():
+    from tessera.kernel_a4 import A4Unit
+    layer=torch.nn.Module();layer.register_buffer('global_scale',torch.ones(1))
+    fields=('select','label','point','nibbles','lut_bytes','label_lut','subset_nibbles','code_nibbles')
+    unit=A4Unit(**{name:torch.arange(8,dtype=torch.uint8) for name in fields},
+        rows=4,cols=8,rate=7,arity=2,memory=8,half=4,global_scale=1.0)
+    layer.tessera_a4_units=[unit];layer.tessera_a4_epilogues=[torch.ones(1)]
+    assert len(_module()._native_tensors(layer))==10
+    before=_module()._native_tensors(layer);unit.point[0]+=1
+    assert _module()._native_tensors(layer)!=before
+    layer.tessera_a4_epilogues=[]
+    with pytest.raises(ValueError,match='epilogue roster'):
+        _module()._native_tensors(layer)
+
+
+def test_loaded_route_selects_actual_native_pair_when_history_has_two(monkeypatch):
+    module,blob,record,source,rendered,kwargs,trace=_fake_preparation(monkeypatch)
+    from tessera.serving import lane,scheme
+    build=lane.build_tessera_method
+    expected=('fixture.packed','fixture.packed.decoder')
+    monkeypatch.setattr(scheme,'launch_pairs',lambda *a,**k:{expected,('old.fallback','old.decoder')})
+    def explicit(*a,**k):
+        method=build(*a,**k);process=method.process_weights_after_loading
+        def load(layer):
+            process(layer);layer.tessera_symbol,layer.tessera_decoder=expected
+        method.process_weights_after_loading=load
+        return method
+    monkeypatch.setattr(lane,'build_tessera_method',explicit)
+    actual=module.prepare_native_operator(blob,record,source,rendered,**kwargs)
+    assert actual['operator']['declared_route']['symbol']==expected[0]
+    assert actual['operator']['declared_route']['decoder']==expected[1]
+
+
+def test_common_operator_source_bundle_binds_both_harnesses_and_resource_code():
+    import hashlib
+    from pathlib import Path
+    from experiments import bench_native_operator as bench
+    root=Path(bench.__file__).parent
+    bundle=bench.native_source_bundle()
+    assert bundle['dense_harness_sha256']==hashlib.sha256(Path(bench.__file__).read_bytes()).hexdigest()
+    assert bundle['routed_harness_sha256']==hashlib.sha256((root/'bench_native_moe_operator.py').read_bytes()).hexdigest()
+    assert bundle['resource_collector_source_sha256']==hashlib.sha256((root/'csrc/native_operator_resources.cpp').read_bytes()).hexdigest()

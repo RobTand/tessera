@@ -57,7 +57,10 @@ def _glm_routing():
             "source_protocol": {"router_class": "Glm5NextTopKRouter",
                 "router_source_sha256": _sha("CPU source fixture"),
                 "scoring_func": "sigmoid", "topk_method": "noaux_tc",
-                "normalization_epsilon": 1e-6,
+                # The GLM-5 router's own denominator constant (transformers
+                # glm_moe_dsa: ``topk_weights.sum(...) + 1e-20``), the value
+                # PrismaQuant's routing replay reads off the source.
+                "normalization_epsilon": 1e-20,
                 "correction_bias": {"content_sha256": _sha("CPU bias fixture"),
                                     "dtype": "torch.float32"},
                 "expert_bias_affects": "selection_only", "norm_topk_prob": True}}
@@ -705,6 +708,10 @@ def _owner_panel(tp, format_name, route_symbol, decoder, member_unit=None):
     shape = moe.validate_shape(_glm_shape(tp, format_name))
     wire = moe.owner_wire(shape)
     name_of = member_unit or (lambda expert, role: f"{GLM_UNIT}.{expert}.{role}")
+    # A4 executes a static input scale, one per stage (w13 and w2), and the
+    # validator refuses an A4 member without one. The other families quantise
+    # their input dynamically and must carry none.
+    a4 = wire["family"] == "TESSERA_NVFP4"
     members = []
     for expert in range(288):
         for role in moe.ROLE_ORDER:
@@ -718,7 +725,8 @@ def _owner_panel(tp, format_name, route_symbol, decoder, member_unit=None):
                             "format": format_name, "shape": declared,
                             "source_weight": _record(declared),
                             "rendered_weight": _record(geometry),
-                            "activation": {"clip_enabled": False, "input_global_scale": None},
+                            "activation": {"clip_enabled": False, "input_global_scale":
+                                           ((0.5 if role == "w2" else 0.25) if a4 else None)},
                             "wire": {**record, "record": dict(record)}})
     route = {"kind": "moe", "policy": wire["policy"], "decoder": decoder,
              "contract": ROUTES[wire["family"]]["activation_contract"], "symbol": route_symbol}
