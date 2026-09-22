@@ -27,6 +27,9 @@ ARM=${ARM:-EAGER$EAGER}
 # Bisect hooks: PIPELINE_CAPTURE_PIN lets the parent disable capture around one
 # op without editing plugin code between serves (see bisect notes in #508).
 ENVS=(-e TESSERA_RESEARCH_GLM53_NOPE=1 -e TESSERA_SERVE_MODE=resident)
+# EAGER=0 is the graph arm: lift the backend's eager-only leg (research opt-in,
+# glm53_nope._config_reason); every other gate still fires.
+[ "$EAGER" = 1 ] || ENVS+=(-e TESSERA_RESEARCH_GLM53_NOPE_GRAPHS=1)
 # BISECT_ENV: whitespace-separated KEY=VALUE entries passed into the container.
 for kv in ${BISECT_ENV:-}; do ENVS+=(-e "$kv"); done
 [ -n "${COMPILATION_MODE:-}" ] && ENVS+=(-e VLLM_COMPILATION_MODE="$COMPILATION_MODE")
@@ -67,6 +70,8 @@ up)
     [ "$(git -C "$TS" rev-parse HEAD)" = "$EXPECT_TREE" ] || { echo "tree is not $EXPECT_TREE"; exit 2; }
   fi
   if docker ps -q --filter name=$NAME | grep -q .; then echo "$NAME up; run: $0 down"; exit 2; fi
+  # A stopped container of this experiment's name blocks the launch by name; clear it.
+  if docker ps -aq --filter name=$NAME | grep -q .; then echo "removing stopped $NAME"; docker rm -f $NAME >/dev/null; fi
   mkdir -p "$EXT" "$OUT" "$DIR/logs"
   printf '%s\n' "EAGER=$EAGER $SERVE_ARGS" > "$OUT/engine-args-EAGER$EAGER.txt"
   { echo "arm=$ARM"; echo "eager=$EAGER"; echo "serve_args=$SERVE_ARGS"
@@ -74,6 +79,13 @@ up)
     echo "image=$IMG"; echo "image_id=$(docker image inspect --format '{{.Id}}' "$IMG")"
     echo "tree=$TS"; echo "tree_sha=$(git -C "$TS" rev-parse HEAD)"; echo "tree_dirty=$(git -C "$TS" status --porcelain | wc -l)"
     echo "model=$MODEL"; echo "started=$(date -u +%FT%TZ)"; } > "$OUT/engine-args-$ARM.txt"
+  # Warm the NFS checkpoint into page cache from the host first: a cold
+  # in-container prefetch drove PSI memory full avg10 to 20 and the box
+  # watchdog (mem-watchdog.sh) removed the loading container (2026-09-22).
+  if [ "${PREWARM:-1}" = 1 ]; then
+    t0=$(date +%s); cat "$MODEL"/*.safetensors > /dev/null
+    echo "prewarm: $(du -sh "$MODEL" | cut -f1) in $(( $(date +%s) - t0 )) s" | tee -a "$OUT/engine-args-$ARM.txt"
+  fi
   inner="$EXT/serve-inner.sh"
   { echo "set -e"; printf '%s\n' "$PREP"
     [ -n "$COMPILATION_JSON" ] && printf "extra=(\"--compilation-config\" '%s')\n" "${COMPILATION_JSON#%\"}"
