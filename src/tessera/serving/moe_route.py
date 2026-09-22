@@ -687,6 +687,23 @@ def compact_window_lane(family: str, compact_ready: bool, *, tp_size: int,
     return research_selected is not None and int(tp_size) in (1, 2)
 
 
+def _require_eager_selected_context(config, prefix):
+    """Keep model and explicit standalone operator eager evidence distinct."""
+    model=getattr(config,"model_config",None)
+    if model is not None:
+        if getattr(model,"enforce_eager",None) is not True:
+            raise ValueError(f"{prefix}: research selected experts require enforce_eager")
+        return
+    # The native whole-operator factory has no ModelConfig: it never loads a
+    # model. Its real CompilationConfig explicitly disables both compilation
+    # and graph capture. Do not invent a ModelConfig merely to pass this gate.
+    from vllm.config.compilation import CompilationMode, CUDAGraphMode
+    compilation=getattr(config,"compilation_config",None)
+    if (compilation is None or getattr(compilation,"mode",None) is not CompilationMode.NONE
+            or getattr(compilation,"cudagraph_mode",None) is not CUDAGraphMode.NONE):
+        raise ValueError(f"{prefix}: standalone research selected experts require explicit eager compilation and no CUDA graphs")
+
+
 def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
                              research_selected: ResearchSelectedMoeConfig | None = None):
     """Construct the vLLM fused-MoE method serving a Tessera expert stack.
@@ -749,8 +766,7 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
             self._rank_local_intake = None
             if research_selected is not None:
                 from vllm.config import get_current_vllm_config
-                if not get_current_vllm_config().model_config.enforce_eager:
-                    raise ValueError(f"{prefix}: research selected experts require enforce_eager")
+                _require_eager_selected_context(get_current_vllm_config(), prefix)
                 self._require_research_parallel_contract()
             self._tp_size = (int(moe.moe_parallel_config.tp_size) if research_selected is None
                              else research_selected.expected_tensor_parallel_size)

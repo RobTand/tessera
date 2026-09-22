@@ -457,3 +457,32 @@ def test_research_backend_is_explicit_and_reaches_selected_owner(original_wires,
     method.apply(layer, torch.randn(1, HIDDEN), torch.ones(1, 2),
                  torch.tensor([[0, 2]], dtype=torch.int32), None, None)
     assert calls == ['triton']
+
+
+def test_explicit_standalone_eager_owner_needs_no_fabricated_model_config(stub_runtime, original_wires, monkeypatch):
+    compilation=types.ModuleType('vllm.config.compilation')
+    compilation.CompilationMode=enum.Enum('CompilationMode',['NONE','COMPILE'])
+    compilation.CUDAGraphMode=enum.Enum('CUDAGraphMode',['NONE','FULL'])
+    monkeypatch.setitem(sys.modules,'vllm.config.compilation',compilation)
+    config=types.SimpleNamespace(model_config=None,compilation_config=types.SimpleNamespace(
+        mode=compilation.CompilationMode.NONE,cudagraph_mode=compilation.CUDAGraphMode.NONE))
+    monkeypatch.setattr(sys.modules['vllm.config'],'get_current_vllm_config',lambda:config)
+    assert _build(original_wires[2],_layer()) is not None
+
+
+@pytest.mark.parametrize('mode,graph', [('COMPILE','NONE'),('NONE','FULL')])
+def test_standalone_selected_context_refuses_compilation_or_graphs(stub_runtime,original_wires,monkeypatch,mode,graph):
+    compilation=types.ModuleType('vllm.config.compilation')
+    compilation.CompilationMode=enum.Enum('CompilationMode',['NONE','COMPILE'])
+    compilation.CUDAGraphMode=enum.Enum('CUDAGraphMode',['NONE','FULL'])
+    monkeypatch.setitem(sys.modules,'vllm.config.compilation',compilation)
+    config=types.SimpleNamespace(model_config=None,compilation_config=types.SimpleNamespace(
+        mode=compilation.CompilationMode[mode],cudagraph_mode=compilation.CUDAGraphMode[graph]))
+    monkeypatch.setattr(sys.modules['vllm.config'],'get_current_vllm_config',lambda:config)
+    with pytest.raises(ValueError,match='explicit eager'):_build(original_wires[2],_layer())
+
+
+def test_model_selected_context_still_requires_explicit_enforce_eager(stub_runtime,original_wires,monkeypatch):
+    config=types.SimpleNamespace(model_config=types.SimpleNamespace(enforce_eager=False))
+    monkeypatch.setattr(sys.modules['vllm.config'],'get_current_vllm_config',lambda:config)
+    with pytest.raises(ValueError,match='require enforce_eager'):_build(original_wires[2],_layer())

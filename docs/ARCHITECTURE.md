@@ -5640,3 +5640,10 @@ schemas, execution declarations, collectives, and loaded library maps. This
 bundle allows a downstream explicit common-runtime projection; it does not
 assert that independent processes loaded equal compiler output or ran on the
 same device. Those facts remain separately measured and compared.
+
+The explicitly selected MoE owner also accepts a standalone operator context
+with no ModelConfig only when the actual vLLM CompilationConfig declares both
+CompilationMode.NONE and CUDAGraphMode.NONE. Model-backed serving retains its
+explicit `enforce_eager=True` requirement. This enables the real native factory
+without fabricating a model configuration, and does not admit compiled or
+captured selected execution.
