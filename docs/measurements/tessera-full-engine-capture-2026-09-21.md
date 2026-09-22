@@ -1,8 +1,9 @@
 # Full-engine resource capture on master, 2026-09-21
 
-Status: **partial.** The capture did not complete. This document records what was
-measured, the two blockers that stopped it, and what remains before tessera#399 can
-close.
+Status: **partial.** The capture completed; the report still refuses. This document
+records what was measured, the blockers found on the way, and what remains before
+tessera#399 can close. Sections below written before the capture ran are kept as the
+record of how it got there; the capture's own results are at the end.
 
 Scope: one served Tessera artifact (Qwen3-0.6B, mixed three-family, tp1, eager,
 `resident`), producer source at master `affae68ed`, runtime
@@ -266,3 +267,122 @@ it opens two JSON documents and allocates nothing on a device.
    this run's scope and is the most likely reason a first master capture still refuses.
 4. Register `allocator_config` in PrismaQuant's consumer (blocker C) before the D37 leg
    can read any master report.
+
+
+---
+
+## The capture, 2026-09-21 (PB action `b0fc1458d478`, sparklina, `--exclusive`)
+
+All four phases returned 0 under one `configuration_sha256`
+(`e8de9ce100534b981baf12991ed885622e074ebed40058ed4c745adff1667463`).
+
+| phase | returncode | wall | GPU after | qualified |
+|---|---|---|---|---|
+| preflight | 0 | 33.8 s | 4.36 W / 140 W (3%) | n/a, no engine |
+| kv | 0 | 95.1 s | 11.54 W / 140 W (8%) | yes |
+| resources | 0 | 732.6 s | 11.91 W / 140 W (9%) | yes |
+| timings | 0 | 82.0 s | 7.42 W / 140 W (5%) | yes |
+
+Power stays at 3–9% of the envelope. That is this workload: a 0.6B engine under an
+intrusive CUPTI memory ledger is bound by the instrumented host path, not by the SMs. On
+GB10 `gpu_utilization` says nothing about that either way, which is why power is the
+number recorded.
+
+### Blocker B closed, and what closing it revealed
+
+Both engine passes qualify every family on a native decoder:
+
+| family | modules | symbol | decoder | unnamed modules | names vs manifest |
+|---|---|---|---|---|---|
+| `TESSERA_FP8` | 110 | `tessera::window_gemm_dense` | `native_window_gemm` | 0 | match |
+| `TESSERA_BF16` | 1 | `tessera::window_gemm_dense` | `native_window_gemm` | 0 | match |
+| `TESSERA_NVFP4` | 1 | `tessera.kernel_a4.a4_span2_gemm` | `native_span2_gemm` | 0 | match |
+
+`mapped_extension_libraries: {}` — master's dense path loads no `cpp_extension` at all.
+
+The 2026-09-18 capture, by contrast, served **111 of 112 modules through `torch_window`**,
+the substituted decoder, and recorded `qualified: true` because the old check looked only
+at the NVFP4 contract. Its own `route-trace.json` says so:
+`(fp8_per_token_dynamic, torch_window)` 16 entries, `(bf16_unquantized, torch_window)` 4,
+`(e2m1_group16_ue4m3_static, native_span2)` 4. A fixed-resource term taken from that
+ledger would be a term measured on the substitute.
+
+### The report
+
+`report-master-affae68ed/report.json`, sha256
+`ba0edcd0a7347319ac80e518ea7004a3075b031d8f3ef475d479115bf0fdd512`, 223,501,977 bytes
+(PB action `7093548e3d7c`, dl380g10, 500 s).
+
+| field | value |
+|---|---|
+| `derived.admission.verdict` | **refused** |
+| `worker_startup` | refused |
+| `history_join`, `external_closure`, `provenance_admission`, `cache_capacity`, `timing_partition` | closed |
+| `unclassified_allocation_count` | 358 |
+| `uncharged_allocation_count` | 1337 |
+| `reserved_peak_bytes` / `reservation_slack_peak_bytes` | null (see below) |
+| `allocator_config` | `"unset"` |
+| `terms` | all null |
+
+The re-export did close its leg: `manifest_unpriced_resident_bytes: 0`,
+`candidate_units_outside_manifest: []`, `allocator_sample_bounds_ledger: true`. The
+2026-09-18 refusal's "20,484 resident bytes the manifest does not price" is gone.
+
+## Blocker D: the ownership census cannot see the native path's weights
+
+`worker_startup` refuses with 112 of 112 units disagreeing, and the ledger charges **less**
+than the manifest prices:
+
+| family | units | ledger candidate resident | manifest resident | difference |
+|---|---|---|---|---|
+| `TESSERA_FP8` | 110 | 1,335,296 | 431,251,456 | −429,916,160 |
+| `TESSERA_BF16` | 1 | 3,825,712 | 8,404,992 | −4,579,280 |
+| `TESSERA_NVFP4` | 1 | 3,154,492 | 3,543,044 | −388,552 |
+| total | 112 | 8,315,500 | 443,199,492 | **−434,883,992** |
+
+A typical FP8 unit charges one row: `model:buffer:…scale_b`, 24,576 bytes, site
+`serving/native_window.py:row_scale`. None of its 6,291,456 bytes of packed weight is
+charged. Beside that, 1,337 allocations totalling 221,727,472 bytes are `owner_class:
+candidate`, `lifetime_class: resident`, `unit: null` — "a candidate allocation carrying no
+unit is charged by no per-unit term" — with a size histogram of the packed-window shape
+(1,572,864 ×82, 1,048,576 ×55, 524,288 ×54).
+
+The mechanism, read from the code rather than from the ledger: `fp8_route.py:385` assigns
+`layer.tessera_native = prepared`, and `PreparedDenseNativeModule` is a `__slots__` object,
+not an `nn.Module`, so its bundles appear in no `named_buffers()`. Only
+`layer.register_buffer("scale_b", …)` (`fp8_route.py:389`) is registered. The census is
+`model.named_parameters() + model.named_buffers()` (`full_engine_worker.py:324`) and a unit
+is resolved from a `model:parameter|buffer:<path>` owner (`full_engine_ownership.py:240`).
+The bundles can therefore carry no owner. This is stated as the attribution **hypothesis**:
+the shortfall, the counts, the bytes and the sizes are measured; the row-by-row match of
+those 1,337 allocations to `kernel_wire.py:_destination` and
+`compact_prep.py:_repack_window_compact` is not.
+
+It did not show on 2026-09-18 because 111 of 112 modules served through `torch_window`.
+
+Not repaired here. Registering the bundles changes what vLLM loads and moves; teaching the
+census to walk `layer.tessera_native` changes what a unit is charged. Either is a pricing
+decision.
+
+## Two derivation bugs fixed on this branch
+
+- `bc37c4a16` — `plugin_jit_prefix` named the retired `tessera_nvfp4/` subdirectory, so a
+  static from the extension the package still builds would read as unresolved and **refuse**
+  `external_closure` rather than mislabel it. The prefix is the extension directory now.
+- `acaf0152f` — the reserved extent was measured and dropped. `worker-startup.json` carries
+  `memory_reserved_bytes: 954,204,160` beside `memory_allocated_bytes: 863,269,888` (slack
+  90,934,272), but `reservation_witness` read only `worker_startup_records`, which is empty
+  on a dense artifact because that record belongs to the routed receipt. **This supersedes
+  the earlier claim above that `reserved_peak_bytes` was null because the 2026-09-18 worker
+  predated `1ca98ac6b`:** it would have been null on any dense capture, of any worker
+  vintage. The `report.json` published above was produced before this fix and still shows
+  null; re-running the report over the same capture publishes the measured pair.
+
+## What remains
+
+1. Decide blocker D (register, or walk `layer.tessera_native`) — a pricing decision.
+2. Re-run the report with `acaf0152f` to publish the reserved peak and slack already measured.
+3. The 358 unclassified need a second capture under a different per-Linear assignment plus
+   the `--boundary-classification` join (tessera#548); unchanged by this run.
+4. Register `allocator_config` in PrismaQuant's consumer (blocker C). On this capture the
+   field is `"unset"` rather than null, so the refusal is not an artefact of an empty value.
