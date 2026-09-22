@@ -221,11 +221,13 @@ def test_cache_location_is_preflighted(tmp_path):
 def test_whole_source_identity_reuses_the_same_stat_bound_cache(tmp_path, monkeypatch):
     from pathlib import Path
     from tessera.serving_parts import source_identity
-    from safetensors.torch import save_file
-    import torch
     source=tmp_path/'whole'; source.mkdir()
     (source/'config.json').write_text('{}')
-    save_file({'x.weight':torch.arange(32)},str(source/'model.safetensors'))
+    # The shard is written by this module's own byte builder, not through
+    # torch/safetensors: every other test here is collected by the bytes-only
+    # CI job, and a torch import inside a test body is collected there and
+    # then fails at run time rather than being ignored.
+    _tensor_file(source/'model.safetensors', ['x.weight'])
     cache_dir=tmp_path/'cache';cache_dir.mkdir()
     cache=SourceDigestCache(cache_dir,source=source,quiescent_seconds=0)
     expected=source_identity(source)

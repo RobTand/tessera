@@ -543,12 +543,6 @@ class CachedUnitBundle:
             if scales.get(key) != expected:
                 raise ValueError(f"{name}: exported activation scale differs from the bound served policy")
 
-    def load_producers(self):
-        """Hash and load each exact historical producer; never relabel a receipt."""
-        from .historical_producer import load_historical_producer
-        return {seal: load_historical_producer(Path(bound["path"]), bound["sha256"])
-                for seal, bound in self.producer_packages.items()}
-
 
 def _bound_document(bound):
     if not isinstance(bound, dict) or set(bound) != {"path", "sha256"}:

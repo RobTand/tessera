@@ -89,7 +89,16 @@ def shipped_cells():
 
 @pytest.fixture(scope="module")
 def cells(shipped_cells):
-    """The document as it was when these records were the attestation.
+    """The withdrawn cells beside the shipped ones, for the replay below.
+
+    This is NOT "the document as it was": contract v34 (tessera#545) gives the
+    E4M3 dense scope a cell again, so the union holds two cells over it -- the
+    withdrawn residency-split one and the v34 bare-id one -- and
+    ``cell_launch_agreement`` resolves the records onto the withdrawn one,
+    which is the cell these records were minted under.  What the SHIPPED
+    document says about the same records is asserted separately, in
+    ``test_the_shipped_document_now_refuses_these_records``, and it is the
+    opposite answer.
 
     Contract v31 withdrew the four E4M3 dense cells this module joins against
     (tessera#538): their ``executes`` named the window-GEMV dispatch that
@@ -103,21 +112,33 @@ def cells(shipped_cells):
     return list(shipped_cells) + withdrawn_cells()
 
 
-def test_the_shipped_document_no_longer_covers_these_records(shipped_cells):
-    """The consumer-visible half of the withdrawal, on the real records.
+def test_the_shipped_document_now_refuses_these_records(shipped_cells):
+    """The consumer-visible half, and it moved twice.
 
     A serve that executed the window-GEMV lane used to resolve to a cell.
-    Against the shipped document it now resolves to nothing -- ``unattested``,
-    the closed-world table's only honest answer for a dispatch no receipt
-    covers -- and NOT to a problem, because absence is not a disagreement.
-    That is the difference between withdrawing a cell and retagging one.
+    Contract v31 withdrew that cell, and from v31 to v33 these records resolved
+    to nothing -- ``unattested``, the closed-world table's only honest answer
+    for a dispatch no receipt covers, and NOT a problem, because absence is not
+    a disagreement.
+
+    Contract v34 (tessera#545) gives the scope a cell again, on a census of the
+    native window GEMM, so the document speaks about these records once more --
+    and what it says is that they are not what this build executes.  The join
+    covers them and REFUSES them, one problem per module per phase.  That is
+    the strongest of the three answers and the correct one: the records are a
+    real serve of a dispatch ``1b767a207`` retired, the cell is a real serve of
+    the one that replaced it, and a consumer must not read the second as
+    describing the first.
     """
     block, problems = _agree(shipped_cells)
-    assert problems == []
-    assert block["agrees"] is None
-    assert block["phases"]["decode"]["unattested"] == 2
-    assert block["phases"]["prefill"]["unattested"] == 2
-    assert block["phases"]["decode"]["cells"] == {}
+    assert block["agrees"] is False
+    assert len(problems) == 4
+    assert all("does not publish" in problem for problem in problems)
+    assert all("native_window_gemm" in problem for problem in problems)
+    assert block["phases"]["decode"]["unattested"] == 0
+    assert block["phases"]["prefill"]["unattested"] == 0
+    assert block["phases"]["decode"]["cells"] == {"tessera_e4m3_k1_dense_sm121_decode": 2}
+    assert block["phases"]["prefill"]["cells"] == {"tessera_e4m3_k1_dense_sm121_batch": 2}
 
 
 def test_the_served_records_agree_with_the_cells_that_cover_them(cells):
