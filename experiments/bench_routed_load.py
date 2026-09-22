@@ -9,16 +9,18 @@ and records what the load costs in time and in device memory.
 TWO ARMS, DISPATCHED ON THE SIDECAR'S FAMILY, because the two routes hold
 different things.  The research-selected packed intake (``TESSERA_FP8`` /
 ``TESSERA_BF16``) keeps rank-local wire planes on an expert axis.  The NVFP4
-routed builder (``TESSERA_NVFP4``, tessera#492/#507) preallocates the stock
-modelopt tile per layer in ``create_weights`` and decodes each expert's wire
-into its slot, dropping the planes -- so its footprint is the tile set, and
-``--layers all`` over a whole body answers what one rank's routed experts
-occupy.  The NVFP4 arm streams a layer at a time with a bounded read-ahead (a
+routed builder (``TESSERA_NVFP4``, tessera#492/#507) registers the stock
+modelopt tiles only as zero-size anchors and prepares each expert's wire, cut
+to this rank, straight into its slot of a per-``(group, role)``
+``native_a4.A4ExpertAxis`` stack -- so its footprint is those axis planes plus
+the per-expert A-side scale rows, and ``--layers all`` over a whole body
+answers what one rank's routed experts occupy.  The NVFP4 arm streams a layer at a time with a bounded read-ahead (a
 42-layer GLM-5.3-Flash A4 body is ~142 GiB of wire), guards the host
 ``MemAvailable`` floor and memory PSI so a load that cannot fit reports
 instead of hanging the box, and stops before
-``process_weights_after_loading``: it measures the INTAKE, not the runtime's
-kernel-format swizzle, and not an engine, a KV cache or an activation peak.
+``process_weights_after_loading``: it measures the INTAKE, not the finalize
+handoff to the layer's stacks, and not an engine, a KV cache or an activation
+peak.
 
 Two modes:
 
@@ -73,11 +75,10 @@ MOE_UNITS = (("w13", 0, "gate_proj"), ("w13", 1, "up_proj"), ("w2", 0, "down_pro
 #: through ``SHARD_TO_GROUP``.  Each entry is ``(shard_id, projection)``.
 NVFP4_SHARDS = (("w1", "gate_proj"), ("w3", "up_proj"), ("w2", "down_proj"))
 
-#: The stock modelopt parameter set ``create_weights`` allocates.  These tensors
-#: ARE the NVFP4 route's resident state: the tile is preallocated per layer and
-#: each expert's wire is decoded into its slot, so the planes never accumulate.
-NVFP4_TILES = ("w13_weight", "w2_weight", "w13_weight_scale", "w2_weight_scale",
-               "w13_weight_scale_2", "w2_weight_scale_2", "w13_input_scale", "w2_input_scale")
+#: The expert axes the NVFP4 route fills, keyed as ``method.intake_axes()``
+#: keys them.  Since the native A4 rewrite the stock modelopt tiles are
+#: zero-size anchors; these stacks ARE the route's resident state.
+NVFP4_AXES = (("w13", "gate_proj"), ("w13", "up_proj"), ("w2", "down_proj"))
 
 _EXPERT_WIRE = re.compile(r"layers\.(\d+)\.mlp\.experts\.\d+\.gate_proj\.wire$")
 
@@ -358,12 +359,13 @@ def _stub_vllm_oracle():
     """vLLM's ``oracle.nvfp4`` seam, stubbed as the route's own tests stub it.
 
     WHAT RUNS FOR REAL AND WHAT DOES NOT.  Everything the route owns runs:
-    ``create_weights`` allocates the stock modelopt parameter set,
-    ``_load_wire`` parses each full container, cuts it to this rank through
-    ``sharding.shard_parsed_roles`` and decodes it into the expert's slot.
-    What is stubbed is the runtime's: the backend oracle, the kernel, and the
-    finalize-time ``convert_to_nvfp4_moe_kernel_format`` swizzle.  So this arm
-    measures the INTAKE and stops before ``process_weights_after_loading``.
+    ``create_weights`` registers the zero-size stock anchors and the expert
+    axes, and ``_load_wire`` parses each full container, cuts it to this rank
+    through ``sharding.shard_parsed_roles`` and prepares it into the expert's
+    axis slot (a CUDA path: the span-2 packers are CUDA kernels).  What is
+    stubbed is the runtime's module surface: the base class, the backend
+    oracle and the helpers the route imports.  This arm measures the INTAKE and
+    stops before ``process_weights_after_loading``.
     Vendoring the runtime is forbidden (AGENTS.md), which is why the seam is a
     stub here and the load-and-execute contract is measured on the pinned image
     by ``experiments/nvfp4_moe_route_load_probe.py`` instead.
@@ -437,19 +439,21 @@ def _nvfp4_layer(rank: int, tp_size: int, experts: int, topk: int, swiglu_limit:
     return layer
 
 
-def _nvfp4_resident(layer) -> int:
-    """The stock tile set this layer holds: the route's resident state."""
-    return sum(getattr(layer, name).numel() * getattr(layer, name).element_size()
-               for name in NVFP4_TILES)
+def _nvfp4_resident(layer, method) -> int:
+    """What this layer's route holds now: the expert axes plus the layer's own
+    parameters (the per-expert A-side scale rows and the zero-size anchors)."""
+    axes = sum(axis.resident_bytes() for axis in method.intake_axes().values())
+    params = sum(param.numel() * param.element_size() for param in layer.parameters())
+    return int(axes + params)
 
 
 def _child_nvfp4(args, torch, device, layers, experts, out) -> int:
     """Load every named layer's experts through the NVFP4 routed builder.
 
-    Each layer's prepared state is the stock tile set, held exactly as vLLM
-    holds it until ``process_weights_after_loading``.  Nothing is finalized and
-    no layer is dropped, so ``resident_final`` is what one rank's routed
-    experts occupy once the last layer has loaded.
+    Each layer's prepared state is its expert axes, held exactly as vLLM holds
+    them until ``process_weights_after_loading``.  Nothing is finalized and no
+    layer is dropped, so ``resident_final`` is what one rank's routed experts
+    occupy once the last layer has loaded.
     """
     from tessera.serving import nvfp4_moe_route
 
@@ -463,7 +467,7 @@ def _child_nvfp4(args, torch, device, layers, experts, out) -> int:
     rank = 1 if args.config == "tp2r1" else 0
     floor = int(args.guard_floor_gib * (1 << 30))
 
-    units, held_layers = [], {}
+    units, held_layers, held_methods = [], {}, {}
     resident = wire_total = 0
     stopped = None
     torch.cuda.synchronize()
@@ -499,15 +503,10 @@ def _child_nvfp4(args, torch, device, layers, experts, out) -> int:
             method.create_weights(holder, experts, hidden, inter // tp_size, torch.bfloat16)
         torch.cuda.synchronize()
         create_seconds = time.perf_counter() - start
-        for name in ("w13_weight", "w2_weight"):
-            if getattr(holder, name).device.type != "cuda":
-                raise SystemExit(f"layer {layer}: {name} was allocated on "
-                                 f"{getattr(holder, name).device}, not {device}")
         held_layers[layer] = holder
-        layer_resident = _nvfp4_resident(holder)
-        resident += layer_resident
+        held_methods[layer] = method
         units.append({"layer": layer, "phase": "create_weights", "seconds": create_seconds,
-                      "layer_resident": int(layer_resident),
+                      "layer_resident": _nvfp4_resident(holder, method),
                       "resident_cumulative": int(resident), **_allocator(torch)})
         for expert in range(experts):
             available, stalled = _host_pressure()
@@ -540,12 +539,18 @@ def _child_nvfp4(args, torch, device, layers, experts, out) -> int:
                 scale_param.weight_loader(scale_param, scale, "input_global_scale", shard, expert)
                 units.append({"layer": layer, "expert": expert, "group": group, "shard": shard,
                               "wire_bytes": int(wire.numel()), "seconds": seconds,
-                              "resident_cumulative": int(resident), **_allocator(torch)})
+                              "resident_cumulative": int(
+                                  resident + _nvfp4_resident(holder, method)),
+                              **_allocator(torch)})
                 del wire, scale
             if args.stop_after and len(units) >= args.stop_after:
                 stopped = {"why": "stop_after", "layer": layer, "expert": expert}
                 break
         del wires
+        layer_resident = _nvfp4_resident(holder, method)
+        resident += layer_resident
+        units.append({"layer": layer, "phase": "intake", "layer_resident": layer_resident,
+                      "resident_cumulative": int(resident), **_allocator(torch)})
         if stopped is not None:
             break
     load_seconds = time.time() - load_start
@@ -555,23 +560,29 @@ def _child_nvfp4(args, torch, device, layers, experts, out) -> int:
         profiler.__exit__(None, None, None)
         _export_torch_profile(profiler, out, max(profiled, 1))
 
-    # The decode wrote real bytes, or it did not: a zero tile is what a stubbed
-    # or misrouted decode leaves behind, and the joined per-expert global is the
-    # multiplier the kernel would be handed.
+    # The prepare wrote real bytes, or it did not: an all-zero nibble plane is
+    # what a stubbed or misrouted prepare leaves behind, and the per-expert
+    # global is the multiplier the kernel would be handed.
     evidence = {}
     for layer in dict.fromkeys([layers[0], layers[-1]]):
         holder = held_layers.get(layer)
         if holder is None:
             continue
+        axes = held_methods[layer].intake_axes()
+        planes = {f"{group}.{role}": dict(axes[(group, role)].named_tensors())
+                  for group, role in NVFP4_AXES}
         evidence[str(layer)] = {
-            "w13_weight_nonzero_fraction": float((holder.w13_weight[0] != 0).float().mean()),
-            "w2_weight_nonzero_fraction": float((holder.w2_weight[0] != 0).float().mean()),
-            "w13_weight_scale_2_expert0": holder.w13_weight_scale_2[0].tolist(),
-            "w2_weight_scale_2_expert0": float(holder.w2_weight_scale_2[0]),
+            "nibbles_expert0_nonzero_fraction": {
+                key: float((held["nibbles"][0] != 0).float().mean())
+                for key, held in planes.items() if "nibbles" in held},
+            "globals_expert0": {key: float(held["globals"][0])
+                                for key, held in planes.items() if "globals" in held},
             "w13_input_global_scale_all_finite": bool(
                 torch.isfinite(holder.w13_input_global_scale).all()),
-            "tile_shapes": {name: list(getattr(holder, name).shape) for name in NVFP4_TILES},
-            "tile_devices": sorted({str(getattr(holder, name).device) for name in NVFP4_TILES}),
+            "axis_shapes": {key: {field: list(tensor.shape) for field, tensor in held.items()}
+                            for key, held in planes.items()},
+            "axis_devices": sorted({str(tensor.device) for held in planes.values()
+                                    for tensor in held.values()}),
         }
     available, stalled = _host_pressure()
     summary = {
@@ -586,8 +597,8 @@ def _child_nvfp4(args, torch, device, layers, experts, out) -> int:
         "unit_seconds": _unit_seconds(units), "stopped_early": stopped,
         "vllm_seam": seam, "evidence": evidence,
         "scope": ("Expert intake only: create_weights and _load_wire, on one rank. "
-                  "NOT process_weights_after_loading (the runtime's kernel-format "
-                  "swizzle), no engine, no KV cache, no activation peak, no "
+                  "NOT process_weights_after_loading (the stack handoff and the "
+                  "frozen epilogues), no engine, no KV cache, no activation peak, no "
                   "non-expert weights, no collective buffers."),
         "mem_available_end": available, "psi_full_avg10_end": stalled,
         "host": platform.node(), "torch": torch.__version__,
@@ -666,8 +677,8 @@ def child(args) -> int:
               else [int(x) for x in args.layers.split(",")])
     experts = int(args.experts)
     device = torch.device("cuda", torch.cuda.current_device())
-    # Each family's own builder owns its intake: the NVFP4 route decodes into a
-    # preallocated stock tile, the research-selected packed route keeps wire
+    # Each family's own builder owns its intake: the NVFP4 route prepares into
+    # per-role expert axes, the research-selected packed route keeps wire
     # planes on an expert axis.  Dispatch on what the sidecar declares.
     if _family(data, layers) == "TESSERA_NVFP4":
         return _child_nvfp4(args, torch, device, layers, experts, out)
