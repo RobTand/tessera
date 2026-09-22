@@ -27,6 +27,10 @@ census tool -- grade `route_only` on all four because no KL arm was run, smoke
 withdrew are NOT restored), TP 1. ADDITIVE for a lane reader; not additive for
 a reader that derives `executes` from `scheme.route_launches` itself.
 
+Re-stamped 2026-09-22 for `SourceDigestCache.adopt` (§ source digest cache):
+a public adoption entry point replaces callers writing entries through the
+cache's private `_record`/`_entry_path`/`_key`. No default moves.
+
 Re-stamped 2026-09-19 for the HIP `_mul` spelling (tessera#481,
 §3.1): `window_viterbi._mul_asm` selects the AMDGCN spelling on a ROCm build,
 still unverified -- wsl-gpu offline -- so `fused_available()` keeps refusing
@@ -434,6 +438,13 @@ document is unchanged. Reuse is recorded beside the identity:
 or bit rot on a reused read, goes undetected, so write access to the cache
 directory is trust base. A publication that needs a second read merges without
 the flag.
+`SourceDigestCache.adopt` is the one other way into the cache: an owner that
+already holds a verified full-read digest and the fingerprint that read was
+fenced by (PrismaQuant's retained source-hash proof) records it without a
+second read. Adoption re-takes the fingerprint with `open` plus `fstat`,
+including `st_dev`, and refuses a change; applies the same 300 s quiescence
+rule; and records the owner's `writer.kind` beside an `adopted` block. A
+disagreeing digest is refused as two disagreeing reads are.
 
 Re-stamped 2026-09-13 for the opt-in historical cached-producer intake (§3.2).
 `--cached-producer-package` plus `--cached-producer-source-sha256` binds the
