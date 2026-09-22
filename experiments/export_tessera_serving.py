@@ -2844,7 +2844,9 @@ def main():
                                     # an accepted byte; both are stated, never implied.
                                     "hessian_identity": cached_identity.record(),
                                     **({"producer_packages": cached_units.producer_packages,
-                                        "reuse_authority": cached_units.reuse_authority}
+                                        "reuse_authority": cached_units.reuse_authority,
+                                        "served_activation_policy": cached_units.served_activation_policy,
+                                        "served_activations": cached_units.served_activations}
                                        if cached_units.producer_packages else {}),
                                     "intake": None if intake is None else intake.record()}}
            if cached_units is not None else {}),

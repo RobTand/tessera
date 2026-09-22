@@ -176,6 +176,8 @@ def test_actual_mixed_producers_export_complete_dense_and_expert_roster(tmp_path
     receipt = json.loads((out / 'tessera_serving_manifest.json').read_text())
     assert receipt['cached_units']['planned_units'] == 6
     assert receipt['cached_units']['producer_packages'] == packages
+    assert receipt['cached_units']['served_activation_policy'] == manifest['served_activation_policy']
+    assert receipt['cached_units']['served_activations'] == manifest['served_activations']
 
 
 def test_added_a4_cannot_omit_served_activation_policy(tmp_path):
