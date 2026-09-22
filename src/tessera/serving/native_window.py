@@ -199,19 +199,20 @@ class PreparedDenseNativeModule:
 
     # -- residency accounting ------------------------------------------------
 
-    def packed_bytes(self) -> int:
-        """Device bytes the prepared weights occupy: the packed wire half.
+    def named_tensors(self):
+        """Every retained packed tensor, in deterministic role/field order.
 
-        The repacked words, the tables and the fp32 row scale -- never a
-        ``[rows, cols]`` decoded tile.
+        Receipt identity and residency accounting must include these tensors:
+        this compact owner deliberately is not an nn.Module buffer registry.
         """
-        total = 0
-        for role in self.__roles:
-            bundle = role.bundle
-            for tensor in (bundle.words, bundle.table, bundle.codes, bundle.native,
-                           bundle.scale, bundle.runs, bundle.init_perm, bundle.perm):
-                total += tensor.numel() * tensor.element_size()
-        return total
+        fields = ("words", "table", "codes", "native", "scale", "runs", "init_perm", "perm")
+        for index, role in enumerate(self.__roles):
+            for field in fields:
+                yield f"role{index}.{role.name}.{field}", getattr(role.bundle, field)
+
+    def packed_bytes(self) -> int:
+        """Logical device bytes held by the packed bundles, never decoded weights."""
+        return sum(t.numel() * t.element_size() for _, t in self.named_tensors())
 
     def fingerprints(self):
         """Identity of every frozen tensor, for a load-time/after-forward check."""

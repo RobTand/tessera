@@ -753,3 +753,33 @@ def test_execution_receipt_preserves_numerical_gate_without_joint_cost(monkeypat
     assert ('cost_sha256' not in receipt['panel'])
     assert receipt['status']==('numerical_refused' if bad_output else 'timing_admissible')
     assert any(kind=='time' for kind,_ in trace) is (not bad_output)
+
+
+def test_packed_native_owner_tensors_are_frozen_beside_registered_buffers():
+    from tessera.serving.native_window import PreparedDenseNativeModule
+    layer=torch.nn.Module();layer.register_buffer('scale_b',torch.ones(4))
+    names=('words','table','codes','native','scale','runs','init_perm','perm')
+    bundle=SimpleNamespace(**{name:torch.arange(8,dtype=torch.int32) for name in names},cols=8)
+    owner=PreparedDenseNativeModule([SimpleNamespace(name='weight',rows=4,bundle=bundle)],
+        rows=4,columns=8,device=torch.device('cpu'),family='e4m3')
+    layer.tessera_native=owner
+    observed=_module()._native_tensors(layer)
+    assert len(observed)==9
+    assert sum(v['logical_bytes'] for v in observed.values())==16+8*32
+    before=copy.deepcopy(observed);bundle.words[0]+=1
+    assert _module()._native_tensors(layer)!=before
+
+
+def test_compact_a4_tensor_planes_and_epilogues_are_frozen():
+    from tessera.kernel_a4 import A4Unit
+    layer=torch.nn.Module();layer.register_buffer('global_scale',torch.ones(1))
+    fields=('select','label','point','nibbles','lut_bytes','label_lut','subset_nibbles','code_nibbles')
+    unit=A4Unit(**{name:torch.arange(8,dtype=torch.uint8) for name in fields},
+        rows=4,cols=8,rate=7,arity=2,memory=8,half=4,global_scale=1.0)
+    layer.tessera_a4_units=[unit];layer.tessera_a4_epilogues=[torch.ones(1)]
+    assert len(_module()._native_tensors(layer))==10
+    before=_module()._native_tensors(layer);unit.point[0]+=1
+    assert _module()._native_tensors(layer)!=before
+    layer.tessera_a4_epilogues=[]
+    with pytest.raises(ValueError,match='epilogue roster'):
+        _module()._native_tensors(layer)

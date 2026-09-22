@@ -262,10 +262,38 @@ def _check_native_library_scope(runtime):
         raise ValueError("native libraries loaded after preparation: " + ", ".join(sorted(unobserved)))
 
 
+def _native_tensor_items(layer):
+    """Registered state plus explicit compact serving owners, never scratch."""
+    import dataclasses
+    import torch
+    result = list(layer.named_parameters()) + list(layer.named_buffers())
+    native = getattr(layer, "tessera_native", None)
+    if native is not None:
+        from tessera.serving.native_window import PreparedDenseNativeModule
+        if not isinstance(native, PreparedDenseNativeModule):
+            raise ValueError("unsupported compact dense native owner")
+        result.extend(("$owner.native." + name, value) for name, value in native.named_tensors())
+    units = getattr(layer, "tessera_a4_units", ())
+    if units:
+        from tessera.kernel_a4 import A4Unit
+        for index, unit in enumerate(units):
+            if not isinstance(unit, A4Unit):
+                raise ValueError("unsupported compact A4 native owner")
+            result.extend((f"$owner.a4.{index}.{field.name}", value)
+                for field in dataclasses.fields(unit)
+                if isinstance(value := getattr(unit, field.name), torch.Tensor))
+        epilogues = getattr(layer, "tessera_a4_epilogues", ())
+        if len(epilogues) != len(units):
+            raise ValueError("compact A4 epilogue roster differs")
+        result.extend((f"$owner.a4_epilogue.{index}", value)
+                      for index, value in enumerate(epilogues))
+    return result
+
+
 def _native_tensors(layer):
     import torch
     result = {name: tensor_identity(value) for name, value in
-              list(layer.named_parameters()) + list(layer.named_buffers())}
+              _native_tensor_items(layer)}
     # NVFP4's externally applied epilogue is a Python scalar, not a buffer.
     for name in ("tessera_epilogue_scale", "tessera_global_scale_real"):
         if hasattr(layer, name):
@@ -277,7 +305,7 @@ def _native_tensors(layer):
 
 def _resident_bytes(layer):
     storages = {}
-    for _name, value in list(layer.named_parameters()) + list(layer.named_buffers()):
+    for _name, value in _native_tensor_items(layer):
         if value.device.type != "cuda":
             raise ValueError("loaded native storage is not CUDA resident")
         storage = value.untyped_storage()
