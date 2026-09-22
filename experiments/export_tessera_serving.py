@@ -1575,7 +1575,7 @@ def main():
     ap.add_argument("--partition-runtime-image",
                     help="exact repository@sha256 image pinned by the part's dispatch command")
     ap.add_argument("--source-digest-cache", type=Path, default=None,
-                    help="directory of stat-bound source shard digests (tessera#499): a shard "
+                    help="directory of stat-bound source shard digests for cached or partition export: a shard "
                          "whose inode, size, mtime_ns and ctime_ns match a recorded full read "
                          "is not re-read for the part's source stamp. Reuse is recorded in "
                          "export_partition.source_digest_receipt, never in the identity.")
@@ -2165,8 +2165,8 @@ def main():
     partition_record = None
     source_digest_cache = None
     if args.source_digest_cache is not None:
-        if not args.partition:
-            raise SystemExit("--source-digest-cache applies to --partition source stamps only")
+        if not args.partition and cache_path is None:
+            raise SystemExit("--source-digest-cache requires cached units or a partition source stamp")
         from tessera.source_digest_cache import SourceDigestCache
         try:
             source_digest_cache = SourceDigestCache(args.source_digest_cache, source=args.src)
@@ -2239,7 +2239,8 @@ def main():
         from tessera.cached_unit import CachedUnitBundle, read_manifest
         from tessera.serving_parts import source_identity
         source = (partition_record["identity"]["source"] if partition_record is not None
-                  else source_identity(args.src))
+                  else (source_identity(args.src, digest_cache=source_digest_cache)
+                        if source_digest_cache is not None else source_identity(args.src)))
         cached_units = CachedUnitBundle(read_manifest(cache_path),
                                         cache_path.parent, cache_unit_names, source)
         if cached_units.producer_packages and args.cached_producer_package is not None:
@@ -2843,6 +2844,8 @@ def main():
                                     # H -- and how the intake ran.  Neither changes
                                     # an accepted byte; both are stated, never implied.
                                     "hessian_identity": cached_identity.record(),
+                                    **({"source_digest_receipt": source_digest_cache.receipt()}
+                                       if source_digest_cache is not None else {}),
                                     **({"producer_packages": cached_units.producer_packages,
                                         "reuse_authority": cached_units.reuse_authority,
                                         "served_activation_policy": cached_units.served_activation_policy,

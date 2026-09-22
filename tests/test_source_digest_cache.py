@@ -216,3 +216,30 @@ def test_cache_location_is_preflighted(tmp_path):
     inside.mkdir()
     with pytest.raises(ValueError, match="inside the source"):
         SourceDigestCache(inside, source=source)
+
+
+def test_whole_source_identity_reuses_the_same_stat_bound_cache(tmp_path, monkeypatch):
+    from pathlib import Path
+    from tessera.serving_parts import source_identity
+    from safetensors.torch import save_file
+    import torch
+    source=tmp_path/'whole'; source.mkdir()
+    (source/'config.json').write_text('{}')
+    save_file({'x.weight':torch.arange(32)},str(source/'model.safetensors'))
+    cache_dir=tmp_path/'cache';cache_dir.mkdir()
+    cache=SourceDigestCache(cache_dir,source=source,quiescent_seconds=0)
+    expected=source_identity(source)
+    assert source_identity(source,digest_cache=cache)==expected
+    assert cache.receipt()['hashed_shards']==1
+    import tessera.serving_parts as parts
+    original=parts.sha256_file
+    def refuse_shard(path):
+        if Path(path).suffix=='.safetensors':raise AssertionError('valid source digest was re-read')
+        return original(path)
+    monkeypatch.setattr(parts,'sha256_file',refuse_shard)
+    reused=SourceDigestCache(cache_dir,source=source,quiescent_seconds=0)
+    assert source_identity(source,digest_cache=reused)==expected
+    assert reused.receipt()['cached_shards']==1
+    shard=source/'model.safetensors';raw=shard.read_bytes();shard.write_bytes(raw)
+    with pytest.raises(AssertionError,match='re-read'):
+        source_identity(source,digest_cache=reused)

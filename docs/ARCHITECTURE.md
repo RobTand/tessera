@@ -5629,3 +5629,12 @@ scales. These runtime input values do not rewrite the historical wire's
 calibration identity. Export checks the actual fp32 scale file against those
 values. Neither the bundle nor these checks establish serving qualification.
 The v1 single-root/global-producer route is unchanged.
+
+Whole cached export also accepts `--source-digest-cache`. It uses the same
+SourceDigestCache fingerprint, quiescence, mutation and corrupt-entry checks
+as partition export. Whole-source identity still verifies the complete index
+and every shard header, always hashes config/auxiliary files, and compares the
+same unchanged identity object with the selected bundle. Missing source hashes
+are computed through the existing affinity-bounded parallel hasher. The cached
+export receipt records which hashes were read or reused; no cache entry is
+inferred from a filename or a prior digest without its original stat fence.
