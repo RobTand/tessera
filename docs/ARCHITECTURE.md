@@ -1707,7 +1707,19 @@ device movement, or allocation. Shared storage is charged once, because every
 declared view joins its backing allocation; external tensor aliases stay fixed,
 and storage alias conflicts retain the existing refusal. An object a route does
 not declare (the research per-expert `PackedWindowUnits`) is not walked, so its
-bytes stay uncharged in the report rather than attributed by guess. These
+bytes stay uncharged in the report rather than attributed by guess. Dense export
+footprints now derive native packed storage from each role's verified rates,
+window width and runtime tile geometry: padded packed words, family tables,
+row scales, rate-run records, initial states and column permutations, plus the
+route's concatenated row-scale buffer. Native layout is required; the expanded
+FP8/BF16 tile formula is available only for an explicitly named `torch_window`
+reference decoder. Native A4 similarly prices its actual span-2 select (including
+column-history and trailing padding), label and point planes, packed LUT scale
+nibbles, role lookup tables and epilogues, plus the module A-side scale and
+existing per-trellis shared cache charge. This does not resolve the multi-unit
+shared-trellis attribution question (#567). No tensor is decoded or encoded
+merely to price its storage.
+These
 observations repair missing native ownership, not assignment-independent charge
 admission: unclassified allocations still require the existing cross-assignment
 evidence.
