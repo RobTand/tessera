@@ -86,7 +86,7 @@ def test_the_rendered_row_takes_the_agent_band_and_the_venv_of_its_commit(tmp_pa
     result=module.render(binding['path'],binding['sha256'],tmp_path/'checkout')
     argv=result['argv']
     assert argv[argv.index('--priority')+1]=='-10'
-    python=f'/home/rob/venvs/pq-cpu312-tessera-{commit[:8]}/bin/python'
+    python=str(module.VENV_ROOT/f'pq-cpu312-tessera-{commit[:8]}'/'bin'/'python')
     assert argv[argv.index('--')+1]==python
     assert result['tessera_commit']==commit and result['interpreter']['path']==python
     assert result['submitted'] is False
