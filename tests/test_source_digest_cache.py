@@ -245,3 +245,82 @@ def test_whole_source_identity_reuses_the_same_stat_bound_cache(tmp_path, monkey
     shard=source/'model.safetensors';raw=shard.read_bytes();shard.write_bytes(raw)
     with pytest.raises(AssertionError,match='re-read'):
         source_identity(source,digest_cache=reused)
+
+
+# -- adopt: a verified digest established elsewhere --------------------------
+
+def _adopting_writer():
+    return {"kind": "adopted_verified_owner_proof", "authority": {"path": "/proof.json",
+                                                                   "sha256": "c" * 64}}
+
+
+def test_an_adopted_digest_is_served_without_reading_the_shard(tmp_path, monkeypatch):
+    source = _source(tmp_path)
+    shard = source / SHARDS[0]
+    digest = parts.sha256_file(shard)
+    cache = _cache(tmp_path)
+    record = cache.adopt(shard, digest, fingerprint=cache.fingerprint(shard),
+                         writer=_adopting_writer())
+    assert record["digest"] == digest
+    assert record["writer"]["kind"] == "adopted_verified_owner_proof"
+    assert record["writer"]["adopted"]["resolved_path"] == str(shard.resolve())
+    assert cache.receipt()["shards"] == [], "adoption serves no digest, so it adds no row"
+    seen = _count_hashes(monkeypatch)
+    fresh = _cache(tmp_path)
+    assert fresh.sha256(shard) == digest
+    assert shard.name not in seen
+    (row,) = fresh.receipt()["shards"]
+    assert row["how"] == "cached" and row["writer"]["kind"] == "adopted_verified_owner_proof"
+
+
+def test_adoption_refuses_a_shard_changed_since_its_owner_fenced_it(tmp_path):
+    source = _source(tmp_path)
+    shard = source / SHARDS[0]
+    cache = _cache(tmp_path)
+    fenced = cache.fingerprint(shard)
+    digest = parts.sha256_file(shard)
+    os.utime(shard, ns=(fenced["mtime_ns"] + 10**9, fenced["mtime_ns"] + 10**9))
+    with pytest.raises(ValueError, match="changed since the adopting owner fenced it"):
+        cache.adopt(shard, digest, fingerprint=fenced, writer=_adopting_writer())
+    assert not list(cache.directory.glob("*.json"))
+
+
+def test_adoption_refuses_a_malformed_digest_or_writer(tmp_path):
+    source = _source(tmp_path)
+    shard = source / SHARDS[0]
+    cache = _cache(tmp_path)
+    fenced = cache.fingerprint(shard)
+    digest = parts.sha256_file(shard)
+    with pytest.raises(ValueError, match="64 lowercase hex"):
+        cache.adopt(shard, digest.upper(), fingerprint=fenced, writer=_adopting_writer())
+    for writer in ({}, {"kind": ""}, {"kind": "x", "adopted": {}}, "x"):
+        with pytest.raises(ValueError, match="kind"):
+            cache.adopt(shard, digest, fingerprint=fenced, writer=writer)
+    with pytest.raises(ValueError, match="not JSON"):
+        cache.adopt(shard, digest, fingerprint=fenced, writer={"kind": "x", "bad": object()})
+    assert not list(cache.directory.glob("*.json"))
+
+
+def test_adoption_applies_the_quiescence_rule_a_fresh_read_is_recorded_under(tmp_path):
+    source = _source(tmp_path)
+    shard = source / SHARDS[0]
+    cache = _cache(tmp_path, quiescent_seconds=300)
+    with pytest.raises(ValueError, match="not quiescent"):
+        cache.adopt(shard, parts.sha256_file(shard), fingerprint=cache.fingerprint(shard),
+                    writer=_adopting_writer())
+    assert not list(cache.directory.glob("*.json"))
+
+
+def test_readoption_is_idempotent_and_a_disagreeing_digest_is_refused(tmp_path):
+    source = _source(tmp_path)
+    shard = source / SHARDS[0]
+    cache = _cache(tmp_path)
+    fenced = cache.fingerprint(shard)
+    digest = parts.sha256_file(shard)
+    first = cache.adopt(shard, digest, fingerprint=fenced, writer=_adopting_writer())
+    again = cache.adopt(shard, digest, fingerprint=fenced,
+                        writer={"kind": "a_second_owner"})
+    assert again == first, "an existing entry with the same digest is kept as it is"
+    with pytest.raises(ValueError, match="disagree"):
+        cache.adopt(shard, "0" * 64, fingerprint=fenced, writer=_adopting_writer())
+    assert not [p for p in cache.directory.iterdir() if p.name.startswith(".entry-")]
