@@ -152,9 +152,28 @@ def fp4_module_count(artifact: Path) -> int:
 
 
 def docker_command(*, name: str, image_id: str, mounts, environment, entry, out_host: Path,
-                   jit_host: Path, ext_host: Path, ext_readonly: bool) -> list:
+                   jit_host: Path, ext_host: Path, ext_readonly: bool, affinity=None) -> list:
     command = ["docker", "run", "--rm", "--gpus", "all", "--ipc", "host", "--network", "none",
                "--name", name, "--workdir", "/tessera"]
+    if affinity is not None:
+        # The CPU mask this launcher was granted, carried into the container.
+        # PrismaBuild's execution policy requires its reservation to be
+        # preserved "including inside containers", and a container started
+        # without a mask is placed on every host CPU whatever the pool
+        # reserved.  Here that is more than politeness: the whole output is a
+        # resource and timing observation, and one taken on an oversubscribed
+        # box is not the observation the configuration describes.
+        # ``--cpuset-cpus`` and not ``--cpus`` because
+        # ``experiments/container_limits_probe.sh`` measured that a CFS quota
+        # changes no CPU count a library can read, so a quota-limited container
+        # still sizes its pools for the whole box (owned_container.sh, lines
+        # two and three of that probe).  ``run_glm_native_construction.py`` is
+        # the existing docker-under-PrismaBuild launcher spelled the same way.
+        cpus = sorted(int(cpu) for cpu in affinity)
+        if not cpus:
+            raise ValueError("empty CPU affinity: a mask that read as nothing would pin the "
+                             "capture container to no CPU at all, which is not a reservation")
+        command += ["--cpuset-cpus", ",".join(str(cpu) for cpu in cpus)]
     for source, target, mode in mounts:
         command += ["--volume", f"{source}:{target}:{mode}"]
     # The scratch roots stay writable even in the negative control: making the
@@ -231,9 +250,11 @@ def main() -> int:
     headroom = memory_pressure()
     require_headroom(headroom)
     before = gpu_sample()
+    # Read once, here, and carried into every container this launcher starts.
+    affinity = sorted(os.sched_getaffinity(0))
     (out / "host-preconditions.json").write_text(json.dumps(
         {"schema": "tessera.step4_launch_preconditions.v1", "hostname": os.uname().nodename,
-         "memory": headroom, "gpu": before,
+         "memory": headroom, "gpu": before, "affinity": affinity,
          "gate": {"min_memavailable_gib": MIN_MEMAVAILABLE_GIB, "max_psi_full_avg10": MAX_PSI_FULL_AVG10}},
         indent=2, sort_keys=True) + "\n")
 
@@ -286,7 +307,7 @@ def main() -> int:
             phases.append(run_phase("census", docker_command(
                 name="step4-census-" + uuid.uuid4().hex[:12], image_id=image_id, mounts=mounts,
                 environment=census_env, out_host=census_out, jit_host=args.jit_dir,
-                ext_host=ext_host, ext_readonly=args.jit_readonly,
+                ext_host=ext_host, ext_readonly=args.jit_readonly, affinity=affinity,
                 entry=["/tessera/experiments/full_engine_plugin_install.py",
                        "--evidence-dir", "/out", "--base-reference", base,
                        "--launcher-image-id", image_id,
@@ -334,7 +355,7 @@ def main() -> int:
         phases.append(run_phase("preflight" if args.preflight_only else "capture", docker_command(
             name="step4-capture-" + uuid.uuid4().hex[:12], image_id=image_id, mounts=mounts,
             environment=environment, out_host=out, jit_host=args.jit_dir,
-            ext_host=ext_host, ext_readonly=args.jit_readonly, entry=entry),
+            ext_host=ext_host, ext_readonly=args.jit_readonly, entry=entry, affinity=affinity),
             out / "container.log", args.timeout_s))
     finally:
         vitals.terminate()
@@ -358,6 +379,7 @@ def main() -> int:
                "configuration_sha256": configuration_sha256, "artifact": str(args.artifact),
                "source_commit": args.source_commit, "jit_dir": str(args.jit_dir),
                "jit_readonly": args.jit_readonly, "ext_dir": str(ext_host), "phases": phases,
+               "affinity": affinity,
                "observation_mode": args.observation_mode, "preflight_only": args.preflight_only,
                "timing_samples": args.timing_samples if args.observation_mode == "timings" else None,
                "gpu_before": before, "gpu_after": after,
