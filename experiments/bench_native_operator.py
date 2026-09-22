@@ -420,7 +420,7 @@ def observe_runtime(runtime_image):
 
 
 def prepare_native_operator(blob, record, source_weight, rendered_weight, *, unit, format_name,
-                            runtime_image, input_global_scale=None, execution=None):
+                            runtime_image, input_global_scale=None, execution=None, phase_inputs=None):
     """Actual create/load/process lifecycle; returns facts for freezing a panel.
 
     Original unit bytes are framed once through the existing single-role fused
@@ -513,6 +513,20 @@ def prepare_native_operator(blob, record, source_weight, rendered_weight, *, uni
                     "contract": ROUTES[family]["activation_contract"]},
                 "native_tensors": _native_tensors(layer)}
     operator["source_weight"] = tensor_identity(source_weight)
+    if phase_inputs is not None:
+        _fields(phase_inputs, PHASES, "untimed phase inputs")
+        initial = {phase: tensor_identity(value) for phase, value in phase_inputs.items()}
+        with torch.inference_mode():
+            for phase in PHASES:
+                value = phase_inputs[phase]
+                _require_cuda_tensor(value)
+                if value.shape[1] != columns:
+                    raise ValueError("untimed phase input width differs from owner")
+                method.apply(layer, value)
+            torch.cuda.synchronize()
+        if (initial != {phase: tensor_identity(value) for phase, value in phase_inputs.items()}
+                or _native_tensors(layer) != operator["native_tensors"]):
+            raise ValueError("untimed native initialization changed inputs or weights")
     return {"method": method, "layer": layer, "operator": operator, "runtime": observe_runtime(runtime_image)}
 
 
@@ -805,7 +819,8 @@ def main(argv=None):
         prepared = prepare_native_operator(artifact("wire_path").read_bytes(),
             json.loads(artifact("wire_record_path").read_text()), tensors["source_weight"], tensors["rendered_weight"],
             unit=request["unit"], format_name=request["format"], runtime_image=request["runtime_image"],
-            input_global_scale=request["input_global_scale"], execution=request["execution"])
+            input_global_scale=request["input_global_scale"], execution=request["execution"],
+            phase_inputs={phase: tensors[f"{phase}.input"] for phase in PHASES})
         if collector_library_sha256 is not None:
             prepared["runtime"]["resource_collector"] = {
                 "library_sha256": collector_library_sha256,
