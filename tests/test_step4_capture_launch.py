@@ -18,6 +18,7 @@ docker-under-PrismaBuild launcher that already spells it that way.  This test
 holds the step-4 launcher to the same rule.
 """
 import importlib.util
+import json
 from pathlib import Path
 
 import pytest
@@ -104,3 +105,58 @@ def test_an_unbound_allocator_policy_is_refused():
     module = _launcher()
     with pytest.raises(ValueError):
         module.bound_container_environment({"environment": {"TESSERA_SERVE_MODE": "resident"}})
+
+
+def _driver():
+    spec = importlib.util.spec_from_file_location(
+        "step4_capture_driver_under_test", ROOT / "experiments" / "step4_capture_driver.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_family_modules_reads_every_family_the_manifest_assigns(tmp_path):
+    """The driver qualifies each family, so the launcher hands it every family's count and names."""
+    manifest = {"modules": {
+        "model.layers.1.mlp.down_proj": {"family": "TESSERA_FP8"},
+        "model.layers.0.mlp.down_proj": {"family": "TESSERA_FP8"},
+        "model.layers.0.self_attn.qkv_proj": {"family": "TESSERA_BF16"},
+        "model.layers.0.mlp.gate_up_proj": {"family": "TESSERA_NVFP4"}}}
+    (tmp_path / "tessera_serving_manifest.json").write_text(json.dumps(manifest))
+    assert _launcher().family_modules(tmp_path) == {
+        "TESSERA_FP8": {"count": 2, "names": ["model.layers.0.mlp.down_proj",
+                                              "model.layers.1.mlp.down_proj"]},
+        "TESSERA_BF16": {"count": 1, "names": ["model.layers.0.self_attn.qkv_proj"]},
+        "TESSERA_NVFP4": {"count": 1, "names": ["model.layers.0.mlp.gate_up_proj"]}}
+
+
+def test_family_modules_refuses_a_module_without_a_family(tmp_path):
+    (tmp_path / "tessera_serving_manifest.json").write_text(
+        json.dumps({"modules": {"model.layers.0.mlp.down_proj": {}}}))
+    with pytest.raises(ValueError, match="names no family"):
+        _launcher().family_modules(tmp_path)
+
+
+def test_the_driver_parses_the_launchers_module_map_and_refuses_unknown_families():
+    driver = _driver()
+    parsed = driver._expected_modules(json.dumps(
+        {"TESSERA_FP8": {"count": 110, "names": []}, "TESSERA_NVFP4": {"count": 1, "names": ["x"]}}))
+    assert parsed["TESSERA_FP8"]["count"] == 110
+    import argparse
+    with pytest.raises(argparse.ArgumentTypeError, match="unknown families"):
+        driver._expected_modules(json.dumps({"TESSERA_INT4": 1}))
+    with pytest.raises(argparse.ArgumentTypeError, match="non-empty JSON object"):
+        driver._expected_modules("110")  # the old --expected-fp4-modules integer is not a map
+    with pytest.raises(argparse.ArgumentTypeError, match="non-empty JSON object"):
+        driver._expected_modules("{}")
+    with pytest.raises(argparse.ArgumentTypeError, match="not JSON"):
+        driver._expected_modules("TESSERA_FP8=110")
+
+
+def test_the_driver_smokes_compile_as_python():
+    """Both child-interpreter programs are strings; a syntax error would surface only in-container."""
+    driver = _driver()
+    compile(driver.NATIVE_SMOKE, "NATIVE_SMOKE", "exec")
+    compile(driver.OBSERVER_SMOKE, "OBSERVER_SMOKE", "exec")
+    assert "tessera_nvfp4" not in driver.NATIVE_SMOKE
+    assert "require_tessera_ext" not in driver.NATIVE_SMOKE
