@@ -719,3 +719,18 @@ def test_decision_samples_follow_stopped_resource_collection(monkeypatch):
     assert receipt['status'] == 'timing_admissible'
     assert receipt['timing_scope'] == 'cuda_events_after_resource_collector_stop'
     assert [kind for kind, _ in trace].count('time') == 2
+
+
+def test_execution_only_panel_does_not_require_unmeasured_cost_or_probe():
+    panel, *_ = _panel_fixture()
+    joint = panel.pop('joint_operator_identity')
+    for key in ('cost_sha256', 'probe_identity_sha256', 'joint_operator_identity_sha256'):
+        panel.pop(key)
+    panel['schema'] = _module().RAW_PANEL_SCHEMA
+    panel['operator_identity'] = {key: joint[key] for key in
+        ('qname', 'format', 'source_weight', 'rendered_weight', 'activation')}
+    panel['operator_identity_sha256'] = _json_sha(panel['operator_identity'])
+    assert _module().validate_panel(panel) == panel
+    panel['cost_sha256'] = _sha('must not masquerade as a joint bound panel')
+    with pytest.raises(ValueError, match='unknown fields'):
+        _module().validate_panel(panel)

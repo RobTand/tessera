@@ -16,6 +16,8 @@ from contextlib import contextmanager
 
 PANEL_SCHEMA = "tessera.native_dense_panel.v1"
 RECEIPT_SCHEMA = "tessera.native_dense_operator_receipt.v1"
+RAW_PANEL_SCHEMA = "tessera.native_dense_execution_panel.v1"
+RAW_RECEIPT_SCHEMA = "tessera.native_dense_execution_receipt.v1"
 RUNTIME_SCHEMA = "tessera.native_dense_runtime.v1"
 EXECUTION = {"owner_kind": "single_dense", "mode": "resident",
              "execution_mode": "eager", "tensor_parallel": 1, "bias": False}
@@ -94,13 +96,16 @@ def validate_panel(panel):
     # attestation a format that does not quantise its input carries counts.
     derived = ("numerics_derivation", "activation_quantizer_attestation")
     optional = derived if isinstance(panel, dict) and any(key in panel for key in derived) else ()
+    raw = isinstance(panel, dict) and panel.get("schema") == RAW_PANEL_SCHEMA
+    binding = (("operator_identity_sha256", "operator_identity") if raw else
+               ("cost_sha256", "probe_identity_sha256", "joint_operator_identity_sha256",
+                "joint_operator_identity"))
     _fields(panel, ("schema", "unit", "format", "shape", "source_sha256", "calibration_sha256",
-                    "cost_sha256", "probe_identity_sha256", "joint_operator_identity_sha256",
-                    "joint_operator_identity", "wire", "execution", "runtime",
+                    *binding, "wire", "execution", "runtime",
                     "native_tensors_sha256", "scheme_sha256", "numerics",
                     *optional,
                     "phases"), "panel")
-    if panel["schema"] != PANEL_SCHEMA:
+    if panel["schema"] not in (PANEL_SCHEMA, RAW_PANEL_SCHEMA):
         raise ValueError("panel schema unsupported")
     # Equality alone admits True == 1 and 0 == False.
     if identity_sha256(panel["execution"]) != identity_sha256(EXECUTION):
@@ -113,14 +118,16 @@ def validate_panel(panel):
         raise ValueError("shape: [N,K] required")
     for n in shape:
         _integer(n, "shape")
-    for key in ("source_sha256", "calibration_sha256", "cost_sha256", "probe_identity_sha256",
-                "joint_operator_identity_sha256", "native_tensors_sha256", "scheme_sha256"):
+    for key in ("source_sha256", "calibration_sha256", "native_tensors_sha256", "scheme_sha256",
+                *(key for key in binding if key.endswith("sha256"))):
         _sha(panel[key], key)
-    joint = panel["joint_operator_identity"]
-    if identity_sha256(joint) != panel["joint_operator_identity_sha256"]:
+    joint = panel["operator_identity" if raw else "joint_operator_identity"]
+    if raw:
+        _fields(joint, ("qname", "format", "source_weight", "rendered_weight", "activation"), "execution operator identity")
+    if identity_sha256(joint) != panel["operator_identity_sha256" if raw else "joint_operator_identity_sha256"]:
         raise ValueError("joint operator identity SHA256 mismatch")
     if (joint.get("qname") != panel["unit"] or joint.get("format") != panel["format"]
-            or joint.get("probe_identity_sha256") != panel["probe_identity_sha256"]):
+            or (not raw and joint.get("probe_identity_sha256") != panel["probe_identity_sha256"])):
         raise ValueError("joint operator unit/format/probe identity mismatch")
     for key in ("source_weight", "rendered_weight"):
         _tensor_record(joint[key], shape, key)
@@ -470,7 +477,7 @@ def _check_prepared(prepared, panel):
         raise ValueError("scheme is not the declared single dense owner/shape")
     if operator["wire_sha256"] != panel["wire"]["blob_sha256"] or operator["wire_record_sha256"] != identity_sha256(panel["wire"]["record"]):
         raise ValueError("wire identity differs from independent panel")
-    joint = panel["joint_operator_identity"]
+    joint = panel["operator_identity" if panel["schema"] == RAW_PANEL_SCHEMA else "joint_operator_identity"]
     for key in ("source_weight", "rendered_weight"):
         if operator[key] != joint[key]:
             raise ValueError(f"{key} identity differs from joint cost")
@@ -572,7 +579,7 @@ def measure_prepared_operator(prepared, panel, phase_tensors, *, warmup_iteratio
                     _check_phase_tensors(panel, phase_tensors)
         _check_prepared(prepared, panel)
     status = ("resources_observed" if resource_collector is not None else "timing_admissible") if passed else "numerical_refused"
-    return {"schema": RECEIPT_SCHEMA, "status": status,
+    return {"schema": RAW_RECEIPT_SCHEMA if panel["schema"] == RAW_PANEL_SCHEMA else RECEIPT_SCHEMA, "status": status,
             "panel": panel, "panel_sha256": identity_sha256(panel), "runtime": prepared["runtime"],
             "runtime_sha256": identity_sha256(prepared["runtime"]), "operator": prepared["operator"],
             "phases": observations, "resources": {"status": "incomplete", "scope": "torch_allocator_observation",
