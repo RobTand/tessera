@@ -300,6 +300,9 @@ def build_tessera_nvfp4_method(scheme, prefix: str, mode: str):
             y = outs[0] if len(outs) == 1 else torch.cat(outs, dim=-1)
             if _research.SYNC:  # tessera#508 bisect site; unset in production
                 _research.sync(f"dense_gemm.exit:{x2.shape[0]}x{x2.shape[1]}->{y.shape[-1]}")
+            if _research.DUMP is not None:  # tessera#508 repeat-diff digests
+                _research.dump("dense_gemm", prefix=getattr(layer, "prefix", None),
+                               num_tokens=int(x2.shape[0]), x=x2, y=y)
             symbol = getattr(layer, "tessera_symbol", GEMM_SYMBOL)
             try:
                 emit_route(

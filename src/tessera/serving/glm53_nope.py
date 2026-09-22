@@ -27,6 +27,9 @@ from vllm.v1.attention.backends.mla.sparse_utils import (
 from . import _research
 from .backend import probed_platform_token
 
+if _research.SLOTMAP_CHECK:  # tessera#508 research bisect only; see _research
+    _research.install_slot_mapping_check()
+
 # Compatibility guards, not device qualification. These are the unmodified
 # sources from eugr/spark-vllm@sha256:0afec8d4f79f44685a1ddf758659d33aef3b0f3ec9068e5a7cd1108d30e5581c.
 _STOCK_SHA256 = {
