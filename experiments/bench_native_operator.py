@@ -368,6 +368,17 @@ def represented_native_input(layer, x):
     return (levels[codes].reshape(m, -1, GROUP_SIZE) * scales.reshape(m, -1, 1) / g).reshape(m, k).to(torch.bfloat16)
 
 
+def native_source_bundle():
+    """Both operator harnesses and resource code from this actual source tree."""
+    root=Path(__file__).parent
+    files={"dense_harness_sha256":Path(__file__),
+        "routed_harness_sha256":root/"bench_native_moe_operator.py",
+        "resource_analysis_sha256":root/"native_operator_resources.py",
+        "resource_collector_source_sha256":root/"csrc/native_operator_resources.cpp"}
+    return {"schema":"tessera.native_operator_source_bundle.v1",
+            **{key:hashlib.sha256(path.read_bytes()).hexdigest() for key,path in files.items()}}
+
+
 def observe_runtime(runtime_image):
     """Observe loaded binaries and source after native preparation, before timing."""
     import importlib.metadata
@@ -413,7 +424,8 @@ def observe_runtime(runtime_image):
                          "cuda": torch.version.cuda},
             "gpu": {"name": props.name, "uuid": uuid, "capability": [props.major, props.minor],
                     "total_memory": props.total_memory, "driver_version": drivers[uuid]},
-            "source": {"tessera_package_sha256": encoder_source_sha256(),
+            "source": {"native_cohort_bundle":native_source_bundle(),
+                       "tessera_package_sha256": encoder_source_sha256(),
                        "runtime_contract_sha256": hashlib.sha256((package / "serving/runtime_contract.json").read_bytes()).hexdigest(),
                        "harness_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest()},
             "native_libraries": libraries}

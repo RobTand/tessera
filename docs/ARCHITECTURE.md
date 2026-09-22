@@ -5631,3 +5631,12 @@ version nor the entry point -- and refuses a built wheel whose `Version`
 metadata, whose entry-point value, or whose installed `__version__` is not
 the declared one; and the publish job's tag check reads the same table
 (§5.4).
+
+Native operator runtime records may carry a versioned
+`tessera.native_operator_source_bundle.v1` under their source identity. It
+hashes both dense and routed harnesses and both resource-analysis and collector
+sources from the actual producer tree. Dense and MoE records retain their own
+schemas, execution declarations, collectives, and loaded library maps. This
+bundle allows a downstream explicit common-runtime projection; it does not
+assert that independent processes loaded equal compiler output or ran on the
+same device. Those facts remain separately measured and compared.

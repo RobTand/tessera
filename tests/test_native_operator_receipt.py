@@ -801,3 +801,14 @@ def test_loaded_route_selects_actual_native_pair_when_history_has_two(monkeypatc
     actual=module.prepare_native_operator(blob,record,source,rendered,**kwargs)
     assert actual['operator']['declared_route']['symbol']==expected[0]
     assert actual['operator']['declared_route']['decoder']==expected[1]
+
+
+def test_common_operator_source_bundle_binds_both_harnesses_and_resource_code():
+    import hashlib
+    from pathlib import Path
+    from experiments import bench_native_operator as bench
+    root=Path(bench.__file__).parent
+    bundle=bench.native_source_bundle()
+    assert bundle['dense_harness_sha256']==hashlib.sha256(Path(bench.__file__).read_bytes()).hexdigest()
+    assert bundle['routed_harness_sha256']==hashlib.sha256((root/'bench_native_moe_operator.py').read_bytes()).hexdigest()
+    assert bundle['resource_collector_source_sha256']==hashlib.sha256((root/'csrc/native_operator_resources.cpp').read_bytes()).hexdigest()
