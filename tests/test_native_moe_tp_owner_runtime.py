@@ -57,7 +57,10 @@ def _glm_routing():
             "source_protocol": {"router_class": "Glm5NextTopKRouter",
                 "router_source_sha256": _sha("CPU source fixture"),
                 "scoring_func": "sigmoid", "topk_method": "noaux_tc",
-                "normalization_epsilon": 1e-6,
+                # The GLM-5 router's own denominator constant (transformers
+                # glm_moe_dsa: ``topk_weights.sum(...) + 1e-20``), the value
+                # PrismaQuant's routing replay reads off the source.
+                "normalization_epsilon": 1e-20,
                 "correction_bias": {"content_sha256": _sha("CPU bias fixture"),
                                     "dtype": "torch.float32"},
                 "expert_bias_affects": "selection_only", "norm_topk_prob": True}}
