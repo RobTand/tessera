@@ -64,3 +64,43 @@ def test_empty_affinity_is_refused_not_ignored():
     """An empty mask is a read that failed; pinning a container to nothing would hang."""
     with pytest.raises(ValueError):
         _command(affinity=[])
+
+
+def test_unset_allocator_policy_is_absent_from_the_container():
+    """``"unset"`` names the variable's ABSENCE, and torch aborts on the literal.
+
+    tessera#558 / PR #565 made the configuration bind
+    ``PYTORCH_CUDA_ALLOC_CONF`` because the reserved-extent witness only
+    transfers under an equal allocator segment policy, and it spelled "no
+    policy" as the explicit string ``"unset"``.
+    ``capture_full_engine_resources.prepare`` pops the key when the binding is
+    that sentinel, so the WORKER never sees it. The launcher one level out
+    copied the configuration's environment block into ``docker run --env``
+    verbatim, so the container's own interpreter did see it -- and ``"unset"``
+    is not a token c10 can parse. Measured on sparklina 2026-09-21, the first
+    capture attempt of this run: ``terminate called after throwing an instance
+    of 'c10::Error' ... Index out of bounds in ConfigTokenizer`` from
+    ``libc10_cuda.so``'s load-time parse, phase returncode 133, before any
+    engine existed.
+    """
+    module = _launcher()
+    config = {"environment": {"PYTORCH_CUDA_ALLOC_CONF": "unset", "TESSERA_SERVE_MODE": "resident"}}
+    environment = module.bound_container_environment(config)
+    assert "PYTORCH_CUDA_ALLOC_CONF" not in environment
+    assert environment == {"TESSERA_SERVE_MODE": "resident"}
+
+
+def test_a_real_allocator_policy_reaches_the_container():
+    """A policy that is a policy is passed through unchanged."""
+    module = _launcher()
+    config = {"environment": {"PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+                              "TESSERA_SERVE_MODE": "resident"}}
+    environment = module.bound_container_environment(config)
+    assert environment["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
+
+
+def test_an_unbound_allocator_policy_is_refused():
+    """The launcher refuses where the capture CLI refuses, not later and not silently."""
+    module = _launcher()
+    with pytest.raises(ValueError):
+        module.bound_container_environment({"environment": {"TESSERA_SERVE_MODE": "resident"}})

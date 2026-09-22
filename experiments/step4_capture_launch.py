@@ -59,10 +59,44 @@ import sys
 import time
 import uuid
 
+# The launcher lives in ``experiments/``; the capture CLI is imported as a
+# package member so the allocator-policy rule keeps ONE home (see
+# :func:`bound_container_environment`).  The import is torch-free by
+# construction -- ``prepare`` refuses a process that imported Torch or vLLM
+# before bootstrap -- so it is safe on a host that has neither.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from experiments.capture_full_engine_resources import (  # noqa: E402
+    ALLOCATOR_POLICY_KEY, UNSET_ALLOCATOR_POLICY, require_allocator_policy)
+
 #: OOM discipline for a shared GB10: GPU and host share one pool, so a serve
 #: started under memory pressure takes the box down with it.
 MIN_MEMAVAILABLE_GIB = 16.0
 MAX_PSI_FULL_AVG10 = 20.0
+
+
+def bound_container_environment(config) -> dict:
+    """The configuration's environment block as the CONTAINER must receive it.
+
+    ``require_allocator_policy`` is the one home of the rule that the
+    configuration must bind ``PYTORCH_CUDA_ALLOC_CONF`` and that ``"unset"``
+    names the variable's ABSENCE rather than a value (tessera#558, PR #565).
+    ``capture_full_engine_resources.prepare`` applies it to the worker
+    environment it builds.  This applies it one level further out, to the
+    container this launcher starts, and it has to: the sentinel is not a token
+    c10 can parse, and torch parses the variable at ``libc10_cuda.so`` load
+    time, before any of our code runs.
+
+    Measured on sparklina, 2026-09-21, the first capture attempt of the
+    tessera#399 master re-run: ``terminate called after throwing an instance of
+    'c10::Error' ... Index out of bounds in ConfigTokenizer``, preflight
+    returncode 133, with no engine started and nothing in the ledger to say
+    why.  Passing the block through verbatim turned an explicit "no policy"
+    binding into a process abort.
+    """
+    environment = dict(config["environment"])
+    if require_allocator_policy(config) == UNSET_ALLOCATOR_POLICY:
+        environment.pop(ALLOCATOR_POLICY_KEY, None)
+    return environment
 
 
 def digest(path) -> str:
@@ -273,7 +307,7 @@ def main() -> int:
         "TESSERA_EXT_DIR": "/jit-ext",
         # The serve's own dispatch histogram: the dispatch leg of the proof.
         "TESSERA_ROUTE_TRACE": "/out/route-trace.json",
-        **config["environment"], **resolved["environment"]}
+        **bound_container_environment(config), **resolved["environment"]}
     for name in ("home", "xdg", "tmp", "triton", "torch-extensions"):
         (args.jit_dir / name).mkdir(parents=True, exist_ok=True)
     # The negative control gets its OWN empty build root, mounted read-only: it
@@ -380,6 +414,7 @@ def main() -> int:
                "source_commit": args.source_commit, "jit_dir": str(args.jit_dir),
                "jit_readonly": args.jit_readonly, "ext_dir": str(ext_host), "phases": phases,
                "affinity": affinity,
+               "allocator_segment_policy": require_allocator_policy(config),
                "observation_mode": args.observation_mode, "preflight_only": args.preflight_only,
                "timing_samples": args.timing_samples if args.observation_mode == "timings" else None,
                "gpu_before": before, "gpu_after": after,
