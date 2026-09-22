@@ -543,16 +543,30 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
 
 
 #: Launches the DISPATCH can make that the packaged runtime contract does not
-#: attest.  The dense native window GEMM is experimental: it serves, and the
-#: routes' census expectation must know it, but no ``lane_eligibility`` cell
-#: names it and no contract version was promoted for it.  ``route_launches``
-#: therefore leaves these out by default -- the cell validator and every
-#: contract reader see exactly the attested dispatch -- and the routes'
-#: ``census_expected`` opts in with ``include_experimental=True`` so a served
-#: record is compared against what the build can really launch.  A pair leaves
-#: this set when a receipt earns it a cell.
+#: attest.  A launch here serves, and the routes' census expectation must know
+#: it, but no ``lane_eligibility`` cell names it and no contract version was
+#: promoted for it.  ``route_launches`` therefore leaves these out by default
+#: -- the cell validator and every contract reader see exactly the attested
+#: dispatch -- and the routes' ``census_expected`` opts in with
+#: ``include_experimental=True`` so a served record is compared against what
+#: the build can really launch.  A pair leaves this set when a receipt earns it
+#: a cell.
+#:
+#: ``(WINDOW_GEMM_SYMBOL, _DECODER_NATIVE_WINDOW_GEMM)`` LEFT at contract v34
+#: (#545): four censuses on the platform's own serve image recorded 112 of 112
+#: dense modules on that pair in both regimes, both residencies, for
+#: ``TESSERA_E4M3_K1`` at q256=1024 and ``TESSERA_BF16_K1`` at q256=1792, and
+#: the four ``tessera_{e4m3_k1,bf16_k1}_dense_sm121_{decode,batch}`` cells name
+#: it.  The removal and the cells are one change: ``contract.
+#: _validate_cell_executes`` derives a cell's ``executes`` from
+#: ``route_launches`` with ``include_experimental=False``, so a cell naming an
+#: experimental pair is refused and a pair removed without its cells would put
+#: an unattested launch in front of every contract reader.
+#:
+#: What stays, and why.  The two A4 pairs are deferred with the NVFP4 lane
+#: (#575) -- no dense or routed A4 census exists -- and the compact window MoE
+#: adapter has no served receipt at all.
 EXPERIMENTAL_LAUNCHES = frozenset({
-    (WINDOW_GEMM_SYMBOL, _DECODER_NATIVE_WINDOW_GEMM),
     (A4_DENSE_GEMM_SYMBOL, _DECODER_NATIVE_SPAN2_GEMM),
     (A4_GROUPED_GEMM_SYMBOL, _DECODER_NATIVE_SPAN2_GROUPED),
     (WINDOW_MOE_COMPACT_SYMBOL, _DECODER_NATIVE_WINDOW_MOE_COMPACT),
