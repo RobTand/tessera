@@ -4,7 +4,7 @@ Same prompts/params as the 2026-09-13 divergence arms (campaign-takeover
 smoke.py), plus return_token_ids so token ids are recorded, not just text.
 Run on the serving host against 127.0.0.1:$PORT; writes $OUT/<arm>.<name>.json.
 """
-import json, math, pathlib, sys, urllib.request
+import json, os, math, pathlib, sys, urllib.request
 
 port = sys.argv[1] if len(sys.argv) > 1 else "8139"
 out = pathlib.Path(sys.argv[2] if len(sys.argv) > 2 else "/home/rob/tmp/t508-serve/receipts")
@@ -17,6 +17,10 @@ PROMPTS = [('short1', 'The capital of France is', 32),
            ('short2', 'The capital of France is', 32),
            ('long', para * 130 + '\nIn one word, what animal jumps?', 16)]
 
+# SMOKE_PROMPTS=short restricts the set to the two short prompts (throughput
+# warm-up under a mode whose two-chunk prefill is known to fault; tessera#508).
+if os.environ.get("SMOKE_PROMPTS") == "short":
+    PROMPTS = [p for p in PROMPTS if p[0] != "long"]
 summary = {}
 for name, prompt, max_tokens in PROMPTS:
     payload = dict(model='glm53-stub', prompt=prompt, max_tokens=max_tokens,
@@ -41,7 +45,7 @@ a = json.loads((out / f'{arm}.short1.json').read_text())['choices'][0]
 b = json.loads((out / f'{arm}.short2.json').read_text())['choices'][0]
 assert a['text'] == b['text'] and a['logprobs'] == b['logprobs'] and a['token_ids'] == b['token_ids'], \
     'short1 != short2: repeat not deterministic'
-assert summary['long']['prompt_tokens'] > 2048, summary['long']
+assert 'long' not in summary or summary['long']['prompt_tokens'] > 2048, summary.get('long')
 summary['repeat_exact'] = True
 (out / f'{arm}.summary.json').write_text(json.dumps(summary, indent=1))
 print(json.dumps(summary, indent=1), flush=True)

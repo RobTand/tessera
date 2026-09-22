@@ -21,7 +21,7 @@ docker ps -q | grep -q . && { echo "tput $ARM: another container is resident"; e
 nvidia-smi --query-compute-apps=pid --format=csv,noheader | grep -q . && { echo "tput $ARM: a GPU process is resident"; exit 3; }
 "$HERE/srv-508.sh" up || { "$HERE/srv-508.sh" savelogs "tput-$ARM-noready"; "$HERE/srv-508.sh" down; exit 4; }
 # One warm-up request so the first pass does not include lazy-init work.
-python3 "$HERE/smoke-508.py" "$PORT" "$OUT" "tput-$ARM-warm" > "$OUT/tput-$ARM.warm.txt" 2>&1
+SMOKE_PROMPTS=short python3 "$HERE/smoke-508.py" "$PORT" "$OUT" "tput-$ARM-warm" > "$OUT/tput-$ARM.warm.txt" 2>&1
 curl -s "127.0.0.1:$PORT/metrics" | grep -E "prefix_cache_(queries|hits)_total|num_requests" > "$OUT/tput-$ARM.metrics-before.txt"
 STOP="$OUT/tput-$ARM.stop"; rm -f "$STOP"
 "$HERE/power-sampler-508.sh" "$OUT/tput-$ARM.power.txt" "$STOP" & sampler=$!
