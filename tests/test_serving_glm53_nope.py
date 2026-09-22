@@ -89,9 +89,13 @@ def test_cudagraph_modes_other_than_none_are_refused_by_measurement(cg, monkeypa
     candidate.compilation_config.cudagraph_mode = cg
     reason = _config_reason(candidate)
     assert reason and cg.name in reason and "tessera#508" in reason
-    expected = {"PIECEWISE": "0.29176", "FULL_AND_PIECEWISE": "0.29176",
-                "FULL_DECODE_ONLY": "illegal memory access", "FULL": "FULL_DECODE_ONLY"}
-    assert expected[cg.name] in reason
+    expected = {"PIECEWISE": ("0.29176", "2 of 2 serves"),
+                "FULL_AND_PIECEWISE": ("0.29176",),
+                "FULL_DECODE_ONLY": ("illegal memory access", "_compute_slot_mappings_kernel",
+                                     "6 of 10 serves", "block_table.py:339-347"),
+                "FULL": ("FULL_DECODE_ONLY",)}
+    for needle in expected[cg.name]:
+        assert needle in reason, (cg.name, needle, reason)
 
 
 def test_cudagraph_none_is_admitted_with_or_without_enforce_eager(monkeypatch):

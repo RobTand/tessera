@@ -82,11 +82,15 @@ _MEASURED_CUDAGRAPH_REFUSALS = {
                   "the two-chunk 3649-token prefill in 2 of 2 serves"),
     "FULL_AND_PIECEWISE": ("carries the PIECEWISE prefill graphs and diverged exactly as "
                            "PIECEWISE does (first-token 0.29176, max 0.56399, 2 of 2 serves)"),
-    "FULL_DECODE_ONLY": ("replays its decode graphs bit-exact against eager (32/32 tokens in 7 "
-                         "of 7 serves) but the two-chunk 3649-token prefill raised an illegal "
+    "FULL_DECODE_ONLY": ("replays its decode graphs bit-exact against eager (32/32 tokens in 9 "
+                         "of 9 serves) but the two-chunk 3649-token prefill raised an illegal "
                          "memory access in stock vllm/v1/worker/gpu/block_table.py "
-                         "_compute_slot_mappings_kernel in 6 of 8 serves; refused until that "
-                         "input is attributed and fixed"),
+                         "_compute_slot_mappings_kernel in 6 of 10 serves (0 of 7 in eager): "
+                         "the kernel indexes the kpool-tail group's 32-entry block-table row by "
+                         "absolute position with no bound (block_table.py:339-347) and reads past "
+                         "the 256-entry table on every prefill beyond position 1023 in every "
+                         "mode; the decode-graph pools decide whether those bytes are mapped, so "
+                         "the fault is stock's and layout-dependent"),
     "FULL": ("is downgraded by stock to FULL_DECODE_ONLY for this backend (UNIFORM_BATCH "
              "support) and shares its refusal"),
 }

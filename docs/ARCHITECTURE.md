@@ -8,7 +8,9 @@ the code that owns it.
 Re-stamped 2026-09-22 for the GLM53 NoPE whole-engine mode gate (tessera#508,
 §5.1.1): the research CUSTOM attention backend now admits `CompilationMode.NONE`
 + `CUDAGraphMode.NONE` with or without `--enforce-eager` and refuses every
-other mode by name with its measured figure; no default path moves.
+other mode by name with its measured figure; the decode-graph crash is
+attributed to stock `_compute_slot_mappings_kernel` reading the kpool-tail
+block table out of bounds; no default path moves.
 Re-stamped 2026-09-19 for the HIP `_mul` spelling (tessera#481,
 §3.1): `window_viterbi._mul_asm` selects the AMDGCN spelling on a ROCm build,
 still unverified -- wsl-gpu offline -- so `fused_available()` keeps refusing
@@ -5308,7 +5310,7 @@ package on a box that has none; `tests/test_packaging.py` holds it to that.
 
 `TESSERA_RESEARCH_GLM53_NOPE=1` asks the same entry point to register
 `TesseraGLM53NoPEBackend` as vLLM's public `AttentionBackendEnum.CUSTOM`.
-Selection additionally requires `--enforce-eager --attention-backend CUSTOM
+Selection additionally requires `--attention-backend CUSTOM
 --kv-cache-dtype fp8_ds_mla --kernel-config '{"enable_flashinfer_autotune":false}'`.
 Selection admits `CompilationMode.NONE` with `CUDAGraphMode.NONE` -- with or
 without `--enforce-eager`, both measured equal -- and refuses every other
@@ -5317,10 +5319,22 @@ compilation or CUDA graph mode by name with the measurement that refuses it
 enumerates every enum member). Measured 2026-09-22 on the four-layer stub
 against `--enforce-eager` (tessera#508; receipts
 `/mnt/shared/tessera-runs/receipts/508-graphs-20260921/`): the breakable
-`FULL_DECODE_ONLY` decode graphs replay bit-exact (32/32 tokens, 7 of 7
+`FULL_DECODE_ONLY` decode graphs replay bit-exact (32/32 tokens, 9 of 9
 serves) but the two-chunk 3649-token prefill raised an illegal memory access
 in stock `vllm/v1/worker/gpu/block_table.py _compute_slot_mappings_kernel`
-in 6 of 8 serves; `PIECEWISE`/`FULL_AND_PIECEWISE` diverge deterministically
+in 6 of 10 serves (0 of 7 eager serves). The kernel indexes the kpool-tail
+group's block-table row (`KpoolTailSpec`, `kv_cache_interface.py:864`; 32
+entries × kernel block 4) by absolute position with an unmasked, unbounded
+load (`block_table.py:339-347`), so every prefill step past position 127 reads
+outside the row and past position 1023 outside the 256-entry table, in every
+mode -- host-checked on 2 of 2 FDO serves (`_research.install_slot_mapping_
+check`, `TESSERA_RESEARCH_GLM53_NOPE_SLOTMAP_CHECK=1`, which monkeypatches the
+stock `BlockTables.compute_slot_mappings` only when set), neither of which
+faulted; with `--max-model-len 1024` the read stays inside the table and
+3 of 3 900-token repeats served. Whether the out-of-bounds bytes are mapped is
+decided by the allocation layout, which the decode-graph pools change: the
+fault is stock's and layout-dependent, not a Tessera input.
+`PIECEWISE`/`FULL_AND_PIECEWISE` diverge deterministically
 on graph-run prefills (first-token |dlogprob| 0.29176, max 0.56399);
 `VLLM_COMPILE` diverges deterministically (0.12906 / 0.95915) because the fork
 runs it with `custom_ops=none` on a model that is not model-level compiled;
