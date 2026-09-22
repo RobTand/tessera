@@ -786,7 +786,15 @@ def dense_startup_check(rows, views, dense, *, ready_index):
         "units_disagreeing": disagreeing,
         "manifest_unpriced_resident_bytes": unpriced,
         "candidate_units_outside_manifest": extra_units,
+        "rank": dense.get("rank"),
         "memory_allocated_bytes": dense["memory_allocated_bytes"],
+        # Carried so the reserved extent this rank actually sampled reaches the
+        # report's reservation witness (tessera#558). A dense artifact writes no
+        # worker_startup_record -- that record is the routed receipt's -- so
+        # without this field the sample the worker took is measured and then
+        # dropped. A pre-#558 dense observation has no such field and carries
+        # None rather than borrowing the allocated sample.
+        "memory_reserved_bytes": dense.get("memory_reserved_bytes"),
         "ledger_live_bytes_at_ready_for_workload": live_at_ready,
         "allocator_sample_bounds_ledger": bounded,
         "closed": not disagreeing and not extra_units and bounded,
