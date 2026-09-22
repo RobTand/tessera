@@ -95,20 +95,37 @@ def install_slot_mapping_check() -> None:
         if any(b < a for a, b in zip(qsl, qsl[1:])) or (qsl and qsl[-1] > positions.numel()):
             problems.append(f"query_start_loc not monotone or beyond positions ({positions.numel()}): {qsl}")
         pos_summary = None
+        oob = []
         if n_actual is not None and 0 < n_actual <= positions.numel():
             pos = positions[:n_actual].cpu()
             pos_summary = (int(pos.min()), int(pos.max()))
+            if pos_summary[0] < 0:
+                problems.append(f"negative positions {pos_summary}")
+            # Mirror the kernel: block_indices = positions // kernel_block_size for
+            # every group whose slot mapping is enabled; the read is
+            # block_table[req_state_idx * row + block_index]. Report, do not raise,
+            # when that leaves the request's row or the tensor: the inputs are the
+            # runner's own, the indexing is the kernel's (#508 finding).
             for g in range(self.num_kv_cache_groups):
-                row_cap = int(self.block_tables[g].gpu.shape[1]); kbs = int(self.kernel_block_sizes[g])
-                if pos_summary[0] < 0 or pos_summary[1] // kbs >= row_cap:
-                    problems.append(f"positions {pos_summary} exceed group {g} block-table row (cap {row_cap} x kernel block {kbs})")
+                if not self._slot_mapping_enabled[g]:
+                    continue
+                table = self.block_tables[g].gpu
+                row_cap = int(table.shape[1]); kbs = int(self.kernel_block_sizes[g])
+                max_index = pos_summary[1] // kbs
+                if max_index >= row_cap:
+                    worst = max(idx) * row_cap + max_index
+                    oob.append(f"group {g}: block_size {self.block_sizes[g]} kernel_block {kbs} row {row_cap} "
+                               f"entries; positions to {pos_summary[1]} index to {max_index} "
+                               f"({'PAST THE TENSOR' if worst >= table.numel() else 'past the row, inside the tensor'}: "
+                               f"flat {worst} of {table.numel()})")
         live = [b.gpu.data_ptr() for b in self.block_tables]
         recorded = self.block_table_ptrs.cpu().tolist()
         if live != recorded:
             problems.append(f"block_table_ptrs stale: recorded {recorded} live {live}")
         summary = (f"#508 slotmap check: num_reqs={num_reqs} idx={idx} qsl={qsl[:num_reqs + 2]} "
                    f"positions[min,max]={pos_summary} num_tokens_padded={num_tokens_padded} "
-                   f"slot_mappings={tuple(self.slot_mappings.shape)}")
+                   f"slot_mappings={tuple(self.slot_mappings.shape)}"
+                   + (" | OOB READ PREDICTED: " + "; ".join(oob) if oob else ""))
         print(summary, file=sys.stderr, flush=True)
         if problems:
             raise RuntimeError("#508 slotmap check: BAD INPUTS: " + "; ".join(problems) + " | " + summary)
