@@ -801,3 +801,60 @@ def test_a_dense_startup_sample_refuses_a_manifest_whose_bytes_are_not_the_plans
     payload = json.loads((tmp_path / "worker-startup.json").read_text())
     assert payload["dense"] is None
     assert "differ from the plan's artifact checkpoint" in payload["skipped"]
+
+
+def test_native_prepared_bundles_have_candidate_owners_and_resolve_to_units(monkeypatch, worker_module):
+    """The native packed owners are slots, not registered nn.Module buffers."""
+    torch = pytest.importorskip("torch")
+    from tessera.serving.native_window import PreparedDenseNativeModule
+    from experiments.full_engine_ownership import _unit_from_owner_path
+
+    names = ("words", "table", "codes", "native", "scale", "runs", "init_perm", "perm")
+    # CPU control: metadata-only CUDA witnesses, no CUDA allocation or execution.
+    tensors = {name: SimpleNamespace(device=SimpleNamespace(type="cuda"), dtype="torch.uint8")
+               for name in names}
+    prepared = PreparedDenseNativeModule(
+        [SimpleNamespace(name="q", rows=2, bundle=SimpleNamespace(cols=3, **tensors))],
+        rows=2, columns=3, device=torch.device("cpu"), family="e4m3")
+    owner = torch.nn.Module()
+    owner.tessera_native = prepared
+    model = torch.nn.Module()
+    model.add_module("dense", owner)
+    boundary = {"owner": owner, "boundary": "dense.quant_method.apply"}
+    ids = worker_module.reference_candidate_tensor_ids(model, [boundary])
+    assert ids == {id(value) for value in tensors.values()}
+    monkeypatch.setattr(worker_module, "claim", lambda: (None, {"canonical_modules": ["dense"]}))
+    worker = worker_module.ResourceCaptureWorker()
+    worker.model_runner = SimpleNamespace(model=model)
+    worker._resource_native_boundaries = [boundary]
+    observed = list(worker._resource_owners())
+    assert len(observed) == len(names)
+    assert {id(row.tensor) for row in observed} == ids
+    assert {row.category for row in observed} == {"candidate"}
+    assert {_unit_from_owner_path([row.owner_id], {"dense": "g:dense"})
+            for row in observed} == {"g:dense"}
+
+
+def test_native_prepared_external_alias_stays_fixed(worker_module):
+    torch = pytest.importorskip("torch")
+    from tessera.serving.native_window import PreparedDenseNativeModule
+    names = ("words", "table", "codes", "native", "scale", "runs", "init_perm", "perm")
+    tensors = {name: torch.zeros(2) for name in names}
+    prepared = PreparedDenseNativeModule(
+        [SimpleNamespace(name="q", rows=2, bundle=SimpleNamespace(cols=3, **tensors))],
+        rows=2, columns=3, device=torch.device("cpu"), family="e4m3")
+    named = dict(prepared.named_tensors())
+    assert list(named) == [f"roles.0.{name}" for name in names]
+    assert all(named[f"roles.0.{name}"] is value for name, value in tensors.items())
+    assert prepared.packed_bytes() == sum(value.numel() * value.element_size()
+                                         for value in tensors.values())
+    assert prepared.fingerprints() == tuple(
+        (value.data_ptr(), value._version, tuple(value.shape), value.dtype)
+        for value in tensors.values())
+    owner, model = torch.nn.Module(), torch.nn.Module()
+    owner.tessera_native = prepared
+    model.add_module("dense", owner)
+    model.register_buffer("external_scale", tensors["scale"])
+    ids = worker_module.reference_candidate_tensor_ids(
+        model, [{"owner": owner, "boundary": "dense.quant_method.apply"}])
+    assert ids == {id(value) for name, value in tensors.items() if name != "scale"}

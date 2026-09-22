@@ -200,30 +200,26 @@ class PreparedDenseNativeModule:
     # -- residency accounting ------------------------------------------------
 
     def named_tensors(self):
-        """Every retained packed tensor, in deterministic role/field order.
+        """References to the exact frozen kernel inputs; no copies or mutation.
 
-        Receipt identity and residency accounting must include these tensors:
-        this compact owner deliberately is not an nn.Module buffer registry.
+        These tensors are held by slotted prepared bundles rather than registered
+        buffers. Resource observers use these names beneath the owning Linear;
+        exposing them does not change module loading or device movement.
         """
-        fields = ("words", "table", "codes", "native", "scale", "runs", "init_perm", "perm")
         for index, role in enumerate(self.__roles):
-            for field in fields:
-                yield f"role{index}.{role.name}.{field}", getattr(role.bundle, field)
+            for name in ("words", "table", "codes", "native", "scale", "runs",
+                         "init_perm", "perm"):
+                yield f"roles.{index}.{name}", getattr(role.bundle, name)
 
     def packed_bytes(self) -> int:
-        """Logical device bytes held by the packed bundles, never decoded weights."""
-        return sum(t.numel() * t.element_size() for _, t in self.named_tensors())
+        """Device bytes the prepared weights occupy: the packed wire half."""
+        return sum(tensor.numel() * tensor.element_size()
+                   for _, tensor in self.named_tensors())
 
     def fingerprints(self):
         """Identity of every frozen tensor, for a load-time/after-forward check."""
-        out = []
-        for role in self.__roles:
-            bundle = role.bundle
-            for tensor in (bundle.words, bundle.table, bundle.codes, bundle.native,
-                           bundle.scale, bundle.runs, bundle.init_perm, bundle.perm):
-                out.append((tensor.data_ptr(), tensor._version, tuple(tensor.shape),
-                            tensor.dtype))
-        return tuple(out)
+        return tuple((tensor.data_ptr(), tensor._version, tuple(tensor.shape), tensor.dtype)
+                     for _, tensor in self.named_tensors())
 
 
 @dataclasses.dataclass(frozen=True)
