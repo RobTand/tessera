@@ -188,6 +188,7 @@ class TesseraGLM53NoPEImpl(FlashInferMLASparseSM120Impl):
             _research.dump("forward_mqa", layer=getattr(layer, "layer_name", None),
                            num_tokens=num_tokens, q=q, topk=topk,
                            topk_sorted=torch.sort(topk, dim=1).values,
-                           physical=physical, counts=counts, out=out)
+                           physical=physical, counts=counts, out=out,
+                           counts_list=counts.tolist() if num_tokens <= 64 else None)
         _research_sync("forward_mqa.exit")
         return out.squeeze(1), None
