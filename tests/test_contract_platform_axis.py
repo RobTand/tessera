@@ -104,8 +104,24 @@ def test_the_packaged_contract_validates_at_v33(contract):
     migration is to admit an fp4 cell only under an attestation whose image is
     the executing one.  NUMBERING NOTE: drafted as v32; PR #560 leg 2 landed
     its v32 first (routed reader widen), so this change is v33.
+
+    v34 (tessera#545) is ADDITIVE for a lane reader and still does not move
+    the lane schema: it MINTS four dense cells --
+    ``tessera_{e4m3_k1,bf16_k1}_dense_sm121_{decode,batch}`` -- for the launch
+    ``fp8_route.apply`` and ``bf16_route.apply`` have made since ``1b767a207``,
+    ``tessera::window_gemm_dense`` / ``native_window_gemm``, on four served
+    censuses taken on the platform's own ``serve_image``
+    (``docs/measurements/tessera-window-gemm-census-2026-09-21.md``), and
+    removes that pair from ``scheme.EXPERIMENTAL_LAUNCHES`` in the same change
+    because ``_validate_cell_executes`` derives ``executes`` from
+    ``route_launches`` with ``include_experimental=False``.  A v10 reader
+    resolves the four new cells with the code it already has and reads four
+    combinations that previously resolved ``unattested``.  It is NOT additive
+    for a reader that derives ``executes`` from ``scheme.route_launches``
+    itself.  It does not restore the gfx1201 cells v31 withdrew: no ROCm
+    census of this launch exists.
     """
-    assert int(contract["contract_version"]) == 33
+    assert int(contract["contract_version"]) == 34
     assert "activation_quantizers" in contract
     assert all("structures" in entry for entry in contract["formats"])
     assert contract["lane_eligibility"]["schema"] == LANE_ELIGIBILITY_SCHEMA
@@ -251,11 +267,23 @@ def test_the_surviving_v22_sm121_cells_are_byte_identical(contract):
         "the surviving v22 sm_121 cells changed bytes at the same length; "
         "regenerate the fixture only if a receipt was deliberately re-measured")
 
-    # The withdrawal itself, stated rather than absorbed into the digest.
+    # The withdrawal itself, stated rather than absorbed into the digest -- and
+    # the part of it contract v34 reversed.  Two of the six ids are shipped
+    # again (tessera#545): a cell id is a SCOPE, so re-attesting a scope reuses
+    # it, and the fixture records which two and on what receipt.  What may not
+    # come back is the withdrawn CLAIM, so the launch is checked rather than
+    # the spelling.
     present = {cell["id"] for cell in contract["lane_eligibility"]["cells"]}
     withdrawn = set(recorded["withdrawn_at_v31"])
+    reearned = set(recorded["reearned_at_v34"])
     assert len(withdrawn) == 6
-    assert not (present & withdrawn), sorted(present & withdrawn)
+    assert reearned < withdrawn and len(reearned) == 2
+    assert not (present & (withdrawn - reearned)), sorted(present & (withdrawn - reearned))
+    assert reearned <= present
+    for cell in contract["lane_eligibility"]["cells"]:
+        if cell["id"] in reearned:
+            assert [(e["symbol"], e["decoder"]) for e in cell["executes"]] == [
+                ("tessera::window_gemm_dense", "native_window_gemm")], cell["id"]
     assert {cell["id"] for cell in span} <= present
 
 

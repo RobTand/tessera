@@ -33,7 +33,7 @@ GATE_TABLES = (2048, 1024, 1024)
 
 def test_bf16_manifest_prices_the_row_scale():
     """The BF16 figure is the tile plus one fp32 per row, not the tile alone."""
-    assert dense_resident_bytes_resident_mode("TESSERA_BF16", QKV_ROWS, QKV_COLS) == (
+    assert dense_resident_bytes_resident_mode("TESSERA_BF16", QKV_ROWS, QKV_COLS, decoder="torch_window") == (
         QKV_TILE + QKV_SCALE
     )
 
@@ -41,14 +41,14 @@ def test_bf16_manifest_prices_the_row_scale():
 def test_nvfp4_manifest_prices_the_a_side_scale_and_the_trellis_tables():
     """The NVFP4 figure is planes plus the scalar plus the pinned tables."""
     assert dense_resident_bytes_resident_mode(
-        "TESSERA_NVFP4", GATE_ROWS, GATE_COLS, trellis_table_bytes=sum(GATE_TABLES)
+        "TESSERA_NVFP4", GATE_ROWS, GATE_COLS, trellis_table_bytes=sum(GATE_TABLES), decoder="torch_window"
     ) == GATE_NIBBLES + GATE_SCALES + GATE_A_SCALE + sum(GATE_TABLES)
 
 
 def test_fp8_manifest_accounting_is_unchanged():
     """The FP8 route already keeps exactly tile plus row scales (tessera#557
     found all 110 FP8 units agreeing); this pins that accounting in place."""
-    assert dense_resident_bytes_resident_mode("TESSERA_FP8", 4096, 1024) == (
+    assert dense_resident_bytes_resident_mode("TESSERA_FP8", 4096, 1024, decoder="torch_window") == (
         4096 * 1024 + 4096 * 4
     )
 

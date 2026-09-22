@@ -1575,7 +1575,7 @@ def main():
     ap.add_argument("--partition-runtime-image",
                     help="exact repository@sha256 image pinned by the part's dispatch command")
     ap.add_argument("--source-digest-cache", type=Path, default=None,
-                    help="directory of stat-bound source shard digests (tessera#499): a shard "
+                    help="directory of stat-bound source shard digests for cached or partition export: a shard "
                          "whose inode, size, mtime_ns and ctime_ns match a recorded full read "
                          "is not re-read for the part's source stamp. Reuse is recorded in "
                          "export_partition.source_digest_receipt, never in the identity.")
@@ -2165,8 +2165,8 @@ def main():
     partition_record = None
     source_digest_cache = None
     if args.source_digest_cache is not None:
-        if not args.partition:
-            raise SystemExit("--source-digest-cache applies to --partition source stamps only")
+        if not args.partition and cache_path is None:
+            raise SystemExit("--source-digest-cache requires cached units or a partition source stamp")
         from tessera.source_digest_cache import SourceDigestCache
         try:
             source_digest_cache = SourceDigestCache(args.source_digest_cache, source=args.src)
@@ -2239,9 +2239,12 @@ def main():
         from tessera.cached_unit import CachedUnitBundle, read_manifest
         from tessera.serving_parts import source_identity
         source = (partition_record["identity"]["source"] if partition_record is not None
-                  else source_identity(args.src))
+                  else (source_identity(args.src, digest_cache=source_digest_cache)
+                        if source_digest_cache is not None else source_identity(args.src)))
         cached_units = CachedUnitBundle(read_manifest(cache_path),
                                         cache_path.parent, cache_unit_names, source)
+        if cached_units.producer_packages and args.cached_producer_package is not None:
+            raise SystemExit("rooted cached units bind their exact producers; omit global cached-producer flags")
         if args.cached_producer_package is not None:
             from tessera.historical_producer import load_historical_producer
             historical_producer = load_historical_producer(
@@ -2253,6 +2256,21 @@ def main():
             lambda weight, unit_name, unit, grid, q256, *, activation: cached_input_identity(
                 historical_producer, weight, unit_name, unit, grid, q256, activation=activation),
             activation, mode=args.cached_hessian_identity)
+        if cached_units.producer_packages:
+            from tessera.cached_unit import ProducerCachedUnitIdentities
+            from tessera.historical_producer import load_historical_producer
+            # Hash and load each exact historical producer; never relabel a
+            # receipt.  Loading a package by path lives here, with the
+            # exporter's other dynamic load, and not in ``tessera.cached_unit``:
+            # a src module that imports the path loader puts an unresolvable
+            # read in ``tests/conftest.py``'s import closure, and
+            # ``tools/impacted_tests.py`` then answers ``full`` for every edit
+            # this tree can make.
+            producers = {seal: load_historical_producer(Path(bound["path"]), bound["sha256"])
+                         for seal, bound in cached_units.producer_packages.items()}
+            cached_identity = ProducerCachedUnitIdentities(
+                cached_units, producers, cached_input_identity,
+                activation, mode=args.cached_hessian_identity)
 
     input_scales = {}
     if args.input_scales:
@@ -2263,6 +2281,8 @@ def main():
                     if tensor.numel() != 1:
                         raise SystemExit(f"--input-scales {key} must contain one scalar")
                     input_scales[key] = float(tensor.float().reshape(-1)[0])
+    if cached_units is not None:
+        cached_units.require_served_scales(input_scales)
     if priced_inputs is not None:
         priced_inputs.require(activation, input_scales)
     # Dense modules AND expert stacks: an NVFP4 stack needs one static A-side
@@ -2345,8 +2365,10 @@ def main():
             source_weight = packed_expert_weight(handle.get_tensor(name), unit)
             expected = cached_identity(source_weight, unit["tensor"], unit, unit_grid, unit_q256)
             cached_blob, cache_record = cached_units.read(expected["unit"])
-            if historical_producer is not None:
-                historical_producer.verify(cached_blob, cache_record, expected)
+            producer = (cached_identity.producer_for(expected["unit"])
+                        if cached_units.producer_packages else historical_producer)
+            if producer is not None:
+                producer.verify(cached_blob, cache_record, expected)
             accepted, blob = pack_cached_expert_unit(cached_blob, cache_record, expected)
             exported = ExportedUnit(unit["tensor"], accepted.blob, unit["rows"], unit["cols"],
                                     unit_q256, accepted.wire_bytes)
@@ -2488,6 +2510,7 @@ def main():
             rungs = [int(plan[m][1]) for m in members]
             roles = []
             role_records = []
+            native_a4_roles = []
             stock_tensors: dict[str, dict] = {}
             # The distinct trellis-table sets the serving load pins for this
             # module (tessera#557): one memoised ``(forest, code)`` set per
@@ -2522,8 +2545,10 @@ def main():
                     from tessera.export import ExportedUnit
                     expected = cached_identity(weight, member, None, member_grid, q256)
                     cached_blob, cache_record = cached_units.read(expected["unit"])
-                    if historical_producer is not None:
-                        historical_producer.verify(cached_blob, cache_record, expected)
+                    producer = (cached_identity.producer_for(expected["unit"])
+                                if cached_units.producer_packages else historical_producer)
+                    if producer is not None:
+                        producer.verify(cached_blob, cache_record, expected)
                     accepted = verify_cached_unit(cached_blob, cache_record, expected)
                     parsed = parse_unit_artifact(accepted.blob, device=args.device)
                     unit, forests, stock_code = parsed.unit, parsed.forests, parsed.code
@@ -2532,6 +2557,10 @@ def main():
                 role = part.role
                 roles.append((role, exported.rows, exported.blob, unit, forests))
                 if family == NVFP4:
+                    native_a4_roles.append({"rows": exported.rows, "cols": exported.columns,
+                                            "rates": unit.rates, "arity": parsed.grid.arity,
+                                            "memory": parsed.code.memory, "half": unit.half,
+                                            "lut_entries": int(unit.scale_lut.numel())})
                     # NVFP4 is the TCQ body, so the parsed unit carries the
                     # forests by rate and the convolutional code the load
                     # prepares select planes from; every rate's trellis it
@@ -2574,6 +2603,12 @@ def main():
                 "geometry_attested": module not in geometry_unattested,
             }
             shard_payload[f"{module}.wire_bytes"] = torch.frombuffer(bytearray(blob), dtype=torch.uint8).clone()
+            native_roles = None
+            if family != NVFP4:
+                from tessera.kernel_window_gemv import TILE_ROWS
+                native_roles = [{"rows": role_rows, "cols": cols, "rates": unit.rates,
+                                 "window_bits": unit.window_bits, "tile_rows": TILE_ROWS}
+                                for _name, role_rows, _blob, unit, _forests in roles]
             if family == NVFP4:
                 shared, _moved = shared_lut_global(
                     [u.scale_lut for _, _, _, u, _ in roles], [float(u.scale_global) for _, _, _, u, _ in roles],
@@ -2604,7 +2639,8 @@ def main():
                 record.update({"shared_global": shared, "input_global_scale": a_scale,
                                "resident_bytes_resident_mode": dense_resident_bytes_resident_mode(
                                    family, rows_total, cols,
-                                   trellis_table_bytes=trellis_table_bytes)})
+                                   trellis_table_bytes=trellis_table_bytes,
+                                   native_roles=native_a4_roles)})
                 if twin is not None:
                     moved, divisor = share_global({module_of(m): stock_tensors[m] for m in members})
                     for m in members:
@@ -2619,15 +2655,8 @@ def main():
                             [a_scale], dtype=torch.float32)
                     record["twin_shared_divisor"] = divisor
             elif family == BF16:
-                # Resident here is the DECODED tile -- 16 bits a weight, the
-                # source precision -- PLUS the fp32-per-row scale the route
-                # keeps beside it (``bf16_route`` registers the prepared
-                # module's ``row_scale`` as a ``[rows]`` buffer after load;
-                # tessera#557).  It is the correctness path and not a size
-                # claim; the product mode is streamed, and the wire it streams
-                # is ``wire_bytes`` above.
                 record["resident_bytes_resident_mode"] = dense_resident_bytes_resident_mode(
-                    family, rows_total, cols)
+                    family, rows_total, cols, native_roles=native_roles)
                 if twin is not None:
                     for m in members:
                         # One tensor, under the ORIGINAL name: the twin is an
@@ -2635,7 +2664,7 @@ def main():
                         twin_payload[m] = stock_tensors[m]["weight"].cpu()
             else:
                 record["resident_bytes_resident_mode"] = dense_resident_bytes_resident_mode(
-                    family, rows_total, cols)
+                    family, rows_total, cols, native_roles=native_roles)
                 if twin is not None:
                     for m in members:
                         for key, value in stock_tensors[m].items():
@@ -2830,6 +2859,13 @@ def main():
                                     # H -- and how the intake ran.  Neither changes
                                     # an accepted byte; both are stated, never implied.
                                     "hessian_identity": cached_identity.record(),
+                                    **({"source_digest_receipt": source_digest_cache.receipt()}
+                                       if source_digest_cache is not None else {}),
+                                    **({"producer_packages": cached_units.producer_packages,
+                                        "reuse_authority": cached_units.reuse_authority,
+                                        "served_activation_policy": cached_units.served_activation_policy,
+                                        "served_activations": cached_units.served_activations}
+                                       if cached_units.producer_packages else {}),
                                     "intake": None if intake is None else intake.record()}}
            if cached_units is not None else {}),
         "arm": f"tessera {default_grid.name} q256={args.q256}" + (f" + plan {args.plan_json}" if args.plan_json else "")

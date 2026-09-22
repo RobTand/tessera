@@ -386,3 +386,54 @@ decision.
    the `--boundary-classification` join (tessera#548); unchanged by this run.
 4. Register `allocator_config` in PrismaQuant's consumer (blocker C). On this capture the
    field is `"unset"` rather than null, so the refusal is not an artefact of an empty value.
+
+
+---
+
+## Blocker D, measured (2026-09-22)
+
+The mechanism above was a hypothesis. It is now measured row by row, and it explains
+**half** of the shortfall. The other half is the manifest, not the census.
+
+PB action `cd33be7ff16a` (dl380g10, CPU only, 21 s) reads the 2026-09-21 report and a
+second capture of the same artifact, image and configuration taken on 2026-09-22 with the
+census extended to the slotted bundles
+(`/mnt/shared/tessera-runs/receipts/399-qwen3-0.6b-20260922-native-census/`). Script and
+output: `/mnt/shared/tessera-runs/receipts/399-blocker-d-match-20260922/`
+(`match_blocker_d.py`, `match.json`).
+
+Each of the 1,337 `unit: null` allocations was attributed two independent ways:
+
+- **In-capture order.** Each row goes to the unit of the next unit-bearing candidate
+  resident row in allocation order (the route registers `scale_b` right after it prepares
+  the bundles).
+- **Cross-capture alignment.** Both captures record 3,216 allocations with an identical
+  byte sequence, index for index, so each row takes the unit the 2026-09-22 census gave
+  the same index.
+
+The two agree on all 1,337 rows. Every row is an FP8 bundle tensor
+(`compact_prep.py:prepare_window_compact` 573, `compact_prep.py:_repack_window_compact`
+573, `window_gemm.py:prepare_window_gemm` 191). The BF16 and NVFP4 units carried no null
+rows: each is the only unit of its family, so `derive_owner_views` attributed their bundle
+rows through its one-unit-per-family fallback.
+
+| family | units | ledger | + null rows | = observed | old manifest (v3) | wire-derived price (#583) |
+|---|---|---|---|---|---|---|
+| `TESSERA_FP8` | 110 | 1,335,296 | 221,727,472 | 223,062,768 | 431,251,456 | 223,062,768 |
+| `TESSERA_BF16` | 1 | 3,825,712 | 0 | 3,825,712 | 8,404,992 | 3,825,712 |
+| `TESSERA_NVFP4` | 1 | 3,154,492 | 0 | 3,154,492 | 3,543,044 | 3,154,492 |
+| total | 112 | 8,315,500 | 221,727,472 | 230,042,972 | 443,199,492 | 230,042,972 |
+
+Observed bytes equal the wire-derived price on 112 of 112 units. The shortfall decomposes
+with no residual:
+
+| part | bytes | cause | repair |
+|---|---|---|---|
+| census blind to the slotted bundles | 221,727,472 | this section's hypothesis, now measured | the declared resident-tensor protocol (tessera#582) |
+| manifest overpricing | 213,156,520 | the exporter priced decoded FP8/BF16 tiles and expanded NVFP4 nibbles, not the packed bundles the native routes keep | the wire-derived footprint (tessera#583) |
+| residual | 0 | | |
+
+So repairing the census alone cannot close `worker_startup`: the 2026-09-22 capture, whose
+census already sees the bundles, has 0 uncharged allocations and still disagrees on 112 of
+112 units against the v3 manifest. The qualifying capture has to run both repairs and an
+artifact whose manifest carries the wire-derived price.

@@ -150,7 +150,13 @@ def tensor_names(path: Path) -> set[str]:
     return set(header) - {"__metadata__"}
 
 
-def source_identity(source: Path) -> dict:
+def source_identity(source: Path, *, workers=None, digest_cache=None) -> dict:
+    """Exact whole-source identity, with the same fenced shard reuse as parts.
+
+    Config, auxiliaries and complete header coverage are always read. Only
+    shard payload hashes use the optional owning SourceDigestCache; the caller
+    must retain its receipt. Parallel hashing preserves path/error order.
+    """
     source = Path(source)
     index_path = source / "model.safetensors.index.json"
     if index_path.exists():
@@ -176,7 +182,8 @@ def source_identity(source: Path) -> dict:
         raise ValueError("source has no safetensors tensors")
     return {"config_sha256": sha256_file(source / "config.json"),
             "auxiliary_sha256": _auxiliary_sha256(source),
-            "files": {name: sha256_file(source / name) for name in files},
+            "files": dict(zip(files, sha256_files([source / name for name in files], workers,
+                digest_cache.sha256 if digest_cache is not None else None))),
             "tensors": tensors}
 
 
@@ -241,37 +248,74 @@ def export_identity(source: Path, options: dict, runtime_image: str, root: Path,
 
 
 def dense_resident_bytes_resident_mode(family: str, rows: int, cols: int,
-                                           *, trellis_table_bytes: int = 0) -> int:
-    """What one dense module keeps resident in resident serve mode (tessera#557).
+                                     *, trellis_table_bytes: int = 0,
+                                     native_roles=None, decoder: str = "native") -> int:
+    """Persistent tensors of the selected dense decoder, including row scales.
 
-    The manifest's per-module figure, and the number the dense startup check
-    holds the ledger's candidate-owned resident rows to, exactly.  Every term
-    is a tensor the route keeps after load, named so a disagreement names its
-    bytes:
+    Native window roles carry their verified wire rates/window width and the
+    runtime tile geometry. Count each fused role separately: padding, tables,
+    permutations and run tables are owned per role. The route retains a second
+    concatenated fp32 row-scale buffer beside the frozen bundles.
 
-    * ``TESSERA_NVFP4``: the packed nibbles (``rows * cols // 2``) and the
-      group-16 block scales (``rows * cols // 16``), the ONE fp32 A-side
-      scale the route registers beside them (``+ 4``,
-      ``trellis_input_global_scale``), and the memoised trellis tables the
-      select-plane build pins per trellis (``trellis_table_bytes``, measured
-      by ``tessera.decode.replay_table_bytes`` -- 4096 B on the attested
-      capture's one NVFP4 unit).
-    * ``TESSERA_BF16``: the decoded tile (``rows * cols * 2``) and the
-      fp32-per-row scale the route keeps beside it (``rows * 4``, the
-      ``row_scale`` buffer).
-    * ``TESSERA_FP8``: the tile (``rows * cols``) and its fp32-per-row scale
-      (``rows * 4``).
-
-    A family this reader does not know is refused, not priced at zero: an
-    unpriced resident is exactly the defect this exists to prevent.
+    The old expanded tensor formula is available only for an explicitly named
+    reference decoder; missing native layout must never silently price it.
     """
     if family == "TESSERA_NVFP4":
-        return rows * cols // 2 + rows * cols // 16 + 4 + trellis_table_bytes
-    if family == "TESSERA_BF16":
-        return rows * cols * 2 + rows * 4
-    if family == "TESSERA_FP8":
-        return rows * cols + rows * 4
-    raise ValueError(f"no resident-mode accounting for family {family!r}")
+        if decoder == "torch_window":
+            return rows * cols // 2 + rows * cols // 16 + 4 + trellis_table_bytes
+        if decoder != "native" or not native_roles:
+            raise ValueError("native A4 resident accounting requires per-role layout")
+        total, role_rows = 4 + trellis_table_bytes, 0
+        for role in native_roles:
+            count, width = int(role["rows"]), int(role["cols"])
+            rates = tuple(int(rate) for rate in role["rates"])
+            arity, memory, half = (int(role[key]) for key in ("arity", "memory", "half"))
+            if (arity != 2 or half != 16 or count <= 0 or count % (2 * arity * 8)
+                    or width != cols or width % half or len(rates) != width
+                    or len(set(rates)) != 1 or not 1 <= rates[0] <= 8 or memory < 1):
+                raise ValueError("invalid native A4 role layout")
+            steps, pairs = count // arity, count // (2 * arity)
+            points = 1 << (rates[0] - 1)
+            select = width * (pairs // 8 + 1) + 8
+            label = width * (pairs // 4)
+            point = width * (steps * (rates[0] - 1) // 8)
+            nibbles = count * width // (half * 2)
+            lut = int(role["lut_entries"]) if len(native_roles) > 1 else 16
+            if not 1 <= lut <= 16:
+                raise ValueError("invalid native A4 scale table")
+            tables = lut + (1 << (memory + 1)) * 4 + 4 * points * (arity + 1)
+            total += select + label + point + nibbles + tables + 4  # per-role epilogue
+            role_rows += count
+        if role_rows != rows:
+            raise ValueError("native A4 role rows do not cover the fused module")
+        return total
+    if family not in ("TESSERA_BF16", "TESSERA_FP8"):
+        raise ValueError(f"no resident-mode accounting for family {family!r}")
+    if decoder == "torch_window":
+        return rows * cols * (2 if family == "TESSERA_BF16" else 1) + rows * 4
+    if decoder != "native":
+        raise ValueError(f"unknown dense resident decoder {decoder!r}")
+    if not native_roles:
+        raise ValueError("native dense resident accounting requires per-role layout")
+    total, role_rows = rows * 4, 0
+    for role in native_roles:
+        count, width = int(role["rows"]), int(role["cols"])
+        rates = tuple(int(rate) for rate in role["rates"])
+        bits, tile = int(role["window_bits"]), int(role["tile_rows"])
+        if count <= 0 or width != cols or len(rates) != width or tile <= 0 or tile % 8:
+            raise ValueError("invalid native dense role geometry")
+        if bits <= 0 or any(rate < 1 or rate > 8 for rate in rates):
+            raise ValueError("invalid native dense window layout")
+        padded = -(-count // tile) * tile
+        words = padded * sum(rates) // 8
+        tables = (1 << bits) * (2 if family == "TESSERA_BF16" else 1)
+        if family == "TESSERA_FP8":
+            tables += 256
+        total += words + tables + count * 4 + len(set(rates)) * 16 + width * 8
+        role_rows += count
+    if role_rows != rows:
+        raise ValueError("native dense role rows do not cover the fused module")
+    return total
 
 
 def summarize_modules(modules: dict, passthrough_bytes: int, checkpoint_bytes: int) -> dict:

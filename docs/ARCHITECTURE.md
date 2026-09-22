@@ -16,6 +16,28 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-21 for the dense window-GEMM census (tessera#545,
+contract v34). The launch `fp8_route.apply` and `bf16_route.apply` have made
+since `1b767a207` -- `tessera::window_gemm_dense` / `native_window_gemm` -- is
+now SERVED on the record: four route censuses on the `sm_121` platform's own
+`serve_image`, eager, on a GB10, each recording all 112 declared modules on
+that pair in BOTH the decode and the batch regime, in both residency modes,
+for `TESSERA_E4M3_K1` at `q256 1024` and `TESSERA_BF16_K1` at `q256 1792`,
+`problems: []`
+(`docs/measurements/tessera-window-gemm-census-2026-09-21.md`). Four cells --
+`tessera_{e4m3_k1,bf16_k1}_dense_sm121_{decode,batch}` -- are minted and the
+pair LEAVES `scheme.EXPERIMENTAL_LAUNCHES`; the two changes are one change,
+because `_validate_cell_executes` derives `executes` from `route_launches`
+with `include_experimental=False`. This is what the 2026-09-17 re-stamp below
+said would earn the withdrawn cells back, and it earns back only this launch:
+the A4 pairs are deferred with the NVFP4 lane (tessera#575) and the compact
+window MoE has no served receipt. SCOPE, not absence: `execution_modes`
+`["eager"]` alone -- compiled dense launch agreement is unsupported by the
+census tool -- grade `route_only` on all four because no KL arm was run, smoke
+`not_recorded`, one rung per family, `sm_121` only (the gfx1201 BF16 cells v31
+withdrew are NOT restored), TP 1. ADDITIVE for a lane reader; not additive for
+a reader that derives `executes` from `scheme.route_launches` itself.
+
 Re-stamped 2026-09-19 for the HIP `_mul` spelling (tessera#481,
 §3.1): `window_viterbi._mul_asm` selects the AMDGCN spelling on a ROCm build,
 still unverified -- wsl-gpu offline -- so `fused_available()` keeps refusing
@@ -1671,15 +1693,36 @@ identity, and patches are restored after observation. Dynamic input and output
 tensor references preserve backings crossing each boundary. For original-wire
 references, native parameters and buffers, including scale storage, are candidate
 owners; tensors also registered outside canonical native modules remain fixed.
-The dense native window owner additionally exposes its frozen packed bundle
-inputs through `PreparedDenseNativeModule.named_tensors()`. The census observes
-those existing references under `model:native:<module>.tessera_native.*`, so
-slotted bundles resolve to the same canonical unit as registered state. This
-adds no buffers, device movement, or allocation; external tensor aliases stay
-fixed, and storage alias conflicts retain the existing refusal. Packed byte
-accounting and fingerprints use the same tensor enumeration. These observations
-repair missing native ownership, not assignment-independent charge admission:
-unclassified allocations still require the existing cross-assignment evidence.
+Every Tessera route holds its prepared weights outside registered state (the
+slotted `PreparedDenseNativeModule` on the FP8/BF16 window routes, `A4Unit`s and
+epilogues on the NVFP4 route, `A4UnitStack`s on the NVFP4 MoE route, the compact
+`PackedWindowMoeBundles` on the window MoE route) and declares them through one
+protocol, `tessera.serving.residency`: `quant_method.resident_tensors(layer)`
+yields each tensor by reference, and each prepared object names its own tensors
+through `named_tensors()`. The census walks only that declaration and records the
+tensors under `model:native:<module>.<attribute>.*`, so they resolve to the same
+canonical unit as registered state; a unit no longer depends on the
+one-unit-per-family fallback in `derive_owner_views`. This adds no buffers,
+device movement, or allocation. Shared storage is charged once, because every
+declared view joins its backing allocation; external tensor aliases stay fixed,
+and storage alias conflicts retain the existing refusal. An object a route does
+not declare (the research per-expert `PackedWindowUnits`) is not walked, so its
+bytes stay uncharged in the report rather than attributed by guess. Dense export
+footprints now derive native packed storage from each role's verified rates,
+window width and runtime tile geometry: padded packed words, family tables,
+row scales, rate-run records, initial states and column permutations, plus the
+route's concatenated row-scale buffer. Native layout is required; the expanded
+FP8/BF16 tile formula is available only for an explicitly named `torch_window`
+reference decoder. Native A4 similarly prices its actual span-2 select (including
+column-history and trailing padding), label and point planes, packed LUT scale
+nibbles, role lookup tables and epilogues, plus the module A-side scale and
+existing per-trellis shared cache charge. This does not resolve the multi-unit
+shared-trellis attribution question (#567). No tensor is decoded or encoded
+merely to price its storage.
+These
+observations repair missing native ownership, not assignment-independent charge
+admission: unclassified allocations still require the existing cross-assignment
+evidence.
 Conflicting storage aliases still refuse rather than receiving a chosen label. The invocation budget is armed
 by an explicit RPC after engine initialization,
 so stock startup warmup cannot consume the requested workload's observations.
@@ -2527,13 +2570,13 @@ describes the dispatch as it stood before this lane landed.
 
 Both went on 2026-09-17: `ROUTE_LAUNCHES` carries only the native GEMM for
 `TESSERA_FP8`/`TESSERA_BF16` dense, and the eight cells are withdrawn.  The
-dense attested launch set for those two routes is now EMPTY -- the one launch
-they make is experimental -- which is why the answer was a withdrawal and not
-a re-tag, and why `validate_serving_contract` refuses any dense cell either
-route might be given before a census of the native GEMM exists.  WHAT THIS
-COSTS, stated rather than buried: those rungs stop being `device_qualified`, so
-a consumer reading the contract for what the runtime executes there reads
-absence. It is not an export refusal -- the dense branch of
+dense attested launch set for those two routes was then EMPTY -- the one launch
+they make was experimental -- which is why the answer was a withdrawal and not
+a re-tag, and why `validate_serving_contract` refused any dense cell either
+route might be given before a census of the native GEMM existed.  WHAT THAT
+COST, stated rather than buried: those rungs stopped being `device_qualified`,
+so a consumer reading the contract for what the runtime executes there read
+absence. It was not an export refusal -- the dense branch of
 `scheme.refuse_unserveable_wire` reads the format row's reader range, not the
 cells -- and saying otherwise would be the same kind of unread claim this issue
 is about.  WHY THE DRIFT WAS INVISIBLE: the
@@ -2541,6 +2584,24 @@ table was checked against `fp8_gemv.census_expected` and `decode_is_gemv`, a
 second table in a module `fp8_route` does not import, so the check agreed with
 a dead lane.  The tie is now to the live `apply` through each route's
 `DENSE_LAUNCH`.
+
+**The cells came back on 2026-09-21 (tessera#545, contract v34), for the one
+launch and nothing else.**  Four censuses on the `sm_121` `serve_image` put all
+112 declared modules on `tessera::window_gemm_dense` / `native_window_gemm` in
+both regimes and both residencies, for `TESSERA_E4M3_K1` at `q256 1024` and
+`TESSERA_BF16_K1` at `q256 1792`
+(`docs/measurements/tessera-window-gemm-census-2026-09-21.md`), so the pair left
+`scheme.EXPERIMENTAL_LAUNCHES` and four dense cells
+(`tessera_{e4m3_k1,bf16_k1}_dense_sm121_{decode,batch}`) name it.  The dense
+attested launch set for those two routes is a singleton again.  WHAT IT DOES
+NOT SAY: `execution_modes` is `["eager"]` -- the census tool does not support
+compiled dense launch agreement, whose trace combines launches as `a+b` -- the
+grade is `route_only` on all four because no KL arm was run, and the gfx1201
+BF16 cells stay withdrawn because no ROCm census of this launch exists.  The
+#104 guard could not be spelled as a lane here, since the native GEMM carries
+`lane: None`; the arms ran `--require-decoder native_window_gemm` instead, and
+the ambiguity #104 exploited does not exist on a route whose admissible set is
+one launch.
 
 **The ROUTED window lane serves the same way, and is likewise a candidate.** A
 routed stack reaches the compact intake through ONE predicate,
@@ -5631,6 +5692,46 @@ version nor the entry point -- and refuses a built wheel whose `Version`
 metadata, whose entry-point value, or whose installed `__version__` is not
 the declared one; and the publish job's tag check reads the same table
 (§5.4).
+
+### Mixed historical cached-unit producers
+
+`tessera.cached_units.v2` closes a selected whole-source roster over explicit
+canonical wire roots and exact historical producer package hashes. Unit
+receipts and wire bytes remain unchanged. Every selected encoder departure
+from the checkpoint seal carries its bound catalog adoption and migration
+proof. PrismaQuant authenticates the completed capture/catalog extension and
+proof semantics before publication; Tessera rechecks the bound documents and
+uses each exact historical package's input-identity factory, followed by the
+unchanged strict cached-wire verifier. Duplicate leaf names are permitted only
+in distinct roots. Symlink roots/files and partial or surplus ownership refuse.
+
+A separately bound served-activation policy records selected A4 executed-group
+scales. These runtime input values do not rewrite the historical wire's
+calibration identity. Export checks the actual fp32 scale file against those
+values. Neither the bundle nor these checks establish serving qualification.
+The v1 single-root/global-producer route is unchanged.
+
+Whole cached export also accepts `--source-digest-cache`. It uses the same
+SourceDigestCache fingerprint, quiescence, mutation and corrupt-entry checks
+as partition export. Whole-source identity still verifies the complete index
+and every shard header, always hashes config/auxiliary files, and compares the
+same unchanged identity object with the selected bundle. Missing source hashes
+are computed through the existing affinity-bounded parallel hasher. The cached
+export receipt records which hashes were read or reused; no cache entry is
+inferred from a filename or a prior digest without its original stat fence.
+
+The GLM CPU campaign launcher (`tools/run_glm_cached_cpu_export.py`) is a
+reuse-only wrapper around this same exporter. It requires digest-bound actual
+assignment, PACT result, export plan, selected-manifest receipt, H reference,
+priced scales and routed selection. It does not interpret or certify PACT:
+campaign review must accept that result's scope before submission. The command
+renderer only emits a reviewable PB argument list. It cannot submit a job.
+The launcher forbids encoding, retains all exporter gates, requires fresh output
+and journals cumulative PB progress only after verified source digests or output
+shards are durable. Its 8-CPU/48-GiB proposal is a geometric admission ceiling,
+not a measured full-model peak or a serving qualification claim. Final output
+belongs on mothership's local ZFS; PB-owned staging SSD capacity is not output
+space for this workflow.
 
 Native operator runtime records may carry a versioned
 `tessera.native_operator_source_bundle.v1` under their source identity. It
