@@ -5,6 +5,10 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-22 for the GLM53 NoPE whole-engine mode gate (tessera#508,
+§5.1.1): the research CUSTOM attention backend now admits `CompilationMode.NONE`
++ `CUDAGraphMode.NONE` with or without `--enforce-eager` and refuses every
+other mode by name with its measured figure; no default path moves.
 Re-stamped 2026-09-19 for the HIP `_mul` spelling (tessera#481,
 §3.1): `window_viterbi._mul_asm` selects the AMDGCN spelling on a ROCm build,
 still unverified -- wsl-gpu offline -- so `fused_available()` keeps refusing
@@ -5306,10 +5310,29 @@ package on a box that has none; `tests/test_packaging.py` holds it to that.
 `TesseraGLM53NoPEBackend` as vLLM's public `AttentionBackendEnum.CUSTOM`.
 Selection additionally requires `--enforce-eager --attention-backend CUSTOM
 --kv-cache-dtype fp8_ds_mla --kernel-config '{"enable_flashinfer_autotune":false}'`.
-Normal selection is eager-only and refuses non-NONE compilation or CUDA graph
-modes. The four-layer whole-engine graph arm differed by 0.67253 logprob nats
-from eager despite global compile mode NONE in both arms; isolated attention
-graph equality does not qualify the model graph path.
+Selection admits `CompilationMode.NONE` with `CUDAGraphMode.NONE` -- with or
+without `--enforce-eager`, both measured equal -- and refuses every other
+compilation or CUDA graph mode by name with the measurement that refuses it
+(`_config_reason`, `_MEASURED_*_REFUSALS`; `tests/test_serving_glm53_nope.py`
+enumerates every enum member). Measured 2026-09-22 on the four-layer stub
+against `--enforce-eager` (tessera#508; receipts
+`/mnt/shared/tessera-runs/receipts/508-graphs-20260921/`): the breakable
+`FULL_DECODE_ONLY` decode graphs replay bit-exact (32/32 tokens, 7 of 7
+serves) but the two-chunk 3649-token prefill raised an illegal memory access
+in stock `vllm/v1/worker/gpu/block_table.py _compute_slot_mappings_kernel`
+in 6 of 8 serves; `PIECEWISE`/`FULL_AND_PIECEWISE` diverge deterministically
+on graph-run prefills (first-token |dlogprob| 0.29176, max 0.56399);
+`VLLM_COMPILE` diverges deterministically (0.12906 / 0.95915) because the fork
+runs it with `custom_ops=none` on a model that is not model-level compiled;
+`FULL` is downgraded by stock to `FULL_DECODE_ONLY`. The earlier "0.67253 nats"
+whole-engine figure was a long-prompt comparison and is superseded: the
+3649-token prompt is nondeterministic in eager itself (stock indexer top-k
+writes selected indices in thread-arrival order once a row has more than
+`index_topk` candidates, `csrc/libtorch_stable/sampler.cu:267`), so only the
+short prompts carry graph-vs-eager information. `TESSERA_RESEARCH_GLM53_NOPE_
+GRAPHS=1` lifts the two mode legs for measurement only; the `_research`
+module's sync/dump knobs are the bisection instruments and are unset in
+production.
 This experimental attention extension is separate from checkpoint quantization
 selection and changes no stock backend registration. Another plugin's CUSTOM
 registration is refused. Without the environment setting, normal plugin loading

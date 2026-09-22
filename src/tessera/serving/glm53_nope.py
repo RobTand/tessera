@@ -1,7 +1,9 @@
 """Explicit research-only GLM5-next NoPE MLA on the pinned stock SM121 runtime.
 
 This uses vLLM's public CUSTOM backend registration. It does not modify stock
-classes or attest a serving cell. FlashInfer owns the native attention kernel;
+classes (outside the env-gated tessera#508 research hooks in ``_research``) or
+attest a serving cell. Whole-engine CUDA graphs and torch.compile are refused
+by measurement, mode by mode (``_config_reason``; tessera#508). FlashInfer owns the native attention kernel;
 vLLM owns packed cache writes, metadata, sparse index conversion, and workspace.
 """
 from __future__ import annotations
@@ -59,17 +61,57 @@ def _research_sync(site: str) -> None:
     _research.sync(site)
 
 
+# tessera#508 (2026-09-22): whole-engine modes measured against --enforce-eager
+# on the 4-layer GLM-5.3-Flash stub (image spark-vllm-nccl230@sha256:a5424378...,
+# vLLM 0.28.1rc1.dev397+gfd4a15126; receipts
+# /mnt/shared/tessera-runs/receipts/508-graphs-20260921/, .claude/report-508.md
+# on branch flash/508-graphs-20260921). Admitted means measured equal on the
+# fixed prompt set; every other member names the measurement that refuses it.
+# Figures are |dlogprob| in nats on the shared generated prefix.
+_MEASURED_COMPILATION_REFUSALS = {
+    "VLLM_COMPILE": ("diverged from --enforce-eager in 3 of 3 serves (first-token 0.12906, "
+                     "max 0.95915 over 29 shared tokens, with cudagraph NONE and "
+                     "FULL_DECODE_ONLY alike); the fork runs it with custom_ops=none, so the "
+                     "un-compiled model executes native torch RMSNorm/activation ops instead "
+                     "of the CUDA custom kernels"),
+}
+_MEASURED_CUDAGRAPH_REFUSALS = {
+    "PIECEWISE": ("diverged from eager on graph-run prefills in 3 of 3 serves (5-token prompt: "
+                  "first-token 0.29176, max 0.56399; exact-length prompts of 1/5/6/7 tokens "
+                  "diverge, 2/3/4/8/12/16 are exact) and raised an illegal memory access on "
+                  "the two-chunk 3649-token prefill in 2 of 2 serves"),
+    "FULL_AND_PIECEWISE": ("carries the PIECEWISE prefill graphs and diverged exactly as "
+                           "PIECEWISE does (first-token 0.29176, max 0.56399, 2 of 2 serves)"),
+    "FULL_DECODE_ONLY": ("replays its decode graphs bit-exact against eager (32/32 tokens in 7 "
+                         "of 7 serves) but the two-chunk 3649-token prefill raised an illegal "
+                         "memory access in stock vllm/v1/worker/gpu/block_table.py "
+                         "_compute_slot_mappings_kernel in 6 of 8 serves; refused until that "
+                         "input is attributed and fixed"),
+    "FULL": ("is downgraded by stock to FULL_DECODE_ONLY for this backend (UNIFORM_BATCH "
+             "support) and shares its refusal"),
+}
+
+
 def _config_reason(config) -> str | None:
-    # Isolated attention graph equality does not qualify the hybrid model's
-    # whole-engine graph path: the matched stub differs by 0.67253 logprob nats.
-    # #508 bisection: TESSERA_RESEARCH_GLM53_NOPE_GRAPHS=1 lifts only the
-    # eager-only leg (research opt-in; every other gate still fires).
+    # TESSERA_RESEARCH_GLM53_NOPE_GRAPHS=1 lifts only the two mode legs so a
+    # refused mode can be measured again; every other gate still fires.
     import os
+    cc = config.compilation_config
     if not os.environ.get("TESSERA_RESEARCH_GLM53_NOPE_GRAPHS"):
-        if (not config.model_config.enforce_eager
-                or config.compilation_config.mode != CompilationMode.NONE
-                or config.compilation_config.cudagraph_mode != CUDAGraphMode.NONE):
-            return "Tessera GLM53 NoPE is eager-only; require --enforce-eager with compilation and CUDA graphs disabled"
+        if cc.mode != CompilationMode.NONE:
+            name = getattr(cc.mode, "name", str(cc.mode))
+            why = _MEASURED_COMPILATION_REFUSALS.get(name, "was not measured against --enforce-eager")
+            return (f"Tessera GLM53 NoPE: compilation mode {name} is not admitted; it {why} "
+                    "(tessera#508). Admitted: CompilationMode.NONE with CUDAGraphMode.NONE, "
+                    "i.e. --enforce-eager or --compilation-config "
+                    "'{\"mode\":\"NONE\",\"cudagraph_mode\":\"NONE\"}'")
+        if cc.cudagraph_mode != CUDAGraphMode.NONE:
+            name = getattr(cc.cudagraph_mode, "name", str(cc.cudagraph_mode))
+            why = _MEASURED_CUDAGRAPH_REFUSALS.get(name, "was not measured against --enforce-eager")
+            return (f"Tessera GLM53 NoPE: cudagraph_mode {name} is not admitted; it {why} "
+                    "(tessera#508). Admitted: CUDAGraphMode.NONE with CompilationMode.NONE, "
+                    "with or without --enforce-eager (measured equal), i.e. --enforce-eager or "
+                    "--compilation-config '{\"cudagraph_mode\":\"NONE\"}'")
     hf = config.model_config.hf_text_config
     expected = dict(model_type="glm5_next_text", kv_lora_rank=512,
                     qk_nope_head_dim=256, qk_rope_head_dim=0,

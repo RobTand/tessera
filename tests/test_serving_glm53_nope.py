@@ -67,10 +67,45 @@ def test_registration_opt_in_preserves_stock_and_refuses_custom_collision(monkey
             register_backend(Backend.CUSTOM, previous)
 
 
-@pytest.mark.parametrize("field,value", [("enforce_eager", False),
-    ("mode", 1), ("cudagraph_mode", 1)])
-def test_whole_engine_graph_and_compile_modes_are_not_admitted(field, value):
+@pytest.mark.parametrize("mode", [m for m in CompilationMode if m != CompilationMode.NONE],
+                         ids=lambda m: m.name)
+def test_compilation_modes_other_than_none_are_refused_by_measurement(mode, monkeypatch):
+    monkeypatch.delenv("TESSERA_RESEARCH_GLM53_NOPE_GRAPHS", raising=False)
     candidate = config()
-    owner = candidate.model_config if field == "enforce_eager" else candidate.compilation_config
-    setattr(owner, field, value)
-    assert "eager-only" in _config_reason(candidate)
+    candidate.compilation_config.mode = mode
+    reason = _config_reason(candidate)
+    assert reason and mode.name in reason and "tessera#508" in reason
+    if mode is CompilationMode.VLLM_COMPILE:
+        assert "0.12906" in reason and "custom_ops=none" in reason
+    else:
+        assert "not measured" in reason
+
+
+@pytest.mark.parametrize("cg", [m for m in CUDAGraphMode if m != CUDAGraphMode.NONE],
+                         ids=lambda m: m.name)
+def test_cudagraph_modes_other_than_none_are_refused_by_measurement(cg, monkeypatch):
+    monkeypatch.delenv("TESSERA_RESEARCH_GLM53_NOPE_GRAPHS", raising=False)
+    candidate = config()
+    candidate.compilation_config.cudagraph_mode = cg
+    reason = _config_reason(candidate)
+    assert reason and cg.name in reason and "tessera#508" in reason
+    expected = {"PIECEWISE": "0.29176", "FULL_AND_PIECEWISE": "0.29176",
+                "FULL_DECODE_ONLY": "illegal memory access", "FULL": "FULL_DECODE_ONLY"}
+    assert expected[cg.name] in reason
+
+
+def test_cudagraph_none_is_admitted_with_or_without_enforce_eager(monkeypatch):
+    monkeypatch.delenv("TESSERA_RESEARCH_GLM53_NOPE_GRAPHS", raising=False)
+    candidate = config()
+    assert _config_reason(candidate) is None
+    candidate.model_config.enforce_eager = False  # arms none1/none2: measured equal
+    assert _config_reason(candidate) is None
+
+
+def test_research_override_lifts_only_the_mode_legs(monkeypatch):
+    monkeypatch.setenv("TESSERA_RESEARCH_GLM53_NOPE_GRAPHS", "1")
+    candidate = config()
+    candidate.compilation_config.cudagraph_mode = CUDAGraphMode.FULL_DECODE_ONLY
+    assert _config_reason(candidate) is None
+    candidate.kernel_config.enable_flashinfer_autotune = True
+    assert "enable_flashinfer_autotune" in _config_reason(candidate)
