@@ -599,7 +599,8 @@ def transient_gap_witness(rows, views, intervals, roster, steps):
 
 #: The four places a device static's source library may live, each attested by
 #: the run: the plugin's JIT extension directory (the launcher's
-#: ``TESSERA_EXT_DIR`` mount, holding only ``tessera_nvfp4_<sha>.so``), the
+#: ``TESSERA_EXT_DIR`` mount, whatever the package builds into it -- naming one
+#: extension made the prefix unmatchable once that extension was retired), the
 #: observer's own collector libraries (the plan names them by path and digest),
 #: the pinned image's site-packages (the root the loaded plugin package sits
 #: under, bound by image digest), and the stock runtime's JIT caches inside the
