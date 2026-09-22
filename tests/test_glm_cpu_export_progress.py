@@ -47,3 +47,54 @@ def test_incomplete_input_bindings_cannot_enter_export(tmp_path,monkeypatch):
     monkeypatch.setenv('PRISMABUILD_ACTION_PROGRESS_HELPER','/unused')
     with pytest.raises(ValueError,match='incomplete'):
         module.main(['--bindings',str(path),'--bindings-sha256',hashlib.sha256(path.read_bytes()).hexdigest()])
+
+
+def renderer():
+    import sys
+    tools=Path(__file__).resolve().parents[1]/'tools'
+    if str(tools) not in sys.path:sys.path.insert(0,str(tools))
+    spec=importlib.util.spec_from_file_location('render_glm_cpu_export_command',tools/'render_glm_cpu_export_command.py')
+    module=importlib.util.module_from_spec(spec);spec.loader.exec_module(module);return module
+
+
+def _bound(path,payload):
+    path.write_bytes(payload);return {'path':str(path),'sha256':hashlib.sha256(payload).hexdigest()}
+
+
+def _bindings(tmp_path,inputs):
+    bound={}
+    for name in inputs:
+        payload=(json.dumps({'schema':'tessera.cached_units.v2','units':{'u':{'blob_bytes':5}}})
+                 if name=='selected_manifest' else name).encode()
+        bound[name]=_bound(tmp_path/f'{name}.json',payload)
+    doc={'schema':'prismaquant.glm_cached_cpu_export_bindings.v1','inputs':bound,'source':'/src',
+         'output':'/out','required_free_bytes':1,'intake_threads':7,'intake_window_bytes':8<<30}
+    return _bound(tmp_path/'bindings.json',json.dumps(doc).encode())
+
+
+def _repo(path):
+    import subprocess
+    path.mkdir()
+    run=lambda *a:subprocess.run(['git','-C',str(path),*a],check=True,capture_output=True,text=True).stdout
+    run('init','-q');(path/'f').write_text('x');run('add','f')
+    run('-c','user.name=t','-c','user.email=t@t','commit','-qm','x')
+    return run('rev-parse','HEAD').strip()
+
+
+def test_the_rendered_row_takes_the_agent_band_and_the_venv_of_its_commit(tmp_path):
+    module=renderer();binding=_bindings(tmp_path,module.INPUTS);commit=_repo(tmp_path/'checkout')
+    result=module.render(binding['path'],binding['sha256'],tmp_path/'checkout')
+    argv=result['argv']
+    assert argv[argv.index('--priority')+1]=='-10'
+    python=str(module.VENV_ROOT/f'pq-cpu312-tessera-{commit[:8]}'/'bin'/'python')
+    assert argv[argv.index('--')+1]==python
+    assert result['tessera_commit']==commit and result['interpreter']['path']==python
+    assert result['submitted'] is False
+    assert not [a for a in argv if '4c384e60' in a]
+
+
+def test_a_dirty_checkout_is_refused_rather_than_named_after_its_head(tmp_path):
+    module=renderer();binding=_bindings(tmp_path,module.INPUTS);_repo(tmp_path/'checkout')
+    (tmp_path/'checkout'/'f').write_text('changed')
+    with pytest.raises(ValueError,match='uncommitted'):
+        module.render(binding['path'],binding['sha256'],tmp_path/'checkout')
