@@ -437,3 +437,48 @@ So repairing the census alone cannot close `worker_startup`: the 2026-09-22 capt
 census already sees the bundles, has 0 uncharged allocations and still disagrees on 112 of
 112 units against the v3 manifest. The qualifying capture has to run both repairs and an
 artifact whose manifest carries the wire-derived price.
+
+## Recapture with both repairs (2026-09-22)
+
+This capture ran both repairs on an artifact that carries the wire-derived price.
+
+- **Source tree.** `git archive 0053b91d0`, which is #580, #582 and #583 merged over
+  master.
+- **Artifact.** `qwen3-0.6b-mixed3-native-footprint-t1-e27580770`. Its manifest was
+  refreshed by `experiments/refresh_native_resident_manifest.py` (PB `6da0525de3b7`).
+  `model.safetensors` is a hard link to the v3 file, and only
+  `resident_bytes_resident_mode` changes: 443,199,492 B before, 230,042,972 B after.
+- **Configuration.** The 2026-09-21 document, re-issued with two changes: the plugin tree
+  and the artifact path. The runtime image, calibration, engine arguments and capacity
+  assertions are unchanged.
+
+The capture ran as PB `3529709c428e` on sparky: GB10, exclusive, snapshot `0053b91d0`,
+driver 595.91.07. All four phases returned 0: preflight 18 s, kv 94 s, resources 816 s
+and timings 161 s. The report ran as PB `fab5730e4fd9` on dl380g10: CPU,
+`report_full_engine_resources.py` at `0053b91d0`, 614 s and 5.4 GB RSS. Receipts are
+in `/mnt/shared/tessera-runs/receipts/399-qwen3-0.6b-20260922-t1/`.
+
+| field | 2026-09-21 capture | this capture |
+|---|---|---|
+| `worker_startup` | refused, 112 of 112 units disagree | closed, 0 of 112 disagree |
+| `uncharged_allocation_count` | 1,337 | 0 |
+| `unclassified_allocation_count` | 358 | 358 |
+| `reserved_peak_bytes` | null | 954,204,160 |
+| `reservation_slack_peak_bytes` | null | 90,934,272 |
+| `history_join`, `external_closure`, `provenance_admission`, `cache_capacity`, `timing_partition` | closed | closed |
+| `derived.admission.verdict` | refused | refused: 358 unclassified allocations |
+
+Per family, the ledger's candidate-owned resident bytes equal the manifest exactly:
+
+| family | units | bytes |
+|---|---|---|
+| `TESSERA_FP8` | 110 | 223,062,768 |
+| `TESSERA_BF16` | 1 | 3,825,712 |
+| `TESSERA_NVFP4` | 1 | 3,154,492 |
+
+These equal the "= observed" column of the blocker D table. The allocator sample at arm
+(863,269,888 B) bounds the ledger's live bytes at `ready_for_workload`
+(855,025,092 B).
+
+Blocker D is closed. The only remaining refusal is the 358 unclassified allocations,
+which need tessera#548's two-capture boundary classification.

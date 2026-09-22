@@ -175,6 +175,26 @@ class A4ExpertAxis:
                                         device=plane.device)
         return plane[expert]
 
+    def named_tensors(self):
+        """``(field, tensor)`` for every plane and the globals this axis holds now.
+
+        The same by-reference convention as ``A4UnitStack.named_tensors``
+        (``serving/residency.py``, #580), for the intake phase that the
+        route's ``resident_tensors(layer)`` declaration does not cover: nothing
+        before the first slot is requested, and nothing again after ``finish``
+        hands the planes to its ``A4UnitStack``.  The tensors are the live
+        buffers, so a caller must not write them.
+        """
+        for field, plane in (self._planes or {}).items():
+            yield field, plane
+        if self._globals is not None:
+            yield "globals", self._globals
+
+    def resident_bytes(self) -> int:
+        """Bytes of every buffer :meth:`named_tensors` yields."""
+        return sum(int(tensor.numel()) * tensor.element_size()
+                   for _field, tensor in self.named_tensors())
+
     def set_lut_bytes(self, expert: int, table: torch.Tensor) -> None:
         """The joined 16-entry LUT written into a preallocated slot."""
         plane = (self._planes or {}).get("lut_bytes")
