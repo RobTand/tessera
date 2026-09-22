@@ -28,15 +28,19 @@ echo "arm $ARM: up rc=$up_rc"
 if [ "$up_rc" != 0 ]; then
   "$HERE/srv-508.sh" savelogs "$ARM-noready"; "$HERE/srv-508.sh" down; exit 4
 fi
-python3 "$HERE/smoke-508.py" "$PORT" "$OUT" "$ARM"; smoke_rc=$?
-echo "arm $ARM: smoke rc=$smoke_rc"
+if [ "${SKIP_SMOKE:-0}" = 1 ]; then
+  smoke_rc=skipped; echo "arm $ARM: smoke skipped (SKIP_SMOKE=1)"
+else
+  python3 "$HERE/smoke-508.py" "$PORT" "$OUT" "$ARM"; smoke_rc=$?
+  echo "arm $ARM: smoke rc=$smoke_rc"
+fi
 # PROBES: optional diagnostics after the fixed set ("pad" = exact-length prompts
 # at and between capture sizes; "long" = repeated long prompts). Their records
 # are labelled by arm; they never replace the fixed smoke set.
 for probe in ${PROBES:-}; do
   case "$probe" in
     pad)  python3 "$HERE/probe-pad-508.py" "$PORT" "$OUT" "$ARM" > "$OUT/$ARM.pad.txt" 2>&1; echo "arm $ARM: pad probe rc=$?" ;;
-    long) python3 "$HERE/probe-long-508.py" "$PORT" "$OUT" "$ARM" > "$OUT/$ARM.longprobe.txt" 2>&1; echo "arm $ARM: long probe rc=$?" ;;
+    long) python3 "$HERE/probe-long-508.py" "$PORT" "$OUT" "$ARM" ${LONG_LENGTHS:-1500,2100,3649} ${LONG_REPEATS:-2} > "$OUT/$ARM.longprobe.txt" 2>&1; echo "arm $ARM: long probe rc=$?" ;;
   esac
 done
 "$HERE/srv-508.sh" savelogs "$ARM"
@@ -47,4 +51,5 @@ echo "smoke_rc=$smoke_rc" >> "$OUT/engine-args-$ARM.txt"
 if [ "$ARM" != "$BASE" ] && [ -e "$OUT/$BASE.long.json" ] && [ -e "$OUT/$ARM.long.json" ]; then
   python3 "$HERE/compare-508.py" "$OUT" "$BASE" "$ARM"
 fi
+[ "$smoke_rc" = skipped ] && exit 0
 exit $smoke_rc

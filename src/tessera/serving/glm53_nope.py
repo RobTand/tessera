@@ -24,6 +24,7 @@ from vllm.v1.attention.backends.mla.sparse_utils import (
     triton_convert_req_index_to_global_index,
 )
 
+from . import _research
 from .backend import probed_platform_token
 
 # Compatibility guards, not device qualification. These are the unmodified
@@ -51,23 +52,8 @@ def require_stock_runtime() -> None:
 
 
 def _research_sync(site: str) -> None:
-    """#508 bisect: env-gated device sync at a Tessera-owned site.
-
-    An asynchronous CUDA fault surfaces at the next sync; with
-    ``TESSERA_RESEARCH_GLM53_NOPE_SYNC=1`` the Tessera attention sites become
-    sync points, so a fault raised here happened between the previous sync
-    and this site. Skipped while a stream is capturing (a sync is illegal in
-    capture) and unset in every production path.
-    """
-    import os
-    if not os.environ.get("TESSERA_RESEARCH_GLM53_NOPE_SYNC"):
-        return
-    if torch.cuda.is_current_stream_capturing():
-        return
-    try:
-        torch.cuda.synchronize()
-    except Exception as exc:  # noqa: BLE001 -- name the site, then re-raise
-        raise RuntimeError(f"#508 sync site {site}: {exc}") from exc
+    """#508 bisect: env-gated device sync at a Tessera-owned site (see _research)."""
+    _research.sync(site)
 
 
 def _config_reason(config) -> str | None:
@@ -195,5 +181,10 @@ class TesseraGLM53NoPEImpl(FlashInferMLASparseSM120Impl):
             sparse_mla_top_k_lens=counts.clamp(min=1),
         )
         out.masked_fill_(empty.view(-1, 1, 1, 1), 0.0)
+        if _research.DUMP is not None:
+            _research.dump("forward_mqa", layer=getattr(layer, "layer_name", None),
+                           num_tokens=num_tokens, q=q, topk=topk,
+                           topk_sorted=torch.sort(topk, dim=1).values,
+                           physical=physical, counts=counts, out=out)
         _research_sync("forward_mqa.exit")
         return out.squeeze(1), None

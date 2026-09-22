@@ -38,6 +38,7 @@ from .lane import MODES
 import dataclasses
 
 from ..kernel_a4 import a4_quantize_activation, a4_span2_gemm
+from . import _research
 from .scheme import (A4_DENSE_GEMM_SYMBOL, GROUP_SIZE, ROUTES, STRUCTURE_DENSE,
                      TESSERA_NVFP4, launch_pairs,
                      parse_compact_blob_for_scheme, validate_tessera_scheme)
@@ -297,6 +298,8 @@ def build_tessera_nvfp4_method(scheme, prefix: str, mode: str):
                                           layer.tessera_a4_epilogues)
             ]
             y = outs[0] if len(outs) == 1 else torch.cat(outs, dim=-1)
+            if _research.SYNC:  # tessera#508 bisect site; unset in production
+                _research.sync(f"dense_gemm.exit:{x2.shape[0]}x{x2.shape[1]}->{y.shape[-1]}")
             symbol = getattr(layer, "tessera_symbol", GEMM_SYMBOL)
             try:
                 emit_route(
