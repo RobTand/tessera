@@ -495,6 +495,17 @@ def build_tessera_nvfp4_moe_method(scheme: Mapping, prefix: str, mode: str, laye
             layer.tessera_rows = n_rows
             layer.tessera_columns = hidden
 
+        def intake_axes(self) -> dict:
+            """The per-``(group, role)`` expert axes the loader is filling.
+
+            A copy of the mapping, keyed as ``("w13", "gate_proj")``; each value
+            is a :class:`~tessera.serving.native_a4.A4ExpertAxis`, whose
+            ``resident_tensors`` is what this route holds for that stack during
+            intake.  Empty once ``process_weights_after_loading`` has moved the
+            planes into the layer's ``tessera_a4_*_stack`` attributes.
+            """
+            return dict(getattr(self, "_axes", None) or {})
+
         def _refuse_stock_tensor(self, param, loaded_weight, weight_name, shard_id, expert_id,
                                  return_success: bool = False):
             raise ValueError(

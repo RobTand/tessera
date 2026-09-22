@@ -175,6 +175,24 @@ class A4ExpertAxis:
                                         device=plane.device)
         return plane[expert]
 
+    def resident_tensors(self) -> "dict[str, torch.Tensor]":
+        """The stacked planes and globals this axis holds now, by field name.
+
+        Empty before the first slot is requested, and empty again after
+        ``finish`` hands the planes to its ``A4UnitStack``.  This is read-only
+        accounting for instruments such as ``experiments/bench_routed_load.py``:
+        the values are the live buffers, so a caller must not write them.
+        """
+        held = dict(self._planes or {})
+        if self._globals is not None:
+            held["globals"] = self._globals
+        return held
+
+    def resident_bytes(self) -> int:
+        """Bytes of every buffer :meth:`resident_tensors` returns."""
+        return sum(int(tensor.numel()) * tensor.element_size()
+                   for tensor in self.resident_tensors().values())
+
     def set_lut_bytes(self, expert: int, table: torch.Tensor) -> None:
         """The joined 16-entry LUT written into a preallocated slot."""
         plane = (self._planes or {}).get("lut_bytes")
