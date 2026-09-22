@@ -96,8 +96,12 @@ up)
   # #508: autolog-on-exit so a crashed engine's stack can never be lost again.
   (docker wait $NAME >/dev/null 2>&1 \
     && docker logs $NAME > "$DIR/logs/auto-$NAME-$$.log" 2>&1) & disown
-  # MemAvailable watchdog: this arm only (no TP peer), 16 GiB floor + PSI full avg10 >= 20.
-  systemd-run --user --unit t508-memwd-$(date +%s) --collect \
+  # MemAvailable watchdog: this arm only (no TP peer), 16 GiB floor. The PSI
+  # full avg10 >= 20 rule (from the 2026-09-14 TP2 hang) fired twice on this
+  # TP1 stub load with MemAvailable at 52 GB and 38 GB (2026-09-22, see
+  # mem-watchdog-sparky-t508-stub.log); PSI_FULL_MAX is raised to 60 for this
+  # arm, the memory floor stays.
+  systemd-run --user --unit t508-memwd-$(date +%s) --collect --setenv PSI_FULL_MAX=${PSI_FULL_MAX:-60} \
     /home/rob/tmp/glm-a4-stub-serve/mem-watchdog.sh $NAME $(hostname) $NAME 16
   wait_ready
   ;;
