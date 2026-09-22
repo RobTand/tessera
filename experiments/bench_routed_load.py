@@ -569,7 +569,7 @@ def _child_nvfp4(args, torch, device, layers, experts, out) -> int:
         if holder is None:
             continue
         axes = held_methods[layer].intake_axes()
-        planes = {f"{group}.{role}": axes[(group, role)].resident_tensors()
+        planes = {f"{group}.{role}": dict(axes[(group, role)].named_tensors())
                   for group, role in NVFP4_AXES}
         evidence[str(layer)] = {
             "nibbles_expert0_nonzero_fraction": {

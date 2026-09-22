@@ -508,9 +508,10 @@ def build_tessera_nvfp4_moe_method(scheme: Mapping, prefix: str, mode: str, laye
 
             A copy of the mapping, keyed as ``("w13", "gate_proj")``; each value
             is a :class:`~tessera.serving.native_a4.A4ExpertAxis`, whose
-            ``resident_tensors`` is what this route holds for that stack during
-            intake.  Empty once ``process_weights_after_loading`` has moved the
-            planes into the layer's ``tessera_a4_*_stack`` attributes.
+            ``named_tensors`` is what this route holds for that stack during
+            intake, before ``resident_tensors(layer)`` has anything to declare.
+            Empty once ``process_weights_after_loading`` has moved the planes
+            into the layer's ``tessera_a4_*_stack`` attributes.
             """
             return dict(getattr(self, "_axes", None) or {})
 

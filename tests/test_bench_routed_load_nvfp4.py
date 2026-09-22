@@ -187,7 +187,7 @@ def _load_layer(bench, held, scheme, *, rank, tp_size, scales=True):
 
 def _axis_planes(method):
     axes = method.intake_axes()
-    return {key: axes[key].resident_tensors() for key in _bench().NVFP4_AXES}
+    return {key: dict(axes[key].named_tensors()) for key in _bench().NVFP4_AXES}
 
 
 def _nbytes(tensor):
