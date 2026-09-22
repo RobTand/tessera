@@ -1,6 +1,6 @@
 {
   "schema": "tessera.runtime-contract.v1",
- "contract_version": 33,
+ "contract_version": 34,
  "quant_method": {
   "canonical": "tessera",
   "accepted": [
@@ -558,6 +558,166 @@
      "grade": "route_only",
      "kl": [],
      "smoke": {"status": "not_recorded", "receipt": null, "attribution": "unattributed", "control": null, "record": null}
+    }
+   },
+   {
+    "id": "tessera_e4m3_k1_dense_sm121_decode",
+    "runtime": {
+     "image": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+     "execution_modes": ["eager"],
+     "vllm": "0.28.0",
+     "torch": "2.13.0+cu130"
+    },
+    "platform": "sm_121",
+    "family": "TESSERA_E4M3_K1",
+    "structure": "dense",
+    "regime": "decode",
+    "rungs_q256": [1024],
+    "activation_contract": "fp8_per_token_dynamic",
+    "executes": [
+     {
+      "symbol": "tessera::window_gemm_dense",
+      "decoder": "native_window_gemm"
+     }
+    ],
+    "route_status": "backed_with_serve_flag",
+    "qualification": "device_qualified",
+    "requires_plugin": "tessera",
+    "requires_serve_flags": [
+     "TESSERA_SERVE_MODE=resident|streamed"
+    ],
+    "predicates": [],
+    "evidence": {
+     "artifact": null,
+     "grade": "route_only",
+     "kl": [],
+     "smoke": {
+      "status": "not_recorded",
+      "receipt": null,
+      "attribution": "unattributed",
+      "control": null,
+      "record": null
+     }
+    }
+   },
+   {
+    "id": "tessera_e4m3_k1_dense_sm121_batch",
+    "runtime": {
+     "image": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+     "execution_modes": ["eager"],
+     "vllm": "0.28.0",
+     "torch": "2.13.0+cu130"
+    },
+    "platform": "sm_121",
+    "family": "TESSERA_E4M3_K1",
+    "structure": "dense",
+    "regime": "batch",
+    "rungs_q256": [1024],
+    "activation_contract": "fp8_per_token_dynamic",
+    "executes": [
+     {
+      "symbol": "tessera::window_gemm_dense",
+      "decoder": "native_window_gemm"
+     }
+    ],
+    "route_status": "backed_with_serve_flag",
+    "qualification": "device_qualified",
+    "requires_plugin": "tessera",
+    "requires_serve_flags": [
+     "TESSERA_SERVE_MODE=resident|streamed"
+    ],
+    "predicates": [],
+    "evidence": {
+     "artifact": null,
+     "grade": "route_only",
+     "kl": [],
+     "smoke": {
+      "status": "not_recorded",
+      "receipt": null,
+      "attribution": "unattributed",
+      "control": null,
+      "record": null
+     }
+    }
+   },
+   {
+    "id": "tessera_bf16_k1_dense_sm121_decode",
+    "runtime": {
+     "image": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+     "execution_modes": ["eager"],
+     "vllm": "0.28.0",
+     "torch": "2.13.0+cu130"
+    },
+    "platform": "sm_121",
+    "family": "TESSERA_BF16_K1",
+    "structure": "dense",
+    "regime": "decode",
+    "rungs_q256": [1792],
+    "activation_contract": "bf16_unquantized",
+    "executes": [
+     {
+      "symbol": "tessera::window_gemm_dense",
+      "decoder": "native_window_gemm"
+     }
+    ],
+    "route_status": "backed_with_serve_flag",
+    "qualification": "device_qualified",
+    "requires_plugin": "tessera",
+    "requires_serve_flags": [
+     "TESSERA_SERVE_MODE=resident|streamed"
+    ],
+    "predicates": [],
+    "evidence": {
+     "artifact": null,
+     "grade": "route_only",
+     "kl": [],
+     "smoke": {
+      "status": "not_recorded",
+      "receipt": null,
+      "attribution": "unattributed",
+      "control": null,
+      "record": null
+     }
+    }
+   },
+   {
+    "id": "tessera_bf16_k1_dense_sm121_batch",
+    "runtime": {
+     "image": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+     "execution_modes": ["eager"],
+     "vllm": "0.28.0",
+     "torch": "2.13.0+cu130"
+    },
+    "platform": "sm_121",
+    "family": "TESSERA_BF16_K1",
+    "structure": "dense",
+    "regime": "batch",
+    "rungs_q256": [1792],
+    "activation_contract": "bf16_unquantized",
+    "executes": [
+     {
+      "symbol": "tessera::window_gemm_dense",
+      "decoder": "native_window_gemm"
+     }
+    ],
+    "route_status": "backed_with_serve_flag",
+    "qualification": "device_qualified",
+    "requires_plugin": "tessera",
+    "requires_serve_flags": [
+     "TESSERA_SERVE_MODE=resident|streamed"
+    ],
+    "predicates": [],
+    "evidence": {
+     "artifact": null,
+     "grade": "route_only",
+     "kl": [],
+     "smoke": {
+      "status": "not_recorded",
+      "receipt": null,
+      "attribution": "unattributed",
+      "control": null,
+      "record": null
+     }
     }
    }
   ]
@@ -2107,6 +2267,7 @@
   }
  },
  "changelog": [
+  {"contract_version": 34, "date": "2026-09-21", "change": "Four dense cells are MINTED for the native window GEMM, and (tessera::window_gemm_dense, native_window_gemm) leaves scheme.EXPERIMENTAL_LAUNCHES (tessera#545). sm_121 cells tessera_e4m3_k1_dense_sm121_{decode,batch} at q256=1024 and tessera_bf16_k1_dense_sm121_{decode,batch} at q256=1792, all four device_qualified / backed_with_serve_flag / TESSERA_SERVE_MODE=resident|streamed, execution_modes [\"eager\"], on the platform's own serve image vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14 (vLLM 0.28.0, torch 2.13.0+cu130). THE RECEIPT: four route censuses on a GB10 (sm_121, capability [12, 1]), eager, tessera affae68ed, recorded in docs/measurements/tessera-window-gemm-census-2026-09-21.md -- {TESSERA_E4M3_K1 q1024, TESSERA_BF16_K1 q1792} x {resident, streamed}, each reporting all 112 declared Tessera modules on tessera::window_gemm_dense/native_window_gemm in BOTH the decode and the batch regime, state served, the family's own activation contract, verdict served and problems []. The four receipt JSONs are build-box run logs, not tracked files; the measurement doc names their directory and carries each arm's sha256, and it is what a cell could cite. This is what v31 asked for: v31 WITHDREW eight dense cells because 1b767a207 left fp8_route.apply and bf16_route.apply making exactly one launch that no cell attested, and said 'a served census of the native window GEMM is what earns cells back'. It is earned for the launch these four cells name and for nothing else. THE #104 GUARD, AND WHY IT IS NOT A LANE. census.lane_engagement resolves a required lane through contract.lane_decoder, i.e. only a native_extensions entry, and the one entry is tessera_window_gemv -- the lane 1b767a207 retired. The native window GEMM carries lane null because it is a launch, not an extension lane, so no --require-lane can name it and the receipts carry lane_engagement.all_required_engaged null, the honest value for 'no lane was required'. The void-census refusal is taken from the launch side instead: every arm ran --require-decoder native_window_gemm, so required_decoder_coverage refuses any phase in which that decoder took zero modules, and each receipt's decoder_coverage reads {\"native_window_gemm\": 112} in both phases. The E4M3 artifact's manifest still stamps requires_lanes [\"tessera_window_gemv\"] from its 2026-09-04 export, which --no-manifest-lanes set aside; that stale stamp is a fact about the bytes, not about this build. WHAT THIS DOES NOT ATTEST, stated rather than left to absence: compiled execution (the census tool does not support compiled dense launch agreement -- its trace combines launches as a+b -- so the cells scope eager alone); quality (grade route_only on all four, derived from zero kl entries: the dispatch is attested and nothing here bounds KL, and no KL arm was run); smoke (not_recorded); any rung but the one each cell publishes; any platform but sm_121 -- gfx1201 and gfx1151 keep null serve_image and no dense cells; TP > 1 and expert parallelism, both unmoved. The three A4/window-MoE pairs (a4_span2_gemm, a4_span2_grouped_gemm, window_moe_compact) STAY in EXPERIMENTAL_LAUNCHES: the A4-dense census is deferred with the NVFP4 lane per tessera#575 and the compact window MoE has no receipt. ADDITIVE for a lane reader: four cells appear where a reader previously resolved unattested, and no existing cell, rung, route, launch, grade, KL entry, qualification, format row, attested_wire stamp, platform entry, activation-quantizer attestation or served byte changes. It is NOT additive for a reader that derives a cell's executes from scheme.route_launches itself: the window-GEMM pair now appears in the non-experimental dispatch for TESSERA_FP8 and TESSERA_BF16 dense, which is the same table _validate_cell_executes reads, and that coupling is why the set shrinks in the commit that mints the cells rather than before it. The activation-quantizer schema stays v2 and lane_eligibility.schema stays v10."},
   {"contract_version": 33, "date": "2026-09-19", "change": "Second fp4 activation attestation for sm_121 (tessera#555): the platform entry is now a LIST of one attestation per image it publishes, because the fp4 rounding decision belongs to the runtime's compiled operator and two builds of one operator are two objects. The new attestation carries the table the GLM-5.3 campaign serving image 192.168.1.107/prismaquant/glm53-nope-sm121@sha256:6941847351647ca714bbe7115ce6f627131bf78fc7eff86ddb98b11e6d25b46e emitted on a GB10 (vLLM 0.28.1rc1.dev397+gfd4a15126.d20260904, torch 2.13.0+cu130, driver 595.91.07): 11 probe vectors, byte-identical to the stock-image table, so the campaign patches (sparse-MLA/PDL/autotune, Python only) do not move the quantizer. The image reached the registry by crane push of sparklina's local glm53-nope-sm121:w7 (config sha256:2e886e5c745e5a7bbf8f1c93c5a5a0ab69c2e9fe0346863531fc87786d85c1ee); the contract names it by registry digest, never by tag. NOT ADDITIVE for activation-table readers: platforms[X] changed from an object to a list, so the activation-quantizer schema moves v1 to v2 and a v1 reader fails closed on the name; lane_eligibility.schema stays v10 -- no cell, rung, route, launch, grade, KL entry, qualification, TP/EP bound or served byte moves. Consumer migration: admit an fp4 cell only under an attestation whose generated.image is the executing image (the PrismaQuant reader follows). NUMBERING NOTE: originally drafted as v32; PR #560 leg 2 landed its v32 first (routed reader widen), so this change takes v33 as the second of the two."},
   {"contract_version": 32, "date": "2026-09-18", "change": "The routed E2M1x2 reader range widens from the single rung [896, 896] to the full trellis domain [128, 896] step 128: the shaped grammar admits every whole-rate rung of rate 1..7 over arity 2 (one forest per span-2 unit). The attestation for the six new rungs is the seven-rung green load receipt, PB action a186d7bc6f1f111d856ee734d7c3359eb957d116ec82ba92a087961d748c2092 (GB10, resident, runtime image localhost/prismaquant/spark-vllm-nccl230@sha256:a5424378...): every rung 128..896 step 128 loads a routed MoE layer through TesseraNvFp4MoEMethod byte-identical to the probe's own encode (identical true, globals_match true) with all eight negative legs refused-and-matched. The rung-896 control is the earlier served receipt PB action de8bc7dada4ea6ca53bd4e272bb59016ddac1282839eb1cb42665879ebc52c22 (896 green; 128..768 refused by the same gate at [896, 896] -- that red state is what this widen retires, not a separate receipt set), and the CPU encode receipt is experiments/nvfp4_moe_route_full_domain_probe.sh over rungs 128..896 step 128 (encode bpp 1.51..5.00 monotone). SCOPE, stated rather than assumed: ONLY the two routed_moe cells (decode/batch, torch_materialize_stock decoder -- the decoder the green receipt loads) widen with the row; the two dense E2M1_K2 cells (decode/batch, native_span2 decoder) STAY at [896] (tessera#560 D2). The seven-rung receipt drives a routed MoE layer through TesseraNvFp4MoEMethod on every rung -- it never loads the dense native_span2 path at 128..768 on any box, so no dense-decoder receipt exists behind a dense widen and none is claimed here. SERVED WIRE: a served ROUTED stack at a sub-cap rung carries the span-2 TCQ body (served_recipe promotes the research WINDOW default to TCQ for STRUCTURE_ROUTED_MOE only, because the routed path decodes TCQ only); a DENSE module keeps the wire_recipe spelling at every rung -- WINDOW below the cap -- which the route refuses at export (tessera#560 D2b). The TCQ spelling measures worse than WINDOW below the cap (1.36-1.43x vs 1.06-1.10x EXL3 at 2.5-3.5 bpp, docs/tessera-one-format.md section 4) -- necessary, stated, and stamped per rung in attested_wire. Off-step rungs (e.g. 448, root rate 3.5) resolve to a MIXED-rate schedule the span-2 preparer refuses ('one forest per unit') and are NOT published: the step-128 range is exactly the readable set. tessera#506 leg 2."},
  {"contract_version": 31, "date": "2026-09-17", "change": "The eight dense cells that attested the window-GEMV lane's dispatch are WITHDRAWN: sm_121 cells tessera_e4m3_k1_dense_sm121_{decode,batch}_{resident,streamed} and tessera_bf16_k1_dense_sm121_{decode,batch}, and gfx1201 cells tessera_bf16_k1_dense_gfx1201_{decode,batch}. They named torch._scaled_mm/torch_window, tessera_window_gemv::gemv/window_gemv and torch.mm/torch_window. Commit 1b767a207 ('serving: retire the dense decode-to-global dispatch branches') left fp8_route.apply and bf16_route.apply making exactly one launch -- tessera::window_gemm_dense/native_window_gemm, raising rather than falling back -- so from that commit the build could not make the arithmetic these cells published. REMOVAL, not a retag: the receipts behind them (their evidence.kl and their runtime image) were taken on the retired dispatch, so naming the native window GEMM in them would claim a measurement that never ran; that launch is in scheme.EXPERIMENTAL_LAUNCHES precisely because no cell attests it. Absent therefore reads as unattested, which is the true state. CONSUMER-VISIBLE and NOT additive: dense TESSERA_E4M3_K1 at q256=1024 and TESSERA_BF16_K1 at q256=1792 are no longer device_qualified on sm_121, and gfx1201 keeps its platform entry with no cells and, as the validator requires of a platform with no receipts, a null serve_image (gfx1151 already reads that way); the ROCm image digest stays recorded in docs/measurements/tessera-gfx1201-bf16-k1-served-2026-09-13.md, whose receipt was taken 2026-09-13, three days before the dispatch it measured was retired. Dense EXPORT is not blocked by this and the changelog says so rather than letting a reader assume it: scheme.refuse_unserveable_wire bounds a dense module by the format row's reader_rate_range_q256, and only a routed_moe stack reads scheme.attested_cells -- no routed cell moved. What changes is the ATTESTATION: a consumer asking what the runtime executes on dense TESSERA_E4M3_K1 at q256=1024 or TESSERA_BF16_K1 at q256=1792, or what grade of evidence stands behind it, now reads absence, which resolves unattested. A served census of the native window GEMM is what earns cells back. The gate that missed this is fixed in the same commit: scheme.ROUTE_LAUNCHES no longer carries the retired lane's three dense launches, and each route module now owns its DENSE_LAUNCH at the emit site with a test asserting the table equals it, so the table can no longer outlive the dispatch it describes. tessera#538."},

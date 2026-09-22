@@ -2242,6 +2242,8 @@ def main():
                   else source_identity(args.src))
         cached_units = CachedUnitBundle(read_manifest(cache_path),
                                         cache_path.parent, cache_unit_names, source)
+        if cached_units.producer_packages and args.cached_producer_package is not None:
+            raise SystemExit("rooted cached units bind their exact producers; omit global cached-producer flags")
         if args.cached_producer_package is not None:
             from tessera.historical_producer import load_historical_producer
             historical_producer = load_historical_producer(
@@ -2253,6 +2255,21 @@ def main():
             lambda weight, unit_name, unit, grid, q256, *, activation: cached_input_identity(
                 historical_producer, weight, unit_name, unit, grid, q256, activation=activation),
             activation, mode=args.cached_hessian_identity)
+        if cached_units.producer_packages:
+            from tessera.cached_unit import ProducerCachedUnitIdentities
+            from tessera.historical_producer import load_historical_producer
+            # Hash and load each exact historical producer; never relabel a
+            # receipt.  Loading a package by path lives here, with the
+            # exporter's other dynamic load, and not in ``tessera.cached_unit``:
+            # a src module that imports the path loader puts an unresolvable
+            # read in ``tests/conftest.py``'s import closure, and
+            # ``tools/impacted_tests.py`` then answers ``full`` for every edit
+            # this tree can make.
+            producers = {seal: load_historical_producer(Path(bound["path"]), bound["sha256"])
+                         for seal, bound in cached_units.producer_packages.items()}
+            cached_identity = ProducerCachedUnitIdentities(
+                cached_units, producers, cached_input_identity,
+                activation, mode=args.cached_hessian_identity)
 
     input_scales = {}
     if args.input_scales:
@@ -2263,6 +2280,8 @@ def main():
                     if tensor.numel() != 1:
                         raise SystemExit(f"--input-scales {key} must contain one scalar")
                     input_scales[key] = float(tensor.float().reshape(-1)[0])
+    if cached_units is not None:
+        cached_units.require_served_scales(input_scales)
     if priced_inputs is not None:
         priced_inputs.require(activation, input_scales)
     # Dense modules AND expert stacks: an NVFP4 stack needs one static A-side
@@ -2345,8 +2364,10 @@ def main():
             source_weight = packed_expert_weight(handle.get_tensor(name), unit)
             expected = cached_identity(source_weight, unit["tensor"], unit, unit_grid, unit_q256)
             cached_blob, cache_record = cached_units.read(expected["unit"])
-            if historical_producer is not None:
-                historical_producer.verify(cached_blob, cache_record, expected)
+            producer = (cached_identity.producer_for(expected["unit"])
+                        if cached_units.producer_packages else historical_producer)
+            if producer is not None:
+                producer.verify(cached_blob, cache_record, expected)
             accepted, blob = pack_cached_expert_unit(cached_blob, cache_record, expected)
             exported = ExportedUnit(unit["tensor"], accepted.blob, unit["rows"], unit["cols"],
                                     unit_q256, accepted.wire_bytes)
@@ -2522,8 +2543,10 @@ def main():
                     from tessera.export import ExportedUnit
                     expected = cached_identity(weight, member, None, member_grid, q256)
                     cached_blob, cache_record = cached_units.read(expected["unit"])
-                    if historical_producer is not None:
-                        historical_producer.verify(cached_blob, cache_record, expected)
+                    producer = (cached_identity.producer_for(expected["unit"])
+                                if cached_units.producer_packages else historical_producer)
+                    if producer is not None:
+                        producer.verify(cached_blob, cache_record, expected)
                     accepted = verify_cached_unit(cached_blob, cache_record, expected)
                     parsed = parse_unit_artifact(accepted.blob, device=args.device)
                     unit, forests, stock_code = parsed.unit, parsed.forests, parsed.code
@@ -2830,6 +2853,11 @@ def main():
                                     # H -- and how the intake ran.  Neither changes
                                     # an accepted byte; both are stated, never implied.
                                     "hessian_identity": cached_identity.record(),
+                                    **({"producer_packages": cached_units.producer_packages,
+                                        "reuse_authority": cached_units.reuse_authority,
+                                        "served_activation_policy": cached_units.served_activation_policy,
+                                        "served_activations": cached_units.served_activations}
+                                       if cached_units.producer_packages else {}),
                                     "intake": None if intake is None else intake.record()}}
            if cached_units is not None else {}),
         "arm": f"tessera {default_grid.name} q256={args.q256}" + (f" + plan {args.plan_json}" if args.plan_json else "")

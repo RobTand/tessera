@@ -223,6 +223,19 @@ _EVIDENCE = {
     # cells publish `not_recorded` rather than a word nothing here can check.
     "tessera_e2m1_k2_routed_moe_sm121_decode_resident": _ROUTE_ONLY,
     "tessera_e2m1_k2_routed_moe_sm121_batch_resident": _ROUTE_ONLY,
+    # Dense E4M3 (q1024) and BF16 (q1792) on the native window GEMM, contract
+    # v34 (tessera#545).  Four route censuses on the sm_121 platform's own
+    # serve image put all 112 declared modules on
+    # tessera::window_gemm_dense/native_window_gemm in both regimes and both
+    # residencies.  The census is the WHOLE of the evidence: no KL arm was run,
+    # so the grade is the one zero kl entries derive, and no greedy smoke was
+    # recorded.  That is a narrower claim than the v5-era dense cells made --
+    # they carried prefill bounds -- and the difference is a measurement nobody
+    # has taken on this launch, not a field anybody dropped.
+    "tessera_e4m3_k1_dense_sm121_decode": _ROUTE_ONLY,
+    "tessera_e4m3_k1_dense_sm121_batch": _ROUTE_ONLY,
+    "tessera_bf16_k1_dense_sm121_decode": _ROUTE_ONLY,
+    "tessera_bf16_k1_dense_sm121_batch": _ROUTE_ONLY,
 }
 
 
