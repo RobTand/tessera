@@ -150,7 +150,13 @@ def tensor_names(path: Path) -> set[str]:
     return set(header) - {"__metadata__"}
 
 
-def source_identity(source: Path) -> dict:
+def source_identity(source: Path, *, workers=None, digest_cache=None) -> dict:
+    """Exact whole-source identity, with the same fenced shard reuse as parts.
+
+    Config, auxiliaries and complete header coverage are always read. Only
+    shard payload hashes use the optional owning SourceDigestCache; the caller
+    must retain its receipt. Parallel hashing preserves path/error order.
+    """
     source = Path(source)
     index_path = source / "model.safetensors.index.json"
     if index_path.exists():
@@ -176,7 +182,8 @@ def source_identity(source: Path) -> dict:
         raise ValueError("source has no safetensors tensors")
     return {"config_sha256": sha256_file(source / "config.json"),
             "auxiliary_sha256": _auxiliary_sha256(source),
-            "files": {name: sha256_file(source / name) for name in files},
+            "files": dict(zip(files, sha256_files([source / name for name in files], workers,
+                digest_cache.sha256 if digest_cache is not None else None))),
             "tensors": tensors}
 
 

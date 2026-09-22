@@ -165,8 +165,10 @@ def test_actual_mixed_producers_export_complete_dense_and_expert_roster(tmp_path
     monkeypatch.setattr(exporter, 'encode_linear_planes', forbidden)
     monkeypatch.setattr(exporter, 'output_partitions', lambda census, module: [32, 32] if module.endswith('.w13') else [32])
     out = tmp_path / 'out'
+    digest_cache = tmp_path / 'source-digests'; digest_cache.mkdir()
     monkeypatch.setattr('sys.argv', ['export', str(source), str(out), '--plan-json', str(plan_path),
-        '--cached-units', str(manifest_path), '--device', 'cpu', '--allow-unrouted', '--allow-unserveable'])
+        '--cached-units', str(manifest_path), '--device', 'cpu', '--allow-unrouted', '--allow-unserveable',
+        '--source-digest-cache', str(digest_cache)])
     exporter.main()
     with safe_open(str(out / 'model.safetensors'), framework='pt') as handle:
         actual = [member.blob for name in handle.keys() if name.endswith(('.wire', '.wire_bytes'))
@@ -174,6 +176,8 @@ def test_actual_mixed_producers_export_complete_dense_and_expert_roster(tmp_path
     assert len(actual) == len(tensors) == 6 and all(item == blob for item in actual)
     assert all((p.stat().st_ino, p.stat().st_ctime_ns) == fence for p, fence in before.items())
     receipt = json.loads((out / 'tessera_serving_manifest.json').read_text())
+    assert receipt['cached_units']['source_digest_receipt']['hashed_shards'] == 1
+    assert receipt['cached_units']['source_digest_receipt']['cached_shards'] == 0
     assert receipt['cached_units']['planned_units'] == 6
     assert receipt['cached_units']['producer_packages'] == packages
     assert receipt['cached_units']['served_activation_policy'] == manifest['served_activation_policy']
