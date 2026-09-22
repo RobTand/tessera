@@ -14,9 +14,10 @@ entry per attested rung -- the checkpoint's own vocabulary
 already records per rung -- saying which bytes the receipt was cut on.  The
 validator checks it is exactly that: one entry per attested rung, and a
 body/span/plane the route decodes.  The tripwire below checks it is the
-CURRENT one: the stamp must equal what the exporter writes at that rung
-today, so the day a bytes-moving encode change lands, this fails and forces
-a re-cut or a re-stamp instead of letting the attestation silently describe
+CURRENT one: the stamp must equal what the serving exporter writes at that
+rung today (``served_recipe``, for every structure a cell attests there),
+so the day a bytes-moving encode change lands, this fails and forces a
+re-cut or a re-stamp instead of letting the attestation silently describe
 bytes no fresh export writes.
 """
 from __future__ import annotations
@@ -53,26 +54,52 @@ def contract():
     return load_serving_contract()
 
 
-def test_every_attested_rung_stamps_the_wire_it_was_cut_on(contract):
-    """One ``wire.recipes`` entry per attested rung, and it is today's wire.
+def _serving_exporter():
+    """The serving exporter, loaded by path the way ``test_serving_export_gate`` loads it.
 
-    Derived, not restated: the expected entry is ``wire_recipe`` at that rung
-    -- the function the exporter calls -- read off the contract's own
-    (family, grid, rung), so a new attested rung is covered by the loop rather
-    than by a new line here.  If the exporter ever writes different bytes at
-    an attested rung, this is the test that says the attestation no longer
-    describes a fresh export.
+    ``experiments`` is not a package, and ``served_recipe`` -- the wire a
+    served unit actually carries -- lives there, beside the ``main`` that
+    writes it.
+    """
+    import importlib.util
+    from pathlib import Path
+
+    path = Path(__file__).resolve().parents[1] / "experiments" / "export_tessera_serving.py"
+    spec = importlib.util.spec_from_file_location("export_tessera_serving", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_every_attested_rung_stamps_the_wire_it_was_cut_on(contract):
+    """One ``wire.recipes`` entry per attested rung, and it is today's SERVED wire.
+
+    Derived, not restated: the expected entry is ``served_recipe`` at that
+    rung -- the function the serving exporter calls for every unit it writes
+    -- for each structure the contract's own ``lane_eligibility`` cells attest
+    the family at on that rung.  A stamp has to be the served wire for every
+    such structure, so a new attested rung or cell is covered by the loop
+    rather than by a new line here.  If the exporter ever writes different
+    bytes at an attested rung, this is the test that says the attestation no
+    longer describes a fresh export.
+
+    Not ``recipe_at(recipe_table(grid), q)``: that is the research table.
+    Since contract v32 (tessera#506 leg 2) a ``routed_moe`` stack on the NVFP4
+    route is served as span-2 TCQ at every reader rung, while the table keeps
+    its WINDOW default below the cap for research encodes and dense modules
+    (``served_recipe``'s docstring, D2b tessera#560).  Comparing the stamps
+    against the table read a correct v32 attestation as stale at 128..768.
 
     Imports the exporter lazily: it needs torch, and the contract half of the
     suite must stay readable where torch is not installed.
     """
     pytest.importorskip("torch")
-    from tessera.export import recipe_at, recipe_table
+    exporter = _serving_exporter()
 
+    cells = contract["lane_eligibility"]["cells"]
     seen = 0
     for entry in contract["formats"]:
         grid = _grid_for(entry["grid"])
-        table = recipe_table(grid)
         stamped = entry["attested_wire"]
         assert isinstance(stamped, list) and len(stamped) == len(entry["attested_rungs_q256"]), (
             f"{entry['family']}: attested_wire must carry one entry per attested rung, got "
@@ -82,9 +109,17 @@ def test_every_attested_rung_stamps_the_wire_it_was_cut_on(contract):
             assert item["q256"] in entry["attested_rungs_q256"], (
                 f"{entry['family']}: attested_wire stamps q256={item['q256']}, which the family "
                 "does not attest")
-            assert item == {"q256": item["q256"], **recipe_at(table, item["q256"]).to_config()}, (
-                f"{entry['family']} q256={item['q256']}: the stamped wire is not what the "
-                "exporter writes at that rung today")
+            structures = sorted({cell["structure"] for cell in cells
+                                 if cell["family"] == entry["family"]
+                                 and item["q256"] in cell["rungs_q256"]})
+            assert structures, (
+                f"{entry['family']} q256={item['q256']}: no lane_eligibility cell attests this "
+                "rung, so no structure says which wire a served unit carries there")
+            for structure in structures:
+                served = exporter.served_recipe(grid, item["q256"], structure=structure)
+                assert item == {"q256": item["q256"], **served.to_config()}, (
+                    f"{entry['family']} q256={item['q256']} ({structure}): the stamped wire is "
+                    "not what the serving exporter writes at that rung today")
     assert seen, "no attested_wire entry was compared; the loop above never ran"
 
 
