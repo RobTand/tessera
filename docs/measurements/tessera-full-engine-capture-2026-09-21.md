@@ -22,9 +22,11 @@ driver**:
    the 2026-09-18 refusal named, and all 228 checkpoint tensors are byte-identical.
 2. Re-deriving the 2026-09-18 capture on master leaves `unclassified_allocation_count` at
    358. That count does not fall to re-derivation alone.
-3. **Blocker A**, fixed here: the `"unset"` allocator binding PR #565 introduced reached
+3. The D37 consumer on PrismaQuant `origin/main` refuses every v2 report master produces,
+   on an unregistered observation name.
+4. **Blocker A**, fixed here: the `"unset"` allocator binding PR #565 introduced reached
    the capture container verbatim and aborted torch before any engine started.
-4. **Blocker B**, open at the time of writing: `experiments/step4_capture_driver.py`
+5. **Blocker B**, open at the time of writing: `experiments/step4_capture_driver.py`
    imports an API that `37e89f576` retired on 2026-09-16.
 
 ## The artifact re-export
@@ -177,6 +179,32 @@ path, and the dispatch leg becomes the whole proof: every dense FP8 and BF16 dis
 name `native_window_gemm`, the NVFP4 dispatch must name `native_span2_gemm`, and no
 dispatch may name `torch_window` or `torch_materialize_stock`.
 
+## Blocker C: the D37 consumer refuses every v2 report master produces
+
+PrismaQuant's `consume_full_engine_resource_report` at PQ `origin/main` (`2a47a93bdc`),
+run read-only over the master re-derivation (report sha256
+`f30dd55d9b1c7c10fea3026d95675e8acf9c2d0db990e973c480414b49537e76`; verdict beside it as
+`pq-verdict.json`):
+
+```
+RuntimePriceError: report observations: observation 'allocator_config' is not a
+registered observation ([... 'reservation_slack', ...]); a producer that adds an
+observation registers its name and its shape check here first
+```
+
+Tessera PR #565 (`6e30ddbe3`) added `observations.allocator_config`
+(`full_engine_resource_partition.py:1097, 1151`). PrismaQuant registered `reservation_slack`
+from that same PR (`prismaquant/full_engine_resource_report.py:239`) but not
+`allocator_config`, and `_observations` refuses an unregistered name — the rule working,
+not failing.
+
+The refusal is on the **name**, not the value: `allocator_config` is `null` in this report
+and is still refused. So the consumer leg of tessera#399's acceptance cannot pass today for
+any master-produced report, including the one a qualifying capture will produce — and a
+capture under the 2026-09-21 configuration binds `"unset"`, so the field will be populated
+rather than null. The fix is one registration plus its shape check on the PrismaQuant side;
+recorded on RobTand/prismaquant#718 rather than taken up here.
+
 ## Frozen inputs
 
 | input | value |
@@ -223,6 +251,9 @@ can read. The admitted runs received 8 of sparklina's performance cores.
 | `8fd4d88c3f05` / `9c2f3994a7ad` | allocator-binding test, red / green | dl380g10 | 3 failed 3 passed / 6 passed |
 | `51b34146a60b` | capture attempt 2 | sparklina | preflight rc 3 (blocker B) |
 
+The D37 consumer leg ran on the coordinator, read-only, under `CUDA_VISIBLE_DEVICES=""`:
+it opens two JSON documents and allocates nothing on a device.
+
 ## What remains before tessera#399 can close
 
 1. Rewire the step-4 preflight and route qualification onto master's real inventory
@@ -233,5 +264,5 @@ can read. The admitted runs received 8 of sparklina's performance cores.
 3. The 358 unclassified allocations need a **second** capture under a different per-Linear
    assignment, and the `--boundary-classification` join built from the pair. That is not in
    this run's scope and is the most likely reason a first master capture still refuses.
-4. Run PrismaQuant's D37 reader (`prismaquant/full_engine_resource_report.py`, present on
-   PQ `origin/main` and reading `…report.v2`) over the report, read-only.
+4. Register `allocator_config` in PrismaQuant's consumer (blocker C) before the D37 leg
+   can read any master report.
