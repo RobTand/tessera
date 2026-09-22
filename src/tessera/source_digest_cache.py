@@ -36,6 +36,10 @@ Conditions, from the tessera#499 design review:
 - Entries are one file per key, published with ``os.link`` from a private
   temporary file, so concurrent writers never tear an entry and need no lock.
   Two full reads that disagree about one key are refused.
+- An owner holding a verified full-read digest and the fingerprint that read
+  was fenced by may seed an entry with :meth:`SourceDigestCache.adopt`, which
+  re-takes the fingerprint, applies the same quiescence rule, and records the
+  owner as the writer.  It is the only way in besides a read.
 """
 from __future__ import annotations
 
@@ -147,6 +151,65 @@ class SourceDigestCache:
                 "quiescent_seconds": self.quiescent_ns / 1e9})
         self._row({"shard": path.name, "how": "hashed", "recorded": recorded})
         return digest
+
+    def adopt(self, path: Path, digest: str, *, fingerprint: dict, writer: dict) -> dict:
+        """Record a digest the caller established elsewhere, under ``path``'s stat identity.
+
+        For an owner that already holds a verified full-read sha256 of this
+        exact shard and the fingerprint that read was fenced by -- a retained
+        source-hash proof it has validated end to end -- so the shard need not
+        be read again to seed this cache.  The claim an adopted entry makes is
+        the same one a recorded read makes: "this sha256 was taken by a full
+        read while the shard's stat identity was this".  What vouches for the
+        read is the caller, named in ``writer``; this cache only checks what it
+        can check itself:
+
+        - ``digest`` is 64 lowercase hex digits;
+        - ``fingerprint`` is exactly :meth:`fingerprint` of ``path`` now,
+          re-taken with ``open`` plus ``fstat``, so a shard that changed after
+          the caller fenced it is refused.  ``_dev`` is part of that fence:
+          the caller and this cache must see the shard through one mount.
+          It is still recorded, not keyed, as for a read;
+        - the shard is quiescent now, by the rule a fresh read is recorded
+          under: its newest timestamp is at least ``quiescent_seconds`` old;
+        - ``writer`` is a JSON object with a non-empty string ``kind`` and no
+          ``adopted`` key, which this method writes: host, boot id, pid,
+          resolved path, ``st_dev``, the adoption time and the quiescence
+          window.
+
+        An existing entry with the same digest is kept as it is (adoption is
+        idempotent); one with a different digest is refused, exactly as two
+        disagreeing reads are.  Returns the entry as it stands on disk.
+        Adoption serves no digest, so it adds no :meth:`receipt` row; a later
+        :meth:`sha256` that reuses the entry reports ``how: cached`` with this
+        ``writer``.
+        """
+        path = Path(path)
+        if not isinstance(digest, str) or _DIGEST.fullmatch(digest) is None:
+            raise ValueError(f"an adopted digest must be 64 lowercase hex digits, got {digest!r}")
+        if (not isinstance(writer, dict) or not isinstance(writer.get("kind"), str)
+                or not writer["kind"] or "adopted" in writer):
+            raise ValueError("an adopted digest needs a writer object naming its non-empty "
+                             "'kind' and leaving 'adopted' to this cache")
+        try:
+            json.dumps(writer, sort_keys=True)
+        except (TypeError, ValueError) as error:
+            raise ValueError(f"an adopted digest's writer is not JSON: {error}") from None
+        now = self.fingerprint(path)
+        if now != fingerprint:
+            raise ValueError(f"source shard changed since the adopting owner fenced it: {path}")
+        adopted_at = time.time_ns()
+        if max(now["mtime_ns"], now["ctime_ns"]) + self.quiescent_ns > adopted_at:
+            raise ValueError(
+                f"source shard is not quiescent (changed within {self.quiescent_ns / 1e9:g} s), "
+                f"so its digest is not adopted: {path}")
+        key = self._key(now)
+        entry = self._entry_path(key)
+        self._record(entry, key, digest, {**writer, "adopted": {
+            "host": socket.gethostname(), "boot_id": _boot_id(), "pid": os.getpid(),
+            "resolved_path": str(path.resolve()), "st_dev": now["_dev"],
+            "adopted_at_ns": adopted_at, "quiescent_seconds": self.quiescent_ns / 1e9}})
+        return self._read(entry, key)
 
     def _record(self, entry: Path, key: dict, digest: str, writer: dict) -> None:
         body = json.dumps({"schema": SCHEMA, "algorithm": "sha256", "key": key,
