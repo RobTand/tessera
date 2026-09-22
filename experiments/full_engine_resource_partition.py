@@ -201,6 +201,27 @@ def reservation_witness(records):
                               "memory_allocated_bytes": peak["memory_allocated_bytes"]})
 
 
+def startup_reservation_samples(ledger):
+    """Every resident-after-load sample at arm, routed and dense.
+
+    ``worker_startup_records`` is written only where the plan names a routed
+    owner receipt, so a dense artifact carries none of them -- while the worker
+    samples ``memory_reserved`` into its dense startup observation all the
+    same. Reading only the routed list therefore published a null reserved peak
+    for a run that had measured one. Both samples are the same kind of
+    thing -- this rank's allocator extent after ``process_weights_after_loading``
+    and before the workload -- so both are offered to the one witness rule
+    rather than a second rule being written for the dense case.
+    """
+    records = [record for record in (ledger.get("worker_startup_records") or [])]
+    check = _dense_check(ledger)
+    if isinstance(check, dict) and check.get("memory_reserved_bytes") is not None:
+        records.append({"rank": check.get("rank"),
+                        "memory_allocated_bytes": check["memory_allocated_bytes"],
+                        "memory_reserved_bytes": check["memory_reserved_bytes"]})
+    return records
+
+
 def cache_capacity_closed(ledger):
     """Whether an admission-eligible KV observation closes it.
 
@@ -1224,7 +1245,7 @@ def assemble_full_engine_resource_report(ledger, *, reference, workload,
         raise ValueError(
             "allocator_config must be the bound PYTORCH_CUDA_ALLOC_CONF string, "
             "including \"unset\", or absent")
-    witnessed = reservation_witness(ledger.get("worker_startup_records"))
+    witnessed = reservation_witness(startup_reservation_samples(ledger))
     if witnessed is not None and allocator_config is None:
         raise ValueError(
             "report claims a reservation witness without the bound allocator "

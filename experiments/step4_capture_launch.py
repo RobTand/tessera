@@ -1,24 +1,30 @@
 #!/usr/bin/env python3
-"""Run the step-4 full-engine capture of a served Tessera artifact, fail-closed on JIT.
+"""Run the step-4 full-engine capture of a served Tessera artifact, fail-closed on the native lanes.
 
 ``g2_launch.py`` (the native-cell launcher staged beside each frontier run) is
 the only thing that wired ``full_engine_plugin_install.py``, and it is shaped
 for a bench driver.  This is the same wiring for the capture CLI, plus the one
 thing that wiring did not have: a proof, taken in the same container before the
-engine exists, that the NVFP4 decode extension actually builds.
+engine exists, that the native code the artifact's families dispatch through
+is importable and buildable there, and a per-family qualification of the
+serve's own route trace afterwards.
 
-WHY THAT PROOF IS THE POINT.  ``nvfp4_route`` prepares its decoder with
-``allow_torch_fallback=substitutes_when_unavailable(self._mode)`` and
-``ext.NATIVE_EXTENSIONS`` publishes, for ``tessera_nvfp4_``,
-``{"resident": {"status": "substituted", "decoder": "torch_materialize_stock"}}``.
-A container that cannot compile therefore does not fail: it serves, the request
-succeeds and the ledger closes.  The resident serve is numerically untouched by
-the substitution, so no quality check would notice -- but a resource capture
-measures allocation, and the two decoders do not allocate alike.  The capture
-would read as qualified while describing the wrong decoder.  So the launcher
-refuses at three points: the preflight must build the library, the worker's own
-mapped-library census must show those exact bytes, and the serve's own route
-trace must name ``native_span2`` on every NVFP4 dispatch.
+WHY THAT PROOF IS THE POINT.  A resource capture measures allocation, and two
+decoders of the same bytes do not allocate alike, so a ledger is about a
+decoder and the record has to say which one.  The pre-``37e89f576`` tree made
+that a silent hazard: ``ext.NATIVE_EXTENSIONS`` published a ``torch_materialize_stock``
+substitute for a container that could not compile the ``tessera_nvfp4``
+extension, so the serve succeeded and the capture read as qualified while
+describing the wrong decoder.  On master every dense route makes exactly one
+native launch and raises rather than falling back (``fp8_route.DENSE_LAUNCH``,
+``bf16_route.DENSE_LAUNCH``, ``kernel_a4.require_native_fp4_mma``), so the
+hazard is now a loud failure -- and the launcher still refuses at two points:
+the in-container preflight must import the native lanes (and pass the FP4
+MMA gate when the artifact carries an NVFP4 family), and the serve's own
+route trace must name each family's one native ``(symbol, decoder)`` on every
+dispatch, over exactly the manifest's modules.  No dense launch loads a
+``cpp_extension`` on this tree, so there is no library to bind; the worker's
+mapped-library census is recorded, not required.
 
 WHAT IT DOES NOT DO.  The construction census is run (``--with-census``) because
 the stock image refuses the ``tessera`` quantization method and the plugin image
@@ -36,10 +42,10 @@ all-native-unit event partition, ``--timing-samples`` interleaved arm pairs).
 layer; each pass gets its own fresh ``--out`` and the same configuration
 document, so the three ledgers share one ``configuration_sha256`` and the
 report joins them by it.  The kv pass runs a stock worker, so it carries no
-worker census: its route trace is recorded and the qualification record says
-``qualified: false`` with that reason rather than passing on half a proof.
+worker census: its qualification is the route trace alone, which on this tree
+is the whole proof, and the record says the library census is absent.
 
-``--preflight-only`` stops after the JIT proof and an observer load smoke
+``--preflight-only`` stops after the native proof and an observer load smoke
 (both collector libraries ``dlopen``ed and their entry symbols resolved, the
 observer modules imported from ``/tessera``, the stock runner's stream hooks
 located) and writes ``observer-preflight.json``.  It exists so a new image or
@@ -59,10 +65,44 @@ import sys
 import time
 import uuid
 
+# The launcher lives in ``experiments/``; the capture CLI is imported as a
+# package member so the allocator-policy rule keeps ONE home (see
+# :func:`bound_container_environment`).  The import is torch-free by
+# construction -- ``prepare`` refuses a process that imported Torch or vLLM
+# before bootstrap -- so it is safe on a host that has neither.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from experiments.capture_full_engine_resources import (  # noqa: E402
+    ALLOCATOR_POLICY_KEY, UNSET_ALLOCATOR_POLICY, require_allocator_policy)
+
 #: OOM discipline for a shared GB10: GPU and host share one pool, so a serve
 #: started under memory pressure takes the box down with it.
 MIN_MEMAVAILABLE_GIB = 16.0
 MAX_PSI_FULL_AVG10 = 20.0
+
+
+def bound_container_environment(config) -> dict:
+    """The configuration's environment block as the CONTAINER must receive it.
+
+    ``require_allocator_policy`` is the one home of the rule that the
+    configuration must bind ``PYTORCH_CUDA_ALLOC_CONF`` and that ``"unset"``
+    names the variable's ABSENCE rather than a value (tessera#558, PR #565).
+    ``capture_full_engine_resources.prepare`` applies it to the worker
+    environment it builds.  This applies it one level further out, to the
+    container this launcher starts, and it has to: the sentinel is not a token
+    c10 can parse, and torch parses the variable at ``libc10_cuda.so`` load
+    time, before any of our code runs.
+
+    Measured on sparklina, 2026-09-21, the first capture attempt of the
+    tessera#399 master re-run: ``terminate called after throwing an instance of
+    'c10::Error' ... Index out of bounds in ConfigTokenizer``, preflight
+    returncode 133, with no engine started and nothing in the ledger to say
+    why.  Passing the block through verbatim turned an explicit "no policy"
+    binding into a process abort.
+    """
+    environment = dict(config["environment"])
+    if require_allocator_policy(config) == UNSET_ALLOCATOR_POLICY:
+        environment.pop(ALLOCATOR_POLICY_KEY, None)
+    return environment
 
 
 def digest(path) -> str:
@@ -144,17 +184,53 @@ def image_declaration(tessera_tree: Path, base: str, configuration_sha256: str, 
             "environment": runtime_image.container_env(declaration)}
 
 
-def fp4_module_count(artifact: Path) -> int:
-    """How many manifest modules the artifact assigns to the NVFP4 family."""
+def family_modules(artifact: Path) -> dict:
+    """``{family: {"count": n, "names": [module prefixes]}}`` from the artifact's manifest.
+
+    Every family the manifest assigns a module to, so the driver qualifies
+    each one against the route trace; the names are the manifest's module keys
+    (vLLM prefixes such as ``model.layers.0.mlp.gate_up_proj``), which the
+    trace's ``module_names`` must match where it names them.
+    """
     manifest = json.loads((artifact / "tessera_serving_manifest.json").read_text())
-    return sum(1 for entry in manifest["modules"].values()
-               if entry.get("family") == "TESSERA_NVFP4")
+    families: dict = {}
+    for name, entry in manifest["modules"].items():
+        family = entry.get("family")
+        if not isinstance(family, str) or not family:
+            raise ValueError(f"manifest module {name!r} names no family")
+        bucket = families.setdefault(family, {"count": 0, "names": []})
+        bucket["count"] += 1
+        bucket["names"].append(name)
+    for bucket in families.values():
+        bucket["names"].sort()
+    if not families:
+        raise ValueError(f"{artifact}: the manifest assigns no module to any family")
+    return families
 
 
 def docker_command(*, name: str, image_id: str, mounts, environment, entry, out_host: Path,
-                   jit_host: Path, ext_host: Path, ext_readonly: bool) -> list:
+                   jit_host: Path, ext_host: Path, ext_readonly: bool, affinity=None) -> list:
     command = ["docker", "run", "--rm", "--gpus", "all", "--ipc", "host", "--network", "none",
                "--name", name, "--workdir", "/tessera"]
+    if affinity is not None:
+        # The CPU mask this launcher was granted, carried into the container.
+        # PrismaBuild's execution policy requires its reservation to be
+        # preserved "including inside containers", and a container started
+        # without a mask is placed on every host CPU whatever the pool
+        # reserved.  Here that is more than politeness: the whole output is a
+        # resource and timing observation, and one taken on an oversubscribed
+        # box is not the observation the configuration describes.
+        # ``--cpuset-cpus`` and not ``--cpus`` because
+        # ``experiments/container_limits_probe.sh`` measured that a CFS quota
+        # changes no CPU count a library can read, so a quota-limited container
+        # still sizes its pools for the whole box (owned_container.sh, lines
+        # two and three of that probe).  ``run_glm_native_construction.py`` is
+        # the existing docker-under-PrismaBuild launcher spelled the same way.
+        cpus = sorted(int(cpu) for cpu in affinity)
+        if not cpus:
+            raise ValueError("empty CPU affinity: a mask that read as nothing would pin the "
+                             "capture container to no CPU at all, which is not a reservation")
+        command += ["--cpuset-cpus", ",".join(str(cpu) for cpu in cpus)]
     for source, target, mode in mounts:
         command += ["--volume", f"{source}:{target}:{mode}"]
     # The scratch roots stay writable even in the negative control: making the
@@ -231,9 +307,11 @@ def main() -> int:
     headroom = memory_pressure()
     require_headroom(headroom)
     before = gpu_sample()
+    # Read once, here, and carried into every container this launcher starts.
+    affinity = sorted(os.sched_getaffinity(0))
     (out / "host-preconditions.json").write_text(json.dumps(
         {"schema": "tessera.step4_launch_preconditions.v1", "hostname": os.uname().nodename,
-         "memory": headroom, "gpu": before,
+         "memory": headroom, "gpu": before, "affinity": affinity,
          "gate": {"min_memavailable_gib": MIN_MEMAVAILABLE_GIB, "max_psi_full_avg10": MAX_PSI_FULL_AVG10}},
         indent=2, sort_keys=True) + "\n")
 
@@ -252,7 +330,7 @@ def main() -> int:
         "TESSERA_EXT_DIR": "/jit-ext",
         # The serve's own dispatch histogram: the dispatch leg of the proof.
         "TESSERA_ROUTE_TRACE": "/out/route-trace.json",
-        **config["environment"], **resolved["environment"]}
+        **bound_container_environment(config), **resolved["environment"]}
     for name in ("home", "xdg", "tmp", "triton", "torch-extensions"):
         (args.jit_dir / name).mkdir(parents=True, exist_ok=True)
     # The negative control gets its OWN empty build root, mounted read-only: it
@@ -286,7 +364,7 @@ def main() -> int:
             phases.append(run_phase("census", docker_command(
                 name="step4-census-" + uuid.uuid4().hex[:12], image_id=image_id, mounts=mounts,
                 environment=census_env, out_host=census_out, jit_host=args.jit_dir,
-                ext_host=ext_host, ext_readonly=args.jit_readonly,
+                ext_host=ext_host, ext_readonly=args.jit_readonly, affinity=affinity,
                 entry=["/tessera/experiments/full_engine_plugin_install.py",
                        "--evidence-dir", "/out", "--base-reference", base,
                        "--launcher-image-id", image_id,
@@ -317,7 +395,7 @@ def main() -> int:
                              "--calibration-sha256", digest(args.calibration)]
         driver_argv = ["--out", "/out", "--capture-output", "/out/capture",
                        "--route-trace", "/out/route-trace.json",
-                       "--expected-fp4-modules", str(fp4_module_count(args.artifact)),
+                       "--expected-modules", json.dumps(family_modules(args.artifact), sort_keys=True),
                        "--observation-mode", mode]
         if args.preflight_only:
             driver_argv.append("--preflight-only")
@@ -334,7 +412,7 @@ def main() -> int:
         phases.append(run_phase("preflight" if args.preflight_only else "capture", docker_command(
             name="step4-capture-" + uuid.uuid4().hex[:12], image_id=image_id, mounts=mounts,
             environment=environment, out_host=out, jit_host=args.jit_dir,
-            ext_host=ext_host, ext_readonly=args.jit_readonly, entry=entry),
+            ext_host=ext_host, ext_readonly=args.jit_readonly, entry=entry, affinity=affinity),
             out / "container.log", args.timeout_s))
     finally:
         vitals.terminate()
@@ -350,7 +428,8 @@ def main() -> int:
         "resources": "raw resource observation of a served artifact; no timing, fixed-resource "
                      "or release admission, and the census is recorded rather than consumed",
         "kv": "read-only stock-engine KV observation of a served artifact; no recorder, no "
-              "snapshot, no timing claim, and no route proof (a stock worker carries no census)",
+              "snapshot, no timing claim; the route proof is the trace alone (a stock worker "
+              "carries no library census, and no dense launch needs one)",
         "timings": "profiled all-native-unit event partition of a served artifact; observer "
                    "qualification only, no admitted timing or fixed-resource price"}
     summary = {"schema": "tessera.step4_capture_launch.v1", "out": str(out),
@@ -358,6 +437,8 @@ def main() -> int:
                "configuration_sha256": configuration_sha256, "artifact": str(args.artifact),
                "source_commit": args.source_commit, "jit_dir": str(args.jit_dir),
                "jit_readonly": args.jit_readonly, "ext_dir": str(ext_host), "phases": phases,
+               "affinity": affinity,
+               "allocator_segment_policy": require_allocator_policy(config),
                "observation_mode": args.observation_mode, "preflight_only": args.preflight_only,
                "timing_samples": args.timing_samples if args.observation_mode == "timings" else None,
                "gpu_before": before, "gpu_after": after,

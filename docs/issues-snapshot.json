@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-19T15:28:47Z",
+ "generated": "2026-09-22T18:32:13Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -2128,7 +2128,7 @@
     "title": "The NVFP4 route spends more time scaling its output than computing it: a full M x N read-modify-write to apply one scalar"
    },
    "578": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "BF16 gate_proj/up_proj dispatch an sm80 CUTLASS schedule on sm_121, and nothing refuses it"
    },
    "579": {
@@ -2144,7 +2144,7 @@
     "title": "[P2] GLM postcampaign waiter mistakes an older publication failure for the new live preparation run"
    },
    "581": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Bridge the full legal Tessera rate domain to measured scalar-price coverage without extrapolation"
    },
    "582": {
@@ -2616,7 +2616,7 @@
     "title": "A reader-only producer change costs the whole qualification journal; consider a second closed source transition (P2, decision)"
    },
    "688": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Joint prepare cannot be published as unit-scoped quanta, so a 36,423-unit qualification is one indivisible PB action (P2)"
    },
    "689": {
@@ -2696,7 +2696,7 @@
     "title": "Refuse a compressed-tensors card whose served routes disagree with its price"
    },
    "705": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Retain two instruments before their stale branches are deleted: the TR3 repeated-window logits diagnostic (#468) and the reader byte-unpack A/B harness"
    },
    "706": {
@@ -2836,7 +2836,7 @@
     "title": "Shard reads go through the residency resolver, ranges included"
    },
    "737": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Source prefetch is pinned to 1 worker / 2 cache slots in the sealed plan while 97.4 GB of budget and 7 slots are free: 31% of the run's main thread waits on settle_prefetched_layers"
    },
    "738": {
@@ -2908,7 +2908,7 @@
     "title": "pb-cpu, the de-facto documented pbtest interpreter, no longer satisfies the repo's Tessera dev pin"
    },
    "753": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Fleet x86 test env pq-cpu312 carries tessera-quant as a local-directory install, so the pbtest pin gate refuses every shard"
    },
    "754": {
@@ -2940,7 +2940,7 @@
     "title": "CB: productionize Monotone Min-Chain encoding (flag-gated)"
    },
    "760": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Bump the tessera serving-runtime pin to the post-#560 lineage contract"
    },
    "761": {
@@ -2960,11 +2960,11 @@
     "title": "Pin/manifest trio: v31 re-pin (#699), image-index loader (#723), fleet interpreter docs (#752)"
    },
    "765": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Distribute the head walk as PrismaBuild verification quanta: the roster is data, not a container's job"
    },
    "766": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Bump the Tessera serving-runtime pin to the post-#560 lineage (contract v32) \u2014 GATED, do not merge before the tessera PRs land"
    },
    "767": {
@@ -3004,7 +3004,7 @@
     "title": "Land a local pre-submit check for the tessera dev-install provenance pbtest gates on"
    },
    "775": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Frozen native panels record no served-quantizer backend, so a reference_qdq cannot be re-derived"
    },
    "776": {
@@ -3056,7 +3056,7 @@
     "title": "Docs: current-pin interpreter roster (#773) + panel served-quantizer decision record (#775)"
    },
    "787": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Producer (#785) vs merged joiner (#783): four wire disagreements block a real-campaign join"
    },
    "788": {
@@ -3108,7 +3108,7 @@
     "title": "Dispatcher rows demand the GPU envelope (#797)"
    },
    "799": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Stage A payload passed the wrong --output-root and the receipt had no default"
    },
    "8": {
@@ -3120,44 +3120,440 @@
     "title": "Fix hybrid linear-attention masking in layer streaming for Qwen3.5/3.6 on transformers >= 5.15"
    },
    "800": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Stage A writes into the plan's sealed output_root (#799)"
+   },
+   "801": {
+    "state": "CLOSED",
+    "title": "Allocator v5 fixtures lost TESSERA_E4M3_K1 coverage under contract v23/lane v10: 9 tests red on main"
+   },
+   "802": {
+    "state": "CLOSED",
+    "title": "Allocator v5 fixtures: re-address packaged scopes across structures (#801)"
+   },
+   "803": {
+    "state": "CLOSED",
+    "title": "Mount-dependent campaign tests fail on GitHub CI instead of skipping"
+   },
+   "804": {
+    "state": "CLOSED",
+    "title": "Skip mount-dependent campaign tests where the sealed campaign is absent (#803)"
+   },
+   "805": {
+    "state": "CLOSED",
+    "title": "main CI red since 03:03: tests drifted ahead of the pinned Tessera contract (49 failures)"
+   },
+   "806": {
+    "state": "CLOSED",
+    "title": "Stage A never passed the plan's historical_encoder_reuse to the anchor loader"
+   },
+   "807": {
+    "state": "CLOSED",
+    "title": "Stage A threads the plan's historical_encoder_reuse (#806)"
+   },
+   "808": {
+    "state": "CLOSED",
+    "title": "The window partition needed a second sealed source: run-plan and re-plan diverged"
+   },
+   "809": {
+    "state": "CLOSED",
+    "title": "The window partition is sealed at derivation: plan or explicit input (#808)"
    },
    "81": {
     "state": "CLOSED",
     "title": "Ship DSv4Flash activation-safe AURA Gridbook release path"
    },
+   "810": {
+    "state": "CLOSED",
+    "title": "Integrate Astra's simplify-redundant-machinery review (6 commits, -647/+58)"
+   },
+   "811": {
+    "state": "CLOSED",
+    "title": "dsv4_onlaw_book_select imports the retired dsv4_onlaw_book_burn; ARCHITECTURE's routed-book section is stale since the Gridbook retirement"
+   },
+   "812": {
+    "state": "CLOSED",
+    "title": "Simplify redundant machinery: Astra's review (#810)"
+   },
+   "813": {
+    "state": "CLOSED",
+    "title": "Residue: format_registry.py CB header comment still describes the retired Gridbook lane as a live out-of-tree plugin lane and cites docs/lanes/nvfp4-cb, which no longer exists in-tree"
+   },
+   "814": {
+    "state": "CLOSED",
+    "title": "Name the Gridbook lane's retirement in the CB header comment"
+   },
+   "815": {
+    "state": "CLOSED",
+    "title": "Stage A's model build ignored the plan's source_derivative and source_prefetch"
+   },
+   "816": {
+    "state": "CLOSED",
+    "title": "Stage A threads the plan derivative and prefetch budget (#815)"
+   },
+   "817": {
+    "state": "CLOSED",
+    "title": "Retire the onlaw book selector with its lane (#811)"
+   },
+   "818": {
+    "state": "CLOSED",
+    "title": "Join the wire the producer seals and the runtime writes (#787)"
+   },
+   "819": {
+    "state": "CLOSED",
+    "title": "Stage A needs an explicitly-recorded source_prefetch override beside the frozen plan (IO-side #809 pattern)"
+   },
    "82": {
     "state": "CLOSED",
     "title": "release: PrismaQuant 0.12.0 and DSv4 source-FP8 W8A16"
+   },
+   "820": {
+    "state": "CLOSED",
+    "title": "Stage A: explicitly-recorded source_prefetch override beside the frozen plan (#819)"
+   },
+   "821": {
+    "state": "CLOSED",
+    "title": "Land #818's harness-fix commit (merged pre-push head missed it)"
+   },
+   "822": {
+    "state": "CLOSED",
+    "title": "joint_adjoint_capture --resume: prefetch override stamps but never spawns workers; single-threaded 4K-granular NFS crawl through unit files"
+   },
+   "823": {
+    "state": "CLOSED",
+    "title": "Head-walk synthesis on cuda: the caching allocator's retained pool is charged to the GPU budget and reaps long walks"
+   },
+   "824": {
+    "state": "CLOSED",
+    "title": "Head walk: return the retained cuda decode pool at unit boundaries"
+   },
+   "825": {
+    "state": "CLOSED",
+    "title": "Declare campaign container images to PrismaBuild before claim admission"
+   },
+   "826": {
+    "state": "CLOSED",
+    "title": "Dev-mode progress commit re-hashes the whole source tree on every durable unit"
+   },
+   "827": {
+    "state": "CLOSED",
+    "title": "Memoize the dev-mode progress stamp's source digest"
+   },
+   "828": {
+    "state": "CLOSED",
+    "title": "Dev-mode progress stamps are opt-in: no sealing ceremony on campaign progress lines"
+   },
+   "829": {
+    "state": "CLOSED",
+    "title": "Declare campaign images to PrismaBuild before admission"
    },
    "83": {
     "state": "CLOSED",
     "title": "fix: the public repo defaulted DATASET to a path in my home directory"
    },
+   "830": {
+    "state": "CLOSED",
+    "title": "Dev-mode progress stamps must be opt-in: campaign runs pay no sealing ceremony"
+   },
+   "831": {
+    "state": "CLOSED",
+    "title": "Joint-quanta dispatcher tags both Spark host names: PB requires every tag, so no box admits a quantum row"
+   },
+   "832": {
+    "state": "CLOSED",
+    "title": "Joint-quanta rows carry the shared GB10 class tag; the plan override is threaded (#831)"
+   },
+   "833": {
+    "state": "CLOSED",
+    "title": "Dev-mode anchor intake still recomputes the campaign checkpoint seal (302.7 s profile cost)"
+   },
+   "834": {
+    "state": "CLOSED",
+    "title": "Dev mode skips the campaign checkpoint seal recompute"
+   },
+   "835": {
+    "state": "CLOSED",
+    "title": "Stage-A dispatcher never binds the data manifest or declares progress (inert tier path)"
+   },
+   "836": {
+    "state": "CLOSED",
+    "title": "Stage-A/quanta dispatcher binds manifest digests and declares phases"
+   },
+   "837": {
+    "state": "CLOSED",
+    "title": "Stage A read manifest omits forward lifetimes and orders reverse ascending: no forward staging, premature eviction on first reverse report"
+   },
+   "838": {
+    "state": "CLOSED",
+    "title": "Quantum launch contract broken: incomplete argv, wire/canonical conflation, stale record roots"
+   },
+   "839": {
+    "state": "CLOSED",
+    "title": "Real-plan producer tests pin superseded plan eff2f7fb; live plan is 0b2cc006"
+   },
    "84": {
     "state": "CLOSED",
     "title": "fix: scope CB warm-state LDLQ identity per format"
+   },
+   "840": {
+    "state": "CLOSED",
+    "title": "Stage A read manifest carries forward lifetimes in true order (#837)"
+   },
+   "841": {
+    "state": "CLOSED",
+    "title": "Real-plan layer_quanta tests pin stale hostcap32 plan against live 0b2cc006 files"
+   },
+   "842": {
+    "state": "CLOSED",
+    "title": "Quantum launch contract: complete argv, wire/canonical split, regeneration path"
+   },
+   "843": {
+    "state": "CLOSED",
+    "title": "Cross-host source identity rehashes 592GiB: stat fingerprint keys on host-local st_dev"
+   },
+   "844": {
+    "state": "CLOSED",
+    "title": "Dev-portable source-identity reuse across hosts (#843)"
+   },
+   "845": {
+    "state": "CLOSED",
+    "title": "Strict real-reader tier enforcement: RAM-first, declared-SSD-only, no pool fallback"
+   },
+   "846": {
+    "state": "CLOSED",
+    "title": "Strict real-reader tier enforcement: RAM-first, declared-SSD-only, no pool fallback"
+   },
+   "847": {
+    "state": "CLOSED",
+    "title": "Full-stack real chain: producer -> PB movers -> readers -> join"
+   },
+   "848": {
+    "state": "CLOSED",
+    "title": "Derive downstream quantum boundary/checkpoint bulk readset binding (post-capture immutable manifest)"
+   },
+   "849": {
+    "state": "CLOSED",
+    "title": "Exercise quantum slices through PB staging, PQ readers and join"
    },
    "85": {
     "state": "CLOSED",
     "title": "Archived-branch follow-ups: AURA, DSpark selection, and score persistence"
    },
+   "850": {
+    "state": "CLOSED",
+    "title": "Integrate PB reader lease (lifetime pinning) through strict readers"
+   },
+   "851": {
+    "state": "CLOSED",
+    "title": "Slice v1 phase tables open with zero-byte head; PB stages nothing for quantum rows"
+   },
+   "852": {
+    "state": "CLOSED",
+    "title": "Drop zero-byte head from slice phase tables so PB stages quantum rows"
+   },
+   "853": {
+    "state": "CLOSED",
+    "title": "Derive quantum boundary/checkpoint bulk readset binding (post-capture immutable manifest)"
+   },
+   "854": {
+    "state": "CLOSED",
+    "title": "validate_cached_streamed_model_identity hardcodes text-only staging; rejects umbrella caches for multimodal-skeleton families"
+   },
+   "855": {
+    "state": "CLOSED",
+    "title": "Validate cached source identity with the streaming model configuration"
+   },
+   "856": {
+    "state": "CLOSED",
+    "title": "Complete the PQ container's PB reader-context transport"
+   },
+   "857": {
+    "state": "CLOSED",
+    "title": "Carry PB reader context and its exact helper generation into containers"
+   },
+   "858": {
+    "state": "CLOSED",
+    "title": "Checkpoint writes bypass the boundary artifact budget"
+   },
+   "859": {
+    "state": "CLOSED",
+    "title": "Connected fleet acceptance harness: formal staged-read paths with immutable pins"
+   },
    "86": {
     "state": "CLOSED",
     "title": "FP8-source wrapped-MoE checkpoints build end to end (imatrix scale contract + live-namespace bridging in the codebook exporter)"
+   },
+   "860": {
+    "state": "CLOSED",
+    "title": "Count checkpoint writes in the boundary artifact budget"
+   },
+   "861": {
+    "state": "CLOSED",
+    "title": "Bind post-capture quantum boundary and checkpoint readsets immutably"
+   },
+   "862": {
+    "state": "CLOSED",
+    "title": "Executable combined quantum read plan (source + boundary timeline, one progress contract)"
+   },
+   "863": {
+    "state": "CLOSED",
+    "title": "Derive quantum read phases and refuse unbound executable dispatch"
+   },
+   "864": {
+    "state": "CLOSED",
+    "title": "Add connected fleet component checks with source-bound receipt verification"
+   },
+   "865": {
+    "state": "CLOSED",
+    "title": "Calibration reader ignores active staged-tier policy (pool payload open)"
+   },
+   "866": {
+    "state": "CLOSED",
+    "title": "Enforce staged tiers in the shared calibration reader"
+   },
+   "867": {
+    "state": "CLOSED",
+    "title": "Bind real-plan fixtures to the accepted takeover inputs"
+   },
+   "868": {
+    "state": "CLOSED",
+    "title": "Live reader qualification artifacts (both Sparks, native+container)"
+   },
+   "869": {
+    "state": "CLOSED",
+    "title": "Exercise staged reads and separate functional success from I/O qualification"
    },
    "87": {
     "state": "CLOSED",
     "title": "shipgate: KL/PPL + greedy-smoke certify boundary-broken artifacts \u2014 three DSV4-Flash quants within ~3% PPL span a 6\u00d7 behavioral gap; proposal: add a sampled behavioral component"
    },
+   "870": {
+    "state": "OPEN",
+    "title": "Connect PQ's produced-render writer/reader to PrismaBuild's prepaid produced-output lifecycle"
+   },
+   "871": {
+    "state": "OPEN",
+    "title": "Produced-render writer/reader connection (#870)"
+   },
+   "872": {
+    "state": "CLOSED",
+    "title": "Streaming context materializes the visual tower because the family has no text-only skeleton route"
+   },
+   "873": {
+    "state": "CLOSED",
+    "title": "Separate the multimodal skeleton from visual materialization"
+   },
+   "874": {
+    "state": "CLOSED",
+    "title": "Stage A: a declared staged range PrismaBuild had not moved yet was refused as never-arriving"
+   },
+   "875": {
+    "state": "CLOSED",
+    "title": "Wait for a declared staged range PrismaBuild has not moved yet (#874)"
+   },
+   "876": {
+    "state": "CLOSED",
+    "title": "Stage A boundary-0 capture commits no progress: reporter starts phaseless and the storage callback names undeclared layer-0"
+   },
+   "877": {
+    "state": "CLOSED",
+    "title": "Stage A boundary-0 reports under its declared head phase (https://github.com/RobTand/prismaquant/issues/876)"
+   },
+   "878": {
+    "state": "CLOSED",
+    "title": "SSD lease covers named every composed-map lead, so one retired head refused all later entries (Stage A f9951e60)"
+   },
+   "879": {
+    "state": "CLOSED",
+    "title": "Resolve SSD lease covers minimally per key, not from every lead"
+   },
    "88": {
     "state": "CLOSED",
     "title": "Continuous trellis rate surface (fail-closed seam), GLM-5.3 stock-cost campaign, telemetry flight recorder, forked-stream expert eval"
    },
+   "880": {
+    "state": "CLOSED",
+    "title": "Stage A boundary readback requires PB produced-output staging (strict tier policy)"
+   },
+   "881": {
+    "state": "CLOSED",
+    "title": "Stage A produced-boundary chain: plan + integration gate (https://github.com/RobTand/prismaquant/issues/880)"
+   },
+   "882": {
+    "state": "CLOSED",
+    "title": "Stage A durable artifact budget declaration/preflight (416 GiB plan cannot fit ~584 GiB peak)"
+   },
+   "883": {
+    "state": "CLOSED",
+    "title": "Preflight Stage A artifact demand and allow explicit run budgets"
+   },
+   "884": {
+    "state": "CLOSED",
+    "title": "Post-StageA quantum binder cannot publish new immutable control metadata beside the prior generation at the original data root"
+   },
+   "885": {
+    "state": "CLOSED",
+    "title": "Quantum control-metadata generation seam (PQ #884)"
+   },
+   "886": {
+    "state": "CLOSED",
+    "title": "GitHub CI has no PrismaBuild SDK: 65 failures and 29 errors in nine files, on main and every pull request"
+   },
+   "887": {
+    "state": "CLOSED",
+    "title": "Stage A owner loop stages and retires synchronously: the GPU waits on the queue at every window"
+   },
+   "888": {
+    "state": "CLOSED",
+    "title": "Eleven tests fail under a one-CPU affinity: they ask for more PWC window workers than the mask holds"
+   },
+   "889": {
+    "state": "CLOSED",
+    "title": "test_selected_source_authentication: three tests fail after test_stage_a_artifact_budget in one process at one CPU"
+   },
    "89": {
     "state": "CLOSED",
     "title": "Fail-closed review deltas on the wrapped-MoE FP8-source export (follow-up to #86)"
+   },
+   "890": {
+    "state": "CLOSED",
+    "title": "Two produced-boundary chain tests depend on fleet-driver timing and fail intermittently at four threads"
+   },
+   "891": {
+    "state": "CLOSED",
+    "title": "Stage A owner loop: read-ahead inside the sealed stage window (#887)"
+   },
+   "892": {
+    "state": "CLOSED",
+    "title": "Skip the fleet-only SDK tests where no PrismaBuild SDK is installed (#886)"
+   },
+   "893": {
+    "state": "CLOSED",
+    "title": "Size the operator-window fixture to the CPUs the shard was given (#888)"
+   },
+   "894": {
+    "state": "CLOSED",
+    "title": "Release the process-global state the Stage A budget tests install (#889)"
+   },
+   "895": {
+    "state": "CLOSED",
+    "title": "Stage A owner: PrismaBuild calls run on the compute thread, and half the groups miss read-ahead under load: GPU busy 18 percent in the 512 forward pass"
+   },
+   "896": {
+    "state": "CLOSED",
+    "title": "A produced-group deferral that clears is not a release failure (#890)"
+   },
+   "897": {
+    "state": "CLOSED",
+    "title": "test_acquire_returns_window_and_key_tuple fails on the fleet on untouched main: lease-context-unavailable: no-action-context"
+   },
+   "898": {
+    "state": "CLOSED",
+    "title": "Stage A readset omits the tails of layers 9/19/29/39: a strict-tier run cannot pass layer 9"
+   },
+   "899": {
+    "state": "CLOSED",
+    "title": "Whole-capture torch.profiler session in Stage A OOMs the box at stop and hides the real error"
    },
    "9": {
     "state": "CLOSED",
@@ -3167,33 +3563,337 @@
     "state": "CLOSED",
     "title": "fix(tests): derive the Fisher quadratic-form tolerance from fp32 precision"
    },
+   "900": {
+    "state": "CLOSED",
+    "title": "Stage B slice manifests for layers 9/19/29/39 inherit the parent readset's holes"
+   },
+   "901": {
+    "state": "CLOSED",
+    "title": "Stage A: complete and gate the read manifest (#898); no whole-capture profiler session (#899)"
+   },
+   "902": {
+    "state": "CLOSED",
+    "title": "Staged-range resolver stops at the lowest-offset covering entry: a stale row hides a healthy one and ends the run"
+   },
+   "903": {
+    "state": "CLOSED",
+    "title": "A stale covering row refuses at once where the layer's own declared range has not landed yet: should wait"
+   },
+   "904": {
+    "state": "CLOSED",
+    "title": "Stage A background stager with retirement/close ownership (#895, #918, #919, #920, #922)"
+   },
+   "905": {
+    "state": "CLOSED",
+    "title": "Stage A dies with 'unpublished' when the reader catches a stage mover mid-copy"
+   },
+   "906": {
+    "state": "CLOSED",
+    "title": "The strict staged-tier policy leaks between tests; the #845 reset is per-module"
+   },
+   "907": {
+    "state": "CLOSED",
+    "title": "A failed Stage A capture leaves prefetch workers waiting out their 300 s bound"
+   },
+   "908": {
+    "state": "CLOSED",
+    "title": "A lease sees what a stage mover has published now, not at first look (#905)"
+   },
+   "909": {
+    "state": "CLOSED",
+    "title": "Executable source phases inherit rendered-cache entries from the parent layer manifest"
+   },
    "91": {
     "state": "CLOSED",
     "title": "chore(dsv4-w8a16): re-freeze the export-source closure after per-file review"
+   },
+   "910": {
+    "state": "CLOSED",
+    "title": "Complete Stage B executable source readsets while preserving slice tiling"
+   },
+   "911": {
+    "state": "CLOSED",
+    "title": "A speculative availability timeout poisons the demand read: the failed future is served stale"
+   },
+   "912": {
+    "state": "CLOSED",
+    "title": "A stale covering row waits when its span is declared (#903)"
+   },
+   "913": {
+    "state": "CLOSED",
+    "title": "Prefetch shutdown and speculative availability retry (907, 911)"
+   },
+   "914": {
+    "state": "CLOSED",
+    "title": "Produced-render lifecycle candidate: reader integration pending (#870)"
+   },
+   "915": {
+    "state": "CLOSED",
+    "title": "test_tessera_stack_group_cli.py: single env-gated test exits 5, failing its PB shard"
+   },
+   "916": {
+    "state": "CLOSED",
+    "title": "P1: retiring broad staged cover hides a live overlapping layer entry"
+   },
+   "917": {
+    "state": "CLOSED",
+    "title": "Stage B executable read plans omit prepared-render phases before retained-window loads"
+   },
+   "918": {
+    "state": "CLOSED",
+    "title": "Timed-out stager publication wait allows origin unlink"
+   },
+   "919": {
+    "state": "CLOSED",
+    "title": "Stager join timeout loses live worker ownership and permits teardown"
    },
    "92": {
     "state": "CLOSED",
     "title": "feat(trellis): wire 7 of 8 seam links; the anchors' currency stays a refusal"
    },
+   "920": {
+    "state": "CLOSED",
+    "title": "Stager drop callback error strands waiters and skips join"
+   },
+   "921": {
+    "state": "CLOSED",
+    "title": "Stale missing waits when declared; retiring cover yields to an independently leased overlap (#903, #916)"
+   },
+   "922": {
+    "state": "CLOSED",
+    "title": "Stager settlement ignores failed drain and can overtake queued publication"
+   },
+   "923": {
+    "state": "CLOSED",
+    "title": "Complete Stage B prepared-input derivation and bounded readiness"
+   },
+   "924": {
+    "state": "CLOSED",
+    "title": "await_materialized waits full 900s timeout on terminal FAILED/WITHDRAWN active produced mover"
+   },
+   "925": {
+    "state": "CLOSED",
+    "title": "Fail fast on terminal failed/withdrawn produced mover (PQ #924)"
+   },
+   "926": {
+    "state": "CLOSED",
+    "title": "Tessera activation-quantizer reader is v1-only; any pin above contract v32 fails closed"
+   },
+   "927": {
+    "state": "CLOSED",
+    "title": "Read current Tessera full-engine allocator and startup reservation observations"
+   },
+   "928": {
+    "state": "CLOSED",
+    "title": "Spool Stage A outputs locally before PB-owned asynchronous durable export"
+   },
+   "929": {
+    "state": "CLOSED",
+    "title": "Read current full-engine startup reservation witnesses"
+   },
    "93": {
     "state": "CLOSED",
     "title": "ci: drop python 3.11 from the test matrix and the supported floor"
+   },
+   "930": {
+    "state": "CLOSED",
+    "title": "Preserve measured quantum statistics through the real allocation handoff"
+   },
+   "931": {
+    "state": "CLOSED",
+    "title": "Preserve measured joint quanta through actual allocation and export handoff"
+   },
+   "932": {
+    "state": "CLOSED",
+    "title": "Spool Stage A exact outputs for PB-owned asynchronous export"
+   },
+   "933": {
+    "state": "CLOSED",
+    "title": "Reduce head-resume progress writes and parallelize authentication"
+   },
+   "934": {
+    "state": "CLOSED",
+    "title": "Stage A explicit GPU memory budget is not allocator-enforced"
+   },
+   "935": {
+    "state": "CLOSED",
+    "title": "Lease coherence snapshots trigger redundant model-heap garbage collection"
+   },
+   "936": {
+    "state": "OPEN",
+    "title": "Bind immutable pre-cost native timing to final GLM PACT joint identities"
+   },
+   "937": {
+    "state": "CLOSED",
+    "title": "Bind an additive qualified A4 catalog to unchanged BF16 Stage A adjoints"
+   },
+   "938": {
+    "state": "OPEN",
+    "title": "Acquire GLM native timings before final joint-cost binding"
+   },
+   "939": {
+    "state": "CLOSED",
+    "title": "Bind mixed historical selected-cache export to accepted catalog and served policy"
    },
    "94": {
     "state": "CLOSED",
     "title": "fix(tests): glm5_next parity NaN \u2014 the polyfill leaves from-config expert weights uninitialized"
    },
+   "940": {
+    "state": "CLOSED",
+    "title": "Bind mixed selected cache to accepted catalog and served A4 policy"
+   },
+   "941": {
+    "state": "CLOSED",
+    "title": "Export selected executed-group A4 scales from their bound allocation"
+   },
+   "942": {
+    "state": "CLOSED",
+    "title": "Export exact selected served-group activation scales"
+   },
+   "943": {
+    "state": "CLOSED",
+    "title": "Bound Stage A checkpoint cotangent retention to the resident read window"
+   },
+   "944": {
+    "state": "CLOSED",
+    "title": "Reuse original fenced source hashes in cached Tessera export"
+   },
+   "945": {
+    "state": "CLOSED",
+    "title": "Reuse fenced original source digests with explicit adoption provenance"
+   },
+   "946": {
+    "state": "CLOSED",
+    "title": "Bound Stage A checkpoint tensor retention to existing read windows"
+   },
+   "947": {
+    "state": "CLOSED",
+    "title": "Bind recovered Stage A receipts to the canonical campaign scope and roster"
+   },
+   "948": {
+    "state": "CLOSED",
+    "title": "Derive recovered adjoint receipt identity from the sealed campaign"
+   },
+   "949": {
+    "state": "CLOSED",
+    "title": "Recover interrupted Stage A forward prefixes with explicit contained provenance"
+   },
    "95": {
     "state": "CLOSED",
     "title": "Land the proven rescues: walker R5 name projection, grouped wo_a Fisher, unit-sharded producer, TP=2 tooling"
+   },
+   "950": {
+    "state": "CLOSED",
+    "title": "Bound Stage B cotangent checkpoint and rollover residency"
+   },
+   "951": {
+    "state": "CLOSED",
+    "title": "Recover contained Stage A forward prefixes through sealed inputs"
+   },
+   "952": {
+    "state": "CLOSED",
+    "title": "A shard whose only file skips at collection is green, not empty (#915)"
+   },
+   "953": {
+    "state": "CLOSED",
+    "title": "The (window, key) contract is observed on a real claim (#897)"
+   },
+   "954": {
+    "state": "CLOSED",
+    "title": "Record the retained instruments as annotated tags (#705)"
+   },
+   "955": {
+    "state": "CLOSED",
+    "title": "Bind an additive qualified A4 catalog to unchanged Stage A adjoints (draft)"
+   },
+   "956": {
+    "state": "CLOSED",
+    "title": "Bound Stage B cotangent checkpoint and rollover residency"
+   },
+   "957": {
+    "state": "CLOSED",
+    "title": "Read the Tessera activation-quantizer table's v2 grammar (#926)"
+   },
+   "958": {
+    "state": "CLOSED",
+    "title": "The lane reader refuses contract v34: `tessera::window_gemm_dense` is read as an undeclared extension launch"
+   },
+   "959": {
+    "state": "CLOSED",
+    "title": "Stager worker death drops queued lane tasks without on_drop; _dead is never surfaced"
    },
    "96": {
     "state": "CLOSED",
     "title": "docs: correct two live claims the 2026-08-29 measurements superseded"
    },
+   "960": {
+    "state": "CLOSED",
+    "title": "A stuck stager on a clean run still publishes _status complete while retaining origins and credit"
+   },
+   "961": {
+    "state": "CLOSED",
+    "title": "Two frozen-clock produced-failfast stub tests hang instead of failing on a pre-fix tree"
+   },
+   "962": {
+    "state": "OPEN",
+    "title": "main's hosted CI is cancelled by each following merge and the test job is not a required check"
+   },
+   "963": {
+    "state": "CLOSED",
+    "title": "Injected PrismaBuild SDK leaks into sys.modules and fails later tests in the same shard"
+   },
+   "964": {
+    "state": "CLOSED",
+    "title": "Bound the produced-failfast stub tests and clear the injected SDK fully"
+   },
+   "965": {
+    "state": "CLOSED",
+    "title": "Give a dead stager worker the same lifecycle a close gives"
+   },
+   "966": {
+    "state": "CLOSED",
+    "title": "Pin Tessera to master acf9eafa6a (contract v34)"
+   },
+   "967": {
+    "state": "CLOSED",
+    "title": "Qualify retained GLM A4 expert cells as PrismaBuild quanta (#688)"
+   },
+   "968": {
+    "state": "OPEN",
+    "title": "Checkpoint loads under transformers 5.6.0 re-initialize fully loaded modules"
+   },
+   "969": {
+    "state": "OPEN",
+    "title": "test_a_row_without_the_contract_adds_no_container_environment fails inside every PrismaBuild action"
+   },
    "97": {
     "state": "CLOSED",
     "title": "docs(format-menu): correct the encode tier and record the fp8 learned-book inversion"
+   },
+   "970": {
+    "state": "OPEN",
+    "title": "Fleet acceptance broker socket path exceeds the AF_UNIX limit under xdist"
+   },
+   "971": {
+    "state": "OPEN",
+    "title": "tools/prove_glm_source_adoption.py ran as PB d5190ba18eef evidence but is not in git"
+   },
+   "972": {
+    "state": "OPEN",
+    "title": "Skip checkpoint initialization for modules the checkpoint fully loaded"
+   },
+   "973": {
+    "state": "OPEN",
+    "title": "Give the no-contract container test an explicitly empty launcher environment"
+   },
+   "974": {
+    "state": "OPEN",
+    "title": "Bind the fleet acceptance broker in a short private directory"
+   },
+   "975": {
+    "state": "OPEN",
+    "title": "Commit the GLM source-adoption proof script that PB d5190ba18eef ran"
    },
    "98": {
     "state": "CLOSED",
@@ -4518,7 +5218,7 @@
     "title": "Retain unused TCQ SSE experiment with full B32 small-delta evidence"
    },
    "395": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Research: whole routed-expert native operator receipts"
    },
    "396": {
@@ -4910,7 +5610,7 @@
     "title": "Qualify the gfx1201 weights-only encode on one commit, and give the HIP kernel its own issue"
    },
    "483": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Window Viterbi front residency: BF16_K1@1792 sits at 64% of the GB10 envelope and gained 1.01x from batching"
    },
    "484": {
@@ -4950,7 +5650,7 @@
     "title": "Add research selected BF16 routed MoE execution"
    },
    "492": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Support full-domain routed expert rates and E2M1/A4 on TP2"
    },
    "493": {
@@ -5014,7 +5714,7 @@
     "title": "Speed and memory for the research routed-expert load (tessera#501)"
    },
    "506": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Publish routed E2M1_K2 sm_121 cells and the full-domain routed expert rate leg (follow-up to #492)"
    },
    "507": {
@@ -5098,7 +5798,7 @@
     "title": "Plan a carried projection without hashing the source, and refuse input-only errors first"
    },
    "525": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Fold the NVFP4 dense route's epilogue scalar into the GEMM's alpha (do not merge: contract v30 + numerics decision pending)"
    },
    "526": {
@@ -5178,7 +5878,7 @@
     "title": "The census can state the engine shape it is run under"
    },
    "543": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Master is red on two gates: the dense window routes no longer call note_lane_refusal"
    },
    "544": {
@@ -5198,7 +5898,7 @@
     "title": "Classify an off-step allocation by its lifetime, and refuse the name rule where it names no candidate"
    },
    "548": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Classify the native boundary tensors and runtime roots, which need two assignments and a v2 boundary ledger"
    },
    "549": {
@@ -5230,7 +5930,7 @@
     "title": "Prove the fp4 decode extension before a capture prices its allocations (#399)"
    },
    "555": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "The fp4 activation table must be generated on the GLM-5.3 campaign serving image before any GLM fp4 route-class cell can admit"
    },
    "556": {
@@ -5238,11 +5938,11 @@
     "title": "Derive ownership, admission and the timing partition from the step-4 ledger (#399)"
    },
    "557": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Runtime manifest omits BF16 row_scale and NVFP4 trellis_input_global_scale, so worker_startup refuses on 2 units / 20,484 B"
    },
    "558": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "v2 full-engine report must emit the reserved peak and the reservation slack, and the configuration document must carry PYTORCH_CUDA_ALLOC_CONF (D37 ship-gate leg)"
    },
    "559": {
@@ -5290,7 +5990,7 @@
     "title": "Serving-correctness trio: manifest resident rows (#557), per-image fp4 table (#555), retired-fallback gates (#543)"
    },
    "569": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Master red: test_the_bf16_route_never_reaches_native_ops fails on origin/master (BF16 closure reaches native_ops)"
    },
    "57": {
@@ -5306,7 +6006,7 @@
     "title": "Correct the arity claim in the K1 disagreement pin's docstring (#477)"
    },
    "572": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Encoder duo: HIP _mul spelling (#481) + R7 best-form evidence (#483); #569 absorbed by #568"
    },
    "573": {
@@ -5317,13 +6017,105 @@
     "state": "CLOSED",
     "title": "Emit kernel_schedule in emit_route records (#573)"
    },
+   "575": {
+    "state": "OPEN",
+    "title": "Bank: revive the NVFP4 alpha-fold custom op when an NVFP4-family cell is republished"
+   },
+   "576": {
+    "state": "CLOSED",
+    "title": "README: the NVFP4 attested rungs are structure-specific since v28/v32"
+   },
+   "577": {
+    "state": "CLOSED",
+    "title": "Integrate Astra's simplify-20260919 review (5 commits, -403/+76)"
+   },
+   "578": {
+    "state": "CLOSED",
+    "title": "Simplify retired-path residue: Astra's review (#577)"
+   },
+   "579": {
+    "state": "CLOSED",
+    "title": "Attest the fused window GEMM and mint its dense cells (contract v34, #545)"
+   },
    "58": {
     "state": "CLOSED",
     "title": "23 experiment harnesses import from the SHARED checkout, so their numbers name no commit"
    },
+   "580": {
+    "state": "OPEN",
+    "title": "Re-run the #399 full-engine capture on master: two fixes, two named blockers"
+   },
+   "581": {
+    "state": "OPEN",
+    "title": "Qualify whole-engine CUDA graphs for the GLM53 NoPE CUSTOM backend by measurement (#508)"
+   },
+   "582": {
+    "state": "OPEN",
+    "title": "Observe native packed tensor ownership in full-engine census"
+   },
+   "583": {
+    "state": "OPEN",
+    "title": "Price native dense packed residency from wire layout"
+   },
+   "584": {
+    "state": "OPEN",
+    "title": "Allow immutable native execution measurements before final joint-cost binding"
+   },
+   "585": {
+    "state": "OPEN",
+    "title": "Measure native execution before the final joint cost exists"
+   },
+   "586": {
+    "state": "OPEN",
+    "title": "Native operator receipts omit packed owner tensor identity and residency"
+   },
+   "587": {
+    "state": "CLOSED",
+    "title": "Reuse selected wires from explicit immutable roots and historical producers"
+   },
+   "588": {
+    "state": "CLOSED",
+    "title": "Consume cached wires from bound roots and historical producers"
+   },
+   "589": {
+    "state": "CLOSED",
+    "title": "Reuse fenced source digests in whole cached model export"
+   },
    "59": {
     "state": "CLOSED",
     "title": "The window GEMV's \"M=2 -> MT=4 is a free ~8%\" is refuted by the receipt's own quiet-box addendum"
+   },
+   "590": {
+    "state": "CLOSED",
+    "title": "Reuse fenced source digests in whole cached exports"
+   },
+   "591": {
+    "state": "CLOSED",
+    "title": "Prepare admitted reuse-only GLM CPU export with durable progress"
+   },
+   "592": {
+    "state": "CLOSED",
+    "title": "Prepare bound GLM reuse-only CPU export and durable PB progress"
+   },
+   "593": {
+    "state": "OPEN",
+    "title": "Compare attested wire stamps against the served wire, not the research table"
+   },
+   "594": {
+    "state": "OPEN",
+    "title": "Bench the NVFP4 route's expert axes, not its zero-size anchors"
+   },
+   "595": {
+    "state": "OPEN",
+    "title": "Point the FIFO test's child interpreter at this tree"
+   },
+   "596": {
+    "state": "OPEN",
+    "title": "Add SourceDigestCache.adopt for owners that hold a verified digest"
+   },
+   "597": {
+    "state": "OPEN",
+    "title": "Render the GLM CPU export row at agent priority with a venv derived from its commit"
    },
    "6": {
     "state": "CLOSED",

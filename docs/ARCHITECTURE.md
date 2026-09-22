@@ -27,6 +27,10 @@ census tool -- grade `route_only` on all four because no KL arm was run, smoke
 withdrew are NOT restored), TP 1. ADDITIVE for a lane reader; not additive for
 a reader that derives `executes` from `scheme.route_launches` itself.
 
+Re-stamped 2026-09-22 for `SourceDigestCache.adopt` (§ source digest cache):
+a public adoption entry point replaces callers writing entries through the
+cache's private `_record`/`_entry_path`/`_key`. No default moves.
+
 Re-stamped 2026-09-19 for the HIP `_mul` spelling (tessera#481,
 §3.1): `window_viterbi._mul_asm` selects the AMDGCN spelling on a ROCm build,
 still unverified -- wsl-gpu offline -- so `fused_available()` keeps refusing
@@ -434,6 +438,13 @@ document is unchanged. Reuse is recorded beside the identity:
 or bit rot on a reused read, goes undetected, so write access to the cache
 directory is trust base. A publication that needs a second read merges without
 the flag.
+`SourceDigestCache.adopt` is the one other way into the cache: an owner that
+already holds a verified full-read digest and the fingerprint that read was
+fenced by (PrismaQuant's retained source-hash proof) records it without a
+second read. Adoption re-takes the fingerprint with `open` plus `fstat`,
+including `st_dev`, and refuses a change; applies the same 300 s quiescence
+rule; and records the owner's `writer.kind` beside an `adopted` block. A
+disagreeing digest is refused as two disagreeing reads are.
 
 Re-stamped 2026-09-13 for the opt-in historical cached-producer intake (§3.2).
 `--cached-producer-package` plus `--cached-producer-source-sha256` binds the
@@ -1682,6 +1693,24 @@ identity, and patches are restored after observation. Dynamic input and output
 tensor references preserve backings crossing each boundary. For original-wire
 references, native parameters and buffers, including scale storage, are candidate
 owners; tensors also registered outside canonical native modules remain fixed.
+Every Tessera route holds its prepared weights outside registered state (the
+slotted `PreparedDenseNativeModule` on the FP8/BF16 window routes, `A4Unit`s and
+epilogues on the NVFP4 route, `A4UnitStack`s on the NVFP4 MoE route, the compact
+`PackedWindowMoeBundles` on the window MoE route) and declares them through one
+protocol, `tessera.serving.residency`: `quant_method.resident_tensors(layer)`
+yields each tensor by reference, and each prepared object names its own tensors
+through `named_tensors()`. The census walks only that declaration and records the
+tensors under `model:native:<module>.<attribute>.*`, so they resolve to the same
+canonical unit as registered state; a unit no longer depends on the
+one-unit-per-family fallback in `derive_owner_views`. This adds no buffers,
+device movement, or allocation. Shared storage is charged once, because every
+declared view joins its backing allocation; external tensor aliases stay fixed,
+and storage alias conflicts retain the existing refusal. An object a route does
+not declare (the research per-expert `PackedWindowUnits`) is not walked, so its
+bytes stay uncharged in the report rather than attributed by guess. These
+observations repair missing native ownership, not assignment-independent charge
+admission: unclassified allocations still require the existing cross-assignment
+evidence.
 Conflicting storage aliases still refuse rather than receiving a chosen label. The invocation budget is armed
 by an explicit RPC after engine initialization,
 so stock startup warmup cannot consume the requested workload's observations.
