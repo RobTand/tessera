@@ -2574,6 +2574,12 @@ def main():
                 "geometry_attested": module not in geometry_unattested,
             }
             shard_payload[f"{module}.wire_bytes"] = torch.frombuffer(bytearray(blob), dtype=torch.uint8).clone()
+            native_roles = None
+            if family != NVFP4:
+                from tessera.kernel_window_gemv import TILE_ROWS
+                native_roles = [{"rows": role_rows, "cols": cols, "rates": unit.rates,
+                                 "window_bits": unit.window_bits, "tile_rows": TILE_ROWS}
+                                for _name, role_rows, _blob, unit, _forests in roles]
             if family == NVFP4:
                 shared, _moved = shared_lut_global(
                     [u.scale_lut for _, _, _, u, _ in roles], [float(u.scale_global) for _, _, _, u, _ in roles],
@@ -2619,15 +2625,8 @@ def main():
                             [a_scale], dtype=torch.float32)
                     record["twin_shared_divisor"] = divisor
             elif family == BF16:
-                # Resident here is the DECODED tile -- 16 bits a weight, the
-                # source precision -- PLUS the fp32-per-row scale the route
-                # keeps beside it (``bf16_route`` registers the prepared
-                # module's ``row_scale`` as a ``[rows]`` buffer after load;
-                # tessera#557).  It is the correctness path and not a size
-                # claim; the product mode is streamed, and the wire it streams
-                # is ``wire_bytes`` above.
                 record["resident_bytes_resident_mode"] = dense_resident_bytes_resident_mode(
-                    family, rows_total, cols)
+                    family, rows_total, cols, native_roles=native_roles)
                 if twin is not None:
                     for m in members:
                         # One tensor, under the ORIGINAL name: the twin is an
@@ -2635,7 +2634,7 @@ def main():
                         twin_payload[m] = stock_tensors[m]["weight"].cpu()
             else:
                 record["resident_bytes_resident_mode"] = dense_resident_bytes_resident_mode(
-                    family, rows_total, cols)
+                    family, rows_total, cols, native_roles=native_roles)
                 if twin is not None:
                     for m in members:
                         for key, value in stock_tensors[m].items():
