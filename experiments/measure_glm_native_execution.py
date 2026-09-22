@@ -59,7 +59,7 @@ def freeze(inputs,prepared,source_sha256):
 def main():
     p=argparse.ArgumentParser();p.add_argument('--inputs-root',type=Path,required=True)
     p.add_argument('--origin-sha256',required=True);p.add_argument('--out',type=Path,required=True)
-    p.add_argument('--resource-library',type=Path,required=True);args=p.parse_args()
+    p.add_argument('--resource-library',type=Path,required=True);p.add_argument('--device-bytes',type=int,required=True);args=p.parse_args()
     root=args.inputs_root
     if sha(root/'origin.json')!=args.origin_sha256:raise ValueError('independent preparation changed')
     origin=json.loads((root/'origin.json').read_text())
@@ -70,6 +70,13 @@ def main():
     collector=NativeMemoryCollector(args.resource_library);finished=False
     from experiments import bench_native_moe_operator as moe
     import torch
+    if args.device_bytes != 48<<30:raise ValueError('native pilot device envelope differs')
+    total=int(torch.cuda.get_device_properties(0).total_memory)
+    if args.device_bytes>=total:raise ValueError('native device envelope does not bound this device')
+    fraction=args.device_bytes/total
+    torch.cuda.set_per_process_memory_fraction(fraction,0)
+    dump(args.out/'device-envelope.json',{'enforced':True,'device_bytes':args.device_bytes,
+        'device_total_bytes':total,'fraction':fraction,'scope':'Torch caching allocator; native/CUDA context allocations additional'})
     from safetensors.torch import load_file
     inputs=json.loads((root/'inputs.json').read_text());refs=json.loads((root/'weight-references.json').read_text())
     ref_by_name={r['unit']:r for r in refs}
