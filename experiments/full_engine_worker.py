@@ -93,6 +93,31 @@ def parameter_category(name, canonical_modules, dtype=None):
     return "candidate" if is_candidate else "fixed"
 
 
+def model_tensor_census(model):
+    """Registered state plus every route's declared resident tensors, preserving aliases.
+
+    A Tessera route keeps its prepared weights outside registered state and
+    declares them through ``quant_method.resident_tensors(layer)``
+    (``tessera.serving.residency``). Only that declaration extends the census:
+    no attribute walk, no new buffers, no runtime allocation. A module whose
+    method declares nothing adds nothing, so an undeclared resident tensor
+    surfaces as an uncharged allocation rather than as a guessed owner.
+    """
+    for kind, tensors in (("parameter", model.named_parameters(remove_duplicate=False)),
+                          ("buffer", model.named_buffers(remove_duplicate=False))):
+        for name, tensor in tensors:
+            yield kind, name, tensor
+    if not hasattr(model, "named_modules"):
+        return
+    for module_name, module in model.named_modules(remove_duplicate=False):
+        declare = getattr(vars(module).get("quant_method"), "resident_tensors", None)
+        if not callable(declare):
+            continue
+        prefix = module_name + "." if module_name else ""
+        for name, tensor in declare(module):
+            yield "native", prefix + name, tensor
+
+
 def reference_candidate_tensor_ids(model, boundaries):
     """Read actual native owner parameters/buffers, preserving external aliases.
 
@@ -106,10 +131,8 @@ conflict checks; no partial backing is silently assigned.
     for row in boundaries:
         owner = row["owner"]
         prefixes.append(row["boundary"].removesuffix(".quant_method.apply") + ".")
-        candidate.update(id(tensor) for _, tensor in
-                         list(owner.named_parameters(remove_duplicate=False)) + list(owner.named_buffers(remove_duplicate=False)))
-    external = {id(tensor) for name, tensor in
-                list(model.named_parameters(remove_duplicate=False)) + list(model.named_buffers(remove_duplicate=False))
+        candidate.update(id(tensor) for _, _, tensor in model_tensor_census(owner))
+    external = {id(tensor) for _, name, tensor in model_tensor_census(model)
                 if not any(name.startswith(prefix) for prefix in prefixes)}
     return candidate - external
 
@@ -320,10 +343,8 @@ class ResourceCaptureWorker(Worker):
             # name-based rule below.
             reference_ids = (reference_candidate_tensor_ids(model, self._resource_native_boundaries)
                              if self._resource_native_boundaries is not None else None)
-            census = [(kind, name, tensor)
-                      for kind, tensors in (("parameter", model.named_parameters(remove_duplicate=False)),
-                                            ("buffer", model.named_buffers(remove_duplicate=False)))
-                      for name, tensor in tensors if tensor.device.type == "cuda"]
+            census = [(kind, name, tensor) for kind, name, tensor in model_tensor_census(model)
+                      if tensor.device.type == "cuda"]
             if reference_ids is None:
                 # The fallback rule states a precondition about the whole
                 # checkpoint, so it is checked against the whole observed

@@ -171,3 +171,77 @@ def test_allocator_config_of_reads_the_plan_or_none():
         "PYTORCH_CUDA_ALLOC_CONF": "unset"}}}) == "unset"
     assert allocator_config_of({"selected_configuration": {"environment": {}}}) is None
     assert allocator_config_of({}) is None
+
+
+def _dense_check(rank=0, allocated=863269888, reserved=954204160, **overrides):
+    """A dense artifact's startup check, as `full_engine_ownership` builds it."""
+    check = {"schema": "tessera.full_engine_dense_startup_check.v1",
+             "units": {}, "units_checked": 0, "units_disagreeing": [],
+             "manifest_unpriced_resident_bytes": 0,
+             "candidate_units_outside_manifest": [],
+             "rank": rank,
+             "memory_allocated_bytes": allocated,
+             "memory_reserved_bytes": reserved,
+             "ledger_live_bytes_at_ready_for_workload": 0,
+             "allocator_sample_bounds_ledger": True, "closed": False,
+             "scope": "fixture"}
+    check.update(overrides)
+    return check
+
+
+def _dense_ledger(**overrides):
+    """A DENSE capture's ledger: no routed receipt, so no startup record."""
+    ledger = _ledger_with_reserved()
+    ledger["worker_startup_records"] = []
+    ledger["owner_views"] = {
+        "schema": "tessera.full_engine_ownership_observation.v1",
+        "views": {"schema": "tessera.full_engine_owner_views.v1", "rules": [],
+                  "evidence": {}, "summary": {}, "views": [], "scope": "fixture"},
+        "external_records": [], "boundary_geometry_witness": None,
+        "transient_gap_witness": None,
+        "dense_startup_check": _dense_check(**overrides)}
+    return ledger
+
+
+def test_a_dense_capture_witnesses_its_reserved_extent():
+    """The dense sample is a resident-after-load sample at arm, and counts.
+
+    `worker_startup_records` is written only where the plan names a routed
+    owner receipt, so a dense artifact carries none and the witness read
+    nothing -- while `_resource_write_startup_sample` had already sampled
+    `memory_reserved` into the dense observation. The measurement existed and
+    the report dropped it: tessera#399's 2026-09-21 capture sampled
+    954,204,160 reserved against 863,269,888 allocated and published
+    `reserved_peak_bytes: null`.
+    """
+    report = assemble_full_engine_resource_report(
+        _dense_ledger(), allocator_config="unset", **_members())
+    assert report["derived"]["reserved_peak_bytes"] == 954204160
+    assert report["derived"]["reservation_slack_peak_bytes"] == 954204160 - 863269888
+    assert report["derived"]["reservation_witness"]["rank"] == 0
+    assert report["derived"]["reservation_witness"]["memory_allocated_bytes"] == 863269888
+
+
+def test_a_dense_check_without_a_reserved_sample_witnesses_nothing():
+    # A pre-#558 dense observation carries no reserved field; it stays null
+    # rather than borrowing the allocated sample.
+    ledger = _dense_ledger()
+    del ledger["owner_views"]["dense_startup_check"]["memory_reserved_bytes"]
+    report = assemble_full_engine_resource_report(ledger, **_members())
+    assert report["derived"]["reserved_peak_bytes"] is None
+    assert report["derived"]["reservation_witness"] is None
+
+
+def test_the_dense_sample_joins_the_routed_records_rather_than_replacing_them():
+    # A capture carrying both takes the peak over both, by the one rule.
+    ledger = _dense_ledger(reserved=900, allocated=800)
+    ledger["worker_startup_records"] = [_startup_record_with_reserved()]
+    report = assemble_full_engine_resource_report(
+        ledger, allocator_config="unset", **_members())
+    assert report["derived"]["reserved_peak_bytes"] == 1201668096
+
+
+def test_a_dense_reserved_sample_below_its_allocated_one_is_refused():
+    ledger = _dense_ledger(reserved=1000, allocated=5000)
+    with pytest.raises(ValueError, match="slack"):
+        assemble_full_engine_resource_report(ledger, allocator_config="unset", **_members())

@@ -66,7 +66,7 @@ def ownership_evidence(*, plan, runtime_observation, per_job, core_manifest, lau
         "vllm_files": set(core_manifest["files"]),
         "observer_roots": observer_roots,
         "observer_libraries": observer_libraries,
-        "plugin_jit_prefix": (ext_dir.rstrip("/") + "/tessera_nvfp4/") if ext_dir else None,
+        "plugin_jit_prefix": (ext_dir.rstrip("/") + "/") if ext_dir else None,
         "jit_cache_prefixes": [environment[name] for name in _JIT_CACHE_ENV if environment.get(name)],
         "inventory_digests": {
             "plugin_source_sha256": per_job.get("plugin_source_sha256"),
@@ -243,7 +243,8 @@ def main():
                              "without it timing_partition stays open and timing_terms null")
     parser.add_argument("--launch-dir", type=Path,
                         help="the step-4 launcher output directory holding per-job-runtime.json, "
-                             "launch-summary.json and jit-preflight.json (default: the parent of "
+                             "launch-summary.json and the phase's native/JIT preflight record "
+                             "(default: the parent of "
                              "--capture-dir)")
     parser.add_argument("--core-manifest", type=Path,
                         help="the attested vLLM core manifest (default: the plan's core_manifest path)")
@@ -268,7 +269,13 @@ def main():
     runtime_observation = _read_json(worker_dir / "runtime-observation.json")
     per_job = _read_json(launch_dir / "per-job-runtime.json")
     launch = _read_json(launch_dir / "launch-summary.json")
-    jit_preflight = _read_json(launch_dir / "jit-preflight.json")
+    # The phase writes one native/JIT preflight record beside its launch summary.  It
+    # was named jit-preflight.json while a cpp_extension was the thing proved; since
+    # `37e89f576` the proof is the native route table and the record is
+    # native-preflight.json.  Read either, so a replay of an older capture still
+    # finds its record.
+    jit_preflight = _read_json(first_existing(launch_dir / "native-preflight.json",
+                                              launch_dir / "jit-preflight.json"))
     core_manifest = _read_json(args.core_manifest or plan["core_manifest"])
     startup_sidecar = _read_json(first_existing(worker_dir / "worker-startup.json",
                                                 args.capture_dir / "worker-startup.json"))

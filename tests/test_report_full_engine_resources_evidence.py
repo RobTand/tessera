@@ -108,13 +108,27 @@ def test_a_plugin_source_tree_already_on_the_pythonpath_is_not_repeated():
 
 def test_the_jit_prefixes_come_from_the_preflight_and_the_recorded_cache_variables():
     evidence = _evidence()
-    assert evidence["plugin_jit_prefix"] == "/ext/tessera_nvfp4/"
+    assert evidence["plugin_jit_prefix"] == "/ext/"
     assert evidence["jit_cache_prefixes"] == ["/cache/triton", "/cache/torch-ext"]
 
 
 def test_the_ext_dir_falls_back_to_the_recorded_container_environment():
     evidence = _evidence(jit_preflight={"library_sha256": "j" * 64})
-    assert evidence["plugin_jit_prefix"] == "/ext/tessera_nvfp4/"
+    assert evidence["plugin_jit_prefix"] == "/ext/"
+
+
+def test_the_plugin_jit_prefix_is_the_extension_directory_not_one_extension():
+    """`37e89f576` retired `tessera_nvfp4`; the directory is what the plugin owns.
+
+    Naming one retired library made the prefix unmatchable, so a device static
+    from the extension the package still builds -- `tessera_window_gemv` -- fell
+    through to "outside the image, its caches, the plugin JIT and the observer"
+    and read as unresolved.  An unresolved static does not close
+    `external_closure`, so a stale prefix does not merely mislabel: it refuses.
+    """
+    prefix = _evidence()["plugin_jit_prefix"]
+    assert "tessera_nvfp4" not in prefix
+    assert "/ext/tessera_window_gemv_ab12.so".startswith(prefix)
 
 
 def test_a_run_that_declared_no_extension_directory_carries_no_plugin_jit_prefix():

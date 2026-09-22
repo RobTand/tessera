@@ -35,6 +35,7 @@ from typing import Optional
 import torch
 
 from .lane import MODES
+from .residency import layer_resident_tensors
 import dataclasses
 
 from ..kernel_a4 import a4_quantize_activation, a4_span2_gemm
@@ -52,6 +53,11 @@ __all__ = [
 ]
 
 ACTIVATION_CONTRACT = ROUTES[TESSERA_NVFP4]["activation_contract"]
+
+# What ``process_weights_after_loading`` leaves on the layer outside registered
+# state: one ``A4Unit`` and one epilogue per role.  ``resident_tensors``
+# declares them (#580).
+RESIDENT_ATTRIBUTES = ("tessera_a4_units", "tessera_a4_epilogues")
 GEMM_SYMBOL = ROUTES[TESSERA_NVFP4]["gemm_symbol"]
 
 
@@ -278,6 +284,12 @@ def build_tessera_nvfp4_method(scheme, prefix: str, mode: str):
             layer.tessera_epilogue_scale = float(units[0].global_scale) / gs
             native_ops.require_native_fp4_quant(f"{prefix}: the Tessera NVFP4 route's A side")
             del layer.wire_bytes
+
+        # -- residency declaration (#580) -------------------------------
+        def resident_tensors(self, layer):
+            """The prepared tensors this route holds for ``layer`` outside
+            registered state, by reference (``serving.residency``)."""
+            return layer_resident_tensors(layer, RESIDENT_ATTRIBUTES)
 
         # -- forward ----------------------------------------------------
         def apply(self, layer, x: torch.Tensor, bias: Optional[torch.Tensor] = None) -> torch.Tensor:
