@@ -83,6 +83,7 @@ import torch
 from ..errors import GrammarError
 from ..moe_layout import W13_PROJECTIONS, validate_moe_wire_lengths
 from .lane import MODE_RESIDENT, MODES
+from .residency import layer_resident_tensors
 from .moe_route import SHARD_TO_GROUP, _packed_group_shard_plan
 from .scheme import (A4_GROUPED_GEMM_SYMBOL, GROUP_SIZE, MOE_GEMM_SYMBOL, MOE_GROUPS, ROUTES,
                      STRUCTURE_ROUTED_MOE, TESSERA_NVFP4, expert_role_declarations,
@@ -101,6 +102,13 @@ __all__ = [
 ]
 
 ACTIVATION_CONTRACT = ROUTES[TESSERA_NVFP4]["activation_contract"]
+
+# What ``process_weights_after_loading`` leaves on the layer outside registered
+# state: the grouped span-2 stacks, the two A-side globals and the per-expert
+# epilogues.  ``resident_tensors`` declares them (#580).
+RESIDENT_ATTRIBUTES = ("tessera_a4_gate_stack", "tessera_a4_up_stack", "tessera_a4_down_stack",
+                       "tessera_a4_gs13", "tessera_a4_gs2", "tessera_a4_gate_epilogues",
+                       "tessera_a4_up_epilogues", "tessera_a4_down_epilogues")
 GEMM_SYMBOL = MOE_GEMM_SYMBOL
 #: The contract's payload family for this route's wires -- the name the
 #: platform gate and the census expectation are keyed by (#457).
@@ -698,6 +706,12 @@ def build_tessera_nvfp4_moe_method(scheme: Mapping, prefix: str, mode: str, laye
                 gemm1_alpha=getattr(layer, "swiglu_alpha", None),
                 gemm1_beta=getattr(layer, "swiglu_beta", None),
                 gemm1_clamp_limit=getattr(layer, "swiglu_limit", None))
+
+        # -- residency declaration (#580) -------------------------------
+        def resident_tensors(self, layer):
+            """The prepared tensors this route holds for ``layer`` outside
+            registered state, by reference (``serving.residency``)."""
+            return layer_resident_tensors(layer, RESIDENT_ATTRIBUTES)
 
         # -- forward ----------------------------------------------------
         def apply(self, layer, x, topk_weights, topk_ids, shared_experts,

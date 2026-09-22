@@ -1693,6 +1693,24 @@ identity, and patches are restored after observation. Dynamic input and output
 tensor references preserve backings crossing each boundary. For original-wire
 references, native parameters and buffers, including scale storage, are candidate
 owners; tensors also registered outside canonical native modules remain fixed.
+Every Tessera route holds its prepared weights outside registered state (the
+slotted `PreparedDenseNativeModule` on the FP8/BF16 window routes, `A4Unit`s and
+epilogues on the NVFP4 route, `A4UnitStack`s on the NVFP4 MoE route, the compact
+`PackedWindowMoeBundles` on the window MoE route) and declares them through one
+protocol, `tessera.serving.residency`: `quant_method.resident_tensors(layer)`
+yields each tensor by reference, and each prepared object names its own tensors
+through `named_tensors()`. The census walks only that declaration and records the
+tensors under `model:native:<module>.<attribute>.*`, so they resolve to the same
+canonical unit as registered state; a unit no longer depends on the
+one-unit-per-family fallback in `derive_owner_views`. This adds no buffers,
+device movement, or allocation. Shared storage is charged once, because every
+declared view joins its backing allocation; external tensor aliases stay fixed,
+and storage alias conflicts retain the existing refusal. An object a route does
+not declare (the research per-expert `PackedWindowUnits`) is not walked, so its
+bytes stay uncharged in the report rather than attributed by guess. These
+observations repair missing native ownership, not assignment-independent charge
+admission: unclassified allocations still require the existing cross-assignment
+evidence.
 Conflicting storage aliases still refuse rather than receiving a chosen label. The invocation budget is armed
 by an explicit RPC after engine initialization,
 so stock startup warmup cannot consume the requested workload's observations.

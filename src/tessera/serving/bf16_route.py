@@ -69,6 +69,7 @@ import torch
 from .compile_identity import note_traced_dispatch
 from .ext import WINDOW_GEMV_MODULE_NAME
 from .lane import MODES
+from .residency import layer_resident_tensors
 from .native_window import prepare_dense_native_module
 from .scheme import (ROUTES, TESSERA_BF16, WINDOW_GEMM_SYMBOL, WINDOW_GEMV_SYMBOL,
                      launch_pairs, parse_compact_blob_for_scheme,
@@ -104,6 +105,10 @@ __all__ = [
 ]
 
 ACTIVATION_CONTRACT = ROUTES[TESSERA_BF16]["activation_contract"]
+
+# What ``process_weights_after_loading`` leaves on the layer outside registered
+# state: the slotted native bundle.  ``resident_tensors`` declares it (#580).
+RESIDENT_ATTRIBUTES = ("tessera_native",)
 GEMM_SYMBOL = ROUTES[TESSERA_BF16]["gemm_symbol"]
 
 #: THE dense launch this route makes, owned where the dispatch is; the BF16
@@ -857,6 +862,12 @@ def build_tessera_bf16_method(scheme, prefix: str, mode: str):
             del layer.wire_bytes
             # One graph, one op, declared here: the FP8 route's rule (#91).
             note_traced_dispatch(prefix, WINDOW_GEMM_SYMBOL)
+
+        # -- residency declaration (#580) -------------------------------
+        def resident_tensors(self, layer):
+            """The prepared tensors this route holds for ``layer`` outside
+            registered state, by reference (``serving.residency``)."""
+            return layer_resident_tensors(layer, RESIDENT_ATTRIBUTES)
 
         # -- forward ----------------------------------------------------
         def apply(self, layer, x: torch.Tensor, bias: Optional[torch.Tensor] = None) -> torch.Tensor:

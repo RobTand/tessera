@@ -403,6 +403,15 @@ class PackedWindowMoeBundles:
                     total += t.numel() * t.element_size()
         return total
 
+    def named_tensors(self):
+        """The exact retained grouped kernel tensors, for ownership observers."""
+        for role in ("gate", "up", "down"):
+            bundle = getattr(self, role)
+            for field in dataclasses.fields(bundle):
+                value = getattr(bundle, field.name)
+                if isinstance(value, torch.Tensor):
+                    yield f"{role}.{field.name}", value
+
     def adapter(self) -> NativeWindowMoE:
         return native_window_moe_from_bundles(
             self.down, gate=self.gate, up=self.up, activation="silu")

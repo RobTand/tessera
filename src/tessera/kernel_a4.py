@@ -38,7 +38,7 @@ from __future__ import annotations
 
 import importlib
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, fields as dataclass_fields
 from typing import Mapping
 
 import torch
@@ -265,6 +265,13 @@ class A4UnitStack:
     def experts(self) -> int:
         return int(self.globals.numel())
 
+    def named_tensors(self):
+        """Every tensor field, by reference, for resource observers (#580)."""
+        for field in dataclass_fields(self):
+            value = getattr(self, field.name)
+            if isinstance(value, torch.Tensor):
+                yield field.name, value
+
     def _check(self, context: str) -> None:
         if self.arity != 2:
             raise GrammarError(f"{context}: the span-2 pair decode needs arity 2")
@@ -348,6 +355,13 @@ class A4Unit:
             global_scale=float(prepared["global_scale"] if global_scale is None
                                else global_scale),
         )
+
+    def named_tensors(self):
+        """Every tensor field, by reference, for resource observers (#580)."""
+        for field in dataclass_fields(self):
+            value = getattr(self, field.name)
+            if isinstance(value, torch.Tensor):
+                yield field.name, value
 
     def epilogue_for(self, input_global_scale: torch.Tensor) -> torch.Tensor:
         """``[1]`` fp32 device tensor: ``global_scale / input_global_scale``.
