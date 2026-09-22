@@ -66,6 +66,19 @@ wait_ready() {
 case "${1:-}" in
 up)
   [ "$(hostname)" = sparky ] || { echo "sparky only (tess#508 brief)"; exit 2; }
+  # Gated like every wrapper that starts a container (issue #100): the digest
+  # in IMG is a research pin; the gate verifies it against the daemon's
+  # RepoDigests and stamps what actually ran instead of trusting the literal.
+  # It fires before anything else so a refusal costs no lock and no prewarm.
+  source "$TS/experiments/runtime_image.sh"
+  runtime_image_require "$IMG" || exit 2
+  # What a process INSIDE needs to check its own image against (#132): the
+  # reference the daemon resolved.  Injected AFTER this wrapper's own -e flags
+  # so nothing here can forge it.
+  imgenv=()
+  while IFS= read -r _kv; do
+    [ -n "$_kv" ] && imgenv+=(-e "$_kv")
+  done <<<"${RUNTIME_IMAGE_CONTAINER_ENV:-}"
   if [ -n "${EXPECT_TREE:-}" ]; then
     [ "$(git -C "$TS" rev-parse HEAD)" = "$EXPECT_TREE" ] || { echo "tree is not $EXPECT_TREE"; exit 2; }
   fi
@@ -77,6 +90,7 @@ up)
   { echo "arm=$ARM"; echo "eager=$EAGER"; echo "serve_args=$SERVE_ARGS"
     echo "compilation_json=$COMPILATION_JSON"; echo "bisect_env=${BISECT_ENV:-}"
     echo "image=$IMG"; echo "image_id=$(docker image inspect --format '{{.Id}}' "$IMG")"
+    echo "image_digest_resolved=${RUNTIME_IMAGE_DIGEST:-}"
     echo "tree=$TS"; echo "tree_sha=$(git -C "$TS" rev-parse HEAD)"; echo "tree_dirty=$(git -C "$TS" status --porcelain | wc -l)"
     echo "model=$MODEL"; echo "started=$(date -u +%FT%TZ)"; } > "$OUT/engine-args-$ARM.txt"
   # Warm the NFS checkpoint into page cache from the host first: a cold
@@ -91,7 +105,7 @@ up)
     [ -n "$COMPILATION_JSON" ] && printf "extra=(\"--compilation-config\" '%s')\n" "${COMPILATION_JSON#%\"}"
     printf 'exec vllm serve %s %s "''${extra[@]}"\n' "$MODEL" "$SERVE_ARGS"; } > "$inner"
   mapfile -t a < <(docker_args)
-  docker run -d --name $NAME "${a[@]}" "${ENVS[@]}" \
+  docker run -d --name $NAME "${a[@]}" "${ENVS[@]}" "${imgenv[@]}" \
     --entrypoint bash $IMG /ext/serve-inner.sh
   # #508: autolog-on-exit so a crashed engine's stack can never be lost again.
   (docker wait $NAME >/dev/null 2>&1 \
