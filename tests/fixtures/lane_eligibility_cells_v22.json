@@ -14,5 +14,10 @@
     "tessera_bf16_k1_dense_sm121_decode",
     "tessera_bf16_k1_dense_sm121_batch"
   ],
-  "withdrawn_why": "They attested the dense window-GEMV lane. Commit 1b767a207 left fp8_route.apply and bf16_route.apply making one launch each -- tessera::window_gemm_dense/native_window_gemm -- so the build could no longer make the arithmetic these cells published, and every receipt behind them predates that commit. A withdrawal is neither an addition nor a re-measurement, so it is named here rather than absorbed into a new digest."
+  "withdrawn_why": "They attested the dense window-GEMV lane. Commit 1b767a207 left fp8_route.apply and bf16_route.apply making one launch each -- tessera::window_gemm_dense/native_window_gemm -- so the build could no longer make the arithmetic these cells published, and every receipt behind them predates that commit. A withdrawal is neither an addition nor a re-measurement, so it is named here rather than absorbed into a new digest.",
+  "reearned_at_v34": [
+    "tessera_bf16_k1_dense_sm121_decode",
+    "tessera_bf16_k1_dense_sm121_batch"
+  ],
+  "reearned_why": "Contract v34 (tessera#545) re-attests the sm_121 BF16 dense scope on a served census of the native window GEMM (docs/measurements/tessera-window-gemm-census-2026-09-21.md), so two of the six withdrawn ids are shipped again. An id is a SCOPE -- validate_serving_contract derives it from (family, structure, platform, regime) and refuses any other spelling -- so re-attesting a scope reuses its id by construction; what is new is the CLAIM. The v34 cells execute tessera::window_gemm_dense/native_window_gemm, never the window-GEMV arithmetic 1b767a207 retired, and they are eager-only where the withdrawn pair covered eager and compiled. The other four ids stay absent: the e4m3 four split a scope by residency, which the v34 cells do not."
 }
