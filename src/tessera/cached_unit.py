@@ -27,6 +27,15 @@ CACHE_SCHEMA = "tessera.cached_units.v1"
 ROOTED_CACHE_SCHEMA = "tessera.cached_units.v2"
 INPUT_SCHEMA = "tessera.cached_unit_inputs.v1"
 ENCODING_INPUT_SCHEMA = "tessera.encoding_inputs.v1"
+#: The catalog-extension documents a rooted bundle's reuse authority may bind:
+#: the ones PrismaQuant writes and still verifies.  v1 bound one completed
+#: Stage A receipt; v2 (PQ #993) binds the Stage A run header, so an extension
+#: can exist from the first sealed band.  PrismaQuant authenticates either
+#: before it publishes the bundle; this reader rechecks the binding and the
+#: schema, and reads no other field of the document.
+CATALOG_EXTENSION_SCHEMAS = frozenset({"prismaquant.joint_catalog_extension.v1",
+                                       "prismaquant.joint_catalog_extension.v2"})
+CANDIDATE_OVERLAY_SCHEMAS = frozenset({"prismaquant.t4_adopted_catalog.v1"})
 
 
 def _json_copy(value):
@@ -462,9 +471,11 @@ class CachedUnitBundle:
                 "catalog_extension", "candidate_overlay", "encoder_source_proofs",
                 "checkpoint_encoder_source_sha256"}:
             raise ValueError("rooted cached units need explicit catalog extension authority")
-        for name, schema in (("catalog_extension", "prismaquant.joint_catalog_extension.v1"),
-                             ("candidate_overlay", "prismaquant.t4_adopted_catalog.v1")):
-            if _bound_document(authority[name]).get("schema") != schema:
+        for name, schemas in (("catalog_extension", CATALOG_EXTENSION_SCHEMAS),
+                              ("candidate_overlay", CANDIDATE_OVERLAY_SCHEMAS)):
+            document = _bound_document(authority[name])
+            schema = document.get("schema") if isinstance(document, dict) else None
+            if not isinstance(schema, str) or schema not in schemas:
                 raise ValueError("rooted cached unit authority schema differs")
         proofs = authority["encoder_source_proofs"]
         if not isinstance(proofs, list):

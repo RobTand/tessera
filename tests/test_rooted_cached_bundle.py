@@ -9,13 +9,13 @@ import pytest
 from tessera.cached_unit import CachedUnitBundle
 
 
-def rooted(tmp_path):
+def rooted(tmp_path, extension_schema='prismaquant.joint_catalog_extension.v1'):
     roots = {key: tmp_path / key for key in ('old', 'added')}
     for path in roots.values():
         path.mkdir()
         (path / 'unit.tessera').write_bytes(b'unchanged wire')
     bound = {}
-    for name, schema in [('catalog_extension', 'prismaquant.joint_catalog_extension.v1'),
+    for name, schema in [('catalog_extension', extension_schema),
                          ('candidate_overlay', 'prismaquant.t4_adopted_catalog.v1')]:
         path = tmp_path / (name + '.json')
         path.write_text(json.dumps({'schema': schema}))
@@ -63,6 +63,28 @@ def test_roots_allow_same_leaf_without_copying_or_relabeling(tmp_path):
         after = (path / 'unit.tessera').stat()
         assert (after.st_ino, after.st_ctime_ns) == (stats[key].st_ino, stats[key].st_ctime_ns)
 
+
+
+# The roster IS the decision here: these are the catalog-extension documents
+# PrismaQuant writes and still verifies (``joint_catalog_extension.SCHEMA`` and
+# ``SCHEMA_V1``).  v2 (PQ #993) binds the Stage A run header instead of one
+# completed receipt, and it is the schema every extension is created under now.
+@pytest.mark.parametrize('schema', ['prismaquant.joint_catalog_extension.v1',
+                                    'prismaquant.joint_catalog_extension.v2'])
+def test_rooted_authority_reads_each_prismaquant_extension_schema(tmp_path, schema):
+    manifest, _ = rooted(tmp_path, extension_schema=schema)
+    bundle = CachedUnitBundle(manifest, tmp_path, {'dense', 'expert'}, manifest['source'])
+    for name in manifest['units']:
+        assert bundle.read(name)[1] == manifest['units'][name]
+
+
+@pytest.mark.parametrize('schema', ['prismaquant.joint_catalog_extension.v3',
+                                    'prismaquant.t4_adopted_catalog.v1', None,
+                                    ['prismaquant.joint_catalog_extension.v2']])
+def test_rooted_authority_refuses_any_other_extension_schema(tmp_path, schema):
+    manifest, _ = rooted(tmp_path, extension_schema=schema)
+    with pytest.raises(ValueError, match='authority schema differs'):
+        CachedUnitBundle(manifest, tmp_path, {'dense', 'expert'}, manifest['source'])
 
 @pytest.mark.parametrize('change', ['missing_root', 'extra_unit', 'aliased_roots', 'unbound_producer', 'missing_authority'])
 def test_rooted_coverage_and_authority_are_closed(tmp_path, change):
