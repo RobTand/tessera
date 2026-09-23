@@ -79,7 +79,8 @@ def test_rooted_authority_reads_each_prismaquant_extension_schema(tmp_path, sche
 
 
 @pytest.mark.parametrize('schema', ['prismaquant.joint_catalog_extension.v3',
-                                    'prismaquant.t4_adopted_catalog.v1', None])
+                                    'prismaquant.t4_adopted_catalog.v1', None,
+                                    ['prismaquant.joint_catalog_extension.v2']])
 def test_rooted_authority_refuses_any_other_extension_schema(tmp_path, schema):
     manifest, _ = rooted(tmp_path, extension_schema=schema)
     with pytest.raises(ValueError, match='authority schema differs'):

@@ -5710,10 +5710,14 @@ the declared one; and the publish job's tag check reads the same table
 canonical wire roots and exact historical producer package hashes. Unit
 receipts and wire bytes remain unchanged. Every selected encoder departure
 from the checkpoint seal carries its bound catalog adoption and migration
-proof. PrismaQuant authenticates the completed capture/catalog extension and
-proof semantics before publication; Tessera rechecks the bound documents and
-uses each exact historical package's input-identity factory, followed by the
-unchanged strict cached-wire verifier. Duplicate leaf names are permitted only
+proof. PrismaQuant authenticates the catalog extension and proof semantics
+before publication. The extension is `prismaquant.joint_catalog_extension.v1`,
+which binds one completed Stage A receipt, or `.v2`, which binds the
+Stage A run header so an extension exists from the first sealed band. Tessera
+rechecks the bound documents, accepts exactly those two extension schemas
+(`cached_unit.CATALOG_EXTENSION_SCHEMAS`) and reads no other extension field,
+then uses each exact historical package's input-identity factory, followed by
+the unchanged strict cached-wire verifier. Duplicate leaf names are permitted only
 in distinct roots. Symlink roots/files and partial or surplus ownership refuse.
 
 A separately bound served-activation policy records selected A4 executed-group
