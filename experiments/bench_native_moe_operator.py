@@ -111,13 +111,12 @@ def selected_window_decoder(backend, family):
 def owner_needs_selected(wire, world):
     """Does this stack need the explicit selected owner, or its own builder?
 
-    BF16 still answers True here although compressed BF16 has a production
-    expert builder since tessera#609 (the compact lane, folded arithmetic):
-    this harness has not been moved onto that owner, and its panel admits the
-    research decoders only where this answers True.
+    Only an FP8 stack above one rank.  Compressed BF16 has had a production
+    expert builder since tessera#609 (the compact lane, folded arithmetic), and
+    the priced owner must be the served one (tessera#613): a checkpoint carries
+    no research block, so a BF16 owner is priced on that builder.
     """
-    return wire["family"] == "TESSERA_BF16" or (wire["family"] == "TESSERA_FP8"
-                                                and int(world) > 1)
+    return wire["family"] == "TESSERA_FP8" and int(world) > 1
 
 
 def census_symbol_base(symbol):
@@ -155,14 +154,15 @@ def owner_launch_pairs(wire, *, world=1):
 def owner_research_selected(shape, wire, request_block):
     """The explicit selected-owner block this stack needs, or None.
 
-    Two stacks need one and one must not have one.  This harness serves a
-    compressed BF16 expert stack only through the selected owner (see
-    :func:`owner_needs_selected`), and the production FP8 expert builder
-    exceeds its TP1 scope past one rank; both take the versioned
-    ``research_selected_moe`` owner.  A family with its own expert builder
-    (``TESSERA_NVFP4``) keeps it -- the selected block refuses to name a
-    target it does not serve, so attaching one to an A4 owner is a refusal
-    rather than a wider admission.
+    One stack needs one and two must not have one.  The production FP8
+    expert builder exceeds its TP1 scope past one rank, so that stack takes
+    the versioned ``research_selected_moe`` owner.  A family with its own
+    expert builder keeps it.  For ``TESSERA_NVFP4`` the selected block refuses
+    to name a target it does not serve, so attaching one to an A4 owner is a
+    refusal rather than a wider admission.  ``TESSERA_BF16`` is refused here
+    by name (tessera#613): the plugin's selected owner still serves it, but
+    the served checkpoint carries no block, so a receipt priced through one
+    would price an object that is not the served one.
     """
     from tessera.moe_execution import ResearchSelectedMoeConfig
     family, world = wire["family"], int(shape.get("tensor_parallel", 1))
@@ -175,6 +175,11 @@ def owner_research_selected(shape, wire, request_block):
                 "the explicit selected owner at this cut, and a production owner is not a "
                 "fallback for it")
         return None
+    if family == "TESSERA_BF16":
+        raise ValueError(
+            "a TESSERA_BF16 routed owner is priced on its production builder (the compact "
+            "native lane, folded arithmetic), which is the served owner; drop the "
+            "research_selected_moe block from this request")
     selected = ResearchSelectedMoeConfig.from_checkpoint(request_block)
     if not ResearchSelectedMoeConfig.applies_to(wire):
         raise ValueError(f"research_selected_moe does not serve a {wire['family']}/{wire['grid']} "

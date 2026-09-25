@@ -381,6 +381,64 @@ def test_bf16_production_route_is_folded_compact_and_matches_the_reference(
         f"TP{tp_size} rank {tp_rank}: max abs diff {float(diff.max())}"
 
 
+def _bf16_owner(wires, tp_rank, tp_size, research=None):
+    """One loaded BF16 expert owner on ``wires``: the production builder when
+    ``research`` is None, else the plugin's research-selected owner."""
+    w13_blobs, w2_blobs, scheme, _expected = wires
+    layer = _native_layer(tp_rank=tp_rank, tp_size=tp_size)
+    layer.global_num_experts = 2
+    if research is None:
+        method = moe_route.build_tessera_moe_method(scheme, 'm', 'resident', layer)
+    else:
+        from vllm.config import set_current_vllm_config
+        with set_current_vllm_config(
+                types.SimpleNamespace(model_config=types.SimpleNamespace(enforce_eager=True))):
+            method = moe_route.build_tessera_moe_method(
+                scheme, 'm', 'resident', layer, research_selected=research)
+    method.create_weights(layer, 2, HIDDEN, INTER // tp_size, torch.bfloat16)
+    _load_all(method, layer, [[pair[0], pair[1]] for pair in w13_blobs],
+              [pair[0] for pair in w2_blobs])
+    method.process_weights_after_loading(layer)
+    return method, layer
+
+
+@cuda
+@pytest.mark.parametrize('tp_rank,tp_size', [(0, 1), (0, 2), (1, 2)])
+@pytest.mark.parametrize('chunk,backend', [(1, 'triton'), (8, 'torch')])
+def test_bf16_production_and_research_owners_are_bit_identical(
+        bf16_wires_native, tp_rank, tp_size, chunk, backend):
+    """The owner the operator bench prices is the served one (tessera#613).
+
+    The bench moved from the research-selected BF16 owner to the production
+    builder.  This is the forward guarantee that the move changes no number:
+    on the same wires and the same inputs the two owners return the SAME BITS,
+    at TP1 and at both TP2 ranks, for decode- and prefill-sized batches, and
+    whatever chunk bound or decode backend the research block declares --
+    both take the compact native lane, and neither setting reaches it.
+    """
+    production, p_layer = _bf16_owner(bf16_wires_native, tp_rank, tp_size)
+    research, r_layer = _bf16_owner(
+        bf16_wires_native, tp_rank, tp_size,
+        research=moe_route.ResearchSelectedMoeConfig(
+            max_experts_per_chunk=chunk, decode_backend=backend,
+            expected_tensor_parallel_size=tp_size))
+    assert production._native is not None and research._native is not None
+    for owner in (production, research):
+        for bundle in (owner._native.gate, owner._native.up, owner._native.down):
+            assert bundle.arithmetic == "folded"
+    assert p_layer.tessera_decoder == r_layer.tessera_decoder
+    gen = torch.Generator().manual_seed(613 + 10 * tp_size + tp_rank)
+    for tokens in (1, 8, 64, 300):
+        x = (torch.randn(tokens, HIDDEN, generator=gen) * 0.5).bfloat16().cuda()
+        ids = torch.randint(0, 2, (tokens, 2), generator=gen, dtype=torch.int32).cuda()
+        weights = torch.rand(tokens, 2, generator=gen).cuda()
+        a = production.apply(p_layer, x, weights, ids, _SharedSpy(), None)
+        b = research.apply(r_layer, x, weights, ids, _SharedSpy(), None)
+        assert torch.equal(a, b), (
+            f"TP{tp_size} rank {tp_rank}, {tokens} tokens: production and research owners "
+            f"differ by up to {float((a.float() - b.float()).abs().max())}")
+
+
 @cuda
 def test_router_weight_on_input_matches_actual_stock_placement():
     """``apply_router_weight_on_input=True`` is ACCEPTED because actual stock
