@@ -16,7 +16,8 @@ import pytest
 
 from experiments.step4_route_qualification import (
     A4_DENSE_GEMM_SYMBOL, BF16_ACTIVATION_CONTRACT, DENSE_LAUNCHES, FP8_ACTIVATION_CONTRACT,
-    NATIVE_SPAN2_GEMM_DECODER, NATIVE_WINDOW_GEMM_DECODER, NVFP4_ACTIVATION_CONTRACT,
+    NATIVE_SPAN2_GEMM_DECODER, NATIVE_WINDOW_GEMM_DECODER, NATIVE_WINDOW_GEMM_FOLDED_DECODER,
+    NVFP4_ACTIVATION_CONTRACT,
     QUALIFICATION_SCHEMA, QualificationRefused, WINDOW_GEMM_SYMBOL, WINDOW_GEMV_LIBRARY_GLOB,
     mapped_native_libraries, qualify_dispatch, qualify_native_route, refusal_record,
     trace_launches_by_contract)
@@ -81,7 +82,8 @@ def test_the_dense_launch_table_names_the_routes_one_launch_each():
     assert DENSE_LAUNCHES["TESSERA_FP8"] == (FP8_ACTIVATION_CONTRACT,
                                              (WINDOW_GEMM_SYMBOL, NATIVE_WINDOW_GEMM_DECODER))
     assert DENSE_LAUNCHES["TESSERA_BF16"] == (BF16_ACTIVATION_CONTRACT,
-                                              (WINDOW_GEMM_SYMBOL, NATIVE_WINDOW_GEMM_DECODER))
+                                              (WINDOW_GEMM_SYMBOL,
+                                               NATIVE_WINDOW_GEMM_FOLDED_DECODER))
     assert DENSE_LAUNCHES["TESSERA_NVFP4"] == (NVFP4_ACTIVATION_CONTRACT,
                                                (A4_DENSE_GEMM_SYMBOL, NATIVE_SPAN2_GEMM_DECODER))
     assert WINDOW_GEMM_SYMBOL == "tessera::window_gemm_dense"

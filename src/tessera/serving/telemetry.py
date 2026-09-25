@@ -83,6 +83,7 @@ __all__ = [
     "DECODER_TORCH_WINDOW",
     "DECODER_WINDOW_GEMV",
     "DECODER_NATIVE_WINDOW_GEMM",
+    "DECODER_NATIVE_WINDOW_GEMM_FOLDED",
     "DECODER_NATIVE_SPAN2_GEMM",
     "DECODER_NATIVE_SPAN2_GROUPED",
     "DECODER_NATIVE_WINDOW_MOE_COMPACT",
@@ -145,6 +146,13 @@ DECODER_WINDOW_GEMV = "window_gemv"
 #: distinct value because no other decoder ran, and a census that read
 #: ``torch_window`` here would claim one.
 DECODER_NATIVE_WINDOW_GEMM = "native_window_gemm"
+#: The same dense GEMM on the BF16 family's FOLDED weight arithmetic: one bf16
+#: rounding of ``value * row_scale`` per weight in registers before the dot,
+#: with no scale in the epilogue (``window_gemm``'s ``arithmetic="folded"``,
+#: tessera#614).  ``native_window_gemm`` stays the epilogue arithmetic -- the
+#: FP8 family's, and the BF16 family's until #614 -- so a cell or a census can
+#: name which numerical function of the wire it attests.
+DECODER_NATIVE_WINDOW_GEMM_FOLDED = "native_window_gemm_folded"
 #: The native A4 lanes (``tessera.kernel_a4``): the span-2 GEMM decodes the
 #: compact loader's packed planes in-kernel -- densely, and per selected expert
 #: in the grouped form.  Distinct from ``native_span2``, which names the
@@ -165,6 +173,7 @@ DECODER_NATIVE_WINDOW_MOE_COMPACT = "native_window_moe_compact"
 DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED = "native_window_moe_compact_folded"
 DECODERS = frozenset((DECODER_NATIVE_SPAN2, DECODER_TORCH_STOCK, DECODER_TORCH_WINDOW,
                       DECODER_WINDOW_GEMV, DECODER_NATIVE_WINDOW_GEMM,
+                      DECODER_NATIVE_WINDOW_GEMM_FOLDED,
                       DECODER_NATIVE_SPAN2_GEMM, DECODER_NATIVE_SPAN2_GROUPED,
                       DECODER_NATIVE_WINDOW_MOE_COMPACT,
                       DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED))

@@ -429,8 +429,8 @@ WINDOW_GEMV_SYMBOL = "tessera_window_gemv::gemv"
 WINDOW_GEMM_SYMBOL = "tessera::window_gemm_dense"
 
 #: The native lanes' own spellings, in the module that executes them, so a
-#: route owner reports the same string the code does.  All four pairs below
-#: are EXPERIMENTAL: the dispatch can make these launches and the routes'
+#: route owner reports the same string the code does.  All pairs below are
+#: EXPERIMENTAL: the dispatch can make these launches and the routes'
 #: census expectation must know them, while no ``lane_eligibility`` cell
 #: attests any of them (``EXPERIMENTAL_LAUNCHES``).  A pair leaves that set
 #: when a receipt earns it a cell.
@@ -453,6 +453,11 @@ MOE_GEMM_SYMBOL = "vllm.fused_moe.modular_kernel"
 _DECODER_NATIVE_SPAN2 = "native_span2"
 _DECODER_TORCH_STOCK = "torch_materialize_stock"
 _DECODER_NATIVE_WINDOW_GEMM = "native_window_gemm"
+#: The same dense GEMM on the BF16 family's folded arithmetic (tessera#614):
+#: the value times the row scale rounded to bf16 once per weight, before the
+#: dot, and no epilogue scale.  Its own string because it is a different
+#: numerical function of the wire than ``native_window_gemm``'s epilogue.
+_DECODER_NATIVE_WINDOW_GEMM_FOLDED = "native_window_gemm_folded"
 #: The native A4 lanes: the span-2 GEMM decodes the packed planes in-kernel
 #: (dense) and the grouped form does it per selected expert.  Distinct from
 #: ``native_span2`` (the load-time span-2 DECODE) and from ``torch_window``.
@@ -477,19 +482,21 @@ _ALL_MODES = ("resident", "streamed")
 #: of the extension's name for the load path that still builds it.
 
 
-def _dense_native_window_launch() -> tuple[dict, ...]:
-    """The compact loader's native window GEMM, one launch for both routes.
+def _dense_native_window_launch(decoder: str) -> tuple[dict, ...]:
+    """The compact loader's native window GEMM, the dense half of both routes.
 
     ``serving.native_window`` prepares each dense role from the verified wire
     (``tessera.compact_prep.prepare_window_compact``) and runs the packed
     bitstream GEMM through one functional custom op; it serves every M in both
     residencies and needs no extension lane, so it carries no ``lane`` and is
-    not a ``when_lane_absent`` fallback.  A BF16 unit is the value family and
-    an E4M3 unit is the fp8 family; the two routes differ in their epilogue
-    only, and this launch is the dense half both publish.
+    not a ``when_lane_absent`` fallback.  An E4M3 unit is the fp8 family, on
+    the epilogue arithmetic (``native_window_gemm``); a BF16 unit is the value
+    family, on the folded arithmetic (``native_window_gemm_folded``,
+    tessera#614).  One symbol, two decoders: the decoder is what names the
+    arithmetic, so a cell attesting one cannot be read as attesting the other.
     """
     return (
-        {"symbol": WINDOW_GEMM_SYMBOL, "decoder": _DECODER_NATIVE_WINDOW_GEMM,
+        {"symbol": WINDOW_GEMM_SYMBOL, "decoder": decoder,
          "regimes": _ALL_REGIMES, "modes": _ALL_MODES, "lane": None,
          "structures": (STRUCTURE_DENSE,),
          "when_lane_absent": False},
@@ -536,7 +543,7 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
     # lane's three launches stood here until #538 and were retired from the
     # dispatch by ``1b767a207``; a table that outlived its dispatch is what let
     # the published ``lane_eligibility`` cells go on naming them.
-    TESSERA_FP8: _dense_native_window_launch() + (
+    TESSERA_FP8: _dense_native_window_launch(_DECODER_NATIVE_WINDOW_GEMM) + (
         {"symbol": MOE_GEMM_SYMBOL, "decoder": _DECODER_TORCH_STOCK,
          "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": None,
          "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": True},
@@ -549,11 +556,13 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
          "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": False},
     ),
     # The dense half: same shape as the FP8 dense half above, and for the same
-    # reason.  The expert half (tessera#609) is the compact window MoE adapter
-    # with the FOLDED weight arithmetic, resident like every expert stack.  It
-    # has no stock-kernel launch at all: there is no materialising BF16 expert
-    # path to fall back to.
-    TESSERA_BF16: _dense_native_window_launch() + (
+    # reason, on the FOLDED weight arithmetic (tessera#614) and therefore its
+    # own decoder.  The expert half (tessera#609) is the compact window MoE
+    # adapter with the same folded arithmetic, resident like every expert
+    # stack.  It has no stock-kernel launch at all: there is no materialising
+    # BF16 expert path to fall back to.  Both halves of the route serve one
+    # arithmetic: the row scale folded into each weight, rounded once.
+    TESSERA_BF16: _dense_native_window_launch(_DECODER_NATIVE_WINDOW_GEMM_FOLDED) + (
         {"symbol": WINDOW_MOE_COMPACT_SYMBOL,
          "decoder": _DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED,
          "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": None,
@@ -587,7 +596,18 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
 #: (#575) -- no dense or routed A4 census exists -- and the compact window MoE
 #: adapter has no served receipt at all, in either arithmetic: the FP8
 #: epilogue pair and the BF16 folded pair (tessera#609) both wait for one.
+#:
+#: ``(WINDOW_GEMM_SYMBOL, _DECODER_NATIVE_WINDOW_GEMM_FOLDED)`` ENTERED at
+#: contract v37 (tessera#614).  The dense BF16 route moved from the epilogue
+#: arithmetic to the folded one, so ``bf16_route.apply`` now makes a launch no
+#: receipt covers: the v34 BF16 dense cells census'd the epilogue kernel.
+#: Those two cells are withdrawn in the same change, for the reason the v34
+#: note above gives in reverse -- ``_validate_cell_executes`` would otherwise
+#: refuse them.  The epilogue pair stays attested for the E4M3 family, whose
+#: arithmetic did not move.  A served census of the folded dense GEMM is what
+#: earns the BF16 dense scope its cells back.
 EXPERIMENTAL_LAUNCHES = frozenset({
+    (WINDOW_GEMM_SYMBOL, _DECODER_NATIVE_WINDOW_GEMM_FOLDED),
     (A4_DENSE_GEMM_SYMBOL, _DECODER_NATIVE_SPAN2_GEMM),
     (A4_GROUPED_GEMM_SYMBOL, _DECODER_NATIVE_SPAN2_GROUPED),
     (WINDOW_MOE_COMPACT_SYMBOL, _DECODER_NATIVE_WINDOW_MOE_COMPACT),

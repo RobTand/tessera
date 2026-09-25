@@ -1,6 +1,6 @@
 {
   "schema": "tessera.runtime-contract.v1",
- "contract_version": 36,
+ "contract_version": 37,
  "quant_method": {
   "canonical": "tessera",
   "accepted": [
@@ -615,86 +615,6 @@
     "regime": "batch",
     "rungs_q256": [1024],
     "activation_contract": "fp8_per_token_dynamic",
-    "executes": [
-     {
-      "symbol": "tessera::window_gemm_dense",
-      "decoder": "native_window_gemm"
-     }
-    ],
-    "route_status": "backed_with_serve_flag",
-    "qualification": "device_qualified",
-    "requires_plugin": "tessera",
-    "requires_serve_flags": [
-     "TESSERA_SERVE_MODE=resident|streamed"
-    ],
-    "predicates": [],
-    "evidence": {
-     "artifact": null,
-     "grade": "route_only",
-     "kl": [],
-     "smoke": {
-      "status": "not_recorded",
-      "receipt": null,
-      "attribution": "unattributed",
-      "control": null,
-      "record": null
-     }
-    }
-   },
-   {
-    "id": "tessera_bf16_k1_dense_sm121_decode",
-    "runtime": {
-     "image": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
-     "execution_modes": ["eager"],
-     "vllm": "0.28.0",
-     "torch": "2.13.0+cu130"
-    },
-    "platform": "sm_121",
-    "family": "TESSERA_BF16_K1",
-    "structure": "dense",
-    "regime": "decode",
-    "rungs_q256": [1792],
-    "activation_contract": "bf16_unquantized",
-    "executes": [
-     {
-      "symbol": "tessera::window_gemm_dense",
-      "decoder": "native_window_gemm"
-     }
-    ],
-    "route_status": "backed_with_serve_flag",
-    "qualification": "device_qualified",
-    "requires_plugin": "tessera",
-    "requires_serve_flags": [
-     "TESSERA_SERVE_MODE=resident|streamed"
-    ],
-    "predicates": [],
-    "evidence": {
-     "artifact": null,
-     "grade": "route_only",
-     "kl": [],
-     "smoke": {
-      "status": "not_recorded",
-      "receipt": null,
-      "attribution": "unattributed",
-      "control": null,
-      "record": null
-     }
-    }
-   },
-   {
-    "id": "tessera_bf16_k1_dense_sm121_batch",
-    "runtime": {
-     "image": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
-     "execution_modes": ["eager"],
-     "vllm": "0.28.0",
-     "torch": "2.13.0+cu130"
-    },
-    "platform": "sm_121",
-    "family": "TESSERA_BF16_K1",
-    "structure": "dense",
-    "regime": "batch",
-    "rungs_q256": [1792],
-    "activation_contract": "bf16_unquantized",
     "executes": [
      {
       "symbol": "tessera::window_gemm_dense",
@@ -2753,6 +2673,7 @@
   }
  },
  "changelog": [
+  {"contract_version": 37, "date": "2026-09-25", "change": "The two dense cells tessera_bf16_k1_dense_sm121_{decode,batch} are WITHDRAWN (tessera#614). The dense TESSERA_BF16 route's weight arithmetic moved from the EPILOGUE form (tl.dot on the raw bf16 table values, the fp32 accumulator multiplied by the row scale) to the FOLDED form (one bf16 rounding of value * row_scale per weight, in registers, before tl.dot, and no scale in the epilogue): window_gemm gains arithmetic=\"folded\", the dense custom op tessera::window_gemm_dense takes it as an argument, and bf16_route.apply now stamps (tessera::window_gemm_dense, native_window_gemm_folded). That is the tile decode.materialize_bf16_folded renders and the arithmetic the routed BF16 stack has served since contract v36 (tessera#609), so the route's dense and routed modules now compute one function of the wire. THE DECISION (tessera#606): the served arithmetic equals the priced one, dense as well as routed; a consumer that prices a BF16 rung prices the decoded tile rounded once to bf16, and the epilogue route served a different function of the same bytes. The measured cost of the fold is unchanged and recorded in bf16_route's docstring (served at R = 7 the folded twin's KL was 1.0011x the epilogue route's on all and 0.9961x on confident, below what the corpus resolves); no quality win is claimed for either arithmetic. WHY A WITHDRAWAL. The v34 census (tessera#545, docs/measurements/tessera-window-gemm-census-2026-09-21.md) measured the epilogue kernel under (tessera::window_gemm_dense, native_window_gemm); from this commit the BF16 route cannot make that arithmetic, so the two cells would publish a launch the dispatch no longer makes for this family. REMOVAL, not a retag, for v31's reason: naming native_window_gemm_folded in them would claim a measurement that never ran. The folded pair enters scheme.EXPERIMENTAL_LAUNCHES in the same commit, because contract._validate_cell_executes derives a cell's executes from the non-experimental dispatch and would refuse the old cells against the new one. CONSUMER-VISIBLE and NOT additive: dense TESSERA_BF16_K1 at q256=1792 is no longer device_qualified on sm_121, and a reader asking what the runtime executes there, or on what evidence, now reads absence, which resolves unattested. WHAT DOES NOT MOVE. The E4M3 dense cells tessera_e4m3_k1_dense_sm121_{decode,batch} and the (tessera::window_gemm_dense, native_window_gemm) pair they name: the FP8 family's arithmetic did not change. The BF16 format row's attested_rungs_q256 [1792] and its attested_wire stamp: the wire recipe did not change, and a rung with no cell is the state v31 to v33 already published. reader_rate_range_q256, structures [dense, routed_moe], every routed cell, every TP/EP bound, sm_121's serve_image (the E2M1 and E4M3 cells still name it) and every served byte. Dense EXPORT is not blocked by this, and the changelog says so rather than letting a reader assume it: scheme.refuse_unserveable_wire bounds a dense module by the format row's reader_rate_range_q256, and only a non-dense structure reads attested cells. PRICED EVIDENCE: dense BF16 operator measurements taken on the epilogue kernel describe a function this route no longer serves and need re-pricing on the folded one. A served census of the folded dense GEMM is what earns the scope its cells back. The activation-quantizer schema stays v2 and lane_eligibility.schema stays v10."},
   {"contract_version": 36, "date": "2026-09-25", "change": "TESSERA_BF16_K1 gains a production expert builder (tessera#609): scheme.MOE_BUILDERS names moe_route.build_tessera_moe_method for TESSERA_BF16, so the format row's structures become [dense, routed_moe] (the validator ties structures to MOE_BUILDERS). The stack serves on the compact native window lane only, with the FOLDED weight arithmetic (one bf16 rounding of value * row_scale per weight before the dot, no epilogue scale); without the compact reader it refuses, because there is no materialising BF16 expert path. Its launch (tessera.native_window_moe.NativeWindowMoE.__call__, native_window_moe_compact_folded) enters scheme.ROUTE_LAUNCHES and scheme.EXPERIMENTAL_LAUNCHES together: no receipt exists, so NO CELL is minted and a routed BF16 stack resolves unattested exactly as before. ADDITIVE for a lane reader: no cell, rung, route status, attested_wire stamp, TP/EP bound or served byte moves; a reader of structures sees routed_moe for BF16 as a dispatch fact. The activation-quantizer schema stays v2 and lane_eligibility.schema stays v10."},
   {"contract_version": 35, "date": "2026-09-25", "change": "Third fp4 activation attestation for sm_121 (tessera#607): the table the GLM-5.3 serving image localhost/prismaquant/spark-vllm-nccl230@sha256:a5424378322071f4c33e63d1372a2bb028e46b03f0da0e5edb0cdd7418e2cebb emitted on a GB10 (vLLM 0.28.1rc1.dev397+gfd4a15126.d20260904, torch 2.13.0+cu130, driver 595.91.07). That image is eugr/spark-vllm@sha256:0afec8d4 with libnccl 2.31.2 replaced by 2.30.7; it is the image the routed E2M1_K2 cells already name, and the one whose stock MLA sources pass the GLM53 NoPE guard. Two builds of one operator are two objects (v33), so an fp4 cell executing on this image had no table to be priced under until now. THE RECEIPT: experiments/attest_activation_quantizer.py emit, generator sha256 fdce9fae99ac..., run inside the image on sparklina (GB10, capability 12.1), PB action a82a0afe4c647356f259a77ec3bae3ad1647b6945db3e8a211ca82478c38f8ba: 11 probe vectors, byte-identical to both published sm_121 tables (vllm/vllm-openai@sha256:61fc8a89... and 192.168.1.107/prismaquant/glm53-nope-sm121@sha256:69418473...), so the NCCL swap does not move the quantizer. ADDITIVE: one list entry appears under activation_quantizers.platforms.sm_121; the activation-quantizer schema stays v2 and lane_eligibility.schema stays v10. No cell, rung, route, launch, grade, KL entry, qualification, format row, attested_wire stamp, TP/EP bound or served byte moves."},
   {"contract_version": 34, "date": "2026-09-21", "change": "Four dense cells are MINTED for the native window GEMM, and (tessera::window_gemm_dense, native_window_gemm) leaves scheme.EXPERIMENTAL_LAUNCHES (tessera#545). sm_121 cells tessera_e4m3_k1_dense_sm121_{decode,batch} at q256=1024 and tessera_bf16_k1_dense_sm121_{decode,batch} at q256=1792, all four device_qualified / backed_with_serve_flag / TESSERA_SERVE_MODE=resident|streamed, execution_modes [\"eager\"], on the platform's own serve image vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14 (vLLM 0.28.0, torch 2.13.0+cu130). THE RECEIPT: four route censuses on a GB10 (sm_121, capability [12, 1]), eager, tessera affae68ed, recorded in docs/measurements/tessera-window-gemm-census-2026-09-21.md -- {TESSERA_E4M3_K1 q1024, TESSERA_BF16_K1 q1792} x {resident, streamed}, each reporting all 112 declared Tessera modules on tessera::window_gemm_dense/native_window_gemm in BOTH the decode and the batch regime, state served, the family's own activation contract, verdict served and problems []. The four receipt JSONs are build-box run logs, not tracked files; the measurement doc names their directory and carries each arm's sha256, and it is what a cell could cite. This is what v31 asked for: v31 WITHDREW eight dense cells because 1b767a207 left fp8_route.apply and bf16_route.apply making exactly one launch that no cell attested, and said 'a served census of the native window GEMM is what earns cells back'. It is earned for the launch these four cells name and for nothing else. THE #104 GUARD, AND WHY IT IS NOT A LANE. census.lane_engagement resolves a required lane through contract.lane_decoder, i.e. only a native_extensions entry, and the one entry is tessera_window_gemv -- the lane 1b767a207 retired. The native window GEMM carries lane null because it is a launch, not an extension lane, so no --require-lane can name it and the receipts carry lane_engagement.all_required_engaged null, the honest value for 'no lane was required'. The void-census refusal is taken from the launch side instead: every arm ran --require-decoder native_window_gemm, so required_decoder_coverage refuses any phase in which that decoder took zero modules, and each receipt's decoder_coverage reads {\"native_window_gemm\": 112} in both phases. The E4M3 artifact's manifest still stamps requires_lanes [\"tessera_window_gemv\"] from its 2026-09-04 export, which --no-manifest-lanes set aside; that stale stamp is a fact about the bytes, not about this build. WHAT THIS DOES NOT ATTEST, stated rather than left to absence: compiled execution (the census tool does not support compiled dense launch agreement -- its trace combines launches as a+b -- so the cells scope eager alone); quality (grade route_only on all four, derived from zero kl entries: the dispatch is attested and nothing here bounds KL, and no KL arm was run); smoke (not_recorded); any rung but the one each cell publishes; any platform but sm_121 -- gfx1201 and gfx1151 keep null serve_image and no dense cells; TP > 1 and expert parallelism, both unmoved. The three A4/window-MoE pairs (a4_span2_gemm, a4_span2_grouped_gemm, window_moe_compact) STAY in EXPERIMENTAL_LAUNCHES: the A4-dense census is deferred with the NVFP4 lane per tessera#575 and the compact window MoE has no receipt. ADDITIVE for a lane reader: four cells appear where a reader previously resolved unattested, and no existing cell, rung, route, launch, grade, KL entry, qualification, format row, attested_wire stamp, platform entry, activation-quantizer attestation or served byte changes. It is NOT additive for a reader that derives a cell's executes from scheme.route_launches itself: the window-GEMM pair now appears in the non-experimental dispatch for TESSERA_FP8 and TESSERA_BF16 dense, which is the same table _validate_cell_executes reads, and that coupling is why the set shrinks in the commit that mints the cells rather than before it. The activation-quantizer schema stays v2 and lane_eligibility.schema stays v10."},

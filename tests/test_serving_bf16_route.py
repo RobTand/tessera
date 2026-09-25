@@ -1,22 +1,22 @@
 """The Tessera 16-bit W16A16 dense serving route.
 
 Exercised for real on a CUDA box: the container parse, the packed-window
-decode, the reference-decoder cross-check at preparation, the fp32 row-scale
-epilogue, both residency modes, the compiled decode and the refusals.
+decode, the reference-decoder cross-check at preparation, the folded row
+scale, both residency modes, the compiled decode and the refusals.
 
-**The load-bearing assertion is that the row scale never touches the tile.**
-That is what the family is for: a CHANNEL scale is an output-row factor and
-commutes with the matmul, so a lane holding the wire runs the GEMM on the raw
-table values -- exact, since every entry is already a bf16 word -- and applies
-the scale to the fp32 output.  Folding instead adds one bf16 rounding
-(~0.0011-0.0022 absolute on GLM expert rows at any rate).  Its 15.4% *share*
-at R = 7 composes in quadrature -- a 1.2% error gap, 2.4% squared -- and served
-at R = 7 the twin's KL is 1.0011x the route's on ``all`` and 0.9961x on
-``confident``, i.e. below what the corpus resolves, so no fold win is claimed
-here (#45).  Two tests hold the line directly: the decoded tile equals
-``materialize_bf16``'s VALUES (not the folded twin's tensor), and the route's
-output is closer to the exact fp32 product than the folded rendering is --
-both in weight space, which is where the fold is visible.
+**The load-bearing assertion is that the route serves the folded tile**
+(tessera#606, #614): each weight is ``bf16(value * row_scale)``, rounded once,
+before the dot, and there is no scale on the output -- the tile
+``materialize_bf16_folded`` renders, and the arithmetic the routed BF16 stack
+serves.  The reason is pricing identity: a consumer that prices a BF16 rung
+prices that tile, so the served function must be that one.  The fold costs one
+bf16 rounding (~0.0011-0.0022 absolute on GLM expert rows at any rate), and
+served at R = 7 the folded twin's KL was 1.0011x the epilogue route's on
+``all`` and 0.9961x on ``confident``, below what the corpus resolves (#45), so
+neither arithmetic is claimed to win on quality.  Two tests hold the line: the
+served output is the folded product (and measurably not the epilogue one), and
+the RETAINED reference preparation still returns ``materialize_bf16``'s
+unfolded pair, which is what the fold is taken of.
 
 STUBBED: vLLM's ``LinearMethodBase`` and parameters.  There is no A-side
 quantiser to stub -- the A side is bf16 as it arrives, which is the whole of
@@ -319,8 +319,8 @@ def _drive(monkeypatch, mode, roles=(("weight", 64),), cols=512, m=8, seed=0, q2
 @pytest.mark.parametrize("mode", [MODE_RESIDENT, MODE_STREAMED])
 def test_the_tile_is_the_reference_values_and_the_scale_is_beside_it(monkeypatch, mode):
     """The RETAINED reference tile is ``materialize_bf16``'s values (never the
-    fold); the route serves the packed native GEMM with the same scale beside
-    it.
+    fold), with the same fp32 row scale beside it that the served GEMM folds
+    into each weight.
 
     The route no longer materialises a tile -- ``native_window`` holds packed
     bundles -- so the byte-for-byte claim is made where it still has a subject,
@@ -342,45 +342,50 @@ def test_the_tile_is_the_reference_values_and_the_scale_is_beside_it(monkeypatch
     assert tuple(layer.row_scale.shape) == (values.shape[0],)
     assert layer.tessera_native is not None
     assert not hasattr(layer, "weight_bf16") and not hasattr(layer, "tessera_prepared")
-    # And it is NOT the folded twin: if it were, this whole family would be
-    # paying the fold it exists to avoid, and every other assertion here would
-    # still pass.
+    # And the reference pair is NOT the folded twin: the fold is taken once,
+    # in the served kernel, of exactly this pair -- a reference that had
+    # already folded would be folded twice there, and every other assertion
+    # here would still pass.
     assert not torch.equal(tile, folded), "the tile has the row scale folded into it"
 
 
-@requires_cuda
-def test_the_route_beats_the_fold_it_refuses_to_do(monkeypatch):
-    """Not folding is measurably better in weight space, which is why the rule exists.
-
-    The exact answer is the fp32 product of the unfolded pair.  The route's
-    output and the folded twin's are both approximations of it; the route's
-    must be the closer one, or the pair is costing bytes for nothing.  (Served
-    KL at R = 7 does not resolve the difference -- #45 -- so this weight-space
-    ordering is the claim, not a served win.)
-    """
-    got, _layer, _m, x, (values, scale, folded) = _drive(monkeypatch, MODE_RESIDENT, m=8)
-    exact = (x.float() @ (values.float() * scale[:, None]).t())
-    twin = (x @ folded.t()).float()
-    err_route = (got.float() - exact).norm() / exact.norm()
-    err_twin = (twin - exact).norm() / exact.norm()
-    assert err_route < err_twin, f"route {err_route:.3e} is not better than the fold {err_twin:.3e}"
+def _rel(a, b):
+    return float((a.float() - b.float()).norm() / b.float().norm())
 
 
 @requires_cuda
-def test_the_epilogue_keeps_the_gemms_own_accumulator(monkeypatch):
-    """fp32 out, scale, one rounding -- not bf16 out, scale, two roundings.
+@pytest.mark.parametrize("mode", [MODE_RESIDENT, MODE_STREAMED])
+def test_the_route_serves_the_folded_tile_and_not_the_epilogue(monkeypatch, mode):
+    """The served output IS ``x @ materialize_bf16_folded(...)^T``, and is not
+    the epilogue arithmetic (tessera#614).
 
-    Rounding the GEMM to bf16 before applying the row scale would put a second
-    rounding between the accumulator and the answer, which is most of what not
-    folding the scale was bought to avoid.
+    ``folded`` is ``decode.materialize_bf16_folded``'s tile, so the reference is
+    the one definition of the fold in the tree.  Both references are the
+    arithmetic's own answer, rounded to bf16 once, as the served GEMM rounds:
+    the products are exact in fp32, so the served output differs from its own
+    arithmetic's reference only by fp32 summation order -- at most one bf16
+    ulp, and in most elements not at all.  Compared against unrounded fp32
+    products instead, the output's own bf16 rounding (unit roundoff 2^-8)
+    swamps the fold's per-weight rounding and neither ordering can be read.
+    On a build that serves the epilogue the ordering reverses, which is what
+    makes this bite.
     """
-    got, _layer, _m, x, (values, scale, _folded) = _drive(monkeypatch, MODE_STREAMED, m=8)
-    exact = (x.float() @ (values.float() * scale[:, None]).t())
-    rounded_first = ((x @ values.t()).float() * scale).to(torch.bfloat16)
-    err_route = (got.float() - exact).norm() / exact.norm()
-    err_rounded = (rounded_first.float() - exact).norm() / exact.norm()
-    assert err_route < err_rounded, (
-        f"route {err_route:.3e} is no better than rounding before the scale {err_rounded:.3e}")
+    got, layer, _m, x, (values, scale, folded) = _drive(monkeypatch, mode, m=8)
+    folded_ref = (x.float() @ folded.float().t()).bfloat16()
+    epilogue_ref = ((x.float() @ values.float().t()) * scale).bfloat16()
+    # The two arithmetics really are different functions of these bytes.
+    assert not torch.equal(folded_ref, epilogue_ref)
+    gap = (got.float() - folded_ref.float()).abs()
+    bound = folded_ref.float().abs() * 2 ** -7 + 1e-4 * float(folded_ref.float().abs().max())
+    assert bool((gap <= bound).all()), (
+        f"served output is up to {float((gap - bound).max()):.3e} past one bf16 ulp of the "
+        "folded product")
+    err_folded = _rel(got, folded_ref)
+    err_epilogue = _rel(got, epilogue_ref)
+    assert err_folded < err_epilogue, (
+        f"served output is closer to the epilogue product ({err_epilogue:.3e}) than to the "
+        f"folded one ({err_folded:.3e}): the route is not serving the fold")
+    assert layer.tessera_native.arithmetic == "folded"
 
 
 @requires_cuda
@@ -555,8 +560,21 @@ def test_route_record_names_the_family_mode_contract_and_decoder(monkeypatch):
     assert rec["state"] == "served"
     assert rec["contract"] == route.ACTIVATION_CONTRACT == "bf16_unquantized"
     assert rec["symbol"] == WINDOW_GEMM_SYMBOL == "tessera::window_gemm_dense"
-    assert rec["decoder"] == telemetry.DECODER_NATIVE_WINDOW_GEMM == layer.tessera_decoder
+    assert rec["decoder"] == telemetry.DECODER_NATIVE_WINDOW_GEMM_FOLDED == layer.tessera_decoder
+    assert (rec["symbol"], rec["decoder"]) == route.DENSE_LAUNCH
     assert rec["decoder"] in telemetry.DECODERS
+
+
+@requires_cuda
+def test_a_bundle_on_another_arithmetic_is_refused_at_load(monkeypatch):
+    """``apply`` stamps ``DENSE_LAUNCH``; a prepared module on the epilogue
+    arithmetic would serve one function and record another, so loading refuses
+    it by name rather than emitting a record the kernel did not earn."""
+    from tessera.serving import native_window
+
+    monkeypatch.setitem(native_window.NATIVE_WINDOW_ARITHMETIC, TESSERA_BF16, "epilogue")
+    with pytest.raises(RuntimeError, match="native_window_gemm_folded"):
+        _drive(monkeypatch, MODE_RESIDENT)
 
 
 @requires_cuda

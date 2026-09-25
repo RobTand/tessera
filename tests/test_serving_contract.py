@@ -160,6 +160,11 @@ for _regime in ("decode", "batch"):
 #: ``TESSERA_BF16_K1`` at q256 1792
 #: (``docs/measurements/tessera-window-gemm-census-2026-09-21.md``).
 #:
+#: The BF16 pair of the four was WITHDRAWN at contract v37 (tessera#614): the
+#: BF16 route moved to the folded arithmetic and its own decoder, which the v34
+#: receipt never measured (``_WITHDRAWN_V37_CELL_IDS`` below).  Only the E4M3
+#: pair still stands on it.
+#:
 #: EAGER ONLY, and that is the receipt's own limit rather than a narrowing:
 #: ``tools/tessera_route_census.py`` does not support compiled dense launch
 #: agreement -- a compiled trace combines launches as ``a+b`` for a graph
@@ -170,8 +175,7 @@ for _regime in ("decode", "batch"):
 WINDOW_GEMM_RECEIPT = "docs/measurements/tessera-window-gemm-census-2026-09-21.md"
 _WINDOW_GEMM_RUNTIME = {"image": _DENSE_IMAGE_FROM_RECEIPT, "execution_modes": ["eager"],
                         "vllm": "0.28.0", "torch": "2.13.0+cu130"}
-for _family, _contract, _rung in (("TESSERA_E4M3_K1", "fp8_per_token_dynamic", 1024),
-                                  ("TESSERA_BF16_K1", "bf16_unquantized", 1792)):
+for _family, _contract, _rung in (("TESSERA_E4M3_K1", "fp8_per_token_dynamic", 1024),):
     for _regime in ("decode", "batch"):
         _CELL_LAWS[f"{_family.lower()}_dense_sm121_{_regime}"] = {
             "platform": "sm_121", "family": _family, "structure": "dense",
@@ -208,14 +212,28 @@ _WITHDRAWN_CELL_IDS = frozenset({
 })
 
 #: RE-EARNED at contract v34 (tessera#545), on the census receipt
-#: ``WINDOW_GEMM_RECEIPT`` names.  A subset of the withdrawn ids, because an id
-#: is a SCOPE and re-attesting a scope reuses it; the CLAIM is new, and
-#: ``test_no_withdrawn_cell_has_come_back_with_its_withdrawn_claim`` checks the
-#: launch rather than the spelling.  The other six stay withdrawn.
-_REEARNED_CELL_IDS = frozenset({
+#: ``WINDOW_GEMM_RECEIPT`` names, the ``sm_121`` BF16 dense pair came back --
+#: and was WITHDRAWN AGAIN at contract v37 (``_WITHDRAWN_V37_CELL_IDS``).  So
+#: no withdrawn id is re-earned today.  A cell that re-earns one is added here
+#: with its receipt, and it must execute the launch in
+#: ``_REEARNED_CELL_LAUNCH``, never a withdrawn claim.
+_REEARNED_CELL_IDS = frozenset()
+
+#: WITHDRAWN at contract v37 (tessera#614).  These two attested
+#: ``tessera::window_gemm_dense``/``native_window_gemm`` for ``TESSERA_BF16_K1``
+#: at q256 1792: the EPILOGUE arithmetic, the fp32 accumulator times the row
+#: scale.  The route now serves the FOLDED arithmetic -- one bf16 rounding of
+#: ``value * row_scale`` per weight, before the dot -- under its own decoder,
+#: so the build cannot make the arithmetic these cells published for BF16.
+#: Their v34 receipt measured the epilogue kernel, so retagging them would
+#: claim a census that never ran.  What earns the scope back is a served census
+#: of the folded dense GEMM.
+_WITHDRAWN_V37_CELL_IDS = frozenset({
     "tessera_bf16_k1_dense_sm121_decode",
     "tessera_bf16_k1_dense_sm121_batch",
 })
+#: The one launch a returning BF16 dense cell may name.
+_REEARNED_CELL_LAUNCH = {("tessera::window_gemm_dense", "native_window_gemm_folded")}
 
 
 @pytest.fixture(scope="module")
@@ -611,9 +629,12 @@ def test_the_dense_launch_table_is_the_launch_apply_makes(monkeypatch):
     from tessera.serving.scheme import (STRUCTURE_DENSE, TESSERA_BF16, TESSERA_FP8,
                                         WINDOW_GEMM_SYMBOL, launch_pairs)
 
-    for module, route in ((fp8_route, TESSERA_FP8), (bf16_route, TESSERA_BF16)):
-        assert module.DENSE_LAUNCH == (WINDOW_GEMM_SYMBOL,
-                                       telemetry.DECODER_NATIVE_WINDOW_GEMM)
+    # One symbol, one decoder per ARITHMETIC: the FP8 family keeps the
+    # epilogue, the BF16 family serves the folded form (tessera#614).
+    for module, route, decoder in (
+            (fp8_route, TESSERA_FP8, telemetry.DECODER_NATIVE_WINDOW_GEMM),
+            (bf16_route, TESSERA_BF16, telemetry.DECODER_NATIVE_WINDOW_GEMM_FOLDED)):
+        assert module.DENSE_LAUNCH == (WINDOW_GEMM_SYMBOL, decoder)
         assert launch_pairs(route, structure=STRUCTURE_DENSE,
                             include_experimental=True) == {module.DENSE_LAUNCH}, route
         for regime in ("decode", "batch"):
@@ -666,15 +687,21 @@ def test_no_published_dense_cell_names_a_launch_the_build_cannot_make(contract):
     ``master`` too -- where it fails, listing the eight stale cells.
     """
     pytest.importorskip("torch")
-    from tessera.serving.scheme import TESSERA_BF16, TESSERA_FP8, WINDOW_GEMM_SYMBOL
-    from tessera.serving.telemetry import DECODER_NATIVE_WINDOW_GEMM
+    from tessera.serving.scheme import WINDOW_GEMM_SYMBOL
+    from tessera.serving.telemetry import (DECODER_NATIVE_WINDOW_GEMM,
+                                           DECODER_NATIVE_WINDOW_GEMM_FOLDED)
 
-    window = {"TESSERA_E4M3_K1": TESSERA_FP8, "TESSERA_BF16_K1": TESSERA_BF16}
-    made = {(WINDOW_GEMM_SYMBOL, DECODER_NATIVE_WINDOW_GEMM)}
+    # Each family's literal pair, per arithmetic (tessera#614): a BF16 cell
+    # naming the epilogue decoder is as stale as one naming the GEMV lane.
+    made_by_family = {
+        "TESSERA_E4M3_K1": {(WINDOW_GEMM_SYMBOL, DECODER_NATIVE_WINDOW_GEMM)},
+        "TESSERA_BF16_K1": {(WINDOW_GEMM_SYMBOL, DECODER_NATIVE_WINDOW_GEMM_FOLDED)},
+    }
     stale = {}
     for cell in contract["lane_eligibility"]["cells"]:
-        if cell["structure"] != "dense" or cell["family"] not in window:
+        if cell["structure"] != "dense" or cell["family"] not in made_by_family:
             continue
+        made = made_by_family[cell["family"]]
         pairs = {(e["symbol"], e["decoder"]) for e in cell["executes"]}
         if pairs - made:
             stale[cell["id"]] = sorted(pairs - made)
@@ -702,20 +729,30 @@ def test_no_withdrawn_cell_has_come_back_with_its_withdrawn_claim(contract):
     ``tessera_e4m3_k1_dense_sm121_*_{resident,streamed}`` ids split a scope by
     residency, which the v34 cells do not (one cell covers both), and the two
     ``gfx1201`` ids have no ROCm census of this launch.
+
+    Contract v37 (tessera#614) withdrew the re-earned pair again: the BF16
+    route moved to the folded arithmetic, which the v34 receipt did not
+    measure.  So both withdrawals are checked the same way -- absent unless
+    re-earned, and a re-earned cell executes the folded launch and neither
+    withdrawn claim (the v31 GEMV lane's, the v37 epilogue decoder's).
     """
     present = {cell["id"] for cell in contract["lane_eligibility"]["cells"]}
-    assert not (present & (_WITHDRAWN_CELL_IDS - _REEARNED_CELL_IDS))
-    assert not (set(_CELL_LAWS) & (_WITHDRAWN_CELL_IDS - _REEARNED_CELL_IDS))
-    assert _REEARNED_CELL_IDS <= _WITHDRAWN_CELL_IDS
+    withdrawn = _WITHDRAWN_CELL_IDS | _WITHDRAWN_V37_CELL_IDS
+    assert not (present & (withdrawn - _REEARNED_CELL_IDS))
+    assert not (set(_CELL_LAWS) & (withdrawn - _REEARNED_CELL_IDS))
+    assert _REEARNED_CELL_IDS <= withdrawn
     assert _REEARNED_CELL_IDS <= present, "a re-earned id that is not shipped is a stale record"
+    # Today nothing is re-earned: the v37 withdrawal is in force.
+    assert not (present & _WITHDRAWN_V37_CELL_IDS)
     withdrawn_launches = {(e["symbol"], e["decoder"])
-                          for cell in withdrawn_cells(sorted(_REEARNED_CELL_IDS))
+                          for cell in withdrawn_cells(sorted(_WITHDRAWN_V37_CELL_IDS))
                           for e in cell["executes"]}
+    withdrawn_launches.add(("tessera::window_gemm_dense", "native_window_gemm"))
     for cell in contract["lane_eligibility"]["cells"]:
         if cell["id"] not in _REEARNED_CELL_IDS:
             continue
         pairs = {(e["symbol"], e["decoder"]) for e in cell["executes"]}
-        assert pairs == {("tessera::window_gemm_dense", "native_window_gemm")}, cell["id"]
+        assert pairs == _REEARNED_CELL_LAUNCH, cell["id"]
         assert not (pairs & withdrawn_launches), cell["id"]
 
 
@@ -765,18 +802,26 @@ def test_the_native_route_pairs_are_registered_experimental_and_censusable():
         # under the FOLDED arithmetic and its own decoder.
         (WINDOW_MOE_COMPACT_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED):
             (TESSERA_BF16, STRUCTURE_ROUTED_MOE),
+        # tessera#614: the BF16 dense GEMM under the FOLDED arithmetic.  It
+        # ENTERED at contract v37, with the two BF16 dense cells withdrawn.
+        (WINDOW_GEMM_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_GEMM_FOLDED):
+            (TESSERA_BF16, STRUCTURE_DENSE),
     }
     assert set(expected) == set(EXPERIMENTAL_LAUNCHES)
     # LEFT at contract v34 (tessera#545), and this is the other half of that
     # move: the dense window GEMM is attested now, so it is NOT experimental
-    # and it IS in the validator's default view -- which is what lets the four
-    # v34 cells name it, since ``_validate_cell_executes`` derives ``executes``
-    # from ``launch_pairs`` with ``include_experimental=False``.
+    # and it IS in the validator's default view -- which is what lets the v34
+    # E4M3 cells name it, since ``_validate_cell_executes`` derives ``executes``
+    # from ``launch_pairs`` with ``include_experimental=False``.  Since v37 it
+    # is the FP8 family's launch only: the BF16 route makes the folded pair,
+    # and its default view of dense is EMPTY until a census earns a cell.
     promoted = (WINDOW_GEMM_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_GEMM)
     assert promoted not in EXPERIMENTAL_LAUNCHES
     assert promoted not in experimental_launch_pairs(TESSERA_FP8, structure=STRUCTURE_DENSE)
     assert promoted in launch_pairs(TESSERA_FP8, structure=STRUCTURE_DENSE)
-    assert promoted in launch_pairs(TESSERA_BF16, structure=STRUCTURE_DENSE)
+    assert promoted not in launch_pairs(TESSERA_BF16, structure=STRUCTURE_DENSE,
+                                        include_experimental=True)
+    assert not launch_pairs(TESSERA_BF16, structure=STRUCTURE_DENSE)
     for pair, (route, structure) in expected.items():
         assert pair[1] in telemetry.DECODERS, pair
         assert pair in experimental_launch_pairs(route, structure=structure), pair
@@ -793,6 +838,7 @@ def test_the_native_route_pairs_are_registered_experimental_and_censusable():
                              (TESSERA_NVFP4, STRUCTURE_ROUTED_MOE),
                              (TESSERA_FP8, STRUCTURE_DENSE),
                              (TESSERA_FP8, STRUCTURE_ROUTED_MOE),
+                             (TESSERA_BF16, STRUCTURE_DENSE),
                              (TESSERA_BF16, STRUCTURE_ROUTED_MOE)):
         assert experimental_launch_pairs(route, structure=structure) <= launch_pairs(
             route, structure=structure, include_experimental=True)

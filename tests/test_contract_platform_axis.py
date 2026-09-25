@@ -132,8 +132,16 @@ def test_the_packaged_contract_validates_at_v33(contract):
     routed_moe]``, and the stack's one launch (the compact adapter under the
     folded arithmetic) enters ``EXPERIMENTAL_LAUNCHES``.  No cell is minted:
     a routed BF16 stack still resolves unattested.
+
+    v37 (tessera#614) is NOT additive for a lane reader and moves no schema:
+    the dense BF16 route moves to the folded arithmetic and stamps
+    ``native_window_gemm_folded``, which enters ``EXPERIMENTAL_LAUNCHES``, and
+    the two ``tessera_bf16_k1_dense_sm121_{decode,batch}`` cells v34 minted on
+    the epilogue kernel are withdrawn.  A v10 reader resolves dense BF16 at
+    q256 1792 on sm_121 as unattested, as it did from v31 to v33.  The format
+    row, its attested rung and wire stamp, and every other cell are unchanged.
     """
-    assert int(contract["contract_version"]) == 36
+    assert int(contract["contract_version"]) == 37
     assert "activation_quantizers" in contract
     assert all("structures" in entry for entry in contract["formats"])
     assert contract["lane_eligibility"]["schema"] == LANE_ELIGIBILITY_SCHEMA
@@ -285,15 +293,23 @@ def test_the_surviving_v22_sm121_cells_are_byte_identical(contract):
     # it, and the fixture records which two and on what receipt.  What may not
     # come back is the withdrawn CLAIM, so the launch is checked rather than
     # the spelling.
+    #
+    # Contract v37 (tessera#614) withdrew the re-earned pair again: the BF16
+    # route serves the folded arithmetic under its own decoder, which the v34
+    # receipt did not measure.  So the ids that stand are those re-earned at
+    # v34 and not withdrawn at v37 -- none, today.
     present = {cell["id"] for cell in contract["lane_eligibility"]["cells"]}
     withdrawn = set(recorded["withdrawn_at_v31"])
     reearned = set(recorded["reearned_at_v34"])
+    withdrawn_again = set(recorded["withdrawn_at_v37"])
     assert len(withdrawn) == 6
     assert reearned < withdrawn and len(reearned) == 2
-    assert not (present & (withdrawn - reearned)), sorted(present & (withdrawn - reearned))
-    assert reearned <= present
+    assert withdrawn_again == reearned
+    standing = reearned - withdrawn_again
+    assert not (present & (withdrawn - standing)), sorted(present & (withdrawn - standing))
+    assert standing <= present
     for cell in contract["lane_eligibility"]["cells"]:
-        if cell["id"] in reearned:
+        if cell["id"] in standing:
             assert [(e["symbol"], e["decoder"]) for e in cell["executes"]] == [
                 ("tessera::window_gemm_dense", "native_window_gemm")], cell["id"]
     assert {cell["id"] for cell in span} <= present

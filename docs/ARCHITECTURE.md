@@ -16,6 +16,26 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-25 for the folded dense BF16 arithmetic (tessera#614,
+contract v37). The dense `TESSERA_BF16` route now serves the same arithmetic
+as the routed stack: each weight is `bf16(value * row_scale)`, rounded once in
+registers before the MMA, with no epilogue scale
+(`decode.materialize_bf16_folded`'s tile). `window_gemm` gains
+`arithmetic="folded"`, the `tessera::window_gemm_dense` op takes it as an
+argument, and the route stamps a new decoder, `native_window_gemm_folded`.
+The decision (tessera#606) is pricing identity: a consumer that prices a BF16
+rung prices the decoded tile rounded once to bf16, so the served function has
+to be that one. Its measured quality cost is below what the corpus resolves
+(`bf16_route` docstring, #45). The v34 BF16 dense cells census'd the epilogue
+kernel, so they are WITHDRAWN and the folded pair enters
+`scheme.EXPERIMENTAL_LAUNCHES`. Dense `TESSERA_BF16_K1` at `q256 1792` on
+`sm_121` reads unattested again until a census of the folded GEMM earns cells.
+Dense export is not blocked (the dense branch of
+`scheme.refuse_unserveable_wire` reads the reader range, not cells). The E4M3
+dense cells and the epilogue pair they name do not move. Dense BF16 operator
+prices measured on the epilogue kernel need re-pricing. Before/after
+`torch.profiler` and power at the GLM dense shapes are in the PR (tessera#614).
+
 Re-stamped 2026-09-25 for the production BF16 expert builder (tessera#609,
 contract v36). A compressed `TESSERA_BF16` routed stack has a production
 builder: `scheme.MOE_BUILDERS` names `moe_route` for it, and it is served on
@@ -2592,8 +2612,11 @@ gate_up `24576x4096` with `gate_proj`/`up_proj` at 12288 rows each and down
 is read through its single index-mapped shard rather than whole.  The retained
 `prepare_tessera_fp8_module`/`prepare_tessera_bf16_module` preparations keep
 their own load-time agreement for the reference path.  The lane stamps
-`native_window_gemm`, a decoder distinct from `torch_window` and
-`window_gemv`, so a census can tell a native serve from a reference one.
+`native_window_gemm` for FP8 (the epilogue arithmetic) and
+`native_window_gemm_folded` for BF16 (the folded arithmetic, tessera#614),
+decoders distinct from `torch_window` and `window_gemv` and from each other,
+so a census can tell a native serve from a reference one and one arithmetic
+from the other.
 
 **The launch table was wider than the dispatch for these two routes, and is
 not any more (tessera#538, contract v31).**  The window-GEMV specialisation is
@@ -2645,6 +2668,22 @@ BF16 cells stay withdrawn because no ROCm census of this launch exists.  The
 `lane: None`; the arms ran `--require-decoder native_window_gemm` instead, and
 the ambiguity #104 exploited does not exist on a route whose admissible set is
 one launch.
+
+**The BF16 half went again on 2026-09-25 (tessera#614, contract v37), because
+the BF16 arithmetic moved.**  The v34 BF16 census measured the epilogue kernel
+-- `tl.dot` on the raw table values, the fp32 accumulator times the row scale.
+The route now folds the row scale into each decoded weight and rounds once
+before the dot, the arithmetic the routed BF16 stack serves (tessera#609) and
+the tile `decode.materialize_bf16_folded` renders, and it stamps
+`native_window_gemm_folded`. The two `tessera_bf16_k1_dense_sm121_*` cells
+therefore named an arithmetic the build no longer makes for BF16, and were
+withdrawn in the same change that put the folded pair into
+`scheme.EXPERIMENTAL_LAUNCHES` -- the v34 move in reverse, for the same
+validator reason. The `TESSERA_BF16` dense attested launch set is EMPTY again;
+`TESSERA_FP8`'s is still the epilogue pair. A census run with
+`--require-decoder native_window_gemm_folded` is what earns the cells back.
+The dense GEMM and the grouped GEMM share one register expression for the fold,
+and `tests/test_window_gemm.py` holds them bit-identical on a one-expert stack.
 
 **The ROUTED window lane serves the same way, and is likewise a candidate.** A
 routed stack reaches the compact intake through ONE predicate,

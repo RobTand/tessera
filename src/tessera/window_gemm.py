@@ -3,11 +3,22 @@ decoded into registers, and fed to a hardware ``tl.dot``.
 
 WHAT IT SERVES.  ``WindowGemvUnit`` in either window family:
 
-* ``family == "value"`` (BF16) -- the table holds bf16 values, the per-row
-  fp32 ``scale`` is applied once on the accumulated output, and the
-  **research folded** variant (rounding the scale into the decoded tile,
-  ``decode_folded``) is a different contract this module never silently
-  substitutes: there is no API for it here.
+* ``family == "value"`` (BF16) -- the table holds bf16 values and the
+  per-row fp32 ``scale`` is applied in one of two places, named once at
+  prepare time by ``arithmetic`` and never substituted silently:
+
+  - ``"epilogue"`` (the default of this module): ``tl.dot`` on the raw table
+    values, the fp32 accumulator multiplied by the row scale once per output;
+  - ``"folded"``: one bf16 rounding of ``value * row_scale`` per weight, in
+    registers, before ``tl.dot``, and no scale in the epilogue -- exactly
+    ``decode.materialize_bf16_folded``'s ``(values.float() * scale[:, None])
+    .to(torch.bfloat16)``, and the arithmetic ``window_gemm_grouped``'s
+    ``arithmetic="folded"`` runs for an expert stack.  The dense BF16 route
+    serves this one (tessera#614).
+
+  The two are different numerical functions of the same wire, so a bundle
+  carries its arithmetic as a field and the route stamps a decoder per
+  arithmetic.
 * ``family == "e4m3"`` (FP8) -- the wire decodes to E4M3 bytes through the
   unit's own ``codes_of_state`` ([2^L] grid codes) and ``native`` ([256]
   code -> byte) tables, the activation is quantized per token by **vLLM's
@@ -54,10 +65,14 @@ import triton.language as tl
 from .errors import GrammarError
 from .kernel_window_gemv import TILE_ROWS, WindowGemvUnit
 
-__all__ = ["window_gemm", "prepare_window_gemm", "PreparedWindowGemm", "MIN_BLOCK"]
+__all__ = ["window_gemm", "prepare_window_gemm", "PreparedWindowGemm", "MIN_BLOCK",
+           "ARITHMETICS"]
 
 #: ``tl.dot`` needs a 16-row minimum operand; any M is served by masking.
 MIN_BLOCK = 16
+
+#: The value family's two weight arithmetics (see the module docstring).
+ARITHMETICS = ("epilogue", "folded")
 
 
 @triton.jit
@@ -67,7 +82,7 @@ def _window_gemm_kernel(
     n_runs, tile_words, total_words, M, rows, cols,
     L: tl.constexpr, TILE: tl.constexpr,
     BM: tl.constexpr, BN: tl.constexpr, BK: tl.constexpr,
-    HAS_INIT: tl.constexpr, FP8: tl.constexpr,
+    HAS_INIT: tl.constexpr, FP8: tl.constexpr, FOLDED: tl.constexpr,
 ):
     pid_n = tl.program_id(0)
     pid_m = tl.program_id(1)
@@ -82,6 +97,10 @@ def _window_gemm_kernel(
 
     rows_v = tl.arange(0, BN)
     acc = tl.zeros((BM, BN), dtype=tl.float32)
+    if FOLDED:
+        # the folded value family multiplies every decoded weight by its row's
+        # scale, so the scale is read once, before the K loop
+        wscale = tl.load(scale_ptr + offs_n, mask=live_n, other=0.0)
 
     for r in range(n_runs):
         rate = tl.load(runs_ptr + r * 4 + 0)
@@ -141,6 +160,10 @@ def _window_gemm_kernel(
                 val = byte.to(tl.float8e4nv, bitcast=True)
             else:
                 val = tl.load(table_ptr + state, mask=live_k2, other=0.0)
+                if FOLDED:
+                    # one bf16 rounding of (value * row scale) in registers,
+                    # before the dot: materialize_bf16_folded's tile
+                    val = (val.to(tl.float32) * wscale[None, :]).to(tl.bfloat16)
 
             xk = tl.load(
                 x_ptr + offs_m[:, None] * cols + kglob[None, :],
@@ -148,12 +171,16 @@ def _window_gemm_kernel(
             )
             acc += tl.dot(xk, val, out_dtype=tl.float32)
 
-    scale = tl.load(scale_ptr + offs_n, mask=live_n, other=0.0)
-    if FP8:
-        a_scale = tl.load(a_scale_ptr + offs_m, mask=live_m, other=0.0)
-        y = (acc * a_scale[:, None]) * scale[None, :]
+    if FOLDED:
+        # the scale is already inside every weight: no epilogue factor
+        y = acc
     else:
-        y = acc * scale[None, :]
+        scale = tl.load(scale_ptr + offs_n, mask=live_n, other=0.0)
+        if FP8:
+            a_scale = tl.load(a_scale_ptr + offs_m, mask=live_m, other=0.0)
+            y = (acc * a_scale[:, None]) * scale[None, :]
+        else:
+            y = acc * scale[None, :]
     tl.store(
         out_ptr + offs_m[:, None] * rows + offs_n[None, :],
         y.to(tl.bfloat16), mask=live_m[:, None] & live_n[None, :],
@@ -184,6 +211,20 @@ class PreparedWindowGemm:
     block_n: int
     block_k: int
     quantizer: str = "native"
+    #: Where the value family applies the row scale: ``"epilogue"`` (on the
+    #: fp32 accumulator) or ``"folded"`` (into each decoded weight, one bf16
+    #: rounding, before the dot).  The E4M3 family is always ``"epilogue"``.
+    arithmetic: str = "epilogue"
+
+    def __post_init__(self):
+        # Metadata only -- no tensor is read -- so the custom op that rebuilds
+        # this bundle per call pays two string comparisons, not a sync.
+        if self.arithmetic not in ARITHMETICS:
+            raise GrammarError(f"unknown weight arithmetic {self.arithmetic!r}")
+        if self.arithmetic == "folded" and self.family != "value":
+            raise GrammarError(
+                "the folded weight arithmetic is the BF16 (value family) contract; the "
+                "E4M3 family keeps the per-token A quant and the row-scale epilogue")
 
     @property
     def device(self) -> torch.device:
@@ -255,7 +296,7 @@ class PreparedWindowGemm:
             m, self.rows, self.cols,
             L=self.window_bits, TILE=TILE_ROWS,
             BM=self.block_m, BN=self.block_n, BK=self.block_k,
-            HAS_INIT=self.has_init, FP8=fp8,
+            HAS_INIT=self.has_init, FP8=fp8, FOLDED=self.arithmetic == "folded",
             num_warps=8,
         )
         return y
@@ -278,6 +319,7 @@ def prepare_window_gemm(
     block_n: int = 64,
     block_k: int = 64,
     quantizer: "str | None" = "native",
+    arithmetic: str = "epilogue",
 ) -> PreparedWindowGemm:
     """Validate the unit once and freeze every constant the call needs.
 
@@ -286,7 +328,21 @@ def prepare_window_gemm(
     may not synchronise.  For the E4M3 family, ``quantizer="native"`` attests
     vLLM's per-token FP8 quantizer once, here; ``quantizer=None`` prepares a
     compute-only bundle that takes prequantized activations.
+
+    ``arithmetic`` names the value family's weight-side contract, once and
+    explicitly: ``"epilogue"`` multiplies the fp32 accumulator by the row
+    scale after the dot; ``"folded"`` rounds ``value * row_scale`` to bf16 per
+    weight before the dot and applies no scale after it
+    (``decode.materialize_bf16_folded``).  The E4M3 family has no folded form
+    -- its per-token A quant and row-scale epilogue are the published contract
+    -- so ``"folded"`` is refused there.
     """
+    if arithmetic not in ARITHMETICS:
+        raise GrammarError(f"unknown weight arithmetic {arithmetic!r}")
+    if arithmetic == "folded" and unit.family != "value":
+        raise GrammarError(
+            "the folded weight arithmetic is the BF16 (value family) contract; the E4M3 "
+            "family keeps the per-token A quant and the row-scale epilogue")
     if unit.family not in ("value", "e4m3"):
         raise GrammarError(f"window_gemm serves the value and e4m3 families, got {unit.family!r}")
     for name, v in (("block_m", block_m), ("block_n", block_n), ("block_k", block_k)):
@@ -387,6 +443,7 @@ def prepare_window_gemm(
         block_n=block_n,
         block_k=block_k,
         quantizer=quantizer if unit.family == "e4m3" else "native",
+        arithmetic=arithmetic,
     )
 
 
@@ -399,11 +456,12 @@ def window_gemm(
     block_n: int = 64,
     block_k: int = 64,
     out: "torch.Tensor | None" = None,
+    arithmetic: str = "epilogue",
 ) -> torch.Tensor:
     """One-shot ``prepare_window_gemm`` + call.  Convenience for tests and
     single uses; a serving path prepares once and holds the object."""
     prepared = prepare_window_gemm(
         unit, initial_state=initial_state,
-        block_m=block_m, block_n=block_n, block_k=block_k,
+        block_m=block_m, block_n=block_n, block_k=block_k, arithmetic=arithmetic,
     )
     return prepared(x, out=out)
