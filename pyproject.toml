@@ -7,7 +7,7 @@ name = "tessera-quant"
 version = "0.1.0"
 description = "Tessera: trellis-coded quantization of LLM weights onto hardware-native NVFP4, FP8 and BF16 tiles, continuous-rate on the FP8 and BF16 grids, with its own vLLM serving plugin"
 readme = "README.md"
-license = "MIT"
+license = "LicenseRef-Tessera-Attribution-1.0"
 license-files = ["LICENSE"]
 authors = [{name = "Robert Tand", email = "robert.tand@icloud.com"}]
 keywords = ["quantization", "trellis", "NVFP4", "FP8", "vLLM", "LLM"]
