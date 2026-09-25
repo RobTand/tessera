@@ -16,6 +16,15 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-25 for the third per-image fp4 table (tessera#607,
+contract v35). The routed `TESSERA_E2M1_K2` cells execute on
+`localhost/prismaquant/spark-vllm-nccl230@sha256:a5424378...` (the
+`eugr/spark-vllm@0afec8d4` build with NCCL 2.30.7), and that image had no fp4
+activation table of its own, so an fp4 cell on it had nothing to be priced
+under (v33 rule: one table per executing image). The generator ran inside it
+on a GB10 and emitted 11 vectors byte-identical to both published sm_121
+tables. Additive: one list entry; no cell, rung, route or launch moves.
+
 Re-stamped 2026-09-21 for the dense window-GEMM census (tessera#545,
 contract v34). The launch `fp8_route.apply` and `bf16_route.apply` have made
 since `1b767a207` -- `tessera::window_gemm_dense` / `native_window_gemm` -- is
