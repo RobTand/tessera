@@ -30,7 +30,7 @@ this module owns:
 ARITHMETIC.  The weight-side contract is the grouped bundle's and is explicit
 at preparation: ``"epilogue"`` (dense BF16 row scale on the fp32 accumulator,
 or the FP8 ``acc * a_scale * w_scale`` contract) or ``"folded"`` (the
-research BF16 contract, one bf16 rounding of ``value * row_scale`` in
+BF16 expert contract, one bf16 rounding of ``value * row_scale`` in
 registers before ``tl.dot``).  The adapter inherits it from the bundles; the
 FP8 family has no folded form.
 
@@ -470,7 +470,7 @@ def prepare_native_window_moe(
     ``up`` is given, in which case ``gate`` and ``up`` are separate stacks of
     ``down.cols`` rows each.  ``arithmetic`` is the grouped bundles' explicit
     weight-side contract (``"epilogue"`` default, ``"folded"`` for the
-    research BF16 contract); the down stack must agree with the gate/up
+    BF16 expert contract); the down stack must agree with the gate/up
     stacks.  ``activation`` must be in :data:`SUPPORTED_ACTIVATIONS`.
     """
     if activation not in SUPPORTED_ACTIVATIONS:

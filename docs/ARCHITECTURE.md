@@ -16,6 +16,24 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-25 for the production BF16 expert builder (tessera#609,
+contract v36). A compressed `TESSERA_BF16` routed stack has a production
+builder: `scheme.MOE_BUILDERS` names `moe_route` for it, and it is served on
+the compact native window lane with the row scale folded into the decoded tile
+before the MMA (`bf16(value * row_scale)`, no epilogue scale) -- the grouped
+kernel's `FOLDED` arithmetic, which the research-selected BF16 owner already
+ran. The format row's `structures` gains `routed_moe`, as the validator
+requires of any route in `MOE_BUILDERS`. The launch
+`(tessera.native_window_moe.NativeWindowMoE.__call__,
+native_window_moe_compact_folded)` is EXPERIMENTAL: no cell is minted and no
+BF16 rung becomes exportable without `--allow-unserveable` until a served
+census earns cells (tessera#606). `moe_route.census_expected` now counts
+experimental pairs for both window families, as the `EXPERIMENTAL_LAUNCHES`
+rule states, so a census can match the compact lane's records. The compact
+lane no longer registers the stock fp8 expert tiles at `create_weights` (zero
+size for both families), which at GLM-5.3 scale was about 10.9 GB per layer
+that nothing read.
+
 Re-stamped 2026-09-25 for the third per-image fp4 table (tessera#607,
 contract v35). The routed `TESSERA_E2M1_K2` cells execute on
 `localhost/prismaquant/spark-vllm-nccl230@sha256:a5424378...` (the
@@ -2121,9 +2139,10 @@ both the scope and that refusal as `engine_scope`.  The stock-engine capture
 `experiments/full_engine_worker.py`) owns those observations; the two are
 separate producers and neither's numbers may be composed with the other's.
 
-**Two stacks need the explicit selected owner, and one must not have it.** A
-compressed BF16 expert stack has no production builder
-(`scheme.MOE_BUILDERS`), and the production FP8 expert builder is TP1-only;
+**Two stacks need the explicit selected owner, and one must not have it.** This
+harness serves a compressed BF16 expert stack only through the selected owner
+(`owner_needs_selected`; the production BF16 builder of tessera#609 is not
+the owner it prices), and the production FP8 expert builder is TP1-only;
 both take the versioned `research_selected_moe` block, which is a request field
 here and must declare this owner's own `expected_tensor_parallel_size`. A family
 with its own expert builder (`TESSERA_NVFP4`) keeps it — the selected block
@@ -2626,15 +2645,15 @@ one launch.
 **The ROUTED window lane serves the same way, and is likewise a candidate.** A
 routed stack reaches the compact intake through ONE predicate,
 `moe_route.compact_window_lane`: `TESSERA_E4M3_K1` (FP8) takes it at every
-world size, and `TESSERA_BF16_K1` takes it only under an explicit
-research-selected config, at TP1 and TP2 -- the world sizes
-`_require_research_parallel_contract` accepts, which is config acceptance and
-not device qualification -- because compressed BF16 has no
-production expert route (`scheme.MOE_BUILDERS` names FP8 and NVFP4, and
-`refuse_a_family_with_no_expert_route` refuses the stack at the builder's front
-door before any fused-MoE import).  An unsupported BF16 stack is therefore
-refused by name, never handed to a materialiser, and a family this builder does
-not serve is answered False rather than admitted through this lane.  The lane
+world size, and so does `TESSERA_BF16_K1` since tessera#609, with or without
+an explicit research-selected config (whose own TP1/TP2 contract,
+`_require_research_parallel_contract`, is config acceptance and not device
+qualification).  FP8 runs the epilogue arithmetic there and BF16 the folded
+one.  Without the shared compact reader nothing takes the lane: FP8 keeps its
+materialising branch and a production BF16 stack is refused by name at
+construction, because there is no materialising BF16 expert path.  A family
+this builder does not serve is answered False rather than admitted through
+this lane.  The lane
 runs one
 `scheme.parse_compact_tessera_expert_blob` per projection -- into a
 preallocated per-expert axis (`native_window_moe.WindowUnitAxis`) and applies
@@ -3651,7 +3670,9 @@ and would return `False` for `w13_wire` -- writing nothing, silently
 Which families have a production expert route is `scheme.MOE_BUILDERS`, and
 `TesseraConfig.get_quant_method` dispatches a `routed_moe` stack to its
 family's builder off that table exactly as a Linear is dispatched off
-`ROUTES`. Two families have one. `TESSERA_FP8` is the route above.
+`ROUTES`. Three families have one. `TESSERA_FP8` is the route above, and
+`TESSERA_BF16` shares it (tessera#609): the same `moe_route` builder on the
+compact lane, with folded arithmetic.
 `TESSERA_NVFP4` is `tessera.serving.nvfp4_moe_route` (tessera#492),
 NATIVE since the A4 serving integration: one E2M1x2 container per expert
 projection is read by the shared compact validator
@@ -3726,9 +3747,11 @@ container receipt. Contract v28 publishes two, at q256 896, eager and resident,
 on the two-rank stub serve's image; contract v32 (tessera#506 leg 2, the
 2026-09-18 re-stamp at the top) widens both to the full trellis domain
 [128, 896] step 128, so an NVFP4 stack at an in-domain rung exports without
-`--allow-unserveable` and only an off-domain rung needs the override. Compressed BF16-family expert wires have only the
-explicit research-selected folded route above; plain source BF16 passthrough
-uses `quantization_config.ignore`. Both production routes refuse, by name:
+`--allow-unserveable` and only an off-domain rung needs the override. Compressed BF16-family expert wires take the compact
+folded lane above, with or without the research-selected block; no BF16
+`routed_moe` cell exists yet, so a BF16 expert rung still needs the override
+until a census earns one (tessera#606). Plain source BF16 passthrough uses
+`quantization_config.ignore`. Both production routes refuse, by name:
 expert parallelism and EPLB (the stride invariant needs every expert's blob
 and the parameter is `[E, ...]` by global id), a residency other than
 `resident`, a non-gated MoE, and any expert/hidden/intermediate size that

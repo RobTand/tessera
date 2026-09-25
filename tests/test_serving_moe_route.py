@@ -161,22 +161,37 @@ SERVED_MOE_DECODER = "torch_materialize_stock"
 
 
 def test_the_expert_route_publishes_one_launch_in_both_regimes():
-    """No lane, no kernel decode: one materialised launch at every M.
+    """No GEMV lane: one launch per stack at every M.
 
     The window routes' two regimes admit different pairs because their
-    dispatch branches on M.  This one does not branch at all -- the stack is
-    materialised once at load -- so a regime split here would be a distinction
-    the code does not make.
+    dispatch branches on M.  This one does not branch on M -- a stack takes
+    the compact native window lane every forward, or (FP8 only, on a build
+    without the compact reader) is materialised once at load -- so a regime
+    split here would be a distinction the code does not make.
+
+    tessera#609: the expectation is what the build can launch, experimental
+    pairs included (the rule ``scheme.EXPERIMENTAL_LAUNCHES`` states), so the
+    compact lane's pair is in it next to the materialised one.  Being in the
+    expectation is not being attested; that stays the cells' job.
     """
-    from tessera.serving.telemetry import DECODER_TORCH_STOCK
+    from tessera.serving.scheme import TESSERA_BF16, WINDOW_MOE_COMPACT_SYMBOL
+    from tessera.serving.telemetry import (
+        DECODER_NATIVE_WINDOW_MOE_COMPACT, DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED,
+        DECODER_TORCH_STOCK)
 
     expected = moe_route.census_expected(compiled=False)
     assert set(expected) == {"decode", "batch"}
     assert expected["decode"] == expected["batch"]
-    assert expected["decode"] == {(moe_route.GEMM_SYMBOL, DECODER_TORCH_STOCK)}
+    assert expected["decode"] == {(moe_route.GEMM_SYMBOL, DECODER_TORCH_STOCK),
+                                  (WINDOW_MOE_COMPACT_SYMBOL, DECODER_NATIVE_WINDOW_MOE_COMPACT)}
     # A traced forward changes nothing: the combined ``a+b`` symbol the window
     # routes stamp under compile exists because two launches share one graph.
     assert moe_route.census_expected(compiled=True) == expected
+    # BF16 has no materialising expert path: its only pair is the compact
+    # lane's folded one, in both regimes.
+    bf16 = moe_route.census_expected(compiled=False, family=TESSERA_BF16)
+    assert bf16["decode"] == bf16["batch"] == {
+        (WINDOW_MOE_COMPACT_SYMBOL, DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED)}
 
 
 def test_the_served_records_symbol_reduces_into_the_expectation():

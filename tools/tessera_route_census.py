@@ -537,7 +537,8 @@ def expected_pairs(family, regime, kind, *, compiled, platform):
     if kind == "moe":
         if family == TESSERA_NVFP4:
             return nvfp4_moe_route.census_expected(compiled=compiled, platform=platform)[regime]
-        return moe_route.census_expected(compiled=compiled, platform=platform)[regime]
+        return moe_route.census_expected(compiled=compiled, platform=platform,
+                                         family=family)[regime]
     if family == TESSERA_FP8:
         return fp8_gemv.census_expected(compiled=compiled, platform=platform)[regime]
     if family == TESSERA_BF16:
@@ -741,7 +742,7 @@ def main() -> int:
     # A ROUTED EXPERT STACK IS NOT ITS FAMILY'S DENSE ROUTE.  The stack serves
     # under the same family (same wire, same activation contract) and a
     # different dispatch, so the expectation is taken from the route that owns
-    # it -- ``moe_route.census_expected`` for FP8, ``nvfp4_moe_route`` for the
+    # it -- ``moe_route.census_expected`` for FP8 and BF16, ``nvfp4_moe_route`` for the
     # native NVFP4 stack -- which also says why the FP8 symbol is compared
     # without the runtime's backend suffix and why no contract cell publishes
     # the native pairs yet.  ``expected_pairs`` (module level, tested) holds

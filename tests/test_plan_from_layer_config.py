@@ -581,7 +581,10 @@ def test_actual_translator_hands_off_whole_expert_stacks(tmp_path, monkeypatch, 
         export.main()
 
 
-def test_compressed_bf16_expert_plan_needs_explicit_selected_execution(tmp_path):
+def test_compressed_bf16_expert_plan_takes_the_production_builder_or_the_selected_block(tmp_path):
+    """A compressed BF16 expert stack has a production builder since
+    tessera#609, so it plans without the research-selected block; the block
+    is still accepted, and recorded, when the caller gives one."""
     src, stack, units, carried = _moe_plan_source(tmp_path, packed=True)
     assignment = {name: tessera("TESSERA_BF16_K1_R1792") for name in units}
     assignment["model.layers.0.feed_forward.gate"] = "BF16"
@@ -589,8 +592,11 @@ def test_compressed_bf16_expert_plan_needs_explicit_selected_execution(tmp_path)
     assignment["__prismaquant__"] = {"tessera_expert_projection": carried}
     path, out = tmp_path / "assignment.json", tmp_path / "plan.json"
     path.write_text(json.dumps(assignment))
-    with pytest.raises(SystemExit, match="no expert route"):
-        PLAN.main([str(path), str(src), str(out), "--no-uniform-control"])
+    PLAN.main([str(path), str(src), str(out), "--no-uniform-control"])
+    assert json.loads(out.read_text())[stack] == {
+        "grid": "BF16", "q256": 1792, "source_layout": "out_first_chunked"}
+    assert "research_selected_moe" not in json.loads(
+        out.with_suffix(".json.provenance.json").read_text())
     config = {"schema": "tessera.research_selected_moe.v1",
               "max_experts_per_chunk": 2, "decode_backend": "torch",
               "expected_tensor_parallel_size": 2}
