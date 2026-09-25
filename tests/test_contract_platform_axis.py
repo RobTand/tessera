@@ -120,8 +120,13 @@ def test_the_packaged_contract_validates_at_v33(contract):
     for a reader that derives ``executes`` from ``scheme.route_launches``
     itself.  It does not restore the gfx1201 cells v31 withdrew: no ROCm
     census of this launch exists.
+
+    v35 (tessera#607) is ADDITIVE and moves no schema: a third sm_121
+    ``activation_quantizers`` entry carries the fp4 table the routed E2M1_K2
+    cells' own runtime image emitted, byte-identical to the two already
+    published.  No cell, rung, route or launch moves.
     """
-    assert int(contract["contract_version"]) == 34
+    assert int(contract["contract_version"]) == 35
     assert "activation_quantizers" in contract
     assert all("structures" in entry for entry in contract["formats"])
     assert contract["lane_eligibility"]["schema"] == LANE_ELIGIBILITY_SCHEMA

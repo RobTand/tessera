@@ -174,6 +174,32 @@ def test_the_generator_the_table_names_is_in_this_checkout(block):
     assert path.is_file(), block["generator"]
 
 
+#: The routed E2M1_K2 cells' own runtime image (tessera#607).  An fp4 cell is
+#: priced under the table of the image that executes it, so the image the
+#: routed cells name must carry one.
+ROUTED_E2M1_IMAGE = (
+    "localhost/prismaquant/spark-vllm-nccl230@sha256:"
+    "a5424378322071f4c33e63d1372a2bb028e46b03f0da0e5edb0cdd7418e2cebb")
+
+
+def test_every_sm121_image_an_fp4_cell_executes_on_has_a_table(contract, block):
+    """Each fp4 cell's runtime image carries its own attestation (v33 rule)."""
+    fp4 = {cell["runtime"]["image"] for cell in contract["lane_eligibility"]["cells"]
+           if cell["platform"] == "sm_121"
+           and cell["activation_contract"] == CONTRACT_NAME}
+    attested = {entry["generated"]["image"] for entry in block["platforms"]["sm_121"]}
+    assert ROUTED_E2M1_IMAGE in fp4
+    assert fp4 <= attested, sorted(fp4 - attested)
+
+
+def test_the_three_sm121_tables_are_byte_identical(block):
+    """One vLLM operator build family: the NCCL swap and the MLA patches move no code."""
+    entries = block["platforms"]["sm_121"]
+    assert {e["generated"]["image"] for e in entries} >= {ROUTED_E2M1_IMAGE}
+    first = entries[0]["contracts"]
+    assert all(e["contracts"] == first for e in entries[1:])
+
+
 def test_the_packaged_bytes_carry_the_block_too():
     """Read the file, not only the loader: the wheel ships these bytes."""
     raw = json.loads(contract_path().read_text())
