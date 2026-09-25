@@ -2139,15 +2139,19 @@ both the scope and that refusal as `engine_scope`.  The stock-engine capture
 `experiments/full_engine_worker.py`) owns those observations; the two are
 separate producers and neither's numbers may be composed with the other's.
 
-**Two stacks need the explicit selected owner, and one must not have it.** This
-harness serves a compressed BF16 expert stack only through the selected owner
-(`owner_needs_selected`; the production BF16 builder of tessera#609 is not
-the owner it prices), and the production FP8 expert builder is TP1-only;
-both take the versioned `research_selected_moe` block, which is a request field
-here and must declare this owner's own `expected_tensor_parallel_size`. A family
-with its own expert builder (`TESSERA_NVFP4`) keeps it — the selected block
-refuses to name a target it does not serve, so attaching one to an A4 owner is
-a refusal rather than a wider admission. A world above one needs an explicit
+**One stack needs the explicit selected owner, and two must not have it.** The
+production FP8 expert builder is TP1-only, so an FP8 owner above one rank takes
+the versioned `research_selected_moe` block, which is a request field here and
+must declare this owner's own `expected_tensor_parallel_size`. A family with its
+own expert builder keeps it. For `TESSERA_NVFP4` the selected block refuses to
+name a target it does not serve, so attaching one to an A4 owner is a refusal
+rather than a wider admission. `TESSERA_BF16` is priced on its production
+builder since tessera#613 (the compact lane, folded arithmetic, tessera#609):
+the served checkpoint carries no block, so the harness refuses one by name
+rather than price an object that is not the served one. On the same wires and
+inputs the two BF16 owners return identical bits at TP1 and at both TP2 ranks
+(`test_bf16_production_and_research_owners_are_bit_identical`), so the move
+changes no number. A world above one needs an explicit
 `distributed` block (world size, rank, a `tcp://` rendezvous, a timeout);
 `bind_owner_rank` then reads the live group and refuses a mismatch, an
 uninitialized world, or a rank outside it, rather than assuming rank 0. At
