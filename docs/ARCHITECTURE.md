@@ -33,8 +33,10 @@ kernel, so they are WITHDRAWN and the folded pair enters
 Dense export is not blocked (the dense branch of
 `scheme.refuse_unserveable_wire` reads the reader range, not cells). The E4M3
 dense cells and the epilogue pair they name do not move. Dense BF16 operator
-prices measured on the epilogue kernel need re-pricing. Before/after
-`torch.profiler` and power at the GLM dense shapes are in the PR (tessera#614).
+prices measured on the epilogue kernel need re-pricing. The fold costs +5.0 %
+kernel time at the median over the GLM dense shapes (+7.3 % at M = 1, +3.5 % at
+M >= 512), and the epilogue kernel does not move
+(`docs/measurements/tessera-window-gemm-folded-profile-2026-09-25.md`).
 
 Re-stamped 2026-09-25 for the production BF16 expert builder (tessera#609,
 contract v36). A compressed `TESSERA_BF16` routed stack has a production
@@ -2684,6 +2686,8 @@ validator reason. The `TESSERA_BF16` dense attested launch set is EMPTY again;
 `--require-decoder native_window_gemm_folded` is what earns the cells back.
 The dense GEMM and the grouped GEMM share one register expression for the fold,
 and `tests/test_window_gemm.py` holds them bit-identical on a one-expert stack.
+What the fold costs in kernel time is measured in
+`docs/measurements/tessera-window-gemm-folded-profile-2026-09-25.md`.
 
 **The ROUTED window lane serves the same way, and is likewise a candidate.** A
 routed stack reaches the compact intake through ONE predicate,
