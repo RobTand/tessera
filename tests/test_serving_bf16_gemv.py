@@ -216,7 +216,9 @@ def test_the_census_expectations_come_from_the_route():
     reads it all the same, so it is right about the serve and housed in the
     wrong module; moving it is follow-up, not part of the withdrawal.
     """
-    expected = {(WINDOW_GEMM_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_GEMM)}
+    # On the folded arithmetic's own decoder since tessera#614.
+    expected = {(WINDOW_GEMM_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_GEMM_FOLDED)}
+    assert expected == {route.DENSE_LAUNCH}
     go = route.census_expected(compiled=False)
     assert go["decode"] == expected
     assert go["batch"] == expected

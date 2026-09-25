@@ -6,12 +6,15 @@ contract against the **actual** BF16 R7 checkpoint and the launch table:
 
 * the compact reader and the materialising reader accept and refuse the same
   sidecar declarations (one comparison helper);
-* the native module's forward is the retained reference preparation's product
-  (fp32 accumulation of the same values), at the M tails and at TP2 cuts;
+* the native module's forward is the FOLDED product of the retained reference
+  preparation's pair -- ``bf16(value * row_scale)`` per weight, fp32
+  accumulation, one cast (tessera#614) -- at the M tails and at TP2 cuts;
 * the prepared weights stay packed across forwards -- fingerprints and byte
   count unchanged, no ``[rows, columns]`` tile anywhere;
-* the launch table publishes the ``(tessera::window_gemm_dense,
-  native_window_gemm)`` pair both routes stamp.
+* the launch table publishes ``(tessera::window_gemm_dense,
+  native_window_gemm)`` for the FP8 route (attested) and
+  ``(tessera::window_gemm_dense, native_window_gemm_folded)`` for the BF16
+  route (experimental until a census earns it a cell).
 """
 from __future__ import annotations
 
@@ -81,7 +84,9 @@ def _col_plan(declared, tp_rank, tp_size):
 
 
 def _reference_product(parsed_roles, plan, x):
-    """The retained reference preparations' product: values * row scale, fp32."""
+    """The served arithmetic, off the retained reference preparation's pair:
+    ``bf16(values * row scale)`` -- ``materialize_bf16_folded``'s one rounding
+    -- multiplied in fp32 and cast once (tessera#614)."""
     import tessera.serving.bf16_route as bf16_route
 
     from tessera.serving.sharding import shard_parsed_roles
@@ -90,7 +95,8 @@ def _reference_product(parsed_roles, plan, x):
     module = bf16_route.prepare_tessera_bf16_module(roles, device="cuda")
     values = module.decode()
     scale = module.row_scale()
-    return (x.float() @ (values.float() * scale[:, None]).t()).bfloat16()
+    folded = (values.float() * scale[:, None]).to(torch.bfloat16)
+    return (x.float() @ folded.float().t()).bfloat16()
 
 
 def _tolerance(reference):
@@ -104,7 +110,7 @@ def test_the_launch_table_publishes_the_native_pair():
                                         WINDOW_GEMM_SYMBOL, launch_pairs)
 
     pair = (WINDOW_GEMM_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_GEMM)
-    for route in (TESSERA_FP8, TESSERA_BF16):
+    for route in (TESSERA_FP8,):
         for regime in ("decode", "batch"):
             # ATTESTED since contract v34 (tessera#545).  The pair was
             # experimental -- in the routes' census expectation and out of the
@@ -121,8 +127,19 @@ def test_the_launch_table_publishes_the_native_pair():
             for mode in ("resident", "streamed"):
                 assert pair in launch_pairs(route, regime=regime, mode=mode), (
                     route, regime, mode)
+    # The BF16 route serves the FOLDED arithmetic under its own decoder since
+    # contract v37 (tessera#614).  The v34 BF16 cells attested the epilogue
+    # kernel and were withdrawn, so the folded pair is in the census opt-in
+    # and NOT in the default view, and the epilogue pair is in neither.
+    folded = (WINDOW_GEMM_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_GEMM_FOLDED)
+    for regime in ("decode", "batch"):
+        for mode in ("resident", "streamed"):
+            assert launch_pairs(TESSERA_BF16, regime=regime, mode=mode,
+                                include_experimental=True) == {folded}, (regime, mode)
+            assert not launch_pairs(TESSERA_BF16, regime=regime, mode=mode), (regime, mode)
     assert WINDOW_GEMM_SYMBOL == "tessera::window_gemm_dense"
     assert telemetry.DECODER_NATIVE_WINDOW_GEMM in telemetry.DECODERS
+    assert telemetry.DECODER_NATIVE_WINDOW_GEMM_FOLDED in telemetry.DECODERS
 
 
 @cuda
@@ -151,8 +168,9 @@ def test_the_two_readers_agree_on_an_actual_wire():
 @cuda
 @pytest.mark.parametrize("m", [0, 1, 8, 9, 15, 17, 32, 128])
 def test_the_native_module_serves_the_reference_product(m):
-    """The actual BF16 R7 unit, whole module: every M tail equals the retained
-    reference preparation's product (fp32 accumulate, row scale, one cast)."""
+    """The actual BF16 R7 unit, whole module: every M tail equals the folded
+    product of the retained reference preparation's pair (one bf16 rounding of
+    value * row scale, fp32 accumulate, one cast)."""
     from tessera.serving.native_window import prepare_dense_native_module
     from tessera.serving.scheme import TESSERA_BF16, validate_tessera_scheme
 

@@ -4,10 +4,13 @@ lookback, the TP row-cut initial state, the prepared bundle and its graph
 compatibility.
 
 The oracle is the definition itself, ``reference_states`` + the raw value or
-E4M3 byte table -- no decode lane is asked to certify this one.  The per-row
-fp32 scale is applied once on the accumulated output; the FP8 family adds the
-per-token scale from vLLM's native quantizer, exactly the contract the route
-publishes.
+E4M3 byte table -- no decode lane is asked to certify this one.  Under the
+default ``arithmetic="epilogue"`` the per-row fp32 scale is applied once on the
+accumulated output; under ``arithmetic="folded"`` (the value family only, what
+the BF16 route serves since tessera#614) each weight is ``bf16(value *
+row_scale)`` before the dot, ``decode.materialize_bf16_folded``'s tile, and
+nothing is applied after it.  The FP8 family adds the per-token scale from
+vLLM's native quantizer, exactly the contract the route publishes.
 
 The units here are built straight from ``repack_window_body`` (and, for one
 rate case the official roster excludes, from the documented tile-word recipe),
@@ -82,6 +85,18 @@ def _reference(body, values, rates, scale, x, init=None):
     raw = values.float().cuda()[_states(body, rates, L, init)]
     acc = raw @ x.float().t()                               # fp32 [rows, M]
     return (scale[:, None] * acc).t().bfloat16()            # [M, rows]
+
+
+def _reference_folded(body, values, rates, scale, x, init=None):
+    """``materialize_bf16_folded``'s tile -- one bf16 rounding of value * row
+    scale per weight -- multiplied in fp32 and cast once."""
+    raw = values.float().cuda()[_states(body, rates, L, init)]
+    w = (raw * scale.float()[:, None]).to(torch.bfloat16).float()
+    return (x.float() @ w.t()).bfloat16()                   # [M, rows]
+
+
+def _rel(a, b):
+    return float((a.float() - b.float()).norm() / b.float().norm())
 
 
 def _reference_fp8(body, codes, native, rates, scale, x, init=None):
@@ -206,6 +221,101 @@ def test_window_gemm_mixed_rate_columns_use_their_own_activations():
 
 
 # --- FP8 (e4m3 family) ---------------------------------------------------------
+
+
+# --- BF16 folded arithmetic (tessera#614) ----------------------------------------
+
+
+@cuda
+@pytest.mark.parametrize("m", [1, 17, 64, 128])
+def test_window_gemm_folded_is_the_folded_tile_and_not_the_epilogue(m):
+    """``arithmetic="folded"`` IS ``x @ bf16(values * scale)^T`` -- the same
+    exact bf16 products summed in fp32, one cast -- and it is not the epilogue
+    arithmetic: the two differ on nontrivial scales, and each is closer to its
+    own definition than to the other's."""
+    rows, cols = 1024, 256
+    rates = _mixed_rates(cols)
+    unit, body, values = _make(rows, cols, rates, seed=61)
+    folded = wg.prepare_window_gemm(unit, block_m=64, block_n=64, block_k=64,
+                                    arithmetic="folded")
+    epilogue = wg.prepare_window_gemm(unit, block_m=64, block_n=64, block_k=64)
+    assert (folded.arithmetic, epilogue.arithmetic) == ("folded", "epilogue")
+    x = torch.randn(m, cols, device="cuda",
+                    generator=torch.Generator(device="cuda").manual_seed(m)).bfloat16()
+    y_f, y_e = folded(x), epilogue(x)
+    ref_f = _reference_folded(body, values, rates, unit.scale, x)
+    ref_e = _reference(body, values, rates, unit.scale, x)
+    # The products are exact in fp32 on both sides, so only the summation order
+    # differs: at most one bf16 ulp, never the fold's own rounding.
+    gap = (y_f.float() - ref_f.float()).abs()
+    bound = ref_f.float().abs() * 2 ** -7 + 1e-4 * float(ref_f.float().abs().max())
+    assert bool((gap <= bound).all()), float((gap - bound).max())
+    assert float((y_e.float() - ref_e.float()).abs().max()) < _tol(ref_e)
+    assert _rel(y_f, ref_f) < _rel(y_f, ref_e)
+    assert _rel(y_e, ref_e) < _rel(y_e, ref_f)
+    assert not torch.equal(y_f, y_e), "folded and epilogue must differ on nontrivial scales"
+    # The one-shot helper takes the same argument.
+    assert torch.equal(wg.window_gemm(unit, x, block_m=64, block_n=64, block_k=64,
+                                      arithmetic="folded"), y_f)
+
+
+@cuda
+def test_window_gemm_folded_tp_row_cut_consumes_initial_state():
+    """The fold multiplies the decoded weight, so a row cut's history must
+    reach it exactly as it reaches the epilogue form."""
+    rows, cols = 768, 192
+    rates = tuple(4 if c % 3 else 2 for c in range(cols))
+    unit, body, values = _make(rows, cols, rates, seed=67)
+    init = torch.randint(0, 1 << L, (cols,), generator=torch.Generator().manual_seed(98),
+                         dtype=torch.int32)
+    x = torch.randn(32, cols, device="cuda").bfloat16()
+    y = wg.window_gemm(unit, x, initial_state=init, block_m=32, block_n=64, block_k=64,
+                       arithmetic="folded")
+    ref = _reference_folded(body, values, rates, unit.scale, x, init=init)
+    assert float((y.float() - ref.float()).abs().max()) < _tol(ref)
+    zero = _reference_folded(body, values, rates, unit.scale, x)
+    assert _rel(y, ref) < _rel(y, zero)
+
+
+@cuda
+def test_dense_folded_is_bit_identical_to_a_one_expert_grouped_folded_stack():
+    """One definition of the fold, in both kernels: the dense GEMM and the
+    grouped (routed) GEMM run the same register expression on the same decoded
+    tile, so on one expert, one route and the same blocks they agree bit for
+    bit.  This is what makes the BF16 route's dense and routed modules one
+    arithmetic rather than two that happen to be close."""
+    from tessera import window_gemm_grouped as wgg
+
+    rows, cols = 768, 192
+    unit, _body_, _values = _make(rows, cols, _mixed_rates(cols), seed=71)
+    dense = wg.prepare_window_gemm(unit, block_m=64, block_n=64, block_k=64,
+                                   arithmetic="folded")
+    grouped = wgg.prepare_grouped_window_gemm([unit], block_m=64, block_n=64, block_k=64,
+                                              arithmetic="folded")
+    t = 48
+    x = torch.randn(t, cols, device="cuda").bfloat16()
+    ids = torch.zeros(t, 1, dtype=torch.int32, device="cuda")
+    rw = torch.ones(t, 1, device="cuda")
+    route = grouped(x, ids, rw, preserve=True)
+    assert torch.equal(route.reshape(t, rows), dense(x))
+
+
+@cuda
+def test_folded_arithmetic_refusals_are_by_name():
+    rows, cols = 256, 64
+    unit, _b, _v = _make(rows, cols, _mixed_rates(cols), seed=73)
+    with pytest.raises(GrammarError, match="unknown weight arithmetic"):
+        wg.prepare_window_gemm(unit, arithmetic="fold")
+    fp8_unit, *_ = _make_fp8(rows, cols, _mixed_rates(cols), seed=74)
+    with pytest.raises(GrammarError, match="folded"):
+        wg.prepare_window_gemm(fp8_unit, quantizer=None, arithmetic="folded")
+    # The bundle states its arithmetic itself, so a rebuilt one (the serving
+    # custom op rebuilds it per call) cannot carry a combination prepare refuses.
+    bundle = wg.prepare_window_gemm(unit, arithmetic="folded")
+    with pytest.raises(GrammarError, match="folded"):
+        dataclasses.replace(bundle, family="e4m3")
+    with pytest.raises(GrammarError, match="unknown weight arithmetic"):
+        dataclasses.replace(bundle, arithmetic="both")
 
 
 @cuda
