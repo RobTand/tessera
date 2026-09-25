@@ -379,3 +379,18 @@ index. The current architecture and packaged-contract links are relative to
 this checkout.
 
 **License:** [MIT](https://github.com/RobTand/tessera/blob/v0.1.0/LICENSE).
+
+## License
+
+Use, modify and redistribute Tessera for any purpose, commercial included.
+Models you encode or serve with it are yours: license them however you like
+and host them anywhere. The one condition is credit. A model or service you
+publish that was made or served with Tessera must say, in its model card or
+README:
+
+> Made with Tessera by Robert Tand - https://github.com/RobTand/tessera
+
+The terms are the MIT License with the Attribution Addendum in
+[LICENSE](LICENSE) (`LicenseRef-Tessera-Attribution-1.0`). With the addendum,
+the license is not plain MIT. Commits made before the addendum remain under
+plain MIT.
