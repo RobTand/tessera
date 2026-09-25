@@ -63,7 +63,8 @@ def _install_vllm_stubs(monkeypatch):
 def _dense_prepared(rows=2, cols=3):
     tensors = {name: torch.zeros(4, dtype=torch.uint8) for name in BUNDLE_FIELDS}
     prepared = PreparedDenseNativeModule(
-        [SimpleNamespace(name="q", rows=rows, bundle=SimpleNamespace(cols=cols, **tensors))],
+        [SimpleNamespace(name="q", rows=rows,
+                         bundle=SimpleNamespace(cols=cols, arithmetic="epilogue", **tensors))],
         rows=rows, columns=cols, device=torch.device("cpu"), family="e4m3")
     return prepared, tensors
 
