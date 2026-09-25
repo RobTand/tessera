@@ -202,8 +202,10 @@ MOE_SOURCE_LAYOUTS = (
 #: absent from it is refused by name rather than served through another
 #: family's decode.
 #:
-#: ``TESSERA_FP8`` and ``TESSERA_NVFP4`` are here. The FP8 builder decodes
-#: E4M3 window wires into vLLM's per-channel FP8 fused-MoE parameter set; the
+#: ``TESSERA_FP8``, ``TESSERA_NVFP4`` and ``TESSERA_BF16`` are here. The FP8
+#: builder serves E4M3 window wires on the compact native window lane where
+#: the shared compact reader is published, and otherwise decodes them into
+#: vLLM's per-channel FP8 fused-MoE parameter set; the
 #: NVFP4 builder (tessera#492) decodes E2M1x2 trellis wires into the stock
 #: modelopt NVFP4 fused-MoE parameter set (packed nibbles, group-16 ue4m3
 #: block scales, one per-expert global, a static per-expert input scale) and
@@ -213,14 +215,20 @@ MOE_SOURCE_LAYOUTS = (
 #: A builder is a dispatch fact, not a served qualification: which
 #: ``(family, structure)`` cells the packaged contract attests is
 #: ``lane_eligibility``'s to say, and ``attested_cells`` reads it.
-#: ``TESSERA_BF16`` is a compressed BF16-alphabet wire with a per-row scale;
-#: this build has no *production* expert builder for it. Its dense route
-#: keeps that scale for the output epilogue; the explicit research-selected
-#: route folds it into BF16 weights to match PrismaQuant's joint screen.
-#: Plain source BF16 passthrough uses ``ignore``.
+#: ``TESSERA_BF16`` (tessera#609) is the compressed BF16-alphabet wire with a
+#: per-row scale, served by the same builder as FP8 on the compact native
+#: window lane (``native_window_moe``), which decodes the packed wire in
+#: registers and materialises no expert tile.  Its weight arithmetic is
+#: FOLDED -- one bf16 rounding of ``value * row_scale`` per weight before the
+#: dot -- which matches a consumer that prices the decoded tile rounded once
+#: to bf16, and the launch stamps its own decoder so a cell can name that
+#: variant (``DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED``).  There is no
+#: materialising fallback: without the compact reader a BF16 stack refuses.
+#: Plain source BF16 passthrough is a different thing and uses ``ignore``.
 MOE_BUILDERS: dict[str, tuple[str, str]] = {
     TESSERA_FP8: ("tessera.serving.moe_route", "build_tessera_moe_method"),
     TESSERA_NVFP4: ("tessera.serving.nvfp4_moe_route", "build_tessera_nvfp4_moe_method"),
+    TESSERA_BF16: ("tessera.serving.moe_route", "build_tessera_moe_method"),
 }
 
 #: What each route can hold, by Tessera's own names (``PayloadGrid.name``,
@@ -431,9 +439,9 @@ A4_DENSE_GEMM_SYMBOL = "tessera.kernel_a4.a4_span2_gemm"
 #: A4 routed experts: ``tessera.kernel_a4.a4_span2_grouped_gemm``.
 A4_GROUPED_GEMM_SYMBOL = "tessera.kernel_a4.a4_span2_grouped_gemm"
 #: Window routed experts: ``tessera.native_window_moe``'s adapter call, the
-#: compact FP8 MoE lane (and its BF16 research sibling).  The folded BF16
-#: arithmetic is a distinct numerical variant carried on the bundle and is
-#: never folded into the dense row-scale-epilogue contract.
+#: compact MoE lane for both window families.  The FP8 family runs the
+#: epilogue arithmetic and the BF16 family the folded one; the two stamp
+#: different decoders, so one symbol never stands for two arithmetics.
 WINDOW_MOE_COMPACT_SYMBOL = "tessera.native_window_moe.NativeWindowMoE.__call__"
 #: The entry point the expert route calls. Its recorded backend suffix is
 #: selected by vLLM at runtime and remains in the census receipt.
@@ -451,10 +459,13 @@ _DECODER_NATIVE_WINDOW_GEMM = "native_window_gemm"
 _DECODER_NATIVE_SPAN2_GEMM = "native_span2_gemm"
 _DECODER_NATIVE_SPAN2_GROUPED = "native_span2_grouped"
 #: The compact window MoE adapter: routed experts served from the loader's
-#: packed ``WindowGemvUnit``s with no decoded tile; FP8 keeps the per-token
-#: native A quant, BF16 keeps the row-scale epilogue (or its distinct folded
-#: variant on the bundle).
+#: packed ``WindowGemvUnit``s with no decoded tile.  The FP8 family keeps the
+#: per-token native A quant and the row scale on the fp32 accumulator; the
+#: BF16 family is FOLDED (one bf16 rounding of ``value * row_scale`` before the
+#: dot) and stamps its own decoder, because it is a different numerical
+#: function of the wire and a cell must be able to name which one it attests.
 _DECODER_NATIVE_WINDOW_MOE_COMPACT = "native_window_moe_compact"
+_DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED = "native_window_moe_compact_folded"
 
 _ALL_REGIMES = ("batch", "decode")
 _ALL_MODES = ("resident", "streamed")
@@ -537,8 +548,17 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
          "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": None,
          "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": False},
     ),
-    # Same shape as the FP8 dense half above, and for the same reason.
-    TESSERA_BF16: _dense_native_window_launch(),
+    # The dense half: same shape as the FP8 dense half above, and for the same
+    # reason.  The expert half (tessera#609) is the compact window MoE adapter
+    # with the FOLDED weight arithmetic, resident like every expert stack.  It
+    # has no stock-kernel launch at all: there is no materialising BF16 expert
+    # path to fall back to.
+    TESSERA_BF16: _dense_native_window_launch() + (
+        {"symbol": WINDOW_MOE_COMPACT_SYMBOL,
+         "decoder": _DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED,
+         "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": None,
+         "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": False},
+    ),
 }
 
 
@@ -565,11 +585,13 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
 #:
 #: What stays, and why.  The two A4 pairs are deferred with the NVFP4 lane
 #: (#575) -- no dense or routed A4 census exists -- and the compact window MoE
-#: adapter has no served receipt at all.
+#: adapter has no served receipt at all, in either arithmetic: the FP8
+#: epilogue pair and the BF16 folded pair (tessera#609) both wait for one.
 EXPERIMENTAL_LAUNCHES = frozenset({
     (A4_DENSE_GEMM_SYMBOL, _DECODER_NATIVE_SPAN2_GEMM),
     (A4_GROUPED_GEMM_SYMBOL, _DECODER_NATIVE_SPAN2_GROUPED),
     (WINDOW_MOE_COMPACT_SYMBOL, _DECODER_NATIVE_WINDOW_MOE_COMPACT),
+    (WINDOW_MOE_COMPACT_SYMBOL, _DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED),
 })
 
 
@@ -854,11 +876,9 @@ def refuse_a_family_with_no_expert_route(route: str, target: str) -> None:
         return
     raise ValueError(
         f"tessera target {target!r}: {route} has no expert route in this build "
-        f"(scheme.MOE_BUILDERS names {sorted(MOE_BUILDERS)}). The compressed "
-        "TESSERA_BF16 expert wire has no production expert builder in this build "
-        "(its folded selected route requires explicit research execution). Plain "
-        "source BF16 passthrough is separate and uses "
-        "quantization_config.ignore. An expert stack is "
+        f"(scheme.MOE_BUILDERS names {sorted(MOE_BUILDERS)}). Plain source BF16 "
+        "passthrough is separate and uses quantization_config.ignore. An expert "
+        "stack is "
         "refused rather than decoded through another family's tile: plan it on a family "
         "with a route, or leave it out to pass it through as BF16.")
 

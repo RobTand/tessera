@@ -529,9 +529,11 @@ def test_the_owner_route_set_comes_from_the_plugins_own_launch_table():
     """The panel's admissible route is the plugin's, per family and per world.
 
     ``TESSERA_NVFP4`` has a routed launch table row (its production expert
-    builder serves a world above one); ``TESSERA_BF16`` has none, because its
-    expert wire is reachable only through the explicit selected owner.  Both
-    statements are the plugin's, read here rather than restated.
+    builder serves a world above one).  ``TESSERA_BF16`` has one since
+    tessera#609 -- the compact lane's folded pair, experimental until a cell
+    attests it -- and this harness still serves its stack through the explicit
+    selected owner, so both are admissible.  Both statements are the
+    plugin's, read here rather than restated.
     """
     materialising = ("vllm.fused_moe.modular_kernel", "torch_materialize_stock")
     a4 = moe.owner_launch_pairs(moe.owner_wire(_glm_shape(1, A4)), world=1)
@@ -542,6 +544,7 @@ def test_the_owner_route_set_comes_from_the_plugins_own_launch_table():
     a16 = moe.owner_launch_pairs(moe.owner_wire(_glm_shape(1, A16)), world=1)
     assert materialising not in a16
     assert {decoder for _symbol, decoder in a16} == {
+        "native_window_moe_compact_folded",
         "research_selected_torch_window_folded_bf16",
         "research_selected_triton_window_folded_bf16"}
 
@@ -556,7 +559,7 @@ def test_a_tp2_fp8_owner_has_no_production_launch_to_declare():
     # A world of one keeps the production pair: that lane is what TP1 has run.
     assert ("vllm.fused_moe.modular_kernel", "torch_materialize_stock") in \
         moe.owner_launch_pairs(wire, world=1)
-    # A compressed BF16 expert stack has no production builder at any world.
+    # A compressed BF16 expert stack has no materialising launch at any world.
     bf16 = moe.owner_launch_pairs(moe.owner_wire(_glm_shape(1, A16)), world=1)
     assert ("vllm.fused_moe.modular_kernel", "research_selected_triton_window_folded_bf16") in bf16
     assert ("vllm.fused_moe.modular_kernel", "torch_materialize_stock") not in bf16
@@ -578,7 +581,7 @@ def test_the_selected_block_is_required_exactly_where_no_production_owner_exists
     with pytest.raises(ValueError, match="expected_tensor_parallel_size"):
         moe.owner_research_selected(a8_tp2, moe.owner_wire(a8_tp2),
                                     {**block, "expected_tensor_parallel_size": 1})
-    # A16's expert route exists only under the explicit block, at any world.
+    # This harness serves A16 only under the explicit block, at any world.
     with pytest.raises(ValueError, match="research_selected_moe"):
         moe.owner_research_selected(a16, moe.owner_wire(a16), None)
     assert moe.owner_research_selected(a16, moe.owner_wire(a16),

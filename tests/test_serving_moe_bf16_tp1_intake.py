@@ -1,5 +1,12 @@
 """A16 routed experts: one predicate decides the intake, at TP1 as well as TP2.
 
+UPDATED FOR tessera#609.  Compressed BF16 is now a production expert family
+(``scheme.MOE_BUILDERS``): it takes the compact lane at every world size
+exactly as FP8 does, with or without a research-selected config, and a build
+without the compact reader refuses a production BF16 stack by name rather
+than reaching a materialising branch.  The history below is kept because the
+TP1 hole it describes is why one predicate answers both questions.
+
 The routed window lane asks the same question twice -- once for the
 construction-time identity (``native_route``) and once for loader ownership
 (``incremental``).  At A16 the answer is the research-selected config: the FP8
@@ -54,7 +61,7 @@ def _research(tp_size):
                                               expected_tensor_parallel_size=tp_size)
 
 
-def _build(*, family, tp_rank=0, tp_size=1, research=True):
+def _build(*, family, tp_rank=0, tp_size=1, research=True, with_layer=False):
     """Construct the routed method and take its intake, without loading bytes."""
     scheme = (_moe_scheme() if family == TESSERA_FP8
               else _moe_scheme(family=TESSERA_BF16, grid="BF16"))
@@ -65,24 +72,23 @@ def _build(*, family, tp_rank=0, tp_size=1, research=True):
             scheme, "m", "resident", layer,
             research_selected=(_research(tp_size) if research else None))
         method.create_weights(layer, EXPERTS, HIDDEN, INTER // tp_size, torch.bfloat16)
-    return method
+    return (method, layer) if with_layer else method
 
 
 @pytest.mark.parametrize("family,compact_ready,tp_size,research,expected", [
     # FP8 takes the compact lane whenever the shared reader exists, at any world.
     (TESSERA_FP8, True, 1, False, True),
     (TESSERA_FP8, True, 2, False, True),
-    # BF16 takes it only under the research-selected config, at TP1 and TP2.
+    # BF16 takes it too (tessera#609), research-selected or not, at any world:
+    # the research contract's TP1/TP2 bound is that route's own refusal.
     (TESSERA_BF16, True, 1, True, True),
     (TESSERA_BF16, True, 2, True, True),
-    # An unsupported BF16 stack is not silently routed to a materialiser.
-    (TESSERA_BF16, True, 1, False, False),
-    (TESSERA_BF16, True, 2, False, False),
-    # A world size the research contract cannot check is not this predicate's
-    # business to admit.
-    (TESSERA_BF16, True, 4, True, False),
+    (TESSERA_BF16, True, 1, False, True),
+    (TESSERA_BF16, True, 2, False, True),
+    (TESSERA_BF16, True, 4, False, True),
     # No shared reader published: nothing takes the compact lane.
     (TESSERA_FP8, False, 2, False, False),
+    (TESSERA_BF16, False, 2, False, False),
     # A family this builder does not serve is not admitted through the lane --
     # at any world size, with or without a research-selected config.  NVFP4 has
     # its own builder (``scheme.MOE_BUILDERS``).
@@ -115,15 +121,36 @@ def test_fp8_still_takes_the_compact_intake_without_research_selected():
     assert method._rank_local_intake is not None
 
 
-@pytest.mark.parametrize("tp_size", [1, 2])
-def test_bf16_without_research_selected_refuses_by_name(tp_size):
-    """Ordinary compressed BF16 is refused at the builder's front door.
+@pytest.mark.parametrize("tp_rank,tp_size", [(0, 1), (0, 2), (1, 2)])
+def test_bf16_production_takes_the_compact_intake(tp_rank, tp_size):
+    """An ordinary BF16 stack is a production stack now (tessera#609)."""
+    method = _build(family=TESSERA_BF16, tp_rank=tp_rank, tp_size=tp_size, research=False)
+    assert method._native_mode is True
+    assert method._rank_local_intake is not None
+    assert method.fp8_backend is None and method.bf16_backend is None
+    assert method.experts_cls is None
 
-    ``refuse_a_family_with_no_expert_route`` (``scheme.py:860-880``) is asked
-    before any vLLM fused-MoE import, and the builder's own carve-out admits a
-    BF16 stack only with an explicit research-selected config
-    (``moe_route.py:663-665``).  So no ordinary BF16 stack reaches a
-    materialising branch -- at either world size.
-    """
-    with pytest.raises(ValueError, match="has no expert route in this build"):
-        _build(family=TESSERA_BF16, tp_size=tp_size, research=False)
+
+@pytest.mark.parametrize("family", [TESSERA_FP8, TESSERA_BF16])
+@pytest.mark.parametrize("tp_size", [1, 2])
+def test_the_compact_intake_registers_no_stock_expert_tile(family, tp_size):
+    """vLLM constructs every layer before it loads any weight, so a stock tile
+    registered here is held for EVERY routed layer at once -- and the compact
+    lane drops it unused.  Neither family registers one on this lane."""
+    method, layer = _build(family=family, tp_size=tp_size, research=False,
+                           with_layer=True)
+    assert method._rank_local_intake is not None
+    registered = set(dict(layer.named_parameters()))
+    assert registered == {"w13_wire", "w2_wire"}, sorted(registered)
+    assert layer.w13_wire.numel() == 0 and layer.w2_wire.numel() == 0
+
+
+def test_bf16_production_without_the_compact_reader_refuses_by_name(monkeypatch):
+    """No compact reader: a production BF16 stack has nowhere to go.  There is
+    no materialising BF16 expert path, and the refusal says so rather than
+    reaching vLLM's unquantized backend oracle."""
+    from tessera.serving import scheme as _scheme
+
+    monkeypatch.delattr(_scheme, "parse_compact_tessera_expert_blob")
+    with pytest.raises(ValueError, match="compact native window lane"):
+        _build(family=TESSERA_BF16, tp_size=1, research=False)

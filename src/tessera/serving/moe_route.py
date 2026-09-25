@@ -1,4 +1,13 @@
-"""Tessera routed-MoE: production FP8 and explicit selected research owners.
+"""Tessera routed-MoE: production FP8 and BF16, and explicit selected research owners.
+
+THE COMPACT LANE COMES FIRST.  Where this build publishes the shared compact
+reader (``scheme.parse_compact_tessera_expert_blob``), both window families
+serve on the compact native window lane (``tessera.native_window_moe``): each
+projection container is validated and packed during its own load callback,
+no expert tile is ever decoded, and the grouped window GEMM decodes the wire
+in registers every forward.  FP8 runs the epilogue arithmetic there and BF16
+the FOLDED one (tessera#609).  The materialising description below is the FP8
+stack's branch on a build without that reader.
 
 WHAT IT SERVES. One ``tessera.fused`` container per expert per projection,
 assembled into ``w13`` (gate then up, the row order
@@ -49,7 +58,7 @@ parallelism and tensor parallelism inside an expert (the stride invariant
 needs every expert's blob, and no expert slicer has been run); a residency
 mode other than ``resident`` (a per-forward expert decode is a different
 kernel story with no measurement); a family with no expert route
-(``scheme.MOE_BUILDERS`` says which, and why the other two are absent); an
+(``scheme.MOE_BUILDERS`` says which); an
 expert count, hidden size or intermediate size that disagrees with the
 sidecar; and a non-gated MoE, whose ``w13`` is one shard rather than the pair
 this route's groups describe.
@@ -59,10 +68,15 @@ TP1 or TP2 selected decode. TP2 constructs zero-byte loader parameters and
 validates each whole original wire during its load callback, then invokes
 the existing role slicer and retains only local packed roles; it preserves global expert IDs and
 leaves output reduction to stock vLLM. It is not a qualified runtime cell.
-The research-only BF16 branch folds its decoded row scale into each selected
-BF16 tile once to match PrismaQuant's joint PWC render, then uses stock
-unquantized Triton MoE. Tessera's dense BF16 wire route keeps the row scale
-for an output epilogue instead; neither route claims the other's arithmetic.
+
+THE BF16 EXPERT ARITHMETIC IS FOLDED (tessera#609): one bf16 rounding of
+``value * row_scale`` per weight before the dot, with no scale in the
+epilogue.  That is what a consumer pricing the decoded tile rounded once to
+bf16 prices, and the production compact lane, the research compact lane and
+the research materialising branch (which folds each selected tile once and
+hands it to stock unquantized Triton MoE) all compute it.  The compact launch
+stamps ``native_window_moe_compact_folded`` so a census and a cell can say
+which arithmetic ran; it is never reported under the FP8 stack's decoder.
 
 WHAT IS ATTESTED. The packaged contract publishes exactly two ``routed_moe`` cells:
 E4M3/q1024, resident/eager on sm_121, for decode and batch on the exact EUGR
@@ -100,7 +114,8 @@ from .scheme import (MOE_GEMM_SYMBOL, MOE_GROUP_SHARDS, MOE_GROUPS, ROUTES,
                      expert_role_declarations, parse_tessera_expert_blob,
                      WINDOW_MOE_COMPACT_SYMBOL,
                      validate_tessera_moe_scheme)
-from .telemetry import (DECODER_NATIVE_WINDOW_MOE_COMPACT, DECODER_TORCH_STOCK,
+from .telemetry import (DECODER_NATIVE_WINDOW_MOE_COMPACT,
+                        DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED, DECODER_TORCH_STOCK,
                         emit_route, route_shape)
 
 __all__ = [
@@ -125,7 +140,27 @@ GEMM_SYMBOL = MOE_GEMM_SYMBOL
 
 
 
-def census_expected(*, compiled: bool = False, platform=None) -> dict:
+#: The payload family each window expert route's census expectation is read
+#: under, keyed by route: the contract's ``executes`` table and
+#: ``census.platform_expectation`` speak payload families.
+_CENSUS_PAYLOAD_FAMILY = {TESSERA_FP8: "TESSERA_E4M3_K1", TESSERA_BF16: "TESSERA_BF16_K1"}
+
+
+def native_decoder(family: str) -> str:
+    """The decoder the compact window lane stamps for ``family``'s stack.
+
+    One home for the rule that the arithmetic is part of the launch: the FP8
+    stack runs the epilogue contract, the BF16 stack the folded one
+    (``window_gemm_grouped``'s ``arithmetic``), and the two are different
+    functions of their wires, so they are never reported under one name.
+    """
+    if family == TESSERA_BF16:
+        return DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED
+    return DECODER_NATIVE_WINDOW_MOE_COMPACT
+
+
+def census_expected(*, compiled: bool = False, platform=None,
+                    family: str = TESSERA_FP8) -> dict:
     """The ``(symbol, decoder)`` pairs an expert stack may report, by regime.
 
     Owned here for the same reason ``fp8_gemv.census_expected`` is owned there:
@@ -133,14 +168,17 @@ def census_expected(*, compiled: bool = False, platform=None) -> dict:
     the path was added rather than in a second spelling inside the census tool.
     Two things about this route are NOT the dense routes' shape.
 
-    ONE LAUNCH, BOTH REGIMES.  There is no GEMV lane and no kernel decode here.
-    ``process_weights_after_loading`` materialises the stack once and every
-    forward, at any M, hands the runtime's modular fused-MoE kernel the tile
-    that materialise produced -- so ``decode`` and ``batch`` admit the same
-    single pair, where the window routes' two regimes admit different ones.
-    ``compiled`` therefore changes nothing: the combined ``a+b`` symbol those
-    routes stamp under a traced forward exists because their dispatch BRANCHES
-    inside the graph, and one launch has nothing to combine.
+    ONE LAUNCH PER STACK, BOTH REGIMES.  There is no GEMV lane.  A stack
+    either takes the compact native window lane (the packed wire decoded
+    inside the grouped GEMM, every forward, at any M) or -- FP8 only, and only
+    on a build that publishes no compact reader -- is materialised once at
+    load for the runtime's modular fused-MoE kernel.  Either way ``decode`` and
+    ``batch`` admit the same pairs, where the dense window routes' two regimes
+    admit different ones.  ``compiled`` therefore changes nothing: the
+    combined ``a+b`` symbol those routes stamp under a traced forward exists
+    because their dispatch BRANCHES inside the graph, and one launch has
+    nothing to combine.  ``family`` selects the stack's family: FP8 (the
+    default) or BF16, whose only launch is the compact lane's folded pair.
 
     THE SYMBOL CARRIES A SUFFIX THIS ROUTE DOES NOT CHOOSE.  ``_record`` stamps
     ``vllm.fused_moe.modular_kernel:<backend>`` because which backend ran is a
@@ -161,26 +199,36 @@ def census_expected(*, compiled: bool = False, platform=None) -> dict:
     returning the same expected launch for compiled execution does not attest it.
     """
     del compiled  # documented above: one launch has nothing to combine
-    launches = route_launches(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE,
-                              mode=MODE_RESIDENT)
-    regimes = {regime for launch in launches for regime in launch["regimes"]}
-    pairs = {regime: launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE,
-                                  regime=regime, mode=MODE_RESIDENT)
-             for regime in regimes}
-    # The native compact lane records its own entry point/decoder pair, and it
-    # stays EXPERIMENTAL: the shared contract keeps this census on the attested
-    # dispatch (tests/test_serving_contract.py asserts the MoE side does not see
-    # the experimental pair), so a native run is visible and unqualified, never
-    # silently promoted to a cell.  A pair joins this set when a receipt earns
-    # it one.
-    # PER ``(platform, family)`` (#457).  The expert stack's family is the
-    # dense FP8 route's -- same wire, same activation contract -- so a
-    # platform that executes no E4M3 route executes none for the experts
+    if family not in _CENSUS_PAYLOAD_FAMILY:
+        raise KeyError(
+            f"{family!r} has no expert stack on this route ({sorted(_CENSUS_PAYLOAD_FAMILY)}); "
+            "the NVFP4 stack's expectation is nvfp4_moe_route's")
+    # WHAT THE BUILD CAN REALLY LAUNCH, experimental pairs included -- the
+    # rule ``scheme.EXPERIMENTAL_LAUNCHES`` states for every route owner's
+    # census expectation, and the one the dense routes already follow.  This
+    # route used to read the attested view only, which made its expectation
+    # the materialising launch while the dispatch took the compact lane on
+    # every build that publishes the compact reader (tessera#604): a served
+    # compact record could never match, and an expectation that no dispatch
+    # produces is not a comparison.  ATTESTATION IS NOT DECIDED HERE: a record
+    # on an experimental pair is expected by the census and still covered by
+    # no cell (``census.cell_launch_agreement`` joins records to cells, and
+    # ``_validate_cell_executes`` derives a cell's launches from the attested
+    # view only).  The BF16 stack (tessera#609) has exactly one launch, the
+    # compact adapter's FOLDED pair, so its expectation is that pair alone.
+    pairs = {}
+    for launch in route_launches(family, structure=STRUCTURE_ROUTED_MOE,
+                                 mode=MODE_RESIDENT, include_experimental=True):
+        for regime in launch["regimes"]:
+            pairs.setdefault(regime, set()).add((launch["symbol"], launch["decoder"]))
+    # PER ``(platform, family)`` (#457).  The expert stack's payload family is
+    # its dense route's -- same wire, same activation contract -- so a
+    # platform that executes no such route executes none for the experts
     # either, and ``build_tessera_moe_method`` refuses such a stack at
     # construction.  ``platform=None`` is unchanged.
     from .census import platform_expectation
 
-    return platform_expectation("TESSERA_E4M3_K1", platform, pairs)
+    return platform_expectation(_CENSUS_PAYLOAD_FAMILY[family], platform, pairs)
 
 
 #: The runtime's shard name -> (group, row block).  DERIVED from
@@ -660,32 +708,30 @@ def compact_window_lane(family: str, compact_ready: bool, *, tp_size: int,
     TP2, so the identity and the intake cannot be moved apart.  Whoever moves
     this rule moves it here.
 
-    FP8 takes the compact lane at every world size: the shared reader cuts its
-    windows per rank and the wire is TP-agnostic.  Compressed BF16 has no
-    production expert route at all (``scheme.MOE_BUILDERS`` names FP8 and
-    NVFP4; ``refuse_a_family_with_no_expert_route`` is asked at the builder's
-    front door, and the builder's carve-out admits BF16 only with an explicit
-    research-selected config), so its only admission is that config, whose
-    folded arithmetic is the bundle's contract.  That route's parallel contract
-    ACCEPTS TP1 and TP2 only (``_require_research_parallel_contract`` refuses
-    anything else) and it now takes the compact lane at both; acceptance by
-    config is not device qualification, which the research route still owes.
-    ``compact_ready`` is whether this build publishes the shared reader;
-    without it nothing takes the compact lane and the FP8 route keeps its
-    materialising branch.
+    Both window families take the compact lane at every world size: the
+    shared reader cuts its windows per rank and the wire is TP-agnostic.  FP8
+    runs the epilogue arithmetic there and BF16 the folded one (the bundle's
+    contract, ``_RankLocalPackedIntake.finish``).  Compressed BF16 became a
+    production expert family in tessera#609 (``scheme.MOE_BUILDERS``); before
+    that its only admission was an explicit research-selected config, which
+    still takes this lane and whose own parallel contract still accepts TP1
+    and TP2 only (``_require_research_parallel_contract`` refuses anything
+    else).  ``compact_ready`` is whether this build publishes the shared
+    reader; without it nothing takes the compact lane, the FP8 route keeps its
+    materialising branch, and a production BF16 stack refuses at construction
+    because there is no materialising BF16 expert path.
     """
+    # ``research_selected`` and ``tp_size`` stay in the signature because both
+    # call sites ask with them, but neither decides admission any more: the
+    # research route's TP1/TP2 contract is that route's own refusal.
+    del research_selected, tp_size
     if not compact_ready:
         return False
-    if family == TESSERA_FP8:
-        return True
-    if family not in (TESSERA_FP8, TESSERA_BF16):
-        # This builder serves FP8 and the research-selected BF16 carve-out;
-        # another family's stack belongs to its own builder
-        # (``scheme.MOE_BUILDERS`` names each family's route).  Do not admit a
-        # lane nothing here serves: an unsupported family answers False, and
-        # whatever refuses it by name does so where the family is decided.
-        return False
-    return research_selected is not None and int(tp_size) in (1, 2)
+    # Another family's stack belongs to its own builder (``scheme.MOE_BUILDERS``
+    # names each family's route); this lane serves the two window families
+    # only, and an unsupported family answers False rather than being refused
+    # here -- whatever refuses it by name does so where the family is decided.
+    return family in (TESSERA_FP8, TESSERA_BF16)
 
 
 def _require_eager_selected_context(config, prefix):
@@ -721,14 +767,13 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
     family = declared["family"]
     _bind_module_prefix(layer, prefix)
     from .scheme import refuse_a_family_with_no_expert_route
-    if not (research_selected is not None and family == TESSERA_BF16):
-        refuse_a_family_with_no_expert_route(family, prefix)
+    refuse_a_family_with_no_expert_route(family, prefix)
     # THE PLATFORM GATE FOR THE EXPERT ROUTE (#457), asked here rather than in
     # ``config.get_quant_method`` so that both builders -- dense and expert --
     # are gated at their own front door and neither can be reached past it.
     # It sits AFTER the no-expert-route refusal because that one is the
-    # narrower and more useful message (a 16-bit expert stack has no builder
-    # on ANY platform), and BEFORE the vLLM fused-MoE imports below, which is
+    # narrower and more useful message (a family with no builder has none on
+    # ANY platform), and BEFORE the vLLM fused-MoE imports below, which is
     # what "before any HIP kernel is touched" means on this path.
     from .backend import require_platform_backs
     from .contract import PAYLOAD_FAMILY_BY_ROUTE
@@ -791,7 +836,13 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
             if not native_route:
                 if family == TESSERA_BF16:
                     if research_selected is None:
-                        raise ValueError(f"{prefix}: compressed BF16 routed experts require explicit research-selected execution")
+                        raise ValueError(
+                            f"{prefix}: a production TESSERA_BF16 expert stack is served only "
+                            "on the compact native window lane, and this build publishes no "
+                            "compact reader (scheme.parse_compact_tessera_expert_blob). There "
+                            "is no materialising BF16 expert path to fall back to, and "
+                            "serving one would be a different arithmetic, not a slower copy "
+                            "of this one.")
                     if self.moe.has_bias:
                         raise ValueError(f"{prefix}: research selected BF16 experts do not cover MoE biases")
                     from vllm.model_executor.layers.fused_moe.oracle.unquantized import (
@@ -946,8 +997,14 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
             # The tile, allocated at create time exactly as the stock
             # per-channel method allocates it, so what the kernel sees is the
             # runtime's own parameter set and ``replace_parameter`` has
-            # something to replace.
-            if research_selected is None:
+            # something to replace -- ON THE MATERIALISING BRANCH ONLY.  The
+            # compact lane never reads it (``process_weights_after_loading``
+            # dropped it unused), and vLLM constructs every layer before it
+            # loads any weight, so allocating it here held a full fp8 tile per
+            # routed layer at once: ~10.9 GB per layer for a 288-expert,
+            # 6144-hidden, 2048-intermediate stack at TP1 (tessera#609).  The
+            # research route already skipped it and serves.
+            if research_selected is None and not incremental:
                 for name, shape in (("w13_weight", (experts, n_rows, k)),
                                     ("w2_weight", (experts, k, n_cols))):
                     layer.register_parameter(name, torch.nn.Parameter(
@@ -1072,7 +1129,7 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
                 self._native = prepared.adapter()
                 if research_selected is not None:
                     self._research_phase = 'ready'
-                layer.tessera_decoder = DECODER_NATIVE_WINDOW_MOE_COMPACT
+                layer.tessera_decoder = native_decoder(family)
                 layer.tessera_backend = 'native'
                 return
             if research_selected is not None:
@@ -1332,7 +1389,7 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
                     symbol=symbol, tile_m=0,
                     shape=route_shape(x2, layer.tessera_rows, layer.tessera_columns),
                     contract=layer.tessera_activation_contract, state="served", reason=None,
-                    decoder=(DECODER_NATIVE_WINDOW_MOE_COMPACT if native
+                    decoder=(native_decoder(family) if native
                              else layer.tessera_decoder),
                     kernel_schedule=symbol)
             except Exception:  # noqa: BLE001 -- telemetry never breaks a request

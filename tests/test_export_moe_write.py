@@ -384,13 +384,31 @@ def test_planning_a_leaf_is_refused_and_names_the_stack_spelling(tmp_path, monke
 # What is refused before the first encode
 # --------------------------------------------------------------------------
 
-def test_a_family_with_no_expert_route_is_refused(tmp_path, monkeypatch):
-    """A 16-bit expert stack has no production builder (tessera#492 gave the
-    NVFP4 family one; BF16 keeps the passthrough ``ignore`` already gives)."""
+def test_a_bf16_expert_stack_is_refused_for_want_of_a_cell_not_a_builder(tmp_path, monkeypatch):
+    """A 16-bit expert stack HAS a production builder since tessera#609, so the
+    no-builder refusal no longer fires for it.  What refuses it now is the
+    serving gate's next question: no ``lane_eligibility`` cell attests a routed
+    BF16 stack, and an export that declares the structure cannot ship on
+    'unattested' without an explicit override."""
     with pytest.raises(SystemExit) as caught:
         _export(tmp_path, monkeypatch, _checkpoint(),
                 {STACK: {"grid": "BF16", "q256": 1792}})
 
+    message = str(caught.value)
+    assert "has no expert route" not in message, message
+    assert "no lane_eligibility cell" in message and "routed_moe" in message, message
+    assert "TESSERA_BF16_K1" in message, message
+
+
+def test_a_family_with_no_expert_route_is_still_refused_by_name(monkeypatch):
+    """The no-builder rule still has one home and still names the families
+    that do have a builder; every window family has one now, so it is driven
+    here by withdrawing a builder from the dispatch table."""
+    from tessera.serving import scheme as serving_scheme
+
+    monkeypatch.delitem(serving_scheme.MOE_BUILDERS, serving_scheme.TESSERA_BF16)
+    with pytest.raises(ValueError) as caught:
+        serving_scheme.refuse_a_family_with_no_expert_route(serving_scheme.TESSERA_BF16, STACK)
     message = str(caught.value)
     assert "MOE_BUILDERS" in message and "TESSERA_BF16" in message, message
     assert "TESSERA_NVFP4" in message, "the refusal names the families that DO have a builder"

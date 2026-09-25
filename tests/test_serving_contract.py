@@ -761,6 +761,10 @@ def test_the_native_route_pairs_are_registered_experimental_and_censusable():
             (TESSERA_NVFP4, STRUCTURE_ROUTED_MOE),
         (WINDOW_MOE_COMPACT_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_MOE_COMPACT):
             (TESSERA_FP8, STRUCTURE_ROUTED_MOE),
+        # tessera#609: the BF16 expert stack's one launch, the same adapter
+        # under the FOLDED arithmetic and its own decoder.
+        (WINDOW_MOE_COMPACT_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED):
+            (TESSERA_BF16, STRUCTURE_ROUTED_MOE),
     }
     assert set(expected) == set(EXPERIMENTAL_LAUNCHES)
     # LEFT at contract v34 (tessera#545), and this is the other half of that
@@ -788,9 +792,13 @@ def test_the_native_route_pairs_are_registered_experimental_and_censusable():
     for route, structure in ((TESSERA_NVFP4, STRUCTURE_DENSE),
                              (TESSERA_NVFP4, STRUCTURE_ROUTED_MOE),
                              (TESSERA_FP8, STRUCTURE_DENSE),
-                             (TESSERA_FP8, STRUCTURE_ROUTED_MOE)):
+                             (TESSERA_FP8, STRUCTURE_ROUTED_MOE),
+                             (TESSERA_BF16, STRUCTURE_ROUTED_MOE)):
         assert experimental_launch_pairs(route, structure=structure) <= launch_pairs(
             route, structure=structure, include_experimental=True)
+    # A routed BF16 stack has NO attested launch until a receipt earns one:
+    # the folded pair is its only launch, and it is experimental.
+    assert not launch_pairs(TESSERA_BF16, structure=STRUCTURE_ROUTED_MOE)
 
 
 def test_launch_table_structures_follow_the_dispatch_builders():
@@ -815,13 +823,15 @@ def test_moe_launches_are_structure_specific_and_resident_only(regime):
     from tessera.serving import fp8_gemv, moe_route
     from tessera.serving.scheme import (
         MOE_BUILDERS, ROUTES, STRUCTURE_DENSE, STRUCTURE_ROUTED_MOE,
-        TESSERA_FP8, launch_pairs)
+        TESSERA_BF16, TESSERA_FP8, launch_pairs)
 
     # Existing callers keep their dense meaning. A requested expert structure
-    # cannot borrow a dense launch, even at the same family and rate.  The
-    # dense side is compared with the experimental launches in: the routes'
-    # census expectation knows the packed native lane, and the MoE side below
-    # must still not see it.
+    # cannot borrow a dense launch, even at the same family and rate.  Both
+    # sides are compared with the experimental launches in: every route
+    # owner's census expectation knows what the build can really launch
+    # (``scheme.EXPERIMENTAL_LAUNCHES``), and the expert stack's compact lane
+    # is what the dispatch takes on any build with the compact reader
+    # (tessera#604, #609).  Attestation is the cells' question, not this one.
     dense = launch_pairs(TESSERA_FP8, regime=regime, include_experimental=True)
     assert dense == launch_pairs(TESSERA_FP8, structure=STRUCTURE_DENSE,
                                  regime=regime, include_experimental=True)
@@ -831,9 +841,16 @@ def test_moe_launches_are_structure_specific_and_resident_only(regime):
     assert not any(pair in non_experimental
                    for pair in dense - non_experimental), "experimental leaked"
     moe = launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE,
-                       regime=regime, mode="resident", lanes=())
+                       regime=regime, mode="resident", lanes=(),
+                       include_experimental=True)
     assert moe == moe_route.census_expected(compiled=False)[regime]
     assert moe and moe.isdisjoint(dense)
+    bf16_moe = launch_pairs(TESSERA_BF16, structure=STRUCTURE_ROUTED_MOE,
+                            regime=regime, mode="resident", include_experimental=True)
+    assert bf16_moe == moe_route.census_expected(compiled=False,
+                                                 family=TESSERA_BF16)[regime]
+    assert bf16_moe and bf16_moe.isdisjoint(moe), (
+        "the folded BF16 launch must not be reported under the FP8 stack's pair")
     assert not launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE,
                             regime=regime, mode="streamed")
     for unsupported in set(ROUTES) - set(MOE_BUILDERS):
@@ -1595,7 +1612,9 @@ def test_the_grammar_is_the_one_the_receipt_and_the_consumer_name(contract):
 def test_format_structures_follow_the_dispatch_builders(contract):
     """v27 (tessera#492): each format row names the structures the plugin
     dispatches for its family, and the validator holds the row to
-    ``scheme.MOE_BUILDERS`` -- a dispatch fact, distinct from the cells."""
+    ``scheme.MOE_BUILDERS`` -- a dispatch fact, distinct from the cells.
+    v36 (tessera#609): BF16 has an expert builder, so its row names
+    ``routed_moe`` too; every shipped family now dispatches both."""
     import copy
 
     from tessera.serving.contract import validate_serving_contract
@@ -1609,10 +1628,11 @@ def test_format_structures_follow_the_dispatch_builders(contract):
         expected = [STRUCTURE_DENSE] + ([STRUCTURE_ROUTED_MOE] if route in MOE_BUILDERS else [])
         assert entry["structures"] == expected, entry["family"]
     assert {entry["family"] for entry in contract["formats"]
-            if STRUCTURE_ROUTED_MOE in entry["structures"]} == {"TESSERA_E2M1_K2", "TESSERA_E4M3_K1"}
+            if STRUCTURE_ROUTED_MOE in entry["structures"]} == {
+                "TESSERA_E2M1_K2", "TESSERA_E4M3_K1", "TESSERA_BF16_K1"}
     # A row that offers a structure its route does not dispatch, or hides one
     # it does, is refused by the validator rather than read.
-    for family, wrong in (("TESSERA_BF16_K1", [STRUCTURE_DENSE, STRUCTURE_ROUTED_MOE]),
+    for family, wrong in (("TESSERA_BF16_K1", [STRUCTURE_DENSE]),
                           ("TESSERA_E2M1_K2", [STRUCTURE_DENSE]),
                           ("TESSERA_E4M3_K1", [STRUCTURE_ROUTED_MOE, STRUCTURE_DENSE])):
         broken = copy.deepcopy(contract)

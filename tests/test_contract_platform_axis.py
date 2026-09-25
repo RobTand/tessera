@@ -125,8 +125,15 @@ def test_the_packaged_contract_validates_at_v33(contract):
     ``activation_quantizers`` entry carries the fp4 table the routed E2M1_K2
     cells' own runtime image emitted, byte-identical to the two already
     published.  No cell, rung, route or launch moves.
+
+    v36 (tessera#609) is ADDITIVE for a lane reader and moves no schema:
+    ``scheme.MOE_BUILDERS`` gains the BF16 expert builder, so the
+    ``TESSERA_BF16_K1`` format row's ``structures`` becomes ``[dense,
+    routed_moe]``, and the stack's one launch (the compact adapter under the
+    folded arithmetic) enters ``EXPERIMENTAL_LAUNCHES``.  No cell is minted:
+    a routed BF16 stack still resolves unattested.
     """
-    assert int(contract["contract_version"]) == 35
+    assert int(contract["contract_version"]) == 36
     assert "activation_quantizers" in contract
     assert all("structures" in entry for entry in contract["formats"])
     assert contract["lane_eligibility"]["schema"] == LANE_ELIGIBILITY_SCHEMA

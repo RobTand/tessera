@@ -109,7 +109,13 @@ def selected_window_decoder(backend, family):
 
 
 def owner_needs_selected(wire, world):
-    """Does this stack need the explicit selected owner, or its own builder?"""
+    """Does this stack need the explicit selected owner, or its own builder?
+
+    BF16 still answers True here although compressed BF16 has a production
+    expert builder since tessera#609 (the compact lane, folded arithmetic):
+    this harness has not been moved onto that owner, and its panel admits the
+    research decoders only where this answers True.
+    """
     return wire["family"] == "TESSERA_BF16" or (wire["family"] == "TESSERA_FP8"
                                                 and int(world) > 1)
 
@@ -149,9 +155,10 @@ def owner_launch_pairs(wire, *, world=1):
 def owner_research_selected(shape, wire, request_block):
     """The explicit selected-owner block this stack needs, or None.
 
-    Two stacks need one and one must not have one.  A compressed BF16 expert
-    stack has no production builder at all, and the production FP8 expert
-    builder exceeds its TP1 scope past one rank; both take the versioned
+    Two stacks need one and one must not have one.  This harness serves a
+    compressed BF16 expert stack only through the selected owner (see
+    :func:`owner_needs_selected`), and the production FP8 expert builder
+    exceeds its TP1 scope past one rank; both take the versioned
     ``research_selected_moe`` owner.  A family with its own expert builder
     (``TESSERA_NVFP4``) keeps it -- the selected block refuses to name a
     target it does not serve, so attaching one to an A4 owner is a refusal
@@ -164,8 +171,9 @@ def owner_research_selected(shape, wire, request_block):
         if needs:
             raise ValueError(
                 f"{family} routed experts at TP{world} require the explicit "
-                "research_selected_moe block: this stack has no production expert owner "
-                "at this cut, and a production owner is not a fallback for it")
+                "research_selected_moe block: this harness serves this stack only through "
+                "the explicit selected owner at this cut, and a production owner is not a "
+                "fallback for it")
         return None
     selected = ResearchSelectedMoeConfig.from_checkpoint(request_block)
     if not ResearchSelectedMoeConfig.applies_to(wire):

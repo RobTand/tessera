@@ -36,7 +36,7 @@ MODES (matching vLLM's ``TopKWeightAndReduce`` semantics).
 * Both modes apply the family epilogues: BF16 row scale only (the research
   folded rounding has no API here); FP8 ``y = acc * a_scale[t] * w_scale[e, n]``
   under vLLM's native per-token quantizer.  ``prepare_grouped_window_gemm``'s
-  ``arithmetic="folded"`` selects the **research BF16 folded contract**
+  ``arithmetic="folded"`` selects the **BF16 expert folded contract**
   instead -- one bf16 rounding of ``(value * row_scale)`` per weight in
   registers before the dot, exactly ``bf16_route.decode_folded``'s
   ``(values.float() * scale[:, :, None]).to(torch.bfloat16)``, with no scale
@@ -174,7 +174,7 @@ def _grouped_window_gemm_kernel(
                 else:
                     val = tl.load(table_all + e * (1 << L) + state, mask=live_k2, other=0.0)
                     if FOLDED:
-                        # the research BF16 contract: one bf16 rounding of
+                        # the BF16 expert contract: one bf16 rounding of
                         # (value * row scale) in registers, before the dot
                         val = (val.to(tl.float32) * wscale[None, :]).to(tl.bfloat16)
 
@@ -417,7 +417,7 @@ def prepare_grouped_window_gemm_from_soa(
     if arithmetic not in ("epilogue", "folded"):
         raise GrammarError(f"unknown weight arithmetic {arithmetic!r}")
     if arithmetic == "folded" and family != "value":
-        raise GrammarError("the folded weight arithmetic is the research BF16 contract")
+        raise GrammarError("the folded weight arithmetic is the BF16 expert contract")
     if family not in ("value", "e4m3"):
         raise GrammarError(f"window_gemm_grouped serves the value and e4m3 families, got {family!r}")
     word_width = int(words_all.shape[1])
@@ -483,7 +483,7 @@ def prepare_grouped_window_gemm(
 
     * ``"epilogue"`` (default, dense): the row scale multiplies the fp32
       accumulator after the dot -- the dense BF16 route's contract;
-    * ``"folded"``: the research BF16 contract, exactly
+    * ``"folded"``: the BF16 expert contract (production and research-selected), exactly
       ``bf16_route.decode_folded``'s ``(values.float() * scale[:, :, None])
       .to(torch.bfloat16)`` -- one bf16 rounding of (value * row scale) in
       registers, before ``tl.dot``, and no scale in the epilogue.  The FP8
@@ -513,7 +513,7 @@ def prepare_grouped_window_gemm(
     device = first.device
     if arithmetic == "folded" and first.family != "value":
         raise GrammarError(
-            "the folded weight arithmetic is the research BF16 contract; the E4M3 "
+            "the folded weight arithmetic is the BF16 expert contract; the E4M3 "
             "family keeps the per-token A quant and the row-scale epilogue"
         )
     run_lengths = torch.tensor([p.runs.numel() // 4 for p in prepared], dtype=torch.int32)

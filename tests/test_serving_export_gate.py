@@ -482,25 +482,36 @@ def test_a_dense_sub_cap_nvfp4_plan_is_refused_without_an_override():
                                structure=STRUCTURE_ROUTED_MOE) is not None
 
 
-def test_a_structure_no_cell_attests_is_refused_by_name():
+def test_a_structure_no_cell_attests_is_refused_by_name(monkeypatch):
     """Three refusals, in the order the facts are established.
 
     A route with no expert builder is refused for THAT reason, before any
     cell is consulted (a cell for it could never exist); a route with a
     builder and no cell for the structure is refused as unattested, by the
     structure's name; a structure the build does not dispatch is refused
-    outright.
+    outright.  Every shipped family has an expert builder since tessera#609,
+    so the builder-less route is made here by taking BF16's entry out.
     """
     import copy
+    from tessera.serving import scheme as scheme_module
     from tessera.serving.contract import load_serving_contract
     from tessera.serving.scheme import STRUCTURE_ROUTED_MOE
 
     recipe = wire_recipe(GRIDS["BF16"], 1792)
+    with monkeypatch.context() as patched:
+        patched.delitem(scheme_module.MOE_BUILDERS, "TESSERA_BF16")
+        with pytest.raises(ValueError) as caught:
+            refuse_unserveable_wire("BF16", 1792, recipe.body.name, recipe.scale_plane.name,
+                                    family="TESSERA_BF16", span=recipe.span,
+                                    target="bf16.stack", structure=STRUCTURE_ROUTED_MOE)
+    assert "MOE_BUILDERS" in str(caught.value), str(caught.value)
+    # With its builder, a BF16 stack reaches the cell check and is refused as
+    # unattested: no routed_moe cell names it yet.
     with pytest.raises(ValueError) as caught:
         refuse_unserveable_wire("BF16", 1792, recipe.body.name, recipe.scale_plane.name,
                                 family="TESSERA_BF16", span=recipe.span,
                                 target="bf16.stack", structure=STRUCTURE_ROUTED_MOE)
-    assert "MOE_BUILDERS" in str(caught.value), str(caught.value)
+    assert "no lane_eligibility cell" in str(caught.value), str(caught.value)
 
     without = copy.deepcopy(load_serving_contract())
     without["lane_eligibility"]["cells"] = [

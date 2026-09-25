@@ -86,6 +86,7 @@ __all__ = [
     "DECODER_NATIVE_SPAN2_GEMM",
     "DECODER_NATIVE_SPAN2_GROUPED",
     "DECODER_NATIVE_WINDOW_MOE_COMPACT",
+    "DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED",
     "ATTR_PREFIX",
     "ROUTE_TRACE_ENV",
     "ROUTE_TRACE_SCHEMA",
@@ -152,14 +153,21 @@ DECODER_NATIVE_SPAN2_GEMM = "native_span2_gemm"
 DECODER_NATIVE_SPAN2_GROUPED = "native_span2_grouped"
 #: The compact window MoE adapter (``tessera.native_window_moe``): routed
 #: experts served from the loader's packed ``WindowGemvUnit``s with no decoded
-#: tile.  FP8 keeps the per-token native A quant, BF16 keeps the row-scale
-#: epilogue, and the folded BF16 arithmetic is a distinct numerical variant on
-#: the bundle -- never relabelled into another contract here.
+#: tile, on the FP8 family's contract (per-token native A quant, row scale on
+#: the fp32 accumulator).
 DECODER_NATIVE_WINDOW_MOE_COMPACT = "native_window_moe_compact"
+#: The same adapter on the BF16 family, whose weight arithmetic is FOLDED: one
+#: bf16 rounding of ``value * row_scale`` per weight in registers before the
+#: dot, with no scale in the epilogue (``window_gemm_grouped``'s
+#: ``arithmetic="folded"``).  A distinct value because it is a distinct
+#: numerical function of the same wire: a census or a cell that read the
+#: epilogue decoder here would attest the arithmetic that did not run.
+DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED = "native_window_moe_compact_folded"
 DECODERS = frozenset((DECODER_NATIVE_SPAN2, DECODER_TORCH_STOCK, DECODER_TORCH_WINDOW,
                       DECODER_WINDOW_GEMV, DECODER_NATIVE_WINDOW_GEMM,
                       DECODER_NATIVE_SPAN2_GEMM, DECODER_NATIVE_SPAN2_GROUPED,
-                      DECODER_NATIVE_WINDOW_MOE_COMPACT))
+                      DECODER_NATIVE_WINDOW_MOE_COMPACT,
+                      DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED))
 
 ATTR_PREFIX = "_tessera_route_"
 
