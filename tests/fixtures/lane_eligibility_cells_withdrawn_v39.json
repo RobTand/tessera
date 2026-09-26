@@ -1,0 +1,106 @@
+{
+ "what": "The two routed_moe cells contract v39 withdrew (tessera#604, second half), as contract v38 published them, field for field. They named (vllm.fused_moe.modular_kernel, torch_materialize_stock), which this build cannot make for an NVFP4 expert stack: nvfp4_moe_route's process_weights_after_loading always builds the native grouped stacks and stamps (tessera.kernel_a4.a4_span2_grouped_gemm, native_span2_grouped). Their receipt, the two-rank GLM-5.3-Flash 4-layer stub serve of 2026-09-14 (tree 44d20d670, image a5424378), is real and stays in the tree; it is quoted here, outside the published document, so tests that join its route traces keep a real record. Nothing resolves this file as a contract.",
+ "source": "src/tessera/serving/runtime_contract.json at contract_version 38 (origin/master 09d6559d7)",
+ "cells": [
+  {
+   "id": "tessera_e2m1_k2_routed_moe_sm121_decode_resident",
+   "runtime": {
+    "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:a5424378322071f4c33e63d1372a2bb028e46b03f0da0e5edb0cdd7418e2cebb",
+    "execution_modes": [
+     "eager"
+    ],
+    "vllm": "0.28.1rc1.dev397+gfd4a15126.d20260904",
+    "torch": "2.13.0+cu130"
+   },
+   "platform": "sm_121",
+   "family": "TESSERA_E2M1_K2",
+   "structure": "routed_moe",
+   "regime": "decode",
+   "rungs_q256": [
+    128,
+    256,
+    384,
+    512,
+    640,
+    768,
+    896
+   ],
+   "activation_contract": "e2m1_group16_ue4m3_static",
+   "executes": [
+    {
+     "symbol": "vllm.fused_moe.modular_kernel",
+     "decoder": "torch_materialize_stock"
+    }
+   ],
+   "route_status": "backed_with_serve_flag",
+   "qualification": "device_qualified",
+   "requires_plugin": "tessera",
+   "requires_serve_flags": [
+    "TESSERA_SERVE_MODE=resident"
+   ],
+   "predicates": [],
+   "evidence": {
+    "artifact": null,
+    "grade": "route_only",
+    "kl": [],
+    "smoke": {
+     "status": "not_recorded",
+     "receipt": null,
+     "attribution": "unattributed",
+     "control": null,
+     "record": null
+    }
+   }
+  },
+  {
+   "id": "tessera_e2m1_k2_routed_moe_sm121_batch_resident",
+   "runtime": {
+    "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:a5424378322071f4c33e63d1372a2bb028e46b03f0da0e5edb0cdd7418e2cebb",
+    "execution_modes": [
+     "eager"
+    ],
+    "vllm": "0.28.1rc1.dev397+gfd4a15126.d20260904",
+    "torch": "2.13.0+cu130"
+   },
+   "platform": "sm_121",
+   "family": "TESSERA_E2M1_K2",
+   "structure": "routed_moe",
+   "regime": "batch",
+   "rungs_q256": [
+    128,
+    256,
+    384,
+    512,
+    640,
+    768,
+    896
+   ],
+   "activation_contract": "e2m1_group16_ue4m3_static",
+   "executes": [
+    {
+     "symbol": "vllm.fused_moe.modular_kernel",
+     "decoder": "torch_materialize_stock"
+    }
+   ],
+   "route_status": "backed_with_serve_flag",
+   "qualification": "device_qualified",
+   "requires_plugin": "tessera",
+   "requires_serve_flags": [
+    "TESSERA_SERVE_MODE=resident"
+   ],
+   "predicates": [],
+   "evidence": {
+    "artifact": null,
+    "grade": "route_only",
+    "kl": [],
+    "smoke": {
+     "status": "not_recorded",
+     "receipt": null,
+     "attribution": "unattributed",
+     "control": null,
+     "record": null
+    }
+   }
+  }
+ ]
+}

@@ -39,6 +39,8 @@ from tessera.serving.contract import (
     validate_serving_contract,
 )
 
+from withdrawn_cells import withdrawn_v39_cells
+
 ROOT = Path(__file__).resolve().parent.parent
 CENSUS = ROOT / "tools" / "tessera_route_census.py"
 
@@ -123,7 +125,11 @@ TP2_STUB_TRACES = (ROOT / "experiments/results/glm53_a4_stub_tp2_route_trace_ran
 
 
 def test_every_route_the_two_rank_stub_served_joins_to_a_cell():
-    """The routed E2M1_K2 cells rest on records, not on a summary of them.
+    """The two-rank stub's records join the cells they were minted from.
+
+    Since contract v39 its routed E2M1_K2 records join only the WITHDRAWN
+    cells (``tests/withdrawn_cells.withdrawn_v39_cells``): they name the
+    materialising launch this build no longer makes.
 
     Each rank's ``tessera.route_trace/1`` entry is joined to the sm_121 cells
     by what it names -- family (through the route), structure (through the
@@ -166,6 +172,20 @@ def test_every_route_the_two_rank_stub_served_joins_to_a_cell():
                        and cell["activation_contract"] == entry["contract"]
                        and mode in cell_residency_modes(cell)
                        and launch in cell["executes"]]
+            if structure == "routed_moe" and family == "TESSERA_E2M1_K2":
+                # Contract v39 withdrew the routed E2M1 cells these records
+                # were minted from (tessera#604, second half): they name the
+                # materialising launch nvfp4_moe_route no longer makes.  The
+                # records still join the withdrawn cells, quoted outside the
+                # published document, and join nothing the contract ships.
+                assert entry["decoder"] == "torch_materialize_stock", entry
+                assert not matched, f"{path.name}: {entry} joins to {matched}"
+                withdrawn = [cell["id"] for cell in withdrawn_v39_cells()
+                             if cell["regime"] == regime and launch in cell["executes"]
+                             and cell["activation_contract"] == entry["contract"]]
+                assert withdrawn, f"{path.name}: {entry} joins no withdrawn cell"
+                seen.add((family, structure, regime))
+                continue
             if structure == "dense" and family in ("TESSERA_E4M3_K1", "TESSERA_BF16_K1"):
                 # Contract v31 withdrew these families' dense cells with the
                 # dispatch they attested (tessera#538), so the stub's dense

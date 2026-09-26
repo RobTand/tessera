@@ -523,16 +523,15 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
          "regimes": _ALL_REGIMES, "modes": _ALL_MODES, "lane": None,
          "structures": (STRUCTURE_DENSE,),
          "when_lane_absent": False},
-        # The expert stack (tessera#492): decoded ONCE at load through the
-        # stock materialiser into the modelopt NVFP4 parameter set, then
-        # every forward, at any M, hands the runtime's modular fused-MoE
-        # kernel that tile -- the same one-launch shape as the FP8 stack's,
-        # and resident-only for the same reason.
-        {"symbol": MOE_GEMM_SYMBOL, "decoder": _DECODER_TORCH_STOCK,
-         "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": None,
-         "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": True},
         # The native A4 routed GEMM (experimental, resident like every expert
-        # stack): the grouped form over the compact loader's planes.
+        # stack): the grouped form over the compact loader's planes.  It is
+        # the expert half's ONLY launch.  The materialising
+        # ``(MOE_GEMM_SYMBOL, _DECODER_TORCH_STOCK)`` entry that stood before
+        # it left this table at contract v39 (tessera#604, second half):
+        # ``nvfp4_moe_route``'s ``process_weights_after_loading`` always
+        # builds the native grouped stacks and stamps this pair, and the
+        # module owns no stock kernel to fall back to.  The v38 reason for
+        # the FP8 row, applied to the NVFP4 one.
         {"symbol": A4_GROUPED_GEMM_SYMBOL, "decoder": _DECODER_NATIVE_SPAN2_GROUPED,
          "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": None,
          "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": False},

@@ -140,8 +140,11 @@ def census_expected(*, compiled: bool = False, platform=None) -> dict:
     for the experts either.
     """
     del compiled  # one launch has nothing to combine
+    # The regimes come from every launch the route can make, experimental
+    # included: since contract v39 the grouped native pair is the expert
+    # half's only launch, so the attested view alone may name no regime.
     launches = route_launches(TESSERA_NVFP4, structure=STRUCTURE_ROUTED_MOE,
-                              mode=MODE_RESIDENT)
+                              mode=MODE_RESIDENT, include_experimental=True)
     regimes = {regime for launch in launches for regime in launch["regimes"]}
     # The native lane's own (symbol, decoder) pairs are experimental: they are
     # what this route actually reports now, so a census must accept them, and

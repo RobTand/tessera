@@ -73,3 +73,19 @@ def withdrawn_v38_cells() -> list[dict]:
 
 
 WITHDRAWN_V38_IDS = frozenset(cell["id"] for cell in withdrawn_v38_cells())
+
+
+FIXTURE_V39 = ROOT / "tests" / "fixtures" / "lane_eligibility_cells_withdrawn_v39.json"
+
+
+def withdrawn_v39_cells() -> list[dict]:
+    """The two routed E2M1 cells contract v39 withdrew, as v38 published them.
+
+    They named ``(vllm.fused_moe.modular_kernel, torch_materialize_stock)``,
+    which ``nvfp4_moe_route`` no longer makes (tessera#604, second half).
+    Their image is the two-rank stub serve's, carried verbatim.
+    """
+    return json.loads(FIXTURE_V39.read_text(encoding="utf-8"))["cells"]
+
+
+WITHDRAWN_V39_IDS = frozenset(cell["id"] for cell in withdrawn_v39_cells())
