@@ -1,0 +1,596 @@
+{
+ "cell_launch_agreement": {
+  "agrees": null,
+  "platform": "sm_121",
+  "runtime": {
+   "execution_mode": "eager",
+   "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5"
+  },
+  "schema": "tessera.cell-launch-agreement.by-structure/1",
+  "structures": {
+   "dense": {
+    "agrees": null,
+    "phases": {
+     "decode": {
+      "cells": {},
+      "covered_by_cell": 0,
+      "modules": 7,
+      "regime": "decode",
+      "unattested": 7,
+      "unsupported_records": 0
+     },
+     "prefill": {
+      "cells": {},
+      "covered_by_cell": 0,
+      "modules": 7,
+      "regime": "batch",
+      "unattested": 7,
+      "unsupported_records": 0
+     }
+    },
+    "platform": "sm_121",
+    "runtime": {
+     "execution_mode": "eager",
+     "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5"
+    },
+    "schema": "tessera.cell-launch-agreement/3",
+    "structure": "dense"
+   },
+   "routed_moe": {
+    "agrees": null,
+    "phases": {
+     "decode": {
+      "cells": {},
+      "covered_by_cell": 0,
+      "modules": 2,
+      "regime": "decode",
+      "unattested": 2,
+      "unsupported_records": 0
+     },
+     "prefill": {
+      "cells": {},
+      "covered_by_cell": 0,
+      "modules": 2,
+      "regime": "batch",
+      "unattested": 2,
+      "unsupported_records": 0
+     }
+    },
+    "platform": "sm_121",
+    "runtime": {
+     "execution_mode": "eager",
+     "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5"
+    },
+    "schema": "tessera.cell-launch-agreement/3",
+    "structure": "routed_moe"
+   }
+  }
+ },
+ "checkpoint": "/mnt/shared/tessera-runs/moe/glm53-4layer-x-picks-20260925/merged",
+ "checkpoint_sidecars": {
+  "config.json": "d93f81564431df80d9c6e8a89370a14ce43ec997db4febfd0663178645980401",
+  "tessera_serving_manifest.json": "881ec4b40c83d78b6e23ff0297fdaa53aec22a128d658f6f5a4589b080d83cf7"
+ },
+ "compiled": false,
+ "declared_families": {
+  "TESSERA_BF16": 5,
+  "TESSERA_FP8": 4
+ },
+ "declared_name_mapping": {
+  "model.language_model.layers.0.mlp.down_proj": "language_model.model.layers.0.mlp.down_proj",
+  "model.language_model.layers.0.mlp.gate_up_proj": "language_model.model.layers.0.mlp.gate_up_proj",
+  "model.language_model.layers.1.mlp.experts": "language_model.model.layers.1.mlp.experts",
+  "model.language_model.layers.1.mlp.shared_experts.down_proj": "language_model.model.layers.1.mlp.shared_experts.down_proj",
+  "model.language_model.layers.1.mlp.shared_experts.gate_up_proj": "language_model.model.layers.1.mlp.shared_experts.gate_up_proj",
+  "model.language_model.layers.2.mlp.experts": "language_model.model.layers.2.mlp.experts",
+  "model.language_model.layers.2.mlp.shared_experts.down_proj": "language_model.model.layers.2.mlp.shared_experts.down_proj",
+  "model.language_model.layers.2.mlp.shared_experts.gate_up_proj": "language_model.model.layers.2.mlp.shared_experts.gate_up_proj",
+  "model.language_model.layers.3.mlp.shared_experts.down_proj": "language_model.model.layers.3.mlp.shared_experts.down_proj"
+ },
+ "declared_names_mapped_to_module_space": true,
+ "decoder_coverage": {
+  "phases": {
+   "decode": {
+    "decoders": {
+     "native_window_gemm": 3,
+     "native_window_gemm_folded": 4,
+     "native_window_moe_compact": 1,
+     "native_window_moe_compact_folded": 1
+    },
+    "modules": 9
+   },
+   "prefill": {
+    "decoders": {
+     "native_window_gemm": 3,
+     "native_window_gemm_folded": 4,
+     "native_window_moe_compact": 1,
+     "native_window_moe_compact_folded": 1
+    },
+    "modules": 9
+   }
+  },
+  "required": []
+ },
+ "device": {
+  "capability": [
+   12,
+   1
+  ],
+  "name": "NVIDIA GB10",
+  "platform_token": "sm_121"
+ },
+ "elapsed_s": 268.0,
+ "engine_backends": {
+  "attention_backend": "CUSTOM",
+  "kernel_config": {
+   "enable_flashinfer_autotune": false
+  },
+  "kv_cache_dtype": "fp8_ds_mla",
+  "moe_backend": "triton",
+  "trust_remote_code": true
+ },
+ "env": {
+  "TESSERA_RESEARCH_GLM53_NOPE": "1",
+  "TESSERA_SERVE_MODE": "resident",
+  "VLLM_DISABLED_KERNELS": null
+ },
+ "generated_text": " unloademyAliases unloadedAliases unloademyAliases",
+ "histogram": {
+  "decode": {
+   "other_route_modules": 0,
+   "regime": "decode",
+   "routes": [
+    {
+     "contract": "bf16_unquantized",
+     "decoder": "native_window_moe_compact_folded",
+     "kind": "moe",
+     "modules": 1,
+     "policy": "TESSERA_BF16:resident",
+     "state": "served",
+     "symbol": "tessera.native_window_moe.NativeWindowMoE.__call__"
+    },
+    {
+     "contract": "bf16_unquantized",
+     "decoder": "native_window_gemm_folded",
+     "kind": "dense",
+     "modules": 4,
+     "policy": "TESSERA_BF16:resident",
+     "state": "served",
+     "symbol": "tessera::window_gemm_dense"
+    },
+    {
+     "contract": "fp8_per_token_dynamic",
+     "decoder": "native_window_moe_compact",
+     "kind": "moe",
+     "modules": 1,
+     "policy": "TESSERA_FP8:resident",
+     "state": "served",
+     "symbol": "tessera.native_window_moe.NativeWindowMoE.__call__"
+    },
+    {
+     "contract": "fp8_per_token_dynamic",
+     "decoder": "native_window_gemm",
+     "kind": "dense",
+     "modules": 3,
+     "policy": "TESSERA_FP8:resident",
+     "state": "served",
+     "symbol": "tessera::window_gemm_dense"
+    }
+   ],
+   "shapes": [
+    "M1:N24576:K4096",
+    "M1:N4096:K12288",
+    "M1:N4096:K2048",
+    "M1:N4096:K4096"
+   ],
+   "tessera_modules": 9,
+   "tessera_modules_by_family": {
+    "TESSERA_BF16": 5,
+    "TESSERA_FP8": 4
+   }
+  },
+  "prefill": {
+   "other_route_modules": 0,
+   "regime": "batch",
+   "routes": [
+    {
+     "contract": "bf16_unquantized",
+     "decoder": "native_window_moe_compact_folded",
+     "kind": "moe",
+     "modules": 1,
+     "policy": "TESSERA_BF16:resident",
+     "state": "served",
+     "symbol": "tessera.native_window_moe.NativeWindowMoE.__call__"
+    },
+    {
+     "contract": "bf16_unquantized",
+     "decoder": "native_window_gemm_folded",
+     "kind": "dense",
+     "modules": 4,
+     "policy": "TESSERA_BF16:resident",
+     "state": "served",
+     "symbol": "tessera::window_gemm_dense"
+    },
+    {
+     "contract": "fp8_per_token_dynamic",
+     "decoder": "native_window_moe_compact",
+     "kind": "moe",
+     "modules": 1,
+     "policy": "TESSERA_FP8:resident",
+     "state": "served",
+     "symbol": "tessera.native_window_moe.NativeWindowMoE.__call__"
+    },
+    {
+     "contract": "fp8_per_token_dynamic",
+     "decoder": "native_window_gemm",
+     "kind": "dense",
+     "modules": 3,
+     "policy": "TESSERA_FP8:resident",
+     "state": "served",
+     "symbol": "tessera::window_gemm_dense"
+    }
+   ],
+   "shapes": [
+    "M64:N24576:K4096",
+    "M64:N4096:K12288",
+    "M64:N4096:K2048",
+    "M64:N4096:K4096"
+   ],
+   "tessera_modules": 9,
+   "tessera_modules_by_family": {
+    "TESSERA_BF16": 5,
+    "TESSERA_FP8": 4
+   }
+  }
+ },
+ "lane_engagement": {
+  "all_required_engaged": null,
+  "declared_by_artifact": [],
+  "engaged_modules_max": {},
+  "phases": {
+   "decode": {
+    "decoders": {
+     "native_window_gemm": 3,
+     "native_window_gemm_folded": 4,
+     "native_window_moe_compact": 1,
+     "native_window_moe_compact_folded": 1
+    },
+    "engaged_modules": {},
+    "lane_refusals": {},
+    "tessera_modules": 9,
+    "unengaged_required_lanes": []
+   },
+   "prefill": {
+    "decoders": {
+     "native_window_gemm": 3,
+     "native_window_gemm_folded": 4,
+     "native_window_moe_compact": 1,
+     "native_window_moe_compact_folded": 1
+    },
+    "engaged_modules": {},
+    "lane_refusals": {},
+    "tessera_modules": 9,
+    "unengaged_required_lanes": []
+   }
+  },
+  "required_decoders": {},
+  "required_lanes": [],
+  "schema": "tessera.lane-engagement/1"
+ },
+ "lane_refusals": {},
+ "memory_budget": {
+  "gpu_memory_utilization": 0.45,
+  "kv_cache_memory_bytes": 4294967296
+ },
+ "problems": [],
+ "prompt_tokens": 64,
+ "quant_method": "tessera",
+ "record_owner": {
+  "decode": {
+   "language_model.model.layers.0.mlp.down_proj": "language_model.model.layers.0.mlp.down_proj",
+   "language_model.model.layers.0.mlp.gate_up_proj": "language_model.model.layers.0.mlp.gate_up_proj",
+   "language_model.model.layers.1.mlp.experts.routed_experts": "language_model.model.layers.1.mlp.experts",
+   "language_model.model.layers.1.mlp.shared_experts.down_proj": "language_model.model.layers.1.mlp.shared_experts.down_proj",
+   "language_model.model.layers.1.mlp.shared_experts.gate_up_proj": "language_model.model.layers.1.mlp.shared_experts.gate_up_proj",
+   "language_model.model.layers.2.mlp.experts.routed_experts": "language_model.model.layers.2.mlp.experts",
+   "language_model.model.layers.2.mlp.shared_experts.down_proj": "language_model.model.layers.2.mlp.shared_experts.down_proj",
+   "language_model.model.layers.2.mlp.shared_experts.gate_up_proj": "language_model.model.layers.2.mlp.shared_experts.gate_up_proj",
+   "language_model.model.layers.3.mlp.shared_experts.down_proj": "language_model.model.layers.3.mlp.shared_experts.down_proj"
+  },
+  "prefill": {
+   "language_model.model.layers.0.mlp.down_proj": "language_model.model.layers.0.mlp.down_proj",
+   "language_model.model.layers.0.mlp.gate_up_proj": "language_model.model.layers.0.mlp.gate_up_proj",
+   "language_model.model.layers.1.mlp.experts.routed_experts": "language_model.model.layers.1.mlp.experts",
+   "language_model.model.layers.1.mlp.shared_experts.down_proj": "language_model.model.layers.1.mlp.shared_experts.down_proj",
+   "language_model.model.layers.1.mlp.shared_experts.gate_up_proj": "language_model.model.layers.1.mlp.shared_experts.gate_up_proj",
+   "language_model.model.layers.2.mlp.experts.routed_experts": "language_model.model.layers.2.mlp.experts",
+   "language_model.model.layers.2.mlp.shared_experts.down_proj": "language_model.model.layers.2.mlp.shared_experts.down_proj",
+   "language_model.model.layers.2.mlp.shared_experts.gate_up_proj": "language_model.model.layers.2.mlp.shared_experts.gate_up_proj",
+   "language_model.model.layers.3.mlp.shared_experts.down_proj": "language_model.model.layers.3.mlp.shared_experts.down_proj"
+  }
+ },
+ "records": {
+  "decode": {
+   "language_model.model.layers.0.mlp.down_proj": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "native_window_gemm",
+    "kernel_schedule": "tessera::window_gemm_dense",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M1:N4096:K12288",
+    "state": "served",
+    "symbol": "tessera::window_gemm_dense",
+    "tile_m": 0
+   },
+   "language_model.model.layers.0.mlp.gate_up_proj": {
+    "contract": "bf16_unquantized",
+    "decoder": "native_window_gemm_folded",
+    "kernel_schedule": "tessera::window_gemm_dense",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_BF16:resident",
+    "reason": null,
+    "shape": "M1:N24576:K4096",
+    "state": "served",
+    "symbol": "tessera::window_gemm_dense",
+    "tile_m": 0
+   },
+   "language_model.model.layers.1.mlp.experts.routed_experts": {
+    "contract": "bf16_unquantized",
+    "decoder": "native_window_moe_compact_folded",
+    "kernel_schedule": "tessera.native_window_moe.NativeWindowMoE.__call__",
+    "kind": "moe",
+    "platform": "sm_121",
+    "policy": "TESSERA_BF16:resident",
+    "reason": null,
+    "shape": "M1:N4096:K4096",
+    "state": "served",
+    "symbol": "tessera.native_window_moe.NativeWindowMoE.__call__",
+    "tile_m": 0
+   },
+   "language_model.model.layers.1.mlp.shared_experts.down_proj": {
+    "contract": "bf16_unquantized",
+    "decoder": "native_window_gemm_folded",
+    "kernel_schedule": "tessera::window_gemm_dense",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_BF16:resident",
+    "reason": null,
+    "shape": "M1:N4096:K2048",
+    "state": "served",
+    "symbol": "tessera::window_gemm_dense",
+    "tile_m": 0
+   },
+   "language_model.model.layers.1.mlp.shared_experts.gate_up_proj": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "native_window_gemm",
+    "kernel_schedule": "tessera::window_gemm_dense",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M1:N4096:K4096",
+    "state": "served",
+    "symbol": "tessera::window_gemm_dense",
+    "tile_m": 0
+   },
+   "language_model.model.layers.2.mlp.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "native_window_moe_compact",
+    "kernel_schedule": "tessera.native_window_moe.NativeWindowMoE.__call__",
+    "kind": "moe",
+    "platform": "sm_121",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M1:N4096:K4096",
+    "state": "served",
+    "symbol": "tessera.native_window_moe.NativeWindowMoE.__call__",
+    "tile_m": 0
+   },
+   "language_model.model.layers.2.mlp.shared_experts.down_proj": {
+    "contract": "bf16_unquantized",
+    "decoder": "native_window_gemm_folded",
+    "kernel_schedule": "tessera::window_gemm_dense",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_BF16:resident",
+    "reason": null,
+    "shape": "M1:N4096:K2048",
+    "state": "served",
+    "symbol": "tessera::window_gemm_dense",
+    "tile_m": 0
+   },
+   "language_model.model.layers.2.mlp.shared_experts.gate_up_proj": {
+    "contract": "bf16_unquantized",
+    "decoder": "native_window_gemm_folded",
+    "kernel_schedule": "tessera::window_gemm_dense",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_BF16:resident",
+    "reason": null,
+    "shape": "M1:N4096:K4096",
+    "state": "served",
+    "symbol": "tessera::window_gemm_dense",
+    "tile_m": 0
+   },
+   "language_model.model.layers.3.mlp.shared_experts.down_proj": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "native_window_gemm",
+    "kernel_schedule": "tessera::window_gemm_dense",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M1:N4096:K2048",
+    "state": "served",
+    "symbol": "tessera::window_gemm_dense",
+    "tile_m": 0
+   }
+  },
+  "prefill": {
+   "language_model.model.layers.0.mlp.down_proj": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "native_window_gemm",
+    "kernel_schedule": "tessera::window_gemm_dense",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M64:N4096:K12288",
+    "state": "served",
+    "symbol": "tessera::window_gemm_dense",
+    "tile_m": 0
+   },
+   "language_model.model.layers.0.mlp.gate_up_proj": {
+    "contract": "bf16_unquantized",
+    "decoder": "native_window_gemm_folded",
+    "kernel_schedule": "tessera::window_gemm_dense",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_BF16:resident",
+    "reason": null,
+    "shape": "M64:N24576:K4096",
+    "state": "served",
+    "symbol": "tessera::window_gemm_dense",
+    "tile_m": 0
+   },
+   "language_model.model.layers.1.mlp.experts.routed_experts": {
+    "contract": "bf16_unquantized",
+    "decoder": "native_window_moe_compact_folded",
+    "kernel_schedule": "tessera.native_window_moe.NativeWindowMoE.__call__",
+    "kind": "moe",
+    "platform": "sm_121",
+    "policy": "TESSERA_BF16:resident",
+    "reason": null,
+    "shape": "M64:N4096:K4096",
+    "state": "served",
+    "symbol": "tessera.native_window_moe.NativeWindowMoE.__call__",
+    "tile_m": 0
+   },
+   "language_model.model.layers.1.mlp.shared_experts.down_proj": {
+    "contract": "bf16_unquantized",
+    "decoder": "native_window_gemm_folded",
+    "kernel_schedule": "tessera::window_gemm_dense",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_BF16:resident",
+    "reason": null,
+    "shape": "M64:N4096:K2048",
+    "state": "served",
+    "symbol": "tessera::window_gemm_dense",
+    "tile_m": 0
+   },
+   "language_model.model.layers.1.mlp.shared_experts.gate_up_proj": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "native_window_gemm",
+    "kernel_schedule": "tessera::window_gemm_dense",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M64:N4096:K4096",
+    "state": "served",
+    "symbol": "tessera::window_gemm_dense",
+    "tile_m": 0
+   },
+   "language_model.model.layers.2.mlp.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "native_window_moe_compact",
+    "kernel_schedule": "tessera.native_window_moe.NativeWindowMoE.__call__",
+    "kind": "moe",
+    "platform": "sm_121",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M64:N4096:K4096",
+    "state": "served",
+    "symbol": "tessera.native_window_moe.NativeWindowMoE.__call__",
+    "tile_m": 0
+   },
+   "language_model.model.layers.2.mlp.shared_experts.down_proj": {
+    "contract": "bf16_unquantized",
+    "decoder": "native_window_gemm_folded",
+    "kernel_schedule": "tessera::window_gemm_dense",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_BF16:resident",
+    "reason": null,
+    "shape": "M64:N4096:K2048",
+    "state": "served",
+    "symbol": "tessera::window_gemm_dense",
+    "tile_m": 0
+   },
+   "language_model.model.layers.2.mlp.shared_experts.gate_up_proj": {
+    "contract": "bf16_unquantized",
+    "decoder": "native_window_gemm_folded",
+    "kernel_schedule": "tessera::window_gemm_dense",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_BF16:resident",
+    "reason": null,
+    "shape": "M64:N4096:K4096",
+    "state": "served",
+    "symbol": "tessera::window_gemm_dense",
+    "tile_m": 0
+   },
+   "language_model.model.layers.3.mlp.shared_experts.down_proj": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "native_window_gemm",
+    "kernel_schedule": "tessera::window_gemm_dense",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M64:N4096:K2048",
+    "state": "served",
+    "symbol": "tessera::window_gemm_dense",
+    "tile_m": 0
+   }
+  }
+ },
+ "runtime": {
+  "execution_mode": "eager",
+  "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5"
+ },
+ "runtime_image_declaration": {
+  "env": [
+   "TESSERA_CENSUS_RUNTIME_IMAGE",
+   "TESSERA_CENSUS_RUNTIME_IMAGE_DECLARATION"
+  ],
+  "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5",
+  "record": {
+   "fix": null,
+   "gated": true,
+   "local_id": "sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5",
+   "pinned": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+   "present": true,
+   "reason": "explicit_digest",
+   "refused": false,
+   "repo_digests": [
+    "192.168.1.107/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5",
+    "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5"
+   ],
+   "requested": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5",
+   "requested_tag": null,
+   "required": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5",
+   "resolved_digest": "sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5",
+   "resolved_reference": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5",
+   "schema": "tessera.runtime_image/1"
+  },
+  "schema": "tessera.runtime-image-declaration/1",
+  "source": "launcher_repo_digests"
+ },
+ "scheduler": {},
+ "schema": "tessera.serving.route_census/2",
+ "tessera_config_groups": 9,
+ "verdict": "served",
+ "versions": {
+  "python": "3.12.3",
+  "tessera": "0.1.0",
+  "tessera_commit": "1a5eb99e73b9e5b08aa3b8816169f43ca44562b6",
+  "tessera_serving": "0.1.0",
+  "torch": "2.13.0+cu130",
+  "vllm": "0.28.1rc1.dev397+gfd4a15126.d20260904"
+ }
+}

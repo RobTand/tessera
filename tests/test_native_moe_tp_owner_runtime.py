@@ -529,9 +529,11 @@ def test_the_owner_route_set_comes_from_the_plugins_own_launch_table():
     """The panel's admissible route is the plugin's, per family and per world.
 
     ``TESSERA_NVFP4`` has a routed launch table row (its production expert
-    builder serves a world above one); ``TESSERA_BF16`` has none, because its
-    expert wire is reachable only through the explicit selected owner.  Both
-    statements are the plugin's, read here rather than restated.
+    builder serves a world above one).  ``TESSERA_BF16`` has one since
+    tessera#609 -- the compact lane's folded pair, experimental until a cell
+    attests it -- and since tessera#613 this harness prices that production
+    owner, so the folded pair is the only admissible route.  Both statements
+    are the plugin's, read here rather than restated.
     """
     materialising = ("vllm.fused_moe.modular_kernel", "torch_materialize_stock")
     a4 = moe.owner_launch_pairs(moe.owner_wire(_glm_shape(1, A4)), world=1)
@@ -541,25 +543,34 @@ def test_the_owner_route_set_comes_from_the_plugins_own_launch_table():
     assert moe.census_symbol_base("vllm.fused_moe.modular_kernel:FLASHINFER_CUTLASS") == materialising[0]
     a16 = moe.owner_launch_pairs(moe.owner_wire(_glm_shape(1, A16)), world=1)
     assert materialising not in a16
-    assert {decoder for _symbol, decoder in a16} == {
-        "research_selected_torch_window_folded_bf16",
-        "research_selected_triton_window_folded_bf16"}
+    from tessera.serving.scheme import WINDOW_MOE_COMPACT_SYMBOL
+    assert a16 == {(WINDOW_MOE_COMPACT_SYMBOL, "native_window_moe_compact_folded")}
 
 
-def test_a_tp2_fp8_owner_has_no_production_launch_to_declare():
-    """At TP2 the FP8 production builder is out of scope, and so is its pair."""
+def test_an_fp8_owner_never_declares_the_materialising_launch():
+    """Contract v38: the materialising FP8 pair left the plugin's table.
+
+    ``moe_route.compact_window_lane`` takes every FP8 stack this build
+    constructs, so the compact window MoE adapter is the FP8 owner's one table
+    launch at every world.  Above one rank the selected owner's decoders stay
+    admissible beside it, as before.
+    """
+    from tessera.serving.scheme import WINDOW_MOE_COMPACT_SYMBOL
+    compact = (WINDOW_MOE_COMPACT_SYMBOL, "native_window_moe_compact")
     wire = moe.owner_wire(_glm_shape(2, A8))
     pairs = moe.owner_launch_pairs(wire, world=2)
     assert ("vllm.fused_moe.modular_kernel", "torch_materialize_stock") not in pairs
     assert ("vllm.fused_moe.modular_kernel", "research_selected_triton_window") in pairs
     assert ("vllm.fused_moe.modular_kernel", "research_selected_torch_window") in pairs
-    # A world of one keeps the production pair: that lane is what TP1 has run.
-    assert ("vllm.fused_moe.modular_kernel", "torch_materialize_stock") in \
-        moe.owner_launch_pairs(wire, world=1)
-    # A compressed BF16 expert stack has no production builder at any world.
-    bf16 = moe.owner_launch_pairs(moe.owner_wire(_glm_shape(1, A16)), world=1)
-    assert ("vllm.fused_moe.modular_kernel", "research_selected_triton_window_folded_bf16") in bf16
-    assert ("vllm.fused_moe.modular_kernel", "torch_materialize_stock") not in bf16
+    assert compact in pairs
+    assert moe.owner_launch_pairs(wire, world=1) == {compact}
+    # A compressed BF16 expert stack has no materialising launch at any world,
+    # and its selected owner's decoders are not admissible either (#613).
+    for world in (1, 2):
+        bf16 = moe.owner_launch_pairs(moe.owner_wire(_glm_shape(world, A16)), world=world)
+        assert ("vllm.fused_moe.modular_kernel",
+                "research_selected_triton_window_folded_bf16") not in bf16
+        assert ("vllm.fused_moe.modular_kernel", "torch_materialize_stock") not in bf16
 
 
 def test_the_selected_block_is_required_exactly_where_no_production_owner_exists():
@@ -578,11 +589,15 @@ def test_the_selected_block_is_required_exactly_where_no_production_owner_exists
     with pytest.raises(ValueError, match="expected_tensor_parallel_size"):
         moe.owner_research_selected(a8_tp2, moe.owner_wire(a8_tp2),
                                     {**block, "expected_tensor_parallel_size": 1})
-    # A16's expert route exists only under the explicit block, at any world.
-    with pytest.raises(ValueError, match="research_selected_moe"):
-        moe.owner_research_selected(a16, moe.owner_wire(a16), None)
-    assert moe.owner_research_selected(a16, moe.owner_wire(a16),
-                                       {**block, "expected_tensor_parallel_size": 1}) is not None
+    # A16 is priced on its production builder, the served owner, at any world
+    # (#613): no block is required, and an attached one is refused by name
+    # rather than pricing an object the served checkpoint does not carry.
+    a16_tp2 = _glm_shape(2, A16)
+    for shape, world in ((a16, 1), (a16_tp2, 2)):
+        assert moe.owner_research_selected(shape, moe.owner_wire(shape), None) is None
+        with pytest.raises(ValueError, match="production builder"):
+            moe.owner_research_selected(shape, moe.owner_wire(shape),
+                                        {**block, "expected_tensor_parallel_size": world})
     # A4 keeps its own production builder, which serves TP2: attaching the block
     # to it would name a target the block does not serve.
     with pytest.raises(ValueError, match="does not serve"):
@@ -769,15 +784,27 @@ def _owner_panel(tp, format_name, route_symbol, decoder, member_unit=None):
 
 
 @pytest.mark.parametrize("tp,format_name,symbol,decoder", [
-    (1, A8, "vllm.fused_moe.modular_kernel:FLASHINFER_CUTLASS", "torch_materialize_stock"),
+    (1, A8, "tessera.native_window_moe.NativeWindowMoE.__call__", "native_window_moe_compact"),
     (2, A4, "vllm.fused_moe.modular_kernel:FLASHINFER_CUTLASS", "torch_materialize_stock"),
     (2, A8, "vllm.fused_moe.modular_kernel:TRITON_REF", "research_selected_triton_window"),
-    (1, A16, "vllm.fused_moe.modular_kernel:TRITON_REF",
-     "research_selected_triton_window_folded_bf16"),
+    (1, A16, "tessera.native_window_moe.NativeWindowMoE.__call__",
+     "native_window_moe_compact_folded"),
+    (2, A16, "tessera.native_window_moe.NativeWindowMoE.__call__",
+     "native_window_moe_compact_folded"),
 ])
 def test_a_glm_owner_panel_validates_at_its_own_family_and_cut(tp, format_name, symbol, decoder):
     panel = _owner_panel(tp, format_name, symbol, decoder)
     assert moe.validate_panel(panel) == panel
+
+
+@pytest.mark.parametrize("backend", ["torch", "triton"])
+def test_a_bf16_panel_on_the_selected_owners_route_is_refused(backend):
+    """Since #613 a BF16 owner is priced on its production builder, so a panel
+    declaring the selected owner's route is a route this owner does not take."""
+    panel = _owner_panel(1, A16, "vllm.fused_moe.modular_kernel:TRITON_REF",
+                         f"research_selected_{backend}_window_folded_bf16")
+    with pytest.raises(ValueError):
+        moe.validate_panel(panel)
 
 
 @pytest.mark.parametrize("mutation", ["policy", "rung", "execution", "decoder", "symbol"])

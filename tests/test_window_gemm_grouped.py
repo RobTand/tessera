@@ -81,7 +81,8 @@ class Expert:
     def reference(self, x, family, folded=False):
         """The per-expert dense definition: fp32 [T, rows], no routing.
 
-        ``folded=True`` is the research BF16 contract:
+        ``folded=True`` is the BF16 folded contract (dense and routed since
+        tessera#614):
         ``bf16(values * row_scale)`` before the dot, no epilogue scale --
         exactly ``bf16_route.decode_folded``'s arithmetic.
         """

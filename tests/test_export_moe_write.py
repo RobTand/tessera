@@ -59,7 +59,10 @@ cuda = pytest.mark.skipif(not torch.cuda.is_available(),
                           reason="the encoder is a GPU job")
 
 
-@pytest.mark.parametrize("grid,q256", [("E4M3", 896), ("BF16", 1792)])
+# Rungs no routed cell attests (the E4M3 cell carries 896 since contract v38,
+# the BF16 cell 1024), so the ordinary gate refuses and only the research
+# block admits them.
+@pytest.mark.parametrize("grid,q256", [("E4M3", 1024), ("BF16", 1792)])
 def test_research_selected_export_gate_accepts_reader_range_without_publishing_a_cell(grid, q256):
     from tessera.control import grid_for_name
 
@@ -120,7 +123,7 @@ def test_research_export_preserves_wires_and_snapshots_execution(tmp_path, monke
     tensors["model.language_model.layers.0.norm.weight"] = torch.randn(32, generator=generator).bfloat16()
     config = _config()
     config["text_config"].update(n_routed_experts=1, hidden_size=32, moe_intermediate_size=32)
-    plan = {STACK: {"grid": "E4M3", "q256": 1024}}
+    plan = {STACK: {"grid": "E4M3", "q256": 896}}
     before = _export(ordinary, monkeypatch, tensors, plan, "--device", "cpu", config=config)
     path, block, text = _research_input(selected)
     real_encode = export.encode_linear_planes
@@ -147,7 +150,7 @@ def test_research_export_preserves_wires_and_snapshots_execution(tmp_path, monke
         "input_utf8": text, "config": block}
     assert manifest["serving_gate"]["research_selected_decoder_only"] == [
         {"target": STACK, "family": "TESSERA_FP8", "grid": "E4M3",
-         "q256": 1024, "qualification": "research_decoder_only"}]
+         "q256": 896, "qualification": "research_decoder_only"}]
     if partition:
         assert manifest["export_identity"]["options"]["research_selected_moe"] == manifest["research_selected_moe"]
         # Numeric equality must not accept JSON floats in an integer-only carrier.
@@ -307,7 +310,7 @@ def _encode_canonical_wire(matrix, expert, projection, device="cuda"):
 
     exported, _unit, _forests = encode_linear_planes(
         matrix.to(device, torch.float32).contiguous(),
-        grid=export.grid_for("E4M3"), q256=1024,
+        grid=export.grid_for("E4M3"), q256=896,  # the plans' rung (contract v38)
         name=f"{STACK}.{expert}.{projection}.weight", verify=True)
     return pack_fused([(projection, exported.rows, exported.blob)])
 
@@ -373,7 +376,7 @@ def test_planning_a_leaf_is_refused_and_names_the_stack_spelling(tmp_path, monke
     """The old refusal said the write half did not exist. It does; the plan is misspelled."""
     with pytest.raises(SystemExit) as caught:
         _export(tmp_path, monkeypatch, _checkpoint(),
-                {f"{STACK}.0.gate_proj.weight": {"grid": "E4M3", "q256": 1024}})
+                {f"{STACK}.0.gate_proj.weight": {"grid": "E4M3", "q256": 896}})
 
     message = str(caught.value)
     assert "ROUTED expert" in message, message
@@ -384,13 +387,31 @@ def test_planning_a_leaf_is_refused_and_names_the_stack_spelling(tmp_path, monke
 # What is refused before the first encode
 # --------------------------------------------------------------------------
 
-def test_a_family_with_no_expert_route_is_refused(tmp_path, monkeypatch):
-    """A 16-bit expert stack has no production builder (tessera#492 gave the
-    NVFP4 family one; BF16 keeps the passthrough ``ignore`` already gives)."""
+def test_a_bf16_expert_stack_is_refused_for_want_of_a_cell_not_a_builder(tmp_path, monkeypatch):
+    """A 16-bit expert stack HAS a production builder since tessera#609, so the
+    no-builder refusal no longer fires for it.  What refuses it now is the
+    serving gate's next question: since contract v38 (tessera#604) the routed
+    BF16 cells attest q256 1024 only, so a stack at 1792 is outside every
+    routed BF16 cell's rungs and cannot ship without an explicit override."""
     with pytest.raises(SystemExit) as caught:
         _export(tmp_path, monkeypatch, _checkpoint(),
                 {STACK: {"grid": "BF16", "q256": 1792}})
 
+    message = str(caught.value)
+    assert "has no expert route" not in message, message
+    assert "outside the rungs" in message and "routed_moe" in message, message
+    assert "TESSERA_BF16_K1 ([1024]" in message, message
+
+
+def test_a_family_with_no_expert_route_is_still_refused_by_name(monkeypatch):
+    """The no-builder rule still has one home and still names the families
+    that do have a builder; every window family has one now, so it is driven
+    here by withdrawing a builder from the dispatch table."""
+    from tessera.serving import scheme as serving_scheme
+
+    monkeypatch.delitem(serving_scheme.MOE_BUILDERS, serving_scheme.TESSERA_BF16)
+    with pytest.raises(ValueError) as caught:
+        serving_scheme.refuse_a_family_with_no_expert_route(serving_scheme.TESSERA_BF16, STACK)
     message = str(caught.value)
     assert "MOE_BUILDERS" in message and "TESSERA_BF16" in message, message
     assert "TESSERA_NVFP4" in message, "the refusal names the families that DO have a builder"
@@ -402,7 +423,7 @@ def test_a_gap_in_the_expert_indices_is_refused(tmp_path, monkeypatch):
         del tensors[f"{STACK}.1.{projection}.weight"]
 
     with pytest.raises(SystemExit) as caught:
-        _export(tmp_path, monkeypatch, tensors, {STACK: {"grid": "E4M3", "q256": 1024}})
+        _export(tmp_path, monkeypatch, tensors, {STACK: {"grid": "E4M3", "q256": 896}})
 
     assert "missing expert" in str(caught.value), str(caught.value)
 
@@ -420,7 +441,7 @@ def test_a_missing_tail_expert_is_refused_against_the_declared_population(tmp_pa
 
     with pytest.raises(SystemExit) as caught:
         _export(tmp_path, monkeypatch, tensors,
-                {STACK: {"grid": "E4M3", "q256": 1024}}, "--device", "cpu")
+                {STACK: {"grid": "E4M3", "q256": 896}}, "--device", "cpu")
 
     message = str(caught.value)
     assert "missing expert" in message and str(EXPERTS) in message, message
@@ -437,7 +458,7 @@ def test_a_truncated_contiguous_population_is_refused_by_the_producer_plan():
     ``project_expert_plan`` used to return successfully with ``experts=3``."""
     with pytest.raises(SystemExit) as caught:
         export.project_expert_plan(_unpacked_shapes(experts=EXPERTS - 1), _config(),
-                                   {STACK: {"grid": "E4M3", "q256": 1024}})
+                                   {STACK: {"grid": "E4M3", "q256": 896}})
 
     message = str(caught.value)
     assert "missing expert" in message and f"[{EXPERTS - 1}]" in message, message
@@ -448,7 +469,7 @@ def test_a_declared_smaller_population_still_plans():
     config = _config()
     config["text_config"]["n_routed_experts"] = EXPERTS - 1
     projected = export.project_expert_plan(_unpacked_shapes(experts=EXPERTS - 1), config,
-                                           {STACK: {"grid": "E4M3", "q256": 1024}})
+                                           {STACK: {"grid": "E4M3", "q256": 896}})
     assert projected["stacks"][STACK]["experts"] == EXPERTS - 1
 
 
@@ -459,7 +480,7 @@ def test_unpacked_stack_geometry_disagreeing_with_the_config_is_refused():
     config["text_config"]["hidden_size"] = 2 * HIDDEN
     with pytest.raises(SystemExit) as caught:
         export.project_expert_plan(_unpacked_shapes(), config,
-                                   {STACK: {"grid": "E4M3", "q256": 1024}})
+                                   {STACK: {"grid": "E4M3", "q256": 896}})
 
     assert "hidden_size" in str(caught.value), str(caught.value)
 
@@ -468,7 +489,7 @@ def test_a_missing_projection_is_refused(tmp_path, monkeypatch):
     tensors = _checkpoint(skip=((2, "up_proj"),))
 
     with pytest.raises(SystemExit) as caught:
-        _export(tmp_path, monkeypatch, tensors, {STACK: {"grid": "E4M3", "q256": 1024}})
+        _export(tmp_path, monkeypatch, tensors, {STACK: {"grid": "E4M3", "q256": 896}})
 
     message = str(caught.value)
     assert "up_proj" in message and "gate/up" in message, message
@@ -479,7 +500,7 @@ def test_experts_that_disagree_about_geometry_are_refused(tmp_path, monkeypatch)
     tensors[f"{STACK}.3.gate_proj.weight"] = torch.zeros(MOE_INTER * 2, HIDDEN)
 
     with pytest.raises(SystemExit) as caught:
-        _export(tmp_path, monkeypatch, tensors, {STACK: {"grid": "E4M3", "q256": 1024}})
+        _export(tmp_path, monkeypatch, tensors, {STACK: {"grid": "E4M3", "q256": 896}})
 
     assert "one tile" in str(caught.value), str(caught.value)
 
@@ -494,7 +515,7 @@ def test_a_stack_the_encoder_cannot_cut_is_refused_not_half_passed_through(tmp_p
     config["text_config"]["moe_intermediate_size"] = 40
 
     with pytest.raises(SystemExit) as caught:
-        _export(tmp_path, monkeypatch, tensors, {STACK: {"grid": "E4M3", "q256": 1024}},
+        _export(tmp_path, monkeypatch, tensors, {STACK: {"grid": "E4M3", "q256": 896}},
                 config=config)
 
     message = str(caught.value)
@@ -504,7 +525,7 @@ def test_a_stack_the_encoder_cannot_cut_is_refused_not_half_passed_through(tmp_p
 def test_a_planned_stack_outside_the_layer_bound_is_refused(tmp_path, monkeypatch):
     with pytest.raises(SystemExit) as caught:
         _export(tmp_path, monkeypatch, _checkpoint(),
-                {STACK: {"grid": "E4M3", "q256": 1024}}, "--layers", "1")
+                {STACK: {"grid": "E4M3", "q256": 896}}, "--layers", "1")
 
     assert "--layers 1" in str(caught.value), str(caught.value)
 
@@ -512,7 +533,7 @@ def test_a_planned_stack_outside_the_layer_bound_is_refused(tmp_path, monkeypatc
 def test_a_stack_and_a_stock_twin_together_are_refused(tmp_path, monkeypatch):
     """The twin has no per-channel FP8 expert writer, so it would silently lose them."""
     with pytest.raises(SystemExit) as caught:
-        _export(tmp_path, monkeypatch, _checkpoint(), {STACK: {"grid": "E4M3", "q256": 1024}},
+        _export(tmp_path, monkeypatch, _checkpoint(), {STACK: {"grid": "E4M3", "q256": 896}},
                 "--stock-twin", str(tmp_path / "twin"))
 
     assert "--stock-twin" in str(caught.value), str(caught.value)
@@ -565,7 +586,7 @@ def test_an_unplanned_stack_is_still_passed_through_and_ignored(tmp_path, monkey
 @cuda
 def test_a_planned_stack_is_written_as_the_plugin_reads_it(tmp_path, monkeypatch):
     """The seam: the exporter's bytes, checked with ``tessera.serving``'s own readers."""
-    out = _export(tmp_path, monkeypatch, _checkpoint(), {STACK: {"grid": "E4M3", "q256": 1024}})
+    out = _export(tmp_path, monkeypatch, _checkpoint(), {STACK: {"grid": "E4M3", "q256": 896}})
 
     written = json.loads((out / "config.json").read_text())["quantization_config"]
     groups = [g for g in written["config_groups"].values() if g["targets"] == [STACK]]
@@ -657,8 +678,8 @@ def test_a_planned_stack_is_written_as_the_plugin_reads_it(tmp_path, monkeypatch
     assert record["attested_by"] == [
         cell["id"] for cell in load_serving_contract()["lane_eligibility"]["cells"]
         if cell["family"] == "TESSERA_E4M3_K1" and cell["structure"] == "routed_moe"
-        and 1024 in cell["rungs_q256"]]
-    assert record["attested_by"], "the packaged contract attests E4M3 q1024 routed_moe"
+        and 896 in cell["rungs_q256"]]
+    assert record["attested_by"], "the packaged contract attests E4M3 q896 routed_moe"
 
 
 @cuda
@@ -667,7 +688,7 @@ def test_a_packed_stack_is_written_as_canonical_per_expert_wires(
         tmp_path, monkeypatch, source_layout):
     out = _export(
         tmp_path, monkeypatch, _packed_checkpoint(source_layout),
-        {STACK: {"grid": "E4M3", "q256": 1024, "source_layout": source_layout}})
+        {STACK: {"grid": "E4M3", "q256": 896, "source_layout": source_layout}})
 
     config = json.loads((out / "config.json").read_text())["quantization_config"]
     scheme = next(group["scheme"] for group in config["config_groups"].values()
@@ -729,7 +750,7 @@ def test_the_written_wires_decode_to_the_stock_expert_tile(tmp_path, monkeypatch
     """
     from tessera.serving.moe_route import prepare_tessera_moe_experts
 
-    out = _export(tmp_path, monkeypatch, _checkpoint(), {STACK: {"grid": "E4M3", "q256": 1024}})
+    out = _export(tmp_path, monkeypatch, _checkpoint(), {STACK: {"grid": "E4M3", "q256": 896}})
     written = json.loads((out / "config.json").read_text())["quantization_config"]
     scheme = next(g["scheme"] for g in written["config_groups"].values() if g["targets"] == [STACK])
     declared = validate_tessera_moe_scheme(scheme, STACK)

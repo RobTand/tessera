@@ -202,8 +202,10 @@ MOE_SOURCE_LAYOUTS = (
 #: absent from it is refused by name rather than served through another
 #: family's decode.
 #:
-#: ``TESSERA_FP8`` and ``TESSERA_NVFP4`` are here. The FP8 builder decodes
-#: E4M3 window wires into vLLM's per-channel FP8 fused-MoE parameter set; the
+#: ``TESSERA_FP8``, ``TESSERA_NVFP4`` and ``TESSERA_BF16`` are here. The FP8
+#: builder serves E4M3 window wires on the compact native window lane where
+#: the shared compact reader is published, and otherwise decodes them into
+#: vLLM's per-channel FP8 fused-MoE parameter set; the
 #: NVFP4 builder (tessera#492) decodes E2M1x2 trellis wires into the stock
 #: modelopt NVFP4 fused-MoE parameter set (packed nibbles, group-16 ue4m3
 #: block scales, one per-expert global, a static per-expert input scale) and
@@ -213,14 +215,20 @@ MOE_SOURCE_LAYOUTS = (
 #: A builder is a dispatch fact, not a served qualification: which
 #: ``(family, structure)`` cells the packaged contract attests is
 #: ``lane_eligibility``'s to say, and ``attested_cells`` reads it.
-#: ``TESSERA_BF16`` is a compressed BF16-alphabet wire with a per-row scale;
-#: this build has no *production* expert builder for it. Its dense route
-#: keeps that scale for the output epilogue; the explicit research-selected
-#: route folds it into BF16 weights to match PrismaQuant's joint screen.
-#: Plain source BF16 passthrough uses ``ignore``.
+#: ``TESSERA_BF16`` (tessera#609) is the compressed BF16-alphabet wire with a
+#: per-row scale, served by the same builder as FP8 on the compact native
+#: window lane (``native_window_moe``), which decodes the packed wire in
+#: registers and materialises no expert tile.  Its weight arithmetic is
+#: FOLDED -- one bf16 rounding of ``value * row_scale`` per weight before the
+#: dot -- which matches a consumer that prices the decoded tile rounded once
+#: to bf16, and the launch stamps its own decoder so a cell can name that
+#: variant (``DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED``).  There is no
+#: materialising fallback: without the compact reader a BF16 stack refuses.
+#: Plain source BF16 passthrough is a different thing and uses ``ignore``.
 MOE_BUILDERS: dict[str, tuple[str, str]] = {
     TESSERA_FP8: ("tessera.serving.moe_route", "build_tessera_moe_method"),
     TESSERA_NVFP4: ("tessera.serving.nvfp4_moe_route", "build_tessera_nvfp4_moe_method"),
+    TESSERA_BF16: ("tessera.serving.moe_route", "build_tessera_moe_method"),
 }
 
 #: What each route can hold, by Tessera's own names (``PayloadGrid.name``,
@@ -421,19 +429,20 @@ WINDOW_GEMV_SYMBOL = "tessera_window_gemv::gemv"
 WINDOW_GEMM_SYMBOL = "tessera::window_gemm_dense"
 
 #: The native lanes' own spellings, in the module that executes them, so a
-#: route owner reports the same string the code does.  All four pairs below
-#: are EXPERIMENTAL: the dispatch can make these launches and the routes'
-#: census expectation must know them, while no ``lane_eligibility`` cell
-#: attests any of them (``EXPERIMENTAL_LAUNCHES``).  A pair leaves that set
-#: when a receipt earns it a cell.
+#: route owner reports the same string the code does.  The two A4 pairs
+#: below are EXPERIMENTAL: the dispatch can make these launches and the
+#: routes' census expectation must know them, while no ``lane_eligibility``
+#: cell attests either (``EXPERIMENTAL_LAUNCHES``).  The window MoE adapter
+#: left that set at contract v38 (tessera#604), when a served census earned
+#: it cells.  A pair leaves the set when a receipt earns it a cell.
 #: A4 (E2M1/span-2) dense: ``tessera.kernel_a4.a4_span2_gemm``.
 A4_DENSE_GEMM_SYMBOL = "tessera.kernel_a4.a4_span2_gemm"
 #: A4 routed experts: ``tessera.kernel_a4.a4_span2_grouped_gemm``.
 A4_GROUPED_GEMM_SYMBOL = "tessera.kernel_a4.a4_span2_grouped_gemm"
 #: Window routed experts: ``tessera.native_window_moe``'s adapter call, the
-#: compact FP8 MoE lane (and its BF16 research sibling).  The folded BF16
-#: arithmetic is a distinct numerical variant carried on the bundle and is
-#: never folded into the dense row-scale-epilogue contract.
+#: compact MoE lane for both window families.  The FP8 family runs the
+#: epilogue arithmetic and the BF16 family the folded one; the two stamp
+#: different decoders, so one symbol never stands for two arithmetics.
 WINDOW_MOE_COMPACT_SYMBOL = "tessera.native_window_moe.NativeWindowMoE.__call__"
 #: The entry point the expert route calls. Its recorded backend suffix is
 #: selected by vLLM at runtime and remains in the census receipt.
@@ -445,16 +454,24 @@ MOE_GEMM_SYMBOL = "vllm.fused_moe.modular_kernel"
 _DECODER_NATIVE_SPAN2 = "native_span2"
 _DECODER_TORCH_STOCK = "torch_materialize_stock"
 _DECODER_NATIVE_WINDOW_GEMM = "native_window_gemm"
+#: The same dense GEMM on the BF16 family's folded arithmetic (tessera#614):
+#: the value times the row scale rounded to bf16 once per weight, before the
+#: dot, and no epilogue scale.  Its own string because it is a different
+#: numerical function of the wire than ``native_window_gemm``'s epilogue.
+_DECODER_NATIVE_WINDOW_GEMM_FOLDED = "native_window_gemm_folded"
 #: The native A4 lanes: the span-2 GEMM decodes the packed planes in-kernel
 #: (dense) and the grouped form does it per selected expert.  Distinct from
 #: ``native_span2`` (the load-time span-2 DECODE) and from ``torch_window``.
 _DECODER_NATIVE_SPAN2_GEMM = "native_span2_gemm"
 _DECODER_NATIVE_SPAN2_GROUPED = "native_span2_grouped"
 #: The compact window MoE adapter: routed experts served from the loader's
-#: packed ``WindowGemvUnit``s with no decoded tile; FP8 keeps the per-token
-#: native A quant, BF16 keeps the row-scale epilogue (or its distinct folded
-#: variant on the bundle).
+#: packed ``WindowGemvUnit``s with no decoded tile.  The FP8 family keeps the
+#: per-token native A quant and the row scale on the fp32 accumulator; the
+#: BF16 family is FOLDED (one bf16 rounding of ``value * row_scale`` before the
+#: dot) and stamps its own decoder, because it is a different numerical
+#: function of the wire and a cell must be able to name which one it attests.
 _DECODER_NATIVE_WINDOW_MOE_COMPACT = "native_window_moe_compact"
+_DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED = "native_window_moe_compact_folded"
 
 _ALL_REGIMES = ("batch", "decode")
 _ALL_MODES = ("resident", "streamed")
@@ -466,19 +483,21 @@ _ALL_MODES = ("resident", "streamed")
 #: of the extension's name for the load path that still builds it.
 
 
-def _dense_native_window_launch() -> tuple[dict, ...]:
-    """The compact loader's native window GEMM, one launch for both routes.
+def _dense_native_window_launch(decoder: str) -> tuple[dict, ...]:
+    """The compact loader's native window GEMM, the dense half of both routes.
 
     ``serving.native_window`` prepares each dense role from the verified wire
     (``tessera.compact_prep.prepare_window_compact``) and runs the packed
     bitstream GEMM through one functional custom op; it serves every M in both
     residencies and needs no extension lane, so it carries no ``lane`` and is
-    not a ``when_lane_absent`` fallback.  A BF16 unit is the value family and
-    an E4M3 unit is the fp8 family; the two routes differ in their epilogue
-    only, and this launch is the dense half both publish.
+    not a ``when_lane_absent`` fallback.  An E4M3 unit is the fp8 family, on
+    the epilogue arithmetic (``native_window_gemm``); a BF16 unit is the value
+    family, on the folded arithmetic (``native_window_gemm_folded``,
+    tessera#614).  One symbol, two decoders: the decoder is what names the
+    arithmetic, so a cell attesting one cannot be read as attesting the other.
     """
     return (
-        {"symbol": WINDOW_GEMM_SYMBOL, "decoder": _DECODER_NATIVE_WINDOW_GEMM,
+        {"symbol": WINDOW_GEMM_SYMBOL, "decoder": decoder,
          "regimes": _ALL_REGIMES, "modes": _ALL_MODES, "lane": None,
          "structures": (STRUCTURE_DENSE,),
          "when_lane_absent": False},
@@ -525,20 +544,34 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
     # lane's three launches stood here until #538 and were retired from the
     # dispatch by ``1b767a207``; a table that outlived its dispatch is what let
     # the published ``lane_eligibility`` cells go on naming them.
-    TESSERA_FP8: _dense_native_window_launch() + (
-        {"symbol": MOE_GEMM_SYMBOL, "decoder": _DECODER_TORCH_STOCK,
-         "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": None,
-         "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": True},
-        # The compact window MoE adapter (experimental): routed experts served
-        # from the loader's packed units, no decoded tile.  The folded BF16
-        # arithmetic is a bundle property and a distinct numerical variant;
-        # this launch relabels neither contract.
+    TESSERA_FP8: _dense_native_window_launch(_DECODER_NATIVE_WINDOW_GEMM) + (
+        # The compact window MoE adapter: routed experts served from the
+        # loader's packed units, no decoded tile, on the epilogue arithmetic.
+        # It is the expert half's ONLY launch.  The materialising
+        # ``(MOE_GEMM_SYMBOL, _DECODER_TORCH_STOCK)`` entry that stood before
+        # it left this table at contract v38 (tessera#604): it ran only on a
+        # build that publishes no compact reader, and ``moe_route.
+        # compact_window_lane`` answers True for this family whenever
+        # ``parse_compact_tessera_expert_blob`` is defined, which it is in
+        # this module.  A table row for a launch the build cannot make is the
+        # defect v31 named for the dense routes.
         {"symbol": WINDOW_MOE_COMPACT_SYMBOL, "decoder": _DECODER_NATIVE_WINDOW_MOE_COMPACT,
          "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": None,
          "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": False},
     ),
-    # Same shape as the FP8 dense half above, and for the same reason.
-    TESSERA_BF16: _dense_native_window_launch(),
+    # The dense half: same shape as the FP8 dense half above, and for the same
+    # reason, on the FOLDED weight arithmetic (tessera#614) and therefore its
+    # own decoder.  The expert half (tessera#609) is the compact window MoE
+    # adapter with the same folded arithmetic, resident like every expert
+    # stack.  It has no stock-kernel launch at all: there is no materialising
+    # BF16 expert path to fall back to.  Both halves of the route serve one
+    # arithmetic: the row scale folded into each weight, rounded once.
+    TESSERA_BF16: _dense_native_window_launch(_DECODER_NATIVE_WINDOW_GEMM_FOLDED) + (
+        {"symbol": WINDOW_MOE_COMPACT_SYMBOL,
+         "decoder": _DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED,
+         "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": None,
+         "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": False},
+    ),
 }
 
 
@@ -563,13 +596,36 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
 #: experimental pair is refused and a pair removed without its cells would put
 #: an unattested launch in front of every contract reader.
 #:
-#: What stays, and why.  The two A4 pairs are deferred with the NVFP4 lane
-#: (#575) -- no dense or routed A4 census exists -- and the compact window MoE
-#: adapter has no served receipt at all.
+#: What stayed at v34, and why.  The two A4 pairs are deferred with the NVFP4
+#: lane (#575) -- no dense or routed A4 census exists -- and the compact window
+#: MoE adapter had no served receipt at all, in either arithmetic, until v38.
+#:
+#: ``(WINDOW_GEMM_SYMBOL, _DECODER_NATIVE_WINDOW_GEMM_FOLDED)`` ENTERED at
+#: contract v37 (tessera#614).  The dense BF16 route moved from the epilogue
+#: arithmetic to the folded one, so ``bf16_route.apply`` now makes a launch no
+#: receipt covers: the v34 BF16 dense cells census'd the epilogue kernel.
+#: Those two cells are withdrawn in the same change, for the reason the v34
+#: note above gives in reverse -- ``_validate_cell_executes`` would otherwise
+#: refuse them.  The epilogue pair stays attested for the E4M3 family, whose
+#: arithmetic did not move.  A served census of the folded dense GEMM is what
+#: earns the BF16 dense scope its cells back.
+#:
+#: THREE PAIRS LEFT at contract v38 (tessera#604): ``(WINDOW_GEMM_SYMBOL,
+#: _DECODER_NATIVE_WINDOW_GEMM_FOLDED)``, ``(WINDOW_MOE_COMPACT_SYMBOL,
+#: _DECODER_NATIVE_WINDOW_MOE_COMPACT)`` and ``(WINDOW_MOE_COMPACT_SYMBOL,
+#: _DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED)``.  One served route census of a
+#: GLM-5.3-Flash stub (one dense and three MoE layers) on the GLM serving
+#: image recorded all nine declared Tessera modules on their family's pair in
+#: both regimes, eager, resident, ``problems: []``
+#: (docs/measurements/tessera-glm-x-census-2026-09-26.md): dense E4M3 at
+#: q256 832/1024/1088 on the epilogue GEMM, dense BF16 at 832/1024/1088 on the
+#: folded GEMM, routed E4M3 at 896 on the compact adapter and routed BF16 at
+#: 1024 on its folded form.  The eight ``*_sm121_{decode,batch}_resident``
+#: cells on that image name them, in the same change, for the v34 reason.
+#: The two A4 pairs stay: no A4 census exists (#575).
 EXPERIMENTAL_LAUNCHES = frozenset({
     (A4_DENSE_GEMM_SYMBOL, _DECODER_NATIVE_SPAN2_GEMM),
     (A4_GROUPED_GEMM_SYMBOL, _DECODER_NATIVE_SPAN2_GROUPED),
-    (WINDOW_MOE_COMPACT_SYMBOL, _DECODER_NATIVE_WINDOW_MOE_COMPACT),
 })
 
 
@@ -854,11 +910,9 @@ def refuse_a_family_with_no_expert_route(route: str, target: str) -> None:
         return
     raise ValueError(
         f"tessera target {target!r}: {route} has no expert route in this build "
-        f"(scheme.MOE_BUILDERS names {sorted(MOE_BUILDERS)}). The compressed "
-        "TESSERA_BF16 expert wire has no production expert builder in this build "
-        "(its folded selected route requires explicit research execution). Plain "
-        "source BF16 passthrough is separate and uses "
-        "quantization_config.ignore. An expert stack is "
+        f"(scheme.MOE_BUILDERS names {sorted(MOE_BUILDERS)}). Plain source BF16 "
+        "passthrough is separate and uses quantization_config.ignore. An expert "
+        "stack is "
         "refused rather than decoded through another family's tile: plan it on a family "
         "with a route, or leave it out to pass it through as BF16.")
 

@@ -392,11 +392,42 @@ def test_a_routed_nvfp4_stack_dispatches_to_its_own_builder(monkeypatch, build):
 
 
 @pytest.mark.parametrize("build", ["real", "named"])
+def test_a_routed_bf16_stack_dispatches_to_the_expert_builder(monkeypatch, build):
+    """tessera#609: a compressed BF16 expert stack with no research block has a
+    production builder now -- the expert route's, which serves it on the
+    compact native window lane with the row scale folded into the decoded
+    tile.  It reaches that builder from ``get_quant_method``; it is no longer
+    refused for having none."""
+    from tessera.serving import moe_route
+
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    if build == "real":
+        from vllm.model_executor.layers.fused_moe import RoutedExperts
+        layer = object.__new__(RoutedExperts)
+    else:
+        layer = object.__new__(type("RoutedExperts", (), {}))
+    scheme = _moe_scheme(family=TESSERA_BF16, grid="BF16", body="WINDOW", plane="CHANNEL",
+                         q256=1792)
+    config = _resolved(_config(scheme, targets=(MOE_TARGET,)))
+    calls = []
+    monkeypatch.setattr(moe_route, "build_tessera_moe_method",
+                        lambda *a, **kw: calls.append((a, kw)) or object())
+    assert config.get_quant_method(layer, MOE_TARGET) is not None
+    (got_scheme, prefix, mode, built), kwargs = calls[0]
+    assert (prefix, mode, built, kwargs) == (MOE_TARGET, "resident", layer, {})
+    assert got_scheme["family"] == TESSERA_BF16
+
+
+@pytest.mark.parametrize("build", ["real", "named"])
 def test_a_routed_stack_on_a_family_with_no_builder_is_refused_by_name(monkeypatch, build):
-    """A compressed BF16 expert stack with no research block has no production
-    builder; the refusal names ``MOE_BUILDERS`` and the families that have one,
+    """A routed stack whose family ``MOE_BUILDERS`` does not name is refused by
+    name; the refusal names ``MOE_BUILDERS`` and the families that have one,
     and it arrives from ``get_quant_method`` before any builder module's vLLM
-    imports."""
+    imports.  Every shipped family has a builder since tessera#609, so the
+    absent family is made here by taking BF16's entry out."""
+    from tessera.serving import scheme as scheme_module
+
+    monkeypatch.delitem(scheme_module.MOE_BUILDERS, TESSERA_BF16)
     monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
     if build == "real":
         from vllm.model_executor.layers.fused_moe import RoutedExperts

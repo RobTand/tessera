@@ -12,12 +12,14 @@ THE LAUNCHES.  Since ``37e89f576`` (contract v30) and ``1b767a207`` (#538),
 each dense route module owns exactly one launch and stamps it at its one
 ``emit_route`` call:
 
-* ``TESSERA_FP8`` and ``TESSERA_BF16`` -- ``fp8_route.DENSE_LAUNCH`` /
+* ``TESSERA_FP8`` and ``TESSERA_BF16`` -- ``fp8_route.DENSE_LAUNCH`` =
+  ``(tessera::window_gemm_dense, native_window_gemm)`` and
   ``bf16_route.DENSE_LAUNCH`` = ``(tessera::window_gemm_dense,
-  native_window_gemm)``: the compact loader's packed window unit multiplied by
-  ``tessera.window_gemm``'s Triton kernel through ``serving.native_window``.
-  ``apply`` raises when the module was not prepared rather than falling back
-  to a materialised tile.
+  native_window_gemm_folded)``: the compact loader's packed window unit
+  multiplied by ``tessera.window_gemm``'s Triton kernel through
+  ``serving.native_window``, on the epilogue arithmetic for FP8 and the folded
+  one for BF16 (tessera#614).  ``apply`` raises when the module was not
+  prepared rather than falling back to a materialised tile.
 * ``TESSERA_NVFP4`` -- ``(tessera.kernel_a4.a4_span2_gemm, native_span2_gemm)``:
   the packed span-2 planes decoded in-kernel by ``tessera.kernel_a4``, whose
   ``require_native_fp4_mma`` refuses a Triton that cannot lower block-scaled
@@ -66,6 +68,7 @@ __all__ = [
     "WINDOW_GEMM_SYMBOL",
     "A4_DENSE_GEMM_SYMBOL",
     "NATIVE_WINDOW_GEMM_DECODER",
+    "NATIVE_WINDOW_GEMM_FOLDED_DECODER",
     "NATIVE_SPAN2_GEMM_DECODER",
     "FP8_ACTIVATION_CONTRACT",
     "BF16_ACTIVATION_CONTRACT",
@@ -83,8 +86,10 @@ __all__ = [
 #: ``scheme.WINDOW_GEMM_SYMBOL`` / ``scheme.A4_DENSE_GEMM_SYMBOL``.
 WINDOW_GEMM_SYMBOL = "tessera::window_gemm_dense"
 A4_DENSE_GEMM_SYMBOL = "tessera.kernel_a4.a4_span2_gemm"
-#: ``telemetry.DECODER_NATIVE_WINDOW_GEMM`` / ``DECODER_NATIVE_SPAN2_GEMM``.
+#: ``telemetry.DECODER_NATIVE_WINDOW_GEMM`` / ``DECODER_NATIVE_WINDOW_GEMM_FOLDED``
+#: / ``DECODER_NATIVE_SPAN2_GEMM``.
 NATIVE_WINDOW_GEMM_DECODER = "native_window_gemm"
+NATIVE_WINDOW_GEMM_FOLDED_DECODER = "native_window_gemm_folded"
 NATIVE_SPAN2_GEMM_DECODER = "native_span2_gemm"
 #: ``scheme.{FP8,BF16,NVFP4}_ACTIVATION_CONTRACT``.
 FP8_ACTIVATION_CONTRACT = "fp8_per_token_dynamic"
@@ -98,7 +103,8 @@ NVFP4_ACTIVATION_CONTRACT = "e2m1_group16_ue4m3_static"
 #: the same pairs and the contract test ties them.
 DENSE_LAUNCHES = {
     "TESSERA_FP8": (FP8_ACTIVATION_CONTRACT, (WINDOW_GEMM_SYMBOL, NATIVE_WINDOW_GEMM_DECODER)),
-    "TESSERA_BF16": (BF16_ACTIVATION_CONTRACT, (WINDOW_GEMM_SYMBOL, NATIVE_WINDOW_GEMM_DECODER)),
+    "TESSERA_BF16": (BF16_ACTIVATION_CONTRACT,
+                     (WINDOW_GEMM_SYMBOL, NATIVE_WINDOW_GEMM_FOLDED_DECODER)),
     "TESSERA_NVFP4": (NVFP4_ACTIVATION_CONTRACT, (A4_DENSE_GEMM_SYMBOL, NATIVE_SPAN2_GEMM_DECODER)),
 }
 

@@ -762,6 +762,61 @@ def test_calibrated_packed_cached_cli_preserves_originals(tmp_path, calibrated_w
                for role in module["roles"])
 
 
+def test_calibrated_cached_cli_accepts_exact_reference_collection_and_priced_binding(
+        tmp_path, calibrated_wires, monkeypatch):
+    """The public export path reuses both groups' priced bytes with two H owners."""
+    from tessera.hessian_capture import capture_sha256_from_units
+    from safetensors import safe_open
+
+    case = _calibrated_packed_export(
+        tmp_path, calibrated_wires, monkeypatch, "out_first_chunked")
+    original = json.loads(case["handoff"].read_text())
+    names = sorted(original["hessians"])
+    groups = [names[:3], names[3:]]
+    references = []
+    for index, units in enumerate(groups):
+        part = copy.deepcopy(original)
+        part["hessians"] = {name: original["hessians"][name] for name in units}
+        digest = capture_sha256_from_units(
+            part["provenance"], {name: part["hessians"][name]["sha256"] for name in units})
+        part["capture_sha256"] = digest
+        part["rows"] = [{"units": units, "capture_sha256": digest}]
+        path = tmp_path / f"part-{index}.references.json"
+        path.write_text(json.dumps(part, sort_keys=True))
+        references.append({"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
+    collection = tmp_path / "both.collection.references.json"
+    collection.write_text(json.dumps({
+        "schema": "tessera.hessian_capture.collection.v1",
+        "references": references,
+        "units": names,
+        "capture_sha256": original["capture_sha256"],
+    }, sort_keys=True))
+    source = ActivationSource.from_capture(collection)
+    priced = tmp_path / "priced-inputs.json"
+    priced.write_text(json.dumps({"priced_inputs": {
+        "schema": "tessera.priced_export_inputs.v2",
+        "hessian_capture_sha256": source.capture_sha256(),
+        "hessian_reference_binding": source.reference_binding(),
+        "input_global_scales": {},
+    }}, sort_keys=True))
+    source.hessians.close()
+    argv = case["argv"]
+    argv[argv.index(str(case["handoff"]))] = str(collection)
+    argv.extend(["--priced-inputs", str(priced), "--priced-inputs-sha256",
+                 hashlib.sha256(priced.read_bytes()).hexdigest()])
+    case["exporter"].main()
+    receipt = json.loads((case["out"] / "tessera_serving_manifest.json").read_text())
+    identity = receipt["cached_units"]["hessian_identity"]
+    assert identity["established"] == "committed"
+    assert len(identity["reference"]["binding"]["references"]) == 2
+    assert sum(len(item["verified_units"]) for item in identity["reference"]["consumption"]["references"]) == 1
+    assert identity["committed_units_served"] == len(case["logical"])
+    with safe_open(str(case["out"] / "model.safetensors"), framework="pt") as handle:
+        for unit in case["units"]:
+            actual = parse_fused(handle.get_tensor(unit["wire"]).numpy().tobytes())[0].blob
+            assert actual == case["logical"][unit["tensor"].removesuffix(".weight")][2]
+
+
 @pytest.mark.parametrize("problem, error", [
     ("missing_h", "Hessian key"), ("physical_h", "Hessian key"),
     ("changed_h", "calibration"), ("wrong_h_shape", "Hessian shape"),

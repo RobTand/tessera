@@ -4,6 +4,14 @@ The fixture is the original PB census with one trailing newline added for the
 repository, not a synthetic positive observation. Its original bytes are hashed.
 The q1024 plan and exact artifact binding are in the accompanying campaign
 receipt; replay here does not replace the full source/plan/sidecar collector.
+
+Contract v38 (tessera#604) withdrew the two cells minted from this receipt:
+they named the materialising FP8 launch, which this build can no longer make
+for an expert stack.  The receipt is real, and the scope and launch checks
+below are about the census join, not about those cells' standing, so the join
+replays against the shipped table plus the two cells quoted from v37
+(``tests/fixtures/lane_eligibility_cells_withdrawn_v38.json``).  What the
+shipped table alone now says about the same records is pinned separately.
 """
 import copy
 import hashlib
@@ -14,10 +22,21 @@ from pathlib import Path
 import pytest
 
 from tessera.serving.contract import CENSUS_PHASE_REGIMES, load_serving_contract
+from withdrawn_cells import WITHDRAWN_V38_IDS, withdrawn_v38_cells
 
 ROOT = Path(__file__).resolve().parents[1]
 RECEIPT = ROOT / "docs/measurements/census/lfm25-8b-a1b-served-r4.json"
 RAW_SHA256 = "825157292db88bd3791d59d867743ddf8e37e68dd24c63e93cfc919d927a2028"
+
+
+def _cells(*, shipped_only=False):
+    shipped = load_serving_contract()["lane_eligibility"]["cells"]
+    quoted = withdrawn_v38_cells()
+    # The quoted cells are not in the shipped table under their v37 scope.
+    assert not {(c["id"], c["runtime"]["image"]) for c in quoted} & \
+        {(c["id"], c["runtime"]["image"]) for c in shipped}
+    assert WITHDRAWN_V38_IDS == {c["id"] for c in quoted}
+    return list(shipped) if shipped_only else [*shipped, *quoted]
 
 
 def _replay(**overrides):
@@ -29,7 +48,7 @@ def _replay(**overrides):
     spec.loader.exec_module(tool)
     owners = {owner for phase in receipt["record_owner"].values() for owner in phase.values()}
     kwargs = {
-        "cells": load_serving_contract()["lane_eligibility"]["cells"],
+        "cells": _cells(),
         "phase_regimes": CENSUS_PHASE_REGIMES, "platform": "sm_121",
         "declared_rungs": {owner: 1024 for owner in owners},
         "record_owners": receipt["record_owner"],
@@ -106,10 +125,9 @@ def test_the_moe_cells_name_the_runtime_the_receipt_records():
     raw = RECEIPT.read_bytes().removesuffix(b"\n")
     assert hashlib.sha256(raw).hexdigest() == RAW_SHA256
     receipt = json.loads(raw)
-    # The LFM receipt is the FP8 family's.  The routed E2M1_K2 pair (v28) rests
-    # on the two-rank GLM stub serve and names that serve's runtime instead.
-    cells = [cell for cell in load_serving_contract()["lane_eligibility"]["cells"]
-             if cell["structure"] == "routed_moe" and cell["family"] == "TESSERA_E4M3_K1"]
+    # The LFM receipt is the FP8 family's; its two cells are the ones v38
+    # withdrew, quoted field for field from v37.
+    cells = withdrawn_v38_cells()
     assert len(cells) == 2
     for cell in cells:
         assert cell["runtime"] == {
@@ -118,3 +136,17 @@ def test_the_moe_cells_name_the_runtime_the_receipt_records():
             "vllm": receipt["versions"]["vllm"],
             "torch": receipt["versions"]["torch"],
         }, cell["id"]
+
+
+def test_the_shipped_table_no_longer_attests_the_lfm_routes():
+    """v38: with the materialising FP8 launch gone from this build, the
+    shipped table covers none of this receipt's routed records -- they read
+    unattested, never as agreeing with a cell for another launch."""
+    _positive_control()
+    block, problems = _replay(cells=_cells(shipped_only=True))
+    assert not problems and block["agrees"] is None
+    phases = block["structures"]["routed_moe"]["phases"]
+    assert set(phases) == {"decode", "prefill"}
+    for phase in phases.values():
+        assert phase["modules"] > 0
+        assert phase["covered_by_cell"] == 0 and phase["unattested"] == phase["modules"]

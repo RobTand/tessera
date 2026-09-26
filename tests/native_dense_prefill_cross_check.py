@@ -8,7 +8,10 @@ preparation (``prepare_tessera_fp8_module`` / ``prepare_tessera_bf16_module``,
 which decodes through ``tessera.decode.materialize_fp8`` /
 ``materialize_bf16``) whose tile and row scale are multiplied by a stock
 matmul.  That reference is the arm the native lane replaced, so agreement is
-what makes the replacement a substitution rather than a second renderer.
+what makes the replacement a substitution rather than a second renderer.  For
+BF16 the reference applies the served arithmetic to that pair: the row scale
+folded into the tile and rounded to bf16 once (``materialize_bf16_folded``),
+since the route serves the folded form (tessera#614).
 
 WHY PREFILL IS THE SHAPE.  The dense routes serve one packed GEMM at every M,
 but the arm that was retired for this regime was the prefill fallback: past
@@ -522,7 +525,9 @@ def _dispatch_probe():
 
 
 def _reference_product(family: str, blob: bytes, scheme, plan, x):
-    """The retired arm's product: the reference decoder's tile and row scale."""
+    """The retired arm's product: the reference decoder's tile and row scale,
+    under each family's served arithmetic (FP8: the scale on the fp32 product;
+    BF16: folded into the tile, one bf16 rounding, tessera#614)."""
     import torch
 
     from tessera.serving import bf16_route, fp8_route
@@ -546,7 +551,10 @@ def _reference_product(family: str, blob: bytes, scheme, plan, x):
         tile = module.decode().to(torch.float32)
         left = x.to(torch.float32)
     scale = module.row_scale().to(torch.float32).reshape(-1, 1)
-    return (left @ (tile * scale).t()).to(torch.bfloat16)
+    weight = tile * scale
+    if family != "TESSERA_FP8":
+        weight = weight.to(torch.bfloat16).to(torch.float32)
+    return (left @ weight.t()).to(torch.bfloat16)
 
 
 def _drive_route(family: str, scheme, declared, blob: bytes, parallel: str,

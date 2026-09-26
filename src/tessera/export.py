@@ -913,6 +913,8 @@ class ActivationSource:
         setting the caller left out.  ``ldlq_sigma`` below zero is spelled by
         the CLIs as "LDLQ off" and lands here as ``None``.
 
+        A ``*.collection.references.json`` binds disjoint existing reference
+        documents; a single ``*.references.json`` keeps its original contract.
         ``resident_hessians`` binds a reference document's commitments to
         tensors the caller already holds, so a producer that just wrote those
         commitments neither re-digests the population to seal nor reads every
@@ -923,7 +925,10 @@ class ActivationSource:
         import torch as _torch
 
         owner = None
-        if str(path).endswith('.references.json'):
+        if str(path).endswith('.collection.references.json'):
+            from .hessian_capture import ReferenceHessianCollection
+            owner = ReferenceHessianCollection(path)
+        elif str(path).endswith('.references.json'):
             from .hessian_capture import ReferenceHessians
             owner = ReferenceHessians(path)
         elif resident_hessians is not None:
@@ -1007,12 +1012,12 @@ class ActivationSource:
         from .cached_unit import tensor_identity
 
         identity = self._sealed_identity()
-        from .hessian_capture import ReferenceHessians
-        if isinstance(self.hessians, ReferenceHessians):
+        from .hessian_capture import REFERENCE_OWNER_TYPES
+        if isinstance(self.hessians, REFERENCE_OWNER_TYPES):
             self.hessians.require_provenance(self.provenance)
         prefetch = _resolve_seal_prefetch()
         memo: dict = {}
-        if isinstance(self.hessians, ReferenceHessians):
+        if isinstance(self.hessians, REFERENCE_OWNER_TYPES):
             units = self.hessians.committed_units()
         else:
             # The plain mapping digests every unit here anyway; the digest
@@ -1054,7 +1059,7 @@ class ActivationSource:
         thread with the GPU idle behind it, once per unit, at the head of
         every batch (the campaign's memo makes it once, not once per rate).
         A plain mapping was digested by ``_seal`` already and ``memo``
-        arrives full.  A ``ReferenceHessians`` sealed from its commitments
+        arrives full.  A checked reference owner sealed from its commitments
         and holds resident tensors (``bind_resident``): those are digested
         here on a daemon thread, in roster order, which is the order a
         campaign consumes them.  Off disk, nothing is prefetched: each
@@ -1064,7 +1069,7 @@ class ActivationSource:
         """
         import weakref
 
-        from .hessian_capture import ReferenceHessians
+        from .hessian_capture import REFERENCE_OWNER_TYPES
 
         lock = threading.Lock()
         stop = threading.Event()
@@ -1072,7 +1077,7 @@ class ActivationSource:
         object.__setattr__(self, "_seal_memo_lock", lock)
         object.__setattr__(self, "_seal_prefetch_stop", stop)
         object.__setattr__(self, "_seal_prefetch_thread", None)
-        if not isinstance(self.hessians, ReferenceHessians):
+        if not isinstance(self.hessians, REFERENCE_OWNER_TYPES):
             return
         owner = weakref.ref(self.hessians)
         if self.hessians.resident_mapping() is None:
@@ -1139,8 +1144,8 @@ class ActivationSource:
         publication path can afford it per unit.  Content is NOT re-digested
         here: that is paid once per unit, where the unit is consumed.
         """
-        from .hessian_capture import ReferenceHessians
-        if isinstance(self.hessians, ReferenceHessians):
+        from .hessian_capture import REFERENCE_OWNER_TYPES
+        if isinstance(self.hessians, REFERENCE_OWNER_TYPES):
             self.hessians.require_provenance(self.provenance)
         identity = self._sealed_identity()
         if identity != dict(seal.identity):
@@ -1227,8 +1232,8 @@ class ActivationSource:
 
     def reference_binding(self) -> "dict | None":
         """The canonical source commitment for opt-in indexed H inputs."""
-        from .hessian_capture import ReferenceHessians
-        return self.hessians.binding() if isinstance(self.hessians, ReferenceHessians) else None
+        from .hessian_capture import REFERENCE_OWNER_TYPES
+        return self.hessians.binding() if isinstance(self.hessians, REFERENCE_OWNER_TYPES) else None
 
     def config_block(self) -> dict:
         """The ``activation_aware`` block the exported config records.

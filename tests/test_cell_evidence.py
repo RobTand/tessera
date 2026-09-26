@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import copy
 import importlib.util
+import json
 from pathlib import Path
 
 import pytest
@@ -207,12 +208,13 @@ _EVIDENCE = {
     # `recorded` on both arms, and no row cycles on the student where the source
     # answered) with attribution `shared_with_reference` (all seven rows the
     # student cycles on are rows the BF16 source cycles on too).
-    "tessera_e4m3_k1_routed_moe_sm121_decode_resident": {
-        "grade": "route_only", "kl": [],
-        "smoke": _recorded_against_reference(MOE_SMOKE, _moe_smoke_record())},
-    "tessera_e4m3_k1_routed_moe_sm121_batch_resident": {
-        "grade": "kl_lower_bound", "kl": [_bound("batch", ["eager"], LFM)],
-        "smoke": _recorded_against_reference(MOE_SMOKE, _moe_smoke_record())},
+    #
+    # Contract v38 (tessera#604) WITHDREW both: they named the materialised FP8
+    # launch this build cannot make.  Their evidence is quoted in
+    # ``_WITHDRAWN_V38_EVIDENCE`` below and in
+    # ``tests/fixtures/lane_eligibility_cells_withdrawn_v38.json``, and the
+    # smoke-record tests in this module run on that quote.  The ids now name
+    # route-only cells on the GLM serving image (see the end of this table).
     # Routed MoE on the E2M1x2 cap wire (q896, contract v28, #506): the
     # GLM-5.3-Flash 4-layer stub served over two GB10s, eager, resident
     # (TP2_STUB).  Both ranks' route traces cover the stack in both regimes,
@@ -223,19 +225,43 @@ _EVIDENCE = {
     # cells publish `not_recorded` rather than a word nothing here can check.
     "tessera_e2m1_k2_routed_moe_sm121_decode_resident": _ROUTE_ONLY,
     "tessera_e2m1_k2_routed_moe_sm121_batch_resident": _ROUTE_ONLY,
-    # Dense E4M3 (q1024) and BF16 (q1792) on the native window GEMM, contract
-    # v34 (tessera#545).  Four route censuses on the sm_121 platform's own
-    # serve image put all 112 declared modules on
+    # Dense E4M3 (q1024) on the native window GEMM, contract v34
+    # (tessera#545).  Route censuses on the sm_121 platform's own serve image
+    # put all 112 declared modules on
     # tessera::window_gemm_dense/native_window_gemm in both regimes and both
-    # residencies.  The census is the WHOLE of the evidence: no KL arm was run,
+    # residencies.  (The BF16 q1792 pair minted beside them was withdrawn at
+    # v37, tessera#614: the route moved to the folded arithmetic.)  The census is the WHOLE of the evidence: no KL arm was run,
     # so the grade is the one zero kl entries derive, and no greedy smoke was
     # recorded.  That is a narrower claim than the v5-era dense cells made --
     # they carried prefill bounds -- and the difference is a measurement nobody
     # has taken on this launch, not a field anybody dropped.
     "tessera_e4m3_k1_dense_sm121_decode": _ROUTE_ONLY,
     "tessera_e4m3_k1_dense_sm121_batch": _ROUTE_ONLY,
-    "tessera_bf16_k1_dense_sm121_decode": _ROUTE_ONLY,
-    "tessera_bf16_k1_dense_sm121_batch": _ROUTE_ONLY,
+    # Contract v38 (tessera#604): eight resident cells on the GLM serving
+    # image, dense E4M3/BF16 and routed E4M3/BF16, from one TP1 eager route
+    # census (``docs/measurements/tessera-glm-x-census-2026-09-26.md``).  The
+    # census is the whole of the evidence: no KL arm, no smoke.
+    **{f"tessera_{family}_{structure}_sm121_{regime}_resident": _ROUTE_ONLY
+       for family in ("e4m3_k1", "bf16_k1") for structure in ("dense", "routed_moe")
+       for regime in ("decode", "batch")},
+}
+
+#: The evidence the two routed E4M3 cells carried until contract v38 withdrew
+#: them (tessera#604), as the v37 table published it.  The receipts are real
+#: and stay in the tree; what v38 retracted is the claim that this build serves
+#: the arithmetic they measured.  Quoted rather than dropped, because the smoke
+#: record is the only real one this repository holds, and the grammar tests
+#: below need a real record, not an invented one.
+_WITHDRAWN_V38_FIXTURE = ROOT / "tests" / "fixtures" / "lane_eligibility_cells_withdrawn_v38.json"
+_WITHDRAWN_V38 = {cell["id"]: cell for cell in
+                  json.loads(_WITHDRAWN_V38_FIXTURE.read_text(encoding="utf-8"))["cells"]}
+_WITHDRAWN_V38_EVIDENCE = {
+    "tessera_e4m3_k1_routed_moe_sm121_decode_resident": {
+        "grade": "route_only", "kl": [],
+        "smoke": _recorded_against_reference(MOE_SMOKE, _moe_smoke_record())},
+    "tessera_e4m3_k1_routed_moe_sm121_batch_resident": {
+        "grade": "kl_lower_bound", "kl": [_bound("batch", ["eager"], LFM)],
+        "smoke": _recorded_against_reference(MOE_SMOKE, _moe_smoke_record())},
 }
 
 
@@ -288,7 +314,7 @@ def test_the_routed_moe_cells_are_now_distinguishable_from_the_dense_ones(contra
     ``evidence`` alone tells the MoE decode cell (census only, a recorded
     smoke) from a dense batch cell (a bound in its own regime) and from the
     six dense E4M3 cells that never ran a smoke."""
-    cells = _cells(contract)
+    cells = _WITHDRAWN_V38  # the withdrawn pair, quoted (contract v38)
     moe_decode = cells["tessera_e4m3_k1_routed_moe_sm121_decode_resident"]["evidence"]
     moe_batch = cells["tessera_e4m3_k1_routed_moe_sm121_batch_resident"]["evidence"]
     assert moe_decode["grade"] == "route_only"
@@ -296,6 +322,29 @@ def test_the_routed_moe_cells_are_now_distinguishable_from_the_dense_ones(contra
     assert moe_decode["smoke"]["status"] == moe_batch["smoke"]["status"] == "recorded"
     assert moe_decode["smoke"]["receipt"] == moe_batch["smoke"]["receipt"] == MOE_SMOKE
     assert moe_batch["kl"][0]["execution_modes"] == ["eager"]
+
+
+def test_the_quoted_withdrawn_evidence_is_what_v37_published_and_still_validates(contract):
+    """The v38 quote is the v37 evidence, and the grammar still accepts it.
+
+    Injected into the shipped cell that now holds the scope, the quoted smoke
+    record validates: withdrawing the cells retracted a route claim, not the
+    record's well-formedness, and the validator still has a real record to run
+    on.  (The quoted KL entry cannot be re-injected: it names a batch-regime
+    receipt the v38 cell's rung and image never measured, so it is only
+    compared here.)
+    """
+    assert sorted(_WITHDRAWN_V38) == sorted(_WITHDRAWN_V38_EVIDENCE)
+    for cell_id, expected in _WITHDRAWN_V38_EVIDENCE.items():
+        quoted = _WITHDRAWN_V38[cell_id]
+        assert {k: v for k, v in quoted["evidence"].items() if k != "artifact"} == expected
+        assert quoted["executes"] == [{"symbol": "vllm.fused_moe.modular_kernel",
+                                       "decoder": "torch_materialize_stock"}]
+        shipped = _cells(contract)[cell_id]
+        assert shipped["runtime"]["image"] != quoted["runtime"]["image"]
+        assert shipped["evidence"]["smoke"] == _NO_SMOKE
+        validate_serving_contract(_with_evidence(contract, cell_id, {
+            "grade": "route_only", "kl": [], "smoke": quoted["evidence"]["smoke"]}))
 
 
 def test_the_stored_smoke_status_is_the_derived_one(contract):
@@ -321,7 +370,7 @@ def test_the_routed_moe_word_follows_the_rows_and_not_the_other_way_round(contra
     each one changes the published word or the attribution -- so a re-run that
     came back differently could not leave this cell's `recorded` standing.
     """
-    cells = _cells(contract)
+    cells = _WITHDRAWN_V38  # the one real record, quoted since contract v38
     for cell_id in ("tessera_e4m3_k1_routed_moe_sm121_decode_resident",
                     "tessera_e4m3_k1_routed_moe_sm121_batch_resident"):
         smoke = cells[cell_id]["evidence"]["smoke"]
@@ -364,7 +413,7 @@ def test_an_empty_completion_cannot_flip_the_word(contract):
     ``repetitive``, however many empty rows are added beside them.
     """
     smoke = copy.deepcopy(
-        _cells(contract)["tessera_e4m3_k1_routed_moe_sm121_batch_resident"]["evidence"]["smoke"])
+        _WITHDRAWN_V38["tessera_e4m3_k1_routed_moe_sm121_batch_resident"]["evidence"]["smoke"])
     for row in smoke["record"]["rows"]:
         if row["interface"] == "chat_template":
             row["status"] = row["reference_status"] = "not_recorded"
@@ -398,7 +447,7 @@ def test_the_instrument_writes_the_block_the_cell_carries(contract, tmp_path):
     """
     import json
 
-    shipped = _cells(contract)[MOE_DECODE]["evidence"]["smoke"]
+    shipped = _WITHDRAWN_V38[MOE_DECODE]["evidence"]["smoke"]
     tokens = {"recorded": list(range(40)), "repetitive": [1, 2] * 8}
 
     def results(which):
@@ -480,7 +529,7 @@ def test_the_routed_moe_smoke_carries_the_record_its_word_is_derived_from(contra
     attribution is derived from it, and no cell anywhere publishes the
     ``unattributed``-with-no-record shape the contrast was about.
     """
-    cells = _cells(contract)
+    cells = _WITHDRAWN_V38  # withdrawn at contract v38; the record is quoted
     moe = [cells[cid]["evidence"]["smoke"] for cid in
            ("tessera_e4m3_k1_routed_moe_sm121_decode_resident",
             "tessera_e4m3_k1_routed_moe_sm121_batch_resident")]
@@ -746,8 +795,15 @@ def test_a_control_tells_a_shared_symptom_from_a_route_specific_one(contract):
     routed_without_record = sorted(
         cell["id"] for cell in contract["lane_eligibility"]["cells"]
         if cell["structure"] == "routed_moe" and cell["evidence"]["smoke"]["record"] is None)
-    assert routed_without_record == ["tessera_e2m1_k2_routed_moe_sm121_batch_resident",
-                                     "tessera_e2m1_k2_routed_moe_sm121_decode_resident"]
+    # Since contract v38 (tessera#604) that is every routed cell: the two that
+    # carried the record were withdrawn, and the v38 routed cells ran no smoke.
+    assert routed_without_record == sorted(
+        f"tessera_{family}_routed_moe_sm121_{regime}_resident"
+        for family in ("e2m1_k2", "e4m3_k1", "bf16_k1") for regime in ("decode", "batch"))
+    for cell in _WITHDRAWN_V38.values():
+        smoke = cell["evidence"]["smoke"]
+        assert smoke["status"] == "recorded", cell["id"]
+        assert smoke["attribution"] == "shared_with_reference", cell["id"]
     for cell_id in routed_without_record:
         assert _cells(contract)[cell_id]["evidence"]["smoke"] == _NO_SMOKE, cell_id
 
@@ -834,8 +890,8 @@ def test_a_smoke_cannot_carry_both_a_control_and_a_record(contract):
     """One derivation, one home.  `attribution` is read off the record when there
     is one and off the control when there is not; a smoke holding both is two
     sources for one field, which is how they drift."""
-    evidence = {**_EVIDENCE[MOE_DECODE],
-                "smoke": {**_EVIDENCE[MOE_DECODE]["smoke"], "control": _BF16_CONTROL}}
+    evidence = {**_WITHDRAWN_V38_EVIDENCE[MOE_DECODE],
+                "smoke": {**_WITHDRAWN_V38_EVIDENCE[MOE_DECODE]["smoke"], "control": _BF16_CONTROL}}
     with pytest.raises(ValueError, match="carries BOTH a control and a record"):
         validate_serving_contract(_with_evidence(contract, MOE_DECODE, evidence))
 
@@ -845,13 +901,13 @@ def test_a_status_cannot_be_asserted_beside_its_record(contract):
     written beside it.  A word the rows do not derive is refused at the bytes,
     which is what makes a re-run of the smoke a test failure rather than a
     silent disagreement."""
-    over = {**_EVIDENCE[MOE_DECODE],
-            "smoke": {**_EVIDENCE[MOE_DECODE]["smoke"], "status": "repetitive"}}
+    over = {**_WITHDRAWN_V38_EVIDENCE[MOE_DECODE],
+            "smoke": {**_WITHDRAWN_V38_EVIDENCE[MOE_DECODE]["smoke"], "status": "repetitive"}}
     with pytest.raises(ValueError,
                        match="status is 'repetitive' but its record derives 'recorded'"):
         validate_serving_contract(_with_evidence(contract, MOE_DECODE, over))
-    under = {**_EVIDENCE[MOE_DECODE],
-             "smoke": {**_EVIDENCE[MOE_DECODE]["smoke"], "attribution": "unattributed"}}
+    under = {**_WITHDRAWN_V38_EVIDENCE[MOE_DECODE],
+             "smoke": {**_WITHDRAWN_V38_EVIDENCE[MOE_DECODE]["smoke"], "attribution": "unattributed"}}
     with pytest.raises(ValueError,
                        match="attribution is 'unattributed' but its record derives "
                              "'shared_with_reference'"):

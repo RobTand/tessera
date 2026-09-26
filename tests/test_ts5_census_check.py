@@ -18,9 +18,15 @@ from tessera.serving.scheme import (
     validate_tessera_moe_scheme)
 
 ACTIVATION_CONTRACT = ROUTES[TESSERA_FP8]["activation_contract"]
-GEMM_SYMBOL = MOE_GEMM_SYMBOL
-DECODER_TORCH_STOCK = next(iter(launch_pairs(
-    TESSERA_FP8, structure="routed_moe", regime="decode", mode="resident")))[1]
+# The one launch an FP8 expert stack makes on this build: the compact window
+# MoE adapter (contract v38, tessera#604).  The materialising
+# ``(MOE_GEMM_SYMBOL, torch_materialize_stock)`` pair left the table then,
+# because ``moe_route.compact_window_lane`` answers True for FP8 whenever the
+# compact reader is defined; a record naming it is one no serve here stamps.
+(_MOE_LAUNCH,) = launch_pairs(
+    TESSERA_FP8, structure="routed_moe", regime="decode", mode="resident")
+GEMM_SYMBOL, DECODER_TORCH_STOCK = _MOE_LAUNCH
+assert GEMM_SYMBOL != MOE_GEMM_SYMBOL
 
 ROOT = Path(__file__).resolve().parents[1]
 IMAGE = "example/runtime@sha256:" + "1" * 64
@@ -84,7 +90,7 @@ def _fixture():
         for target in TARGETS:
             child = f"{target}.routed_experts"
             records[phase][child] = {"kind": "moe", "policy": f"{TESSERA_FP8}:resident",
-                "symbol": f"{GEMM_SYMBOL}:TRITON", "decoder": DECODER_TORCH_STOCK,
+                "symbol": GEMM_SYMBOL, "decoder": DECODER_TORCH_STOCK,
                 "contract": ACTIVATION_CONTRACT, "state": "served",
                 "shape": "M1:N128:K128" if phase == "decode" else "M64:N128:K128"}
             owners[phase][child] = target
@@ -113,8 +119,8 @@ def test_complete_population_passes_without_pretending_moe_is_attested():
     assert result["verdict"] == "passed"
     assert result["expected_owners"] == TARGETS
     assert result["cell_launch_agreement"]["agrees"] is None
-    assert result["symbols"] == {"decode": [f"{GEMM_SYMBOL}:TRITON"],
-                                  "prefill": [f"{GEMM_SYMBOL}:TRITON"]}
+    assert result["symbols"] == {"decode": [GEMM_SYMBOL],
+                                  "prefill": [GEMM_SYMBOL]}
 
 
 @pytest.mark.parametrize("phase", ["decode", "prefill"])

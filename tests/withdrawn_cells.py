@@ -58,3 +58,18 @@ def withdrawn_cells(ids=None) -> list[dict]:
 
 WITHDRAWN_IDS = frozenset(
     cell["id"] for cell in json.loads(FIXTURE.read_text(encoding="utf-8"))["cells"])
+
+
+FIXTURE_V38 = ROOT / "tests" / "fixtures" / "lane_eligibility_cells_withdrawn_v38.json"
+
+
+def withdrawn_v38_cells() -> list[dict]:
+    """The two routed FP8 cells contract v38 withdrew, as v37 published them.
+
+    Their image is the LFM census's, not the pin, so the fixture carries it
+    verbatim and nothing is resolved.
+    """
+    return json.loads(FIXTURE_V38.read_text(encoding="utf-8"))["cells"]
+
+
+WITHDRAWN_V38_IDS = frozenset(cell["id"] for cell in withdrawn_v38_cells())

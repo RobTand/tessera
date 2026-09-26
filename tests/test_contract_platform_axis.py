@@ -120,8 +120,37 @@ def test_the_packaged_contract_validates_at_v33(contract):
     for a reader that derives ``executes`` from ``scheme.route_launches``
     itself.  It does not restore the gfx1201 cells v31 withdrew: no ROCm
     census of this launch exists.
+
+    v35 (tessera#607) is ADDITIVE and moves no schema: a third sm_121
+    ``activation_quantizers`` entry carries the fp4 table the routed E2M1_K2
+    cells' own runtime image emitted, byte-identical to the two already
+    published.  No cell, rung, route or launch moves.
+
+    v36 (tessera#609) is ADDITIVE for a lane reader and moves no schema:
+    ``scheme.MOE_BUILDERS`` gains the BF16 expert builder, so the
+    ``TESSERA_BF16_K1`` format row's ``structures`` becomes ``[dense,
+    routed_moe]``, and the stack's one launch (the compact adapter under the
+    folded arithmetic) enters ``EXPERIMENTAL_LAUNCHES``.  No cell is minted:
+    a routed BF16 stack still resolves unattested.
+
+    v37 (tessera#614) is NOT additive for a lane reader and moves no schema:
+    the dense BF16 route moves to the folded arithmetic and stamps
+    ``native_window_gemm_folded``, which enters ``EXPERIMENTAL_LAUNCHES``, and
+    the two ``tessera_bf16_k1_dense_sm121_{decode,batch}`` cells v34 minted on
+    the epilogue kernel are withdrawn.  A v10 reader resolves dense BF16 at
+    q256 1792 on sm_121 as unattested, as it did from v31 to v33.  The format
+    row, its attested rung and wire stamp, and every other cell are unchanged.
+
+    v38 (tessera#604) is NOT additive for a lane reader and moves no schema:
+    eight resident, eager cells are minted on the GLM serving image for the
+    dense epilogue and folded GEMMs and the compact window MoE adapter in both
+    arithmetics, three pairs leave ``EXPERIMENTAL_LAUNCHES``, the FP8 routed
+    materialising launch leaves ``ROUTE_LAUNCHES``, and the two routed E4M3
+    cells that named it are withdrawn.  A v10 reader resolves every cell with
+    the code it already has; what moved is which combinations resolve, and the
+    E4M3/BF16 format rows' attested rungs.
     """
-    assert int(contract["contract_version"]) == 34
+    assert int(contract["contract_version"]) == 38
     assert "activation_quantizers" in contract
     assert all("structures" in entry for entry in contract["formats"])
     assert contract["lane_eligibility"]["schema"] == LANE_ELIGIBILITY_SCHEMA
@@ -273,17 +302,34 @@ def test_the_surviving_v22_sm121_cells_are_byte_identical(contract):
     # it, and the fixture records which two and on what receipt.  What may not
     # come back is the withdrawn CLAIM, so the launch is checked rather than
     # the spelling.
+    #
+    # Contract v37 (tessera#614) withdrew the re-earned pair again: the BF16
+    # route serves the folded arithmetic under its own decoder, which the v34
+    # receipt did not measure.
+    #
+    # Contract v38 (tessera#604) withdrew the two routed E4M3 cells from the
+    # span, and re-earned four ids on the GLM-image census: the resident E4M3
+    # dense pair v31 withdrew, and the routed pair v38 itself withdrew, each on
+    # the launch the census recorded.
     present = {cell["id"] for cell in contract["lane_eligibility"]["cells"]}
-    withdrawn = set(recorded["withdrawn_at_v31"])
+    withdrawn = set(recorded["withdrawn_at_v31"]) | set(recorded["withdrawn_at_v38"])
     reearned = set(recorded["reearned_at_v34"])
-    assert len(withdrawn) == 6
+    withdrawn_again = set(recorded["withdrawn_at_v37"])
+    reearned_v38 = set(recorded["reearned_at_v38"])
+    assert len(recorded["withdrawn_at_v31"]) == 6 and len(recorded["withdrawn_at_v38"]) == 2
     assert reearned < withdrawn and len(reearned) == 2
-    assert not (present & (withdrawn - reearned)), sorted(present & (withdrawn - reearned))
-    assert reearned <= present
+    assert withdrawn_again == reearned
+    assert reearned_v38 < withdrawn and len(reearned_v38) == 4
+    standing = (reearned - withdrawn_again) | reearned_v38
+    assert not (present & (withdrawn - standing)), sorted(present & (withdrawn - standing))
+    assert standing <= present
+    launch = {"dense": ("tessera::window_gemm_dense", "native_window_gemm"),
+              "routed_moe": ("tessera.native_window_moe.NativeWindowMoE.__call__",
+                             "native_window_moe_compact")}
     for cell in contract["lane_eligibility"]["cells"]:
-        if cell["id"] in reearned:
+        if cell["id"] in standing:
             assert [(e["symbol"], e["decoder"]) for e in cell["executes"]] == [
-                ("tessera::window_gemm_dense", "native_window_gemm")], cell["id"]
+                launch[cell["structure"]]], cell["id"]
     assert {cell["id"] for cell in span} <= present
 
 

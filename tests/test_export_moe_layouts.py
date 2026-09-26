@@ -745,7 +745,9 @@ def test_a_packed_stack_plan_requires_a_supported_source_layout(
     out = tmp_path / "out"
     plan = tmp_path / "plan.json"
     stack = "model.language_model.layers.1.mlp.experts"
-    spec = {"grid": "E4M3", "q256": 1024}
+    # q256 896: the routed E4M3 cells' rung (contract v38), so the layout
+    # check, not the rung gate, is what this plan meets first.
+    spec = {"grid": "E4M3", "q256": 896}
     if source_layout is not None:
         spec["source_layout"] = source_layout
     plan.write_text(json.dumps({stack: spec}))

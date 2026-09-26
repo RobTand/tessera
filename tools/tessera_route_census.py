@@ -481,6 +481,35 @@ def scheduler_kwargs(args):
     return kwargs
 
 
+def engine_backend_kwargs(args):
+    """The engine's backend choices, assembled where a test can read it.
+
+    A census builds its engine with ``LLM(...)`` and nothing else, so a model
+    that serves only under a named attention backend or KV cache dtype could
+    not be loaded at all.  GLM-5.3-Flash on sm_121 is that model: its MLA
+    serves through the opt-in GLM53 NoPE backend (``glm53_nope``, enabled by
+    ``TESSERA_RESEARCH_GLM53_NOPE=1``), which registers as ``CUSTOM`` and
+    accepts only ``fp8_ds_mla``.  The serving image has no environment variable
+    for either, so a missing argument here is a checkpoint no census can
+    measure and a cell nobody can earn (issue #618).  Each field is vLLM's own
+    engine argument, passed unchanged; at the defaults nothing is added, so a
+    command line written before these arguments builds the engine it always
+    did.
+    """
+    kwargs = {}
+    if args.attention_backend:
+        kwargs["attention_backend"] = args.attention_backend
+    if args.kv_cache_dtype:
+        kwargs["kv_cache_dtype"] = args.kv_cache_dtype
+    if args.moe_backend:
+        kwargs["moe_backend"] = args.moe_backend
+    if args.kernel_config is not None:
+        kwargs["kernel_config"] = args.kernel_config
+    if args.trust_remote_code:
+        kwargs["trust_remote_code"] = True
+    return kwargs
+
+
 def required_decoder_coverage(tessera_by_phase, required):
     """Did the decoder this arm exists to measure take every module?
 
@@ -537,7 +566,8 @@ def expected_pairs(family, regime, kind, *, compiled, platform):
     if kind == "moe":
         if family == TESSERA_NVFP4:
             return nvfp4_moe_route.census_expected(compiled=compiled, platform=platform)[regime]
-        return moe_route.census_expected(compiled=compiled, platform=platform)[regime]
+        return moe_route.census_expected(compiled=compiled, platform=platform,
+                                         family=family)[regime]
     if family == TESSERA_FP8:
         return fp8_gemv.census_expected(compiled=compiled, platform=platform)[regime]
     if family == TESSERA_BF16:
@@ -619,6 +649,20 @@ def parse_args(argv=None, env=None):
                          "too -- so a green receipt can describe a serve in which the launch the "
                          "arm exists to measure never ran. A named decoder that takes zero "
                          "modules is the same refusal from the other side (issue #104).")
+    ap.add_argument("--attention-backend", default=None, metavar="NAME",
+                    help="vLLM's attention_backend engine argument, passed unchanged (e.g. "
+                         "CUSTOM for the GLM53 NoPE backend); unset leaves vLLM's choice")
+    ap.add_argument("--kv-cache-dtype", default=None, metavar="DTYPE",
+                    help="vLLM's kv_cache_dtype engine argument, passed unchanged (the GLM53 "
+                         "NoPE backend accepts only fp8_ds_mla); unset leaves vLLM's default")
+    ap.add_argument("--moe-backend", default=None, metavar="NAME",
+                    help="vLLM's moe_backend engine argument, passed unchanged; unset leaves "
+                         "vLLM's choice")
+    ap.add_argument("--kernel-config", default=None, metavar="JSON",
+                    help="vLLM's kernel_config engine argument as a JSON object, e.g. "
+                         "'{\"enable_flashinfer_autotune\": false}'; unset leaves vLLM's default")
+    ap.add_argument("--trust-remote-code", action="store_true",
+                    help="pass trust_remote_code=True to the engine")
     add_topology_arguments(ap)
     ap.add_argument("--tessera-commit", default=None,
                     help="the host's `git rev-parse HEAD` for the Tessera checkout under test; "
@@ -635,6 +679,15 @@ def parse_args(argv=None, env=None):
         ap.error("--kv-cache-memory-bytes must be >= 0 (0 leaves vLLM to size the cache)")
     if args.max_num_seqs < 0:
         ap.error("--max-num-seqs must be >= 0 (0 leaves vLLM's own default)")
+    # A JSON object or nothing, refused where it is typed: a malformed value
+    # would otherwise surface as an engine error after the model started loading.
+    if args.kernel_config is not None:
+        try:
+            args.kernel_config = json.loads(args.kernel_config)
+        except ValueError as exc:
+            ap.error(f"--kernel-config is not JSON: {exc}")
+        if not isinstance(args.kernel_config, dict):
+            ap.error("--kernel-config must be a JSON object")
     from tessera.serving.contract import require_runtime_image
     from tessera.serving.runtime_image import RuntimeImageError, declared_reference
 
@@ -741,7 +794,7 @@ def main() -> int:
     # A ROUTED EXPERT STACK IS NOT ITS FAMILY'S DENSE ROUTE.  The stack serves
     # under the same family (same wire, same activation contract) and a
     # different dispatch, so the expectation is taken from the route that owns
-    # it -- ``moe_route.census_expected`` for FP8, ``nvfp4_moe_route`` for the
+    # it -- ``moe_route.census_expected`` for FP8 and BF16, ``nvfp4_moe_route`` for the
     # native NVFP4 stack -- which also says why the FP8 symbol is compared
     # without the runtime's backend suffix and why no contract cell publishes
     # the native pairs yet.  ``expected_pairs`` (module level, tested) holds
@@ -829,6 +882,7 @@ def main() -> int:
     # group existed builds the same engine it always did.
     llm = LLM(model=args.model, enforce_eager=not args.compiled, max_model_len=args.max_model_len,
               seed=0, **memory_budget_kwargs(args), **scheduler_kwargs(args),
+              **engine_backend_kwargs(args),
               **topology_kwargs(args))
 
     # CHECKPOINT NAMES ARE NOT MODULE NAMES, and this join is made in module
@@ -1067,6 +1121,10 @@ def main() -> int:
         # also caps the Mamba block cache, and a concurrency limit above the
         # blocks available is a capture refusal rather than a measurement.
         "scheduler": scheduler_kwargs(args),
+        # The backends the engine was told to use.  A cell earned under a named
+        # attention backend or KV cache dtype serves only under it, so the
+        # receipt carries them beside the budget rather than in a shell history.
+        "engine_backends": engine_backend_kwargs(args),
         # WHERE THAT SCOPE CAME FROM.  The image above is a join key of every
         # cell this receipt resolves; this says which mechanism established it
         # and carries the launcher's record verbatim, so a reader can redo the
@@ -1082,7 +1140,8 @@ def main() -> int:
         "generated_text": generated,
         "declared_families": dict(sorted(collections.Counter(declared.values()).items())),
         "env": {TESSERA_MODE_ENV: mode or None,
-                "VLLM_DISABLED_KERNELS": os.environ.get("VLLM_DISABLED_KERNELS")},
+                "VLLM_DISABLED_KERNELS": os.environ.get("VLLM_DISABLED_KERNELS"),
+                "TESSERA_RESEARCH_GLM53_NOPE": os.environ.get("TESSERA_RESEARCH_GLM53_NOPE")},
         "versions": {"vllm": vllm.__version__, "torch": torch.__version__,
                      "tessera": getattr(tessera, "__version__", None),
                      "tessera_serving": getattr(serving, "__version__", None),

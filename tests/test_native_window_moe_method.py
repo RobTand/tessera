@@ -11,7 +11,8 @@ result.  The two-node run is a separate milestone.
 What is checked here:
 * FP8 ordinary route (no research config), TP1;
 * FP8 ordinary route at TP2, rank 0 and rank 1, row-cut w13 and column-cut w2;
-* folded BF16 through its existing experimental route (TP2, folded arithmetic);
+* folded BF16 through its research route (TP2, folded arithmetic), and the
+  production BF16 stack (tessera#609) at TP1 and both TP2 ranks;
 * actual routing and the nonlinear activation against a stock-arithmetic
   reference built from the same reference tensors the wire decodes to;
 * shared-expert ownership: the method returns ROUTED output only and never
@@ -311,6 +312,131 @@ def test_bf16_folded_native_route_matches_folded_reference(bf16_wires_native):
     diff = (out.float() - ref.float()).abs()
     assert float(diff.max()) < 5e-2 + 2e-2 * float(ref.float().abs().max()), \
         f"max abs diff {float(diff.max())}"
+
+
+@cuda
+@pytest.mark.parametrize('tp_rank,tp_size', [(0, 1), (0, 2), (1, 2)])
+def test_bf16_production_route_is_folded_compact_and_matches_the_reference(
+        bf16_wires_native, tp_rank, tp_size):
+    """The PRODUCTION BF16 expert stack (tessera#609): no research config.
+
+    It takes the compact lane at TP1 and at both TP2 ranks, registers no stock
+    expert tile at construction (vLLM builds every layer before loading any),
+    computes the FOLDED arithmetic -- the reference below is
+    ``read_unit_artifact(...).to(bfloat16)``, one bf16 rounding of the decoded
+    ``value * row_scale`` -- and reports the folded decoder, so a census can
+    tell it from the FP8 stack's epilogue launch.
+    """
+    from tessera.serving.scheme import WINDOW_MOE_COMPACT_SYMBOL
+    from tessera.serving.telemetry import (ATTR_PREFIX,
+                                           DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED)
+
+    w13_blobs, w2_blobs, scheme, expected = bf16_wires_native
+    layer = _native_layer(tp_rank=tp_rank, tp_size=tp_size)
+    layer.global_num_experts = 2
+    method = moe_route.build_tessera_moe_method(scheme, 'm', 'resident', layer)
+    assert method._native_mode is True
+    method.create_weights(layer, 2, HIDDEN, INTER // tp_size, torch.bfloat16)
+    registered = dict(layer.named_parameters())
+    assert not {'w13_weight', 'w2_weight', 'w13_weight_scale',
+                'w2_weight_scale'} & set(registered), sorted(registered)
+    _load_all(method, layer, [[pair[0], pair[1]] for pair in w13_blobs],
+              [pair[0] for pair in w2_blobs])
+    method.process_weights_after_loading(layer)
+    assert method._native is not None and method.moe_kernel is None
+    assert not dict(layer.named_parameters()), "only packed constants stay resident"
+    for bundle in (method._native.gate, method._native.up, method._native.down):
+        assert bundle.arithmetic == "folded" and bundle.family == "value"
+    assert layer.tessera_decoder == DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED
+
+    local = INTER // tp_size
+    lo, hi = tp_rank * local, (tp_rank + 1) * local
+    x = (torch.randn(8, HIDDEN, generator=torch.Generator().manual_seed(41)) * 0.5
+         ).bfloat16().cuda()
+    ids = torch.tensor([[0, 1], [1, 0], [0, 0], [1, 1], [0, 1], [1, 0], [1, 1], [0, 0]],
+                       dtype=torch.int32, device='cuda')
+    weights = torch.rand(8, 2, generator=torch.Generator().manual_seed(42)).cuda()
+    shared = _SharedSpy()
+    out = method.apply(layer, x, weights, ids, shared, None)
+    assert shared.calls == 0
+    assert out.dtype == torch.bfloat16 and out.shape == (8, HIDDEN)
+    assert getattr(layer, f"{ATTR_PREFIX}decoder") == DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED
+    assert getattr(layer, f"{ATTR_PREFIX}symbol") == WINDOW_MOE_COMPACT_SYMBOL
+
+    ref = torch.zeros(8, HIDDEN, dtype=torch.float32, device='cuda')
+    for token in range(8):
+        for choice in range(2):
+            e = int(ids[token, choice])
+            full13, full2 = expected[e]
+            gate = full13[lo:hi].float().cuda()
+            up = full13[INTER + lo:INTER + hi].float().cuda()
+            down = full2[:, lo:hi].float().cuda()
+            g = gate @ x[token].float()
+            u = up @ x[token].float()
+            act = (torch.nn.functional.silu(g) * u).bfloat16().float()
+            ref[token] += weights[token, choice] * (down @ act)
+    ref = ref.bfloat16()
+    diff = (out.float() - ref.float()).abs()
+    assert float(diff.max()) < 5e-2 + 2e-2 * float(ref.float().abs().max()), \
+        f"TP{tp_size} rank {tp_rank}: max abs diff {float(diff.max())}"
+
+
+def _bf16_owner(wires, tp_rank, tp_size, research=None):
+    """One loaded BF16 expert owner on ``wires``: the production builder when
+    ``research`` is None, else the plugin's research-selected owner."""
+    w13_blobs, w2_blobs, scheme, _expected = wires
+    layer = _native_layer(tp_rank=tp_rank, tp_size=tp_size)
+    layer.global_num_experts = 2
+    if research is None:
+        method = moe_route.build_tessera_moe_method(scheme, 'm', 'resident', layer)
+    else:
+        from vllm.config import set_current_vllm_config
+        with set_current_vllm_config(
+                types.SimpleNamespace(model_config=types.SimpleNamespace(enforce_eager=True))):
+            method = moe_route.build_tessera_moe_method(
+                scheme, 'm', 'resident', layer, research_selected=research)
+    method.create_weights(layer, 2, HIDDEN, INTER // tp_size, torch.bfloat16)
+    _load_all(method, layer, [[pair[0], pair[1]] for pair in w13_blobs],
+              [pair[0] for pair in w2_blobs])
+    method.process_weights_after_loading(layer)
+    return method, layer
+
+
+@cuda
+@pytest.mark.parametrize('tp_rank,tp_size', [(0, 1), (0, 2), (1, 2)])
+@pytest.mark.parametrize('chunk,backend', [(1, 'triton'), (8, 'torch')])
+def test_bf16_production_and_research_owners_are_bit_identical(
+        bf16_wires_native, tp_rank, tp_size, chunk, backend):
+    """The owner the operator bench prices is the served one (tessera#613).
+
+    The bench moved from the research-selected BF16 owner to the production
+    builder.  This is the forward guarantee that the move changes no number:
+    on the same wires and the same inputs the two owners return the SAME BITS,
+    at TP1 and at both TP2 ranks, for decode- and prefill-sized batches, and
+    whatever chunk bound or decode backend the research block declares --
+    both take the compact native lane, and neither setting reaches it.
+    """
+    production, p_layer = _bf16_owner(bf16_wires_native, tp_rank, tp_size)
+    research, r_layer = _bf16_owner(
+        bf16_wires_native, tp_rank, tp_size,
+        research=moe_route.ResearchSelectedMoeConfig(
+            max_experts_per_chunk=chunk, decode_backend=backend,
+            expected_tensor_parallel_size=tp_size))
+    assert production._native is not None and research._native is not None
+    for owner in (production, research):
+        for bundle in (owner._native.gate, owner._native.up, owner._native.down):
+            assert bundle.arithmetic == "folded"
+    assert p_layer.tessera_decoder == r_layer.tessera_decoder
+    gen = torch.Generator().manual_seed(613 + 10 * tp_size + tp_rank)
+    for tokens in (1, 8, 64, 300):
+        x = (torch.randn(tokens, HIDDEN, generator=gen) * 0.5).bfloat16().cuda()
+        ids = torch.randint(0, 2, (tokens, 2), generator=gen, dtype=torch.int32).cuda()
+        weights = torch.rand(tokens, 2, generator=gen).cuda()
+        a = production.apply(p_layer, x, weights, ids, _SharedSpy(), None)
+        b = research.apply(r_layer, x, weights, ids, _SharedSpy(), None)
+        assert torch.equal(a, b), (
+            f"TP{tp_size} rank {tp_rank}, {tokens} tokens: production and research owners "
+            f"differ by up to {float((a.float() - b.float()).abs().max())}")
 
 
 @cuda

@@ -83,6 +83,15 @@ def test_every_attested_rung_stamps_the_wire_it_was_cut_on(contract):
     bytes at an attested rung, this is the test that says the attestation no
     longer describes a fresh export.
 
+    A rung may be attested with no cell covering it: a cell withdrawal
+    removes the scope a census backed and leaves the rung's own receipt and
+    stamp standing (``TESSERA_BF16_K1`` at 1792 from contract v31 to v33,
+    and again from v37, tessera#614).  No cell then names the
+    structures to derive from, so the stamp is held to the served wire of
+    every structure the format row declares -- a stricter check than any
+    cell subset, and it keeps the tripwire armed while the rung waits for a
+    census to re-earn its cells.
+
     Not ``recipe_at(recipe_table(grid), q)``: that is the research table.
     Since contract v32 (tessera#506 leg 2) a ``routed_moe`` stack on the NVFP4
     route is served as span-2 TCQ at every reader rung, while the table keeps
@@ -112,9 +121,12 @@ def test_every_attested_rung_stamps_the_wire_it_was_cut_on(contract):
             structures = sorted({cell["structure"] for cell in cells
                                  if cell["family"] == entry["family"]
                                  and item["q256"] in cell["rungs_q256"]})
+            if not structures:
+                structures = sorted(entry["structures"])
             assert structures, (
-                f"{entry['family']} q256={item['q256']}: no lane_eligibility cell attests this "
-                "rung, so no structure says which wire a served unit carries there")
+                f"{entry['family']} q256={item['q256']}: neither a lane_eligibility cell nor the "
+                "format row names a structure, so nothing says which wire a served unit "
+                "carries there")
             for structure in structures:
                 served = exporter.served_recipe(grid, item["q256"], structure=structure)
                 assert item == {"q256": item["q256"], **served.to_config()}, (
@@ -134,9 +146,11 @@ def test_the_bf16_attestation_is_cut_on_the_pinned_wire(contract):
     that starts moving fresh-export bytes trips here first.
     """
     row = next(e for e in contract["formats"] if e["family"] == "TESSERA_BF16_K1")
-    assert row["attested_rungs_q256"] == [1792]
-    (stamped,) = row["attested_wire"]
-    assert stamped["q256"] == 1792
+    # Contract v38 (tessera#604) added 832/1024/1088 from the GLM-image census,
+    # cut on the same pinned wire; 1792 is still the v5 receipt's rung.
+    assert row["attested_rungs_q256"] == [832, 1024, 1088, 1792]
+    (stamped,) = [w for w in row["attested_wire"] if w["q256"] == 1792]
+    assert all(w["sigma"] is None for w in row["attested_wire"])
     assert stamped["sigma"] is None, (
         f"TESSERA_BF16_K1 @ 1792 is stamped with sigma={stamped['sigma']!r}; the served "
         "receipt it cites was cut on the pinned wire (sigma unset)")

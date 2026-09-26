@@ -57,8 +57,11 @@ set and dispatches through the same ``select_nvfp4_moe_backend`` /
 ``convert_to_nvfp4_moe_kernel_format`` / ``make_nvfp4_moe_kernel`` path
 ``ModelOptNvFp4FusedMoE`` takes.  A family absent from ``MOE_BUILDERS`` is
 refused by name through the FP8 builder's front door
-(``refuse_a_family_with_no_expert_route``); a BF16 expert stack is the
-passthrough ``ignore`` already gives.  When the checkpoint carries
+(``refuse_a_family_with_no_expert_route``).  ``TESSERA_BF16`` goes to
+``moe_route`` too (tessera#609): a compressed BF16 expert stack is served on
+the compact native window lane with the folded arithmetic, and has no
+materialising path; a SOURCE-precision BF16 stack is still the passthrough
+``ignore`` gives.  When the checkpoint carries
 ``research_selected_moe``, only the stacks that block serves
 (``ResearchSelectedMoeConfig.applies_to``: FP8/E4M3, BF16/BF16) take the
 selected owner; an NVFP4 stack beside them takes its production builder.

@@ -109,9 +109,14 @@ def selected_window_decoder(backend, family):
 
 
 def owner_needs_selected(wire, world):
-    """Does this stack need the explicit selected owner, or its own builder?"""
-    return wire["family"] == "TESSERA_BF16" or (wire["family"] == "TESSERA_FP8"
-                                                and int(world) > 1)
+    """Does this stack need the explicit selected owner, or its own builder?
+
+    Only an FP8 stack above one rank.  Compressed BF16 has had a production
+    expert builder since tessera#609 (the compact lane, folded arithmetic), and
+    the priced owner must be the served one (tessera#613): a checkpoint carries
+    no research block, so a BF16 owner is priced on that builder.
+    """
+    return wire["family"] == "TESSERA_FP8" and int(world) > 1
 
 
 def census_symbol_base(symbol):
@@ -133,13 +138,11 @@ def owner_launch_pairs(wire, *, world=1):
     choice is the runtime's, not a second route.
     """
     from tessera.serving.scheme import MOE_GEMM_SYMBOL, launch_pairs
+    # An FP8 stack's one table launch is the compact window MoE adapter.  The
+    # materialising pair this function used to drop above one rank (that
+    # builder was TP1-only) left the plugin's table at contract v38: the
+    # compact lane takes every FP8 stack this build constructs.
     pairs = set(launch_pairs(wire["family"], structure="routed_moe", include_experimental=True))
-    if wire["family"] == "TESSERA_FP8" and int(world) > 1:
-        # The production FP8 expert builder is TP1-only -- its `create_weights`
-        # compares this rank's partition width against a TP1 geometry -- so at a
-        # world above one its launch is not reachable and is not a pair a panel
-        # may declare.
-        pairs.discard((MOE_GEMM_SYMBOL, "torch_materialize_stock"))
     if owner_needs_selected(wire, world):
         for backend in ("torch", "triton"):
             pairs.add((MOE_GEMM_SYMBOL, selected_window_decoder(backend, wire["family"])))
@@ -149,13 +152,15 @@ def owner_launch_pairs(wire, *, world=1):
 def owner_research_selected(shape, wire, request_block):
     """The explicit selected-owner block this stack needs, or None.
 
-    Two stacks need one and one must not have one.  A compressed BF16 expert
-    stack has no production builder at all, and the production FP8 expert
-    builder exceeds its TP1 scope past one rank; both take the versioned
-    ``research_selected_moe`` owner.  A family with its own expert builder
-    (``TESSERA_NVFP4``) keeps it -- the selected block refuses to name a
-    target it does not serve, so attaching one to an A4 owner is a refusal
-    rather than a wider admission.
+    One stack needs one and two must not have one.  The production FP8
+    expert builder exceeds its TP1 scope past one rank, so that stack takes
+    the versioned ``research_selected_moe`` owner.  A family with its own
+    expert builder keeps it.  For ``TESSERA_NVFP4`` the selected block refuses
+    to name a target it does not serve, so attaching one to an A4 owner is a
+    refusal rather than a wider admission.  ``TESSERA_BF16`` is refused here
+    by name (tessera#613): the plugin's selected owner still serves it, but
+    the served checkpoint carries no block, so a receipt priced through one
+    would price an object that is not the served one.
     """
     from tessera.moe_execution import ResearchSelectedMoeConfig
     family, world = wire["family"], int(shape.get("tensor_parallel", 1))
@@ -164,9 +169,15 @@ def owner_research_selected(shape, wire, request_block):
         if needs:
             raise ValueError(
                 f"{family} routed experts at TP{world} require the explicit "
-                "research_selected_moe block: this stack has no production expert owner "
-                "at this cut, and a production owner is not a fallback for it")
+                "research_selected_moe block: this harness serves this stack only through "
+                "the explicit selected owner at this cut, and a production owner is not a "
+                "fallback for it")
         return None
+    if family == "TESSERA_BF16":
+        raise ValueError(
+            "a TESSERA_BF16 routed owner is priced on its production builder (the compact "
+            "native lane, folded arithmetic), which is the served owner; drop the "
+            "research_selected_moe block from this request")
     selected = ResearchSelectedMoeConfig.from_checkpoint(request_block)
     if not ResearchSelectedMoeConfig.applies_to(wire):
         raise ValueError(f"research_selected_moe does not serve a {wire['family']}/{wire['grid']} "

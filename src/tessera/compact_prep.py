@@ -326,7 +326,7 @@ def _tcq_cut_state(metadata: ParsedMetadata, s0: int, c0: int, c1: int, device,
 
 
 def _window_cut_state(metadata: ParsedMetadata, r0: int, c0: int, c1: int,
-                      device) -> torch.Tensor:
+                      device, scratch: "dict | None" = None) -> torch.Tensor:
     """The window state immediately before local row 0, one int64 per local
     column, in *original* column order.
 
@@ -345,7 +345,7 @@ def _window_cut_state(metadata: ParsedMetadata, r0: int, c0: int, c1: int,
         if metadata.shard_state is None:
             return state
         return metadata.shard_state.reshape(-1)[c0:c1].to(device, torch.int64)
-    packed = _plane_u8(metadata.chunks[PlaneKind.BODY], device)
+    packed = _plane_u8(metadata.chunks[PlaneKind.BODY], device, scratch, "body")
     rates = tuple(int(r) for r in metadata.rates)
     rows_total = metadata.rows
     # The parent's bit prefix before this cut's first column: the packed plane
@@ -574,7 +574,8 @@ def prepare_span2_compact(wire: CompactWire, *, rows=None, cols=None,
 
 
 def _repack_window_compact(metadata: ParsedMetadata, rows: "tuple[int, int]",
-                           cols: "tuple[int, int]", device):
+                           cols: "tuple[int, int]", device,
+                           scratch: "dict | None" = None):
     """The window BODY plane in ``kernel_window_gemv``'s tile order.
 
     The same ``Repacked`` ``kernel_window_gemv.repack_window_body`` builds
@@ -628,7 +629,7 @@ def _repack_window_compact(metadata: ParsedMetadata, rows: "tuple[int, int]",
         groups[present] = [c for c in order if rates_local[c] == present]
     tile_bytes = sum(len(which) * 64 * present for present, which in groups.items())
     flat = torch.zeros(n_tiles * tile_bytes, dtype=torch.uint8, device=device)
-    body = _plane_u8(metadata.chunks[PlaneKind.BODY], device)
+    body = _plane_u8(metadata.chunks[PlaneKind.BODY], device, scratch, "body")
     runs, word0, group_col0, group_byte0 = [], 0, 0, 0
     for present in sorted(groups):
         which = groups[present]
@@ -657,7 +658,8 @@ def _repack_window_compact(metadata: ParsedMetadata, rows: "tuple[int, int]",
 def prepare_window_compact(wire: CompactWire, *, rows=None, cols=None,
                            device="cuda", M: int = 1, plan=None,
                            family: "str | None" = None,
-                           table_dtype=torch.bfloat16):
+                           table_dtype=torch.bfloat16,
+                           scratch: "dict | None" = None):
     """A CHANNEL-plane window unit -> the native window GEMM's unit.
 
     The result is ``kernel_window_gemv.WindowGemvUnit`` with the repacked
@@ -718,11 +720,11 @@ def prepare_window_compact(wire: CompactWire, *, rows=None, cols=None,
         metadata.chunks[PlaneKind.DIAG_SV], metadata.rows, device)[r0:r1]
     scale = (scale_rows.float()
              * float(metadata.manifest.scale_plane.global_scale)).reshape(-1).contiguous()
-    rep = _repack_window_compact(metadata, (r0, r1), (c0, c1), device)
+    rep = _repack_window_compact(metadata, (r0, r1), (c0, c1), device, scratch)
     if plan is None:
         plan = kg.default_plan(rep.rows, rep.cols, M, table_dtype=table_dtype,
                                window_bits=int(metadata.manifest.window_bits))
-    state = _window_cut_state(metadata, r0, c0, c1, device).to(torch.int32)
+    state = _window_cut_state(metadata, r0, c0, c1, device, scratch).to(torch.int32)
     return kg.WindowGemvUnit(
         rep=rep, table=table, scale=scale,
         window_bits=int(metadata.manifest.window_bits), plan=plan,

@@ -87,11 +87,8 @@ def main():
     if sha(serving['path'])!=serving['sha256']:raise ValueError('serving configuration changed')
     config,serving_record=moe.resolve_serving_config(serving['path'],inputs['runtime_image'],tensor_parallel=1)
     distributed=moe.owner_distributed(inputs['shape'],None)
-    selected_block=None
-    if inputs['format'].startswith('TESSERA_BF16'):
-        selected_block={'schema':'tessera.research_selected_moe.v1','max_experts_per_chunk':1,
-                        'decode_backend':'triton','expected_tensor_parallel_size':1}
-    selected=moe.owner_research_selected(inputs['shape'],moe.owner_wire(inputs['shape']),selected_block)
+    # A BF16 owner is priced on its production builder, the served owner (#613).
+    selected=moe.owner_research_selected(inputs['shape'],moe.owner_wire(inputs['shape']),None)
     tracepath=args.out/'memory.json'
     try:
         with moe.native_runtime_context(config,distributed=distributed):

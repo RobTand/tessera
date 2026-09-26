@@ -191,10 +191,9 @@ def bundle_manifest(served: dict, bundle: Path) -> dict:
 def research_selected_record(served: dict):
     """The research-selected owner block this export ran with, or None.
 
-    A BF16 or above-TP1 E4M3 expert stack has no production builder, so the
-    exporter refuses to plan one unless it was given the versioned
-    research-selected owner -- and it records that input, with its digest, in
-    ``export_identity.options``.  Reading the flag from there is what keeps
+    When the exporter is given the versioned research-selected owner it plans
+    the stacks that owner serves under it, and it records that input, with its
+    digest, in ``export_identity.options``.  Reading the flag from there is what keeps
     this driver's plan the exporter's plan: a flag guessed here could plan a
     stack the export refused, or refuse one it planned.
     """

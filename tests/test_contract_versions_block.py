@@ -82,7 +82,11 @@ def test_the_default_serve_image_is_the_dense_cells_image(contract):
     assert by_platform, "no platform has cells; the premise moved"
     for platform, by_structure in by_platform.items():
         serve_image = block["platforms"][platform]["serve_image"]
-        assert by_structure["dense"] == {serve_image}, platform
+        # Since contract v38 (tessera#604) sm_121 publishes dense cells on a
+        # second image too -- the GLM serving image, resident-only -- so the
+        # claim is that the serve image is one of the dense images, not the
+        # only one.  The pin's own dense cells did not move.
+        assert serve_image in by_structure["dense"], platform
         assert serve_image not in by_structure.get("routed_moe", set()), platform
     assert pin in {block["platforms"][p]["serve_image"] for p in by_platform}
     for platform, entry in block["platforms"].items():
