@@ -23,6 +23,8 @@ from .grammar import GrammarError
 REFERENCE_SCHEMA = 'tessera.hessian_capture.references.v1'
 LOAD_SCHEMA = 'tessera.hessian_reference_load.v1'
 BINDING_SCHEMA = 'tessera.canonical_hessian_binding.v1'
+COLLECTION_SCHEMA = 'tessera.hessian_capture.collection.v1'
+COLLECTION_BINDING_SCHEMA = 'tessera.canonical_hessian_collection_binding.v1'
 #: Where a resident Hessian may live.  The producer that computes these
 #: commitments holds its population wherever it captured it -- on GB10 that
 #: is CUDA -- and binding exists to serve it from there.  A device outside
@@ -115,6 +117,26 @@ class _HeldFile:
 
 
 def normalize_reference_binding(value):
+    if isinstance(value, Mapping) and value.get('schema') == COLLECTION_BINDING_SCHEMA:
+        if (set(value) != {'schema', 'collection_document_sha256', 'references'} or
+                not _sha(value['collection_document_sha256']) or
+                not isinstance(value['references'], list) or len(value['references']) < 2):
+            raise GrammarError('Hessian collection binding requires its exact document and references')
+        names = []
+        for child in value['references']:
+            if (not isinstance(child, Mapping) or set(child) != {'path', 'sha256', 'binding'} or
+                    not isinstance(child['path'], str) or not Path(child['path']).is_absolute() or
+                    Path(child['path']).resolve() != Path(child['path']) or
+                    not _sha(child['sha256'])):
+                raise GrammarError('Hessian collection binding has an invalid child')
+            if (not isinstance(child['binding'], Mapping) or
+                    child['binding'].get('schema') != BINDING_SCHEMA):
+                raise GrammarError('Hessian collection child binding is not canonical v1')
+            normalize_reference_binding(child['binding'])
+            names.append(child['path'])
+        if names != sorted(set(names)):
+            raise GrammarError('Hessian collection binding children must be distinct and sorted')
+        return copy.deepcopy(dict(value))
     if (not isinstance(value, Mapping) or set(value) !=
             {'schema', 'canonical_capture_sha256', 'census_sha256'} or
             value.get('schema') != BINDING_SCHEMA or
@@ -576,3 +598,168 @@ class ReferenceHessians(Mapping):
 
     def __del__(self):
         self.close()
+
+
+class ReferenceHessianCollection(Mapping):
+    """One checked, lazy H mapping over disjoint canonical reference owners.
+
+    The collection binds existing reference documents, not copied captures.
+    Every child remains the v1 reader and authenticates its own source at
+    consumption.  The collection owns and closes every child descriptor.
+    """
+
+    def __init__(self, path):
+        self._held = None
+        self._children = []
+        self._bindings = []
+        self._owners = {}
+        self._closed = False
+        try:
+            self._held = _HeldFile(path, cap=MAX_METADATA_BYTES)
+            raw, self.document_sha256 = self._held.read(keep=True)
+            document = json.loads(raw, object_pairs_hook=_pairs)
+            if (not isinstance(document, dict) or set(document) !=
+                    {'schema', 'references', 'units', 'capture_sha256'} or
+                    document['schema'] != COLLECTION_SCHEMA or
+                    not isinstance(document['references'], list) or
+                    len(document['references']) < 2 or
+                    not isinstance(document['units'], list) or
+                    not all(isinstance(name, str) and name for name in document['units']) or
+                    document['units'] != sorted(set(document['units'])) or
+                    not document['units'] or not _sha(document['capture_sha256'])):
+                raise GrammarError('unsupported or non-closed Hessian reference collection')
+            self._document = document
+            names = []
+            provenance = None
+            for reference in document['references']:
+                if (not isinstance(reference, dict) or set(reference) != {'path', 'sha256'} or
+                        not isinstance(reference['path'], str) or not _sha(reference['sha256'])):
+                    raise GrammarError('Hessian collection requires exact child path/SHA-256 bindings')
+                names.append(reference['path'])
+                child = ReferenceHessians(reference['path'])
+                self._children.append(child)
+                if child.document_sha256 != reference['sha256']:
+                    raise GrammarError(f"Hessian collection child checksum differs: {reference['path']}")
+                self._bindings.append(child.binding())
+                if provenance is None:
+                    provenance = child.provenance
+                elif child.provenance != provenance:
+                    raise GrammarError(f"Hessian collection child calibration differs: {reference['path']}")
+                overlap = set(child) & set(self._owners)
+                if overlap:
+                    raise GrammarError(f'Hessian collection overlaps on unit {sorted(overlap)[0]}')
+                self._owners.update({name: child for name in child})
+            if names != sorted(set(names)):
+                raise GrammarError('Hessian collection child paths must be distinct and sorted')
+            if document['units'] != sorted(self._owners):
+                raise GrammarError('Hessian collection unit roster omits or invents a committed unit')
+            commitments = self.committed_units()
+            if capture_sha256_from_units(provenance, commitments) != document['capture_sha256']:
+                raise GrammarError('Hessian collection capture seal differs from its children')
+            self._provenance = provenance
+            self._capture_sha256 = document['capture_sha256']
+        except BaseException:
+            self.close()
+            raise
+
+    def require_current(self):
+        if self._closed:
+            raise GrammarError('Hessian reference collection is closed')
+        self._held.check()
+        for child in self._children:
+            child.require_current()
+
+    @property
+    def provenance(self):
+        self.require_current()
+        return dict(self._provenance)
+
+    def require_provenance(self, provenance):
+        if {key: value for key, value in provenance.items() if key != 'path'} != self.provenance:
+            raise GrammarError('Hessian collection provenance moved from its references')
+
+    def committed_units(self):
+        self.require_current()
+        return {name: digest for child in self._children
+                for name, digest in child.committed_units().items()}
+
+    def binding(self):
+        self.require_current()
+        return dict(schema=COLLECTION_BINDING_SCHEMA,
+                    collection_document_sha256=self.document_sha256,
+                    references=[dict(path=reference['path'], sha256=reference['sha256'],
+                                     binding=copy.deepcopy(binding))
+                                for reference, binding in zip(self._document['references'], self._bindings)])
+
+    def bind_resident(self, mapping):
+        self.require_current()
+        if not isinstance(mapping, Mapping) or set(mapping) != set(self._owners):
+            raise GrammarError('resident Hessians do not name the collection roster')
+        try:
+            for child in self._children:
+                child.bind_resident({name: mapping[name] for name in child})
+        except BaseException:
+            self.close()
+            raise
+
+    def resident_mapping(self):
+        self.require_current()
+        parts = [child.resident_mapping() for child in self._children]
+        if any(part is None for part in parts):
+            return None
+        return MappingProxyType({name: value for part in parts for name, value in part.items()})
+
+    def commitment(self, name):
+        self.require_current()
+        return self._owners[name].commitment(name)
+
+    def __getitem__(self, name):
+        self.require_current()
+        return self._owners[name][name]
+
+    def __iter__(self):
+        self.require_current()
+        return iter(self._owners)
+
+    def __len__(self):
+        self.require_current()
+        return len(self._owners)
+
+    def __contains__(self, name):
+        self.require_current()
+        return name in self._owners
+
+    def receipt(self):
+        receipts = [child.receipt() for child in self._children]
+        return dict(schema='tessera.hessian_reference_collection_consumption.v1',
+                    committed_units=len(self._owners),
+                    committed_units_served=sorted({name for item in receipts
+                                                   for name in item['committed_units_served']}),
+                    verified_units=sorted({name for item in receipts
+                                           for name in item['verified_units']}),
+                    references=[dict(path=reference['path'], sha256=reference['sha256'],
+                                     binding=copy.deepcopy(binding),
+                                     **item)
+                                for reference, binding, item in zip(
+                                    self._document['references'], self._bindings, receipts)],
+                    closed=self._closed)
+
+    def close(self):
+        self._closed = True
+        for child in self._children:
+            child.close()
+        if self._held is not None:
+            self._held.close()
+
+    def __enter__(self):
+        self.require_current()
+        return self
+
+    def __exit__(self, *_):
+        self.close()
+
+    def __del__(self):
+        self.close()
+
+
+REFERENCE_OWNER_TYPES = (ReferenceHessians, ReferenceHessianCollection)
