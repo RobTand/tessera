@@ -803,10 +803,15 @@ def scheduler_kwargs(args):
     ``--compiled`` refused with ``ValueError: max_num_seqs (256) exceeds
     available Mamba cache blocks (123)`` and measured no graph at all.  The
     limit is vLLM's own scheduler field, and 0 leaves the engine's default.
+    The separate batched-token cap is also forwarded only when explicitly
+    provided, so a memory-bounded census can match the successful serving
+    configuration without changing older commands.
     """
     kwargs = {}
     if args.max_num_seqs:
         kwargs["max_num_seqs"] = args.max_num_seqs
+    if args.max_num_batched_tokens:
+        kwargs["max_num_batched_tokens"] = args.max_num_batched_tokens
     return kwargs
 
 
@@ -952,6 +957,9 @@ def parse_args(argv=None, env=None):
                          "two-layer mixed dense census held 123 blocks at 1 GiB of KV, so "
                          "compiled capture refused at the default 256 rather than measuring "
                          "a graph.")
+    ap.add_argument("--max-num-batched-tokens", type=int, default=0, metavar="N",
+                    help="pass vLLM's scheduler token cap unchanged; 0 leaves its default. "
+                         "A bounded GLM census can reproduce the served batch/memory scope")
     ap.add_argument("--compiled", action="store_true",
                     help="load with enforce_eager=False (vLLM's default compiled forward + CUDA "
                          "graphs) instead of eager; the route records then carry M='*' because "
@@ -1037,6 +1045,8 @@ def parse_args(argv=None, env=None):
         ap.error("--kv-cache-memory-bytes must be >= 0 (0 leaves vLLM to size the cache)")
     if args.max_num_seqs < 0:
         ap.error("--max-num-seqs must be >= 0 (0 leaves vLLM's own default)")
+    if args.max_num_batched_tokens < 0:
+        ap.error("--max-num-batched-tokens must be >= 0 (0 leaves vLLM's own default)")
     # A JSON object or nothing, refused where it is typed: a malformed value
     # would otherwise surface as an engine error after the model started loading.
     if args.kernel_config is not None:

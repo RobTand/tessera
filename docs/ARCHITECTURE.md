@@ -61,8 +61,11 @@ Draft decoder coverage requires the family-owned native launch in each
 observed phase, including the folded BF16 MoE decoder. A fallback record
 cannot qualify the draft just because its route publishes that pair.
 The stock `--language-model-only` engine argument is forwarded only when
-explicitly requested and recorded as text-only scope in the receipt. A
-successful raw native route at an unlisted rung has cell agreement `null`:
+explicitly requested and recorded as text-only scope in the receipt. An
+explicit `--max-num-batched-tokens` census cap likewise reaches the stock scheduler
+and receipt only when supplied, permitting the bounded full-body serve's
+token/memory scope to be reproduced. A successful raw native route at an
+unlisted rung has cell agreement `null`:
 that observation can support review of a new cell, while the production
 admission gate continues to refuse until the cell and runtime pin are published.
 

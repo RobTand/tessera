@@ -123,6 +123,19 @@ def test_a_negative_concurrency_limit_is_a_usage_error(capsys):
     assert "must be >= 0" in capsys.readouterr().err
 
 
+def test_batched_token_cap_reaches_engine_with_served_memory_scope():
+    args = _args("--max-num-seqs", "1", "--max-num-batched-tokens", "1024")
+    assert _tool().scheduler_kwargs(args) == {
+        "max_num_seqs": 1, "max_num_batched_tokens": 1024}
+
+
+def test_negative_batched_token_cap_refuses_before_model_load(capsys):
+    with pytest.raises(SystemExit) as excinfo:
+        _args("--max-num-batched-tokens", "-1")
+    assert excinfo.value.code == 2
+    assert "--max-num-batched-tokens must be >= 0" in capsys.readouterr().err
+
+
 def _tessera(decode_decoder="native_window_gemm", prefill_decoder="native_window_gemm"):
     return {"decode": {"m0": {"decoder": decode_decoder}, "m1": {"decoder": decode_decoder}},
             "prefill": {"m0": {"decoder": prefill_decoder},
