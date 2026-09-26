@@ -38,6 +38,31 @@ names rather than the body's already mapped names; body lookups continue to
 use the target's view. An MTP lookup is admitted only when exactly one view
 owns its derived draft module name.
 
+The route census may additionally request the stock one-token GLM MTP
+speculative mode (tessera#631). It partitions the checkpoint's original
+declarations by its `num_hidden_layers`/`num_nextn_predict_layers` range:
+the existing target census still reads the body through `LLM.apply_model`,
+while a bounded `LLM.collective_rpc` asks each worker's own
+`get_draft_model()` for its mapper, route records, lane refusals and rank
+identity. It returns no model object. Draft route attributes are cleared before
+each actual draft `nn.Module` forward through census-only pre/post hooks, so
+a warmup or earlier call cannot pose as the observed dispatch. The hook keeps
+the first and latest scalar route records per observed regime and a call count;
+it retains no tensors and is removed after the arm, including on generation
+failure. The single-request arm may prove both draft batch and decode if it
+actually reports M>1 and M1; an optional bounded arm with one or more prompts
+can probe batch separately. Requested prompt count is not an observed M, and
+target prefill is not draft prefill. The draft block in the additive receipt
+preserves original source
+targets beside actual `.mtp_block` module names and checks every rank. No
+speculative serve has yet run, so this is observation capability rather than
+an R1024 cell or a model-fit claim.
+The stock `--language-model-only` engine argument is forwarded only when
+explicitly requested and recorded as text-only scope in the receipt. A
+successful raw native route at an unlisted rung has cell agreement `null`:
+that observation can support review of a new cell, while the production
+admission gate continues to refuse until the cell and runtime pin are published.
+
 Re-stamped 2026-09-26 for independent cached-unit cohort composition
 (tessera#630). `tessera.cached_units.v3` binds original v1/v2 child manifests
 by canonical absolute path and file SHA-256. Their complete, disjoint unit

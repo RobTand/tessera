@@ -113,6 +113,7 @@ import collections
 import json
 import os
 import platform
+import re
 import subprocess
 import sys
 import time
@@ -240,6 +241,324 @@ def declared_in_module_space(model, targets):
         mapped = unstacked.apply_list([target])
         out[target] = mapped[0] if mapped else None
     return out
+
+
+def draft_declared_in_module_space(model, targets):
+    """Resolve original GLM MTP declarations against the actual draft tree.
+
+    The stock draft's ``hf_to_vllm_mapper`` strips the multimodal source
+    prefix, and its model class inserts ``mtp_block`` below its speculative
+    layer. Reuse Tessera's one model-owned namespace rule, then require each
+    selected target to exist in this draft's ``named_modules``. Body targets
+    are deliberately absent from this separate model, not missing routes.
+    """
+    cls = type(model)
+    if (cls.__module__ != "vllm.models.glm5next.nvidia.mtp"
+            or cls.__name__ != "Glm5NextMTP"):
+        raise ValueError("draft census requires the stock Glm5NextMTP model class")
+    from tessera.serving.weights_mapper import glm5next_mtp_module_prefix
+
+    mapped = declared_in_module_space(model, targets)
+    if mapped is None:
+        raise ValueError("Glm5NextMTP exposes no source-name mapper")
+    config = model.config
+    modules = {name for name, _ in model.named_modules()}
+    out = {}
+    for source, base in mapped.items():
+        if base is None:
+            raise ValueError(f"Glm5NextMTP mapper drops declared target {source!r}")
+        actual = glm5next_mtp_module_prefix(
+            base, architecture="Glm5NextMTPModel",
+            first_layer=getattr(config, "num_hidden_layers", None),
+            count=getattr(config, "num_nextn_predict_layers", None))
+        if actual is None:
+            continue
+        if actual not in modules:
+            raise ValueError(
+                f"Glm5NextMTP has no module {actual!r} for checkpoint target {source!r}")
+        if actual in out.values():
+            raise ValueError(
+                f"two checkpoint targets map to the same Glm5NextMTP module {actual!r}")
+        out[source] = actual
+    if not out:
+        raise ValueError("Glm5NextMTP has no declared Tessera target in its speculative layer range")
+    return out
+
+
+def draft_worker_inventory(worker, targets):
+    """Return small draft observations from one worker, never its model object.
+
+    ``LLM.apply_model`` exposes only the target model. The stock worker's
+    ``get_draft_model`` is the separate speculative owner, and
+    ``LLM.collective_rpc`` calls this function on every worker.
+    """
+    draft = worker.get_draft_model()
+    if draft is None:
+        raise ValueError("the worker has no draft model to census")
+    return {"name_mapping": draft_declared_in_module_space(draft, targets),
+            "records": census(draft), "identity": rank_identity(draft),
+            "lane_refusals": lane_refusals(draft)}
+
+
+def clear_draft_route_records(worker):
+    """Remove only stale route telemetry before a measured draft forward.
+
+    vLLM may run a draft during warmup. A latest-record census without a fresh
+    boundary could quote that warmup after a request which never drafted.
+    Route attributes are observations only; this touches no model parameters
+    or serving state. The next ``emit_route`` must recreate every field.
+    """
+    draft = worker.get_draft_model()
+    if draft is None:
+        raise ValueError("the worker has no draft model to census")
+    from tessera.serving.telemetry import ATTR_PREFIX, ROUTE_FIELDS
+    cleared = 0
+    for _, module in draft.named_modules():
+        fields = vars(module)
+        for field in ROUTE_FIELDS:
+            if fields.pop(ATTR_PREFIX + field, None) is not None:
+                cleared += 1
+    return cleared
+
+
+def arm_draft_forward_observer(worker, targets, policy_prefixes):
+    """Snapshot scalar draft routes after each actual eager model forward.
+
+    Stock ``SpecDecodeBaseProposer.propose`` invokes ``self.model(...)`` after
+    target prefill. A latest-record read after generation can miss its M>1
+    first call when a later M1 call overwrites telemetry. Hooks live only for
+    this census arm; neither model outputs nor tensors are retained.
+    """
+    draft = worker.get_draft_model()
+    if draft is None:
+        raise ValueError("the worker has no draft model to observe")
+    if hasattr(worker, "_tessera_draft_forward_observer"):
+        raise ValueError("a Tessera draft forward observer is already armed")
+    mapping = draft_declared_in_module_space(draft, targets)
+    from tessera.serving.scheme import parse_eager_shape, regime_of_m
+
+    clear_draft_route_records(worker)
+    state = {"draft": draft, "mapping": mapping, "calls": 0,
+             "by_regime": {}, "unclassified_calls": 0, "mixed_shape_calls": 0}
+
+    def before(_module, _inputs):
+        clear_draft_route_records(worker)
+
+    def after(module, _inputs, _output):
+        state["calls"] += 1
+        records = {name: record for name, record in census(module).items()
+                   if str(record.get("policy", "")).startswith(policy_prefixes)}
+        try:
+            ms = {parse_eager_shape(record.get("shape"))[0]
+                  for record in records.values()}
+        except ValueError:
+            state["unclassified_calls"] += 1
+            return
+        if not ms:
+            state["unclassified_calls"] += 1
+            return
+        if len(ms) != 1:
+            state["mixed_shape_calls"] += 1
+            return
+        m = next(iter(ms))
+        regime = regime_of_m(m)
+        observed = state["by_regime"].setdefault(
+            regime, {"calls": 0, "first": records, "first_m": m})
+        observed["calls"] += 1
+        observed["latest"] = records
+        observed["latest_m"] = m
+
+    pre = draft.register_forward_pre_hook(before)
+    try:
+        post = draft.register_forward_hook(after)
+    except BaseException:
+        pre.remove()
+        raise
+    state["handles"] = (pre, post)
+    worker._tessera_draft_forward_observer = state
+    return {"name_mapping": mapping, "armed": True}
+
+
+def disarm_draft_forward_observer(worker):
+    """Remove both hooks even if reading the compact observation fails."""
+    state = getattr(worker, "_tessera_draft_forward_observer", None)
+    if state is None:
+        raise ValueError("no Tessera draft forward observer is armed")
+    try:
+        return {"name_mapping": state["mapping"],
+                "identity": rank_identity(state["draft"]),
+                "lane_refusals": lane_refusals(state["draft"]),
+                "calls": state["calls"], "by_regime": state["by_regime"],
+                "unclassified_calls": state["unclassified_calls"],
+                "mixed_shape_calls": state["mixed_shape_calls"]}
+    finally:
+        for handle in state["handles"]:
+            handle.remove()
+        del worker._tessera_draft_forward_observer
+
+
+def draft_observations_from_forward(rows, regime, *, snapshot):
+    """Convert per-call scalar snapshots to the existing draft route validator."""
+    return [{"identity": row["identity"], "name_mapping": row["name_mapping"],
+             "lane_refusals": row["lane_refusals"],
+             "records": row["by_regime"].get(regime, {}).get(snapshot, {})}
+            for row in rows]
+
+
+def draft_forward_observer_problems(rows, *, arm):
+    problems = []
+    for index, row in enumerate(rows):
+        for field in ("unclassified_calls", "mixed_shape_calls"):
+            if row[field]:
+                problems.append(f"draft {arm} response {index}: {row[field]} {field}")
+        if not row["calls"]:
+            problems.append(f"draft {arm} response {index}: no model forward hook fired")
+    return problems
+
+
+def partition_glm_mtp_targets(config, declared):
+    """Split original checkpoint declarations by the GLM model's spec range."""
+    if (config.get("model_type") != "glm5_next"
+            or config.get("architectures") != ["Glm5NextForConditionalGeneration"]):
+        raise ValueError("draft census requires the GLM5Next multimodal checkpoint architecture")
+    text = config.get("text_config") or {}
+    start = text.get("num_hidden_layers")
+    count = text.get("num_nextn_predict_layers")
+    if (type(start) is not int or start < 0 or type(count) is not int or count <= 0):
+        raise ValueError("GLM draft census needs a positive explicit MTP layer range")
+    pattern = re.compile(r"^model\.language_model\.layers\.(\d+)\.")
+    body, draft = {}, {}
+    for target, value in declared.items():
+        match = pattern.match(target)
+        if match is not None and start <= int(match.group(1)) < start + count:
+            draft[target] = value
+        else:
+            body[target] = value
+    if not body or not draft:
+        raise ValueError("GLM draft census needs both body and MTP Tessera targets")
+    return body, draft
+
+
+def parse_mtp_speculative_config(raw, *, world):
+    """Only the pinned stock one-step GLM MTP path this census can observe."""
+    if not isinstance(raw, str):
+        raise ValueError("--speculative-config needs an explicit JSON object")
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"--speculative-config is not JSON: {exc}") from exc
+    allowed = {"method", "num_speculative_tokens", "draft_tensor_parallel_size",
+               "attention_backend", "kv_cache_dtype", "moe_backend"}
+    if not isinstance(value, dict) or set(value) - allowed:
+        raise ValueError("--speculative-config must use only the supported GLM MTP fields")
+    if value.get("method") != "mtp" or type(value.get("num_speculative_tokens")) is not int \
+            or value["num_speculative_tokens"] != 1:
+        raise ValueError("draft census requires method mtp and exactly one speculative token")
+    if type(world) is not int or world < 1:
+        raise ValueError("draft census needs a positive tensor-parallel world")
+    draft_world = value.get("draft_tensor_parallel_size", 1)
+    if type(draft_world) is not int or draft_world != world:
+        raise ValueError("draft tensor-parallel size must equal the censused target world")
+    for name in ("attention_backend", "kv_cache_dtype", "moe_backend"):
+        if name in value and (not isinstance(value[name], str) or not value[name]):
+            raise ValueError(f"--speculative-config {name} must be a nonempty string")
+    return value
+
+
+def validate_draft_route_records(observations_by_phase, *, source_to_module,
+                                 draft_declared, target_identities, phase_regimes,
+                                 mode, policy_prefixes, contract_for, expected,
+                                 symbol_base, shape_problem):
+    """Validate compact draft RPC observations without an engine or device.
+
+    The output keeps original source ownership and actual draft module names
+    separate. An RPC list is not a world merely because its rank *set* matches:
+    cardinality, exact integer identities, and each rank's target identity all
+    have to agree before any route is credited.
+    """
+    world = len(target_identities)
+    families = {source_to_module[source]: family
+                for source, family in draft_declared.items()}
+    rank_records = {rank: {} for rank in range(world)}
+    rank_refusals = {rank: {} for rank in range(world)}
+    rank_identity = {}
+    phase_records, phase_owners, problems = {}, {}, []
+    for phase, observations in observations_by_phase.items():
+        phase_records[phase], phase_owners[phase] = {}, {}
+        if (not isinstance(observations, list) or len(observations) != world
+                or any(not isinstance(row, dict)
+                       or not isinstance(row.get("identity"), dict)
+                       or type(row["identity"].get("rank")) is not int
+                       or type(row["identity"].get("world_size")) is not int
+                       for row in observations)):
+            problems.append(f"draft {phase}: incomplete, duplicate or invalid rank identities")
+            continue
+        ranks = [row["identity"]["rank"] for row in observations]
+        if sorted(ranks) != list(range(world)):
+            problems.append(f"draft {phase}: incomplete or duplicate rank identities {ranks!r}")
+            continue
+        by_rank = {row["identity"]["rank"]: row for row in observations}
+        for rank in range(world):
+            row = by_rank[rank]
+            tag = f"draft rank {rank} {phase}"
+            identity = row["identity"]
+            if identity["world_size"] != world:
+                problems.append(f"{tag}: world size differs from target TP{world}")
+            if rank in rank_identity and identity != rank_identity[rank]:
+                problems.append(f"{tag}: worker identity changed between draft phases")
+            rank_identity[rank] = identity
+            for field in ("node", "device", "platform_token", "runtime_image"):
+                if identity.get(field) != target_identities[rank].get(field):
+                    problems.append(f"{tag}: {field} differs from the target worker")
+            if row.get("name_mapping") != source_to_module:
+                problems.append(f"{tag}: source-to-module mapping differs across ranks")
+            refusals = row.get("lane_refusals")
+            if not isinstance(refusals, dict):
+                problems.append(f"{tag}: lane refusal inventory is missing or invalid")
+                refusals = {}
+            rank_refusals[rank][phase] = refusals
+            for name, reason in sorted(refusals.items()):
+                problems.append(f"{tag}: lane refused {name}: {reason}")
+            raw = row.get("records")
+            if not isinstance(raw, dict):
+                problems.append(f"{tag}: draft route inventory is missing or invalid")
+                raw = {}
+            tess = {name: record for name, record in raw.items()
+                    if str(record.get("policy", "")).startswith(policy_prefixes)}
+            rank_records[rank][phase] = tess
+            if not tess:
+                problems.append(f"{tag}: no MTP module reports a fresh Tessera route")
+            owner, join_problems = join_records_to_declared(tess, families)
+            problems.extend(f"{tag}: {message}" for message in join_problems)
+            for name, record in tess.items():
+                source_module = owner.get(name)
+                family = families.get(source_module)
+                if family is None:
+                    problems.append(f"{tag}: {name} has no original checkpoint declaration")
+                    continue
+                if record.get("state") != "served":
+                    problems.append(f"{tag}: {name} state={record.get('state')!r}")
+                if record.get("contract") != contract_for[family]:
+                    problems.append(f"{tag}: {name} activation contract disagrees")
+                if record.get("policy") != f"{family}:{mode}":
+                    problems.append(f"{tag}: {name} residency/family policy disagrees")
+                problem = shape_problem(record.get("shape"), phase_regimes[phase])
+                if problem is not None:
+                    problems.append(f"{tag}: {name}: {problem}")
+                wanted = expected(family, phase_regimes[phase], record.get("kind"))
+                symbol = (symbol_base(record.get("symbol", ""))
+                          if record.get("kind") == "moe" else record.get("symbol"))
+                if (symbol, record.get("decoder")) not in wanted:
+                    problems.append(f"{tag}: {name} did not take its declared launch pair")
+            missing = sorted(set(families) - set(owner.values()))
+            if missing:
+                problems.append(f"{tag}: {len(missing)} MTP declarations report no fresh route")
+            for name, record in tess.items():
+                qualified = name if world == 1 else f"rank{rank}/{name}"
+                phase_records[phase][qualified] = record
+                if name in owner:
+                    phase_owners[phase][qualified] = owner[name]
+    return phase_records, phase_owners, rank_records, rank_identity, problems, rank_refusals
 
 
 def join_records_to_declared(records, declared):
@@ -510,6 +829,11 @@ def engine_backend_kwargs(args):
     return kwargs
 
 
+def engine_scope_kwargs(args):
+    """Record only explicit stock engine scope changes; keep old defaults."""
+    return {"language_model_only": True} if args.language_model_only else {}
+
+
 def required_decoder_coverage(tessera_by_phase, required):
     """Did the decoder this arm exists to measure take every module?
 
@@ -663,6 +987,16 @@ def parse_args(argv=None, env=None):
                          "'{\"enable_flashinfer_autotune\": false}'; unset leaves vLLM's default")
     ap.add_argument("--trust-remote-code", action="store_true",
                     help="pass trust_remote_code=True to the engine")
+    ap.add_argument("--language-model-only", action="store_true",
+                    help="pass stock language_model_only=True; receipt records text-only scope")
+    ap.add_argument("--speculative-config", default=None, metavar="JSON",
+                    help="explicit one-step GLM MTP speculative_config JSON; requires --draft-routes")
+    ap.add_argument("--draft-routes", action="store_true",
+                    help="also observe the separate stock Glm5NextMTP draft on every worker")
+    ap.add_argument("--draft-batch-prompts", type=int, default=0, metavar="N",
+                    help="drive an additional N-request, two-output-token draft arm; 0 uses "
+                         "only the normal decode arm's per-forward snapshots. Only actual "
+                         "observed draft M>1 can attest batch")
     add_topology_arguments(ap)
     ap.add_argument("--tessera-commit", default=None,
                     help="the host's `git rev-parse HEAD` for the Tessera checkout under test; "
@@ -673,6 +1007,20 @@ def parse_args(argv=None, env=None):
     # topology mistake found after two 85-160 s loads is one found at the cost
     # of the run.
     validate_topology_arguments(ap, args)
+    if args.draft_routes:
+        try:
+            args.speculative_config = parse_mtp_speculative_config(
+                args.speculative_config, world=args.tensor_parallel_size)
+        except ValueError as exc:
+            ap.error(str(exc))
+        if args.compiled:
+            ap.error("GLM MTP draft census requires eager execution")
+        if args.draft_batch_prompts < 0:
+            ap.error("--draft-batch-prompts must be nonnegative")
+        if args.max_num_seqs and args.draft_batch_prompts > args.max_num_seqs:
+            ap.error("--draft-batch-prompts exceeds --max-num-seqs")
+    elif args.speculative_config is not None or args.draft_batch_prompts:
+        ap.error("--speculative-config and --draft-batch-prompts require --draft-routes")
     # A byte count, refused where it is typed: a negative budget would reach the
     # engine as a nonsense cap, and a census is two 85-160 s model loads.
     if args.kv_cache_memory_bytes < 0:
@@ -873,6 +1221,13 @@ def main() -> int:
     # borrowing one member's cell.
     declared_rungs = {t: declared_rung(g["scheme"])
                       for g in tessera_groups.values() for t in g.get("targets", [])}
+    draft_declared = {}
+    draft_rungs = {}
+    if args.draft_routes:
+        body_declared, draft_declared = partition_glm_mtp_targets(cfg, declared)
+        draft_rungs = {name: declared_rungs[name] for name in draft_declared}
+        declared_rungs = {name: declared_rungs[name] for name in body_declared}
+        declared = body_declared
 
     problems = []
     t0 = time.time()
@@ -882,8 +1237,9 @@ def main() -> int:
     # group existed builds the same engine it always did.
     llm = LLM(model=args.model, enforce_eager=not args.compiled, max_model_len=args.max_model_len,
               seed=0, **memory_budget_kwargs(args), **scheduler_kwargs(args),
-              **engine_backend_kwargs(args),
-              **topology_kwargs(args))
+              **engine_backend_kwargs(args), **engine_scope_kwargs(args),
+              **topology_kwargs(args),
+              **({"speculative_config": args.speculative_config} if args.draft_routes else {}))
 
     # CHECKPOINT NAMES ARE NOT MODULE NAMES, and this join is made in module
     # space.  ``config_groups`` targets are written in the CHECKPOINT's
@@ -909,11 +1265,21 @@ def main() -> int:
                 f"e.g. {dropped[:3]}; the runtime builds no module for them")
         declared = {name_map[t] or t: f for t, f in declared.items()}
         declared_rungs = {name_map[t] or t: r for t, r in declared_rungs.items()}
+    draft_names = None
+    if args.draft_routes:
+        # ``apply_model`` calls WorkerBase.apply_model -> get_model(): target
+        # only. The worker callable returns names/records, never an nn.Module.
+        draft_start = llm.collective_rpc(
+            draft_worker_inventory, args=(list(draft_declared),))
+        draft_names = [row["name_mapping"] for row in draft_start]
+        if any(names != draft_names[0] for names in draft_names[1:]):
+            problems.append("MTP draft name mappings differ across ranks")
     tok = llm.get_tokenizer()
     text = ("The receipt names the route the serve took, for every module, "
             "in both the prefill and the decode shape. ") * 20
     ids = tok.encode(text, add_special_tokens=False)[: args.prompt_tokens]
     prompt = {"prompt_token_ids": ids}
+    prefixes = tuple(f"{family}:" for family in TESSERA_FAMILIES)
 
     # EVERY RANK, NOT THE HEAD.  ``apply_model`` returns one result per worker
     # and this tool took ``[0]``, so a census could only ever describe rank 0 --
@@ -924,10 +1290,49 @@ def main() -> int:
     # One forward over M = len(ids) rows, sample one token, stop.
     outs = llm.generate([prompt], SamplingParams(max_tokens=1, temperature=0.0))
     phases_by_rank[batch_phase] = llm.apply_model(census)
-    # Decode steps follow; the last forward is one row wide.
-    outs = llm.generate([prompt], SamplingParams(max_tokens=8, temperature=0.0))
+    # The stock proposer calls its nn.Module for each draft forward. Read each
+    # call at its boundary: a later M1 may overwrite a real prompt-length M>1
+    # draft record before LLM.generate returns. The hooks are census-only and
+    # removed even when generation fails.
+    draft_observer_arms = {}
+    if args.draft_routes:
+        llm.collective_rpc(arm_draft_forward_observer,
+                           args=(list(draft_declared), prefixes))
+    try:
+        outs = llm.generate([prompt], SamplingParams(max_tokens=8, temperature=0.0))
+    finally:
+        if args.draft_routes:
+            draft_observer_arms["decode_arm"] = llm.collective_rpc(
+                disarm_draft_forward_observer)
     phases_by_rank[decode_phase] = llm.apply_model(census)
     generated = outs[0].outputs[0].text
+    draft_by_phase = {}
+    draft_phase_sources = {}
+    if args.draft_routes:
+        observed = draft_observer_arms["decode_arm"]
+        problems.extend(draft_forward_observer_problems(observed, arm="decode_arm"))
+        draft_by_phase[decode_phase] = draft_observations_from_forward(
+            observed, "decode", snapshot="latest")
+        draft_phase_sources[decode_phase] = "decode_arm/latest_decode"
+        if any("batch" in row["by_regime"] for row in observed):
+            draft_by_phase[batch_phase] = draft_observations_from_forward(
+                observed, "batch", snapshot="first")
+            draft_phase_sources[batch_phase] = "decode_arm/first_batch"
+        if args.draft_batch_prompts:
+            llm.collective_rpc(arm_draft_forward_observer,
+                               args=(list(draft_declared), prefixes))
+            try:
+                llm.generate([prompt] * args.draft_batch_prompts,
+                             SamplingParams(max_tokens=2, temperature=0.0))
+            finally:
+                draft_observer_arms["batch_arm"] = llm.collective_rpc(
+                    disarm_draft_forward_observer)
+            batch_observed = draft_observer_arms["batch_arm"]
+            problems.extend(draft_forward_observer_problems(
+                batch_observed, arm="batch_arm"))
+            draft_by_phase[batch_phase] = draft_observations_from_forward(
+                batch_observed, "batch", snapshot="first")
+            draft_phase_sources[batch_phase] = "batch_arm/first_batch"
     # Load facts, so once and after the forwards: which modules' lane refused
     # to prepare, and why.  Same for every phase by construction.
     refusals_by_rank = llm.apply_model(lane_refusals)
@@ -959,7 +1364,6 @@ def main() -> int:
     refusals = refusals_by_rank[0]
 
     mode = os.environ.get(TESSERA_MODE_ENV, "")
-    prefixes = tuple(f"{family}:" for family in TESSERA_FAMILIES)
     # THE PER-MODULE CHECKS RUN ON EVERY RANK.  Each rank serves its own shard
     # of every module and writes its own route record, so a check run on the
     # head alone would pass a world in which rank 1 fell back on every unit.
@@ -1102,6 +1506,62 @@ def main() -> int:
         families_by_route=PAYLOAD_FAMILY_BY_ROUTE,
         runtime_image=args.runtime_image, execution_mode=args.execution_mode)
     problems.extend(agreement_problems)
+    draft_receipt = None
+    if args.draft_routes:
+        from tessera.serving.scheme import eager_regime_problem
+
+        source_to_module = draft_names[0]
+        draft_families = {source_to_module[name]: family
+                          for name, family in draft_declared.items()}
+        draft_module_rungs = {source_to_module[name]: draft_rungs[name]
+                              for name in draft_declared}
+        (draft_phase_records, draft_phase_owners, draft_rank_records,
+         draft_rank_identity, draft_problems, draft_rank_refusals) = (
+            validate_draft_route_records(
+                draft_by_phase, source_to_module=source_to_module,
+                draft_declared=draft_declared, target_identities=identities,
+                phase_regimes=CENSUS_PHASE_REGIMES, mode=mode,
+                policy_prefixes=prefixes, contract_for=contract_for,
+                expected=_expected, symbol_base=moe_route.census_symbol_base,
+                shape_problem=eager_regime_problem))
+        problems.extend(draft_problems)
+        draft_agreement, draft_agreement_problems = all_structure_agreement(
+            draft_phase_records, cells=load_serving_contract()["lane_eligibility"]["cells"],
+            phase_regimes=CENSUS_PHASE_REGIMES, platform=served_platform,
+            declared_rungs=draft_module_rungs, record_owners=draft_phase_owners,
+            families_by_route=PAYLOAD_FAMILY_BY_ROUTE,
+            runtime_image=args.runtime_image, execution_mode=args.execution_mode)
+        problems.extend(f"draft: {message}" for message in draft_agreement_problems)
+        required_draft_decoder = (
+            [moe_route.native_decoder(TESSERA_FP8)]
+            if set(draft_families.values()) == {TESSERA_FP8} else [])
+        draft_decoder_coverage, draft_decoder_problems = required_decoder_coverage(
+            draft_phase_records, required_draft_decoder)
+        problems.extend(f"draft: {message}" for message in draft_decoder_problems)
+        draft_receipt = {
+            "schema": "tessera.serving.draft_route_census.v1",
+            "speculative_config": args.speculative_config,
+            "source_declarations": dict(draft_declared),
+            "source_to_module": source_to_module,
+            "rungs_by_source": draft_rungs,
+            "requested_batch_prompts": args.draft_batch_prompts,
+            "measured_phases": list(draft_by_phase),
+            "phase_sources": draft_phase_sources,
+            "batch_measured": (batch_phase in draft_by_phase
+                               and all(row["records"] for row in draft_by_phase[batch_phase])),
+            "forward_observer": {
+                "mechanism": "eager nn.Module forward pre/post hooks",
+                "snapshot": "first batch and latest decode actual draft calls",
+                "arms": draft_observer_arms,
+            },
+            "records": draft_rank_records[0],
+            "ranks": [{"identity": draft_rank_identity.get(rank),
+                       "records": draft_rank_records[rank],
+                       "lane_refusals": draft_rank_refusals[rank]}
+                      for rank in range(world_size)],
+            "decoder_coverage": draft_decoder_coverage,
+            "cell_launch_agreement": draft_agreement,
+        }
     # The controller holds the checked artifact immutable; verify that seal
     # again after both forwards, before publishing any served receipt.
     checkpoint_sidecar_hashes(args.model, expected=sidecars)
@@ -1125,6 +1585,7 @@ def main() -> int:
         # attention backend or KV cache dtype serves only under it, so the
         # receipt carries them beside the budget rather than in a shell history.
         "engine_backends": engine_backend_kwargs(args),
+        **({"engine_scope": engine_scope_kwargs(args)} if args.language_model_only else {}),
         # WHERE THAT SCOPE CAME FROM.  The image above is a join key of every
         # cell this receipt resolves; this says which mechanism established it
         # and carries the launcher's record verbatim, so a reader can redo the
@@ -1172,6 +1633,8 @@ def main() -> int:
         "problems": problems,
         "verdict": "served" if not problems else "REFUSED",
     }
+    if draft_receipt is not None:
+        receipt["draft"] = draft_receipt
     # THE WORLD, WRITTEN ONLY WHERE THERE IS ONE.  At a single rank the joined
     # record IS the receipt: a ``ranks`` list would restate it once and a
     # ``topology`` block would state the engine's own default, and both would
