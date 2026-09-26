@@ -103,6 +103,7 @@ def test_partition_uses_original_glm_spec_layer_range_without_renaming():
 
 
 def test_draft_census_clear_discards_stale_observations_only(monkeypatch):
+    pytest.importorskip("torch")  # telemetry imports torch; the pure CI has no torch
     draft = Glm5NextMTP()
     module = SimpleNamespace(_tessera_route_state="served", packed_weight="keep")
     draft.named_modules = lambda: iter([("model.layers.45.mtp_block.mlp.experts", module)])
@@ -189,7 +190,7 @@ def test_text_only_scope_is_explicit_and_does_not_change_default_engine_kwargs()
 
 
 def _forward_observer_fixture(monkeypatch):
-    import torch
+    torch = pytest.importorskip("torch")
 
     class Draft(torch.nn.Module):
         def __init__(self):
