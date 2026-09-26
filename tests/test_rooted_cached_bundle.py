@@ -113,7 +113,8 @@ def test_root_and_wire_symlink_changes_refuse(tmp_path):
         bundle.read('expert')
 
 
-def test_actual_mixed_producers_export_complete_dense_and_expert_roster(tmp_path, monkeypatch):
+@pytest.mark.parametrize('composed', [False, True])
+def test_actual_mixed_producers_export_complete_dense_and_expert_roster(tmp_path, monkeypatch, composed):
     """Real historical factories and exporter consume both roots, never encode."""
     import torch
     from safetensors.torch import save_file
@@ -131,7 +132,7 @@ def test_actual_mixed_producers_export_complete_dense_and_expert_roster(tmp_path
     producers, packages = {}, {}
     for key in roots:
         roots[key].mkdir()
-        parent = tmp_path / ('producer-' + key); parent.mkdir()
+        parent = tmp_path / ('producer-' + key + ('-composed' if composed else '')); parent.mkdir()
         package, seal = _distinct_producer(parent)
         producers[key] = load_historical_producer(package, seal)
         packages[seal] = {'path': str(package), 'sha256': seal}
@@ -180,6 +181,24 @@ def test_actual_mixed_producers_export_complete_dense_and_expert_roster(tmp_path
         'wire_roots': {key: str(path) for key, path in roots.items()}, 'unit_roots': owners,
         'producer_packages': packages, 'reuse_authority': authority, 'encoder_adoptions': adoptions,
         'served_activation_policy': None, 'served_activations': {}}
+    if composed:
+        # The expert cohort was independently priced and never had an old
+        # checkpoint-encoder reference. Keep each original receipt unchanged.
+        body = {**manifest, 'units': {k: v for k, v in records.items() if owners[k] == 'old'},
+                'wire_roots': {'old': str(roots['old'])},
+                'unit_roots': {k: v for k, v in owners.items() if v == 'old'},
+                'producer_packages': {old: packages[old]},
+                'reuse_authority': {**authority, 'encoder_source_proofs': []},
+                'encoder_adoptions': {}}
+        mtp = {'schema': 'tessera.cached_units.v1', 'source': manifest['source'],
+               'units': {k: v for k, v in records.items() if owners[k] == 'added'}}
+        body_bound = bound('body-child', body)
+        mtp_path = roots['added'] / 'mtp-child.json'
+        mtp_path.write_text(json.dumps(mtp))
+        mtp_bound = {'path': str(mtp_path), 'sha256': hashlib.sha256(mtp_path.read_bytes()).hexdigest()}
+        manifest = {'schema': 'tessera.cached_units.v3', 'source': manifest['source'],
+                    'children': [{'manifest': body_bound, 'producer_package': None},
+                                 {'manifest': mtp_bound, 'producer_package': packages[new]}]}
     manifest_path = tmp_path / 'manifest.json'; manifest_path.write_text(json.dumps(manifest))
     plan_path = tmp_path / 'plan.json'; plan_path.write_text(json.dumps(choices))
     before = {p: (p.stat().st_ino, p.stat().st_ctime_ns) for root in roots.values() for p in root.iterdir()}
@@ -202,8 +221,13 @@ def test_actual_mixed_producers_export_complete_dense_and_expert_roster(tmp_path
     assert receipt['cached_units']['source_digest_receipt']['cached_shards'] == 0
     assert receipt['cached_units']['planned_units'] == 6
     assert receipt['cached_units']['producer_packages'] == packages
-    assert receipt['cached_units']['served_activation_policy'] == manifest['served_activation_policy']
-    assert receipt['cached_units']['served_activations'] == manifest['served_activations']
+    assert receipt['cached_units']['served_activations'] == {}
+    if composed:
+        assert [child['schema'] for child in receipt['cached_units']['cohorts']] == [
+            'tessera.cached_units.v2', 'tessera.cached_units.v1']
+        assert 'served_activation_policy' not in receipt['cached_units']
+    else:
+        assert receipt['cached_units']['served_activation_policy'] == manifest['served_activation_policy']
 
 
 def test_added_a4_cannot_omit_served_activation_policy(tmp_path):

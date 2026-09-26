@@ -2862,8 +2862,11 @@ def main():
                                     **({"source_digest_receipt": source_digest_cache.receipt()}
                                        if source_digest_cache is not None else {}),
                                     **({"producer_packages": cached_units.producer_packages,
-                                        "reuse_authority": cached_units.reuse_authority,
-                                        "served_activation_policy": cached_units.served_activation_policy,
+                                        **({"cohorts": cached_units.child_manifests}
+                                           if cached_units.child_manifests else {}),
+                                        **({"reuse_authority": cached_units.reuse_authority,
+                                            "served_activation_policy": cached_units.served_activation_policy}
+                                           if not cached_units.child_manifests else {}),
                                         "served_activations": cached_units.served_activations}
                                        if cached_units.producer_packages else {}),
                                     "intake": None if intake is None else intake.record()}}

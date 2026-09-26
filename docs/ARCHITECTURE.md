@@ -1,5 +1,16 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-09-26 for independent cached-unit cohort composition
+(tessera#630). `tessera.cached_units.v3` binds original v1/v2 child manifests
+by canonical absolute path and file SHA-256. Their complete, disjoint unit
+rosters must equal the selected producer plan and each child must identify the
+same whole checkpoint. A v1 child binds its one historical encoder package by
+original source seal; a v2 child retains its own producer roster, migration
+adoptions, catalog authority and served-activation policy. The exporter uses
+each child's original files and identity factory, and records each child
+binding and policy separately. No wire bytes, encoder recipe or serving lane
+changes.
+
 Re-stamped 2026-09-26 for canonical Hessian reference collections
 (tessera#625). `ActivationSource.from_capture` accepts a
 `*.collection.references.json` document through the existing `--hessian`
@@ -5881,6 +5892,25 @@ the declared one; and the publish job's tag check reads the same table
 (§5.4).
 
 ### Mixed historical cached-unit producers
+
+`tessera.cached_units.v3` is a closed composition of independently completed
+v1/v2 cached-unit cohorts. It has exact fields `schema`, `source`, and
+`children`; each child descriptor has `manifest: {path, sha256}` and
+`producer_package: null | {path, sha256}`. The child manifest path is absolute,
+canonical and byte bound; duplicate paths, symlinks and recursive children
+refuse. Each child passes its unchanged v1/v2 bundle gate against the parent's
+whole checkpoint identity. Child unit sets are disjoint and their union is the
+entire current producer plan. For a v1 child, the package seal must equal the
+single original encoder source seal across all its records. For a v2 child,
+`producer_package` is null because its own manifest already binds all packages,
+catalog authority, encoder adoptions and served-activation policy. Conflicting
+bindings of one producer seal refuse. Export derives each source/H/recipe
+identity through that unit's original sealed producer, then verifies the
+original blob and current serving eligibility as before. Its manifest records
+each child binding, producer roster, authority and served policy separately;
+the parent does not claim one catalog migration or one served policy for all
+cohorts. This authorizes reuse of independent evidence, not a new recipe or
+runtime qualification.
 
 `tessera.cached_units.v2` closes a selected whole-source roster over explicit
 canonical wire roots and exact historical producer package hashes. Unit
