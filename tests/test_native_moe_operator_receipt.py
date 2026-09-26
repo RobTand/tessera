@@ -148,8 +148,11 @@ def _panel():
         member.update(shape=geometry, source_weight=_record(geometry), rendered_weight=_record(geometry),
             activation={"clip_enabled": False, "input_global_scale": None},
             wire={**record, "record": dict(record)})
-    route = {"kind": "moe", "policy": "TESSERA_FP8:resident", "decoder": "torch_materialize_stock",
-             "contract": "fp8_per_token_dynamic", "symbol": "vllm.fused_moe.modular_kernel:TEST_ONLY"}
+    # The FP8 stack's launch on this build: the compact window MoE adapter
+    # (the materialising pair left the plugin's table at contract v38).
+    route = {"kind": "moe", "policy": "TESSERA_FP8:resident", "decoder": "native_window_moe_compact",
+             "contract": "fp8_per_token_dynamic",
+             "symbol": "tessera.native_window_moe.NativeWindowMoE.__call__"}
     phases = {}
     routing = _routing()
     for phase, m in (("prefill", 8), ("decode", 1)):

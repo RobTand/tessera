@@ -138,13 +138,11 @@ def owner_launch_pairs(wire, *, world=1):
     choice is the runtime's, not a second route.
     """
     from tessera.serving.scheme import MOE_GEMM_SYMBOL, launch_pairs
+    # An FP8 stack's one table launch is the compact window MoE adapter.  The
+    # materialising pair this function used to drop above one rank (that
+    # builder was TP1-only) left the plugin's table at contract v38: the
+    # compact lane takes every FP8 stack this build constructs.
     pairs = set(launch_pairs(wire["family"], structure="routed_moe", include_experimental=True))
-    if wire["family"] == "TESSERA_FP8" and int(world) > 1:
-        # The production FP8 expert builder is TP1-only -- its `create_weights`
-        # compares this rank's partition width against a TP1 geometry -- so at a
-        # world above one its launch is not reachable and is not a pair a panel
-        # may declare.
-        pairs.discard((MOE_GEMM_SYMBOL, "torch_materialize_stock"))
     if owner_needs_selected(wire, world):
         for backend in ("torch", "triton"):
             pairs.add((MOE_GEMM_SYMBOL, selected_window_decoder(backend, wire["family"])))

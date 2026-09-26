@@ -27,9 +27,23 @@ RUNTIME = {"image": IMAGE, "execution_modes": ["eager", "compiled"],
 
 
 def _scoped_contract():
+    """The packaged table with every runtime rewritten to example digests.
+
+    The pin's cells land on ``IMAGE`` and every other published image on its
+    own example digest.  Since contract v38 one scope (dense E4M3 on sm_121)
+    has cells on two images, one resident-only, so collapsing every image
+    into one would build overlapping scopes the validator rightly refuses --
+    a failure these tests are not about.
+    """
     contract = runtime_contract.load_serving_contract()
+    pin = contract["versions"]["default_serve_image"]
+    others = sorted({cell["runtime"]["image"] for cell in contract["lane_eligibility"]["cells"]}
+                    - {pin})
+    mapped = {pin: IMAGE, **{image: "example/runtime@sha256:" + f"{i + 1:x}" * 64
+                             for i, image in enumerate(others)}}
+    assert IMAGE not in list(mapped.values())[1:] and OTHER_IMAGE not in mapped.values()
     for cell in contract["lane_eligibility"]["cells"]:
-        cell["runtime"] = copy.deepcopy(RUNTIME)
+        cell["runtime"] = {**copy.deepcopy(RUNTIME), "image": mapped[cell["runtime"]["image"]]}
     contract["versions"]["default_serve_image"] = IMAGE
     # Lane schema v10 (#456): a platform's ``serve_image`` must be an image one
     # of its OWN cells attests.  This helper rewrites every cell's runtime, so

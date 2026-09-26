@@ -165,14 +165,15 @@ def test_the_expert_route_publishes_one_launch_in_both_regimes():
 
     The window routes' two regimes admit different pairs because their
     dispatch branches on M.  This one does not branch on M -- a stack takes
-    the compact native window lane every forward, or (FP8 only, on a build
-    without the compact reader) is materialised once at load -- so a regime
-    split here would be a distinction the code does not make.
+    the compact native window lane every forward -- so a regime split here
+    would be a distinction the code does not make.
 
     tessera#609: the expectation is what the build can launch, experimental
-    pairs included (the rule ``scheme.EXPERIMENTAL_LAUNCHES`` states), so the
-    compact lane's pair is in it next to the materialised one.  Being in the
-    expectation is not being attested; that stays the cells' job.
+    pairs included (the rule ``scheme.EXPERIMENTAL_LAUNCHES`` states).  Contract
+    v38 (tessera#604) dropped the materialising FP8 pair from the table: this
+    build always publishes the compact reader, so ``compact_window_lane``
+    takes every FP8 stack and that branch cannot run.  The compact pair is
+    the FP8 expectation's only member.
     """
     from tessera.serving.scheme import TESSERA_BF16, WINDOW_MOE_COMPACT_SYMBOL
     from tessera.serving.telemetry import (
@@ -182,8 +183,8 @@ def test_the_expert_route_publishes_one_launch_in_both_regimes():
     expected = moe_route.census_expected(compiled=False)
     assert set(expected) == {"decode", "batch"}
     assert expected["decode"] == expected["batch"]
-    assert expected["decode"] == {(moe_route.GEMM_SYMBOL, DECODER_TORCH_STOCK),
-                                  (WINDOW_MOE_COMPACT_SYMBOL, DECODER_NATIVE_WINDOW_MOE_COMPACT)}
+    assert expected["decode"] == {(WINDOW_MOE_COMPACT_SYMBOL, DECODER_NATIVE_WINDOW_MOE_COMPACT)}
+    assert (moe_route.GEMM_SYMBOL, DECODER_TORCH_STOCK) not in expected["decode"]
     # A traced forward changes nothing: the combined ``a+b`` symbol the window
     # routes stamp under compile exists because two launches share one graph.
     assert moe_route.census_expected(compiled=True) == expected
@@ -199,11 +200,21 @@ def test_the_served_records_symbol_reduces_into_the_expectation():
 
     ``select_fp8_moe_backend`` is vLLM's predicate over the kernels it finds on
     the box; the record keeps its answer so a receipt says which backend ran,
-    and the comparison is over the entry point, which is the part this route
+    and the comparison is over the entry point, which is the part a route
     promises.
+
+    The record above is the materialising FP8 launch, which left this build's
+    table at contract v38 (tessera#604), so the FP8 expectation no longer
+    admits it.  The suffix rule is the same for every route that stamps the
+    modular kernel; the NVFP4 stack's materialising launch still does, and is
+    where the reduction is pinned now.
     """
-    expected = moe_route.census_expected(compiled=False)["batch"]
-    assert (moe_route.census_symbol_base(SERVED_MOE_SYMBOL), SERVED_MOE_DECODER) in expected
+    from tessera.serving import nvfp4_moe_route
+
+    served = (moe_route.census_symbol_base(SERVED_MOE_SYMBOL), SERVED_MOE_DECODER)
+    assert served not in moe_route.census_expected(compiled=False)["batch"]
+    expected = nvfp4_moe_route.census_expected(compiled=False)["batch"]
+    assert served in expected
     assert moe_route.census_symbol_base(SERVED_MOE_SYMBOL) == moe_route.GEMM_SYMBOL
     # ...and a suffix is not a licence: another entry point still fails, with
     # or without one.

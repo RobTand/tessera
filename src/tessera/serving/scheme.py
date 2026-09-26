@@ -429,11 +429,12 @@ WINDOW_GEMV_SYMBOL = "tessera_window_gemv::gemv"
 WINDOW_GEMM_SYMBOL = "tessera::window_gemm_dense"
 
 #: The native lanes' own spellings, in the module that executes them, so a
-#: route owner reports the same string the code does.  All pairs below are
-#: EXPERIMENTAL: the dispatch can make these launches and the routes'
-#: census expectation must know them, while no ``lane_eligibility`` cell
-#: attests any of them (``EXPERIMENTAL_LAUNCHES``).  A pair leaves that set
-#: when a receipt earns it a cell.
+#: route owner reports the same string the code does.  The two A4 pairs
+#: below are EXPERIMENTAL: the dispatch can make these launches and the
+#: routes' census expectation must know them, while no ``lane_eligibility``
+#: cell attests either (``EXPERIMENTAL_LAUNCHES``).  The window MoE adapter
+#: left that set at contract v38 (tessera#604), when a served census earned
+#: it cells.  A pair leaves the set when a receipt earns it a cell.
 #: A4 (E2M1/span-2) dense: ``tessera.kernel_a4.a4_span2_gemm``.
 A4_DENSE_GEMM_SYMBOL = "tessera.kernel_a4.a4_span2_gemm"
 #: A4 routed experts: ``tessera.kernel_a4.a4_span2_grouped_gemm``.
@@ -544,13 +545,16 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
     # dispatch by ``1b767a207``; a table that outlived its dispatch is what let
     # the published ``lane_eligibility`` cells go on naming them.
     TESSERA_FP8: _dense_native_window_launch(_DECODER_NATIVE_WINDOW_GEMM) + (
-        {"symbol": MOE_GEMM_SYMBOL, "decoder": _DECODER_TORCH_STOCK,
-         "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": None,
-         "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": True},
-        # The compact window MoE adapter (experimental): routed experts served
-        # from the loader's packed units, no decoded tile.  The folded BF16
-        # arithmetic is a bundle property and a distinct numerical variant;
-        # this launch relabels neither contract.
+        # The compact window MoE adapter: routed experts served from the
+        # loader's packed units, no decoded tile, on the epilogue arithmetic.
+        # It is the expert half's ONLY launch.  The materialising
+        # ``(MOE_GEMM_SYMBOL, _DECODER_TORCH_STOCK)`` entry that stood before
+        # it left this table at contract v38 (tessera#604): it ran only on a
+        # build that publishes no compact reader, and ``moe_route.
+        # compact_window_lane`` answers True for this family whenever
+        # ``parse_compact_tessera_expert_blob`` is defined, which it is in
+        # this module.  A table row for a launch the build cannot make is the
+        # defect v31 named for the dense routes.
         {"symbol": WINDOW_MOE_COMPACT_SYMBOL, "decoder": _DECODER_NATIVE_WINDOW_MOE_COMPACT,
          "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": None,
          "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": False},
@@ -592,10 +596,9 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
 #: experimental pair is refused and a pair removed without its cells would put
 #: an unattested launch in front of every contract reader.
 #:
-#: What stays, and why.  The two A4 pairs are deferred with the NVFP4 lane
-#: (#575) -- no dense or routed A4 census exists -- and the compact window MoE
-#: adapter has no served receipt at all, in either arithmetic: the FP8
-#: epilogue pair and the BF16 folded pair (tessera#609) both wait for one.
+#: What stayed at v34, and why.  The two A4 pairs are deferred with the NVFP4
+#: lane (#575) -- no dense or routed A4 census exists -- and the compact window
+#: MoE adapter had no served receipt at all, in either arithmetic, until v38.
 #:
 #: ``(WINDOW_GEMM_SYMBOL, _DECODER_NATIVE_WINDOW_GEMM_FOLDED)`` ENTERED at
 #: contract v37 (tessera#614).  The dense BF16 route moved from the epilogue
@@ -606,12 +609,23 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
 #: refuse them.  The epilogue pair stays attested for the E4M3 family, whose
 #: arithmetic did not move.  A served census of the folded dense GEMM is what
 #: earns the BF16 dense scope its cells back.
+#:
+#: THREE PAIRS LEFT at contract v38 (tessera#604): ``(WINDOW_GEMM_SYMBOL,
+#: _DECODER_NATIVE_WINDOW_GEMM_FOLDED)``, ``(WINDOW_MOE_COMPACT_SYMBOL,
+#: _DECODER_NATIVE_WINDOW_MOE_COMPACT)`` and ``(WINDOW_MOE_COMPACT_SYMBOL,
+#: _DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED)``.  One served route census of a
+#: GLM-5.3-Flash stub (one dense and three MoE layers) on the GLM serving
+#: image recorded all nine declared Tessera modules on their family's pair in
+#: both regimes, eager, resident, ``problems: []``
+#: (docs/measurements/tessera-glm-x-census-2026-09-26.md): dense E4M3 at
+#: q256 832/1024/1088 on the epilogue GEMM, dense BF16 at 832/1024/1088 on the
+#: folded GEMM, routed E4M3 at 896 on the compact adapter and routed BF16 at
+#: 1024 on its folded form.  The eight ``*_sm121_{decode,batch}_resident``
+#: cells on that image name them, in the same change, for the v34 reason.
+#: The two A4 pairs stay: no A4 census exists (#575).
 EXPERIMENTAL_LAUNCHES = frozenset({
-    (WINDOW_GEMM_SYMBOL, _DECODER_NATIVE_WINDOW_GEMM_FOLDED),
     (A4_DENSE_GEMM_SYMBOL, _DECODER_NATIVE_SPAN2_GEMM),
     (A4_GROUPED_GEMM_SYMBOL, _DECODER_NATIVE_SPAN2_GROUPED),
-    (WINDOW_MOE_COMPACT_SYMBOL, _DECODER_NATIVE_WINDOW_MOE_COMPACT),
-    (WINDOW_MOE_COMPACT_SYMBOL, _DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED),
 })
 
 

@@ -1,10 +1,10 @@
 {
-  "bytes": 9608,
-  "cells": 4,
-  "lifted_by": "json.JSONDecoder().raw_decode four times from the byte after the 'cells' array's opening bracket; the span is the bytes those four elements occupy, separators and whitespace included, with no trailing comma",
-  "sha256": "b0eb116d6a7b07aa50210fba88936bf721b5c2f85e118037146d6003e53879e1",
-  "source": "src/tessera/serving/runtime_contract.json at contract_version 22 (origin/master 3ec01f26); re-spanned at contract_version 24 (#460) and again at 31 (tessera#538), without re-measuring any surviving cell; re-spanned at 32 (tessera#506 leg 2) when the E2M1_K2 dense cells' rungs_q256 widened to the full trellis domain, again without re-measuring \u2014 the two E4M3 routed cells in the span are untouched; re-spanned a second time at 32 (tessera#560 D2) when the dense widen was reverted to [896] for lack of a dense receipt, and the dense batch cell's KL entry stamped q256 896, the rung its 2026-09-02 receipt measured",
-  "what": "The v22 sm_121 cells that SURVIVE at contract_version 32, recorded as a digest. Contract v22 published ten; v31 withdrew six of them (tessera#538) and the four below are what is left, still the first four elements of lane_eligibility.cells.",
+  "bytes": 2370,
+  "cells": 2,
+  "lifted_by": "json.JSONDecoder().raw_decode two times from the byte after the 'cells' array's opening bracket; the span is the bytes those two elements occupy, separators and whitespace included, with no trailing comma",
+  "sha256": "f4734cbe820157101c3745d817d640af30d7da93b580c78afdbfe8af3fb5a7ac",
+  "source": "src/tessera/serving/runtime_contract.json at contract_version 22 (origin/master 3ec01f26); re-spanned at contract_version 24 (#460) and again at 31 (tessera#538), without re-measuring any surviving cell; re-spanned at 32 (tessera#506 leg 2) when the E2M1_K2 dense cells' rungs_q256 widened to the full trellis domain, again without re-measuring \u2014 the two E4M3 routed cells in the span are untouched; re-spanned a second time at 32 (tessera#560 D2) when the dense widen was reverted to [896] for lack of a dense receipt, and the dense batch cell's KL entry stamped q256 896, the rung its 2026-09-02 receipt measured; re-spanned at 38 (tessera#604) to the first two elements when the two E4M3 routed cells were withdrawn -- the two surviving E2M1_K2 dense cells' span hashes identically on origin/master at contract_version 37 (2370 bytes, f4734cbe...), so no surviving cell was edited",
+  "what": "The v22 sm_121 cells that SURVIVE at contract_version 38, recorded as a digest. Contract v22 published ten; v31 withdrew six of them (tessera#538) and v38 withdrew two more (tessera#604); the two below are what is left, still the first two elements of lane_eligibility.cells.",
   "why_not_the_bytes": "A copy of the array would repeat the runtime image pin, and tests/test_runtime_image_pin.py refuses a second copy of that digest in any file that acts. A hash pins the same bytes without holding the pin.",
   "withdrawn_at_v31": [
     "tessera_e4m3_k1_dense_sm121_decode_resident",
@@ -24,5 +24,17 @@
     "tessera_bf16_k1_dense_sm121_decode",
     "tessera_bf16_k1_dense_sm121_batch"
   ],
-  "withdrawn_at_v37_why": "Contract v37 (tessera#614) withdraws the two ids v34 re-earned. The BF16 route moved from the epilogue arithmetic (the fp32 accumulator times the row scale) to the folded one (one bf16 rounding of value * row_scale per weight, before the dot) and stamps its own decoder, native_window_gemm_folded; the v34 census measured the epilogue kernel under native_window_gemm, so the cells named an arithmetic the build no longer makes for BF16. Neither was in this span, so the digest does not move."
+  "withdrawn_at_v37_why": "Contract v37 (tessera#614) withdraws the two ids v34 re-earned. The BF16 route moved from the epilogue arithmetic (the fp32 accumulator times the row scale) to the folded one (one bf16 rounding of value * row_scale per weight, before the dot) and stamps its own decoder, native_window_gemm_folded; the v34 census measured the epilogue kernel under native_window_gemm, so the cells named an arithmetic the build no longer makes for BF16. Neither was in this span, so the digest does not move.",
+  "withdrawn_at_v38": [
+    "tessera_e4m3_k1_routed_moe_sm121_decode_resident",
+    "tessera_e4m3_k1_routed_moe_sm121_batch_resident"
+  ],
+  "withdrawn_at_v38_why": "Contract v38 (tessera#604) withdraws the two routed E4M3 cells on eugr/spark-vllm@sha256:0afec8d4... at q256 1024. They named (vllm.fused_moe.modular_kernel, torch_materialize_stock), which this build cannot make for an FP8 expert stack: moe_route.compact_window_lane answers True for FP8 whenever scheme.parse_compact_tessera_expert_blob exists, and it does. The launch leaves scheme.ROUTE_LAUNCHES in the same change.",
+  "reearned_at_v38": [
+    "tessera_e4m3_k1_dense_sm121_decode_resident",
+    "tessera_e4m3_k1_dense_sm121_batch_resident",
+    "tessera_e4m3_k1_routed_moe_sm121_decode_resident",
+    "tessera_e4m3_k1_routed_moe_sm121_batch_resident"
+  ],
+  "reearned_at_v38_why": "Contract v38 mints resident-scoped cells on the GLM serving image from a TP1 eager route census (docs/measurements/tessera-glm-x-census-2026-09-26.md). Two of the ids are E4M3 dense ones v31 withdrew, now executing tessera::window_gemm_dense/native_window_gemm on q256 832/1024/1088; two are the routed ids this version withdraws, now executing tessera.native_window_moe.NativeWindowMoE.__call__/native_window_moe_compact at q256 896 on another image. An id is a SCOPE, so re-attesting a scope reuses its id; the withdrawn CLAIMS do not come back."
 }

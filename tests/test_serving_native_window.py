@@ -129,14 +129,18 @@ def test_the_launch_table_publishes_the_native_pair():
                     route, regime, mode)
     # The BF16 route serves the FOLDED arithmetic under its own decoder since
     # contract v37 (tessera#614).  The v34 BF16 cells attested the epilogue
-    # kernel and were withdrawn, so the folded pair is in the census opt-in
-    # and NOT in the default view, and the epilogue pair is in neither.
+    # kernel and were withdrawn; contract v38 (tessera#604) attests the folded
+    # pair on the GLM serving image (resident, eager), so it left
+    # scheme.EXPERIMENTAL_LAUNCHES and the default view and the census opt-in
+    # agree again.  The epilogue pair is in neither.  Residency is the cells'
+    # scope, not the table's: the view is the same in both modes.
     folded = (WINDOW_GEMM_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_GEMM_FOLDED)
     for regime in ("decode", "batch"):
         for mode in ("resident", "streamed"):
             assert launch_pairs(TESSERA_BF16, regime=regime, mode=mode,
                                 include_experimental=True) == {folded}, (regime, mode)
-            assert not launch_pairs(TESSERA_BF16, regime=regime, mode=mode), (regime, mode)
+            assert launch_pairs(TESSERA_BF16, regime=regime, mode=mode) == {folded}, (
+                regime, mode)
     assert WINDOW_GEMM_SYMBOL == "tessera::window_gemm_dense"
     assert telemetry.DECODER_NATIVE_WINDOW_GEMM in telemetry.DECODERS
     assert telemetry.DECODER_NATIVE_WINDOW_GEMM_FOLDED in telemetry.DECODERS
