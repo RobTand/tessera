@@ -15,6 +15,16 @@ child separately, including its verified reads and commitment-only uses.
 The single-reference document, binding and receipt retain their v1 spelling.
 No serving lane, wire, encoder recipe or runtime pin changes.
 
+The window-GEMV JIT loader uses a guarded build directory ending in
+`_tessera_guarded_v1` (2026-09-26, tessera#600). A pre-upgrade builder may
+still hold torch's ownerless `FileBaton` in the old directory, so the new
+loader never enters or reaps that legacy directory. Builders in the new
+namespace hold Tessera's kernel-released flock around torch's `load`; only
+there may a later caller remove a leftover baton after a killed builder.
+The extension module name, source, flags and kernel ABI are unchanged. The
+first load in the new directory recompiles; that startup cost has not been
+measured.
+
 Native operator research receipts may freeze an execution-only panel before
 joint distortion completes. Dense and whole-MoE raw schemas carry original
 wire, source, calibration, tensor, routing and runtime identities but no cost

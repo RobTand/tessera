@@ -364,6 +364,8 @@ def _ext():
         probed_platform_token,
     )
 
+    from .jit_build_lock import GUARDED_BUILD_SUFFIX, jit_build_lock
+
     _ensure_toolchain_on_path()
     # The one source, resolved from the contract's native-extension table: the
     # path the contract publishes IS the file compiled here (#134).
@@ -387,24 +389,30 @@ def _ext():
     build = os.path.join(root, f"tessera_window_gemv_{token}")
     if pf != 1:
         build = build + f"_pf{pf}"
+    # A pre-upgrade FileBaton builder may still be alive in the legacy path.
+    # Only this fresh namespace is exclusively owned by jit_build_lock.
+    build += GUARDED_BUILD_SUFFIX
     os.makedirs(build, exist_ok=True)
     pin_build_arch(token, torch)   # torch writes its own --offload-arch; one token, not two
     verbose = bool(os.environ.get("TESSERA_WINDOW_GEMV_VERBOSE"))
     try:
-        module = load(
-            name="tessera_window_gemv",  # literal: the contract reader reads it statically
-            sources=[WINDOW_GEMV_SOURCE],  # the same file, by the check above; the roster test reads this line
-            build_directory=build,
-            extra_cuda_cflags=_window_gemv_cflags(backend, token, pf, verbose),
-            verbose=verbose,
-            # On HIP torch hipifies the source before compiling it and writes
-            # the .hip beside the .cu; asking it not to keep the intermediate
-            # removes that file from the checkout after the build.  (The
-            # .gitignore entry is the belt: a build killed mid-flight leaves
-            # one behind.)  Nothing is generated on the CUDA path, where the
-            # flag would be a no-op.
-            **({"keep_intermediates": False} if backend == "hip" else {}),
-        )
+        # A killed guarded builder leaves only a baton we may safely clear;
+        # the legacy build directory and any live pre-upgrade owner are untouched.
+        with jit_build_lock(build):
+            module = load(
+                name="tessera_window_gemv",  # literal: the contract reader reads it statically
+                sources=[WINDOW_GEMV_SOURCE],  # the same file, by the check above; the roster test reads this line
+                build_directory=build,
+                extra_cuda_cflags=_window_gemv_cflags(backend, token, pf, verbose),
+                verbose=verbose,
+                # On HIP torch hipifies the source before compiling it and writes
+                # the .hip beside the .cu; asking it not to keep the intermediate
+                # removes that file from the checkout after the build.  (The
+                # .gitignore entry is the belt: a build killed mid-flight leaves
+                # one behind.)  Nothing is generated on the CUDA path, where the
+                # flag would be a no-op.
+                **({"keep_intermediates": False} if backend == "hip" else {}),
+            )
     except Exception as exc:
         probed = _probed_or_none(probed_platform_token)
         if token == probed or not _built_library(build):
