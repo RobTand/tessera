@@ -209,6 +209,15 @@ class TesseraConfig(QuantizationConfig):
                     raise ValueError(f"target {target!r} is declared by two config groups")
                 self.target_scheme[target] = dict(scheme)
         self._check_overlap()
+        # vLLM's stock MTP proposer reuses the target quant_config object and
+        # asks its draft model class to apply a second name mapper. Keep the
+        # checkpoint namespace immutable across those calls: feeding body-
+        # mapped names to the draft mapper loses the source prefix forever.
+        self._source_target_scheme = dict(self.target_scheme)
+        self._source_ignore = self.ignore
+        self._mapped_views: list[tuple[dict[str, dict], tuple[str, ...]]] = [
+            (self.target_scheme, self.ignore)]
+        self._mapper_applied = False
         # Resolve the residency HERE, at config parse, so an unset or misspelt
         # mode is one clear message before any weight is touched.
         self._mode = serve_mode()
@@ -258,6 +267,13 @@ class TesseraConfig(QuantizationConfig):
         modules colliding onto one vLLM module, is a checkpoint that cannot be
         served correctly, and silence there is how a wire ends up loaded and
         never executed.
+
+        The stock MTP proposer passes the same quant config object to its
+        draft class after the body class has applied a different mapper. Each
+        call therefore starts from the immutable checkpoint declarations and
+        records a separate module-space view. The first mapped view remains
+        the public body table; the guarded MTP lookup can select one draft
+        view without rewriting the body lookup or source identities.
         """
         def mapped(target: str) -> str:
             if "." not in target or target.startswith("re:"):
@@ -273,7 +289,7 @@ class TesseraConfig(QuantizationConfig):
 
         declared: dict[str, dict] = {}
         origin: dict[str, str] = {}
-        for target, scheme in self.target_scheme.items():
+        for target, scheme in self._source_target_scheme.items():
             name = mapped(target)
             if name in declared:
                 raise ValueError(
@@ -281,12 +297,22 @@ class TesseraConfig(QuantizationConfig):
                     "module cannot take two Tessera wires")
             declared[name] = scheme
             origin[name] = target
-        self.target_scheme = declared
         # ``dict.fromkeys`` keeps the order and drops the duplicates two
         # checkpoint names can become; unlike a declared target, a doubly-named
         # ignore is harmless.
-        self.ignore = tuple(dict.fromkeys(mapped(i) for i in self.ignore))
-        self._check_overlap()
+        ignored = tuple(dict.fromkeys(mapped(i) for i in self._source_ignore))
+        overlap = sorted(set(ignored) & set(declared))
+        if overlap:
+            raise ValueError(
+                f"targets {overlap} are both declared and ignored; one of the two is a mistake")
+        view = (declared, ignored)
+        if not any(view == existing for existing in self._mapped_views):
+            self._mapped_views.append(view)
+        if not self._mapper_applied:
+            # The target model is configured first in the stock engine. Keep
+            # its public tables stable while the draft adds a second view.
+            self.target_scheme, self.ignore = view
+            self._mapper_applied = True
 
     # -- vLLM's QuantizationConfig contract -------------------------------
     @classmethod
@@ -392,21 +418,70 @@ class TesseraConfig(QuantizationConfig):
         declare_compile_identity(**facts)
         self._declared = True
 
+    def _module_lookup(self, prefix: str) -> tuple[str, dict[str, dict], tuple[str, ...]]:
+        """Resolve only the stock GLM MTP draft's model-owned block insertion.
+
+        vLLM gives ``apply_vllm_mapper`` only a name mapper, not its model
+        class, and calls it before installing the current model-construction
+        context. Here ``get_quant_method`` has that context and can require
+        the actual MTP draft architecture and speculative layer range. The
+        lookup key is in vLLM's mapped declaration namespace; the caller keeps
+        ``prefix`` itself for the builder, loader, and route telemetry.
+        """
+        if ".mtp_block." not in prefix:
+            return prefix, self.target_scheme, self.ignore
+        from vllm.config import get_current_vllm_config_or_none
+        from .weights_mapper import glm5next_mtp_module_prefix
+
+        current = get_current_vllm_config_or_none()
+        speculative = getattr(current, "speculative_config", None)
+        if getattr(speculative, "method", None) != "mtp":
+            return prefix, self.target_scheme, self.ignore
+        draft = getattr(speculative, "draft_model_config", None)
+        hf = getattr(draft, "hf_config", None)
+        text = getattr(draft, "hf_text_config", None)
+        architectures = getattr(hf, "architectures", None)
+        if (architectures != ["Glm5NextMTPModel"]
+                or getattr(text, "model_type", None) != "glm5_next_text"):
+            return prefix, self.target_scheme, self.ignore
+        candidate = prefix.replace(".mtp_block.", ".", 1)
+        mapped = glm5next_mtp_module_prefix(
+            candidate, architecture=architectures[0],
+            first_layer=getattr(text, "num_hidden_layers", None),
+            count=getattr(text, "num_nextn_predict_layers", None))
+        if mapped != prefix:
+            return prefix, self.target_scheme, self.ignore
+        views = [(declared, ignored) for declared, ignored in self._mapped_views
+                 if candidate in declared or candidate in ignored]
+        if not views:
+            return prefix, self.target_scheme, self.ignore
+        if len(views) != 1:
+            raise ValueError(
+                f"tessera MTP target {prefix!r} has {len(views)} mapped namespace owners")
+        if any(prefix in declared or prefix in ignored
+               for declared, ignored in self._mapped_views):
+            raise ValueError(
+                f"tessera MTP target {prefix!r} collides with mapped declaration "
+                f"{candidate!r}; one module cannot have two owners")
+        return candidate, *views[0]
+
     def get_quant_method(self, layer: torch.nn.Module,
                          prefix: str) -> QuantizeMethodBase | None:
         from vllm.model_executor.layers.linear import LinearBase, UnquantizedLinearMethod
+
+        lookup_prefix, target_scheme, ignored = self._module_lookup(prefix)
 
         moe_classes = _moe_layer_classes()
         if (moe_classes and isinstance(layer, moe_classes)) or \
                 type(layer).__name__ in _moe_class_names() or \
                 _looks_like_moe_layer(layer):
-            if prefix in self.ignore:
+            if lookup_prefix in ignored:
                 # The checkpoint DECLARED these experts BF16 (the exporter names
                 # a passed-through expert stack in ``ignore``), so vLLM's own
                 # unquantized MoE method is the right answer and saying so is
                 # not a silent fallback.
                 return None
-            scheme = self.target_scheme.get(prefix)
+            scheme = target_scheme.get(lookup_prefix)
             if scheme is not None and scheme.get("structure") == STRUCTURE_ROUTED_MOE:
                 self._declare_once()
                 from importlib import import_module
@@ -443,12 +518,12 @@ class TesseraConfig(QuantizationConfig):
                 "scheme, or name it in quantization_config.ignore to pass the experts "
                 "through at their source precision.")
         if isinstance(layer, LinearBase):
-            scheme = self.target_scheme.get(prefix)
+            scheme = target_scheme.get(lookup_prefix)
             if scheme is not None:
                 self._require_a_cutter(prefix)
                 self._declare_once()
                 return build_tessera_method(scheme, prefix, self._mode)
-            if prefix in self.ignore:
+            if lookup_prefix in ignored:
                 return UnquantizedLinearMethod()
             raise ValueError(
                 f"tessera checkpoint declares no wire for Linear {prefix!r} and does not ignore "

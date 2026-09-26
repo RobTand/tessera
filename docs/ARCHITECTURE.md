@@ -16,6 +16,59 @@ served-quality qualification. See
 configuration, responses, both-host telemetry and controlled teardown. No
 serving default, contract cell, wire, arithmetic or runtime pin changes.
 
+Re-stamped 2026-09-26 for the GLM MTP draft namespace adapter
+(tessera#631). The checkpoint keeps its original
+`model.language_model.layers.<N>.*` names and cached-unit identities. Stock
+`Glm5NextMTPModel` maps those names to `model.layers.<N>.*` and constructs the
+decoder under `model.layers.<N>.mtp_block.*`. Tessera resolves that additional
+segment only during `get_quant_method`, when vLLM's current speculative
+configuration identifies the exact MTP draft architecture and its declared
+layer range. The outer HF config supplies the architecture and the draft
+model's `hf_text_config` supplies its layer geometry. The mapped declaration
+is a lookup key; the actual module prefix
+continues to own the loader and route record. Missing draft context, another
+architecture, an out-of-range layer or two declarations for one module remain
+refusals. This establishes name resolution, not a served MTP route, output
+quality or runtime measurement; the selected BF16 R1024 MTP draft remains
+unmeasured even though a non-MTP routed cell covers that rung.
+Stock MTP reuses the target quantization config object while its own model
+class applies a second source-name mapper. Tessera retains immutable original
+declarations and separate mapped views, so the draft mapper reads checkpoint
+names rather than the body's already mapped names; body lookups continue to
+use the target's view. An MTP lookup is admitted only when exactly one view
+owns its derived draft module name.
+
+The route census may additionally request the stock one-token GLM MTP
+speculative mode (tessera#631). It partitions the checkpoint's original
+declarations by its `num_hidden_layers`/`num_nextn_predict_layers` range:
+the existing target census still reads the body through `LLM.apply_model`,
+while a bounded `LLM.collective_rpc` asks each worker's own
+`get_draft_model()` for its mapper, route records, lane refusals and rank
+identity. It returns no model object. Draft route attributes are cleared before
+each actual draft `nn.Module` forward through census-only pre/post hooks, so
+a warmup or earlier call cannot pose as the observed dispatch. The hook keeps
+the first and latest scalar route records per observed regime and a call count;
+it retains no tensors and is removed after the arm, including on generation
+failure. The single-request arm may prove both draft batch and decode if it
+actually reports M>1 and M1; an optional bounded arm with one or more prompts
+can probe batch separately. Requested prompt count is not an observed M, and
+target prefill is not draft prefill. The draft block in the additive receipt
+preserves original source
+targets beside actual `.mtp_block` module names and checks every rank. No
+speculative serve has yet run, so this is observation capability rather than
+a new cell or a model-fit claim.
+Draft decoder coverage requires the family-owned native launch in each
+observed phase, including the folded BF16 MoE decoder. A fallback record
+cannot qualify the draft just because its route publishes that pair.
+The stock `--language-model-only` engine argument is forwarded only when
+explicitly requested and recorded as text-only scope in the receipt. An
+explicit `--max-num-batched-tokens` census cap likewise reaches the stock scheduler
+and receipt only when supplied, permitting the bounded full-body serve's
+token/memory scope to be reproduced. A successful raw native route at an
+unlisted rung has cell agreement `null`:
+that observation can support review of a new cell, while the production
+admission gate continues to refuse until the cell and runtime pin are published.
+
 Re-stamped 2026-09-26 for independent cached-unit cohort composition
 (tessera#630). `tessera.cached_units.v3` binds original v1/v2 child manifests
 by canonical absolute path and file SHA-256. Their complete, disjoint unit
