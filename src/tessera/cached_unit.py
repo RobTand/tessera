@@ -203,7 +203,7 @@ class CachedUnitIdentity:
         ``calibration.settings``, which is unit-independent (it is the
         owner's ``config_block`` less prose, the same for every unit).
 
-    Only a ``ReferenceHessians`` owner has commitments; a plain mapping is
+    Only a checked reference owner has commitments; a plain mapping is
     digested whatever was asked, and no activation means no calibration
     block at all.  ``record()`` says which happened, so a receipt never
     implies bytes were compared when they were not.  Safe to call from
@@ -224,15 +224,20 @@ class CachedUnitIdentity:
         if activation is None:
             self.established = None
         else:
-            from .hessian_capture import ReferenceHessians
-            reference = isinstance(activation.hessians, ReferenceHessians)
+            from .hessian_capture import REFERENCE_OWNER_TYPES, ReferenceHessianCollection
+            reference = isinstance(activation.hessians, REFERENCE_OWNER_TYPES)
             self.established = mode if reference else "digested"
             if reference:
                 owner = activation.hessians
-                self._reference = {
-                    "path": activation.provenance.get("path"),
-                    "document_sha256": owner.document_sha256,
-                    **{k: v for k, v in owner.binding().items() if k != "schema"}}
+                if isinstance(owner, ReferenceHessianCollection):
+                    self._reference = {"path": activation.provenance.get("path"),
+                                       "document_sha256": owner.document_sha256,
+                                       "binding": owner.binding()}
+                else:
+                    self._reference = {
+                        "path": activation.provenance.get("path"),
+                        "document_sha256": owner.document_sha256,
+                        **{k: v for k, v in owner.binding().items() if k != "schema"}}
 
     def __call__(self, weight, unit_name: str, unit, grid, q256: int) -> dict:
         if self.established != "committed":
@@ -272,6 +277,9 @@ class CachedUnitIdentity:
         served = reference = None
         if self._reference is not None:
             reference = dict(self._reference, capture_sha256=self.activation.capture_sha256())
+            from .hessian_capture import ReferenceHessianCollection
+            if isinstance(self.activation.hessians, ReferenceHessianCollection):
+                reference["consumption"] = self.activation.hessians.receipt()
         if self.established == "committed":
             served = len(self.activation.hessians.receipt()["committed_units_served"])
         return _json_copy({"schema": "tessera.cached_unit_hessian_identity.v1",
