@@ -82,6 +82,64 @@ def _load_all(layer, w13_blobs, w2_blobs):
                 'wire', shard, expert, return_success=True)
 
 
+@cuda
+@pytest.mark.parametrize('rank', [0, 1])
+def test_window_intake_reuses_one_body_staging_buffer_across_experts(wires, monkeypatch, rank):
+    """The real loader callback must hand the packed BODY transfer one owned buffer.
+
+    Under vLLM's 20 MiB max-split setting, a fresh device transfer per wire
+    stranded a slab even while allocated bytes stayed flat (#626).  Rank 1's
+    row cut reads the BODY twice; both reads must share the same staging owner.
+    """
+    from tessera import compact_prep
+
+    original = compact_prep._plane_u8
+    owners = []
+
+    def observed(data, device, scratch=None, key='plane'):
+        owners.append(scratch)
+        return original(data, device, scratch, key)
+
+    monkeypatch.setattr(compact_prep, '_plane_u8', observed)
+    layer = _layer_for(rank)
+    method = _method(wires, layer)
+    method.create_weights(layer, E, H, N // 2, torch.bfloat16)
+    intake = method._rank_local_intake
+    first_slots = None
+    for expert in range(E):
+        for shard, blob in (('w1', wires[0][expert][0]),
+                            ('w3', wires[0][expert][1]), ('w2', wires[1][expert])):
+            param = layer.w2_wire if shard == 'w2' else layer.w13_wire
+            param.weight_loader(param, torch.frombuffer(bytearray(blob), dtype=torch.uint8),
+                                'wire', shard, expert)
+        if expert == 0:
+            first_slots = {
+                (group, part, field): tensor[0].clone()
+                for group, axis in intake.axis.items()
+                for part, slot in axis._slots.items()
+                for field, tensor in slot.items()
+                if isinstance(tensor, torch.Tensor) and tensor.ndim > 0
+                and tensor.shape[0] > 0
+            }
+            # Exercise both a larger staging allocation and a short reuse
+            # before the next expert; the first packed expert must not alias it.
+            body_capacity = intake._scratch['body'].numel()
+            compact_prep._plane_u8(bytes(body_capacity * 2), 'cuda', intake._scratch, 'body')
+            compact_prep._plane_u8(b'\x01', 'cuda', intake._scratch, 'body')
+    assert len(owners) >= 3 * E
+    assert owners[0] is not None, 'the window path allocated a fresh BODY transfer'
+    assert all(owner is owners[0] for owner in owners), \
+        'the loader changed the staging owner between experts or row cuts'
+    assert all(torch.equal(first_slots[group, part, field],
+                           intake.axis[group]._slots[part][field][0])
+               for group, part, field in first_slots), \
+        'reusing or growing scratch changed an earlier packed expert'
+    method.process_weights_after_loading(layer)
+    assert not intake._scratch, 'a finished routed layer retained the transfer staging'
+    ids = torch.tensor([2, 0, 1], dtype=torch.int32, device='cuda')
+    _assert_rank_local_scales(method._packed, _materialised(wires, rank, ids), ids)
+
+
 def _materialised(wires, rank, ids):
     """The materialising owner's rank-local tiles: the reference the packed
     bundles must reproduce.  This is the retained (non-native) decode path --
