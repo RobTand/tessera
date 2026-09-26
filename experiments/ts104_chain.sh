@@ -36,7 +36,7 @@ tail -3 "$RUNS/export-requirelane.log"
 sha_after=$(sha256sum "$NEW/model.safetensors" | cut -d" " -f1)
 echo "wire sha before=$sha_before after=$sha_after"
 [ "$sha_before" = "$sha_after" ] && echo "BYTE-IDENTICAL re-export" || echo "WIRE MOVED (investigate)"
-grep -o '"requires_lanes": \[[^]]*\]' "$NEW/tessera_serving_manifest.json"
+grep -o '"requires_lanes": *\[[^]]*\]' "$NEW/tessera_serving_manifest.json"
 
 "$PY" "$WT/tools/tessera_lane_preflight.py" "$NEW" \
   --lane tessera_window_gemv --json "$RUNS/preflight-new.json" 2>&1 | tail -20

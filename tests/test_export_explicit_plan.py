@@ -401,3 +401,24 @@ def test_a_failed_shard_write_keeps_the_previous_published_bytes(tmp_path, monke
              {name: "BF16"}, "--layers", "0")
     assert previous.read_bytes() == b"previous published shard"
     assert sorted(p.name for p in out.iterdir()) == ["model.safetensors"]
+
+
+def _assert_compact_json(path):
+    text = path.read_text()
+    assert "\n" not in text
+    assert text == json.dumps(json.loads(text), separators=(",", ":"))
+
+
+def test_manifest_sidecars_are_written_as_compact_json(tmp_path, monkeypatch):
+    """The manifests ship inside the artifact and count toward its size.
+
+    Indented, the GLM-5.3-Flash body+MTP manifest carried 13 MB of whitespace
+    and put a size-matched checkpoint over its byte ceiling.  ``config.json``
+    and the safetensors index keep their conventional indented form.
+    """
+    out = _run(tmp_path, monkeypatch, {NAME: _tensor(32, 32, 0)},
+               {NAME: dict(QUANTIZED)}, "--stock-twin", str(tmp_path / "twin"))
+    _assert_compact_json(out / "tessera_serving_manifest.json")
+    _assert_compact_json(tmp_path / "twin" / "tessera_stock_twin_manifest.json")
+    assert (out / "config.json").read_text() == json.dumps(
+        json.loads((out / "config.json").read_text()), indent=2)
