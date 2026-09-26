@@ -8,7 +8,7 @@ diagnostic of full-checkpoint loading and text generation, not a production
 capacity or quality qualification. The earlier BODY-transfer and word-reversal
 staging fixes, with their matched allocator before/after evidence, are recorded
 in [the loader measurement](tessera-glm-window-loader-scratch-2026-09-26.md)
-(PRs #628 and #629). The packaged runtime contract SHA-256 stayed
+(pull requests 628 and 629). The packaged runtime contract SHA-256 stayed
 `04d5a20a33b932607be604fc78cc3559499a151be1471bdf66e9c8049d9d22e4`.
 
 Both GB10 hosts used the same digest-qualified stock vLLM image
