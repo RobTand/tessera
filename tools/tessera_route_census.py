@@ -561,6 +561,16 @@ def validate_draft_route_records(observations_by_phase, *, source_to_module,
     return phase_records, phase_owners, rank_records, rank_identity, problems, rank_refusals
 
 
+def required_draft_native_decoders(families_by_module, *, native_decoder,
+                                   supported_families):
+    """Require the exact native decoder for every selected draft family."""
+    families = set(families_by_module.values())
+    unsupported = families - set(supported_families)
+    if unsupported:
+        raise ValueError(f"unsupported draft native decoder family: {sorted(unsupported)!r}")
+    return [native_decoder(family) for family in sorted(families)]
+
+
 def join_records_to_declared(records, declared):
     """Which declared target each route record belongs to, and what is ambiguous.
 
@@ -1532,9 +1542,9 @@ def main() -> int:
             families_by_route=PAYLOAD_FAMILY_BY_ROUTE,
             runtime_image=args.runtime_image, execution_mode=args.execution_mode)
         problems.extend(f"draft: {message}" for message in draft_agreement_problems)
-        required_draft_decoder = (
-            [moe_route.native_decoder(TESSERA_FP8)]
-            if set(draft_families.values()) == {TESSERA_FP8} else [])
+        required_draft_decoder = required_draft_native_decoders(
+            draft_families, native_decoder=moe_route.native_decoder,
+            supported_families={TESSERA_FP8, TESSERA_BF16})
         draft_decoder_coverage, draft_decoder_problems = required_decoder_coverage(
             draft_phase_records, required_draft_decoder)
         problems.extend(f"draft: {message}" for message in draft_decoder_problems)

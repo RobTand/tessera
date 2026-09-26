@@ -56,7 +56,10 @@ target prefill is not draft prefill. The draft block in the additive receipt
 preserves original source
 targets beside actual `.mtp_block` module names and checks every rank. No
 speculative serve has yet run, so this is observation capability rather than
-an R1024 cell or a model-fit claim.
+a new cell or a model-fit claim.
+Draft decoder coverage requires the family-owned native launch in each
+observed phase, including the folded BF16 MoE decoder. A fallback record
+cannot qualify the draft just because its route publishes that pair.
 The stock `--language-model-only` engine argument is forwarded only when
 explicitly requested and recorded as text-only scope in the receipt. A
 successful raw native route at an unlisted rung has cell agreement `null`:

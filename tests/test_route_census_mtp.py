@@ -189,6 +189,21 @@ def test_text_only_scope_is_explicit_and_does_not_change_default_engine_kwargs()
         "language_model_only": True}
 
 
+def test_draft_native_coverage_requires_folded_bf16_and_fp8_decoders():
+    mapping = {"bf16": "TESSERA_BF16", "fp8": "TESSERA_FP8"}
+    decoder = {"TESSERA_BF16": "native_window_moe_compact_folded",
+               "TESSERA_FP8": "native_window_moe_compact"}
+    get = lambda families: census.required_draft_native_decoders(
+        families, native_decoder=decoder.__getitem__,
+        supported_families=set(decoder))
+    assert get({"mtp": mapping["bf16"]}) == ["native_window_moe_compact_folded"]
+    assert get({"mtp": mapping["fp8"]}) == ["native_window_moe_compact"]
+    assert get(mapping) == ["native_window_moe_compact_folded",
+                            "native_window_moe_compact"]
+    with pytest.raises(ValueError, match="unsupported"):
+        get({"mtp": "TESSERA_UNKNOWN"})
+
+
 def _forward_observer_fixture(monkeypatch):
     torch = pytest.importorskip("torch")
 
