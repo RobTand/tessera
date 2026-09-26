@@ -470,7 +470,8 @@ def _compact_role_units(blob, declared_role, target, device):
     return reader(blob, declared_role, target, device=device)
 
 
-def _compact_expert_units(blob, declared_role, plan, target, *, device, family):
+def _compact_expert_units(blob, declared_role, plan, target, *, device, family,
+                          scratch=None):
     """ONE projection container -> this rank's ``(role, WindowGemvUnit)``.
 
     Each load callback carries one projection, so the boundary must return
@@ -492,7 +493,8 @@ def _compact_expert_units(blob, declared_role, plan, target, *, device, family):
             f"single projection {declared!r}")
     name, wire = roles[0]
     return name, prepare_window_compact(
-        wire, device=device, family=family, **_role_cut(plan, name))
+        wire, device=device, family=family, scratch=scratch,
+        **_role_cut(plan, name))
 
 
 class _RankLocalPackedIntake:
@@ -520,6 +522,7 @@ class _RankLocalPackedIntake:
                       for g in MOE_GROUPS}
         self.roles = {g: expert_role_declarations(declared['groups'][g]) for g in MOE_GROUPS}
         self._has_loaded = False
+        self._scratch = {}  # one BODY transfer buffer per owning routed stack
         self.axis = {}
         if self.compact:
             if len(self.roles['w13']) != 2:
@@ -576,7 +579,7 @@ class _RankLocalPackedIntake:
             family = "value" if self.family == TESSERA_BF16 else "e4m3"
             name, unit = _compact_expert_units(
                 blob, self.roles[group][index], self.plans[group], target,
-                device=device, family=family)
+                device=device, family=family, scratch=self._scratch)
             # The axis allocates each plane stack once and drops this unit as
             # soon as its expert slot is filled; a repeated callback refuses.
             self.axis[group].put(name, expert, unit)
@@ -606,6 +609,7 @@ class _RankLocalPackedIntake:
             family = "value" if self.family == TESSERA_BF16 else "e4m3"
             arithmetic = "folded" if self.family == TESSERA_BF16 else "epilogue"
             soa = {g: self.axis[g].finish() for g in MOE_GROUPS}
+            self._scratch.clear()  # every role now lives in its packed axis
             names = {g: [str(role['roles'][0][0]) for role in self.roles[g]] for g in MOE_GROUPS}
 
             def bundle(group, part):

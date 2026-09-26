@@ -16,6 +16,18 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-26 for the routed window loader's BODY staging
+(tessera#626). The compact expert intake now gives both the window repacker
+and TP row-history reader one reusable, caller-owned device buffer per routed
+stack, cleared at finalize. Under vLLM's `max_split_size_mb=20` context the
+prior fresh transfer left a 20 MiB allocator slab per wire; at a matched
+2,500-callback boundary, CUDA reserved fell from 49.75/61.81 GB to 15.54 GB
+on the two TP ranks while active packed intake stayed 5.61 GB. The exact
+before/after counters, both-box Netdata and the boundary's limits are in
+`docs/measurements/tessera-glm-window-loader-scratch-2026-09-26.md`. This is
+a load-memory change; the wire, arithmetic, contract v38 and cell claims do
+not move. Full-model READY and generation are separate acceptance work.
+
 Re-stamped 2026-09-26 for the GLM-image window cells (tessera#604, contract
 v38). One route census of a GLM-5.3-Flash stub (one dense and three MoE
 layers) on the GLM serving image
@@ -2728,7 +2740,12 @@ runs one
 preallocated per-expert axis (`native_window_moe.WindowUnitAxis`) and applies
 the two-stage grouped kernels (`window_gemm_grouped`, wrapped by
 `native_window_moe.NativeWindowMoE`: gathered routed rows in, activation, down
-projection, routing weights, routed output only).  The activation is `silu`
+projection, routing weights, routed output only). The loader's BODY transfer
+is staged through one reusable CUDA buffer per routed stack for both the
+repacker and rank-local row-history read; the buffer is released when that
+stack finishes loading (tessera#626). This is the same caller-owned
+`_plane_u8` mechanism the A4 intake uses, with the same-stream copy/consume
+order and no change to prepared packed planes. The activation is `silu`
 with the model's SwiGLU clamp (`swiglu_limit` / vLLM's `gemm1_clamp_limit`)
 reproduced on the fp32 accumulators -- gate saturated at `+limit`, up branch at
 `+-limit`, the arithmetic vLLM's own `silu_and_mul` performs; `swiglu_alpha`,
