@@ -547,16 +547,23 @@ def test_the_owner_route_set_comes_from_the_plugins_own_launch_table():
     assert a16 == {(WINDOW_MOE_COMPACT_SYMBOL, "native_window_moe_compact_folded")}
 
 
-def test_a_tp2_fp8_owner_has_no_production_launch_to_declare():
-    """At TP2 the FP8 production builder is out of scope, and so is its pair."""
+def test_an_fp8_owner_never_declares_the_materialising_launch():
+    """Contract v38: the materialising FP8 pair left the plugin's table.
+
+    ``moe_route.compact_window_lane`` takes every FP8 stack this build
+    constructs, so the compact window MoE adapter is the FP8 owner's one table
+    launch at every world.  Above one rank the selected owner's decoders stay
+    admissible beside it, as before.
+    """
+    from tessera.serving.scheme import WINDOW_MOE_COMPACT_SYMBOL
+    compact = (WINDOW_MOE_COMPACT_SYMBOL, "native_window_moe_compact")
     wire = moe.owner_wire(_glm_shape(2, A8))
     pairs = moe.owner_launch_pairs(wire, world=2)
     assert ("vllm.fused_moe.modular_kernel", "torch_materialize_stock") not in pairs
     assert ("vllm.fused_moe.modular_kernel", "research_selected_triton_window") in pairs
     assert ("vllm.fused_moe.modular_kernel", "research_selected_torch_window") in pairs
-    # A world of one keeps the production pair: that lane is what TP1 has run.
-    assert ("vllm.fused_moe.modular_kernel", "torch_materialize_stock") in \
-        moe.owner_launch_pairs(wire, world=1)
+    assert compact in pairs
+    assert moe.owner_launch_pairs(wire, world=1) == {compact}
     # A compressed BF16 expert stack has no materialising launch at any world,
     # and its selected owner's decoders are not admissible either (#613).
     for world in (1, 2):
@@ -777,7 +784,7 @@ def _owner_panel(tp, format_name, route_symbol, decoder, member_unit=None):
 
 
 @pytest.mark.parametrize("tp,format_name,symbol,decoder", [
-    (1, A8, "vllm.fused_moe.modular_kernel:FLASHINFER_CUTLASS", "torch_materialize_stock"),
+    (1, A8, "tessera.native_window_moe.NativeWindowMoE.__call__", "native_window_moe_compact"),
     (2, A4, "vllm.fused_moe.modular_kernel:FLASHINFER_CUTLASS", "torch_materialize_stock"),
     (2, A8, "vllm.fused_moe.modular_kernel:TRITON_REF", "research_selected_triton_window"),
     (1, A16, "tessera.native_window_moe.NativeWindowMoE.__call__",

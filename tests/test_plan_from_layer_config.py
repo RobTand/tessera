@@ -508,7 +508,7 @@ def _moe_plan_source(tmp_path, *, packed=False):
     config = {"architectures": ["Lfm2MoeForCausalLM"], "hidden_size": 64,
               "moe_intermediate_size": 64, "num_experts": 2}
     (src / "config.json").write_text(json.dumps(config))
-    request = {stack: {"grid": "E4M3", "q256": 1024,
+    request = {stack: {"grid": "E4M3", "q256": 896,
                       "source_layout": "out_first_chunked" if packed else "unpacked_per_expert"}}
     projection = export.project_expert_plan({n: tuple(t.shape) for n, t in tensors.items()}, config, request)
     projection["source"] = source_identity(src)
@@ -522,7 +522,8 @@ def _moe_plan_source(tmp_path, *, packed=False):
 
 
 @pytest.mark.parametrize("packed", [False, True])
-@pytest.mark.parametrize("choice", ["TESSERA_E4M3_K1_R1024", "BF16"])
+# R896: the routed E4M3 cells' rung since contract v38.
+@pytest.mark.parametrize("choice", ["TESSERA_E4M3_K1_R896", "BF16"])
 def test_actual_translator_hands_off_whole_expert_stacks(tmp_path, monkeypatch, packed, choice):
     import export_tessera_serving as export
     src, stack, units, carried = _moe_plan_source(tmp_path, packed=packed)

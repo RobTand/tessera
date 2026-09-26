@@ -16,6 +16,28 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-26 for the GLM-image window cells (tessera#604, contract
+v38). One route census of a GLM-5.3-Flash stub (one dense and three MoE
+layers) on the GLM serving image
+`localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a0...`, TP 1, eager,
+resident, recorded all nine Tessera modules served in both regimes with
+`problems: []` (`experiments/results/glm53_x_stub_tp1_eager_census.json`,
+`docs/measurements/tessera-glm-x-census-2026-09-26.md`). Eight cells are
+minted on that image: dense `TESSERA_E4M3_K1` and `TESSERA_BF16_K1` at
+`q256` 832/1024/1088, routed `TESSERA_E4M3_K1` at 896 and routed
+`TESSERA_BF16_K1` at 1024, decode and batch, all `route_only`. The folded
+dense GEMM pair and both compact window MoE pairs leave
+`scheme.EXPERIMENTAL_LAUNCHES`; only the two A4 pairs stay. The FP8 routed
+`torch_materialize_stock` launch leaves `scheme.ROUTE_LAUNCHES`, because this
+build always publishes the compact reader and so cannot make it. The two
+`eugr/spark-vllm@0afec8d4` routed E4M3 cells that named it are WITHDRAWN, and
+with them the only packaged smoke record and the LFM batch KL bound: an
+evidence downgrade, stated as one. The format rows gain the new rungs and their
+`attested_wire` stamps. Not attested: compiled execution (tessera#508), TP > 1,
+streamed residency, quality, timing. `tests/test_glm_x_census_cells.py`
+replays the receipt against the table. The routed `TESSERA_E2M1_K2` cells are
+untouched.
+
 Re-stamped 2026-09-25 for the folded dense BF16 arithmetic (tessera#614,
 contract v37). The dense `TESSERA_BF16` route now serves the same arithmetic
 as the routed stack: each weight is `bf16(value * row_scale)`, rounded once in
@@ -2712,13 +2734,15 @@ reproduced on the fp32 accumulators -- gate saturated at `+limit`, up branch at
 `+-limit`, the arithmetic vLLM's own `silu_and_mul` performs; `swiglu_alpha`,
 `swiglu_beta` and another activation still refuse.  It stamps `moe_route.py`'s
 `native_window_moe_compact` decoder and the
-`tessera.native_window_moe.NativeWindowMoE.__call__` symbol, published as an
-EXPERIMENTAL pair (`scheme.EXPERIMENTAL_LAUNCHES`) rather than as a cell, so
-the routed `lane_eligibility` cells keep naming the attested stock dispatch.
-The evidence so far is numerical -- the PB receipt `b3dfb9b0…` (55 passed, 13
+`tessera.native_window_moe.NativeWindowMoE.__call__` symbol (BF16 stamps
+`native_window_moe_compact_folded`). Both pairs were EXPERIMENTAL until
+contract v38, when a served TP1 eager census on the GLM serving image earned
+them cells (routed E4M3 at `q256 896`, routed BF16 at 1024; tessera#604), and
+the materialising FP8 launch the older cells named left the dispatch table.
+The numerical evidence is the PB receipt `b3dfb9b0…` (55 passed, 13
 device-allocated, one GB10) plus stage-by-stage comparison against stock
-`scaled_mm`/`fused_experts` -- and a two-node serve of this lane has NOT run,
-so nothing is promoted: the shared-expert combination stays the runner's
+`scaled_mm`/`fused_experts`. A two-node serve of this lane has NOT been
+censused, so nothing beyond TP 1 is promoted: the shared-expert combination stays the runner's
 (`SharedExpertsOrder.NO_OVERLAP`), no internal MK kernel is claimed, and the
 family's activation contract (quantizer, scale grouping, accumulation order)
 is the one the family already publishes.
@@ -4184,7 +4208,10 @@ asserted prose when it is now the checked output of a stated rule. No rung,
 route, activation contract, launch, grade, KL entry, qualification, TP/EP bound
 or byte moved.
 
-Rob decided #133 on 2026-09-04: both `routed_moe` cells keep
+*History: the two LFM-evidenced routed E4M3 cells this paragraph describes
+were WITHDRAWN at contract v38 (tessera#604), because they named the
+materialised FP8 launch this build cannot make. Their receipts stay in the
+tree.* Rob decided #133 on 2026-09-04: both `routed_moe` cells keep
 `device_qualified`, with the evidence debt recorded rather than closed. Read
 the two cells as qualified on **one artifact, one residency mode, one
 execution mode, one regime** -- an LFM2.5-8B-A1B E4M3/q1024 checkpoint served
@@ -4293,15 +4320,16 @@ to itself (`join_records_to_declared`,
 
 The structure then decides what that record is graded against. A stack serves
 under `TESSERA_FP8` -- same family, same wire, same activation contract -- and
-a different dispatch: one materialised launch through vLLM's own modular
-fused-MoE kernel, at every M, with no GEMV lane and nothing for a compiled
-forward to combine. Resolving the expectation from the FAMILY alone hands the
+a different dispatch: one launch at every M, with no GEMV lane and nothing
+for a compiled forward to combine. Since contract v38 that launch is the
+compact window MoE adapter; the materialised launch through vLLM's modular
+fused-MoE kernel left the table because this build cannot make it. Resolving the expectation from the FAMILY alone hands the
 stack the dense route's pair set and refuses a serve that did exactly what the
 route intends, so it comes from the route that owns the dispatch
 (`moe_route.census_expected`, the same ownership rule as
 `fp8_gemv.census_expected`). Both derive from `scheme.ROUTE_LAUNCHES`, whose
 `structures` axis keeps dense and routed launches distinct. Existing launch
-lookups default to dense; routed FP8 admits only its resident modular-kernel
+lookups default to dense; routed FP8 admits only its resident compact-adapter
 launch, in both regimes. The contract's launch derivation passes each cell's
 structure to the same lookup. Its symbol is compared without the backend suffix
 the record carries (`...modular_kernel:TRITON`): `select_fp8_moe_backend` is

@@ -194,9 +194,12 @@ def census_expected(*, compiled: bool = False, platform=None,
     DERIVATION IS NOT ATTESTATION. The shared ``scheme.ROUTE_LAUNCHES`` table
     separates this expert structure from the dense FP8 launch set. Reading
     that table keeps the census and contract derivations together. It does
-    not itself publish a served cell. The packaged contract's measured E4M3/q1024
-    resident/eager cells name their exact EUGR image, toolchain and sm_121 scope;
-    returning the same expected launch for compiled execution does not attest it.
+    not itself publish a served cell. The packaged contract's routed E4M3
+    (q256 896) and BF16 (q256 1024) resident/eager cells name their exact
+    image, toolchain and sm_121 scope (contract v38); returning the same
+    expected launch for compiled execution does not attest it.  Since v38 the
+    table carries no materialising launch for FP8 either: this build always
+    publishes the compact reader, so that branch cannot run.
     """
     del compiled  # documented above: one launch has nothing to combine
     if family not in _CENSUS_PAYLOAD_FAMILY:

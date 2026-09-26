@@ -246,7 +246,8 @@ def test_partitioned_expert_wires_equal_one_process_export(tmp_path, monkeypatch
     (source / "config.json").write_text(json.dumps({"architectures": ["Glm5NextForConditionalGeneration"],
         "text_config": {"hidden_size": 32, "moe_intermediate_size": 32, "n_routed_experts": 1}}))
     plan = tmp_path / "plan.json"
-    plan.write_text(json.dumps({stack: {"grid": "E4M3", "q256": 1024} for stack in stacks}))
+    # q256 896: the routed E4M3 cells' rung (contract v38).
+    plan.write_text(json.dumps({stack: {"grid": "E4M3", "q256": 896} for stack in stacks}))
     common = ["--grid", "E4M3", "--q256", "1024", "--device", "cpu", "--plan-json", str(plan)]
     paths = []
     for rank in range(2):
