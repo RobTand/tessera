@@ -640,7 +640,7 @@ def _repack_window_compact(metadata: ParsedMetadata, rows: "tuple[int, int]",
             rows_local=rows_local, rate=present, group_col0=group_col0,
             group_byte0=group_byte0, n_cols=n, n_tiles=n_tiles,
             chunk_bytes=chunk_bytes, tile_bytes=tile_bytes, device=device,
-            tile_rows=TILE_ROWS)
+            tile_rows=TILE_ROWS, scratch=scratch)
         flat = flat + part
         runs.append((present, group_col0, n, word0))
         word0 += n * 16 * present

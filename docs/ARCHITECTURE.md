@@ -41,6 +41,19 @@ who prices bytes, and what has to be served before an allocation ships.
 Numbers below are citations, not claims -- each points at the measurement or
 the code that owns it.
 
+Re-stamped 2026-09-26 for the second routed window staging path
+(tessera#626). The same per-stack scratch dict now reaches
+`window_repack_stream_cuda`, so its existing `_plane_words` helper reuses
+the word-reversal source and destination buffers. After the earlier BODY
+transfer fix, an exact full-export replay still grew CUDA reserved memory by
+20 MiB per callback near callback 33,000; its allocator snapshot located the
+missed `_plane_words` call. With the word staging connected, reserved memory
+was flat from callbacks 33,000 to 33,200 on both TP ranks while active packed
+intake bytes were unchanged. The matched counters and both-box host evidence
+are in `docs/measurements/tessera-glm-window-loader-scratch-2026-09-26.md`.
+The bounded replay stopped at callback 34,000; full-model READY and generation
+remain unproven. Wire bytes, arithmetic and contract v38 did not change.
+
 Re-stamped 2026-09-26 for the routed window loader's BODY staging
 (tessera#626). The compact expert intake now gives both the window repacker
 and TP row-history reader one reusable, caller-owned device buffer per routed
@@ -2782,7 +2795,9 @@ is staged through one reusable CUDA buffer per routed stack for both the
 repacker and rank-local row-history read; the buffer is released when that
 stack finishes loading (tessera#626). This is the same caller-owned
 `_plane_u8` mechanism the A4 intake uses, with the same-stream copy/consume
-order and no change to prepared packed planes. The activation is `silu`
+order and no change to prepared packed planes. The repacker also passes that
+scratch owner into `window_repack_stream_cuda`, whose `_plane_words` helper
+reuses the word-reversal source and destination buffers. The activation is `silu`
 with the model's SwiGLU clamp (`swiglu_limit` / vLLM's `gemm1_clamp_limit`)
 reproduced on the fp32 accumulators -- gate saturated at `+limit`, up branch at
 `+-limit`, the arithmetic vLLM's own `silu_and_mul` performs; `swiglu_alpha`,
