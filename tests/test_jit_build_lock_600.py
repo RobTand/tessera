@@ -148,7 +148,7 @@ def ext_build_directory(tmp_path, monkeypatch):
     monkeypatch.setattr(kg, "torch", _cuda_torch())
     monkeypatch.setattr(kg, "_ensure_toolchain_on_path", lambda: None)
     kg._ext.cache_clear()
-    yield tmp_path / "tessera_window_gemv_sm_121"
+    yield tmp_path / ("tessera_window_gemv_sm_121" + jbl.GUARDED_BUILD_SUFFIX)
     kg._ext.cache_clear()
 
 
@@ -166,6 +166,51 @@ def test_ext_survives_a_killed_builder(ext_build_directory, monkeypatch):
     kg._ext()
     assert calls == ["tessera_window_gemv"]
     assert not (ext_build_directory / jbl.TORCH_BATON_NAME).exists()
+
+
+def test_ext_does_not_steal_a_live_legacy_builders_baton(
+        ext_build_directory, monkeypatch):
+    """A pre-upgrade FileBaton builder has no reason to hold our new flock."""
+    import tessera.kernel_window_gemv as kg
+
+    legacy = ext_build_directory.with_name(
+        ext_build_directory.name.removesuffix(jbl.GUARDED_BUILD_SUFFIX))
+    legacy.mkdir(parents=True)
+    ready = legacy.parent / "legacy.ready"
+    child = _run_child(textwrap.dedent(f"""
+        import os, time
+        from pathlib import Path
+        directory = Path({str(legacy)!r})
+        fd = os.open(directory / 'lock', os.O_CREAT | os.O_EXCL)
+        Path({str(ready)!r}).write_text('building')
+        time.sleep(600)
+        os.close(fd)
+    """), {})
+    try:
+        deadline = time.monotonic() + 10
+        while not ready.exists():
+            assert child.poll() is None, "legacy builder exited before its baton"
+            assert time.monotonic() < deadline, "legacy builder never took its baton"
+            time.sleep(0.02)
+        seen = {}
+
+        def load(name, *, build_directory, **_kwargs):
+            directory = Path(build_directory)
+            calls = []
+            result = _baton_load(directory, calls)(name)
+            seen.update(directory=directory, legacy_still_building=child.poll() is None,
+                        calls=calls)
+            return result
+
+        monkeypatch.setattr(cpp_extension, "load", load)
+        kg._ext()
+        assert seen["calls"] == ["tessera_window_gemv"]
+        assert seen["legacy_still_building"]
+        assert seen["directory"] != legacy, "two live builders entered the legacy directory"
+        assert (legacy / jbl.TORCH_BATON_NAME).exists(), "live legacy baton was removed"
+    finally:
+        child.kill()
+        child.wait(timeout=5)
 
 
 def test_ext_holds_the_guard_while_load_runs(ext_build_directory, monkeypatch):
@@ -200,7 +245,7 @@ def test_ext_holds_the_guard_while_load_runs(ext_build_directory, monkeypatch):
 # --------------------------------------------------------------------------
 
 def test_a_stale_baton_without_any_builder_is_cleared(tmp_path):
-    directory = tmp_path / "torch_extensions" / "pkg"
+    directory = tmp_path / "torch_extensions" / ("pkg" + jbl.GUARDED_BUILD_SUFFIX)
     directory.mkdir(parents=True)
     os.close(os.open(directory / jbl.TORCH_BATON_NAME, os.O_CREAT | os.O_EXCL))
     with jbl.jit_build_lock(directory) as removed:
@@ -208,25 +253,40 @@ def test_a_stale_baton_without_any_builder_is_cleared(tmp_path):
     assert not (directory / jbl.TORCH_BATON_NAME).exists()
 
 
+def test_legacy_directory_is_never_reaped(tmp_path):
+    legacy = tmp_path / "tessera_window_gemv_sm_121"
+    legacy.mkdir()
+    baton = legacy / jbl.TORCH_BATON_NAME
+    baton.touch()
+    with pytest.raises(ValueError, match="legacy JIT build directory"):
+        jbl.clear_stale_baton(legacy)
+    with pytest.raises(ValueError, match="legacy JIT build directory"):
+        with jbl.jit_build_lock(legacy):
+            pass
+    assert baton.exists()
+
+
 def test_a_live_flock_holder_keeps_its_lock(tmp_path):
     """A torch that flocks ``lock`` itself (pytorch#189245): a live holder is
     never robbed."""
-    baton = tmp_path / jbl.TORCH_BATON_NAME
+    directory = tmp_path / ("pkg" + jbl.GUARDED_BUILD_SUFFIX)
+    directory.mkdir()
+    baton = directory / jbl.TORCH_BATON_NAME
     holder = os.open(baton, os.O_RDWR | os.O_CREAT)
     try:
         # A separate open file description conflicts with this one's flock,
         # exactly as another process's would.
         fcntl.flock(holder, fcntl.LOCK_EX)
-        assert jbl.clear_stale_baton(tmp_path) is False
+        assert jbl.clear_stale_baton(directory) is False
         assert baton.exists()
     finally:
         os.close(holder)
-    assert jbl.clear_stale_baton(tmp_path) is True
+    assert jbl.clear_stale_baton(directory) is True
     assert not baton.exists()
 
 
 def test_the_guard_serializes_builders_and_is_released_by_a_kill(tmp_path):
-    directory = tmp_path / "build"
+    directory = tmp_path / ("build" + jbl.GUARDED_BUILD_SUFFIX)
     ready = tmp_path / "builder.ready"
     script = textwrap.dedent(f"""
         import time
@@ -259,7 +319,7 @@ def test_load_after_a_killed_builder_finishes(tmp_path, monkeypatch):
     """The guard module's own contract, independent of ``_ext()``: a real
     child takes the guard and the baton in one directory, is SIGKILLed, and a
     later caller of the guard proceeds instead of waiting on the corpse."""
-    directory = tmp_path / "torch_extensions" / "pkg"
+    directory = tmp_path / "torch_extensions" / ("pkg" + jbl.GUARDED_BUILD_SUFFIX)
     directory.mkdir(parents=True)
     _killed_builder(directory)
     calls: list = []

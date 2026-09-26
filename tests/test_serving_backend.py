@@ -30,6 +30,7 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from tessera.serving import backend as backend_module  # noqa: E402
+from tessera.jit_build_lock import GUARDED_BUILD_SUFFIX  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src" / "tessera"
@@ -251,7 +252,8 @@ def test_the_override_gives_the_build_its_own_directory(monkeypatch, tmp_path):
     recorded = _drive_window_gemv_loader(monkeypatch, tmp_path,
                                          torch=_hip_torch("gfx1201:xnack-"),
                                          override="gfx1151")
-    assert recorded["build_directory"].endswith("tessera_window_gemv_gfx1151")
+    assert recorded["build_directory"].endswith(
+        "tessera_window_gemv_gfx1151" + GUARDED_BUILD_SUFFIX)
     assert "--offload-arch=gfx1151" in recorded["extra_cuda_cflags"]
     assert recorded["name"] == "tessera_window_gemv"
 
@@ -279,7 +281,8 @@ def test_the_loader_pins_the_arch_variable_it_builds_under(monkeypatch, tmp_path
 def test_the_probed_device_gives_the_build_its_own_directory(monkeypatch, tmp_path):
     recorded = _drive_window_gemv_loader(monkeypatch, tmp_path,
                                          torch=_hip_torch("gfx1201:xnack-"))
-    assert recorded["build_directory"].endswith("tessera_window_gemv_gfx1201")
+    assert recorded["build_directory"].endswith(
+        "tessera_window_gemv_gfx1201" + GUARDED_BUILD_SUFFIX)
     assert recorded["keep_intermediates"] is False, (
         "a HIP build writes the hipified .hip beside the .cu; the loader must ask "
         "torch not to keep it in the checkout")
@@ -287,7 +290,8 @@ def test_the_probed_device_gives_the_build_its_own_directory(monkeypatch, tmp_pa
 
 def test_a_cuda_build_directory_carries_its_token_too(monkeypatch, tmp_path):
     recorded = _drive_window_gemv_loader(monkeypatch, tmp_path, torch=_cuda_torch((12, 1)))
-    assert recorded["build_directory"].endswith("tessera_window_gemv_sm_121")
+    assert recorded["build_directory"].endswith(
+        "tessera_window_gemv_sm_121" + GUARDED_BUILD_SUFFIX)
     assert "keep_intermediates" not in recorded, (
         "nothing is generated on the CUDA path; the flag would be a no-op there")
 

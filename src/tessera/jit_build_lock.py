@@ -14,13 +14,12 @@ a build directory holding a 0-byte ``lock`` with no process behind it, and
 releases when its holder dies; a leftover file there blocks nobody.
 
 :func:`jit_build_lock` holds an ``fcntl.flock`` on a separate file,
-``tessera.build.flock``, in the build directory around ``load``. The kernel
-releases that flock when its holder dies, so a killed builder cannot wedge
-it. While a process holds it, no other Tessera builder of that extension is
-inside ``load``, so a ``lock`` file found there is a dead builder's baton and
-is removed, with no age threshold. One guard remains for a torch that flocks
-``lock`` itself: the file is removed only while a non-blocking ``flock`` on
-it succeeds, so a live holder's lock is never taken from it.
+``tessera.build.flock``, around ``load``. Its build directory has a fresh,
+guarded namespace: pre-upgrade builders use the legacy directory and do not
+hold our flock. Only guarded builders can enter the new directory, so a
+``lock`` file found there under the guard is a dead builder's baton and can
+be removed without an age threshold. A non-blocking ``flock`` on ``lock``
+also protects a live torch release that owns that file directly.
 
 This module is Tessera's own copy of the mechanism PrismaQuant carries at
 ``prismaquant/kernels/jit_build_lock.py`` (PQ #1174) -- not imported from
@@ -45,6 +44,7 @@ from pathlib import Path
 
 __all__ = [
     "GUARD_NAME",
+    "GUARDED_BUILD_SUFFIX",
     "TORCH_BATON_NAME",
     "clear_stale_baton",
     "jit_build_lock",
@@ -52,18 +52,24 @@ __all__ = [
 
 #: The file this module flocks; distinct from torch's own ``lock``.
 GUARD_NAME = "tessera.build.flock"
+# A pre-#600 builder never uses this build directory. Do not reuse the legacy
+# name: its live FileBaton owner cannot be detected by flock.
+GUARDED_BUILD_SUFFIX = "_tessera_guarded_v1"
 #: The file ``torch.utils.cpp_extension`` serializes a build with.
 TORCH_BATON_NAME = "lock"
 
 
 def clear_stale_baton(build_directory) -> bool:
-    """Remove torch's ``lock`` file when no live process holds it.
+    """Remove torch's ``lock`` only in our guarded build namespace.
 
     Call only while holding :func:`jit_build_lock` for ``build_directory``:
     that is what makes a ``FileBaton`` found here a dead builder's. Returns
     True when a file was removed.
     """
-    path = Path(build_directory) / TORCH_BATON_NAME
+    directory = Path(build_directory)
+    if not directory.name.endswith(GUARDED_BUILD_SUFFIX):
+        raise ValueError(f"refusing to clear a legacy JIT build directory: {directory}")
+    path = directory / TORCH_BATON_NAME
     try:
         fd = os.open(path, os.O_RDONLY)
     except FileNotFoundError:
@@ -90,6 +96,8 @@ def jit_build_lock(build_directory):
     Yields whether a stale ``lock`` file was removed.
     """
     directory = Path(build_directory)
+    if not directory.name.endswith(GUARDED_BUILD_SUFFIX):
+        raise ValueError(f"refusing to guard a legacy JIT build directory: {directory}")
     directory.mkdir(parents=True, exist_ok=True)
     fd = os.open(directory / GUARD_NAME, os.O_RDWR | os.O_CREAT, 0o644)
     try:
@@ -101,4 +109,3 @@ def jit_build_lock(build_directory):
         yield removed
     finally:
         os.close(fd)  # closing the only descriptor releases the flock
-

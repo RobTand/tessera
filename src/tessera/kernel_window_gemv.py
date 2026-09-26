@@ -364,7 +364,7 @@ def _ext():
         probed_platform_token,
     )
 
-    from .jit_build_lock import jit_build_lock
+    from .jit_build_lock import GUARDED_BUILD_SUFFIX, jit_build_lock
 
     _ensure_toolchain_on_path()
     # The one source, resolved from the contract's native-extension table: the
@@ -389,13 +389,15 @@ def _ext():
     build = os.path.join(root, f"tessera_window_gemv_{token}")
     if pf != 1:
         build = build + f"_pf{pf}"
+    # A pre-upgrade FileBaton builder may still be alive in the legacy path.
+    # Only this fresh namespace is exclusively owned by jit_build_lock.
+    build += GUARDED_BUILD_SUFFIX
     os.makedirs(build, exist_ok=True)
     pin_build_arch(token, torch)   # torch writes its own --offload-arch; one token, not two
     verbose = bool(os.environ.get("TESSERA_WINDOW_GEMV_VERBOSE"))
     try:
-        # The build runs under jit_build_lock on this same directory, so a
-        # builder killed mid-build cannot leave every later load of this
-        # extension waiting on torch's own build lock forever (#600).
+        # A killed guarded builder leaves only a baton we may safely clear;
+        # the legacy build directory and any live pre-upgrade owner are untouched.
         with jit_build_lock(build):
             module = load(
                 name="tessera_window_gemv",  # literal: the contract reader reads it statically
