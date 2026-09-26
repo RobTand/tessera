@@ -25,6 +25,7 @@ from .unit_artifact import _reach_attrs, build_unit_artifact, encoder_profile_id
 
 CACHE_SCHEMA = "tessera.cached_units.v1"
 ROOTED_CACHE_SCHEMA = "tessera.cached_units.v2"
+COMPOSED_CACHE_SCHEMA = "tessera.cached_units.v3"
 INPUT_SCHEMA = "tessera.cached_unit_inputs.v1"
 ENCODING_INPUT_SCHEMA = "tessera.encoding_inputs.v1"
 #: The catalog-extension documents a rooted bundle's reuse authority may bind:
@@ -398,11 +399,15 @@ class CachedUnitBundle:
 
     def __init__(self, manifest: dict, directory: Path, expected_units: set[str], source: dict):
         rooted = manifest.get("schema") == ROOTED_CACHE_SCHEMA
+        composed = manifest.get("schema") == COMPOSED_CACHE_SCHEMA
         fields = {"schema", "source", "units"}
         if rooted:
             fields |= {"wire_roots", "unit_roots", "producer_packages",
                        "reuse_authority", "encoder_adoptions", "served_activation_policy", "served_activations"}
-        if set(manifest) != fields or manifest["schema"] not in (CACHE_SCHEMA, ROOTED_CACHE_SCHEMA):
+        if composed:
+            fields = {"schema", "source", "children"}
+        if set(manifest) != fields or manifest["schema"] not in (
+                CACHE_SCHEMA, ROOTED_CACHE_SCHEMA, COMPOSED_CACHE_SCHEMA):
             raise ValueError("cached unit bundle has an unsupported schema or fields")
         from .serving_parts import SOURCE_PART_SCHEMA, prove_source_part
         if isinstance(source, dict) and source.get("schema") == SOURCE_PART_SCHEMA:
@@ -417,16 +422,23 @@ class CachedUnitBundle:
             prove_source_part(source, whole, "cached unit bundle")
         elif manifest["source"] != source:
             raise ValueError("cached unit bundle source checkpoint identity mismatch")
-        units = manifest["units"]
-        if not isinstance(units, dict) or set(units) != set(expected_units):
-            raise ValueError("cached unit bundle coverage differs from the complete producer plan")
         self.directory = Path(directory).resolve()
-        self.roots = {"legacy": self.directory}
-        self.unit_roots = dict.fromkeys(units, "legacy")
+        self.children = {}
+        self.child_manifests = []
         self.producer_packages = {}
         self.reuse_authority = None
         self.encoder_adoptions = {}
         self.served_activation_policy, self.served_activations = None, {}
+        if composed:
+            self._bind_composed(manifest, expected_units)
+            self.manifest_sha256 = hashlib.sha256(json.dumps(
+                manifest, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+            return
+        units = manifest["units"]
+        if not isinstance(units, dict) or set(units) != set(expected_units):
+            raise ValueError("cached unit bundle coverage differs from the complete producer plan")
+        self.roots = {"legacy": self.directory}
+        self.unit_roots = dict.fromkeys(units, "legacy")
         if rooted:
             self._bind_rooted(manifest, units)
         files = set()
@@ -443,12 +455,90 @@ class CachedUnitBundle:
             manifest, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
 
     def read(self, key: str) -> tuple[bytes, dict]:
+        if self.children:
+            return self.children[key].read(key)
         record = self.units[key]
         root = self.roots[self.unit_roots[key]]
         path = root / record["file"]
         if root.resolve() != root or path.is_symlink() or path.resolve().parent != root:
             raise ValueError(f"cached unit filename escapes bundle: {path}")
         return path.read_bytes(), record
+
+    def _bind_composed(self, manifest, expected_units):
+        """Join independently completed child manifests without changing receipts."""
+        descriptors = manifest["children"]
+        if not isinstance(descriptors, list) or not descriptors:
+            raise ValueError("cached unit composition needs a nonempty child roster")
+        seen_paths = set()
+        units, producers, owners, served = {}, {}, {}, {}
+        children = []
+        for descriptor in descriptors:
+            if not isinstance(descriptor, dict) or set(descriptor) != {"manifest", "producer_package"}:
+                raise ValueError("cached unit child needs manifest and producer package fields")
+            bound = descriptor["manifest"]
+            # _bound_document verifies the exact file bytes. Reject path aliases
+            # as well, so one document cannot masquerade as two cohorts.
+            if not isinstance(bound, dict) or not isinstance(bound.get("path"), str):
+                raise ValueError("cached unit child manifest path is invalid")
+            path = Path(bound["path"])
+            if path.resolve() != path or path in seen_paths:
+                raise ValueError("cached unit child manifests alias a path")
+            seen_paths.add(path)
+            document = _bound_document(bound)
+            if not isinstance(document, dict) or document.get("schema") not in (
+                    CACHE_SCHEMA, ROOTED_CACHE_SCHEMA):
+                raise ValueError("cached unit composition children must be v1 or v2")
+            child_units = document.get("units")
+            if not isinstance(child_units, dict) or not child_units:
+                raise ValueError("cached unit child has no unit roster")
+            if set(child_units) & set(units):
+                raise ValueError("cached unit child unit rosters overlap")
+            child = CachedUnitBundle(document, path.parent, set(child_units), manifest["source"])
+            package = descriptor["producer_package"]
+            if document["schema"] == CACHE_SCHEMA:
+                seals = {record["identity"]["encoder_source_sha256"]
+                         for record in child.units.values()}
+                if len(seals) != 1 or not isinstance(package, dict) or set(package) != {"path", "sha256"}:
+                    raise ValueError("v1 cached unit child needs its one original producer package")
+                seal = next(iter(seals))
+                if not isinstance(package["path"], str):
+                    raise ValueError("v1 cached unit producer package path is invalid")
+                package_path = Path(package["path"])
+                if (not isinstance(seal, str) or len(seal) != 64
+                        or any(c not in '0123456789abcdef' for c in seal)
+                        or package["sha256"] != seal or not package_path.is_absolute()
+                        or package_path.resolve() != package_path):
+                    raise ValueError("v1 cached unit producer package differs from original seal")
+                child_packages = {seal: package}
+            else:
+                if package is not None:
+                    raise ValueError("v2 cached unit child already binds its producer packages")
+                child_packages = child.producer_packages
+            for seal, original in child_packages.items():
+                if seal in producers and producers[seal] != original:
+                    raise ValueError("cached unit child producer package bindings conflict")
+                producers[seal] = original
+            for name in child.units:
+                owners[name] = child
+            units.update(child.units)
+            if set(served) & set(child.served_activations):
+                raise ValueError("cached unit child served activations overlap")
+            served.update(child.served_activations)
+            children.append({"manifest": bound, "schema": document["schema"],
+                             "units": len(child.units), "producer_package": package,
+                             "producer_packages": child.producer_packages,
+                             "reuse_authority": child.reuse_authority,
+                             "encoder_adoptions": len(child.encoder_adoptions),
+                             "served_activation_policy": child.served_activation_policy,
+                             "served_activations": child.served_activations})
+        if set(units) != set(expected_units):
+            raise ValueError("cached unit composition coverage differs from the complete producer plan")
+        self.units, self.children = units, owners
+        # The caller still owns the parsed parent document. Keep its small
+        # provenance dictionaries from changing after manifest_sha256 is set.
+        self.producer_packages = _json_copy(producers)
+        self.served_activations = _json_copy(served)
+        self.child_manifests = _json_copy(children)
 
     def _bind_rooted(self, manifest, units):
         roots, owners = manifest["wire_roots"], manifest["unit_roots"]
