@@ -1,5 +1,20 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-09-26 for canonical Hessian reference collections
+(tessera#625). `ActivationSource.from_capture` accepts a
+`*.collection.references.json` document through the existing `--hessian`
+argument. The closed collection binds two or more existing v1 reference
+documents by absolute path and SHA-256, requires their calibration provenance
+to agree and their committed unit sets to be disjoint, and declares the exact
+union roster and its `tessera.hessian_capture.v1` content seal. Each child
+retains its own canonical capture/census binding and byte bounds. The owner
+serves one unit through that child's existing checked reader; cached-unit
+identities still derive source, H, recipe and encoder facts independently of
+their receipts. The collection binding and consumption receipt name each
+child separately, including its verified reads and commitment-only uses.
+The single-reference document, binding and receipt retain their v1 spelling.
+No serving lane, wire, encoder recipe or runtime pin changes.
+
 Native operator research receipts may freeze an execution-only panel before
 joint distortion completes. Dense and whole-MoE raw schemas carry original
 wire, source, calibration, tensor, routing and runtime identities but no cost
@@ -815,6 +830,18 @@ Unbound, every H lookup, including cached-wire input identity, verifies the
 bounded original file and actual H bytes through a held descriptor before
 returning a detached H. The reader retains metadata and descriptors, never H/X
 tensors.
+Re-stamped 2026-09-26 for disjoint reference composition (tessera#625).
+`ReferenceHessianCollection` opens and holds each existing reference owner,
+verifies the exact child document SHA-256 and common calibration context,
+then seals the union of their per-unit H commitments using the unchanged
+capture digest grammar. The collection file names the complete sorted union;
+omitted, duplicated or invented units refuse before any H payload read.
+`ActivationSource` keeps using commitment sealing and verifies bytes when a
+unit is actually consumed. A collection close closes every child. Per-child
+read/commitment receipts prevent a witness from one reference being reported
+as verification of the others. `--priced-inputs` admits an explicit collection
+binding with the collection document digest and every child's canonical
+binding; the existing single-document binding remains byte-identical.
 The explicit load policy bounds each JSON, source file and H; one lookup may
 own one capped source mapping, an H copy and the existing H-sized hash staging,
 in addition to caller/encoder owners. Legacy `.pt` captures remain eager.
