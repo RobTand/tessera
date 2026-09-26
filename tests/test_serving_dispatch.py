@@ -41,6 +41,8 @@ def _install_vllm_stubs():
         sys.modules[name] = value
         return value
     module("vllm")
+    current = module("vllm.config")
+    current.get_current_vllm_config_or_none = lambda: None
     module("vllm.model_executor")
     module("vllm.model_executor.layers")
     module("vllm.model_executor.layers.quantization")
@@ -303,6 +305,146 @@ def test_a_non_linear_non_moe_layer_takes_vllms_own_method(monkeypatch):
     """``ParallelLMHead`` and friends: ``None`` is right here, and only here."""
     monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
     assert _resolved().get_quant_method(_lm_head(), "lm_head") is None
+
+
+def _glm_mtp_context(monkeypatch, *, architecture="Glm5NextMTPModel", method="mtp",
+                     start=45, count=1, text_type="glm5_next_text"):
+    """Pinned draft: outer MTP identity, nested text-layer geometry."""
+    from vllm import config as vllm_config
+
+    draft = types.SimpleNamespace(
+        hf_config=types.SimpleNamespace(
+            architectures=[architecture], model_type="glm5_next_mtp"),
+        hf_text_config=types.SimpleNamespace(
+            model_type=text_type, num_hidden_layers=start,
+            num_nextn_predict_layers=count))
+    context = types.SimpleNamespace(speculative_config=types.SimpleNamespace(
+        method=method, draft_model_config=draft))
+    monkeypatch.setattr(vllm_config, "get_current_vllm_config_or_none", lambda: context)
+
+
+def _glm_mtp_mapper():
+    """Pinned Glm5NextMTP.hf_to_vllm_mapper's name-only table."""
+    class Mapper:
+        def apply_list(self, names):
+            return [name.replace("model.language_model.", "model.", 1)
+                    if name.startswith("model.language_model.") else name
+                    for name in names]
+    return Mapper()
+
+
+def _glm_body_mapper():
+    """Pinned Glm5NextForConditionalGeneration source-name table."""
+    class Mapper:
+        def apply_list(self, names):
+            return [name.replace("model.language_model.", "language_model.model.", 1)
+                    if name.startswith("model.language_model.") else name
+                    for name in names]
+    return Mapper()
+
+
+def test_glm_mtp_declared_expert_resolves_only_at_the_draft_module(monkeypatch):
+    from tessera.serving import moe_route
+    from vllm.model_executor.layers.fused_moe import RoutedExperts
+
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    _glm_mtp_context(monkeypatch)
+    source = "model.language_model.layers.45.mlp.experts"
+    actual = "model.layers.45.mtp_block.mlp.experts"
+    config = _resolved(_config(_moe_scheme(), targets=(source,)))
+    config.apply_vllm_mapper(_glm_mtp_mapper())
+    calls = []
+    monkeypatch.setattr(moe_route, "build_tessera_moe_method",
+                        lambda *args, **kwargs: calls.append((args, kwargs)) or object())
+    layer = object.__new__(RoutedExperts)
+
+    assert config.get_quant_method(layer, actual) is not None
+    assert calls[0][0][1] == actual  # downstream loader/trace keeps actual module name
+    assert "model.layers.45.mlp.experts" in config.target_scheme
+    assert source not in config.target_scheme
+
+
+def test_glm_body_then_draft_mapper_rebinds_from_original_declarations(monkeypatch):
+    from tessera.serving import moe_route
+    from vllm.model_executor.layers.fused_moe import RoutedExperts
+
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    _glm_mtp_context(monkeypatch)
+    source = "model.language_model.layers.45.mlp.experts"
+    actual = "model.layers.45.mtp_block.mlp.experts"
+    body_name = "language_model.model.layers.45.mlp.experts"
+    config = _resolved(_config(_moe_scheme(), targets=(source,)))
+    config.apply_vllm_mapper(_glm_body_mapper())
+    assert body_name in config.target_scheme
+    config.apply_vllm_mapper(_glm_mtp_mapper())
+    calls = []
+    monkeypatch.setattr(moe_route, "build_tessera_moe_method",
+                        lambda *args, **kwargs: calls.append((args, kwargs)) or object())
+    assert config.get_quant_method(object.__new__(RoutedExperts), actual) is not None
+    assert calls[0][0][1] == actual
+    assert body_name in config.target_scheme
+
+
+def test_glm_mtp_ignored_shared_linear_resolves_at_the_draft_module(monkeypatch):
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    _glm_mtp_context(monkeypatch)
+    source = "model.language_model.layers.45.mlp.shared_experts.down_proj"
+    actual = "model.layers.45.mtp_block.mlp.shared_experts.down_proj"
+    config = _resolved(_config(ignore=(source,)))
+    config.apply_vllm_mapper(_glm_mtp_mapper())
+    assert type(config.get_quant_method(_layer(), actual)).__name__ == "UnquantizedLinearMethod"
+
+
+def test_glm_body_then_draft_mapper_preserves_ignored_shared_linear(monkeypatch):
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    _glm_mtp_context(monkeypatch)
+    source = "model.language_model.layers.45.mlp.shared_experts.down_proj"
+    actual = "model.layers.45.mtp_block.mlp.shared_experts.down_proj"
+    config = _resolved(_config(ignore=(source,)))
+    config.apply_vllm_mapper(_glm_body_mapper())
+    config.apply_vllm_mapper(_glm_mtp_mapper())
+    assert type(config.get_quant_method(_layer(), actual)).__name__ == "UnquantizedLinearMethod"
+    assert "language_model.model.layers.45.mlp.shared_experts.down_proj" in config.ignore
+
+
+@pytest.mark.parametrize("context", ["none", "missing_draft_config", "wrong_architecture",
+                                      "wrong_text_type", "wrong_method", "wrong_index"])
+def test_glm_mtp_name_adapter_refuses_outside_its_actual_draft_scope(monkeypatch, context):
+    from vllm.model_executor.layers.fused_moe import RoutedExperts
+
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    source = "model.language_model.layers.45.mlp.experts"
+    actual = "model.layers.45.mtp_block.mlp.experts"
+    config = _resolved(_config(_moe_scheme(), targets=(source,)))
+    config.apply_vllm_mapper(_glm_mtp_mapper())
+    if context == "missing_draft_config":
+        from vllm import config as vllm_config
+        monkeypatch.setattr(vllm_config, "get_current_vllm_config_or_none",
+                            lambda: types.SimpleNamespace(speculative_config=types.SimpleNamespace(
+                                method="mtp", draft_model_config=None)))
+    elif context == "wrong_architecture":
+        _glm_mtp_context(monkeypatch, architecture="AnotherMTPModel")
+    elif context == "wrong_text_type":
+        _glm_mtp_context(monkeypatch, text_type="another_text")
+    elif context == "wrong_method":
+        _glm_mtp_context(monkeypatch, method="draft_model")
+    elif context == "wrong_index":
+        _glm_mtp_context(monkeypatch, start=46)
+    with pytest.raises(ValueError, match="declares no wire"):
+        config.get_quant_method(object.__new__(RoutedExperts), actual)
+
+
+def test_glm_mtp_explicit_target_collision_refuses(monkeypatch):
+    from vllm.model_executor.layers.fused_moe import RoutedExperts
+
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    _glm_mtp_context(monkeypatch)
+    source = "model.language_model.layers.45.mlp.experts"
+    actual = "model.layers.45.mtp_block.mlp.experts"
+    config = _resolved(_config(_moe_scheme(), targets=(source, actual)))
+    config.apply_vllm_mapper(_glm_mtp_mapper())
+    with pytest.raises(ValueError, match="both|ambiguous|collid"):
+        config.get_quant_method(object.__new__(RoutedExperts), actual)
 
 
 @pytest.mark.parametrize("build", ["real", "named"])
