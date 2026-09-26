@@ -550,3 +550,14 @@ def test_explicit_plan_requires_every_source_expert(tmp_path):
     manifest_path.write_text(json.dumps(manifest))
     with pytest.raises(ValueError, match="plan.*coverage"):
         parts.merge_serving_parts(paths, tmp_path / "merged", source)
+
+
+def test_merged_manifest_is_compact_json(tmp_path):
+    """The merged manifest ships in the artifact; whitespace is paid in bytes."""
+    source, paths = _fixture(tmp_path)
+    out = tmp_path / "merged"
+    parts.merge_serving_parts(paths, out, source)
+    text = (out / "tessera_serving_manifest.json").read_text()
+    assert "\n" not in text
+    assert text == json.dumps(json.loads(text), separators=(",", ":"))
+    assert text == parts.manifest_json(json.loads(text))

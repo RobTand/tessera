@@ -21,6 +21,21 @@ SCHEMA = "tessera.serving-part.v1"
 BODY_LAYER = re.compile(r"^model\.(?:[^.]+\.)*layers\.(\d+)\.")
 
 
+def manifest_json(manifest: dict) -> str:
+    """The on-disk text of a Tessera manifest sidecar: compact JSON.
+
+    The manifest ships inside the artifact, so its bytes count toward the
+    artifact's size.  Indented, the GLM-5.3-Flash body+MTP manifest was
+    42,445,119 B; compact, the same object is 29,341,610 B.  Those 13 MB of
+    whitespace put a size-matched checkpoint over its byte ceiling.  Key order
+    is insertion order, as before, so the text is as deterministic as the
+    object.  Every reader parses JSON; the digests taken of this file are
+    computed from the bytes on disk.  ``config.json`` and
+    ``model.safetensors.index.json`` keep their conventional indented form.
+    """
+    return json.dumps(manifest, separators=(",", ":"))
+
+
 def parse_partition(value: str) -> tuple[int, int]:
     try:
         index, count = map(int, value.split("/"))
@@ -681,7 +696,7 @@ def merge_serving_parts(paths, out: Path, source: Path, *, move=False,
                 shutil.copy2(aux, out / aux.name)
     (out / "model.safetensors.index.json").write_text(json.dumps({
         "metadata": {"total_size": size}, "weight_map": weight_map}, indent=2))
-    (out / "tessera_serving_manifest.json").write_text(json.dumps(manifest, indent=2))
+    (out / "tessera_serving_manifest.json").write_text(manifest_json(manifest))
     (out / "config.json").write_text(json.dumps(config, indent=2))
     return manifest
 
