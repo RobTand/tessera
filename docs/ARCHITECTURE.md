@@ -1,5 +1,21 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-09-26 for the bounded full GLM-5.3-Flash TP2 serve
+(tessera#626). With both routed-window staging fixes on merged Tessera
+`f790bcc1aaa039388f6218ae3ef70155a8a9e6fa`, the unchanged 120-shard
+checkpoint reached READY and generated three short text replies in resident,
+eager TP2. This diagnostic used rank 0/API on sparklina, rank 1 on sparky,
+stock `--language-model-only`, 0.5 GiB KV per rank and maximum length 1,024.
+Both hosts passed the 24 GiB MemAvailable READY gate, but sparky briefly fell
+27,520 kB below that margin during a 1,023-prompt-token plus one-output-token
+request. The request completed and the 16 GiB watchdog did not fire. This is
+bounded evidence of short text generation and exact-context admission, not
+continuous 24 GiB slack, long-context capacity, multimodal, graph, MTP or
+served-quality qualification. See
+`docs/measurements/tessera-glm53-full-tp2-text-serve-2026-09-26.md` for the
+configuration, responses, both-host telemetry and controlled teardown. No
+serving default, contract cell, wire, arithmetic or runtime pin changes.
+
 Re-stamped 2026-09-26 for independent cached-unit cohort composition
 (tessera#630). `tessera.cached_units.v3` binds original v1/v2 child manifests
 by canonical absolute path and file SHA-256. Their complete, disjoint unit
@@ -62,8 +78,9 @@ missed `_plane_words` call. With the word staging connected, reserved memory
 was flat from callbacks 33,000 to 33,200 on both TP ranks while active packed
 intake bytes were unchanged. The matched counters and both-box host evidence
 are in `docs/measurements/tessera-glm-window-loader-scratch-2026-09-26.md`.
-The bounded replay stopped at callback 34,000; full-model READY and generation
-remain unproven. Wire bytes, arithmetic and contract v38 did not change.
+The bounded replay stopped at callback 34,000; it did not itself prove
+full-model READY or generation. The separate later text-only diagnostic serve
+is recorded above. Wire bytes, arithmetic and contract v38 did not change.
 
 Re-stamped 2026-09-26 for the routed window loader's BODY staging
 (tessera#626). The compact expert intake now gives both the window repacker
@@ -75,7 +92,7 @@ on the two TP ranks while active packed intake stayed 5.61 GB. The exact
 before/after counters, both-box Netdata and the boundary's limits are in
 `docs/measurements/tessera-glm-window-loader-scratch-2026-09-26.md`. This is
 a load-memory change; the wire, arithmetic, contract v38 and cell claims do
-not move. Full-model READY and generation are separate acceptance work.
+not move. The separate later text-only diagnostic serve is recorded above.
 
 Re-stamped 2026-09-26 for the GLM-image window cells (tessera#604, contract
 v38). One route census of a GLM-5.3-Flash stub (one dense and three MoE
