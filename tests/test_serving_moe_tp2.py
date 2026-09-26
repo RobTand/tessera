@@ -85,22 +85,29 @@ def _load_all(layer, w13_blobs, w2_blobs):
 @cuda
 @pytest.mark.parametrize('rank', [0, 1])
 def test_window_intake_reuses_one_body_staging_buffer_across_experts(wires, monkeypatch, rank):
-    """The real loader callback must hand the packed BODY transfer one owned buffer.
+    """The real loader callback must share BODY and word-reversal staging.
 
     Under vLLM's 20 MiB max-split setting, a fresh device transfer per wire
     stranded a slab even while allocated bytes stayed flat (#626).  Rank 1's
     row cut reads the BODY twice; both reads must share the same staging owner.
     """
-    from tessera import compact_prep
+    from tessera import compact_prep, kernel_wire
 
     original = compact_prep._plane_u8
     owners = []
+    original_words = kernel_wire._plane_words
+    word_owners = []
 
     def observed(data, device, scratch=None, key='plane'):
         owners.append(scratch)
         return original(data, device, scratch, key)
 
+    def observed_words(plane, scratch=None):
+        word_owners.append(scratch)
+        return original_words(plane, scratch)
+
     monkeypatch.setattr(compact_prep, '_plane_u8', observed)
+    monkeypatch.setattr(kernel_wire, '_plane_words', observed_words)
     layer = _layer_for(rank)
     method = _method(wires, layer)
     method.create_weights(layer, E, H, N // 2, torch.bfloat16)
@@ -126,10 +133,25 @@ def test_window_intake_reuses_one_body_staging_buffer_across_experts(wires, monk
             body_capacity = intake._scratch['body'].numel()
             compact_prep._plane_u8(bytes(body_capacity * 2), 'cuda', intake._scratch, 'body')
             compact_prep._plane_u8(b'\x01', 'cuda', intake._scratch, 'body')
+            if 'plane_words' in intake._scratch:
+                words_capacity = intake._scratch['plane_words'][0].numel()
+                for length in (words_capacity * 2, 1):
+                    plane = torch.arange(length, dtype=torch.int32,
+                                         device='cuda').to(torch.uint8)
+                    expected = original_words(plane)
+                    actual = kernel_wire._plane_words(plane, intake._scratch)
+                    assert actual.device.type == 'cuda'
+                    assert torch.equal(actual, expected), \
+                        'reused word-reversal staging changed CUDA bytes'
     assert len(owners) >= 3 * E
     assert owners[0] is not None, 'the window path allocated a fresh BODY transfer'
     assert all(owner is owners[0] for owner in owners), \
         'the loader changed the staging owner between experts or row cuts'
+    assert len(word_owners) >= 3 * E
+    assert word_owners[0] is intake._scratch, \
+        'the window repacker allocated a fresh word-reversal buffer'
+    assert all(owner is intake._scratch for owner in word_owners), \
+        'the loader changed the word-reversal staging owner'
     assert all(torch.equal(first_slots[group, part, field],
                            intake.axis[group]._slots[part][field][0])
                for group, part, field in first_slots), \
