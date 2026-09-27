@@ -47,6 +47,63 @@ def test_artifact_roster_and_assignment_come_from_the_manifest(tmp_path):
     assert "artifact" not in source and source["ignore"] == ["lm_head"]
 
 
+def test_artifact_full_hash_brackets_every_regular_file_stat(tmp_path):
+    source, _roster, _assignment, attestation = read_tessera_artifact(
+        _artifact(tmp_path), with_file_attestation=True)
+    assert attestation["schema"] == "tessera.artifact_file_stat_attestation.v1"
+    assert set(attestation["files"]) == set(source["files"])
+    for name, observed in attestation["files"].items():
+        current = (tmp_path / name).stat()
+        assert observed == {"size": current.st_size, "mtime_ns": current.st_mtime_ns,
+                            "ctime_ns": current.st_ctime_ns,
+                            "st_dev": current.st_dev, "st_ino": current.st_ino}
+
+
+def test_artifact_stat_attestation_refuses_symlink_and_hash_time_mutation(tmp_path, monkeypatch):
+    from experiments import full_engine_artifact
+    _artifact(tmp_path)
+    target = tmp_path / "actual.safetensors"
+    (tmp_path / "model.safetensors").rename(target)
+    (tmp_path / "model.safetensors").symlink_to(target)
+    with pytest.raises(ValueError, match="non-symlink"):
+        read_tessera_artifact(tmp_path, with_file_attestation=True)
+    (tmp_path / "model.safetensors").unlink()
+    target.rename(tmp_path / "model.safetensors")
+    original = full_engine_artifact.os.read
+    target_inode = (tmp_path / "model.safetensors").stat().st_ino
+    changed = False
+
+    def mutate_after_first_read(fd, count):
+        nonlocal changed
+        data = original(fd, count)
+        if data and not changed and full_engine_artifact.os.fstat(fd).st_ino == target_inode:
+            changed = True
+            (tmp_path / "model.safetensors").write_bytes(b"changed while hashing")
+        return data
+
+    monkeypatch.setattr(full_engine_artifact.os, "read", mutate_after_first_read)
+    with pytest.raises(ValueError, match="changed during its full hash"):
+        read_tessera_artifact(tmp_path, with_file_attestation=True)
+
+
+def test_artifact_attestation_binds_parsed_config_across_weight_pass(tmp_path, monkeypatch):
+    from experiments import full_engine_artifact
+    _artifact(tmp_path)
+    original = full_engine_artifact._attested_digest
+
+    def change_after_config(path, *, capture_bytes=False):
+        if Path(path).name == "tessera_serving_manifest.json":
+            config = tmp_path / "config.json"
+            value = json.loads(config.read_text())
+            value["quantization_config"]["ignore"] = ["lm_head", "changed"]
+            config.write_text(json.dumps(value))
+        return original(path, capture_bytes=capture_bytes)
+
+    monkeypatch.setattr(full_engine_artifact, "_attested_digest", change_after_config)
+    with pytest.raises(ValueError, match="changed after its full hash"):
+        read_tessera_artifact(tmp_path, with_file_attestation=True)
+
+
 def test_artifact_observation_refuses_a_checkpoint_that_is_not_tessera(tmp_path):
     with pytest.raises(ValueError, match="quantization_config names tessera"):
         read_tessera_artifact(_artifact(tmp_path, quant_method="compressed-tensors"))

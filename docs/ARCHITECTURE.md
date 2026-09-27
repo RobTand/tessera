@@ -1,5 +1,14 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-09-27 for the approved M3 TP2 observer integration
+(tessera#650; PrismaQuant#1463). The clean `e3f75d880` producer protocol is
+integrated without its uncommitted profiler-health work. Integer TP1 retains
+its exact v2 report bytes; integer TP2 emits per-rank v3, a shared rank-world
+roster and a whole off-step observation, with null placement obligation and
+`certifies_placement: false`. Other worlds refuse. CPU fixtures are protocol
+and refusal evidence only; no runtime cell, serving default or placement
+admission changes, and Tessera does not import PrismaQuant.
+
 Re-stamped 2026-09-26 for the GLM-image E2M1 cells and the rung widening
 (tessera#604, second half; contract v39). Eight TP1 eager resident route
 censuses of eight-layer GLM-5.3-Flash stubs on the GLM serving image
@@ -72,7 +81,10 @@ Re-stamped 2026-09-26 for the TP2 full-engine observer producer contract
 retain their scope. An explicit TP2/eager/resident run now binds each actual
 worker rank to its physical GPU UUID and a `VLLM_HOST_IP` verified on that
 worker's local interface. Resource report v3 is one rank per envelope but
-carries `observations.rank_world` with both raw capture paths/digests; the
+carries `observations.rank_world` with both raw capture paths/digests. Its raw
+plan also retains the exact artifact source object and a no-follow per-file
+stat seal from the full-hash pass, allowing change detection without a second
+24 GB weight rehash when the shared file identities remain stable. The
 read-only KV v2 record binds rank/device/host and configured capacity.
 Timing capture v2 prices routed apply plus the actual late final all-reduce as
 two disjoint owner segments, leaving intervening shared and transform work

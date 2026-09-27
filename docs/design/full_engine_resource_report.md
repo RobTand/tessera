@@ -12,8 +12,20 @@ quality or capacity measurement was run for this document.
 
 `tessera.full_engine_resource_report.v3` is an explicit TP2/eager/resident,
 one-rank envelope. v2 remains the TP1 schema and retains its field meanings.
-The shared resource launch plan binds the served-object digests and world size;
-each stock worker supplies its **actual** rank, local device index and physical
+The shared resource launch plan binds the served-object digests and world size.
+For artifact observations it carries `canonical_source`, the exact object whose
+canonical hash is `identity.model_sha256`. The source names and hashes every
+loaded weight file plus config, serving manifest and index. The same full-hash
+pass opens each regular file without following symlinks and requires its
+`size`, `mtime_ns`, `ctime_ns`, `st_dev` and `st_ino` to agree before and
+after hashing. `artifact_checkpoint.file_attestation` carries that per-file
+stat seal for cheap change detection before a consumer reuses the full digest;
+the source-BF16 census path has no artifact checkpoint. Device IDs are
+mount-local and may differ on another host even when the shared NFS file's
+inode, size and timestamps agree. A changed portable stat or file content
+requires fresh full-hash attestation.
+
+Each stock worker supplies its **actual** rank, local device index and physical
 GPU UUID before CUDA initialization. `VLLM_HOST_IP` is checked against that
 worker's own IPv4 interfaces and recorded as its host-network identity. The
 existing step-4 launcher has explicit `--tp2-role head|peer` modes on the
@@ -88,7 +100,9 @@ includes resident bytes alongside off-step transients and is recomputable from
 `owner_views`. It is **only** a witness for the captured assignment. A changed
 candidate residency may change that whole peak; `placement_obligation` is
 therefore null in v3 until a consumer derives a candidate-specific off-step
-bound from qualified ownership/invariance evidence. Native external allocation
+bound from qualified ownership/invariance evidence. The integrated producer
+also makes that refusal explicit as `derived.certifies_placement: false`
+(tessera#650 / PrismaQuant#1463); it is never an admission bit a caller may flip. Native external allocation
 overlap is not established by this Torch-only witness. The existing v1
 partition's `non_step_transient_peak_bytes` remains separately reported, never
 silently promoted to a whole off-step bound. Real TP2 GPU captures, native
@@ -807,6 +821,15 @@ off-step filter.
 
 One rank's capture is three passes on the same box and the same configured run;
 each pass is its own process, and nothing about their pointers is ever compared.
+The step-4 launcher binds stable, box-local cache roots for Triton, Torch
+extensions, TorchInductor and CUDA under `--jit-dir`. The plugin installer drops
+the model process to UID/GID 1000. Before either TP rank starts a model, the
+driver runs `step4_cache_preflight` under that identity: it resolves the actual
+TorchInductor and Torch-extension paths and writes and reads through those,
+Triton's cache manager, CUDA's named cache root and the temporary roots. A
+failure refuses the pass; the `worker-cache-preflight.json` receipt identifies
+the paths and worker UID. Reusing a scoped cache across passes is allowed, but
+its ownership and write/read gate runs on every pass.
 
 1. **The intrusive resource pass** runs the ledger and the startup sample:
    `python -m experiments.capture_full_engine_resources --config ... --model ...

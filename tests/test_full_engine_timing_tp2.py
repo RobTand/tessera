@@ -15,6 +15,12 @@ BASE = datetime(2026, 9, 26, 18, 0, tzinfo=timezone.utc).timestamp()
 DIGESTS = {name: character * 64 for name, character in zip(
     ("configuration_sha256", "model_sha256", "runtime_manifest_sha256",
      "workload_sha256", "assignment_sha256", "canonical_units_sha256"), "abcdef")}
+SYNTHETIC_SOURCE = {"schema": "tessera.artifact_observer_source.v1",
+                    "files": {"config.json": "1" * 64,
+                              "tessera_serving_manifest.json": "2" * 64},
+                    "manifest_totals": {"units": 1}, "ignore": []}
+DIGESTS["model_sha256"] = hashlib.sha256(json.dumps(
+    SYNTHETIC_SOURCE, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 
 def test_unmeasured_draft_forward_cannot_enter_the_target_only_observer():
@@ -107,7 +113,8 @@ def _write_world(tmp_path, *, mutate=None, policy=True):
     capture_dir, launch_dir = tmp_path / "capture", tmp_path / "launch"
     capture_dir.mkdir()
     launch_dir.mkdir()
-    plan = {"identity": DIGESTS, "world_size": 2, "timing_samples": 3,
+    plan = {"identity": DIGESTS, "canonical_source": SYNTHETIC_SOURCE,
+            "world_size": 2, "timing_samples": 3,
             "selected_configuration": {"engine_args": {"tensor_parallel_size": 2,
                                                         "speculative_config": None},
                                        "environment": {"TESSERA_SERVE_MODE": "resident"}}}

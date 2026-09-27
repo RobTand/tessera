@@ -54,6 +54,7 @@ def main():
         for rank in (0, 1)}
     plan = {"schema": "tessera.stock_engine_resource_observer_plan.v1",
             "world_size": 2, "identity": dict(module.DIGESTS),
+            "canonical_source": module.SYNTHETIC_SOURCE,
             "selected_configuration": {"engine_args": {"tensor_parallel_size": 2,
                                                         "speculative_config": None},
                                        "environment": {"TESSERA_SERVE_MODE": "resident"}},

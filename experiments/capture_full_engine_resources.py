@@ -160,10 +160,12 @@ def prepare(args):
         # tessera_serving_manifest.json; the census-derived source-BF16 roster
         # and its BF16-only refusal do not apply to it.
         from experiments.full_engine_artifact import read_tessera_artifact
-        source, roster, assignment = read_tessera_artifact(args.model)
+        source, roster, assignment, file_attestation = read_tessera_artifact(
+            args.model, with_file_attestation=True)
         artifact = {"schema": "tessera.artifact_observer_checkpoint.v1",
                     "path": str(args.model.resolve()), "source_sha256": canonical_hash(source),
                     "manifest_sha256": source["files"]["tessera_serving_manifest.json"],
+                    "file_attestation": file_attestation,
                     "families": sorted({row["family"] for row in roster}),
                     "candidate_rule": "actual native owner parameters and buffers of each manifest module; external aliases fixed"}
     else:
@@ -317,7 +319,8 @@ def prepare(args):
             "output_directory": str(args.output.resolve()), "model": str(args.model.resolve()),
             "selected_configuration": config, "runtime_evidence_sha256": digest(args.runtime_evidence),
             "runtime_evidence": str(args.runtime_evidence.resolve()),
-            "core_manifest": str(args.core_manifest.resolve()), "assignment": assignment,
+            "core_manifest": str(args.core_manifest.resolve()), "canonical_source": source,
+            "assignment": assignment,
             "canonical_roster": roster, "canonical_modules": [row["module"] for row in roster],
             "observed_units": units, "workload": workload,
             "max_history_entries": 1_000_000, "max_execute_calls": declared_steps,

@@ -22,7 +22,8 @@ JOIN_SCHEMA = "tessera.full_engine_observation_join.v1"
 #: read: the observer tree on ``PYTHONPATH``, the plugin JIT extension dir and
 #: the stock runtime's JIT caches. Read from the launch summary's own docker
 #: argv, never assumed.
-_JIT_CACHE_ENV = ("TRITON_CACHE_DIR", "TORCH_EXTENSIONS_DIR")
+_JIT_CACHE_ENV = ("TRITON_CACHE_DIR", "TORCH_EXTENSIONS_DIR",
+                  "TORCHINDUCTOR_CACHE_DIR", "CUDA_CACHE_PATH")
 
 
 def _container_environment(launch):

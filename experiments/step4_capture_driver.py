@@ -268,10 +268,35 @@ def record_dispatch_leg_only(out: Path, trace_path: Path, mode: str, expected_mo
 def qualify(out: Path, capture_dir: Path, trace_path: Path, preflight_record: dict,
             mode: str, expected_modules) -> dict:
     observations = sorted(capture_dir.glob("worker-*/runtime-observation.json"))
-    if len(observations) != 1:
+    expected = 2 if (out / "rank-1" / "peer-ready.json").exists() else 1
+    if len(observations) != expected:
         raise QualificationRefused(
-            f"expected exactly one worker runtime observation under {capture_dir}, found "
+            f"expected exactly {expected} worker runtime observation(s) under {capture_dir}, found "
             f"{[str(p) for p in observations]}")
+    if expected == 2:
+        by_rank = {}
+        for observed in observations:
+            value = json.loads(observed.read_text())
+            rank = (value.get("actual_execution") or {}).get("rank")
+            if rank not in (0, 1) or rank in by_rank:
+                raise QualificationRefused("TP2 runtime observation lacks two distinct actual ranks")
+            by_rank[rank] = (observed, value)
+        records = []
+        for rank in (0, 1):
+            observed, value = by_rank[rank]
+            source = trace_path if rank == 0 else out / "rank-1" / "route-trace.json"
+            trace = _read_trace(source)
+            if trace.get("rank") != rank or trace.get("world_size") != 2:
+                raise QualificationRefused(f"TP2 rank {rank} route trace has a different rank/world")
+            entry = qualify_native_route(value, trace, mode=mode, expected_modules=expected_modules)
+            entry.update(rank=rank, runtime_observation=str(observed), route_trace=str(source),
+                         route_trace_sha256=digest(source))
+            records.append(entry)
+        result = {"schema": "tessera.step4_tp2_native_route_qualification.v1",
+                  "rank_qualifications": records, "qualified": all(row["qualified"] for row in records),
+                  "scope": "each actual TP2 worker's native dispatch trace and runtime inventory"}
+        write(out / "native-route-qualification.json", result)
+        return result
     trace = _read_trace(trace_path)
     record = qualify_native_route(json.loads(observations[0].read_text()), trace,
                                   mode=mode, expected_modules=expected_modules)
@@ -312,6 +337,9 @@ def main() -> int:
     parser.add_argument("--observation-mode", choices=("resources", "kv", "timings"), default="resources")
     parser.add_argument("--preflight-only", action="store_true",
                         help="native proof and observer load smoke, then stop; no engine, no capture")
+    parser.add_argument("--tp2-head", action="store_true",
+                        help="wait for installed peer, seal shared plan, then start joined MP engine")
+    parser.add_argument("--peer-wait-s", type=int, default=600)
     parser.add_argument("capture_argv", nargs=argparse.REMAINDER,
                         help="-- followed by the capture CLI arguments")
     args = parser.parse_args()
@@ -322,6 +350,11 @@ def main() -> int:
                       f"no residency: --serve-mode not given and ${SERVE_MODE_ENV} is unset")
 
     started = time.time()
+    try:
+        from experiments.step4_cache_preflight import check_worker_caches
+        check_worker_caches(out / "worker-cache-preflight.json")
+    except Exception as exc:  # noqa: BLE001 -- no model load on an unwritable worker cache
+        return refuse(out, "worker_cache_preflight", f"{type(exc).__name__}: {exc}")
     try:
         record = native_preflight(out, args.serve_mode, args.expected_modules)
     except Exception as exc:  # noqa: BLE001 -- every failure here refuses the run
@@ -344,6 +377,31 @@ def main() -> int:
         return 0
     command = [sys.executable, "-u", "-m", "experiments.capture_full_engine_resources", *capture_argv]
     write(out / "capture-command.json", {"command": command, "cwd": os.getcwd()})
+    if args.tp2_head:
+        peer_evidence = out / "rank-1" / "per-job-runtime.json"
+        deadline = time.monotonic() + args.peer_wait_s
+        while not peer_evidence.is_file() and time.monotonic() < deadline:
+            time.sleep(1)
+        if not peer_evidence.is_file():
+            return refuse(out, "peer_installer", "rank-1 installed-runtime evidence did not arrive")
+        prepared = subprocess.run([*command, "--peer-runtime-evidence", str(peer_evidence),
+                                   "--prepare-only"])
+        if prepared.returncode != 0:
+            return refuse(out, "plan_preparation", f"shared plan preparation exited {prepared.returncode}")
+        plan = args.capture_output / "observer-plan.json"
+        ready = out / "rank-1" / "peer-ready.json"
+        while not ready.is_file() and time.monotonic() < deadline:
+            time.sleep(1)
+        if not ready.is_file():
+            return refuse(out, "peer_ready", "rank-1 did not acknowledge the sealed shared plan")
+        ack = json.loads(ready.read_text())
+        session = json.loads((out / "head-session.json").read_text())
+        if (ack.get("session_id") != session.get("session_id")
+                or ack.get("plan_sha256") != digest(plan)
+                or ack.get("runtime_evidence_sha256") != digest(peer_evidence)):
+            return refuse(out, "peer_ready", "rank-1 acknowledgement differs from plan/evidence bytes")
+        command = [sys.executable, "-u", "-m", "experiments.capture_full_engine_resources",
+                   "--run-plan", str(plan)]
     result = subprocess.run(command)
     capture_seconds = time.time() - started
     write(out / "capture-result.json", {"returncode": result.returncode,
@@ -353,9 +411,25 @@ def main() -> int:
                       capture_seconds=round(capture_seconds, 3))
     try:
         if args.observation_mode == "kv":
-            qualified = record_dispatch_leg_only(
-                out, args.route_trace, args.serve_mode, args.expected_modules,
-                "the read-only KV pass runs a stock worker that writes no runtime observation")
+            if args.tp2_head:
+                records = []
+                for rank, source in ((0, args.route_trace),
+                                     (1, out / "rank-1" / "route-trace.json")):
+                    trace = _read_trace(source)
+                    if trace.get("rank") != rank or trace.get("world_size") != 2:
+                        raise QualificationRefused(f"TP2 KV route trace differs from rank {rank}/2")
+                    records.append({"rank": rank, "route_trace": str(source),
+                                    "route_trace_sha256": digest(source),
+                                    "families": qualify_dispatch(trace, mode=args.serve_mode,
+                                                                expected_modules=args.expected_modules)})
+                qualified = {"schema": "tessera.step4_tp2_native_route_qualification.v1",
+                             "rank_qualifications": records, "qualified": True,
+                             "scope": "both actual TP2 stock-worker native dispatch traces"}
+                write(out / "native-route-qualification.json", qualified)
+            else:
+                qualified = record_dispatch_leg_only(
+                    out, args.route_trace, args.serve_mode, args.expected_modules,
+                    "the read-only KV pass runs a stock worker that writes no runtime observation")
         else:
             qualified = qualify(out, args.capture_output, args.route_trace, record,
                                 args.serve_mode, args.expected_modules)
@@ -365,9 +439,7 @@ def main() -> int:
     except Exception as exc:  # noqa: BLE001
         return refuse(out, "native_route_qualification", f"{type(exc).__name__}: {exc}")
     print(json.dumps({"phase": "native_route_qualification", "qualified": qualified["qualified"],
-                      "families": {family: {"launches": value["observed"]["launches"],
-                                            "modules": value["observed"]["modules"]}
-                                   for family, value in qualified["families"].items()}}), flush=True)
+                      "ranks": len(qualified.get("rank_qualifications", [qualified]))}), flush=True)
     if args.observation_mode == "timings":
         # The same-run timing observation, derived from every arm the pass
         # wrote, beside the ledger files: the resource report joins it by run

@@ -1283,6 +1283,8 @@ def assemble_full_engine_resource_report(ledger, *, reference, workload,
     # schema says a report outside that scope refuses rather than projecting,
     # and a stamped constant is exactly the projection it forbids.
     world = (ledger.get("identity") or {}).get("world_size", 1)
+    if type(world) is not int or world not in (1, 2):
+        raise ValueError("resource report supports only integer TP1 or TP2 worlds")
     supported_execution = (dict(SUPPORTED_EXECUTION, topology="tp2") if world == 2
                            else SUPPORTED_EXECUTION)
     if execution != supported_execution:
@@ -1292,7 +1294,8 @@ def assemble_full_engine_resource_report(ledger, *, reference, workload,
             f"scope is never projected over it")
     if world == 2:
         identity = ledger.get("identity") or {}
-        if (identity.get("rank") not in (0, 1) or not identity.get("device_uuid")
+        if (type(identity.get("rank")) is not int or identity["rank"] not in (0, 1)
+                or not identity.get("device_uuid")
                 or not isinstance(identity.get("host"), dict)):
             raise ValueError("TP2 report needs one actual rank, GPU UUID and worker host")
         rank_world = ledger.get("rank_world") or {}
@@ -1456,6 +1459,7 @@ def assemble_full_engine_resource_report(ledger, *, reference, workload,
                 "declared steps, including resident and transient rows; this captured assignment only; "
                 "external native allocation overlap is not established by this witness"),
             "placement_obligation": None,
+            "certifies_placement": False,
             "proposal_placement_rule": ("derive a candidate-specific off-step bound from qualified invariant "
                 "transient and external ownership plus the candidate's resident charge; the captured "
                 "whole peak is a reference-assignment witness, not a reusable fixed byte price"),
