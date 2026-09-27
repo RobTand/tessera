@@ -209,7 +209,7 @@ def image_declaration(tessera_tree: Path, base: str, configuration_sha256: str, 
 
 
 def family_modules(artifact: Path) -> dict:
-    """``{family: {"count": n, "names": [module prefixes]}}`` from the artifact's manifest.
+    """Per-family count/names and, for routed families, explicit kind partitions.
 
     Every family the manifest assigns a module to, so the driver qualifies
     each one against the route trace; the names are the manifest's module keys
@@ -222,11 +222,23 @@ def family_modules(artifact: Path) -> dict:
         family = entry.get("family")
         if not isinstance(family, str) or not family:
             raise ValueError(f"manifest module {name!r} names no family")
-        bucket = families.setdefault(family, {"count": 0, "names": []})
+        structure = entry.get("structure", "dense")
+        if structure not in ("dense", "routed_moe"):
+            raise ValueError(f"manifest module {name!r} has unknown structure {structure!r}")
+        kind = "moe" if structure == "routed_moe" else "dense"
+        bucket = families.setdefault(family, {"count": 0, "names": [], "kinds": {}})
         bucket["count"] += 1
         bucket["names"].append(name)
+        members = bucket["kinds"].setdefault(kind, {"count": 0, "names": []})
+        members["count"] += 1
+        members["names"].append(name)
     for bucket in families.values():
         bucket["names"].sort()
+        for members in bucket["kinds"].values():
+            members["names"].sort()
+        if set(bucket["kinds"]) == {"dense"}:
+            # Keep the original dense-only launcher/receipt shape.
+            del bucket["kinds"]
     if not families:
         raise ValueError(f"{artifact}: the manifest assigns no module to any family")
     return families
