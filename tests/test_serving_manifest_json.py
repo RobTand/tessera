@@ -48,7 +48,10 @@ def test_compact_writer_round_trips_in_insertion_order_and_binds_disk_bytes(tmp_
             digests[directory.name] = digest
             rosters.append(roster)
             if attest:
-                assert result[3]["files"]["tessera_serving_manifest.json"]["size"] == len(written)
+                assert len(result) == 4
+                attestation = result[-1]
+                assert isinstance(attestation, dict)
+                assert attestation["files"]["tessera_serving_manifest.json"]["size"] == len(written)
         assert (directory / "tessera_serving_manifest.json").read_bytes() == written
     assert all(roster == rosters[0] for roster in rosters)
     assert digests["old"] != digests["compact"]
@@ -62,8 +65,8 @@ def test_lane_display_reads_pretty_and_compact_json(tmp_path):
     assert len(commands) == 1
     manifest = {"requires_lanes": ["tessera_window_gemv", "another_lane"]}
     env = {**os.environ, "PY": sys.executable, "NEW": str(tmp_path)}
-    for options in ({"indent": 2}, {"separators": (",", ":")}):
-        (tmp_path / "tessera_serving_manifest.json").write_text(json.dumps(manifest, **options))
+    for text in (json.dumps(manifest, indent=2), json.dumps(manifest, separators=(",", ":"))):
+        (tmp_path / "tessera_serving_manifest.json").write_text(text)
         result = subprocess.run(["bash", "-c", commands[0]], env=env,
                                 text=True, capture_output=True)
         assert result.returncode == 0, result.stderr
