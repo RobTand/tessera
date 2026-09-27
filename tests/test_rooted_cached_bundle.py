@@ -176,10 +176,10 @@ def test_actual_mixed_producers_export_complete_dense_and_expert_roster(tmp_path
         path = tmp_path / (name + '.json'); path.write_text(json.dumps(value))
         return {'path': str(path), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
     old, new = (identities[key]['encoder_source_sha256'] for key in ('old', 'added'))
-    fixture = identities['old']['encoder_fixture_id']
+    fixture_id = identities['old']['encoder_fixture_id']
     proof = bound('proof', {'schema': fixture.PROOF_SCHEMA, 'ok': True,
         'encoder_fixture_id_equal': True, 'pins': {'old': {'encoder_source_sha256': old},
-        'new': {'encoder_source_sha256': new}}, 'fixture_id': {'ids': {'old': fixture, 'new': fixture}}})
+        'new': {'encoder_source_sha256': new}}, 'fixture_id': {'ids': {'old': fixture_id, 'new': fixture_id}}})
     for adoption in adoptions.values(): adoption['encoder_source_proof'] = proof
     authority = {'catalog_extension': bound('extension', {'schema': fixture.CATALOG_EXTENSION_SCHEMA}),
         'candidate_overlay': bound('overlay', {'schema': fixture.CANDIDATE_OVERLAY_SCHEMA}),
