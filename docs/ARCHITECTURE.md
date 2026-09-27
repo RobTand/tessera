@@ -1,5 +1,20 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-09-26 for manifest-kind full-engine route qualification
+(tessera#648, PACT M3). The step-4 launcher retains the manifest's explicit
+`routed_moe` structure as trace kind `moe`; absent structure retains the
+serving manifest's legacy `dense` meaning. Mixed families are partitioned
+by kind, not guessed from prefixes. Qualification checks each kind's exact
+native symbol/decoder, activation contract, residency, module count and named
+roster independently. Unknown kinds, crossed identities, unnamed routed
+modules and fallback launches refuse. Dense-only callers keep the previous
+count/names interface. Preflight reads `scheme.route_launches` for each
+present kind; CPU tests bind the JSON-only qualifier's table to that owner.
+This fixes a producer false refusal, not a runtime-contract cell: contract
+v39, serving defaults and release gates are unchanged. A successful dispatch
+qualification alone establishes neither fixed-resource completeness nor a
+runtime provenance relation; those remain independent consumer gates.
+
 Re-stamped 2026-09-26 for the GLM-image E2M1 cells and the rung widening
 (tessera#604, second half; contract v39). Eight TP1 eager resident route
 censuses of eight-layer GLM-5.3-Flash stubs on the GLM serving image

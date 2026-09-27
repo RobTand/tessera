@@ -189,14 +189,14 @@ def test_a_family_with_no_module_is_skipped_not_required():
     assert sorted(record) == ["TESSERA_FP8"]
 
 
-def test_an_artifact_with_no_dense_module_is_refused():
+def test_an_artifact_with_no_module_is_refused():
     with pytest.raises(QualificationRefused, match="nothing to qualify"):
         qualify_dispatch(trace(entry("TESSERA_FP8")), mode="resident",
                          expected_modules={"TESSERA_FP8": 0})
 
 
 def test_an_unknown_family_or_mode_is_refused():
-    with pytest.raises(QualificationRefused, match="no dense launch for"):
+    with pytest.raises(QualificationRefused, match="unknown family"):
         qualify_dispatch(trace(entry("TESSERA_FP8")), mode="resident",
                          expected_modules={"TESSERA_FP8": 1, "TESSERA_INT4": 1})
     with pytest.raises(QualificationRefused, match="unknown residency mode"):
