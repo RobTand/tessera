@@ -14,10 +14,11 @@ import sys
 _recorder = None
 _plan = None
 _claimed = False
+_process_name = None
 
 
 def start():
-    global _recorder, _plan
+    global _recorder, _plan, _process_name
     source = os.environ.get("TESSERA_ENGINE_RESOURCE_PLAN")
     if not source:
         return
@@ -27,13 +28,19 @@ def start():
         raise RuntimeError("resource bootstrap must precede Torch and vLLM imports")
     from experiments.full_engine_resources import FullEngineResourceRecorder
     _plan = json.loads(Path(source).read_text())
+    if _plan.get("world_size") == 2:
+        from experiments.full_engine_worker_identity import actual_host_ip
+        host = actual_host_ip()["ip"].replace(".", "_")
+        _process_name = f"{host}-{os.getpid()}"
+    else:
+        _process_name = str(os.getpid())
     _recorder = FullEngineResourceRecorder(
         _plan["collector_library"], _plan["identity"],
         max_checkpoints=_plan["max_checkpoints"],
         max_history_entries=_plan["max_history_entries"])
     directory = Path(_plan["output_directory"]) / "processes"
     directory.mkdir(parents=True, exist_ok=True)
-    (directory / f"{os.getpid()}.bootstrap.json").write_text(json.dumps({
+    (directory / f"{_process_name}.bootstrap.json").write_text(json.dumps({
         "pid": os.getpid(), "ppid": os.getppid(), "argv": sys.argv,
         "history_started_before_cuda_initialization": _recorder._early,
         "collector_library_sha256": _recorder._collector.library_sha256,
@@ -41,14 +48,29 @@ def start():
     atexit.register(_close_unfinished)
 
 
-def claim():
-    global _claimed
+def claim(*, actual_identity=None):
+    global _claimed, _plan
     if _recorder is None or _claimed:
         raise RuntimeError("worker requires one independently bootstrapped recorder")
     if _recorder.process_id != os.getpid():
         raise RuntimeError("fork-inherited resource collector is forbidden; use spawn")
     if not _recorder._early or _recorder._errors:
         raise RuntimeError("worker resource history did not start cleanly before CUDA")
+    if actual_identity is not None:
+        from experiments.full_engine_resources import _identity
+        declared = _plan["identity"]
+        for name in ("model_sha256", "configuration_sha256", "runtime_manifest_sha256",
+                     "assignment_sha256", "canonical_units_sha256", "workload_sha256"):
+            if actual_identity.get(name) != declared.get(name):
+                raise ValueError(f"worker identity changed the plan's {name}")
+        if actual_identity.get("world_size") != _plan.get("world_size", declared.get("world_size")):
+            raise ValueError("actual worker world disagrees with the configured plan world")
+        if _recorder.snapshot_count or _recorder._torch.cuda.is_initialized():
+            raise RuntimeError("worker identity must be bound before CUDA initialization or a snapshot")
+        actual_identity = _identity(actual_identity)
+        _plan = dict(_plan, identity=actual_identity)
+        _recorder.identity = actual_identity
+        _recorder.device = actual_identity["device_id"]
     _claimed = True
     return _recorder, _plan
 
@@ -60,11 +82,11 @@ def _close_unfinished():
     try:
         if _claimed:
             _recorder._errors.append("worker exited before explicit resource finalization")
-            _recorder.finish(directory / f"{os.getpid()}.unfinished")
+            _recorder.finish(directory / f"{_process_name}.unfinished")
         else:
-            _recorder._collector.finish(directory / f"{os.getpid()}.unclaimed-cupti.json")
+            _recorder._collector.finish(directory / f"{_process_name}.unclaimed-cupti.json")
             _recorder._torch.cuda.memory._record_memory_history(enabled=None)
             _recorder._closed = True
     except Exception as exc:
-        (directory / f"{os.getpid()}.close-error.json").write_text(json.dumps({
+        (directory / f"{_process_name}.close-error.json").write_text(json.dumps({
             "error": f"{type(exc).__name__}: {exc}", "claimed": _claimed}))

@@ -16,6 +16,7 @@ from experiments.full_engine_resource_partition import (
     assemble_full_engine_resource_report, classify_allocations,
     compose_scalar_budget, derive_partition, qualify_domains, _compose_terms,
     _simultaneous_peak, _unit_of,
+    observed_whole_off_step_torch_peak,
 )
 from experiments.full_engine_resources import analyze_engine_resource_ledger
 
@@ -100,6 +101,58 @@ def test_overlapping_allocations_sum_into_the_peak():
 def test_a_never_freed_allocation_is_live_to_the_terminal_boundary():
     rows = [_row("a", 128, 0, None)]
     assert _simultaneous_peak(rows, terminal_index=4) == 128
+
+
+def test_tp2_whole_off_step_witness_includes_resident_and_excludes_observer():
+    rows = [_raw("resident", 100, 0, None, ["fixed"], "resident", []),
+            _raw("transient", 50, 2, 4, ["fixed"], "non_step", []),
+            _raw("observer", 10, 1, 5, ["observer"], "non_step", [])]
+    ledger = _synthetic_ledger(160, rows, steps=[(6, 8)])
+    ledger["owner_views"] = {
+        "schema": "tessera.full_engine_ownership_observation.v1",
+        "views": {"views": [{"allocation_id": name,
+                              "class": ("observer" if name == "observer" else "fixed")}
+                             for name in ("resident", "transient", "observer")]}}
+    assert observed_whole_off_step_torch_peak(ledger) == 150
+    ledger["step_coverage"]["state"] = "partial"
+    assert observed_whole_off_step_torch_peak(ledger) is None
+
+
+def test_tp2_off_step_sweep_samples_a_step_end_without_an_allocation_event():
+    rows = [_raw("resident", 100, 2, None, ["fixed"], "resident", [])]
+    ledger = _synthetic_ledger(100, rows, steps=[(1, 3)])
+    ledger["owner_views"] = {"schema": "tessera.full_engine_ownership_observation.v1",
+                             "views": {"views": [{"allocation_id": "resident", "class": "fixed"}]}}
+    assert observed_whole_off_step_torch_peak(ledger) == 100
+
+
+def test_tp2_report_is_per_rank_and_does_not_reuse_the_reference_peak(ledger):
+    ledger = dict(ledger, identity=dict(ledger["identity"], rank=1, world_size=2,
+                                         device_uuid="GPU-rank-1",
+                                         host={"ip": "192.168.1.108"}))
+    identity = ledger["identity"]
+    ledger["rank_world"] = {"schema": "tessera.full_engine_rank_world.v1", "world_size": 2,
+                             "raw_run": {"path": "/fixture/run.json", "sha256": "a" * 64},
+                             "raw_plan": {"path": "/fixture/plan.json", "sha256": "b" * 64},
+                             "run_identity": {name: identity[name] for name in (
+                                 "configuration_sha256", "model_sha256", "runtime_manifest_sha256",
+                                 "workload_sha256", "assignment_sha256", "canonical_units_sha256")},
+                             "ranks": [{"rank": rank, "world_size": 2, "device_id": 0,
+                                        "device_uuid": f"GPU-rank-{rank}",
+                                        "host": {"ip": f"192.168.1.{107 + rank}"},
+                                        "process_id": 100 + rank,
+                                        "capture": {"path": f"/fixture/rank-{rank}.json", "sha256": "c" * 64},
+                                        "runtime_evidence": {"path": f"/fixture/runtime-{rank}.json",
+                                                             "sha256": "d" * 64}}
+                                       for rank in (0, 1)]}
+    report = assemble_full_engine_resource_report(
+        ledger, **_members(execution=dict(SUPPORTED_EXECUTION, topology="tp2")))
+    assert report["schema"] == "tessera.full_engine_resource_report.v3"
+    assert report["observations"]["rank_world"] == ledger["rank_world"]
+    assert report["partition"]["scope"]["topology"] == "tp2_per_rank_resident_eager"
+    assert report["derived"]["placement_obligation"] is None
+    assert report["derived"]["off_step_torch_live_peak_bytes"] is None
+    assert "candidate-specific" in report["derived"]["proposal_placement_rule"]
 
 
 def test_the_composition_refuses_while_any_single_term_is_unavailable(ledger):

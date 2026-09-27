@@ -110,6 +110,12 @@ def _identity(value):
         world = _int(value["world_size"], "identity.world_size", 1)
         if rank >= world:
             raise ValueError(f"identity.rank {rank} is outside identity.world_size {world}")
+        if world == 2:
+            host = value.get("host")
+            if (not isinstance(host, dict) or not all(
+                    isinstance(host.get(name), str) and host[name]
+                    for name in ("ip", "interface", "source"))):
+                raise ValueError("TP2 identity needs the worker's observed host interface")
     return json.loads(_json_bytes(value))
 
 
@@ -850,7 +856,17 @@ def runtime_provenance_relation(identity, *, plan, launch, per_job, runtime_obse
                        "installer": per_job.get("launcher_declared_image_id")})
     check("plugin_installer_evidence",
           {"worker": loaded.get("installer_evidence_sha256"),
-           "plan": plan.get("runtime_evidence_sha256")})
+           "plan": ((plan.get("rank_runtime_evidence") or {}).get(str(identity.get("rank")), {})
+                    .get("sha256") if identity.get("world_size") == 2 else
+                    plan.get("runtime_evidence_sha256"))})
+    if identity.get("world_size") == 2:
+        actual = runtime_observation.get("actual_execution") or {}
+        check("tp2_rank", {"capture": identity.get("rank"), "worker": actual.get("rank")})
+        check("tp2_node_rank", {"capture": identity.get("rank"), "worker": actual.get("node_rank")})
+        check("tp2_nnodes", {"worker": actual.get("nnodes"), "required": 2})
+        check("tp2_backend", {"worker": actual.get("distributed_executor_backend"), "required": "mp"})
+        check("tp2_host_ip", {"capture": (identity.get("host") or {}).get("ip"),
+                              "worker": actual.get("host_ip")})
     check("plugin_package_files_unchanged_from_installer",
           {"worker": loaded.get("package_files_unchanged_from_installer")},
           agree=loaded.get("package_files_unchanged_from_installer") is True)

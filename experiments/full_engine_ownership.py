@@ -604,7 +604,8 @@ def transient_gap_witness(rows, views, intervals, roster, steps):
 #: observer's own collector libraries (the plan names them by path and digest),
 #: the pinned image's site-packages (the root the loaded plugin package sits
 #: under, bound by image digest), and the stock runtime's JIT caches inside the
-#: launcher's cache mount (``TRITON_CACHE_DIR`` / ``TORCH_EXTENSIONS_DIR``).
+#: launcher's explicit Triton, Torch extension, TorchInductor and CUDA cache
+#: roots. The prefixes come from the sealed launch argv, never a guessed path.
 EXTERNAL_STATIC_CLASSES = ("plugin_jit_static", "observer_static", "image_static",
                            "image_jit_static")
 

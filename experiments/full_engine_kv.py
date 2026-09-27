@@ -8,6 +8,7 @@ import enum
 import hashlib
 import json
 import math
+import subprocess
 from fractions import Fraction
 
 
@@ -159,6 +160,7 @@ def inspect_worker_kv(worker, expectations=None, *, received=None):
 
 
 KV_OBSERVATION_SCHEMA = "tessera.full_engine_kv_observation.v1"
+TP2_KV_OBSERVATION_SCHEMA = "tessera.full_engine_kv_observation.v2"
 
 
 def read_only_kv_observation(worker):
@@ -172,8 +174,17 @@ def read_only_kv_observation(worker):
     records indistinguishable.
     """
     import os
-
-    return {"process_id": os.getpid(), "observation": inspect_worker_kv(worker)}
+    from experiments.full_engine_worker_identity import actual_host_ip
+    device_id = worker.device.index
+    uuids = subprocess.check_output(["nvidia-smi", "--query-gpu=uuid", "--format=csv,noheader"],
+                                    text=True).strip().splitlines()
+    if device_id not in range(len(uuids)):
+        raise ValueError("read-only KV worker has no matching local GPU UUID")
+    return {"process_id": os.getpid(), "rank": worker.rank,
+            "world_size": worker.vllm_config.parallel_config.tensor_parallel_size,
+            "device_id": device_id, "device_uuid": uuids[device_id],
+            "host": (actual_host_ip() if worker.vllm_config.parallel_config.tensor_parallel_size == 2 else None),
+            "observation": inspect_worker_kv(worker)}
 
 #: The digests the two passes of one report must share. They are the run
 #: identity's own fields, so a read-only KV pass and the intrusive resource pass
@@ -211,7 +222,8 @@ def admission_evidence(*, mode, process_id, recorder_attached, snapshot_count):
                        "timing- and admission-ineligible")}
 
 
-def kv_observation_record(observed, *, evidence, rank, world_size, run_identity, scope):
+def kv_observation_record(observed, *, evidence, rank, world_size, run_identity, scope,
+                          device_id=None, device_uuid=None, host=None):
     """One rank's KV observation, in the shape the report consumer recomputes from.
 
     The record is the observer's OWN resolved descriptors and deduplicated
@@ -243,8 +255,8 @@ def kv_observation_record(observed, *, evidence, rank, world_size, run_identity,
         rows.append({name: row[name] for name in
                      ("address", "bytes", "device_id", "device_type", "owners")})
     limits = observed["resolved_limits"]
-    return {
-        "schema": KV_OBSERVATION_SCHEMA,
+    record = {
+        "schema": TP2_KV_OBSERVATION_SCHEMA if world_size == 2 else KV_OBSERVATION_SCHEMA,
         "rank": rank, "world_size": world_size,
         "run_identity": {name: run_identity[name] for name in COMMON_RUN_DIGESTS},
         "process_id": int(evidence["process_id"]),
@@ -271,6 +283,13 @@ def kv_observation_record(observed, *, evidence, rank, world_size, run_identity,
         "capacity_assertions": observed.get("capacity_assertions"),
         "received_argument_scope": observed.get("received_argument_scope"),
     }
+    if world_size == 2:
+        if (type(device_id) is not int or device_id < 0
+                or type(device_uuid) is not str or not device_uuid
+                or not isinstance(host, dict) or type(host.get("ip")) is not str):
+            raise ValueError("TP2 KV observation needs its actual rank device and host")
+        record.update(device_id=device_id, device_uuid=device_uuid, host=host)
+    return record
 
 
 def check_kv_capacity(observed, expected):

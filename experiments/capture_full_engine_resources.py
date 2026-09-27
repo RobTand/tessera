@@ -30,6 +30,12 @@ def canonical_hash(value):
         separators=(",", ":"), allow_nan=False).encode()).hexdigest()
 
 
+def require_observed_decode_contract(config):
+    """Reject stock draft work until it has its own measured owner segments."""
+    if config["engine_args"].get("speculative_config"):
+        raise ValueError("full-engine PACT observer has no draft owner/first-call regime contract; speculative decoding is unavailable")
+
+
 def canonical_roster(census):
     grouped = {member for members in census["anchor_groups"].values() for member in members}
     roster = [{"unit_id": name, "module": name.split(":", 1)[1], "members": members}
@@ -154,10 +160,12 @@ def prepare(args):
         # tessera_serving_manifest.json; the census-derived source-BF16 roster
         # and its BF16-only refusal do not apply to it.
         from experiments.full_engine_artifact import read_tessera_artifact
-        source, roster, assignment = read_tessera_artifact(args.model)
+        source, roster, assignment, file_attestation = read_tessera_artifact(
+            args.model, with_file_attestation=True)
         artifact = {"schema": "tessera.artifact_observer_checkpoint.v1",
                     "path": str(args.model.resolve()), "source_sha256": canonical_hash(source),
                     "manifest_sha256": source["files"]["tessera_serving_manifest.json"],
+                    "file_attestation": file_attestation,
                     "families": sorted({row["family"] for row in roster}),
                     "candidate_rule": "actual native owner parameters and buffers of each manifest module; external aliases fixed"}
     else:
@@ -187,10 +195,31 @@ def prepare(args):
     if world_size < 1 or rank < 0 or rank >= world_size:
         raise ValueError(f"rank {rank} is not inside a world of {world_size}")
     configured_tp = config["engine_args"].get("tensor_parallel_size", 1)
+    require_observed_decode_contract(config)
     if world_size != configured_tp:
         raise ValueError(
             f"--world-size {world_size} differs from the selected engine's tensor_parallel_size "
             f"{configured_tp}; one capture observes one rank of the world the configuration runs")
+    if world_size == 2:
+        engine = config["engine_args"]
+        if (rank != 0 or engine.get("nnodes") != 2 or engine.get("node_rank") != 0
+                or engine.get("distributed_executor_backend") != "mp"
+                or not engine.get("master_addr")
+                or not config.get("environment", {}).get("VLLM_HOST_IP")):
+            raise ValueError("TP2 observer plan needs explicit head node_rank=0, nnodes=2, "
+                             "MP backend, master address and VLLM_HOST_IP")
+        if not getattr(args, "prepare_only", False):
+            raise ValueError("TP2 plan must be prepared and sealed before the peer/head engines start")
+        peer_path = getattr(args, "peer_runtime_evidence", None)
+        if peer_path is None or not peer_path.is_file():
+            raise ValueError("TP2 plan needs the peer worker's installed-runtime evidence before preparation")
+        peer = json.loads(peer_path.read_text())
+        for name in ("registry_base", "upstream_commit", "core_manifest_sha256",
+                     "plugin_source_commit", "plugin_source_sha256", "plugin_files"):
+            if peer.get(name) != runtime.get(name):
+                raise ValueError(f"TP2 peer installed-runtime evidence differs on {name}")
+    elif getattr(args, "peer_runtime_evidence", None) is not None:
+        raise ValueError("peer installed-runtime evidence is only read by a TP2 plan")
     if mode == "kv":
         if not getattr(args, "all_units", False) or args.unit:
             raise ValueError("the read-only KV pass reads the complete roster's plan identity; "
@@ -249,8 +278,9 @@ def prepare(args):
     if mode == "timings":
         if args.calibration is None or not args.all_units or args.unit:
             raise ValueError("timing observation requires the canonical calibration and --all-units without a partial --unit selection")
-        if type(args.timing_samples) is not int or args.timing_samples < 1:
-            raise ValueError("timing_samples must be a positive integer")
+        minimum = 3 if world_size == 2 else 1
+        if type(args.timing_samples) is not int or args.timing_samples < minimum:
+            raise ValueError(f"timing_samples must be at least {minimum} for TP{world_size}")
         workload["timing_protocol"] = {"samples": args.timing_samples,
             "arms": ["control", "partition"], "cache_state": "reset_prefix_cache before every request",
             "warmup": "one identical request before the interleaved profiled arm pairs",
@@ -269,6 +299,8 @@ def prepare(args):
     # that measured it rather than to a world total.
     receipt = None
     if args.receipt is not None:
+        if world_size == 2:
+            raise ValueError("TP2 resource observation needs a receipt for each actual rank; one --receipt cannot bind both")
         if mode != "resources":
             raise ValueError("a routed-owner receipt belongs to the intrusive resource pass that "
                              "samples resident-after-load memory")
@@ -287,7 +319,8 @@ def prepare(args):
             "output_directory": str(args.output.resolve()), "model": str(args.model.resolve()),
             "selected_configuration": config, "runtime_evidence_sha256": digest(args.runtime_evidence),
             "runtime_evidence": str(args.runtime_evidence.resolve()),
-            "core_manifest": str(args.core_manifest.resolve()), "assignment": assignment,
+            "core_manifest": str(args.core_manifest.resolve()), "canonical_source": source,
+            "assignment": assignment,
             "canonical_roster": roster, "canonical_modules": [row["module"] for row in roster],
             "observed_units": units, "workload": workload,
             "max_history_entries": 1_000_000, "max_execute_calls": declared_steps,
@@ -297,6 +330,17 @@ def prepare(args):
             "observer_engine_args": {"worker_cls": "experiments.full_engine_worker.ResourceCaptureWorker"},
             "observer_environment": {"VLLM_WORKER_MULTIPROC_METHOD": "spawn"},
             "scope": "intrusive raw resource capture; no timing, fixed-resource or release admission"}
+    if world_size == 2:
+        # This file is shared by the two workers. Only the world and immutable
+        # served-object digests are launcher facts; each worker binds its own
+        # rank and device before CUDA is initialized.
+        plan["world_size"] = 2
+        plan["identity_scope"] = "launcher_bootstrap_device_only; rank identity is worker_observed"
+        plan["identity"].pop("rank")
+        plan["identity"].pop("world_size")
+        plan["rank_runtime_evidence"] = {
+            "0": {"path": str(args.runtime_evidence.resolve()), "sha256": digest(args.runtime_evidence)},
+            "1": {"path": str(peer_path.resolve()), "sha256": digest(peer_path)}}
     plan["observation_mode"] = mode
     plan["unit_boundary"] = "native_apply" if args.all_units else "module_forward"
     if receipt is not None:
@@ -314,6 +358,10 @@ def prepare(args):
         plan["identity"]["model_sha256"] = reference["checkpoint_sha256"]
     if mode == "timings":
         plan["timing_samples"] = args.timing_samples
+        impact_policy = getattr(args, "observer_impact_policy", None)
+        if impact_policy is not None:
+            plan["observer_impact_policy"] = {"path": str(impact_policy.resolve()),
+                                               "sha256": digest(impact_policy)}
         plan["observer_engine_args"] = {"worker_cls": "experiments.full_engine_timing_worker.TimingCaptureWorker"}
         plan["scope"] = "profiled all-native-unit event partition; observer qualification, no admitted timing or fixed-resource price"
     elif mode == "kv":
@@ -343,6 +391,11 @@ def prepare(args):
                                      "sha256": digest(args.owner_rule)}
     path = args.output / "observer-plan.json"
     path.write_text(json.dumps(plan, sort_keys=True, indent=2) + "\n")
+    if getattr(args, "prepare_only", False):
+        print(json.dumps({"plan": str(path.resolve()), "sha256": digest(path),
+                          "scope": "prepared and sealed before both TP2 workers start; no engine ran"}),
+              flush=True)
+        return
     root = Path(__file__).resolve().parents[1]
     env = os.environ.copy()
     env.update(config["environment"])
@@ -390,7 +443,10 @@ def run(plan_path):
         responses = llm.chat(workload["messages"], sampling, use_tqdm=False)
     workers = llm.collective_rpc("resource_capture_finish")
     audit_after = audit_core(plan["core_manifest"])
-    if len(workers) != 1:
+    world = plan["selected_configuration"]["engine_args"].get("tensor_parallel_size", 1)
+    if world == 2:
+        _complete_tp2_workers(armed, workers)
+    elif len(workers) != 1:
         raise ValueError("resource observer expected exactly one worker result")
     result = {"schema": "tessera.stock_engine_raw_resource_run.v1", "scope": plan["scope"],
         "plan_sha256": digest(plan_path), "started_unix": started, "finished_unix": time.time(),
@@ -422,35 +478,44 @@ def run_read_only_kv(llm, plan, plan_path, started, audit_before):
     output = Path(plan["output_directory"])
     workers = llm.collective_rpc(read_only_kv_observation)
     audit_after = audit_core(plan["core_manifest"])
-    if len(workers) != 1:
+    world = plan["selected_configuration"]["engine_args"].get("tensor_parallel_size", 1)
+    if world == 2:
+        _complete_tp2_workers(workers)
+    elif len(workers) != 1:
         raise ValueError("the read-only KV pass observes exactly one worker's KV pool")
-    identity = plan["identity"]
-    evidence = admission_evidence(mode="kv", process_id=workers[0]["process_id"],
-                                  recorder_attached=False, snapshot_count=0)
-    record = kv_observation_record(
-        workers[0]["observation"], evidence=evidence, rank=identity["rank"],
-        world_size=identity["world_size"], run_identity=identity,
-        scope=("stock engine's own resolved KV descriptors and deduplicated physical "
-               "backings, read by a worker RPC that attaches nothing and takes no snapshot"))
+    records = []
+    for worker in workers:
+        identity = dict(plan["identity"], rank=worker["rank"], world_size=worker["world_size"],
+                        device_id=worker["device_id"], device_uuid=worker["device_uuid"])
+        evidence = admission_evidence(mode="kv", process_id=worker["process_id"],
+                                      recorder_attached=False, snapshot_count=0)
+        records.append(kv_observation_record(
+            worker["observation"], evidence=evidence, rank=identity["rank"],
+            world_size=identity["world_size"], run_identity=identity,
+            device_id=worker["device_id"], device_uuid=worker["device_uuid"], host=worker.get("host"),
+            scope=("stock engine's own resolved KV descriptors and deduplicated physical "
+                   "backings, read by a worker RPC that attaches nothing and takes no snapshot")))
     observation_path = output / "kv-observation.json"
+    worker_ids = ({"observer_worker_process_id": workers[0]["process_id"]} if world == 1 else
+                  {"observer_worker_process_ids": [worker["process_id"] for worker in workers]})
     observation_path.write_text(json.dumps(
         {"schema": "tessera.full_engine_read_only_kv_pass.v1",
-         "records": [record], "plan_sha256": digest(plan_path),
-         "observer_worker_process_id": workers[0]["process_id"]},
+         "records": records, "plan_sha256": digest(plan_path),
+         **worker_ids},
         sort_keys=True, indent=2) + "\n")
     result = {"schema": "tessera.stock_engine_read_only_kv_run.v1", "scope": plan["scope"],
               "plan_sha256": digest(plan_path), "started_unix": started, "finished_unix": time.time(),
               "core_audit_before": audit_before, "core_audit_after": audit_after,
               "kv_observation": {"path": str(observation_path),
                                  "sha256": digest(observation_path),
-                                 "runtime_admission": record["runtime_admission"]},
-              "runtime_admission": record["runtime_admission"],
+                                 "runtime_admission": all(record["runtime_admission"] for record in records)},
+              "runtime_admission": all(record["runtime_admission"] for record in records),
               "full_model_fixed_resources_complete": False, "timings": None,
               "admission": None, "pricing_scope": PRICING_SCOPE}
     (output / "run.json").write_text(json.dumps(result, sort_keys=True, indent=2) + "\n")
     print(json.dumps({"artifact": str(output / "run.json"), "sha256": digest(output / "run.json"),
                       "kv_observation_sha256": result["kv_observation"]["sha256"],
-                      "runtime_admission": record["runtime_admission"],
+                      "runtime_admission": result["runtime_admission"],
                       "admission": None, "pricing_scope": PRICING_SCOPE}), flush=True)
 
 
@@ -470,6 +535,7 @@ def run_timings(llm, plan, plan_path, started, audit_before):
             raise ValueError("timing request did not generate exactly two tokens")
         return tokens[0]
 
+    world = plan["selected_configuration"]["engine_args"].get("tensor_parallel_size", 1)
     warmup_tokens = request()
     arms = []
     for sample in range(plan["timing_samples"]):
@@ -477,15 +543,20 @@ def run_timings(llm, plan, plan_path, started, audit_before):
             armed = llm.collective_rpc("timing_capture_arm", args=(arm, sample))
             tokens = request()
             workers = llm.collective_rpc("timing_capture_finish")
-            if len(workers) != 1 or tokens != warmup_tokens:
+            if tokens != warmup_tokens:
                 raise ValueError("timing worker population or generated tokens changed between arms")
+            if world == 2:
+                _complete_tp2_workers(armed, workers)
+            elif len(workers) != 1 or len(armed) != 1:
+                raise ValueError("TP1 timing pass expected exactly one worker")
             arms.append({"arm": arm, "sample": sample, "armed": armed, "tokens": tokens, "workers": workers})
-    coverage_verified = all(item["workers"][0]["partition"]["status"] == "observed_same_run_partition"
+    coverage_verified = all(all(worker["partition"]["status"] == "observed_same_run_partition"
+                                for worker in item["workers"])
                             for item in arms if item["arm"] == "partition")
     result = {"schema": "tessera.stock_engine_raw_timing_run.v1", "scope": plan["scope"],
               "plan_sha256": digest(plan_path), "started_unix": started, "finished_unix": time.time(),
               "core_audit_before": audit_before, "core_audit_after": audit_core(plan["core_manifest"]),
-              "warmup_tokens": warmup_tokens, "arms": arms, "timings": None,
+              "warmup_tokens": warmup_tokens, "warmup_requests": 1, "arms": arms, "timings": None,
               "partition_coverage_verified": coverage_verified,
               "full_model_fixed_resources_complete": False, "admission": None, "pricing_scope": PRICING_SCOPE}
     path = Path(plan["output_directory"]) / "run.json"
@@ -495,15 +566,43 @@ def run_timings(llm, plan, plan_path, started, audit_before):
         raise RuntimeError("all-unit profiler/event partition remains incomplete; retained raw timing run: " + str(path))
 
 
+def _complete_tp2_workers(armed, workers=None):
+    """Check the actual RPC populations without trusting array position."""
+    populations = (("read_only", armed),) if workers is None else (("armed", armed), ("finished", workers))
+    for label, rows in populations:
+        if len(rows) != 2 or {row.get("rank") for row in rows} != {0, 1}:
+            raise ValueError(f"TP2 {label} RPC did not return distinct ranks 0 and 1")
+        if {row.get("world_size") for row in rows} != {2}:
+            raise ValueError(f"TP2 {label} RPC disagrees on world size")
+        uuids = [row.get("device_uuid") for row in rows]
+        if any(type(uuid) is not str or not uuid for uuid in uuids) or len(set(uuids)) != 2:
+            raise ValueError(f"TP2 {label} RPC lacks distinct physical device UUIDs")
+        ips = [(row.get("host") or {}).get("ip") for row in rows]
+        if any(type(ip) is not str or not ip for ip in ips) or len(set(ips)) != 2:
+            raise ValueError(f"TP2 {label} RPC lacks distinct actual host IPs")
+    if workers is None:
+        return
+    for rank in (0, 1):
+        left = next(row for row in armed if row["rank"] == rank)
+        right = next(row for row in workers if row["rank"] == rank)
+        if (left["pid"], left["device_id"], left["device_uuid"], left["host"]) != (
+                right.get("pid"), right.get("device_id"), right.get("device_uuid"), right.get("host")):
+            raise ValueError(f"TP2 rank {rank} changed worker or device within an arm")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-plan", type=Path)
+    parser.add_argument("--prepare-only", action="store_true",
+                        help="write the shared plan without starting an engine, for a paired TP2 launch")
     parser.add_argument("--config", type=Path)
     parser.add_argument("--census", type=Path)
     parser.add_argument("--model", type=Path)
     parser.add_argument("--collector", type=Path)
     parser.add_argument("--core-manifest", type=Path)
     parser.add_argument("--runtime-evidence", type=Path)
+    parser.add_argument("--peer-runtime-evidence", type=Path,
+                        help="TP2 peer's separately installed runtime evidence, bound before either worker starts")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--calibration", type=Path)
     parser.add_argument("--calibration-sha256")
@@ -515,6 +614,8 @@ def main():
                         help="resources: intrusive ledger pass; timings: profiled event partition; "
                              "kv: read-only stock-engine KV pass")
     parser.add_argument("--timing-samples", type=int, default=1)
+    parser.add_argument("--observer-impact-policy", type=Path,
+                        help="explicit versioned TP2 observer-impact policy; absent policy leaves timing unavailable")
     parser.add_argument("--reference-proof", type=Path)
     parser.add_argument("--qualify-first-native-prefix", action="store_true")
     parser.add_argument("--rank", type=int, default=0, help="the rank this capture observes")
@@ -525,6 +626,8 @@ def main():
     parser.add_argument("--artifact", action="store_true",
                         help="observe a served Tessera artifact; roster and assignment come from its serving manifest")
     args = parser.parse_args()
+    if args.run_plan is not None and args.prepare_only:
+        parser.error("--run-plan and --prepare-only are mutually exclusive")
     if args.run_plan:
         run(args.run_plan)
     else:
