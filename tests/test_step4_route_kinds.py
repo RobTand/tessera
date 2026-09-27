@@ -95,6 +95,60 @@ def test_mixed_dispatch_refuses_wrong_kind_or_identity(corruption):
         qualify_dispatch(routes, mode="resident", expected_modules=expected)
 
 
+def test_preflight_uses_controller_roster_not_frozen_observer_source(tmp_path, monkeypatch):
+    import sys
+    from types import ModuleType
+    import tessera
+    from experiments import step4_capture_driver as driver
+
+    # --control and --tessera-tree are distinct mounts. A frozen observed
+    # source need not contain the controller's newer qualification helper.
+    monkeypatch.setitem(sys.modules, "experiments.step4_route_qualification", None)
+    triton = ModuleType("triton")
+    monkeypatch.setitem(sys.modules, "triton", triton)
+    monkeypatch.setitem(sys.modules, "tessera.window_gemm", ModuleType("tessera.window_gemm"))
+    kernel = ModuleType("tessera.kernel_a4")
+    monkeypatch.setattr(kernel, "native_fp4_backend", lambda: "test-double", raising=False)
+    monkeypatch.setattr(kernel, "require_native_fp4_mma", lambda _: None, raising=False)
+    monkeypatch.setattr(kernel, "native_fp4_mma_ptx_tokens", lambda: [], raising=False)
+    monkeypatch.setitem(sys.modules, "tessera.kernel_a4", kernel)
+    monkeypatch.setattr(tessera, "kernel_a4", kernel, raising=False)
+    monkeypatch.delenv("TRITON_CACHE_DIR", raising=False)
+    expected, _ = mixed()
+    kinds = {family: members["kinds"] for family, members in expected.items()}
+    output = tmp_path / "preflight.json"
+    monkeypatch.setattr(sys, "argv", ["preflight", str(output), "resident",
+                                     json.dumps(expected), json.dumps(kinds)])
+    with pytest.raises(SystemExit) as result:
+        exec(compile(driver.NATIVE_SMOKE, "NATIVE_SMOKE", "exec"), {})
+    record = json.loads(output.read_text())
+    assert result.value.code == 0, record.get("refusal")
+    assert record["refusal"] is None
+    assert all(set(group) == {"dense", "moe"} for group in record["module_kind_launches"].values())
+
+
+@pytest.mark.parametrize("legacy", [False, True])
+def test_preflight_passes_normalized_controller_roster(tmp_path, monkeypatch, legacy):
+    from types import SimpleNamespace
+    from experiments import step4_capture_driver as driver
+    from experiments.step4_route_qualification import expected_module_kinds
+
+    expected, _ = mixed()
+    if legacy:
+        expected = {"TESSERA_FP8": {"count": 1, "names": ["model.layers.0.mlp.down_proj"]}}
+    observed = []
+
+    def child(argv):
+        observed.append(argv)
+        (tmp_path / "native-preflight.json").write_text(json.dumps({"refusal": None}))
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(driver.subprocess, "run", child)
+    driver.native_preflight(tmp_path, "resident", expected)
+    assert len(observed) == 1
+    assert json.loads(observed[0][-1]) == expected_module_kinds(expected)
+
+
 def test_dense_evidence_with_moe_stamp_is_not_dense_evidence():
     row = entry("TESSERA_FP8")
     row["kind"] = "moe"

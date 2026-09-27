@@ -66,7 +66,7 @@ import time
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from step4_route_qualification import (  # noqa: E402
     DENSE_LAUNCHES, QUALIFICATION_SCHEMA, QualificationRefused, qualify_dispatch,
-    qualify_native_route, refusal_record)
+    qualify_native_route, refusal_record, expected_module_kinds)
 
 #: ``lane.TESSERA_MODE_ENV``: the residency the configuration binds into the
 #: container; the driver reads the same variable the plugin latches.
@@ -92,7 +92,7 @@ def refuse(out: Path, phase: str, message: str, **context) -> int:
 NATIVE_SMOKE = r"""
 import hashlib, json, os, sys, traceback
 from pathlib import Path
-out, mode, expected_json = sys.argv[1:4]
+out, mode, expected_json, kinds_json = sys.argv[1:5]
 expected = json.loads(expected_json)
 families = sorted(f for f, v in expected.items()
                   if (v["count"] if isinstance(v, dict) else v) > 0)
@@ -103,8 +103,9 @@ def finish(code):
     raise SystemExit(code)
 try:
     from tessera.serving import ext, scheme
-    from experiments.step4_route_qualification import expected_module_kinds
-    kinds = expected_module_kinds(expected)
+    # The observed frozen source need not contain the controller's helper.
+    # The controller validates and serializes its roster before this child.
+    kinds = json.loads(kinds_json)
     # 1. The published extension table, and whether any native launch of the
     #    artifact's families names one of its lanes.  A lane on the dispatch
     #    is a when_unavailable substitute the qualifier does not model.
@@ -178,8 +179,10 @@ def native_preflight(out: Path, mode: str, expected_modules) -> dict:
     whether it passes or refuses, so a refusal carries the tables it read.
     """
     path = out / "native-preflight.json"
+    kinds = expected_module_kinds(expected_modules)
     result = subprocess.run([sys.executable, "-c", NATIVE_SMOKE, str(path), mode,
-                             json.dumps(expected_modules, sort_keys=True)])
+                             json.dumps(expected_modules, sort_keys=True),
+                             json.dumps(kinds, sort_keys=True)])
     record = json.loads(path.read_text()) if path.exists() else None
     if result.returncode != 0 or record is None or record.get("refusal") is not None:
         reason = (record or {}).get("refusal") or f"native preflight exited {result.returncode}"
