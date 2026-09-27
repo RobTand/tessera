@@ -32,11 +32,15 @@ ENCODING_INPUT_SCHEMA = "tessera.encoding_inputs.v1"
 #: The catalog-extension documents a rooted bundle's reuse authority may bind:
 #: the ones PrismaQuant writes and still verifies.  v1 bound one completed
 #: Stage A receipt; v2 (PQ #993) binds the Stage A run header, so an extension
-#: can exist from the first sealed band.  PrismaQuant authenticates either
-#: before it publishes the bundle; this reader rechecks the binding and the
-#: schema, and reads no other field of the document.
+#: can exist from the first sealed band; v3 (PQ #1126) is v2 plus the campaign
+#: scope derived when the run header sealed none (tessera#670).  PrismaQuant
+#: authenticates each before it publishes the bundle; this reader rechecks the
+#: binding and the schema, and reads no other field of the document.
+#: Client schema names in Tessera are removed together by tessera#599 step 2;
+#: do not add a second mechanism for this list.
 CATALOG_EXTENSION_SCHEMAS = frozenset({"prismaquant.joint_catalog_extension.v1",
-                                       "prismaquant.joint_catalog_extension.v2"})
+                                       "prismaquant.joint_catalog_extension.v2",
+                                       "prismaquant.joint_catalog_extension.v3"})
 CANDIDATE_OVERLAY_SCHEMAS = frozenset({"prismaquant.t4_adopted_catalog.v1"})
 
 
