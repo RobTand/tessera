@@ -6,14 +6,14 @@ conservative. Context/library startup, model fixed resources, KV, allocator
 reservation slack and graph pools require the separate full-engine receipt.
 Unsupported allocation domains or incomplete collection never become zero.
 """
-from __future__ import annotations
-
 import ctypes
 import hashlib
 import json
 import os
-from pathlib import Path
 import re
+from pathlib import Path
+
+from experiments.full_engine_cuda_domains import ARGUMENT_SCHEMA, ARGUMENT_CONFIGURATION
 
 TRACE_SCHEMA = "tessera.cupti_memory_trace.v1"
 MEMORY_API_OPERATIONS = {"cudaMalloc": "allocate", "cuMemAlloc": "allocate",
@@ -63,7 +63,10 @@ class NativeMemoryCollector:
         path = Path(path)
         stop_code = self._lib.tessera_memory_stop(os.fsencode(path))
         self._finished = True
-        raw = json.loads(path.read_text())
+        try:
+            raw = json.loads(path.read_text())
+        except (OSError, UnicodeError, ValueError) as error:
+            raise ValueError(f"collector trace could not be read back: {error}") from error
         raw["capture"] = {"started_before_cuda_libraries": True,
                           "collector_library_sha256": self.library_sha256,
                           "start_code": self.start_code, "stop_code": stop_code}
@@ -121,7 +124,7 @@ def _segments(observation, name):
     if not isinstance(rows, list):
         raise ValueError("allocator segments must be an explicit list")
     result = sorted((_integer(r["address"], 1), _integer(r["total_size"], 1)) for r in rows)
-    if any(a + n > b for (a, n), (b, _) in zip(result, result[1:])):
+    if any(a + n > b for (a, n), (b, _) in zip(result, result[1:], strict=False)):
         raise ValueError("allocator segments overlap")
     return result
 
@@ -131,7 +134,8 @@ def validate_cupti_capture(trace):
     if trace["schema"] != TRACE_SCHEMA:
         raise ValueError("unsupported CUPTI trace schema")
     capture = trace["capture"]
-    if (capture["started_before_cuda_libraries"] is not True
+    if (type(capture["started_before_cuda_libraries"]) is not bool
+            or not capture["started_before_cuda_libraries"]
             or type(capture["start_code"]) is not int or capture["start_code"] != 0
             or type(capture["stop_code"]) is not int or capture["stop_code"] != 0
             or not re.fullmatch("[0-9a-f]{64}", capture["collector_library_sha256"])):
@@ -142,7 +146,6 @@ def validate_cupti_capture(trace):
                               "enable_memory_pool", "enable_runtime", "enable_driver",
                               "flush_before_disable", "flush_after_disable"}
     if "argument_schema" in trace:
-        from experiments.full_engine_cuda_domains import ARGUMENT_SCHEMA, ARGUMENT_CONFIGURATION
         if trace["argument_schema"] != ARGUMENT_SCHEMA:
             raise ValueError("unsupported CUDA memory argument schema")
         expected_configuration |= ARGUMENT_CONFIGURATION
@@ -157,6 +160,40 @@ def validate_cupti_capture(trace):
         raise ValueError("CUPTI dropped records or failed dropped-record query")
     pid = _integer(trace["process_id"], 1)
     return pid
+
+
+def api_base_name(name):
+    """CUPTI callback names carry an ABI version suffix; strip only that."""
+    return re.sub(r"_v\d+$", "", name)
+
+
+def ownership_operation(name, return_value):
+    """Classify an ownership API as allocate/free; None when not ownership.
+
+    This is the one home for the ownership-API rule: ``None`` means the API
+    makes no fixed-ownership claim; ``"unsupported"`` means it does and the
+    record shows failure or an undocumented API; otherwise the operation.
+    """
+    if not MEMORY_OWNERSHIP_API.match(name):
+        return None
+    if name not in MEMORY_API_OPERATIONS or _integer(return_value) != 0:
+        return "unsupported"
+    return "allocate" if name in {"cudaMalloc", "cuMemAlloc"} else "free"
+
+
+def memory_row_domain(row):
+    """One home for the CUPTI memory-row domain classification.
+
+    Host rows (kinds 1/2) are outside device-byte scope; anything not a
+    synchronous, unpooled device (3) or static (6) row is refused here so
+    every consumer refuses the same rows with the same words.
+    """
+    if row["memory_kind"] in (1, 2):
+        return "host"
+    if (row["memory_kind"] not in (3, 6) or type(row["async"]) is not bool or row["async"]
+            or row["pool_type"] != 0):
+        raise ValueError("unsupported managed/async/pool/unknown memory domain")
+    return "static" if row["memory_kind"] == 6 else "device"
 
 
 def analyze_trace(trace, *, interval, torch_observation):
@@ -209,27 +246,26 @@ def analyze_trace(trace, *, interval, torch_observation):
             raise ValueError("Torch peak precedes baseline; counter interval mismatch")
         # Callback names are emitted by CUPTI itself. Versions identify the
         # ABI; strip only that suffix when comparing documented CUDA APIs.
-        supported = MEMORY_API_OPERATIONS
-        ownership = MEMORY_OWNERSHIP_API
         if not trace["api_events"]:
             raise ValueError("no observed CUDA API records")
         by_correlation, required_operations = {}, {}
         for api in trace["api_events"]:
-            name = re.sub(r"_v\d+$", "", api["name"])
+            name = api_base_name(api["name"])
             key = (_integer(api["process_id"], 1), _integer(api["correlation_id"]))
             api_start, api_end = _integer(api["start_ns"], 1), _integer(api["end_ns"], 1)
             if api_end < api_start:
                 raise ValueError("CUDA API timestamps are reversed")
             by_correlation.setdefault(key, []).append((name, api_start, api_end))
             overlaps = api_start <= end and api_end >= begin
-            if overlaps and ownership.match(name):
-                if name not in supported or _integer(api["return_value"]) != 0:
-                    raise ValueError("unsupported or failed allocation API: " + name)
+            operation = ownership_operation(name, api["return_value"]) if overlaps else None
+            if operation == "unsupported":
+                raise ValueError("unsupported or failed allocation API: " + name)
+            if operation is not None:
                 if key[0] != pid or not begin <= api_start <= api_end <= end:
                     raise ValueError("allocation API crosses the apply process/interval")
                 if key in required_operations:
                     raise ValueError("ambiguous allocation API correlation")
-                required_operations[key] = ("allocate" if name in {"cudaMalloc", "cuMemAlloc"} else "free")
+                required_operations[key] = operation
             if overlaps and name.startswith(("cudaGraph", "cuGraph")):
                 raise ValueError("CUDA graph execution is outside eager resource scope")
         events = sorted(trace["memory_events"], key=lambda r: r["timestamp_ns"])
@@ -243,11 +279,10 @@ def analyze_trace(trace, *, interval, torch_observation):
                 break
             if row["process_id"] != pid:
                 raise ValueError("allocation belongs to another process")
-            # Pageable/pinned host allocations are outside device-byte scope.
-            if row["memory_kind"] in (1, 2):
+            # Pageable/pinned host allocations are outside device-byte scope;
+            # the shared classifier refuses every row no consumer may accept.
+            if memory_row_domain(row) == "host":
                 continue
-            if row["memory_kind"] not in (3, 6) or row["async"] is not False or row["pool_type"] != 0:
-                raise ValueError("unsupported managed/async/pool/unknown memory domain")
             address, size = _integer(row["address"], 1), _integer(row["bytes"], 1)
             inside = begin <= t <= end
             if row["memory_kind"] == 6:
