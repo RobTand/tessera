@@ -428,3 +428,15 @@ power sample counts expose their limited resolution.
 | funnel32 | e2m1 | 64 | stock | 1790475786.162939 | 1790475806.953265 | 2 |
 | funnel32 | e2m1 | 512 | native | 1790475817.183503 | 1790475838.522951 | 2 |
 | funnel32 | e2m1 | 512 | stock | 1790475844.402352 | 1790475864.488981 | 1 |
+
+
+## Same-session correction: exact numerical-report equality
+
+The sentence in Numerical gate claiming all end-to-end statistics match history
+exactly is too broad. Teacher-forced-stage statistics match throughout; complete
+end-to-end statistics match on the final retained tree and grid-loop trial.
+Small-tile and funnel trials have 11 differing E2M1 M64 elements, versus 10 in
+history; their maximum error and row-ULP statistics are unchanged. These
+intermediate reports are not byte-identical. Every case still has zero bound
+violations. The delivered RESULT.md contains the corrected wording. This
+append-only correction preserves the dated measurement history.
