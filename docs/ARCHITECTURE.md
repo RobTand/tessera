@@ -4278,9 +4278,11 @@ on the two-rank stub serve's image; contract v32 (tessera#506 leg 2, the
 2026-09-18 re-stamp at the top) widens both to the full trellis domain
 [128, 896] step 128, so an NVFP4 stack at an in-domain rung exports without
 `--allow-unserveable` and only an off-domain rung needs the override. Compressed BF16-family expert wires take the compact
-folded lane above, with or without the research-selected block; no BF16
-`routed_moe` cell exists yet, so a BF16 expert rung still needs the override
-until a census earns one (tessera#606). Plain source BF16 passthrough uses
+folded lane above, with or without the research-selected block. Contract v38
+publishes BF16 `routed_moe` decode and batch cells at q256 1024 on the GLM
+serving image, eager and resident (tessera#604); their evidence is route-only,
+with no recorded smoke or KL. Other BF16 expert rungs still need the override.
+Plain source BF16 passthrough uses
 `quantization_config.ignore`. Both production routes refuse, by name:
 expert parallelism and EPLB (the stride invariant needs every expert's blob
 and the parameter is `[E, ...]` by global id), a residency other than
