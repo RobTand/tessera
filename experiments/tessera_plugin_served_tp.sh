@@ -198,6 +198,9 @@ done
 env_line="TS='$TS' RUNS='$RUNS' EXT='$EXT' TESSERA_TP_NAME_WORKER='$NAME_WORKER'"
 env_line="$env_line TESSERA_TP_HEAD_ADDR='$HEAD_ADDR' TESSERA_TP_RAY_PORT='$RAY_PORT'"
 env_line="$env_line TESSERA_SERVE_MODE='$MODE' TESSERA_TP_ENV='${TESSERA_TP_ENV:-}'"
+# The image the head resolved, so the worker resolves the same reference on its
+# own daemon rather than falling back to the pin.
+env_line="$env_line IMG='$IMG'"
 ssh -o BatchMode=yes "$WORKER" "$env_line bash '$TS/experiments/tessera_plugin_served_tp.sh' --worker" \
   </dev/null >"$RUNS/tp_worker.log" 2>&1 &
 WORKER_SSH=$!
