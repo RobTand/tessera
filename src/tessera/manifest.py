@@ -140,8 +140,7 @@ class Geometry:
     """Declared physical shape. Nothing here is a guessed constant.
 
     ``superblock_columns``, ``group_weights`` and ``half_weights`` are schema
-    parameters carried on the wire, because this package cannot verify a
-    Gridbook-side constant from outside that repository.
+    parameters carried on the wire, not inferred from the container name.
     """
 
     rows: int
