@@ -648,14 +648,18 @@ def _modules_naming_the_package(root: Path, package: str) -> set[str]:
 def test_a_package_init_change_selects_every_test_that_imports_the_package():
     """#148: longest-prefix attribution dropped the package edge entirely."""
 
-    selected = set(impacted.select(ROOT, ["src/tessera/__init__.py"])["tests"])
+    result = impacted.select(ROOT, ["src/tessera/__init__.py"])
+    selected = set(result["tests"])
+    excluded = {entry["path"] for entry in result["excluded_tests"]}
     expected = _modules_naming_the_package(ROOT, "tessera")
 
     assert expected, "the fixture is vacuous if no test imports tessera"
-    assert not expected - selected, (
-        f"{len(expected - selected)} test modules import a tessera submodule "
-        f"and were not selected: {sorted(expected - selected)[:5]}"
+    missing = expected - selected - excluded
+    assert not missing, (
+        f"{len(missing)} test modules import a tessera submodule "
+        f"and were neither selected nor explicitly excluded: {sorted(missing)[:5]}"
     )
+    assert not selected & excluded
 
 
 def test_an_opaque_path_outranks_the_generic_inert_suffix_rule():
@@ -1061,8 +1065,10 @@ def test_a_box_artifacts_edit_selects_the_tests_that_read_its_roots():
 
     assert result["verdict"] != "full", result["forces_full"]
     consumers = _modules_importing_bare(ROOT, "box_artifacts")
-    assert not consumers - set(result["tests"]), (
-        sorted(consumers - set(result["tests"])))
+    excluded = {entry["path"] for entry in result["excluded_tests"]}
+    missing = consumers - set(result["tests"]) - excluded
+    assert not missing, sorted(missing)
+    assert not set(result["tests"]) & excluded
     shipped = "tests/test_shipped_checkpoint_minor7.py"
     if (ROOT / shipped).exists():
         assert shipped in result["tests"], "the audit's named example"
