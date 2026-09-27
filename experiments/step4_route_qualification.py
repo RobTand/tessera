@@ -1,4 +1,4 @@
-"""Does a full-engine capture's own evidence say the native dense routes ran?
+"""Does a full-engine capture's evidence say its native routes ran by module kind?
 
 WHAT THIS QUALIFIES.  A resource capture measures allocation, and two decoders
 of the same bytes do not allocate alike, so a ledger is about a decoder and
@@ -6,7 +6,9 @@ the record has to say which one.  The serve's own ``TESSERA_ROUTE_TRACE``
 histogram (``telemetry._RouteTrace``) keys every served dispatch on
 ``(policy, shape, symbol, decoder, contract, kind)``; the qualification reads
 that file and refuses unless every dispatch on every family the artifact
-carries is the ONE launch that family's dense route makes.
+carries is the ONE launch that family's declared module kind makes. Manifest
+``dense`` (including the legacy absent structure) maps to trace ``dense``;
+``routed_moe`` maps to trace ``moe``. Neither is inferred from module names.
 
 THE LAUNCHES.  Since ``37e89f576`` (contract v30) and ``1b767a207`` (#538),
 each dense route module owns exactly one launch and stamps it at its one
@@ -74,6 +76,9 @@ __all__ = [
     "BF16_ACTIVATION_CONTRACT",
     "NVFP4_ACTIVATION_CONTRACT",
     "DENSE_LAUNCHES",
+    "MOE_LAUNCHES",
+    "KIND_LAUNCHES",
+    "expected_module_kinds",
     "WINDOW_GEMV_LIBRARY_GLOB",
     "QUALIFICATION_SCHEMA",
     "mapped_native_libraries",
@@ -107,6 +112,17 @@ DENSE_LAUNCHES = {
                      (WINDOW_GEMM_SYMBOL, NATIVE_WINDOW_GEMM_FOLDED_DECODER)),
     "TESSERA_NVFP4": (NVFP4_ACTIVATION_CONTRACT, (A4_DENSE_GEMM_SYMBOL, NATIVE_SPAN2_GEMM_DECODER)),
 }
+
+#: The routed pairs published by scheme.ROUTE_LAUNCHES (resident only).
+MOE_LAUNCHES = {
+    "TESSERA_FP8": (FP8_ACTIVATION_CONTRACT,
+                     ("tessera.native_window_moe.NativeWindowMoE.__call__", "native_window_moe_compact")),
+    "TESSERA_BF16": (BF16_ACTIVATION_CONTRACT,
+                      ("tessera.native_window_moe.NativeWindowMoE.__call__", "native_window_moe_compact_folded")),
+    "TESSERA_NVFP4": (NVFP4_ACTIVATION_CONTRACT,
+                       ("tessera.kernel_a4.a4_span2_grouped_gemm", "native_span2_grouped")),
+}
+KIND_LAUNCHES = {"dense": DENSE_LAUNCHES, "moe": MOE_LAUNCHES}
 
 #: ``ext.NATIVE_EXTENSIONS[0]["filename_glob"]``: the one extension the package
 #: still builds.  Recorded, not required -- no dense launch names its lane.
@@ -148,7 +164,7 @@ def _pair_key(symbol, decoder):
     return f"{symbol} / {decoder}"
 
 
-def trace_launches_by_contract(route_trace, contract, *, policy=None):
+def trace_launches_by_contract(route_trace, contract, *, policy=None, kind=None):
     """``{"<symbol> / <decoder>": {...}}`` for one activation contract.
 
     Each value carries ``symbol``, ``decoder``, ``launches`` (summed over
@@ -158,7 +174,8 @@ def trace_launches_by_contract(route_trace, contract, *, policy=None):
     is the ``<family>:<mode>`` stamp every entry on the contract must carry;
     another policy on the same contract is refused, because a contract served
     under a residency the configuration did not name is not the serve the
-    configuration describes.
+    configuration describes. ``kind`` restricts the counted dispatches after
+    policy validation; the caller separately checks the complete kind roster.
     """
     entries = route_trace.get("entries")
     if entries is None:
@@ -169,11 +186,13 @@ def trace_launches_by_contract(route_trace, contract, *, policy=None):
     for entry in entries:
         if entry.get("contract") != contract:
             continue
-        seen_contract = True
         if policy is not None and entry.get("policy") != policy:
             raise QualificationRefused(
                 f"route-trace entry on {contract} carries policy {entry.get('policy')!r}, the "
                 f"configuration serves {policy!r}: {entry!r}")
+        if kind is not None and entry.get("kind") != kind:
+            continue
+        seen_contract = True
         symbol = entry.get("symbol")
         if not isinstance(symbol, str) or not symbol:
             raise QualificationRefused(
@@ -227,60 +246,112 @@ def _expected_count(expected, family):
     return int(value), None
 
 
-def qualify_dispatch(route_trace, *, mode, expected_modules):
-    """The dispatch leg over every family in ``expected_modules``, or a refusal.
+def expected_module_kinds(expected_modules):
+    """Normalize legacy dense expectations or a manifest's explicit kind partition.
 
-    ``expected_modules`` is ``{family: count}`` or ``{family: {"count": n,
-    "names": [...]}}`` from the artifact's ``tessera_serving_manifest.json``.
-    A family the artifact does not carry (count 0) is skipped.  Returns
-    ``{family: {"contract", "policy", "expected", "observed", "launches"}}``.
+    A mixed family adds ``kinds: {dense|moe: {count, names}}`` beside its
+    aggregate count/names. That partition must be disjoint and exhaustive.
+    Explicit kinds require names; an old count-only dense caller remains valid.
+    """
+    result = {}
+    for family, value in expected_modules.items():
+        if family not in DENSE_LAUNCHES:
+            raise QualificationRefused(f"the artifact names an unknown family: {family!r}")
+        count, names = _expected_count(expected_modules, family)
+        if count < 0:
+            raise QualificationRefused(f"negative module count for {family}")
+        if not isinstance(value, dict) or "kinds" not in value:
+            result[family] = {"dense": {"count": count, "names": names}} if count else {}
+            continue
+        kinds = value["kinds"]
+        if not isinstance(kinds, dict) or not kinds or set(kinds) - set(KIND_LAUNCHES):
+            raise QualificationRefused(f"unknown or empty manifest module kinds for {family}: {kinds!r}")
+        union = set()
+        for kind, members in kinds.items():
+            if not isinstance(members, dict):
+                raise QualificationRefused(f"unreadable manifest module kind {family}/{kind}")
+            roster, size = members.get("names"), members.get("count")
+            if (type(size) is not int or size <= 0 or not isinstance(roster, list)
+                    or not all(isinstance(n, str) and n for n in roster)
+                    or len(roster) != size or len(set(roster)) != size or union.intersection(roster)):
+                raise QualificationRefused(f"invalid or overlapping manifest module names for {family}/{kind}")
+            union.update(roster)
+        if (not isinstance(names, list) or not all(isinstance(n, str) for n in names)
+                or len(names) != count or len(union) != count or union != set(names)):
+            raise QualificationRefused(f"manifest kind partition does not cover {family}'s count/names")
+        result[family] = kinds
+    return result
+
+
+def _qualify_kind(route_trace, *, family, kind, mode, members, require_names):
+    count, names = members["count"], members.get("names")
+    if kind == "moe" and mode != "resident":
+        raise QualificationRefused("routed MoE has no streamed native launch")
+    contract, (symbol, decoder) = KIND_LAUNCHES[kind][family]
+    policy = f"{family}:{mode}"
+    launches = trace_launches_by_contract(route_trace, contract, policy=policy, kind=kind)
+    expected_key = _pair_key(symbol, decoder)
+    foreign = sorted(key for key in launches if key != expected_key)
+    if foreign:
+        raise QualificationRefused(
+            f"dispatches on {contract} ({family}/{kind}) used {foreign}, not {expected_key}: "
+            + json.dumps({key: {k: launches[key][k] for k in ("launches", "modules")}
+                          for key in foreign}, sort_keys=True))
+    native = launches[expected_key]
+    if native["launches"] < 1:
+        raise QualificationRefused(f"no served dispatch on {contract} ({family}/{kind}) was counted")
+    if native["unnamed_modules"]:
+        raise QualificationRefused(
+            f"{native['unnamed_modules']} module(s) dispatching on {contract} ({family}/{kind}) carried "
+            "no prefix; a per-module claim needs unnamed_modules == 0")
+    if native["modules"] != count:
+        raise QualificationRefused(
+            f"{native['modules']} modules dispatched on {contract} ({family}/{kind}), the artifact "
+            f"assigns {count}; the remainder did not serve this route")
+    if require_names and not native["module_names"]:
+        raise QualificationRefused(f"{family}/{kind} names no modules; a kind claim needs exact prefixes")
+    if names is not None and native["module_names"]:
+        expected_names = sorted(set(names))
+        if native["module_names"] != expected_names:
+            missing = sorted(set(expected_names) - set(native["module_names"]))
+            extra = sorted(set(native["module_names"]) - set(expected_names))
+            raise QualificationRefused(
+                f"the modules dispatching on {contract} ({family}/{kind}) are not the manifest's: "
+                f"missing {missing}, unexpected {extra}")
+    return {"contract": contract, "policy": policy,
+            "expected": {"symbol": symbol, "decoder": decoder, "modules": count,
+                         "names_checked": bool(names is not None and native["module_names"])},
+            "observed": native}
+
+
+def qualify_dispatch(route_trace, *, mode, expected_modules):
+    """Qualify exact native launches separately for every manifest family/kind.
+
+    Legacy count/names callers describe dense modules. Explicit ``kinds``
+    callers get a per-kind result and require exact trace identities.
     """
     if mode not in ("resident", "streamed"):
         raise QualificationRefused(f"unknown residency mode {mode!r}")
-    unknown = sorted(set(expected_modules) - set(DENSE_LAUNCHES))
-    if unknown:
-        raise QualificationRefused(
-            f"the artifact names families this qualifier has no dense launch for: {unknown}")
     families = {}
-    for family in sorted(expected_modules):
-        count, names = _expected_count(expected_modules, family)
-        if count == 0:
+    for family, kinds in expected_module_kinds(expected_modules).items():
+        if not kinds:
             continue
-        contract, (symbol, decoder) = DENSE_LAUNCHES[family]
-        policy = f"{family}:{mode}"
-        launches = trace_launches_by_contract(route_trace, contract, policy=policy)
-        expected_key = _pair_key(symbol, decoder)
-        foreign = sorted(key for key in launches if key != expected_key)
-        if foreign:
-            raise QualificationRefused(
-                f"dispatches on {contract} ({family}) used {foreign}, not {expected_key}: "
-                + json.dumps({key: {k: launches[key][k] for k in ("launches", "modules")}
-                              for key in foreign}, sort_keys=True))
-        native = launches[expected_key]
-        if native["launches"] < 1:
-            raise QualificationRefused(f"no served dispatch on {contract} ({family}) was counted")
-        if native["unnamed_modules"]:
-            raise QualificationRefused(
-                f"{native['unnamed_modules']} module(s) dispatching on {contract} ({family}) carried "
-                "no prefix; a per-module claim needs unnamed_modules == 0")
-        if native["modules"] != count:
-            raise QualificationRefused(
-                f"{native['modules']} modules dispatched on {contract} ({family}), the artifact "
-                f"assigns {count}; the remainder did not serve this route")
-        if names is not None and native["module_names"]:
-            expected_names = sorted(set(names))
-            if native["module_names"] != expected_names:
-                missing = sorted(set(expected_names) - set(native["module_names"]))
-                extra = sorted(set(native["module_names"]) - set(expected_names))
-                raise QualificationRefused(
-                    f"the modules dispatching on {contract} ({family}) are not the manifest's: "
-                    f"missing {missing}, unexpected {extra}")
-        families[family] = {"contract": contract, "policy": policy,
-                            "expected": {"symbol": symbol, "decoder": decoder, "modules": count,
-                                         "names_checked": bool(names is not None and native["module_names"])},
-                            "observed": native}
+        contract = DENSE_LAUNCHES[family][0]
+        entries = route_trace.get("entries")
+        if not isinstance(entries, list):
+            raise QualificationRefused("route trace carries no entries; the dispatch leg is not verified")
+        for entry in entries:
+            if str(entry.get("policy", "")).split(":")[0] == family and entry.get("contract") != contract:
+                raise QualificationRefused(f"unexpected activation contract for {family}: {entry.get('contract')!r}")
+            if entry.get("contract") == contract and entry.get("kind") not in kinds:
+                raise QualificationRefused(f"unexpected route kind for {family}: {entry.get('kind')!r}")
+        explicit = isinstance(expected_modules[family], dict) and "kinds" in expected_modules[family]
+        claims = {kind: _qualify_kind(route_trace, family=family, kind=kind, mode=mode,
+                                      members=members, require_names=explicit)
+                  for kind, members in kinds.items()}
+        families[family] = {"kinds": claims} if explicit else claims["dense"]
     if not families:
-        raise QualificationRefused("the artifact assigns no module to any dense family; nothing to qualify")
+        raise QualificationRefused("the artifact assigns no module to any family; nothing to qualify")
     return families
 
 
@@ -301,7 +372,7 @@ def qualify_native_route(runtime_observation, route_trace, *, mode, expected_mod
                                ("schema", "identity_version", "rank", "world_size", "rank_source",
                                 "rank_conflict", "platform", "pid")},
             "scope": ("every counted dispatch on every family the artifact carries is the one "
-                      "native launch its dense route makes; no library leg -- no dense launch on this "
+                      "native launch its manifest module kind makes; no library leg -- no qualified launch on this "
                       "tree loads a cpp_extension, so a mapped library proves nothing here and is "
                       "recorded only; no timing, fixed-resource or release admission follows from it"),
             "qualified": True}

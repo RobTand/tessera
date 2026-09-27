@@ -26,8 +26,8 @@ order, each refusing the whole run rather than continuing:
 3. **qualification** -- ``step4_route_qualification.qualify_native_route`` over
    the serve's own ``TESSERA_ROUTE_TRACE`` histogram, per family: every
    dispatch on each family's activation contract must be the one native
-   ``(symbol, decoder)`` its dense route stamps, and the module count (and,
-   where the trace names them, the module names) must be the manifest's.  The
+   ``(symbol, decoder)`` its manifest module kind stamps. Explicit kind
+   partitions require exact module names as well as counts.  The
    worker's ``runtime-observation.json`` mapped-library census is recorded,
    not required: no dense launch on this tree loads a ``cpp_extension``.  A
    capture that cannot be qualified is kept (it is evidence of the refusal)
@@ -103,7 +103,9 @@ def finish(code):
     raise SystemExit(code)
 try:
     from tessera.serving import ext, scheme
-    # 1. The published extension table, and whether any dense launch of the
+    from experiments.step4_route_qualification import expected_module_kinds
+    kinds = expected_module_kinds(expected)
+    # 1. The published extension table, and whether any native launch of the
     #    artifact's families names one of its lanes.  A lane on the dispatch
     #    is a when_unavailable substitute the qualifier does not model.
     record["native_extensions"] = [
@@ -113,15 +115,23 @@ try:
         for e in ext.NATIVE_EXTENSIONS]
     launches = {}
     for family in families:
-        launches[family] = [
-            {"symbol": l["symbol"], "decoder": l["decoder"], "lane": l["lane"],
-             "when_lane_absent": bool(l["when_lane_absent"])}
-            for l in scheme.route_launches(family, structure=scheme.STRUCTURE_DENSE, mode=mode,
-                                           include_experimental=True)]
-    record["dense_launches"] = launches
-    named = sorted({l["lane"] for ls in launches.values() for l in ls if l["lane"] is not None})
+        launches[family] = {}
+        for kind in kinds[family]:
+            structure = scheme.STRUCTURE_ROUTED_MOE if kind == "moe" else scheme.STRUCTURE_DENSE
+            rows = [
+                {"symbol": l["symbol"], "decoder": l["decoder"], "lane": l["lane"],
+                 "when_lane_absent": bool(l["when_lane_absent"])}
+                for l in scheme.route_launches(family, structure=structure, mode=mode,
+                                               include_experimental=True)]
+            if not rows:
+                raise ValueError(f"no native launch for {family}/{kind}/{mode}")
+            launches[family][kind] = rows
+    record["module_kind_launches"] = launches
+    record["dense_launches"] = {f: rows["dense"] for f, rows in launches.items() if "dense" in rows}
+    named = sorted({l["lane"] for kinds in launches.values() for ls in kinds.values()
+                    for l in ls if l["lane"] is not None})
     if named:
-        record["refusal"] = f"dense launches name extension lane(s) {named}; this preflight has no proof for a lane"
+        record["refusal"] = f"native launches name extension lane(s) {named}; this preflight has no proof for a lane"
         finish(4)
     # 2. The window GEMM is Triton: import it (fp8_route/bf16_route reach it
     #    through serving.native_window at process_weights_after_loading).
