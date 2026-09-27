@@ -153,9 +153,9 @@ TESSERA_SCHEME_KEY = "family"
 #: ``RoutedExperts`` stack.  ``STRUCTURES`` is what this build DISPATCHES, and
 #: a structure outside it is refused by name rather than served through a
 #: method that would read the wrong tensor rank.
-STRUCTURE_DENSE = "dense"
-STRUCTURE_ROUTED_MOE = "routed_moe"
-STRUCTURES = (STRUCTURE_DENSE, STRUCTURE_ROUTED_MOE)
+#: The names live in the core ``tessera.structure`` module, which ``export`` and
+#: ``cached_unit`` read without importing this plugin layer.
+from ..structure import STRUCTURE_DENSE, STRUCTURE_ROUTED_MOE, STRUCTURES  # noqa: E402,F401
 
 #: THE TWO EXPERT GROUPS, AND WHY THERE ARE EXACTLY TWO.  vLLM's
 #: ``RoutedExperts`` holds an expert's gate and up in ONE ``w13`` matrix

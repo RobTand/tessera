@@ -18,9 +18,10 @@ from pathlib import Path
 from .container import parse
 from .encoder_identity import encoder_fixture_id, resumable
 from .export import (ActivationSource, DEFAULT_CODE, DEFAULT_GROUP, DEFAULT_HALF,
-                     HESSIAN_IDENTITY, wire_recipe)
+                     HESSIAN_IDENTITY, WireRecipe, served_recipe)
 from .grammar import bresenham_rate_schedule
 from .manifest import BodyKind, ContainerClass, RotationState
+from .structure import STRUCTURE_DENSE, STRUCTURES
 from .unit_artifact import _reach_attrs, build_unit_artifact, encoder_profile_id
 
 CACHE_SCHEMA = "tessera.cached_units.v1"
@@ -115,13 +116,24 @@ def encoder_source_sha256() -> str:
 
 
 def encoding_input_identity(weight, unit_name: str, grid, q256: int, *,
-                            activation: ActivationSource | None = None) -> dict:
+                            activation: ActivationSource | None = None,
+                            structure: str = STRUCTURE_DENSE) -> dict:
     """Source/H/settings identity shared by dense and projected campaign units.
 
     This function imposes no source-layout or runtime topology. A caller using
     the projected cache/export boundary adds the producer projection through
     ``unit_input_identity``. No invented expert fields are needed for a dense
     campaign's resume check.
+
+    ``structure`` is what the unit is served AS, and it picks the recipe the
+    receipt stamps: ``export.served_recipe(grid, q256, structure)``, the one
+    statement the serving exporter encodes and the intake adopts (tessera#662).
+    The block carries no structure key of its own. With the default, and at
+    every rung where the served wire is the research one (every E4M3 and BF16
+    rung, and E2M1x2 at its cap), the block is ``wire_recipe``'s, byte for
+    byte, so no receipt stamped before the argument existed moves. Only a
+    routed E2M1x2 stack below the cap stamps a different block: the span-2
+    TCQ wire its decoder reads.
     """
     if not isinstance(unit_name, str) or not unit_name:
         raise ValueError("encoding input identity requires a unit name")
@@ -146,13 +158,14 @@ def encoding_input_identity(weight, unit_name: str, grid, q256: int, *,
     return _json_copy({"schema": ENCODING_INPUT_SCHEMA, "unit": name,
                        "source": tensor_identity(weight), "calibration": calibration,
                        "recipe": {"grid": grid.name, "q256": q256,
-                                  **wire_recipe(grid, q256).to_config()},
+                                  **served_recipe(grid, q256, structure).to_config()},
                        "encoder_source_sha256": encoder_source_sha256(),
                        "encoder_fixture_id": encoder_fixture_id().hex()})
 
 
 def unit_input_identity(weight, projection: dict, grid, q256: int, *,
-                        activation: ActivationSource | None = None) -> dict:
+                        activation: ActivationSource | None = None,
+                        structure: str = STRUCTURE_DENSE) -> dict:
     """Add an explicit producer projection to the common encoding inputs.
 
     ``projection.tensor`` is the logical producer tensor name WITH ``.weight``;
@@ -171,7 +184,7 @@ def unit_input_identity(weight, projection: dict, grid, q256: int, *,
     if list(weight.shape) != [projection["rows"], projection["cols"]]:
         raise ValueError("cached unit source shape disagrees with producer projection")
     identity = encoding_input_identity(weight, projection["tensor"], grid, q256,
-                                        activation=activation)
+                                        activation=activation, structure=structure)
     return _json_copy({**identity, "schema": INPUT_SCHEMA,
                        "projection": {key: projection[key] for key in sorted(required)}})
 
@@ -324,9 +337,20 @@ def _check_wire(blob: bytes, identity: dict):
     recipe_spec = identity["recipe"]
     grid = grid_for_name(recipe_spec["grid"])
     q256 = recipe_spec["q256"]
-    recipe = wire_recipe(grid, q256)
-    if recipe_spec != {"grid": grid.name, "q256": q256, **recipe.to_config()}:
+    # The recipe block must be a served wire this package states for the
+    # unit's (grid, q256) and a structure its schema admits (tessera#662): a
+    # dense receipt (no projection) is served dense, so only the dense
+    # spelling; a projected expert unit may be served as either. The wire is
+    # then held to the recipe the block names. A structure-specific intake
+    # still compares the whole block against its own expected identity
+    # (``verify_cached_unit``), so this is the bound a producer's record is
+    # checked against, not a license at export.
+    admissible = STRUCTURES if projected else (STRUCTURE_DENSE,)
+    stated = [{"grid": grid.name, "q256": q256, **served_recipe(grid, q256, s).to_config()}
+              for s in admissible]
+    if recipe_spec not in stated:
         raise ValueError("cached unit recipe differs from the producer recipe")
+    recipe = WireRecipe.from_config(recipe_spec)
     geometry = manifest.geometry
     if manifest.shard is not None or len(manifest.terminals) != 1:
         raise ValueError("cached unit must be one complete, unsharded terminal")
@@ -636,8 +660,12 @@ class CachedUnitBundle:
         if not isinstance(served, dict) or not set(served) <= set(units):
             raise ValueError("rooted cached unit served activation coverage differs")
         if policy_bound is None:
+            # Every E2M1x2 rung executes the static A-side contract, so an
+            # adopted A4 unit at ANY rung needs the bound policy, not only the
+            # cap rung the first adoptions used (tessera#662: routed sub-cap
+            # units are adoptable now).
             added_a4 = any(units[name]["identity"].get("recipe", {}).get("grid") == "E2M1x2"
-                           and units[name]["identity"]["recipe"].get("q256") == 896 for name in adoptions)
+                           for name in adoptions)
             if served or added_a4:
                 raise ValueError("served activation values lack their bound policy")
         else:
