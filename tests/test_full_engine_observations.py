@@ -75,7 +75,8 @@ def test_only_a_pass_with_no_recorder_and_no_snapshot_is_read_only():
 def test_the_kv_record_carries_the_consumers_required_coordinates_and_nothing_more():
     evidence = admission_evidence(mode="kv", process_id=11, recorder_attached=False, snapshot_count=0)
     record = kv_observation_record(_observed(), evidence=evidence, rank=1, world_size=2,
-                                   run_identity=_run_identity(), scope="fixture")
+                                   run_identity=_run_identity(), scope="fixture", device_id=0,
+                                   device_uuid="fixture-device-1", host={"ip": "10.0.0.2"})
     assert record["rank"] == 1 and record["world_size"] == 2
     assert record["process_id"] == 11
     assert record["runtime_admission"] is True
@@ -114,9 +115,13 @@ def test_the_kv_record_refuses_a_foreign_storage_spelling_and_a_foreign_run():
 
 def test_the_read_only_rpc_names_the_process_that_observed(monkeypatch):
     from experiments import full_engine_kv
-    monkeypatch.setattr(full_engine_kv, "inspect_worker_kv", lambda worker: {"stub": worker})
-    result = read_only_kv_observation("the-worker")
-    assert result["observation"] == {"stub": "the-worker"}
+    worker = SimpleNamespace(device=SimpleNamespace(index=0), rank=0,
+                             vllm_config=SimpleNamespace(
+                                 parallel_config=SimpleNamespace(tensor_parallel_size=1)))
+    monkeypatch.setattr(full_engine_kv, "inspect_worker_kv", lambda observed: {"stub": observed is worker})
+    monkeypatch.setattr(full_engine_kv.subprocess, "check_output", lambda *args, **kwargs: "fixture-device-0\n")
+    result = read_only_kv_observation(worker)
+    assert result["observation"] == {"stub": True}
     assert result["process_id"] == os.getpid()
 
 
@@ -146,7 +151,8 @@ def test_the_identity_carries_a_rank_and_a_world_together_or_not_at_all():
             "assignment_sha256": _DIGEST, "canonical_units_sha256": _DIGEST,
             "workload_sha256": _DIGEST, "device_id": 0, "device_uuid": "fixture"}
     assert _identity(dict(base))["device_uuid"] == "fixture"
-    scoped = _identity(dict(base, rank=1, world_size=2))
+    scoped = _identity(dict(base, rank=1, world_size=2,
+                            host={"ip": "10.0.0.2", "interface": "eth0", "source": "fixture"}))
     assert (scoped["rank"], scoped["world_size"]) == (1, 2)
     with pytest.raises(ValueError, match="together or not at all"):
         _identity(dict(base, rank=0))
@@ -195,7 +201,8 @@ def test_worker_startup_closes_on_the_ledger_fixed_rows_and_refuses_every_other_
 
 
 def _kv_record(runtime_admission=True, read_only=True, rank=0, world_size=2, storages=None):
-    return {"rank": rank, "world_size": world_size,
+    return {"schema": "tessera.full_engine_kv_observation.v2", "rank": rank, "world_size": world_size,
+            "device_id": 0, "device_uuid": "fixture-device-0", "host": {"ip": "10.0.0.1"},
             "run_identity": {name: _DIGEST for name in COMMON_RUN_DIGESTS},
             "runtime_admission": runtime_admission,
             "admission_evidence": {"read_only": read_only, "snapshot_count": 0},
@@ -271,7 +278,8 @@ def test_the_assembler_refuses_per_rank_observations_without_a_rank_scoped_ident
 
 
 def test_the_join_binds_one_run_and_allows_two_different_processes():
-    ledger = {"identity": dict(_run_identity(), rank=0, world_size=2),
+    ledger = {"identity": dict(_run_identity(), rank=0, world_size=2, device_id=0,
+                                device_uuid="fixture-device-0", host={"ip": "10.0.0.1"}),
               "capture_sha256": _DIGEST}
     notes = join_observation_passes(
         ledger, resource_process_id=111, startup_records=[_startup_record()],
@@ -287,7 +295,9 @@ def test_the_join_binds_one_run_and_allows_two_different_processes():
 
 
 def test_the_join_refuses_a_second_pass_from_a_different_run_or_rank_or_pool():
-    ledger = {"identity": dict(_run_identity(), rank=0, world_size=2), "capture_sha256": _DIGEST}
+    ledger = {"identity": dict(_run_identity(), rank=0, world_size=2, device_id=0,
+                                device_uuid="fixture-device-0", host={"ip": "10.0.0.1"}),
+              "capture_sha256": _DIGEST}
     foreign_run = _kv_record()
     foreign_run["run_identity"]["workload_sha256"] = "b" * 64
     with pytest.raises(ValueError, match="not the same configured run"):

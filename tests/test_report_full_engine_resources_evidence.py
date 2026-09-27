@@ -9,9 +9,26 @@ that assembly on hand-written records; they establish nothing about a run.
 """
 import pytest
 
-from experiments.report_full_engine_resources import _container_environment, ownership_evidence
+from experiments.report_full_engine_resources import (_container_environment, ownership_evidence,
+                                                      select_worker_capture)
 
 SITE = "/img/site-packages"
+
+
+def test_tp2_report_selects_actual_rank_only_from_complete_distinct_world():
+    armed = [{"rank": rank, "world_size": 2, "pid": 100 + rank,
+              "device_id": 0, "device_uuid": f"GPU-{rank}",
+              "host": {"ip": f"192.168.1.{107 + rank}", "interface": "eth0"}} for rank in (0, 1)]
+    workers = [dict(row, directory=f"/capture/rank-{row['rank']}") for row in armed]
+    run = {"workload_arm": armed, "workers": workers}
+    assert select_worker_capture(run, 2, 1) == workers[1]
+    with pytest.raises(ValueError, match="explicit --rank"):
+        select_worker_capture(run, 2, None)
+    with pytest.raises(ValueError, match="both distinct"):
+        select_worker_capture(dict(run, workers=workers[:1]), 2, 0)
+    copied = [dict(row, device_uuid="GPU-0") for row in workers]
+    with pytest.raises(ValueError, match="distinct physical devices"):
+        select_worker_capture(dict(run, workers=copied), 2, 0)
 
 
 def _launch(argv=None, phases=None):

@@ -5,6 +5,7 @@ canonical routed group observes RoutedExperts.quant_method.apply after routing,
 the same boundary used by the native whole-MoE receipt. Module forward is wider.
 """
 from contextlib import contextmanager
+import importlib
 import inspect
 
 
@@ -35,6 +36,7 @@ def resolve_apply_boundaries(model, roster):
             raise ValueError("native apply does not expose its layer argument: " + unit)
         result.append({"unit_id": unit, "module": name, "boundary": boundary_name + ".quant_method.apply",
                        "owner": owner, "method": method, "apply": apply,
+                       "runner": modules[name] if unit.startswith("s:") else None,
                        "signature": inspect.signature(apply),
                        "includes_router": False if unit.startswith("s:") else None})
     if not result:
@@ -84,3 +86,58 @@ Unlisted owners sharing a method still execute their original implementation.
                 method.apply = previous
             else:
                 del method.apply
+
+
+@contextmanager
+def observe_tp2_owner_boundaries(boundaries, observe_apply, observe_reduce, observe_collective):
+    """Observe the two disjoint spans of a TP routed native owner.
+
+    The stock runner executes shared output/transform work between the routed
+    apply and ``_maybe_reduce_final_output``.  That work belongs in measured
+    fixed gaps, so wrapping its whole forward would overprice the native owner.
+    The recorder checks one late-reduction call for each routed apply and the
+    profile checks the actual CUDA stream and launches.
+    """
+    restores = []
+    moe_runner = importlib.import_module("vllm.model_executor.layers.fused_moe.runner.moe_runner")
+    collective_name = "tensor_model_parallel_all_reduce"
+    collective = getattr(moe_runner, collective_name, None)
+    if not callable(collective):
+        raise ValueError("stock MoE runner no longer publishes its final all-reduce callsite")
+
+    def wrapped_collective(states, *args, **kwargs):
+        with observe_collective(states):
+            return collective(states, *args, **kwargs)
+
+    moe_runner.tensor_model_parallel_all_reduce = wrapped_collective
+    try:
+        with observe_apply_boundaries(boundaries, observe_apply):
+            try:
+                for row in boundaries:
+                    runner = row["runner"]
+                    if runner is None:
+                        continue
+                    original = getattr(runner, "_maybe_reduce_final_output", None)
+                    if not callable(original):
+                        raise ValueError("routed owner has no stock final-reduction boundary: " + row["unit_id"])
+                    had_override = "_maybe_reduce_final_output" in vars(runner)
+                    previous = vars(runner).get("_maybe_reduce_final_output")
+
+                    def wrapped(*args, _original=original, _row=row, **kwargs):
+                        call = {"arguments": args, "keywords": kwargs, "result": None}
+                        with observe_reduce(_row, call):
+                            result = _original(*args, **kwargs)
+                            call["result"] = result
+                            return result
+
+                    runner._maybe_reduce_final_output = wrapped
+                    restores.append((runner, had_override, previous))
+                yield
+            finally:
+                for runner, had_override, previous in reversed(restores):
+                    if had_override:
+                        runner._maybe_reduce_final_output = previous
+                    else:
+                        del runner._maybe_reduce_final_output
+    finally:
+        moe_runner.tensor_model_parallel_all_reduce = collective

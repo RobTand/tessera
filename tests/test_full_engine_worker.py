@@ -53,6 +53,32 @@ def test_worker_claim_is_unique(monkeypatch):
         bootstrap.claim()
 
 
+def test_tp2_worker_identity_comes_from_actual_rank_and_local_device(worker_module):
+    plan = {"world_size": 2, "identity": {"model_sha256": "a" * 64,
+                                           "device_id": 0, "device_uuid": "launcher-only"}}
+    identity = worker_module.actual_worker_identity(plan, 2, 1, 0, ["GPU-other-host"])
+    assert identity["rank"] == 1 and identity["world_size"] == 2
+    assert identity["device_id"] == 0 and identity["device_uuid"] == "GPU-other-host"
+    assert identity["model_sha256"] == plan["identity"]["model_sha256"]
+    with pytest.raises(ValueError, match="world"):
+        worker_module.actual_worker_identity(plan, 1, 0, 0, ["GPU-other-host"])
+    with pytest.raises(ValueError, match="rank or local device"):
+        worker_module.actual_worker_identity(plan, 2, 2, 0, ["GPU-other-host"])
+
+
+def test_tp2_host_ip_must_exist_on_actual_worker_interface(monkeypatch):
+    import socket
+    from experiments import full_engine_worker_identity as worker_identity
+    monkeypatch.setenv("VLLM_HOST_IP", "192.168.1.108")
+    monkeypatch.setattr(socket, "if_nameindex", lambda: [(1, "eth0")])
+    monkeypatch.setattr(worker_identity.fcntl, "ioctl",
+                        lambda _fd, _request, _arg: b"\0" * 20 + socket.inet_aton("192.168.1.108"))
+    assert worker_identity.actual_host_ip()["ip"] == "192.168.1.108"
+    monkeypatch.setenv("VLLM_HOST_IP", "192.168.1.107")
+    with pytest.raises(ValueError, match="not on one actual worker interface"):
+        worker_identity.actual_host_ip()
+
+
 def test_late_bootstrap_fails_before_loading_collector(monkeypatch):
     monkeypatch.setattr(bootstrap, "_recorder", None)
     monkeypatch.setenv("TESSERA_ENGINE_RESOURCE_PLAN", "/unused.json")
@@ -133,7 +159,7 @@ def test_invalid_native_owner_identity_retains_raw_capture_and_refusal(
     plan = {"output_directory": str(tmp_path / "capture"), "max_invocations_per_unit": 2,
             "native_owner_rule": {"path": str(rule_path), "sha256": hashlib.sha256(rule_path.read_bytes()).hexdigest()}}
     monkeypatch.setattr(worker_module, "claim", lambda: (recorder, plan))
-    monkeypatch.setattr(worker_module, "full_engine_runtime_observation", lambda plan: {"loaded_package": {}})
+    monkeypatch.setattr(worker_module, "full_engine_runtime_observation", lambda plan, **kwargs: {"loaded_package": {}})
     libraries = {} if library_state == "absent" else {"/fixture/native.so": {"sha256": "b" * 64, "bytes": 12}}
     monkeypatch.setattr(worker_module, "native_library_observation", lambda: {"libraries": libraries})
     worker = worker_module.ResourceCaptureWorker()
@@ -638,7 +664,10 @@ def _observation_plan(tmp_path, *, receipt=None, rank=0, world_size=2):
 
 def _observation_worker(worker_module, monkeypatch, plan):
     monkeypatch.setattr(worker_module, "claim", lambda: (SimpleNamespace(), plan))
-    return worker_module.ResourceCaptureWorker()
+    worker = worker_module.ResourceCaptureWorker()
+    if (plan.get("identity") or {}).get("world_size") == 2:
+        worker._resource_host = {"ip": "192.168.1.107", "interface": "eth0", "source": "synthetic fixture"}
+    return worker
 
 
 def test_a_plan_with_no_receipt_emits_no_startup_sample_at_all(monkeypatch, worker_module, tmp_path):

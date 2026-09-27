@@ -391,6 +391,47 @@ def _simultaneous_peak(rows, terminal_index):
     return peak
 
 
+def observed_whole_off_step_torch_peak(ledger):
+    """Reference-assignment witness over all non-observer Torch live bytes.
+
+    This includes resident bytes simultaneously live with off-step transient
+    bytes. It is a measurement of this captured assignment, not a fixed price
+    transferable to a different candidate. The original allocation lifetimes,
+    complete step intervals and owner views remain in the report for a reader
+    to recompute it and derive any separately justified proposal bound.
+    """
+    steps = _declared_steps(ledger)
+    views = views_by_allocation(ledger)
+    if steps is None or not views:
+        return None
+    rows = ledger["torch_allocations"]
+    if any(row["allocation_id"] not in views for row in rows):
+        return None
+    endpoints = [index for row in rows for index in
+                 (row["allocate_index"], row["free_completed_index"])
+                 if index is not None]
+    cuts = {index for step in steps for index in step}
+    terminal = 1 + max([*endpoints, *cuts], default=0)
+    events = {}
+    for row in rows:
+        if views[row["allocation_id"]].get("class") == "observer":
+            continue
+        events.setdefault(row["allocate_index"], []).append(row["bytes"])
+        events.setdefault(terminal if row["free_completed_index"] is None
+                          else row["free_completed_index"], []).append(-row["bytes"])
+    cuts.update(events)
+    cuts.add(terminal)
+    ordered = sorted(cuts)
+    live = peak = 0
+    for index, following in zip(ordered, ordered[1:]):
+        live += sum(events.get(index, []))
+        # This value is live throughout [index, following). Step boundaries
+        # are cuts even when no allocation changed there.
+        if following > index and not any(begin <= index < end for begin, end in steps):
+            peak = max(peak, live)
+    return peak
+
+
 def _unit_of(row, view=None):
     """The candidate unit this allocation is charged to, if any.
 
@@ -746,7 +787,9 @@ def _provenance_reason(ledger):
 
 def _timing(ledger):
     record = ledger.get("timing_captures")
-    if not isinstance(record, dict) or record.get("schema") != "tessera.full_engine_timing_observation.v1":
+    if not isinstance(record, dict) or record.get("schema") not in {
+            "tessera.full_engine_timing_observation.v1",
+            "tessera.full_engine_timing_observation.v2"}:
         return None
     return record
 
@@ -767,6 +810,21 @@ def timing_partition_closed(ledger):
     checks = record.get("qualification") or {}
     if partition.get("established") is not True or not checks:
         return False
+    if record["schema"] == "tessera.full_engine_timing_observation.v2":
+        identity = ledger.get("identity") or {}
+        ranks = record.get("ranks") or []
+        if (identity.get("world_size") != 2 or record.get("world_size") != 2
+                or identity.get("rank") not in (0, 1)
+                or len(ranks) != 2 or {row.get("rank") for row in ranks} != {0, 1}
+                or len({row.get("device_uuid") for row in ranks}) != 2
+                or any(not row.get("qualification") or not all(
+                    check.get("passed") is True for check in row["qualification"].values())
+                       for row in ranks)
+                or next(row for row in ranks if row["rank"] == identity["rank"]).get("device_uuid")
+                   != identity.get("device_uuid")
+                or next(row for row in ranks if row["rank"] == identity["rank"]).get("host")
+                   != identity.get("host")):
+            return False
     return all(check.get("passed") is True for check in checks.values())
 
 
@@ -975,7 +1033,8 @@ def derive_partition(ledger):
         "units": units,
         "terms": terms,
         "scope": {
-            "topology": SCOPE_TOPOLOGY,
+            "topology": ("tp2_per_rank_resident_eager" if (ledger.get("identity") or {}).get("world_size") == 2
+                         else SCOPE_TOPOLOGY),
             "allocation_scope": "gpu_allocations_only",
             "unavailable_terms": sorted(unavailable),
             "expressible": not unavailable,
@@ -1054,6 +1113,7 @@ def derive_fixed_resources(partition):
 
 
 TIMING_TERMS_SCHEMA = "tessera.full_engine_timing_terms.v1"
+TP2_TIMING_TERMS_SCHEMA = "tessera.full_engine_timing_terms.v2"
 
 
 def derive_timing_terms(ledger, partition):
@@ -1068,6 +1128,16 @@ def derive_timing_terms(ledger, partition):
     record = ledger["timing_captures"]
     terms = record["partition"]["terms"]
     run = record.get("run_identity") or {}
+    if record.get("schema") == "tessera.full_engine_timing_observation.v2":
+        rank = ledger["identity"]["rank"]
+        return {"schema": TP2_TIMING_TERMS_SCHEMA, "rank": rank, "world_size": 2,
+                "workload_sha256": run.get("workload_sha256"),
+                "timing_samples": record.get("timing_samples"),
+                "phases": terms["ranks"][str(rank)],
+                "rank_median_fixed_ms": terms["rank_median_fixed_ms"],
+                "slowest_rank_median_fixed_ms": terms["slowest_rank_median_fixed_ms"],
+                "aggregation": terms["aggregation"],
+                "scope": "direct gap sums within samples, median samples per actual rank, then slowest rank median"}
     return {"schema": TIMING_TERMS_SCHEMA,
             # The timing pass's own workload, not the memory pass's: the
             # prices below are for these tokens and this step shape.
@@ -1118,6 +1188,7 @@ def compose_scalar_budget(partition):
 #: ``observations`` gains ``allocator_config`` (the bound
 #: PYTORCH_CUDA_ALLOC_CONF).
 REPORT_SCHEMA = "tessera.full_engine_resource_report.v2"
+TP2_REPORT_SCHEMA = "tessera.full_engine_resource_report.v3"
 
 # The seven envelope members, in the frozen order.
 REPORT_MEMBERS = ("identity", "reference", "workload", "execution",
@@ -1211,11 +1282,46 @@ def assemble_full_engine_resource_report(ledger, *, reference, workload,
     # whose scope contradicts the declaration inside the same envelope: the
     # schema says a report outside that scope refuses rather than projecting,
     # and a stamped constant is exactly the projection it forbids.
-    if execution != SUPPORTED_EXECUTION:
+    world = (ledger.get("identity") or {}).get("world_size", 1)
+    supported_execution = (dict(SUPPORTED_EXECUTION, topology="tp2") if world == 2
+                           else SUPPORTED_EXECUTION)
+    if execution != supported_execution:
         raise ValueError(
             f"execution coordinate {sorted(execution.items())} is outside this "
-            f"schema's scope {sorted(SUPPORTED_EXECUTION.items())}, and the "
+            f"schema's scope {sorted(supported_execution.items())}, and the "
             f"scope is never projected over it")
+    if world == 2:
+        identity = ledger.get("identity") or {}
+        if (identity.get("rank") not in (0, 1) or not identity.get("device_uuid")
+                or not isinstance(identity.get("host"), dict)):
+            raise ValueError("TP2 report needs one actual rank, GPU UUID and worker host")
+        rank_world = ledger.get("rank_world") or {}
+        ranks = rank_world.get("ranks") or []
+        def bound_ref(value):
+            return (isinstance(value, dict) and type(value.get("path")) is str
+                    and value["path"] and type(value.get("sha256")) is str
+                    and len(value["sha256"]) == 64
+                    and set(value["sha256"]) <= set("0123456789abcdef"))
+        if (rank_world.get("schema") != "tessera.full_engine_rank_world.v1"
+                or rank_world.get("world_size") != 2 or len(ranks) != 2
+                or {row.get("rank") for row in ranks} != {0, 1}
+                or not bound_ref(rank_world.get("raw_run"))
+                or not bound_ref(rank_world.get("raw_plan"))
+                or any(row.get("world_size") != 2
+                       or type(row.get("device_id")) is not int
+                       or type(row.get("process_id")) is not int
+                       or not isinstance(row.get("host"), dict)
+                       or type(row["host"].get("ip")) is not str
+                       or not bound_ref(row.get("capture"))
+                       or not bound_ref(row.get("runtime_evidence")) for row in ranks)
+                or any(rank_world.get("run_identity", {}).get(name) != identity.get(name)
+                       for name in ("configuration_sha256", "model_sha256", "runtime_manifest_sha256",
+                                    "workload_sha256", "assignment_sha256", "canonical_units_sha256"))
+                or next(row for row in ranks if row["rank"] == identity["rank"]).get("device_uuid")
+                   != identity["device_uuid"]
+                or next(row for row in ranks if row["rank"] == identity["rank"]).get("host")
+                   != identity["host"]):
+            raise ValueError("TP2 report rank-world roster does not bind its own raw capture identity")
 
     partition = derive_partition(ledger)
     # A per-rank observation is only meaningful for the run that measured it.
@@ -1263,7 +1369,7 @@ def assemble_full_engine_resource_report(ledger, *, reference, workload,
                       "a serve only under the bound PYTORCH_CUDA_ALLOC_CONF"),
         }
     report = {
-        "schema": REPORT_SCHEMA,
+        "schema": TP2_REPORT_SCHEMA if world == 2 else REPORT_SCHEMA,
         "identity": {
             "run": ledger.get("identity"),
             "capture_sha256": ledger.get("capture_sha256"),
@@ -1342,6 +1448,18 @@ def assemble_full_engine_resource_report(ledger, *, reference, workload,
             "timing_terms": derive_timing_terms(ledger, partition),
         },
     }
+    if world == 2:
+        report["observations"]["rank_world"] = ledger["rank_world"]
+        report["derived"].update({
+            "off_step_torch_live_peak_bytes": observed_whole_off_step_torch_peak(ledger),
+            "off_step_torch_live_peak_scope": ("same-instant non-observer Torch allocation bytes outside "
+                "declared steps, including resident and transient rows; this captured assignment only; "
+                "external native allocation overlap is not established by this witness"),
+            "placement_obligation": None,
+            "proposal_placement_rule": ("derive a candidate-specific off-step bound from qualified invariant "
+                "transient and external ownership plus the candidate's resident charge; the captured "
+                "whole peak is a reference-assignment witness, not a reusable fixed byte price"),
+        })
     assert set(report) == set(REPORT_MEMBERS) | {"schema"}
     # Evidence that points at nothing cannot be checked. Every id a closed
     # domain cites has to name an observation this envelope carries.

@@ -164,6 +164,9 @@ def build_timing_observation(capture_dir, *, launch_dir=None):
     """Derive the observation from one timing pass's capture directory."""
     capture_dir = Path(capture_dir)
     plan = json.loads((capture_dir / "observer-plan.json").read_text())
+    if plan.get("world_size", plan.get("identity", {}).get("world_size")) == 2:
+        from experiments.full_engine_timing_world import build_tp2_timing_observation
+        return build_tp2_timing_observation(capture_dir, launch_dir=launch_dir)
     run = json.loads((capture_dir / "run.json").read_text())
     if run.get("schema") != RUN_SCHEMA:
         raise ValueError("unsupported timing run schema: " + str(run.get("schema")))

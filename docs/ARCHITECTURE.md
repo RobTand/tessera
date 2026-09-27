@@ -67,6 +67,29 @@ no GPU timing, served-quality, contract-cell or runtime-pin admission is implied
 PrismaQuant's independent dense panel freezer still needs a world-aware input
 contract (prismaquant#1429); its table world-equality gate remains unchanged.
 
+Re-stamped 2026-09-26 for the TP2 full-engine observer producer contract
+(tessera#399). The existing TP1 resource report v2 and timing observation v1
+retain their scope. An explicit TP2/eager/resident run now binds each actual
+worker rank to its physical GPU UUID and a `VLLM_HOST_IP` verified on that
+worker's local interface. Resource report v3 is one rank per envelope but
+carries `observations.rank_world` with both raw capture paths/digests; the
+read-only KV v2 record binds rank/device/host and configured capacity.
+Timing capture v2 prices routed apply plus the actual late final all-reduce as
+two disjoint owner segments, leaving intervening shared and transform work
+in direct fixed gaps. Timing observation v2 cites both ranks' raw arms,
+profiles, host logs, plan, run and explicit impact policy and retains samples
+and rank vectors; its proposed coordinate is the slowest rank's median of
+per-sample direct gap sums. Missing peer, policy, trace/collection evidence or
+stream join refuses timing. The current post-stop CUPTI drop query resets on
+read and omits Kineto callback consumption and global/NCCL queues, so timing
+v2 remains unavailable until a cumulative collection-health witness exists.
+Report v3 also carries a raw-recomputable whole
+off-step Torch live peak including resident bytes, explicitly only a witness
+for the captured assignment. Candidate-specific placement still needs
+independent ownership/invariance and external allocation reasoning. CPU
+protocol fixtures establish contract behavior only; no TP2 GLM observer
+capture or fixed-resource admission is claimed.
+
 Re-stamped 2026-09-26 for the bounded full GLM-5.3-Flash TP2 serve
 (tessera#626). With both routed-window staging fixes on merged Tessera
 `f790bcc1aaa039388f6218ae3ef70155a8a9e6fa`, the unchanged 120-shard
