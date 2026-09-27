@@ -1,8 +1,6 @@
 """An explicitly bound mixed catalog retains original files and producers."""
-import copy
 import hashlib
 import json
-from pathlib import Path
 
 import pytest
 
@@ -114,7 +112,8 @@ def test_root_and_wire_symlink_changes_refuse(tmp_path):
 
 
 @pytest.mark.parametrize('composed', [False, True])
-def test_actual_mixed_producers_export_complete_dense_and_expert_roster(tmp_path, monkeypatch, composed):
+@pytest.mark.parametrize('proof_mode', ['strict', 'permissive'])
+def test_actual_mixed_producers_export_complete_dense_and_expert_roster(tmp_path, monkeypatch, composed, proof_mode):
     """Real historical factories and exporter consume both roots, never encode."""
     import torch
     from safetensors.torch import save_file
@@ -132,7 +131,8 @@ def test_actual_mixed_producers_export_complete_dense_and_expert_roster(tmp_path
     producers, packages = {}, {}
     for key in roots:
         roots[key].mkdir()
-        parent = tmp_path / ('producer-' + key + ('-composed' if composed else '')); parent.mkdir()
+        parent = tmp_path / ('producer-' + key + '-' + proof_mode + ('-composed' if composed else ''))
+        parent.mkdir()
         package, seal = _distinct_producer(parent)
         producers[key] = load_historical_producer(package, seal)
         packages[seal] = {'path': str(package), 'sha256': seal}
@@ -181,6 +181,10 @@ def test_actual_mixed_producers_export_complete_dense_and_expert_roster(tmp_path
         'wire_roots': {key: str(path) for key, path in roots.items()}, 'unit_roots': owners,
         'producer_packages': packages, 'reuse_authority': authority, 'encoder_adoptions': adoptions,
         'served_activation_policy': None, 'served_activations': {}}
+    if proof_mode == 'permissive':
+        authority['encoder_source_proofs'] = []
+        for adoption in adoptions.values():
+            adoption['encoder_source_proof'] = None
     if composed:
         # The expert cohort was independently priced and never had an old
         # checkpoint-encoder reference. Keep each original receipt unchanged.
@@ -209,7 +213,7 @@ def test_actual_mixed_producers_export_complete_dense_and_expert_roster(tmp_path
     digest_cache = tmp_path / 'source-digests'; digest_cache.mkdir()
     monkeypatch.setattr('sys.argv', ['export', str(source), str(out), '--plan-json', str(plan_path),
         '--cached-units', str(manifest_path), '--device', 'cpu', '--allow-unrouted', '--allow-unserveable',
-        '--source-digest-cache', str(digest_cache)])
+        '--source-digest-cache', str(digest_cache), '--cached-encoder-source-proof-mode', proof_mode])
     exporter.main()
     with safe_open(str(out / 'model.safetensors'), framework='pt') as handle:
         actual = [member.blob for name in handle.keys() if name.endswith(('.wire', '.wire_bytes'))
@@ -222,6 +226,10 @@ def test_actual_mixed_producers_export_complete_dense_and_expert_roster(tmp_path
     assert receipt['cached_units']['planned_units'] == 6
     assert receipt['cached_units']['producer_packages'] == packages
     assert receipt['cached_units']['served_activations'] == {}
+    assert receipt['cached_units']['encoder_source_proof_mode'] == proof_mode
+    warnings = receipt['cached_units']['warnings']
+    assert {warning['unit'] for warning in warnings} == (
+        set(adoptions) if proof_mode == 'permissive' and not composed else set())
     if composed:
         assert [child['schema'] for child in receipt['cached_units']['cohorts']] == [
             'tessera.cached_units.v2', 'tessera.cached_units.v1']

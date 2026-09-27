@@ -1545,6 +1545,11 @@ def main():
     cache_options.add_argument("--cached-units", type=Path, default=None,
                     help="closed exact-unit cache manifest for every planned dense and expert unit; "
                          "requires whole source tensors for dense roles, with no re-encode fallback")
+    ap.add_argument("--cached-encoder-source-proof-mode", choices=("strict", "permissive"),
+                    default="strict",
+                    help="strict requires each encoder adoption's covering source proof; "
+                         "permissive records unproven adoptions in cached intake warnings, "
+                         "without relaxing identity, digest or wire checks")
     ap.add_argument("--cached-producer-package", type=Path,
                     help="original producer's immutable src/tessera package for cached intake")
     ap.add_argument("--cached-producer-source-sha256",
@@ -2242,7 +2247,8 @@ def main():
                   else (source_identity(args.src, digest_cache=source_digest_cache)
                         if source_digest_cache is not None else source_identity(args.src)))
         cached_units = CachedUnitBundle(read_manifest(cache_path),
-                                        cache_path.parent, cache_unit_names, source)
+                                        cache_path.parent, cache_unit_names, source,
+                                        encoder_source_proof_mode=args.cached_encoder_source_proof_mode)
         if cached_units.producer_packages and args.cached_producer_package is not None:
             raise SystemExit("rooted cached units bind their exact producers; omit global cached-producer flags")
         if args.cached_producer_package is not None:
@@ -2848,6 +2854,8 @@ def main():
         **({cache_scope: {"manifest_sha256": cached_units.manifest_sha256,
                                     "manifest_encoding": "canonical_json.sorted_compact.v1",
                                     "planned_units": len(cache_unit_names),
+                                    "encoder_source_proof_mode": cached_units.encoder_source_proof_mode,
+                                    "warnings": cached_units.warnings,
                                     **({"historical_producer": {
                                         "package": str(args.cached_producer_package.resolve()),
                                         "source_sha256": historical_producer.source_sha256,
