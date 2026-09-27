@@ -190,7 +190,7 @@ from tessera.decode import replay_table_bytes  # noqa: E402
 from tessera.serving_parts import (  # noqa: E402
     BODY_LAYER, SCHEMA as PART_SCHEMA, dense_resident_bytes_resident_mode, export_identity,
     parse_partition, make_artifact_readable, partition_owner, sha256_file, summarize_modules,
-    validate_explicit_plan)
+    validate_explicit_plan, write_serving_manifest)
 
 
 def save_serving_shard(payload: dict, destination: Path) -> None:
@@ -2984,7 +2984,7 @@ def main():
             # reused from a recorded read changes no stamped digest.
             partition_record["source_digest_receipt"] = source_digest_cache.receipt()
         manifest["export_partition"] = partition_record
-    (args.out / "tessera_serving_manifest.json").write_text(json.dumps(manifest, indent=2))
+    write_serving_manifest(args.out / "tessera_serving_manifest.json", manifest)
 
     if twin is not None:
         twin_groups = {}
@@ -3019,7 +3019,7 @@ def main():
             (twin / "model.safetensors.index.json").write_text(
                 json.dumps({"metadata": {"total_size": size}, "weight_map": twin_weight_map}, indent=2))
         twin_resident = sum(r["resident_bytes"] for r in twin_records.values())
-        (twin / "tessera_stock_twin_manifest.json").write_text(json.dumps({
+        write_serving_manifest(twin / "tessera_stock_twin_manifest.json", {
             "source": str(args.src), "git": git_hash(), "written": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "wire_checkpoint": str(args.out), "arm": manifest["arm"] + " (stock twin of the same wires)",
             "vllm_fp4_predicate": twin_fp4_predicate,
@@ -3042,7 +3042,7 @@ def main():
                        "resident_bpp": float(Fraction(twin_resident * 8, params)) if params else None,
                        "checkpoint_bytes": sum((twin / s).stat().st_size for s in shards)},
             "modules": twin_records,
-        }, indent=2))
+        })
     print(json.dumps(totals, indent=2))
     print(f"elapsed {time.time() - started:.0f}s -> {args.out}" + (f" (twin -> {twin})" if twin is not None else ""))
 
