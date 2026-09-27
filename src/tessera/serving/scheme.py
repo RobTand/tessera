@@ -840,7 +840,7 @@ def _refuse_an_unreadable_rung(route: str, grid: str, q256: int, target: str) ->
     (tessera#560 D2); the research ``wire_recipe`` default below the cap is
     still the WINDOW body, which the routed path promotes to TCQ at export
     for ``STRUCTURE_ROUTED_MOE`` only -- see
-    ``experiments.export_tessera_serving.served_recipe`` -- while a dense
+    ``tessera.export.served_recipe`` -- while a dense
     module keeps WINDOW and is refused there).
     """
     from .contract import reader_accepts, reader_rate_grid
@@ -986,7 +986,7 @@ def refuse_unserveable_wire(grid: str, q256: int, body: str, plane: str,
     (Contract v32 publishes the trellis domain [128, 896] step 128 on the
     E2M1_K2 reader row, and served ROUTED stacks below the cap carry the
     span-2 TCQ spelling -- see
-    ``experiments.export_tessera_serving.served_recipe`` -- while a dense
+    ``tessera.export.served_recipe`` -- while a dense
     module keeps the WINDOW body and stays refused here exactly as before;
     the shape of the failure this gate exists for is unchanged.)
 
