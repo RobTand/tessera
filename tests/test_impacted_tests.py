@@ -739,7 +739,9 @@ def test_a_file_the_shared_conftest_imports_selects_every_test_below_it():
                   for p in (ROOT / "tests").rglob("test_*.py")}
 
     assert result["verdict"] == "narrowed", result["forces_full"]
-    assert not population - set(result["tests"])
+    excluded = {entry["path"] for entry in result["excluded_tests"]}
+    assert not population - (set(result["tests"]) | excluded)
+    assert not set(result["tests"]) & excluded
     assert "conftest" in result["reason"], result["reason"]
 
 
