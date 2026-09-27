@@ -98,3 +98,12 @@ def test_a_dirty_checkout_is_refused_rather_than_named_after_its_head(tmp_path):
     (tmp_path/'checkout'/'f').write_text('changed')
     with pytest.raises(ValueError,match='uncommitted'):
         module.render(binding['path'],binding['sha256'],tmp_path/'checkout')
+
+
+def test_a_producer_authority_binding_is_optional_and_nothing_else_is(tmp_path):
+    module=renderer();_repo(tmp_path/'checkout')
+    binding=_bindings(tmp_path,(*module.INPUTS,'producer_authority'))
+    assert module.render(binding['path'],binding['sha256'],tmp_path/'checkout')['submitted'] is False
+    other=tmp_path/'other';other.mkdir();binding=_bindings(other,(*module.INPUTS,'unreviewed'))
+    with pytest.raises(ValueError,match='incomplete'):
+        module.render(binding['path'],binding['sha256'],tmp_path/'checkout')

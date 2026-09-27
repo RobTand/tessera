@@ -32,8 +32,22 @@ COLLECTION_BINDING_SCHEMA = 'tessera.canonical_hessian_collection_binding.v1'
 #: and an unlisted backend has not been shown to satisfy the ownership and
 #: contiguity facts the checks below read.
 RESIDENT_DEVICES = frozenset({'cpu', 'cuda'})
-CANONICAL_SCHEMA = 'prismaquant.tessera_calibration_cache.v2'
-CANONICAL_SOURCE = 'tessera_campaign_prefix_f32_v1'
+#: The canonical capture a reference binds is its producer's calibration
+#: cache: Tessera reads its layout (``identity``, ``entries`` and each
+#: ``inputs/*.pt`` payload) but does not own its schema or storage-source name.
+#: The caller supplies both as ``canonical_capture=(schema, source)``.
+MISSING_CANONICAL_CAPTURE = ('Hessian references need the producer canonical capture '
+                             '(canonical_capture=(schema, source)); none was supplied')
+
+
+def normalize_canonical_capture(value):
+    """Check a caller's ``(schema, storage_source)`` pair; ``None`` passes through."""
+    if value is None:
+        return None
+    if (not isinstance(value, (tuple, list)) or len(value) != 2 or
+            not all(isinstance(item, str) and item for item in value)):
+        raise GrammarError('canonical_capture must be a (schema, source) pair of names')
+    return tuple(value)
 # The first JSON cannot declare the bound under which it is first parsed.
 MAX_METADATA_BYTES = 128*1024**2
 READ_BYTES = 8*1024**2
@@ -180,9 +194,10 @@ class ReferenceHessians(Mapping):
     the existing tensor identity helper also stages at most one H-sized byte
     string. Caller-owned H values and encoder workspaces are additional.
     """
-    def __init__(self, path):
+    def __init__(self, path, *, canonical_capture=None):
         self._held = []
         self._closed = False
+        self._canonical_capture = normalize_canonical_capture(canonical_capture)
         self._lock = threading.RLock()
         self._verified = set()
         self._resident = None
@@ -228,9 +243,12 @@ class ReferenceHessians(Mapping):
         p, canonical, census = self._document, self._canonical, self._census
         identity = canonical.get('identity') or {}
         units, entries = identity.get('units'), canonical.get('entries')
-        if (canonical.get('schema') != CANONICAL_SCHEMA or canonical.get('status') != 'complete' or
-                identity.get('schema') != CANONICAL_SCHEMA or
-                identity.get('storage_source') != CANONICAL_SOURCE or
+        if self._canonical_capture is None:
+            raise GrammarError(MISSING_CANONICAL_CAPTURE)
+        schema, source = self._canonical_capture
+        if (canonical.get('schema') != schema or canonical.get('status') != 'complete' or
+                identity.get('schema') != schema or
+                identity.get('storage_source') != source or
                 identity.get('census_sha256') != p['census']['sha256'] or
                 not isinstance(units, dict) or not units or not isinstance(entries, dict) or
                 set(entries) != set(units) or census.get('unit_shapes') != units or
@@ -528,7 +546,7 @@ class ReferenceHessians(Mapping):
                 count = self._document['counts'][name]
                 columns = expected['shape'][0]
                 rows = min(count, self._canonical['identity']['max_act_rows'])
-                if (payload['name'] != name or payload['source'] != CANONICAL_SOURCE or
+                if (payload['name'] != name or payload['source'] != self._canonical_capture[1] or
                         type(payload['count']) is not int or payload['count'] != count or
                         payload['max_abs'] != self._census['max_abs'][name] or
                         not math.isfinite(float(payload['max_abs']))):
@@ -608,7 +626,7 @@ class ReferenceHessianCollection(Mapping):
     consumption.  The collection owns and closes every child descriptor.
     """
 
-    def __init__(self, path):
+    def __init__(self, path, *, canonical_capture=None):
         self._held = None
         self._children = []
         self._bindings = []
@@ -636,7 +654,7 @@ class ReferenceHessianCollection(Mapping):
                         not isinstance(reference['path'], str) or not _sha(reference['sha256'])):
                     raise GrammarError('Hessian collection requires exact child path/SHA-256 bindings')
                 names.append(reference['path'])
-                child = ReferenceHessians(reference['path'])
+                child = ReferenceHessians(reference['path'], canonical_capture=canonical_capture)
                 self._children.append(child)
                 if child.document_sha256 != reference['sha256']:
                     raise GrammarError(f"Hessian collection child checksum differs: {reference['path']}")

@@ -24,6 +24,7 @@ from tessera.export import ActivationSource
 from tessera.hessian_capture import ReferenceHessians
 
 from test_hessian_reference_capture import reference  # noqa: F401  (fixture)
+from reuse_authority_fixture import CANONICAL_CAPTURE
 
 
 @pytest.fixture
@@ -52,7 +53,7 @@ def counted(monkeypatch, module, name):
 
 def bound_source(handoff, H, **settings):
     settings.setdefault('ldlq_sigma', None)
-    return ActivationSource.from_capture(handoff, resident_hessians=H, **settings)
+    return ActivationSource.from_capture(handoff, canonical_capture=CANONICAL_CAPTURE, resident_hessians=H, **settings)
 
 
 def encode_kwargs(source, unit='a.weight', columns=4, device='cpu'):
@@ -136,7 +137,7 @@ def test_the_checkpoint_identity_path_sees_the_same_object(resident, monkeypatch
 
 def test_bind_refuses_a_roster_that_gained_or_lost_a_unit(resident):
     handoff, _, H = resident
-    owner = ReferenceHessians(handoff)
+    owner = ReferenceHessians(handoff, canonical_capture=CANONICAL_CAPTURE)
     with pytest.raises(GrammarError) as gained:
         owner.bind_resident(dict(H, c=torch.eye(4)))
     assert "gained ['c']" in str(gained.value)
@@ -154,7 +155,7 @@ def test_bind_refuses_a_roster_that_gained_or_lost_a_unit(resident):
 ])
 def test_bind_refuses_a_tensor_its_commitment_does_not_describe(resident, name, wrong):
     handoff, _, H = resident
-    owner = ReferenceHessians(handoff)
+    owner = ReferenceHessians(handoff, canonical_capture=CANONICAL_CAPTURE)
     with pytest.raises(GrammarError, match='resident Hessian'):
         owner.bind_resident(dict(H, a=wrong()))
     owner.close()
@@ -165,7 +166,7 @@ def test_bind_refuses_a_view_that_does_not_own_its_storage(resident):
     handoff, _, H = resident
     buffer = torch.zeros(2, 4, 4)
     buffer[0] = H['a']
-    owner = ReferenceHessians(handoff)
+    owner = ReferenceHessians(handoff, canonical_capture=CANONICAL_CAPTURE)
     with pytest.raises(GrammarError, match='own its storage'):
         owner.bind_resident(dict(H, a=buffer[0]))
     owner.close()
@@ -192,7 +193,7 @@ def test_a_resident_cuda_h_is_served_as_itself(resident):
 
 def test_bind_refuses_a_device_with_no_bytes(resident):
     handoff, _, H = resident
-    owner = ReferenceHessians(handoff)
+    owner = ReferenceHessians(handoff, canonical_capture=CANONICAL_CAPTURE)
     with pytest.raises(GrammarError, match='lives on meta'):
         owner.bind_resident(dict(H, a=torch.eye(4, device='meta')*3))
     owner.close()
@@ -209,7 +210,7 @@ def test_close_releases_the_owners_hold_on_the_population(resident):
     import weakref
 
     handoff, _, H = resident
-    owner = ReferenceHessians(handoff)
+    owner = ReferenceHessians(handoff, canonical_capture=CANONICAL_CAPTURE)
     # Clones, so the only strong references are this test's and the owner's --
     # the fixture keeps its own H alive in its frame and would mask the leak.
     caller = {name: value.clone() for name, value in H.items()}
@@ -232,7 +233,7 @@ def test_close_releases_the_owners_hold_on_the_population(resident):
 
 def test_closing_does_not_reach_into_the_callers_mapping(resident):
     handoff, _, H = resident
-    owner = ReferenceHessians(handoff)
+    owner = ReferenceHessians(handoff, canonical_capture=CANONICAL_CAPTURE)
     caller = dict(H)
     owner.bind_resident(caller)
     owner.close()
@@ -259,7 +260,7 @@ def test_consuming_a_bound_unit_twice_leaves_the_callers_bytes_alone(resident):
     # metric through Du.  Both take the served object as their input.
     arms = [dict(ldlq_sigma=0.025, ldlq_block=2), dict(ldlq_sigma=None)]
     for settings in arms:
-        source = ActivationSource.from_capture(handoff, resident_hessians=H, **settings)
+        source = ActivationSource.from_capture(handoff, canonical_capture=CANONICAL_CAPTURE, resident_hessians=H, **settings)
         for _ in range(2):
             kwargs = source.for_unit('a.weight', 4, 'cpu',
                                      scale_plane=ScalePlaneKind.CHANNEL,
@@ -273,7 +274,7 @@ def test_consuming_a_bound_unit_twice_leaves_the_callers_bytes_alone(resident):
 
 def test_bind_is_one_shot_and_ends_with_the_owner(resident):
     handoff, _, H = resident
-    owner = ReferenceHessians(handoff)
+    owner = ReferenceHessians(handoff, canonical_capture=CANONICAL_CAPTURE)
     owner.bind_resident(dict(H))
     with pytest.raises(GrammarError, match='already bound'):
         owner.bind_resident(dict(H))
@@ -334,7 +335,7 @@ def test_replacing_the_callers_entry_after_binding_does_not_change_what_is_serve
     """The bound set is fixed at bind, so a later swap cannot reach the encoder."""
     handoff, _, H = resident
     caller = dict(H)
-    owner = ReferenceHessians(handoff)
+    owner = ReferenceHessians(handoff, canonical_capture=CANONICAL_CAPTURE)
     owner.bind_resident(caller)
     caller['a'] = torch.eye(4) * 11
     served = owner['a']
@@ -348,7 +349,7 @@ def test_resident_hessians_needs_a_reference_document(resident, tmp_path):
     legacy = tmp_path / 'capture.pt'
     torch.save({'H': H, 'provenance': {}}, legacy)
     with pytest.raises(GrammarError, match='resident_hessians'):
-        ActivationSource.from_capture(legacy, resident_hessians=H)
+        ActivationSource.from_capture(legacy, canonical_capture=CANONICAL_CAPTURE, resident_hessians=H)
 
 
 # --- what the run records --------------------------------------------------
