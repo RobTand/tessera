@@ -414,8 +414,13 @@ def main() -> int:
                 or ack.get("runtime_evidence_sha256") != digest(peer_evidence)):
             return refuse(out, "peer_ready", "rank-1 acknowledgement differs from plan/evidence bytes")
         command = [sys.executable, "-u", "-m", "experiments.capture_full_engine_resources",
-                   "--run-plan", str(plan)]
-    result = subprocess.run(command)
+                   "--run-plan", str(plan.resolve())]
+        # The spawned workers load the resource bootstrap only from this
+        # environment; it is the one the single-process exec sets.
+        from experiments.capture_full_engine_resources import apply_run_plan_environment
+        result = subprocess.run(command, env=apply_run_plan_environment(os.environ.copy(), plan))
+    else:
+        result = subprocess.run(command)
     capture_seconds = time.time() - started
     write(out / "capture-result.json", {"returncode": result.returncode,
                                         "seconds": round(capture_seconds, 3)})

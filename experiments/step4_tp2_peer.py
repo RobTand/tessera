@@ -96,22 +96,11 @@ def main():
     plan = wait_for_plan(args.plan, args.wait_s, finished=finished, session_id=session_id)
     engine = peer_engine_args(plan, args.evidence, host_ip=args.host_ip)
     # The stock peer uses the same observer plan and bootstrap as the head.
-    root = str(Path(__file__).resolve().parents[1])
-    if plan["observation_mode"] == "resources":
-        os.environ["TESSERA_ENGINE_RESOURCE_PLAN"] = str(args.plan)
-        os.environ.pop("TESSERA_ENGINE_TIMING_PLAN", None)
-        os.environ["PYTHONPATH"] = root + "/experiments/resource_bootstrap:" + root
-    elif plan["observation_mode"] == "timings":
-        os.environ["TESSERA_ENGINE_TIMING_PLAN"] = str(args.plan)
-        os.environ.pop("TESSERA_ENGINE_RESOURCE_PLAN", None)
-        os.environ["PYTHONPATH"] = root
-    elif plan["observation_mode"] == "kv":
-        os.environ.pop("TESSERA_ENGINE_RESOURCE_PLAN", None)
-        os.environ.pop("TESSERA_ENGINE_TIMING_PLAN", None)
-        os.environ["PYTHONPATH"] = root
-    else:
-        raise ValueError("unsupported TP2 observation mode")
-    os.environ.update(plan["observer_environment"])
+    # The tree root comes from the imported experiments package (the tree on
+    # PYTHONPATH), never from this script's path: the launcher runs it from a
+    # separate read-only mount of experiments/ at /control.
+    from experiments.capture_full_engine_resources import apply_run_plan_environment
+    apply_run_plan_environment(os.environ, args.plan)
     os.environ["VLLM_HOST_IP"] = args.host_ip
     args.ready.write_text(json.dumps({"schema": "tessera.tp2_peer_ready.v1",
                                       "session_id": session_id,
