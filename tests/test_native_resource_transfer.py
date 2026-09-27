@@ -453,13 +453,22 @@ def test_round2_mutants_m1_to_m3_are_refused(defect):
 
 def test_world_one_persistence_checks_bite():
     pytest.importorskip("scipy")
-    def change(cases, evidence):
+    def resource_change(cases, evidence):
         cases[1]["resource"]["process"] = {"pid": 201, "boot_id": "CPU-fixture",
                                            "start_ticks": 201}
         cases[1]["resource"]["binding"] = copy.deepcopy(cases[0]["resource"]["binding"])
-    result = _qualify(_evidence(), change=change)
+    result = _qualify(_evidence(), change=resource_change)
     assert result["status"] == "failed"
     assert any("resource pass must be one persistent process" in r for r in result["reasons"])
+
+    # the timing bucket's own one-process rule: a second pass-T process at
+    # world 1 is refused even though each leg still matches the band rows
+    def timing_two_processes(cases, evidence):
+        cases[1]["timing"]["process"] = {"pid": 301, "boot_id": "CPU-fixture",
+                                         "start_ticks": 301}
+    result = _qualify(_evidence(), change=timing_two_processes)
+    assert result["status"] == "failed"
+    assert any("timing pass must be one persistent process" in r for r in result["reasons"])
 
 
 def test_timing_leg_is_bound_to_the_raw_band():
