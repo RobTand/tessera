@@ -23,8 +23,10 @@ What it pins:
 2. every module of every rank, in both phases, ran the two native A4 launches
    -- no materialising fallback on either rank;
 3. each rank's shape is the TP1 shape of the same module cut in half along
-   exactly one axis, and both axes are cut for both structures, so the receipt
-   exercises both cuts; every rank-local extent is a multiple of the
+   exactly one axis.  Dense modules are cut on both axes.  A routed stack's
+   record names its gate_up shape, whose N halves (4096 -> 2048, an
+   intermediate of 1024 per rank); that intermediate is the extent the stack's
+   down projection is row-cut to, which the record does not name separately; every rank-local extent is a multiple of the
    admission's 32, and the live serve admitted it (a refused cut would not
    have reached the native launch on that rank);
 4. the contract still says 2 for the unit, with both loader axes sharded.
@@ -116,7 +118,13 @@ def test_each_rank_is_the_tp1_module_cut_in_half_on_one_axis_and_admits_the_cut(
             # lays its rows along.
             assert n2 % SELECT_COLUMN_ROWS == 0 and k2 % SELECT_COLUMN_ROWS == 0, (
                 name, n2, k2)
-    assert axes_by_kind == {"dense": {"row", "column"}, "moe": {"row", "column"}}
+            if record["kind"] == "moe":
+                # gate_up is two projections of the intermediate; one of them
+                # is the down projection's rank-local row extent.
+                assert (n2 // 2) % SELECT_COLUMN_ROWS == 0, (name, n2)
+    # The routed record carries the stack's gate_up (w13) shape only; its
+    # column cut halves the intermediate, and that half is w2's row extent.
+    assert axes_by_kind == {"dense": {"row", "column"}, "moe": {"column"}}
 
 
 def test_the_contract_keeps_e2m1_at_two_with_both_axes_sharded():

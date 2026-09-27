@@ -36,8 +36,9 @@ span-2 route and its rank-cut admission
 A TP2 eager resident route census of the all-E2M1 stub D ran on the GLM image
 across sparky and sparklina (ray executor, census tool at 62f9e1ce5). Every
 one of the 21 modules on each rank served on the two native A4 launches, with
-`problems: []`. The dense and routed modules were each cut on both axes, and
-every rank-local extent is a multiple of 32. The receipt is
+`problems: []`. Dense modules were cut on both axes, and each routed stack's
+intermediate was halved to 1024, the down projection's row extent. Every
+rank-local extent is a multiple of 32. The receipt is
 `experiments/results/glm53_u1_stub_d_tp2_eager_census.json`, replayed by
 `tests/test_glm_u1_tp2_census.py`. This census is a route receipt only. The
 KL-bearing `world_size_receipts` entry is still v29's.

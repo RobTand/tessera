@@ -166,10 +166,14 @@ halved along exactly one axis:
 |---|---|---|
 | Dense `gate_up_proj` (column cut) | N24576:K4096 | N12288:K4096 |
 | Dense `down_proj` (row cut) | N4096:K12288 | N4096:K6144 |
-| Routed and shared `gate_up` | N4096:K4096 | N2048:K4096 |
-| Routed and shared `down` | N4096:K2048 | N4096:K1024 |
+| Shared-expert `gate_up_proj` (column cut) | N4096:K4096 | N2048:K4096 |
+| Shared-expert `down_proj` (row cut) | N4096:K2048 | N4096:K1024 |
+| Routed stack (record names `gate_up`, column cut) | N4096:K4096 | N2048:K4096 |
 
-Every local extent is a multiple of 32. `tests/test_glm_u1_tp2_census.py`
+The routed record names only the stack's `gate_up` shape. Its halved N is an
+intermediate of 1024 per rank, which is the extent the stack's `down`
+projection is row-cut to; the record does not name that projection
+separately. Every local extent is a multiple of 32. `tests/test_glm_u1_tp2_census.py`
 replays the receipt.
 
 This is a route receipt. The KL-bearing `world_size_receipts` entry is still
