@@ -1,5 +1,9 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-09-27 for the v3 catalog extension in rooted cached units
+(tessera#670): `CATALOG_EXTENSION_SCHEMAS` adds
+`prismaquant.joint_catalog_extension.v3`.
+
 Re-stamped 2026-09-27 for the served recipe in the package (tessera#662).
 `tessera.export.served_recipe(grid, q256, structure)` moved out of
 `experiments/export_tessera_serving.py` into the package, and
@@ -6195,10 +6199,12 @@ projection), named-document SHA-256, blob bytes/digests and shapes still refuse
 in both modes. Unrelated unused proof authority still refuses. PrismaQuant
 authenticates the catalog extension and proof semantics
 before publication. The extension is `prismaquant.joint_catalog_extension.v1`,
-which binds one completed Stage A receipt, or `.v2`, which binds the
-Stage A run header so an extension exists from the first sealed band. Tessera
-rechecks the bound documents, accepts exactly those two extension schemas
-(`cached_unit.CATALOG_EXTENSION_SCHEMAS`) and reads no other extension field,
+which binds one completed Stage A receipt, `.v2`, which binds the
+Stage A run header so an extension exists from the first sealed band, or `.v3`,
+which is v2 plus the campaign scope derived when that header sealed none
+(tessera#670). Tessera rechecks the bound documents, accepts exactly those three
+extension schemas (`cached_unit.CATALOG_EXTENSION_SCHEMAS`; tessera#599 step 2
+removes these client names) and reads no other extension field,
 then uses each exact historical package's input-identity factory, followed by
 the unchanged strict cached-wire verifier. Duplicate leaf names are permitted only
 in distinct roots. Symlink roots/files and partial or surplus ownership refuse.

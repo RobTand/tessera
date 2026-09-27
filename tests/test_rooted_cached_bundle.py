@@ -64,19 +64,26 @@ def test_roots_allow_same_leaf_without_copying_or_relabeling(tmp_path):
 
 
 # The roster IS the decision here: these are the catalog-extension documents
-# PrismaQuant writes and still verifies (``joint_catalog_extension.SCHEMA`` and
-# ``SCHEMA_V1``).  v2 (PQ #993) binds the Stage A run header instead of one
-# completed receipt, and it is the schema every extension is created under now.
+# PrismaQuant writes and still verifies (``joint_catalog_extension.SCHEMA_V1``,
+# ``SCHEMA`` and ``SCHEMA_V3``).  v2 (PQ #993) binds the Stage A run header
+# instead of one completed receipt; v3 (PQ #1126) is v2 plus a derived campaign
+# scope, and it is what the GLM-5.3 A4 extension is (tessera#670).  Both proof
+# modes read it: the A4 export runs permissive (PrismaQuant dev mode), and an
+# authorized adoption leaves no warning in either.
+@pytest.mark.parametrize('mode', ['strict', 'permissive'])
 @pytest.mark.parametrize('schema', ['prismaquant.joint_catalog_extension.v1',
-                                    'prismaquant.joint_catalog_extension.v2'])
-def test_rooted_authority_reads_each_prismaquant_extension_schema(tmp_path, schema):
+                                    'prismaquant.joint_catalog_extension.v2',
+                                    'prismaquant.joint_catalog_extension.v3'])
+def test_rooted_authority_reads_each_prismaquant_extension_schema(tmp_path, schema, mode):
     manifest, _ = rooted(tmp_path, extension_schema=schema)
-    bundle = CachedUnitBundle(manifest, tmp_path, {'dense', 'expert'}, manifest['source'])
+    bundle = CachedUnitBundle(manifest, tmp_path, {'dense', 'expert'}, manifest['source'],
+                              encoder_source_proof_mode=mode)
+    assert bundle.encoder_source_proof_mode == mode and bundle.warnings == []
     for name in manifest['units']:
         assert bundle.read(name)[1] == manifest['units'][name]
 
 
-@pytest.mark.parametrize('schema', ['prismaquant.joint_catalog_extension.v3',
+@pytest.mark.parametrize('schema', ['prismaquant.joint_catalog_extension.v4',
                                     'prismaquant.t4_adopted_catalog.v1', None,
                                     ['prismaquant.joint_catalog_extension.v2']])
 def test_rooted_authority_refuses_any_other_extension_schema(tmp_path, schema):
