@@ -1,0 +1,208 @@
+{
+ "what": "The four cells contract v39 withdrew (tessera#604, second half), as contract v38 published them, field for field except that the serve-image pin in the two dense cells is the placeholder <versions.default_serve_image> (tests/test_runtime_image_pin.py refuses a second copy of the pin under tests/; tests/withdrawn_cells.py resolves it). THE TWO ROUTED CELLS named (vllm.fused_moe.modular_kernel, torch_materialize_stock), which this build cannot make for an NVFP4 expert stack: nvfp4_moe_route's process_weights_after_loading always builds the native grouped stacks and stamps (tessera.kernel_a4.a4_span2_grouped_gemm, native_span2_grouped). Their receipt, the two-rank GLM-5.3-Flash 4-layer stub serve of 2026-09-14 (tree 44d20d670, image a5424378), is real and stays in the tree. THE TWO DENSE CELLS named (torch._scaled_mm, native_span2) on the pinned serve image, which this build cannot make for an NVFP4 dense module either: nvfp4_route's process_weights_after_loading always prepares native A4 units and stamps (tessera.kernel_a4.a4_span2_gemm, native_span2_gemm), and apply runs a4_span2_gemm on every forward; the route's own docstring kept the pair in the table 'only because the shipped dense cells' executes name the launches their receipts ran'. Their receipts (docs/measurements/tessera-serving-plugin-2026-09-02.md, including the batch cell's top-1024 KL lower bound at q256 896) are real and stay in the tree. They are quoted here, outside the published document, so tests that join their route traces keep a real record. Nothing resolves this file as a contract.",
+ "source": "src/tessera/serving/runtime_contract.json at contract_version 38 (origin/master 09d6559d7)",
+ "cells": [
+  {
+   "id": "tessera_e2m1_k2_routed_moe_sm121_decode_resident",
+   "runtime": {
+    "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:a5424378322071f4c33e63d1372a2bb028e46b03f0da0e5edb0cdd7418e2cebb",
+    "execution_modes": [
+     "eager"
+    ],
+    "vllm": "0.28.1rc1.dev397+gfd4a15126.d20260904",
+    "torch": "2.13.0+cu130"
+   },
+   "platform": "sm_121",
+   "family": "TESSERA_E2M1_K2",
+   "structure": "routed_moe",
+   "regime": "decode",
+   "rungs_q256": [
+    128,
+    256,
+    384,
+    512,
+    640,
+    768,
+    896
+   ],
+   "activation_contract": "e2m1_group16_ue4m3_static",
+   "executes": [
+    {
+     "symbol": "vllm.fused_moe.modular_kernel",
+     "decoder": "torch_materialize_stock"
+    }
+   ],
+   "route_status": "backed_with_serve_flag",
+   "qualification": "device_qualified",
+   "requires_plugin": "tessera",
+   "requires_serve_flags": [
+    "TESSERA_SERVE_MODE=resident"
+   ],
+   "predicates": [],
+   "evidence": {
+    "artifact": null,
+    "grade": "route_only",
+    "kl": [],
+    "smoke": {
+     "status": "not_recorded",
+     "receipt": null,
+     "attribution": "unattributed",
+     "control": null,
+     "record": null
+    }
+   }
+  },
+  {
+   "id": "tessera_e2m1_k2_routed_moe_sm121_batch_resident",
+   "runtime": {
+    "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:a5424378322071f4c33e63d1372a2bb028e46b03f0da0e5edb0cdd7418e2cebb",
+    "execution_modes": [
+     "eager"
+    ],
+    "vllm": "0.28.1rc1.dev397+gfd4a15126.d20260904",
+    "torch": "2.13.0+cu130"
+   },
+   "platform": "sm_121",
+   "family": "TESSERA_E2M1_K2",
+   "structure": "routed_moe",
+   "regime": "batch",
+   "rungs_q256": [
+    128,
+    256,
+    384,
+    512,
+    640,
+    768,
+    896
+   ],
+   "activation_contract": "e2m1_group16_ue4m3_static",
+   "executes": [
+    {
+     "symbol": "vllm.fused_moe.modular_kernel",
+     "decoder": "torch_materialize_stock"
+    }
+   ],
+   "route_status": "backed_with_serve_flag",
+   "qualification": "device_qualified",
+   "requires_plugin": "tessera",
+   "requires_serve_flags": [
+    "TESSERA_SERVE_MODE=resident"
+   ],
+   "predicates": [],
+   "evidence": {
+    "artifact": null,
+    "grade": "route_only",
+    "kl": [],
+    "smoke": {
+     "status": "not_recorded",
+     "receipt": null,
+     "attribution": "unattributed",
+     "control": null,
+     "record": null
+    }
+   }
+  },
+  {
+   "id": "tessera_e2m1_k2_dense_sm121_decode",
+   "runtime": {
+    "image": "<versions.default_serve_image>",
+    "execution_modes": [
+     "eager",
+     "compiled"
+    ],
+    "vllm": "0.28.0",
+    "torch": "2.13.0+cu130"
+   },
+   "platform": "sm_121",
+   "family": "TESSERA_E2M1_K2",
+   "structure": "dense",
+   "regime": "decode",
+   "rungs_q256": [
+    896
+   ],
+   "activation_contract": "e2m1_group16_ue4m3_static",
+   "executes": [
+    {
+     "symbol": "torch._scaled_mm",
+     "decoder": "native_span2"
+    }
+   ],
+   "route_status": "backed_with_serve_flag",
+   "qualification": "device_qualified",
+   "requires_plugin": "tessera",
+   "requires_serve_flags": [
+    "TESSERA_SERVE_MODE=resident|streamed"
+   ],
+   "predicates": [],
+   "evidence": {
+    "artifact": null,
+    "grade": "route_only",
+    "kl": [],
+    "smoke": {
+     "status": "not_recorded",
+     "receipt": null,
+     "attribution": "unattributed",
+     "control": null,
+     "record": null
+    }
+   }
+  },
+  {
+   "id": "tessera_e2m1_k2_dense_sm121_batch",
+   "runtime": {
+    "image": "<versions.default_serve_image>",
+    "execution_modes": [
+     "eager",
+     "compiled"
+    ],
+    "vllm": "0.28.0",
+    "torch": "2.13.0+cu130"
+   },
+   "platform": "sm_121",
+   "family": "TESSERA_E2M1_K2",
+   "structure": "dense",
+   "regime": "batch",
+   "rungs_q256": [
+    896
+   ],
+   "activation_contract": "e2m1_group16_ue4m3_static",
+   "executes": [
+    {
+     "symbol": "torch._scaled_mm",
+     "decoder": "native_span2"
+    }
+   ],
+   "route_status": "backed_with_serve_flag",
+   "qualification": "device_qualified",
+   "requires_plugin": "tessera",
+   "requires_serve_flags": [
+    "TESSERA_SERVE_MODE=resident|streamed"
+   ],
+   "predicates": [],
+   "evidence": {
+    "artifact": null,
+    "grade": "kl_lower_bound",
+    "kl": [
+     {
+      "kind": "topk_intersection_lower_bound",
+      "top_k": 1024,
+      "regime": "batch",
+      "execution_modes": [
+       "eager",
+       "compiled"
+      ],
+      "receipt": "docs/measurements/tessera-serving-plugin-2026-09-02.md",
+      "q256": 896
+     }
+    ],
+    "smoke": {
+     "status": "not_recorded",
+     "receipt": null,
+     "attribution": "unattributed",
+     "control": null,
+     "record": null
+    }
+   }
+  }
+ ]
+}

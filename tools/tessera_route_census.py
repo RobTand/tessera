@@ -285,6 +285,26 @@ def draft_declared_in_module_space(model, targets):
     return out
 
 
+def on_every_rank_model(fn, *fargs):
+    """Wrap ``fn(model, *fargs)`` as a ``collective_rpc`` callable for every rank.
+
+    ``LLM.apply_model(fn)`` sends ``fn`` as an RPC ARGUMENT, and vLLM's
+    multiprocess and ray executors write RPC arguments with the stdlib pickler.
+    That pickler refuses a lambda outright ("Can't pickle local object") and
+    writes a function of this script as a reference to ``__main__``, which a
+    worker process whose ``__main__`` is vLLM's or ray's cannot resolve.  One
+    rank never noticed: the in-process executor calls ``fn`` without pickling.
+    The first TP2 census on image X died on the name-map lambda
+    (2026-09-27 01:08Z).  A callable passed as the RPC METHOD is written with
+    cloudpickle, which carries a ``__main__`` function by value, so every rank
+    gets the same code the head runs.  The result is one entry per rank, as
+    ``apply_model`` returned.
+    """
+    def call(worker):
+        return fn(worker.get_model(), *fargs)
+    return call
+
+
 def draft_worker_inventory(worker, targets):
     """Return small draft observations from one worker, never its model object.
 
@@ -1275,8 +1295,8 @@ def main() -> int:
     # checkpoint declares no wire for -- a refusal that says the opposite of
     # what is true.  The table is the RUNTIME's (the model class's own mapper),
     # replayed here rather than restated.
-    name_map = llm.apply_model(
-        lambda model: declared_in_module_space(model, list(declared)))[0]
+    name_map = llm.collective_rpc(
+        on_every_rank_model(declared_in_module_space, list(declared)))[0]
     if name_map is not None:
         dropped = sorted(t for t, m in name_map.items() if m is None)
         if dropped:
@@ -1309,7 +1329,7 @@ def main() -> int:
     phases_by_rank = {}
     # One forward over M = len(ids) rows, sample one token, stop.
     outs = llm.generate([prompt], SamplingParams(max_tokens=1, temperature=0.0))
-    phases_by_rank[batch_phase] = llm.apply_model(census)
+    phases_by_rank[batch_phase] = llm.collective_rpc(on_every_rank_model(census))
     # The stock proposer calls its nn.Module for each draft forward. Read each
     # call at its boundary: a later M1 may overwrite a real prompt-length M>1
     # draft record before LLM.generate returns. The hooks are census-only and
@@ -1324,7 +1344,7 @@ def main() -> int:
         if args.draft_routes:
             draft_observer_arms["decode_arm"] = llm.collective_rpc(
                 disarm_draft_forward_observer)
-    phases_by_rank[decode_phase] = llm.apply_model(census)
+    phases_by_rank[decode_phase] = llm.collective_rpc(on_every_rank_model(census))
     generated = outs[0].outputs[0].text
     draft_by_phase = {}
     draft_phase_sources = {}
@@ -1355,8 +1375,8 @@ def main() -> int:
             draft_phase_sources[batch_phase] = "batch_arm/first_batch"
     # Load facts, so once and after the forwards: which modules' lane refused
     # to prepare, and why.  Same for every phase by construction.
-    refusals_by_rank = llm.apply_model(lane_refusals)
-    identities = llm.apply_model(rank_identity)
+    refusals_by_rank = llm.collective_rpc(on_every_rank_model(lane_refusals))
+    identities = llm.collective_rpc(on_every_rank_model(rank_identity))
     world_size = len(identities)
     ranks_seen = sorted(int(identity["rank"]) for identity in identities)
     if ranks_seen != list(range(world_size)):

@@ -14,9 +14,10 @@ What it pins:
    join agrees (the fail-before: on contract v37 every module is
    ``unattested``, because no cell names this image and three of the four
    pairs were experimental);
-2. the cells cover exactly the rungs the stub carried per family and
-   structure -- a cell widened past its receipt, or a receipt rung dropped
-   from a cell, fails here;
+2. the cells still cover every rung the stub carried per family and
+   structure -- a receipt rung dropped from a cell fails here.  Contract v39
+   widened six of them on eight more receipts, so the EXACT coverage check
+   over all nine lives in ``tests/test_glm_u1_census_cells.py``;
 3. the receipt is the one the contract cites: same checkpoint config, same
    image, same toolchain, the serve's backends recorded.
 """
@@ -138,7 +139,7 @@ def test_the_join_fails_on_the_table_before_these_cells():
             assert row["unattested"] == row["modules"]
 
 
-def test_the_cells_cover_exactly_the_rungs_the_stub_carried():
+def test_the_cells_cover_every_rung_the_stub_carried():
     receipt = _receipt()
     rungs = _declared_rungs(receipt)
     carried: dict = {}
@@ -151,6 +152,6 @@ def test_the_cells_cover_exactly_the_rungs_the_stub_carried():
     cells = {c["id"]: c for c in load_serving_contract()["lane_eligibility"]["cells"]}
     for cell_id in CELL_IDS:
         cell = cells[cell_id]
-        assert set(cell["rungs_q256"]) == carried[(cell["family"], cell["structure"])], cell_id
+        assert set(cell["rungs_q256"]) >= carried[(cell["family"], cell["structure"])], cell_id
         assert cell["evidence"]["grade"] == "route_only", cell_id
         assert cell["requires_serve_flags"] == ["TESSERA_SERVE_MODE=resident"], cell_id

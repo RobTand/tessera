@@ -59,11 +59,16 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # The fabric and the OOM-killer setting, named once and exported into both
 # containers.  A worker that took different values is a different serve.
+# TESSERA_TP_ENV adds the serve's own KEY=VALUE settings (space-separated, for
+# example TESSERA_RESEARCH_GLM53_NOPE=1): the head forwards it to the worker
+# over ssh, so both ranks build the model under the same settings.
 tp_fabric_env() {
   printf '%s\n' \
     "NCCL_SOCKET_IFNAME=${TESSERA_TP_SOCKET_IFNAME:-enp1s0f1np1}" \
     "NCCL_IB_HCA=${TESSERA_TP_IB_HCA:-rocep1s0f1,roceP2p1s0f1}" \
     "RAY_memory_monitor_refresh_ms=0"
+  local kv
+  for kv in ${TESSERA_TP_ENV:-}; do printf '%s\n' "$kv"; done
 }
 
 # The docker arguments both containers share.  The RoCE devices are passed
@@ -136,6 +141,9 @@ fi
 
 # --- the head side ----------------------------------------------------------
 [ $# -ge 2 ] || { echo "usage: $0 <checkpoint-dir> <out.json> [census args...]" >&2; exit 64; }
+for kv in ${TESSERA_TP_ENV:-}; do
+  case "$kv" in (?*=*) ;; (*) echo "REFUSED: TESSERA_TP_ENV entry '$kv' is not KEY=VALUE" >&2; exit 64 ;; esac
+done
 MODEL="$1"; OUT="$2"; shift 2
 
 source "$HERE/runtime_image.sh"
@@ -189,7 +197,16 @@ done
 
 env_line="TS='$TS' RUNS='$RUNS' EXT='$EXT' TESSERA_TP_NAME_WORKER='$NAME_WORKER'"
 env_line="$env_line TESSERA_TP_HEAD_ADDR='$HEAD_ADDR' TESSERA_TP_RAY_PORT='$RAY_PORT'"
-env_line="$env_line TESSERA_SERVE_MODE='$MODE'"
+env_line="$env_line TESSERA_SERVE_MODE='$MODE' TESSERA_TP_ENV='${TESSERA_TP_ENV:-}'"
+# The image the head resolved, so the worker resolves the same reference on its
+# own daemon rather than falling back to the pin.
+env_line="$env_line IMG='$IMG'"
+# The fabric overrides, so tp_fabric_env renders the same NCCL interface and
+# HCAs on both boxes.  Without them the worker fell back to the defaults while
+# the head used the overrides, and NCCL init hung with the two ranks on
+# different interfaces.
+env_line="$env_line TESSERA_TP_SOCKET_IFNAME='${TESSERA_TP_SOCKET_IFNAME:-}'"
+env_line="$env_line TESSERA_TP_IB_HCA='${TESSERA_TP_IB_HCA:-}'"
 ssh -o BatchMode=yes "$WORKER" "$env_line bash '$TS/experiments/tessera_plugin_served_tp.sh' --worker" \
   </dev/null >"$RUNS/tp_worker.log" 2>&1 &
 WORKER_SSH=$!

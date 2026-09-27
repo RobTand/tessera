@@ -149,8 +149,17 @@ def test_the_packaged_contract_validates_at_v33(contract):
     cells that named it are withdrawn.  A v10 reader resolves every cell with
     the code it already has; what moved is which combinations resolve, and the
     E4M3/BF16 format rows' attested rungs.
+
+    v39 (tessera#604, second half) is NOT additive for a lane reader and moves
+    no schema: four E2M1 cells are withdrawn (the pin-image dense pair on
+    ``(torch._scaled_mm, native_span2)`` and the a5424378 routed pair on the
+    materialising launch) with both launch rows, four resident, eager E2M1
+    cells are minted on the GLM serving image on the two native A4 pairs,
+    which leave ``EXPERIMENTAL_LAUNCHES``, six v38 cells widen their rungs,
+    and the image gains an ``activation_quantizers`` entry.  The E4M3/BF16
+    format rows' attested rungs widen; the E2M1 row's shrink to 896.
     """
-    assert int(contract["contract_version"]) == 38
+    assert int(contract["contract_version"]) == 39
     assert "activation_quantizers" in contract
     assert all("structures" in entry for entry in contract["formats"])
     assert contract["lane_eligibility"]["schema"] == LANE_ELIGIBILITY_SCHEMA
@@ -311,25 +320,36 @@ def test_the_surviving_v22_sm121_cells_are_byte_identical(contract):
     # span, and re-earned four ids on the GLM-image census: the resident E4M3
     # dense pair v31 withdrew, and the routed pair v38 itself withdrew, each on
     # the launch the census recorded.
+    #
+    # Contract v39 (tessera#604, second half) withdrew the span's last two
+    # cells (the pin-image E2M1 dense pair) and the a5424378 routed E2M1 pair,
+    # and re-earned the routed ids on the GLM image's native grouped launch.
     present = {cell["id"] for cell in contract["lane_eligibility"]["cells"]}
-    withdrawn = set(recorded["withdrawn_at_v31"]) | set(recorded["withdrawn_at_v38"])
+    withdrawn = (set(recorded["withdrawn_at_v31"]) | set(recorded["withdrawn_at_v38"])
+                 | set(recorded["withdrawn_at_v39"]))
     reearned = set(recorded["reearned_at_v34"])
     withdrawn_again = set(recorded["withdrawn_at_v37"])
     reearned_v38 = set(recorded["reearned_at_v38"])
+    reearned_v39 = set(recorded["reearned_at_v39"])
     assert len(recorded["withdrawn_at_v31"]) == 6 and len(recorded["withdrawn_at_v38"]) == 2
+    assert len(recorded["withdrawn_at_v39"]) == 4
     assert reearned < withdrawn and len(reearned) == 2
     assert withdrawn_again == reearned
     assert reearned_v38 < withdrawn and len(reearned_v38) == 4
-    standing = (reearned - withdrawn_again) | reearned_v38
+    assert reearned_v39 < withdrawn and len(reearned_v39) == 2
+    standing = (reearned - withdrawn_again) | reearned_v38 | reearned_v39
     assert not (present & (withdrawn - standing)), sorted(present & (withdrawn - standing))
     assert standing <= present
-    launch = {"dense": ("tessera::window_gemm_dense", "native_window_gemm"),
-              "routed_moe": ("tessera.native_window_moe.NativeWindowMoE.__call__",
-                             "native_window_moe_compact")}
+    launch = {("TESSERA_E4M3_K1", "dense"): ("tessera::window_gemm_dense", "native_window_gemm"),
+              ("TESSERA_E4M3_K1", "routed_moe"): (
+                  "tessera.native_window_moe.NativeWindowMoE.__call__",
+                  "native_window_moe_compact"),
+              ("TESSERA_E2M1_K2", "routed_moe"): (
+                  "tessera.kernel_a4.a4_span2_grouped_gemm", "native_span2_grouped")}
     for cell in contract["lane_eligibility"]["cells"]:
         if cell["id"] in standing:
             assert [(e["symbol"], e["decoder"]) for e in cell["executes"]] == [
-                launch[cell["structure"]]], cell["id"]
+                launch[(cell["family"], cell["structure"])]], cell["id"]
     assert {cell["id"] for cell in span} <= present
 
 
@@ -443,8 +463,9 @@ def test_the_serve_image_rule_is_the_weaker_one_the_data_supports(contract):
 
     The design asked that every cell's ``runtime.image`` equal its platform's
     ``serve_image``. The shipped document falsifies that: ``sm_121`` carries
-    two attested images, and since v28 (#506) three: the routed E2M1_K2 cells
-    name the NCCL 2.30 image their two-rank receipt ran. Taken literally the
+    two attested images, from v28 (#506) to v38 three, and since v39
+    (tessera#604) two again: the dense pin and the GLM serving image, which is
+    not the platform's ``serve_image``. Taken literally the
     stronger rule refuses the contract in this repository, so the rule is
     "attested by one of the platform's own cells" instead. This test is the
     measurement.
@@ -452,5 +473,5 @@ def test_the_serve_image_rule_is_the_weaker_one_the_data_supports(contract):
     block = contract["lane_eligibility"]
     images = {cell["runtime"]["image"] for cell in block["cells"]
               if cell["platform"] == "sm_121"}
-    assert len(images) == 3, images
+    assert len(images) == 2, images
     assert block["platforms"]["sm_121"]["serve_image"] in images

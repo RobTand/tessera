@@ -170,17 +170,14 @@ _ROUTE_ONLY = {"grade": "route_only", "kl": [], "smoke": _NO_SMOKE}
 #: #111, so they attest nothing here; the window-GEMV receipt's arm B ran the
 #: refused-lane fallback under ``streamed`` and attests nothing either.
 _EVIDENCE = {
-    # E2M1x2 (q896): prefill KL, eager and compiled, both residencies
-    # (``k2-resident``, ``k2-streamed``, ``k2-*-graph``, PLUGIN §3).  No
-    # decode-regime KL and no greedy smoke on record.
-    "tessera_e2m1_k2_dense_sm121_decode": _ROUTE_ONLY,
-    "tessera_e2m1_k2_dense_sm121_batch": {
-        # D2b (tessera#560): the entry stamps the rung the receipt measured --
-        # q896, the only rung this cell publishes -- because a top-k
-        # intersection bound scored at one rung bounds nothing at another.
-        "grade": "kl_lower_bound",
-        "kl": [{**_bound("batch", ["eager", "compiled"], PLUGIN), "q256": 896}],
-        "smoke": _NO_SMOKE},
+    # E2M1x2 (q896) dense on the serve-image pin carried a prefill KL, eager
+    # and compiled, both residencies (``k2-resident``, ``k2-streamed``,
+    # ``k2-*-graph``, PLUGIN §3), on the batch cell.  Contract v39
+    # (tessera#604, second half) WITHDREW both pin-image dense E2M1 cells: they
+    # named ``(torch._scaled_mm, native_span2)``, which ``nvfp4_route`` no
+    # longer makes.  Their evidence is quoted in ``_WITHDRAWN_V39_EVIDENCE``
+    # below; the dense E2M1 scope is now the route-only GLM-image pair at the
+    # end of this table.
     # E4M3 (q1024).  The decode regime has a KL only where the window-GEMV
     # lane was under test -- the streamed cell -- eager on 2026-09-03 and
     # compiled in the r6 population; the resident decode cell has the census
@@ -223,6 +220,10 @@ _EVIDENCE = {
     # tokens equal to a BF16 recording, on text that degenerates at every
     # precision -- is not a record this grammar can derive a word from, so the
     # cells publish `not_recorded` rather than a word nothing here can check.
+    #
+    # Contract v39 withdrew that pair too (it named the materialising launch)
+    # and re-minted the ids on the GLM serving image from a route census of
+    # the native grouped launch: route-only again, for the same reason.
     "tessera_e2m1_k2_routed_moe_sm121_decode_resident": _ROUTE_ONLY,
     "tessera_e2m1_k2_routed_moe_sm121_batch_resident": _ROUTE_ONLY,
     # Dense E4M3 (q1024) on the native window GEMM, contract v34
@@ -244,6 +245,23 @@ _EVIDENCE = {
     **{f"tessera_{family}_{structure}_sm121_{regime}_resident": _ROUTE_ONLY
        for family in ("e4m3_k1", "bf16_k1") for structure in ("dense", "routed_moe")
        for regime in ("decode", "batch")},
+    # Contract v39 (tessera#604, second half): the dense E2M1 pair on the same
+    # image, from the all-E2M1 stub's census
+    # (``docs/measurements/tessera-glm-u1-census-2026-09-26.md``).  Route only.
+    "tessera_e2m1_k2_dense_sm121_decode_resident": _ROUTE_ONLY,
+    "tessera_e2m1_k2_dense_sm121_batch_resident": _ROUTE_ONLY,
+}
+
+#: The evidence the pin-image dense E2M1 pair carried until contract v39
+#: withdrew it, as v38 published it.  The 2026-09-02 receipt is real and stays
+#: in the tree; what v39 retracted is the claim that this build executes the
+#: launch it measured.
+_WITHDRAWN_V39_EVIDENCE = {
+    "tessera_e2m1_k2_dense_sm121_decode": _ROUTE_ONLY,
+    "tessera_e2m1_k2_dense_sm121_batch": {
+        "grade": "kl_lower_bound",
+        "kl": [{**_bound("batch", ["eager", "compiled"], PLUGIN), "q256": 896}],
+        "smoke": _NO_SMOKE},
 }
 
 #: The evidence the two routed E4M3 cells carried until contract v38 withdrew
@@ -613,13 +631,18 @@ def test_the_grammar_is_exported_for_a_consumer(contract):
 
 # --- the validator refuses what a gate could not read ------------------------
 
-#: The two cells the refusals below are driven on: one graded
-#: ``kl_lower_bound`` with a KL entry to mutate, one ``route_only`` with none.
-#: They were the E4M3 resident pair until contract v31 withdrew it
-#: (tessera#538); the E2M1x2 dense pair is the same shape and its launch was
-#: never the window-GEMV lane's, so the mutations read identically.
-BATCH = "tessera_e2m1_k2_dense_sm121_batch"
-DECODE = "tessera_e2m1_k2_dense_sm121_decode"
+#: The two cells the refusals below are driven on.  They were the E4M3
+#: resident pair until contract v31 withdrew it (tessera#538), then the
+#: pin-image E2M1x2 dense pair until contract v39 withdrew that (tessera#604);
+#: they are now the GLM-image E2M1x2 dense pair, eager and resident.  No
+#: published cell carries a KL entry any more, so ``_KL_BASE`` is the graded
+#: evidence the mutations start from: the shape the withdrawn batch cell
+#: carried, narrowed to the one execution mode these cells cover.
+BATCH = "tessera_e2m1_k2_dense_sm121_batch_resident"
+DECODE = "tessera_e2m1_k2_dense_sm121_decode_resident"
+_KL_BASE = {"grade": "kl_lower_bound",
+            "kl": [{**_bound("batch", ["eager"], PLUGIN), "q256": 896}],
+            "smoke": _NO_SMOKE}
 
 
 def test_a_cell_without_evidence_is_refused(contract):
@@ -630,7 +653,7 @@ def test_a_cell_without_evidence_is_refused(contract):
 
 
 def test_evidence_is_a_closed_object(contract):
-    good = _EVIDENCE[BATCH]
+    good = _KL_BASE
     with pytest.raises(ValueError, match=r"evidence carries unknown field\(s\) \['detail'\]"):
         validate_serving_contract(_with_evidence(
             contract, BATCH, {**good, "detail": "screen-grade, prefill only"}))
@@ -646,19 +669,19 @@ def test_the_grade_cannot_be_asserted_above_or_below_its_entries(contract):
     over = {**_EVIDENCE[DECODE], "grade": "kl_lower_bound"}
     with pytest.raises(ValueError, match="grade is 'kl_lower_bound' but its kl entries derive 'route_only'"):
         validate_serving_contract(_with_evidence(contract, DECODE, over))
-    under = {**_EVIDENCE[BATCH], "grade": "route_only"}
+    under = {**_KL_BASE, "grade": "route_only"}
     with pytest.raises(ValueError, match="grade is 'route_only' but its kl entries derive 'kl_lower_bound'"):
         validate_serving_contract(_with_evidence(contract, BATCH, under))
     with pytest.raises(ValueError, match="grade 'measured' is not one of"):
         validate_serving_contract(_with_evidence(
-            contract, BATCH, {**_EVIDENCE[BATCH], "grade": "measured"}))
+            contract, BATCH, {**_KL_BASE, "grade": "measured"}))
 
 
 def test_a_bound_in_another_regime_is_not_this_cells_evidence(contract):
     """The confusion #133 is about, refused at the bytes: a prefill bound
     written into a decode cell."""
     borrowed = {"grade": "kl_lower_bound",
-                "kl": [_bound("batch", ["eager", "compiled"], PLUGIN)], "smoke": _NO_SMOKE}
+                "kl": [_bound("batch", ["eager"], PLUGIN)], "smoke": _NO_SMOKE}
     with pytest.raises(ValueError, match="regime 'batch' is not the cell's regime 'decode'"):
         validate_serving_contract(_with_evidence(contract, DECODE, borrowed))
 
@@ -705,7 +728,7 @@ def test_a_kl_entry_may_not_claim_an_execution_mode_the_cell_does_not_cover(cont
 
 
 def test_the_same_receipt_and_mode_cannot_be_counted_twice(contract):
-    entry = _bound("batch", ["eager", "compiled"], PLUGIN)
+    entry = _bound("batch", ["eager"], PLUGIN)
     evidence = {"grade": "kl_lower_bound", "kl": [entry, entry], "smoke": _NO_SMOKE}
     with pytest.raises(ValueError, match="repeats"):
         validate_serving_contract(_with_evidence(contract, BATCH, evidence))
@@ -717,15 +740,16 @@ def test_a_kl_entry_may_stamp_the_rung_its_receipt_measured(contract):
     A KL bound scored at one rung bounds nothing at another (a top-k
     intersection bound is rate-dependent), so an entry may name the rung its
     receipt measured in ``q256`` -- and when it does, the rung must be one the
-    cell publishes.  The dense batch cell stamps the 896 rung its 2026-09-02
-    receipt measured; a stamp outside the cell's rungs is refused.
+    cell publishes.  The pin-image dense batch cell stamped the 896 rung its
+    2026-09-02 receipt measured until contract v39 withdrew it; a stamp outside
+    the cell's rungs is refused.
     """
-    stamped = {**_bound("batch", ["eager", "compiled"], PLUGIN), "q256": 896}
+    stamped = {**_bound("batch", ["eager"], PLUGIN), "q256": 896}
     doc = _with_evidence(contract, BATCH, {
         "grade": "kl_lower_bound", "kl": [stamped], "smoke": _NO_SMOKE})
     validate_serving_contract(doc)
     assert cell_evidence(_cells(doc)[BATCH], BATCH)["kl"] == [stamped]
-    outside = {**_bound("batch", ["eager", "compiled"], PLUGIN), "q256": 768}
+    outside = {**_bound("batch", ["eager"], PLUGIN), "q256": 768}
     with pytest.raises(ValueError, match="q256=768"):
         validate_serving_contract(_with_evidence(contract, BATCH, {
             "grade": "kl_lower_bound", "kl": [outside], "smoke": _NO_SMOKE}))
@@ -746,7 +770,7 @@ def test_a_kl_entry_may_stamp_the_rung_its_receipt_measured(contract):
      r"smoke is missing \['attribution', 'control', 'record'\]"),
 ], ids=lambda x: x if isinstance(x, str) else "smoke")
 def test_a_smoke_outside_the_grammar_is_refused(contract, smoke, match):
-    evidence = {**_EVIDENCE[BATCH], "smoke": smoke}
+    evidence = {**_KL_BASE, "smoke": smoke}
     with pytest.raises(ValueError, match=match):
         validate_serving_contract(_with_evidence(contract, BATCH, evidence))
 
@@ -846,7 +870,7 @@ def test_an_attribution_cannot_be_asserted_beside_its_control(contract):
                        match="attribution is 'unattributed' but its control derives "
                              "'shared_with_reference'"):
         validate_serving_contract(_with_evidence(contract, MOE_DECODE, over))
-    under = {**_EVIDENCE[BATCH],
+    under = {**_KL_BASE,
              "smoke": {**_NO_SMOKE, "attribution": "shared_with_reference"}}
     with pytest.raises(ValueError,
                        match="attribution is 'shared_with_reference' but its control derives "
@@ -948,7 +972,7 @@ def test_a_record_outside_the_grammar_is_refused(contract, record, match):
 def test_a_smoke_nobody_ran_cannot_carry_a_control(contract):
     """`not_recorded` means no completion came back, so there is nothing for a
     reference to have matched."""
-    evidence = {**_EVIDENCE[BATCH],
+    evidence = {**_KL_BASE,
                 "smoke": {"status": "not_recorded", "receipt": None, "record": None,
                           "attribution": "shared_with_reference", "control": _BF16_CONTROL}}
     with pytest.raises(ValueError, match="status not_recorded names a control"):
@@ -961,10 +985,22 @@ def test_a_full_vocabulary_bound_grades_above_a_top_k_one(contract):
     full = {"kind": "full_vocab", "top_k": None, "regime": "batch",
             "execution_modes": ["eager"], "receipt": PLUGIN}
     evidence = {"grade": "kl_full_vocab",
-                "kl": [_bound("batch", ["eager", "compiled"], PLUGIN), full], "smoke": _NO_SMOKE}
+                "kl": [_bound("batch", ["eager"], PLUGIN), full], "smoke": _NO_SMOKE}
     doc = _with_evidence(contract, BATCH, evidence)
     validate_serving_contract(doc)
     cell = _cells(doc)[BATCH]
     assert derive_evidence_grade(cell) == "kl_full_vocab"
     parsed = cell_evidence(cell, BATCH)
     assert parsed["grade"] == "kl_full_vocab" and len(parsed["kl"]) == 2
+
+
+def test_the_cells_v39_withdrew_are_quoted_with_the_evidence_they_carried():
+    """Contract v39 withdrew the pin-image dense E2M1 pair (tessera#604): the
+    fixture quotes them with the evidence they published, the batch cell's
+    KL bound included, so the receipt stays attached to the claim it backed."""
+    from withdrawn_cells import withdrawn_v39_cells
+
+    quoted = {cell["id"]: cell for cell in withdrawn_v39_cells()}
+    for cell_id, expected in _WITHDRAWN_V39_EVIDENCE.items():
+        assert {k: v for k, v in quoted[cell_id]["evidence"].items()
+                if k != "artifact"} == expected, cell_id

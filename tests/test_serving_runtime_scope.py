@@ -81,13 +81,14 @@ def test_one_image_carries_one_toolchain():
         by_image.setdefault(cell["runtime"]["image"], set()).add(
             runtime_contract.cell_runtime_versions(cell))
     assert all(len(versions) == 1 for versions in by_image.values()), by_image
-    assert len(by_image) == 3, (
-        "the dense pin, the EUGR MoE image and the NCCL 2.30.7 rebuild of the "
-        "EUGR image the two-rank GLM stub served on, nothing else. The gfx1201 "
-        "ROCm image was the fourth until contract v31 withdrew the two cells "
-        "that named it with the dispatch they attested (tessera#538); it is "
-        "still in its receipt under docs/measurements/, which is where an "
-        "image a cell no longer carries belongs")
+    assert len(by_image) == 2, (
+        "the dense pin and the GLM serving image (the NCCL 2.30.7 rebuild of "
+        "the EUGR image, spark-vllm-nccl230@sha256:f8dbe1a0...), nothing else. "
+        "The gfx1201 ROCm image left at contract v31 (tessera#538), the EUGR "
+        "MoE image at v38 and the two-rank stub's spark-vllm-nccl230@sha256:"
+        "a5424378... image at v39 (tessera#604), each with the cells that named "
+        "it and the dispatch they attested; each is still in its receipt, which "
+        "is where an image a cell no longer carries belongs")
 
 
 @pytest.mark.parametrize("image", [None, 1, "", "example/runtime:latest",

@@ -1348,3 +1348,14 @@ against the BF16 reference is the same at both worlds
 (`docs/measurements/tessera-glm53-a4-stub-tp2-excess-resolved-2026-09-17.md`).
 The stub's attention backend refuses graph mode, so no compiled forward is
 attested.
+
+**Contract v39 (tessera#604, second half).** v39 withdrew the two v28/v32
+cells. They named `(vllm.fused_moe.modular_kernel, torch_materialize_stock)`,
+and this build's NVFP4 expert stack cannot make that launch: it always builds
+the native grouped A4 stacks. The same ids come back on the GLM serving image
+at q256 896 only, executing `(tessera.kernel_a4.a4_span2_grouped_gemm,
+native_span2_grouped)`, TP 1, eager and resident
+(`docs/measurements/tessera-glm-u1-census-2026-09-26.md`). The world-size and
+KL receipts above measured the materialising launch and do not carry over.
+Routed E2M1 at q256 128..768 is unattested until a census of the grouped
+route earns it.

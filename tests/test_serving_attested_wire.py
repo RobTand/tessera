@@ -146,9 +146,10 @@ def test_the_bf16_attestation_is_cut_on_the_pinned_wire(contract):
     that starts moving fresh-export bytes trips here first.
     """
     row = next(e for e in contract["formats"] if e["family"] == "TESSERA_BF16_K1")
-    # Contract v38 (tessera#604) added 832/1024/1088 from the GLM-image census,
-    # cut on the same pinned wire; 1792 is still the v5 receipt's rung.
-    assert row["attested_rungs_q256"] == [832, 1024, 1088, 1792]
+    # Contract v38 (tessera#604) added 832/1024/1088 from the GLM-image census
+    # and v39 864/880/896/928/960 from the u1 stub censuses, all cut on the
+    # same pinned wire; 1792 is still the v5 receipt's rung.
+    assert row["attested_rungs_q256"] == [832, 864, 880, 896, 928, 960, 1024, 1088, 1792]
     (stamped,) = [w for w in row["attested_wire"] if w["q256"] == 1792]
     assert all(w["sigma"] is None for w in row["attested_wire"])
     assert stamped["sigma"] is None, (
