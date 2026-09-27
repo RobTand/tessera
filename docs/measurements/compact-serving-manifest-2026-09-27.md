@@ -80,3 +80,38 @@ were inspected. Local receipt files are `.pi/pre-fix.json` and `.pi/post-fix.jso
 in the task worktree. The regression covers parsed field equality, deterministic
 repeat writes, old pretty fixtures, raw-byte digests (both attestation modes),
 unchanged source files, real main/twin exports and checked part merge.
+
+## Conservative impacted-population follow-up
+
+The selector at `de414945f` returned 299 files (`narrowed`, no forced-full paths).
+The known standalone `tests/test_native_a4_serving.py` has zero pytest items and
+was explicitly excluded with that reason; its manual GPU gate was not run.
+PB selected the remaining 298 files in 20 shards: 5,309 passed, 1,218 skipped,
+one failed (the new doc referenced an issue missing from the offline snapshot).
+No CUDA device or allocations; 0 uncollected modules in the reported surfaces.
+This first aggregate was **red**, not a clean full-suite receipt.
+
+The failing issue-reference file passed all three tests on pristine `f82f879eb`
+(PB `f0f540a699fe45439f2987262eeb8c8d259eb1869c75d7102ff47ccb127a2d8a`).
+Refreshed the snapshot through `tools/refresh_issues.py`. Retake
+`1c752bc25320e3442ac510d5d6dc20317d2da5b205841ecb1e5664aa336e2b1e`
+passed six tests with one attributable module skip and no reconciliation gaps.
+It includes the three issue-reference tests and the three manifest regressions.
+
+One original shard exited 0 but omitted the second of two equal helper-issued
+module skip records (`tests/test_kl_tool_decode_regime.py`). The retake above
+records that exact file's collection skip separately; it does not claim its
+external-instrument tests executed. Reason verbatim:
+
+> box artifact absent: kl_tool.py and kl_estimator.py, the untracked served-KL instrument -- nothing set KL_TOOL_DIR and its default is not resolved for this root (set KL_TOOL_DIR; documented default /home/rob/dq-runs)
+
+Filed the shared collection-accounting finding in PrismaBuild issue 1220 rather
+than weaken reconciliation. Original counts and all verbatim skip reasons remain
+in `.pi/impacted-pb.json`; the explicit standalone exclusion is in
+`.pi/impact-pytest-selection.json`. This is a CPU-only selection plus focused
+retakes, not an all-green single aggregate or a device qualification.
+
+Hosted bytes-only CI additionally caught a missing optional dependency in the
+new refresh test: `ModuleNotFoundError: No module named 'safetensors'` on run
+36306852805. That case now explicitly skips when torch or safetensors is absent;
+the compact writer and raw-byte reader tests remain dependency-free.

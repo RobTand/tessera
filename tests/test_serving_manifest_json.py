@@ -6,6 +6,8 @@ from pathlib import Path
 import subprocess
 import sys
 
+import pytest
+
 from experiments.full_engine_artifact import read_tessera_artifact
 from tessera import serving_parts
 
@@ -74,6 +76,8 @@ def test_lane_display_reads_pretty_and_compact_json(tmp_path):
 
 
 def test_refresh_writes_compact_manifest_without_changing_source(tmp_path):
+    pytest.importorskip("torch")
+    pytest.importorskip("safetensors")
     from experiments.refresh_native_resident_manifest import refresh
 
     source = tmp_path / "source"
