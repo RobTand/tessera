@@ -201,6 +201,12 @@ env_line="$env_line TESSERA_SERVE_MODE='$MODE' TESSERA_TP_ENV='${TESSERA_TP_ENV:
 # The image the head resolved, so the worker resolves the same reference on its
 # own daemon rather than falling back to the pin.
 env_line="$env_line IMG='$IMG'"
+# The fabric overrides, so tp_fabric_env renders the same NCCL interface and
+# HCAs on both boxes.  Without them the worker fell back to the defaults while
+# the head used the overrides, and NCCL init hung with the two ranks on
+# different interfaces.
+env_line="$env_line TESSERA_TP_SOCKET_IFNAME='${TESSERA_TP_SOCKET_IFNAME:-}'"
+env_line="$env_line TESSERA_TP_IB_HCA='${TESSERA_TP_IB_HCA:-}'"
 ssh -o BatchMode=yes "$WORKER" "$env_line bash '$TS/experiments/tessera_plugin_served_tp.sh' --worker" \
   </dev/null >"$RUNS/tp_worker.log" 2>&1 &
 WORKER_SSH=$!
