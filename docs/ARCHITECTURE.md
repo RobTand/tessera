@@ -29,6 +29,19 @@ at q256 896 on `(a4_span2_gemm, native_span2_gemm)` and
 `scheme.EXPERIMENTAL_LAUNCHES`, which is now empty. The routed ids reuse the
 withdrawn scope's spelling.
 
+`TESSERA_E2M1_K2` keeps `tensor_parallel.max_world_size: 2`. Its v29
+world-size receipt ran the materialising route v39 withdraws, so the native
+span-2 route and its rank-cut admission
+(`lane_planes.require_native_select_plane_admission`) were checked separately.
+A TP2 eager resident route census of the all-E2M1 stub D ran on the GLM image
+across sparky and sparklina (ray executor, census tool at 62f9e1ce5). Every
+one of the 21 modules on each rank served on the two native A4 launches, with
+`problems: []`. The dense and routed modules were each cut on both axes, and
+every rank-local extent is a multiple of 32. The receipt is
+`experiments/results/glm53_u1_stub_d_tp2_eager_census.json`, replayed by
+`tests/test_glm_u1_tp2_census.py`. This census is a route receipt only. The
+KL-bearing `world_size_receipts` entry is still v29's.
+
 WIDENED on the same image and launches as v38: dense E4M3 to
 832/864/896/928/960/1024/1088, dense BF16 to 832/864/880/896/928/960/1024/1088,
 and routed E4M3 to 832/864/896/928/944/960/1024/1088. Routed BF16 stays at 1024.

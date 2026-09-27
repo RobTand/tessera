@@ -1,0 +1,2182 @@
+{
+ "cell_launch_agreement": {
+  "agrees": true,
+  "platform": "sm_121",
+  "runtime": {
+   "execution_mode": "eager",
+   "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5"
+  },
+  "schema": "tessera.cell-launch-agreement.by-structure/1",
+  "structures": {
+   "dense": {
+    "agrees": true,
+    "phases": {
+     "decode": {
+      "cells": {
+       "tessera_e2m1_k2_dense_sm121_decode_resident": 32
+      },
+      "covered_by_cell": 32,
+      "modules": 32,
+      "regime": "decode",
+      "unattested": 0,
+      "unsupported_records": 0
+     },
+     "prefill": {
+      "cells": {
+       "tessera_e2m1_k2_dense_sm121_batch_resident": 32
+      },
+      "covered_by_cell": 32,
+      "modules": 32,
+      "regime": "batch",
+      "unattested": 0,
+      "unsupported_records": 0
+     }
+    },
+    "platform": "sm_121",
+    "runtime": {
+     "execution_mode": "eager",
+     "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5"
+    },
+    "schema": "tessera.cell-launch-agreement/3",
+    "structure": "dense"
+   },
+   "routed_moe": {
+    "agrees": true,
+    "phases": {
+     "decode": {
+      "cells": {
+       "tessera_e2m1_k2_routed_moe_sm121_decode_resident": 10
+      },
+      "covered_by_cell": 10,
+      "modules": 10,
+      "regime": "decode",
+      "unattested": 0,
+      "unsupported_records": 0
+     },
+     "prefill": {
+      "cells": {
+       "tessera_e2m1_k2_routed_moe_sm121_batch_resident": 10
+      },
+      "covered_by_cell": 10,
+      "modules": 10,
+      "regime": "batch",
+      "unattested": 0,
+      "unsupported_records": 0
+     }
+    },
+    "platform": "sm_121",
+    "runtime": {
+     "execution_mode": "eager",
+     "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5"
+    },
+    "schema": "tessera.cell-launch-agreement/3",
+    "structure": "routed_moe"
+   }
+  }
+ },
+ "checkpoint": "/mnt/shared/tessera-runs/moe/u1-stubs-20260926/stub-D",
+ "checkpoint_sidecars": {
+  "config.json": "425ddb417381aec789b76e5036d23896a1c64937d30fdc779d939eaf024b571c",
+  "tessera_serving_manifest.json": "0e214fcb1dd7cbbc270e838a7cfc7cb659a7ceee8ccaeaaf05b12e1707355b06"
+ },
+ "compiled": false,
+ "declared_families": {
+  "TESSERA_NVFP4": 21
+ },
+ "declared_name_mapping": {
+  "model.language_model.layers.0.mlp.down_proj": "language_model.model.layers.0.mlp.down_proj",
+  "model.language_model.layers.0.mlp.gate_up_proj": "language_model.model.layers.0.mlp.gate_up_proj",
+  "model.language_model.layers.1.mlp.down_proj": "language_model.model.layers.1.mlp.down_proj",
+  "model.language_model.layers.1.mlp.gate_up_proj": "language_model.model.layers.1.mlp.gate_up_proj",
+  "model.language_model.layers.2.mlp.down_proj": "language_model.model.layers.2.mlp.down_proj",
+  "model.language_model.layers.2.mlp.gate_up_proj": "language_model.model.layers.2.mlp.gate_up_proj",
+  "model.language_model.layers.3.mlp.experts": "language_model.model.layers.3.mlp.experts",
+  "model.language_model.layers.3.mlp.shared_experts.down_proj": "language_model.model.layers.3.mlp.shared_experts.down_proj",
+  "model.language_model.layers.3.mlp.shared_experts.gate_up_proj": "language_model.model.layers.3.mlp.shared_experts.gate_up_proj",
+  "model.language_model.layers.4.mlp.experts": "language_model.model.layers.4.mlp.experts",
+  "model.language_model.layers.4.mlp.shared_experts.down_proj": "language_model.model.layers.4.mlp.shared_experts.down_proj",
+  "model.language_model.layers.4.mlp.shared_experts.gate_up_proj": "language_model.model.layers.4.mlp.shared_experts.gate_up_proj",
+  "model.language_model.layers.5.mlp.experts": "language_model.model.layers.5.mlp.experts",
+  "model.language_model.layers.5.mlp.shared_experts.down_proj": "language_model.model.layers.5.mlp.shared_experts.down_proj",
+  "model.language_model.layers.5.mlp.shared_experts.gate_up_proj": "language_model.model.layers.5.mlp.shared_experts.gate_up_proj",
+  "model.language_model.layers.6.mlp.experts": "language_model.model.layers.6.mlp.experts",
+  "model.language_model.layers.6.mlp.shared_experts.down_proj": "language_model.model.layers.6.mlp.shared_experts.down_proj",
+  "model.language_model.layers.6.mlp.shared_experts.gate_up_proj": "language_model.model.layers.6.mlp.shared_experts.gate_up_proj",
+  "model.language_model.layers.7.mlp.experts": "language_model.model.layers.7.mlp.experts",
+  "model.language_model.layers.7.mlp.shared_experts.down_proj": "language_model.model.layers.7.mlp.shared_experts.down_proj",
+  "model.language_model.layers.7.mlp.shared_experts.gate_up_proj": "language_model.model.layers.7.mlp.shared_experts.gate_up_proj"
+ },
+ "declared_names_mapped_to_module_space": true,
+ "decoder_coverage": {
+  "phases": {
+   "decode": {
+    "decoders": {
+     "native_span2_gemm": 32,
+     "native_span2_grouped": 10
+    },
+    "modules": 42
+   },
+   "prefill": {
+    "decoders": {
+     "native_span2_gemm": 32,
+     "native_span2_grouped": 10
+    },
+    "modules": 42
+   }
+  },
+  "required": []
+ },
+ "device": {
+  "capability": [
+   12,
+   1
+  ],
+  "name": "NVIDIA GB10",
+  "platform_token": "sm_121"
+ },
+ "elapsed_s": 106.7,
+ "engine_backends": {
+  "attention_backend": "CUSTOM",
+  "kernel_config": {
+   "enable_flashinfer_autotune": false
+  },
+  "kv_cache_dtype": "fp8_ds_mla",
+  "moe_backend": "triton",
+  "trust_remote_code": true
+ },
+ "env": {
+  "TESSERA_RESEARCH_GLM53_NOPE": "1",
+  "TESSERA_SERVE_MODE": "resident",
+  "VLLM_DISABLED_KERNELS": null
+ },
+ "generated_text": "ers'-'s ownwordsmiths",
+ "histogram": {
+  "decode": {
+   "other_route_modules": 0,
+   "regime": "decode",
+   "routes": [
+    {
+     "contract": "e2m1_group16_ue4m3_static",
+     "decoder": "native_span2_gemm",
+     "kind": "dense",
+     "modules": 32,
+     "policy": "TESSERA_NVFP4:resident",
+     "state": "served",
+     "symbol": "tessera.kernel_a4.a4_span2_gemm"
+    },
+    {
+     "contract": "e2m1_group16_ue4m3_static",
+     "decoder": "native_span2_grouped",
+     "kind": "moe",
+     "modules": 10,
+     "policy": "TESSERA_NVFP4:resident",
+     "state": "served",
+     "symbol": "tessera.kernel_a4.a4_span2_grouped_gemm"
+    }
+   ],
+   "shapes": [
+    "M1:N12288:K4096",
+    "M1:N2048:K4096",
+    "M1:N4096:K1024",
+    "M1:N4096:K6144"
+   ],
+   "tessera_modules": 42,
+   "tessera_modules_by_family": {
+    "TESSERA_NVFP4": 42
+   }
+  },
+  "prefill": {
+   "other_route_modules": 0,
+   "regime": "batch",
+   "routes": [
+    {
+     "contract": "e2m1_group16_ue4m3_static",
+     "decoder": "native_span2_gemm",
+     "kind": "dense",
+     "modules": 32,
+     "policy": "TESSERA_NVFP4:resident",
+     "state": "served",
+     "symbol": "tessera.kernel_a4.a4_span2_gemm"
+    },
+    {
+     "contract": "e2m1_group16_ue4m3_static",
+     "decoder": "native_span2_grouped",
+     "kind": "moe",
+     "modules": 10,
+     "policy": "TESSERA_NVFP4:resident",
+     "state": "served",
+     "symbol": "tessera.kernel_a4.a4_span2_grouped_gemm"
+    }
+   ],
+   "shapes": [
+    "M64:N12288:K4096",
+    "M64:N2048:K4096",
+    "M64:N4096:K1024",
+    "M64:N4096:K6144"
+   ],
+   "tessera_modules": 42,
+   "tessera_modules_by_family": {
+    "TESSERA_NVFP4": 42
+   }
+  }
+ },
+ "lane_engagement": {
+  "all_required_engaged": null,
+  "declared_by_artifact": [],
+  "engaged_modules_max": {},
+  "phases": {
+   "decode": {
+    "decoders": {
+     "native_span2_gemm": 32,
+     "native_span2_grouped": 10
+    },
+    "engaged_modules": {},
+    "lane_refusals": {},
+    "tessera_modules": 42,
+    "unengaged_required_lanes": []
+   },
+   "prefill": {
+    "decoders": {
+     "native_span2_gemm": 32,
+     "native_span2_grouped": 10
+    },
+    "engaged_modules": {},
+    "lane_refusals": {},
+    "tessera_modules": 42,
+    "unengaged_required_lanes": []
+   }
+  },
+  "required_decoders": {},
+  "required_lanes": [],
+  "schema": "tessera.lane-engagement/1"
+ },
+ "lane_refusals": {},
+ "memory_budget": {
+  "gpu_memory_utilization": 0.45,
+  "kv_cache_memory_bytes": 4294967296
+ },
+ "problems": [],
+ "prompt_tokens": 64,
+ "quant_method": "tessera",
+ "ranks": [
+  {
+   "device": "NVIDIA GB10",
+   "histogram": {
+    "decode": {
+     "other_route_modules": 0,
+     "regime": "decode",
+     "routes": [
+      {
+       "contract": "e2m1_group16_ue4m3_static",
+       "decoder": "native_span2_gemm",
+       "kind": "dense",
+       "modules": 16,
+       "policy": "TESSERA_NVFP4:resident",
+       "state": "served",
+       "symbol": "tessera.kernel_a4.a4_span2_gemm"
+      },
+      {
+       "contract": "e2m1_group16_ue4m3_static",
+       "decoder": "native_span2_grouped",
+       "kind": "moe",
+       "modules": 5,
+       "policy": "TESSERA_NVFP4:resident",
+       "state": "served",
+       "symbol": "tessera.kernel_a4.a4_span2_grouped_gemm"
+      }
+     ],
+     "shapes": [
+      "M1:N12288:K4096",
+      "M1:N2048:K4096",
+      "M1:N4096:K1024",
+      "M1:N4096:K6144"
+     ],
+     "tessera_modules": 21,
+     "tessera_modules_by_family": {
+      "TESSERA_NVFP4": 21
+     }
+    },
+    "prefill": {
+     "other_route_modules": 0,
+     "regime": "batch",
+     "routes": [
+      {
+       "contract": "e2m1_group16_ue4m3_static",
+       "decoder": "native_span2_gemm",
+       "kind": "dense",
+       "modules": 16,
+       "policy": "TESSERA_NVFP4:resident",
+       "state": "served",
+       "symbol": "tessera.kernel_a4.a4_span2_gemm"
+      },
+      {
+       "contract": "e2m1_group16_ue4m3_static",
+       "decoder": "native_span2_grouped",
+       "kind": "moe",
+       "modules": 5,
+       "policy": "TESSERA_NVFP4:resident",
+       "state": "served",
+       "symbol": "tessera.kernel_a4.a4_span2_grouped_gemm"
+      }
+     ],
+     "shapes": [
+      "M64:N12288:K4096",
+      "M64:N2048:K4096",
+      "M64:N4096:K1024",
+      "M64:N4096:K6144"
+     ],
+     "tessera_modules": 21,
+     "tessera_modules_by_family": {
+      "TESSERA_NVFP4": 21
+     }
+    }
+   },
+   "lane_refusals": {},
+   "local_rank": 0,
+   "node": "sparky",
+   "platform_token": "sm_121",
+   "rank": 0,
+   "records": {
+    "decode": {
+     "language_model.model.layers.0.mlp.down_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M1:N4096:K6144",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.0.mlp.gate_up_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M1:N12288:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.1.mlp.down_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M1:N4096:K6144",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.1.mlp.gate_up_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M1:N12288:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.2.mlp.down_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M1:N4096:K6144",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.2.mlp.gate_up_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M1:N12288:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.3.mlp.experts.routed_experts": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_grouped",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "kind": "moe",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M1:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.3.mlp.shared_experts.down_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M1:N4096:K1024",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.3.mlp.shared_experts.gate_up_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M1:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.4.mlp.experts.routed_experts": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_grouped",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "kind": "moe",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M1:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.4.mlp.shared_experts.down_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M1:N4096:K1024",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.4.mlp.shared_experts.gate_up_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M1:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.5.mlp.experts.routed_experts": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_grouped",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "kind": "moe",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M1:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.5.mlp.shared_experts.down_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M1:N4096:K1024",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.5.mlp.shared_experts.gate_up_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M1:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.6.mlp.experts.routed_experts": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_grouped",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "kind": "moe",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M1:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.6.mlp.shared_experts.down_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M1:N4096:K1024",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.6.mlp.shared_experts.gate_up_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M1:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.7.mlp.experts.routed_experts": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_grouped",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "kind": "moe",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M1:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.7.mlp.shared_experts.down_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M1:N4096:K1024",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.7.mlp.shared_experts.gate_up_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M1:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     }
+    },
+    "prefill": {
+     "language_model.model.layers.0.mlp.down_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M64:N4096:K6144",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.0.mlp.gate_up_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M64:N12288:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.1.mlp.down_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M64:N4096:K6144",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.1.mlp.gate_up_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M64:N12288:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.2.mlp.down_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M64:N4096:K6144",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.2.mlp.gate_up_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M64:N12288:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.3.mlp.experts.routed_experts": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_grouped",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "kind": "moe",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M64:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.3.mlp.shared_experts.down_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M64:N4096:K1024",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.3.mlp.shared_experts.gate_up_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M64:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.4.mlp.experts.routed_experts": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_grouped",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "kind": "moe",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M64:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.4.mlp.shared_experts.down_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M64:N4096:K1024",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.4.mlp.shared_experts.gate_up_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M64:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.5.mlp.experts.routed_experts": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_grouped",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "kind": "moe",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M64:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.5.mlp.shared_experts.down_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M64:N4096:K1024",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.5.mlp.shared_experts.gate_up_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M64:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.6.mlp.experts.routed_experts": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_grouped",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "kind": "moe",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M64:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.6.mlp.shared_experts.down_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M64:N4096:K1024",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.6.mlp.shared_experts.gate_up_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M64:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.7.mlp.experts.routed_experts": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_grouped",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "kind": "moe",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M64:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.7.mlp.shared_experts.down_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M64:N4096:K1024",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.7.mlp.shared_experts.gate_up_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M64:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     }
+    }
+   },
+   "runtime_image": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5",
+   "schema": "tessera.rank-census/1",
+   "world_size": 2
+  },
+  {
+   "device": "NVIDIA GB10",
+   "histogram": {
+    "decode": {
+     "other_route_modules": 0,
+     "regime": "decode",
+     "routes": [
+      {
+       "contract": "e2m1_group16_ue4m3_static",
+       "decoder": "native_span2_gemm",
+       "kind": "dense",
+       "modules": 16,
+       "policy": "TESSERA_NVFP4:resident",
+       "state": "served",
+       "symbol": "tessera.kernel_a4.a4_span2_gemm"
+      },
+      {
+       "contract": "e2m1_group16_ue4m3_static",
+       "decoder": "native_span2_grouped",
+       "kind": "moe",
+       "modules": 5,
+       "policy": "TESSERA_NVFP4:resident",
+       "state": "served",
+       "symbol": "tessera.kernel_a4.a4_span2_grouped_gemm"
+      }
+     ],
+     "shapes": [
+      "M1:N12288:K4096",
+      "M1:N2048:K4096",
+      "M1:N4096:K1024",
+      "M1:N4096:K6144"
+     ],
+     "tessera_modules": 21,
+     "tessera_modules_by_family": {
+      "TESSERA_NVFP4": 21
+     }
+    },
+    "prefill": {
+     "other_route_modules": 0,
+     "regime": "batch",
+     "routes": [
+      {
+       "contract": "e2m1_group16_ue4m3_static",
+       "decoder": "native_span2_gemm",
+       "kind": "dense",
+       "modules": 16,
+       "policy": "TESSERA_NVFP4:resident",
+       "state": "served",
+       "symbol": "tessera.kernel_a4.a4_span2_gemm"
+      },
+      {
+       "contract": "e2m1_group16_ue4m3_static",
+       "decoder": "native_span2_grouped",
+       "kind": "moe",
+       "modules": 5,
+       "policy": "TESSERA_NVFP4:resident",
+       "state": "served",
+       "symbol": "tessera.kernel_a4.a4_span2_grouped_gemm"
+      }
+     ],
+     "shapes": [
+      "M64:N12288:K4096",
+      "M64:N2048:K4096",
+      "M64:N4096:K1024",
+      "M64:N4096:K6144"
+     ],
+     "tessera_modules": 21,
+     "tessera_modules_by_family": {
+      "TESSERA_NVFP4": 21
+     }
+    }
+   },
+   "lane_refusals": {},
+   "local_rank": 0,
+   "node": "sparklina",
+   "platform_token": "sm_121",
+   "rank": 1,
+   "records": {
+    "decode": {
+     "language_model.model.layers.0.mlp.down_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M1:N4096:K6144",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.0.mlp.gate_up_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M1:N12288:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.1.mlp.down_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M1:N4096:K6144",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.1.mlp.gate_up_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M1:N12288:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.2.mlp.down_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M1:N4096:K6144",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.2.mlp.gate_up_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M1:N12288:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.3.mlp.experts.routed_experts": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_grouped",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "kind": "moe",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M1:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.3.mlp.shared_experts.down_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M1:N4096:K1024",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.3.mlp.shared_experts.gate_up_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M1:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.4.mlp.experts.routed_experts": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_grouped",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "kind": "moe",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M1:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.4.mlp.shared_experts.down_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M1:N4096:K1024",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.4.mlp.shared_experts.gate_up_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M1:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.5.mlp.experts.routed_experts": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_grouped",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "kind": "moe",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M1:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.5.mlp.shared_experts.down_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M1:N4096:K1024",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.5.mlp.shared_experts.gate_up_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M1:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.6.mlp.experts.routed_experts": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_grouped",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "kind": "moe",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M1:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.6.mlp.shared_experts.down_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M1:N4096:K1024",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.6.mlp.shared_experts.gate_up_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M1:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.7.mlp.experts.routed_experts": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_grouped",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "kind": "moe",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M1:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.7.mlp.shared_experts.down_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M1:N4096:K1024",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.7.mlp.shared_experts.gate_up_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M1:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     }
+    },
+    "prefill": {
+     "language_model.model.layers.0.mlp.down_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M64:N4096:K6144",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.0.mlp.gate_up_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M64:N12288:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.1.mlp.down_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M64:N4096:K6144",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.1.mlp.gate_up_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M64:N12288:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.2.mlp.down_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M64:N4096:K6144",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.2.mlp.gate_up_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M64:N12288:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.3.mlp.experts.routed_experts": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_grouped",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "kind": "moe",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M64:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.3.mlp.shared_experts.down_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M64:N4096:K1024",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.3.mlp.shared_experts.gate_up_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M64:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.4.mlp.experts.routed_experts": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_grouped",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "kind": "moe",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M64:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.4.mlp.shared_experts.down_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M64:N4096:K1024",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.4.mlp.shared_experts.gate_up_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M64:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.5.mlp.experts.routed_experts": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_grouped",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "kind": "moe",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M64:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.5.mlp.shared_experts.down_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M64:N4096:K1024",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.5.mlp.shared_experts.gate_up_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M64:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.6.mlp.experts.routed_experts": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_grouped",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "kind": "moe",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M64:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.6.mlp.shared_experts.down_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M64:N4096:K1024",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.6.mlp.shared_experts.gate_up_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M64:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.7.mlp.experts.routed_experts": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_grouped",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "kind": "moe",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M64:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.7.mlp.shared_experts.down_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M64:N4096:K1024",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.7.mlp.shared_experts.gate_up_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M64:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     }
+    }
+   },
+   "runtime_image": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5",
+   "schema": "tessera.rank-census/1",
+   "world_size": 2
+  }
+ ],
+ "record_owner": {
+  "decode": {
+   "language_model.model.layers.0.mlp.down_proj": "language_model.model.layers.0.mlp.down_proj",
+   "language_model.model.layers.0.mlp.gate_up_proj": "language_model.model.layers.0.mlp.gate_up_proj",
+   "language_model.model.layers.1.mlp.down_proj": "language_model.model.layers.1.mlp.down_proj",
+   "language_model.model.layers.1.mlp.gate_up_proj": "language_model.model.layers.1.mlp.gate_up_proj",
+   "language_model.model.layers.2.mlp.down_proj": "language_model.model.layers.2.mlp.down_proj",
+   "language_model.model.layers.2.mlp.gate_up_proj": "language_model.model.layers.2.mlp.gate_up_proj",
+   "language_model.model.layers.3.mlp.experts.routed_experts": "language_model.model.layers.3.mlp.experts",
+   "language_model.model.layers.3.mlp.shared_experts.down_proj": "language_model.model.layers.3.mlp.shared_experts.down_proj",
+   "language_model.model.layers.3.mlp.shared_experts.gate_up_proj": "language_model.model.layers.3.mlp.shared_experts.gate_up_proj",
+   "language_model.model.layers.4.mlp.experts.routed_experts": "language_model.model.layers.4.mlp.experts",
+   "language_model.model.layers.4.mlp.shared_experts.down_proj": "language_model.model.layers.4.mlp.shared_experts.down_proj",
+   "language_model.model.layers.4.mlp.shared_experts.gate_up_proj": "language_model.model.layers.4.mlp.shared_experts.gate_up_proj",
+   "language_model.model.layers.5.mlp.experts.routed_experts": "language_model.model.layers.5.mlp.experts",
+   "language_model.model.layers.5.mlp.shared_experts.down_proj": "language_model.model.layers.5.mlp.shared_experts.down_proj",
+   "language_model.model.layers.5.mlp.shared_experts.gate_up_proj": "language_model.model.layers.5.mlp.shared_experts.gate_up_proj",
+   "language_model.model.layers.6.mlp.experts.routed_experts": "language_model.model.layers.6.mlp.experts",
+   "language_model.model.layers.6.mlp.shared_experts.down_proj": "language_model.model.layers.6.mlp.shared_experts.down_proj",
+   "language_model.model.layers.6.mlp.shared_experts.gate_up_proj": "language_model.model.layers.6.mlp.shared_experts.gate_up_proj",
+   "language_model.model.layers.7.mlp.experts.routed_experts": "language_model.model.layers.7.mlp.experts",
+   "language_model.model.layers.7.mlp.shared_experts.down_proj": "language_model.model.layers.7.mlp.shared_experts.down_proj",
+   "language_model.model.layers.7.mlp.shared_experts.gate_up_proj": "language_model.model.layers.7.mlp.shared_experts.gate_up_proj"
+  },
+  "prefill": {
+   "language_model.model.layers.0.mlp.down_proj": "language_model.model.layers.0.mlp.down_proj",
+   "language_model.model.layers.0.mlp.gate_up_proj": "language_model.model.layers.0.mlp.gate_up_proj",
+   "language_model.model.layers.1.mlp.down_proj": "language_model.model.layers.1.mlp.down_proj",
+   "language_model.model.layers.1.mlp.gate_up_proj": "language_model.model.layers.1.mlp.gate_up_proj",
+   "language_model.model.layers.2.mlp.down_proj": "language_model.model.layers.2.mlp.down_proj",
+   "language_model.model.layers.2.mlp.gate_up_proj": "language_model.model.layers.2.mlp.gate_up_proj",
+   "language_model.model.layers.3.mlp.experts.routed_experts": "language_model.model.layers.3.mlp.experts",
+   "language_model.model.layers.3.mlp.shared_experts.down_proj": "language_model.model.layers.3.mlp.shared_experts.down_proj",
+   "language_model.model.layers.3.mlp.shared_experts.gate_up_proj": "language_model.model.layers.3.mlp.shared_experts.gate_up_proj",
+   "language_model.model.layers.4.mlp.experts.routed_experts": "language_model.model.layers.4.mlp.experts",
+   "language_model.model.layers.4.mlp.shared_experts.down_proj": "language_model.model.layers.4.mlp.shared_experts.down_proj",
+   "language_model.model.layers.4.mlp.shared_experts.gate_up_proj": "language_model.model.layers.4.mlp.shared_experts.gate_up_proj",
+   "language_model.model.layers.5.mlp.experts.routed_experts": "language_model.model.layers.5.mlp.experts",
+   "language_model.model.layers.5.mlp.shared_experts.down_proj": "language_model.model.layers.5.mlp.shared_experts.down_proj",
+   "language_model.model.layers.5.mlp.shared_experts.gate_up_proj": "language_model.model.layers.5.mlp.shared_experts.gate_up_proj",
+   "language_model.model.layers.6.mlp.experts.routed_experts": "language_model.model.layers.6.mlp.experts",
+   "language_model.model.layers.6.mlp.shared_experts.down_proj": "language_model.model.layers.6.mlp.shared_experts.down_proj",
+   "language_model.model.layers.6.mlp.shared_experts.gate_up_proj": "language_model.model.layers.6.mlp.shared_experts.gate_up_proj",
+   "language_model.model.layers.7.mlp.experts.routed_experts": "language_model.model.layers.7.mlp.experts",
+   "language_model.model.layers.7.mlp.shared_experts.down_proj": "language_model.model.layers.7.mlp.shared_experts.down_proj",
+   "language_model.model.layers.7.mlp.shared_experts.gate_up_proj": "language_model.model.layers.7.mlp.shared_experts.gate_up_proj"
+  }
+ },
+ "records": {
+  "decode": {
+   "language_model.model.layers.0.mlp.down_proj": {
+    "contract": "e2m1_group16_ue4m3_static",
+    "decoder": "native_span2_gemm",
+    "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_NVFP4:resident",
+    "reason": null,
+    "shape": "M1:N4096:K6144",
+    "state": "served",
+    "symbol": "tessera.kernel_a4.a4_span2_gemm",
+    "tile_m": 0
+   },
+   "language_model.model.layers.0.mlp.gate_up_proj": {
+    "contract": "e2m1_group16_ue4m3_static",
+    "decoder": "native_span2_gemm",
+    "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_NVFP4:resident",
+    "reason": null,
+    "shape": "M1:N12288:K4096",
+    "state": "served",
+    "symbol": "tessera.kernel_a4.a4_span2_gemm",
+    "tile_m": 0
+   },
+   "language_model.model.layers.1.mlp.down_proj": {
+    "contract": "e2m1_group16_ue4m3_static",
+    "decoder": "native_span2_gemm",
+    "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_NVFP4:resident",
+    "reason": null,
+    "shape": "M1:N4096:K6144",
+    "state": "served",
+    "symbol": "tessera.kernel_a4.a4_span2_gemm",
+    "tile_m": 0
+   },
+   "language_model.model.layers.1.mlp.gate_up_proj": {
+    "contract": "e2m1_group16_ue4m3_static",
+    "decoder": "native_span2_gemm",
+    "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_NVFP4:resident",
+    "reason": null,
+    "shape": "M1:N12288:K4096",
+    "state": "served",
+    "symbol": "tessera.kernel_a4.a4_span2_gemm",
+    "tile_m": 0
+   },
+   "language_model.model.layers.2.mlp.down_proj": {
+    "contract": "e2m1_group16_ue4m3_static",
+    "decoder": "native_span2_gemm",
+    "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_NVFP4:resident",
+    "reason": null,
+    "shape": "M1:N4096:K6144",
+    "state": "served",
+    "symbol": "tessera.kernel_a4.a4_span2_gemm",
+    "tile_m": 0
+   },
+   "language_model.model.layers.2.mlp.gate_up_proj": {
+    "contract": "e2m1_group16_ue4m3_static",
+    "decoder": "native_span2_gemm",
+    "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_NVFP4:resident",
+    "reason": null,
+    "shape": "M1:N12288:K4096",
+    "state": "served",
+    "symbol": "tessera.kernel_a4.a4_span2_gemm",
+    "tile_m": 0
+   },
+   "language_model.model.layers.3.mlp.experts.routed_experts": {
+    "contract": "e2m1_group16_ue4m3_static",
+    "decoder": "native_span2_grouped",
+    "kernel_schedule": "tessera.kernel_a4.a4_span2_grouped_gemm",
+    "kind": "moe",
+    "platform": "sm_121",
+    "policy": "TESSERA_NVFP4:resident",
+    "reason": null,
+    "shape": "M1:N2048:K4096",
+    "state": "served",
+    "symbol": "tessera.kernel_a4.a4_span2_grouped_gemm",
+    "tile_m": 0
+   },
+   "language_model.model.layers.3.mlp.shared_experts.down_proj": {
+    "contract": "e2m1_group16_ue4m3_static",
+    "decoder": "native_span2_gemm",
+    "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_NVFP4:resident",
+    "reason": null,
+    "shape": "M1:N4096:K1024",
+    "state": "served",
+    "symbol": "tessera.kernel_a4.a4_span2_gemm",
+    "tile_m": 0
+   },
+   "language_model.model.layers.3.mlp.shared_experts.gate_up_proj": {
+    "contract": "e2m1_group16_ue4m3_static",
+    "decoder": "native_span2_gemm",
+    "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_NVFP4:resident",
+    "reason": null,
+    "shape": "M1:N2048:K4096",
+    "state": "served",
+    "symbol": "tessera.kernel_a4.a4_span2_gemm",
+    "tile_m": 0
+   },
+   "language_model.model.layers.4.mlp.experts.routed_experts": {
+    "contract": "e2m1_group16_ue4m3_static",
+    "decoder": "native_span2_grouped",
+    "kernel_schedule": "tessera.kernel_a4.a4_span2_grouped_gemm",
+    "kind": "moe",
+    "platform": "sm_121",
+    "policy": "TESSERA_NVFP4:resident",
+    "reason": null,
+    "shape": "M1:N2048:K4096",
+    "state": "served",
+    "symbol": "tessera.kernel_a4.a4_span2_grouped_gemm",
+    "tile_m": 0
+   },
+   "language_model.model.layers.4.mlp.shared_experts.down_proj": {
+    "contract": "e2m1_group16_ue4m3_static",
+    "decoder": "native_span2_gemm",
+    "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_NVFP4:resident",
+    "reason": null,
+    "shape": "M1:N4096:K1024",
+    "state": "served",
+    "symbol": "tessera.kernel_a4.a4_span2_gemm",
+    "tile_m": 0
+   },
+   "language_model.model.layers.4.mlp.shared_experts.gate_up_proj": {
+    "contract": "e2m1_group16_ue4m3_static",
+    "decoder": "native_span2_gemm",
+    "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_NVFP4:resident",
+    "reason": null,
+    "shape": "M1:N2048:K4096",
+    "state": "served",
+    "symbol": "tessera.kernel_a4.a4_span2_gemm",
+    "tile_m": 0
+   },
+   "language_model.model.layers.5.mlp.experts.routed_experts": {
+    "contract": "e2m1_group16_ue4m3_static",
+    "decoder": "native_span2_grouped",
+    "kernel_schedule": "tessera.kernel_a4.a4_span2_grouped_gemm",
+    "kind": "moe",
+    "platform": "sm_121",
+    "policy": "TESSERA_NVFP4:resident",
+    "reason": null,
+    "shape": "M1:N2048:K4096",
+    "state": "served",
+    "symbol": "tessera.kernel_a4.a4_span2_grouped_gemm",
+    "tile_m": 0
+   },
+   "language_model.model.layers.5.mlp.shared_experts.down_proj": {
+    "contract": "e2m1_group16_ue4m3_static",
+    "decoder": "native_span2_gemm",
+    "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_NVFP4:resident",
+    "reason": null,
+    "shape": "M1:N4096:K1024",
+    "state": "served",
+    "symbol": "tessera.kernel_a4.a4_span2_gemm",
+    "tile_m": 0
+   },
+   "language_model.model.layers.5.mlp.shared_experts.gate_up_proj": {
+    "contract": "e2m1_group16_ue4m3_static",
+    "decoder": "native_span2_gemm",
+    "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_NVFP4:resident",
+    "reason": null,
+    "shape": "M1:N2048:K4096",
+    "state": "served",
+    "symbol": "tessera.kernel_a4.a4_span2_gemm",
+    "tile_m": 0
+   },
+   "language_model.model.layers.6.mlp.experts.routed_experts": {
+    "contract": "e2m1_group16_ue4m3_static",
+    "decoder": "native_span2_grouped",
+    "kernel_schedule": "tessera.kernel_a4.a4_span2_grouped_gemm",
+    "kind": "moe",
+    "platform": "sm_121",
+    "policy": "TESSERA_NVFP4:resident",
+    "reason": null,
+    "shape": "M1:N2048:K4096",
+    "state": "served",
+    "symbol": "tessera.kernel_a4.a4_span2_grouped_gemm",
+    "tile_m": 0
+   },
+   "language_model.model.layers.6.mlp.shared_experts.down_proj": {
+    "contract": "e2m1_group16_ue4m3_static",
+    "decoder": "native_span2_gemm",
+    "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_NVFP4:resident",
+    "reason": null,
+    "shape": "M1:N4096:K1024",
+    "state": "served",
+    "symbol": "tessera.kernel_a4.a4_span2_gemm",
+    "tile_m": 0
+   },
+   "language_model.model.layers.6.mlp.shared_experts.gate_up_proj": {
+    "contract": "e2m1_group16_ue4m3_static",
+    "decoder": "native_span2_gemm",
+    "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_NVFP4:resident",
+    "reason": null,
+    "shape": "M1:N2048:K4096",
+    "state": "served",
+    "symbol": "tessera.kernel_a4.a4_span2_gemm",
+    "tile_m": 0
+   },
+   "language_model.model.layers.7.mlp.experts.routed_experts": {
+    "contract": "e2m1_group16_ue4m3_static",
+    "decoder": "native_span2_grouped",
+    "kernel_schedule": "tessera.kernel_a4.a4_span2_grouped_gemm",
+    "kind": "moe",
+    "platform": "sm_121",
+    "policy": "TESSERA_NVFP4:resident",
+    "reason": null,
+    "shape": "M1:N2048:K4096",
+    "state": "served",
+    "symbol": "tessera.kernel_a4.a4_span2_grouped_gemm",
+    "tile_m": 0
+   },
+   "language_model.model.layers.7.mlp.shared_experts.down_proj": {
+    "contract": "e2m1_group16_ue4m3_static",
+    "decoder": "native_span2_gemm",
+    "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_NVFP4:resident",
+    "reason": null,
+    "shape": "M1:N4096:K1024",
+    "state": "served",
+    "symbol": "tessera.kernel_a4.a4_span2_gemm",
+    "tile_m": 0
+   },
+   "language_model.model.layers.7.mlp.shared_experts.gate_up_proj": {
+    "contract": "e2m1_group16_ue4m3_static",
+    "decoder": "native_span2_gemm",
+    "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_NVFP4:resident",
+    "reason": null,
+    "shape": "M1:N2048:K4096",
+    "state": "served",
+    "symbol": "tessera.kernel_a4.a4_span2_gemm",
+    "tile_m": 0
+   }
+  },
+  "prefill": {
+   "language_model.model.layers.0.mlp.down_proj": {
+    "contract": "e2m1_group16_ue4m3_static",
+    "decoder": "native_span2_gemm",
+    "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_NVFP4:resident",
+    "reason": null,
+    "shape": "M64:N4096:K6144",
+    "state": "served",
+    "symbol": "tessera.kernel_a4.a4_span2_gemm",
+    "tile_m": 0
+   },
+   "language_model.model.layers.0.mlp.gate_up_proj": {
+    "contract": "e2m1_group16_ue4m3_static",
+    "decoder": "native_span2_gemm",
+    "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_NVFP4:resident",
+    "reason": null,
+    "shape": "M64:N12288:K4096",
+    "state": "served",
+    "symbol": "tessera.kernel_a4.a4_span2_gemm",
+    "tile_m": 0
+   },
+   "language_model.model.layers.1.mlp.down_proj": {
+    "contract": "e2m1_group16_ue4m3_static",
+    "decoder": "native_span2_gemm",
+    "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_NVFP4:resident",
+    "reason": null,
+    "shape": "M64:N4096:K6144",
+    "state": "served",
+    "symbol": "tessera.kernel_a4.a4_span2_gemm",
+    "tile_m": 0
+   },
+   "language_model.model.layers.1.mlp.gate_up_proj": {
+    "contract": "e2m1_group16_ue4m3_static",
+    "decoder": "native_span2_gemm",
+    "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_NVFP4:resident",
+    "reason": null,
+    "shape": "M64:N12288:K4096",
+    "state": "served",
+    "symbol": "tessera.kernel_a4.a4_span2_gemm",
+    "tile_m": 0
+   },
+   "language_model.model.layers.2.mlp.down_proj": {
+    "contract": "e2m1_group16_ue4m3_static",
+    "decoder": "native_span2_gemm",
+    "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_NVFP4:resident",
+    "reason": null,
+    "shape": "M64:N4096:K6144",
+    "state": "served",
+    "symbol": "tessera.kernel_a4.a4_span2_gemm",
+    "tile_m": 0
+   },
+   "language_model.model.layers.2.mlp.gate_up_proj": {
+    "contract": "e2m1_group16_ue4m3_static",
+    "decoder": "native_span2_gemm",
+    "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_NVFP4:resident",
+    "reason": null,
+    "shape": "M64:N12288:K4096",
+    "state": "served",
+    "symbol": "tessera.kernel_a4.a4_span2_gemm",
+    "tile_m": 0
+   },
+   "language_model.model.layers.3.mlp.experts.routed_experts": {
+    "contract": "e2m1_group16_ue4m3_static",
+    "decoder": "native_span2_grouped",
+    "kernel_schedule": "tessera.kernel_a4.a4_span2_grouped_gemm",
+    "kind": "moe",
+    "platform": "sm_121",
+    "policy": "TESSERA_NVFP4:resident",
+    "reason": null,
+    "shape": "M64:N2048:K4096",
+    "state": "served",
+    "symbol": "tessera.kernel_a4.a4_span2_grouped_gemm",
+    "tile_m": 0
+   },
+   "language_model.model.layers.3.mlp.shared_experts.down_proj": {
+    "contract": "e2m1_group16_ue4m3_static",
+    "decoder": "native_span2_gemm",
+    "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_NVFP4:resident",
+    "reason": null,
+    "shape": "M64:N4096:K1024",
+    "state": "served",
+    "symbol": "tessera.kernel_a4.a4_span2_gemm",
+    "tile_m": 0
+   },
+   "language_model.model.layers.3.mlp.shared_experts.gate_up_proj": {
+    "contract": "e2m1_group16_ue4m3_static",
+    "decoder": "native_span2_gemm",
+    "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_NVFP4:resident",
+    "reason": null,
+    "shape": "M64:N2048:K4096",
+    "state": "served",
+    "symbol": "tessera.kernel_a4.a4_span2_gemm",
+    "tile_m": 0
+   },
+   "language_model.model.layers.4.mlp.experts.routed_experts": {
+    "contract": "e2m1_group16_ue4m3_static",
+    "decoder": "native_span2_grouped",
+    "kernel_schedule": "tessera.kernel_a4.a4_span2_grouped_gemm",
+    "kind": "moe",
+    "platform": "sm_121",
+    "policy": "TESSERA_NVFP4:resident",
+    "reason": null,
+    "shape": "M64:N2048:K4096",
+    "state": "served",
+    "symbol": "tessera.kernel_a4.a4_span2_grouped_gemm",
+    "tile_m": 0
+   },
+   "language_model.model.layers.4.mlp.shared_experts.down_proj": {
+    "contract": "e2m1_group16_ue4m3_static",
+    "decoder": "native_span2_gemm",
+    "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_NVFP4:resident",
+    "reason": null,
+    "shape": "M64:N4096:K1024",
+    "state": "served",
+    "symbol": "tessera.kernel_a4.a4_span2_gemm",
+    "tile_m": 0
+   },
+   "language_model.model.layers.4.mlp.shared_experts.gate_up_proj": {
+    "contract": "e2m1_group16_ue4m3_static",
+    "decoder": "native_span2_gemm",
+    "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_NVFP4:resident",
+    "reason": null,
+    "shape": "M64:N2048:K4096",
+    "state": "served",
+    "symbol": "tessera.kernel_a4.a4_span2_gemm",
+    "tile_m": 0
+   },
+   "language_model.model.layers.5.mlp.experts.routed_experts": {
+    "contract": "e2m1_group16_ue4m3_static",
+    "decoder": "native_span2_grouped",
+    "kernel_schedule": "tessera.kernel_a4.a4_span2_grouped_gemm",
+    "kind": "moe",
+    "platform": "sm_121",
+    "policy": "TESSERA_NVFP4:resident",
+    "reason": null,
+    "shape": "M64:N2048:K4096",
+    "state": "served",
+    "symbol": "tessera.kernel_a4.a4_span2_grouped_gemm",
+    "tile_m": 0
+   },
+   "language_model.model.layers.5.mlp.shared_experts.down_proj": {
+    "contract": "e2m1_group16_ue4m3_static",
+    "decoder": "native_span2_gemm",
+    "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_NVFP4:resident",
+    "reason": null,
+    "shape": "M64:N4096:K1024",
+    "state": "served",
+    "symbol": "tessera.kernel_a4.a4_span2_gemm",
+    "tile_m": 0
+   },
+   "language_model.model.layers.5.mlp.shared_experts.gate_up_proj": {
+    "contract": "e2m1_group16_ue4m3_static",
+    "decoder": "native_span2_gemm",
+    "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_NVFP4:resident",
+    "reason": null,
+    "shape": "M64:N2048:K4096",
+    "state": "served",
+    "symbol": "tessera.kernel_a4.a4_span2_gemm",
+    "tile_m": 0
+   },
+   "language_model.model.layers.6.mlp.experts.routed_experts": {
+    "contract": "e2m1_group16_ue4m3_static",
+    "decoder": "native_span2_grouped",
+    "kernel_schedule": "tessera.kernel_a4.a4_span2_grouped_gemm",
+    "kind": "moe",
+    "platform": "sm_121",
+    "policy": "TESSERA_NVFP4:resident",
+    "reason": null,
+    "shape": "M64:N2048:K4096",
+    "state": "served",
+    "symbol": "tessera.kernel_a4.a4_span2_grouped_gemm",
+    "tile_m": 0
+   },
+   "language_model.model.layers.6.mlp.shared_experts.down_proj": {
+    "contract": "e2m1_group16_ue4m3_static",
+    "decoder": "native_span2_gemm",
+    "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_NVFP4:resident",
+    "reason": null,
+    "shape": "M64:N4096:K1024",
+    "state": "served",
+    "symbol": "tessera.kernel_a4.a4_span2_gemm",
+    "tile_m": 0
+   },
+   "language_model.model.layers.6.mlp.shared_experts.gate_up_proj": {
+    "contract": "e2m1_group16_ue4m3_static",
+    "decoder": "native_span2_gemm",
+    "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_NVFP4:resident",
+    "reason": null,
+    "shape": "M64:N2048:K4096",
+    "state": "served",
+    "symbol": "tessera.kernel_a4.a4_span2_gemm",
+    "tile_m": 0
+   },
+   "language_model.model.layers.7.mlp.experts.routed_experts": {
+    "contract": "e2m1_group16_ue4m3_static",
+    "decoder": "native_span2_grouped",
+    "kernel_schedule": "tessera.kernel_a4.a4_span2_grouped_gemm",
+    "kind": "moe",
+    "platform": "sm_121",
+    "policy": "TESSERA_NVFP4:resident",
+    "reason": null,
+    "shape": "M64:N2048:K4096",
+    "state": "served",
+    "symbol": "tessera.kernel_a4.a4_span2_grouped_gemm",
+    "tile_m": 0
+   },
+   "language_model.model.layers.7.mlp.shared_experts.down_proj": {
+    "contract": "e2m1_group16_ue4m3_static",
+    "decoder": "native_span2_gemm",
+    "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_NVFP4:resident",
+    "reason": null,
+    "shape": "M64:N4096:K1024",
+    "state": "served",
+    "symbol": "tessera.kernel_a4.a4_span2_gemm",
+    "tile_m": 0
+   },
+   "language_model.model.layers.7.mlp.shared_experts.gate_up_proj": {
+    "contract": "e2m1_group16_ue4m3_static",
+    "decoder": "native_span2_gemm",
+    "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_NVFP4:resident",
+    "reason": null,
+    "shape": "M64:N2048:K4096",
+    "state": "served",
+    "symbol": "tessera.kernel_a4.a4_span2_gemm",
+    "tile_m": 0
+   }
+  }
+ },
+ "runtime": {
+  "execution_mode": "eager",
+  "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5"
+ },
+ "runtime_image_declaration": {
+  "env": [
+   "TESSERA_CENSUS_RUNTIME_IMAGE",
+   "TESSERA_CENSUS_RUNTIME_IMAGE_DECLARATION"
+  ],
+  "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5",
+  "record": {
+   "fix": null,
+   "gated": true,
+   "local_id": "sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5",
+   "pinned": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+   "present": true,
+   "reason": "explicit_digest",
+   "refused": false,
+   "repo_digests": [
+    "192.168.1.107/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5",
+    "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5"
+   ],
+   "requested": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5",
+   "requested_tag": null,
+   "required": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5",
+   "resolved_digest": "sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5",
+   "resolved_reference": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5",
+   "schema": "tessera.runtime_image/1"
+  },
+  "schema": "tessera.runtime-image-declaration/1",
+  "source": "launcher_repo_digests"
+ },
+ "scheduler": {},
+ "schema": "tessera.serving.route_census/2",
+ "tessera_config_groups": 21,
+ "topology": {
+  "distributed_executor_backend": "ray",
+  "master_addr": null,
+  "master_port": null,
+  "nnodes": null,
+  "node_rank": null,
+  "observed_world_size": 2,
+  "requested_tensor_parallel_size": 2
+ },
+ "verdict": "served",
+ "versions": {
+  "python": "3.12.3",
+  "tessera": "0.1.0",
+  "tessera_commit": "62f9e1ce5f2d9ec05cfcc2e938e3c12486983258",
+  "tessera_serving": "0.1.0",
+  "torch": "2.13.0+cu130",
+  "vllm": "0.28.1rc1.dev397+gfd4a15126.d20260904"
+ }
+}

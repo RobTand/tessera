@@ -134,3 +134,64 @@ PrismaBuild actions `5e7b6ccd…` (A), `60472fd0…` (B), `448533dd…` (D),
 --cached-units … --cached-hessian-identity committed` against the union
 campaign's Hessian references and producer package. `tests/test_glm_u1_census_cells.py`
 replays each receipt against the packaged table.
+
+## 5. Stub D at a world of two (2026-09-27)
+
+Contract v39 keeps `TESSERA_E2M1_K2` at `max_world_size: 2`. The v29 receipt
+behind that value ran the withdrawn `torch_materialize_stock` route, which
+serves cuts the native span-2 admission refuses. The admission requires each
+rank's rows to be a multiple of `arity * 8 * span`, which is 32 for E2M1x2.
+This census puts the native route itself at a world of two.
+
+- Command: `experiments/tessera_plugin_served_tp.sh` on stub D, with a ray head
+  on sparky (rank 0) and a worker on sparklina (rank 1). It ran with the same
+  census flags as the TP1 runs, plus `--tensor-parallel-size 2`, eager and
+  resident.
+- Fabric: `TESSERA_TP_SOCKET_IFNAME=enp1s0f0np0` and
+  `TESSERA_TP_IB_HCA=rocep1s0f0,roceP2p1s0f0`, with `GLOO_SOCKET_IFNAME` on
+  the same interface.
+- Image: `f8dbe1a0...`, the GLM image. Tessera tree: `62f9e1ce5`.
+- Window: 01:10Z to 01:12Z.
+- Receipt: `experiments/results/glm53_u1_stub_d_tp2_eager_census.json`,
+  sha256 `1a286a81d36b891f8839669551d96bbbddfbbc29b7a8bea07f31c99bf18e2824`.
+  Its verdict is `served`, `problems: []`, with an observed world size of 2.
+
+Each rank served 21 modules in each phase. Every module ran on the native A4
+launches: `a4_span2_gemm`/`native_span2_gemm` for dense and
+`a4_span2_grouped_gemm`/`native_span2_grouped` for routed. Neither rank
+refused a lane. Compared with the TP1 receipt of the same stub, each module is
+halved along exactly one axis:
+
+| Module | TP1 shape | Per-rank shape at TP2 |
+|---|---|---|
+| Dense `gate_up_proj` (column cut) | N24576:K4096 | N12288:K4096 |
+| Dense `down_proj` (row cut) | N4096:K12288 | N4096:K6144 |
+| Routed and shared `gate_up` | N4096:K4096 | N2048:K4096 |
+| Routed and shared `down` | N4096:K2048 | N4096:K1024 |
+
+Every local extent is a multiple of 32. `tests/test_glm_u1_tp2_census.py`
+replays the receipt.
+
+This is a route receipt. The KL-bearing `world_size_receipts` entry is still
+v29's, and it cannot take this serve as another of its serves. That entry
+derives its `executed_units` from the units every serve executed, and this
+stub executes E2M1 only.
+
+The first four launches failed. Each failure was fixed at its cause before the
+next launch:
+
+1. The worker fell back to the pin image, which has no `ray`. Fixed in
+   `5037ca478`: the driver forwards `IMG`.
+2. Gloo failed with `ss1.ss_family == ss2.ss_family. 10 vs 2`. The driver's
+   default `enp1s0f1np1` is on different subnets on the two boxes, and
+   `GLOO_SOCKET_IFNAME` was unset. `ef4dd184f` lets `TESSERA_TP_ENV` forward
+   settings to the worker.
+3. NCCL init hung. The fabric overrides reached only the head, so the worker
+   used the default interface. Fixed in `c4080a42a`.
+4. `AttributeError: Can't pickle local object 'main.<locals>.<lambda>'`.
+   `LLM.apply_model` sends its function as an RPC argument, and the mp and ray
+   executors write RPC arguments with the stdlib pickler. No multi-rank census
+   had run on this path before. Fixed in `62f9e1ce5`: every model read is now
+   sent as a by-value `collective_rpc` method, pinned by
+   `tests/test_census_rpc_by_value.py`.
+
