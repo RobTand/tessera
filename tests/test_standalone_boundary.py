@@ -114,7 +114,7 @@ def test_scanner_sees_every_reference_form():
         "    '''prismabuild.core in a docstring is prose.'''\n"
         "    import prismabuild\n"
         "    return b'prismaquant.tessera.v1/x', f'{a}prismabuild.pool.v2'\n"
-        "X = '/mnt/shared/prismabuild-fleet/cas'\n"
+        "X = 'fleet:prismabuild-fleet/cas'\n"
         "Y = 'prismaquantX.no'  # prismaquant.comment is prose\n"
     )
     assert sorted(findings(source)) == [
