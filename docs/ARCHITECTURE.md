@@ -1,5 +1,11 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-09-27 for concurrent window rate calls (tessera#668). At a
+mixed-rate window rung, a window span yields all of its rate calls as a tuple,
+and the batched LDLQ driver runs them on per-thread CUDA side streams
+(`TESSERA_WINDOW_RATE_STREAMS=0` runs them serially). Bytes, contract cells,
+serving defaults and routes do not change. §3.1b carries the measured deltas.
+
 Re-stamped 2026-09-27 for the v3 catalog extension in rooted cached units
 (tessera#670): `CATALOG_EXTENSION_SCHEMAS` adds
 `prismaquant.joint_catalog_extension.v3`.
@@ -2745,10 +2751,11 @@ would return, and the blob each unit gets out is **byte-identical** to the
 blob `encode_linear` writes for it alone. `encode_unit` is this driver at
 `B=1`: the per-unit body is a generator that yields each trellis call and
 receives its own columns back, so there is one implementation and not a fast
-path beside a reference. `encoder_fixture_id` does not move.
-`tests/test_batched_encode_identity.py` pins blob equality unit by unit at
-BF16_K1@1792, E4M3_K1@1024, E2M1_K2@896 and the mixed-rate E4M3@1042 with
-LDLQ on at the default refit schedule.
+path beside a reference. A window span yields its rate calls together, as a
+tuple, and receives a tuple of answers (tessera#668). `encoder_fixture_id` does
+not move. `tests/test_batched_encode_identity.py` pins blob equality unit by
+unit at BF16_K1@1792, E4M3_K1@1024, E2M1_K2@896, the mixed-rate E4M3@1042 and
+the mixed-rate BF16_K1@1088 with LDLQ on at the default refit schedule.
 
 The batched entry points are `export.encode_linears_planes` /
 `export.encode_linears`: one recipe, one rate schedule and one set of forests
@@ -2811,6 +2818,26 @@ and the host runs ahead until the pass's refit reads its floats.
 `tests/test_encode_host_sync_contract.py` pins it: a Viterbi call that
 discards its cost makes no host sync, one that reads it makes one, and an
 LDLQ encode makes the same number of syncs at eight blocks as at two.
+
+**A window span's rates run concurrently (2026-09-27, tessera#668).** At a
+mixed-rate window rung -- BF16_K1 at q256 1088 or 1152, where every 32-column
+LDLQ block holds R4 and R5 columns -- `trellis_pass` used to yield one call per
+rate and wait for its answer before it built the next, so each block's R4 and R5
+Viterbi ran back to back on one stream. That chain is the bound: on the PACT G2
+expert shapes the GPU is busy 99 % of a pass, each block step runs about 4 970
+kernels with a median of 11 us, the host waits in a full launch queue, and the
+GPU draws 57 % of the 140 W envelope. A window span now yields every rate call
+at once. `_drive_in_step` joins each rate across the batch and `_run_group` runs
+the rates on per-thread side streams forked from the caller's stream and joined
+back to it, with `record_stream` ordering the allocator's reuse. The same
+tensors reach the same plans and kernels, so the bytes do not move.
+`TESSERA_WINDOW_RATE_STREAMS=0` is the serial control. On GB10 a 16-unit batch
+encodes 18.5-22.4 % faster at 1.18-1.23x the units per joule, and the
+serial control is within 1 % of `master`; the GPU draws 59 % of the envelope and
+the mean SM clock falls from about 2 400 to 2 260 MHz
+(`docs/measurements/tessera668-window-rate-streams-2026-09-27.md`).
+`tests/test_window_rate_group.py` pins the tuple yield and the streams' bytes
+against the serial control's.
 
 **The fused window body is an NVPTX path, and a ROCm build takes the
 reference (2026-09-13, #472).** `window_viterbi._build`'s `_mul` is
