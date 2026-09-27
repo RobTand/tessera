@@ -296,7 +296,7 @@ now returns the window body over CHANNEL at L=14 on E4M3 at every rung, the
 window over LUT16 at L=12 on E2M1x2 below its cap, and the coset trellis at
 the E2M1x2 cap and on E2M1. That is the research spelling. The served spelling
 for a ROUTED NVFP4 stack is span-2 TCQ at EVERY rung including below the cap
-(`experiments/export_tessera_serving.py:served_recipe`, contract v32,
+(`tessera.export.served_recipe` since tessera#662, contract v32,
 tessera#506 leg 2, promotion scoped to `STRUCTURE_ROUTED_MOE` by tessera#560
 D2b): the routed path has no WINDOW decode, so the served wire pays
 the TCQ cost the frontier measured (§4: 1.36–1.43× vs 1.06–1.10× EXL3 at

@@ -1,5 +1,22 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-09-27 for the served recipe in the package (tessera#662).
+`tessera.export.served_recipe(grid, q256, structure)` moved out of
+`experiments/export_tessera_serving.py` into the package, and
+`tessera.structure` now owns the structure names that `tessera.serving.scheme`
+re-exports. The cached-unit identities take the structure:
+`encoding_input_identity` and `unit_input_identity` stamp
+`served_recipe(grid, q256, structure)`, and `_check_wire` admits the spelling
+of each structure its schema serves. A dense receipt admits `dense` only; a
+projected receipt admits every structure. Without a structure, the stamp is
+the research `wire_recipe` spelling, byte for byte, so no existing receipt and
+no K1 or E2M1x2 q896 wire moves. The only new stamp is a routed E2M1x2 stack
+below the cap, which now records and adopts the span-2 TCQ wire the contract
+attests. The exporter's cached intake passes `routed_moe` for a projected
+unit. It refuses a historical producer that takes no structure only at a rung
+where the structure changes the wire. No contract cell, serving default or
+route changes.
+
 Re-stamped 2026-09-27 for compact serving-manifest serialization (tessera#635).
 New main, stock-twin, merged-part and fresh residency-refresh manifests use
 `serving_parts.write_serving_manifest`: UTF-8 JSON with `separators=(",", ":")`,
@@ -2827,6 +2844,9 @@ per-unit Hessian plus capture identity and full activation settings, resolved
 recipe, encoder behavior/source identities, and the whole blob digest.
 Its `encoding_input_identity` is shared by dense and projected campaign
 callers; `unit_input_identity` adds the producer's explicit expert projection.
+Both take the unit's serving `structure` and stamp
+`export.served_recipe(grid, q256, structure)`; without one they stamp the
+research `wire_recipe` spelling unchanged (tessera#662).
 Both use the same unit-record construction and wire verifier. Expert export
 requires the projected identity; dense export uses the common encoding identity.
 Both require exact field equality against freshly supplied source and capture.
