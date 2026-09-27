@@ -2080,7 +2080,12 @@ This does not qualify the Torch/CUPTI ownership or timing join.
 source-BF16 or hash-bound original-wire reference observation pass using the stock runtime's supported `worker_cls`
 configuration. Its early Python process bootstrap starts CUPTI before Torch
 and records allocator history before CUDA initialization; each spawned process
-owns its collector, and fork-inherited or late worker captures refuse. The
+owns its collector, and fork-inherited or late worker captures refuse. vLLM
+initializes CUDA before constructing the worker class, so the worker identity
+binds at the constructor against the recorded pre-CUDA history: the claim
+verifies the collector that recorded that initialization is still live, while
+a snapshot before the binding or CUDA activity the recorded history cannot
+cover still refuses. The
 worker subclass calls the stock device, model-load, KV-allocation, execution
 and sampling methods, adding synchronized checkpoints and bounded forward
 hooks for explicitly selected canonical units. `--all-units` resolves every
