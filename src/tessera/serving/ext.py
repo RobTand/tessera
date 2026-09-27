@@ -558,8 +558,8 @@ def native_source_path(module_name_prefix: str) -> str:
 
     Resolved from :data:`NATIVE_EXTENSIONS` by ``module_name_prefix`` -- the
     one table the contract reads -- and refused (``IncompleteInstallError``) if
-    the file is not in this install.  Every JIT loader in the package takes its
-    source from here, so what the contract says is built is what is built.
+    the file is not in this install. Every contract-published JIT loader takes
+    its source from here, so what the contract says is built is what is built.
     """
     for entry in NATIVE_EXTENSIONS:
         if entry["module_name_prefix"] == module_name_prefix:
