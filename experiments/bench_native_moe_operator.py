@@ -831,6 +831,12 @@ def owner_distributed(shape, block):
     geometry: a receipt's world size is not something to discover at run time.
     """
     declared = int(shape["tensor_parallel"]) if is_glm_geometry(shape) else 1
+    return validate_distributed(declared, block)
+
+
+def validate_distributed(declared, block):
+    """Shared explicit rendezvous grammar for dense and routed owners."""
+    dense._integer(declared, "declared tensor parallel")
     if block is None:
         if declared != 1:
             raise ValueError(f"this owner declares TP{declared} and carries no distributed block; "

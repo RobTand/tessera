@@ -1,4 +1,4 @@
-"""Research receipts for one actual eager/resident/TP1 dense serving operator.
+"""Research receipts for one actual eager/resident TP1 or TP2 dense operator.
 
 Preparation is separate from measurement: callers freeze its native/runtime
 identities in an independent panel before collecting timings. This is not a
@@ -26,8 +26,16 @@ ROUTE_KEYS = {"kind", "policy", "symbol", "decoder", "contract"}
 
 
 @contextmanager
-def native_runtime_context(vllm_config=None):
-    """Fresh-process vLLM TP1 context required by real BasevLLMParameter."""
+def native_runtime_context(vllm_config=None, *, distributed=None):
+    """Fresh-process context; TP2 uses the routed owner's existing NCCL setup."""
+    if distributed is not None and distributed["world_size"] > 1:
+        from experiments.bench_native_moe_operator import native_runtime_context as owner_context
+        from vllm.config import VllmConfig, ParallelConfig
+        config = vllm_config if vllm_config is not None else VllmConfig(
+            parallel_config=ParallelConfig(tensor_parallel_size=distributed["world_size"]))
+        with owner_context(config, distributed=distributed):
+            yield
+        return
     import tempfile
     import torch
     from vllm.config import VllmConfig, set_current_vllm_config
@@ -84,6 +92,94 @@ def _tensor_record(value, shape, name):
     _sha(value["content_sha256"], name)
 
 
+def validate_execution(execution):
+    """TP1 is unchanged; TP2 must name which dimension the engine partitions."""
+    if not isinstance(execution, dict):
+        raise ValueError("execution: mapping required")
+    world = execution.get("tensor_parallel")
+    if type(world) is not int or world not in (1, 2):
+        raise ValueError("execution.tensor_parallel: only integer TP1 or TP2 supported")
+    expected = dict(EXECUTION)
+    if world == 2:
+        axis = execution.get("tensor_parallel_cut_axis")
+        if axis not in ("input", "output"):
+            raise ValueError("execution.tensor_parallel_cut_axis: input or output required")
+        expected.update(tensor_parallel=world, tensor_parallel_cut_axis=axis)
+    if identity_sha256(execution) != identity_sha256(expected):
+        raise ValueError("execution: only single dense eager resident without bias is supported")
+    return dict(execution)
+
+
+def execution_distributed(execution, block):
+    from experiments.bench_native_moe_operator import validate_distributed
+    return validate_distributed(validate_execution(execution)["tensor_parallel"], block)
+
+
+def local_shape(shape, execution):
+    execution = validate_execution(execution)
+    result = list(shape)
+    if len(result) != 2:
+        raise ValueError("shape: [N,K] required")
+    for value in result:
+        _integer(value, "shape")
+    if execution["tensor_parallel"] == 2:
+        axis = 0 if execution["tensor_parallel_cut_axis"] == "output" else 1
+        if result[axis] % 2:
+            raise ValueError("shape: TP2 partition dimension must be divisible by two")
+        result[axis] //= 2
+    return result
+
+
+def whole_shape(shape, execution):
+    execution = validate_execution(execution)
+    result = list(shape)
+    if execution["tensor_parallel"] == 2:
+        result[0 if execution["tensor_parallel_cut_axis"] == "output" else 1] *= 2
+    return result
+
+
+def rank_weight(weight, execution, rank):
+    shape = local_shape(weight.shape, execution)
+    if type(rank) is not int or not 0 <= rank < execution["tensor_parallel"]:
+        raise ValueError("rank outside declared dense world")
+    if execution["tensor_parallel"] == 1:
+        return weight
+    if execution["tensor_parallel_cut_axis"] == "output":
+        return weight[rank * shape[0]:(rank + 1) * shape[0]].contiguous()
+    return weight[:, rank * shape[1]:(rank + 1) * shape[1]].contiguous()
+
+
+def _all_reduce(value):
+    # Same vLLM primitive/boundary as routed _maybe_reduce_final_output:
+    # return the full row-parallel output, not its rank-local partial sum.
+    from vllm.distributed import tensor_model_parallel_all_reduce
+    return tensor_model_parallel_all_reduce(value)
+
+
+def apply_complete(prepared, value):
+    output = prepared["method"].apply(prepared["layer"], value)
+    execution = prepared["runtime"]["execution"]
+    if execution.get("tensor_parallel_cut_axis") == "input":
+        output = _all_reduce(output)
+    return output
+
+
+def _agree_output(prepared, output, phase):
+    if prepared["runtime"]["execution"].get("tensor_parallel_cut_axis") == "input":
+        from experiments.bench_native_moe_operator import agree_output_across_ranks
+        return agree_output_across_ranks(output, distributed=prepared["runtime"]["distributed"], where=phase)
+
+
+def _agree_numerical_status(prepared, passed):
+    """Both ranks take the same numerical/resource branch before any timing."""
+    if prepared["runtime"]["execution"]["tensor_parallel"] == 1:
+        return passed
+    import torch
+    status = torch.tensor(int(passed), device="cuda", dtype=torch.int32)
+    torch.distributed.all_reduce(status, op=torch.distributed.ReduceOp.MIN)
+    return bool(status.item())
+
+
 def validate_panel(panel):
     """Validate the frozen narrow scope before importing CUDA/vLLM."""
     # PrismaQuant's freeze emits a derivation for the tolerances and an
@@ -109,9 +205,7 @@ def validate_panel(panel):
                     "phases"), "panel")
     if panel["schema"] not in (PANEL_SCHEMA, RAW_PANEL_SCHEMA):
         raise ValueError("panel schema unsupported")
-    # Equality alone admits True == 1 and 0 == False.
-    if identity_sha256(panel["execution"]) != identity_sha256(EXECUTION):
-        raise ValueError("execution: only single dense eager resident TP1 without bias is supported")
+    validate_execution(panel["execution"])
     for key in ("unit", "format"):
         if not isinstance(panel[key], str) or not panel[key]:
             raise ValueError(f"{key}: nonempty string required")
@@ -143,7 +237,7 @@ def validate_panel(panel):
     _fields(record, ("file", "blob_sha256", "blob_bytes", "identity"), "wire record")
     if record["blob_sha256"] != wire["blob_sha256"] or record["blob_bytes"] != wire["blob_bytes"]:
         raise ValueError("wire record and panel blob identity disagree")
-    if record["identity"]["source"]["shape"] != shape:
+    if record["identity"]["source"]["shape"] != whole_shape(shape, panel["execution"]):
         raise ValueError("wire source shape differs from panel")
     _fields(panel["numerics"], ("atol", "rtol"), "numerics")
     for key, value in panel["numerics"].items():
@@ -151,8 +245,9 @@ def validate_panel(panel):
     runtime = panel["runtime"]
     if not isinstance(runtime, dict) or runtime.get("schema") != RUNTIME_SCHEMA:
         raise ValueError("runtime manifest schema unsupported")
-    if identity_sha256(runtime.get("execution")) != identity_sha256(EXECUTION):
+    if identity_sha256(runtime.get("execution")) != identity_sha256(panel["execution"]):
         raise ValueError("runtime execution differs from panel")
+    execution_distributed(panel["execution"], runtime.get("distributed"))
     identity_sha256(runtime)  # refuse non-JSON/nonfinite coordinates
     _fields(panel["phases"], PHASES, "phases")
     for phase, item in panel["phases"].items():
@@ -432,7 +527,8 @@ def observe_runtime(runtime_image):
 
 
 def prepare_native_operator(blob, record, source_weight, rendered_weight, *, unit, format_name,
-                            runtime_image, input_global_scale=None, execution=None, phase_inputs=None):
+                            runtime_image, input_global_scale=None, execution=None, phase_inputs=None,
+                            distributed=None):
     """Actual create/load/process lifecycle; returns facts for freezing a panel.
 
     Original unit bytes are framed once through the existing single-role fused
@@ -445,8 +541,12 @@ def prepare_native_operator(blob, record, source_weight, rendered_weight, *, uni
     from tessera.serving.lane import build_tessera_method
     from tessera.serving.scheme import ROUTES, TESSERA_NVFP4, validate_tessera_scheme, launch_pairs, STRUCTURE_DENSE
     from tessera.unit_artifact import read_unit_artifact
-    if identity_sha256(execution if execution is not None else EXECUTION) != identity_sha256(EXECUTION):
-        raise ValueError("only single dense eager resident TP1 preparation is supported")
+    execution = validate_execution(EXECUTION if execution is None else execution)
+    distributed = execution_distributed(execution, distributed)
+    rank, world = 0, 1
+    if execution["tensor_parallel"] > 1:
+        from experiments.bench_native_moe_operator import bind_owner_rank
+        rank, world = bind_owner_rank(distributed)
     _require_cuda_tensor(source_weight)
     _require_cuda_tensor(rendered_weight)
     if source_weight.shape != rendered_weight.shape:
@@ -489,8 +589,9 @@ def prepare_native_operator(blob, record, source_weight, rendered_weight, *, uni
         raise ValueError("format differs from original wire recipe")
     method = build_tessera_method(scheme, unit, "resident")
     layer = torch.nn.Module()
-    layer.tp_rank, layer.tp_size = 0, 1
-    method.create_weights(layer, input_size_per_partition=columns, output_partition_sizes=[rows],
+    layer.tp_rank, layer.tp_size = rank, world
+    local_rows, local_columns = local_shape([rows, columns], execution)
+    method.create_weights(layer, input_size_per_partition=local_columns, output_partition_sizes=[local_rows],
                           input_size=columns, output_size=rows, params_dtype=torch.bfloat16)
     layer.wire_bytes.data = torch.frombuffer(bytearray(container), dtype=torch.uint8).clone()
     if family == TESSERA_NVFP4:
@@ -517,14 +618,16 @@ def prepare_native_operator(blob, record, source_weight, rendered_weight, *, uni
     declared_symbol, declared_decoder = next(iter(candidates))
     actual_g = float(layer.trellis_input_global_scale.reshape(())) if family == TESSERA_NVFP4 else None
     operator = {"wire_sha256": hashlib.sha256(blob).hexdigest(), "wire_record_sha256": identity_sha256(record),
-                "rendered_weight": tensor_identity(decoded), "activation_contract": layer.tessera_activation_contract,
+                "rendered_weight": tensor_identity(rank_weight(decoded, execution, rank)), "activation_contract": layer.tessera_activation_contract,
                 "input_global_scale": actual_g, "clip_enabled": False,
                 "scheme": json.loads(json.dumps(scheme)), "scheme_sha256": identity_sha256(scheme),
                 "declared_route": {"kind": "dense", "policy": f"{family}:resident",
                     "symbol": declared_symbol, "decoder": declared_decoder,
                     "contract": ROUTES[family]["activation_contract"]},
                 "native_tensors": _native_tensors(layer)}
-    operator["source_weight"] = tensor_identity(source_weight)
+    operator["source_weight"] = tensor_identity(rank_weight(source_weight, execution, rank))
+    prepared = {"method": method, "layer": layer, "operator": operator,
+                "runtime": {"execution": execution, "distributed": distributed}}
     if phase_inputs is not None:
         _fields(phase_inputs, PHASES, "untimed phase inputs")
         initial = {phase: tensor_identity(value) for phase, value in phase_inputs.items()}
@@ -532,24 +635,36 @@ def prepare_native_operator(blob, record, source_weight, rendered_weight, *, uni
             for phase in PHASES:
                 value = phase_inputs[phase]
                 _require_cuda_tensor(value)
-                if value.shape[1] != columns:
+                if value.shape[1] != local_columns:
                     raise ValueError("untimed phase input width differs from owner")
-                method.apply(layer, value)
+                apply_complete(prepared, value)
             torch.cuda.synchronize()
         if (initial != {phase: tensor_identity(value) for phase, value in phase_inputs.items()}
                 or _native_tensors(layer) != operator["native_tensors"]):
             raise ValueError("untimed native initialization changed inputs or weights")
-    return {"method": method, "layer": layer, "operator": operator, "runtime": observe_runtime(runtime_image)}
+    prepared["runtime"] = observe_runtime(runtime_image)
+    prepared["runtime"]["execution"] = execution
+    if world > 1:
+        prepared["runtime"]["distributed"] = distributed
+        prepared["runtime"]["collective"] = {
+            "implementation": "vllm.distributed.tensor_model_parallel_all_reduce",
+            "applies_per_invocation": 1 if execution["tensor_parallel_cut_axis"] == "input" else 0,
+            "boundary": "apply_complete_including_row_parallel_reduction"}
+    return prepared
 
 
 def _check_prepared(prepared, panel):
     operator, layer = prepared["operator"], prepared["layer"]
     _require_eager_context()
-    if (type(getattr(layer, "tp_size", None)) is not int or layer.tp_size != 1
-            or type(getattr(layer, "tp_rank", None)) is not int or layer.tp_rank != 0
+    distributed = execution_distributed(panel["execution"], panel["runtime"].get("distributed"))
+    if panel["execution"]["tensor_parallel"] > 1:
+        from experiments.bench_native_moe_operator import bind_owner_rank
+        bind_owner_rank(distributed)
+    if (type(getattr(layer, "tp_size", None)) is not int or layer.tp_size != distributed["world_size"]
+            or type(getattr(layer, "tp_rank", None)) is not int or layer.tp_rank != distributed["rank"]
             or layer.tessera_mode != "resident"
             or layer.tessera_family != operator["scheme"]["family"]):
-        raise ValueError("actual native execution differs from single dense resident TP1 panel")
+        raise ValueError("actual native execution differs from single dense resident panel")
     if observe_arithmetic() != panel["runtime"].get("arithmetic"):
         raise ValueError("actual arithmetic settings differ from independent panel")
     _check_native_library_scope(panel["runtime"])
@@ -563,7 +678,8 @@ def _check_prepared(prepared, panel):
             or operator["scheme_sha256"] != panel["scheme_sha256"]):
         raise ValueError("scheme identity differs from independent panel")
     scheme = operator["scheme"]
-    if (scheme["rows"], scheme["columns"]) != tuple(panel["shape"]) or scheme["roles"] != [["weight", panel["shape"][0]]]:
+    full_shape = whole_shape(panel["shape"], panel["execution"])
+    if (scheme["rows"], scheme["columns"]) != tuple(full_shape) or scheme["roles"] != [["weight", full_shape[0]]]:
         raise ValueError("scheme is not the declared single dense owner/shape")
     if operator["wire_sha256"] != panel["wire"]["blob_sha256"] or operator["wire_record_sha256"] != identity_sha256(panel["wire"]["record"]):
         raise ValueError("wire identity differs from independent panel")
@@ -609,9 +725,10 @@ def measure_prepared_operator(prepared, panel, phase_tensors, *, warmup_iteratio
             torch.cuda.synchronize()
             torch.cuda.reset_peak_memory_stats()
             before = torch.cuda.memory_allocated()
-            output = method.apply(layer, x)
+            output = apply_complete(prepared, x)
             torch.cuda.synchronize()
             peak = max(0, torch.cuda.max_memory_allocated() - before)
+            _agree_output(prepared, output, phase)
             route = read_route(layer)
             wanted = expected["expected_route"]
             if (not isinstance(route, dict) or any(route.get(k) != v for k, v in wanted.items())
@@ -632,6 +749,7 @@ def measure_prepared_operator(prepared, panel, phase_tensors, *, warmup_iteratio
             del output, qdq
             _check_phase_tensors(panel, phase_tensors)
         passed = all(observations[p][key]["status"] == "passed" for p in PHASES for key in ("numerics", "qdq_numerics"))
+        passed = _agree_numerical_status(prepared, passed)
         if passed:
             _check_prepared(prepared, panel)
             for phase in PHASES:
@@ -639,13 +757,13 @@ def measure_prepared_operator(prepared, panel, phase_tensors, *, warmup_iteratio
                 _check_phase_tensors(panel, phase_tensors)
                 if resource_collector is None:
                     observations[phase]["measurement"] = time_apply(
-                        lambda phase=phase: method.apply(layer, phase_tensors[phase]["input"]),
+                        lambda phase=phase: apply_complete(prepared, phase_tensors[phase]["input"]),
                         warmup_iterations=warmup_iterations, iterations=iterations)
                 else:
                     # Warm the allocator with real applies, but do not price
                     # calls while CUPTI memory/API collection is active.
                     for _ in range(warmup_iterations):
-                        method.apply(layer, phase_tensors[phase]["input"])
+                        apply_complete(prepared, phase_tensors[phase]["input"])
                     torch.cuda.synchronize()
                 _check_prepared(prepared, panel)
                 _check_phase_tensors(panel, phase_tensors)
@@ -657,10 +775,11 @@ def measure_prepared_operator(prepared, panel, phase_tensors, *, warmup_iteratio
                     _check_prepared(prepared, panel)
                     _check_phase_tensors(panel, phase_tensors)
                     output, allocation = resource_collector.observe_apply(
-                        lambda phase=phase: method.apply(layer, phase_tensors[phase]["input"]),
+                        lambda phase=phase: apply_complete(prepared, phase_tensors[phase]["input"]),
                         phase, device=phase_tensors[phase]["input"].device.index)
                     error = compare_tensors(output, phase_tensors[phase]["reference_output"], **panel["numerics"])
-                    if error["status"] != "passed" or read_route(layer) != observations[phase]["route"]:
+                    if not _agree_numerical_status(prepared,
+                            error["status"] == "passed" and read_route(layer) == observations[phase]["route"]):
                         raise ValueError(f"{phase}: resource invocation numerical/route mismatch")
                     resource_phases[phase]["torch_observation"] = allocation
                     resource_phases[phase]["numerics"] = error
@@ -694,7 +813,7 @@ def time_after_resource_collection(prepared, panel, phase_tensors, receipt, *, c
             _check_prepared(prepared, panel)
             _check_phase_tensors(panel, phase_tensors)
             receipt["phases"][phase]["measurement"] = time_apply(
-                lambda phase=phase: prepared["method"].apply(prepared["layer"], phase_tensors[phase]["input"]),
+                lambda phase=phase: apply_complete(prepared, phase_tensors[phase]["input"]),
                 warmup_iterations=warmup_iterations, iterations=iterations)
             _check_prepared(prepared, panel)
             _check_phase_tensors(panel, phase_tensors)
@@ -746,7 +865,7 @@ def profile_prepared_operator(prepared, panel, phase_tensors, *, output_prefix,
         _check_phase_tensors(panel, phase_tensors)
         with torch.inference_mode(), profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
                                              record_shapes=True, profile_memory=True) as prof:
-            output = prepared["method"].apply(prepared["layer"], phase_tensors[phase]["input"])
+            output = apply_complete(prepared, phase_tensors[phase]["input"])
             torch.cuda.synchronize()
         numerics = compare_tensors(output, phase_tensors[phase]["reference_output"], **panel["numerics"])
         if numerics["status"] != "passed":
@@ -790,8 +909,10 @@ def main(argv=None):
     if args.profile and args.prepare:
         parser.error("--profile requires --panel")
     request = json.loads(args.request.read_text())
+    optional = ("distributed",) if "distributed" in request else ()
     _fields(request, ("schema", "unit", "format", "wire_path", "wire_record_path", "tensors_path",
-                      "runtime_image", "input_global_scale", "execution"), "request")
+                      "runtime_image", "input_global_scale", "execution", *optional), "request")
+    distributed = execution_distributed(request["execution"], request.get("distributed"))
     if request["schema"] != "tessera.native_dense_request.v1":
         raise ValueError("native request schema unsupported")
     def artifact(key):
@@ -832,6 +953,7 @@ def main(argv=None):
             json.loads(artifact("wire_record_path").read_text()), tensors["source_weight"], tensors["rendered_weight"],
             unit=request["unit"], format_name=request["format"], runtime_image=request["runtime_image"],
             input_global_scale=request["input_global_scale"], execution=request["execution"],
+            distributed=request.get("distributed"),
             phase_inputs={phase: tensors[f"{phase}.input"] for phase in PHASES})
         if collector_library_sha256 is not None:
             prepared["runtime"]["resource_collector"] = {
@@ -861,7 +983,13 @@ def main(argv=None):
             trace = collector.finish(trace_path)
             if not args.prepare:
                 attach_resource_trace(result, trace)
-                if result["status"] == "resources_observed" and result["resources"]["status"] == "complete_operator_bound":
+                if distributed["world_size"] > 1:
+                    from experiments.bench_native_moe_operator import per_rank_resource_identity
+                    result["resources"].update(per_rank_resource_identity(result, distributed))
+                complete = result["status"] == "resources_observed" and result["resources"]["status"] == "complete_operator_bound"
+                # A locally complete rank must not enter row all-reduce timing
+                # while an incomplete peer takes the refusal branch.
+                if _agree_numerical_status(prepared, complete):
                     time_after_resource_collection(prepared, json.loads(args.panel.read_text()), phase_tensors,
                         result, collector=collector, warmup_iterations=args.warmup_iterations, iterations=args.iterations)
         args.out.write_text(json.dumps(result, sort_keys=True, indent=2, allow_nan=False) + "\n")
@@ -878,7 +1006,7 @@ def main(argv=None):
                       (collector is None or result["resources"]["status"] == "complete_operator_bound"))
         return 0 if args.prepare or admissible else 2
     try:
-        with native_runtime_context():
+        with native_runtime_context(distributed=distributed):
             return run()
     finally:
         # Refused preparation/measurement keeps the raw failure trace too.

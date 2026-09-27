@@ -54,10 +54,18 @@ rungs other than 832 on one stack each.
 `activation_quantizers.platforms.sm_121` gains the GLM image's table, which is
 byte-identical to the `a5424378` one.
 
-Still not attested: compiled execution, TP > 1, streamed residency, quality
-and timing. The native routed kernels measure 1.2-5.9x slower than vLLM's stock
-fused MoE on the same wires (tessera#640); that is a performance finding, not
-a change to any cell.
+Still not attested: compiled execution, TP > 1 beyond the E2M1 route census
+above, streamed residency, quality and timing. The native routed kernels
+measure 1.2-5.9x slower than vLLM's stock fused MoE on the same wires
+(tessera#640); that is a performance finding, not a change to any cell.
+
+Re-stamped 2026-09-26 for dense native TP2 receipt preparation (tessera#637).
+The research harness uses the existing routed NCCL context and peer-resource
+exchange, the dense loader's rank-local cuts, and complete row-parallel apply
+including vLLM's all-reduce. CPU contract tests are not a two-device receipt;
+no GPU timing, served-quality, contract-cell or runtime-pin admission is implied.
+PrismaQuant's independent dense panel freezer still needs a world-aware input
+contract (prismaquant#1429); its table world-equality gate remains unchanged.
 
 Re-stamped 2026-09-26 for the bounded full GLM-5.3-Flash TP2 serve
 (tessera#626). With both routed-window staging fixes on merged Tessera
@@ -1881,8 +1889,8 @@ without an external allocation binding retain their existing behavior.
 
 ### 2.4 Native dense receipts bind one actual operator, not an engine
 
-`experiments/bench_native_operator.py` prepares one dense resident/eager/TP1
-operator through the existing create/load/process lifecycle from the retained
+`experiments/bench_native_operator.py` prepares one dense resident/eager TP1
+or explicitly partitioned TP2 operator through the existing create/load/process lifecycle from the retained
 original unit wire. Preparation verifies actual source values and the wire's
 bytes-only decode against the supplied PrismaQuant PWC render. It emits
 untimed native tensor, scheme, runtime image, binary and arithmetic identities
@@ -1890,10 +1898,29 @@ for a separately frozen panel. Both prefill and decode must match the panel's
 input, activation QDQ, output and observed serving route before any CUDA-event
 timings. Panel tolerances are explicit. Tensor and execution-state drift
 around the numerical gate, timing and resource invocation refuses the receipt.
-The standalone CLI initializes vLLM's actual TP1 context and loads weights
+The standalone CLI initializes vLLM's actual context and loads weights
 under `no_grad`, preserving the loader's tensor version-counter seals. CUDA
 UUIDs join Torch to the driver's observed UUID; native binary identities retain
 canonical paths as well as hashes, including distinct same-basename libraries.
+
+TP1's execution/request contract is unchanged. TP2 adds explicit
+`execution.tensor_parallel_cut_axis="output"|"input"` and the routed driver's
+`distributed` block (`world_size`, `rank`, TCP `init_method`, `timeout_seconds`).
+Both ranks retain the same whole wire/scheme; existing loader sharding receives
+half N for column parallel or half K for row parallel. Panel shapes, source
+and rendered identities, inputs and QDQ are rank-local. Row-parallel reference
+outputs are the reduced whole output; column-parallel outputs are local halves.
+Every warmup, numerical, resource, timing and profiler invocation uses the same
+complete apply: the native dense method followed by exactly one
+`vllm.distributed.tensor_model_parallel_all_reduce` for row parallel, none for
+column parallel. This is the routed `_maybe_reduce_final_output` boundary, not
+a claim to execute that MoE callsite. Row outputs must agree across ranks, and
+both ranks must pass numerics before either enters timing. Resource receipts
+reuse the routed `resources.self`/`peers` identities. Rank 0 (sparklina in the
+PACT two-Spark plan) supplies the dense table row and its actually observed
+GPU UUID; rank 1 retains its own UUID and auxiliary receipt, never a relabelled
+rank-0 identity. No launcher or format/rate allowlist is added. This CPU-tested
+path still owes both-device profiling/telemetry and real per-rung receipts.
 
 The optional fresh-process CUPTI collector in
 `experiments/native_operator_resources.py` observes allocations before CUDA
