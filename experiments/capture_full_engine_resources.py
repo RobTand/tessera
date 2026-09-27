@@ -153,7 +153,7 @@ def prepare(args):
     config = json.loads(args.config.read_text())
     # First, before any input is read: the allocator policy binds the
     # reservation witness, and an unbound configuration cannot produce one.
-    allocator_policy = require_allocator_policy(config)
+    require_allocator_policy(config)
     artifact = None
     if args.artifact:
         # A served Tessera artifact carries its own roster and assignment in
@@ -396,28 +396,50 @@ def prepare(args):
                           "scope": "prepared and sealed before both TP2 workers start; no engine ran"}),
               flush=True)
         return
+    env = apply_run_plan_environment(os.environ.copy(), path)
+    os.execve(sys.executable, [sys.executable, "-m", "experiments.capture_full_engine_resources",
+                             "--run-plan", str(path.resolve())], env)
+
+
+def apply_run_plan_environment(env, plan_path):
+    """Set, in ``env``, what a ``--run-plan`` process needs for its plan's mode.
+
+    vLLM spawns every worker as a fresh interpreter, so the resource bootstrap
+    reaches a worker only through this environment: the plan path in
+    ``TESSERA_ENGINE_RESOURCE_PLAN`` and ``resource_bootstrap`` first on
+    ``PYTHONPATH``. The single-process ``prepare`` exec, the TP2 head driver
+    and the TP2 peer all call this one function. The tree root is the one this
+    module was imported from, which is the tree on ``PYTHONPATH``; a caller's
+    own script path can be a separate mount of ``experiments/``.
+    """
+    plan_path = Path(plan_path).resolve()
+    plan = json.loads(plan_path.read_text())
+    config = plan["selected_configuration"]
     root = Path(__file__).resolve().parents[1]
-    env = os.environ.copy()
     env.update(config["environment"])
     # The worker's effective policy is the bound one, exactly: "unset" means
     # the variable is absent from the worker environment, never the literal
     # string, so a capture that claims "unset" cannot have run under a policy.
-    if allocator_policy == UNSET_ALLOCATOR_POLICY:
+    if require_allocator_policy(config) == UNSET_ALLOCATOR_POLICY:
         env.pop(ALLOCATOR_POLICY_KEY, None)
     env.update(plan["observer_environment"])
+    mode = plan["observation_mode"]
     if mode == "resources":
-        env.update({"TESSERA_ENGINE_RESOURCE_PLAN": str(path.resolve()),
+        env.pop("TESSERA_ENGINE_TIMING_PLAN", None)
+        env.update({"TESSERA_ENGINE_RESOURCE_PLAN": str(plan_path),
                     "PYTHONPATH": str(root / "experiments/resource_bootstrap") + os.pathsep + str(root)})
     elif mode == "timings":
         env.pop("TESSERA_ENGINE_RESOURCE_PLAN", None)
-        env.update({"TESSERA_ENGINE_TIMING_PLAN": str(path.resolve()), "PYTHONPATH": str(root)})
-    else:
+        env.update({"TESSERA_ENGINE_TIMING_PLAN": str(plan_path), "PYTHONPATH": str(root)})
+    elif mode == "kv":
         # kv: the plan travels through the run-plan argument only; no bootstrap
         # module may attach to a read-only pass.
         env.pop("TESSERA_ENGINE_RESOURCE_PLAN", None)
+        env.pop("TESSERA_ENGINE_TIMING_PLAN", None)
         env.update({"PYTHONPATH": str(root)})
-    os.execve(sys.executable, [sys.executable, "-m", "experiments.capture_full_engine_resources",
-                             "--run-plan", str(path.resolve())], env)
+    else:
+        raise ValueError(f"unsupported observation mode {mode!r}")
+    return env
 
 
 def run(plan_path):
