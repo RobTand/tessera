@@ -46,7 +46,7 @@ def _tensor_file(path, names):
 SHARD_A, SHARD_B = "model-00001-of-00002.safetensors", "model-00002-of-00002.safetensors"
 
 
-def _fixture(tmp_path, two_shards=False):
+def _fixture(tmp_path, two_shards=False, *, manifest_indent=None):
     """Two parts; with ``two_shards`` each part reads a different source shard."""
     source = tmp_path / "source"
     source.mkdir()
@@ -85,7 +85,7 @@ def _fixture(tmp_path, two_shards=False):
                     "export_partition": {"schema": parts.SCHEMA, "index": rank, "count": 2,
                         "identity": identity, "source_tensors": owned,
                         "output_sha256": {"model.safetensors": parts.sha256_file(path / "model.safetensors")}}}
-        (path / "tessera_serving_manifest.json").write_text(json.dumps(manifest))
+        (path / "tessera_serving_manifest.json").write_text(json.dumps(manifest, indent=manifest_indent))
         paths.append(path)
     return source, paths
 
@@ -111,13 +111,18 @@ def test_invalid_partition_refuses(value):
         parts.parse_partition(value)
 
 
-def test_checked_union_writes_one_complete_checkpoint_without_reencoding(tmp_path):
-    source, paths = _fixture(tmp_path)
+@pytest.mark.parametrize("manifest_indent", [None, 2])
+def test_checked_union_writes_one_complete_checkpoint_without_reencoding(tmp_path, manifest_indent):
+    source, paths = _fixture(tmp_path, manifest_indent=manifest_indent)
+    old_bytes = [(path / "tessera_serving_manifest.json").read_bytes() for path in paths]
     out = tmp_path / "merged"
     parts.merge_serving_parts(paths[::-1], out, source)
     config = json.loads((out / "config.json").read_text())
     index = json.loads((out / "model.safetensors.index.json").read_text())
-    manifest = json.loads((out / "tessera_serving_manifest.json").read_text())
+    written = (out / "tessera_serving_manifest.json").read_bytes()
+    manifest = json.loads(written)
+    assert written == json.dumps(manifest, separators=(",", ":")).encode("utf-8")
+    assert [(path / "tessera_serving_manifest.json").read_bytes() for path in paths] == old_bytes
     assert set(index["weight_map"]) == set(parts.source_identity(source)["tensors"])
     assert len(set(index["weight_map"].values())) == 2
     assert config["quantization_config"]["ignore"] == ["lm_head", "model.layers.0.norm", "model.layers.1.norm"]

@@ -1,5 +1,16 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-09-27 for compact serving-manifest serialization (tessera#635).
+New main, stock-twin, merged-part and fresh residency-refresh manifests use
+`serving_parts.write_serving_manifest`: UTF-8 JSON with `separators=(",", ":")`,
+no indentation, and the existing insertion order. Parsed values, wire payloads,
+contract cells and serving gates do not change. Readers accept old pretty JSON
+and new compact JSON; shell lane display parses JSON instead of whitespace.
+File attestations still hash actual disk bytes; canonical cached-unit identities
+remain canonical. Existing artifacts and their bound digests are never rewritten
+for whitespace alone. The real-artifact size comparison is recorded in
+`docs/measurements/compact-serving-manifest-2026-09-27.md`.
+
 Re-stamped 2026-09-27 for the approved M3 TP2 observer integration
 (tessera#650; PrismaQuant#1463). The clean `e3f75d880` producer protocol is
 integrated without its uncommitted profiler-health work. Integer TP1 retains

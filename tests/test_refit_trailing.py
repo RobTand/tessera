@@ -286,9 +286,14 @@ def test_the_export_flag_records_the_trailing_objective(tmp_path, monkeypatch):
     the artifacts that produced the numbers (tessera#60).
     """
     def blocks(out: Path) -> "tuple[dict, dict]":
-        wire = json.loads((out / "tessera_serving_manifest.json").read_text())
-        twin = json.loads(
-            (out.parent / "twin" / "tessera_stock_twin_manifest.json").read_text())
+        manifests = []
+        for path in (out / "tessera_serving_manifest.json",
+                     out.parent / "twin" / "tessera_stock_twin_manifest.json"):
+            raw = path.read_bytes()
+            parsed = json.loads(raw)
+            assert raw == json.dumps(parsed, separators=(",", ":")).encode("utf-8")
+            manifests.append(parsed)
+        wire, twin = manifests
         return wire["activation_aware"], twin["activation_aware"]
 
     control_wire, control_twin = blocks(

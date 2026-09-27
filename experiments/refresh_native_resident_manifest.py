@@ -16,7 +16,8 @@ import subprocess
 from safetensors import safe_open
 from tessera.fused import parse_fused
 from tessera.kernel_window_gemv import TILE_ROWS
-from tessera.serving_parts import dense_resident_bytes_resident_mode, summarize_modules
+from tessera.serving_parts import (dense_resident_bytes_resident_mode, summarize_modules,
+                                   write_serving_manifest)
 from tessera.unit_artifact import parse_unit_metadata
 
 
@@ -96,7 +97,7 @@ def refresh(source: Path, output: Path):
                'scope': 'native dense resident footprint only; checkpoint bytes hard-linked unchanged; no new serving qualification',
                'updates': updates}
     manifest['native_resident_refresh'] = {key: value for key, value in receipt.items() if key != 'updates'}
-    (output / 'tessera_serving_manifest.json').write_text(json.dumps(manifest, indent=2) + '\n')
+    write_serving_manifest(output / 'tessera_serving_manifest.json', manifest)
     (output / 'native-resident-refresh.json').write_text(json.dumps(receipt, indent=2) + '\n')
     print(json.dumps({'output': str(output), 'native_modules': len(updates),
                       'before': sum(row['before'] for row in updates.values()),
