@@ -8,7 +8,13 @@
 # only under <out_dir> (HOME/TMPDIR/Triton cache included).
 set -euo pipefail
 CHECKOUT=$(realpath "$1"); OUT=$(realpath -m "$2"); shift 2
-IMAGE_REF=${ORACLE_IMAGE:-localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5}
+IMAGE_REF=${ORACLE_IMAGE:?set ORACLE_IMAGE to the immutable PB-declared measurement image}
+source "$CHECKOUT/experiments/runtime_image.sh"
+runtime_image_require "$IMAGE_REF"
+IMAGE_ENV=()
+while IFS= read -r line; do
+  [[ -z "$line" ]] || IMAGE_ENV+=(-e "$line")
+done <<< "$RUNTIME_IMAGE_CONTAINER_ENV"
 MEAS=/mnt/shared/tessera-measurements/glm-canonical-census-20260908
 mkdir -p "$OUT/home" "$OUT/tmp" "$OUT/triton"
 CPUS=$(python3 -c 'import os; s=sorted(os.sched_getaffinity(0)); print(",".join(map(str,s)))')
@@ -37,5 +43,5 @@ exec docker run --rm --gpus all --ipc=host --network=host --cpuset-cpus "$CPUS" 
   -e NUMEXPR_NUM_THREADS=1 -e PYTHONUNBUFFERED=1 \
   -e ORACLE_IMAGE="$IMAGE_REF" -e TESSERA_HEAD="$HEAD" -e TESSERA_STATE="$STATE" \
   -e PB_ACTION_KEY="${PB_ACTION_KEY:-${PRISMABUILD_ACTION_KEY:-}}" \
-  "${EXTRA_MOUNTS[@]}" --entrypoint "${COMMAND[0]}" -w /work "$IMAGE_REF" \
+  "${IMAGE_ENV[@]}" "${EXTRA_MOUNTS[@]}" --entrypoint "${COMMAND[0]}" -w /work "$IMAGE_REF" \
   "${COMMAND[@]:1}" --out "$OUT" "$@"
