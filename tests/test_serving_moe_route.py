@@ -203,23 +203,22 @@ def test_the_served_records_symbol_reduces_into_the_expectation():
     and the comparison is over the entry point, which is the part a route
     promises.
 
-    The record above is the materialising FP8 launch, which left this build's
-    table at contract v38 (tessera#604), so the FP8 expectation no longer
-    admits it.  The suffix rule is the same for every route that stamps the
-    modular kernel; the NVFP4 stack's materialising launch still does, and is
-    where the reduction is pinned now.
+    The record above is the materialising launch.  It left this build's FP8
+    table at contract v38 and its NVFP4 table at v39 (tessera#604), so no
+    route's expectation admits it any more; the suffix rule is pinned against
+    the pair the record reduces to, which is what a pre-v39 receipt carries.
     """
     from tessera.serving import nvfp4_moe_route
 
     served = (moe_route.census_symbol_base(SERVED_MOE_SYMBOL), SERVED_MOE_DECODER)
+    assert served == (moe_route.GEMM_SYMBOL, SERVED_MOE_DECODER)
     assert served not in moe_route.census_expected(compiled=False)["batch"]
-    expected = nvfp4_moe_route.census_expected(compiled=False)["batch"]
-    assert served in expected
-    assert moe_route.census_symbol_base(SERVED_MOE_SYMBOL) == moe_route.GEMM_SYMBOL
-    # ...and a suffix is not a licence: another entry point still fails, with
-    # or without one.
+    assert served not in nvfp4_moe_route.census_expected(compiled=False)["batch"]
+    # ...and a suffix is not a licence: another entry point reduces to itself,
+    # with or without one.
     for other in ("torch._scaled_mm", "torch._scaled_mm:TRITON", "tessera_window_gemv::gemv"):
-        assert (moe_route.census_symbol_base(other), SERVED_MOE_DECODER) not in expected
+        assert moe_route.census_symbol_base(other) == other.partition(":")[0]
+        assert (moe_route.census_symbol_base(other), SERVED_MOE_DECODER) != served
 
 
 def test_the_dense_fp8_expectation_would_refuse_every_served_stack():

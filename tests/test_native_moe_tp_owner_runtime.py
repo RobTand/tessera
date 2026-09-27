@@ -25,6 +25,9 @@ torch = pytest.importorskip("torch")
 from experiments import bench_native_moe_operator as moe
 from experiments import bench_native_operator as dense
 
+#: The routed NVFP4 stack's one launch since contract v39 (tessera#604).
+A4_GROUPED = ("tessera.kernel_a4.a4_span2_grouped_gemm", "native_span2_grouped")
+
 GLM_UNIT = "model.language_model.layers.3.mlp.experts"
 A4 = "TESSERA_E2M1x2_K2_R896"
 A8 = "TESSERA_E4M3_K1_R1024"
@@ -529,16 +532,20 @@ def test_the_owner_route_set_comes_from_the_plugins_own_launch_table():
     """The panel's admissible route is the plugin's, per family and per world.
 
     ``TESSERA_NVFP4`` has a routed launch table row (its production expert
-    builder serves a world above one).  ``TESSERA_BF16`` has one since
+    builder serves a world above one); since contract v39 it is the grouped A4
+    GEMM alone.  ``TESSERA_BF16`` has one since
     tessera#609 -- the compact lane's folded pair, experimental until a cell
     attests it -- and since tessera#613 this harness prices that production
     owner, so the folded pair is the only admissible route.  Both statements
     are the plugin's, read here rather than restated.
     """
     materialising = ("vllm.fused_moe.modular_kernel", "torch_materialize_stock")
-    a4 = moe.owner_launch_pairs(moe.owner_wire(_glm_shape(1, A4)), world=1)
-    assert a4 and all(len(pair) == 2 for pair in a4)
-    assert materialising in a4
+    # Contract v39 (tessera#604): the NVFP4 expert stack's one launch is the
+    # grouped A4 GEMM at every world; the materialising pair left the table.
+    for world in (1, 2):
+        a4 = moe.owner_launch_pairs(moe.owner_wire(_glm_shape(world, A4)), world=world)
+        assert a4 == {A4_GROUPED}, world
+        assert materialising not in a4
     # The backend suffix a served record carries is not a second route.
     assert moe.census_symbol_base("vllm.fused_moe.modular_kernel:FLASHINFER_CUTLASS") == materialising[0]
     a16 = moe.owner_launch_pairs(moe.owner_wire(_glm_shape(1, A16)), world=1)
@@ -785,7 +792,7 @@ def _owner_panel(tp, format_name, route_symbol, decoder, member_unit=None):
 
 @pytest.mark.parametrize("tp,format_name,symbol,decoder", [
     (1, A8, "tessera.native_window_moe.NativeWindowMoE.__call__", "native_window_moe_compact"),
-    (2, A4, "vllm.fused_moe.modular_kernel:FLASHINFER_CUTLASS", "torch_materialize_stock"),
+    (2, A4, "tessera.kernel_a4.a4_span2_grouped_gemm", "native_span2_grouped"),
     (2, A8, "vllm.fused_moe.modular_kernel:TRITON_REF", "research_selected_triton_window"),
     (1, A16, "tessera.native_window_moe.NativeWindowMoE.__call__",
      "native_window_moe_compact_folded"),
@@ -810,8 +817,7 @@ def test_a_bf16_panel_on_the_selected_owners_route_is_refused(backend):
 @pytest.mark.parametrize("mutation", ["policy", "rung", "execution", "decoder", "symbol"])
 def test_the_panel_refuses_a_route_from_another_family_or_cut(mutation):
     """The literals this harness used to carry cannot come back silently."""
-    panel = _owner_panel(2, A4, "vllm.fused_moe.modular_kernel:FLASHINFER_CUTLASS",
-                         "torch_materialize_stock")
+    panel = _owner_panel(2, A4, A4_GROUPED[0], A4_GROUPED[1])
     route = panel["phases"]["prefill"]["expected_route"]
     if mutation == "policy":
         route["policy"] = "TESSERA_FP8:resident"
@@ -852,8 +858,7 @@ def test_a_member_named_by_its_projection_reaches_the_panel_validator():
     priced from -- it must validate, and a name pointing at another role must
     still be refused.
     """
-    panel = _owner_panel(2, A4, "vllm.fused_moe.modular_kernel:FLASHINFER_CUTLASS",
-                         "torch_materialize_stock", member_unit=_glm_projection_unit)
+    panel = _owner_panel(2, A4, A4_GROUPED[0], A4_GROUPED[1], member_unit=_glm_projection_unit)
     assert [m["unit"] for m in panel["members"][:3]] == [
         f"{GLM_UNIT}.0.gate_proj", f"{GLM_UNIT}.0.up_proj", f"{GLM_UNIT}.0.down_proj"]
     assert panel["members"][0]["role"] == "w1"
@@ -875,8 +880,7 @@ def test_the_panel_binds_the_source_at_the_module_and_the_render_at_the_rank():
     direction is refused here at TP2 -- a rank-local source and a module-wide
     render are each the wrong tensor for their own claim.
     """
-    panel = _owner_panel(2, A4, "vllm.fused_moe.modular_kernel:FLASHINFER_CUTLASS",
-                         "torch_materialize_stock")
+    panel = _owner_panel(2, A4, A4_GROUPED[0], A4_GROUPED[1])
     member = panel["members"][0]
     declared = moe._declared_member_shape(panel["shape"], member["role"])
     rank_local = moe._member_shape(panel["shape"], member["role"])

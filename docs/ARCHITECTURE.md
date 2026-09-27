@@ -1,5 +1,50 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-09-26 for the GLM-image E2M1 cells and the rung widening
+(tessera#604, second half; contract v39). Eight TP1 eager resident route
+censuses of eight-layer GLM-5.3-Flash stubs on the GLM serving image
+`localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a0...` recorded all 21
+Tessera modules of each stub served in both regimes, `problems: []`, on wires
+cut from the union encode campaign with no new encode
+(`docs/measurements/tessera-glm-u1-census-2026-09-26.md`,
+`experiments/results/glm53_u1_stub_d_tp1_eager_census.json` and its seven
+siblings, replayed by `tests/test_glm_u1_census_cells.py`).
+
+WITHDRAWN, each for a launch this build cannot make:
+- the routed `TESSERA_E2M1_K2` pair on image `a5424378...`, which named
+  `(vllm.fused_moe.modular_kernel, torch_materialize_stock)` at q256 128..896
+  (`nvfp4_moe_route` always builds the native grouped stacks);
+- the dense `TESSERA_E2M1_K2` pair on the serve-image pin, which named
+  `(torch._scaled_mm, native_span2)` (`nvfp4_route.apply` runs
+  `tessera.kernel_a4.a4_span2_gemm` on every forward).
+
+Both launch rows leave `scheme.ROUTE_LAUNCHES`. LOST, with no replacement:
+E2M1 dense on the pin image (and its 2026-09-02 batch KL lower bound), E2M1
+dense at streamed residency, E2M1 in compiled mode, and routed E2M1 at q256
+128..768.
+
+MINTED on the GLM image: `tessera_e2m1_k2_{dense,routed_moe}_sm121_{decode,batch}_resident`
+at q256 896 on `(a4_span2_gemm, native_span2_gemm)` and
+`(a4_span2_grouped_gemm, native_span2_grouped)`. Both A4 pairs leave
+`scheme.EXPERIMENTAL_LAUNCHES`, which is now empty. The routed ids reuse the
+withdrawn scope's spelling.
+
+WIDENED on the same image and launches as v38: dense E4M3 to
+832/864/896/928/960/1024/1088, dense BF16 to 832/864/880/896/928/960/1024/1088,
+and routed E4M3 to 832/864/896/928/944/960/1024/1088. Routed BF16 stays at 1024.
+The format rows' attested rungs and `attested_wire` stamps widen to match.
+Several rungs rest on a single module or stack: dense BF16 864/880/896/928 and
+dense E4M3 864/896/928 on layer 7's shared-expert `down_proj`, and routed E4M3
+rungs other than 832 on one stack each.
+
+`activation_quantizers.platforms.sm_121` gains the GLM image's table, which is
+byte-identical to the `a5424378` one.
+
+Still not attested: compiled execution, TP > 1, streamed residency, quality
+and timing. The native routed kernels measure 1.2-5.9x slower than vLLM's stock
+fused MoE on the same wires (tessera#640); that is a performance finding, not
+a change to any cell.
+
 Re-stamped 2026-09-26 for the bounded full GLM-5.3-Flash TP2 serve
 (tessera#626). With both routed-window staging fixes on merged Tessera
 `f790bcc1aaa039388f6218ae3ef70155a8a9e6fa`, the unchanged 120-shard

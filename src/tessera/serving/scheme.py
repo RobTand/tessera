@@ -429,12 +429,9 @@ WINDOW_GEMV_SYMBOL = "tessera_window_gemv::gemv"
 WINDOW_GEMM_SYMBOL = "tessera::window_gemm_dense"
 
 #: The native lanes' own spellings, in the module that executes them, so a
-#: route owner reports the same string the code does.  The two A4 pairs
-#: below are EXPERIMENTAL: the dispatch can make these launches and the
-#: routes' census expectation must know them, while no ``lane_eligibility``
-#: cell attests either (``EXPERIMENTAL_LAUNCHES``).  The window MoE adapter
-#: left that set at contract v38 (tessera#604), when a served census earned
-#: it cells.  A pair leaves the set when a receipt earns it a cell.
+#: route owner reports the same string the code does.  The window MoE adapter
+#: left ``EXPERIMENTAL_LAUNCHES`` at contract v38 and the two A4 pairs below at
+#: contract v39 (tessera#604), each when a served census earned it cells.
 #: A4 (E2M1/span-2) dense: ``tessera.kernel_a4.a4_span2_gemm``.
 A4_DENSE_GEMM_SYMBOL = "tessera.kernel_a4.a4_span2_gemm"
 #: A4 routed experts: ``tessera.kernel_a4.a4_span2_grouped_gemm``.
@@ -505,26 +502,27 @@ def _dense_native_window_launch(decoder: str) -> tuple[dict, ...]:
 
 
 ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
-    # One launch: the span-2 kernel decodes and the scaled GEMM runs, in both
-    # regimes and both residencies.  The stock-materialise decoder is what runs
-    # when the extension is ABSENT, which is published as a fallback
-    # (``ext.NATIVE_EXTENSIONS[].when_unavailable``) and is not a launch an
-    # attested cell may name.
+    # The dense half is ONE launch, the fused span-2 GEMM below.  The
+    # ``(torch._scaled_mm, native_span2)`` entry that stood before it -- the
+    # span-2 kernel decoding a stock tile for a scaled GEMM -- left this table
+    # at contract v39 (tessera#604, second half) with the two pin-image dense
+    # cells that named it: ``nvfp4_route``'s ``process_weights_after_loading``
+    # always prepares native A4 units and ``apply`` runs ``a4_span2_gemm`` on
+    # every forward, so the build cannot make it.  The v38 reason for the FP8
+    # expert row, applied to the NVFP4 dense one.
     TESSERA_NVFP4: (
-        {"symbol": ROUTES[TESSERA_NVFP4]["gemm_symbol"], "decoder": _DECODER_NATIVE_SPAN2,
-         "regimes": _ALL_REGIMES, "modes": _ALL_MODES, "lane": None,
-         "structures": (STRUCTURE_DENSE,),
-         "when_lane_absent": True},
-        # The native A4 dense GEMM (experimental): the compact loader's packed
-        # span-2 planes decoded in-kernel by tessera.kernel_a4, no materialised
-        # stock tile.  No lane and no fallback flag -- it is a launch, and
-        # EXPERIMENTAL_LAUNCHES keeps it out of the contract validator's view.
+        # The native A4 dense GEMM: the compact loader's packed span-2 planes
+        # decoded in-kernel by tessera.kernel_a4, no materialised stock tile,
+        # in both regimes and both residencies.  No lane and no fallback flag.
+        # Attested since contract v39 (tessera#604) by the GLM-image dense
+        # E2M1 cells.
         {"symbol": A4_DENSE_GEMM_SYMBOL, "decoder": _DECODER_NATIVE_SPAN2_GEMM,
          "regimes": _ALL_REGIMES, "modes": _ALL_MODES, "lane": None,
          "structures": (STRUCTURE_DENSE,),
          "when_lane_absent": False},
-        # The native A4 routed GEMM (experimental, resident like every expert
-        # stack): the grouped form over the compact loader's planes.  It is
+        # The native A4 routed GEMM (resident like every expert stack): the
+        # grouped form over the compact loader's planes, attested since
+        # contract v39 by the GLM-image routed E2M1 cells.  It is
         # the expert half's ONLY launch.  The materialising
         # ``(MOE_GEMM_SYMBOL, _DECODER_TORCH_STOCK)`` entry that stood before
         # it left this table at contract v39 (tessera#604, second half):
@@ -621,11 +619,21 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
 #: folded GEMM, routed E4M3 at 896 on the compact adapter and routed BF16 at
 #: 1024 on its folded form.  The eight ``*_sm121_{decode,batch}_resident``
 #: cells on that image name them, in the same change, for the v34 reason.
-#: The two A4 pairs stay: no A4 census exists (#575).
-EXPERIMENTAL_LAUNCHES = frozenset({
-    (A4_DENSE_GEMM_SYMBOL, _DECODER_NATIVE_SPAN2_GEMM),
-    (A4_GROUPED_GEMM_SYMBOL, _DECODER_NATIVE_SPAN2_GROUPED),
-})
+#:
+#: BOTH A4 PAIRS LEFT at contract v39 (tessera#604, second half):
+#: ``(A4_DENSE_GEMM_SYMBOL, _DECODER_NATIVE_SPAN2_GEMM)`` and
+#: ``(A4_GROUPED_GEMM_SYMBOL, _DECODER_NATIVE_SPAN2_GROUPED)``.  A served route
+#: census of an eight-layer GLM-5.3-Flash stub with every Linear the plan
+#: encodes on ``TESSERA_E2M1_K2`` at q256 896, on the GLM serving image, eager,
+#: resident, recorded all sixteen dense modules (three dense MLPs and five
+#: shared-expert blocks) on the span-2 GEMM and all five routed stacks on the
+#: grouped form, in both regimes, ``problems: []``
+#: (docs/measurements/tessera-glm-u1-census-2026-09-26.md).  The four
+#: ``tessera_e2m1_k2_{dense,routed_moe}_sm121_{decode,batch}_resident`` cells
+#: on that image name them, in the same change, for the v34 reason.  Nothing
+#: is experimental after v39; the set stays so the next unattested launch has
+#: a place to stand.
+EXPERIMENTAL_LAUNCHES: frozenset = frozenset()
 
 
 def route_launches(route: str, *, structure: str = STRUCTURE_DENSE,

@@ -79,13 +79,22 @@ FIXTURE_V39 = ROOT / "tests" / "fixtures" / "lane_eligibility_cells_withdrawn_v3
 
 
 def withdrawn_v39_cells() -> list[dict]:
-    """The two routed E2M1 cells contract v39 withdrew, as v38 published them.
+    """The four E2M1 cells contract v39 withdrew, as v38 published them.
 
-    They named ``(vllm.fused_moe.modular_kernel, torch_materialize_stock)``,
-    which ``nvfp4_moe_route`` no longer makes (tessera#604, second half).
-    Their image is the two-rank stub serve's, carried verbatim.
+    The two routed cells named ``(vllm.fused_moe.modular_kernel,
+    torch_materialize_stock)`` and the two dense cells ``(torch._scaled_mm,
+    native_span2)``; neither route makes its pair any more (tessera#604,
+    second half).  The routed cells' image is the two-rank stub serve's,
+    carried verbatim; the dense cells' is the serve-image pin, stored as
+    ``PIN_PLACEHOLDER`` and resolved here like the v31 fixture's.
     """
-    return json.loads(FIXTURE_V39.read_text(encoding="utf-8"))["cells"]
+    from tessera.serving.runtime_image import pinned_reference
+
+    cells = json.loads(FIXTURE_V39.read_text(encoding="utf-8"))["cells"]
+    for cell in cells:
+        if cell["runtime"]["image"] == PIN_PLACEHOLDER:
+            cell["runtime"]["image"] = pinned_reference()
+    return cells
 
 
 WITHDRAWN_V39_IDS = frozenset(cell["id"] for cell in withdrawn_v39_cells())

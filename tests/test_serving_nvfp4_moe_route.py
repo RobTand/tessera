@@ -54,7 +54,11 @@ from tessera.serving.scheme import (                               # noqa: E402
 
 HIDDEN, INTER, EXPERTS, Q256 = 128, 256, 3, 896
 SHARDS = ("w1", "w3", "w2")     # gate, up, down: the runtime's shard ids
-KERNEL_PAIR = ("vllm.fused_moe.modular_kernel", "torch_materialize_stock")
+#: The one launch a routed NVFP4 stack makes, attested since contract v39
+#: (tessera#604).  The materialising ``(vllm.fused_moe.modular_kernel,
+#: torch_materialize_stock)`` row left the table with the v39 withdrawal.
+KERNEL_PAIR = ("tessera.kernel_a4.a4_span2_grouped_gemm", "native_span2_grouped")
+WITHDRAWN_PAIR = ("vllm.fused_moe.modular_kernel", "torch_materialize_stock")
 
 
 def _native_prep_available() -> bool:
@@ -774,15 +778,16 @@ def test_census_expectation_is_the_shared_launch_table():
     expected = nvfp4_moe_route.census_expected()
     assert set(expected) == {"batch", "decode"}
     for regime, pairs in expected.items():
-        # The route reports the native lane's own pairs on top of the attested
-        # dispatch (``experimental_launch_pairs``); the attested set is what
-        # ``launch_pairs`` returns and no qualification is promoted here.
+        # The route reports the attested dispatch plus any experimental pairs
+        # (``experimental_launch_pairs``).  Since v39 the grouped A4 pair is
+        # attested and the experimental view is empty, so the expectation IS
+        # the attested launch, and the withdrawn materialising pair is not in it.
         native = experimental_launch_pairs(
             TESSERA_NVFP4, structure=STRUCTURE_ROUTED_MOE, regime=regime,
             mode="resident")
-        assert native, "the native lane must publish its own pairs"
-        assert pairs == {KERNEL_PAIR} | native
-        # the attested view itself is unchanged
+        assert not native
+        assert pairs == {KERNEL_PAIR}
+        assert WITHDRAWN_PAIR not in pairs
         assert {KERNEL_PAIR} == launch_pairs(TESSERA_NVFP4, structure=STRUCTURE_ROUTED_MOE,
                                              regime=regime, mode="resident")
         assert pairs.isdisjoint(launch_pairs(TESSERA_NVFP4, regime=regime))
@@ -790,7 +795,7 @@ def test_census_expectation_is_the_shared_launch_table():
                                 regime=regime, mode="streamed")
     assert nvfp4_moe_route.census_expected(compiled=True) == expected
     assert nvfp4_moe_route.census_symbol_base("vllm.fused_moe.modular_kernel:FLASHINFER_CUTLASS") \
-        == KERNEL_PAIR[0]
+        == WITHDRAWN_PAIR[0]
     # A platform the contract publishes as unbacked for E2M1_K2 expects nothing.
     unbacked = nvfp4_moe_route.census_expected(platform="gfx1151")
     assert set(unbacked) == set(expected) and not any(unbacked.values())
