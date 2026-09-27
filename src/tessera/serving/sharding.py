@@ -19,8 +19,7 @@ plane, and it is why the cut belongs to ``tessera.layout.slice_unit`` -- a
 wire-format operation with its own exactness proof -- and not to a serving
 route reaching into planes it does not own.
 
-TODAY.  ``tp_size == 1`` is what this plugin has SERVED, and at ``tp_size == 1``
-the seam returns the whole unit unchanged -- the same object, so the caller's
+AT TP1.  The seam returns the whole unit unchanged -- the same object, so the caller's
 parsed view of it stays valid and the served arithmetic is bit-identical to a
 build with no TP support at all.  At ``tp_size > 1`` the seam CUTS: it asks
 ``tessera.layout.can_shard`` first (refusing with the granularity the operator
@@ -140,11 +139,10 @@ name rather than defaulted.
 
 MoE can reuse these unit-level cuts: tensor parallelism inside each expert
 partitions gate/up rows independently and down columns; expert parallelism
-assigns whole experts instead. The production routed-expert builder refuses
-TP above one and does not call these slicing functions. The separate explicit
-``ResearchSelectedMoeConfig(expected_tensor_parallel_size=2)`` path reuses them
-for rank-local packed expert ownership; dense loader axes alone do not
-qualify a production MoE TP route.
+assigns whole experts instead. Routed-expert builders reuse these cuts for
+rank-local packed expert ownership where their own route supports that world.
+Dense loader axes alone do not qualify a production MoE TP route; the packaged
+runtime contract and the routed builder's own gates remain authoritative.
 """
 from __future__ import annotations
 
