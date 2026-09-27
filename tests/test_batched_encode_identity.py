@@ -39,6 +39,10 @@ FAMILIES = [
     ("E4M3_K1@1024", E4M3_GRID, 1024),
     ("E2M1_K2@896", K2, 896),
     ("E4M3_K1@1042", E4M3_GRID, 1042),
+    # The PACT G2 routed rung: the window body over the CHANNEL plane with R4
+    # and R5 columns inside every LDLQ block, so each span's two rate calls run
+    # as one group on separate streams (``encode._run_group``).
+    ("BF16_K1@1088", BF16_GRID, 1088),
 ]
 assert FAMILIES[2][2] == tcq_cap_q256(K2)
 assert wire_recipe(K2, 896).body is BodyKind.TCQ
