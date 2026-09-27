@@ -6,7 +6,8 @@ PACT G2 w01b shapes (GLM-5.3 routed experts, BF16_K1 at q256 1088 and 1152, 16
 units a batch), a batch encodes 18.5-22.4 % faster, with 1.18-1.23x the units per
 joule. All 18 byte comparisons against `master` match: every unit's wire blob and
 every `EncodedUnit` field. The GPU-gated test receipts are in the pull request
-(tessera#669).
+(tessera#669). The A/B ran on the campaign image's torch 2.13.0+cu130, and the
+GPU-gated tests ran in the pinned test venvs on torch 2.11.0+cu130.
 
 Date: 2026-09-27. Before: `master` `a3e83875d`. After: `64cc379a6`, on that
 `master`. Box: GB10 / DGX Spark `sparklina`, NVIDIA driver 595.91.07, 140 W
