@@ -136,6 +136,15 @@ unlisted rung has cell agreement `null`:
 that observation can support review of a new cell, while the production
 admission gate continues to refuse until the cell and runtime pin are published.
 
+Re-stamped 2026-09-27 for explicit cached-adoption proof admission and
+multi-rung served-activation policies (tessera#644). `CachedUnitBundle` defaults
+to strict proof authorization; a caller may explicitly select permissive mode,
+which retains structured per-unit warnings through composed cohorts and export
+receipts. All identity, bound-document digest and wire checks remain hard
+failures. The v2 served policy takes its A4 rung scope from its format list;
+v1 retains its single-rung behavior. No runtime contract cell, kernel, launch,
+wire byte, recipe or serving qualification changes.
+
 Re-stamped 2026-09-26 for independent cached-unit cohort composition
 (tessera#630). `tessera.cached_units.v3` binds original v1/v2 child manifests
 by canonical absolute path and file SHA-256. Their complete, disjoint unit
@@ -6071,8 +6080,19 @@ runtime qualification.
 `tessera.cached_units.v2` closes a selected whole-source roster over explicit
 canonical wire roots and exact historical producer package hashes. Unit
 receipts and wire bytes remain unchanged. Every selected encoder departure
-from the checkpoint seal carries its bound catalog adoption and migration
-proof. PrismaQuant authenticates the catalog extension and proof semantics
+from the checkpoint seal carries its bound catalog adoption. By default its
+migration proof must authorize that adoption. The caller-only keyword
+`encoder_source_proof_mode="permissive"` (export CLI
+`--cached-encoder-source-proof-mode permissive`) instead stamps each missing or
+non-covering proof in `bundle.warnings`: `tessera.cached_unit_warning.v1`, with
+unit, code, reason and the submitted proof binding. Unknown modes refuse;
+`strict` is the default. The mode is never inferred from the environment or
+bundle contents. Composition forwards it to every child and retains each
+warning; export serializes both the mode and warnings in its cached intake
+receipt. Identity equality (unit, source, calibration, encoder fixture and
+projection), named-document SHA-256, blob bytes/digests and shapes still refuse
+in both modes. Unrelated unused proof authority still refuses. PrismaQuant
+authenticates the catalog extension and proof semantics
 before publication. The extension is `prismaquant.joint_catalog_extension.v1`,
 which binds one completed Stage A receipt, or `.v2`, which binds the
 Stage A run header so an extension exists from the first sealed band. Tessera
@@ -6083,7 +6103,11 @@ the unchanged strict cached-wire verifier. Duplicate leaf names are permitted on
 in distinct roots. Symlink roots/files and partial or surplus ownership refuse.
 
 A separately bound served-activation policy records selected A4 executed-group
-scales. These runtime input values do not rewrite the historical wire's
+scales. Policy v1 retains its exact single `TESSERA_E2M1_K2_R896` scope. Policy
+v2 carries a nonempty sorted unique `formats` list: every adopted `E2M1x2` unit
+whose q256 format is listed must have exactly its bound executed-group scale,
+and no other served entry is accepted. The rung list is policy data, not a
+reader gamut roster. These runtime input values do not rewrite the historical wire's
 calibration identity. Export checks the actual fp32 scale file against those
 values. Neither the bundle nor these checks establish serving qualification.
 The v1 single-root/global-producer route is unchanged.

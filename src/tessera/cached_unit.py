@@ -397,7 +397,12 @@ def verify_cached_unit(blob: bytes, record: dict, expected_identity: dict) -> Ac
 class CachedUnitBundle:
     """Closed unit roster; all filenames/source bindings checked before reads."""
 
-    def __init__(self, manifest: dict, directory: Path, expected_units: set[str], source: dict):
+    def __init__(self, manifest: dict, directory: Path, expected_units: set[str], source: dict,
+                 *, encoder_source_proof_mode: str = "strict"):
+        if encoder_source_proof_mode not in ("strict", "permissive"):
+            raise ValueError("cached unit encoder_source_proof_mode must be strict or permissive")
+        self.encoder_source_proof_mode = encoder_source_proof_mode
+        self.warnings = []
         rooted = manifest.get("schema") == ROOTED_CACHE_SCHEMA
         composed = manifest.get("schema") == COMPOSED_CACHE_SCHEMA
         fields = {"schema", "source", "units"}
@@ -493,7 +498,9 @@ class CachedUnitBundle:
                 raise ValueError("cached unit child has no unit roster")
             if set(child_units) & set(units):
                 raise ValueError("cached unit child unit rosters overlap")
-            child = CachedUnitBundle(document, path.parent, set(child_units), manifest["source"])
+            child = CachedUnitBundle(document, path.parent, set(child_units), manifest["source"],
+                                     encoder_source_proof_mode=self.encoder_source_proof_mode)
+            self.warnings.extend(_json_copy(child.warnings))
             package = descriptor["producer_package"]
             if document["schema"] == CACHE_SCHEMA:
                 seals = {record["identity"]["encoder_source_sha256"]
@@ -529,6 +536,7 @@ class CachedUnitBundle:
                              "producer_packages": child.producer_packages,
                              "reuse_authority": child.reuse_authority,
                              "encoder_adoptions": len(child.encoder_adoptions),
+                             "warnings": child.warnings,
                              "served_activation_policy": child.served_activation_policy,
                              "served_activations": child.served_activations})
         if set(units) != set(expected_units):
@@ -609,8 +617,19 @@ class CachedUnitBundle:
                     or proof.get("pins", {}).get("old", {}).get("encoder_source_sha256") != original
                     or proof.get("pins", {}).get("new", {}).get("encoder_source_sha256") != candidate["encoder_source_sha256"]
                     or set((proof.get("fixture_id", {}).get("ids") or {}).values()) != {candidate["encoder_fixture_id"]}):
-                raise ValueError("cached unit encoder source proof does not authorize this adoption")
-            used_proofs.add(key)
+                reason = "cached unit encoder source proof does not authorize this adoption"
+                if self.encoder_source_proof_mode == "strict":
+                    raise ValueError(reason)
+                self.warnings.append({
+                    "schema": "tessera.cached_unit_warning.v1",
+                    "code": "encoder_source_proof_not_authorized", "unit": name,
+                    "reason": reason,
+                    "proof_status": ("absent" if adoption["encoder_source_proof"] is None
+                                     else "unlisted" if key not in proof_documents
+                                     else "not_authorizing"),
+                    "encoder_source_proof": _json_copy(adoption["encoder_source_proof"])})
+            if key in proof_documents:
+                used_proofs.add(key)
         if used_proofs != set(proof_documents):
             raise ValueError("rooted cached unit proof roster contains unused authority")
         policy_bound, served = manifest["served_activation_policy"], manifest["served_activations"]
@@ -623,15 +642,14 @@ class CachedUnitBundle:
                 raise ValueError("served activation values lack their bound policy")
         else:
             policy = _bound_document(policy_bound)
-            if (policy.get("schema") != "prismaquant.joint_served_activation_policy.v1"
-                    or policy.get("format") != "TESSERA_E2M1_K2_R896"):
-                raise ValueError("rooted cached unit served activation policy schema differs")
+            rates = _served_activation_rates(policy)
             groups = policy["executed_grouping"]["groups"]
             index = {name: (key, group) for key, group in groups.items() for name in group["members"]}
             expected = {}
             for name in adoptions:
                 recipe = units[name]["identity"].get("recipe", {})
-                if recipe.get("grid") == "E2M1x2" and recipe.get("q256") == 896:
+                if (recipe.get("grid") == "E2M1x2"
+                        and recipe.get("q256") in rates):
                     if name not in index:
                         raise ValueError("selected A4 unit absent from served activation policy")
                     key, group = index[name]
@@ -651,6 +669,23 @@ class CachedUnitBundle:
             expected = struct.unpack("f", struct.pack("f", value["input_global_scale"]))[0]
             if scales.get(key) != expected:
                 raise ValueError(f"{name}: exported activation scale differs from the bound served policy")
+
+
+def _served_activation_rates(policy):
+    """Read the bound policy's scope; v1 retains its original single rung."""
+    if isinstance(policy, dict):
+        if (policy.get("schema") == "prismaquant.joint_served_activation_policy.v1"
+                and policy.get("format") == "TESSERA_E2M1_K2_R896"):
+            return (896,)
+        if policy.get("schema") == "prismaquant.joint_served_activation_policy.v2":
+            import re
+            formats = policy.get("formats")
+            if (isinstance(formats, list) and formats
+                    and all(isinstance(fmt, str) and re.fullmatch(r"TESSERA_E2M1_K2_R[1-9][0-9]*", fmt)
+                            for fmt in formats)
+                    and formats == sorted(set(formats))):
+                return tuple(int(fmt.removeprefix("TESSERA_E2M1_K2_R")) for fmt in formats)
+    raise ValueError("rooted cached unit served activation policy schema differs")
 
 
 def _bound_document(bound):
