@@ -2504,6 +2504,21 @@ both the scope and that refusal as `engine_scope`.  The stock-engine capture
 `experiments/full_engine_worker.py`) owns those observations; the two are
 separate producers and neither's numbers may be composed with the other's.
 
+**One serving document feeds both legs (tessera#657).**  Re-stamped
+2026-09-27: `resolve_serving_config` resolves two exact closed
+`tessera.first_model_serving_config.v1` shapes.  The legacy operator shape
+keeps its own field set and `kernel_config == {"moe_backend": "auto"}`
+unchanged; the shared full-engine shape the TP2 observer freezes adds the
+engine-selection fields (`attention_backend` CUSTOM, `kv_cache_dtype`
+fp8_ds_mla, `language_model_only`, `trust_remote_code`) and, for a two-rank
+world, the named topology fields (`nnodes` 2, `node_rank` 0,
+`distributed_executor_backend` mp, `master_addr`, `master_port`) -- each
+validated and bound to the declared cut, never generically ignored.  The
+declared `moe_backend` is executed through the resolved `KernelConfig`, and a
+backend the factory cannot construct refuses by name; the harness never
+falls back to `auto`.  Scope, world equality, family coverage and exit codes
+are unchanged for both shapes.
+
 **One stack needs the explicit selected owner, and two must not have it.** The
 production FP8 expert builder is TP1-only, so an FP8 owner above one rank takes
 the versioned `research_selected_moe` block, which is a request field here and

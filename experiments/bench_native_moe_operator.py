@@ -922,6 +922,70 @@ def _native_config(layer):
             "is_monolithic": bool(method.is_monolithic)}
 
 
+#: The topology fields the shared full-engine document declares for a
+#: two-rank world (tessera#657).  Each is a NAMED closed field bound to the
+#: declared world in ``resolve_serving_config`` -- never a generic ignore.
+_TOPOLOGY_FIELDS = ("nnodes", "node_rank", "distributed_executor_backend",
+                    "master_addr", "master_port")
+
+#: The engine-selection fields the shared full-engine document carries beside
+#: the operator's own settings.  Named and validated, in the same closed way.
+_ENGINE_SELECTION_FIELDS = ("attention_backend", "kv_cache_dtype", "language_model_only",
+                            "trust_remote_code", "moe_backend")
+
+#: The MoE backends the native harness EXECUTES from a shared document
+#: (tessera#657 option 1).  ``triton`` is the backend the demonstrated GLM
+#: image-X engine runs; anything else -- ``auto`` included -- refuses by name
+#: instead of falling back.
+_SHARED_MOE_BACKENDS = ("triton",)
+
+
+def _validate_shared_engine_selection(args, *, tensor_parallel):
+    """Validate the shared document's named fields, bound to the declared world.
+
+    Every field is checked by name; none is ignored (tessera#657 option 1).
+    The refusals are structured so a wrong document says what is wrong, the
+    topology cannot describe a run this receipt cannot claim, and the declared
+    MoE backend is executed or refused -- never silently substituted.
+    """
+    if args["attention_backend"] != "CUSTOM":
+        raise ValueError(f"shared serving configuration attention_backend "
+                         f"{args['attention_backend']!r} is outside the demonstrated GLM lane (CUSTOM)")
+    if args["kv_cache_dtype"] != "fp8_ds_mla":
+        raise ValueError(f"shared serving configuration kv_cache_dtype {args['kv_cache_dtype']!r} "
+                         "is outside the demonstrated GLM lane (fp8_ds_mla)")
+    if args["language_model_only"] is not True:
+        raise ValueError("shared serving configuration language_model_only must be true")
+    if args["trust_remote_code"] is not True:
+        raise ValueError("shared serving configuration trust_remote_code must be true")
+    backend = args["moe_backend"]
+    if backend == "auto":
+        raise ValueError("shared serving configuration moe_backend 'auto' is a fallback the native "
+                         "harness never takes; declare the backend the engine runs")
+    if backend not in _SHARED_MOE_BACKENDS:
+        raise ValueError(f"shared serving configuration moe_backend {backend!r} is not a backend "
+                         f"the native harness executes {_SHARED_MOE_BACKENDS}")
+    kernel = args["kernel_config"]
+    if (not isinstance(kernel, dict) or set(kernel) != {"enable_flashinfer_autotune"}
+            or type(kernel["enable_flashinfer_autotune"]) is not bool):
+        raise ValueError("shared serving configuration kernel_config must be exactly "
+                         "enable_flashinfer_autotune: bool")
+    if tensor_parallel == 2:
+        if type(args["nnodes"]) is not int or args["nnodes"] != 2:
+            raise ValueError("shared serving configuration nnodes must equal the declared "
+                             "two-rank world")
+        if type(args["node_rank"]) is not int or args["node_rank"] != 0:
+            raise ValueError("shared serving configuration node_rank must be 0: the native "
+                             "harness drives the head")
+        if args["distributed_executor_backend"] != "mp":
+            raise ValueError("shared serving configuration distributed_executor_backend must be 'mp'")
+        if not isinstance(args["master_addr"], str) or not args["master_addr"]:
+            raise ValueError("shared serving configuration master_addr must be a non-empty string")
+        if type(args["master_port"]) is not int or not 1 <= args["master_port"] <= 65535:
+            raise ValueError("shared serving configuration master_port must be an integer "
+                             "in [1, 65535]")
+
+
 def resolve_serving_config(path, runtime_image, *, tensor_parallel):
     """Derive the factory context from explicit versioned engine settings.
 
@@ -931,6 +995,14 @@ def resolve_serving_config(path, runtime_image, *, tensor_parallel):
     ``tensor_parallel`` is the OWNER's declared cut, and the document has to
     say the same thing: a configuration is not a place to discover the world
     size the receipt will claim.
+
+    Two exact closed shapes resolve (tessera#657): the legacy operator shape
+    (``kernel_config == {"moe_backend": "auto"}``, no engine-selection or
+    topology fields) and the shared full-engine shape the TP2 observer freezes
+    in ONE document for both legs.  The shared shape's engine-selection and
+    topology fields are named closed fields bound to the declared world, and
+    the declared MoE backend is executed or refused by name -- the harness
+    never falls back to ``auto``.
     """
     import os
     from vllm.config import (VllmConfig, CacheConfig, ParallelConfig,
@@ -946,14 +1018,28 @@ def resolve_serving_config(path, runtime_image, *, tensor_parallel):
     if document.get("runtime_image") != runtime_image:
         raise ValueError("serving configuration image differs from requested runtime")
     args = document["engine_args"]
-    required = {"data_parallel_size", "dtype", "enable_chunked_prefill", "enable_expert_parallel",
+    base = {"data_parallel_size", "dtype", "enable_chunked_prefill", "enable_expert_parallel",
         "enable_prefix_caching", "enforce_eager", "gpu_memory_utilization", "kernel_config",
         "max_model_len", "max_num_batched_tokens", "max_num_seqs", "pipeline_parallel_size",
         "tensor_parallel_size"}
-    optional = {"kv_cache_memory_bytes"} & set(args)
-    dense._fields(args, required | optional, "serving engine arguments")
+    optional = {"kv_cache_memory_bytes"} & set(args) if isinstance(args, dict) else set()
+    legacy_fields = base | optional
+    # The document's own declared cut decides which shared shape is closed, so
+    # offering a different owner cut still refuses on scope, not on field shape.
+    declared = args.get("tensor_parallel_size") if isinstance(args, dict) else None
+    world = declared if type(declared) is int and declared in (1, 2) else tensor_parallel
+    shared_fields = (base | optional | set(_ENGINE_SELECTION_FIELDS)
+                     | (set(_TOPOLOGY_FIELDS) if world == 2 else set()))
+    if isinstance(args, dict) and set(args) == set(legacy_fields):
+        shape = "legacy"
+    elif isinstance(args, dict) and set(args) == set(shared_fields):
+        shape = "shared"
+    else:
+        raise ValueError("serving engine arguments: missing or unknown fields")
     if "kv_cache_memory_bytes" in args:
         dense._integer(args["kv_cache_memory_bytes"], "kv_cache_memory_bytes", 1)
+    if shape == "shared":
+        _validate_shared_engine_selection(args, tensor_parallel=world)
     if (args["dtype"] != "bfloat16" or args["enforce_eager"] is not True
             or args["enable_expert_parallel"] is not False
             or any(type(args[key]) is not int or args[key] != 1 for key in
@@ -961,7 +1047,7 @@ def resolve_serving_config(path, runtime_image, *, tensor_parallel):
             or type(args["tensor_parallel_size"]) is not int
             or args["tensor_parallel_size"] not in (1, 2)
             or args["tensor_parallel_size"] != tensor_parallel
-            or args["kernel_config"] != {"moe_backend": "auto"}
+            or (shape == "legacy" and args["kernel_config"] != {"moe_backend": "auto"})
             or document["environment"].get("TESSERA_SERVE_MODE") != MODE_RESIDENT
             or os.environ.get("TESSERA_SERVE_MODE") != MODE_RESIDENT):
         raise ValueError(
@@ -969,6 +1055,14 @@ def resolve_serving_config(path, runtime_image, *, tensor_parallel):
     for key in ("max_model_len", "max_num_batched_tokens", "max_num_seqs"):
         dense._integer(args[key], key)
     from vllm.config.compilation import CompilationMode, CUDAGraphMode
+    kernel_args = args["kernel_config"] if shape == "legacy" else {
+        **args["kernel_config"], "moe_backend": args["moe_backend"]}
+    try:
+        kernel_config = KernelConfig(**kernel_args)
+    except Exception as exc:
+        declared_backend = args["kernel_config"].get("moe_backend", args.get("moe_backend"))
+        raise ValueError(f"declared moe_backend {declared_backend!r} cannot be constructed in "
+                         f"the native factory: {exc}") from exc
     config = VllmConfig(
         scheduler_config=SchedulerConfig(max_model_len=args["max_model_len"], is_encoder_decoder=False,
             max_num_batched_tokens=args["max_num_batched_tokens"], max_num_seqs=args["max_num_seqs"],
@@ -978,7 +1072,7 @@ def resolve_serving_config(path, runtime_image, *, tensor_parallel):
             enable_prefix_caching=args["enable_prefix_caching"]),
         parallel_config=ParallelConfig(tensor_parallel_size=args["tensor_parallel_size"],
             pipeline_parallel_size=1, data_parallel_size=1, enable_expert_parallel=False),
-        kernel_config=KernelConfig(**args["kernel_config"]),
+        kernel_config=kernel_config,
         compilation_config=CompilationConfig(mode=CompilationMode.NONE, cudagraph_mode=CUDAGraphMode.NONE))
     return config, {"file_sha256": hashlib.sha256(raw).hexdigest(), "document": document,
         "scope": OPERATOR_CONTEXT_SCOPE,
