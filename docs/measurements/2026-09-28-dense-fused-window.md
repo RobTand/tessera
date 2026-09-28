@@ -370,6 +370,36 @@ after run, for the trade-off tool.
   the all-q1024 0.6B artifact satisfies and the mixed stub cannot; stub B's
   receipt is read module by module in the replay test instead.
 
+## CPU suite (PrismaBuild, untagged -> dl380g10)
+
+`pbtest.py --checkout <this tree> --python
+/home/rob/venvs/pq-pb059953bc-tessera-db5b6e23/bin/python --shards 8
+--timeout-s 3600 --priority -10 tests`, three runs. The first found the
+readers of the dense route that still assumed one launch pair
+(`test_step4_route_qualification`, `test_step4_route_kinds`,
+`test_serving_contract`, `test_contract_platform_axis` with its v22 fixture,
+`test_native_operator_receipt`'s fake owner, which declared no launch and so
+left the bench unable to name one of two -- the bench's refusal was right --
+and this change's own fail-before test, which asserted a coverage gap where
+the join by scope still covers every module and the verdict by launch is what
+fails), plus three artifacts of the change: the census script's host-side
+image spelling, a brace-expanded path in the changelog and a stale issue
+snapshot. Every shard's reconciliation reads `collected == ran` and
+`never_ran: []`; the CUDA-gated surface is skipped on that box by design (the
+run's own `tessera surface` block says so) and was exercised by the GPU rows
+above. `pbtest` itself exited 1 on all three runs for one reconciliation
+problem that is not this change's: `tests/test_native_a4_serving.py` is
+dropped by `conftest.collect_ignore` on a box without its surface, so the
+shard it was assigned to reports no collection for it (`assigned file absent`),
+exactly as in #640's two full runs (shard 7 there, shard 1 here). Every shard's
+own rc is 0.
+
+| run | shards | result | keys |
+|---|---|---|---|
+| full, tree `e7febce44f` | 8 | 13 failed / 5437 passed / 1269 skipped -- every failure a reader of the dense route that assumed one launch pair, plus the census script's image spelling, a changelog path and the issue snapshot | `ac1a6d1f53b3...`, `f1239879f64a...`, `910c16408626...`, `c40c61159f1e...`, `e2732d73deca...`, `6ebc91955e14...`, `d2653bf207c6...`, `862dbc4f1754...` |
+| targeted, the 13 files, tree `06eb1e5959` | 2 | 345 passed / 40 skipped / 0 failed | `a23c29a4d8e8...`, `c9533557e8a6...` |
+| full, tree `06eb1e5959` | 8 | 5450 passed / 1269 skipped / 0 failed, every shard rc 0 | `66a85639ac20...`, `a7e9fb463f45...`, `962e60779156...`, `b679e63b1d02...`, `fbd475c9c0f4...`, `e1046000d78a...`, `0ce860c2abde...`, `3b1b16b08455...` |
+
 ## Receipts
 
 | row | box | what | key |
