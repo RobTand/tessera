@@ -227,7 +227,7 @@ ROUTED_FUSED_LANE_REQUIRES = {
     # compact adapter; the one-table down/dense launch reads every rate.
     # Derived in routed_fused.ROUTED_LANE_RATES from the kernel's own layout
     # and pinned equal here by tests/test_routed_fused_window.py.
-    "column_rates_routed_moe": [1, 2, 3, 4, 5],
+    "column_rates_routed_moe": [1, 2, 3, 4, 5, 6],
     "window_bits": [14],
     "body": "window",
     "plane": "channel",

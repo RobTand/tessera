@@ -43,7 +43,7 @@ cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="the lane is a C
 #: shared-memory block), and the low extremes 256 (rate 1) and 384 (1/2); 256
 #: and 576 columns realise each exactly.  Rates 6..8 on gate/up are refused
 #: by name (``test_support_predicate_refuses_the_gate_up_slot_the_device_cannot_hold``).
-Q256_CASES = [256, 384, 768, 832, 928, 1088, 1152, 1280]
+Q256_CASES = [256, 384, 768, 832, 928, 1088, 1152, 1280, 1408, 1536]
 
 L = 14
 # gate/up: [INTER, HIDDEN] at rate 4 (two 512-row tiles: INTER > 512);
@@ -451,24 +451,25 @@ def test_support_predicate_honours_the_opt_out_and_the_device(monkeypatch):
 
 def test_the_word_stage_slot_and_shared_memory_are_the_kernels_layout():
     """The host restates the kernel's shared-memory layout (tessera#694): a
-    column's slot is its ``2 * rate`` words plus the one word the re-aligned
-    window over-reads at rates whose ``8 * rate`` is not a multiple of 32; a
-    launch's slot is the larger of its pair's, rounded to a multiple of 4; the
-    word stages sit after the fixed part (two tables for gate/up, one for
-    down/dense) and their size follows the slot."""
-    assert [rf.slot_words_for_rate(r) for r in rf.RATES] == [3, 5, 7, 8, 11, 13, 15, 16]
+    column's slot is its ``2 * rate`` words, plus the two words the odd-rate
+    copies start early by (an odd rate's half is 8-byte aligned at odd half
+    indices, and the copies are 16-byte pieces from the aligned pair before
+    it); a launch's slot is the larger of its pair's, rounded to a multiple of
+    4; the word stages sit after the fixed part (two tables for gate/up, one
+    for down/dense) and their size follows the slot."""
+    assert [rf.slot_words_for_rate(r) for r in rf.RATES] == [4, 4, 8, 8, 12, 12, 16, 16]
 
     def pair(r_lo, r_hi=0, n_hi=0):
         return torch.tensor([r_lo, 0, 64, 0, r_hi, 64, n_hi, 0], dtype=torch.int32)
 
-    assert [rf.slot_words_for_pair(pair(r)) for r in rf.RATES] == [4, 8, 8, 8, 12, 16, 16, 16]
-    assert [rf.slot_words_for_pair(pair(lo, lo + 1, 32)) for lo in range(1, 8)] == [8, 8, 8, 12, 16, 16, 16]
+    assert [rf.slot_words_for_pair(pair(r)) for r in rf.RATES] == [4, 4, 8, 8, 12, 12, 16, 16]
+    assert [rf.slot_words_for_pair(pair(lo, lo + 1, 32)) for lo in range(1, 8)] == [4, 8, 8, 12, 12, 16, 16]
     assert rf.slot_words_for_pair(pair(1, 8, 32)) == 16
     # a pair whose high run is empty is the low rate's slot alone
     assert rf.slot_words_for_pair(pair(3, 8, 0)) == 8
     assert rf.smem_bytes(0, 8) == rf.smem_bytes(1, 8) == 91_216 + 3 * 2 * rf.BK * 8 * 4 == 97_360
     assert rf.smem_bytes(0, 12) == 100_432
-    assert rf.smem_bytes(0, 16) == 103_504          # over sm_121's 101,376: gate/up refuses rates 6..8
+    assert rf.smem_bytes(0, 16) == 103_504          # over sm_121's 101,376: gate/up refuses rates 7 and 8
     assert rf.smem_bytes(2, 16) == 70_736           # the one-table down/dense launch fits every rate
     assert rf.SLOT_WORDS_MAX == rf.slot_words_for_rate(rf.RATE_MAX) == 16
 
@@ -477,8 +478,8 @@ def test_the_word_stage_slot_and_shared_memory_are_the_kernels_layout():
 def test_support_predicate_refuses_the_gate_up_slot_the_device_cannot_hold():
     """A gate/up stack whose slot does not fit the device's opt-in shared
     memory is refused by name (the compact adapter serves it); one that fits
-    is admitted.  Rate 6 (q256 1536) is the first the two-table launch cannot
-    hold on sm_121; rate 5 (q256 1280) is the largest it can."""
+    is admitted.  Rate 7 (q256 1792) is the first the two-table launch cannot
+    hold on sm_121; rate 6 (q256 1536) is the largest it can."""
     lib = rf._ext("value")
     have = int(lib.max_dynamic_smem_bytes(torch.cuda.current_device()))
     assert int(lib.smem_bytes(0, 16)) == rf.smem_bytes(0, 16) and int(lib.smem_bytes(2, 16)) == rf.smem_bytes(2, 16)
@@ -490,7 +491,7 @@ def test_support_predicate_refuses_the_gate_up_slot_the_device_cannot_hold():
         assert admitted == rf.ROUTED_LANE_RATES
     else:  # another device: the published set is sm_121's, and this test says which device it ran on
         assert admitted, have
-    for q256, slot in ((1536, 16), (1280, 12)):
+    for q256, slot in ((1792, 16), (1536, 12)):
         b = _bundles("value", _stacks("value", q256=q256, cut=False))
         reason = rf.fused_routed_window_supported(b.gate, b.up, b.down)
         if rf.smem_bytes(0, slot) <= have:
@@ -574,7 +575,7 @@ def test_the_published_lane_predicate_is_the_kernels_shape():
     # the routed-expert launch's set is DERIVED from the kernel's shared-memory
     # layout at the target's opt-in limit, and published equal to it
     assert ext.ROUTED_FUSED_LANE_REQUIRES["column_rates_routed_moe"] == list(rf.ROUTED_LANE_RATES) \
-        == [1, 2, 3, 4, 5]
+        == [1, 2, 3, 4, 5, 6]
     assert rf.ROUTED_LANE_RATES == tuple(
         r for r in rf.RATES
         if rf.smem_bytes(0, rf.slot_words_for_pair(torch.tensor([r, 0, 64, 0, 0, 64, 0, 0], dtype=torch.int32)))

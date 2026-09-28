@@ -104,14 +104,14 @@ constexpr int WSCALE_FLOATS = 2 * BN;                           // two item slot
 constexpr int DESC_INTS = 2 * 8;
 // The shared-memory layout.  The word stages come LAST and are sized at
 // launch by the stack's rates: ``Params::slot_words`` int32 words per (half,
-// column) slot -- at least 2 * rate (+1 where a lane's window over-reads one
-// word past the column's 2 * rate words at a rate whose 8 * rate is not a
-// multiple of 32), rounded to a multiple of 4 so the 16-byte copies stay
-// aligned.  A block on sm_121 may opt in to 101,376 B of dynamic shared
-// memory; the two-table gate/up launch needs 91,216 + 768 * slot_words, so it
-// fits slots up to 12 words (rates <= 5) and not the 16-word slot of rates
-// 6..8; the one-table down/dense launch (MODE 2) fits every rate.  The host
-// entries check the launch against the device's own limit.
+// column) slot -- ``slot_words_for_rate`` of the larger rate (2 * rate, plus
+// the two words the odd-rate copies start early by), rounded to a multiple of
+// 4 so the 16-byte copies stay aligned.  A block on sm_121 may opt in to
+// 101,376 B of dynamic shared memory; the two-table gate/up launch needs
+// 91,216 + 768 * slot_words, so it fits slots up to 12 words (rates <= 6) and
+// not the 16-word slot of rates 7 and 8; the one-table down/dense launch
+// (MODE 2) fits every rate.  The host entries check the launch against the
+// device's own limit.
 template <int MODE> struct Layout {
     static constexpr int TABLES = (MODE == 2) ? 1 : 2;
     static constexpr int OFF_TABLES = 0;
@@ -127,11 +127,15 @@ __host__ __device__ constexpr int w_stage_ints(int slot_words) { return 2 * BK *
 __host__ __device__ constexpr int smem_bytes(int mode, int slot_words) {
     return (mode == 2 ? Layout<2>::OFF_W : Layout<0>::OFF_W) + WORD_STAGES * w_stage_ints(slot_words) * 4;
 }
-// The slot one column at ``rate`` needs: its 2 * rate words plus the one word
-// a lane's re-aligned window reads past them when 8 * rate is not a multiple
-// of 32 (the bits it holds enter no field).
+// The slot one column at ``rate`` needs: its 2 * rate words, plus two at an
+// odd rate -- a 64-row half at an odd rate is 8 * rate bytes at an
+// 8 * rate * t64-byte offset, 16-byte aligned only for even t64, and the
+// producer copies the odd halves in 16-byte pieces from the aligned word pair
+// before them (``issue_words``), so the slot holds those two words too.  The
+// decode reads no word past the half (``decode_rows`` loads the next word
+// only where a field reaches into it).
 __host__ __device__ constexpr int slot_words_for_rate(int rate) {
-    return 2 * rate + (((8 * rate) % 32) != 0 ? 1 : 0);
+    return 2 * rate + ((rate & 1) ? 2 : 0);
 }
 
 constexpr int BAR_FULL0 = 1;
@@ -148,8 +152,8 @@ __device__ __forceinline__ void cp_async16(void* smem, const void* gmem) {
     const uint32_t s = static_cast<uint32_t>(__cvta_generic_to_shared(smem));
     asm volatile("cp.async.cg.shared.global [%0], [%1], 16;" :: "r"(s), "l"(gmem) : "memory");
 }
-// 8-byte copies serve the odd rates: a 64-row half at rate r is 8 * r bytes
-// at an 8 * r * (rows / 64)-byte offset, 16-byte aligned only for even r.
+// The 8-byte copy is the tail of an odd-rate half whose first word is
+// 16-byte aligned (t64 even): 2 * rate words is 2 mod 4 there.
 __device__ __forceinline__ void cp_async8(void* smem, const void* gmem) {
     const uint32_t s = static_cast<uint32_t>(__cvta_generic_to_shared(smem));
     asm volatile("cp.async.ca.shared.global [%0], [%1], 8;" :: "r"(s), "l"(gmem) : "memory");
@@ -276,12 +280,15 @@ __device__ __forceinline__ void decode_rows(const int32_t* Wc, uint32_t prev, in
         if constexpr (WIDE) Z2 = (uint32_t)Wc[b + 1];
     } else {
         const int u = bits0 & 31;                     // 1..31 here, 0 only for j = 0
-        const uint32_t w1 = (uint32_t)Wc[b + 1];
+        // The lane's eight fields end 8 * R bits after bits0; the next word is
+        // read only where a field reaches into it, so the last lane of a half
+        // never reads past the half's 2 * R words.
+        const uint32_t w1 = (u + 8 * R > 32) ? (uint32_t)Wc[b + 1] : 0u;
         // the 32 stream bits starting u into (hi:lo), MSB-first; u = 0 gives hi
         Z0 = __funnelshift_rc(w0, wm1, 32 - u);
         Z1 = __funnelshift_rc(w1, w0, 32 - u);
         if constexpr (WIDE) {
-            const uint32_t w2 = (uint32_t)Wc[b + 2];
+            const uint32_t w2 = (u + 8 * R > 64) ? (uint32_t)Wc[b + 2] : 0u;
             Z2 = __funnelshift_rc(w2, w1, 32 - u);
         }
     }
@@ -554,7 +561,12 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
             rp_i.n_hi = ih ? rp_h[1].n_hi : rp_h[0].n_hi;
             rp_i.w_hi = ih ? rp_h[1].w_hi : rp_h[0].w_hi;
             // The words of chunk kc for half ih, lane group mm: 2 * rate words per
-            // column, 16-byte copies at even rates, 8-byte at odd (alignment).
+            // column in 16-byte copies.  An odd rate's half starts on an 8-byte
+            // boundary when t64 is odd (a column's words start 16-byte aligned;
+            // 8 * rate * t64 is 8 mod 16 there): the copies then start at the
+            // aligned word pair before the half, which lands in the slot's first
+            // two words, and the decode reads the half from word 2 (``odd_off``).
+            // At even t64 the half's last two words are an 8-byte tail.
             auto issue_words = [&](int kc) {
                 if (tid < 128) {
                     const int mm = (tid >> 1) & 31;
@@ -562,11 +574,12 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                     const ColMap c = col_map(bdesc_i, rp_i, kc, mm);
                     const int32_t* src = tbase_i + c.cw0 + 2 * c.rate * t64_i;
                     int32_t* dst = Ws + (kc % WORD_STAGES) * w_stage + (ih * BK + mm) * p.slot_words;
-                    if (c.rate & 1) {
-                        for (int k = q; k < c.rate; k += 2) cp_async8(dst + 2 * k, src + 2 * k);
-                    } else {
-                        for (int k = q; k < c.rate / 2; k += 2) cp_async16(dst + 4 * k, src + 4 * k);
-                    }
+                    const int off = ((c.rate & 1) & (t64_i & 1)) << 1;      // 0 or 2 words
+                    const int words = 2 * c.rate + off;
+                    const int n16 = words >> 2;
+                    const int32_t* s16 = src - off;
+                    for (int k = q; k < n16; k += 2) cp_async16(dst + 4 * k, s16 + 4 * k);
+                    if ((words & 3) && q == (n16 & 1)) cp_async8(dst + 4 * n16, s16 + 4 * n16);
                 }
             };
             // The 32 stream bits before the half's first word, for every row
@@ -652,7 +665,8 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                     // MODE 2 reads one projection: both halves map alike.
                     const ColMap c = (MODE == 2 && h == 1) ? c0 : col_map(bdesc_h[h], rp_h[h], kc, m);
                     if (h == 0) c0 = c;
-                    const int32_t* Wc = W + (h * BK + m) * p.slot_words;
+                    const int odd_off = ((c.rate & 1) & (t64_h[h] & 1)) << 1;   // see issue_words
+                    const int32_t* Wc = W + (h * BK + m) * p.slot_words + odd_off;
                     const uint16_t* T = tab + ((MODE == 2) ? 0 : h * TABLE_ENTRIES);
                     const int chunk = (MODE == 2) ? (8 * h + j) : (4 * (j >> 1) + 2 * h + (j & 1));
                     const float* ws = wsc + slot * BN + chunk * 8;
@@ -862,6 +876,15 @@ void launch(const Params& p, int grid, cudaStream_t stream) {
     C10_CUDA_KERNEL_LAUNCH_CHECK();
 }
 
+// The word tensors both host entries take: int32 [E, words_stride], 16-byte
+// aligned with a stride that keeps every expert's words so, since the odd-rate
+// copies assume a column's words start 16-byte aligned (``issue_words``).
+void check_words(const torch::Tensor& words, const char* name) {
+    TORCH_CHECK(words.is_cuda() && words.scalar_type() == torch::kInt32 && words.dim() == 2
+                && words.is_contiguous(), name, " must be a contiguous int32 [E, words_stride] CUDA tensor");
+    TORCH_CHECK(reinterpret_cast<uintptr_t>(words.data_ptr()) % 16 == 0, name, " must be 16-byte aligned");
+    TORCH_CHECK(words.size(1) % 4 == 0, name, ": words_stride must be a multiple of 4 words");
+}
 // The slot and shared-memory checks both host entries make.
 void check_slot(int mode, int64_t slot_words, const torch::Tensor& on) {
     TORCH_CHECK(slot_words % 4 == 0 && slot_words >= 4 && slot_words <= SLOT_WORDS_MAX,
@@ -1020,6 +1043,8 @@ void routed_fused_forward(
     p.runs1 = two ? i32_ptr(runs1) : nullptr;
     p.bdesc0 = i32_ptr(bdesc0);
     p.bdesc1 = two ? i32_ptr(bdesc1) : nullptr;
+    check_words(words0, "words0");
+    if (two) check_words(words1, "words1");
     p.words_stride = words0.size(1);
     p.tile_words = (int)tile_words;
     check_slot((int)mode, slot_words, x);
@@ -1125,6 +1150,7 @@ void dense_forward(
     p.runs1 = nullptr;
     p.bdesc0 = i32_ptr(bdesc);
     p.bdesc1 = nullptr;
+    check_words(words, "words");
     p.words_stride = words.size(1);
     p.tile_words = (int)tile_words;
     check_slot(2, slot_words, x);

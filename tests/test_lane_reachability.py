@@ -876,10 +876,10 @@ def test_the_plan_gate_refuses_a_requirement_it_has_not_learned(monkeypatch):
 # --------------------------------------------------------------------------
 
 FUSED_LANE = ext.ROUTED_FUSED_E4M3_MODULE_NAME
-#: Facts of a rate-6 window unit in ``wire_facts_of_parsed``'s vocabulary,
+#: Facts of a rate-7 window unit in ``wire_facts_of_parsed``'s vocabulary,
 #: without a structure -- the byte-time reader's view.
-RATE6_FACTS = {
-    "rates": (6,), "window_bits": 14, "body": "WINDOW", "plane": "CHANNEL",
+RATE7_FACTS = {
+    "rates": (7,), "window_bits": 14, "body": "WINDOW", "plane": "CHANNEL",
     "release_overrides": 0, "diagonals": False, "rotation": "NONE",
     "start_state": False, "grid_arity": 1,
 }
@@ -919,8 +919,8 @@ def test_the_validator_holds_the_routed_set_inside_the_wires(monkeypatch, mutate
 
 
 def test_the_core_decides_the_routed_set_against_the_structure():
-    """A routed stack at rate 6 is refused by the structure-scoped set and a
-    dense unit at rate 6 is not; a caller that did not state the structure is
+    """A routed stack at rate 7 is refused by the structure-scoped set and a
+    dense unit at rate 7 is not; a caller that did not state the structure is
     refused by name (absent evidence is not a pass), and so is a structure
     this build does not serve.  Rates 4 and 5 (q256 1088's pair) pass either
     way."""
@@ -928,19 +928,19 @@ def test_the_core_decides_the_routed_set_against_the_structure():
     from tessera.structure import STRUCTURE_DENSE, STRUCTURE_ROUTED_MOE
 
     requires = lane_requirements(FUSED_LANE)
-    routed6 = dict(RATE6_FACTS, structure=STRUCTURE_ROUTED_MOE)
+    routed6 = dict(RATE7_FACTS, structure=STRUCTURE_ROUTED_MOE)
     refusals = decide_lane_requirements(FUSED_LANE, requires, routed6)
     assert len(refusals) == 1 and refusals[0].startswith("column_rates_routed_moe [6]"), refusals
     assert "routed-expert launch" in refusals[0] and "compact adapter" in refusals[0]
-    assert decide_lane_requirements(FUSED_LANE, requires, dict(RATE6_FACTS, structure=STRUCTURE_DENSE)) == []
-    unstated = decide_lane_requirements(FUSED_LANE, requires, RATE6_FACTS)
+    assert decide_lane_requirements(FUSED_LANE, requires, dict(RATE7_FACTS, structure=STRUCTURE_DENSE)) == []
+    unstated = decide_lane_requirements(FUSED_LANE, requires, RATE7_FACTS)
     assert len(unstated) == 1 and "structure was not read" in unstated[0] \
         and "column_rates_routed_moe" in unstated[0], unstated
-    odd = decide_lane_requirements(FUSED_LANE, requires, dict(RATE6_FACTS, structure="shared_expert"))
+    odd = decide_lane_requirements(FUSED_LANE, requires, dict(RATE7_FACTS, structure="shared_expert"))
     assert len(odd) == 1 and "'shared_expert' is not one this build serves" in odd[0], odd
     for structure in (STRUCTURE_ROUTED_MOE, STRUCTURE_DENSE):
         assert decide_lane_requirements(
-            FUSED_LANE, requires, dict(RATE6_FACTS, rates=(4, 5), structure=structure)) == []
+            FUSED_LANE, requires, dict(RATE7_FACTS, rates=(4, 5), structure=structure)) == []
     # the rates fact is still required once the structure binds
     absent = decide_lane_requirements(FUSED_LANE, requires, dict(routed6, rates=()))
     assert any("rates was not read" in r and "column_rates_routed_moe" in r for r in absent), absent
@@ -948,7 +948,7 @@ def test_the_core_decides_the_routed_set_against_the_structure():
 
 def test_the_plan_gate_reads_the_structure_and_has_no_passing_default():
     """``refuse_unreachable_lane`` on a fused lane: an expert stack at q256
-    1536 (rate 6) is refused with the launch named and the dense re-plan
+    1792 (rate 7) is refused with the launch named and the dense re-plan
     offered; the same rung as a dense structure passes; a plan that did not
     state its structure is refused by name; q256 1280 (rate 5) and 1088 (4/5)
     pass as a stack."""
@@ -962,13 +962,13 @@ def test_the_plan_gate_reads_the_structure_and_has_no_passing_default():
             window_bits=int(recipe.window_bits), target=f"stack@q{q256}", **kw)
 
     with pytest.raises(ValueError) as caught:
-        plan(1536, structure=STRUCTURE_ROUTED_MOE)
+        plan(1792, structure=STRUCTURE_ROUTED_MOE)
     message = str(caught.value)
     assert "column_rates_routed_moe [6]" in message and "compact adapter" in message
     assert "plan it as a dense structure" in message
-    assert plan(1536, structure=STRUCTURE_DENSE) == (6,)
+    assert plan(1792, structure=STRUCTURE_DENSE) == (7,)
     with pytest.raises(ValueError, match="structure was not read"):
-        plan(1536)
+        plan(1792)
     assert plan(1280, structure=STRUCTURE_ROUTED_MOE) == (5,)
     assert plan(1088, structure=STRUCTURE_ROUTED_MOE) == (4, 5)
     # the GEMV lane publishes no structure-scoped requirement and reads none
@@ -982,7 +982,7 @@ def test_the_byte_time_report_cannot_decide_the_routed_set():
     the report is not readable.  The truth, not a pass."""
     from tessera.serving.scheme import lane_wire_report
 
-    report = lane_wire_report(FUSED_LANE, dict(RATE6_FACTS, rates=(4,)))
+    report = lane_wire_report(FUSED_LANE, dict(RATE7_FACTS, rates=(4,)))
     assert not report["readable"]
     assert [r for r in report["refusals"] if "column_rates_routed_moe" in r and "structure was not read" in r]
     assert report["requirements"]["column_rates_routed_moe"] == [1, 2, 3, 4, 5]

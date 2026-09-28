@@ -146,11 +146,14 @@ def chunk_words(rate: int) -> int:
 
 
 def slot_words_for_rate(rate: int) -> int:
-    """The word-stage slot one column at ``rate`` needs: its ``2 * rate`` words
-    plus the one word a lane's re-aligned window reads past them when
-    ``8 * rate`` is not a multiple of 32 (those bits enter no field)."""
+    """The word-stage slot one column at ``rate`` needs: its ``2 * rate`` words,
+    plus two at an odd rate -- a 64-row half at an odd rate starts on an
+    8-byte boundary when its index is odd, and the kernel copies it in 16-byte
+    pieces from the aligned word pair before it (``issue_words`` in
+    ``routed_fused_window.cu``), which lands in the slot too.  The decode reads
+    no word past the half."""
     rate = int(rate)
-    return 2 * rate + (1 if (8 * rate) % 32 else 0)
+    return 2 * rate + (2 if rate & 1 else 0)
 
 
 def slot_words_for_pair(pair: torch.Tensor) -> int:
@@ -168,8 +171,9 @@ def smem_bytes(mode: int, slot_words: int) -> int:
 
 #: The rates a ROUTED-EXPERT stack (the two-table gate/up launch, MODE 0/1)
 #: reaches on the target platform: those whose one-rate slot fits sm_121's
-#: opt-in shared memory.  A two-rate pair's slot is the larger rate's, so the
-#: set is closed under bracketing.  Published as the fused lanes'
+#: opt-in shared memory -- slots 8 and 12 (rates 1..6) fit, the 16-word slot
+#: of rates 7 and 8 does not.  A two-rate pair's slot is the larger rate's, so
+#: the set is closed under bracketing.  Published as the fused lanes'
 #: ``column_rates_routed_moe`` (``serving.ext.ROUTED_FUSED_LANE_REQUIRES``,
 #: contract v45, tessera#694); the down/dense one-table launch reads every
 #: rate in ``RATES``.  Derived, not typed: the day the layout changes, this

@@ -1144,26 +1144,26 @@ def test_cell_launch_derivation_uses_the_cells_structure(contract, regime):
     mixed["executes"] = [compact]
     with pytest.raises(ValueError, match="executes"):
         _validate_cell_executes(mixed, "TESSERA_FP8", entry, contract, "synthetic")
-    # At q256 1536 (rate 6) the lane READS the wire but its routed-expert
+    # At q256 1792 (rate 7) the lane READS the wire but its routed-expert
     # launch does not reach the rate on the target
-    # (lane.requires.column_rates_routed_moe is 1..5: the two-table gate/up
+    # (lane.requires.column_rates_routed_moe is 1..6: the two-table gate/up
     # launch does not fit sm_121's shared memory above it), so an expert stack
     # derives the compact launch alone -- the structure is what the decision
     # reads -- while a dense module at the same rung derives the fused dense
     # identity beside the Triton GEMM, the one-table launch reading every rate.
-    # (the format row stamps attested_wire per attested rung; 1536 is not one,
+    # (the format row stamps attested_wire per attested rung; 1792 is not one,
     # so the derivation is given a copy of the shipped stamp at that rung)
     import copy
     stamped = copy.deepcopy(entry)
     stamped["attested_wire"] = list(stamped["attested_wire"]) + [
-        {**stamped["attested_wire"][0], "q256": 1536}]
-    high = dict(synthetic, rungs_q256=[1536], executes=[compact])
+        {**stamped["attested_wire"][0], "q256": 1792}]
+    high = dict(synthetic, rungs_q256=[1792], executes=[compact])
     _validate_cell_executes(high, "TESSERA_FP8", stamped, contract, "synthetic")
     high["executes"] = [compact, fused]
     with pytest.raises(ValueError, match="executes"):
         _validate_cell_executes(high, "TESSERA_FP8", stamped, contract, "synthetic")
     dense_high = {
-        "structure": "dense", "regime": regime, "rungs_q256": [1536],
+        "structure": "dense", "regime": regime, "rungs_q256": [1792],
         "requires_serve_flags": ["TESSERA_SERVE_MODE=resident"],
         "executes": [{"symbol": "tessera::window_gemm_dense", "decoder": "native_window_gemm"},
                      {"symbol": "tessera::fused_window_dense", "decoder": "native_fused_window_dense"}]}

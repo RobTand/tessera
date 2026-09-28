@@ -191,15 +191,15 @@ def test_the_packaged_contract_validates_at_v33(contract):
     v45 (tessera#694) widens the two fused lanes' published predicate:
     ``lane.requires.column_rates`` moves from ``[4]`` to ``[1..8]`` on both
     entries -- the kernel reads the wire's run table at every rate -- and a
-    structure-scoped ``column_rates_routed_moe`` ``[1..5]`` enters beside it:
+    structure-scoped ``column_rates_routed_moe`` ``[1..6]`` enters beside it:
     the routed-expert (gate/up, two-table) launch does not fit sm_121's
-    101,376 B per-block shared memory above rate 5, so an expert stack there
+    101,376 B per-block shared memory above rate 6, so an expert stack there
     keeps the compact adapter while the one-table down/dense launch reads
-    every rate.  Every rung of the two window families up to rate 5 reaches
+    every rate.  Every rung of the two window families up to rate 6 reaches
     the fused pair the way q256 1024 did.  The cells' ``executes`` are
     unchanged -- each routed/dense window cell already named the fused pair
     beside the compact/Triton pair on a rung set that includes 1024 (all of
-    them at rates <= 5), and the derivation now reaches it at their other
+    them at rates <= 6), and the derivation now reaches it at their other
     rungs too.  NOT additive for a validator: ``column_rates_routed_moe`` is
     a new ``lane.requires`` field a v44 reader (and PrismaQuant's mirror of
     the roster) refuses, the fail-closed direction.  (v44 is tessera#691's.)

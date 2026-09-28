@@ -3301,7 +3301,7 @@ is the one the family already publishes.
 same attribute, and it is the default (tessera#640, contract v42).**
 `PackedWindowMoeBundles.adapter` asks `routed_fused.fused_routed_window_
 supported` whether the loaded stack is one the fused lane serves -- every
-column at a rate in `ROUTED_LANE_RATES` (1..5 since contract v45, tessera#694;
+column at a rate in `ROUTED_LANE_RATES` (1..6 since contract v45, tessera#694;
 rate 4 everywhere before it), `window_bits` 14, window body, channel plane, no
 decoration, the E4M3 quantizer native, `intermediate % 64 == 0`, `hidden % 128
 == 0`, the predicate `native_extensions[].lane.requires` publishes
@@ -3429,29 +3429,38 @@ rate-4-only -- a column block is a pair of runs `(r_lo, n_lo, r_hi, n_hi)` and
 `decode_rows<FP8, R>` exists for R in 1..8 -- but its word ring was sized for
 rate 4 and its shared-memory layout was fixed, so the predicate admitted rate 4
 alone. Since v45 the word stages are sized per launch: `Params::slot_words`
-carries `slot_words_for_rate(r) = 2r + (8r % 32 != 0)` words per (column,
-8-row group) rounded up to 4 for the larger rate of the pair (`routed_fused.
+carries `slot_words_for_rate(r) = 2r + 2 * (r odd)` words per (column, 64-row
+half) rounded up to 4 for the larger rate of the pair (`routed_fused.
 slot_words_for_pair`), a `Layout<MODE>` template places the tables, B and A
 stages, scales, descriptors and the claim counter ahead of the word ring, and
 `smem_bytes(mode, slot) = SMEM_FIXED[mode] + WORD_STAGES * 2 * BK * slot * 4`
 is the dynamic shared memory the launch requests (91,216 B fixed for the
-two-table gate/up modes, 58,448 B for down; `SLOT_WORDS_MAX` 16). The device
-decides the rates: sm_121 grants 101,376 B per block
+two-table gate/up modes, 58,448 B for down; `SLOT_WORDS_MAX` 16). The two
+extra words at an odd rate are the copy path: a column's words start 16-byte
+aligned and a 64-row half at rate r is 8r bytes, so an odd rate's half is
+8-byte aligned at odd half indices, and the producer copies every half in
+16-byte `cp.async` pieces (from the aligned word pair before it when it is
+misaligned, with one 8-byte tail when it is not) instead of the 8-byte copies
+the first cut of this version made; the decode reads the half from the slot's
+third word there, and loads a word past a lane's eight fields only where a
+field reaches into it, so no launch reads past a half. The device decides the
+rates: sm_121 grants 101,376 B per block
 (`cudaDevAttrMaxSharedMemoryPerBlockOptin`), so the gate/up launch holds slot
-8 (97,360 B; rates 1-4) and slot 12 (100,432 B; rate 5) and not slot 16
-(103,504 B; rates 6-8), while the one-table down launch holds every slot
-(70,736 B at 16). `ROUTED_LANE_RATES` is derived from exactly that inequality
--- `(1, 2, 3, 4, 5)` -- and the dense identity, which runs each role in its own
-launch and so has no two-table gate/up mode, reaches 1..8. A routed stack whose
-larger rate is 6-8 keeps the compact adapter, and the predicate names the slot
-and the bytes; it may JIT-build the extension to ask the device (a first call
-on a cold cache pays nvcc). One correctness fix rode along: the previous window
+8 (97,360 B; rates 1-4) and slot 12 (100,432 B; rates 5 and 6) and not slot
+16 (103,504 B; rates 7 and 8), while the one-table down launch holds every
+slot (70,736 B at 16). `ROUTED_LANE_RATES` is derived from exactly that
+inequality -- `(1, 2, 3, 4, 5, 6)` -- and the dense identity, which runs each
+role in its own launch and so has no two-table gate/up mode, reaches 1..8. A
+routed stack whose larger rate is 7 or 8 keeps the compact adapter, and the
+predicate names the slot and the bytes; it may JIT-build the extension to ask
+the device (a first call on a cold cache pays nvcc). One correctness fix rode
+along: the previous window
 word was loaded for the first 8-row group only, but a field's 14-bit window
 reaches 13 bits before it, so at rate 1 the groups whose window starts inside
 the half's first word (`8 * j * rate < 32`) read a stale word; every such
 group now loads it. Because one lane serves both structures and the
 contract's `executes` list is the census's admissible set, the two fused
-entries publish `lane.requires.column_rates_routed_moe = [1..5]` beside
+entries publish `lane.requires.column_rates_routed_moe = [1..6]` beside
 `column_rates = [1..8]`: `scheme.decide_lane_requirements` decides it only
 over a `routed_moe` structure fact and refuses by name without one,
 `_lanes_a_rung_reaches` and the export plan gate pass the cell's structure,
