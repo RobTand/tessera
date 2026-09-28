@@ -1,5 +1,38 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-09-28 for CUDA graphs in the research GLM53 NoPE backend
+(tessera#508). `glm53_nope._config_reason` no longer requires
+`--enforce-eager`. Under compilation mode NONE it admits CUDA-graph modes
+FULL_DECODE_ONLY, PIECEWISE and FULL_AND_PIECEWISE, and under VLLM_COMPILE it
+admits FULL_DECODE_ONLY, on one measured V2 model runner: the pinned image's
+`v1/worker/gpu/model_runner.py` with vllm-project/vllm#57317 backported (sha256
+`1c30b8c0...`, image
+`localhost/prismaquant/spark-vllm-nccl230@sha256:c2e75e03cfc52c15489b40fe58e65acb7347f6fa3ddf2e81afda86760698147b`,
+whose vLLM differs from the stock image `f8dbe1a0...` in that file alone). The
+stock runner is refused by name: its generic slot mapping reads the kpool
+tail's block-table row by absolute position, and past the table in a long
+prefill. In a stock eager serve with PyTorch's caching allocator off,
+compute-sanitizer counts 128 invalid reads at `block_table.py:344` on one
+3649-token prompt and the engine dies; on the backport it counts none. Also
+refused by name: STOCK_TORCH_COMPILE, graphs under DYNAMO_TRACE_ONCE,
+piecewise graphs under VLLM_COMPILE, the V1 runner, and any graph mode with a
+speculative config. Admission and the eager-equivalence claim are now separate
+verdicts: `glm53_nope.eager_equivalence_gap` says whether an admitted
+configuration runs eager's arithmetic, and every serving process prints the
+verdict once on stderr. A capture list that pads some batch sizes withholds
+the claim (vLLM's mHC TileLang op picks its split-K by token count; a batch of
+5 replayed in the 8-token graph moved top-20 logprobs by up to 0.98081 nats on
+an identical prefix), and so does a compilation mode whose default op settings
+replace eager's (custom_ops `none`, IR ops `native`; vLLM's GLM5-next model
+has no `@support_torch_compile`, so VLLM_COMPILE and DYNAMO_TRACE_ONCE compile
+nothing). Capturing every size from 1 to the largest restores the claim for
+about 0.02 s of capture and no graph-pool bytes per added size on the
+four-layer stub. Not attested: the full model at TP2, a drafter, the quality
+of a serve without the claim (it needs its own served KL), and any contract
+cell under compiled execution. The contract version and its cells are
+unchanged. See §5.1.1 and
+`docs/measurements/2026-09-28-glm53-nope-graphs-508.md`.
+
 Re-stamped 2026-09-28 for the fused window kernel's DENSE identity (contract
 v43, the dense follow-up to tessera#640). The q256 1024 dense and shared-expert
 window Linears -- E4M3 and BF16 -- are served by a SECOND launch identity by
@@ -6233,16 +6266,51 @@ package on a box that has none; `tests/test_packaging.py` holds it to that.
 
 `TESSERA_RESEARCH_GLM53_NOPE=1` asks the same entry point to register
 `TesseraGLM53NoPEBackend` as vLLM's public `AttentionBackendEnum.CUSTOM`.
-Selection additionally requires `--enforce-eager --attention-backend CUSTOM
---kv-cache-dtype fp8_ds_mla --kernel-config '{"enable_flashinfer_autotune":false}'`.
-Normal selection is eager-only and refuses non-NONE compilation or CUDA graph
-modes. The four-layer whole-engine graph arm differed by 0.67253 logprob nats
-from eager despite global compile mode NONE in both arms; isolated attention
-graph equality does not qualify the model graph path.
+Selection additionally requires `--attention-backend CUSTOM --kv-cache-dtype
+fp8_ds_mla --kernel-config '{"enable_flashinfer_autotune":false}'`.
 This experimental attention extension is separate from checkpoint quantization
 selection and changes no stock backend registration. Another plugin's CUSTOM
 registration is refused. Without the environment setting, normal plugin loading
 is unchanged.
+
+**Execution modes are admitted by receipt** (`glm53_nope._execution_reason`,
+tessera#508). Eager, and compilation modes NONE, VLLM_COMPILE and
+DYNAMO_TRACE_ONCE without CUDA graphs, run on any runner. CUDA graphs run on
+vLLM's V2 model runner, without a speculative config, and only on the runner
+source they were measured on: `v1/worker/gpu/model_runner.py` with vllm-project/vllm#57317
+backported (`_GRAPH_RUNNER_SHA256`, image
+`localhost/prismaquant/spark-vllm-nccl230@sha256:c2e75e03...`). Under mode
+NONE that admits FULL_DECODE_ONLY, PIECEWISE and FULL_AND_PIECEWISE; under
+VLLM_COMPILE, FULL_DECODE_ONLY. The gate judges the graph mode vLLM will run
+(`_graph_mode`): this backend's metadata builder supports uniform batches
+only, so a FULL request becomes FULL_DECODE_ONLY, or FULL_AND_PIECEWISE when
+attention is a splitting op. Every other combination is refused with its
+reason: the stock runner (its generic slot mapping reads the kpool tail's
+block-table row by absolute position, and past the table in a long prefill),
+STOCK_TORCH_COMPILE (it fails to start), graphs under DYNAMO_TRACE_ONCE
+(measured without graphs only), piecewise graphs under VLLM_COMPILE (they need
+vLLM's breakable graph, which forces mode NONE), the V1 runner, and a
+speculative config (no drafter graph path is measured).
+
+**Admission does not claim equality with eager.**
+`glm53_nope.eager_equivalence_gap` answers that separately, and every serving
+process prints the answer once on stderr. Eager itself is not repeat-exact on
+this model (FlashInfer's fused MoE finalize reduces with atomics), so "equal"
+means that every completion of the equality suite is one an eager serve also
+produced. The claim is withheld, with the measured figure, for two reasons.
+The first is a capture list that pads batch sizes: the V2 runner replays a
+batch of n tokens in the smallest captured graph of at least n, and vLLM's mHC
+TileLang op picks its split-K by token count (`mhc_fused_post_pre_tilelang`),
+so a padded replay runs another valid reduction order. Capturing every size
+from 1 to the largest removes it, at about 0.02 s of capture and no graph-pool
+bytes per added size on the four-layer stub. The second is a compilation mode
+whose default op settings differ from eager's: VLLM_COMPILE compiles nothing
+for this model (it has no `@support_torch_compile`) but switches `custom_ops`
+to `none` and the RMSNorm IR ops to `native`. A configuration without the
+claim runs correctly, but its quality needs its own served KL-vs-BF16 instead
+of inheriting eager's. The claim is a log line, not a contract field, and no
+contract cell attests compiled execution.
+`docs/measurements/2026-09-28-glm53-nope-graphs-508.md` has the receipts.
 
 The extension requires SM121 and GLM5-next text geometry: latent rank512,
 NoPE256, RoPE0, index_topk2048 and index_kpool4. Context parallelism is refused.
