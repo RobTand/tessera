@@ -156,11 +156,13 @@ if _T695_GC or _T695_DRAFT_LOG:
             self._ensure()
             args = bound.arguments
             idx = input_batch.idx_mapping[:n].long()
-            cols = [drafts[:n].to(torch.int64),
-                    args["last_sampled"][idx].to(torch.int64)[:, None],
-                    args["num_sampled"][:n].to(torch.int64)[:, None],
-                    args["num_rejected"][:n].to(torch.int64)[:, None],
-                    input_batch.seq_lens[:n].to(torch.int64)[:, None]]
+            # Every column as [n, width]: the runner's last-sampled buffer is
+            # [max_num_reqs, 1], the per-request counters and lengths are [n].
+            cols = [drafts[:n].reshape(n, -1).to(torch.int64),
+                    args["last_sampled"][idx].reshape(n, -1)[:, -1:].to(torch.int64),
+                    args["num_sampled"][:n].reshape(n, 1).to(torch.int64),
+                    args["num_rejected"][:n].reshape(n, 1).to(torch.int64),
+                    input_batch.seq_lens[:n].reshape(n, 1).to(torch.int64)]
             packed = torch.cat(cols, dim=1)
             host = torch.empty(packed.shape, dtype=torch.int64, device="cpu", pin_memory=True)
             host.copy_(packed, non_blocking=True)

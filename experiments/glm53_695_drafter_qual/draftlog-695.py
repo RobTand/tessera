@@ -21,6 +21,13 @@ Steps whose context the pool never reached are counted and not judged. With two
 or more eager arms, each is also judged against the others, which measures the
 pool's own spread (the stub's eager serve is not bitwise repeatable).
 
+  identity       for two arms, over every pair of steps (one from each) at an
+                 identical context: the fraction whose draft token at position i
+                 is the same, per position, and whose whole draft vector is.
+                 ARM is paired with each eager arm, and the eager arms with each
+                 other: the eager pairs are the noise floor a graph arm's
+                 identity rate is read against.
+
 Exit 0 when at least one step aligned and every aligned step is a member, 1 on a
 non-member, 2 when nothing aligned.
 """
@@ -124,6 +131,33 @@ def judge(steps, pool):
                 nonmember_examples=nonmembers)
 
 
+def identity(steps_a, steps_b):
+    """Per-position draft identity over every pair of steps at an identical context."""
+    by_a, by_b = collections.defaultdict(list), collections.defaultdict(list)
+    for (state, _), drafts in steps_a:
+        by_a[state].append(drafts)
+    for (state, _), drafts in steps_b:
+        by_b[state].append(drafts)
+    shared = by_a.keys() & by_b.keys()
+    pairs = whole = 0
+    pos_n, pos_eq = collections.Counter(), collections.Counter()
+    for state in shared:
+        for a in by_a[state]:
+            for b in by_b[state]:
+                pairs += 1
+                whole += a == b
+                for i, (x, y) in enumerate(zip(a, b)):
+                    pos_n[i] += 1
+                    pos_eq[i] += x == y
+    return dict(contexts_a=len(by_a), contexts_b=len(by_b), contexts_shared=len(shared), pairs=pairs,
+                per_position_identity=[pos_eq[i] / pos_n[i] for i in sorted(pos_n)],
+                vector_identity=whole / pairs if pairs else None)
+
+
+def steps_of(streams):
+    return [step for stream in streams for step in stream["steps"]]
+
+
 def main():
     receipts, arm, eager_arms = sys.argv[1], sys.argv[2], sys.argv[3].split(",")
     out = pathlib.Path(sys.argv[4]) if len(sys.argv) > 4 else pathlib.Path(receipts) / f"{arm}.draftcmp.json"
@@ -137,6 +171,10 @@ def main():
     record = dict(arm=arm, eager_pool=eager_arms, k=list(ks.pop()), pool_contexts=len(pool),
                   pool_contexts_with_several_vectors=multi,
                   judged=[dict(file=s["file"], counts=s["counts"], **judge(s["steps"], pool)) for s in judged])
+    record["identity_vs_eager"] = {e: identity(steps_of(judged), steps_of(eager[e])) for e in eager_arms}
+    record["identity_eager_pairs"] = {
+        f"{a}~{b}": identity(steps_of(eager[a]), steps_of(eager[b]))
+        for i, a in enumerate(eager_arms) for b in eager_arms[i + 1:]}
     if len(eager_arms) >= 2:
         record["eager_leave_one_out"] = {
             e: [judge(s["steps"], pool_of(v for o, v in eager.items() if o != e)) for s in eager[e]]
@@ -150,6 +188,12 @@ def main():
         for j in rows:
             print(f"  eager spread {e} vs rest: aligned {j['aligned']} member {j['member']} "
                   f"nonmember {j['nonmember']} per-position {[round(x, 4) for x in j['per_position_agreement']]}")
+    for name, rows in (("vs", record["identity_vs_eager"]), ("eager", record["identity_eager_pairs"])):
+        for pair, j in rows.items():
+            label = f"{arm} vs {pair}" if name == "vs" else f"eager {pair}"
+            print(f"  identity {label}: shared contexts {j['contexts_shared']} pairs {j['pairs']} "
+                  f"per-position {[round(x, 4) for x in j['per_position_identity']]} "
+                  f"vector {None if j['vector_identity'] is None else round(j['vector_identity'], 4)}")
     print(f"pool contexts {len(pool)}, with several vectors {multi}; wrote {out}")
     if any(j["nonmember"] for j in record["judged"]):
         sys.exit(1)
