@@ -70,7 +70,6 @@ def units_of(path: str, device: str):
 
     from tessera.fused import parse_fused
     from tessera.serving.scheme import wire_facts_of_parsed
-    from tessera.serving_parts import read_serving_manifest
     from tessera.unit_artifact import parse_unit_artifact
 
     out = []
@@ -103,6 +102,7 @@ def main() -> int:
     args = ap.parse_args()
 
     from tessera.serving.scheme import lane_rate_report, lane_wire_report
+    from tessera.serving_parts import read_serving_manifest
 
     # /2: a lane's verdict now carries the published ``requirements`` it was
     # decided against and the ``refusals`` by name, because /1 could only ever
