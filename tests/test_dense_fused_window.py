@@ -573,10 +573,12 @@ def test_the_k_split_model_is_the_bandwidth_model():
         # the wire is the role's own words per tile: rate 4 restates the default
         assert rf.dense_k_split(m, rows, cols, sms, tile_words=64 * cols) == got
     assert rf.dense_k_split(1, 256, 4096, sms) > 1
-    # a lighter wire (rate 2) moves the optimum: the model reads the bytes, not the rate
-    light = rf.dense_k_split(1, 4096, 2048, sms, tile_words=32 * 2048)
-    heavy = rf.dense_k_split(1, 4096, 2048, sms, tile_words=128 * 2048)
-    assert light <= rf.dense_k_split(1, 4096, 2048, sms) <= heavy and light < heavy
+    # the wire's bytes move the optimum where the split is not capped by
+    # ceil(sms / items0): at M = 32 x 256 x 4096 (2 items, cap 24) rate 1
+    # (16 words per column per tile), rate 4 and rate 8 pick three splits
+    light = rf.dense_k_split(32, 256, 4096, sms, tile_words=16 * 4096)
+    heavy = rf.dense_k_split(32, 256, 4096, sms, tile_words=128 * 4096)
+    assert light < rf.dense_k_split(32, 256, 4096, sms) < heavy, (light, heavy)
     # More rows means more items and never a larger split at the same M.
     assert rf.dense_k_split(1, 2048, 4096, sms) <= rf.dense_k_split(1, 256, 4096, sms)
 

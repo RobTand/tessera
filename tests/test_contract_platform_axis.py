@@ -187,8 +187,16 @@ def test_the_packaged_contract_validates_at_v33(contract):
     four GLM-image E4M3/BF16 cells) name the fused pair beside the Triton pair,
     each on a served census of its own image.  No image, rung, flag or format
     row moves; the pin is unchanged.
+
+    v45 (tessera#694) widens the two fused lanes' published predicate:
+    ``lane.requires.column_rates`` moves from ``[4]`` to ``[1..8]`` on both
+    entries, so every rung of the two window families reaches the fused pair
+    the way q256 1024 did.  The cells' ``executes`` are unchanged -- each
+    routed/dense window cell already named the fused pair beside the
+    compact/Triton pair on a rung set that includes 1024, and the derivation
+    now reaches it at their other rungs too.  (v44 is tessera#691's.)
     """
-    assert int(contract["contract_version"]) == 43
+    assert int(contract["contract_version"]) == 45
     fused = "tessera.routed_fused.FusedRoutedWindowMoE.__call__"
     for cell in contract["lane_eligibility"]["cells"]:
         window_routed = (cell["structure"] == "routed_moe"
