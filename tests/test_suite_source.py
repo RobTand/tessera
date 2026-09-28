@@ -1,15 +1,21 @@
-"""Effective source identity must not mistake PB scaffolding for source."""
+"""Effective source identity must not mistake executor scaffolding for source.
+
+A materialized checkout may carry a file the executor generated.  It is left
+out of the hash only when a declared source verifier vouches for it, and
+Tessera still checks every file the verifier names.  These tests drive that
+seam with small verifier commands written under ``tmp_path``; they name no
+executor.
+"""
 import hashlib
 import importlib
 import json
+import shlex
 import subprocess
+import sys
 
 import pytest
 
-
-def _hash(value):
-    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"),
-                                     ensure_ascii=False, allow_nan=False).encode()).hexdigest()
+GENERATED = "executor-stamp.json"
 
 
 def _git(root, *args):
@@ -17,128 +23,169 @@ def _git(root, *args):
                                     "-c", "user.email=test@example.invalid", *args]).decode().strip()
 
 
-def _snapshot(tmp_path, name, content="same source\n", *, extra=None, bad=None,
-              version=1, schema_version=None):
-    root = tmp_path / name / "pending" / "checkout"
+def _module():
+    return importlib.import_module("tessera._dev.suite_source")
+
+
+def _snapshot(tmp_path, name, content="same source\n", *, stamp=None, extra=None):
+    """A checkout whose commit carries one generated file beside the source."""
+
+    root = tmp_path / name / "checkout"
     root.mkdir(parents=True)
-    requests = tmp_path / name / "requests"
     _git(root, "init", "-q")
     (root / "source.py").write_text(content)
-    if extra:
-        for path, value in extra.items():
-            (root / path).write_text(value)
-    stamp = {"cwd": ".", "head": "a" * 40, "dirty_sha256": "b" * 64}
-    variables = {"PRISMABUILD_CONTAINER_OWNER": "e" * 64}
-    command = ["python", "-m", "pytest", name]
-    demand = {"cpu": 1, "mem_gb": 4}
-    placement = {"required_tags": [name]}
-    fingerprint = hashlib.sha256(json.dumps(
-        [command, ".", demand, variables, {k: stamp[k] for k in ("head", "dirty_sha256")}, placement],
-        sort_keys=True).encode()).hexdigest()[:16]
-    filename = f".pbrun-closure.{fingerprint}.json"
-    if bad == "filename":
-        filename = ".pbrun-closure.0123456789abcdef.json"
-    if bad == "extra-key":
-        stamp["not_generated"] = True
-    if bad == "cwd":
-        stamp["cwd"] = "elsewhere"
-    raw = json.dumps(stamp, indent=1, sort_keys=True).encode()
-    (root / filename).write_bytes(raw)
+    for path, value in (extra or {}).items():
+        (root / path).write_text(value)
+    raw = json.dumps(stamp or {"arm": name}).encode()
+    (root / GENERATED).write_bytes(raw)
     _git(root, "add", "-A")
-    _git(root, "commit", "-qm", f"PrismaBuild pbrun checkout snapshot v{version}")
-    head = _git(root, "rev-parse", "HEAD")
-    entry = {"path": filename, "bytes": len(raw), "sha256": hashlib.sha256(raw).hexdigest()}
-    if bad == "closure-size":
-        entry["bytes"] += 1
-    if bad == "closure-hash":
-        entry["sha256"] = "0" * 64
-    closure = {"schema": "prismaquant.prismabuild.code_closure.v1", "files": [entry]}
-    closure["closure_sha256"] = _hash(closure)
-    if bad == "closure-null":
-        closure = None
-    snapshot_input = {"id": "pbrun.checkout-snapshot", "bytes": 123, "sha256": "c" * 64}
-    action = {
-        "schema": "prismaquant.prismabuild.action.v2",
-        "task": {"definition_id": "fleet/pbrun", "definition_version": "v1",
-                 "result_path": f"pbrun_result.{fingerprint}.txt"},
-        "params": {"command": command, "cwd": ".", "demand": demand,
-                   "placement": placement, "checkout_snapshot": {
-                       "schema": f"prismaquant.prismabuild.pbrun_checkout_snapshot.v{schema_version or version}",
-                       "commit": "0" * 40 if bad == "snapshot" else head,
-                       "subdirectory": ".", "input": snapshot_input}},
-        "inputs": [snapshot_input], "environment": {
-            "variables": None if bad == "variables-null" else variables},
-        "code_closure": closure,
-    }
-    action["action_key"] = _hash(action)
-    key = action["action_key"]
-    moved = root.parent.with_name(f"{key[:12]}.fixture")
-    root.parent.rename(moved)
-    root = moved / "checkout"
-    request = requests / key[:2] / f"{key}.json"
-    request.parent.mkdir(parents=True)
-    request.write_text(json.dumps(action))
-    return root, requests, request, filename
+    _git(root, "commit", "-qm", "materialized snapshot")
+    return root, {"path": GENERATED, "bytes": len(raw),
+                  "sha256": hashlib.sha256(raw).hexdigest(),
+                  "action_key": "a" * 64, "request_sha256": "b" * 64}
 
 
-def _measure(fixture, **kwargs):
-    module = importlib.import_module("tessera._dev.suite_source")
-    root, requests, _, _ = fixture
-    return module.measured_source(root, request_root=requests, owner="e" * 64, **kwargs)
+def _verifier(tmp_path, *, generated=None, exit_code=0, stdout=None):
+    """A verifier command that prints ``generated`` or exits ``exit_code``.
+
+    It also records the root and commit it was asked about.
+    """
+
+    script = tmp_path / f"verifier-{len(list(tmp_path.glob('verifier-*')))}.py"
+    asked = script.with_suffix(".asked")
+    text = stdout if stdout is not None else json.dumps(
+        {"schema": "example.generated.v1", "generated": generated or []})
+    script.write_text(
+        "import sys, pathlib\n"
+        f"pathlib.Path({str(asked)!r}).write_text(' '.join(sys.argv[1:]))\n"
+        f"sys.stdout.write({text!r})\n"
+        f"sys.stderr.write('verifier says no')\n"
+        f"sys.exit({exit_code})\n")
+    return [sys.executable, str(script)], asked
 
 
-@pytest.mark.parametrize("versions", [(1, 1), (2, 2), (1, 2)])
-def test_arm_specific_snapshots_retain_ids_but_have_one_effective_source(tmp_path, versions):
-    left = _measure(_snapshot(tmp_path, "gpu", version=versions[0]))
-    right = _measure(_snapshot(tmp_path, "x86", version=versions[1]))
-    assert left["snapshot_commit"] != right["snapshot_commit"]
-    assert left["verification"] == right["verification"] == "verified"
-    assert left["sha256"] == right["sha256"]
-    assert len(left["excluded_metadata"]) == len(right["excluded_metadata"]) == 1
-    changed = _measure(_snapshot(tmp_path, "changed", "different source\n",
-                                 version=versions[1]))
-    assert changed["sha256"] != right["sha256"]
+def _measure(root, verifier, **kwargs):
+    return _module().measured_source(root, verifier=verifier, **kwargs)
 
 
-def test_same_original_head_does_not_hide_changed_source_bytes(tmp_path):
-    left = _measure(_snapshot(tmp_path, "gpu"))
-    right = _measure(_snapshot(tmp_path, "x86", "different dirty source at same head\n"))
-    assert left["sha256"] != right["sha256"]
+def test_arm_specific_generated_files_leave_one_effective_source(tmp_path):
+    left, left_entry = _snapshot(tmp_path, "gpu")
+    right, right_entry = _snapshot(tmp_path, "x86")
+    left_record = _measure(left, _verifier(tmp_path, generated=[left_entry])[0])
+    right_record = _measure(right, _verifier(tmp_path, generated=[right_entry])[0])
+    assert left_record["snapshot_commit"] != right_record["snapshot_commit"]
+    assert left_record["verification"] == right_record["verification"] == "verified"
+    assert left_record["sha256"] == right_record["sha256"]
+    assert left_record["excluded_metadata"] == [left_entry]
+    assert right_record["excluded_metadata"] == [right_entry]
+    changed, changed_entry = _snapshot(tmp_path, "changed", "different source\n",
+                                       stamp={"arm": "x86"})
+    changed_record = _measure(changed, _verifier(tmp_path, generated=[changed_entry])[0])
+    assert changed_record["sha256"] != right_record["sha256"]
 
 
-def test_extra_exact_grammar_metadata_is_source_not_scaffolding(tmp_path):
-    name = ".pbrun-closure.ffffffffffffffff.json"
-    first = json.dumps({"cwd": ".", "head": "a" * 40, "dirty_sha256": "c" * 64})
-    second = json.dumps({"cwd": ".", "head": "b" * 40, "dirty_sha256": "c" * 64})
-    left = _measure(_snapshot(tmp_path, "gpu", extra={name: first}))
-    right = _measure(_snapshot(tmp_path, "x86", extra={name: second}))
-    assert left["sha256"] != right["sha256"]
-    assert name not in [row["path"] for row in left["excluded_metadata"]]
+def test_the_verifier_is_asked_about_this_checkout_and_commit(tmp_path):
+    root, entry = _snapshot(tmp_path, "gpu")
+    verifier, asked = _verifier(tmp_path, generated=[entry])
+    record = _measure(root, verifier)
+    assert asked.read_text() == f"{root} {record['snapshot_commit']}"
 
 
-@pytest.mark.parametrize("bad", ["filename", "extra-key", "cwd", "closure-size", "closure-hash", "snapshot"])
-@pytest.mark.parametrize("version", [1, 2])
-def test_unverifiable_closure_metadata_never_establishes_source_equivalence(tmp_path, bad, version):
-    record = _measure(_snapshot(tmp_path, "gpu", bad=bad, version=version))
-    assert record["verification"] == "unknown"
+def test_the_environment_declares_the_verifier_by_default(tmp_path, monkeypatch):
+    root, entry = _snapshot(tmp_path, "gpu")
+    verifier, _ = _verifier(tmp_path, generated=[entry])
+    monkeypatch.setenv(_module().VERIFIER_ENV, shlex.join(verifier))
+    assert _module().measured_source(root)["excluded_metadata"] == [entry]
+    monkeypatch.setenv(_module().VERIFIER_ENV, "  ")
+    record = _module().measured_source(root)
+    assert record["verification"] == "unknown" and "names no command" in record["reason"]
+
+
+def test_without_a_verifier_every_tracked_file_is_source(tmp_path, monkeypatch):
+    monkeypatch.delenv(_module().VERIFIER_ENV, raising=False)
+    left, _ = _snapshot(tmp_path, "gpu")
+    right, _ = _snapshot(tmp_path, "x86")
+    left_record, right_record = _module().measured_source(left), _measure(right, None)
+    assert left_record["verification"] == right_record["verification"] == "verified"
+    assert left_record["excluded_metadata"] == right_record["excluded_metadata"] == []
+    # The generated files differ, so without a verifier the arms never agree.
+    assert left_record["sha256"] != right_record["sha256"]
+
+
+def test_a_file_the_verifier_did_not_name_is_source(tmp_path):
+    name = "lookalike-stamp.json"
+    left, left_entry = _snapshot(tmp_path, "gpu", extra={name: "one"})
+    right, right_entry = _snapshot(tmp_path, "x86", extra={name: "two"})
+    left_record = _measure(left, _verifier(tmp_path, generated=[left_entry])[0])
+    right_record = _measure(right, _verifier(tmp_path, generated=[right_entry])[0])
+    assert left_record["sha256"] != right_record["sha256"]
+    assert name not in [row["path"] for row in left_record["excluded_metadata"]]
+
+
+def _broken(entry, how):
+    if how == "size":
+        return [dict(entry, bytes=entry["bytes"] + 1)]
+    if how == "digest":
+        return [dict(entry, sha256="0" * 64)]
+    if how == "absent":
+        return [dict(entry, path="not-there.json")]
+    if how == "escape":
+        return [dict(entry, path="../outside.json")]
+    if how == "absolute":
+        return [dict(entry, path="/etc/hostname")]
+    if how == "unnormalized":
+        return [dict(entry, path="./" + entry["path"])]
+    if how == "repeated":
+        return [entry, entry]
+    if how == "no-digest":
+        return [{"path": entry["path"]}]
+    return ["not an object"]
+
+
+@pytest.mark.parametrize("how", ["size", "digest", "absent", "escape", "absolute",
+                                 "unnormalized", "repeated", "no-digest", "shape"])
+def test_a_generated_file_tessera_cannot_check_is_never_left_out(tmp_path, how):
+    root, entry = _snapshot(tmp_path, "gpu")
+    record = _measure(root, _verifier(tmp_path, generated=_broken(entry, how))[0])
+    assert record["verification"] == "unknown", record
     assert record["sha256"] is None and record["excluded_metadata"] == []
     assert record["reason"]
 
 
-@pytest.mark.parametrize("version,schema_version", [(3, 3), (2, 1)])
-def test_unknown_or_mismatched_snapshot_versions_cannot_establish_identity(
-        tmp_path, version, schema_version):
-    record = _measure(_snapshot(tmp_path, "gpu", version=version,
-                                schema_version=schema_version))
-    assert record["verification"] == "unknown"
+def test_a_generated_file_absent_from_the_commit_is_never_left_out(tmp_path):
+    """A file the verifier vouches for must be the commit's blob, not an extra."""
+
+    root, entry = _snapshot(tmp_path, "gpu")
+    _git(root, "rm", "-q", "--cached", GENERATED)
+    _git(root, "commit", "-qm", "stamp untracked")
+    (root / ".git" / "info" / "exclude").write_text(GENERATED + "\n")
+    record = _measure(root, _verifier(tmp_path, generated=[entry])[0])
+    assert record["verification"] == "unknown", record
+    assert record["excluded_metadata"] == []
+
+
+@pytest.mark.parametrize("verifier", ["refuses", "no-json", "no-list", "missing"])
+def test_a_verifier_that_does_not_vouch_makes_the_identity_unknown(tmp_path, verifier):
+    root, entry = _snapshot(tmp_path, "gpu")
+    if verifier == "refuses":
+        command = _verifier(tmp_path, generated=[entry], exit_code=1)[0]
+    elif verifier == "no-json":
+        command = _verifier(tmp_path, stdout="snapshot verified")[0]
+    elif verifier == "no-list":
+        command = _verifier(tmp_path, stdout=json.dumps({"generated": "all"}))[0]
+    else:
+        command = [str(tmp_path / "no-such-verifier")]
+    record = _measure(root, command)
+    assert record["verification"] == "unknown", record
     assert record["sha256"] is None and record["excluded_metadata"] == []
-    assert "snapshot" in record["reason"]
+    assert "verifier" in record["reason"]
+    if verifier == "refuses":
+        assert "verifier says no" in record["reason"]
 
 
-@pytest.mark.parametrize("change", ["bytes", "mode", "delete", "untracked", "closure"])
+@pytest.mark.parametrize("change", ["bytes", "mode", "delete", "untracked", "generated"])
 def test_dirty_materialized_snapshot_is_not_reported_as_its_old_source(tmp_path, change):
-    fixture = _snapshot(tmp_path, "gpu")
-    root, _, _, stamp = fixture
+    root, entry = _snapshot(tmp_path, "gpu")
     if change == "bytes":
         (root / "source.py").write_text("changed\n")
     elif change == "mode":
@@ -148,33 +195,16 @@ def test_dirty_materialized_snapshot_is_not_reported_as_its_old_source(tmp_path,
     elif change == "untracked":
         (root / "new-source.py").write_text("new\n")
     else:
-        (root / stamp).write_text("{}")
-    record = _measure(fixture)
+        (root / GENERATED).write_text("{}")
+    record = _measure(root, _verifier(tmp_path, generated=[entry])[0])
     assert record["verification"] == "unknown" and record["sha256"] is None
 
 
-def test_missing_or_ambiguous_action_lookup_is_unknown(tmp_path):
-    fixture = _snapshot(tmp_path, "gpu")
-    root, requests, request, _ = fixture
-    saved = request.read_bytes()
-    request.unlink()
-    assert _measure(fixture)["verification"] == "unknown"
-    request.write_bytes(saved)
-    request.with_name(request.stem[:12] + "f" * 52 + ".json").write_bytes(saved)
-    assert _measure(fixture)["verification"] == "unknown"
-
-
-def test_malformed_action_mappings_report_unknown_instead_of_aborting(tmp_path):
-    for bad in ("variables-null", "closure-null"):
-        record = _measure(_snapshot(tmp_path, bad, bad=bad))
-        assert record["verification"] == "unknown" and record["sha256"] is None
-
-
 def test_mode_symlink_and_nul_safe_path_identity_are_preserved(tmp_path):
-    fixtures = [_snapshot(tmp_path, name) for name in ("base", "mode", "link", "name")]
-    # Ordinary non-PB Git commits still measure their whole source roster.
-    for index, (root, _, _, stamp) in enumerate(fixtures):
-        _git(root, "rm", "-q", stamp)
+    fixtures = [_snapshot(tmp_path, name)[0] for name in ("base", "mode", "link", "name")]
+    # Ordinary Git commits still measure their whole source roster.
+    for index, root in enumerate(fixtures):
+        _git(root, "rm", "-q", GENERATED)
         if index == 1:
             (root / "source.py").chmod(0o755)
         elif index == 2:
@@ -184,13 +214,13 @@ def test_mode_symlink_and_nul_safe_path_identity_are_preserved(tmp_path):
             (root / "source.py").rename(root / "source\nwith\ttabs.py")
         _git(root, "add", "-A")
         _git(root, "commit", "--allow-empty", "-qm", "ordinary source")
-    records = [_measure(item) for item in fixtures]
+    records = [_measure(item, None) for item in fixtures]
     assert all(row["verification"] == "verified" for row in records)
     assert len({row["sha256"] for row in records}) == len(records)
 
 
 def _plain(tmp_path, name, body="A\n"):
-    """An ordinary (non-PB) checkout, which is what a local suite runs in."""
+    """An ordinary checkout, which is what a local suite runs in."""
 
     root = tmp_path / name
     root.mkdir()
@@ -199,10 +229,6 @@ def _plain(tmp_path, name, body="A\n"):
     _git(root, "add", "-A")
     _git(root, "commit", "-qm", "ordinary source")
     return root
-
-
-def _module():
-    return importlib.import_module("tessera._dev.suite_source")
 
 
 def test_a_clean_source_switch_during_the_run_is_not_attested(tmp_path):
@@ -260,11 +286,12 @@ def test_an_unverifiable_entry_cannot_bind_a_verified_publication(tmp_path):
 
 
 def test_the_immutable_snapshot_case_still_binds(tmp_path):
-    """A PB snapshot cannot move under a run, and must stay attestable."""
+    """A materialized snapshot cannot move under a run, and must stay attestable."""
 
-    fixture = _snapshot(tmp_path, "gpu")
-    entry = _measure(fixture)
-    published = _measure(fixture, entry=entry)
+    root, generated = _snapshot(tmp_path, "gpu")
+    verifier = _verifier(tmp_path, generated=[generated])[0]
+    entry = _measure(root, verifier)
+    published = _measure(root, verifier, entry=entry)
     assert published["verification"] == "verified", published
     assert published["sha256"] == entry["sha256"]
     assert len(published["excluded_metadata"]) == 1

@@ -24,6 +24,16 @@ name the fused pair beside the compact pair on that receipt; flags, rungs
 and every other cell are unchanged, and `scheme.EXPERIMENTAL_LAUNCHES` is
 empty again. See §3.3 and `docs/measurements/2026-09-28-routed-fused-640.md`.
 
+Re-stamped 2026-09-28 for the source-verifier seam (tessera#599, step 3).
+`tessera._dev.suite_source` no longer parses PrismaBuild's snapshot, action or
+closure records. A test population leaves an executor-generated file out of
+its source hash only when a verifier, declared in `TESSERA_SOURCE_VERIFIER`,
+vouches for it. Tessera still checks each vouched-for file against the commit.
+`tools/merge_suite.py` declares PrismaBuild's `pbsnapshot.py verify`. The
+seam fails closed, as described in "Each population retains the actual Git
+snapshot commit" below. `src/tessera` now names a client only through the
+`prismaquant.tessera.v1` wire-ID literals.
+
 Re-stamped 2026-09-28 for the serving code identity (contract v41). A cell's
 `runtime` block accepts an optional pair that names the Tessera code its
 evidence was taken on: `tessera_commit` (40-hex, for a person) and
@@ -1467,17 +1477,38 @@ numeric 124/137: retain the inner logs and command deadline/grace per arm.
 
 Each population retains the actual Git snapshot commit and separately records
 `tessera.suite_source.v1`: SHA-256 over every tracked source path, executable
-mode, and actual file/symlink bytes, checked against the snapshot blobs. Only
-the exact generated closure member verified against that action's sealed CAS
-request is omitted. The action-prefix directory is a bounded lookup hint,
-not proof: the full action key, snapshot commit, container owner, closure
-hash/size, logical path and generated filename fingerprint must all agree.
-Snapshot subjects v1 and v2 must match the sealed snapshot schema. Unknown
-snapshot versions yield `unknown`, rather than being hashed as ordinary Git
-source. Both supported versions retain the same strict closure verification.
-Other closure-looking tracked files remain source. Original-head and dirty
-stamps are never substituted for the actual source hash. Post-materialization
-dirty state, ambiguous/missing requests or failed verification yield `unknown`.
+mode, and actual file/symlink bytes, checked against the snapshot blobs.
+
+**The source-verifier seam (tessera#599 step 3).** A checkout an executor
+materialized can carry a file the executor generated, such as a closure stamp.
+Such a file is left out of the hash only when a declared *source verifier*
+vouches for it, and never because of its name. Tessera defines the seam and
+names no executor:
+
+- `TESSERA_SOURCE_VERIFIER` declares the verifier as a shell-quoted argv.
+  `suite_source.measured_source` runs it with the checkout root and its HEAD
+  commit appended.
+- The verifier exits 0 and prints one JSON object whose `generated` list names
+  each generated file, with at least `path`, `bytes` and `sha256`. The entries
+  are recorded as given in `excluded_metadata`. An empty list means that
+  nothing was generated.
+- Tessera checks each listed file itself before leaving it out: a normalized
+  relative path, a regular file with those bytes and that digest, and equal to
+  its blob at the commit.
+- The seam fails closed. A declared verifier that cannot run, exits non-zero,
+  prints anything else, or lists a file that fails those checks yields
+  `unknown`. With no verifier declared, nothing is left out, so arms that
+  carry different generated files never agree on a source.
+
+`tools/merge_suite.py`, which submits both arms through PrismaBuild, declares
+PrismaBuild's published `pbsnapshot.py verify` (RobTand/prismabuild#1280). That
+tool verifies pbrun's closure stamp against the exact sealed action request,
+and its entries carry the `action_key` and `request_sha256` that the resume
+path below binds on. Until a PrismaBuild generation with that tool is
+published, the declared verifier cannot run, so every population is `unknown`
+and names no producer. That is a refusal, never an unverified acceptance.
+Other stamp-looking tracked files remain source. Post-materialization dirty
+state and a failed verification yield `unknown`.
 That hash is of a **span**, not of an instant: `tests/conftest.py` captures the
 identity above its first import of the code under test and the publication is
 bound to it, so a checkout fast-forwarded cleanly mid-run publishes `unknown`
@@ -1535,8 +1566,8 @@ shapes this tool seals -- `pytest`, `<python> -m pytest`, or either under
 program string passed to `-c` is not read. A candidate is then bound or
 refused, by reason, on three legs: the request's `checkout_snapshot.commit`
 and the population's `commit` are both present and equal; the population's
-verified source stamp (`source_identity.excluded_metadata[].action_key`, written
-by `tessera._dev.suite_source` only for a verified snapshot checkout) names
+verified source stamp (`source_identity.excluded_metadata[].action_key`, which
+`tessera._dev.suite_source` records only from a source verifier's answer) names
 that action and its `request_sha256` is the digest of the request bytes read;
 and the record's top-level status is `executed` or `failed` -- the two the
 worker writes together with the attempt's own `detail` (a

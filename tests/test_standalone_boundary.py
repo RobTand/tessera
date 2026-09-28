@@ -30,10 +30,12 @@ multiset:
   so the list tracks the code.
 
 The allowlist only shrinks. CI refuses any pull request that adds a line
-to it (``.github/workflows/ci.yml``). Steps 1 and 5 of the plan remove the
-``cached_unit.py``, ``hessian_capture.py`` and ``_dev/suite_source.py``
-entries; the end state is the ``prismaquant.tessera.v1`` wire-ID literals
-alone, which stay until the wire-version decision (step 8).
+to it (``.github/workflows/ci.yml``). It now holds the end state: the
+``prismaquant.tessera.v1`` wire-ID literals alone, which stay until the
+wire-version decision (step 8). The ``cached_unit.py`` and
+``hessian_capture.py`` entries went with step 1, and the
+``_dev/suite_source.py`` entries went when its PrismaBuild record checks moved
+behind the source-verifier seam (tessera#599 step 3).
 """
 from __future__ import annotations
 
