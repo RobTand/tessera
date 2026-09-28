@@ -1,8 +1,10 @@
 """The fused routed window MoE lane (``tessera.routed_fused``, tessera#640).
 
-Parity against the same per-expert definition oracle the grouped GEMM tests
-use (``test_window_gemm_grouped.Expert``: each expert's weights ARE the
-definition, routing applied on the host), for both window families, with a
+Parity against the same per-expert definition the grouped GEMM tests use
+(``test_window_gemm_grouped.Expert``: each expert's weights ARE the
+definition, routing applied on the host), held per element to bounds derived
+from the dtypes and operation counts (``fused_bound``), stage by stage on the
+exact input each stage consumes, for both window families, with a
 TP row cut (per-expert start state), M = 1 and M past one 64-route
 superblock, empty and repeated experts, the route-preserving ``gate_up`` and
 the reduced ``down_routes`` stages, the SwiGLU clamp, the top-k = 1
@@ -31,7 +33,7 @@ from tessera.native_window_moe import (NativeWindowMoE, PackedWindowMoeBundles, 
                                        _silu_and_mul, native_window_moe_from_bundles)
 
 import fused_bound as fb                                   # noqa: E402
-from test_window_gemm_grouped import Expert, _quant, _tol  # noqa: E402
+from test_window_gemm_grouped import Expert, _quant  # noqa: E402
 
 cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="the lane is a CUDA kernel")
 
@@ -102,53 +104,132 @@ def _routes(t, k, seed, experts=EXPERTS):
     return ids, rw
 
 
-def _reference(stacks, x, ids, rw, family, *, limit=None, weight_input=False):
-    """vLLM's placement, per route on the host: bf16 gate/up, SwiGLU (clamp)
-    in fp32 to one bf16, the family's A quant, down per route, weighted and
-    rounded to bf16 per route, summed in fp32, rounded once."""
-    gate_stack, up_stack, down_stack = stacks
-    folded = family == "value"
+def _w64(stack, family):
+    return [fb.fp64_weight(e, family) for e in stack]
+
+
+def _a64(family, x):
+    """The scaled fp64 A operand the kernel multiplies: the route's own E4M3
+    quantisation times its scale, or the bf16 x."""
+    if family == "e4m3":
+        xq, a = _quant(x)
+        return xq.double() * a.double().reshape(-1, 1)
+    return x.double()
+
+
+def _per_route(values, ids):
+    """``[E, T, N]`` gathered to ``[T, top_k, N]`` by the routing."""
     t, k = ids.shape
-    inter, hidden = gate_stack[0].rows, down_stack[0].rows
-    sel = torch.arange(t, device="cuda")[:, None].expand_as(ids)
-    if weight_input:
-        x = x * rw.reshape(-1, 1).to(x.dtype)
-    if family == "e4m3":
-        xq, a1 = _quant(x)
-        xq1 = xq.float()
-    else:
-        xq1, a1 = x, None
-    g = torch.stack([e.reference(xq1, family, folded=folded) for e in gate_stack])   # [E,T,I]
-    u = torch.stack([e.reference(xq1, family, folded=folded) for e in up_stack])
-    if family == "e4m3":
-        g = g * a1.reshape(1, t, 1)
-        u = u * a1.reshape(1, t, 1)
-    gate = g[ids.long(), sel].bfloat16().float()                                      # [T,K,I]
-    up = u[ids.long(), sel].bfloat16().float()
-    if limit is not None:
-        gate = torch.clamp(gate, max=limit)
-        up = torch.clamp(up, min=-limit, max=limit)
-    act = (torch.nn.functional.silu(gate) * up).bfloat16()
-    flat = act.reshape(t * k, inter)
-    if family == "e4m3":
-        aq, a2 = _quant(flat)
-        flat_q = aq.float()
-    else:
-        flat_q, a2 = flat, None
-    d = torch.stack([e.reference(flat_q, family, folded=folded) for e in down_stack])  # [E,T*K,H]
-    routes = d[ids.long().reshape(-1), torch.arange(t * k, device="cuda")].reshape(t, k, hidden)
-    if family == "e4m3":
-        routes = routes * a2.reshape(t, k, 1)
-    if not weight_input:
-        routes = routes * rw[..., None]
-    routes = routes.bfloat16()
-    return routes.float().sum(1).bfloat16()
+    sel = torch.arange(t, device=ids.device)[:, None].expand(t, k)
+    return values[ids.long(), sel]
 
 
-def _close(out, ref, what):
-    err = float((out.float() - ref.float()).abs().max())
-    assert err < _tol(ref), f"{what}: max abs err {err} vs tol {_tol(ref)}"
-    return err
+def _gate_up_bounds(stacks, family, x, ids):
+    """Stage 1 per route: ``(r_gate, b_gate, r_up, b_up)``, each ``[T, top_k,
+    I]`` fp64 -- ``fused_bound.dense_bound`` with ``S = 1`` (the fused lane
+    runs one pass over K; the Triton lane's chunked depth is at most K), the
+    family's epilogue multiplies, no routing weight (the route-preserving
+    projection is unweighted), one bf16 rounding."""
+    gate, up, _down = stacks
+    a64 = _a64(family, x)
+    out = []
+    for stack in (gate, up):
+        refs, bounds = zip(*(fb.dense_bound(family, a64, w, stack[0].cols, 1)
+                             for w in _w64(stack, family)))
+        out += [_per_route(torch.stack(refs), ids), _per_route(torch.stack(bounds), ids)]
+    return out
+
+
+def _down_bounds(stacks, family, act, ids, rw, *, weight_input=False):
+    """Stage 2 on the route-indexed activation ``act`` ``[T * top_k, I]`` (the
+    exact bf16 tensor the kernel consumes; E4M3 re-quantises it with the
+    route's own quantiser): per route ``dense_bound`` with ``S = 1`` and the
+    routing weight as one more multiply unless it was applied on input, each
+    route rounded to bf16, then ``route_sum_bound`` (the fp32 sum of top_k
+    bf16 routes -- fixed order in the fused ``token_sum``, atomics in the
+    compact lane; gamma(top_k) covers either -- and one rounding)."""
+    down = stacks[2]
+    t, k = ids.shape
+    h64 = _a64(family, act)
+    weight = None if weight_input else rw.double().reshape(t * k, 1)
+    refs, bounds = zip(*(fb.dense_bound(family, h64, w, down[0].cols, 1, weight=weight)
+                         for w in _w64(down, family)))
+    flat_ids = ids.reshape(-1, 1)
+    hidden = down[0].rows
+    r_d = _per_route(torch.stack(refs), flat_ids).reshape(t, k, hidden)
+    b_d = _per_route(torch.stack(bounds), flat_ids).reshape(t, k, hidden)
+    return fb.route_sum_bound(r_d, b_d, top_k_dim=1)
+
+
+def _staged_check(stacks, bundles, x, ids, rw, family, what, *, limit=None,
+                  weight_input=False, compact=True):
+    """Hold the routed lanes to derived bounds, stage by stage, on the exact
+    input each stage consumes; returns ``(gate_up, act, down, forward)`` of
+    the fused lane.
+
+    * ``gate_up`` per route and element within :func:`_gate_up_bounds` of the
+      fp64 reference;
+    * ``down_routes`` on the SwiGLU of that output (``_silu_and_mul``, clamp
+      included) within :func:`_down_bounds`;
+    * the fused forward EQUAL, bitwise, to that staged composition: its
+      epilogue rounds gate and up to bf16, widens, clamps and activates in
+      fp32 with one rounding, as ``_silu_and_mul`` does, and ``token_sum`` is
+      fixed-order -- so the end-to-end forward is held by the stage bounds
+      without a limit of its own;
+    * ``compact``: the compact adapter's gate and up within the stage-1 bound
+      (and within twice it of the fused lane: both sit inside it); its own
+      forward within the stage-2 bound of ITS OWN staged activation (its
+      preserve stages store each route once -- no atomics -- so the forward
+      consumes that activation); and its down on the fused lane's activation
+      within twice the fused down's bound.
+
+    With ``weight_input`` (top_k = 1) the weight scales x in bf16 before the
+    quantiser, as both lanes' forwards do, and no stage applies it again.
+    """
+    fused = _fused(bundles)
+    t, k = ids.shape
+    inter = stacks[0][0].rows
+    x_in = x * rw.reshape(-1, 1).to(x.dtype) if weight_input else x
+    r_g, b_g, r_u, b_u = _gate_up_bounds(stacks, family, x_in, ids)
+    gu = fused.gate_up(x_in, ids, rw, preserve=True)
+    ratios = {"gate": fb.check_within(gu[..., :inter], r_g, b_g,
+                                      f"{what}: fused gate vs the fp64 reference"),
+              "up": fb.check_within(gu[..., inter:], r_u, b_u,
+                                    f"{what}: fused up vs the fp64 reference")}
+    act = _silu_and_mul(gu[..., :inter].reshape(t * k, inter),
+                        gu[..., inter:].reshape(t * k, inter), clamp_limit=limit)
+    r_tok, b_tok = _down_bounds(stacks, family, act, ids, rw, weight_input=weight_input)
+    dn = fused.down_routes(act, ids, rw, route_input=True,
+                           apply_router_weight_on_input=weight_input, round_routes=True)
+    ratios["down"] = fb.check_within(dn, r_tok, b_tok, f"{what}: fused down vs the fp64 reference")
+    out = fused(x, ids, rw, apply_router_weight_on_input=weight_input, swiglu_limit=limit)
+    diff = int((out != dn).sum())
+    assert diff == 0, f"{what}: the forward differs from its staged composition in {diff} elements"
+    if compact:
+        legacy = _legacy(bundles)
+        g_l = legacy.gate(x_in, ids, rw, preserve=True, apply_router_weight_on_input=False)
+        u_l = legacy.up(x_in, ids, rw, preserve=True, apply_router_weight_on_input=False)
+        ratios["compact gate"] = fb.check_within(g_l, r_g, b_g,
+                                                 f"{what}: compact gate vs the fp64 reference")
+        ratios["compact up"] = fb.check_within(u_l, r_u, b_u,
+                                               f"{what}: compact up vs the fp64 reference")
+        ratios["gate pair"] = fb.check_within(gu[..., :inter], g_l.double(), b_g,
+                                              f"{what}: gate fused vs compact", scale=2.0)
+        ratios["up pair"] = fb.check_within(gu[..., inter:], u_l.double(), b_u,
+                                            f"{what}: up fused vs compact", scale=2.0)
+        act_l = _silu_and_mul(g_l.reshape(t * k, inter), u_l.reshape(t * k, inter),
+                              clamp_limit=limit)
+        r_l, b_l = _down_bounds(stacks, family, act_l, ids, rw, weight_input=weight_input)
+        out_l = legacy(x, ids, rw, apply_router_weight_on_input=weight_input, swiglu_limit=limit)
+        ratios["compact forward"] = fb.check_within(
+            out_l, r_l, b_l, f"{what}: compact forward vs the fp64 reference of its own stages")
+        dn_l = legacy.down(act, ids, rw, route_input=True,
+                           apply_router_weight_on_input=weight_input, round_routes=True)
+        ratios["down pair"] = fb.check_within(dn, dn_l.double(), b_tok,
+                                              f"{what}: down fused vs compact", scale=2.0)
+    print(f"ROUTED-BOUND {what} " + " ".join(f"{name.replace(' ', '_')}={v:.4f}"
+                                             for name, v in ratios.items()))
+    return gu, act, dn, out
 
 
 # --- parity ------------------------------------------------------------------
@@ -159,19 +240,15 @@ def _close(out, ref, what):
 def test_fused_forward_matches_the_per_expert_oracle_and_the_compact_adapter(family, t):
     """M = 1 (decode), a short batch, and 71 x 3 = 213 routes so at least one
     expert spans two 64-route superblocks; experts 1 and 3 carry a start
-    state.  The compact adapter computes the same function of the wire, so
-    the two lanes agree to accumulation order; the oracle is the definition."""
+    state.  Both lanes are held stage by stage to the derived bounds of the
+    fp64 definition (``_staged_check``); the fused forward is its staged
+    composition bitwise, and the two lanes agree within twice the bound."""
     stacks = _stacks(family)
     bundles = _bundles(family, stacks)
-    fused, legacy = _fused(bundles), _legacy(bundles)
     x = torch.randn(t, HIDDEN, device="cuda").bfloat16()
     ids, rw = _routes(t, TOP_K, 900 + t)
-    out = fused(x, ids, rw)
+    *_stages, out = _staged_check(stacks, bundles, x, ids, rw, family, f"{family} T={t}")
     assert out.shape == (t, HIDDEN) and out.dtype == torch.bfloat16
-    ref = _reference(stacks, x, ids, rw, family)
-    _close(out, ref, f"{family} fused vs oracle")
-    _close(legacy(x, ids, rw), ref, f"{family} compact vs oracle")
-    _close(out, legacy(x, ids, rw), f"{family} fused vs compact")
 
 
 @cuda
@@ -179,14 +256,12 @@ def test_fused_forward_matches_the_per_expert_oracle_and_the_compact_adapter(fam
 def test_fused_swiglu_clamp_is_the_stock_placement(family):
     stacks = _stacks(family, cut=False)
     bundles = _bundles(family, stacks)
-    fused, legacy = _fused(bundles), _legacy(bundles)
+    fused = _fused(bundles)
     x = (torch.randn(24, HIDDEN, device="cuda") * 3).bfloat16()
     ids, rw = _routes(24, TOP_K, 77)
     limit = 0.5
-    out = fused(x, ids, rw, swiglu_limit=limit)
-    ref = _reference(stacks, x, ids, rw, family, limit=limit)
-    _close(out, ref, f"{family} clamp vs oracle")
-    _close(out, legacy(x, ids, rw, swiglu_limit=limit), f"{family} clamp vs compact")
+    *_stages, out = _staged_check(stacks, bundles, x, ids, rw, family, f"{family} clamp",
+                                  limit=limit)
     # the clamp changes the answer, so a lane that ignored it could not pass
     assert not torch.equal(out, fused(x, ids, rw))
 
@@ -202,9 +277,9 @@ def test_fused_empty_and_repeated_experts(family):
     x = torch.randn(40, HIDDEN, device="cuda").bfloat16()
     rw = torch.rand(40, TOP_K, device="cuda")
     ids = torch.full((40, TOP_K), 2, dtype=torch.int32, device="cuda")
-    _close(fused(x, ids, rw), _reference(stacks, x, ids, rw, family), f"{family} one expert")
+    _staged_check(stacks, bundles, x, ids, rw, family, f"{family} one expert", compact=False)
     ids = torch.arange(40 * TOP_K, device="cuda", dtype=torch.int32).reshape(40, TOP_K) % EXPERTS
-    _close(fused(x, ids, rw), _reference(stacks, x, ids, rw, family), f"{family} all experts")
+    _staged_check(stacks, bundles, x, ids, rw, family, f"{family} all experts", compact=False)
     empty = fused(x[:0], ids[:0], rw[:0])
     assert empty.shape == (0, HIDDEN) and empty.dtype == torch.bfloat16
 
@@ -213,29 +288,18 @@ def test_fused_empty_and_repeated_experts(family):
 @pytest.mark.parametrize("family", ["value", "e4m3"])
 def test_fused_staged_interfaces_match_the_compact_adapters(family):
     """``gate_up`` (route-preserving) and ``down_routes`` (reduced) are the
-    stages the routed pair oracle teacher-forces; they must be the compact
-    adapter's to accumulation order, and their composition the forward."""
+    stages the routed pair oracle teacher-forces; each lane's stage sits
+    inside the derived bound, so the fused and compact stages agree within
+    twice it, and their composition is the forward bitwise
+    (``_staged_check``)."""
     stacks = _stacks(family)
     bundles = _bundles(family, stacks)
-    fused, legacy = _fused(bundles), _legacy(bundles)
+    fused = _fused(bundles)
     t = 33
     x = torch.randn(t, HIDDEN, device="cuda").bfloat16()
     ids, rw = _routes(t, TOP_K, 5)
-    gu = fused.gate_up(x, ids, rw, preserve=True, apply_router_weight_on_input=False)
+    gu, act, down, _out = _staged_check(stacks, bundles, x, ids, rw, family, f"{family} staged")
     assert gu.shape == (t, TOP_K, 2 * INTER) and gu.dtype == torch.bfloat16
-    g_l = legacy.gate(x, ids, rw, preserve=True, apply_router_weight_on_input=False)
-    u_l = legacy.up(x, ids, rw, preserve=True, apply_router_weight_on_input=False)
-    _close(gu[..., :INTER], g_l, f"{family} gate")
-    _close(gu[..., INTER:], u_l, f"{family} up")
-    act = _silu_and_mul(gu[..., :INTER].reshape(t * TOP_K, INTER),
-                        gu[..., INTER:].reshape(t * TOP_K, INTER), clamp_limit=None)
-    down = fused.down_routes(act, ids, rw, route_input=True,
-                             apply_router_weight_on_input=False, round_routes=True)
-    down_l = legacy.down(act, ids, rw, route_input=True,
-                         apply_router_weight_on_input=False, round_routes=True)
-    _close(down, down_l, f"{family} down")
-    # the staged composition IS the forward's arithmetic (same rounding points)
-    _close(down, fused(x, ids, rw), f"{family} staged vs forward")
     if family == "e4m3":
         aq, a2 = _quant(act)
         pre = fused.down_routes(aq, ids, rw, a_scale=a2, route_input=True,
@@ -252,15 +316,12 @@ def test_fused_staged_interfaces_match_the_compact_adapters(family):
 def test_fused_weight_on_input_is_the_modular_prepare_placement(family):
     stacks = _stacks(family, cut=False)
     bundles = _bundles(family, stacks)
-    fused, legacy = _fused(bundles), _legacy(bundles)
+    fused = _fused(bundles)
     t = 19
     x = torch.randn(t, HIDDEN, device="cuda").bfloat16()
     ids, rw = _routes(t, 1, 11)
-    out = fused(x, ids, rw, apply_router_weight_on_input=True)
-    ref = _reference(stacks, x, ids, rw, family, weight_input=True)
-    _close(out, ref, f"{family} weight on input vs oracle")
-    _close(out, legacy(x, ids, rw, apply_router_weight_on_input=True),
-           f"{family} weight on input vs compact")
+    _staged_check(stacks, bundles, x, ids, rw, family, f"{family} weight on input",
+                  weight_input=True)
     ids3, rw3 = _routes(t, 3, 12)
     with pytest.raises(GrammarError, match="topk=1"):
         fused(x, ids3, rw3, apply_router_weight_on_input=True)
@@ -462,26 +523,6 @@ def test_the_published_lane_predicate_is_the_kernels_shape():
 
 
 # --- every rung's schedule: one-hot decode oracle, derived bounds (tessera#694) ----
-
-def _w64(stack, family):
-    return [fb.fp64_weight(e, family) for e in stack]
-
-
-def _a64(family, x):
-    """The scaled fp64 A operand the kernel multiplies: the route's own E4M3
-    quantisation times its scale, or the bf16 x."""
-    if family == "e4m3":
-        xq, a = _quant(x)
-        return xq.double() * a.double().reshape(-1, 1)
-    return x.double()
-
-
-def _per_route(values, ids):
-    """``[E, T, N]`` gathered to ``[T, top_k, N]`` by the routing."""
-    t, k = ids.shape
-    sel = torch.arange(t, device=ids.device)[:, None].expand(t, k)
-    return values[ids.long(), sel]
-
 
 @cuda
 @pytest.mark.parametrize("family", ["value", "e4m3"])
