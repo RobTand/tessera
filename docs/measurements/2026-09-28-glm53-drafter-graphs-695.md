@@ -167,7 +167,8 @@ runs: about 0.4 at four eager and three graph serves. It cannot separate a
 failure from noise. Step 2 therefore applies criterion 2's serve-level
 relabelling to each serve's mean non-member count, with the pools
 recomputed under each labelling, and refuses when `p_high` < 0.10 (floor
-0.029 at four eager and three graph serves). The max-rule count is printed
+0.029 at four eager and three graph serves; `member-pools-695.py
+--relabel` computes it). The max-rule count is printed
 beside it as a diagnostic and never decides. This was ruled on 2026-09-28,
 before any release data; the stub readings in this document stand as run,
 under the max rule.

@@ -31,17 +31,18 @@ Each pool name's second pass (<name>-r2) joins the pool when its receipts exist,
 except when it is ARM itself: a run is never judged against its own outcomes. ARM
 may not appear in the pool. To judge an eager run against the other eager runs,
 leave its serve out of the pool, or list only the serve's other pass.
+
+The predicate is importable (member-pools-695.py uses it): pool_runs() gathers a
+pool's runs, and members() returns the (case, choice) pairs of a run that equal
+some outcome of those runs. A choice is a member of a pool exactly when it is a
+member of one of the pool's runs, so a pool's members are the union of its runs'.
 """
 import json
 import pathlib
 import sys
 
-recs = pathlib.Path(sys.argv[1])
-arm = sys.argv[2]
-pool = sys.argv[3].split(",")
 
-
-def load_arm(name):
+def load_arm(recs, name):
     summary = json.loads((recs / f"{name}.eq.summary.json").read_text())
     if summary.get("_admission") != "paused":
         raise SystemExit(f"{name}: batches were not admitted paused ({summary.get('_admission')!r})")
@@ -85,53 +86,85 @@ def same_prefix(a, b):
     return dict(token_ids_differ_at=diverge, max_same_prefix_delta=dmax)
 
 
-if arm in pool:
-    raise SystemExit(f"{arm} is in its own pool")
-target = load_arm(arm)
-runs = {}
-for name in pool:
-    runs[name] = load_arm(name)
-    second = f"{name}-r2"
-    if second != arm and (recs / f"{second}.eq.summary.json").exists():
-        runs[second] = load_arm(second)
+def pool_runs(recs, arm, pool):
+    """The runs a pool brings: each named serve and its second pass, never ARM itself."""
+    if arm in pool:
+        raise SystemExit(f"{arm} is in its own pool")
+    runs = {}
+    for name in pool:
+        runs[name] = load_arm(recs, name)
+        second = f"{name}-r2"
+        if second != arm and (recs / f"{second}.eq.summary.json").exists():
+            runs[second] = load_arm(recs, second)
+    return runs
 
-# Outcome pool per target case: (run, case) pairs whose case sends the same batch.
-outcomes = {}
-for case, choices in target.items():
-    sig = signature(choices)
-    outcomes[case] = [(f"{r}:{c}" if c != case else r, cs) for r, cases in runs.items()
-                      for c, cs in cases.items() if signature(cs) == sig]
 
-report, all_ok = {}, True
-for case, choices in target.items():
-    rows = []
-    for i, choice in enumerate(choices):
-        hits = [r for r, cs in outcomes[case] if key(cs[i]) == key(choice)]
-        row = dict(choice=i, member=bool(hits), matches=hits)
-        if not hits:
-            near = [(same_prefix(choice, cs[i]), distance(choice, cs[i]), r)
-                    for r, cs in outcomes[case]]
-            best = min(near, default=None,
-                       key=lambda t: (t[0]["max_same_prefix_delta"], t[1][0], t[2]))
-            if best is not None:
-                prefix, (pos, dmax), r = best
-                row.update(closest=r, differing_positions=pos, max_shared_top20_delta=dmax,
-                           **prefix)
-            all_ok = False
-        rows.append(row)
-    report[case] = rows
-    miss = [r for r in rows if not r["member"]]
-    if miss:
-        print(f"{case:12s} NOT A MEMBER: " + "; ".join(
-            f"choice {r['choice']} closest {r.get('closest')} "
-            f"({r.get('differing_positions')} positions, token ids differ at "
-            f"{r.get('token_ids_differ_at')}, same-prefix max {r.get('max_same_prefix_delta', 0):.6g})"
-            for r in miss))
-    else:
-        print(f"{case:12s} member: every choice equals an eager outcome "
-              f"({len(set(h for r in rows for h in r['matches']))} of {len(outcomes[case])} pooled outcomes "
-              f"match some choice)")
-(recs / f"member-{arm}.json").write_text(json.dumps(dict(arm=arm, pool=sorted(runs), cases=report),
-                                                      indent=1))
-print("ALL MEMBERS" if all_ok else "NOT ALL MEMBERS", f"(pool: {', '.join(sorted(runs))})")
-sys.exit(0 if all_ok else 1)
+def outcome_pools(target, runs):
+    """Per target case, the (run, choices) outcomes whose case sends the same batch."""
+    outcomes = {}
+    for case, choices in target.items():
+        sig = signature(choices)
+        outcomes[case] = [(f"{r}:{c}" if c != case else r, cs) for r, cases in runs.items()
+                          for c, cs in cases.items() if signature(cs) == sig]
+    return outcomes
+
+
+def members(target, runs):
+    """The (case, choice) pairs of TARGET whose token ids and top-20 lists equal an outcome of RUNS."""
+    out = set()
+    for case, pool in outcome_pools(target, runs).items():
+        for i, choice in enumerate(target[case]):
+            want = key(choice)
+            if any(key(cs[i]) == want for _, cs in pool):
+                out.add((case, i))
+    return out
+
+
+def main():
+    recs = pathlib.Path(sys.argv[1])
+    arm = sys.argv[2]
+    pool = sys.argv[3].split(",")
+    if arm in pool:
+        raise SystemExit(f"{arm} is in its own pool")
+    target = load_arm(recs, arm)
+    runs = pool_runs(recs, arm, pool)
+    # Outcome pool per target case: (run, case) pairs whose case sends the same batch.
+    outcomes = outcome_pools(target, runs)
+
+    report, all_ok = {}, True
+    for case, choices in target.items():
+        rows = []
+        for i, choice in enumerate(choices):
+            hits = [r for r, cs in outcomes[case] if key(cs[i]) == key(choice)]
+            row = dict(choice=i, member=bool(hits), matches=hits)
+            if not hits:
+                near = [(same_prefix(choice, cs[i]), distance(choice, cs[i]), r)
+                        for r, cs in outcomes[case]]
+                best = min(near, default=None,
+                           key=lambda t: (t[0]["max_same_prefix_delta"], t[1][0], t[2]))
+                if best is not None:
+                    prefix, (pos, dmax), r = best
+                    row.update(closest=r, differing_positions=pos, max_shared_top20_delta=dmax,
+                               **prefix)
+                all_ok = False
+            rows.append(row)
+        report[case] = rows
+        miss = [r for r in rows if not r["member"]]
+        if miss:
+            print(f"{case:12s} NOT A MEMBER: " + "; ".join(
+                f"choice {r['choice']} closest {r.get('closest')} "
+                f"({r.get('differing_positions')} positions, token ids differ at "
+                f"{r.get('token_ids_differ_at')}, same-prefix max {r.get('max_same_prefix_delta', 0):.6g})"
+                for r in miss))
+        else:
+            print(f"{case:12s} member: every choice equals an eager outcome "
+                  f"({len(set(h for r in rows for h in r['matches']))} of {len(outcomes[case])} pooled outcomes "
+                  f"match some choice)")
+    (recs / f"member-{arm}.json").write_text(json.dumps(dict(arm=arm, pool=sorted(runs), cases=report),
+                                                          indent=1))
+    print("ALL MEMBERS" if all_ok else "NOT ALL MEMBERS", f"(pool: {', '.join(sorted(runs))})")
+    sys.exit(0 if all_ok else 1)
+
+
+if __name__ == "__main__":
+    main()
