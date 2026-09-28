@@ -205,14 +205,31 @@ each actual draft `nn.Module` forward through census-only pre/post hooks, so
 a warmup or earlier call cannot pose as the observed dispatch. The hook keeps
 the first and latest scalar route records per observed regime and a call count;
 it retains no tensors and is removed after the arm, including on generation
-failure. The single-request arm may prove both draft batch and decode if it
-actually reports M>1 and M1; an optional bounded arm with one or more prompts
-can probe batch separately. Requested prompt count is not an observed M, and
-target prefill is not draft prefill. The draft block in the additive receipt
-preserves original source
-targets beside actual `.mtp_block` module names and checks every rank. No
-speculative serve has yet run, so this is observation capability rather than
-a new cell or a model-fit claim.
+failure. Requested prompt count is not an observed M, and target prefill is not
+draft prefill. The draft block in the additive receipt preserves original source
+targets beside actual `.mtp_block` module names and checks every rank.
+
+Amended 2026-09-28 (tessera#681): with `num_speculative_tokens = 1` no forward
+is one row. Each generation step verifies k+1 = 2 tokens on the target, and the
+draft's one forward per step runs over the same two, so a decode phase keyed to
+the contract's one-row `decode` regime cannot be satisfied. The served GLM-5.3
+BAL TP2 census `u4-BAL-20260928T0540Z-2c-r5` was refused on 533 problems while
+every route was correct. `census_phase_plan` now derives this run's phase table
+from the speculative config and leaves `contract.CENSUS_PHASE_REGIMES`
+unchanged. Prefill expects M = the prompt, and the generation phase expects
+M = k+1, which is the batch regime and so the batch cells. Every body and draft
+record is checked against that exact M. A target at M1 means the draft was not
+engaged, and an M1 draft call is inconsistent with k = 1; both are refused.
+The draft's prefill phase is the observer's first multi-row call and its
+generation phase is the latest, and the two must be distinct calls at those Ms.
+The receipt stamps `decode_regime_served: false`, `num_speculative_tokens`,
+`generation_step_m`, `phase_regimes` and `phase_expected_m`. The one-row
+attestation therefore belongs to a census taken without a draft, whose
+behaviour is unchanged. `validate_census_observations` holds every check the
+census makes on its recorded observations, so a stored receipt can be replayed
+without an engine; `tests/test_route_census_mtp_step.py` replays the r5
+records from a trimmed fixture. This is observation capability, not a new cell
+or a model-fit claim.
 Draft decoder coverage requires the family-owned native launch in each
 observed phase, including the folded BF16 MoE decoder. A fallback record
 cannot qualify the draft just because its route publishes that pair.
@@ -4869,7 +4886,8 @@ The following are rules rather than measured values:
 - **The regime is *this* contract's, and two vocabularies say "decode".** Here
   `decode` is the one-row forward and `batch` is every M > 1
   (`contract.CENSUS_PHASE_REGIMES`, which is also what stamps a census
-  record); the kernel's `decode` is `M <= GEMV_MAX_M` and spans eight token
+  record, except under the one-step MTP draft, whose generation phase is
+  stamped `batch` because it runs M = 2); the kernel's `decode` is `M <= GEMV_MAX_M` and spans eight token
   counts. Reading the second into a cell is how the batch cell first published
   the prefill launch alone -- true of the 64-row shape the census drives, false
   of the 2-to-8-row forwards the same regime covers, where the lane serves its
