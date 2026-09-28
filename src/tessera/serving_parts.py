@@ -446,8 +446,11 @@ def validate_explicit_plan(plan, modules: dict, config_groups: dict, *, source_t
     # item 3): this gate used to repeat a weaker check ("grid" and "q256"
     # present), so a sidecar field the schema accepts was refused downstream
     # of the argument-time gate that had accepted it.  Imported lazily: this
-    # module sits under the validator in some import orders.
-    from tessera.serving_plan import SCHEMA_KEY, validate_serving_plan
+    # module sits under the validator in some import orders. Relative, so a
+    # sealed historical copy of this file stays importable: an absolute
+    # ``tessera.*`` import reads as an escape into the current producer
+    # (historical_producer._SealedLoader) and refuses the whole package.
+    from .serving_plan import SCHEMA_KEY, validate_serving_plan
     try:
         validate_serving_plan(plan)
     except ValueError as exc:
