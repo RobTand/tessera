@@ -161,10 +161,20 @@ run: 4.95 W. Forwards per joule = forwards per second / mean W.
   lane does the same work 2.0-3.6x sooner, so forwards per joule rise 2.5-
   3.5x; the ratio tracks the time ratio, since the power draw of the two lanes
   is within 15% at every M except decode of the BF16 gate/up, where the fused
-  kernel pulls 17 W more and still wins 2.5x per joule. Netdata's 10 s samples
-  agree with the in-process 10 Hz windows to within 1 W except where a window
-  straddles a leg boundary (the fused down projection at M = 64 and above,
-  34-55 W in the box series against 56-91 W in-process).
+  kernel pulls 17 W more and still wins 2.5x per joule. Netdata's
+  `nvidia_smi` collector on sparklina samples every 10 s, so a 20 s window
+  holds two samples; they agree with the in-process 10 Hz mean to within
+  1 W in 27 of 30 legs. The three that disagree are the fused down projection
+  at M = 64, 512 and 2048 (34.0, 55.0 and 54.0 W in the box series against
+  55.6, 90.9 and 88.4 W in-process): those windows opened 0.2-0.6 s after a
+  collector tick (12:40:09.5, 12:41:00.6 and 12:41:49.8 UTC), so one of the
+  two samples still reads the 5 s idle gap between legs (13-15 W) and halves
+  the mean, while the in-window samples read 55-56, 90-96 and 90-93 W
+  (`nvidia_smi.gpu_power_draw`, sparklina, tier 0, read back after the run).
+  The Triton windows of the same module opened 4-5 s after a tick, so both
+  samples fell inside them. Forwards per joule uses the in-process series,
+  which is the higher fused number, so the 2.5-3.5x per-joule ratios are the
+  conservative side.
 * Roofline, decode (M = 1, bytes / 239.4 GB/s). The wire the fused module
   reads is 4.28 MB (down) or 8.5 MB (gate/up), so the fused decode forwards
   achieve 72 GB/s (down, 0.30 of the ceiling), 109 GB/s (BF16 gate/up, 0.45)
@@ -191,9 +201,11 @@ sparklina, `ncu-20260928T123623Z/ncu/dense.ncu-rep`, read back with
 leg's warm-up (`experiments/dense_fused_ncu.py`), both lanes, the three
 modules, M in {1, 64, 512, 2048}, sections LaunchStats, Occupancy,
 SpeedOfLight, MemoryWorkloadAnalysis; 49 kernels. Durations are under NCU's
-clock control (1.3-1.5x the profile's), so compare inside this table. GB10
-exposes no DRAM section to NCU (unified LPDDR5X), so "Mem %" is the
-compute-memory speed-of-light (L1TEX/L2) and "L2 %" the L2 slice throughput.
+clock control and kernel replay (1.3-1.5x the profile's for the GEMM kernels,
+about 3.5x for the 1.3-1.5 us `dense_reduce_kernel`), so compare inside this
+table. The report carries no `dram__` metric on this device, so "Mem %" is
+the compute-memory speed-of-light (L1TEX/L2) and "L2 %" the L2 slice
+throughput.
 The two-role modules launch once per role; the second launch of each pair is
 within 1.5% of the first on every column and is folded into one row.
 
@@ -242,9 +254,9 @@ Reading.
   the 2.3-3.1x decode ratios in the profile: 2-3x the warps and every SM
   busy.
 * The reduce is noise. `dense_reduce_kernel` is 5 us at M = 1 (2-4 blocks)
-  and 10 us at M = 64 (128 blocks), 4-15% of the split forward; its
-  occupancy is grid-limited (0.01-0.53 waves) and does not matter at that
-  size. The model's `2 S M N 4` term is what keeps S at 1 from M = 64 (down)
+  and 10 us at M = 64 (128 blocks) on NCU's clock, 1.3-1.5 us under the
+  profiler (2-4% of the split forward); its occupancy is grid-limited
+  (0.01-0.53 waves) and does not matter at that size. The model's `2 S M N 4` term is what keeps S at 1 from M = 64 (down)
   or M = 512 (gate/up) up, where the partial traffic would exceed the wire
   it saves.
 * Cache behaviour. The fused kernel streams the wire once (L1 hit 7-17%)
@@ -316,8 +328,12 @@ the before run is the #640 after-run (`kernel-640-pact-bench/bench-after-2026092
 row `44454eec...`), same image content, vLLM and torch. Medians of 30 timed
 iterations after 10 warm-up; IQRs in `bench-before-after.csv` beside the
 output. Five of the 22 groups take the lane (every q256 1024 window group);
-the 17 others are the control: after/before median 1.003, all within 0.98 to
-1.13 (187 cells).
+the 17 others are the control: before/after median 1.003 over 187 cells,
+range 0.98-1.13. The two control cells past 3% are NVFP4 R896 groups that do
+not take the lane and ran faster in the after run: `dense_down.T4` at M = 512
+(0.973 -> 0.862 ms, 1.13x, IQR 0.005 ms on both sides) and `shared_down.T4`
+at M = 2048 (0.591 -> 0.539 ms, 1.10x). Unexplained between the two runs;
+the direction does not flatter the lane groups.
 
 | group | format | local shape | M=1 before -> after ms (x) | M=512 (x) | M=2048 (x) | M=8192 (x) |
 |---|---|---|---|---|---|---|
