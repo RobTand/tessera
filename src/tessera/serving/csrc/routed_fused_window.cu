@@ -569,19 +569,25 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                     }
                 }
             };
+            // The 32 stream bits before the half's first word, for every row
+            // group whose window starts inside that word (8 * j * rate < 32:
+            // j = 0 at any rate, j <= 3 at rate 1, j = 1 at rates 2 and 3) --
+            // a field's 14-bit window reaches up to 13 bits before it, and at
+            // rate 1 the second group's does reach past the word (tessera#694:
+            // loading it for j = 0 alone left rows 8..12 of every half after
+            // the first reading a zero history at rate 1).
             auto load_prev = [&](int kc, int32_t (&pv)[2]) {
-                if (j == 0) {
-                    #pragma unroll
-                    for (int h = 0; h < 2; ++h) {
-                        const ColMap c = col_map(bdesc_h[h], rp_h[h], kc, m);
-                        const int wr0 = 2 * c.rate * t64_h[h];
-                        const int32_t* wcol = tbase_h[h] + c.cw0;
-                        int32_t v;
-                        if (wr0 > 0) v = wcol[wr0 - 1];
-                        else if (g_h[h] > 0) v = wcol[16 * c.rate - 1 - p.tile_words];
-                        else v = hasinit_h[h] ? init_h[h][c.p] : 0;
-                        pv[h] = v;
-                    }
+                #pragma unroll
+                for (int h = 0; h < 2; ++h) {
+                    const ColMap c = col_map(bdesc_h[h], rp_h[h], kc, m);
+                    if (8 * j * c.rate >= 32) continue;
+                    const int wr0 = 2 * c.rate * t64_h[h];
+                    const int32_t* wcol = tbase_h[h] + c.cw0;
+                    int32_t v;
+                    if (wr0 > 0) v = wcol[wr0 - 1];
+                    else if (g_h[h] > 0) v = wcol[16 * c.rate - 1 - p.tile_words];
+                    else v = hasinit_h[h] ? init_h[h][c.p] : 0;
+                    pv[h] = v;
                 }
             };
             auto load_a = [&](int kc, uint4& a) {

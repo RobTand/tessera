@@ -410,13 +410,15 @@ def test_support_predicate_refuses_by_name():
     rate2_up = grouped([Expert(INTER, HIDDEN, (2,) * HIDDEN, 740 + i) for i in range(EXPERTS)])
     assert rf.fused_routed_window_supported(rate2, rate2_up, ok.down) is None
     # experts that disagree on their schedule: the kernel reads one run pair per
-    # stack.  Half the columns at 3 and half at 5 carry the same words as rate 4
-    # everywhere, so the wire is [E, W] and the run tables are what differ.
+    # stack.  Half the columns at 3 and half at 5, or half at 2 and half at 6,
+    # carry the same words (two runs each), so the wire is [E, W] with two runs
+    # per expert and the run tables are what differ.
     three_five = tuple(3 if c % 2 else 5 for c in range(HIDDEN))
-    uneven = grouped([Expert(INTER, HIDDEN, three_five if i % 2 else (4,) * HIDDEN, 750 + i)
+    two_six = tuple(2 if c % 2 else 6 for c in range(HIDDEN))
+    uneven = grouped([Expert(INTER, HIDDEN, three_five if i % 2 else two_six, 750 + i)
                       for i in range(EXPERTS)])
     reason = rf.fused_routed_window_supported(uneven, ok.up, ok.down)
-    assert reason is not None and "run tables" in reason
+    assert reason is not None and "disagree on their run tables" in reason
     # the epilogue arithmetic on the value family is not the published contract
     epi = wgg.prepare_grouped_window_gemm([e.unit for e in value[0]], block_m=32, block_n=64,
                                           block_k=64, arithmetic="epilogue")

@@ -493,8 +493,10 @@ def test_the_served_module_takes_the_fused_lane_and_serves_two_roles(family, mon
                 f"{family} module M={m} over the same bytes",
                 triton=_served(twin, family, xq, x, a))
     # The fused lane's own storage beyond the shared bundles: one composed
-    # 16-bit table and one int32 flag per role.
-    assert module.packed_bytes() - twin.packed_bytes() == len(roles) * (rf.TABLE_ENTRIES * 2 + 4)
+    # 16-bit table, one int32 flag, the run pair (8 int32) and the block
+    # descriptor (BDESC_INTS int32 per 32 columns) per role (tessera#694).
+    assert module.packed_bytes() - twin.packed_bytes() == len(roles) * (
+        rf.TABLE_ENTRIES * 2 + 4 + 8 * 4 + (256 // 32) * rf.BDESC_INTS * 4)
     assert not any(name.endswith(("fused_table16", "fused_has_init"))
                    for name, _ in twin.named_tensors())
 
