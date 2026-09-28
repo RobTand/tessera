@@ -33,6 +33,25 @@ the q256 1024 fused lanes slower than the v43 kernel (value family, routed
 queued measurement, not a result. E2M1 stays on `a4_span2`. See §3.3
 "Mixed rates" and `docs/measurements/2026-09-28-mixed-rate-fused-window.md`.
 
+Re-stamped 2026-09-28 for drafters in the research GLM53 NoPE backend
+(tessera#695). Speculative method `dflash` is refused by name in every
+execution mode: the pinned vLLM cannot load a DFlash drafter for GLM5-next. Its
+V2 runner calls `set_eagle3_aux_hidden_state_layers` for dflash, and neither
+GLM5-next class implements `SupportsEagle3`; and `_get_kv_cache_groups_glm5_next`
+returns None for the DFlash2 drafter's sliding-window layers. An in-image test
+reads both facts off the runtime. A drafter under CUDA graphs is no longer
+refused wholesale: `glm53_nope._SPECULATIVE_GRAPH_RECEIPTS` admits a drafter
+graph path by receipt, keyed by method, draft tokens, whether later draft
+steps reuse the first step's sparse indices (`index_share_for_mtp_iteration`),
+compilation mode and CUDA-graph mode. The table is empty, so every drafter
+still serves eager, and the refusal names the configuration and what is
+measured. `eager_equivalence_gap` now checks the drafter's graph families for
+padding: target verification and the drafter's first step, at whole requests
+of 1 + k tokens; the drafter's later steps, at one token per request; and
+mixed batches. With a drafter, the reference is an eager serve of the same
+speculative configuration. Eager drafters other than dflash keep their
+admission on any runner. See §5.1.1.
+
 Re-stamped 2026-09-28 for CUDA graphs in the research GLM53 NoPE backend
 (tessera#508). `glm53_nope._config_reason` no longer requires
 `--enforce-eager`. Under compilation mode NONE it admits CUDA-graph modes
@@ -6362,8 +6381,7 @@ is unchanged.
 **Execution modes are admitted by receipt** (`glm53_nope._execution_reason`,
 tessera#508). Eager, and compilation modes NONE, VLLM_COMPILE and
 DYNAMO_TRACE_ONCE without CUDA graphs, run on any runner. CUDA graphs run on
-vLLM's V2 model runner, without a speculative config, and only on the runner
-source they were measured on: `v1/worker/gpu/model_runner.py` with vllm-project/vllm#57317
+vLLM's V2 model runner, and only on the runner source they were measured on: `v1/worker/gpu/model_runner.py` with vllm-project/vllm#57317
 backported (`_GRAPH_RUNNER_SHA256`, image
 `localhost/prismaquant/spark-vllm-nccl230@sha256:c2e75e03...`). Under mode
 NONE that admits FULL_DECODE_ONLY, PIECEWISE and FULL_AND_PIECEWISE; under
@@ -6376,14 +6394,22 @@ block-table row by absolute position, and past the table in a long prefill),
 STOCK_TORCH_COMPILE (it fails to start), graphs under DYNAMO_TRACE_ONCE
 (measured without graphs only), piecewise graphs under VLLM_COMPILE (they need
 vLLM's breakable graph, which forces mode NONE), the V1 runner, and a
-speculative config (no drafter graph path is measured).
+drafter graph path without a receipt (tessera#695). Drafters are admitted
+under CUDA graphs only through `_SPECULATIVE_GRAPH_RECEIPTS`, keyed by method,
+draft tokens, sparse-index sharing across draft steps, compilation mode and
+CUDA-graph mode; the table is empty, so drafters serve eager. Speculative
+method `dflash` is refused in every mode, eager included: the pinned vLLM
+cannot load it for GLM5-next (no `SupportsEagle3` on either GLM5-next class,
+and no KV cache grouping for sliding-window drafter layers).
 
 **Admission does not claim equality with eager.**
 `glm53_nope.eager_equivalence_gap` answers that separately, and every serving
 process prints the answer once on stderr. Eager itself is not repeat-exact on
 this model (FlashInfer's fused MoE finalize reduces with atomics), so "equal"
 means that every completion of the equality suite is one an eager serve also
-produced. The claim is withheld, with the measured figure, for two reasons.
+produced. With a drafter, that eager serve runs the same speculative
+configuration: verification runs 1 + k query tokens per request, so a serve
+without the drafter is a different computation. The claim is withheld, with the measured figure, for two reasons.
 The first is a capture list that pads batch sizes: the V2 runner replays a
 batch of n tokens in the smallest captured graph of at least n, and vLLM's mHC
 TileLang op picks its split-K by token count (`mhc_fused_post_pre_tilelang`),

@@ -19,7 +19,7 @@ EAGER_IR = ["vllm_c", "native"]
 
 def config(*, mode=CompilationMode.NONE, graph=CUDAGraphMode.NONE, attention_splits=False,
            enforce_eager=True, sizes=CONTIGUOUS, max_num_seqs=8, custom_ops=("all",),
-           ir=EAGER_IR):
+           ir=EAGER_IR, speculative=None):
     return SimpleNamespace(
         model_config=SimpleNamespace(enforce_eager=enforce_eager, hf_text_config=SimpleNamespace(
             model_type="glm5_next_text", kv_lora_rank=512, qk_nope_head_dim=256,
@@ -35,8 +35,16 @@ def config(*, mode=CompilationMode.NONE, graph=CUDAGraphMode.NONE, attention_spl
             splitting_ops_contain_attention=lambda: attention_splits),
         scheduler_config=SimpleNamespace(max_num_seqs=max_num_seqs),
         use_v2_model_runner=True,
-        speculative_config=None,
+        speculative_config=speculative,
     )
+
+
+def drafter(method="mtp", k=2, share=True, **extra):
+    """A speculative configuration as vLLM resolves it; the draft config carries
+    ``index_share_for_mtp_iteration`` from the model's own config."""
+    return SimpleNamespace(method=method, num_speculative_tokens=k, **extra,
+                           draft_model_config=SimpleNamespace(hf_config=SimpleNamespace(
+                               index_share_for_mtp_iteration=share)))
 
 
 @pytest.fixture
@@ -165,14 +173,71 @@ def test_graphs_on_an_unmeasured_runner_name_its_digest(runner):
         assert "f" * 64 in reason and glm53_nope._GRAPH_RUNNER_SHA256 in reason
 
 
-def test_graphs_need_the_v2_runner_and_no_drafter(runner):
+def test_graphs_need_the_v2_runner(runner):
     for graph in _GRAPHS:
-        candidate = config(graph=graph, enforce_eager=False)
-        candidate.use_v2_model_runner = False
-        assert "V2 model runner" in _config_reason(candidate)
-        candidate = config(graph=graph, enforce_eager=False)
-        candidate.speculative_config = SimpleNamespace(method="mtp")
-        assert "speculative decoding" in _config_reason(candidate)
+        for speculative in (None, drafter()):
+            candidate = config(graph=graph, enforce_eager=False, speculative=speculative)
+            candidate.use_v2_model_runner = False
+            assert "V2 model runner" in _config_reason(candidate)
+
+
+def test_dflash_is_refused_by_name_in_every_mode(runner):
+    for mode in (CompilationMode.NONE, CompilationMode.VLLM_COMPILE):
+        for graph in (CUDAGraphMode.NONE,) + _GRAPHS:
+            reason = _config_reason(config(mode=mode, graph=graph, speculative=drafter("dflash", k=7)))
+            assert "refuses speculative method 'dflash' in every mode" in reason
+            assert "SupportsEagle3" in reason and "_get_kv_cache_groups_glm5_next" in reason
+            assert "tessera#695" in reason
+
+
+def test_eager_drafters_other_than_dflash_keep_their_admission(runner):
+    """The gate claims nothing about an eager drafter but dflash's load failure."""
+    runner("0" * 64)
+    for method in ("mtp", "ngram", "eagle"):
+        for k in (1, 2, 7):
+            assert _config_reason(config(speculative=drafter(method, k=k))) is None
+            assert _config_reason(config(enforce_eager=False, speculative=drafter(method, k=k))) is None
+
+
+def test_speculative_graphs_are_refused_without_a_receipt(runner):
+    assert glm53_nope._SPECULATIVE_GRAPH_RECEIPTS == {}
+    for graph in _GRAPHS:
+        resolved = _resolved(graph, False).name
+        for k in (1, 2, 3):
+            reason = _config_reason(config(graph=graph, enforce_eager=False, speculative=drafter(k=k)))
+            assert f"refuses speculative method 'mtp' at {k} draft tokens" in reason
+            assert f"compilation mode NONE, CUDA-graph mode {resolved}: no receipt" in reason
+            assert ("sparse indices shared across draft steps" in reason) == (k > 1)
+            assert "measured: none; tessera#695" in reason
+        reason = _config_reason(config(graph=graph, enforce_eager=False, speculative=drafter(
+            k=2, num_speculative_tokens_per_batch_size=[(1, 4, 2)])))
+        assert "dynamic speculative decoding" in reason and "tessera#695" in reason
+    # The runner comes first: no receipt admits a drafter on the stock runner.
+    runner(glm53_nope._STOCK_RUNNER_SHA256)
+    reason = _config_reason(config(graph=CUDAGraphMode.FULL_DECODE_ONLY, enforce_eager=False,
+                                   speculative=drafter()))
+    assert "vLLM #57317" in reason
+
+
+def test_a_receipt_admits_exactly_its_drafter_graph_path(runner, monkeypatch):
+    key = ("mtp", 2, True, CompilationMode.NONE, CUDAGraphMode.FULL_DECODE_ONLY)
+    monkeypatch.setattr(glm53_nope, "_SPECULATIVE_GRAPH_RECEIPTS", {key: None})
+    fdo = dict(graph=CUDAGraphMode.FULL_DECODE_ONLY, enforce_eager=False)
+    assert _config_reason(config(**fdo, speculative=drafter())) is None
+    # FULL resolves to FULL_DECODE_ONLY without attention splitting: the same path.
+    assert _config_reason(config(graph=CUDAGraphMode.FULL, enforce_eager=False,
+                                 speculative=drafter())) is None
+    measured = ("measured: speculative method 'mtp' at 2 draft tokens, sparse indices shared "
+                "across draft steps, compilation mode NONE, CUDA-graph mode FULL_DECODE_ONLY")
+    for other in (drafter(k=1), drafter(k=3), drafter(share=False), drafter("eagle")):
+        reason = _config_reason(config(**fdo, speculative=other))
+        assert "no receipt measures this drafter graph path" in reason and measured in reason
+    for graph in (CUDAGraphMode.PIECEWISE, CUDAGraphMode.FULL_AND_PIECEWISE):
+        reason = _config_reason(config(graph=graph, enforce_eager=False, speculative=drafter()))
+        assert f"CUDA-graph mode {graph.name}: no receipt" in reason
+    compiled = config(mode=CompilationMode.VLLM_COMPILE, **fdo, speculative=drafter())
+    assert "compilation mode VLLM_COMPILE, CUDA-graph mode FULL_DECODE_ONLY: no receipt" in (
+        _config_reason(compiled))
 
 
 @pytest.mark.parametrize("graph,sizes,max_num_seqs,padded", [
@@ -196,6 +261,100 @@ def test_graphs_need_the_v2_runner_and_no_drafter(runner):
 def test_padded_token_counts_follow_the_runner_dispatch(graph, sizes, max_num_seqs, padded):
     candidate = config(graph=graph, sizes=sizes, max_num_seqs=max_num_seqs, enforce_eager=False)
     assert glm53_nope._padded_token_counts(candidate, graph) == padded
+
+
+#: vLLM's default capture lists at max_num_seqs 4 with k draft tokens
+#: (``_set_cudagraph_sizes``: 1, 2, 4 and multiples of 8 up to 2 * 4 * (1 + k),
+#: plus (1 + k) tokens times 1, 2 and 4 requests).
+SPEC_DEFAULT_SIZES = {1: [1, 2, 4, 8, 16], 2: [1, 2, 3, 4, 6, 8, 12, 16, 24],
+                      3: [1, 2, 4, 8, 16, 24, 32]}
+_MIXED_K2 = [5, 7, 9, 10, 11, 13, 14, 15, 17, 18, 19, 20, 21, 22, 23]
+
+
+@pytest.mark.parametrize("graph,k,sizes,max_num_seqs,padded", [
+    # Two draft tokens: verification of 1 to 4 requests is 3, 6, 9 and 12 tokens,
+    # 9 from capture size 8 rounded up to whole requests; the drafter's later
+    # steps decode 1 to 4 tokens. Nothing pads.
+    (CUDAGraphMode.FULL_DECODE_ONLY, 2, SPEC_DEFAULT_SIZES[2], 4, []),
+    # One draft token: verifying 3 requests (6 tokens) replays in the 8-token graph.
+    (CUDAGraphMode.FULL_DECODE_ONLY, 1, SPEC_DEFAULT_SIZES[1], 4, [6]),
+    # Three: 3 requests verify in the 16-token graph and draft-decode in the 4-token one.
+    (CUDAGraphMode.FULL_DECODE_ONLY, 3, SPEC_DEFAULT_SIZES[3], 4, [3, 12]),
+    # A verification wider than every uniform graph runs eager, unpadded.
+    (CUDAGraphMode.FULL_DECODE_ONLY, 2, [1, 2, 3], 4, []),
+    # One request pads nothing (the default list at max_num_seqs 1, 3 draft tokens).
+    (CUDAGraphMode.FULL_DECODE_ONLY, 3, [1, 2, 4, 8], 1, []),
+    # Mixed batches pad at every gap in the list, with or without a drafter.
+    (CUDAGraphMode.FULL_AND_PIECEWISE, 2, SPEC_DEFAULT_SIZES[2], 4, _MIXED_K2),
+    (CUDAGraphMode.PIECEWISE, 2, SPEC_DEFAULT_SIZES[2], 4, _MIXED_K2),
+    (CUDAGraphMode.FULL_AND_PIECEWISE, 1, SPEC_DEFAULT_SIZES[1], 4,
+     [3, 5, 6, 7, 9, 10, 11, 12, 13, 14, 15]),
+    # Every size up to max_num_seqs * (1 + k) pads nothing in any family.
+    (CUDAGraphMode.FULL_DECODE_ONLY, 2, list(range(1, 13)), 4, []),
+    (CUDAGraphMode.FULL_AND_PIECEWISE, 2, list(range(1, 13)), 4, []),
+    (CUDAGraphMode.PIECEWISE, 2, list(range(1, 13)), 4, []),
+])
+def test_padded_token_counts_with_a_drafter(graph, k, sizes, max_num_seqs, padded):
+    candidate = config(graph=graph, sizes=sizes, max_num_seqs=max_num_seqs, enforce_eager=False,
+                       speculative=drafter(k=k))
+    assert glm53_nope._padded_token_counts(candidate, graph) == padded
+
+
+def test_a_drafter_is_claimed_equal_only_to_an_eager_serve_of_the_same(runner, monkeypatch):
+    gap = glm53_nope.eager_equivalence_gap
+    # Eager with a drafter is that drafter's reference.
+    assert gap(config(speculative=drafter())) is None
+    fdo = dict(graph=CUDAGraphMode.FULL_DECODE_ONLY, enforce_eager=False, max_num_seqs=4)
+    contiguous = config(**fdo, sizes=range(1, 13), speculative=drafter())
+    assert "no receipt compares this drafter graph path with eager" in gap(contiguous)
+    key = ("mtp", 2, True, CompilationMode.NONE, CUDAGraphMode.FULL_DECODE_ONLY)
+    monkeypatch.setattr(glm53_nope, "_SPECULATIVE_GRAPH_RECEIPTS", {key: None})
+    assert gap(contiguous) is None
+    assert gap(config(**fdo, sizes=SPEC_DEFAULT_SIZES[2], speculative=drafter())) is None
+    three = ("mtp", 3, True, CompilationMode.NONE, CUDAGraphMode.FULL_DECODE_ONLY)
+    monkeypatch.setattr(glm53_nope, "_SPECULATIVE_GRAPH_RECEIPTS", {key: None, three: None})
+    padded = gap(config(**fdo, sizes=SPEC_DEFAULT_SIZES[3], speculative=drafter(k=3)))
+    assert ("[3, 12] (target verification and draft prefill: [12]; draft decode: [3]) in larger"
+            in padded)
+    # A receipt that found a difference with every size captured is reported as measured.
+    monkeypatch.setattr(glm53_nope, "_SPECULATIVE_GRAPH_RECEIPTS", {key: "the measured difference"})
+    assert gap(contiguous) == "the measured difference"
+
+
+def test_the_dflash_load_blockers_hold_in_this_image():
+    """The dflash refusal's two blockers, read off the pinned runtime itself."""
+    import torch
+    from vllm.model_executor.models.interfaces import supports_eagle3
+    from vllm.models.glm5next import Glm5NextForCausalLM, Glm5NextForConditionalGeneration
+    from vllm.v1.core.kv_cache_utils import _get_kv_cache_groups_glm5_next
+    from vllm.v1.kv_cache_interface import MambaSpec, MLAAttentionSpec, SlidingWindowSpec
+
+    # The V2 runner's set_eagle3_aux_hidden_state_layers raises on this predicate.
+    assert not supports_eagle3(Glm5NextForCausalLM)
+    assert not supports_eagle3(Glm5NextForConditionalGeneration)
+
+    class Unread:
+        def __getattr__(self, name):
+            raise LookupError(f"read vllm_config.{name}")
+
+    body = {
+        "model.layers.0.self_attn.kda": MambaSpec(block_size=64, shapes=((1,),),
+                                                  dtypes=(torch.float32,)),
+        "model.layers.1.self_attn.attn": MLAAttentionSpec(
+            block_size=64, num_kv_heads=1, head_size=656, dtype=torch.uint8),
+        "model.layers.1.self_attn.indexer": MLAAttentionSpec(
+            block_size=64, num_kv_heads=1, head_size=132, dtype=torch.uint8, tokens_per_state=4),
+    }
+    sliding = {"model.layers.45.self_attn.attn": SlidingWindowSpec(
+        block_size=64, num_kv_heads=8, head_size=128, dtype=torch.bfloat16, sliding_window=2048)}
+    # A sliding-window layer ends the GLM5-next grouping before it reads the config ...
+    assert _get_kv_cache_groups_glm5_next(Unread(), {**body, **sliding}) is None
+    # ... where the same layers without it pass that check (and fail later, on these toy pages).
+    try:
+        outcome = _get_kv_cache_groups_glm5_next(Unread(), body)
+    except Exception as error:
+        outcome = error
+    assert outcome is not None
 
 
 def test_eager_equivalence_is_claimed_only_without_padding_or_an_op_switch(runner):
