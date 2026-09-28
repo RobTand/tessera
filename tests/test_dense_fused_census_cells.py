@@ -22,8 +22,9 @@ What it pins:
    two cells' runtime (image, vLLM, torch), in the residency its name says,
    and recorded the fused pair on all 112 modules in both phases;
 2. every served module of both receipts joins one of the two cells in both
-   phases, and the join FAILS on a table whose two cells lack the fused pair
-   (the fail-before: v42's executes);
+   phases and agrees with it, and on a table whose two cells lack the fused
+   pair (the fail-before: v42's executes) every joined record DISAGREES --
+   the join is by scope, the verdict is by launch;
 3. the two cells' rungs are exactly what the receipts carried (1024).
 """
 from __future__ import annotations
@@ -140,8 +141,11 @@ def test_every_served_module_joins_a_pinned_image_cell_in_both_phases(mode):
 
 def test_the_join_fails_on_the_table_before_v43():
     """The fail-before, as a mutation of the packaged table: strip the fused
-    pair from the two cells' ``executes`` (v42's rows) and no record of either
-    receipt is covered, in either phase."""
+    pair from the two cells' ``executes`` (v42's rows).  The join is by scope
+    (family, residency, regime, rung, runtime), so every record still lands on
+    its cell -- and every one of them then DISAGREES with it: 112 problems per
+    phase naming the fused pair the cell does not publish, and the dense block
+    reads ``agrees: False`` for both receipts."""
     tool = _tool()
     contract = load_serving_contract()
     for cell in contract["lane_eligibility"]["cells"]:
@@ -150,10 +154,16 @@ def test_the_join_fails_on_the_table_before_v43():
                                 if (e["symbol"], e["decoder"]) != FUSED_PAIR]
             assert [(e["symbol"], e["decoder"]) for e in cell["executes"]] == [TRITON_PAIR]
     for mode in RECEIPTS:
-        block, _problems = _agreement(tool, contract, _load(mode))
-        for row in block["structures"]["dense"]["phases"].values():
-            assert row["covered_by_cell"] == 0, (mode, row)
-            assert row["unattested"] == row["modules"] == MODULES, (mode, row)
+        block, problems = _agreement(tool, contract, _load(mode))
+        dense = block["structures"]["dense"]
+        assert dense["agrees"] is False and block["agrees"] is False, mode
+        for row in dense["phases"].values():
+            assert row["covered_by_cell"] == MODULES, (mode, row)
+        assert len(problems) == 2 * MODULES, (mode, len(problems))
+        for problem in problems:
+            assert repr(FUSED_PAIR) in problem, problem
+            assert any(f"cell {cell_id!r}" in problem for cell_id in CELLS), problem
+            assert "does not publish" in problem, problem
 
 
 def test_the_two_cells_name_both_launches_and_exactly_the_receipts_rungs():

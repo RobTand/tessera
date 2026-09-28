@@ -985,8 +985,25 @@ def test_the_native_route_pairs_are_attested_and_censusable():
     assert promoted in launch_pairs(TESSERA_FP8, structure=STRUCTURE_DENSE)
     assert promoted not in launch_pairs(TESSERA_BF16, structure=STRUCTURE_DENSE,
                                         include_experimental=True)
+    # Contract v43 (tessera#692): the fused window kernel's DENSE identity is
+    # a second lane-bearing launch on both dense routes, each in its family's
+    # arithmetic, and the Triton pair stays beside it (the modules the lane
+    # refuses, and TESSERA_DENSE_FUSED=0).  Narrowed to a box with no
+    # extension prepared, the fused row drops and the Triton row stays.
+    from tessera.serving.scheme import FUSED_WINDOW_DENSE_SYMBOL
+    dense_fused_fp8 = (FUSED_WINDOW_DENSE_SYMBOL, telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE)
+    dense_fused_bf16 = (FUSED_WINDOW_DENSE_SYMBOL,
+                        telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED)
     assert launch_pairs(TESSERA_BF16, structure=STRUCTURE_DENSE) == {
+        (WINDOW_GEMM_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_GEMM_FOLDED), dense_fused_bf16}
+    assert launch_pairs(TESSERA_FP8, structure=STRUCTURE_DENSE) == {promoted, dense_fused_fp8}
+    assert dense_fused_fp8 not in launch_pairs(TESSERA_BF16, structure=STRUCTURE_DENSE,
+                                               include_experimental=True)
+    assert dense_fused_bf16 not in launch_pairs(TESSERA_FP8, structure=STRUCTURE_DENSE,
+                                                include_experimental=True)
+    assert launch_pairs(TESSERA_BF16, structure=STRUCTURE_DENSE, lanes=()) == {
         (WINDOW_GEMM_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_GEMM_FOLDED)}
+    assert launch_pairs(TESSERA_FP8, structure=STRUCTURE_DENSE, lanes=()) == {promoted}
     for pair, (route, structure) in expected.items():
         assert pair[1] in telemetry.DECODERS, pair
         assert pair not in experimental_launch_pairs(route, structure=structure), pair

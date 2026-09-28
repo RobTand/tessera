@@ -77,6 +77,7 @@ docker run --rm --gpus all --ipc=host --network=host --cpuset-cpus "$CPUS" \
   -e PB_ACTION_KEY="${PB_ACTION_KEY:-${PRISMABUILD_ACTION_KEY:-}}" \
   "${IMAGE_ENV[@]}" ${TESSERA_ROUTED_ENV:+-e "$TESSERA_ROUTED_ENV"} \
   --entrypoint bash -w /work "$IMAGE_REF" \
-  -c 'source /work/experiments/cuda_home_shadow.sh "$TMPDIR/.." && exec python3 "$@"' bash \
-  /work/tools/tessera_route_census.py "$MODEL" "$OUT/census.json" \
-  --runtime-image "$IMAGE_REF" --tessera-commit "$HEAD" "$@"
+  -c 'source /work/experiments/cuda_home_shadow.sh "$TMPDIR/.." && exec python3 \
+  /work/tools/tessera_route_census.py "$1" "$2" \
+  --runtime-image "$TESSERA_CENSUS_RUNTIME_IMAGE" --tessera-commit "$3" "${@:4}"' bash \
+  "$MODEL" "$OUT/census.json" "$HEAD" "$@"

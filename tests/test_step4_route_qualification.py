@@ -299,8 +299,17 @@ def test_every_family_holding_qualifies_and_says_what_it_does_not_claim():
     fp8 = record["families"]["TESSERA_FP8"]
     assert fp8["observed"]["launches"] == 4 and fp8["observed"]["modules"] == 2
     assert fp8["observed"]["module_names"] == EXPECTED["TESSERA_FP8"]["names"]
-    assert fp8["expected"] == {"symbol": WINDOW_GEMM_SYMBOL, "decoder": NATIVE_WINDOW_GEMM_DECODER,
-                               "modules": 2, "names_checked": True}
+    # Contract v43 (tessera#692): the FP8 dense route admits two launches, the
+    # Triton window GEMM and the fused kernel's dense identity, so the
+    # expectation names both pairs and no single symbol -- the form the routed
+    # kind took at v42.  The observed side is still the one pair the trace ran.
+    assert fp8["expected"] == {
+        "launches": [{"symbol": WINDOW_GEMM_SYMBOL, "decoder": NATIVE_WINDOW_GEMM_DECODER},
+                     {"symbol": "tessera::fused_window_dense",
+                      "decoder": "native_fused_window_dense"}],
+        "modules": 2, "names_checked": True}
+    assert fp8["observed"]["symbol"] == WINDOW_GEMM_SYMBOL
+    assert fp8["observed"]["decoder"] == NATIVE_WINDOW_GEMM_DECODER
     assert record["trace_identity"]["identity_version"] == 1
     assert record["trace_identity"]["platform"] == "sm_121"
     json.dumps(record)  # the record is JSON, sets and all
