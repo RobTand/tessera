@@ -164,7 +164,16 @@ def _padded_token_counts(config, graph: CUDAGraphMode) -> list[int]:
 #: parallelism, image). Empty until a qualifying serve measures a drafter's
 #: graph path; until then speculative decoding is served eager.
 _SPECULATIVE_GRAPH_RECEIPTS: dict[tuple[str, int, bool | None, CompilationMode, CUDAGraphMode],
-                                  str | None] = {}
+                                  str | None] = {
+    # MEASUREMENT-ONLY (branch claude/695-meas, never merged): the candidate
+    # keys tessera#695 step 1 measures, admitted so their serves can start.
+    # No value here is a receipt; the measured rows are.
+    (method, draft, share, CompilationMode.NONE, graph):
+        "MEASUREMENT-ONLY admission (tessera#695 step 1): this drafter graph path is under measurement"
+    for method, draft, share in (("mtp", 1, None), ("mtp", 2, True), ("mtp", 3, True))
+    for graph in (CUDAGraphMode.FULL_DECODE_ONLY, CUDAGraphMode.PIECEWISE,
+                  CUDAGraphMode.FULL_AND_PIECEWISE)
+}
 
 
 def _speculative_key(config):
