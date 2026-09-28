@@ -239,12 +239,26 @@ __device__ __forceinline__ RunPair load_runs(const int32_t* runs, int e) {
     return r;
 }
 __device__ __forceinline__ ColMap col_map(const int32_t* bdesc, const RunPair& rp, int kc, int m) {
+    ColMap c;
+    // A one-run unit (n_hi = 0; every q256 whose root is an integer rate, the
+    // v42/v43 rate-4 stacks among them) has the identity descriptor --
+    // block_desc lists all 32 columns as low-rate in in-block order, with
+    // counts (kc * BK, BK) -- so its map is computed, not read: the two
+    // descriptor loads per call are pure overhead there, and the producer
+    // makes five calls per chunk.  rp is the item's, so the branch is uniform
+    // across the block.
+    if (rp.n_hi == 0) {
+        c.rate = rp.r_lo;
+        c.cib = m;
+        c.p = kc * BK + m;
+        c.cw0 = c.p * 16 * rp.r_lo;
+        return c;
+    }
     const int32_t* blk = bdesc + (long)kc * BDESC_INTS;
     const int cib = (blk[m >> 2] >> (8 * (m & 3))) & 0xFF;
     const int2 counts = *reinterpret_cast<const int2*>(blk + 8);   // (n_lo_before, cnt_lo)
     const bool lo = m < counts.y;
     const int rank = lo ? counts.x + m : (kc * BK - counts.x) + (m - counts.y);
-    ColMap c;
     c.rate = lo ? rp.r_lo : rp.r_hi;
     c.cib = cib;
     c.p = lo ? rank : rp.n_lo + rank;
