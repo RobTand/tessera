@@ -91,27 +91,137 @@ def _graph_mode(compilation) -> CUDAGraphMode:
     return mode
 
 
-def _padded_token_counts(config, graph: CUDAGraphMode) -> list[int]:
-    """Token counts that replay a larger captured graph than their own.
+def _num_draft_tokens(config) -> int:
+    spec = config.speculative_config
+    return int(spec.num_speculative_tokens or 0) if spec is not None else 0
+
+
+def _padded_families(config, graph: CUDAGraphMode) -> list[tuple[str, list[int]]]:
+    """Each graph family's token counts that replay a larger captured graph than their own.
 
     vLLM's V2 runner (``CudaGraphManager._init_candidates``) runs a batch of n
-    tokens in the smallest captured graph of at least n tokens, so every n
-    below the largest capture size that is not itself a capture size runs
-    padded. The decode half (``FULL_DECODE_ONLY``, and ``FULL_AND_PIECEWISE``'s
-    FULL graphs) captures the sizes up to ``max_num_seqs``, one token per
-    request (a drafter is refused, so there is no wider decode query); the
-    mixed half (``PIECEWISE``, and ``FULL_AND_PIECEWISE``'s piecewise graphs)
-    captures every size.
+    tokens in the smallest captured graph of its family that holds it; a
+    FULL candidate comes before a piecewise one, and a batch larger than
+    every graph of its family runs eager, unpadded. With k draft tokens a
+    decode request carries q = 1 + k query tokens, and the families are:
+
+    - the FULL graphs for uniform decode batches (``FULL_DECODE_ONLY``, and
+      ``FULL_AND_PIECEWISE``'s FULL half): each capture size rounded up to
+      whole requests of q tokens, kept up to ``max_num_seqs`` requests and
+      the largest capture size. Without a drafter this is the decode batch
+      of n requests; with one, the target's verification of n requests, and
+      the drafter's first step, which dispatches on the target's padded
+      count (``AutoRegressiveSpeculator.propose``) and so pads with it;
+    - the drafter's later steps, k >= 2 (``init_cudagraph_manager``): FULL
+      graphs of one token per request, at the capture sizes up to
+      ``max_num_seqs``, in any mode with FULL decode graphs; eager otherwise;
+    - mixed batches (``PIECEWISE``, and ``FULL_AND_PIECEWISE``'s piecewise
+      half): every capture size. Under ``PIECEWISE`` uniform batches take
+      these graphs too.
+
+    These are the families of the autoregressive speculator, which vLLM runs
+    for method ``mtp``; the gate refuses every other drafter under graphs.
     """
     sizes = sorted(set(config.compilation_config.cudagraph_capture_sizes or ()))
-    padded: set[int] = set()
+    if not sizes or graph == CUDAGraphMode.NONE:
+        return []
+    max_num_seqs = config.scheduler_config.max_num_seqs
+    draft = _num_draft_tokens(config)
+    query = 1 + draft
+    families = []
     if graph in (CUDAGraphMode.FULL_DECODE_ONLY, CUDAGraphMode.FULL_AND_PIECEWISE):
-        decode = [n for n in sizes if n <= config.scheduler_config.max_num_seqs]
-        if decode:
-            padded.update(n for n in range(1, decode[-1] + 1) if n not in decode)
-    if graph in (CUDAGraphMode.PIECEWISE, CUDAGraphMode.FULL_AND_PIECEWISE) and sizes:
-        padded.update(n for n in range(1, sizes[-1] + 1) if n not in sizes)
-    return sorted(padded)
+        ceiling = min(max_num_seqs * query, sizes[-1])
+        uniform = {-(-n // query) * query for n in sizes}
+        uniform = sorted(n for n in uniform if n <= ceiling)
+        if uniform:
+            families.append(("target verification and draft prefill" if draft else "decode",
+                             [n * query for n in range(1, max_num_seqs + 1)
+                              if n * query < uniform[-1] and n * query not in uniform]))
+        if draft >= 2:
+            steps = [n for n in sizes if n <= max_num_seqs]
+            if steps:
+                families.append(("draft decode",
+                                 [n for n in range(1, steps[-1]) if n not in steps]))
+    if graph in (CUDAGraphMode.PIECEWISE, CUDAGraphMode.FULL_AND_PIECEWISE):
+        families.append(("mixed", [n for n in range(1, sizes[-1]) if n not in sizes]))
+    return [(name, counts) for name, counts in families if counts]
+
+
+def _padded_token_counts(config, graph: CUDAGraphMode) -> list[int]:
+    """Token counts that replay a larger captured graph than their own, in any family."""
+    return sorted({n for _, counts in _padded_families(config, graph) for n in counts})
+
+
+#: Speculative decoding under CUDA graphs, admitted by receipt (tessera#695).
+#: The key names what shapes the drafter's graph path: (method, draft tokens,
+#: whether draft steps after the first reuse the first step's sparse indices
+#: (``index_share_for_mtp_iteration``; None with one draft token, which has no
+#: later step), compilation mode, CUDA-graph mode), on the graph runner. The
+#: value is the eager-equivalence verdict with every size captured, against
+#: an eager serve of the same speculative configuration: None when every
+#: output of the equality suite was one such a serve also produced, else what
+#: differs, with its measurement. Each receipt names its scope (model, tensor
+#: parallelism, image). Empty until a qualifying serve measures a drafter's
+#: graph path; until then speculative decoding is served eager.
+_SPECULATIVE_GRAPH_RECEIPTS: dict[tuple[str, int, bool | None, CompilationMode, CUDAGraphMode],
+                                  str | None] = {}
+
+
+def _speculative_key(config):
+    """The drafter graph-path key of ``_SPECULATIVE_GRAPH_RECEIPTS``, or None without a drafter."""
+    spec = config.speculative_config
+    if spec is None:
+        return None
+    draft = _num_draft_tokens(config)
+    share = None
+    if draft > 1:
+        draft_hf = getattr(getattr(spec, "draft_model_config", None), "hf_config", None)
+        share = bool(getattr(draft_hf, "index_share_for_mtp_iteration", False))
+    compilation = config.compilation_config
+    return (spec.method, draft, share, compilation.mode, _graph_mode(compilation))
+
+
+def _describe_drafter(key) -> str:
+    method, draft, share, mode, graph = key
+    shared = ("" if share is None else
+              f", sparse indices {'shared' if share else 'recomputed'} across draft steps")
+    return (f"speculative method {method!r} at {draft} draft tokens{shared}, compilation mode "
+            f"{mode.name}, CUDA-graph mode {graph.name}")
+
+
+def _drafter_reason(config) -> str | None:
+    """Refuse, in every execution mode, a drafter the pinned runtime cannot load."""
+    spec = config.speculative_config
+    if spec is None or spec.method != "dflash":
+        return None
+    return ("Tessera GLM53 NoPE refuses speculative method 'dflash' in every mode: the pinned "
+            "vLLM cannot load a DFlash drafter for GLM5-next (tessera#695). Its V2 runner "
+            "turns on auxiliary hidden states for dflash and, at load, calls "
+            "set_eagle3_aux_hidden_state_layers, which raises unless the target implements "
+            "SupportsEagle3; neither Glm5NextForCausalLM nor Glm5NextForConditionalGeneration "
+            "does (models/glm5next/nvidia/model.py:867, :963). And "
+            "_get_kv_cache_groups_glm5_next (v1/core/kv_cache_utils.py:1165) returns None when "
+            "any attention layer's spec is not exactly MLAAttentionSpec, as the DFlash2 "
+            "drafter's sliding-window layers are. Serve method 'mtp'")
+
+
+def _speculative_reason(config) -> str | None:
+    """Admit a drafter under CUDA graphs only by receipt; refuse the rest by name."""
+    spec = config.speculative_config
+    graph = _graph_mode(config.compilation_config)
+    if getattr(spec, "num_speculative_tokens_per_batch_size", None) is not None:
+        return (f"Tessera GLM53 NoPE refuses CUDA-graph mode {graph.name} with dynamic "
+                "speculative decoding (num_speculative_tokens_per_batch_size): the decode "
+                "query width changes with the batch, and no receipt measures it (tessera#695); "
+                "serve it with CUDA-graph mode NONE")
+    key = _speculative_key(config)
+    if key in _SPECULATIVE_GRAPH_RECEIPTS:
+        return None
+    measured = "; ".join(_describe_drafter(k) for k in sorted(
+        _SPECULATIVE_GRAPH_RECEIPTS, key=lambda k: (k[0], k[1], str(k[2]), k[3].name, k[4].name)))
+    return (f"Tessera GLM53 NoPE refuses {_describe_drafter(key)}: no receipt measures this "
+            f"drafter graph path (measured: {measured or 'none'}; tessera#695); serve "
+            "speculative decoding with CUDA-graph mode NONE")
 
 
 #: The op implementations compilation mode NONE resolves, which the eager
@@ -149,10 +259,19 @@ def eager_equivalence_gap(config) -> str | None:
     stub, eager itself is not repeat-exact (the fused-MoE finalize reduces
     with atomics), so "equal" means every greedy choice and top-20 logprob
     list of the equality suite is one an eager serve of the same image also
-    produced.
+    produced. With a drafter the reference is an eager serve of the same
+    speculative configuration: verification runs 1 + k query tokens per
+    request, so a serve without the drafter is a different computation.
     """
     compilation = config.compilation_config
     gaps = []
+    drafter = _speculative_key(config)
+    if drafter is not None and drafter[-1] != CUDAGraphMode.NONE:
+        if drafter not in _SPECULATIVE_GRAPH_RECEIPTS:
+            gaps.append(f"no receipt compares this drafter graph path with eager "
+                        f"({_describe_drafter(drafter)}, tessera#695)")
+        elif _SPECULATIVE_GRAPH_RECEIPTS[drafter] is not None:
+            gaps.append(_SPECULATIVE_GRAPH_RECEIPTS[drafter])
     if compilation.mode != CompilationMode.NONE:
         ops = _op_implementation_gap(config)
         if ops:
@@ -166,10 +285,14 @@ def eager_equivalence_gap(config) -> str | None:
                 "changed a token); with custom_ops ['all'] and both IR ops ['vllm_c', "
                 "'native'] all 48 were eager outcomes (tessera#508)")
     graph = _graph_mode(compilation)
-    padded = _padded_token_counts(config, graph)
-    if padded:
+    families = _padded_families(config, graph)
+    if families:
+        padded = sorted({n for _, counts in families for n in counts})
+        by_family = ""
+        if drafter is not None:
+            by_family = " (" + "; ".join(f"{name}: {counts}" for name, counts in families) + ")"
         gaps.append(
-            f"CUDA-graph mode {graph.name} replays token counts {padded} in larger "
+            f"CUDA-graph mode {graph.name} replays token counts {padded}{by_family} in larger "
             "captured graphs, and vLLM picks some kernels by token count (the mHC "
             "TileLang op splits its reduction 8 ways below 8 tokens and 4 ways from 8 "
             "to 16, tilelang.py mhc_fused_post_pre_tilelang): a batch of 5 replayed "
@@ -212,13 +335,9 @@ def _execution_reason(config) -> str | None:
     if not config.use_v2_model_runner:
         return (f"Tessera GLM53 NoPE admits CUDA-graph mode {graph.name} on vLLM's V2 model "
                 "runner only; the V1 runner's graph path is not measured (tessera#508)")
-    if config.speculative_config is not None:
-        return (f"Tessera GLM53 NoPE refuses CUDA-graph mode {graph.name} with speculative "
-                "decoding: no drafter graph path is measured (the qualifying stub carries "
-                "no MTP layer, tessera#508); serve the drafter eager")
     runner = _runner_sha256()
     if runner == _GRAPH_RUNNER_SHA256:
-        return None
+        return None if config.speculative_config is None else _speculative_reason(config)
     if runner == _STOCK_RUNNER_SHA256:
         return (f"Tessera GLM53 NoPE refuses CUDA-graph mode {graph.name} on the stock V2 "
                 "runner: it maps the kpool-tail KV group through the generic slot-mapping "
@@ -244,8 +363,12 @@ def _report_equivalence(config) -> None:
     _REPORTED.add(gap)
     graph = _graph_mode(config.compilation_config).name
     if gap is None:
+        drafter = _speculative_key(config)
+        against = ("" if drafter is None else
+                   f", {drafter[0]} at {drafter[1]} draft tokens against an eager serve of the "
+                   "same (tessera#695)")
         print(f"Tessera GLM53 NoPE: compilation mode {config.compilation_config.mode.name}, "
-              f"CUDA-graph mode {graph}: runs eager's arithmetic (tessera#508)",
+              f"CUDA-graph mode {graph}{against}: runs eager's arithmetic (tessera#508)",
               file=sys.stderr, flush=True)
     else:
         print(f"Tessera GLM53 NoPE: WARNING: this serve's outputs are not claimed equal to "
@@ -266,7 +389,7 @@ def _config_reason(config) -> str | None:
             return f"Tessera GLM53 NoPE requires {name}=1"
     if config.kernel_config.enable_flashinfer_autotune is not False:
         return "Tessera GLM53 NoPE requires kernel_config.enable_flashinfer_autotune=false"
-    return _execution_reason(config)
+    return _drafter_reason(config) or _execution_reason(config)
 
 
 class TesseraGLM53NoPEBackend(FlashInferMLASparseSM120Backend):

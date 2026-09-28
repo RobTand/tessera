@@ -25,6 +25,12 @@ KV_BYTES=4294967296
 TP1_UTIL=${TP1_UTIL:-0.45}
 MOE_BACKEND=${MOE_BACKEND:-flashinfer_cutlass}
 EAGER=${EAGER:-1}
+# MAX_NUM_SEQS: the scheduler's sequence cap; the tessera#695 drafter arms
+# serve 4, the release configuration's.
+MAX_NUM_SEQS=${MAX_NUM_SEQS:-8}
+# SPEC_JSON: a --speculative-config for a drafter arm (tessera#695); empty
+# serves without a drafter.
+SPEC_JSON=${SPEC_JSON:-}
 EXTRA_ARGS=${EXTRA_ARGS:-}
 COMPILATION_JSON=${COMPILATION_JSON:-}
 ARM=${ARM:-EAGER$EAGER}
@@ -52,13 +58,22 @@ for kv in ${BISECT_ENV:-}; do ENVS+=(-e "$kv"); done
 DIGEST_MOUNT=()
 # CAPLOG=1: price CUDA-graph capture (per-graph wall time and caching-allocator
 #   reserved bytes) into $OUT/$ARM.capture.jsonl.
-if [ "${DIGEST:-0}" = 1 ] || [ "${PROF:-0}" = 1 ] || [ "${HOOKS:-0}" = 1 ] || [ "${CAPLOG:-0}" = 1 ]; then
+# GCDRAFT=1: collect garbage once before the MTP drafter loads (tessera#695;
+#   digest/usercustomize.py T695_GC_BEFORE_DRAFTER). Memory management only.
+# DRAFTLOG=1: record every serving step's drafts per request into
+#   $OUT/$ARM.draft.<pid>.jsonl (tessera#695; T695_DRAFT_LOG), for
+#   ../glm53_695_drafter_qual/draftlog-695.py. Adds small copies per step:
+#   not for latency arms.
+if [ "${DIGEST:-0}" = 1 ] || [ "${PROF:-0}" = 1 ] || [ "${HOOKS:-0}" = 1 ] || [ "${CAPLOG:-0}" = 1 ] \
+   || [ "${GCDRAFT:-0}" = 1 ] || [ "${DRAFTLOG:-0}" = 1 ]; then
   ENVS+=(-e PYTHONPATH=/digest)
   DIGEST_MOUNT=(-v "$TS/experiments/glm53_508_graph_qual/digest":/digest:ro)
 fi
 [ "${DIGEST:-0}" = 1 ] && ENVS+=(-e T508_DIGEST=/out/$ARM.dig.jsonl)
 [ "${PROF:-0}" = 1 ] && ENVS+=(-e T508_PROF_DIR=/out/$ARM.prof -e T508_PROF_TRIGGER=/out/$ARM.prof.trigger)
 [ "${CAPLOG:-0}" = 1 ] && ENVS+=(-e T508_CAPTURE_LOG=/out/$ARM.capture.jsonl)
+[ "${GCDRAFT:-0}" = 1 ] && ENVS+=(-e T695_GC_BEFORE_DRAFTER=1)
+[ "${DRAFTLOG:-0}" = 1 ] && ENVS+=(-e T695_DRAFT_LOG=/out/$ARM.draft)
 
 PREP='inc="$(python3 -c "import glob; p=sorted(glob.glob(\"/usr/local/lib/python3*/dist-packages/nvidia/cu*/include\")); print(p[0] if p else \"\")")"
 dst=/usr/local/cuda/include
@@ -68,7 +83,7 @@ pip install --no-deps --no-build-isolation -q -e /tessera >/dev/null 2>&1'
 SERVE_ARGS="--host 0.0.0.0 --port $PORT --tensor-parallel-size 1 --attention-backend CUSTOM \
  --kv-cache-dtype fp8_ds_mla --moe-backend $MOE_BACKEND --kernel-config '{\"enable_flashinfer_autotune\":false}' \
  --max-model-len 4096 --kv-cache-memory-bytes $KV_BYTES --gpu-memory-utilization $TP1_UTIL \
- --trust-remote-code --max-num-seqs 8 --max-logprobs 1024 --served-model-name glm53-stub \
+ --trust-remote-code --max-num-seqs $MAX_NUM_SEQS --max-logprobs 1024 --served-model-name glm53-stub \
  $([ "$EAGER" = 1 ] && echo --enforce-eager) $EXTRA_ARGS"
 
 docker_args() {
@@ -115,8 +130,9 @@ up)
   printf '%s\n' "EAGER=$EAGER $SERVE_ARGS" > "$OUT/engine-args-EAGER$EAGER.txt"
   { echo "arm=$ARM"; echo "eager=$EAGER"; echo "serve_args=$SERVE_ARGS"
     echo "compilation_json=$COMPILATION_JSON"; echo "bisect_env=${BISECT_ENV:-}"
+    echo "spec_json=$SPEC_JSON"; echo "max_num_seqs=$MAX_NUM_SEQS"
     echo "sanitize=$SANITIZE"; [ "$SANITIZE" = 1 ] && echo "sanitize_args=$SANITIZE_ARGS"
-    echo "digest=${DIGEST:-0} prof=${PROF:-0} hooks=${HOOKS:-0} caplog=${CAPLOG:-0}"
+    echo "digest=${DIGEST:-0} prof=${PROF:-0} hooks=${HOOKS:-0} caplog=${CAPLOG:-0} gcdraft=${GCDRAFT:-0} draftlog=${DRAFTLOG:-0}"
     echo "image=$IMG"; echo "image_id=$(docker image inspect --format '{{.Id}}' "$IMG")"
     echo "image_digest_resolved=${RUNTIME_IMAGE_DIGEST:-}"
     echo "tree=$TS"; echo "tree_sha=$(git -C "$TS" rev-parse HEAD)"; echo "tree_dirty=$(git -C "$TS" status --porcelain | wc -l)"
@@ -131,6 +147,7 @@ up)
   inner="$EXT/serve-inner.sh"
   { echo "set -e"; printf '%s\n' "$PREP"
     [ -n "$COMPILATION_JSON" ] && printf "extra=(\"--compilation-config\" '%s')\n" "${COMPILATION_JSON#%\"}"
+    [ -n "$SPEC_JSON" ] && printf "extra+=(\"--speculative-config\" '%s')\n" "$SPEC_JSON"
     if [ "$SANITIZE" = 1 ]; then
       # Not exec'd: bash stays PID 1 so "down" can stop the API server with SIGTERM
       # (a clean vLLM shutdown) and the tool can write its ERROR SUMMARY on exit.
