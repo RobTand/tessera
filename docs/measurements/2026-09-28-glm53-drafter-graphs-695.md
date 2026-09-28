@@ -10,6 +10,13 @@ k\* are compared with the serve as the unit (relabelling floor 1/35 = 0.029).
 The stub results below are supporting depth for that decision, not the
 admission.
 
+Step 2 serves the release text-only (`--language-model-only`), with
+`max_model_len` 4096, `max_num_batched_tokens` 2048, `max_num_seqs` 4 and
+explicit KV bytes per rank, the configuration its memory gate was measured
+under. The release's documented serve configuration (vision on,
+`MAX_MODEL_LEN` 1000000 at `GPU_MEM_UTIL` 0.87) is not what step 2
+measures; its memory fit is a separate release-serve smoke.
+
 ## Setup
 
 - **Model.** `/mnt/shared/tessera-runs/moe/glm53-4layer-a4-e2m1x2-q896-l2-mtp1`:
