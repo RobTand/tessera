@@ -24,12 +24,14 @@ from the aligned pair before it and the decoder reads it at the slot's third
 word, loading a word past a lane's eight fields only where a field reaches
 into it; one correctness fix rode along (the previous window word is loaded
 for every 8-row group whose window starts inside the half's first word, not
-the first group alone). No cell's `executes`, rungs or flags move: the four
-E4M3 window cells are re-measured on the changed kernel by the same stub-B
-and pinned-image censuses, which now record the fused pair on the stub's
-mixed-rate stacks (E4M3 at q256 896, 928, 1088) and dense modules (q256 832,
-880, 960, 1088) as well as its q256 1024 ones (`remeasured_at_v45`). E2M1 stays on `a4_span2`. See §3.3 "Mixed
-rates" and `docs/measurements/2026-09-28-mixed-rate-fused-window.md`.
+the first group alone). A one-run unit's descriptor is the identity, so its column map
+is computed rather than read. No cell's `executes`, rungs or flags move. The
+served census of the four E4M3 window cells on this kernel has not run, so
+the fixture names no v45 re-measurement. On the first cut the bench timed
+the q256 1024 fused lanes slower than the v43 kernel (value family, routed
++60% at M = 2048); whether the computed one-run map closes that gap is a
+queued measurement, not a result. E2M1 stays on `a4_span2`. See §3.3
+"Mixed rates" and `docs/measurements/2026-09-28-mixed-rate-fused-window.md`.
 
 Re-stamped 2026-09-28 for CUDA graphs in the research GLM53 NoPE backend
 (tessera#508). `glm53_nope._config_reason` no longer requires
@@ -3559,7 +3561,9 @@ aligned and a 64-row half at rate r is 8r bytes, so an odd rate's half is
 misaligned, with one 8-byte tail when it is not) instead of the 8-byte copies
 the first cut of this version made; the decode reads the half from the slot's
 third word there, and loads a word past a lane's eight fields only where a
-field reaches into it, so no launch reads past a half. The device decides the
+field reaches into it, so no launch reads past a half. A one-run unit
+(`n_hi = 0`) has the identity block descriptor, so `col_map` computes its
+map instead of reading the descriptor. The device decides the
 rates: sm_121 grants 101,376 B per block
 (`cudaDevAttrMaxSharedMemoryPerBlockOptin`), so the gate/up launch holds slot
 8 (97,360 B; rates 1-4) and slot 12 (100,432 B; rates 5 and 6) and not slot
@@ -3584,8 +3588,9 @@ and the validator holds the field to an ascending subset of `column_rates`.
 The field is not additive for a v44 reader or for PrismaQuant's mirror of the
 roster (`lane_eligibility.LANE_REQUIREMENT_FIELDS`, `tessera_render.
 planned_wire_facts`, which must also carry the structure fact), which is why
-the version moved. Served-path receipts: `docs/measurements/2026-09-28-mixed-
-rate-fused-window.md`. E2M1 fused stays parked; the E2M1_K2 routed stacks stay
+the version moved. The served-path receipts (census, timing, NCU) are
+queued, not recorded; `docs/measurements/2026-09-28-mixed-rate-fused-window.md`
+tracks them. E2M1 fused stays parked; the E2M1_K2 routed stacks stay
 on the A4 span-2 grouped path.
 
 ### 3.4 Declared weight transforms are refused at the materialisation boundary
