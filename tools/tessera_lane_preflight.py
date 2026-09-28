@@ -70,6 +70,7 @@ def units_of(path: str, device: str):
 
     from tessera.fused import parse_fused
     from tessera.serving.scheme import wire_facts_of_parsed
+    from tessera.serving_parts import read_serving_manifest
     from tessera.unit_artifact import parse_unit_artifact
 
     out = []
@@ -115,8 +116,7 @@ def main() -> int:
         declared = []
         manifest = os.path.join(path, "tessera_serving_manifest.json")
         if os.path.isfile(manifest):
-            with open(manifest) as fh:
-                declared = list(json.load(fh).get("requires_lanes") or ())
+            declared = list(read_serving_manifest(manifest).get("requires_lanes") or ())
         if args.manifest_lanes:
             lanes = declared
         elif not lanes:

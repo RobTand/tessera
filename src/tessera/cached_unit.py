@@ -22,6 +22,7 @@ from .export import (ActivationSource, DEFAULT_CODE, DEFAULT_GROUP, DEFAULT_HALF
                      HESSIAN_IDENTITY, WireRecipe, served_recipe)
 from .grammar import bresenham_rate_schedule
 from .manifest import BodyKind, ContainerClass, RotationState
+from .serving_parts import unique_json_pairs
 from .structure import STRUCTURE_DENSE, STRUCTURES
 from .unit_artifact import _reach_attrs, build_unit_artifact, encoder_profile_id
 
@@ -730,7 +731,7 @@ def _bound_document(bound):
     raw = path.read_bytes()
     if hashlib.sha256(raw).hexdigest() != bound["sha256"]:
         raise ValueError("cached unit authority SHA256 differs")
-    return json.loads(raw, object_pairs_hook=_unique_json_pairs)
+    return json.loads(raw, object_pairs_hook=unique_json_pairs)
 
 
 class ProducerCachedUnitIdentities:
@@ -762,14 +763,5 @@ class ProducerCachedUnitIdentities:
                               for seal, identity in sorted(self.identities.items())}}
 
 
-def _unique_json_pairs(pairs):
-    result = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError(f"duplicate cached unit JSON key: {key}")
-        result[key] = value
-    return result
-
-
 def read_manifest(path: Path) -> dict:
-    return json.loads(Path(path).read_text(), object_pairs_hook=_unique_json_pairs)
+    return json.loads(Path(path).read_text(), object_pairs_hook=unique_json_pairs)
