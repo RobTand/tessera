@@ -26,6 +26,11 @@ token id differs from that outcome's.
 
   eq-member-508.py RECEIPTS ARM EAGER_ARM[,EAGER_ARM...]
 Writes RECEIPTS/member-<ARM>.json; exit 0 when every choice of every case matches.
+
+Each pool name's second pass (<name>-r2) joins the pool when its receipts exist,
+except when it is ARM itself: a run is never judged against its own outcomes. ARM
+may not appear in the pool. To judge an eager run against the other eager runs,
+leave its serve out of the pool, or list only the serve's other pass.
 """
 import json
 import pathlib
@@ -80,12 +85,15 @@ def same_prefix(a, b):
     return dict(token_ids_differ_at=diverge, max_same_prefix_delta=dmax)
 
 
+if arm in pool:
+    raise SystemExit(f"{arm} is in its own pool")
 target = load_arm(arm)
 runs = {}
 for name in pool:
     runs[name] = load_arm(name)
-    if (recs / f"{name}-r2.eq.summary.json").exists():
-        runs[f"{name}-r2"] = load_arm(f"{name}-r2")
+    second = f"{name}-r2"
+    if second != arm and (recs / f"{second}.eq.summary.json").exists():
+        runs[second] = load_arm(second)
 
 # Outcome pool per target case: (run, case) pairs whose case sends the same batch.
 outcomes = {}
