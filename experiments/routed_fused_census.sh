@@ -18,6 +18,12 @@
 #   ORACLE_IMAGE          the immutable image reference (required)
 #   TESSERA_SERVE_MODE    residency the serve declares (default resident)
 #   TESSERA_ROUTED_ENV    one extra KEY=VALUE for the container (optional)
+#
+# The image may be one whose CUDA toolkit lacks the library headers the JIT
+# build of the fused window kernel pulls (the platform's pinned
+# ``vllm/vllm-openai`` image): ``experiments/cuda_home_shadow.sh`` runs first
+# inside the container and points CUDA_HOME at a user-owned shadow under
+# <out_dir> when, and only when, a header is missing.
 set -euo pipefail
 CHECKOUT=$(realpath "$1"); OUT=$(realpath -m "$2"); MODEL=$(realpath "$3"); shift 3
 IMAGE_REF=${ORACLE_IMAGE:?set ORACLE_IMAGE to the immutable PB-declared serving image}
@@ -70,6 +76,8 @@ docker run --rm --gpus all --ipc=host --network=host --cpuset-cpus "$CPUS" \
   -e TESSERA_ROUTED_FUSED_VERBOSE="${TESSERA_ROUTED_FUSED_VERBOSE:-}" \
   -e PB_ACTION_KEY="${PB_ACTION_KEY:-${PRISMABUILD_ACTION_KEY:-}}" \
   "${IMAGE_ENV[@]}" ${TESSERA_ROUTED_ENV:+-e "$TESSERA_ROUTED_ENV"} \
-  --entrypoint python3 -w /work "$IMAGE_REF" \
-  /work/tools/tessera_route_census.py "$MODEL" "$OUT/census.json" \
-  --runtime-image "$IMAGE_REF" --tessera-commit "$HEAD" "$@"
+  --entrypoint bash -w /work "$IMAGE_REF" \
+  -c 'source /work/experiments/cuda_home_shadow.sh "$TMPDIR/.." && exec python3 \
+  /work/tools/tessera_route_census.py "$1" "$2" \
+  --runtime-image "$TESSERA_CENSUS_RUNTIME_IMAGE" --tessera-commit "$3" "${@:4}"' bash \
+  "$MODEL" "$OUT/census.json" "$HEAD" "$@"

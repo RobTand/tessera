@@ -1,5 +1,41 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-09-28 for the fused window kernel's DENSE identity (contract
+v43, the dense follow-up to tessera#640). The q256 1024 dense and shared-expert
+window Linears -- E4M3 and BF16 -- are served by a SECOND launch identity by
+default: the same persistent CUDA kernel in its `DENSE` instantiation (E = 1,
+identity routing, no epilogue activation; `tessera.routed_fused.dense_forward`),
+which splits K into fp32 partials that a fixed-order reduce sums when fewer
+work items than SMs exist (`dense_k_split`, a bandwidth model in the SM count
+and the byte counts, S = 1 in prefill) and rounds once to bf16
+(`tessera::fused_window_dense`, decoders `native_fused_window_dense` /
+`native_fused_window_dense_folded`). The integration is per Linear, not per
+MLP: vLLM applies the activation between the two Linears it owns, so each
+module's roles run as one op into column slices of one output and the census
+module count is unchanged. `native_window.prepare_dense_native_module` decides
+the lane once per module (`routed_fused.fused_dense_window_supported`: rate 4
+in every column, rows a multiple of 128, columns a multiple of 32 and at
+least 128, the family's arithmetic, the attested native quantiser) and keeps
+the Triton window GEMM otherwise or under `TESSERA_DENSE_FUSED=0`; the module
+answers its own `launch_pair`, which `fp8_route` and `bf16_route` stamp
+(`DENSE_LAUNCHES`, two pairs). The pair rides the existing
+`tessera_routed_fused_{e4m3,value}` lanes in `scheme.ROUTE_LAUNCHES`, so
+`_validate_cell_executes` derives it for every window dense cell whose rungs
+the lane reaches (q256 1024): the four GLM-image dense cells, re-earned by a
+TP1 eager census of stub B on the GLM image
+(`experiments/results/glm53_u1_stub_b_fused_dense_tp1_eager_census.json`), and
+the two pinned-image E4M3 dense cells, re-earned on the pinned `vllm-openai`
+image in BOTH residencies rather than withdrawn
+(`qwen3_0_6b_uniform_r1024_fused_{resident,streamed}_eager_census.json`,
+112/112 modules on the fused pair, `tests/test_dense_fused_census_cells.py`):
+withdrawing them would have moved `versions.default_serve_image` onto a build
+no registry serves. Served-path oracle: 51 cases (TP1, both TP2 ranks, both
+residencies, both lanes), 0 violations of the dtype-derived bound,
+deterministic, streamed bitwise equal to resident. PACT bench on sparklina:
+the q1024 E4M3 dense/shared groups 2.6-3.7x faster at M <= 8 and 2.5-3.5x at
+M = 512/2048, BF16 R1024 1.7x and 2.2-2.5x; every other group within noise.
+See §3.3 and `docs/measurements/2026-09-28-dense-fused-window.md`.
+
 Re-stamped 2026-09-28 for the fused routed window MoE lane (tessera#640,
 contract v42). The routed E4M3 and BF16 expert stacks are served by a NEW
 launch identity by default: one persistent warp-specialised CUDA kernel
@@ -3318,6 +3354,73 @@ one the code makes. The oracle, profile, NCU, census and bench receipts are
 recorded in `docs/measurements/2026-09-28-routed-fused-640.md`. The lane does
 not cover `TESSERA_E2M1_K2`, whose routed stacks stay on the A4 span-2 grouped
 path; that gap is measured in the same document.
+
+**The dense identity (contract v43).** A dense Linear is the E = 1, top-1,
+unweighted case of the routed lane, and since v43 the same kernel serves the
+q256 1024 dense and shared-expert window modules of both families through a
+`DENSE` template instantiation (`routed_fused_kernel<FP8, MODE, DENSE, SPLIT>`
+in `serving/csrc/routed_fused_window.cu`; host entry
+`tessera.routed_fused.dense_forward`). Two things differ from the routed
+case. First, decode has too few work items -- an item is 64 rows of `x` by 128
+rows of the module, so a 4096 x 2048 down projection at M = 1 is 32 items on
+48 SMs -- so the dense entry splits K: S work items per (row block, M block)
+each write an fp32 partial of their K range and `dense_reduce_kernel` sums the
+S partials in a fixed order before the one epilogue (`(acc * a_scale) *
+w_scale` for E4M3, the bare accumulator for the folded value family) and the
+one bf16 rounding; `dense_k_split(m, rows, cols, sms)` is the integer minimiser
+of `wire * sms / min(S * items, sms) + 2 S M N 4` over `1 .. min(K/32,
+ceil(sms/items))` and returns 1 as soon as every SM has an item, so prefill is
+the unsplit kernel. Two runs are bitwise equal in both regimes and a captured
+forward replays (the work counter is zeroed inside the region; the partial is
+a graph-pool allocation). Second, the integration is per Linear: vLLM applies
+the activation between `gate_up_proj` and `down_proj` in code Tessera does not
+own, so an MLP-level fusion would have saved one bf16 round trip (about 1% at
+M = 2048) for a model-forward patch and a changed census module count; instead
+`native_window.PreparedDenseNativeModule` runs each role as one op into its
+column slice of one `[M, rows]` output (`tessera::fused_window_dense`, a custom
+op like `window_gemm_dense`). The lane is decided once per module at weight
+load by `_decide_lane` over `routed_fused.fused_dense_window_supported` (rate 4
+in every column of every role, rows a multiple of 128, columns a multiple of 32
+and at least 128, window 14, the identity column order, the family's
+arithmetic -- `epilogue` for E4M3, `folded` for value -- and a bundle prepared
+with the attested native quantiser); a refusal names its reason
+(`lane_reason`, logged), `TESSERA_DENSE_FUSED=0` keeps the Triton lane for
+every module, and a build failure of the library after admission is the
+published `when_unavailable` substitution. The module answers its own
+`launch_pair` (`(tessera::fused_window_dense, native_fused_window_dense)` or
+`_folded`), which `fp8_route.apply` / `bf16_route.apply` stamp, and both
+routes publish it beside the Triton pair as `DENSE_LAUNCHES`; the compile
+identity (#91) names whichever op the module runs. The pair sits on the
+existing `tessera_routed_fused_e4m3` / `tessera_routed_fused_value` lanes in
+`scheme.ROUTE_LAUNCHES` (a lane's decoder string stays the routed one; the
+dense decoders live on the rows), so `_validate_cell_executes` derives it for
+every window dense cell whose rungs the lane reaches and refuses a cell that
+omits it. That reached six cells. The four GLM-image dense cells were
+re-earned by a TP1 eager census of stub B on image X
+(`experiments/results/glm53_u1_stub_b_fused_dense_tp1_eager_census.json`,
+replayed by `tests/test_glm_u1_census_cells.py`): its three q256 1024 dense
+modules (layer 5 shared down E4M3, layer 5 shared gate/up BF16, layer 7 shared
+gate/up E4M3) recorded the fused pair and its thirteen mixed-rate dense modules
+the Triton pair, both regimes, `problems: []`. The two pinned-image E4M3 dense
+cells (`tessera_e4m3_k1_dense_sm121_{decode,batch}`, attested on
+`qwen3-0.6b-uniform-R1024`) had no receipt on which the pair had run; rather
+than withdraw them -- which would have moved `versions.default_serve_image`
+and `platforms.sm_121.serve_image` onto a `localhost/` build no registry
+serves -- the artifact was served again on the pinned `vllm-openai` image in
+both residencies with the fused lane as the dispatch
+(`qwen3_0_6b_uniform_r1024_fused_{resident,streamed}_eager_census.json`, 112 of
+112 modules on `native_fused_window_dense` in both phases, cell agreement
+true, replayed by `tests/test_dense_fused_census_cells.py` together with the
+fail-before on v42's `executes`). The pinned image lacks the CUDA headers the
+JIT build includes through ATen; `experiments/cuda_home_shadow.sh` fills that
+gap from the CUDA wheel's headers for the census container and is a no-op
+where `/usr/local/cuda/include` is complete. The served-path oracle
+(`experiments/dense_fused_oracle.py`, `tests/test_dense_fused_window.py`),
+profiles, NCU, census and bench receipts are recorded in
+`docs/measurements/2026-09-28-dense-fused-window.md`. The lane covers rate 4
+only, on both structures; the mixed-rate rungs the allocator prices (832-1088
+today) stay on the Triton GEMM and the compact adapter, which is the next
+kernel change (tessera#690).
 
 ### 3.4 Declared weight transforms are refused at the materialisation boundary
 

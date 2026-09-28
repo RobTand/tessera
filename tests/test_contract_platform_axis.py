@@ -178,8 +178,17 @@ def test_the_packaged_contract_validates_at_v33(contract):
     serves every stack the lane refuses and ``TESSERA_ROUTED_FUSED=0``), so a
     v10 reader that admitted those cells before admits them still and reads
     one more launch.  No rung, route, flag or format row moves.
+
+    v43 (the dense follow-up to tessera#640) is additive the same way: two
+    more lane-bearing rows -- the fused window kernel's DENSE identity,
+    ``tessera::fused_window_dense`` under one decoder per arithmetic -- enter
+    the two window families' dense launches, and the six dense cells whose
+    rungs reach the lane's predicate (the two pinned-image E4M3 cells and the
+    four GLM-image E4M3/BF16 cells) name the fused pair beside the Triton pair,
+    each on a served census of its own image.  No image, rung, flag or format
+    row moves; the pin is unchanged.
     """
-    assert int(contract["contract_version"]) == 42
+    assert int(contract["contract_version"]) == 43
     fused = "tessera.routed_fused.FusedRoutedWindowMoE.__call__"
     for cell in contract["lane_eligibility"]["cells"]:
         window_routed = (cell["structure"] == "routed_moe"
@@ -374,8 +383,19 @@ def test_the_surviving_v22_sm121_cells_are_byte_identical(contract):
     # census of the rate-4 u1 stub B
     # (docs/measurements/2026-09-28-routed-fused-640.md).  Neither is a
     # withdrawn claim; the span is empty, so the digest does not move.
+    #
+    # Contract v43 (tessera#692): the standing dense E4M3 pair names the fused
+    # window kernel's DENSE identity beside the Triton window GEMM, on a served
+    # census of the same stub's q256 1024 shared-expert modules
+    # (docs/measurements/2026-09-28-dense-fused-window.md); the fixture's
+    # ``remeasured_at_v43`` list names the two ids.  Again no withdrawn claim.
+    assert set(recorded["remeasured_at_v43"]) == {
+        "tessera_e4m3_k1_dense_sm121_decode_resident",
+        "tessera_e4m3_k1_dense_sm121_batch_resident"}
+    assert set(recorded["remeasured_at_v43"]) <= standing
     launch = {("TESSERA_E4M3_K1", "dense"): [
-                  ("tessera::window_gemm_dense", "native_window_gemm")],
+                  ("tessera::window_gemm_dense", "native_window_gemm"),
+                  ("tessera::fused_window_dense", "native_fused_window_dense")],
               ("TESSERA_E4M3_K1", "routed_moe"): [
                   ("tessera.native_window_moe.NativeWindowMoE.__call__",
                    "native_window_moe_compact"),

@@ -529,6 +529,13 @@ def _fake_preparation(monkeypatch):
             layer.register_buffer("weight_bf16", rendered.clone())
             layer.tessera_family = "TESSERA_BF16"
             layer.tessera_activation_contract = "bf16_unquantized"
+            # A loaded owner declares the launch it prepared, as the real
+            # route's process_weights_after_loading stamps the prepared
+            # module's own pair.  Since contract v43 (tessera#692) the BF16
+            # dense route admits two launches, so a fixture that declared
+            # nothing would leave the bench unable to name one.
+            layer.tessera_symbol = "tessera::window_gemm_dense"
+            layer.tessera_decoder = "native_window_gemm_folded"
             trace.append("process loaded original wire")
 
         return SimpleNamespace(create_weights=create_weights,

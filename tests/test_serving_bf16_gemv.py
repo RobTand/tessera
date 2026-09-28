@@ -202,8 +202,12 @@ def test_the_census_expectations_come_from_the_route():
     ``1b767a207`` left ``bf16_route.apply`` making one launch -- the packed native window
     GEMM, at every M and in both residencies -- and contract v31 dropped the
     retired rows from the table, so the expectation a census compares a served
-    record against is now that one pair.  Asserted as EQUALITY, because the
-    defect this whole file is about was an expectation wider than the dispatch.
+    record against became that one pair.  Contract v43 added the fused window
+    kernel's dense identity (``native_fused_window_dense_folded``) as a second
+    launch the route decides per module at weight load, so the expectation is
+    now exactly the route's own ``DENSE_LAUNCHES`` -- two pairs, of which any
+    one module stamps one.  Asserted as EQUALITY, because the defect this whole
+    file is about was an expectation wider than the dispatch.
 
     A note on where this function lives, which the equality makes visible: it
     still belongs to ``bf16_route``, and ``bf16_route.apply`` does not import it.  The census tool
@@ -211,8 +215,9 @@ def test_the_census_expectations_come_from_the_route():
     wrong module; moving it is follow-up, not part of the withdrawal.
     """
     # On the folded arithmetic's own decoder since tessera#614.
-    expected = {(WINDOW_GEMM_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_GEMM_FOLDED)}
-    assert expected == {route.DENSE_LAUNCH}
+    assert route.DENSE_LAUNCH == (WINDOW_GEMM_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_GEMM_FOLDED)
+    expected = set(route.DENSE_LAUNCHES)
+    assert expected == {route.DENSE_LAUNCH, route.DENSE_FUSED_LAUNCH} and len(expected) == 2
     go = route.census_expected(compiled=False)
     assert go["decode"] == expected
     assert go["batch"] == expected

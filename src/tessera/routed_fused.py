@@ -30,6 +30,22 @@ cells name them.  The compact adapter's pairs stay attested and stay the dispatc
 this lane refuses (:func:`fused_routed_window_supported`) and for
 ``TESSERA_ROUTED_FUSED=0``.
 
+THE DENSE CASE (contract v43).  A dense window Linear is the E = 1, top_k = 1,
+unweighted case of the down projection, and the same kernel serves it: one
+launch per role of a merged Linear (``routed_fused_kernel<FP8, 2, DENSE>``),
+row ``m`` of ``x`` as route ``m``, the role's rows written into their column
+slice of the module's output, and -- when ``ceil(M / 64) * rows / 128`` items
+would leave SMs idle, which is every decode shape -- the K range split ``S``
+ways into an fp32 workspace that a fixed-order reduce sums before the one
+epilogue (:func:`dense_k_split` states the model that picks ``S``).  It is
+its own launch identity, ``tessera::fused_window_dense`` (the functional
+custom op in ``serving.native_window``) with the decoders
+``native_fused_window_dense`` (E4M3, epilogue) and
+``native_fused_window_dense_folded`` (BF16, folded), lane-bearing rows on the
+same two extensions.  :func:`fused_dense_window_supported` is the per-role
+predicate; the Triton ``tessera::window_gemm_dense`` stays the dispatch for
+every module it refuses and for ``TESSERA_DENSE_FUSED=0``.
+
 The kernel is JIT-built once per family through ``torch.utils.cpp_extension``
 into two libraries, ``tessera_routed_fused_value`` and
 ``tessera_routed_fused_e4m3``, the two ``native_extensions`` entries the
@@ -50,13 +66,21 @@ from .errors import GrammarError
 
 __all__ = [
     "ENV_TOGGLE",
+    "ENV_TOGGLE_DENSE",
+    "FusedDenseWindowRole",
     "FusedRoutedWindowMoE",
     "MODULE_NAME_E4M3",
     "MODULE_NAME_VALUE",
     "SOURCE",
+    "compose_dense_table16",
     "compose_table16",
+    "dense_forward",
+    "dense_k_split",
+    "fused_dense_window_enabled",
+    "fused_dense_window_supported",
     "fused_routed_window_supported",
     "fused_routed_window_enabled",
+    "prepare_dense_role",
     "words_by_expert",
 ]
 
@@ -66,6 +90,12 @@ log = logging.getLogger(__name__)
 #: unset or ``1`` takes this lane wherever :func:`fused_routed_window_supported`
 #: admits the stack.
 ENV_TOGGLE = "TESSERA_ROUTED_FUSED"
+#: ``TESSERA_DENSE_FUSED=0`` keeps the Triton ``tessera::window_gemm_dense``
+#: for every dense module; unset or ``1`` takes this kernel's dense identity
+#: wherever :func:`fused_dense_window_supported` admits every role.  Its own
+#: toggle so the two identities can be measured against their predecessors
+#: independently.
+ENV_TOGGLE_DENSE = "TESSERA_DENSE_FUSED"
 #: The two JIT module names, one library per family.  Literals: the contract's
 #: native-extension scanner reads the ``load(name=...)`` sites statically.
 MODULE_NAME_VALUE = "tessera_routed_fused_value"
@@ -81,12 +111,17 @@ BN = 128
 BK = 32
 RATE = 4
 WINDOW_BITS = 14
+TABLE_ENTRIES = 1 << WINDOW_BITS
 CHUNK_WORDS = 64          # int32 words per column per 512-row tile at rate 4
 MIN_COLS = 4 * BK
 
 
 def fused_routed_window_enabled() -> bool:
     return os.environ.get(ENV_TOGGLE, "1") != "0"
+
+
+def fused_dense_window_enabled() -> bool:
+    return os.environ.get(ENV_TOGGLE_DENSE, "1") != "0"
 
 
 def _cflags(token: str, fp8: bool) -> list:
@@ -560,3 +595,178 @@ class FusedRoutedWindowMoE:
                      limit=float("inf"), out=routed, counter=1)
         _ext(self.family).token_sum(routed, out, int(routing.top_k))
         return out
+
+
+# ---------------------------------------------------------------------------
+# the dense identity: one role of a dense Linear as the E = 1 case
+# ---------------------------------------------------------------------------
+
+def fused_dense_window_supported(bundle) -> "str | None":
+    """Why the dense identity refuses a prepared role, or ``None`` when it serves it.
+
+    ``bundle`` is a ``window_gemm.PreparedWindowGemm`` (the frozen role the
+    Triton dense GEMM runs).  The kernel reads the routed lane's one wire shape
+    -- every column at rate 4 in one run from word 0, window bits 14, identity
+    column order, the family's published arithmetic (folded for value,
+    epilogue for e4m3) -- plus the dense tile: rows a multiple of 128 (one
+    128-column B block per item) and columns a multiple of 32 and at least
+    128.  A role outside it keeps ``tessera::window_gemm_dense``, and the
+    reason is the string returned here so a load log can say which.
+    """
+    if not fused_dense_window_enabled():
+        return f"disabled by {ENV_TOGGLE_DENSE}=0"
+    fam = bundle.family
+    if fam not in ("value", "e4m3"):
+        return f"family {fam!r} is not a window family"
+    want_arith = "folded" if fam == "value" else "epilogue"
+    if bundle.arithmetic != want_arith:
+        return f"arithmetic {bundle.arithmetic!r}; the fused identity serves {want_arith!r} for {fam}"
+    if bundle.device.type != "cuda":
+        return f"the role lives on {bundle.device}; the kernel is CUDA"
+    if bundle.window_bits != WINDOW_BITS:
+        return f"window_bits {bundle.window_bits} != {WINDOW_BITS}"
+    if fam == "e4m3" and bundle.quantizer != "native":
+        return "the role was prepared without the native activation quantizer"
+    cols, rows = int(bundle.cols), int(bundle.rows)
+    if cols % BK != 0 or cols < MIN_COLS:
+        return f"{cols} columns; the kernel needs a multiple of {BK} and at least {MIN_COLS}"
+    if rows % BN != 0:
+        return f"{rows} rows; the dense identity needs a multiple of {BN}"
+    if bundle.words.dtype != torch.int32 or bundle.words.dim() != 1:
+        return "words must be a flat int32 stream"
+    runs = bundle.runs.reshape(-1, 4)
+    want_run = torch.tensor([[RATE, 0, cols, 0]], dtype=runs.dtype, device=runs.device)
+    if tuple(runs.shape) != (1, 4) or not bool((runs == want_run).all()):
+        return (f"run table is not [[{RATE}, 0, {cols}, 0]] (mixed rates, or a rate other "
+                f"than {RATE})")
+    arange = torch.arange(cols, dtype=bundle.perm.dtype, device=bundle.perm.device)
+    if bundle.perm.numel() != cols or not bool((bundle.perm == arange).all()):
+        return "the role permutes its columns; the kernel reads the identity order"
+    if int(bundle.tile_words) != cols * CHUNK_WORDS:
+        return f"tile_words {bundle.tile_words} is not {cols * CHUNK_WORDS}"
+    if bundle.init_perm.dtype != torch.int32 or bundle.init_perm.numel() != cols:
+        return "init_perm must be int32 [cols]"
+    if bundle.scale.dtype != torch.float32 or bundle.scale.numel() != rows:
+        return "scale must be fp32 [rows]"
+    if fam == "value":
+        if bundle.table.dtype != torch.bfloat16 or bundle.table.numel() != TABLE_ENTRIES:
+            return f"the value table must be bf16 [{TABLE_ENTRIES}]"
+    else:
+        if bundle.codes.dtype != torch.uint8 or bundle.codes.numel() != TABLE_ENTRIES:
+            return f"codes must be uint8 [{TABLE_ENTRIES}]"
+        if bundle.native.dtype != torch.uint8 or bundle.native.numel() != 256:
+            return "native must be uint8 [256]"
+    return None
+
+
+def compose_dense_table16(bundle) -> torch.Tensor:
+    """:func:`compose_table16` for one role: int16 ``[1, 2^L]``."""
+    if bundle.family == "value":
+        return bundle.table.contiguous().view(torch.int16).reshape(1, TABLE_ENTRIES)
+    bytes_ = bundle.native[bundle.codes.to(torch.int64)]                 # [2^L] uint8
+    return (bytes_.view(torch.float8_e4m3fn).to(torch.float16).contiguous()
+            .view(torch.int16).reshape(1, TABLE_ENTRIES))
+
+
+@dataclasses.dataclass(frozen=True)
+class FusedDenseWindowRole:
+    """One role's kernel inputs, frozen at preparation.
+
+    ``words``/``init``/``wscale`` are views of the bundle's own tensors (no new
+    storage); ``table16`` is the composed 16-bit table (32 KB, new storage,
+    counted by the module's residency accounting); ``has_init`` is the one
+    int32 flag the kernel reads per expert.
+    """
+    family: str
+    rows: int
+    cols: int
+    words: torch.Tensor       # int32 [1, W]
+    table16: torch.Tensor     # int16 [1, 2^L]
+    init: torch.Tensor        # int32 [1, K]
+    has_init: torch.Tensor    # int32 [1]
+    wscale: torch.Tensor      # fp32 [1, N]
+
+    @property
+    def fp8(self) -> bool:
+        return self.family == "e4m3"
+
+    @property
+    def tile_words(self) -> int:
+        return self.cols * CHUNK_WORDS
+
+    def named_tables(self):
+        yield "fused_table16", self.table16
+        yield "fused_has_init", self.has_init
+
+
+def prepare_dense_role(bundle) -> FusedDenseWindowRole:
+    """The kernel inputs for an admitted role; builds the family's library first."""
+    reason = fused_dense_window_supported(bundle)
+    if reason is not None:
+        raise GrammarError(f"the fused dense identity refuses this role: {reason}")
+    _ext(bundle.family)
+    device = bundle.device
+    return FusedDenseWindowRole(
+        family=bundle.family, rows=int(bundle.rows), cols=int(bundle.cols),
+        words=bundle.words.reshape(1, -1), table16=compose_dense_table16(bundle),
+        init=bundle.init_perm.reshape(1, -1),
+        has_init=torch.tensor([1 if bundle.has_init else 0], dtype=torch.int32, device=device),
+        wscale=bundle.scale.reshape(1, -1))
+
+
+def dense_k_split(m: int, rows: int, cols: int, sms: int) -> int:
+    """How many ways to split K for one role at ``m`` rows: the bandwidth model.
+
+    An item is 64 rows of ``x`` by 128 rows of the role, so ``items0 =
+    ceil(m / 64) * rows / 128``.  When ``items0 >= sms`` every SM has work and
+    the answer is 1 (prefill is untouched).  Below that, each split adds items
+    and costs an fp32 partial written and read back; the time model is the
+    wire bytes served by ``min(S * items0, sms)`` SMs at the per-SM share of
+    the bandwidth, plus the partial traffic at full bandwidth:
+
+        t(S) = wire * sms / min(S * items0, sms) + 2 * S * m * rows * 4
+
+    with ``wire = rows * cols / 2`` (rate 4).  The minimiser over the integers
+    ``1 .. min(K / 32, ceil(sms / items0))`` is returned; the constants are the
+    SM count and the byte counts, nothing else.
+    """
+    items0 = -(-m // BM) * (rows // BN)
+    nk = cols // BK
+    if items0 >= sms or m <= 0:
+        return 1
+    best_s, best_t = 1, None
+    for s in range(1, min(nk, -(-sms // items0)) + 1):
+        wire = rows * cols // 2
+        t = wire * sms / min(s * items0, sms) + 2.0 * s * m * rows * 4
+        if best_t is None or t < best_t:
+            best_s, best_t = s, t
+    return best_s
+
+
+def dense_forward(role: FusedDenseWindowRole, x: torch.Tensor, a_scale: "torch.Tensor | None",
+                  out: torch.Tensor, counter: torch.Tensor) -> None:
+    """One role's launch into ``out`` (a ``[M, rows]`` view, unit column stride).
+
+    ``x`` is the family's A operand as the route quantised it (e4m3 + fp32
+    ``a_scale`` for E4M3, bf16 for value), contiguous ``[M, cols]``; ``counter``
+    is one int32 slot this call zeroes in-stream.  No host synchronisation, so
+    a captured forward replays.
+    """
+    lib = _ext(role.family)
+    m = int(x.shape[0])
+    if m == 0:
+        return
+    index = x.device.index if x.device.index is not None else torch.cuda.current_device()
+    sms = _sm_count(index)
+    s = dense_k_split(m, role.rows, role.cols, sms)
+    if s > 1:
+        partial = torch.empty((s, m, role.rows), dtype=torch.float32, device=x.device)
+    else:
+        partial = x.new_empty(0, dtype=torch.float32)
+    slot = counter[:1]
+    slot.zero_()
+    empty = x.new_empty(0, dtype=torch.float32)
+    lib.dense_forward(
+        bool(role.fp8), x, a_scale if a_scale is not None else empty,
+        role.words, role.table16, role.init, role.has_init, role.wscale,
+        int(role.tile_words), slot, int(s), partial, out, sms)
