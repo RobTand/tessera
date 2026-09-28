@@ -29,6 +29,7 @@ through PrismaBuild inside the pinned serving image
 (``experiments/routed_fused_tests.sh``).
 """
 
+import dataclasses
 import sys
 from pathlib import Path
 
@@ -40,7 +41,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from tessera import routed_fused as rf                    # noqa: E402
 from tessera import window_gemm as wg                     # noqa: E402
 from tessera.errors import GrammarError                   # noqa: E402
+from tessera.grammar import bresenham_rate_schedule       # noqa: E402
 
+import fused_bound as fb                                  # noqa: E402
 from test_window_gemm_grouped import Expert, _quant, _tol  # noqa: E402
 
 cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="the lane is a CUDA kernel")
@@ -50,6 +53,20 @@ L = 14
 ROWS, COLS = 256, 256
 M_CASES = [1, 3, 64, 65, 200, 1536]
 FAMILIES = ["value", "e4m3"]
+#: The rungs the mixed-rate tests read (tessera#694): one-rate wires at every
+#: rate the kernel decodes and two-rate schedules at the GLM rungs --
+#: q256 832 (3.25: rates 3/4), 928 (3.625), 1088 (4.25: 4/5), 1152 (4.5) --
+#: plus the two-rate 7/8 and 1/2 extremes.  256 columns realise every one of
+#: them exactly (``bresenham_rate_schedule`` refuses a rung it cannot).
+Q256_CASES = [256, 512, 768, 1024, 1280, 1536, 1792, 2048, 384, 832, 928, 1088, 1152, 1920]
+
+
+def _sched(cols, q256):
+    """The grammar's Bresenham schedule for ``q256`` over ``cols`` columns
+    (cap 8: the packer's whole range, so the value family's rungs are read too)."""
+    from fractions import Fraction
+
+    return bresenham_rate_schedule(Fraction(q256, 256), cols, cap=8)
 
 
 def _init(cols, seed):
@@ -246,43 +263,15 @@ GLM_ROLE_SHAPES = [
     pytest.param("dense_gate_up_tp2_row_cut", 6144, 4096, True, id="dense_gate_up_tp2-6144x4096"),
 ]
 GLM_M_CASES = [1, 3, 64, 512, 2048]
-U_ACC = 2.0 ** -23          # one fp32 ulp per accumulation step (a truncating adder)
-U32 = 2.0 ** -24            # fp32 unit roundoff (round-to-nearest multiply)
-U64 = 2.0 ** -53            # fp64 unit roundoff (the reference's own dot)
-
-
-def _gamma(n, u):
-    return n * u / (1.0 - n * u)
-
-
-def _bf16_ulp(v):
-    """The bf16 ulp at magnitude ``v`` (fp64, >= 0): ``2^(e - 7)`` for ``v`` in
-    ``[2^e, 2^(e+1))``, floored at the smallest normal's ulp."""
-    return torch.exp2(torch.floor(torch.log2(v.clamp(min=2.0 ** -126))) - 7)
-
-
-def _fp64_weight(expert, family):
-    """The role's decoded weight in fp64 ``[rows, cols]``, row scale applied:
-    the E4M3 bytes times the fp32 row scale (both exact in fp64), or the value
-    table folded once to bf16 with the row scale, as the folded contract does."""
-    states = expert.states.cuda()
-    if family == "e4m3":
-        byte = expert.unit.native[expert.unit.codes_of_state[states].long()]
-        return byte.view(torch.float8_e4m3fn).double() * expert.scale.double()[:, None]
-    values = expert.values.float().cuda()[states]
-    return (values * expert.scale[:, None]).bfloat16().double()
+# The bound model lives in ``tests/fused_bound.py`` (shared with the routed and
+# grouped tests); these names keep this file's statements readable.
+_gamma, _bf16_ulp, _fp64_weight = fb.gamma, fb.bf16_ulp, fb.fp64_weight
 
 
 def _glm_bound(family, a64, w64, k, s):
     """``(r, bound)``: the fp64 reference and the per-element bound on
-    ``|fused - r|`` stated in the test's docstring."""
-    r = a64 @ w64.t()
-    sigma = a64.abs() @ w64.abs().t()
-    e_acc = (_gamma(k + s + 2, U_ACC) + _gamma(k, U64)) * sigma
-    e_pre = e_acc
-    if family == "e4m3":
-        e_pre = e_acc + _gamma(2, U32) * (r.abs() + e_acc)
-    return r, e_pre + 0.5 * _bf16_ulp(r.abs() + e_pre)
+    ``|fused - r|`` stated in the test's docstring (``fused_bound.dense_bound``)."""
+    return fb.dense_bound(family, a64, w64, k, s)
 
 
 @cuda
@@ -525,8 +514,22 @@ def test_the_predicate_refuses_by_name():
     _e, narrow = _role("value", cols=64)
     assert rf.fused_dense_window_supported(narrow) == \
         f"64 columns; the kernel needs a multiple of {rf.BK} and at least {rf.MIN_COLS}"
+    # two rates (the two bracketing a root) are read since contract v45 (#694)
     _e, mixed = _role("value", rates=tuple(3 if c % 2 else 4 for c in range(COLS)))
-    assert "run table is not" in rf.fused_dense_window_supported(mixed)
+    assert rf.fused_dense_window_supported(mixed) is None
+    # three rates are not a grammar schedule; the kernel reads one run pair
+    _e, three = _role("value", rates=tuple((2, 3, 4)[c % 3] for c in range(COLS)))
+    assert "3 runs" in rf.fused_dense_window_supported(three)
+    # a column order that is not the packer's stable (rate, column) sort
+    shuffled = torch.tensor([1, 0] + list(range(2, COLS)), dtype=mixed.perm.dtype,
+                            device=mixed.perm.device)
+    assert "ascending column order" in rf.fused_dense_window_supported(
+        dataclasses.replace(mixed, perm=shuffled))
+    assert "not a permutation" in rf.fused_dense_window_supported(
+        dataclasses.replace(mixed, perm=torch.zeros_like(mixed.perm)))
+    # a tile stride the run table does not produce
+    assert "tile_words" in rf.fused_dense_window_supported(
+        dataclasses.replace(mixed, tile_words=int(mixed.tile_words) + 16))
     _e, epilogue = _role("value", arithmetic="epilogue")
     assert rf.fused_dense_window_supported(epilogue) == \
         "arithmetic 'epilogue'; the fused identity serves 'folded' for value"
@@ -567,7 +570,13 @@ def test_the_k_split_model_is_the_bandwidth_model():
         got = rf.dense_k_split(m, rows, cols, sms)
         assert got == restated(m, rows, cols), (m, rows, cols, got)
         assert 1 <= got <= cols // rf.BK
+        # the wire is the role's own words per tile: rate 4 restates the default
+        assert rf.dense_k_split(m, rows, cols, sms, tile_words=64 * cols) == got
     assert rf.dense_k_split(1, 256, 4096, sms) > 1
+    # a lighter wire (rate 2) moves the optimum: the model reads the bytes, not the rate
+    light = rf.dense_k_split(1, 4096, 2048, sms, tile_words=32 * 2048)
+    heavy = rf.dense_k_split(1, 4096, 2048, sms, tile_words=128 * 2048)
+    assert light <= rf.dense_k_split(1, 4096, 2048, sms) <= heavy and light < heavy
     # More rows means more items and never a larger split at the same M.
     assert rf.dense_k_split(1, 2048, 4096, sms) <= rf.dense_k_split(1, 256, 4096, sms)
 
@@ -598,3 +607,137 @@ def test_the_dense_identity_is_a_published_launch_of_both_window_routes():
             for regime in ("decode", "batch"):
                 assert set(module.DENSE_LAUNCHES) == launch_pairs(
                     route, structure=STRUCTURE_DENSE, regime=regime, mode=mode), (route, regime, mode)
+
+
+# --- every rate, and the two-rate schedules (tessera#694) -------------------------
+
+@cuda
+@pytest.mark.parametrize("family", FAMILIES)
+@pytest.mark.parametrize("q256", Q256_CASES)
+def test_dense_forward_decodes_every_rate_exactly(family, q256):
+    """One-hot rows through the real kernel: each output element is one
+    decoded weight through the epilogue, so the fused output must equal the
+    torch restatement of that arithmetic BITWISE at every (row, column) --
+    which catches a wrong column map, run offset, or field position at any
+    rate, in either run, with and without a start state.  ``S`` is whatever
+    the bandwidth model picks for ``M = cols`` rows, so the split path's
+    partials and reduce are read too (a split adds exact zeros only)."""
+    rates = _sched(COLS, q256)
+    assert set(rates) <= set(rf.RATES) and len(set(rates)) in (1, 2)
+    for seed, init in ((7000 + q256, None), (7100 + q256, _init(COLS, 7200 + q256))):
+        expert, bundle = _role(family, rates=rates, seed=seed, init=init)
+        assert rf.fused_dense_window_supported(bundle) is None, (family, q256)
+        role = rf.prepare_dense_role(bundle)
+        assert role.tile_words == 16 * sum(rates) == int(bundle.tile_words)
+        _x, xq, a, hot = fb.one_hot_inputs(family, COLS, _quant)
+        got = _fused(role, xq, a)
+        want = fb.one_hot_expected(expert, family, hot, a)
+        bad = (got != want)
+        assert not bool(bad.any()), (
+            f"{family} q256={q256} rates {sorted(set(rates))} init={init is not None}: "
+            f"{int(bad.sum())} of {bad.numel()} one-hot products differ; first at "
+            f"{bad.nonzero()[0].tolist()} (column, row)")
+
+
+@cuda
+@pytest.mark.parametrize("family", FAMILIES)
+@pytest.mark.parametrize("q256", [768, 832, 928, 1088, 1152, 2048])
+@pytest.mark.parametrize("cols", [128, COLS])
+def test_dense_forward_at_every_rate_is_within_the_derived_bound(family, q256, cols):
+    """Random inputs at the GLM rungs and the extremes, K = 128 (the smallest
+    the kernel takes) and 256, M in the split and one-pass regimes: the fused
+    output is within ``fused_bound.dense_bound`` of the fp64 reference per
+    element, and within twice it of the Triton lane (follow-up 3 of #693:
+    the fused-vs-Triton statistic is a pass criterion with a derived limit)."""
+    rates = _sched(cols, q256)
+    expert, bundle = _role(family, cols=cols, rates=rates, seed=7300 + q256 + cols)
+    role = rf.prepare_dense_role(bundle)
+    sms = rf._sm_count(torch.cuda.current_device())
+    w64 = fb.fp64_weight(expert, family)
+    for m in (1, 64, 200):
+        s = rf.dense_k_split(m, ROWS, cols, sms, tile_words=role.tile_words)
+        _x, xq, a = _inputs(family, m, cols, 7400 + m + q256)
+        a64 = xq.double() * a.double()[:, None] if family == "e4m3" else xq.double()
+        r, bound = fb.dense_bound(family, a64, w64, cols, s)
+        fused = _fused(role, xq, a)
+        what = f"{family} q256={q256} K={cols} M={m} S={s}"
+        ratio = fb.check_within(fused, r, bound, f"{what}: fused vs the fp64 reference")
+        triton = _triton(bundle, xq, a)
+        fb.check_within(triton, r, bound, f"{what}: Triton vs the fp64 reference")
+        pair = fb.check_within(fused, triton.double(), bound, f"{what}: fused vs Triton", scale=2.0)
+        print(f"RATE-BOUND {what} fused/bound={ratio:.4f} pair/(2*bound)={pair:.4f}")
+
+
+@cuda
+@pytest.mark.parametrize("family", FAMILIES)
+def test_a_row_stride_that_is_only_even_takes_the_unsplit_path(family):
+    """Follow-up 4 of #693: the split path's reduce stores four bf16 (uint2)
+    at 4-aligned columns, so a ``[M, rows]`` view whose row stride is 2 mod 4
+    is refused by the extension for ``k_split > 1`` and ``dense_forward``
+    routes it through ``S = 1`` -- same answer as a contiguous output."""
+    expert, bundle = _role(family)
+    role = rf.prepare_dense_role(bundle)
+    m = 1
+    sms = rf._sm_count(torch.cuda.current_device())
+    assert rf.dense_k_split(m, ROWS, COLS, sms, tile_words=role.tile_words) > 1
+    _x, xq, a = _inputs(family, m, COLS, 7500)
+    wide = torch.zeros(m, ROWS + 2, dtype=torch.bfloat16, device="cuda")
+    view = wide[:, :ROWS]
+    assert view.stride(0) % 4 == 2
+    counter = torch.zeros(1, dtype=torch.int32, device="cuda")
+    rf.dense_forward(role, xq, a, view, counter)
+    assert torch.equal(view, _fused(role, xq, a))            # S forced to 1: the one-pass answer
+    assert torch.equal(wide[:, ROWS:], torch.zeros_like(wide[:, ROWS:]))
+    lib = rf._ext(family)
+    s = 2
+    partial = torch.empty((s, m, ROWS), dtype=torch.float32, device="cuda")
+    empty = xq.new_empty(0, dtype=torch.float32)
+    with pytest.raises(RuntimeError, match="multiple of 4"):
+        lib.dense_forward(bool(role.fp8), xq, a if a is not None else empty,
+                          role.words, role.table16, role.init, role.has_init, role.wscale,
+                          role.runs, role.bdesc, int(role.tile_words), counter, s, partial, view, sms)
+
+
+def test_the_run_pair_and_block_descriptor_are_the_packers_layout():
+    """Pure host arithmetic: the run pair restates a one- or two-run table and
+    refuses three runs, a wrong offset or a run that does not tile K; the
+    block descriptor lists each block's low-rate columns then its high-rate
+    columns in ascending position with the running low-rate count -- checked
+    against a direct restatement over the packer's permutation."""
+    cols = 128
+    rates = _sched(cols, 928)                                        # 3/4 mixed, 80 at rate 4
+    n_lo = rates.count(3)
+    perm = torch.tensor(sorted(range(cols), key=lambda c: (rates[c], c)), dtype=torch.int32)
+    runs = torch.tensor([[3, 0, n_lo, 0], [4, n_lo, cols - n_lo, 16 * 3 * n_lo]], dtype=torch.int32)
+    pair, why = rf.run_pair(runs, cols)
+    assert why is None and pair.tolist() == [3, 0, n_lo, 0, 4, n_lo, cols - n_lo, 48 * n_lo]
+    assert rf.pair_tile_words(pair) == 16 * sum(rates)
+    one, why = rf.run_pair(torch.tensor([[5, 0, cols, 0]], dtype=torch.int32), cols)
+    assert why is None and one.tolist() == [5, 0, cols, 0, 0, cols, 0, 80 * cols]
+    assert rf.pair_tile_words(one) == 16 * 5 * cols
+    for bad, word in ((torch.tensor([[2, 0, 64, 0], [3, 64, 32, 2048], [4, 96, 32, 3584]]), "3 runs"),
+                      (torch.tensor([[3, 0, n_lo, 0], [4, n_lo, cols - n_lo, 0]]), "do not tile"),
+                      (torch.tensor([[4, 0, n_lo, 0], [3, n_lo, cols - n_lo, 64 * n_lo]]), "not above"),
+                      (torch.tensor([[9, 0, cols, 0]]), "rate in 1..8"),
+                      (torch.tensor([[4, 0, cols - 32, 0]]), "covers")):
+        got, why = rf.run_pair(bad.to(torch.int32), cols)
+        assert got is None and word in why, (bad.tolist(), why)
+    assert rf.perm_reason(perm, n_lo, cols) is None
+    swapped = perm.clone()
+    swapped[0], swapped[1] = perm[1], perm[0]                        # a descent inside the low run
+    assert "ascending" in rf.perm_reason(swapped, n_lo, cols)
+    assert "not a permutation" in rf.perm_reason(torch.zeros(cols, dtype=torch.int32), n_lo, cols)
+    desc = rf.block_desc(perm, n_lo, cols)
+    assert tuple(desc.shape) == (1, cols // 32, rf.BDESC_INTS) and desc.dtype == torch.int32
+    is_hi = [rates[c] == 4 for c in range(cols)]
+    before = 0
+    for kc in range(cols // 32):
+        block = list(range(32 * kc, 32 * kc + 32))
+        order = [c - 32 * kc for c in block if not is_hi[c]] + [c - 32 * kc for c in block if is_hi[c]]
+        words = desc[0, kc].tolist()
+        got = [(words[i // 4] >> (8 * (i % 4))) & 0xFF for i in range(32)]
+        assert got == order, kc
+        cnt_lo = sum(1 for c in block if not is_hi[c])
+        assert words[8] == before and words[9] == cnt_lo and words[10] == words[11] == 0
+        before += cnt_lo
+    assert before == n_lo

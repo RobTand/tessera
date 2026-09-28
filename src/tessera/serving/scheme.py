@@ -606,11 +606,13 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
          "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": False},
         # The fused warp-specialised lane (tessera#640) on the same epilogue
         # arithmetic.  ``PackedWindowMoeBundles.adapter`` takes it for every
-        # stack ``routed_fused.fused_routed_window_supported`` admits (every
-        # column at rate 4, window 14, identity order -- the q256=1024 GLM
-        # stacks) unless ``TESSERA_ROUTED_FUSED=0``; the compact pair above
-        # stays the dispatch for the rest (the mixed-rate q256=896 rung, a
-        # box whose toolchain cannot build the library, the opt-out).  The
+        # stack ``routed_fused.fused_routed_window_supported`` admits (the
+        # wire's one- or two-rate run table at rates 1..8 in the packer's
+        # column order, window 14 -- every GLM q256 rung since contract v45,
+        # tessera#694; v42-v44 read rate 4 alone) unless
+        # ``TESSERA_ROUTED_FUSED=0``; the compact pair above stays the
+        # dispatch for the rest (a box whose toolchain cannot build the
+        # library, the opt-out).  The
         # FIRST lane-bearing row since #538: ``lane`` names the extension
         # ``native_extensions`` publishes for it, so a cell derives this pair
         # only at a rung the extension's own ``lane.requires`` admits

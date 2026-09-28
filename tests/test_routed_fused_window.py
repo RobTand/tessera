@@ -30,9 +30,15 @@ from tessera.errors import GrammarError                   # noqa: E402
 from tessera.native_window_moe import (NativeWindowMoE, PackedWindowMoeBundles,  # noqa: E402
                                        _silu_and_mul, native_window_moe_from_bundles)
 
+import fused_bound as fb                                   # noqa: E402
 from test_window_gemm_grouped import Expert, _quant, _tol  # noqa: E402
 
 cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="the lane is a CUDA kernel")
+
+#: The rungs the mixed-rate routed tests read (tessera#694): the GLM E4M3
+#: rungs q256 832 (rates 3/4), 928, 1088 (4/5), 1152, the one-rate 768 and
+#: 2048 (the extremes), and 1536; 256 and 576 columns realise each exactly.
+Q256_CASES = [768, 832, 928, 1088, 1152, 1536, 2048]
 
 L = 14
 # gate/up: [INTER, HIDDEN] at rate 4 (two 512-row tiles: INTER > 512);
@@ -45,16 +51,28 @@ def _init(cols, seed):
                          dtype=torch.int32)
 
 
-def _stacks(family, *, hidden=HIDDEN, inter=INTER, experts=EXPERTS, seed=300, cut=True):
-    """gate, up, down Expert lists at rate 4 everywhere; experts 1 and 3 carry
-    a start state (the TP row-cut case) when ``cut``."""
-    gate = [Expert(inter, hidden, (4,) * hidden, seed + i, family=family,
+def _sched(cols, q256):
+    """The grammar's Bresenham schedule for ``q256`` over ``cols`` columns
+    (cap 8: the packer's whole range, so the value family's rungs are read too)."""
+    from fractions import Fraction
+
+    from tessera.grammar import bresenham_rate_schedule
+
+    return bresenham_rate_schedule(Fraction(q256, 256), cols, cap=8)
+
+
+def _stacks(family, *, hidden=HIDDEN, inter=INTER, experts=EXPERTS, seed=300, cut=True, q256=1024):
+    """gate, up, down Expert lists at the ``q256`` rung's schedule (rate 4
+    everywhere by default); experts 1 and 3 carry a start state (the TP
+    row-cut case) when ``cut``."""
+    r_h, r_i = _sched(hidden, q256), _sched(inter, q256)
+    gate = [Expert(inter, hidden, r_h, seed + i, family=family,
                    init=_init(hidden, seed + 40 + i) if (cut and i % 2) else None)
             for i in range(experts)]
-    up = [Expert(inter, hidden, (4,) * hidden, seed + 10 + i, family=family,
+    up = [Expert(inter, hidden, r_h, seed + 10 + i, family=family,
                  init=_init(hidden, seed + 50 + i) if (cut and i % 2) else None)
           for i in range(experts)]
-    down = [Expert(hidden, inter, (4,) * inter, seed + 20 + i, family=family,
+    down = [Expert(hidden, inter, r_i, seed + 20 + i, family=family,
                    init=_init(inter, seed + 60 + i) if (cut and i == 3) else None)
             for i in range(experts)]
     return gate, up, down
@@ -306,19 +324,32 @@ def test_support_predicate_refuses_by_name():
     value = _stacks("value", cut=False)
     ok = _bundles("value", value)
     assert rf.fused_routed_window_supported(ok.gate, ok.up, ok.down) is None
-    # mixed rates: two runs per expert (and a permuted column order)
-    mixed = [Expert(INTER, HIDDEN, tuple(2 if c % 2 else 4 for c in range(HIDDEN)), 700 + i)
-             for i in range(EXPERTS)]
-    mixed_b = wgg.prepare_grouped_window_gemm([e.unit for e in mixed], block_m=32, block_n=64,
-                                              block_k=64, arithmetic="folded")
-    reason = rf.fused_routed_window_supported(mixed_b, ok.up, ok.down)
-    assert reason is not None and "run" in reason
-    # a rate other than 4 everywhere: one run, but not the kernel's
-    rate2 = [Expert(INTER, HIDDEN, (2,) * HIDDEN, 720 + i) for i in range(EXPERTS)]
-    rate2_b = wgg.prepare_grouped_window_gemm([e.unit for e in rate2], block_m=32, block_n=64,
-                                              block_k=64, arithmetic="folded")
-    reason = rf.fused_routed_window_supported(rate2_b, ok.up, ok.down)
-    assert reason is not None and "[[4, 0" in reason
+
+    def grouped(experts):
+        return wgg.prepare_grouped_window_gemm([e.unit for e in experts], block_m=32, block_n=64,
+                                               block_k=64, arithmetic="folded")
+    # three rates: three runs per expert; the kernel reads the two bracketing the root
+    three = grouped([Expert(INTER, HIDDEN, tuple((2, 3, 4)[c % 3] for c in range(HIDDEN)), 700 + i)
+                     for i in range(EXPERTS)])
+    reason = rf.fused_routed_window_supported(three, ok.up, ok.down)
+    assert reason is not None and "runs" in reason
+    # two rates (a permuted column order) ARE read since contract v45 (#694) --
+    # but gate and up must share the tile stride the one launch reads
+    mixed_rates = tuple(2 if c % 2 else 4 for c in range(HIDDEN))
+    mixed = grouped([Expert(INTER, HIDDEN, mixed_rates, 710 + i) for i in range(EXPERTS)])
+    reason = rf.fused_routed_window_supported(mixed, ok.up, ok.down)
+    assert reason is not None and "tile_words" in reason
+    mixed_up = grouped([Expert(INTER, HIDDEN, mixed_rates, 720 + i) for i in range(EXPERTS)])
+    assert rf.fused_routed_window_supported(mixed, mixed_up, ok.down) is None
+    # one rate other than 4 everywhere is one run the kernel reads
+    rate2 = grouped([Expert(INTER, HIDDEN, (2,) * HIDDEN, 730 + i) for i in range(EXPERTS)])
+    rate2_up = grouped([Expert(INTER, HIDDEN, (2,) * HIDDEN, 740 + i) for i in range(EXPERTS)])
+    assert rf.fused_routed_window_supported(rate2, rate2_up, ok.down) is None
+    # experts that disagree on their schedule: the kernel reads one run pair per stack
+    uneven = grouped([Expert(INTER, HIDDEN, mixed_rates if i % 2 else (4,) * HIDDEN, 750 + i)
+                      for i in range(EXPERTS)])
+    reason = rf.fused_routed_window_supported(uneven, mixed_up, ok.down)
+    assert reason is not None and ("run" in reason or "tile_words" in reason)
     # the epilogue arithmetic on the value family is not the published contract
     epi = wgg.prepare_grouped_window_gemm([e.unit for e in value[0]], block_m=32, block_n=64,
                                           block_k=64, arithmetic="epilogue")
@@ -413,11 +444,11 @@ def test_a_build_failure_substitutes_the_compact_adapter(family, monkeypatch, ca
 
 def test_the_published_lane_predicate_is_the_kernels_shape():
     """``ext.ROUTED_FUSED_LANE_REQUIRES`` and the load-time predicate read one
-    kernel: rate 4, window bits 14, and the two module names are the loader's
-    literals."""
+    kernel: every rate 1..8 (contract v45), window bits 14, and the two module
+    names are the loader's literals."""
     from tessera.serving import ext
 
-    assert ext.ROUTED_FUSED_LANE_REQUIRES["column_rates"] == [rf.RATE]
+    assert ext.ROUTED_FUSED_LANE_REQUIRES["column_rates"] == list(rf.RATES) == list(range(1, 9))
     assert ext.ROUTED_FUSED_LANE_REQUIRES["window_bits"] == [rf.WINDOW_BITS]
     assert "start_state" not in ext.ROUTED_FUSED_LANE_REQUIRES   # reads a cut and a whole alike
     assert ext.ROUTED_FUSED_E4M3_MODULE_NAME == rf.MODULE_NAME_E4M3
@@ -428,3 +459,133 @@ def test_the_published_lane_predicate_is_the_kernels_shape():
     assert 'name="tessera_routed_fused_value"' in source
     prefixes = {e["module_name_prefix"] for e in ext.NATIVE_EXTENSIONS}
     assert {rf.MODULE_NAME_E4M3, rf.MODULE_NAME_VALUE} <= prefixes
+
+
+# --- every rung's schedule: one-hot decode oracle, derived bounds (tessera#694) ----
+
+def _w64(stack, family):
+    return [fb.fp64_weight(e, family) for e in stack]
+
+
+def _a64(family, x):
+    """The scaled fp64 A operand the kernel multiplies: the route's own E4M3
+    quantisation times its scale, or the bf16 x."""
+    if family == "e4m3":
+        xq, a = _quant(x)
+        return xq.double() * a.double().reshape(-1, 1)
+    return x.double()
+
+
+def _per_route(values, ids):
+    """``[E, T, N]`` gathered to ``[T, top_k, N]`` by the routing."""
+    t, k = ids.shape
+    sel = torch.arange(t, device=ids.device)[:, None].expand(t, k)
+    return values[ids.long(), sel]
+
+
+@cuda
+@pytest.mark.parametrize("family", ["value", "e4m3"])
+@pytest.mark.parametrize("q256", Q256_CASES)
+def test_fused_stages_decode_every_rate_exactly(family, q256):
+    """One-hot rows through the real kernel, both launches: each output
+    element is one decoded weight through the family's epilogue, so
+    ``gate_up`` (both halves, two run tables and two block descriptors per
+    item) and ``down_routes`` (top_k = 1: the one-route sum is the route) must
+    equal the torch restatement of that arithmetic BITWISE for every (expert,
+    column, row) -- a wrong column map, run offset or field position at any
+    rate, in either run, with or without a start state, shows here."""
+    stacks = _stacks(family, q256=q256)
+    gate, up, down = stacks
+    assert set(gate[0].rates) <= set(rf.RATES) and len(set(gate[0].rates)) in (1, 2)
+    fused = _fused(_bundles(family, stacks))
+    assert fused.tile_words_gate_up == 16 * sum(gate[0].rates)
+    assert fused.tile_words_down == 16 * sum(down[0].rates)
+    # gate/up: HIDDEN one-hot tokens, every one routed to every expert
+    _x, xq, a, hot = fb.one_hot_inputs(family, HIDDEN, _quant)
+    ids = torch.arange(EXPERTS, device="cuda", dtype=torch.int32).expand(HIDDEN, EXPERTS).contiguous()
+    rw = torch.ones(HIDDEN, EXPERTS, device="cuda")
+    gu = fused.gate_up(xq, ids, rw, a_scale=a, preserve=True)
+    assert gu.shape == (HIDDEN, EXPERTS, 2 * INTER)
+    for e in range(EXPERTS):
+        for name, stack, half in (("gate", gate, gu[:, e, :INTER]), ("up", up, gu[:, e, INTER:])):
+            want = fb.one_hot_expected(stack[e], family, hot, a)
+            bad = half != want
+            assert not bool(bad.any()), (
+                f"{family} q256={q256} {name} expert {e}: {int(bad.sum())} of {bad.numel()} "
+                f"one-hot products differ; first at {bad.nonzero()[0].tolist()} (column, row)")
+    # down: INTER one-hot routes per expert, top_k = 1, unit weight
+    _x, xq, a, hot = fb.one_hot_inputs(family, INTER, _quant)
+    xq_all = xq.repeat(EXPERTS, 1).contiguous()
+    a_all = a.repeat(EXPERTS).contiguous() if a is not None else None
+    ids = torch.arange(EXPERTS, device="cuda", dtype=torch.int32).repeat_interleave(INTER).reshape(-1, 1)
+    rw = torch.ones(EXPERTS * INTER, 1, device="cuda")
+    out = fused.down_routes(xq_all, ids, rw, a_scale=a_all, route_input=True, round_routes=True)
+    assert out.shape == (EXPERTS * INTER, HIDDEN)
+    for e in range(EXPERTS):
+        want = fb.one_hot_expected(down[e], family, hot, a)
+        got = out[e * INTER:(e + 1) * INTER]
+        bad = got != want
+        assert not bool(bad.any()), (
+            f"{family} q256={q256} down expert {e}: {int(bad.sum())} of {bad.numel()} one-hot "
+            f"products differ; first at {bad.nonzero()[0].tolist()} (column, row)")
+
+
+@cuda
+@pytest.mark.parametrize("family", ["value", "e4m3"])
+@pytest.mark.parametrize("q256", Q256_CASES)
+def test_fused_stages_at_every_rate_are_within_the_derived_bounds(family, q256):
+    """Random tokens at the rung's schedule: ``gate_up`` is within
+    ``fused_bound.dense_bound`` (S = 1) of the fp64 reference per route and
+    element; ``down_routes`` on the SAME quantised intermediate is within the
+    per-route bound (one more multiply, the routing weight) summed by
+    ``route_sum_bound``; and the forward IS the composition of the two stages
+    through the host SwiGLU, bitwise (the kernel's fused epilogue rounds gate
+    and up to bf16, widens, clamps and activates in fp32 as ``_silu_and_mul``
+    does), so the end-to-end forward is held by the stage bounds without a
+    limit of its own.  Both lanes sit inside the bound, so the compact adapter
+    is within twice it of the fused lane."""
+    stacks = _stacks(family, q256=q256)
+    gate, up, down = stacks
+    bundles = _bundles(family, stacks)
+    fused, legacy = _fused(bundles), _legacy(bundles)
+    t = 71
+    x = torch.randn(t, HIDDEN, device="cuda",
+                    generator=torch.Generator(device="cuda").manual_seed(8000 + q256)).bfloat16()
+    ids, rw = _routes(t, TOP_K, 8100 + q256)
+    # stage 1
+    a64 = _a64(family, x)
+    refs, bounds = zip(*(fb.dense_bound(family, a64, w, HIDDEN, 1) for w in _w64(gate, family)))
+    r_g, b_g = _per_route(torch.stack(refs), ids), _per_route(torch.stack(bounds), ids)
+    refs, bounds = zip(*(fb.dense_bound(family, a64, w, HIDDEN, 1) for w in _w64(up, family)))
+    r_u, b_u = _per_route(torch.stack(refs), ids), _per_route(torch.stack(bounds), ids)
+    gu = fused.gate_up(x, ids, rw, preserve=True)
+    what = f"{family} q256={q256}"
+    fb.check_within(gu[..., :INTER], r_g, b_g, f"{what}: gate vs the fp64 reference")
+    fb.check_within(gu[..., INTER:], r_u, b_u, f"{what}: up vs the fp64 reference")
+    g_l = legacy.gate(x, ids, rw, preserve=True, apply_router_weight_on_input=False)
+    u_l = legacy.up(x, ids, rw, preserve=True, apply_router_weight_on_input=False)
+    fb.check_within(gu[..., :INTER], g_l.double(), b_g, f"{what}: gate fused vs compact", scale=2.0)
+    fb.check_within(gu[..., INTER:], u_l.double(), b_u, f"{what}: up fused vs compact", scale=2.0)
+    # stage 2 on the same intermediate
+    act = _silu_and_mul(gu[..., :INTER].reshape(t * TOP_K, INTER),
+                        gu[..., INTER:].reshape(t * TOP_K, INTER), clamp_limit=None)
+    h64 = _a64(family, act)                                                # [T*K, I]
+    rw64 = rw.double().reshape(t * TOP_K, 1)
+    refs, bounds = zip(*(fb.dense_bound(family, h64, w, INTER, 1, weight=rw64)
+                         for w in _w64(down, family)))
+    flat_ids = ids.reshape(-1, 1)
+    r_d = _per_route(torch.stack(refs), flat_ids).reshape(t, TOP_K, HIDDEN)
+    b_d = _per_route(torch.stack(bounds), flat_ids).reshape(t, TOP_K, HIDDEN)
+    # each route is rounded to bf16 before the sum: its bound already ends in
+    # half a bf16 ulp; the token sum adds gamma(top_k) and one more rounding
+    r_tok, b_tok = fb.route_sum_bound(r_d, b_d, top_k_dim=1)
+    dn = fused.down_routes(act, ids, rw, route_input=True, round_routes=True)
+    ratio = fb.check_within(dn, r_tok, b_tok, f"{what}: down vs the fp64 reference")
+    dn_l = legacy.down(act, ids, rw, route_input=True, apply_router_weight_on_input=False,
+                       round_routes=True)
+    fb.check_within(dn, dn_l.double(), b_tok, f"{what}: down fused vs compact", scale=2.0)
+    # the forward is the composition, bitwise
+    out = fused(x, ids, rw)
+    diff = int((out != dn).sum())
+    assert diff == 0, f"{what}: the forward differs from its staged composition in {diff} elements"
+    print(f"ROUTED-RATE-BOUND {what} down/bound={ratio:.4f}")

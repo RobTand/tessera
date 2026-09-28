@@ -46,8 +46,9 @@ reads to see that a forward changed none of it.
 
 TWO LAUNCH IDENTITIES, ONE PER MODULE.  Since contract v43 a module whose every
 role the fused window kernel reads (``tessera.routed_fused.
-fused_dense_window_supported``: rate 4 in every column, window 14, identity
-order, rows a multiple of 128) is served by that kernel's dense case instead:
+fused_dense_window_supported``: the wire's one- or two-rate run table at
+rates 1..8 in the packer's column order since v45 -- rate 4 alone at v43/v44
+-- window 14, rows a multiple of 128) is served by that kernel's dense case instead:
 the functional custom op ``tessera::fused_window_dense`` launches
 ``routed_fused_kernel<FP8, 2, DENSE>`` once per role into the role's column
 slice of one ``[M, rows]`` output (no concatenation), splitting K at decode
