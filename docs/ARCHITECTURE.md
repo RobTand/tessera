@@ -6240,8 +6240,8 @@ the publish job runs it on the bytes it is about to upload.
 
 **What the wheel deliberately does not ship.** `src/tessera/_dev/` is the
 repository's own tooling -- the merge-suite deadline helper
-(`_dev/suite_deadline.py`), the PrismaBuild source-identity reader
-(`_dev/suite_source.py`), and the import-graph analyser behind
+(`_dev/suite_deadline.py`), the suite source identity, which consults a
+declared source verifier (`_dev/suite_source.py`), and the import-graph analyser behind
 `tools/impacted_tests.py` (`_dev/source_dependencies.py`). It lives under
 `src/` because `tools/` imports it by module name, and until #151 it
 therefore installed into every consumer's `site-packages`. One line of
