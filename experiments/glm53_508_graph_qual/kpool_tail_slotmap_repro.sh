@@ -18,13 +18,19 @@ mkdir -p "$OUT"
 # Gated like every wrapper that starts a container (issue #100): the digest in
 # IMG is checked against the daemon's RepoDigests and what ran is stamped.
 source "$TREE/experiments/runtime_image.sh"
-runtime_image_require "$IMG" | tee "$OUT/image.txt"
-[ "${PIPESTATUS[0]}" = 0 ] || exit 2
+runtime_image_require "$IMG" > "$OUT/image.txt" || { cat "$OUT/image.txt"; exit 2; }
+cat "$OUT/image.txt"
+# What a process inside may check its own image against (issue #132): the
+# reference the daemon resolved, injected after this wrapper's own -e flags.
+imgenv=()
+while IFS= read -r _kv; do
+  [ -n "$_kv" ] && imgenv+=(-e "$_kv")
+done <<<"${RUNTIME_IMAGE_CONTAINER_ENV:-}"
 # The container runs as the invoking user: OUT may be on the root-squashed
 # shared mount, where the image's root cannot write.
 docker run --rm --gpus all --ipc host --network none --user "$(id -u):$(id -g)" \
   -v "$TREE/experiments/glm53_508_graph_qual":/w:ro -v "$OUT":/out \
-  -e HOME=/out -e TRITON_CACHE_DIR=/out/triton -e TMPDIR=/out \
+  -e HOME=/out -e TRITON_CACHE_DIR=/out/triton -e TMPDIR=/out "${imgenv[@]}" \
   --entrypoint bash "$IMG" -c '
 set -u
 run() {  # name, env, sanitize(0|1), rule

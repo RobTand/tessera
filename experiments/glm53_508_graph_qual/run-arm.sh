@@ -16,9 +16,14 @@ export ARM EAGER COMPILATION_JSON BISECT_ENV OUT PORT
 # An instrumented arm starts the self-test container below, so its image is
 # gated here, before the serve lock (issue #100, experiments/runtime_image.sh):
 # a refusal must not hold the box's one lock. srv-508.sh gates the serve's image.
+imgenv=()
 if [ "${DIGEST:-0}" = 1 ] || [ "${PROF:-0}" = 1 ] || [ "${HOOKS:-0}" = 1 ]; then
   source "$HERE/../runtime_image.sh"
   runtime_image_require "${IMG:?IMG names the arm image}" || exit 2
+  # The resolved reference, for a process inside to check against (issue #132).
+  while IFS= read -r _kv; do
+    [ -n "$_kv" ] && imgenv+=(-e "$_kv")
+  done <<<"${RUNTIME_IMAGE_CONTAINER_ENV:-}"
 fi
 export SERVE_LOCK_OWNER="t508-$ARM" SERVE_LOCK_TIMEOUT=${SERVE_LOCK_TIMEOUT:-900}
 source "$HERE/../serve_lock.sh"
@@ -45,7 +50,7 @@ if [ "${DIGEST:-0}" = 1 ] || [ "${PROF:-0}" = 1 ] || [ "${HOOKS:-0}" = 1 ]; then
     docker run --rm --gpus all --network none --user "$(id -u):$(id -g)" \
       -v "$HERE/digest":/digest:ro -v "$OUT":/out -e HOME=/out/selftest-home \
       -e TMPDIR=/out/selftest-tmp -e TRITON_CACHE_DIR=/out/selftest-triton \
-      -e PYTHONDONTWRITEBYTECODE=1 --entrypoint python3 "${IMG:?IMG names the arm image}" \
+      -e PYTHONDONTWRITEBYTECODE=1 "${imgenv[@]}" --entrypoint python3 "${IMG:?IMG names the arm image}" \
       /digest/selftest_digest.py "/out/digest-selftest-$ARM" $mode > "$OUT/$ARM.digest-selftest-$mode.txt" 2>&1
     selftest_rc=$?
     echo "arm $ARM: digest self-test ($mode) rc=$selftest_rc"
