@@ -930,7 +930,7 @@ def test_the_core_decides_the_routed_set_against_the_structure():
     requires = lane_requirements(FUSED_LANE)
     routed6 = dict(RATE7_FACTS, structure=STRUCTURE_ROUTED_MOE)
     refusals = decide_lane_requirements(FUSED_LANE, requires, routed6)
-    assert len(refusals) == 1 and refusals[0].startswith("column_rates_routed_moe [6]"), refusals
+    assert len(refusals) == 1 and refusals[0].startswith("column_rates_routed_moe [7]"), refusals
     assert "routed-expert launch" in refusals[0] and "compact adapter" in refusals[0]
     assert decide_lane_requirements(FUSED_LANE, requires, dict(RATE7_FACTS, structure=STRUCTURE_DENSE)) == []
     unstated = decide_lane_requirements(FUSED_LANE, requires, RATE7_FACTS)
@@ -964,7 +964,7 @@ def test_the_plan_gate_reads_the_structure_and_has_no_passing_default():
     with pytest.raises(ValueError) as caught:
         plan(1792, structure=STRUCTURE_ROUTED_MOE)
     message = str(caught.value)
-    assert "column_rates_routed_moe [6]" in message and "compact adapter" in message
+    assert "column_rates_routed_moe [7]" in message and "compact adapter" in message
     assert "plan it as a dense structure" in message
     assert plan(1792, structure=STRUCTURE_DENSE) == (7,)
     with pytest.raises(ValueError, match="structure was not read"):
@@ -985,4 +985,4 @@ def test_the_byte_time_report_cannot_decide_the_routed_set():
     report = lane_wire_report(FUSED_LANE, dict(RATE7_FACTS, rates=(4,)))
     assert not report["readable"]
     assert [r for r in report["refusals"] if "column_rates_routed_moe" in r and "structure was not read" in r]
-    assert report["requirements"]["column_rates_routed_moe"] == [1, 2, 3, 4, 5]
+    assert report["requirements"]["column_rates_routed_moe"] == [1, 2, 3, 4, 5, 6]
