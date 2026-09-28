@@ -336,7 +336,12 @@ over the Triton lane's bytes. This kernel adds two launch arguments per role,
 the int32 `[1, 8]` run pair and the int32 `[K / 32, 12]` block descriptors,
 which the role declares (`FusedDenseWindowRole.named_tables`). Commit
 `546e706c2d` counts them, and the corrected identity matches all 51 recorded
-deltas exactly:
+deltas exactly. The serving side has no such arithmetic to correct: both
+identities declare their resident bytes by iterating `named_tables()`
+(`native_window.py`, `native_window_moe.py`), so the census counts the new
+tensors as declared. The oracle's default module set stays the three q256
+1024 modules, so its 51-case pass says nothing about a mixed rate; the next
+paragraph does.
 
 | Module | Local K | Roles | Fused over Triton, v45 | v43 |
 |---|---:|---:|---:|---:|

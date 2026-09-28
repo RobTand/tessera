@@ -370,9 +370,10 @@ class PreparedDenseNativeModule:
             for name in ("words", "table", "codes", "native", "scale", "runs",
                          "init_perm", "perm"):
                 yield f"roles.{index}.{name}", getattr(role.bundle, name)
-        # The fused lane's own storage beyond the bundles: the composed 16-bit
-        # table (32 KB) and the has_init flag per role; its words, start state
-        # and row scale are views of the bundle tensors already yielded.
+        # The fused lane's own storage beyond the bundles, per role: the composed
+        # 16-bit table (32 KB), the has_init flag, the run pair and the 32-column
+        # block descriptors (FusedDenseWindowRole.named_tables); its words, start
+        # state and row scale are views of the bundle tensors already yielded.
         for index, fused in enumerate(self.__fused):
             for name, tensor in fused.named_tables():
                 yield f"roles.{index}.{name}", tensor
