@@ -2,7 +2,9 @@
 
 Issue: RobTand/tessera#694 (item 2 of #690: the fused window kernel's run
 table generalised to mixed rates). Tree: the `claude/tessera-fused-mixed-rate`
-branch, merged with master at `f4ec39f21d` (#691 contract v44, #656, #699).
+branch, merged with master at `6c49d2e0b9` (#691 contract v44, #656, #699,
+#700). The kernel is that of `cf559dafb6`; nothing under `src/` that the fused
+lanes build or call changes after it.
 Boxes: sparklina (GB10, sm_121, 48 SMs, 140 W envelope) for every GPU row;
 dl380g10 for the CPU suite. Image X
 (`localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a0...`, vLLM
@@ -35,6 +37,11 @@ row that is queued and has not run.
   at R832 and R1088 move from the Triton window GEMM to the fused lane at
   0.35x to 0.63x of its time (M = 1 and 2048). The shipped kernel's numbers
   are queued.
+- Correctness holds at this kernel. The routed oracle passes on real layer-3
+  experts at R832, R1024 and R1088, and the dense oracle passes on stub B's
+  q256 1024 modules. The GPU tests pass except one master test that #610
+  tracks. The mixed-rate CUDA-graph test replays bitwise equal to eager at all
+  six capture rungs in both families. See [GPU tests](#gpu-tests-image-x).
 - Not run: the served route census, R768 and R1152 on real weights (no wire
   exists at either rung), and every row marked PENDING below.
 
@@ -94,11 +101,12 @@ every such group now loads it.
 
 What each rate rests on:
 
-- Real GLM-5.3-Flash experts (layer 3): the oracle rows at this head cover
-  R832, R1024 and R1088 (PENDING); the first cut passed the same oracle at
-  R832 and R928. The profile covers R832, R1024 and R1088.
-- Stub B's dense role shapes at 832, 880, 960, 1024 and 1088: the dense
-  oracle row at this head (PENDING).
+- Real GLM-5.3-Flash experts (layer 3): the routed oracle passes at R832,
+  R1024 and R1088 at this kernel; the first cut passed it at R832 and R928.
+  The profile rows cover R832, R1024 and R1088.
+- Stub B's dense modules: the dense oracle passes on the three q256 1024
+  modules at this head; its row over the thirteen mixed-rate modules (q256
+  832, 880, 960 and 1088) is PENDING.
 - Synthetic wire, on the device, for every other rate: the GPU tests run the
   same launches against the one-hot decode oracle (bit-exact), the derived
   bound and the Triton lane. `test_routed_fused_window.py` covers `Q256_CASES`
@@ -286,8 +294,19 @@ epilogue multiplies, the bf16 output); the end-to-end forward is compared
 against the staged composition and against a repeat of itself; the launch
 pair is read off the route's `emit_route` record after every apply.
 
-PENDING at this head: `4c4fbb73...` (R832), `760bfe84...` (R1024),
-`818fc173...` (R1088).
+All three pass at every M, at tree `46969f127e` (this head's kernel). The
+stage columns are the worst max|d|/bound over the five M values. "Repeat"
+is the largest difference between two applies of the same input, and
+"staged" between the apply and the staged composition; both are 0, so both
+are bitwise. Every case recorded the `native_routed_fused_window` pair.
+
+| Rung | Row | Gate | Up | Activation | Down | Repeat, staged |
+|---|---|---:|---:|---:|---:|---|
+| R832 | `4c4fbb73...` | 0.40 | 0.41 | 0.99 | 0.54 | 0, 0 |
+| R1024 | `760bfe84...` | 0.42 | 0.40 | 0.99 | 0.56 | 0, 0 |
+| R1088 | `818fc173...` | 0.42 | 0.41 | 0.99 | 0.53 | 0, 0 |
+
+Outputs: `measure-20260928T202904Z/routed-R{832,1024,1088}-oracle/oracle.json`.
 
 The first cut passed the same oracle at R832 and R928: stage max|d|/bound
 0.30-0.54 (activation 0.98-0.99, the shared bf16 rounding), end-to-end
@@ -296,12 +315,37 @@ The first cut passed the same oracle at R832 and R928: stage max|d|/bound
 
 ## Oracle: dense, GLM role shapes
 
-`experiments/dense_fused_oracle.py --mode oracle` on stub B's role shapes at
-the rungs it carries (832, 880, 960, 1024, 1088), M in {1, 3, 64, 512, 2048},
-TP1 and both TP2 ranks, both families; the derived bound of #693 for the
-fused and Triton lanes and the row-ulp criterion between them.
+`experiments/dense_fused_oracle.py --mode oracle` on stub B's dense modules,
+M in {1, 3, 64, 512, 2048}, TP1 and both TP2 ranks: the derived bound of #693
+for the fused and Triton lanes, the row-ulp difference between them,
+determinism, the streamed residency against the resident one, and a
+residency identity. Its default module set is the three q256 1024 modules the
+v43 fused identity served (layer 5 shared-expert down, E4M3, and gate/up,
+BF16; layer 7 shared-expert gate/up, E4M3). It does not cover a mixed rate.
 
-PENDING at this head: `129ab8c4...`.
+At this head (`546e706c2d`, row `6dc60623...`) it passes all 51 cases: no
+bound violation on either lane, worst max|d|/bound 0.855 on both, the fused
+lane within 1 bf16 ulp of the row max of the Triton lane, every case
+deterministic, and the streamed residency bitwise equal to the resident one.
+
+The first row at this kernel (`129ab8c4...`, tree `46969f127e`) failed all 51
+cases on the residency identity alone, with the same numerics. The identity
+held the fused lane to one 32 KB decode table and one int32 flag per role
+over the Triton lane's bytes. This kernel adds two launch arguments per role,
+the int32 `[1, 8]` run pair and the int32 `[K / 32, 12]` block descriptors,
+which the role declares (`FusedDenseWindowRole.named_tables`). Commit
+`546e706c2d` counts them, and the corrected identity matches all 51 recorded
+deltas exactly:
+
+| Module | Local K | Roles | Fused over Triton, v45 | v43 |
+|---|---:|---:|---:|---:|
+| shared-expert down, TP1 | 2048 | 1 | 35,876 B | 32,772 B |
+| shared-expert down, TP2 (each rank) | 1024 | 1 | 34,340 B | 32,772 B |
+| shared-expert gate/up, TP1 and TP2 | 4096 | 2 | 77,896 B | 65,544 B |
+
+The thirteen mixed-rate dense modules of stub B (layers 0-2 dense MLP at q256
+832, 960 and 1088; the shared experts of layers 3, 4 and 6 at 832, 960 and
+1088; layer 7's shared-expert down at 880) are PENDING in row `158b5f00...`.
 
 ## GPU tests (image X)
 
@@ -316,7 +360,19 @@ at `CAPTURE_Q256`) captures one forward on a side stream, replays it twice
 and requires both replays bitwise equal to eager, then swaps the routes and
 replays again.
 
-PENDING at this head: `f34062c1...`.
+| Tree | Row | Passed | Skipped | Failed |
+|---|---|---:|---:|---:|
+| `46969f127e` (this kernel) | `f34062c1...` | 444 | 1 | 1 |
+| `546e706c2d` (this head) | `bbe52a6e...` | 444 | 1 | 1 |
+
+The failure is the same master test on both trees,
+`test_native_window_moe.py::test_native_window_moe_matches_the_oracle_fused_and_split`,
+which #610 tracks. The test applies the route weight on the input at top-k 2,
+and the lane has refused that since `6ed8c4cb31`. This branch changes neither
+the test nor `native_window_moe.py`. The skip is `test_serving_export_gate.py:277`
+(E2M1 publishes no reader range). The mixed-rate capture test passed at every
+`CAPTURE_Q256` rung in both families (1024, 768, 832, 1088, 1152 and 1536:
+12 cases), and the dense capture test passed in both families.
 
 The first-cut kernel passed `test_routed_fused_window.py`,
 `test_dense_fused_window.py`, `test_native_fp8_quant.py` and
@@ -447,9 +503,10 @@ and census files: 358 passed, 164 skipped for want of CUDA or vLLM, rows
 | R928 oracle, first cut | `4404963a...` | `746cccfbb6` | executed, pass |
 | R832 profile, first cut | `9fb4de06...` | `746cccfbb6` | executed, pass |
 | GPU tests, first cut | `bdab07a1...` | `c06b01e11a` | executed, 175 passed, 8 xfailed |
-| GPU tests | `f34062c1...` | this head | PENDING |
-| Oracle R832, R1024, R1088 | `4c4fbb73...`, `760bfe84...`, `818fc173...` | this head | PENDING |
-| Dense oracle | `129ab8c4...` | this head | PENDING |
+| GPU tests | `f34062c1...` / `bbe52a6e...` | `46969f127e` / `546e706c2d` | executed: 444 passed, 1 skipped, 1 failed (#610) on each |
+| Oracle R832, R1024, R1088 | `4c4fbb73...`, `760bfe84...`, `818fc173...` | `46969f127e` | executed, pass |
+| Dense oracle, q256 1024 | `129ab8c4...` / `6dc60623...` | `46969f127e` / `546e706c2d` | failed on the residency identity alone / pass |
+| Dense oracle, mixed rates | `158b5f00...` | `db68eaec47` | PENDING |
 | R1024 profile | `5e701e17...` | this head | PENDING |
 | R1024 profile | `7d038d36...` | master `f4ec39f21d` | PENDING |
 | R1024 profile | `eb47821f...` | 16-byte `6453424013` | PENDING |
@@ -459,12 +516,15 @@ and census files: 358 passed, 164 skipped for want of CUDA or vLLM, rows
 | NCU R832, R1088, first cut | `11e3c006...`, `0d5505fc...` | `5477b3f90c` | PENDING |
 | PACT bench | `920b9189...` / `35bb094d...` | this head / master | PENDING |
 | CPU suite | `bb668c62...`, `31b896de...` / `638c8539...`, `d98764db...` | `46969f127e` / master | executed, 0 failed on both |
+| CPU suite | `96fbe69e...`, `60eb6c62...` | `8b853279a9` | executed, 0 failed |
 
 Measurement outputs live under
 `/mnt/shared/tessera-measurements/kernel-mixed-rate-pact-bench/`: the first
 cut's rows in `measure-20260928T175919Z/` and `bench-after-20260928T175819Z/`,
 master's in `bench-before-20260928T162411Z/`, and the queued rows in
-`measure-20260928T202904Z/`, `measure-20260928T203948Z/` and
-`measure-20260928T204308Z/`. The ptxas
+`measure-20260928T202904Z/`, `measure-20260928T203948Z/`,
+`measure-20260928T204308Z/`, `measure-20260928T213154Z/` and
+`measure-20260928T214014Z/`. A PENDING row labelled "this head" was sealed
+at `46969f127e` or later, all with this head's kernel. The ptxas
 reports are in
 `/home/rob/tmp/claude-campaign-20260926/tmp/ptxas-694/`.
