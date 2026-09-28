@@ -104,13 +104,14 @@ def test_a_closure_shaped_tracked_file_is_not_ownership_proof(
 
 
 def test_verified_action_metadata_preserves_narrowed_selection(tmp_path, monkeypatch):
-    from test_suite_source import _snapshot, _verifier
+    from test_suite_source import _git as _snapshot_git, _snapshot, _verifier
     from tessera._dev.suite_source import measured_source
 
     stamp = ".pbrun-closure.0123456789abcdef.json"
     repo, entry = _snapshot(tmp_path, "gpu")
-    _git(repo, "mv", entry["path"], stamp)
-    _git(repo, "commit", "-qm", "generated file under its executor's name")
+    # The snapshot repo carries no identity of its own; its helper supplies one.
+    _snapshot_git(repo, "mv", entry["path"], stamp)
+    _snapshot_git(repo, "commit", "-qm", "generated file under its executor's name")
     entry = dict(entry, path=stamp)
     verifier, _ = _verifier(tmp_path, generated=[entry])
     empty = subprocess.check_output(
