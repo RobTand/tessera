@@ -163,18 +163,21 @@ run: 4.95 W. Forwards per joule = forwards per second / mean W.
   is within 15% at every M except decode of the BF16 gate/up, where the fused
   kernel pulls 17 W more and still wins 2.5x per joule. Netdata's
   `nvidia_smi` collector on sparklina samples every 10 s, so a 20 s window
-  holds two samples; they agree with the in-process 10 Hz mean to within
-  1 W in 27 of 30 legs. The three that disagree are the fused down projection
-  at M = 64, 512 and 2048 (34.0, 55.0 and 54.0 W in the box series against
-  55.6, 90.9 and 88.4 W in-process): those windows opened 0.2-0.6 s after a
-  collector tick (12:40:09.5, 12:41:00.6 and 12:41:49.8 UTC), so one of the
-  two samples still reads the 5 s idle gap between legs (13-15 W) and halves
-  the mean, while the in-window samples read 55-56, 90-96 and 90-93 W
-  (`nvidia_smi.gpu_power_draw`, sparklina, tier 0, read back after the run).
-  The Triton windows of the same module opened 4-5 s after a tick, so both
-  samples fell inside them. Forwards per joule uses the in-process series,
-  which is the higher fused number, so the 2.5-3.5x per-joule ratios are the
-  conservative side.
+  holds two samples; they agree with the in-process 10 Hz mean within 1 W in
+  every leg at M <= 64 but one, and within 4 W in the M >= 512 gate/up legs
+  (85-90 W plateaus that drift a few watts across a leg), 27 of 30 legs in
+  all. The three that disagree are the fused down projection at M = 64, 512
+  and 2048 (34.0, 55.0 and 54.0 W in the box series against 55.6, 90.9 and
+  88.4 W in-process): those windows opened 0.2-0.5 s BEFORE a collector tick
+  (12:40:09.5, 12:40:59.6 and 12:41:49.8 UTC against ticks at :10, :00 and
+  :50), so the first of the two samples was taken 0.2-0.5 s into the leg,
+  while the reading still showed the 5 s idle gap between legs (13, 14 and
+  15 W), and it halves the mean; the samples 10 s later read 55-56, 90-96
+  and 90-93 W (`nvidia_smi.gpu_power_draw`, sparklina, tier 0, read back
+  after the run). The Triton windows of the same module opened 4.6-5.1 s
+  after a tick, so their first sample came 5 s into the leg. Forwards per
+  joule uses the in-process series, which is the higher fused number, so the
+  2.5-3.5x per-joule ratios are the conservative side.
 * Roofline, decode (M = 1, bytes / 239.4 GB/s). The wire the fused module
   reads is 4.28 MB (down) or 8.5 MB (gate/up), so the fused decode forwards
   achieve 72 GB/s (down, 0.30 of the ceiling), 109 GB/s (BF16 gate/up, 0.45)
