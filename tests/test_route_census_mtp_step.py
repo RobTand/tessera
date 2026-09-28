@@ -230,3 +230,16 @@ def test_a_prefill_that_is_not_the_prompt_is_refused():
             record["shape"] = "M32:" + record["shape"].split(":", 1)[1]
     problems = _replay(fixture, plan=_k1_plan(tool, fixture))["problems"]
     assert any("M32 is not the M64 of one full prefill" in p for p in problems), problems
+
+
+def test_the_speculative_scope_is_stamped_into_the_receipt():
+    """The plan's scope fields reach the receipt, gated to the draft census."""
+    source = TOOL.read_text()
+    gate = source.index("    if args.draft_routes:\n        # THE SCOPE TRAVELS WITH THE RECEIPT.")
+    block = source[gate:source.index("        })", gate)]
+    for key, field in (("decode_regime_served", "decode_regime_served"),
+                       ("num_speculative_tokens", "num_speculative_tokens"),
+                       ("generation_step_m", "generation_step_m"),
+                       ("phase_regimes", "phase_regimes"),
+                       ("phase_expected_m", "expected_m")):
+        assert f'"{key}": phase_plan["{field}"],' in block, key
