@@ -41,7 +41,9 @@ if [[ "${ORACLE_NCU:-0}" == 1 ]]; then
   COMMAND=("$NCU_ROOT/ncu" --profile-from-start off --target-processes all
     --kernel-name 'regex:routed_fused_kernel|dense_reduce_kernel|_window_gemm_kernel'
     --section LaunchStats --section Occupancy --section SpeedOfLight
-    --section MemoryWorkloadAnalysis --csv --log-file "$OUT/ncu.csv"
+    --section MemoryWorkloadAnalysis --section MemoryWorkloadAnalysis_Tables
+    --section WarpStateStats --section SchedulerStats --section InstructionStats
+    --csv --log-file "$OUT/ncu.csv"
     --export "$OUT/dense" --force-overwrite
     python3 /work/experiments/dense_fused_ncu.py)
 fi
