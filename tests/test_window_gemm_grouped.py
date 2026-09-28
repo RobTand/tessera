@@ -249,7 +249,7 @@ def test_grouped_m_tails():
 
 @cuda
 def test_grouped_empty_experts_and_repeated_ids():
-    rows, cols, experts = 768, 192, 4
+    rows, cols = 768, 192
     stack = _stack(rows, cols, "value", [41, 42, 43, 44])
     prepared = wgg.prepare_grouped_window_gemm([e.unit for e in stack], block_m=32, block_n=64, block_k=64)
     t, k = 16, 2
