@@ -56,11 +56,7 @@ COLUMNS = 512
 
 
 def _exporter():
-    spec = importlib.util.spec_from_file_location(
-        "export_tessera_serving", ROOT / "experiments" / "export_tessera_serving.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return importlib.import_module("tessera.export_serving")
 
 
 def _scheme(family, grid, q256, roles, columns=COLUMNS, wire_bytes=1):

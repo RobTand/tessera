@@ -369,7 +369,7 @@ def _expected_outputs(owned: set[str], modules: dict) -> set[str]:
                 # same quantity the dense route reads as
                 # ``trellis_input_global_scale`` (``nvfp4_moe_route``
                 # :107-109, :328-331), written beside each wire by
-                # ``export_tessera_serving`` (:2356-2371).  The role declares
+                # ``tessera.export_serving`` (:2413-2429).  The role declares
                 # the scale exactly when the export wrote one, so expect it
                 # from the declaration rather than from the family: a role
                 # that declares a scale and wrote none is as broken as a

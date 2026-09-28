@@ -481,7 +481,7 @@ def _coerce_refit_gauss_seidel(obj):
     refuses it anywhere else rather than ignore it -- so one bool applied to
     every unit cannot be true on a checkpoint whose units sit on different
     planes.  GLM is exactly that shape -- E4M3/CHANNEL attention beside
-    E2M1x2/LUT16 experts -- and ``experiments/export_tessera_serving.py``
+    E2M1x2/LUT16 experts -- and ``tessera.export_serving``
     builds it from ONE ``ActivationSource``, reading ``(grid, q256)`` per
     member, so a bare ``True`` refuses at the first CHANNEL unit and the
     sweep cannot be measured on that model at all.  ``{"lut16": True}`` is

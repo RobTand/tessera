@@ -388,7 +388,7 @@ def _unit_geomean(ratios: "Sequence[float]") -> float:
 def grid_for_name(name: str) -> PayloadGrid:
     """``"E2M1x2" -> tuple_grid(E2M1_GRID, 2)``, the exporter's ``--grid`` vocabulary.
 
-    The same four names ``experiments/export_tessera_serving.py`` accepts, so a
+    The same four names ``tessera.export_serving`` accepts, so a
     plan written for the exporter prices here without translation.
     """
     text = str(name)

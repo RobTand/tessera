@@ -204,10 +204,7 @@ def test_exporter_writes_only_owned_tensors_and_withholds_loadable_config(tmp_pa
     import importlib.util
     torch = pytest.importorskip("torch")
     safetensors = pytest.importorskip("safetensors.torch")
-    script = Path(__file__).resolve().parents[1] / "experiments/export_tessera_serving.py"
-    spec = importlib.util.spec_from_file_location("serving_export_partition_test", script)
-    exporter = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(exporter)
+    exporter = importlib.import_module("tessera.export_serving")
     source = tmp_path / "source"
     source.mkdir()
     tensors = {f"model.layers.{layer}.mlp.down_proj.weight": torch.ones(32, 16)
@@ -236,10 +233,7 @@ def test_partitioned_expert_wires_equal_one_process_export(tmp_path, monkeypatch
     import importlib.util
     torch = pytest.importorskip("torch")
     safetensors = pytest.importorskip("safetensors.torch")
-    script = Path(__file__).resolve().parents[1] / "experiments/export_tessera_serving.py"
-    spec = importlib.util.spec_from_file_location("expert_partition_export", script)
-    exporter = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(exporter)
+    exporter = importlib.import_module("tessera.export_serving")
     source = tmp_path / "source"
     source.mkdir()
     generator = torch.Generator().manual_seed(5)
@@ -304,10 +298,7 @@ def test_a_partition_part_stamps_only_the_shards_it_reads(tmp_path, monkeypatch)
     import importlib.util
     torch = pytest.importorskip("torch")
     safetensors = pytest.importorskip("safetensors.torch")
-    script = Path(__file__).resolve().parents[1] / "experiments/export_tessera_serving.py"
-    spec = importlib.util.spec_from_file_location("serving_export_stamp_test", script)
-    exporter = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(exporter)
+    exporter = importlib.import_module("tessera.export_serving")
     source = tmp_path / "source"
     source.mkdir()
     layout = {SHARD_A: {"model.layers.0.mlp.down_proj.weight": torch.ones(32, 16),

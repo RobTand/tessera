@@ -128,6 +128,22 @@ and v1 bundles need no authority. Bytes, wires, contract cells, serving
 defaults and routes do not change (v40 is additive), and accept/refuse decisions are unchanged
 for a caller that supplies PrismaQuant's authority.
 
+Re-stamped 2026-09-28 for the supported exporter and the published serving
+plan (tessera#687). `experiments/export_tessera_serving.py` moved into the
+package as `tessera.export_serving` (entry point `python -m
+tessera.export_serving`; the old path is a shim), the stock-twin config
+symbols its stock arm used moved with it to `tessera.stock`, and
+`tessera.serving_plan` publishes the `--plan-json` schema
+`tessera.serving_plan.v1` (per tensor `"PASSTHROUGH"`/`"BF16"` or
+`{"grid","q256"}`; per `<moe>.experts` stack `{"grid","q256","source_layout"}`;
+the two `prismaquant_charged_bits*` producer annotations are copied through
+and never read). `family_for` and `module_scheme_key` moved to the same
+module so a producer runs the fused-group check without importing
+`experiments/`. `producer_interface.reuse_authority.drivers` names the
+exporter at its new package path (contract v43) and the equality test scans
+`experiments/`, `tools/` and `src/tessera/`. No cell, rung, route, format row
+or served byte changes.
+
 Re-stamped 2026-09-27 for concurrent window rate calls (tessera#668). At a
 mixed-rate window rung, a window span yields all of its rate calls as a tuple,
 and the batched LDLQ driver runs them on per-thread CUDA side streams
@@ -1462,7 +1478,8 @@ layout, packaged cells, release pins and serving gates are unchanged.
 
 This doc covers the path from a PrismaQuant rung assignment to a served
 Tessera checkpoint: `experiments/plan_from_layer_config.py` (assignment to
-plan), `experiments/export_tessera_serving.py` (plan to checkpoint),
+plan, off the supported path since tessera#687 -- the producer writes the plan),
+`tessera.export_serving` (`python -m tessera.export_serving`; plan to checkpoint),
 `tools/tessera_route_census.py` (checkpoint to route), and `tessera.control`
 plus `experiments/uniform_control.py` (the gate that judges the result).
 The wire itself is `docs/schema/prismaquant.tessera.v1.md`; the menu the
@@ -1825,7 +1842,7 @@ constructed `feed_forward.w13`, for both quantized targets and explicit BF16
 passthroughs. Routed `feed_forward.experts.N.w1/w3` remain projection leaves
 owned by the MoE stack; no dense alias applies to them. This naming comes from
 the pinned LFM construction receipt, not a fallback in the serving plugin.
-`export_tessera_serving.fused_module` is the one statement of that roster --
+`tessera.export_serving.fused_module` is the one statement of that roster --
 q/k/v, every non-routed gate/up including `mlp.shared_experts`, and `w13` --
 and the converter's `fused_key` delegates to it rather than restating two of
 its rows (tessera#211), so the plan-time fused check and the export-time one
@@ -1922,7 +1939,7 @@ their original bytes and modes.
 
 ### 2.1 Whole-layer export parts have one checked assembly
 
-`export_tessera_serving.py --partition INDEX/COUNT` gives a complete decoder
+`tessera.export_serving --partition INDEX/COUNT` gives a complete decoder
 layer to `layer % COUNT`; non-body tensors belong to index zero. Every worker
 validates the same full plan before selecting its work, so a fused module and
 an expert stack cannot be divided between workers. Each worker reads and writes
@@ -2136,7 +2153,7 @@ this adds no cost there.
 
 ### 2.3 Priced inputs remain bound across the process handoff
 
-`export_tessera_serving.py --priced-inputs BUILD --priced-inputs-sha256 SHA`
+`tessera.export_serving --priced-inputs BUILD --priced-inputs-sha256 SHA`
 accepts the preflight's build anchor and the SHA-256 returned directly with
 its publication. Both flags are required together. `PricedInputsSnapshot`
 reads the bytes once, checks their digest against the argument, and reads the
@@ -3074,7 +3091,7 @@ research `wire_recipe` spelling unchanged (tessera#662).
 Both use the same unit-record construction and wire verifier. Expert export
 requires the projected identity; dense export uses the common encoding identity.
 Both require exact field equality against freshly supplied source and capture.
-`export_tessera_serving.py --cached-expert-units MANIFEST` requires exact
+`tessera.export_serving --cached-expert-units MANIFEST` requires exact
 coverage of the planned experts and the full source checkpoint seal. It
 checks those receipts against the actual source slices and capture, validates
 wire geometry/rates/profile/reach/encoder identity and complete plane extents,
@@ -3738,7 +3755,7 @@ than what degree they were built for — `schema_minor`, and `tp_agnostic`
 (`SLICEABLE_SCHEMA_MINOR`), which is the one home of that rule and lives with
 the cutter, not in the exporter's comment. Both keys go into
 `tessera_config.json` (`export._write_config`) and into the loader-visible
-`quantization_config` (`export_tessera_serving.py`,
+`quantization_config` (`tessera.export_serving`,
 `serving_parts.merge_serving_parts`), because those are two different configs
 and only the second is what vLLM hands the plugin.
 
@@ -4232,7 +4249,7 @@ loader agree by construction, and a requirement the contract grows is
 *refused* by any gate that has not learned it -- on the plan side too,
 which used to skip unknown fields. The block is read on both sides:
 
-- **Plan time.** `experiments/export_tessera_serving.py --require-lane LANE`
+- **Plan time.** `tessera.export_serving --require-lane LANE`
   calls `scheme.refuse_unreachable_lane` at argument time, beside
   `check_recipe`, for the default rung and every plan override. It needs no
   shape -- reachability is a function of the rung alone (`grammar.rate_set`)
@@ -4513,7 +4530,7 @@ a block that names no stack it serves is refused at config parse.
 
 **The exporter writes it.** A `--plan-json` entry keyed `<moe>.experts` -- the
 STACK, not one of its leaves, because vLLM builds one method for the stack --
-gives every expert of it one rung; `export_tessera_serving.py` then writes one
+gives every expert of it one rung; `tessera.export_serving` then writes one
 container per expert per projection under `<moe>.experts.{e}.{proj}.wire`,
 derives each group's `wire_stride` as the maximum over that group's blobs, and
 declares the `routed_moe` scheme through
