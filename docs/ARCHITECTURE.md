@@ -180,6 +180,13 @@ architecture, an out-of-range layer or two declarations for one module remain
 refusals. This establishes name resolution, not a served MTP route, output
 quality or runtime measurement; the selected BF16 R1024 MTP draft remains
 unmeasured even though a non-MTP routed cell covers that rung.
+
+Amended 2026-09-28: the pinned GLM image hands the draft decoder layer its bare
+prefix, so its Linears reach `get_quant_method` as `model.layers.<N>.*` while
+`named_modules` still inserts `mtp_block`. The adapter resolves both spellings
+against the draft's mapped view, under the same guards, and refuses when both
+spellings of one module are declared. The served PACT balanced export refused
+at engine start on `model.layers.45.mlp.shared_experts.gate_up_proj` before this.
 Stock MTP reuses the target quantization config object while its own model
 class applies a second source-name mapper. Tessera retains immutable original
 declarations and separate mapped views, so the draft mapper reads checkpoint
