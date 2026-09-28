@@ -15,14 +15,23 @@ served-activation comparison. A rooted bundle with no authority refuses with
 child. Likewise, a Hessian reference binds its producer's canonical
 calibration cache, so `ReferenceHessians`, `ReferenceHessianCollection` and
 `ActivationSource.from_capture` take `canonical_capture=(schema, source)` and
-refuse without it. The exporter's `--producer-authority PATH` loads a
-producer's authority file (a module defining `PRODUCER_AUTHORITY`) and hands
-both to its intake; the GLM CPU launcher passes an optional
-`producer_authority` binding through. PrismaQuant's authority lives in its own
+refuse without it. `--producer-authority PATH` loads a producer's authority
+file (a module defining `PRODUCER_AUTHORITY`) and hands both to the driver's
+intake. Every driver that opens a producer capture declares it through
+`tessera.producer_authority`, which holds its one help text and one set of
+refusals: the exporter, `export_glm53_tessera.py`,
+`glm_routed_owner_inputs.py`, `bf16_reach_roster.py` and
+`tools/glm_cpu_cached_pack_probe.py`. The GLM CPU launcher passes an optional
+`producer_authority` binding through. Contract v40 publishes the option as
+data: `producer_interface.reuse_authority` names the option, the attribute,
+the protocol and the drivers, and `tests/test_producer_authority_drivers.py`
+derives the driver list from the tree. A producer passes the option only when
+its pinned checkout's contract carries the block; an older driver does not
+know the option. PrismaQuant's authority lives in its own
 tree (`prismaquant/tessera_reuse_authority.py`) with its schema tests, so a new
 client record version no longer needs a Tessera change. Legacy `.pt` captures
 and v1 bundles need no authority. Bytes, wires, contract cells, serving
-defaults and routes do not change, and accept/refuse decisions are unchanged
+defaults and routes do not change (v40 is additive), and accept/refuse decisions are unchanged
 for a caller that supplies PrismaQuant's authority.
 
 Re-stamped 2026-09-27 for concurrent window rate calls (tessera#668). At a

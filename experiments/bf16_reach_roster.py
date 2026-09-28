@@ -244,17 +244,29 @@ def dense_roster(layers, roles) -> "list[str]":
     return [f"model.layers.{l}.{r}" for l in layers for r in roles]
 
 
+def production_capture(a):
+    """The ``--production`` capture at ``ActivationSource`` defaults.
+
+    A reference document binds the producer's calibration cache, so it refuses
+    by name unless ``--producer-authority`` supplies the producer's canonical
+    capture (tessera#599); a legacy ``.pt`` payload needs none.
+    """
+    from tessera import producer_authority
+    return ActivationSource.from_capture(
+        a.production, canonical_capture=producer_authority.canonical_capture(a.producer_authority))
+
+
 def load_dense(a):
     """The dense roster: weights from the checkpoint, H from the production
     capture, H_eval from the held-out capture.  Yields per unit."""
     src = open_all(DENSE_SRC)
-    act = ActivationSource.from_capture(a.production)
+    act = production_capture(a)
     fit_h = dict(act.hessians)
     if a.weights_only:
         act = None
     payload = torch.load(a.eval_h, map_location="cpu", weights_only=False)
     ev_h, ev_prov = payload["H"], payload["provenance"]
-    fit_prov = ActivationSource.from_capture(a.production).provenance
+    fit_prov = production_capture(a).provenance
     for f in ("text_sha256", "fit_ids_sha256", "eval_ids_sha256"):
         if ev_prov.get(f) != fit_prov.get(f):
             raise SystemExit(f"held-out H {a.eval_h} and fit H {a.production} disagree on "
@@ -351,7 +363,9 @@ def load_glm(a):
     return meta, gen
 
 
-def main() -> int:
+def build_parser():
+    from tessera import producer_authority
+
     ap = argparse.ArgumentParser()
     ap.add_argument("--source", choices=("dense", "glm"), default="dense")
     ap.add_argument("--out", required=True)
@@ -371,7 +385,12 @@ def main() -> int:
     ap.add_argument("--weights-only", action="store_true",
                     help="the matched control: same capture, same scorer, no Hessian "
                          "in the encode")
-    a = ap.parse_args()
+    producer_authority.add_argument(ap)
+    return ap
+
+
+def main() -> int:
+    a = build_parser().parse_args()
 
     b = Bench(a.out)
     rows_dir = Path(a.rows_dir)

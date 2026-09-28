@@ -159,6 +159,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from export_stock_compressed import (  # noqa: E402
     FP8_INPUTS, FP8_WEIGHTS, NVFP4_INPUTS, NVFP4_WEIGHTS, regex_target,
     stock_quantization_config)
+from tessera import producer_authority as producer_authority_option  # noqa: E402
 from tessera.cached_unit import CachedUnitIdentity, HESSIAN_IDENTITY_MODES  # noqa: E402
 from tessera.alphabet import (  # noqa: E402
     BF16_GRID, E2M1_GRID, E4M3_GRID, tuple_grid)
@@ -1500,40 +1501,12 @@ def stock_targets(modules):
 def load_producer_authority(path):
     """Load a producer's authority file for cached-unit and Hessian-reference intake.
 
-    The file is a self-contained Python module that defines
-    ``PRODUCER_AUTHORITY``: a ``tessera.cached_unit.ReuseAuthority`` that
-    judges a rooted bundle's producer documents, whose optional
-    ``canonical_hessian_capture`` attribute is the producer's
-    ``(schema, source)`` pair for the calibration cache a Hessian reference
-    binds.  The producer owns those records, so it ships the reader; this
-    exporter names none of them.  Loading by path lives here, with the
-    exporter's other dynamic load, for the reason given at the historical
-    producer load below.
+    ``tessera.producer_authority.load`` does the work, so this exporter and
+    every other driver that takes ``--producer-authority`` read the file with
+    one set of refusals (tessera#599).
     """
-    import importlib.util
-    from tessera.cached_unit import ReuseAuthority
-    from tessera.hessian_capture import normalize_canonical_capture
-    path = Path(path)
-    if not path.is_absolute() or path.is_symlink() or not path.is_file():
-        raise SystemExit(f"--producer-authority must name an absolute regular file: {path}")
-    digest = hashlib.sha256(path.read_bytes()).hexdigest()
-    name = "tessera_producer_authority_" + digest
-    module = sys.modules.get(name)
-    if module is None:
-        spec = importlib.util.spec_from_file_location(name, path)
-        module = importlib.util.module_from_spec(spec)
-        sys.modules[name] = module
-        try:
-            spec.loader.exec_module(module)
-        except BaseException:
-            del sys.modules[name]
-            raise
-    authority = getattr(module, "PRODUCER_AUTHORITY", None)
-    if not isinstance(authority, ReuseAuthority):
-        raise SystemExit(f"--producer-authority {path} defines no ReuseAuthority PRODUCER_AUTHORITY")
-    canonical = normalize_canonical_capture(getattr(authority, "canonical_hessian_capture", None))
-    print(f"producer authority: {path} sha256={digest}", flush=True)
-    return authority, canonical
+    from tessera.producer_authority import load
+    return load(path)
 
 
 def main():
@@ -1570,11 +1543,7 @@ def main():
                     help="strict requires each encoder adoption's covering source proof; "
                          "permissive records unproven adoptions in cached intake warnings, "
                          "without relaxing identity, digest or wire checks")
-    ap.add_argument("--producer-authority", type=Path, default=None,
-                    help="the producer's authority file (a module defining PRODUCER_AUTHORITY, "
-                         "a tessera.cached_unit.ReuseAuthority). Rooted --cached-units bundles "
-                         "and --hessian reference documents bind producer records; without it "
-                         "they refuse by name")
+    producer_authority_option.add_argument(ap)
     ap.add_argument("--cached-producer-package", type=Path,
                     help="original producer's immutable src/tessera package for cached intake")
     ap.add_argument("--cached-producer-source-sha256",
