@@ -28,7 +28,7 @@ fi
 export SERVE_LOCK_OWNER="t508-$ARM" SERVE_LOCK_TIMEOUT=${SERVE_LOCK_TIMEOUT:-900}
 source "$HERE/../serve_lock.sh"
 serve_lock_acquire || { echo "arm $ARM: serve lock unavailable"; exit 3; }
-trap 'docker rm -f t508-stub >/dev/null 2>&1; serve_lock_release' EXIT
+trap 'docker rm -f t508-stub >/dev/null 2>&1; [ -n "${MEM_STOP:-}" ] && touch "$MEM_STOP"; serve_lock_release' EXIT
 { echo "== $(date -u +%FT%TZ) pre-launch"; nvidia-smi --query-gpu=power.draw,memory.used --format=csv,noheader
   echo "-- gpu processes"; nvidia-smi --query-compute-apps=pid,process_name,used_memory --format=csv,noheader
   echo "-- containers"; docker ps --format '{{.Names}} {{.Status}}'
@@ -56,6 +56,14 @@ if [ "${DIGEST:-0}" = 1 ] || [ "${PROF:-0}" = 1 ] || [ "${HOOKS:-0}" = 1 ]; then
     echo "arm $ARM: digest self-test ($mode) rc=$selftest_rc"
     [ "$selftest_rc" = 0 ] || exit 5
   done
+fi
+# MEMLOG=1: sample MemAvailable and swap at 1 Hz from before launch to after
+# teardown; mem-summary-695.py writes the arm's footprint (tessera#695).
+MEM_STOP="$OUT/$ARM.mem.stop"
+if [ "${MEMLOG:-0}" = 1 ]; then
+  rm -f "$MEM_STOP"
+  "$HERE/../glm53_695_drafter_qual/mem-sampler-695.sh" "$OUT/$ARM.mem.txt" "$MEM_STOP" & mem_sampler=$!
+  sleep 2
 fi
 "$HERE/srv-508.sh" up; up_rc=$?
 echo "arm $ARM: up rc=$up_rc"
@@ -87,6 +95,9 @@ for probe in ${PROBES:-}; do
           sleep 5
           python3 "$HERE/lat-508.py" "$PORT" "$OUT" "$ARM" ${LAT_CASES:-} > "$OUT/$ARM.lat.txt" 2>&1; echo "arm $ARM: lat rc=$?"
           sleep 5; touch "$STOP"; wait $sampler ;;
+    # accept: a drafter's acceptance, from the engine's spec-decode counters over
+    # the prompts file ACCEPT_PROMPTS (tessera#695, accept-695.py).
+    accept) python3 "$HERE/../glm53_695_drafter_qual/accept-695.py" "$PORT" "$OUT" "$ARM" "${ACCEPT_PROMPTS:?ACCEPT_PROMPTS names the prompts file}" > "$OUT/$ARM.accept.txt" 2>&1; echo "arm $ARM: accept rc=$?" ;;
     prof) python3 "$HERE/prof-508.py" "$PORT" ${PROF_BATCH:-1} > "$OUT/$ARM.prof.txt" 2>&1; echo "arm $ARM: prof rc=$?" ;;
     # rep: the same batch-1 requests repeated inside this serve (probe-rep-508.py).
     rep)  python3 "$HERE/probe-rep-508.py" "$PORT" "$OUT" "$ARM" ${REP_LENGTHS:-1,17,2000} ${REP_REPEATS:-3} > "$OUT/$ARM.rep.txt" 2>&1; echo "arm $ARM: rep probe rc=$?" ;;
@@ -129,6 +140,10 @@ fi
 "$HERE/srv-508.sh" savelogs "$ARM"
 "$HERE/srv-508.sh" status > "$OUT/$ARM.status.txt" 2>&1
 "$HERE/srv-508.sh" down
+if [ "${MEMLOG:-0}" = 1 ]; then
+  sleep 5; touch "$MEM_STOP"; wait $mem_sampler
+  python3 "$HERE/../glm53_695_drafter_qual/mem-summary-695.py" "$OUT/$ARM.mem.txt" "$OUT/$ARM.mem.json"
+fi
 serve_lock_release
 echo "smoke_rc=$smoke_rc" >> "$OUT/engine-args-$ARM.txt"
 if [ "$ARM" != "$BASE" ] && [ -e "$OUT/$BASE.long.json" ] && [ -e "$OUT/$ARM.long.json" ]; then

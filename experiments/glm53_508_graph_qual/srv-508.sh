@@ -25,6 +25,12 @@ KV_BYTES=4294967296
 TP1_UTIL=${TP1_UTIL:-0.45}
 MOE_BACKEND=${MOE_BACKEND:-flashinfer_cutlass}
 EAGER=${EAGER:-1}
+# MAX_NUM_SEQS: the scheduler's sequence cap; the tessera#695 drafter arms
+# serve 4, the release configuration's.
+MAX_NUM_SEQS=${MAX_NUM_SEQS:-8}
+# SPEC_JSON: a --speculative-config for a drafter arm (tessera#695); empty
+# serves without a drafter.
+SPEC_JSON=${SPEC_JSON:-}
 EXTRA_ARGS=${EXTRA_ARGS:-}
 COMPILATION_JSON=${COMPILATION_JSON:-}
 ARM=${ARM:-EAGER$EAGER}
@@ -68,7 +74,7 @@ pip install --no-deps --no-build-isolation -q -e /tessera >/dev/null 2>&1'
 SERVE_ARGS="--host 0.0.0.0 --port $PORT --tensor-parallel-size 1 --attention-backend CUSTOM \
  --kv-cache-dtype fp8_ds_mla --moe-backend $MOE_BACKEND --kernel-config '{\"enable_flashinfer_autotune\":false}' \
  --max-model-len 4096 --kv-cache-memory-bytes $KV_BYTES --gpu-memory-utilization $TP1_UTIL \
- --trust-remote-code --max-num-seqs 8 --max-logprobs 1024 --served-model-name glm53-stub \
+ --trust-remote-code --max-num-seqs $MAX_NUM_SEQS --max-logprobs 1024 --served-model-name glm53-stub \
  $([ "$EAGER" = 1 ] && echo --enforce-eager) $EXTRA_ARGS"
 
 docker_args() {
@@ -115,6 +121,7 @@ up)
   printf '%s\n' "EAGER=$EAGER $SERVE_ARGS" > "$OUT/engine-args-EAGER$EAGER.txt"
   { echo "arm=$ARM"; echo "eager=$EAGER"; echo "serve_args=$SERVE_ARGS"
     echo "compilation_json=$COMPILATION_JSON"; echo "bisect_env=${BISECT_ENV:-}"
+    echo "spec_json=$SPEC_JSON"; echo "max_num_seqs=$MAX_NUM_SEQS"
     echo "sanitize=$SANITIZE"; [ "$SANITIZE" = 1 ] && echo "sanitize_args=$SANITIZE_ARGS"
     echo "digest=${DIGEST:-0} prof=${PROF:-0} hooks=${HOOKS:-0} caplog=${CAPLOG:-0}"
     echo "image=$IMG"; echo "image_id=$(docker image inspect --format '{{.Id}}' "$IMG")"
@@ -131,6 +138,7 @@ up)
   inner="$EXT/serve-inner.sh"
   { echo "set -e"; printf '%s\n' "$PREP"
     [ -n "$COMPILATION_JSON" ] && printf "extra=(\"--compilation-config\" '%s')\n" "${COMPILATION_JSON#%\"}"
+    [ -n "$SPEC_JSON" ] && printf "extra+=(\"--speculative-config\" '%s')\n" "$SPEC_JSON"
     if [ "$SANITIZE" = 1 ]; then
       # Not exec'd: bash stays PID 1 so "down" can stop the API server with SIGTERM
       # (a clean vLLM shutdown) and the tool can write its ERROR SUMMARY on exit.
