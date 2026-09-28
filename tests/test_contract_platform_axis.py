@@ -163,8 +163,14 @@ def test_the_packaged_contract_validates_at_v33(contract):
     ``producer_interface`` block publishes the export drivers'
     ``--producer-authority`` option as data, and no cell, rung, route or
     format row moves.
+
+    v41 is additive too: a cell's ``runtime`` accepts the optional
+    ``tessera_commit`` / ``serving_source_sha256`` pair and the route-trace
+    header carries the same digest.  No cell stamps it yet.
     """
-    assert int(contract["contract_version"]) == 40
+    assert int(contract["contract_version"]) == 41
+    assert not any(set(cell["runtime"]) & {"tessera_commit", "serving_source_sha256"}
+                   for cell in contract["lane_eligibility"]["cells"])
     assert "activation_quantizers" in contract
     assert "producer_interface" in contract
     assert all("structures" in entry for entry in contract["formats"])

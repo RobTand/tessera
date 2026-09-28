@@ -1,5 +1,29 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-09-28 for the serving code identity (contract v41). A cell's
+`runtime` block accepts an optional pair that names the Tessera code its
+evidence was taken on: `tessera_commit` (40-hex, for a person) and
+`serving_source_sha256` (for a program). The digest is
+`tessera.serving.source_identity.serving_source_sha256()`, algorithm
+`tessera.package_source.v1`: the paths and bytes of every source file in the
+package (each `.py` file and each native source under `tessera/`), with paths
+taken relative to the directory that holds `tessera/`. It is the whole package
+rather than a computed serving closure: the closure measured 82 of 93 modules,
+computing it means following string-named route builders through
+`import_module`, and a digest that can be short is the defect the field rules
+out. It reads files as bytes and never parses them, so
+`tools/impacted_tests.py` sees a plain read, not a loader. An editable serve
+records no commit, so the digest is what a consumer compares; the route-trace
+header carries the same digest of the tree the serve started on
+(`serving_source_sha256`, added under `identity_version` 1 because no known
+field changed). The validator requires both fields or neither
+(`contract.cell_runtime_code`, `RUNTIME_CODE_KEYS`). No cell carries them in
+v41: none of the fourteen records the tree its evidence was taken on, and a
+digest is only stamped when evidence is taken, never onto old evidence.
+`tests/test_serving_source_identity.py` holds the digest to every source file
+and checks that it moves on a serving, a lazily imported and a native source
+edit.
+
 Re-stamped 2026-09-27 for the producer reuse authority (tessera#599, step 2).
 Tessera no longer reads a client's records by itself. A rooted cached-unit
 bundle (`tessera.cached_units.v2`) binds documents its producer wrote: the

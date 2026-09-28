@@ -184,12 +184,24 @@ ATTR_PREFIX = "_tessera_route_"
 #: histogram in.  Unset (the default) means the histogram does not exist:
 #: ``emit_route`` writes the same record it always did and counts nothing.
 #: Read once, at import, which is what latches it for the process.
+def _serving_source_sha256_or_none() -> str | None:
+    """:func:`source_identity.serving_source_sha256`, or ``None`` if unreadable."""
+    from .source_identity import serving_source_sha256
+
+    try:
+        return serving_source_sha256()
+    except (OSError, ValueError):
+        return None
+
+
 ROUTE_TRACE_ENV = "TESSERA_ROUTE_TRACE"
 ROUTE_TRACE_SCHEMA = "tessera.route_trace/1"
 
 #: Version of the ADDITIVE identity block this file writes: entry
 #: ``module_names`` / ``unnamed_modules`` / ``dispatches_without_prefix``, and
-#: the header's ``rank`` / ``world_size`` / ``rank_source`` / ``platform``.
+#: the header's ``rank`` / ``world_size`` / ``rank_source`` / ``platform``,
+#: and (contract v41) ``serving_source_sha256``, which is additive in the same
+#: sense: a new key, no known field redefined, so the version does not move.
 #: ``schema`` stays ``tessera.route_trace/1`` because nothing was removed or
 #: renamed: a reader that knows only the histogram still reads exactly what it
 #: read before, and a reader that wants per-module identity checks this number
@@ -473,6 +485,10 @@ class _RouteTrace:
     def __init__(self, path):
         self.path = Path(path)
         self.started_utc = datetime.now(timezone.utc).isoformat()
+        #: The serving closure's digest, taken once when the trace starts, so
+        #: the header names the code this process started on even if the
+        #: checkout behind an editable install is edited while it serves.
+        self.serving_source_sha256 = _serving_source_sha256_or_none()
         self.flushes = 0
         self._lock = threading.Lock()
         self._counts: dict[tuple, list] = {}
@@ -619,6 +635,10 @@ class _RouteTrace:
             # core.  A device probe here is a CUDA initialisation in the wrong
             # process (or a frozen "" in the right one) for a header field.
             "platform": latched_platform(),
+            # Added under identity_version 1: a new key, and no known field
+            # changed meaning.  ``None`` means the tree could not be read, which
+            # a consumer treats as "does not say", never as a match.
+            "serving_source_sha256": self.serving_source_sha256,
             "pid": os.getpid(),
             "started_utc": self.started_utc,
             "flushed_utc": datetime.now(timezone.utc).isoformat(),
