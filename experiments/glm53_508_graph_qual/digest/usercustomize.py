@@ -56,8 +56,74 @@ inactive unless its variable is set:
     phase is the capture's memory cost. vLLM's own "took X GiB" line is the
     drop in device free memory, which on GB10's unified memory moves with the
     page cache and every other process on the box.
+
+``T695_GC_BEFORE_DRAFTER=1`` (tessera#695)
+    Runs ``gc.collect()`` and ``torch.cuda.empty_cache()`` once before the MTP
+    drafter loads, and prints MemAvailable before and after. The V2 runner loads
+    the target and the drafter inside one ``DeviceMemoryProfiler`` block, whose
+    exit is the first full collection after the target's load; on the four-layer
+    stub the target's load leaves about 33 GiB collectable until then (MemAvailable
+    110 -> 32.5 GiB during an eager load, 74 GiB right after the block exits), so
+    the drafter loaded on top of it and the box watchdog stopped both serves at
+    its 16 GiB floor. Memory management only: no arithmetic changes.
 """
 import os
+
+if os.environ.get("T695_GC_BEFORE_DRAFTER") == "1":
+    import gc
+    import importlib.abc
+    import sys
+
+    _T695_MODULE = "vllm.v1.worker.gpu.spec_decode.mtp.speculator"
+
+    def _t695_available_mib():
+        with open("/proc/meminfo") as fh:
+            for line in fh:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) // 1024
+        return -1
+
+    def _t695_patch(module):
+        cls = getattr(module, "MTPSpeculator", None)
+        if cls is None or getattr(cls.load_model, "_t695", False):
+            return
+        original = cls.load_model
+
+        def load_model(self, *args, **kwargs):
+            before = _t695_available_mib()
+            collected = gc.collect()
+            import torch
+            torch.cuda.empty_cache()
+            print(f"[t695] gc before the drafter loads: {collected} objects collected, "
+                  f"MemAvailable {before} -> {_t695_available_mib()} MiB", file=sys.stderr, flush=True)
+            return original(self, *args, **kwargs)
+
+        load_model._t695 = True
+        cls.load_model = load_model
+
+    class _T695Finder(importlib.abc.MetaPathFinder):
+        """Patch the MTP speculator right after its module executes."""
+
+        def find_spec(self, name, path, target=None):
+            if name != _T695_MODULE:
+                return None
+            for finder in sys.meta_path:
+                if finder is self or not hasattr(finder, "find_spec"):
+                    continue
+                spec = finder.find_spec(name, path, target)
+                if spec is None or spec.loader is None:
+                    continue
+                run = spec.loader.exec_module
+
+                def exec_module(module, _run=run):
+                    _run(module)
+                    _t695_patch(module)
+
+                spec.loader.exec_module = exec_module
+                return spec
+            return None
+
+    sys.meta_path.insert(0, _T695Finder())
 
 _DIGEST_PATH = os.environ.get("T508_DIGEST")
 _MOE_DET = os.environ.get("T508_MOE_DETERMINISTIC") == "1"

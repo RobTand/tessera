@@ -58,13 +58,17 @@ for kv in ${BISECT_ENV:-}; do ENVS+=(-e "$kv"); done
 DIGEST_MOUNT=()
 # CAPLOG=1: price CUDA-graph capture (per-graph wall time and caching-allocator
 #   reserved bytes) into $OUT/$ARM.capture.jsonl.
-if [ "${DIGEST:-0}" = 1 ] || [ "${PROF:-0}" = 1 ] || [ "${HOOKS:-0}" = 1 ] || [ "${CAPLOG:-0}" = 1 ]; then
+# GCDRAFT=1: collect garbage once before the MTP drafter loads (tessera#695;
+#   digest/usercustomize.py T695_GC_BEFORE_DRAFTER). Memory management only.
+if [ "${DIGEST:-0}" = 1 ] || [ "${PROF:-0}" = 1 ] || [ "${HOOKS:-0}" = 1 ] || [ "${CAPLOG:-0}" = 1 ] \
+   || [ "${GCDRAFT:-0}" = 1 ]; then
   ENVS+=(-e PYTHONPATH=/digest)
   DIGEST_MOUNT=(-v "$TS/experiments/glm53_508_graph_qual/digest":/digest:ro)
 fi
 [ "${DIGEST:-0}" = 1 ] && ENVS+=(-e T508_DIGEST=/out/$ARM.dig.jsonl)
 [ "${PROF:-0}" = 1 ] && ENVS+=(-e T508_PROF_DIR=/out/$ARM.prof -e T508_PROF_TRIGGER=/out/$ARM.prof.trigger)
 [ "${CAPLOG:-0}" = 1 ] && ENVS+=(-e T508_CAPTURE_LOG=/out/$ARM.capture.jsonl)
+[ "${GCDRAFT:-0}" = 1 ] && ENVS+=(-e T695_GC_BEFORE_DRAFTER=1)
 
 PREP='inc="$(python3 -c "import glob; p=sorted(glob.glob(\"/usr/local/lib/python3*/dist-packages/nvidia/cu*/include\")); print(p[0] if p else \"\")")"
 dst=/usr/local/cuda/include
@@ -123,7 +127,7 @@ up)
     echo "compilation_json=$COMPILATION_JSON"; echo "bisect_env=${BISECT_ENV:-}"
     echo "spec_json=$SPEC_JSON"; echo "max_num_seqs=$MAX_NUM_SEQS"
     echo "sanitize=$SANITIZE"; [ "$SANITIZE" = 1 ] && echo "sanitize_args=$SANITIZE_ARGS"
-    echo "digest=${DIGEST:-0} prof=${PROF:-0} hooks=${HOOKS:-0} caplog=${CAPLOG:-0}"
+    echo "digest=${DIGEST:-0} prof=${PROF:-0} hooks=${HOOKS:-0} caplog=${CAPLOG:-0} gcdraft=${GCDRAFT:-0}"
     echo "image=$IMG"; echo "image_id=$(docker image inspect --format '{{.Id}}' "$IMG")"
     echo "image_digest_resolved=${RUNTIME_IMAGE_DIGEST:-}"
     echo "tree=$TS"; echo "tree_sha=$(git -C "$TS" rev-parse HEAD)"; echo "tree_dirty=$(git -C "$TS" status --porcelain | wc -l)"
