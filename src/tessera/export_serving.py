@@ -404,7 +404,7 @@ class PlanSnapshot:
     -- its own deep copy -- so no reader can mutate what another one writes.
     """
 
-    __slots__ = ("path", "sha256", "entries")
+    __slots__ = ("path", "sha256", "entries", "schema")
 
     def __init__(self, path: Path, text: str):
         self.path = Path(path)
@@ -420,11 +420,15 @@ class PlanSnapshot:
         # The published schema (``tessera.serving_plan``, #687), asked at
         # ARGUMENT time: a malformed entry is a typo in the run's
         # instructions, and finding it after the first encode costs
-        # the encode.
+        # the encode.  The reserved schema key (#691 item 5) is popped
+        # before the entry loop: it declares the object, it is not an
+        # entry, and the manifest records the declaration beside the
+        # published plan.
         try:
             validate_serving_plan(entries)
         except ValueError as exc:
             raise SystemExit(f"--plan-json {self.path}: {exc}") from exc
+        self.schema = entries.pop("schema", None)
         self.entries = entries
 
     @classmethod
@@ -735,20 +739,89 @@ def ignored_modules(tensor_name: str, shape) -> tuple[str, ...]:
     return tuple(names)
 
 
+def exporter_code_root() -> Path:
+    """The tree :func:`export_identity` digests for this running exporter.
+
+    A checkout's root (holding ``src/`` and ``experiments/``) when the
+    module resolves from a checkout; the directory holding the ``tessera``
+    package (a checkout's ``src/``, or ``site-packages``) when it resolves
+    from an install -- the same derivation as
+    ``tessera.serving.source_identity._default_root`` (#691 item 4).
+    Anything else is refused with its location, not hashed as whatever
+    two parents up happens to be.
+    """
+    holder = Path(__file__).resolve().parents[1]
+    checkout = holder.parent
+    if holder.name == "src" and (checkout / "experiments").is_dir():
+        return checkout
+    if (holder / "tessera" / "serving").is_dir():
+        return holder
+    raise SystemExit(
+        f"cannot locate the Tessera code root from {__file__}: {holder} "
+        "is neither a checkout src/ with an experiments/ sibling nor a "
+        "directory holding an installed tessera package.")
+
+
+def _installed_commit_id() -> "str | None":
+    """The commit the running Tessera was installed from, if recorded.
+
+    A non-editable pip install from git records ``direct_url.json`` with the
+    commit in its dist-info; an editable install is a checkout, so git
+    answers before this is ever asked.  The search is restricted to the
+    directory holding the imported ``tessera`` package: a global scan would
+    happily return some OTHER environment's install of Tessera, which is
+    the same provenance hole stamped as a value (#691 item 4).
+    """
+    holder = Path(__file__).resolve().parents[1]
+    try:
+        from importlib.metadata import distributions
+    except ImportError:
+        return None
+    for dist in distributions(path=[str(holder)]):
+        try:
+            text = dist.read_text("direct_url.json")
+        except Exception:
+            continue
+        if not text:
+            continue
+        try:
+            info = json.loads(text)
+        except ValueError:
+            continue
+        commit = (info.get("vcs_info") or {}).get("commit_id")
+        if commit:
+            return commit
+    return None
+
+
 def git_hash() -> str:
-    """The commit this build came from -- from git, or from the environment.
+    """The commit this build came from -- git, the environment, or the install.
 
     A build that runs on a synced copy of the tree has no ``.git`` and used to
     stamp ``unknown``, which is a provenance hole in an artifact whose whole
     claim is that the surrogate, the KL and the bytes are one rendering.
-    ``TESSERA_GIT`` is how the caller supplies it when git cannot.
+    ``TESSERA_GIT`` is how the caller supplies it when git cannot; a
+    non-editable install from git stamps its ``direct_url.json`` commit
+    (#691 item 4).  When none of the three answers, this refuses instead of
+    stamping ``unknown``.
     """
     import os
 
     try:
         return subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=Path(__file__).parent, text=True).strip()
     except Exception:
-        return os.environ.get("TESSERA_GIT", "unknown")
+        pass
+    caller = os.environ.get("TESSERA_GIT")
+    if caller:
+        return caller
+    commit = _installed_commit_id()
+    if commit:
+        return commit
+    raise SystemExit(
+        "cannot stamp the Tessera commit: no git checkout above the running "
+        "module, no TESSERA_GIT in the environment, and the installed Tessera "
+        "records no commit in its direct_url.json (not a pip install from "
+        "git). Set TESSERA_GIT to the commit this code came from.")
 
 
 def quantizable(src: Path):
@@ -1221,11 +1294,15 @@ def project_expert_plan(source_shapes: dict, source_config: dict,
         raise SystemExit(f"producer plan has unknown expert stacks: {sorted(unknown)}")
     result = {}
     for stack, choice in sorted(stack_plan.items()):
-        if not isinstance(choice, dict) or not {"grid", "q256"} <= choice.keys() \
-                or set(choice) - {"grid", "q256", "source_layout"}:
-            raise SystemExit(f"{stack}: producer stack plan requires grid/q256 and optional source_layout")
-        if type(choice["q256"]) is not int:
-            raise SystemExit(f"{stack}: producer stack rung must be an integer")
+        # The choice SHAPE is the published schema's one implementation
+        # (#691 item 3): this planner used to repeat its own check, so a
+        # producer annotation the schema accepts was refused here after the
+        # argument-time gate had accepted it.  ValueError becomes the
+        # SystemExit this producer-facing entry point raises.
+        try:
+            validate_serving_plan({stack: choice})
+        except ValueError as exc:
+            raise SystemExit(f"{stack}: {exc}") from exc
         grid = grid_for_name(choice["grid"])
         if stack in packed_stacks:
             planned = plan_packed_expert_stack(
@@ -2183,12 +2260,14 @@ def main():
         import threading
         threading.Thread(target=_warm_encoder_fixture_id, args=(encoder_fixture_id,),
                          name="encoder-fixture-id", daemon=True).start()
-        # The identity hashes the CHECKOUT the exporter runs from (its src/
-        # and experiments/ trees, tessera#499). Living in src/tessera/, the
-        # checkout root is two parents up, not one as it was in experiments/
-        # (tessera#687).
+        # The identity hashes the CODE the exporter runs from -- the checkout
+        # (its src/ and experiments/ trees, tessera#499) or the installed
+        # holder (the package, #691 item 4). Living in src/tessera/, two
+        # parents up is the checkout root only from a checkout; from an
+        # installed wheel it is lib/python3.x, so the root is derived, not
+        # counted.
         identity = export_identity(args.src, options, args.partition_runtime_image,
-                                   Path(__file__).resolve().parents[2], shards=read_shards,
+                                   exporter_code_root(), shards=read_shards,
                                    digest_cache=source_digest_cache)
         identity["encoder_fixture_id"] = encoder_fixture_id().hex()
         partition_record = {"schema": PART_SCHEMA, "index": index, "count": count,
@@ -2853,6 +2932,10 @@ def main():
         "arm": f"tessera {default_grid.name} q256={args.q256}" + (f" + plan {args.plan_json}" if args.plan_json else "")
                + f" -> tessera.serving {'+'.join(families)}",
         "default": {"grid": default_grid.name, "q256": args.q256}, "plan_json": str(args.plan_json) if args.plan_json else None,
+        # What the plan DECLARED, not what it was validated against (#691
+        # item 5): the reserved schema key is optional, so an older plan
+        # records nothing here and the manifest stays honest about that.
+        "plan_schema": plan_snapshot.schema if plan_snapshot is not None else None,
         # The plan CONTENT, not only its pathname: the merged path seals
         # options.plan into export_identity, and a direct export used to
         # record a path that may not outlive the run, so a later sidecar

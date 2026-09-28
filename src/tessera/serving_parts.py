@@ -241,11 +241,26 @@ def export_identity(source: Path, options: dict, runtime_image: str, root: Path,
     """
     if not re.fullmatch(r"[^\s]+@sha256:[0-9a-f]{64}", runtime_image or ""):
         raise ValueError("partition runtime image must be an exact repository@sha256 digest")
+    # ``root`` is a checkout root (holding ``src/`` and ``experiments/``)
+    # or an installed holder (holding the ``tessera`` package, #691 item
+    # 4): the digest covers the code the exporter runs from either way, and
+    # anything else is refused with its location.
+    if (root / "experiments").is_dir() and (root / "src").is_dir():
+        paths = sorted([*(p for p in root.joinpath("src").rglob("*")
+                           if p.suffix in {".py", ".cu", ".cuh", ".cpp", ".h"}),
+                        *root.joinpath("experiments").glob("*.py"),
+                        root / "src/tessera/serving/runtime_contract.json"])
+    elif (root / "tessera" / "serving").is_dir():
+        package = root / "tessera"
+        paths = sorted([*(p for p in package.rglob("*")
+                           if p.suffix in {".py", ".cu", ".cuh", ".cpp", ".h"}
+                           and p.is_file() and "__pycache__" not in p.parts),
+                        package / "serving" / "runtime_contract.json"])
+    else:
+        raise FileNotFoundError(
+            f"{root} is neither a Tessera checkout (src/ + experiments/) "
+            "nor a directory holding an installed tessera package")
     digest = hashlib.sha256()
-    paths = sorted([*(p for p in root.joinpath("src").rglob("*")
-                       if p.suffix in {".py", ".cu", ".cuh", ".cpp", ".h"}),
-                    *root.joinpath("experiments").glob("*.py"),
-                    root / "src/tessera/serving/runtime_contract.json"])
     for path in paths:
         digest.update(str(path.relative_to(root)).encode() + b"\0")
         digest.update(path.read_bytes())
@@ -402,13 +417,23 @@ def validate_explicit_plan(plan, modules: dict, config_groups: dict, *, source_t
         return
     if not isinstance(plan, dict):
         raise ValueError("explicit export plan must be an object")
+    # The entry SHAPE is the published schema's one implementation (#691
+    # item 3): this gate used to repeat a weaker check ("grid" and "q256"
+    # present), so a sidecar field the schema accepts was refused downstream
+    # of the argument-time gate that had accepted it.  Imported lazily: this
+    # module sits under the validator in some import orders.
+    from tessera.serving_plan import SCHEMA_KEY, validate_serving_plan
+    try:
+        validate_serving_plan(plan)
+    except ValueError as exc:
+        raise ValueError(f"explicit export plan {exc}") from exc
     requested, passthrough = {}, set()
     for name, spec in plan.items():
+        if name == SCHEMA_KEY:
+            continue
         if spec in ("PASSTHROUGH", "BF16"):
             passthrough.add(name)
             continue
-        if not isinstance(spec, dict) or "grid" not in spec or "q256" not in spec:
-            raise ValueError(f"explicit export plan has invalid entry {name!r}")
         requested[name] = spec
     planned_stacks = {name for name in requested if name.endswith(".experts")}
     emitted_stacks = {name for name, module in modules.items()

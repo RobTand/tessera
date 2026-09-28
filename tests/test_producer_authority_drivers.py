@@ -7,7 +7,10 @@ cannot do its job on a producer's capture.  So every driver on the export path
 declares ``--producer-authority`` through ``tessera.producer_authority`` -- one
 help text, one set of refusals -- and the packaged runtime contract publishes
 the list (``producer_interface.reuse_authority.drivers``) for a producer to
-read before it passes the option.
+read before it passes the option.  The one exception is the legacy shim
+``experiments/export_tessera_serving.py``, which takes the option through its
+re-export of the supported module rather than declaring it: ``SHIM_DRIVERS``
+admits it explicitly, with the re-export checked.
 
 These tests hold three things:
 
@@ -57,6 +60,16 @@ def declares_the_option(source: str) -> bool:
                for node in ast.walk(tree))
 
 
+#: Legacy path shims admitted WITHOUT declaring the option themselves: each
+#: maps to the declared driver it re-exports, and the admission is checked
+#: below (the shim file must import its target), so the contract lists a
+#: path that takes the option without the scanner pretending the shim
+#: declares it (#691 item 1).
+SHIM_DRIVERS = {
+    "experiments/export_tessera_serving.py": "src/tessera/export_serving.py",
+}
+
+
 def declared_drivers() -> list[str]:
     found = []
     # ``src/tessera`` holds the one supported entry point that takes the
@@ -66,6 +79,12 @@ def declared_drivers() -> list[str]:
         for path in sorted((ROOT / top).rglob("*.py")):
             if declares_the_option(path.read_text(encoding="utf-8")):
                 found.append(path.relative_to(ROOT).as_posix())
+    for shim, target in sorted(SHIM_DRIVERS.items()):
+        text = (ROOT / shim).read_text(encoding="utf-8")
+        module = target.removeprefix("src/").replace("/", ".")[:-len(".py")]
+        assert module in text, (
+            f"{shim} no longer re-exports {target}; drop it from SHIM_DRIVERS")
+        found.append(shim)
     return sorted(found)
 
 
@@ -149,8 +168,10 @@ DRIVERS = {
 
 def test_every_listed_driver_but_the_exporter_is_exercised_here():
     # The exporter's reference and rooted-bundle intake is exercised in
-    # test_rooted_cached_bundle.py and test_reuse_authority_boundary.py.
-    assert set(DRIVERS) | {"src/tessera/export_serving.py"} == set(declared_drivers())
+    # test_rooted_cached_bundle.py and test_reuse_authority_boundary.py;
+    # the shim's entry point is exercised in test_serving_plan_schema.py.
+    assert (set(DRIVERS) | {"src/tessera/export_serving.py"}
+            | set(SHIM_DRIVERS)) == set(declared_drivers())
 
 
 @pytest.mark.parametrize("driver", sorted(DRIVERS))

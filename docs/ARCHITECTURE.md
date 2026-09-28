@@ -128,6 +128,27 @@ and v1 bundles need no authority. Bytes, wires, contract cells, serving
 defaults and routes do not change (v40 is additive), and accept/refuse decisions are unchanged
 for a caller that supplies PrismaQuant's authority.
 
+Re-stamped 2026-09-28 for the #691 review fixes on the #687 schema. The
+contract's `producer_interface.reuse_authority.drivers` (v43) lists the
+supported exporter `src/tessera/export_serving.py` ALONGSIDE the legacy shim
+`experiments/export_tessera_serving.py`, admitted explicitly by
+`tests/test_producer_authority_drivers.py` via its re-export, so a producer
+that has not moved its driver keeps passing `--producer-authority` to a path
+that takes it. One validator owns the plan entry shape:
+`serving_parts.validate_explicit_plan` and `export_serving.project_expert_plan`
+route through `tessera.serving_plan.validate_serving_plan` (the probe's
+accepted-here/refused-there sidecar disagreement is gone). Plans may declare
+`"schema": "tessera.serving_plan.v1"` under a reserved top-level key,
+recorded as `plan_schema` in the manifest beside the published plan; the
+`prismaquant_*` annotation names are retired for a neutral
+`producer_annotations` object, copied through and never read. The exporter
+derives its code root instead of counting parents (installed-wheel
+`export_identity` digests the package) and stamps the install's
+`direct_url.json` commit when git cannot, refusing instead of `unknown` when
+neither answers. `experiments/moe_plan_baseline.py` drives the real module,
+not the shim's namespace. No cell, rung, route, format row or served byte
+changes.
+
 Re-stamped 2026-09-28 for the supported exporter and the published serving
 plan (tessera#687). `experiments/export_tessera_serving.py` moved into the
 package as `tessera.export_serving` (entry point `python -m
