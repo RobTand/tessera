@@ -357,7 +357,11 @@ def test_optional_gemv_extension_does_not_change_dense_compile_identity(monkeypa
 
     assert gemv_layer.tessera_native is not None
     assert fallback_layer.tessera_native is not None
-    assert WINDOW_GEMM_SYMBOL in gemv
+    # The identity names the op the module's graph runs: one of the two dense
+    # launches the route publishes (contract v43 added the fused window
+    # kernel's dense identity beside the Triton GEMM), decided at weight load.
+    assert gemv_layer.tessera_symbol in {symbol for symbol, _ in route.DENSE_LAUNCHES}
+    assert gemv_layer.tessera_symbol in gemv
     assert fp8_gemv.STREAMED_APPLY_OP not in gemv
     assert gemv == fallback == again, "one packed graph must keep one compile identity"
 
@@ -528,15 +532,21 @@ def test_the_census_expectations_come_from_the_route():
     ``1b767a207`` left ``fp8_route.apply`` making one launch -- the packed native window
     GEMM, at every M and in both residencies -- and contract v31 dropped the
     retired rows from the table, so the expectation a census compares a served
-    record against is now that one pair.  Asserted as EQUALITY, because the
-    defect this whole file is about was an expectation wider than the dispatch.
+    record against became that one pair.  Contract v43 added the fused window
+    kernel's dense identity as a second launch the route decides per module
+    at weight load, so the expectation is now exactly the route's own
+    ``DENSE_LAUNCHES`` -- two pairs, of which any one module stamps one.
+    Asserted as EQUALITY, because the defect this whole file is about was an
+    expectation wider than the dispatch.
 
     A note on where this function lives, which the equality makes visible: it
     still belongs to ``fp8_gemv``, and ``fp8_route.apply`` does not import it.  The census tool
     reads it all the same, so it is right about the serve and housed in the
     wrong module; moving it is follow-up, not part of the withdrawal.
     """
-    expected = {(WINDOW_GEMM_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_GEMM)}
+    expected = set(route.DENSE_LAUNCHES)
+    assert (WINDOW_GEMM_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_GEMM) in expected
+    assert len(expected) == 2
     go = fp8_gemv.census_expected(compiled=False)
     assert go["decode"] == expected
     assert go["batch"] == expected

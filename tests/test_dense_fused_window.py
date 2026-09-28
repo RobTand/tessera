@@ -325,10 +325,12 @@ def test_the_served_module_takes_the_fused_lane_and_serves_two_roles(family, mon
     assert (module.symbol, module.decoder) == module.launch_pair
     assert module.role_names == ("gate_proj", "up_proj")
     named = dict(module.named_tensors())
-    for index in range(2):
+    for index, facts in enumerate(module.layout_facts()):
         assert named[f"roles.{index}.fused_table16"].shape == (1, rf.TABLE_ENTRIES)
         assert named[f"roles.{index}.fused_table16"].dtype == torch.int16
-        assert int(named[f"roles.{index}.fused_has_init"].item()) == 0
+        # An encoded unit may start its decode inside the wire (the encoder's
+        # own start register), whole or cut: the kernel's flag is the bundle's.
+        assert int(named[f"roles.{index}.fused_has_init"].item()) == int(facts.has_history)
     for m in (1, 5, 64, 129):
         x, xq, a = _inputs(family, m, 256, 500 + m)
         got = _served(module, family, xq, x, a)
