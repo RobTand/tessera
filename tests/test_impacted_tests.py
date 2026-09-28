@@ -104,10 +104,15 @@ def test_a_closure_shaped_tracked_file_is_not_ownership_proof(
 
 
 def test_verified_action_metadata_preserves_narrowed_selection(tmp_path, monkeypatch):
-    from test_suite_source import _snapshot
+    from test_suite_source import _snapshot, _verifier
     from tessera._dev.suite_source import measured_source
 
-    repo, requests, _, stamp = _snapshot(tmp_path, "gpu")
+    stamp = ".pbrun-closure.0123456789abcdef.json"
+    repo, entry = _snapshot(tmp_path, "gpu")
+    _git(repo, "mv", entry["path"], stamp)
+    _git(repo, "commit", "-qm", "generated file under its executor's name")
+    entry = dict(entry, path=stamp)
+    verifier, _ = _verifier(tmp_path, generated=[entry])
     empty = subprocess.check_output(
         ["git", "-C", str(repo), "hash-object", "-t", "tree", "-w", "--stdin"],
         input=b"",
@@ -115,7 +120,7 @@ def test_verified_action_metadata_preserves_narrowed_selection(tmp_path, monkeyp
     verified = []
 
     def inspect_source(root):
-        record = measured_source(root, request_root=requests, owner="e" * 64)
+        record = measured_source(root, verifier=verifier)
         assert record["verification"] == "verified", record
         verified.append(record)
         return record
