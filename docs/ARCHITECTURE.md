@@ -192,6 +192,12 @@ unit. It refuses a historical producer that takes no structure only at a rung
 where the structure changes the wire. No contract cell, serving default or
 route changes.
 
+Re-stamped 2026-09-27 for explicit manual-gate exclusion from impacted pytest
+targets (tessera#647). `tools/impacted_tests.py` keeps the standalone A4 harness
+in its dependency graph but records it under `excluded_tests` with its reason,
+not in the pytest target list. Its manual CUDA gate is not executed or certified
+by that selection; pytest consumers and full-run escalation remain unchanged.
+
 Re-stamped 2026-09-27 for compact serving-manifest serialization (tessera#635).
 New main, stock-twin, merged-part and fresh residency-refresh manifests use
 `serving_parts.write_serving_manifest`: UTF-8 JSON with `separators=(",", ":")`,
@@ -1721,6 +1727,14 @@ that the graph read everything relevant, so where it did not, the answer is
 `full`. It reuses this verified exclusion: a closure-shaped
 tracked file is not ignored by name, and unverifiable metadata forces a full
 selection. Verified PB metadata still permits narrowed selection.
+The explicitly standalone `tests/test_native_a4_serving.py` is a manual CUDA
+`run_gate`/`__main__` harness with no pytest items. After all candidate-selection
+paths, the selector removes it from pytest targets and records its path and
+reason in `excluded_tests` (also displayed in the text receipt). It remains in
+the graph so its pytest consumers are still selected. No general absence-of-test
+heuristic drops modules: pytest can collect imported, inherited or generated
+cases. No exclusion weakens uncertainty escalation or PrismaBuild's requirement
+that every assigned pytest file have a collection/outcome record (tessera#647).
 Both normal and parentless diffs use Git's NUL-delimited path protocol, so
 display quoting cannot conceal metadata under tab/newline-containing paths.
 A path named in `OPAQUE` -- `docs/schema/`, `pyproject.toml` -- forces the full
