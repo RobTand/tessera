@@ -120,13 +120,48 @@ SHARDS = (("w1", "gate_proj"), ("w3", "up_proj"), ("w2", "down_proj"))
 FAMILIES = {
     "e4m3": {"payload": "TESSERA_E4M3_K1", "rung": "R1024", "family": "TESSERA_FP8",
              "pair": ("tessera.native_window_moe.NativeWindowMoE.__call__",
-                      "native_window_moe_compact")},
+                      "native_window_moe_compact"),
+             "fused_pair": ("tessera.routed_fused.FusedRoutedWindowMoE.__call__",
+                            "native_routed_fused_window")},
     "bf16": {"payload": "TESSERA_BF16_K1", "rung": "R1024", "family": "TESSERA_BF16",
              "pair": ("tessera.native_window_moe.NativeWindowMoE.__call__",
-                      "native_window_moe_compact_folded")},
+                      "native_window_moe_compact_folded"),
+             "fused_pair": ("tessera.routed_fused.FusedRoutedWindowMoE.__call__",
+                            "native_routed_fused_window_folded")},
     "e2m1": {"payload": "TESSERA_E2M1_K2", "rung": "R896", "family": "TESSERA_NVFP4",
              "pair": ("tessera.kernel_a4.a4_span2_grouped_gemm", "native_span2_grouped")},
 }
+
+FUSED_ADAPTER = "FusedRoutedWindowMoE"
+
+
+def expected_pair(fam, method):
+    """The launch pair the built method must emit.
+
+    ``PackedWindowMoeBundles.adapter`` (tessera#640) takes the fused
+    warp-specialised lane for every stack it admits and the compact Triton
+    adapter otherwise; the expectation is keyed on WHICH adapter class was
+    built, never read off the adapter's own ``launch_pair`` (that would make
+    the telemetry check circular).  The A4 family's pair is fixed.
+    """
+    nat = getattr(method, "_native", None)
+    if type(nat).__name__ == FUSED_ADAPTER:
+        return tuple(fam["fused_pair"])
+    return tuple(fam["pair"])
+
+
+def compact_twin(method, activation="silu"):
+    """The compact Triton adapter over the SAME prepared bundles as a fused
+    ``method._native`` (no second copy of the weights), or None when the
+    method's adapter is not the fused lane."""
+    nat = getattr(method, "_native", None)
+    if type(nat).__name__ != FUSED_ADAPTER:
+        return None
+    from tessera.native_window_moe import native_window_moe_from_bundles
+
+    return native_window_moe_from_bundles(nat.down, gate=nat.gate, up=nat.up,
+                                          activation=getattr(nat, "activation", activation))
+
 
 # ---- the dtype constants the bound is built from ---------------------------
 U16 = 2.0 ** -8
@@ -367,6 +402,7 @@ def build_after(fam, scheme, blobs, scales, n_experts, cfg, clamp, prefix):
     else:
         assert method._native is not None
         info["native_adapter"] = type(method._native).__name__
+        info["launch_pair"] = list(method._native.launch_pair)
         info["arithmetic"] = getattr(method._native.down, "arithmetic", None)
         info["family_of_bundles"] = getattr(method._native.down, "family", None)
         info["fused_gate_up"] = method._native.gate_up is not None
@@ -721,8 +757,12 @@ def oracle_case(fkey, fam, layer, method, ref, x, ids, w, clamp, n_experts, reco
         g_n = g_n.reshape(P, INTER)
         u_n = u_n.reshape(P, INTER)
         act_n = nwm._silu_and_mul(g_n, u_n, clamp_limit=clamp)          # bf16 [P, I]
-        down_n = nat.down(act_n, ids, w, route_input=True,
-                          apply_router_weight_on_input=False, round_routes=True)   # [T, H]
+        # the fused lane spells the staged down projection ``down_routes``
+        # (its ``down`` is the prepared bundle); the compact adapter's bundle
+        # is itself the callable.
+        down_fn = getattr(nat, "down_routes", None) or nat.down
+        down_n = down_fn(act_n, ids, w, route_input=True,
+                         apply_router_weight_on_input=False, round_routes=True)   # [T, H]
     else:
         order, offsets, route_tokens_s, route_weights_s = a4_dispatch(ids, w, n_experts)
         from tessera.serving.native_a4 import a4_grouped_apply
@@ -797,10 +837,12 @@ def oracle_case(fkey, fam, layer, method, ref, x, ids, w, clamp, n_experts, reco
     torch.cuda.synchronize()
     routes_seen = recorder.take()
     pairs = sorted({(c["symbol"], c["decoder"]) for c in routes_seen})
+    expected = expected_pair(fam, method)
     out["route_telemetry"] = {"pairs": [list(p) for p in pairs], "calls": len(routes_seen),
                               "contract": sorted({str(c["contract"]) for c in routes_seen}),
-                              "expected_pair": list(fam["pair"]),
-                              "pair_matches": pairs == [tuple(fam["pair"])]}
+                              "expected_pair": list(expected),
+                              "adapter": type(getattr(method, "_native", None)).__name__,
+                              "pair_matches": pairs == [expected]}
     out["repeat_apply_max_abs_diff"] = float((out_n.float() - out_n2.float()).abs().max())
     out["apply_vs_staged_composition_max_abs_diff"] = float(
         (out_n.float() - down_n.float()).abs().max())
@@ -1287,6 +1329,8 @@ def run_oracle(args):
             log(fkey, "building native method")
             layer, method, info = build_after(fam, scheme, blobs, scales, E, cfg, args.clamp, prefix)
             entry["native"] = info
+            entry["expected_launch_pair"] = list(expected_pair(fam, method))
+            entry["compact_launch_pair"] = list(fam["pair"])
             if fam["family"] == "TESSERA_NVFP4":
                 entry["native"]["note"] = (
                     "gs13/gs2 are the route's own reduction over the LOADED experts "
@@ -1406,6 +1450,15 @@ def run_profile(args):
             layer, method, info = build_after(fam, scheme, blobs, scales, E, cfg, args.clamp, prefix)
             entry["after_build"] = info
             legs["after"] = lambda x, w, ids, _m=method, _l=layer: _m.apply(_l, x, w, ids, None, None)
+            compact = compact_twin(method)
+            if compact is not None:
+                # tessera#640: the lane this build replaces, over the same
+                # resident bundles, so after/legacy differ in the kernel only.
+                entry["legacy_build"] = {"adapter": type(compact).__name__,
+                                         "launch_pair": list(compact.launch_pair),
+                                         "shares_bundles_with_after": True}
+                legs["legacy"] = lambda x, w, ids, _c=compact, _lim=args.clamp: _c(
+                    x, ids, w, swiglu_limit=_lim, apply_router_weight_on_input=False)
             try:
                 before, binfo, _bl = build_before(fkey, fam, scheme, blobs, scales, E, cfg,
                                                   args.clamp, prefix)
@@ -1418,16 +1471,19 @@ def run_profile(args):
             del blobs
             for m in [int(v) for v in args.m.split(",")]:
                 x, ids, w = make_inputs(m, E, args.seed + m, args.sigma)
-                if "before" in legs:
+                for other in ("before", "legacy"):
+                    if other not in legs:
+                        continue
+                    key = f"after_vs_{other}"
                     try:
                         a = legs["after"](x, w, ids)
-                        b = legs["before"](x, w, ids)
+                        b = legs[other](x, w, ids)
                         torch.cuda.synchronize()
-                        entry.setdefault("after_vs_before", {})[str(m)] = {
+                        entry.setdefault(key, {})[str(m)] = {
                             "max_abs_diff": float((a.float() - b.float()).abs().max()),
                             "max_abs_after": float(a.float().abs().max())}
                     except Exception as exc:  # noqa: BLE001
-                        entry.setdefault("after_vs_before", {})[str(m)] = {"error": str(exc)}
+                        entry.setdefault(key, {})[str(m)] = {"error": str(exc)}
                 for leg, fn in legs.items():
                     name = f"{fkey}_{leg}_M{m}"
                     log("profiling", name)
@@ -1444,7 +1500,8 @@ def run_profile(args):
                                                "traceback": traceback.format_exc()[-4000:]}
                         log(name, "FAILED", exc)
                     (out_dir / "profiles.json").write_text(json.dumps(report, indent=1, default=str))
-            del legs, layer, method
+            entry["legs_built"] = sorted(legs)
+            del legs, layer, method, compact
             torch.cuda.empty_cache()
         except Exception as exc:  # noqa: BLE001
             entry["error"] = f"{type(exc).__name__}: {exc}"
@@ -1459,8 +1516,10 @@ def run_profile(args):
     requested_m = [int(value) for value in args.m.split(",")]
     report["pass"] = bool(report["families"]) and bool(requested_m)
     for family, entry in report["families"].items():
-        expected = {f"{family}_{leg}_M{m}"
-                    for leg in ("after", "before") for m in requested_m}
+        built = entry.get("legs_built") or ["after", "before"]
+        if "before" not in built:
+            built = [*built, "before"]      # a before leg that failed to build is a failure
+        expected = {f"{family}_{leg}_M{m}" for leg in built for m in requested_m}
         complete = (not entry.get("error")
                     and set(entry["legs"]) == expected
                     and all(not leg.get("error") for leg in entry["legs"].values()))
