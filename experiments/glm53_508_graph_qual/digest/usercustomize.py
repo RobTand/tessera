@@ -66,15 +66,32 @@ inactive unless its variable is set:
     110 -> 32.5 GiB during an eager load, 74 GiB right after the block exits), so
     the drafter loaded on top of it and the box watchdog stopped both serves at
     its 16 GiB floor. Memory management only: no arithmetic changes.
+
+``T695_DRAFT_LOG=<prefix>`` (tessera#695)
+    Records what the MTP drafter proposed, so a graph arm's drafts can be
+    compared with an eager arm's at the same context. Acceptance cannot do this
+    on the stub: its target emits near-random tokens, so no draft is accepted.
+    Each engine process appends to ``<prefix>.<pid>.jsonl``:
+    ``{"ev": "new", "req", "prompt_len", "prompt_sha"}`` for every request the
+    runner adds, and ``{"ev": "draft", "reqs", "k", "rows"}`` for every serving
+    ``propose`` call, one row per request: its k draft tokens, then the token
+    the target sampled last (the drafter's first input), how many tokens the
+    target emitted this step, how many drafts it rejected, and the sequence
+    length. Dummy, profiling and capturing calls are not recorded. The rows are
+    copied device-to-host without blocking, behind an event, and written once
+    the event completes (at the next call or within a second), so the runner's
+    host-device overlap is kept. The copies add a gather and a few small
+    kernels per step; the arithmetic of every forward is unchanged.
 """
 import os
 
-if os.environ.get("T695_GC_BEFORE_DRAFTER") == "1":
+_T695_GC = os.environ.get("T695_GC_BEFORE_DRAFTER") == "1"
+_T695_DRAFT_LOG = os.environ.get("T695_DRAFT_LOG")
+
+if _T695_GC or _T695_DRAFT_LOG:
     import gc
     import importlib.abc
     import sys
-
-    _T695_MODULE = "vllm.v1.worker.gpu.spec_decode.mtp.speculator"
 
     def _t695_available_mib():
         with open("/proc/meminfo") as fh:
@@ -83,29 +100,174 @@ if os.environ.get("T695_GC_BEFORE_DRAFTER") == "1":
                     return int(line.split()[1]) // 1024
         return -1
 
-    def _t695_patch(module):
-        cls = getattr(module, "MTPSpeculator", None)
-        if cls is None or getattr(cls.load_model, "_t695", False):
-            return
-        original = cls.load_model
+    class _T695DraftLog:
+        """Deferred device-to-host copies of the drafter's proposals (see the docstring)."""
 
-        def load_model(self, *args, **kwargs):
-            before = _t695_available_mib()
-            collected = gc.collect()
+        def __init__(self, prefix):
+            self.prefix = prefix
+            self.owner = None
+            self.failed = False
+
+        def _ensure(self):
+            """Per process: the state, the drain thread and the file belong to the process
+            that records. A forked child re-creates them (a thread does not survive a
+            fork, and a lock copied while held would never be released)."""
+            if self.owner == os.getpid():
+                return
+            import atexit
+            import collections
+            import threading
+            self.owner = os.getpid()
+            self.fh = None
+            self.pending = collections.deque()
+            self.lock = threading.Lock()
+            threading.Thread(target=self._drain_loop, name="t695-draft-log", daemon=True).start()
+            atexit.register(self.flush, True)
+
+        def _write(self, rec):
+            import json
+            if self.fh is None:
+                self.fh = open(f"{self.prefix}.{os.getpid()}.jsonl", "a", buffering=1)
+            self.fh.write(json.dumps(rec, separators=(",", ":")) + "\n")
+
+        def new_requests(self, scheduler_output):
+            import hashlib
+            import json
+            self._ensure()
+            recs = []
+            for req in getattr(scheduler_output, "scheduled_new_reqs", None) or []:
+                prompt_len = getattr(req, "prompt_len", None)
+                toks = req.prompt_token_ids
+                if toks is None:
+                    toks = (req.prefill_token_ids or [])[:prompt_len]
+                toks = [int(t) for t in toks]
+                recs.append(dict(ev="new", req=req.req_id, prompt_len=len(toks),
+                                 prompt_sha=hashlib.sha256(json.dumps(toks).encode()).hexdigest()[:16]))
+            if recs:
+                with self.lock:
+                    for rec in recs:
+                        self._write(rec)
+
+        def propose(self, input_batch, bound, drafts):
             import torch
-            torch.cuda.empty_cache()
-            print(f"[t695] gc before the drafter loads: {collected} objects collected, "
-                  f"MemAvailable {before} -> {_t695_available_mib()} MiB", file=sys.stderr, flush=True)
-            return original(self, *args, **kwargs)
+            n = int(input_batch.num_reqs)
+            if n <= 0:
+                return
+            self._ensure()
+            args = bound.arguments
+            idx = input_batch.idx_mapping[:n].long()
+            cols = [drafts[:n].to(torch.int64),
+                    args["last_sampled"][idx].to(torch.int64)[:, None],
+                    args["num_sampled"][:n].to(torch.int64)[:, None],
+                    args["num_rejected"][:n].to(torch.int64)[:, None],
+                    input_batch.seq_lens[:n].to(torch.int64)[:, None]]
+            packed = torch.cat(cols, dim=1)
+            host = torch.empty(packed.shape, dtype=torch.int64, device="cpu", pin_memory=True)
+            host.copy_(packed, non_blocking=True)
+            event = torch.cuda.Event()
+            event.record()
+            meta = dict(ev="draft", reqs=list(input_batch.req_ids[:n]), k=int(drafts.shape[1]))
+            with self.lock:
+                self.pending.append((event, host, meta))
+            self.flush(False)
 
-        load_model._t695 = True
-        cls.load_model = load_model
+        def flush(self, wait):
+            if self.owner != os.getpid():
+                return
+            with self.lock:
+                while self.pending:
+                    event, host, meta = self.pending[0]
+                    if wait:
+                        event.synchronize()
+                    elif not event.query():
+                        break
+                    self.pending.popleft()
+                    meta["rows"] = host.tolist()
+                    self._write(meta)
+
+        def _drain_loop(self):
+            import time
+            while True:
+                time.sleep(1.0)
+                try:
+                    self.flush(False)
+                except Exception as exc:  # research hook: report once, never stop the serve
+                    if not self.failed:
+                        self.failed = True
+                        print(f"[t695] draft log flush failed: {exc!r}", file=sys.stderr, flush=True)
+
+    _t695_draft_log = _T695DraftLog(_T695_DRAFT_LOG) if _T695_DRAFT_LOG else None
+
+    def _t695_patch_speculator(module):
+        cls = getattr(module, "MTPSpeculator", None)
+        if cls is None or getattr(cls, "_t695", False):
+            return
+        cls._t695 = True
+        if _T695_GC:
+            original_load = cls.load_model
+
+            def load_model(self, *args, **kwargs):
+                before = _t695_available_mib()
+                collected = gc.collect()
+                import torch
+                torch.cuda.empty_cache()
+                print(f"[t695] gc before the drafter loads: {collected} objects collected, "
+                      f"MemAvailable {before} -> {_t695_available_mib()} MiB", file=sys.stderr, flush=True)
+                return original_load(self, *args, **kwargs)
+
+            cls.load_model = load_model
+        if _t695_draft_log is not None:
+            import inspect
+            original_propose = cls.propose
+            signature = inspect.signature(original_propose)
+
+            def propose(self, input_batch, *args, **kwargs):
+                drafts = original_propose(self, input_batch, *args, **kwargs)
+                import torch
+                if (kwargs.get("dummy_run") or kwargs.get("is_profile")
+                        or torch.cuda.is_current_stream_capturing() or _t695_draft_log.failed):
+                    return drafts
+                try:
+                    bound = signature.bind(self, input_batch, *args, **kwargs)
+                    _t695_draft_log.propose(input_batch, bound, drafts)
+                except Exception as exc:  # research hook: report once, never stop the serve
+                    _t695_draft_log.failed = True
+                    print(f"[t695] draft log disabled: {exc!r}", file=sys.stderr, flush=True)
+                return drafts
+
+            cls.propose = propose
+        print(f"[t695] MTPSpeculator patched: gc={_T695_GC} draft_log={bool(_t695_draft_log)}",
+              file=sys.stderr, flush=True)
+
+    def _t695_patch_runner(module):
+        cls = getattr(module, "GPUModelRunner", None)
+        if cls is None or _t695_draft_log is None or getattr(cls, "_t695", False):
+            return
+        cls._t695 = True
+        original_add = cls.add_requests
+
+        def add_requests(self, scheduler_output, *args, **kwargs):
+            if not _t695_draft_log.failed:
+                try:
+                    _t695_draft_log.new_requests(scheduler_output)
+                except Exception as exc:  # research hook: report once, never stop the serve
+                    _t695_draft_log.failed = True
+                    print(f"[t695] draft log disabled: {exc!r}", file=sys.stderr, flush=True)
+            return original_add(self, scheduler_output, *args, **kwargs)
+
+        cls.add_requests = add_requests
+
+    _T695_PATCHES = {
+        "vllm.v1.worker.gpu.spec_decode.mtp.speculator": _t695_patch_speculator,
+        "vllm.v1.worker.gpu.model_runner": _t695_patch_runner,
+    }
 
     class _T695Finder(importlib.abc.MetaPathFinder):
-        """Patch the MTP speculator right after its module executes."""
+        """Patch the MTP speculator and the V2 runner right after their modules execute."""
 
         def find_spec(self, name, path, target=None):
-            if name != _T695_MODULE:
+            patch = _T695_PATCHES.get(name)
+            if patch is None:
                 return None
             for finder in sys.meta_path:
                 if finder is self or not hasattr(finder, "find_spec"):
@@ -115,9 +277,9 @@ if os.environ.get("T695_GC_BEFORE_DRAFTER") == "1":
                     continue
                 run = spec.loader.exec_module
 
-                def exec_module(module, _run=run):
+                def exec_module(module, _run=run, _patch=patch):
                     _run(module)
-                    _t695_patch(module)
+                    _patch(module)
 
                 spec.loader.exec_module = exec_module
                 return spec
