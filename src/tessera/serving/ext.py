@@ -42,6 +42,10 @@ from ..kernel_roster import SUPPORTED_RATES, WINDOW_BITS_SUPPORTED
 
 __all__ = [
     "NATIVE_EXTENSIONS",
+    "ROUTED_FUSED_E4M3_MODULE_NAME",
+    "ROUTED_FUSED_LANE_REQUIRES",
+    "ROUTED_FUSED_SOURCE",
+    "ROUTED_FUSED_VALUE_MODULE_NAME",
     "WINDOW_GEMV_MODULE_NAME",
     "WINDOW_GEMV_SOURCE",
     "FALLBACK_REFUSED",
@@ -178,6 +182,40 @@ WINDOW_GEMV_LANE = {
     },
 }
 
+#: The fused routed window MoE lane's two libraries (tessera#640).  One
+#: source, ``tessera.routed_fused`` builds it once per window family
+#: (``-DTESSERA_ROUTED_FUSED_FP8=1`` for E4M3, ``0`` for the value family),
+#: and each library is its own entry because ``lane.decoder`` is one string
+#: and the two families stamp two decoders.  The names are the literals the
+#: loader's two ``load(name=...)`` sites spell; the scanner test reads both.
+ROUTED_FUSED_E4M3_MODULE_NAME = "tessera_routed_fused_e4m3"
+ROUTED_FUSED_VALUE_MODULE_NAME = "tessera_routed_fused_value"
+ROUTED_FUSED_SOURCE = "csrc/routed_fused_window.cu"
+
+#: What a routed stack's wire must be for the fused lane to read it.  The
+#: kernel reads one shape: every column at RATE 4 (16 rows of 4-bit codes are
+#: two 32-bit words, the stream the decoder's funnel shift walks), window
+#: bits 14 (its lookup table is 2^14 entries per expert), the channel plane
+#: of the window body, no decoration.  A rung that mixes rates (q256=896 is
+#: rate 3 and 4 columns) refuses this lane at load, module by module, and
+#: keeps the compact adapter -- so the predicate is published, as the GEMV
+#: lane's is, for a producer to read before it encodes.  ``start_state`` is
+#: deliberately ABSENT, not false: the kernel reads a TP shard's start state
+#: (``has_init``) and a whole unit alike, so it carries no predicate on it.
+#: ``routed_fused.fused_routed_window_supported`` is the load-time decision
+#: over the prepared bundles; ``tests/test_routed_fused_window.py`` ties the
+#: two.
+ROUTED_FUSED_LANE_REQUIRES = {
+    "column_rates": [4],
+    "window_bits": [14],
+    "body": "window",
+    "plane": "channel",
+    "release_overrides": False,
+    "diagonals": False,
+    "rotation": ["none"],
+    "grid_arities": [1],
+}
+
 #: The native code this package can load INTO A SERVING PROCESS, as the
 #: runtime contract publishes it.
 #:
@@ -245,6 +283,49 @@ NATIVE_EXTENSIONS = [
                          "decoder": "torch_window"},
             "streamed": {"status": FALLBACK_SUBSTITUTED,
                          "decoder": "torch_window"},
+        },
+    },
+    # THE FUSED ROUTED WINDOW LANE (tessera#640): one source, two libraries,
+    # one per window family, because ``lane.decoder`` is one string by schema
+    # and the two families stamp two decoders (the E4M3 epilogue arithmetic
+    # and the BF16 folded one).  ``tessera.routed_fused`` builds each with
+    # ``-DTESSERA_ROUTED_FUSED_FP8={1,0}``; ``moe_route``'s
+    # ``process_weights_after_loading`` reaches it through
+    # ``native_window_moe.PackedWindowMoeBundles.adapter``.  Without the
+    # library a stack keeps the compact Triton adapter in either residency
+    # (expert stacks are resident-only; the streamed answer is the same
+    # substitute, stated so a reader has an answer per mode), and the
+    # substitute is VISIBLE: it stamps the compact pair's decoder.
+    {
+        "module_name_prefix": ROUTED_FUSED_E4M3_MODULE_NAME,
+        "filename_glob": ROUTED_FUSED_E4M3_MODULE_NAME + "*.so",
+        "match": MATCH_BASENAME_FNMATCH,
+        "source": ROUTED_FUSED_SOURCE,
+        "loaded_by": "tessera.serving.moe_route",
+        "routes": ["TESSERA_FP8"],
+        "lane": {"decoder": "native_routed_fused_window",
+                 "requires": ROUTED_FUSED_LANE_REQUIRES},
+        "when_unavailable": {
+            "resident": {"status": FALLBACK_SUBSTITUTED,
+                         "decoder": "native_window_moe_compact"},
+            "streamed": {"status": FALLBACK_SUBSTITUTED,
+                         "decoder": "native_window_moe_compact"},
+        },
+    },
+    {
+        "module_name_prefix": ROUTED_FUSED_VALUE_MODULE_NAME,
+        "filename_glob": ROUTED_FUSED_VALUE_MODULE_NAME + "*.so",
+        "match": MATCH_BASENAME_FNMATCH,
+        "source": ROUTED_FUSED_SOURCE,
+        "loaded_by": "tessera.serving.moe_route",
+        "routes": ["TESSERA_BF16"],
+        "lane": {"decoder": "native_routed_fused_window_folded",
+                 "requires": ROUTED_FUSED_LANE_REQUIRES},
+        "when_unavailable": {
+            "resident": {"status": FALLBACK_SUBSTITUTED,
+                         "decoder": "native_window_moe_compact_folded"},
+            "streamed": {"status": FALLBACK_SUBSTITUTED,
+                         "decoder": "native_window_moe_compact_folded"},
         },
     },
 ]

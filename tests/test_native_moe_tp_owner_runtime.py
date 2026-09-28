@@ -550,8 +550,11 @@ def test_the_owner_route_set_comes_from_the_plugins_own_launch_table():
     assert moe.census_symbol_base("vllm.fused_moe.modular_kernel:FLASHINFER_CUTLASS") == materialising[0]
     a16 = moe.owner_launch_pairs(moe.owner_wire(_glm_shape(1, A16)), world=1)
     assert materialising not in a16
-    from tessera.serving.scheme import WINDOW_MOE_COMPACT_SYMBOL
-    assert a16 == {(WINDOW_MOE_COMPACT_SYMBOL, "native_window_moe_compact_folded")}
+    from tessera.serving.scheme import ROUTED_FUSED_WINDOW_SYMBOL, WINDOW_MOE_COMPACT_SYMBOL
+    # Contract v41 (tessera#640): the fused lane's folded pair is admissible
+    # beside the compact one -- the dispatch takes it for a rate-4 stack.
+    assert a16 == {(WINDOW_MOE_COMPACT_SYMBOL, "native_window_moe_compact_folded"),
+                   (ROUTED_FUSED_WINDOW_SYMBOL, "native_routed_fused_window_folded")}
 
 
 def test_an_fp8_owner_never_declares_the_materialising_launch():
@@ -562,15 +565,17 @@ def test_an_fp8_owner_never_declares_the_materialising_launch():
     launch at every world.  Above one rank the selected owner's decoders stay
     admissible beside it, as before.
     """
-    from tessera.serving.scheme import WINDOW_MOE_COMPACT_SYMBOL
+    from tessera.serving.scheme import ROUTED_FUSED_WINDOW_SYMBOL, WINDOW_MOE_COMPACT_SYMBOL
     compact = (WINDOW_MOE_COMPACT_SYMBOL, "native_window_moe_compact")
+    fused = (ROUTED_FUSED_WINDOW_SYMBOL, "native_routed_fused_window")
     wire = moe.owner_wire(_glm_shape(2, A8))
     pairs = moe.owner_launch_pairs(wire, world=2)
     assert ("vllm.fused_moe.modular_kernel", "torch_materialize_stock") not in pairs
     assert ("vllm.fused_moe.modular_kernel", "research_selected_triton_window") in pairs
     assert ("vllm.fused_moe.modular_kernel", "research_selected_torch_window") in pairs
     assert compact in pairs
-    assert moe.owner_launch_pairs(wire, world=1) == {compact}
+    # Contract v41 (tessera#640): the fused lane's pair beside the compact one.
+    assert moe.owner_launch_pairs(wire, world=1) == {compact, fused}
     # A compressed BF16 expert stack has no materialising launch at any world,
     # and its selected owner's decoders are not admissible either (#613).
     for world in (1, 2):

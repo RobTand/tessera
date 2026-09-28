@@ -171,12 +171,25 @@ DECODER_NATIVE_WINDOW_MOE_COMPACT = "native_window_moe_compact"
 #: numerical function of the same wire: a census or a cell that read the
 #: epilogue decoder here would attest the arithmetic that did not run.
 DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED = "native_window_moe_compact_folded"
+#: The fused warp-specialised routed window MoE (``tessera.routed_fused``,
+#: tessera#640): routed experts served from the same packed planes by one
+#: persistent kernel that decodes each weight once per tile and reuses it
+#: across routes, with a DETERMINISTIC fixed-order per-token reduction.  The
+#: E4M3 family's epilogue arithmetic stamps the first; the BF16 family's
+#: folded arithmetic the second.  Distinct from the compact pair because a
+#: census must tell which kernel served a stack, and because the reduction
+#: order -- fixed here, scheduling-dependent in the compact adapter's atomic
+#: -- makes the two different numerical functions of the same wire.
+DECODER_NATIVE_ROUTED_FUSED_WINDOW = "native_routed_fused_window"
+DECODER_NATIVE_ROUTED_FUSED_WINDOW_FOLDED = "native_routed_fused_window_folded"
 DECODERS = frozenset((DECODER_NATIVE_SPAN2, DECODER_TORCH_STOCK, DECODER_TORCH_WINDOW,
                       DECODER_WINDOW_GEMV, DECODER_NATIVE_WINDOW_GEMM,
                       DECODER_NATIVE_WINDOW_GEMM_FOLDED,
                       DECODER_NATIVE_SPAN2_GEMM, DECODER_NATIVE_SPAN2_GROUPED,
                       DECODER_NATIVE_WINDOW_MOE_COMPACT,
-                      DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED))
+                      DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED,
+                      DECODER_NATIVE_ROUTED_FUSED_WINDOW,
+                      DECODER_NATIVE_ROUTED_FUSED_WINDOW_FOLDED))
 
 ATTR_PREFIX = "_tessera_route_"
 

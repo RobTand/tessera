@@ -159,6 +159,18 @@ def native_decoder(family: str) -> str:
     return DECODER_NATIVE_WINDOW_MOE_COMPACT
 
 
+def _profiler_label(adapter) -> str:
+    """The ``torch.profiler`` range a routed forward runs under.
+
+    One label per adapter identity (tessera#640): the compact adapter's
+    forward is ``tessera_native_window_moe`` as it always was, and an adapter
+    that publishes ``PROFILER_LABEL`` -- the fused routed window lane -- is
+    ranged under its own name, so a profile of a fused serve does not read as
+    the compact kernel's.  A new identity under an old name is a disguise.
+    """
+    return str(getattr(adapter, "PROFILER_LABEL", "tessera_native_window_moe"))
+
+
 def census_expected(*, compiled: bool = False, platform=None,
                     family: str = TESSERA_FP8) -> dict:
     """The ``(symbol, decoder)`` pairs an expert stack may report, by regime.
@@ -1136,7 +1148,11 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
                 self._native = prepared.adapter()
                 if research_selected is not None:
                     self._research_phase = 'ready'
-                layer.tessera_decoder = native_decoder(family)
+                # The adapter names its own launch: the compact Triton pair
+                # or the fused warp-specialised lane's (tessera#640).  Read
+                # off the object, never derived from the family alone, so a
+                # record says what ran.
+                layer.tessera_decoder = self._native.launch_pair[1]
                 layer.tessera_backend = 'native'
                 return
             if research_selected is not None:
@@ -1275,7 +1291,7 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
             x_native = x.reshape(-1, x.shape[-1])
             if not x_native.is_contiguous():
                 x_native = x_native.contiguous()
-            with torch.profiler.record_function('tessera_native_window_moe'):
+            with torch.profiler.record_function(_profiler_label(self._native)):
                 out = self._native(
                     x_native, topk_ids, topk_weights,
                     swiglu_limit=limit,
@@ -1338,7 +1354,7 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
                 x_native = x.reshape(-1, x.shape[-1])
                 if not x_native.is_contiguous():
                     x_native = x_native.contiguous()
-                with torch.profiler.record_function('tessera_native_window_moe'):
+                with torch.profiler.record_function(_profiler_label(self._native)):
                     return self._native(
                         x_native, ids, weights,
                         swiglu_limit=limit,
@@ -1389,15 +1405,19 @@ def build_tessera_moe_method(scheme: Mapping, prefix: str, mode: str, layer, *,
             try:
                 x2 = x.reshape(-1, x.shape[-1])
                 native = self._native is not None
-                symbol = (WINDOW_MOE_COMPACT_SYMBOL if native
-                          else f"{GEMM_SYMBOL}:{layer.tessera_backend}")
+                if native:
+                    # The adapter's own pair: the compact lane's or the fused
+                    # lane's (tessera#640), whichever process_weights built.
+                    symbol, decoder = self._native.launch_pair
+                else:
+                    symbol = f"{GEMM_SYMBOL}:{layer.tessera_backend}"
+                    decoder = layer.tessera_decoder
                 emit_route(
                     layer, kind="moe", policy=f"{family}:{layer.tessera_mode}",
                     symbol=symbol, tile_m=0,
                     shape=route_shape(x2, layer.tessera_rows, layer.tessera_columns),
                     contract=layer.tessera_activation_contract, state="served", reason=None,
-                    decoder=(native_decoder(family) if native
-                             else layer.tessera_decoder),
+                    decoder=decoder,
                     kernel_schedule=symbol)
             except Exception:  # noqa: BLE001 -- telemetry never breaks a request
                 pass
