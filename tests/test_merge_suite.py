@@ -1342,7 +1342,7 @@ def _gpu_population(path, commit="a" * 40, producer=None, **overrides):
 
     A population the suite publishes from a PrismaBuild snapshot carries the
     sealed action it ran under in ``source_identity.excluded_metadata``:
-    ``suite_source._verified_stamp`` writes the action key and the digest of
+    the source verifier (``pbsnapshot.py verify``, recorded by ``suite_source``) writes the action key and the digest of
     the request's bytes there once it has verified the closure member against
     that request. ``producer=None`` is the shape with no such stamp -- a
     population from before it existed, or one whose source came out
@@ -1973,7 +1973,7 @@ def test_missing_binding_evidence_is_unobserved_not_established(tmp_path):
 def test_a_population_that_names_no_producer_adopts_no_status(tmp_path):
     """A population's stamp is the identifier that binds it to an action.
 
-    ``suite_source._verified_stamp`` writes the sealed action's key and the
+    the source verifier (``pbsnapshot.py verify``, recorded by ``suite_source``) writes the sealed action's key and the
     digest of its request into the population once the closure member is
     verified against that request; a population without it -- one from before
     the stamp, or one whose source came out ``unknown`` -- names no action, so
@@ -2197,7 +2197,7 @@ def _pool_records_for(merge_suite, real, destination, key="beef" + "0" * 60,
     summary line, the counts. Two things a box with no PrismaBuild cannot
     produce are supplied here and named rather than hidden: the sealed request
     and the outcome record, which are the pool's shapes; and the population's
-    **producer stamp**, which ``suite_source._verified_stamp`` writes only for
+    **producer stamp**, which the source verifier (``pbsnapshot.py verify``, recorded by ``suite_source``) writes only for
     a checkout it verified against a sealed action.
 
     The stamp goes into the **file**, and what the reader is handed is the
@@ -2509,3 +2509,26 @@ def test_the_binding_authenticates_the_publication_it_was_given(
         merge_suite._verdict([record])
     assert record["surface_sha256"] == surface_publication.digest_bytes(
         scene["a"]), record
+
+
+@pytest.mark.parametrize("name", ["gpu", "x86"])
+def test_each_arm_declares_the_source_verifier_its_population_binds_on(tmp_path, name):
+    """The resume path binds a population to its producer through the stamp
+    ``excluded_metadata`` records, which exists only when a verifier vouched
+    for it.  An arm that declared none would publish populations that name no
+    producer, so every resumed status would be refused."""
+    import shlex
+    from types import SimpleNamespace
+
+    merge_suite = _module()
+    args = SimpleNamespace(cpus=1, pytest_arg=[], gpu_tag="sparky", mem_gb=4,
+                           checkout=ROOT, timeout_s=300, wait_s=300, dry_run=True)
+    record = merge_suite._submit(name, merge_suite.ARMS[name], args, tmp_path)
+    invocation = shlex.split(record["pbrun"])
+    options = invocation[:invocation.index("--")]
+    environment = [options[index + 1] for index, option in enumerate(options) if option == "--env"]
+    declared = [value for value in environment
+                if value.startswith(merge_suite.VERIFIER_ENV + "=")]
+    assert declared == [f"{merge_suite.VERIFIER_ENV}={shlex.join(merge_suite.SOURCE_VERIFIER)}"]
+    assert record["source_verifier"] == shlex.join(merge_suite.SOURCE_VERIFIER)
+    assert merge_suite.SOURCE_VERIFIER[-1] == "verify"

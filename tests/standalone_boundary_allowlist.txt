@@ -2,10 +2,6 @@
 # One line per occurrence: path<TAB>kind<TAB>value. Delete lines; never add.
 # CI refuses a pull request that adds a line here. The end state is the
 # prismaquant.tessera.v1 wire-ID literals alone (decoupling steps 1 and 5).
-src/tessera/_dev/suite_source.py	literal	prismabuild-fleet
-src/tessera/_dev/suite_source.py	literal	prismaquant.prismabuild.action.v2
-src/tessera/_dev/suite_source.py	literal	prismaquant.prismabuild.code_closure.v1
-src/tessera/_dev/suite_source.py	literal	prismaquant.prismabuild.pbrun_checkout_snapshot.
 src/tessera/encoder_identity.py	literal	prismaquant.tessera.v1
 src/tessera/identity.py	literal	prismaquant.tessera.v1
 src/tessera/manifest.py	literal	prismaquant.tessera.v1
