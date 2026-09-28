@@ -1229,3 +1229,24 @@ def test_a_half_parsed_dispatch_line_is_not_a_known_dispatch() -> None:
     assert read is not None
     assert read["custom_ops"] == ["all"]
     assert read["ir_op_priority"]["rms_norm"] == ["vllm_c"]
+
+
+def test_build_identity_hashing_goes_through_the_chunked_owner(tmp_path, monkeypatch):
+    """#710: _sha256 hashed whole files inline; it delegates to
+    serving_parts.sha256_file now, keeping None for missing files. The
+    golden pins the fixture digest on both spellings (same value today)."""
+    from tessera import serving_parts
+    from tessera.serving import build_identity
+    golden = ("9909ab877b071d38b5c807cd552daacfb2af04fdc0a82c710d31696b338637e9")
+    fixture = tmp_path / "slot.bin"
+    fixture.write_bytes(b"tessera-a3-golden-fixture-contents")
+    assert serving_parts.sha256_file(fixture) == golden
+    assert build_identity._sha256(fixture) == golden
+    assert build_identity._sha256(tmp_path / "absent.bin") is None
+
+    def _boom(path):
+        raise AssertionError("owner not consulted")
+
+    monkeypatch.setattr(build_identity, "sha256_file", _boom)
+    with pytest.raises(AssertionError, match="owner not consulted"):
+        build_identity._sha256(fixture)
