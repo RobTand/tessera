@@ -1,7 +1,8 @@
 """Development infrastructure that is not part of the installed package.
 
 These modules exist for the repository's own tooling -- the merge-suite
-deadline helper, the PrismaBuild source-identity reader, the import-graph
+deadline helper, the suite source identity (which consults a declared
+source verifier, never an executor's records), the import-graph
 analyser behind ``tools/impacted_tests.py``, and the publication line the
 suite's conftest prints and ``tools/merge_suite.py`` reads back.  ``tools/``
 imports them, which is why they live under ``src/`` at all; a consumer of the
