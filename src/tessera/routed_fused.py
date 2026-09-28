@@ -24,9 +24,9 @@ before the reduction -- with three differences a reader must know:
 
 It is a NEW launch identity: ``scheme.ROUTED_FUSED_WINDOW_SYMBOL`` with the
 decoders ``native_routed_fused_window`` (E4M3, epilogue) and
-``native_routed_fused_window_folded`` (BF16, folded), both in
-``scheme.EXPERIMENTAL_LAUNCHES`` until a served census earns them cells.  The
-compact adapter's pairs stay attested and stay the dispatch for every stack
+``native_routed_fused_window_folded`` (BF16, folded), both lane-bearing
+``scheme.ROUTE_LAUNCHES`` rows since contract v42, where the four window routed
+cells name them.  The compact adapter's pairs stay attested and stay the dispatch for every stack
 this lane refuses (:func:`fused_routed_window_supported`) and for
 ``TESSERA_ROUTED_FUSED=0``.
 
