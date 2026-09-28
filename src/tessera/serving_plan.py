@@ -107,7 +107,10 @@ def validate_serving_plan(entries) -> None:
             raise ValueError(
                 f"has an invalid entry {name!r}: grid must be one of the four "
                 f"grid names, got {spec['grid']!r}")
-        from tessera.control import grid_for_name, GrammarError
+        # Torch-free homes: the control imports the encoder (torch), so the
+        # validator resolves grid names through the alphabet (CI ``pure``).
+        from tessera.alphabet import grid_for_name
+        from tessera.errors import GrammarError
         try:
             grid_for_name(spec["grid"])
         except GrammarError as exc:
