@@ -43,11 +43,7 @@ import pytest
 torch = pytest.importorskip("torch")
 safetensors_torch = pytest.importorskip("safetensors.torch")
 
-_spec = importlib.util.spec_from_file_location(
-    "export_tessera_serving",
-    Path(__file__).resolve().parents[1] / "experiments" / "export_tessera_serving.py")
-export = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(export)
+export = importlib.import_module("tessera.export_serving")
 
 HIDDEN, VIS = 128, 64
 

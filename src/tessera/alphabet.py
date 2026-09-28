@@ -87,6 +87,8 @@ __all__ = [
     "build_forest",
     "GAUSSIAN_SOURCE",
     "tuple_grid",
+    "GRID_NAMES",
+    "grid_for_name",
     "lloyd_max_grid",
     "require_hardware_byte_grid",
     "require_mx_grid",
@@ -572,6 +574,44 @@ BF16_GRID = PayloadGrid(
     BF16_VALUES,
     tuple(_bf16_legal(bits) for bits in range(1 << 16)),
 )
+
+_GRID_BY_NAME = {
+    "E2M1": E2M1_GRID,
+    "E4M3": E4M3_GRID,
+    "BF16": BF16_GRID,
+}
+
+#: The exporter's ``--grid`` vocabulary, as one tuple rather than as a sentence
+#: in a refusal message.  A test enumerates it to cross every rung the wire can
+#: emit against the rungs the serving plugin publishes a decode for (#41), so a
+#: grid added here without a served range is a failing test rather than a
+#: checkpoint that refuses at load.
+GRID_NAMES = ("E2M1", "E2M1x2", "E4M3", "BF16")
+
+
+def grid_for_name(name: str) -> PayloadGrid:
+    """``"E2M1x2" -> tuple_grid(E2M1_GRID, 2)``, the exporter's ``--grid`` vocabulary.
+
+    The same four names ``tessera.export_serving`` accepts, so a
+    plan written for the exporter prices here without translation.
+
+    This lives in the alphabet, not the control, because the plan validator
+    (``tessera.serving_plan``) must resolve grid names on the torch-free
+    side of the import boundary (CI ``pure``): the control imports the
+    encoder, and the encoder imports torch.
+    """
+    text = str(name)
+    grid = _GRID_BY_NAME.get(text)
+    if grid is not None:
+        return grid
+    if text.startswith("E2M1x"):
+        suffix = text[len("E2M1x"):]
+        if suffix.isdigit() and int(suffix) >= 1:
+            return tuple_grid(E2M1_GRID, int(suffix))
+    raise GrammarError(
+        f"unknown grid {name!r}; one of {', '.join(GRID_NAMES)} "
+        "(E2M1/E2M1x2 the NVFP4 route, E4M3 the FP8 route, BF16 the 16-bit route)"
+    )
 
 
 def value_order(grid: PayloadGrid = E2M1_GRID) -> tuple[int, ...]:

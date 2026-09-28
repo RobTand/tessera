@@ -215,7 +215,7 @@ TP_STATUSES = (TP_SHARDED, TP_REFUSED)
 #: the native span-2 decoder and ``materialize_stock`` start a row shard from
 #: the same state (held to each other by the tests' reference asset).
 #: It is keyed by ROUTE because family, body and route are one-to-one today
-#: (``export_tessera_serving.check_recipe`` enforces it); a fourth family with
+#: (``tessera.export_serving.check_recipe`` enforces it); a fourth family with
 #: a different body brings its own row.
 ROUTE_TP_AXES: dict[str, dict[str, str]] = {
     TESSERA_NVFP4: {AXIS_ROWS: TP_SHARDED, AXIS_COLUMNS: TP_SHARDED},

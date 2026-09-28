@@ -26,7 +26,7 @@ def activation_source(hpath,authority_path):
 def main(argv=None):
     args=build_parser().parse_args(argv)
     root=Path(__file__).resolve().parents[1]
-    spec=importlib.util.spec_from_file_location('glm_cpu_pack_exporter',root/'experiments/export_tessera_serving.py');exporter=importlib.util.module_from_spec(spec);spec.loader.exec_module(exporter)
+    spec=importlib.util.spec_from_file_location('tessera.export_serving',root/'src/tessera/export_serving.py');exporter=importlib.util.module_from_spec(spec);spec.loader.exec_module(exporter)
     def forbidden(*a,**k):raise AssertionError('reuse-only CPU proof attempted encoding')
     exporter.encode_linear_planes=forbidden
     source=Path('/mnt/shared/models/GLM-5.3-Flash-BF16');index=json.loads((source/'model.safetensors.index.json').read_text())['weight_map']

@@ -187,10 +187,7 @@ torch = pytest.importorskip("torch")
 from safetensors import safe_open  # noqa: E402
 from safetensors.torch import save_file  # noqa: E402
 
-_spec = importlib.util.spec_from_file_location(
-    "export_tessera_serving", ROOT / "experiments" / "export_tessera_serving.py")
-exporter = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(exporter)
+exporter = importlib.import_module("tessera.export_serving")
 
 LAYER = "model.layers.0."
 IN_PROJ_TENSOR = LAYER + "conv.in_proj.weight"

@@ -59,7 +59,9 @@ from tessera.export import DEFAULT_CODE, encode_linear_planes, wire_recipe  # no
 from tessera.fused import shared_input_global_scale  # noqa: E402
 from tessera.stock import (  # noqa: E402
     FLOAT_QUANTIZED, NVFP4_PACK_QUANTIZED, declared_format, materialize_stock,
-    share_global, stock_bytes, stock_dequant, stock_kind, vllm_fp4_predicate)
+    share_global, stock_bytes, stock_dequant, stock_kind, vllm_fp4_predicate,
+    FP8_INPUTS, FP8_WEIGHTS, NVFP4_INPUTS, NVFP4_WEIGHTS, regex_target,
+    stock_quantization_config)
 
 FUSED = (
     (re.compile(r"^(.*\.self_attn\.)(q_proj|k_proj|v_proj)\.weight$"), "qkv_proj",
@@ -68,29 +70,6 @@ FUSED = (
      ("gate_proj", "up_proj")),
 )
 
-#: vLLM's NVFP4 config group, verbatim from a production PrismaQuant export
-#: (fc45-0p6b-nvfp4): tensor_group 16 with an E4M3 block scale, static
-#: per-tensor input global with local (dynamic) per-16 input scales.
-NVFP4_WEIGHTS = {
-    "num_bits": 4, "type": "float", "strategy": "tensor_group", "group_size": 16,
-    "symmetric": True, "dynamic": False,
-    "scale_dtype": "torch.float8_e4m3fn", "zp_dtype": "torch.float8_e4m3fn",
-    "observer": "memoryless_minmax",
-}
-NVFP4_INPUTS = {
-    "num_bits": 4, "type": "float", "strategy": "tensor_group", "group_size": 16,
-    "symmetric": True, "dynamic": "local", "observer": "static_minmax",
-    "scale_dtype": "torch.float8_e4m3fn", "zp_dtype": "torch.float8_e4m3fn",
-}
-#: PrismaQuant's ``FP8_E4M3_SCHEME``: per-channel static weights, per-token
-#: dynamic activations -- vLLM's W8A8 FP8 route.
-FP8_WEIGHTS = {
-    "num_bits": 8, "type": "float", "strategy": "channel",
-    "symmetric": True, "dynamic": False, "observer": "memoryless_minmax",
-}
-FP8_INPUTS = {
-    "num_bits": 8, "type": "float", "strategy": "token", "symmetric": True, "dynamic": True,
-}
 FP8_MAX = 448.0
 
 
@@ -105,10 +84,6 @@ def grid_for(name: str):
 
 def module_of(tensor_name: str) -> str:
     return tensor_name[: -len(".weight")]
-
-
-def regex_target(module: str) -> str:
-    return f"re:^{module.replace('.', '[.]')}$"
 
 
 def fused_key(tensor_name: str):
@@ -139,38 +114,6 @@ def check_fp8_rtn_against_prismaquant(weight: torch.Tensor) -> str:
     if not (same_q and same_s):
         raise SystemExit("the local FP8 RTN is not PrismaQuant's quantize_dequantize_fp8_dynamic")
     return "identical to PrismaQuant's quantize_dequantize_fp8_dynamic on the first Linear"
-
-
-def stock_quantization_config(config_groups, ignore):
-    """The ``quantization_config`` block for these groups, and what it resolves to.
-
-    The top-level ``format`` is DERIVED from the groups (``declared_format``)
-    rather than fixed.  It used to be the constant ``"mixed-precision"``, and
-    the stock NVFP4 twin this exporter writes for the comparator arm is not
-    mixed: one group, every target.  That constant is the whole of vLLM's
-    FP4-model predicate, so our comparator answered False where a uniform-NVFP4
-    checkpoint from anyone else answers True, and the two arms of a speed
-    comparison were not the same compiled graph (#92).
-
-    The resolved predicate travels back beside the block so the manifest records
-    it.  A genuinely mixed artifact still declares ``mixed-precision`` -- that
-    is the honest label -- and this record is what turns the fusion it gives up
-    into a priced property of mixing instead of a silent one.
-
-    Returns ``(None, None)`` when nothing was quantized: such a checkpoint
-    declares no ``quantization_config`` at all, rather than one telling a
-    runtime to look for compressed tensors it does not hold.
-    """
-    if not config_groups:
-        return None, None
-    fmt = declared_format(config_groups)
-    return {
-        "quant_method": "compressed-tensors",
-        "format": fmt,
-        "config_groups": config_groups,
-        "ignore": list(ignore),
-        "quantization_status": "compressed",
-    }, vllm_fp4_predicate("compressed-tensors", fmt)
 
 
 def git_hash() -> str:
