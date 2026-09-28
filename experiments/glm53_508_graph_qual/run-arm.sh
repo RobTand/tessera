@@ -13,6 +13,13 @@ BASE=${BASE:-eager1}
 PORT=${PORT:-8139}
 mkdir -p "$OUT"
 export ARM EAGER COMPILATION_JSON BISECT_ENV OUT PORT
+# An instrumented arm starts the self-test container below, so its image is
+# gated here, before the serve lock (issue #100, experiments/runtime_image.sh):
+# a refusal must not hold the box's one lock. srv-508.sh gates the serve's image.
+if [ "${DIGEST:-0}" = 1 ] || [ "${PROF:-0}" = 1 ] || [ "${HOOKS:-0}" = 1 ]; then
+  source "$HERE/../runtime_image.sh"
+  runtime_image_require "${IMG:?IMG names the arm image}" || exit 2
+fi
 export SERVE_LOCK_OWNER="t508-$ARM" SERVE_LOCK_TIMEOUT=${SERVE_LOCK_TIMEOUT:-900}
 source "$HERE/../serve_lock.sh"
 serve_lock_acquire || { echo "arm $ARM: serve lock unavailable"; exit 3; }

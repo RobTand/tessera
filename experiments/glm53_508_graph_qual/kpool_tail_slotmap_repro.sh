@@ -15,6 +15,11 @@ OUT=$2
 HERE=$(cd "$(dirname "$0")" && pwd)
 TREE=$(cd "$HERE/../.." && pwd)
 mkdir -p "$OUT"
+# Gated like every wrapper that starts a container (issue #100): the digest in
+# IMG is checked against the daemon's RepoDigests and what ran is stamped.
+source "$TREE/experiments/runtime_image.sh"
+runtime_image_require "$IMG" | tee "$OUT/image.txt"
+[ "${PIPESTATUS[0]}" = 0 ] || exit 2
 # The container runs as the invoking user: OUT may be on the root-squashed
 # shared mount, where the image's root cannot write.
 docker run --rm --gpus all --ipc host --network none --user "$(id -u):$(id -g)" \

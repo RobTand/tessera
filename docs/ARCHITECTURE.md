@@ -5,7 +5,7 @@ Re-stamped 2026-09-28 for CUDA graphs in the research GLM53 NoPE backend
 `--enforce-eager`. Under compilation mode NONE it admits CUDA-graph modes
 FULL_DECODE_ONLY, PIECEWISE and FULL_AND_PIECEWISE, and under VLLM_COMPILE it
 admits FULL_DECODE_ONLY, on one measured V2 model runner: the pinned image's
-`v1/worker/gpu/model_runner.py` with vLLM #57317 backported (sha256
+`v1/worker/gpu/model_runner.py` with vllm-project/vllm#57317 backported (sha256
 `1c30b8c0...`, image
 `localhost/prismaquant/spark-vllm-nccl230@sha256:c2e75e03cfc52c15489b40fe58e65acb7347f6fa3ddf2e81afda86760698147b`,
 whose vLLM differs from the stock image `f8dbe1a0...` in that file alone). The
@@ -6263,7 +6263,7 @@ is unchanged.
 tessera#508). Eager, and compilation modes NONE, VLLM_COMPILE and
 DYNAMO_TRACE_ONCE without CUDA graphs, run on any runner. CUDA graphs run on
 vLLM's V2 model runner, without a speculative config, and only on the runner
-source they were measured on: `v1/worker/gpu/model_runner.py` with vLLM #57317
+source they were measured on: `v1/worker/gpu/model_runner.py` with vllm-project/vllm#57317
 backported (`_GRAPH_RUNNER_SHA256`, image
 `localhost/prismaquant/spark-vllm-nccl230@sha256:c2e75e03...`). Under mode
 NONE that admits FULL_DECODE_ONLY, PIECEWISE and FULL_AND_PIECEWISE; under

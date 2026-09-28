@@ -7,6 +7,10 @@
 set -euo pipefail
 IMG=$1; OUT=$(realpath -m "$2")
 here=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# Gated like every wrapper that starts a container (issue #100): the digest in
+# IMG is checked against the daemon's RepoDigests and what ran is stamped.
+source "$here/../runtime_image.sh"
+runtime_image_require "$IMG" || exit 2
 mkdir -p "$OUT/home" "$OUT/tmp"
 CPUS=$(python3 -c 'import os; print(",".join(map(str, sorted(os.sched_getaffinity(0)))))')
 echo "host=$(hostname) cpus=$CPUS image=$IMG"
