@@ -170,13 +170,23 @@ def normalize_reference_load_policy(policy):
     return dict(policy)
 
 
+def v1_seal_header(identity: dict) -> bytes:
+    """The existing v1 seal's first bytes: schema plus identity, one spelling.
+
+    ``export._seal`` and :func:`capture_sha256_from_units` digest these same
+    bytes before framing per-unit commitments. It takes no options: a second
+    spelling is a schema bump, not a caller choice (tessera#708).
+    """
+    return json.dumps({"schema": "tessera.hessian_capture.v1", "identity": identity},
+                      sort_keys=True, default=str).encode()
+
+
 def capture_sha256_from_units(provenance, units):
     """The existing v1 seal, given already bound per-unit tensor commitments."""
     from .export import CAPTURE_CONTEXT, HESSIAN_IDENTITY
     identity = {field: provenance.get(field) for field in (*HESSIAN_IDENTITY, *CAPTURE_CONTEXT)}
     digest = hashlib.sha256()
-    digest.update(json.dumps({'schema': 'tessera.hessian_capture.v1', 'identity': identity},
-                             sort_keys=True, default=str).encode())
+    digest.update(v1_seal_header(identity))
     for name in sorted(units):
         value = units[name]
         if not isinstance(name, str) or not name or not _sha(value):
