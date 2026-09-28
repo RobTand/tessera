@@ -6,16 +6,7 @@ src/tessera/_dev/suite_source.py	literal	prismabuild-fleet
 src/tessera/_dev/suite_source.py	literal	prismaquant.prismabuild.action.v2
 src/tessera/_dev/suite_source.py	literal	prismaquant.prismabuild.code_closure.v1
 src/tessera/_dev/suite_source.py	literal	prismaquant.prismabuild.pbrun_checkout_snapshot.
-src/tessera/cached_unit.py	literal	prismaquant.joint_catalog_extension.v1
-src/tessera/cached_unit.py	literal	prismaquant.joint_catalog_extension.v2
-src/tessera/cached_unit.py	literal	prismaquant.joint_catalog_extension.v3
-src/tessera/cached_unit.py	literal	prismaquant.joint_catalog_source_adoption.v1
-src/tessera/cached_unit.py	literal	prismaquant.joint_served_activation_policy.v1
-src/tessera/cached_unit.py	literal	prismaquant.joint_served_activation_policy.v2
-src/tessera/cached_unit.py	literal	prismaquant.reseal_proof_bundle.v1
-src/tessera/cached_unit.py	literal	prismaquant.t4_adopted_catalog.v1
 src/tessera/encoder_identity.py	literal	prismaquant.tessera.v1
-src/tessera/hessian_capture.py	literal	prismaquant.tessera_calibration_cache.v2
 src/tessera/identity.py	literal	prismaquant.tessera.v1
 src/tessera/manifest.py	literal	prismaquant.tessera.v1
 src/tessera/manifest.py	literal	prismaquant.tessera.v1
