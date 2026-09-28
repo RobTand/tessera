@@ -74,7 +74,10 @@ One thing this deliberately does **not** do is certify serving behaviour.
 imports it the way the runtime does -- but tests that import it are still
 found by the graph, because that is a different question. Selecting the right
 tests is not the same as proving the plugin still serves, and a served check
-remains its own gate.
+remains its own gate. Explicit standalone manual gates stay in the dependency
+graph, but are not pytest targets: the receipt records each reached exclusion
+and its reason. This is not a heuristic that drops files without local test
+functions; imported, generated and inherited pytest cases remain candidates.
 
 So the answer is a *selection plus a verdict*.  When the verdict is
 ``full``, the caller runs everything; a narrowed list is only ever returned
@@ -109,6 +112,17 @@ SKIP_DIRS = {".git", ".claude", "archive", "build", ".venv", "node_modules",
              "muse-out", "worktrees", "__pycache__"}
 # Extensions that cannot change behaviour and never force a full run.
 INERT = {".md", ".txt", ".rst"}
+
+# An explicit interface decision, not a guess at pytest collection. Keep these
+# modules in the graph so changes still select their pytest consumers. This
+# gate runs only through its manual __main__ entry point; selecting it would
+# assert pytest coverage for a file that produces no items.
+MANUAL_GATES = {
+    "tests/test_native_a4_serving.py": (
+        "standalone manual CUDA gate (run_gate under __main__); "
+        "no pytest items; not executed by this selection"
+    ),
+}
 
 # This grammar only identifies metadata that needs verification. It never
 # proves ownership or grants an exclusion: the sealed action does that.
@@ -644,6 +658,12 @@ def select(root: Path, changed: list[str], *, comparison: str = "") -> dict:
             str(q.relative_to(root)) for q in scope.rglob("test_*.py")
         })
 
+    # Apply the explicit interface decision after ALL candidate paths (direct
+    # changes, imports, text reads and conftest scope), never to graph edges.
+    excluded = [{"path": path, "reason": MANUAL_GATES[path]}
+                for path in tests if path in MANUAL_GATES]
+    tests = [path for path in tests if path not in MANUAL_GATES]
+
     # Edges out of a file that is not in this tree cannot be read, so a branch
     # analysed from another checkout is under-approximated.  Say so loudly
     # rather than returning a confidently short list.
@@ -655,6 +675,7 @@ def select(root: Path, changed: list[str], *, comparison: str = "") -> dict:
         "changed": len(changed),
         "comparison": comparison,
         "tests": tests,
+        "excluded_tests": excluded,
         "forces_full": forced,
         "unresolved_file_loaders": sorted(
             str(by_name[name].relative_to(root)) for name in unresolved),
@@ -683,6 +704,8 @@ def select(root: Path, changed: list[str], *, comparison: str = "") -> dict:
             "conservatively select their consumers -- repair "
             + ", ".join(f"{path} ({unreadable[path].split(':', 1)[0]})"
                         for path in unreadable_reached))
+    if excluded:
+        result["reason"] += "; explicit standalone manual gate exclusions are not pytest coverage"
     if scopes:
         result["reason"] += (
             "; a changed path reaches a conftest, which pytest imports for "
@@ -731,6 +754,10 @@ def main() -> int:
                   "(dependency kept, target unnamed):")
             for path in result["unplaced_data_reads"]:
                 print(f"  {path}")
+        if result["excluded_tests"]:
+            print(f"excluded pytest targets ({len(result['excluded_tests'])}):")
+            for excluded in result["excluded_tests"]:
+                print(f"  {excluded['path']}: {excluded['reason']}")
         if forced:
             print("forces full run:")
             for f in forced:
