@@ -38,8 +38,9 @@ row that is queued and has not run.
   0.35x to 0.63x of its time (M = 1 and 2048). The shipped kernel's numbers
   are queued.
 - Correctness holds at this kernel. The routed oracle passes on real layer-3
-  experts at R832, R1024 and R1088, and the dense oracle passes on stub B's
-  q256 1024 modules. The GPU tests pass except one master test that #610
+  experts at R832, R1024 and R1088, and the dense oracle passes on all 16 of
+  stub B's dense modules, 13 of them mixed-rate. The GPU tests pass except
+  one master test that #610
   tracks. The mixed-rate CUDA-graph test replays bitwise equal to eager at all
   six capture rungs in both families. See [GPU tests](#gpu-tests-image-x).
 - Not run: the served route census, R768 and R1152 on real weights (no wire
@@ -104,9 +105,9 @@ What each rate rests on:
 - Real GLM-5.3-Flash experts (layer 3): the routed oracle passes at R832,
   R1024 and R1088 at this kernel; the first cut passed it at R832 and R928.
   The profile rows cover R832, R1024 and R1088.
-- Stub B's dense modules: the dense oracle passes on the three q256 1024
-  modules at this head; its row over the thirteen mixed-rate modules (q256
-  832, 880, 960 and 1088) is PENDING.
+- Stub B's dense modules: the dense oracle passes on all 16 at this head,
+  the three q256 1024 modules and the 13 mixed-rate ones at q256 832, 880,
+  960 and 1088 (rates 3/4 and 4/5, both families).
 - Synthetic wire, on the device, for every other rate: the GPU tests run the
   same launches against the one-hot decode oracle (bit-exact), the derived
   bound and the Triton lane. `test_routed_fused_window.py` covers `Q256_CASES`
@@ -343,9 +344,16 @@ deltas exactly:
 | shared-expert down, TP2 (each rank) | 1024 | 1 | 34,340 B | 32,772 B |
 | shared-expert gate/up, TP1 and TP2 | 4096 | 2 | 77,896 B | 65,544 B |
 
-The thirteen mixed-rate dense modules of stub B (layers 0-2 dense MLP at q256
-832, 960 and 1088; the shared experts of layers 3, 4 and 6 at 832, 960 and
-1088; layer 7's shared-expert down at 880) are PENDING in row `158b5f00...`.
+The same oracle over the 13 mixed-rate dense modules of stub B, selected
+with `--modules` (row `158b5f00...`, tree `db68eaec47`), passes all 221
+cases. The modules are the dense MLP of layers 0-2 at q256 832, 960 and 1088
+(gate/up E4M3 with two 12,288-row roles, down BF16 at K 12,288), the shared
+experts of layers 3, 4 and 6 at the same rungs (down E4M3, gate/up BF16), and
+layer 7's shared-expert down (BF16, q256 880). Every case took the fused
+lane, over two-run tables at rates 3/4 and 4/5. There is no bound violation
+on either lane; the worst max|d|/bound is 0.860 on both, and the fused lane
+is within 1 bf16 ulp of the row max of the Triton lane. Every case is
+deterministic and holds the corrected residency identity.
 
 ## GPU tests (image X)
 
@@ -506,7 +514,7 @@ and census files: 358 passed, 164 skipped for want of CUDA or vLLM, rows
 | GPU tests | `f34062c1...` / `bbe52a6e...` | `46969f127e` / `546e706c2d` | executed: 444 passed, 1 skipped, 1 failed (#610) on each |
 | Oracle R832, R1024, R1088 | `4c4fbb73...`, `760bfe84...`, `818fc173...` | `46969f127e` | executed, pass |
 | Dense oracle, q256 1024 | `129ab8c4...` / `6dc60623...` | `46969f127e` / `546e706c2d` | failed on the residency identity alone / pass |
-| Dense oracle, mixed rates | `158b5f00...` | `db68eaec47` | PENDING |
+| Dense oracle, mixed rates | `158b5f00...` | `db68eaec47` | executed, pass (221 cases) |
 | R1024 profile | `5e701e17...` | this head | PENDING |
 | R1024 profile | `7d038d36...` | master `f4ec39f21d` | PENDING |
 | R1024 profile | `eb47821f...` | 16-byte `6453424013` | PENDING |
