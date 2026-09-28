@@ -3301,9 +3301,11 @@ is the one the family already publishes.
 same attribute, and it is the default (tessera#640, contract v42).**
 `PackedWindowMoeBundles.adapter` asks `routed_fused.fused_routed_window_
 supported` whether the loaded stack is one the fused lane serves -- every
-column at rate 4, `window_bits` 14, window body, channel plane, no decoration,
-the E4M3 quantizer native, `intermediate % 64 == 0`, `hidden % 128 == 0`,
-the predicate `native_extensions[].lane.requires` publishes -- and builds
+column at a rate in `ROUTED_LANE_RATES` (1..5 since contract v45, tessera#694;
+rate 4 everywhere before it), `window_bits` 14, window body, channel plane, no
+decoration, the E4M3 quantizer native, `intermediate % 64 == 0`, `hidden % 128
+== 0`, the predicate `native_extensions[].lane.requires` publishes
+(`column_rates` for the wire, `column_rates_routed_moe` for this launch) -- and builds
 `tessera.routed_fused.FusedRoutedWindowMoE` when it is, the compact
 `NativeWindowMoE` otherwise, logging the refusal reason at INFO.
 `TESSERA_ROUTED_FUSED=0` keeps the compact adapter for every stack. The fused
@@ -3336,8 +3338,10 @@ the compact pair, since the same change), and the forward runs under its own
 adapter's. Both pairs sit in `scheme.ROUTE_LAUNCHES` as the first
 LANE-BEARING rows since v31: each names the extension it needs, so
 `_validate_cell_executes` derives the fused pair only at a rung the
-extension's own `lane.requires` admits (`contract._lanes_a_rung_reaches`:
-q256 1024, not the mixed-rate 896), and the compact rows keep
+extension's own `lane.requires` admits (`contract._lanes_a_rung_reaches`,
+which since v45 reads the cell's structure: a routed cell reaches the lane only
+where every rate of the rung is in `column_rates_routed_moe`, a dense cell
+wherever every rate is in `column_rates`), and the compact rows keep
 `when_lane_absent` False because the compact adapter still runs beside the
 lane -- for the stacks the predicate refuses and for the opt-out. A TP1 eager
 resident route census of the rate-4 u1 stub B on the GLM serving image
@@ -3379,11 +3383,12 @@ M = 2048) for a model-forward patch and a changed census module count; instead
 `native_window.PreparedDenseNativeModule` runs each role as one op into its
 column slice of one `[M, rows]` output (`tessera::fused_window_dense`, a custom
 op like `window_gemm_dense`). The lane is decided once per module at weight
-load by `_decide_lane` over `routed_fused.fused_dense_window_supported` (rate 4
-in every column of every role, rows a multiple of 128, columns a multiple of 32
-and at least 128, window 14, the identity column order, the family's
-arithmetic -- `epilogue` for E4M3, `folded` for value -- and a bundle prepared
-with the attested native quantiser); a refusal names its reason
+load by `_decide_lane` over `routed_fused.fused_dense_window_supported` (every
+column of every role at a rate in 1..8 -- rate 4 only before v45 -- rows a
+multiple of 128, columns a multiple of 32 and at least 128, window 14, the
+identity column order, the family's arithmetic -- `epilogue` for E4M3, `folded`
+for value -- a bundle prepared with the attested native quantiser, and a
+word-stage slot the device's shared memory holds); a refusal names its reason
 (`lane_reason`, logged), `TESSERA_DENSE_FUSED=0` keeps the Triton lane for
 every module, and a build failure of the library after admission is the
 published `when_unavailable` substitution. The module answers its own
@@ -3417,10 +3422,46 @@ gap from the CUDA wheel's headers for the census container and is a no-op
 where `/usr/local/cuda/include` is complete. The served-path oracle
 (`experiments/dense_fused_oracle.py`, `tests/test_dense_fused_window.py`),
 profiles, NCU, census and bench receipts are recorded in
-`docs/measurements/2026-09-28-dense-fused-window.md`. The lane covers rate 4
-only, on both structures; the mixed-rate rungs the allocator prices (832-1088
-today) stay on the Triton GEMM and the compact adapter, which is the next
-kernel change (tessera#690).
+`docs/measurements/2026-09-28-dense-fused-window.md`.
+
+**Mixed rates (contract v45, tessera#694).** The kernel's run table was never
+rate-4-only -- a column block is a pair of runs `(r_lo, n_lo, r_hi, n_hi)` and
+`decode_rows<FP8, R>` exists for R in 1..8 -- but its word ring was sized for
+rate 4 and its shared-memory layout was fixed, so the predicate admitted rate 4
+alone. Since v45 the word stages are sized per launch: `Params::slot_words`
+carries `slot_words_for_rate(r) = 2r + (8r % 32 != 0)` words per (column,
+8-row group) rounded up to 4 for the larger rate of the pair (`routed_fused.
+slot_words_for_pair`), a `Layout<MODE>` template places the tables, B and A
+stages, scales, descriptors and the claim counter ahead of the word ring, and
+`smem_bytes(mode, slot) = SMEM_FIXED[mode] + WORD_STAGES * 2 * BK * slot * 4`
+is the dynamic shared memory the launch requests (91,216 B fixed for the
+two-table gate/up modes, 58,448 B for down; `SLOT_WORDS_MAX` 16). The device
+decides the rates: sm_121 grants 101,376 B per block
+(`cudaDevAttrMaxSharedMemoryPerBlockOptin`), so the gate/up launch holds slot
+8 (97,360 B; rates 1-4) and slot 12 (100,432 B; rate 5) and not slot 16
+(103,504 B; rates 6-8), while the one-table down launch holds every slot
+(70,736 B at 16). `ROUTED_LANE_RATES` is derived from exactly that inequality
+-- `(1, 2, 3, 4, 5)` -- and the dense identity, which runs each role in its own
+launch and so has no two-table gate/up mode, reaches 1..8. A routed stack whose
+larger rate is 6-8 keeps the compact adapter, and the predicate names the slot
+and the bytes; it may JIT-build the extension to ask the device (a first call
+on a cold cache pays nvcc). One correctness fix rode along: the previous window
+word was loaded for the first 8-row group only, but a field's 14-bit window
+reaches 13 bits before it, so at rate 1 the groups whose window starts inside
+the half's first word (`8 * j * rate < 32`) read a stale word; every such
+group now loads it. Because one lane serves both structures and the
+contract's `executes` list is the census's admissible set, the two fused
+entries publish `lane.requires.column_rates_routed_moe = [1..5]` beside
+`column_rates = [1..8]`: `scheme.decide_lane_requirements` decides it only
+over a `routed_moe` structure fact and refuses by name without one,
+`_lanes_a_rung_reaches` and the export plan gate pass the cell's structure,
+and the validator holds the field to an ascending subset of `column_rates`.
+The field is not additive for a v44 reader or for PrismaQuant's mirror of the
+roster (`lane_eligibility.LANE_REQUIREMENT_FIELDS`, `tessera_render.
+planned_wire_facts`, which must also carry the structure fact), which is why
+the version moved. Served-path receipts: `docs/measurements/2026-09-28-mixed-
+rate-fused-window.md`. E2M1 fused stays parked; the E2M1_K2 routed stacks stay
+on the A4 span-2 grouped path.
 
 ### 3.4 Declared weight transforms are refused at the materialisation boundary
 

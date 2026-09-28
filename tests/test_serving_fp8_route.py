@@ -181,8 +181,12 @@ FP8_MAX = 448.0
 
 
 def _reference_fp8_quant(x):
-    """Per-token dynamic E4M3 (the arithmetic of vLLM's op), recording the value
-    it represents so the expectation is the A side the route consumed."""
+    """The tests' own per-token dynamic E4M3 quantiser, recording the value it
+    represents so the expectation is the A side the route consumed.  It is NOT
+    vLLM's op's arithmetic: the op divides where this multiplies by a
+    reciprocal and floors its scale at 1 / (448 * 512); the oracles here feed
+    the same codes to both sides, so the difference is invisible to them and
+    is held by ``tests/test_native_fp8_quant.py`` instead."""
     xf = x.float()
     amax = xf.abs().amax(dim=1, keepdim=True).clamp_min(1e-12)
     scale = amax / FP8_MAX
