@@ -30,11 +30,7 @@ def _api():
 
 
 def _exporter():
-    spec = importlib.util.spec_from_file_location(
-        "cached_test_exporter", ROOT / "experiments/export_tessera_serving.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return importlib.import_module("tessera.export_serving")
 
 
 @pytest.fixture(scope="module")

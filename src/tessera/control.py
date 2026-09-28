@@ -75,7 +75,10 @@ from fractions import Fraction
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
 
-from .alphabet import BF16_GRID, E2M1_GRID, E4M3_GRID, PayloadGrid, tuple_grid
+# ``GRID_NAMES`` and ``grid_for_name`` live in the alphabet (torch-free) and
+# are re-exported here, so every existing ``control.grid_for_name`` caller
+# keeps working while the plan validator imports them without torch.
+from .alphabet import GRID_NAMES, PayloadGrid, grid_for_name
 from .calculator import terminal_rate
 from .encode import LUT_LANDING_MODES, LUT_LANDING_WIRE
 from .errors import (
@@ -142,19 +145,6 @@ DEFAULT_MAX_RELATIVE_SLACK = Fraction(1, 1000)
 #: takes the heaviest rung that does not outweigh the candidate, for a claim
 #: that must be conservative against the allocation whatever the outcome.
 MATCH_RULES = ("nearest", "no_larger")
-
-_GRID_BY_NAME = {
-    "E2M1": E2M1_GRID,
-    "E4M3": E4M3_GRID,
-    "BF16": BF16_GRID,
-}
-
-#: The exporter's ``--grid`` vocabulary, as one tuple rather than as a sentence
-#: in a refusal message.  A test enumerates it to cross every rung the wire can
-#: emit against the rungs the serving plugin publishes a decode for (#41), so a
-#: grid added here without a served range is a failing test rather than a
-#: checkpoint that refuses at load.
-GRID_NAMES = ("E2M1", "E2M1x2", "E4M3", "BF16")
 
 _BITS_CACHE: "dict[tuple, Fraction]" = {}
 
@@ -383,26 +373,6 @@ def _unit_ratios(values, *, where: str) -> "tuple[float, ...]":
 def _unit_geomean(ratios: "Sequence[float]") -> float:
     """The geometric mean of a unit set, in logs so a long set does not drift."""
     return math.exp(math.fsum(math.log(r) for r in ratios) / len(ratios))
-
-
-def grid_for_name(name: str) -> PayloadGrid:
-    """``"E2M1x2" -> tuple_grid(E2M1_GRID, 2)``, the exporter's ``--grid`` vocabulary.
-
-    The same four names ``experiments/export_tessera_serving.py`` accepts, so a
-    plan written for the exporter prices here without translation.
-    """
-    text = str(name)
-    grid = _GRID_BY_NAME.get(text)
-    if grid is not None:
-        return grid
-    if text.startswith("E2M1x"):
-        suffix = text[len("E2M1x"):]
-        if suffix.isdigit() and int(suffix) >= 1:
-            return tuple_grid(E2M1_GRID, int(suffix))
-    raise GrammarError(
-        f"unknown grid {name!r}; one of {', '.join(GRID_NAMES)} "
-        "(E2M1/E2M1x2 the NVFP4 route, E4M3 the FP8 route, BF16 the 16-bit route)"
-    )
 
 
 def unit_wire_bits(grid: "str | PayloadGrid", q256: int, rows: int, columns: int) -> Fraction:

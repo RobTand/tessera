@@ -46,11 +46,7 @@ E4M3 = grid_for_name("E4M3")
 
 
 def _exporter():
-    spec = importlib.util.spec_from_file_location(
-        "export_tessera_serving", ROOT / "experiments" / "export_tessera_serving.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return importlib.import_module("tessera.export_serving")
 
 
 # --------------------------------------------------------------------------
@@ -270,7 +266,7 @@ def test_the_exporter_accepts_the_plan_at_a_rung_the_lane_reads(tmp_path, monkey
 
 def test_require_lane_is_stamped_into_the_artifact():
     """The requirement must travel with the BYTES, not with a shell history."""
-    source = (ROOT / "experiments" / "export_tessera_serving.py").read_text()
+    source = (ROOT / "src/tessera/export_serving.py").read_text()
     assert '"requires_lanes": required_lanes,' in source
 
 

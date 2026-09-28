@@ -11,10 +11,7 @@ from tessera.errors import GrammarError
 from tessera.export import ActivationSource
 
 ROOT = Path(__file__).resolve().parents[1]
-_spec = importlib.util.spec_from_file_location(
-    "priced_inputs_exporter", ROOT / "experiments/export_tessera_serving.py")
-exporter = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(exporter)
+exporter = importlib.import_module("tessera.export_serving")
 KEY = "unit.input_global_scale"
 IDENTITY = {"text_sha256": "a" * 64, "fit_ids_sha256": "b" * 64, "fit_tokens": 4}
 

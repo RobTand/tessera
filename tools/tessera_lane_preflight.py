@@ -40,7 +40,7 @@ on an artifact somebody else built.
 
 ``--manifest-lanes`` restricts the check to the lanes the artifact itself
 declares (``tessera_serving_manifest.json``'s ``requires_lanes``, stamped by
-``experiments/export_tessera_serving.py --require-lane``), which is the form a
+``tessera.export_serving --require-lane``), which is the form a
 build pipeline wants: check what the producer promised.
 """
 from __future__ import annotations
