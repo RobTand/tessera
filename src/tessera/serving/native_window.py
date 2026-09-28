@@ -183,7 +183,9 @@ def _fused_window_dense(
     a_scale: Optional[torch.Tensor],
     words: List[torch.Tensor], tables: List[torch.Tensor], inits: List[torch.Tensor],
     has_inits: List[torch.Tensor], wscales: List[torch.Tensor],
-    role_rows: List[int], cols: int, family_e4m3: bool, folded: bool,
+    runs: List[torch.Tensor], bdescs: List[torch.Tensor],
+    role_rows: List[int], tile_words: List[int], slot_words: List[int],
+    cols: int, family_e4m3: bool, folded: bool,
 ) -> torch.Tensor:
     """A whole module through the fused window kernel's dense case: one node.
 
@@ -193,9 +195,13 @@ def _fused_window_dense(
     into its column slice of the one ``[M, sum(rows)]`` output; the work
     counter the kernel claims items through is allocated here per call and
     zeroed in-stream, so the op stays functional (nothing outside it is
-    mutated) and a captured forward replays.  ``folded`` is carried for the
-    same reason the Triton op carries it: the family fixes it, and a rebuilt
-    role cannot run a different arithmetic than the prepared one.
+    mutated) and a captured forward replays.  ``runs``, ``bdescs``,
+    ``tile_words`` and ``slot_words`` are each role's run pair, block
+    descriptor, tile stride and word-stage slot (tessera#694): the kernel
+    reads the wire's rates from them, so they travel with the role like every
+    other frozen input.  ``folded`` is carried for the same reason the Triton
+    op carries it: the family fixes it, and a rebuilt role cannot run a
+    different arithmetic than the prepared one.
     """
     from .. import routed_fused as rf
 
@@ -212,15 +218,16 @@ def _fused_window_dense(
     for i, rows in enumerate(role_rows):
         role = rf.FusedDenseWindowRole(
             family=family, rows=int(rows), cols=int(cols), words=words[i], table16=tables[i],
-            init=inits[i], has_init=has_inits[i], wscale=wscales[i])
+            init=inits[i], has_init=has_inits[i], wscale=wscales[i],
+            runs=runs[i], bdesc=bdescs[i], tile_words=int(tile_words[i]), slot_words=int(slot_words[i]))
         rf.dense_forward(role, x, a_scale, out.narrow(1, offset, int(rows)), counter[i:i + 1])
         offset += int(rows)
     return out
 
 
 @_fused_window_dense.register_fake
-def _fused_window_dense_fake(x, a_scale, words, tables, inits, has_inits, wscales,
-                             role_rows, cols, family_e4m3, folded):
+def _fused_window_dense_fake(x, a_scale, words, tables, inits, has_inits, wscales, runs, bdescs,
+                             role_rows, tile_words, slot_words, cols, family_e4m3, folded):
     return torch.empty((x.shape[0], int(sum(role_rows))), dtype=torch.bfloat16, device=x.device)
 
 
@@ -334,7 +341,9 @@ class PreparedDenseNativeModule:
             return _fused_window_dense(
                 x, a_scale, [f.words for f in fused], [f.table16 for f in fused],
                 [f.init for f in fused], [f.has_init for f in fused], [f.wscale for f in fused],
-                [int(f.rows) for f in fused], int(self.__columns), self.__family == "e4m3",
+                [f.runs for f in fused], [f.bdesc for f in fused],
+                [int(f.rows) for f in fused], [int(f.tile_words) for f in fused],
+                [int(f.slot_words) for f in fused], int(self.__columns), self.__family == "e4m3",
                 self.__arithmetic == "folded")
         parts = []
         for role in self.__roles:

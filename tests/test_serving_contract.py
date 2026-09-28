@@ -1133,11 +1133,15 @@ def test_cell_launch_derivation_uses_the_cells_structure(contract, regime):
     synthetic["executes"] = [compact]
     with pytest.raises(ValueError, match="executes"):
         _validate_cell_executes(synthetic, "TESSERA_FP8", entry, contract, "synthetic")
-    # At q256 896 the rate set is {3, 4}; the lane reads rate-4 columns only,
-    # so the rung does not reach it and the compact launch is the whole set.
-    mixed = dict(synthetic, rungs_q256=[896], executes=[compact])
+    # At q256 896 the rate set is {3, 4}.  Since contract v45 (tessera#694)
+    # the lane reads every rate 1..8 -- the wire's own run table -- so the
+    # mixed rung reaches it as q256 1024 does and both launches are the set;
+    # a claim of the compact launch alone is refused there too.  (At v42-v44
+    # the lane read rate-4 columns only and the compact launch was the whole
+    # set at 896; the derivation followed lane.requires then as now.)
+    mixed = dict(synthetic, rungs_q256=[896], executes=[compact, fused])
     _validate_cell_executes(mixed, "TESSERA_FP8", entry, contract, "synthetic")
-    mixed["executes"] = [compact, fused]
+    mixed["executes"] = [compact]
     with pytest.raises(ValueError, match="executes"):
         _validate_cell_executes(mixed, "TESSERA_FP8", entry, contract, "synthetic")
     synthetic["executes"] = [compact, fused]

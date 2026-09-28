@@ -697,7 +697,8 @@ def test_a_row_stride_that_is_only_even_takes_the_unsplit_path(family):
     with pytest.raises(RuntimeError, match="multiple of 4"):
         lib.dense_forward(bool(role.fp8), xq, a if a is not None else empty,
                           role.words, role.table16, role.init, role.has_init, role.wscale,
-                          role.runs, role.bdesc, int(role.tile_words), counter, s, partial, view, sms)
+                          role.runs, role.bdesc, int(role.tile_words), int(role.slot_words), counter, s,
+                          partial, view, sms)
 
 
 def test_the_run_pair_and_block_descriptor_are_the_packers_layout():

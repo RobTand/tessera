@@ -115,16 +115,67 @@ BK = 32
 RATE_MIN = 1
 RATE_MAX = 8
 RATES = tuple(range(RATE_MIN, RATE_MAX + 1))
-SLOT_WORDS = 2 * RATE_MAX             # int32 words per (half, column) stage slot
+SLOT_WORDS_MAX = 2 * RATE_MAX         # the rate-8 word-stage slot, int32 words per (half, column)
 BDESC_INTS = 12                       # int32 words per 32-column block descriptor
 WINDOW_BITS = 14
 TABLE_ENTRIES = 1 << WINDOW_BITS
 MIN_COLS = 4 * BK
+#: The kernel's shared-memory layout, restated for the support predicates (the
+#: library's attributes are checked against these at load): the word stages
+#: come last and are sized per launch by the stack's rates, so the fixed part
+#: is ``SMEM_FIXED[mode]`` (two 32 KB tables for gate/up, one for down/dense)
+#: and a launch needs ``SMEM_FIXED[mode] + WORD_STAGES * 2 * BK * slot_words * 4``
+#: bytes.  A block on sm_121 may opt in to 101,376 B, so the gate/up launch
+#: fits slots up to 12 words (rates <= 5) and the down/dense launch every rate.
+WORD_STAGES = 3
+SMEM_FIXED = {0: 91_216, 1: 91_216, 2: 58_448}
 
 
 def chunk_words(rate: int) -> int:
     """int32 words one column at ``rate`` occupies per 512-row tile."""
     return 16 * int(rate)
+
+
+def slot_words_for_rate(rate: int) -> int:
+    """The word-stage slot one column at ``rate`` needs: its ``2 * rate`` words
+    plus the one word a lane's re-aligned window reads past them when
+    ``8 * rate`` is not a multiple of 32 (those bits enter no field)."""
+    rate = int(rate)
+    return 2 * rate + (1 if (8 * rate) % 32 else 0)
+
+
+def slot_words_for_pair(pair: torch.Tensor) -> int:
+    """The launch's slot: the larger of the two rates' slots, rounded up to a
+    multiple of 4 (16-byte copies stay aligned), at least 4."""
+    r_lo, _c0, _n_lo, _w0, r_hi, _c1, n_hi, _w1 = (int(v) for v in pair.reshape(8).tolist())
+    need = max(slot_words_for_rate(r_lo), slot_words_for_rate(r_hi) if n_hi > 0 else 0, 4)
+    return -(-need // 4) * 4
+
+
+def smem_bytes(mode: int, slot_words: int) -> int:
+    """Dynamic shared memory the launch of ``mode`` needs at ``slot_words``-word slots."""
+    return SMEM_FIXED[int(mode)] + WORD_STAGES * 2 * BK * int(slot_words) * 4
+
+
+def smem_reason(mode: int, slot_words: int, device: torch.device, family: str) -> "str | None":
+    """Why the launch does not fit the device's opt-in shared-memory limit, or ``None``.
+
+    The limit is read from the built library (``cudaDevAttrMaxSharedMemoryPer
+    BlockOptin``; torch publishes no such property).  A library that cannot be
+    built answers ``None`` here: the build failure is the caller's, reported
+    where the adapter is constructed, not a lane refusal.
+    """
+    try:
+        lib = _ext(family)
+    except Exception:  # noqa: BLE001 -- the build's failure is reported by from_bundles
+        return None
+    index = device.index if device.index is not None else torch.cuda.current_device()
+    need, have = smem_bytes(mode, slot_words), int(lib.max_dynamic_smem_bytes(index))
+    if need <= have:
+        return None
+    what = "gate/up" if mode != 2 else "down/dense"
+    return (f"the {what} launch at {slot_words}-word slots needs {need} bytes of shared memory "
+            f"per block and this device allows {have}")
 
 
 def fused_routed_window_enabled() -> bool:
@@ -218,8 +269,10 @@ def _ext(family: str):
             f"this process's device is {probed}; the library under {build} is a compile-gate "
             "artifact and is refused as a serving path.")
     for name, want in (("BM", BM), ("BN", BN), ("HALF", HALF), ("BK", BK),
-                       ("RATE_MIN", RATE_MIN), ("RATE_MAX", RATE_MAX), ("SLOT_WORDS", SLOT_WORDS),
-                       ("BDESC_INTS", BDESC_INTS), ("WINDOW_BITS", WINDOW_BITS), ("FAMILY_FP8", fp8)):
+                       ("RATE_MIN", RATE_MIN), ("RATE_MAX", RATE_MAX), ("SLOT_WORDS_MAX", SLOT_WORDS_MAX),
+                       ("BDESC_INTS", BDESC_INTS), ("WINDOW_BITS", WINDOW_BITS), ("FAMILY_FP8", fp8),
+                       ("WORD_STAGES", WORD_STAGES), ("SMEM_FIXED_GATE_UP", SMEM_FIXED[0]),
+                       ("SMEM_FIXED_DOWN", SMEM_FIXED[2])):
         if getattr(lib, name) != want:
             raise GrammarError(
                 f"{module} was built with {name}={getattr(lib, name)!r}; this module expects {want!r}")
@@ -446,6 +499,12 @@ def fused_routed_window_supported(gate, up, down) -> "str | None":
     if int(gate.tile_words[0]) != int(up.tile_words[0]):
         return (f"gate tile_words {int(gate.tile_words[0])} != up tile_words {int(up.tile_words[0])}; "
                 "the gate/up launch reads one tile stride for both")
+    # The word-stage slot each launch needs, against the device's shared memory.
+    for mode, bs in ((0, (gate, up)), (2, (down,))):
+        slot = max(slot_words_for_pair(run_pair(b.runs_all.reshape(e, -1, 4)[0], b.cols)[0]) for b in bs)
+        why = smem_reason(mode, slot, down.device, fam)
+        if why is not None:
+            return why
     return None
 
 
@@ -506,6 +565,8 @@ class FusedRoutedWindowMoE:
     bdesc_down: torch.Tensor
     tile_words_gate_up: int
     tile_words_down: int
+    slot_words_gate_up: int
+    slot_words_down: int
     counters: torch.Tensor
     activation: str = "silu"
 
@@ -529,11 +590,11 @@ class FusedRoutedWindowMoE:
             assert pair is not None, why          # the predicate above admitted it
             return (pair.reshape(1, 8).expand(e, 8).contiguous(),
                     block_desc(b.perm_all, int(pair[2]), int(b.cols)),
-                    pair_tile_words(pair))
+                    pair_tile_words(pair), slot_words_for_pair(pair))
 
-        runs_gate, bdesc_gate, tw_gate = tables(gate)
-        runs_up, bdesc_up, _tw_up = tables(up)
-        runs_down, bdesc_down, tw_down = tables(down)
+        runs_gate, bdesc_gate, tw_gate, sw_gate = tables(gate)
+        runs_up, bdesc_up, _tw_up, sw_up = tables(up)
+        runs_down, bdesc_down, tw_down, sw_down = tables(down)
         return cls(gate=gate, up=up, down=down, family=down.family, arithmetic=down.arithmetic,
                    table_gate=compose_table16(gate), table_up=compose_table16(up),
                    table_down=compose_table16(down),
@@ -542,6 +603,7 @@ class FusedRoutedWindowMoE:
                    runs_gate=runs_gate, runs_up=runs_up, runs_down=runs_down,
                    bdesc_gate=bdesc_gate, bdesc_up=bdesc_up, bdesc_down=bdesc_down,
                    tile_words_gate_up=tw_gate, tile_words_down=tw_down,
+                   slot_words_gate_up=max(sw_gate, sw_up), slot_words_down=sw_down,
                    counters=torch.zeros(2, dtype=torch.int32, device=down.device),
                    activation=activation)
 
@@ -617,14 +679,14 @@ class FusedRoutedWindowMoE:
             t0 = t1 = self.table_down
             r0 = r1 = self.runs_down
             d0 = d1 = self.bdesc_down
-            tile_words = self.tile_words_down
+            tile_words, slot_words = self.tile_words_down, self.slot_words_down
         else:
             b0, b1 = self.gate, self.up
             w0, w1 = self.words_gate, self.words_up
             t0, t1 = self.table_gate, self.table_up
             r0, r1 = self.runs_gate, self.runs_up
             d0, d1 = self.bdesc_gate, self.bdesc_up
-            tile_words = self.tile_words_gate_up
+            tile_words, slot_words = self.tile_words_gate_up, self.slot_words_gate_up
         empty = self.counters.new_zeros(0, dtype=torch.float32)
         slot = self.counters[counter:counter + 1]
         slot.zero_()   # in-stream: a captured forward replays with a fresh work list
@@ -636,7 +698,7 @@ class FusedRoutedWindowMoE:
             b0.init_all, b1.init_all, b0.has_init, b1.has_init,
             b0.scale_all, b1.scale_all,
             r0, r1, d0, d1,
-            int(tile_words),
+            int(tile_words), int(slot_words),
             routing.offsets, routing.flat_sorted, routing.rw_sorted, routing.item_off,
             slot,
             int(routing.top_k), int(a_row_mode), bool(mul_weight), float(limit),
@@ -803,6 +865,9 @@ def fused_dense_window_supported(bundle) -> "str | None":
         return f"{why}; the kernel reads the packer's column order"
     if int(bundle.tile_words) != pair_tile_words(pair):
         return f"tile_words {bundle.tile_words} is not {pair_tile_words(pair)} (from the run table)"
+    why = smem_reason(2, slot_words_for_pair(pair), bundle.device, fam)
+    if why is not None:
+        return why
     if bundle.init_perm.dtype != torch.int32 or bundle.init_perm.numel() != cols:
         return "init_perm must be int32 [cols]"
     if bundle.scale.dtype != torch.float32 or bundle.scale.numel() != rows:
@@ -850,6 +915,7 @@ class FusedDenseWindowRole:
     runs: torch.Tensor        # int32 [1, 8]
     bdesc: torch.Tensor       # int32 [1, K / 32, BDESC_INTS]
     tile_words: int
+    slot_words: int
 
     @property
     def fp8(self) -> bool:
@@ -879,7 +945,7 @@ def prepare_dense_role(bundle) -> FusedDenseWindowRole:
         has_init=torch.tensor([1 if bundle.has_init else 0], dtype=torch.int32, device=device),
         wscale=bundle.scale.reshape(1, -1),
         runs=pair.reshape(1, 8), bdesc=block_desc(bundle.perm, int(pair[2]), cols),
-        tile_words=pair_tile_words(pair))
+        tile_words=pair_tile_words(pair), slot_words=slot_words_for_pair(pair))
 
 
 def dense_k_split(m: int, rows: int, cols: int, sms: int, *, tile_words: "int | None" = None) -> int:
@@ -944,4 +1010,4 @@ def dense_forward(role: FusedDenseWindowRole, x: torch.Tensor, a_scale: "torch.T
     lib.dense_forward(
         bool(role.fp8), x, a_scale if a_scale is not None else empty,
         role.words, role.table16, role.init, role.has_init, role.wscale,
-        role.runs, role.bdesc, int(role.tile_words), slot, int(s), partial, out, sms)
+        role.runs, role.bdesc, int(role.tile_words), int(role.slot_words), slot, int(s), partial, out, sms)

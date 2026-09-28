@@ -90,7 +90,6 @@ constexpr int BK = 32;                              // k columns per chunk
 // (``grammar.rate_set``) -- and any of 1..8 is read.
 constexpr int RATE_MIN = 1;
 constexpr int RATE_MAX = 8;
-constexpr int SLOT_WORDS = 2 * RATE_MAX;            // word-stage slot per (half, column): 16 words
 constexpr int BDESC_INTS = 12;                      // per-32-column descriptor (see ``col_map``)
 constexpr int TILE_ROWS = 512;
 constexpr int WINDOW_BITS = 14;
@@ -98,21 +97,42 @@ constexpr int TABLE_ENTRIES = 1 << WINDOW_BITS;
 constexpr int STAGES = 2;
 constexpr int WORD_STAGES = 3;
 
-constexpr int TABLE_BYTES = 2 * TABLE_ENTRIES * 2;              // 65536
+constexpr int TABLE_BYTES = TABLE_ENTRIES * 2;                  // 32768, one table
 constexpr int B_STAGE_BYTES = BK * BN * 2;                      // 8192
 constexpr int A_STAGE_BYTES = BM * BK * 2;                      // 4096
-constexpr int W_STAGE_INTS = 2 * BK * SLOT_WORDS;               // 1024 ints
-constexpr int W_STAGE_BYTES = W_STAGE_INTS * 4;                 // 4096
 constexpr int WSCALE_FLOATS = 2 * BN;                           // two item slots
 constexpr int DESC_INTS = 2 * 8;
-constexpr int OFF_TABLES = 0;
-constexpr int OFF_B = OFF_TABLES + TABLE_BYTES;
-constexpr int OFF_A = OFF_B + STAGES * B_STAGE_BYTES;
-constexpr int OFF_W = OFF_A + STAGES * A_STAGE_BYTES;
-constexpr int OFF_WSCALE = OFF_W + WORD_STAGES * W_STAGE_BYTES;
-constexpr int OFF_DESC = OFF_WSCALE + WSCALE_FLOATS * 4;
-constexpr int OFF_CLAIM = OFF_DESC + DESC_INTS * 4;
-constexpr int SMEM_BYTES = OFF_CLAIM + 16;                      // 103,760
+// The shared-memory layout.  The word stages come LAST and are sized at
+// launch by the stack's rates: ``Params::slot_words`` int32 words per (half,
+// column) slot -- at least 2 * rate (+1 where a lane's window over-reads one
+// word past the column's 2 * rate words at a rate whose 8 * rate is not a
+// multiple of 32), rounded to a multiple of 4 so the 16-byte copies stay
+// aligned.  A block on sm_121 may opt in to 101,376 B of dynamic shared
+// memory; the two-table gate/up launch needs 91,216 + 768 * slot_words, so it
+// fits slots up to 12 words (rates <= 5) and not the 16-word slot of rates
+// 6..8; the one-table down/dense launch (MODE 2) fits every rate.  The host
+// entries check the launch against the device's own limit.
+template <int MODE> struct Layout {
+    static constexpr int TABLES = (MODE == 2) ? 1 : 2;
+    static constexpr int OFF_TABLES = 0;
+    static constexpr int OFF_B = OFF_TABLES + TABLES * TABLE_BYTES;
+    static constexpr int OFF_A = OFF_B + STAGES * B_STAGE_BYTES;
+    static constexpr int OFF_WSCALE = OFF_A + STAGES * A_STAGE_BYTES;
+    static constexpr int OFF_DESC = OFF_WSCALE + WSCALE_FLOATS * 4;
+    static constexpr int OFF_CLAIM = OFF_DESC + DESC_INTS * 4;
+    static constexpr int OFF_W = OFF_CLAIM + 16;                // 91,216 (two tables) / 58,448 (one)
+};
+constexpr int SLOT_WORDS_MAX = 2 * RATE_MAX;                    // 16: the rate-8 slot
+__host__ __device__ constexpr int w_stage_ints(int slot_words) { return 2 * BK * slot_words; }
+__host__ __device__ constexpr int smem_bytes(int mode, int slot_words) {
+    return (mode == 2 ? Layout<2>::OFF_W : Layout<0>::OFF_W) + WORD_STAGES * w_stage_ints(slot_words) * 4;
+}
+// The slot one column at ``rate`` needs: its 2 * rate words plus the one word
+// a lane's re-aligned window reads past them when 8 * rate is not a multiple
+// of 32 (the bits it holds enter no field).
+__host__ __device__ constexpr int slot_words_for_rate(int rate) {
+    return 2 * rate + (((8 * rate) % 32) != 0 ? 1 : 0);
+}
 
 constexpr int BAR_FULL0 = 1;
 constexpr int BAR_EMPTY0 = 3;
@@ -321,6 +341,7 @@ struct Params {
     const int32_t* bdesc1;
     long words_stride;
     int tile_words;
+    int slot_words;                // int32 words per (half, column) word-stage slot (see Layout)
     int K;
     int N;                         // rows per projection
     int E;
@@ -346,14 +367,16 @@ template <bool FP8, int MODE, bool DENSE, bool SPLIT>
 __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p) {
     static_assert(!DENSE || MODE == 2, "the dense case is the single-projection (down) mode");
     static_assert(!SPLIT || DENSE, "a K split is a dense scheduling device");
+    using L = Layout<MODE>;
     extern __shared__ __align__(128) uint8_t smem[];
-    uint16_t* tab = reinterpret_cast<uint16_t*>(smem + OFF_TABLES);
-    uint8_t* Bs = smem + OFF_B;
-    uint8_t* As = smem + OFF_A;
-    int32_t* Ws = reinterpret_cast<int32_t*>(smem + OFF_W);
-    float* wsc = reinterpret_cast<float*>(smem + OFF_WSCALE);
-    int32_t* desc = reinterpret_cast<int32_t*>(smem + OFF_DESC);
-    int32_t* claim = reinterpret_cast<int32_t*>(smem + OFF_CLAIM);
+    uint16_t* tab = reinterpret_cast<uint16_t*>(smem + L::OFF_TABLES);
+    uint8_t* Bs = smem + L::OFF_B;
+    uint8_t* As = smem + L::OFF_A;
+    int32_t* Ws = reinterpret_cast<int32_t*>(smem + L::OFF_W);
+    float* wsc = reinterpret_cast<float*>(smem + L::OFF_WSCALE);
+    int32_t* desc = reinterpret_cast<int32_t*>(smem + L::OFF_DESC);
+    int32_t* claim = reinterpret_cast<int32_t*>(smem + L::OFF_CLAIM);
+    const int w_stage = w_stage_ints(p.slot_words);
 
     const int tid = threadIdx.x;
     const int lane = tid & 31;
@@ -496,8 +519,10 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                     if (rp.n_lo + rp.n_hi != p.K
                         || 16 * (rp.n_lo * rp.r_lo + rp.n_hi * rp.r_hi) != p.tile_words
                         || rp.r_lo < RATE_MIN || rp.r_lo > RATE_MAX
+                        || slot_words_for_rate(rp.r_lo) > p.slot_words
                         || (rp.n_hi > 0 && (rp.r_hi <= rp.r_lo || rp.r_hi > RATE_MAX
-                                            || rp.w_hi != 16 * rp.n_lo * rp.r_lo)))
+                                            || rp.w_hi != 16 * rp.n_lo * rp.r_lo
+                                            || slot_words_for_rate(rp.r_hi) > p.slot_words)))
                         __trap();
                 }
             }
@@ -536,7 +561,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                     const int q = tid & 1;
                     const ColMap c = col_map(bdesc_i, rp_i, kc, mm);
                     const int32_t* src = tbase_i + c.cw0 + 2 * c.rate * t64_i;
-                    int32_t* dst = Ws + (kc % WORD_STAGES) * W_STAGE_INTS + (ih * BK + mm) * SLOT_WORDS;
+                    int32_t* dst = Ws + (kc % WORD_STAGES) * w_stage + (ih * BK + mm) * p.slot_words;
                     if (c.rate & 1) {
                         for (int k = q; k < c.rate; k += 2) cp_async8(dst + 2 * k, src + 2 * k);
                     } else {
@@ -613,7 +638,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 const int stage = gc & 1;
                 if (gc >= 2) bar_sync(BAR_EMPTY0 + stage, THREADS);
                 store_a(stage, a_cur);
-                const int32_t* W = Ws + (kc % WORD_STAGES) * W_STAGE_INTS;
+                const int32_t* W = Ws + (kc % WORD_STAGES) * w_stage;
                 uint8_t* B = Bs + stage * B_STAGE_BYTES;
                 ColMap c0;
                 #pragma unroll
@@ -621,7 +646,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                     // MODE 2 reads one projection: both halves map alike.
                     const ColMap c = (MODE == 2 && h == 1) ? c0 : col_map(bdesc_h[h], rp_h[h], kc, m);
                     if (h == 0) c0 = c;
-                    const int32_t* Wc = W + (h * BK + m) * SLOT_WORDS;
+                    const int32_t* Wc = W + (h * BK + m) * p.slot_words;
                     const uint16_t* T = tab + ((MODE == 2) ? 0 : h * TABLE_ENTRIES);
                     const int chunk = (MODE == 2) ? (8 * h + j) : (4 * (j >> 1) + 2 * h + (j & 1));
                     const float* ws = wsc + slot * BN + chunk * 8;
@@ -812,16 +837,34 @@ __global__ void token_sum_kernel(const uint16_t* __restrict__ routed, uint16_t* 
     *reinterpret_cast<uint4*>(out + t * width + c) = o;
 }
 
+int max_dynamic_smem_bytes(int device) {
+    int v = 0;
+    C10_CUDA_CHECK(cudaDeviceGetAttribute(&v, cudaDevAttrMaxSharedMemoryPerBlockOptin, device));
+    return v;
+}
+
 template <bool FP8, int MODE, bool DENSE = false, bool SPLIT = false>
 void launch(const Params& p, int grid, cudaStream_t stream) {
-    static bool attributed = false;
-    if (!attributed) {
+    const int smem = smem_bytes(MODE, p.slot_words);
+    static int attributed = 0;     // the largest dynamic size this instantiation was granted
+    if (smem > attributed) {
         C10_CUDA_CHECK(cudaFuncSetAttribute(routed_fused_kernel<FP8, MODE, DENSE, SPLIT>,
-                                            cudaFuncAttributeMaxDynamicSharedMemorySize, SMEM_BYTES));
-        attributed = true;
+                                            cudaFuncAttributeMaxDynamicSharedMemorySize, smem));
+        attributed = smem;
     }
-    routed_fused_kernel<FP8, MODE, DENSE, SPLIT><<<grid, THREADS, SMEM_BYTES, stream>>>(p);
+    routed_fused_kernel<FP8, MODE, DENSE, SPLIT><<<grid, THREADS, smem, stream>>>(p);
     C10_CUDA_KERNEL_LAUNCH_CHECK();
+}
+
+// The slot and shared-memory checks both host entries make.
+void check_slot(int mode, int64_t slot_words, const torch::Tensor& on) {
+    TORCH_CHECK(slot_words % 4 == 0 && slot_words >= 4 && slot_words <= SLOT_WORDS_MAX,
+                "slot_words must be a multiple of 4 in [4, ", SLOT_WORDS_MAX, "]");
+    const int need = smem_bytes(mode, (int)slot_words);
+    const int have = max_dynamic_smem_bytes(on.device().index());
+    TORCH_CHECK(need <= have, "the ", (mode == 2 ? "down/dense" : "gate/up"), " launch at ", slot_words,
+                "-word slots needs ", need, " bytes of dynamic shared memory per block; device ",
+                (int)on.device().index(), " allows ", have);
 }
 
 // DENSE && SPLIT: out[m, n] = epilogue( sum_{s < S} partial[s, m, n] ), the sum
@@ -887,7 +930,7 @@ void routed_fused_forward(
     torch::Tensor wscale0, torch::Tensor wscale1,
     torch::Tensor runs0, torch::Tensor runs1,
     torch::Tensor bdesc0, torch::Tensor bdesc1,
-    int64_t tile_words,
+    int64_t tile_words, int64_t slot_words,
     torch::Tensor offsets, torch::Tensor flat_sorted, torch::Tensor rw_sorted,
     torch::Tensor item_off, torch::Tensor counter,
     int64_t top_k, int64_t a_row_mode, bool mul_weight, double limit,
@@ -973,6 +1016,8 @@ void routed_fused_forward(
     p.bdesc1 = two ? i32_ptr(bdesc1) : nullptr;
     p.words_stride = words0.size(1);
     p.tile_words = (int)tile_words;
+    check_slot((int)mode, slot_words, x);
+    p.slot_words = (int)slot_words;
     p.K = (int)K;
     p.N = (int)N;
     p.E = (int)E;
@@ -1012,7 +1057,7 @@ void dense_forward(
     bool fp8, torch::Tensor x, torch::Tensor a_scale,
     torch::Tensor words, torch::Tensor table, torch::Tensor init, torch::Tensor has_init,
     torch::Tensor wscale, torch::Tensor runs, torch::Tensor bdesc, int64_t tile_words,
-    torch::Tensor counter, int64_t k_split, torch::Tensor partial, torch::Tensor out, int64_t grid) {
+    int64_t slot_words, torch::Tensor counter, int64_t k_split, torch::Tensor partial, torch::Tensor out, int64_t grid) {
     TORCH_CHECK(x.is_cuda() && x.dim() == 2 && x.is_contiguous(), "x must be a contiguous 2-D CUDA tensor");
     const int64_t M = x.size(0);
     const int64_t K = x.size(1);
@@ -1076,6 +1121,8 @@ void dense_forward(
     p.bdesc1 = nullptr;
     p.words_stride = words.size(1);
     p.tile_words = (int)tile_words;
+    check_slot(2, slot_words, x);
+    p.slot_words = (int)slot_words;
     p.K = (int)K;
     p.N = (int)N;
     p.E = 1;
@@ -1144,10 +1191,16 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.attr("BK") = BK;
     m.attr("RATE_MIN") = RATE_MIN;
     m.attr("RATE_MAX") = RATE_MAX;
-    m.attr("SLOT_WORDS") = SLOT_WORDS;
+    m.attr("SLOT_WORDS_MAX") = SLOT_WORDS_MAX;
+    m.attr("WORD_STAGES") = WORD_STAGES;
+    m.attr("SMEM_FIXED_GATE_UP") = Layout<0>::OFF_W;
+    m.attr("SMEM_FIXED_DOWN") = Layout<2>::OFF_W;
     m.attr("BDESC_INTS") = BDESC_INTS;
     m.attr("WINDOW_BITS") = WINDOW_BITS;
-    m.attr("SMEM_BYTES") = SMEM_BYTES;
+    m.def("smem_bytes", [](int64_t mode, int64_t slot_words) { return (int64_t)smem_bytes((int)mode, (int)slot_words); },
+          "dynamic shared memory the launch of ``mode`` needs at ``slot_words``-word slots");
+    m.def("max_dynamic_smem_bytes", [](int64_t device) { return (int64_t)max_dynamic_smem_bytes((int)device); },
+          "cudaDevAttrMaxSharedMemoryPerBlockOptin of the device");
     m.attr("THREADS") = THREADS;
     m.attr("FAMILY_FP8") = FAMILY_FP8;
 }
