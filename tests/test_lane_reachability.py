@@ -898,15 +898,24 @@ def test_the_fused_lanes_publish_the_routed_launchs_rates_inside_the_wires():
         assert requires == ext.ROUTED_FUSED_LANE_REQUIRES
     assert "column_rates_routed_moe" in ext.LANE_REQUIREMENT_FIELDS
     assert "column_rates_routed_moe" not in lane_requirements(LANE)   # the GEMV lane has one launch shape
-    doc = copy.deepcopy(load_serving_contract())
-    entry = next(e for e in doc["native_extensions"] if e["module_name_prefix"] == FUSED_LANE)
-    entry["lane"]["requires"]["column_rates_routed_moe"] = [1, 2, 3, 4, 5, 9]
-    with pytest.raises(ValueError, match="column_rates_routed_moe names \\[9\\]"):
-        validate_serving_contract(doc)
-    entry["lane"]["requires"]["column_rates_routed_moe"] = [1, 2, 3, 4, 5]
-    del entry["lane"]["requires"]["column_rates"]
-    with pytest.raises(ValueError, match="narrows column_rates"):
-        validate_serving_contract(doc)
+
+
+@pytest.mark.parametrize("mutate,match", [
+    (lambda r: r.__setitem__("column_rates_routed_moe", [1, 2, 3, 4, 5, 9]),
+     "column_rates_routed_moe names \\[9\\]"),
+    (lambda r: r.__delitem__("column_rates"), "narrows column_rates"),
+    (lambda r: r.__setitem__("column_rates_routed_moe", [5, 1]), "ascending"),
+])
+def test_the_validator_holds_the_routed_set_inside_the_wires(monkeypatch, mutate, match):
+    """A routed set naming a rate the lane does not read, one published without
+    the wire predicate it narrows, or one out of order is refused; the build's
+    own copy is patched alongside so the authority check is not what fires."""
+    payload = copy.deepcopy(load_serving_contract())
+    entry = next(e for e in payload["native_extensions"] if e["module_name_prefix"] == FUSED_LANE)
+    mutate(entry["lane"]["requires"])
+    monkeypatch.setattr(ext, "NATIVE_EXTENSIONS", payload["native_extensions"])
+    with pytest.raises(ValueError, match=match):
+        validate_serving_contract(payload)
 
 
 def test_the_core_decides_the_routed_set_against_the_structure():

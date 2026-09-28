@@ -1551,7 +1551,14 @@ def main():
     ap.add_argument("--image", default=os.environ.get("ORACLE_IMAGE", ""))
     ap.add_argument("--tessera-head", default=os.environ.get("TESSERA_HEAD", ""))
     ap.add_argument("--tessera-state", default=os.environ.get("TESSERA_STATE", ""))
+    ap.add_argument("--rung", default=None,
+                    help="wire rung to read for every selected family (e.g. R832) in place of the "
+                         "family's pinned one; tessera#694 reads the mixed-rate E4M3 rungs "
+                         "R832/R928/R960/R1088 of the same cache")
     args = ap.parse_args()
+    if args.rung:
+        for key in args.families.split(","):
+            FAMILIES[key] = dict(FAMILIES[key], rung=str(args.rung))
     torch.manual_seed(args.seed)
     log("host", os.environ.get("HOST_NAME"), "device", torch.cuda.get_device_name(0))
     if args.mode == "oracle":

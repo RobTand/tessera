@@ -1151,17 +1151,23 @@ def test_cell_launch_derivation_uses_the_cells_structure(contract, regime):
     # derives the compact launch alone -- the structure is what the decision
     # reads -- while a dense module at the same rung derives the fused dense
     # identity beside the Triton GEMM, the one-table launch reading every rate.
+    # (the format row stamps attested_wire per attested rung; 1536 is not one,
+    # so the derivation is given a copy of the shipped stamp at that rung)
+    import copy
+    stamped = copy.deepcopy(entry)
+    stamped["attested_wire"] = list(stamped["attested_wire"]) + [
+        {**stamped["attested_wire"][0], "q256": 1536}]
     high = dict(synthetic, rungs_q256=[1536], executes=[compact])
-    _validate_cell_executes(high, "TESSERA_FP8", entry, contract, "synthetic")
+    _validate_cell_executes(high, "TESSERA_FP8", stamped, contract, "synthetic")
     high["executes"] = [compact, fused]
     with pytest.raises(ValueError, match="executes"):
-        _validate_cell_executes(high, "TESSERA_FP8", entry, contract, "synthetic")
+        _validate_cell_executes(high, "TESSERA_FP8", stamped, contract, "synthetic")
     dense_high = {
         "structure": "dense", "regime": regime, "rungs_q256": [1536],
         "requires_serve_flags": ["TESSERA_SERVE_MODE=resident"],
         "executes": [{"symbol": "tessera::window_gemm_dense", "decoder": "native_window_gemm"},
                      {"symbol": "tessera::fused_window_dense", "decoder": "native_fused_window_dense"}]}
-    _validate_cell_executes(dense_high, "TESSERA_FP8", entry, contract, "synthetic")
+    _validate_cell_executes(dense_high, "TESSERA_FP8", stamped, contract, "synthetic")
     synthetic["executes"] = [compact, fused]
     # The dense launch at the same family and rung is refused for an expert
     # stack, and so is the materialising launch v38 removed (tessera#604).
