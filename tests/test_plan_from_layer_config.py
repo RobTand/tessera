@@ -367,7 +367,7 @@ def test_the_fused_roster_is_derived_from_the_exporter():
     the fused invariant entirely (#211).  Derive the expectation from the
     exporter so a roster change there cannot silently strand this check again.
     """
-    import export_tessera_serving as exporter
+    import tessera.export_serving as exporter
 
     for qname in ("model.layers.3.self_attn.q_proj",
                   "model.layers.3.self_attn.o_proj",
@@ -491,7 +491,7 @@ def _moe_plan_source(tmp_path, *, packed=False):
     import torch
     from safetensors.torch import save_file
     from tessera.serving_parts import source_identity
-    import export_tessera_serving as export
+    import tessera.export_serving as export  # the running module
 
     src = tmp_path / "source"
     src.mkdir()
@@ -525,7 +525,7 @@ def _moe_plan_source(tmp_path, *, packed=False):
 # R896: the routed E4M3 cells' rung since contract v38.
 @pytest.mark.parametrize("choice", ["TESSERA_E4M3_K1_R896", "BF16"])
 def test_actual_translator_hands_off_whole_expert_stacks(tmp_path, monkeypatch, packed, choice):
-    import export_tessera_serving as export
+    import tessera.export_serving as export  # the running module, so the monkeypatch lands
     src, stack, units, carried = _moe_plan_source(tmp_path, packed=packed)
     assignment = {name: choice for name in units}
     router = "model.layers.0.feed_forward.gate"

@@ -187,8 +187,16 @@ def test_the_packaged_contract_validates_at_v33(contract):
     four GLM-image E4M3/BF16 cells) name the fused pair beside the Triton pair,
     each on a served census of its own image.  No image, rung, flag or format
     row moves; the pin is unchanged.
+
+    v44 (tessera#687) is ADDITIVE for a lane reader and moves no schema: the
+    exporter became the supported entry point ``src/tessera/export_serving``
+    (``python -m tessera.export_serving``), so the ``producer_interface``
+    reuse-authority drivers list names the package path alongside the
+    ``experiments/`` shim row (tessera#691 item 1).  The option a driver must
+    declare is unchanged; no cell, rung, route, launch, grade, format row
+    or flag moves.
     """
-    assert int(contract["contract_version"]) == 43
+    assert int(contract["contract_version"]) == 44
     fused = "tessera.routed_fused.FusedRoutedWindowMoE.__call__"
     for cell in contract["lane_eligibility"]["cells"]:
         window_routed = (cell["structure"] == "routed_moe"

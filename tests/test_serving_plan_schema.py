@@ -113,14 +113,23 @@ def test_module_scheme_key_is_importable_from_the_package():
 
 
 def test_module_scheme_key_separates_structures_through_the_served_recipe():
-    """The routed span-2 promotion is part of the key, not just of the decode."""
+    """The routed span-2 promotion is part of the key, not just of the decode.
+
+    A sub-cap E2M1x2 rung keeps the WINDOW body when served dense but is
+    promoted to TCQ when served routed, so one (grid, q256) names two served
+    wires and the key separates them.  At the cap (q256 896) both structures
+    already decode TCQ, which is why the sub-cap rung is the one that pins
+    this.
+    """
     from tessera.alphabet import E2M1_GRID, tuple_grid
     from tessera.serving.scheme import STRUCTURE_DENSE, STRUCTURE_ROUTED_MOE
     from tessera.serving_plan import module_scheme_key
 
-    grid, q256 = tuple_grid(E2M1_GRID, 2), 896
-    assert (module_scheme_key(grid, q256, STRUCTURE_ROUTED_MOE)
-            != module_scheme_key(grid, q256, STRUCTURE_DENSE))
+    grid, q256 = tuple_grid(E2M1_GRID, 2), 512
+    assert module_scheme_key(grid, q256, STRUCTURE_DENSE) == (
+        "TESSERA_NVFP4", "E2M1x2", "WINDOW", "LUT")
+    assert module_scheme_key(grid, q256, STRUCTURE_ROUTED_MOE) == (
+        "TESSERA_NVFP4", "E2M1x2", "TCQ", "LUT")
 
 
 def _write_checkpoint(tmp_path: Path) -> Path:

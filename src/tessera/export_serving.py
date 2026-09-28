@@ -2183,8 +2183,12 @@ def main():
         import threading
         threading.Thread(target=_warm_encoder_fixture_id, args=(encoder_fixture_id,),
                          name="encoder-fixture-id", daemon=True).start()
+        # The identity hashes the CHECKOUT the exporter runs from (its src/
+        # and experiments/ trees, tessera#499). Living in src/tessera/, the
+        # checkout root is two parents up, not one as it was in experiments/
+        # (tessera#687).
         identity = export_identity(args.src, options, args.partition_runtime_image,
-                                   Path(__file__).resolve().parents[1], shards=read_shards,
+                                   Path(__file__).resolve().parents[2], shards=read_shards,
                                    digest_cache=source_digest_cache)
         identity["encoder_fixture_id"] = encoder_fixture_id().hex()
         partition_record = {"schema": PART_SCHEMA, "index": index, "count": count,
