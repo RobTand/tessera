@@ -422,7 +422,7 @@ def test_the_surviving_v22_sm121_cells_are_byte_identical(contract):
     # list, rung or id moves, so no cell is withdrawn or re-earned.  The served
     # census of the four E4M3 window ids on the changed kernel has not run yet;
     # the fixture names no v45 re-measurement until it has
-    # (docs/measurements/2026-09-28-mixed-rate-fused-window.md, "Census").
+    # (docs/measurements/2026-09-28-mixed-rate-fused-window.md, "Route census").
     assert "remeasured_at_v45" not in recorded
     launch = {("TESSERA_E4M3_K1", "dense"): [
                   ("tessera::window_gemm_dense", "native_window_gemm"),
