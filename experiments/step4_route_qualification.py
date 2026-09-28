@@ -113,16 +113,32 @@ DENSE_LAUNCHES = {
     "TESSERA_NVFP4": (NVFP4_ACTIVATION_CONTRACT, (A4_DENSE_GEMM_SYMBOL, NATIVE_SPAN2_GEMM_DECODER)),
 }
 
-#: The routed pairs published by scheme.ROUTE_LAUNCHES (resident only).
+#: family -> (activation contract, EVERY (symbol, decoder) pair its routed
+#: route may stamp, resident only), as scheme.ROUTE_LAUNCHES publishes them.
+#: Since contract v42 (tessera#640) the two window families carry two: the
+#: compact adapter and the fused routed window lane, which
+#: ``PackedWindowMoeBundles.adapter`` picks per module on the bundle's own
+#: shape (``routed_fused.fused_routed_window_supported``).  A served MoE
+#: family may therefore dispatch on either or both; a pair outside this
+#: tuple is a foreign launch and refuses the capture.
+COMPACT_WINDOW_MOE_SYMBOL = "tessera.native_window_moe.NativeWindowMoE.__call__"
+FUSED_WINDOW_MOE_SYMBOL = "tessera.routed_fused.FusedRoutedWindowMoE.__call__"
 MOE_LAUNCHES = {
-    "TESSERA_FP8": (FP8_ACTIVATION_CONTRACT,
-                     ("tessera.native_window_moe.NativeWindowMoE.__call__", "native_window_moe_compact")),
-    "TESSERA_BF16": (BF16_ACTIVATION_CONTRACT,
-                      ("tessera.native_window_moe.NativeWindowMoE.__call__", "native_window_moe_compact_folded")),
-    "TESSERA_NVFP4": (NVFP4_ACTIVATION_CONTRACT,
-                       ("tessera.kernel_a4.a4_span2_grouped_gemm", "native_span2_grouped")),
+    "TESSERA_FP8": (FP8_ACTIVATION_CONTRACT, (
+        (COMPACT_WINDOW_MOE_SYMBOL, "native_window_moe_compact"),
+        (FUSED_WINDOW_MOE_SYMBOL, "native_routed_fused_window"))),
+    "TESSERA_BF16": (BF16_ACTIVATION_CONTRACT, (
+        (COMPACT_WINDOW_MOE_SYMBOL, "native_window_moe_compact_folded"),
+        (FUSED_WINDOW_MOE_SYMBOL, "native_routed_fused_window_folded"))),
+    "TESSERA_NVFP4": (NVFP4_ACTIVATION_CONTRACT, (
+        ("tessera.kernel_a4.a4_span2_grouped_gemm", "native_span2_grouped"),)),
 }
-KIND_LAUNCHES = {"dense": DENSE_LAUNCHES, "moe": MOE_LAUNCHES}
+#: kind -> family -> (contract, admissible pairs).  The dense table keeps its
+#: one-pair shape for its callers; here every kind reads the same way.
+KIND_LAUNCHES = {
+    "dense": {family: (contract, (pair,)) for family, (contract, pair) in DENSE_LAUNCHES.items()},
+    "moe": MOE_LAUNCHES,
+}
 
 #: ``ext.NATIVE_EXTENSIONS[0]["filename_glob"]``: the one extension the package
 #: still builds.  Recorded, not required -- no dense launch names its lane.
@@ -287,17 +303,18 @@ def _qualify_kind(route_trace, *, family, kind, mode, members, require_names):
     count, names = members["count"], members.get("names")
     if kind == "moe" and mode != "resident":
         raise QualificationRefused("routed MoE has no streamed native launch")
-    contract, (symbol, decoder) = KIND_LAUNCHES[kind][family]
+    contract, pairs = KIND_LAUNCHES[kind][family]
     policy = f"{family}:{mode}"
     launches = trace_launches_by_contract(route_trace, contract, policy=policy, kind=kind)
-    expected_key = _pair_key(symbol, decoder)
-    foreign = sorted(key for key in launches if key != expected_key)
+    expected_keys = [_pair_key(symbol, decoder) for symbol, decoder in pairs]
+    foreign = sorted(key for key in launches if key not in expected_keys)
     if foreign:
+        admissible = " or ".join(expected_keys)
         raise QualificationRefused(
-            f"dispatches on {contract} ({family}/{kind}) used {foreign}, not {expected_key}: "
+            f"dispatches on {contract} ({family}/{kind}) used {foreign}, not {admissible}: "
             + json.dumps({key: {k: launches[key][k] for k in ("launches", "modules")}
                           for key in foreign}, sort_keys=True))
-    native = launches[expected_key]
+    native = _merge_admissible_launches(launches, expected_keys)
     if native["launches"] < 1:
         raise QualificationRefused(f"no served dispatch on {contract} ({family}/{kind}) was counted")
     if native["unnamed_modules"]:
@@ -318,10 +335,41 @@ def _qualify_kind(route_trace, *, family, kind, mode, members, require_names):
             raise QualificationRefused(
                 f"the modules dispatching on {contract} ({family}/{kind}) are not the manifest's: "
                 f"missing {missing}, unexpected {extra}")
-    return {"contract": contract, "policy": policy,
-            "expected": {"symbol": symbol, "decoder": decoder, "modules": count,
-                         "names_checked": bool(names is not None and native["module_names"])},
-            "observed": native}
+    names_checked = bool(names is not None and native["module_names"])
+    if len(pairs) == 1:
+        # The one-launch record every dense reader has consumed since v1, unchanged.
+        ((symbol, decoder),) = pairs
+        expected = {"symbol": symbol, "decoder": decoder, "modules": count, "names_checked": names_checked}
+    else:
+        expected = {"launches": [{"symbol": symbol, "decoder": decoder} for symbol, decoder in pairs],
+                    "modules": count, "names_checked": names_checked}
+    return {"contract": contract, "policy": policy, "expected": expected, "observed": native}
+
+
+def _merge_admissible_launches(launches, expected_keys):
+    """One observation over the admissible pairs a kind may dispatch on.
+
+    A module runs exactly one adapter, so the per-pair ``modules`` (each a
+    per-M-group maximum) add across pairs, as do launches, entries and the
+    unnamed count; ``module_names`` is the union.  ``by_launch`` keeps each
+    pair's own bucket; ``symbol``/``decoder`` are set only when one pair was
+    observed, so a dense record reads exactly as before.
+    """
+    present = [key for key in expected_keys if key in launches]
+    merged = {"launches": 0, "entries": 0, "modules": 0, "unnamed_modules": 0,
+              "module_names": [], "by_launch": {}}
+    names = set()
+    for key in present:
+        bucket = launches[key]
+        merged["by_launch"][key] = dict(bucket)
+        for field in ("launches", "entries", "modules", "unnamed_modules"):
+            merged[field] += bucket[field]
+        names.update(bucket["module_names"])
+    merged["module_names"] = sorted(names)
+    if len(present) == 1:
+        merged["symbol"] = launches[present[0]]["symbol"]
+        merged["decoder"] = launches[present[0]]["decoder"]
+    return merged
 
 
 def qualify_dispatch(route_trace, *, mode, expected_modules):

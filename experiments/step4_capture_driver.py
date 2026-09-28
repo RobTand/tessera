@@ -107,8 +107,7 @@ try:
     # The controller validates and serializes its roster before this child.
     kinds = json.loads(kinds_json)
     # 1. The published extension table, and whether any native launch of the
-    #    artifact's families names one of its lanes.  A lane on the dispatch
-    #    is a when_unavailable substitute the qualifier does not model.
+    #    artifact's families names one of its lanes.
     record["native_extensions"] = [
         {"module_name_prefix": e["module_name_prefix"], "filename_glob": e["filename_glob"],
          "routes": list(e["routes"]),
@@ -129,11 +128,20 @@ try:
             launches[family][kind] = rows
     record["module_kind_launches"] = launches
     record["dense_launches"] = {f: rows["dense"] for f, rows in launches.items() if "dense" in rows}
-    named = sorted({l["lane"] for kinds in launches.values() for ls in kinds.values()
-                    for l in ls if l["lane"] is not None})
-    if named:
-        record["refusal"] = f"native launches name extension lane(s) {named}; this preflight has no proof for a lane"
+    # A lane-bearing launch is made only where its extension built; the serve
+    # records which published pair each module took and the qualifier accepts
+    # any of them (step4_route_qualification.MOE_LAUNCHES).  This preflight has
+    # no proof for a lane, so it refuses only a family/kind whose EVERY launch
+    # needs one: there a build failure would leave the serve no attested
+    # launch.  Lane-bearing launches beside a lane-free one are recorded.
+    lane_only = sorted(f"{family}/{kind}" for family, by_kind in launches.items()
+                       for kind, ls in by_kind.items() if all(l["lane"] is not None for l in ls))
+    if lane_only:
+        record["refusal"] = (f"every native launch of {lane_only} names an extension lane; "
+                             "this preflight has no proof for a lane")
         finish(4)
+    record["lane_launches"] = sorted({l["lane"] for by_kind in launches.values() for ls in by_kind.values()
+                                      for l in ls if l["lane"] is not None})
     # 2. The window GEMM is Triton: import it (fp8_route/bf16_route reach it
     #    through serving.native_window at process_weights_after_loading).
     import triton

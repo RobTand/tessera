@@ -95,6 +95,7 @@ __all__ = [
     "A4_DENSE_GEMM_SYMBOL",
     "A4_GROUPED_GEMM_SYMBOL",
     "WINDOW_MOE_COMPACT_SYMBOL",
+    "ROUTED_FUSED_WINDOW_SYMBOL",
     "EXPERIMENTAL_LAUNCHES",
     "experimental_launch_pairs",
     "parse_compact_blob_for_scheme",
@@ -441,6 +442,15 @@ A4_GROUPED_GEMM_SYMBOL = "tessera.kernel_a4.a4_span2_grouped_gemm"
 #: epilogue arithmetic and the BF16 family the folded one; the two stamp
 #: different decoders, so one symbol never stands for two arithmetics.
 WINDOW_MOE_COMPACT_SYMBOL = "tessera.native_window_moe.NativeWindowMoE.__call__"
+#: The fused warp-specialised routed window MoE (``tessera.routed_fused``,
+#: tessera#640): gate/up + SwiGLU in one persistent kernel, the down
+#: projection in a second launch of the same kernel with a fixed-order
+#: per-token reduction.  A NEW identity, not the compact adapter under a new
+#: name: it decodes each weight once per tile and reuses it across routes,
+#: schedules by route count on the device, and its down reduction is
+#: deterministic where the compact adapter's is an fp32 atomic.  Same two
+#: arithmetics, same two decoder spellings as the compact lane, its own.
+ROUTED_FUSED_WINDOW_SYMBOL = "tessera.routed_fused.FusedRoutedWindowMoE.__call__"
 #: The entry point the expert route calls. Its recorded backend suffix is
 #: selected by vLLM at runtime and remains in the census receipt.
 MOE_GEMM_SYMBOL = "vllm.fused_moe.modular_kernel"
@@ -469,6 +479,14 @@ _DECODER_NATIVE_SPAN2_GROUPED = "native_span2_grouped"
 #: function of the wire and a cell must be able to name which one it attests.
 _DECODER_NATIVE_WINDOW_MOE_COMPACT = "native_window_moe_compact"
 _DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED = "native_window_moe_compact_folded"
+#: The fused routed window MoE lane (tessera#640), epilogue arithmetic (the
+#: E4M3 family) and folded arithmetic (the BF16 family).  Its own strings for
+#: the reason the compact pair has two: a census must be able to say which
+#: kernel and which arithmetic served a stack, and the fused lane's
+#: deterministic reduction is a different numerical function of the same
+#: wire than the compact adapter's atomic one.
+_DECODER_NATIVE_ROUTED_FUSED_WINDOW = "native_routed_fused_window"
+_DECODER_NATIVE_ROUTED_FUSED_WINDOW_FOLDED = "native_routed_fused_window_folded"
 
 _ALL_REGIMES = ("batch", "decode")
 _ALL_MODES = ("resident", "streamed")
@@ -555,6 +573,24 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
         {"symbol": WINDOW_MOE_COMPACT_SYMBOL, "decoder": _DECODER_NATIVE_WINDOW_MOE_COMPACT,
          "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": None,
          "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": False},
+        # The fused warp-specialised lane (tessera#640) on the same epilogue
+        # arithmetic.  ``PackedWindowMoeBundles.adapter`` takes it for every
+        # stack ``routed_fused.fused_routed_window_supported`` admits (every
+        # column at rate 4, window 14, identity order -- the q256=1024 GLM
+        # stacks) unless ``TESSERA_ROUTED_FUSED=0``; the compact pair above
+        # stays the dispatch for the rest (the mixed-rate q256=896 rung, a
+        # box whose toolchain cannot build the library, the opt-out).  The
+        # FIRST lane-bearing row since #538: ``lane`` names the extension
+        # ``native_extensions`` publishes for it, so a cell derives this pair
+        # only at a rung the extension's own ``lane.requires`` admits
+        # (``contract._lanes_a_rung_reaches``), and the compact row keeps
+        # ``when_lane_absent`` False because it still runs beside the lane --
+        # for the stacks the lane's runtime geometry check refuses and for
+        # ``when_unavailable``.  A served route census of a rate-4 GLM stub
+        # (contract v42) is what let the four window routed cells name it.
+        {"symbol": ROUTED_FUSED_WINDOW_SYMBOL, "decoder": _DECODER_NATIVE_ROUTED_FUSED_WINDOW,
+         "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": "tessera_routed_fused_e4m3",
+         "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": False},
     ),
     # The dense half: same shape as the FP8 dense half above, and for the same
     # reason, on the FOLDED weight arithmetic (tessera#614) and therefore its
@@ -567,6 +603,11 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
         {"symbol": WINDOW_MOE_COMPACT_SYMBOL,
          "decoder": _DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED,
          "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": None,
+         "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": False},
+        # The fused lane's folded form (tessera#640); see the FP8 row.
+        {"symbol": ROUTED_FUSED_WINDOW_SYMBOL,
+         "decoder": _DECODER_NATIVE_ROUTED_FUSED_WINDOW_FOLDED,
+         "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": "tessera_routed_fused_value",
          "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": False},
     ),
 }
@@ -631,8 +672,24 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
 #: (docs/measurements/tessera-glm-u1-census-2026-09-26.md).  The four
 #: ``tessera_e2m1_k2_{dense,routed_moe}_sm121_{decode,batch}_resident`` cells
 #: on that image name them, in the same change, for the v34 reason.  Nothing
-#: is experimental after v39; the set stays so the next unattested launch has
-#: a place to stand.
+#: was experimental after v39; the set stayed so the next unattested launch
+#: would have a place to stand.
+#:
+#: TWO PAIRS PASSED THROUGH at contract v42 (tessera#640): ``(ROUTED_FUSED_
+#: WINDOW_SYMBOL, _DECODER_NATIVE_ROUTED_FUSED_WINDOW)`` and ``(ROUTED_FUSED_
+#: WINDOW_SYMBOL, _DECODER_NATIVE_ROUTED_FUSED_WINDOW_FOLDED)``.  The fused
+#: warp-specialised routed kernel is a new launch identity the dispatch makes
+#: by default for every rate-4 window-14 expert stack, so the routes'
+#: ``census_expected`` had to admit it before any cell could name it, and the
+#: two pairs stood here while the lane was built.  A served route census of
+#: the rate-4 u1 stub B on the GLM serving image recorded both -- the E4M3
+#: pair on its q256=1024 stack and the folded pair on its BF16 stack, both
+#: regimes, ``problems: []`` (docs/measurements/2026-09-28-routed-fused-640.md)
+#: -- and the four ``tessera_{e4m3,bf16}_k1_routed_moe_sm121_{decode,batch}_
+#: resident`` cells name them in the same change, for the v34 reason.  The
+#: compact pairs stay attested beside them: they serve every stack the lane
+#: refuses and the ``TESSERA_ROUTED_FUSED=0`` opt-out.  The set is empty
+#: again, kept so the next unattested launch has a place to stand.
 EXPERIMENTAL_LAUNCHES: frozenset = frozenset()
 
 

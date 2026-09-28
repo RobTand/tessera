@@ -35,18 +35,26 @@ def mixed():
 
 def test_mixed_dispatch_qualifies_each_kind_without_double_counting():
     from tessera.serving import scheme
-    from experiments.step4_route_qualification import KIND_LAUNCHES
+    from experiments.step4_route_qualification import FUSED_WINDOW_MOE_SYMBOL, KIND_LAUNCHES
 
     # Offline qualification data is tied to the producer's dispatch owner,
     # including its no-extension-lane invariant; it does not qualify a cell.
     for kind, table in KIND_LAUNCHES.items():
-        for family, (contract, pair) in table.items():
+        for family, (contract, pairs) in table.items():
             structure = scheme.STRUCTURE_ROUTED_MOE if kind == "moe" else scheme.STRUCTURE_DENSE
             rows = scheme.route_launches(family, structure=structure, mode="resident",
                                         include_experimental=True)
-            assert {(r["symbol"], r["decoder"]) for r in rows} == {pair}
+            assert {(r["symbol"], r["decoder"]) for r in rows} == set(pairs)
             assert scheme.ROUTES[family]["activation_contract"] == contract
-            assert all(r["lane"] is None and not r["when_lane_absent"] for r in rows)
+            # The fused routed window lane (contract v42, tessera#640) is the
+            # one launch that names its extension lane; every other row keeps
+            # the no-extension-lane invariant, and no row is a fallback.
+            for r in rows:
+                assert not r["when_lane_absent"]
+                if r["symbol"] == FUSED_WINDOW_MOE_SYMBOL:
+                    assert r["lane"] is not None and kind == "moe"
+                else:
+                    assert r["lane"] is None
     expected, routes = mixed()
     result = qualify_dispatch(routes, mode="resident", expected_modules=expected)
     for family in FAMILIES:
@@ -56,6 +64,68 @@ def test_mixed_dispatch_qualifies_each_kind_without_double_counting():
             assert claim["observed"]["modules"] == 1
             assert claim["observed"]["launches"] == 2
             assert claim["expected"]["names_checked"] is True
+
+
+def _two_launch_moe(family="TESSERA_FP8"):
+    """One family whose routed stacks split across its two admissible pairs."""
+    from experiments.step4_route_qualification import MOE_LAUNCHES
+    (compact_symbol, compact_decoder), (fused_symbol, fused_decoder) = MOE_LAUNCHES[family][1]
+    dense = "model.layers.0.mlp.down_proj"
+    compact, fused = "model.layers.3.mlp.experts", "model.layers.4.mlp.experts"
+    expected = {family: {"count": 3, "names": sorted([dense, compact, fused]), "kinds": {
+        "dense": {"count": 1, "names": [dense]},
+        "moe": {"count": 2, "names": sorted([compact, fused])}}}}
+    entries = []
+    for m in (1, 512):
+        entries.append(entry(family, shape=f"M{m}:N1024:K3072", names=[dense]))
+        for symbol, decoder, name in ((compact_symbol, compact_decoder, compact),
+                                      (fused_symbol, fused_decoder, fused)):
+            routed = entry(family, symbol=symbol, decoder=decoder,
+                           shape=f"M{m}:N1024:K3072", names=[name])
+            routed["kind"] = "moe"
+            entries.append(routed)
+    return expected, trace(*entries, identity=True)
+
+
+def test_a_family_dispatching_both_admissible_routed_launches_qualifies_once_per_module():
+    expected, routes = _two_launch_moe()
+    result = qualify_dispatch(routes, mode="resident", expected_modules=expected)
+    moe = result["TESSERA_FP8"]["kinds"]["moe"]
+    assert moe["observed"]["modules"] == 2
+    assert moe["observed"]["launches"] == 4
+    assert moe["observed"]["module_names"] == ["model.layers.3.mlp.experts", "model.layers.4.mlp.experts"]
+    assert set(moe["observed"]["by_launch"]) == {
+        "tessera.native_window_moe.NativeWindowMoE.__call__ / native_window_moe_compact",
+        "tessera.routed_fused.FusedRoutedWindowMoE.__call__ / native_routed_fused_window"}
+    assert all(bucket["modules"] == 1 for bucket in moe["observed"]["by_launch"].values())
+    # Two pairs observed: no single symbol/decoder is claimed for the kind.
+    assert "symbol" not in moe["observed"] and "symbol" not in moe["expected"]
+    assert [(e["symbol"], e["decoder"]) for e in moe["expected"]["launches"]] == [
+        ("tessera.native_window_moe.NativeWindowMoE.__call__", "native_window_moe_compact"),
+        ("tessera.routed_fused.FusedRoutedWindowMoE.__call__", "native_routed_fused_window")]
+    # The dense kind still reads as it always has: one pair, named outright.
+    dense = result["TESSERA_FP8"]["kinds"]["dense"]
+    assert dense["expected"]["symbol"] == dense["observed"]["symbol"] == "tessera::window_gemm_dense"
+
+
+@pytest.mark.parametrize("corruption", ["fused_on_nvfp4", "fused_folded_on_fp8", "count_ignores_second_pair"])
+def test_two_launch_moe_refuses_a_pair_the_family_does_not_admit(corruption):
+    expected, routes = _two_launch_moe()
+    fused = [row for row in routes["entries"] if row["decoder"] == "native_routed_fused_window"]
+    if corruption == "fused_on_nvfp4":
+        for row in fused:
+            row["policy"] = "TESSERA_NVFP4:resident"
+            row["contract"] = "e2m1_group16_ue4m3_static"
+    elif corruption == "fused_folded_on_fp8":
+        for row in fused:
+            row["decoder"] = "native_routed_fused_window_folded"
+    elif corruption == "count_ignores_second_pair":
+        expected["TESSERA_FP8"]["kinds"]["moe"]["count"] = 1
+        expected["TESSERA_FP8"]["kinds"]["moe"]["names"] = ["model.layers.3.mlp.experts"]
+        expected["TESSERA_FP8"]["count"] = 2
+        expected["TESSERA_FP8"]["names"] = ["model.layers.0.mlp.down_proj", "model.layers.3.mlp.experts"]
+    with pytest.raises(QualificationRefused):
+        qualify_dispatch(routes, mode="resident", expected_modules=expected)
 
 
 @pytest.mark.parametrize("corruption", ["kind", "missing_kind", "swapped_names", "missing_names",
@@ -95,7 +165,9 @@ def test_mixed_dispatch_refuses_wrong_kind_or_identity(corruption):
         qualify_dispatch(routes, mode="resident", expected_modules=expected)
 
 
-def test_preflight_uses_controller_roster_not_frozen_observer_source(tmp_path, monkeypatch):
+def _run_preflight(tmp_path, monkeypatch):
+    """Run ``NATIVE_SMOKE`` as the frozen observer would: no controller helper,
+    a stub Triton and A4 surface, the mixed roster on argv."""
     import sys
     from types import ModuleType
     import tessera
@@ -121,10 +193,37 @@ def test_preflight_uses_controller_roster_not_frozen_observer_source(tmp_path, m
                                      json.dumps(expected), json.dumps(kinds)])
     with pytest.raises(SystemExit) as result:
         exec(compile(driver.NATIVE_SMOKE, "NATIVE_SMOKE", "exec"), {})
-    record = json.loads(output.read_text())
-    assert result.value.code == 0, record.get("refusal")
+    return result.value.code, json.loads(output.read_text())
+
+
+def test_preflight_uses_controller_roster_not_frozen_observer_source(tmp_path, monkeypatch):
+    code, record = _run_preflight(tmp_path, monkeypatch)
+    assert code == 0, record.get("refusal")
     assert record["refusal"] is None
     assert all(set(group) == {"dense", "moe"} for group in record["module_kind_launches"].values())
+    # The fused routed window lane's two extensions are recorded, not proven:
+    # every routed kind also publishes the compact adapter's lane-free launch.
+    assert record["lane_launches"] == ["tessera_routed_fused_e4m3", "tessera_routed_fused_value"]
+    for family, kinds in record["module_kind_launches"].items():
+        assert any(row["lane"] is None for row in kinds["moe"]), family
+        assert all(row["lane"] is None for row in kinds["dense"]), family
+
+
+def test_preflight_refuses_a_kind_whose_every_launch_needs_a_lane(tmp_path, monkeypatch):
+    from tessera.serving import scheme
+
+    published = scheme.route_launches
+
+    def lane_only(family, **kw):
+        rows = published(family, **kw)
+        if family == "TESSERA_FP8" and kw.get("structure") == scheme.STRUCTURE_ROUTED_MOE:
+            rows = [row for row in rows if row["lane"] is not None]
+        return rows
+
+    monkeypatch.setattr(scheme, "route_launches", lane_only)
+    code, record = _run_preflight(tmp_path, monkeypatch)
+    assert code == 4
+    assert "TESSERA_FP8/moe" in record["refusal"] and "no proof for a lane" in record["refusal"]
 
 
 @pytest.mark.parametrize("legacy", [False, True])
