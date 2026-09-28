@@ -540,3 +540,16 @@ def test_the_serve_image_rule_is_the_weaker_one_the_data_supports(contract):
               if cell["platform"] == "sm_121"}
     assert len(images) == 2, images
     assert block["platforms"]["sm_121"]["serve_image"] in images
+
+
+def test_the_changelog_is_newest_first_and_heads_at_the_contract_version(contract):
+    """A reader takes ``changelog[0]`` as the current version's account.
+
+    Two PRs that each minted a version (tessera#693 v43, tessera#691 v44) left
+    the later entry below the earlier one; nothing refused it.  The changelog
+    is strictly descending and its head is the packaged ``contract_version``.
+    """
+    versions = [int(entry["contract_version"]) for entry in contract["changelog"]]
+    assert versions[0] == int(contract["contract_version"]), versions[:3]
+    assert all(a > b for a, b in zip(versions, versions[1:])), [
+        (a, b) for a, b in zip(versions, versions[1:]) if a <= b]
