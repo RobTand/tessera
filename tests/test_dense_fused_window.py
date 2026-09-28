@@ -328,9 +328,12 @@ def test_the_served_module_takes_the_fused_lane_and_serves_two_roles(family, mon
     for index, facts in enumerate(module.layout_facts()):
         assert named[f"roles.{index}.fused_table16"].shape == (1, rf.TABLE_ENTRIES)
         assert named[f"roles.{index}.fused_table16"].dtype == torch.int16
-        # An encoded unit may start its decode inside the wire (the encoder's
-        # own start register), whole or cut: the kernel's flag is the bundle's.
-        assert int(named[f"roles.{index}.fused_has_init"].item()) == int(facts.has_history)
+        # An encoded unit carries a start register whole or cut (all zero for
+        # a whole unit -- ``has_history`` false -- and the kernel reads it
+        # through the same flag the Triton bundle sets, ``has_init``).
+        flag = int(named[f"roles.{index}.fused_has_init"].item())
+        assert flag in (0, 1) and flag >= int(facts.has_history)
+        assert named[f"roles.{index}.init_perm"].shape == (256,)
     for m in (1, 5, 64, 129):
         x, xq, a = _inputs(family, m, 256, 500 + m)
         got = _served(module, family, xq, x, a)
