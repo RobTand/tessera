@@ -64,12 +64,10 @@ exclude = ["tessera._dev*"]
 
 [tool.setuptools.package-data]
 # The packaged runtime contract a producer reads through importlib.resources,
-# and the CUDA sources the routes JIT-build (the span-2 NVFP4 decoder and the
-# window-body GEMV).  An editable install reads the tree and would not notice
-# these missing; a wheel would.
-# Both kernels live under the serving package's csrc/, the one directory the
-# contract's native-extension table publishes; the window GEMV loader in
-# ``tessera.kernel_window_gemv`` resolves its source through that table.
+# and CUDA JIT sources under serving/csrc. The span-2 whole-weight decoder was
+# retired; the window GEMV remains published by the native-extension table.
+# Its loader in tessera.kernel_window_gemv resolves the source through that
+# table. An editable install would not notice missing source files; a wheel would.
 "tessera.serving" = ["runtime_contract.json", "csrc/*.cu"]
 
 [tool.pytest.ini_options]

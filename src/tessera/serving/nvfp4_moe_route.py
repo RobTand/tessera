@@ -84,7 +84,7 @@ from ..errors import GrammarError
 from ..moe_layout import W13_PROJECTIONS, validate_moe_wire_lengths
 from .lane import MODE_RESIDENT, MODES
 from .residency import layer_resident_tensors
-from .moe_route import SHARD_TO_GROUP, _packed_group_shard_plan
+from .moe_route import SHARD_TO_GROUP, _bind_module_prefix, _packed_group_shard_plan
 from .scheme import (A4_GROUPED_GEMM_SYMBOL, GROUP_SIZE, MOE_GEMM_SYMBOL, MOE_GROUPS, ROUTES,
                      STRUCTURE_ROUTED_MOE, TESSERA_NVFP4, expert_role_declarations,
                      launch_pairs, moe_census_symbol_base as census_symbol_base,
@@ -131,10 +131,11 @@ def census_expected(*, compiled: bool = False, platform=None) -> dict:
     """The ``(symbol, decoder)`` pairs an NVFP4 expert stack may report, by regime.
 
     The same shape as ``moe_route.census_expected`` for the same reason: one
-    launch in both regimes (the tile is materialised once at load; every
-    forward hands it to the runtime's modular kernel), so ``compiled`` changes
-    nothing, and the symbol's backend suffix is the runtime's answer rather
-    than this route's promise -- a census compares :func:`census_symbol_base`.
+    launch in both regimes (the native grouped span-2 GEMM over the compact
+    loader's planes, ``(a4_span2_grouped_gemm, native_span2_grouped)``, the
+    expert half's only launch since contract v39), so ``compiled`` changes
+    nothing.  :func:`census_symbol_base` still strips a runtime backend suffix
+    from a recorded symbol, for records taken before v39.
     Per ``(platform, family)`` (#457): the stack's payload family is the dense
     NVFP4 route's, so a platform that executes no E2M1_K2 route executes none
     for the experts either.
@@ -143,10 +144,11 @@ def census_expected(*, compiled: bool = False, platform=None) -> dict:
     launches = route_launches(TESSERA_NVFP4, structure=STRUCTURE_ROUTED_MOE,
                               mode=MODE_RESIDENT)
     regimes = {regime for launch in launches for regime in launch["regimes"]}
-    # The native lane's own (symbol, decoder) pairs are experimental: they are
-    # what this route actually reports now, so a census must accept them, and
-    # ``launch_pairs``' default view keeps the cell validator on the attested
-    # dispatch -- no qualification is promoted here.
+    # Experimental pairs, if a later launch enters that set, are what this
+    # route would report before a receipt earns them a cell, so a census
+    # accepts them; ``launch_pairs``' default view keeps the cell validator on
+    # the attested dispatch -- no qualification is promoted here.  None exist
+    # at contract v39: the grouped pair is attested.
     from .scheme import experimental_launch_pairs
 
     pairs = {regime: launch_pairs(TESSERA_NVFP4, structure=STRUCTURE_ROUTED_MOE,
@@ -316,6 +318,9 @@ def build_tessera_nvfp4_moe_method(scheme: Mapping, prefix: str, mode: str, laye
         raise ValueError(
             f"tessera target {prefix!r}: this builder serves {TESSERA_NVFP4} expert stacks "
             f"and the sidecar declares {family}; scheme.MOE_BUILDERS names each family's own")
+    # The route trace names a module by ``layer.prefix`` and vLLM's fused MoE
+    # stores none; ``moe_route._bind_module_prefix`` says why and what it keeps.
+    _bind_module_prefix(layer, prefix)
     from .scheme import refuse_a_family_with_no_expert_route
     refuse_a_family_with_no_expert_route(family, prefix)
     # THE PLATFORM GATE FOR THE EXPERT ROUTE (#457), asked at this builder's

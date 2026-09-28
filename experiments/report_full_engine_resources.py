@@ -22,7 +22,8 @@ JOIN_SCHEMA = "tessera.full_engine_observation_join.v1"
 #: read: the observer tree on ``PYTHONPATH``, the plugin JIT extension dir and
 #: the stock runtime's JIT caches. Read from the launch summary's own docker
 #: argv, never assumed.
-_JIT_CACHE_ENV = ("TRITON_CACHE_DIR", "TORCH_EXTENSIONS_DIR")
+_JIT_CACHE_ENV = ("TRITON_CACHE_DIR", "TORCH_EXTENSIONS_DIR",
+                  "TORCHINDUCTOR_CACHE_DIR", "CUDA_CACHE_PATH")
 
 
 def _container_environment(launch):
@@ -120,6 +121,14 @@ def first_existing(*paths):
     return Path(paths[-1])
 
 
+def resolve_observer_path(path, capture_dir):
+    """Map the launcher's `/out` bind to its host directory after the run."""
+    path = Path(path)
+    if path.is_absolute() and path.parts[:2] == ("/", "out") and not path.exists():
+        return Path(capture_dir).parent.joinpath(*path.parts[2:])
+    return path
+
+
 def join_observation_passes(ledger, *, resource_process_id, startup_records, kv_records,
                             capacity_witness=None):
     """Bind the two passes to ONE run and ONE configured capacity.
@@ -162,6 +171,12 @@ def join_observation_passes(ledger, *, resource_process_id, startup_records, kv_
             raise ValueError(
                 f"kv observation is rank {record.get('rank')}/{record.get('world_size')} and "
                 f"this capture is {rank}/{world_size}")
+        if world_size == 2:
+            if (record.get("schema") != "tessera.full_engine_kv_observation.v2"
+                    or record.get("device_id") != identity.get("device_id")
+                    or record.get("device_uuid") != identity.get("device_uuid")
+                    or record.get("host") != identity.get("host")):
+                raise ValueError("TP2 read-only KV observation differs from the resource rank/device")
         notes["read_only_pass"] = {
             "process_id": record.get("process_id"),
             "admission_evidence": record.get("admission_evidence"),
@@ -171,6 +186,9 @@ def join_observation_passes(ledger, *, resource_process_id, startup_records, kv_
                                         and record.get("process_id") != resource_process_id)
         if capacity_witness is not None:
             witness = capacity_witness[0] if isinstance(capacity_witness, list) else capacity_witness
+            if world_size == 2 and (witness.get("device_uuid") != record.get("device_uuid")
+                                    or witness.get("host") != record.get("host")):
+                raise ValueError("TP2 resource and read-only KV observations differ on host/device")
             if (witness.get("num_blocks") != record.get("num_blocks")
                     or witness.get("group_page_size_bytes") != record.get("group_page_size_bytes")):
                 raise ValueError(
@@ -229,9 +247,75 @@ def declared_members(plan):
     return reference, declared_workload, execution
 
 
+def select_worker_capture(run, world, rank):
+    """Select one actual rank while requiring the whole TP2 RPC population."""
+    workers = run["workers"]
+    if world == 1:
+        if rank not in (None, 0) or len(workers) != 1:
+            raise ValueError("TP1 report covers exactly one worker capture")
+        return workers[0]
+    if world != 2 or rank not in (0, 1):
+        raise ValueError("TP2 report requires explicit --rank 0 or --rank 1")
+    if (len(workers) != 2 or {row.get("rank") for row in workers} != {0, 1}
+            or {row.get("world_size") for row in workers} != {2}):
+        raise ValueError("TP2 resource run lacks both distinct worker ranks")
+    uuids = [row.get("device_uuid") for row in workers]
+    if any(type(uuid) is not str or not uuid for uuid in uuids) or len(set(uuids)) != 2:
+        raise ValueError("TP2 resource run lacks distinct physical devices")
+    hosts = [(row.get("host") or {}).get("ip") for row in workers]
+    if any(type(ip) is not str or not ip for ip in hosts) or len(set(hosts)) != 2:
+        raise ValueError("TP2 resource run lacks distinct actual host IPs")
+    armed = run.get("workload_arm") or []
+    if (len(armed) != 2 or {row.get("rank") for row in armed} != {0, 1}
+            or {row.get("world_size") for row in armed} != {2}):
+        raise ValueError("TP2 resource arm lacks both distinct worker ranks")
+    for worker in workers:
+        matching = next(row for row in armed if row["rank"] == worker["rank"])
+        if (matching.get("pid"), matching.get("device_id"), matching.get("device_uuid"),
+                matching.get("host")) != (
+                worker.get("pid"), worker.get("device_id"), worker.get("device_uuid"),
+                worker.get("host")):
+            raise ValueError("TP2 worker identity changed from arm to finish")
+    return next(worker for worker in workers if worker["rank"] == rank)
+
+
+def resource_rank_world(run, plan, capture_dir):
+    """The shared TP2 roster from both actual worker RPCs and raw receipts."""
+    select_worker_capture(run, 2, 0)
+    plan_path = Path(capture_dir) / "observer-plan.json"
+    if run.get("plan_sha256") != _digest(plan_path):
+        raise ValueError("TP2 resource run does not bind the shared observer plan bytes")
+    digests = ("configuration_sha256", "model_sha256", "runtime_manifest_sha256",
+               "workload_sha256", "assignment_sha256", "canonical_units_sha256")
+    ranks = []
+    for worker in sorted(run["workers"], key=lambda row: row["rank"]):
+        capture = (worker.get("receipt") or {}).get("artifacts", {}).get("capture.json") or {}
+        sha = capture.get("sha256")
+        if type(sha) is not str or len(sha) != 64:
+            raise ValueError("TP2 worker receipt has no raw capture digest")
+        ranks.append({"rank": worker["rank"], "world_size": 2,
+                      "device_id": worker["device_id"], "device_uuid": worker["device_uuid"],
+                      "host": worker["host"], "process_id": worker["pid"],
+                      "capture": {"path": str(Path(worker["directory"]) / "capture.json"),
+                                  "sha256": sha},
+                      "runtime_evidence": {"path": str(resolve_observer_path(
+                          plan["rank_runtime_evidence"][str(worker["rank"])]["path"], capture_dir)),
+                          "sha256": plan["rank_runtime_evidence"][str(worker["rank"])]["sha256"]}})
+    return {"schema": "tessera.full_engine_rank_world.v1", "world_size": 2,
+            "run_identity": {name: plan["identity"][name] for name in digests},
+            "raw_run": {"path": str(Path(capture_dir) / "run.json"),
+                        "sha256": _digest(Path(capture_dir) / "run.json")},
+            "raw_plan": {"path": str(plan_path),
+                         "sha256": run["plan_sha256"]},
+            "ranks": ranks,
+            "scope": "two actual TP2 worker rank captures of one served object; each raw capture is content-bound"}
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--capture-dir", type=Path, required=True, help="the observer output directory")
+    parser.add_argument("--rank", type=int,
+                        help="actual TP2 worker rank for this one-rank report; required for a TP2 run")
     parser.add_argument("--output", type=Path, required=True, help="directory for ledger.json and report.json")
     parser.add_argument("--startup-observation", type=Path,
                         help="the resource pass's worker-startup sidecar (default: the worker directory)")
@@ -246,6 +330,8 @@ def main():
                              "launch-summary.json and the phase's native/JIT preflight record "
                              "(default: the parent of "
                              "--capture-dir)")
+    parser.add_argument("--peer-launch-dir", type=Path,
+                        help="rank-1 TP2 host's own launch summary and installed-runtime inventory")
     parser.add_argument("--core-manifest", type=Path,
                         help="the attested vLLM core manifest (default: the plan's core_manifest path)")
     parser.add_argument("--without-ownership", action="store_true",
@@ -258,16 +344,36 @@ def main():
     args = parser.parse_args()
     plan = json.loads((args.capture_dir / "observer-plan.json").read_text())
     run = json.loads((args.capture_dir / "run.json").read_text())
-    if len(run["workers"]) != 1:
-        raise ValueError("a report covers exactly one worker capture")
-    worker_dir = Path(run["workers"][0]["directory"])
+    world = plan.get("world_size", plan["identity"].get("world_size", 1))
+    worker_entry = select_worker_capture(run, world, args.rank)
+    worker_dir = Path(worker_entry["directory"])
     if not worker_dir.is_absolute() or not worker_dir.exists():
         worker_dir = args.capture_dir / worker_dir.name
     capture_path = worker_dir / "capture.json"
     raw = json.loads(capture_path.read_text())
-    launch_dir = args.launch_dir or args.capture_dir.parent
+    if world == 2:
+        identity = raw.get("identity") or {}
+        if (identity.get("rank"), identity.get("world_size"), identity.get("device_id"),
+                identity.get("device_uuid"), identity.get("host"), raw.get("process_id")) != (
+                args.rank, 2, worker_entry["device_id"], worker_entry["device_uuid"],
+                worker_entry["host"], worker_entry["pid"]):
+            raise ValueError("selected TP2 raw capture differs from the actual worker RPC identity")
+        rank_world = resource_rank_world(run, plan, args.capture_dir)
+        own = rank_world["ranks"][args.rank]
+        if own["capture"]["sha256"] != _digest(capture_path):
+            raise ValueError("selected TP2 raw capture differs from the worker's sealed receipt")
+    if world == 2 and args.rank == 1 and args.peer_launch_dir is None:
+        raise ValueError("rank-1 TP2 report requires the peer host's own --peer-launch-dir")
+    launch_dir = (args.peer_launch_dir if world == 2 and args.rank == 1 else
+                  args.launch_dir or args.capture_dir.parent)
     runtime_observation = _read_json(worker_dir / "runtime-observation.json")
-    per_job = _read_json(launch_dir / "per-job-runtime.json")
+    per_job_path = (resolve_observer_path(plan["rank_runtime_evidence"][str(args.rank)]["path"],
+                                          args.capture_dir) if world == 2 else
+                    launch_dir / "per-job-runtime.json")
+    per_job = _read_json(per_job_path)
+    if world == 2 and (not per_job_path.is_file() or _digest(per_job_path)
+                       != plan["rank_runtime_evidence"][str(args.rank)]["sha256"]):
+        raise ValueError("TP2 rank's installed-runtime evidence bytes changed after plan preparation")
     launch = _read_json(launch_dir / "launch-summary.json")
     # The phase writes one native/JIT preflight record beside its launch summary.  It
     # was named jit-preflight.json while a cpp_extension was the thing proved; since
@@ -302,6 +408,8 @@ def main():
             raise ValueError("a boundary classification is read by the ownership derivation; "
                              "--without-ownership replays without it")
     ledger = analyze_engine_resource_ledger(raw, evidence, classification)
+    if world == 2:
+        ledger["rank_world"] = rank_world
     if evidence is not None and ledger.get("identity") is not None:
         ledger["runtime_provenance_relation"] = runtime_provenance_relation(
             ledger["identity"], plan=plan, launch=launch, per_job=per_job,
@@ -317,10 +425,17 @@ def main():
     # from a read-only pass, which is a different process by design.  The join
     # binds them to one run and one configured capacity and says so.
     startup_path = args.startup_observation or first_existing(
-        worker_dir / "worker-startup.json", args.capture_dir / "worker-startup.json")
+        worker_dir / "worker-startup.json",
+        args.capture_dir / (f"worker-startup-rank{args.rank}.json" if world == 2 else "worker-startup.json"))
     kv_path = args.kv_observation or (worker_dir / "kv-observation.json")
     startup_records = read_observation_list(startup_path, "worker_startup_records", "records")
     kv_records = read_observation_list(kv_path, "kv_observations", "records")
+    if world == 2 and kv_records is not None:
+        if len(kv_records) != 2 or {row.get("rank") for row in kv_records} != {0, 1}:
+            raise ValueError("TP2 read-only KV pass lacks distinct records for both ranks")
+        kv_records = [row for row in kv_records if row["rank"] == args.rank]
+        if kv_records and kv_records[0].get("host") != worker_entry.get("host"):
+            raise ValueError("TP2 read-only KV host differs from the resource worker host")
     capacity_witness = read_observation_list(worker_dir / "kv-observation.json",
                                              "kv_observations", "records")
     join = join_observation_passes(ledger, resource_process_id=raw.get("process_id"),
@@ -332,11 +447,27 @@ def main():
     if kv_records is not None:
         ledger["kv_observations"] = kv_records
     reference, workload, execution = declared_members(plan)
+    run_ref = {"path": str(args.capture_dir / "run.json")}
+    if world == 2:
+        run_ref["sha256"] = _digest(args.capture_dir / "run.json")
     artifacts = [{"schema": "tessera.full_engine_capture_files.v1",
                   "observer_plan": {"path": str(args.capture_dir / "observer-plan.json"),
                                     "sha256": run["plan_sha256"]},
                   "capture": {"path": str(capture_path), "sha256": _digest(capture_path)},
-                  "run": {"path": str(args.capture_dir / "run.json")}}]
+                  "run": run_ref}]
+    if world == 2:
+        sources = {"runtime_observation": worker_dir / "runtime-observation.json",
+                   "per_job_runtime": per_job_path,
+                   "launch_summary": launch_dir / "launch-summary.json",
+                   "native_preflight": first_existing(launch_dir / "native-preflight.json",
+                                                      launch_dir / "jit-preflight.json"),
+                   "core_manifest": args.core_manifest or Path(plan["core_manifest"]),
+                   "worker_observations": worker_dir / "worker-observations.json"}
+        artifacts.append({"schema": "tessera.full_engine_raw_inventory_references.v1",
+                          "rank": args.rank,
+                          "sources": {name: {"path": str(path),
+                                             "sha256": _digest(path) if path.exists() else None}
+                                      for name, path in sources.items()}})
     for name, records, path in (("worker_startup_records", startup_records,
                                  startup_path),
                                 ("kv_observations", kv_records, kv_path),

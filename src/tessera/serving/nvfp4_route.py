@@ -6,9 +6,9 @@ a 16-entry LUT scale plane -- served by the fused span-2 kernel
 packed planes in-kernel and multiplies by the A-side activations quantised
 under the checkpoint's static global scale, folding each role's epilogue
 scalar into the GEMM.  No materialised stock tile exists on this path at any
-point: the retired ``(torch._scaled_mm, native_span2)`` launch stays in the
-table's default view only because the shipped dense cells' ``executes`` name
-the launches their receipts ran.
+point.  The retired ``(torch._scaled_mm, native_span2)`` launch left
+``scheme.ROUTE_LAUNCHES`` at contract v39 with the two cells that still named
+it (tessera#604).
 
 FUSED MODULES.  vLLM merges q/k/v and gate/up.  A module's blob is a
 ``tessera.fused`` container of the per-role units in stacking order; each role
@@ -69,10 +69,9 @@ def census_expected(*, compiled: bool = False, platform=None) -> dict:
     a second spelling in the tool (the ownership rule ``fp8_gemv`` and
     ``bf16_route`` already follow).  ``apply`` stamps the fused pair
     ``(a4_span2_gemm, native_span2_gemm)`` on every forward at every M in both
-    residencies; the retired ``(torch._scaled_mm, native_span2)`` pair stays in
-    the table's default view because the shipped dense cells' ``executes``
-    still name the launches their receipts ran, not because this dispatch can
-    still make it.  ``compiled`` changes nothing: one fused launch has nothing
+    residencies, and since contract v39 that pair is the table's only dense
+    NVFP4 launch (the retired ``(torch._scaled_mm, native_span2)`` pair left
+    with the cells that named it, tessera#604).  ``compiled`` changes nothing: one fused launch has nothing
     to combine into an ``a+b`` symbol, and the stamp is unconditional on
     tracing.  Per ``(platform, family)`` (#457): the dense payload family is
     the route's own ``TESSERA_E2M1_K2``.

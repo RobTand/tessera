@@ -244,7 +244,7 @@ class PreparedGroupedWindowGemm:
     block_m: int
     block_n: int
     block_k: int
-    quantizer: str = "native"
+    quantizer: str | None = "native"
     arithmetic: str = "epilogue"
 
     @property
@@ -254,8 +254,8 @@ class PreparedGroupedWindowGemm:
     def __call__(self, x: torch.Tensor,
                  expert_ids: torch.Tensor,
                  routing_weights: torch.Tensor,
-                 a_scale: "torch.Tensor | None" = None,
-                 out: "torch.Tensor | None" = None,
+                 a_scale: torch.Tensor | None = None,
+                 out: torch.Tensor | None = None,
                  *,
                  preserve: bool = False,
                  apply_router_weight_on_input: bool = False,
@@ -410,7 +410,7 @@ def prepare_grouped_window_gemm_from_soa(
     block_m: int = 64,
     block_n: int = 64,
     block_k: int = 64,
-    quantizer: "str | None" = "native",
+    quantizer: str | None = "native",
     arithmetic: str = "epilogue",
 ) -> PreparedGroupedWindowGemm:
     """A prebuilt SoA stack -- what a loader fills incrementally -- validated
@@ -467,11 +467,11 @@ def routing_ids_ok(expert_ids: torch.Tensor, experts: int) -> torch.Tensor:
 def prepare_grouped_window_gemm(
     units: Sequence[WindowGemvUnit],
     *,
-    initial_state: "torch.Tensor | None" = None,
+    initial_state: torch.Tensor | None = None,
     block_m: int = 64,
     block_n: int = 64,
     block_k: int = 64,
-    quantizer: "str | None" = "native",
+    quantizer: str | None = "native",
     arithmetic: str = "epilogue",
 ) -> PreparedGroupedWindowGemm:
     """Validate every unit once and freeze the SoA stack.

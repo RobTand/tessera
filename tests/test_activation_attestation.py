@@ -174,12 +174,15 @@ def test_the_generator_the_table_names_is_in_this_checkout(block):
     assert path.is_file(), block["generator"]
 
 
-#: The routed E2M1_K2 cells' own runtime image (tessera#607).  An fp4 cell is
-#: priced under the table of the image that executes it, so the image the
-#: routed cells name must carry one.
-ROUTED_E2M1_IMAGE = (
+#: The E2M1_K2 cells' runtime image.  An fp4 cell is priced under the table of
+#: the image that executes it, so the image the cells name must carry one.
+#: Until contract v39 the routed cells named ``a5424378`` (tessera#607); v39
+#: (tessera#604) withdrew them and minted the dense and routed E2M1 cells on the
+#: GLM serving image, with a table generated there.  The ``a5424378`` entry
+#: stays: it is a measurement of that image.
+E2M1_IMAGE = (
     "localhost/prismaquant/spark-vllm-nccl230@sha256:"
-    "a5424378322071f4c33e63d1372a2bb028e46b03f0da0e5edb0cdd7418e2cebb")
+    "f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5")
 
 
 def test_every_sm121_image_an_fp4_cell_executes_on_has_a_table(contract, block):
@@ -188,14 +191,14 @@ def test_every_sm121_image_an_fp4_cell_executes_on_has_a_table(contract, block):
            if cell["platform"] == "sm_121"
            and cell["activation_contract"] == CONTRACT_NAME}
     attested = {entry["generated"]["image"] for entry in block["platforms"]["sm_121"]}
-    assert ROUTED_E2M1_IMAGE in fp4
+    assert fp4 == {E2M1_IMAGE}
     assert fp4 <= attested, sorted(fp4 - attested)
 
 
-def test_the_three_sm121_tables_are_byte_identical(block):
+def test_every_sm121_table_is_byte_identical(block):
     """One vLLM operator build family: the NCCL swap and the MLA patches move no code."""
     entries = block["platforms"]["sm_121"]
-    assert {e["generated"]["image"] for e in entries} >= {ROUTED_E2M1_IMAGE}
+    assert {e["generated"]["image"] for e in entries} >= {E2M1_IMAGE}
     first = entries[0]["contracts"]
     assert all(e["contracts"] == first for e in entries[1:])
 

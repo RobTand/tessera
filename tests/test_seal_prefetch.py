@@ -38,6 +38,7 @@ from tessera.manifest import ScalePlaneKind
 
 from test_hessian_reference_capture import reference  # noqa: F401  (fixture)
 from test_hessian_resident_binding import bound_source, counted, encode_kwargs
+from reuse_authority_fixture import CANONICAL_CAPTURE
 
 cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="needs CUDA")
 
@@ -192,7 +193,7 @@ def test_the_helper_stops_when_the_owner_closes(resident):
 
 def test_an_unbound_reference_prefetches_nothing(reference):  # noqa: F811
     handoff, _, _, _, _ = reference
-    source = ActivationSource.from_capture(handoff, ldlq_sigma=None)
+    source = ActivationSource.from_capture(handoff, canonical_capture=CANONICAL_CAPTURE, ldlq_sigma=None)
     source.capture_sha256()
     assert source._seal_prefetch_thread is None
     assert source._seal_memo == {}

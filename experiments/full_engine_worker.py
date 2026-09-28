@@ -8,6 +8,7 @@ import json
 import hashlib
 import cProfile
 import os
+import subprocess
 import sys
 from contextlib import contextmanager
 from pathlib import Path
@@ -20,6 +21,7 @@ from experiments.full_engine_resources import TensorOwner, BlasWorkspaceObserver
 from experiments.full_engine_kv import (kv_config_value, kv_configuration_observation, inspect_worker_kv,
                                         admission_evidence, kv_observation_record)
 from experiments.full_engine_timing_boundaries import resolve_apply_boundaries, observe_apply_boundaries
+from experiments.full_engine_worker_identity import actual_worker_identity, actual_host_ip
 
 
 SOURCE_WEIGHT_DTYPES = ("torch.bfloat16", "torch.float16", "torch.float32")
@@ -228,7 +230,7 @@ def native_library_observation():
             "libraries": libraries, "errors": errors, "runtime_admission": False}
 
 
-def full_engine_runtime_observation(plan):
+def full_engine_runtime_observation(plan, *, worker=None):
     """Fresh post-initialization package/source and actual loaded-runtime census."""
     import tessera
     import tessera.cached_unit
@@ -239,9 +241,18 @@ def full_engine_runtime_observation(plan):
                                              "bytes": path.stat().st_size}
              for path in sorted(package.rglob("*"))
              if path.is_file() and "__pycache__" not in path.parts}
-    installer_bytes = Path(plan["runtime_evidence"]).read_bytes()
+    identity = plan["identity"]
+    if identity.get("world_size") == 2:
+        rank = identity["rank"]
+        spec = (plan.get("rank_runtime_evidence") or {}).get(str(rank))
+        if not isinstance(spec, dict):
+            raise ValueError("TP2 worker has no installed-runtime evidence for its actual rank")
+        installer_path, expected_installer_sha = spec["path"], spec["sha256"]
+    else:
+        installer_path, expected_installer_sha = plan["runtime_evidence"], plan["runtime_evidence_sha256"]
+    installer_bytes = Path(installer_path).read_bytes()
     installer_sha256 = hashlib.sha256(installer_bytes).hexdigest()
-    if installer_sha256 != plan["runtime_evidence_sha256"]:
+    if installer_sha256 != expected_installer_sha:
         raise ValueError("runtime evidence changed from its planned digest")
     installer = json.loads(installer_bytes)
     if files != installer["plugin_files"]:
@@ -271,6 +282,7 @@ def full_engine_runtime_observation(plan):
     loaded = {"schema": "tessera.loaded_package_identity.v1",
         "encoder_source_sha256": base["source"]["tessera_package_sha256"],
         "package_path": str(package), "installer_evidence_sha256": installer_sha256,
+        "installer_evidence_path": str(installer_path),
         "loaded_tessera_modules": module_identities, "module_identity_errors": [],
         "package_files": files, "package_files_unchanged_from_installer": True,
         "tessera_file": tessera.__file__, "cached_unit_file": tessera.cached_unit.__file__,
@@ -281,7 +293,12 @@ def full_engine_runtime_observation(plan):
         "actual_execution": {"mode": os.environ.get("TESSERA_SERVE_MODE", "resident"),
             "execution_mode": "eager" if plan["selected_configuration"]["engine_args"]["enforce_eager"] else "graph",
             "tensor_parallel": plan["selected_configuration"]["engine_args"]["tensor_parallel_size"],
-            "expert_parallel": 1},
+            "expert_parallel": 1,
+            **({"rank": identity["rank"], "node_rank": worker.vllm_config.parallel_config.node_rank,
+                "nnodes": worker.vllm_config.parallel_config.nnodes,
+                "distributed_executor_backend": worker.vllm_config.parallel_config.distributed_executor_backend,
+                "host_ip": os.environ.get("VLLM_HOST_IP")}
+               if identity.get("world_size") == 2 and worker is not None else {})},
         "configuration_sha256": plan["identity"]["configuration_sha256"],
         "execution": {"engine_args": plan["selected_configuration"]["engine_args"],
             "environment": plan["selected_configuration"]["environment"],
@@ -304,7 +321,27 @@ def full_engine_runtime_observation(plan):
 
 class ResourceCaptureWorker(Worker):
     def __init__(self, *args, **kwargs):
-        self._resource_recorder, self._resource_plan = claim()
+        if args or "vllm_config" in kwargs:
+            config = args[0] if args else kwargs["vllm_config"]
+            local_rank = args[1] if len(args) > 1 else kwargs["local_rank"]
+            rank = args[2] if len(args) > 2 else kwargs["rank"]
+            # A shared launch plan cannot assert that both workers are rank
+            # zero or have the launcher's UUID. Bind the actual vLLM worker
+            # before its first CUDA initialization or allocator snapshot.
+            from experiments.full_engine_bootstrap import _plan
+            uuids = subprocess.check_output(["nvidia-smi", "--query-gpu=uuid", "--format=csv,noheader"],
+                                            text=True).strip().splitlines()
+            identity = actual_worker_identity(_plan, config.parallel_config.tensor_parallel_size,
+                                              rank, local_rank, uuids)
+            self._resource_host = actual_host_ip() if identity["world_size"] == 2 else None
+            if self._resource_host is not None:
+                identity["host"] = self._resource_host
+            self._resource_recorder, self._resource_plan = claim(actual_identity=identity)
+        else:
+            # CPU protocol fixtures construct the stock subclass without vLLM
+            # constructor arguments and supply a fake bootstrapped recorder.
+            self._resource_recorder, self._resource_plan = claim()
+            self._resource_host = None
         prefix = self._resource_plan.get("qualification_prefix")
         if prefix is not None:
             if (type(prefix) is not dict or type(prefix.get("native_invocations")) is not int
@@ -329,6 +366,18 @@ class ResourceCaptureWorker(Worker):
         self._resource_prefix_closed = False
         self._resource_prefix_result = None
         super().__init__(*args, **kwargs)
+
+    def _resource_worker_directory(self):
+        identity = self._resource_plan.get("identity") or {}
+        name = (f"rank-{identity['rank']}-worker-{os.getpid()}" if identity.get("world_size") == 2
+                else f"worker-{os.getpid()}")
+        return Path(self._resource_plan["output_directory"]) / name
+
+    def _resource_startup_path(self):
+        identity = self._resource_plan.get("identity") or {}
+        name = (f"worker-startup-rank{identity['rank']}.json" if identity.get("world_size") == 2
+                else "worker-startup.json")
+        return Path(self._resource_plan["output_directory"]) / name
 
     def _resource_owners(self):
         if self._resource_blas_observer is not None:
@@ -381,6 +430,9 @@ class ResourceCaptureWorker(Worker):
 
     def init_device(self):
         result = super().init_device()
+        identity = self._resource_plan.get("identity") or {}
+        if identity.get("world_size") == 2 and self.device.index != identity["device_id"]:
+            raise RuntimeError("stock worker selected a device other than the early resource recorder")
         if "blas_workspace_observer" in self._resource_plan:
             spec = self._resource_plan["blas_workspace_observer"]
             self._resource_blas_observer = BlasWorkspaceObserver(spec["path"], spec["sha256"])
@@ -573,7 +625,11 @@ class ResourceCaptureWorker(Worker):
             self._resource_native_patches = observe_apply_boundaries(self._resource_native_boundaries, self._resource_observe_apply)
             self._resource_native_patches.__enter__()
         self._resource_armed = True
-        return {"pid": os.getpid(), "startup_execute_calls": self._resource_startup_calls,
+        identity = self._resource_plan.get("identity") or {}
+        return {"pid": os.getpid(), "rank": identity.get("rank"), "world_size": identity.get("world_size"),
+                "device_id": identity.get("device_id"), "device_uuid": identity.get("device_uuid"),
+                "host": self._resource_host,
+                "startup_execute_calls": self._resource_startup_calls,
                 "scope": "subsequent execution belongs to the explicit observation workload"}
 
     def _resource_write_startup_sample(self):
@@ -620,7 +676,7 @@ class ResourceCaptureWorker(Worker):
             payload["workspace"] = workspace
         except Exception as exc:
             payload["skipped"] = f"{type(exc).__name__}: {exc}"
-        path = Path(self._resource_plan["output_directory"]) / "worker-startup.json"
+        path = self._resource_startup_path()
         path.write_text(json.dumps(payload, sort_keys=True, indent=2) + "\n")
 
     def _resource_write_dense_startup_sample(self):
@@ -693,7 +749,7 @@ class ResourceCaptureWorker(Worker):
                           "from the other here")}
         except Exception as exc:  # noqa: BLE001 -- a refusal with a reason, beside the ledger
             payload["skipped"] = f"{type(exc).__name__}: {exc}"
-        path = Path(plan["output_directory"]) / "worker-startup.json"
+        path = self._resource_startup_path()
         path.write_text(json.dumps(payload, sort_keys=True, indent=2) + "\n")
 
     def _resource_write_kv_observation(self, directory):
@@ -729,7 +785,8 @@ class ResourceCaptureWorker(Worker):
                                           snapshot_count=self._resource_recorder.snapshot_count)
             payload["records"] = [kv_observation_record(
                 observed, evidence=evidence, rank=int(rank), world_size=int(world_size),
-                run_identity=identity,
+                run_identity=identity, device_id=identity.get("device_id"),
+                device_uuid=identity.get("device_uuid"), host=self._resource_host,
                 scope=("intrusive resource pass's own KV view; timing- and admission-ineligible, "
                        "kept as the capacity witness a separate read-only pass is compared with"))]
         except Exception as exc:
@@ -758,8 +815,8 @@ class ResourceCaptureWorker(Worker):
                 self._resource_recorder._errors.append(
                     f"observed unit {name} had {count} invocations, expected "
                     f"{self._resource_plan['max_invocations_per_unit']}")
-        directory = Path(self._resource_plan["output_directory"]) / f"worker-{os.getpid()}"
-        runtime = full_engine_runtime_observation(self._resource_plan)
+        directory = self._resource_worker_directory()
+        runtime = full_engine_runtime_observation(self._resource_plan, worker=self)
         native_libraries = native_library_observation()
         native_evidence = []
         if "native_owner_rule" in self._resource_plan:
@@ -796,4 +853,8 @@ class ResourceCaptureWorker(Worker):
             "scope": ("bounded startup/first-native prefix only; subsequent request execution unobserved"
                       if prefix_only else "intrusive raw engine resource pass; timing and admission ineligible")
         }, sort_keys=True))
-        return {"directory": str(directory), "receipt": result}
+        identity = self._resource_plan.get("identity") or {}
+        return {"directory": str(directory), "receipt": result, "pid": os.getpid(),
+                "rank": identity.get("rank"), "world_size": identity.get("world_size"),
+                "device_id": identity.get("device_id"), "device_uuid": identity.get("device_uuid"),
+                "host": self._resource_host}

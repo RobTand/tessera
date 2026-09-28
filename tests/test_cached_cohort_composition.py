@@ -7,6 +7,7 @@ import pytest
 
 from tessera.cached_unit import CachedUnitBundle
 from test_rooted_cached_bundle import rooted
+from reuse_authority_fixture import AUTHORITY
 
 
 def _bound(path, value):
@@ -42,9 +43,9 @@ def test_independent_cohorts_require_composition(tmp_path):
     invalid_migration["wire_roots"]["added"] = str(tmp_path / "added")
     invalid_migration["producer_packages"]["b" * 64] = parent["children"][1]["producer_package"]
     with pytest.raises(ValueError, match="adoption coverage"):
-        CachedUnitBundle(invalid_migration, tmp_path, {"dense", "expert"}, parent["source"])
+        CachedUnitBundle(invalid_migration, tmp_path, {"dense", "expert"}, parent["source"], authority=AUTHORITY)
 
-    bundle = CachedUnitBundle(parent, tmp_path, {"dense", "expert"}, parent["source"])
+    bundle = CachedUnitBundle(parent, tmp_path, {"dense", "expert"}, parent["source"], authority=AUTHORITY)
     assert set(bundle.units) == {"dense", "expert"}
     assert set(bundle.producer_packages) == {"a" * 64, "b" * 64}
     for name in bundle.units:
@@ -64,16 +65,16 @@ def test_composition_preserves_source_part_proof(tmp_path):
     parent["children"][1]["manifest"] = _bound(tmp_path / "added" / "manifest.json", mtp)
     part = {"schema": "tessera.source-part.v1", **whole,
             "files": {"shard-0": whole["files"]["shard-0"]}}
-    assert set(CachedUnitBundle(parent, tmp_path, {"dense", "expert"}, part).units) == {
+    assert set(CachedUnitBundle(parent, tmp_path, {"dense", "expert"}, part, authority=AUTHORITY).units) == {
         "dense", "expert"}
     part["files"]["shard-0"] = "e" * 64
     with pytest.raises(ValueError, match="source identity changed"):
-        CachedUnitBundle(parent, tmp_path, {"dense", "expert"}, part)
+        CachedUnitBundle(parent, tmp_path, {"dense", "expert"}, part, authority=AUTHORITY)
 
 
 def test_parent_manifest_mutation_cannot_change_bound_provenance(tmp_path):
     parent, _, _ = cohorts(tmp_path)
-    bundle = CachedUnitBundle(parent, tmp_path, {"dense", "expert"}, parent["source"])
+    bundle = CachedUnitBundle(parent, tmp_path, {"dense", "expert"}, parent["source"], authority=AUTHORITY)
     original = copy.deepcopy(bundle.child_manifests)
     packages = copy.deepcopy(bundle.producer_packages)
     parent["children"][0]["manifest"]["sha256"] = "0" * 64
@@ -121,4 +122,4 @@ def test_composition_refuses_bad_children(tmp_path, change):
         body["encoder_adoptions"]["dense"] = {"invented": True}
         parent["children"][0]["manifest"] = _bound(tmp_path / "body.json", body)
     with pytest.raises(ValueError):
-        CachedUnitBundle(parent, tmp_path, {"dense", "expert"}, parent["source"])
+        CachedUnitBundle(parent, tmp_path, {"dense", "expert"}, parent["source"], authority=AUTHORITY)

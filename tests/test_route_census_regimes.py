@@ -39,6 +39,8 @@ from tessera.serving.contract import (
     validate_serving_contract,
 )
 
+from withdrawn_cells import withdrawn_v39_cells
+
 ROOT = Path(__file__).resolve().parent.parent
 CENSUS = ROOT / "tools" / "tessera_route_census.py"
 
@@ -123,7 +125,11 @@ TP2_STUB_TRACES = (ROOT / "experiments/results/glm53_a4_stub_tp2_route_trace_ran
 
 
 def test_every_route_the_two_rank_stub_served_joins_to_a_cell():
-    """The routed E2M1_K2 cells rest on records, not on a summary of them.
+    """The two-rank stub's records join the cells they were minted from.
+
+    Since contract v39 its E2M1_K2 records, routed and dense, join only the
+    WITHDRAWN cells (``tests/withdrawn_cells.withdrawn_v39_cells``): they name
+    launches this build no longer makes.
 
     Each rank's ``tessera.route_trace/1`` entry is joined to the sm_121 cells
     by what it names -- family (through the route), structure (through the
@@ -166,6 +172,25 @@ def test_every_route_the_two_rank_stub_served_joins_to_a_cell():
                        and cell["activation_contract"] == entry["contract"]
                        and mode in cell_residency_modes(cell)
                        and launch in cell["executes"]]
+            if family == "TESSERA_E2M1_K2":
+                # Contract v39 withdrew the E2M1 cells these records were
+                # minted from (tessera#604, second half): the routed ones name
+                # the materialising launch nvfp4_moe_route no longer makes,
+                # the dense ones the ``(torch._scaled_mm, native_span2)``
+                # launch nvfp4_route no longer makes.  The records still join
+                # the withdrawn cells, quoted outside the published document,
+                # and join nothing the contract ships.
+                assert entry["decoder"] == {"routed_moe": "torch_materialize_stock",
+                                            "dense": "native_span2"}[structure], entry
+                assert not matched, f"{path.name}: {entry} joins to {matched}"
+                withdrawn = [cell["id"] for cell in withdrawn_v39_cells()
+                             if cell["regime"] == regime and cell["structure"] == structure
+                             and launch in cell["executes"]
+                             and mode in cell_residency_modes(cell)
+                             and cell["activation_contract"] == entry["contract"]]
+                assert withdrawn, f"{path.name}: {entry} joins no withdrawn cell"
+                seen.add((family, structure, regime))
+                continue
             if structure == "dense" and family in ("TESSERA_E4M3_K1", "TESSERA_BF16_K1"):
                 # Contract v31 withdrew these families' dense cells with the
                 # dispatch they attested (tessera#538), so the stub's dense
@@ -179,8 +204,9 @@ def test_every_route_the_two_rank_stub_served_joins_to_a_cell():
         per_rank.append(seen)
         joined |= seen
     assert per_rank[0] == per_rank[1], "the two ranks served different routes"
-    assert {("TESSERA_E2M1_K2", "routed_moe", "decode"),
-            ("TESSERA_E2M1_K2", "routed_moe", "batch")} <= joined, joined
+    assert {("TESSERA_E2M1_K2", structure, regime)
+            for structure in ("dense", "routed_moe")
+            for regime in ("decode", "batch")} <= joined, joined
 
 
 def test_the_census_drives_every_regime_the_table_names():
@@ -244,14 +270,15 @@ def _record(m, **over):
 
     It was a ``TESSERA_FP8:resident`` record until contract v31 withdrew that
     family's dense cells (tessera#538); the shape-and-regime matcher under test
-    is family-blind, and the E2M1x2 dense pair is the cell that still covers a
+    is family-blind, and an E2M1x2 dense pair is the cell that still covers a
     resident dense record in both regimes with one launch.  That "one launch in
     both regimes" is the property this fixture needs: it is what makes a
     miscounted decode observation invisible downstream, which is the defect
-    these tests pin.
+    these tests pin.  Since contract v39 that pair is the GLM-image one on the
+    native A4 GEMM (tessera#604), so the join reads that cell's image.
     """
     return dict({"kind": "dense", "policy": "TESSERA_NVFP4:resident",
-                 "symbol": "torch._scaled_mm", "decoder": "native_span2",
+                 "symbol": "tessera.kernel_a4.a4_span2_gemm", "decoder": "native_span2_gemm",
                  "shape": f"M{m}:N64:K64", "state": "served",
                  "contract": "e2m1_group16_ue4m3_static"}, **over)
 
@@ -268,7 +295,13 @@ def _agreement(records):
         records, cells=contract["lane_eligibility"]["cells"],
         phase_regimes=CENSUS_PHASE_REGIMES, platform="sm_121",
         rungs_by_module={_MODULE: 896}, families_by_route=PAYLOAD_FAMILY_BY_ROUTE,
-        runtime_image=contract["versions"]["default_serve_image"], execution_mode="eager")
+        runtime_image=_e2m1_dense_image(contract), execution_mode="eager")
+
+
+def _e2m1_dense_image(contract):
+    (image,) = {cell["runtime"]["image"] for cell in contract["lane_eligibility"]["cells"]
+                if (cell["family"], cell["structure"]) == ("TESSERA_E2M1_K2", "dense")}
+    return image
 
 
 def _decode_phase():

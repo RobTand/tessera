@@ -59,10 +59,10 @@ cuda = pytest.mark.skipif(not torch.cuda.is_available(),
                           reason="the encoder is a GPU job")
 
 
-# Rungs no routed cell attests (the E4M3 cell carries 896 since contract v38,
-# the BF16 cell 1024), so the ordinary gate refuses and only the research
+# Rungs no routed cell attests (the E4M3 cells carry 832..1088 since contract
+# v39, the BF16 cells 1024), so the ordinary gate refuses and only the research
 # block admits them.
-@pytest.mark.parametrize("grid,q256", [("E4M3", 1024), ("BF16", 1792)])
+@pytest.mark.parametrize("grid,q256", [("E4M3", 1536), ("BF16", 1792)])
 def test_research_selected_export_gate_accepts_reader_range_without_publishing_a_cell(grid, q256):
     from tessera.control import grid_for_name
 

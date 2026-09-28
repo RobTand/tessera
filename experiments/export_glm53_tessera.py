@@ -44,6 +44,7 @@ from pathlib import Path
 
 import torch
 
+from tessera import producer_authority
 from tessera.alphabet import E2M1_GRID, tuple_grid
 from tessera.export import (
     DEFAULT_LDLQ_BLOCK, DEFAULT_LDLQ_SIGMA,
@@ -56,7 +57,7 @@ PLAN = ("/mnt/shared/dq-runs/glm53-tessera-alloc-20260901/artifacts/"
         "glm53_tessera_plan.json")   # shared: both boxes read one plan
 
 
-def main():
+def build_parser():
     ap = argparse.ArgumentParser()
     ap.add_argument("--shards", default="",
                     help="inclusive 1-based input-shard range, e.g. 61-120; "
@@ -73,16 +74,31 @@ def main():
                     help="error the scale refit minimises: plain | hessian | h^ALPHA. "
                          "Default: the measured objective for each unit's own scale "
                          "plane (export.DEFAULT_REFIT_OBJECTIVE)")
-    args = ap.parse_args()
+    producer_authority.add_argument(ap)
+    return ap
 
-    # One loader for every driver's --hessian, so no two of them can disagree
-    # about what a capture file means (``ActivationSource.from_capture``).
-    activation = None
-    if args.hessian:
-        activation = ActivationSource.from_capture(
-            args.hessian, ldlq_sigma=args.ldlq_sigma, ldlq_block=args.ldlq_block,
-            **({} if args.refit_metric is None
-               else {"refit_objective": args.refit_metric}))
+
+def activation_source(args):
+    """The ``--hessian`` capture at the driver's settings, or ``None``.
+
+    One loader for every driver's --hessian, so no two of them can disagree
+    about what a capture file means (``ActivationSource.from_capture``).  A
+    reference document binds a producer's calibration cache, so it refuses by
+    name unless ``--producer-authority`` supplies the producer's canonical
+    capture (tessera#599).
+    """
+    if not args.hessian:
+        return None
+    return ActivationSource.from_capture(
+        args.hessian, ldlq_sigma=args.ldlq_sigma, ldlq_block=args.ldlq_block,
+        canonical_capture=producer_authority.canonical_capture(args.producer_authority),
+        **({} if args.refit_metric is None
+           else {"refit_objective": args.refit_metric}))
+
+
+def main():
+    args = build_parser().parse_args()
+    activation = activation_source(args)
 
     plan = {k: int(v) for k, v in json.load(open(PLAN)).items()}
     shard_filter = None

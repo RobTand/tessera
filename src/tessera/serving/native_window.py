@@ -44,6 +44,24 @@ bundle holds the repacked wire words plus the small tables and the fp32 row
 scale; ``packed_bytes()`` and ``fingerprints()`` are what a test (or a census)
 reads to see that a forward changed none of it.
 
+TWO LAUNCH IDENTITIES, ONE PER MODULE.  Since contract v43 a module whose every
+role the fused window kernel reads (``tessera.routed_fused.
+fused_dense_window_supported``: rate 4 in every column, window 14, identity
+order, rows a multiple of 128) is served by that kernel's dense case instead:
+the functional custom op ``tessera::fused_window_dense`` launches
+``routed_fused_kernel<FP8, 2, DENSE>`` once per role into the role's column
+slice of one ``[M, rows]`` output (no concatenation), splitting K at decode
+shapes so every SM has an item, and stamps ``native_fused_window_dense`` /
+``native_fused_window_dense_folded``.  The lane is decided ONCE at
+preparation for the whole module -- a module stamps one decoder -- and the
+Triton op above stays the dispatch for every module the predicate refuses,
+for a box whose toolchain cannot build the library (the ``when_unavailable``
+substitution, logged), and for ``TESSERA_DENSE_FUSED=0``.  Both identities
+compute the same function of the wire (the family's published arithmetic and
+fp32 operation order); their MMA accumulation orders differ, so agreement is
+held to the reference product's bound, not bitwise
+(``tests/test_dense_fused_window.py``, ``experiments/dense_fused_oracle.py``).
+
 THE REFERENCE STAYS.  ``prepare_tessera_fp8_module``/``prepare_tessera_bf16_module``
 and the torch window decode in ``serving.window`` are retained unchanged as
 the reference path; they are no longer reached from ``process_weights_after_loading``.
@@ -52,23 +70,33 @@ Deleting them is a separate assignment, after this path has served.
 from __future__ import annotations
 
 import dataclasses
+import logging
 from typing import List, Optional, Sequence
 
 import torch
 
 from ..compact_prep import CompactWire, prepare_window_compact
-from .scheme import ROUTES, TESSERA_BF16, TESSERA_FP8, WINDOW_GEMM_SYMBOL
+from .scheme import (FUSED_WINDOW_DENSE_SYMBOL, ROUTES, TESSERA_BF16, TESSERA_FP8,
+                     WINDOW_GEMM_SYMBOL)
 from .sharding import AXIS_ROWS, ShardPlan
-from .telemetry import DECODER_NATIVE_WINDOW_GEMM, DECODER_NATIVE_WINDOW_GEMM_FOLDED
+from .telemetry import (DECODER_NATIVE_FUSED_WINDOW_DENSE,
+                        DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED,
+                        DECODER_NATIVE_WINDOW_GEMM, DECODER_NATIVE_WINDOW_GEMM_FOLDED)
 
 __all__ = [
     "DENSE_FAMILIES",
+    "DENSE_LANES",
+    "FUSED_WINDOW_DENSE_DECODER",
+    "LANE_FUSED",
+    "LANE_TRITON",
     "NATIVE_WINDOW_ARITHMETIC",
     "NATIVE_WINDOW_DECODER",
     "NATIVE_WINDOW_FAMILY",
     "PreparedDenseNativeModule",
     "prepare_dense_native_module",
 ]
+
+_log = logging.getLogger(__name__)
 
 DENSE_FAMILIES = (TESSERA_FP8, TESSERA_BF16)
 
@@ -82,6 +110,17 @@ NATIVE_WINDOW_ARITHMETIC = {TESSERA_FP8: "epilogue", TESSERA_BF16: "folded"}
 #: The decoder each arithmetic stamps -- one symbol, two numerical functions.
 NATIVE_WINDOW_DECODER = {"epilogue": DECODER_NATIVE_WINDOW_GEMM,
                          "folded": DECODER_NATIVE_WINDOW_GEMM_FOLDED}
+#: The fused window kernel's dense identity, per arithmetic (contract v43).
+FUSED_WINDOW_DENSE_DECODER = {"epilogue": DECODER_NATIVE_FUSED_WINDOW_DENSE,
+                              "folded": DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED}
+#: The two lanes a prepared module may run, and the ``(symbol, decoder)`` each
+#: stamps per arithmetic.  ``lane`` is a module fact decided at preparation.
+LANE_TRITON = "triton"
+LANE_FUSED = "fused"
+DENSE_LANES = {
+    LANE_TRITON: (WINDOW_GEMM_SYMBOL, NATIVE_WINDOW_DECODER),
+    LANE_FUSED: (FUSED_WINDOW_DENSE_SYMBOL, FUSED_WINDOW_DENSE_DECODER),
+}
 #: The activation contract each route publishes, read off its ROUTES entry.
 ACTIVATION_CONTRACT = {family: ROUTES[family]["activation_contract"]
                        for family in DENSE_FAMILIES}
@@ -137,6 +176,53 @@ def _window_gemm_dense_fake(
     return torch.empty((x.shape[0], rows), dtype=torch.bfloat16, device=x.device)
 
 
+@torch.library.custom_op("tessera::fused_window_dense", mutates_args=())
+def _fused_window_dense(
+    x: torch.Tensor,
+    a_scale: Optional[torch.Tensor],
+    words: List[torch.Tensor], tables: List[torch.Tensor], inits: List[torch.Tensor],
+    has_inits: List[torch.Tensor], wscales: List[torch.Tensor],
+    role_rows: List[int], cols: int, family_e4m3: bool, folded: bool,
+) -> torch.Tensor:
+    """A whole module through the fused window kernel's dense case: one node.
+
+    The module's roles are explicit lists (one entry per role, row order), so
+    a compiled forward traces one opaque node with one output it owns, exactly
+    as ``tessera::window_gemm_dense`` does per role.  Each role is launched
+    into its column slice of the one ``[M, sum(rows)]`` output; the work
+    counter the kernel claims items through is allocated here per call and
+    zeroed in-stream, so the op stays functional (nothing outside it is
+    mutated) and a captured forward replays.  ``folded`` is carried for the
+    same reason the Triton op carries it: the family fixes it, and a rebuilt
+    role cannot run a different arithmetic than the prepared one.
+    """
+    from .. import routed_fused as rf
+
+    family = "e4m3" if family_e4m3 else "value"
+    if folded != (family == "value"):
+        raise ValueError("the fused dense identity folds the value family and only it")
+    m = int(x.shape[0])
+    total = int(sum(role_rows))
+    out = torch.empty((m, total), dtype=torch.bfloat16, device=x.device)
+    if m == 0:
+        return out
+    counter = torch.zeros(len(role_rows), dtype=torch.int32, device=x.device)
+    offset = 0
+    for i, rows in enumerate(role_rows):
+        role = rf.FusedDenseWindowRole(
+            family=family, rows=int(rows), cols=int(cols), words=words[i], table16=tables[i],
+            init=inits[i], has_init=has_inits[i], wscale=wscales[i])
+        rf.dense_forward(role, x, a_scale, out.narrow(1, offset, int(rows)), counter[i:i + 1])
+        offset += int(rows)
+    return out
+
+
+@_fused_window_dense.register_fake
+def _fused_window_dense_fake(x, a_scale, words, tables, inits, has_inits, wscales,
+                             role_rows, cols, family_e4m3, folded):
+    return torch.empty((x.shape[0], int(sum(role_rows))), dtype=torch.bfloat16, device=x.device)
+
+
 class PreparedDenseNativeModule:
     """One vLLM dense module's roles, prepared once and served packed.
 
@@ -147,10 +233,11 @@ class PreparedDenseNativeModule:
     """
 
     __slots__ = ("__roles", "__rows", "__columns", "__device", "__family",
-                 "__arithmetic")
+                 "__arithmetic", "__lane", "__fused", "__lane_reason")
 
     def __init__(self, roles, *, rows: int, columns: int, device: torch.device,
-                 family: str):
+                 family: str, lane: str = LANE_TRITON, fused_roles=None,
+                 lane_reason: "str | None" = None):
         self.__roles = tuple(roles)
         self.__rows = int(rows)
         self.__columns = int(columns)
@@ -166,6 +253,17 @@ class PreparedDenseNativeModule:
                 f"the roles of one module run one weight arithmetic, got {sorted(arithmetics)}; "
                 "the module stamps one decoder")
         self.__arithmetic = arithmetics.pop()
+        if lane not in DENSE_LANES:
+            raise ValueError(f"unknown dense lane {lane!r}; one of {sorted(DENSE_LANES)}")
+        fused = tuple(fused_roles) if fused_roles is not None else ()
+        if (lane == LANE_FUSED) != bool(fused):
+            raise ValueError("the fused lane carries one prepared kernel role per module role")
+        if fused and (len(fused) != len(self.__roles)
+                      or any(f.rows != r.rows for f, r in zip(fused, self.__roles))):
+            raise ValueError("the fused roles do not match the module's roles row for row")
+        self.__lane = lane
+        self.__fused = fused
+        self.__lane_reason = lane_reason
 
     @property
     def rows(self): return self.__rows
@@ -178,7 +276,21 @@ class PreparedDenseNativeModule:
     @property
     def arithmetic(self): return self.__arithmetic
     @property
-    def decoder(self): return NATIVE_WINDOW_DECODER[self.__arithmetic]
+    def lane(self):
+        """``"fused"`` or ``"triton"``: which launch identity serves this module."""
+        return self.__lane
+    @property
+    def lane_reason(self):
+        """Why the module kept the Triton lane (``None`` on the fused lane)."""
+        return self.__lane_reason
+    @property
+    def symbol(self): return DENSE_LANES[self.__lane][0]
+    @property
+    def decoder(self): return DENSE_LANES[self.__lane][1][self.__arithmetic]
+    @property
+    def launch_pair(self):
+        """The ``(symbol, decoder)`` this module's ``apply`` stamps."""
+        return (self.symbol, self.decoder)
     @property
     def role_names(self): return tuple(role.name for role in self.__roles)
 
@@ -212,9 +324,17 @@ class PreparedDenseNativeModule:
 
         ``x`` is bf16 for the value family and prequantized fp8 plus its
         per-token scale for the e4m3 family (the route quantizes before this
-        call, so the contract's quantizer is the one that ran).  One custom-op
-        node per role; no host-side data-dependent work.
+        call, so the contract's quantizer is the one that ran).  On the fused
+        lane one custom-op node serves the whole module; on the Triton lane one
+        node per role.  No host-side data-dependent work on either.
         """
+        if self.__lane == LANE_FUSED:
+            fused = self.__fused
+            return _fused_window_dense(
+                x, a_scale, [f.words for f in fused], [f.table16 for f in fused],
+                [f.init for f in fused], [f.has_init for f in fused], [f.wscale for f in fused],
+                [int(f.rows) for f in fused], int(self.__columns), self.__family == "e4m3",
+                self.__arithmetic == "folded")
         parts = []
         for role in self.__roles:
             bundle = role.bundle
@@ -240,6 +360,12 @@ class PreparedDenseNativeModule:
             for name in ("words", "table", "codes", "native", "scale", "runs",
                          "init_perm", "perm"):
                 yield f"roles.{index}.{name}", getattr(role.bundle, name)
+        # The fused lane's own storage beyond the bundles: the composed 16-bit
+        # table (32 KB) and the has_init flag per role; its words, start state
+        # and row scale are views of the bundle tensors already yielded.
+        for index, fused in enumerate(self.__fused):
+            for name, tensor in fused.named_tables():
+                yield f"roles.{index}.{name}", tensor
 
     def packed_bytes(self) -> int:
         """Device bytes the prepared weights occupy: the packed wire half."""
@@ -336,6 +462,14 @@ def prepare_dense_native_module(
     and fixes the family's weight arithmetic (``NATIVE_WINDOW_ARITHMETIC``).
     No reference decode runs here; the expanded reference preparations remain
     the test oracle.
+
+    The lane is decided here, once per module: the fused window kernel's dense
+    identity when ``routed_fused.fused_dense_window_supported`` admits every
+    role and ``TESSERA_DENSE_FUSED`` is not ``0`` (its libraries are built or
+    loaded HERE, so a toolchain that cannot compile them fails at load into
+    the Triton lane -- the ``when_unavailable`` substitution -- and not on a
+    serve's first forward); the Triton GEMM otherwise, with the reason kept
+    on the module (``lane_reason``) and logged.
     """
     from .. import window_gemm as wg
 
@@ -370,5 +504,37 @@ def prepare_dense_native_module(
         roles.append(_NativeRole(name=wire.name or name, rows=int(unit.rows),
                                  bundle=bundle, facts=facts))
         offset += int(unit.rows)
+    lane, fused, reason = _decide_lane(roles, window_family)
     return PreparedDenseNativeModule(roles, rows=offset, columns=columns,
-                                     device=device, family=window_family)
+                                     device=device, family=window_family,
+                                     lane=lane, fused_roles=fused, lane_reason=reason)
+
+
+def _decide_lane(roles, window_family: str):
+    """``(lane, fused_roles, reason)`` for a module's prepared roles.
+
+    Every role must pass the predicate (one decoder per module); the first
+    refusal is the module's reason.  A build or load failure of the family's
+    library after the predicate admitted the module is the substitution the
+    extension entry's ``when_unavailable`` publishes: the Triton lane, with a
+    warning naming the cause.
+    """
+    from .. import routed_fused as rf
+    from ..errors import GrammarError
+
+    for role in roles:
+        reason = rf.fused_dense_window_supported(role.bundle)
+        if reason is not None:
+            _log.info("Triton dense window GEMM kept for a %s module of %d role(s): role %r: %s",
+                      window_family, len(roles), role.name, reason)
+            return LANE_TRITON, None, f"role {role.name!r}: {reason}"
+    try:
+        fused = tuple(rf.prepare_dense_role(role.bundle) for role in roles)
+    except GrammarError:
+        raise
+    except Exception as exc:  # noqa: BLE001 -- the native build is what may fail here
+        reason = f"native build unavailable ({type(exc).__name__}: {exc})"
+        _log.warning("fused dense window identity unavailable for a %s module of %d role(s); "
+                     "the Triton GEMM serves it: %s", window_family, len(roles), reason)
+        return LANE_TRITON, None, reason
+    return LANE_FUSED, fused, None

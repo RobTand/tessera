@@ -84,6 +84,8 @@ __all__ = [
     "DECODER_WINDOW_GEMV",
     "DECODER_NATIVE_WINDOW_GEMM",
     "DECODER_NATIVE_WINDOW_GEMM_FOLDED",
+    "DECODER_NATIVE_FUSED_WINDOW_DENSE",
+    "DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED",
     "DECODER_NATIVE_SPAN2_GEMM",
     "DECODER_NATIVE_SPAN2_GROUPED",
     "DECODER_NATIVE_WINDOW_MOE_COMPACT",
@@ -171,12 +173,33 @@ DECODER_NATIVE_WINDOW_MOE_COMPACT = "native_window_moe_compact"
 #: numerical function of the same wire: a census or a cell that read the
 #: epilogue decoder here would attest the arithmetic that did not run.
 DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED = "native_window_moe_compact_folded"
+#: The fused warp-specialised routed window MoE (``tessera.routed_fused``,
+#: tessera#640): routed experts served from the same packed planes by one
+#: persistent kernel that decodes each weight once per tile and reuses it
+#: across routes, with a DETERMINISTIC fixed-order per-token reduction.  The
+#: E4M3 family's epilogue arithmetic stamps the first; the BF16 family's
+#: folded arithmetic the second.  Distinct from the compact pair because a
+#: census must tell which kernel served a stack, and because the reduction
+#: order -- fixed here, scheduling-dependent in the compact adapter's atomic
+#: -- makes the two different numerical functions of the same wire.
+DECODER_NATIVE_ROUTED_FUSED_WINDOW = "native_routed_fused_window"
+DECODER_NATIVE_ROUTED_FUSED_WINDOW_FOLDED = "native_routed_fused_window_folded"
+#: The same kernel's dense identity (contract v43): one role of a dense Linear
+#: as the E = 1 case, K split at decode shapes with a fixed-order reduce.  Its
+#: own strings because it is a different launch than the Triton dense GEMM
+#: (a different accumulation order over the same function of the wire) and a
+#: census must be able to say which one served a module.
+DECODER_NATIVE_FUSED_WINDOW_DENSE = "native_fused_window_dense"
+DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED = "native_fused_window_dense_folded"
 DECODERS = frozenset((DECODER_NATIVE_SPAN2, DECODER_TORCH_STOCK, DECODER_TORCH_WINDOW,
                       DECODER_WINDOW_GEMV, DECODER_NATIVE_WINDOW_GEMM,
                       DECODER_NATIVE_WINDOW_GEMM_FOLDED,
                       DECODER_NATIVE_SPAN2_GEMM, DECODER_NATIVE_SPAN2_GROUPED,
                       DECODER_NATIVE_WINDOW_MOE_COMPACT,
-                      DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED))
+                      DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED,
+                      DECODER_NATIVE_ROUTED_FUSED_WINDOW,
+                      DECODER_NATIVE_ROUTED_FUSED_WINDOW_FOLDED,
+                      DECODER_NATIVE_FUSED_WINDOW_DENSE, DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED,))
 
 ATTR_PREFIX = "_tessera_route_"
 
@@ -184,12 +207,24 @@ ATTR_PREFIX = "_tessera_route_"
 #: histogram in.  Unset (the default) means the histogram does not exist:
 #: ``emit_route`` writes the same record it always did and counts nothing.
 #: Read once, at import, which is what latches it for the process.
+def _serving_source_sha256_or_none() -> str | None:
+    """:func:`source_identity.serving_source_sha256`, or ``None`` if unreadable."""
+    from .source_identity import serving_source_sha256
+
+    try:
+        return serving_source_sha256()
+    except (OSError, ValueError):
+        return None
+
+
 ROUTE_TRACE_ENV = "TESSERA_ROUTE_TRACE"
 ROUTE_TRACE_SCHEMA = "tessera.route_trace/1"
 
 #: Version of the ADDITIVE identity block this file writes: entry
 #: ``module_names`` / ``unnamed_modules`` / ``dispatches_without_prefix``, and
-#: the header's ``rank`` / ``world_size`` / ``rank_source`` / ``platform``.
+#: the header's ``rank`` / ``world_size`` / ``rank_source`` / ``platform``,
+#: and (contract v41) ``serving_source_sha256``, which is additive in the same
+#: sense: a new key, no known field redefined, so the version does not move.
 #: ``schema`` stays ``tessera.route_trace/1`` because nothing was removed or
 #: renamed: a reader that knows only the histogram still reads exactly what it
 #: read before, and a reader that wants per-module identity checks this number
@@ -473,6 +508,10 @@ class _RouteTrace:
     def __init__(self, path):
         self.path = Path(path)
         self.started_utc = datetime.now(timezone.utc).isoformat()
+        #: The serving closure's digest, taken once when the trace starts, so
+        #: the header names the code this process started on even if the
+        #: checkout behind an editable install is edited while it serves.
+        self.serving_source_sha256 = _serving_source_sha256_or_none()
         self.flushes = 0
         self._lock = threading.Lock()
         self._counts: dict[tuple, list] = {}
@@ -619,6 +658,10 @@ class _RouteTrace:
             # core.  A device probe here is a CUDA initialisation in the wrong
             # process (or a frozen "" in the right one) for a header field.
             "platform": latched_platform(),
+            # Added under identity_version 1: a new key, and no known field
+            # changed meaning.  ``None`` means the tree could not be read, which
+            # a consumer treats as "does not say", never as a match.
+            "serving_source_sha256": self.serving_source_sha256,
             "pid": os.getpid(),
             "started_utc": self.started_utc,
             "flushed_utc": datetime.now(timezone.utc).isoformat(),

@@ -1,0 +1,12 @@
+# Shrink-only allowlist for tests/test_standalone_boundary.py.
+# One line per occurrence: path<TAB>kind<TAB>value. Delete lines; never add.
+# CI refuses a pull request that adds a line here. The end state is the
+# prismaquant.tessera.v1 wire-ID literals alone (decoupling steps 1 and 5).
+src/tessera/encoder_identity.py	literal	prismaquant.tessera.v1
+src/tessera/identity.py	literal	prismaquant.tessera.v1
+src/tessera/manifest.py	literal	prismaquant.tessera.v1
+src/tessera/manifest.py	literal	prismaquant.tessera.v1
+src/tessera/manifest.py	literal	prismaquant.tessera.v1
+src/tessera/manifest.py	literal	prismaquant.tessera.v1
+src/tessera/unit_artifact.py	literal	prismaquant.tessera.v1
+src/tessera/unit_artifact.py	literal	prismaquant.tessera.v1

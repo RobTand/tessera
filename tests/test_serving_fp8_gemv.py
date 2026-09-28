@@ -1,14 +1,13 @@
-"""The streamed FP8 route's decode-regime GEMV: the wire read once, never materialised.
+"""The current packed FP8 route and the retained window-GEMV reference operator.
 
-Wires ``tessera.kernel_window_gemv`` (the fused window-body GEMV, whose
-DECODED TILE is bit-exact against the torch decoder's on 196/196 reach units
--- the GEMM is a separate question, and #110 is what happens when the two are
-conflated) into the FP8 route's ``apply()`` for M <= 8, keeping the
-materialised decode + ``torch._scaled_mm`` path for prefill.  The activation
-contract does NOT change: the GEMV runs on the per-token-dynamic FP8 codes the
-route's own quantiser produced, with ``a_scale`` applied to the kernel's fp32
-output, so what it computes is the W8A8 product up to fp32 summation order,
-and the census contract field is untouched.
+The serve prepares ``tessera_native`` and dispatches ONE launch per module at
+every M and in both residencies -- the Triton window GEMM, or since contract
+v43 the fused window kernel's dense identity where the module's wire admits
+it (``route.DENSE_LAUNCHES``; the default shape here, q256 1024 with rows a
+multiple of 128, takes the fused lane).  It no longer creates a GEMV holder
+or a materialized weight fallback. Precision tests for the retained GEMV operator
+prepare that holder explicitly from the wire, independently of the serve.
+They retain the original byte-identity, fp32-order and activation-scale bars.
 
 STUBBED like its sibling: vLLM's ``LinearMethodBase`` / parameters, the
 per-token FP8 activation quantiser and the ABI attestation.
@@ -30,7 +29,9 @@ from tessera.serving import lane as serving_lane                     # noqa: E40
 from tessera.serving import native_ops, telemetry                    # noqa: E402
 from tessera.serving.lane import (                                   # noqa: E402
     MODE_RESIDENT, MODE_STREAMED, TESSERA_MODE_ENV, build_tessera_method)
-from tessera.serving.scheme import TESSERA_FP8                       # noqa: E402
+from tessera.serving.scheme import (                                # noqa: E402
+    TESSERA_FP8, parse_tessera_blob_for_scheme,
+)
 
 CUDA = torch.cuda.is_available()
 requires_cuda = pytest.mark.skipif(not CUDA, reason="needs a CUDA device")
@@ -60,10 +61,9 @@ def _install_vllm_stubs(monkeypatch):
         return torch.nn.Parameter(data, requires_grad=False)
 
     linear = types.ModuleType("vllm.model_executor.layers.linear")
-    linear.LinearMethodBase = _LinearMethodBase
+    linear.__dict__["LinearMethodBase"] = _LinearMethodBase
     parameter = types.ModuleType("vllm.model_executor.parameter")
-    parameter.ModelWeightParameter = _param
-    parameter.BasevLLMParameter = _param
+    parameter.__dict__.update(ModelWeightParameter=_param, BasevLLMParameter=_param)
     for name, mod in (("vllm", types.ModuleType("vllm")),
                       ("vllm.model_executor", types.ModuleType("vllm.model_executor")),
                       ("vllm.model_executor.layers", types.ModuleType("vllm.model_executor.layers")),
@@ -119,7 +119,8 @@ def _encode_module(roles, cols=1024, q256=1024, seed=0):
     return blob, scheme, weight, scale, ref_w
 
 
-def _drive(monkeypatch, mode, roles=(("weight", 256),), cols=1024, m=32, seed=0, q256=1024):
+def _drive(monkeypatch, mode, roles=(("weight", 256),), cols=1024, m=32, seed=0,
+           q256=1024, *, with_gemv_reference=False):
     serving_lane.reset_for_tests()
     monkeypatch.setenv(TESSERA_MODE_ENV, mode)
     _install_vllm_stubs(monkeypatch)
@@ -136,6 +137,11 @@ def _drive(monkeypatch, mode, roles=(("weight", 256),), cols=1024, m=32, seed=0,
                           input_size=cols, output_size=rows, params_dtype=torch.bfloat16)
     layer.wire_bytes.data = torch.frombuffer(bytearray(blob), dtype=torch.uint8).clone()
     layer.to(torch.device("cuda"))
+    if with_gemv_reference:
+        # Test-owned reference state, never an attribute the serving route sets.
+        parsed = parse_tessera_blob_for_scheme(blob, scheme, "test.reference")
+        layer.reference_gemv = fp8_gemv.prepare_fp8_gemv(
+            parsed, device="cuda", expected=(weight, scale))
     method.process_weights_after_loading(layer)
     x = torch.randn(m, cols, dtype=torch.bfloat16, device="cuda",
                     generator=torch.Generator(device="cuda").manual_seed(seed))
@@ -161,35 +167,33 @@ def _bf16_tol(bound, ref):
 # --- the wiring --------------------------------------------------------------
 
 @requires_cuda
-def test_streamed_prepares_the_gemv_holder_and_drops_the_torch_planes(monkeypatch):
-    """The streamed route holds the repacked wire, not the torch window planes."""
-    _g, _w, layer, _m, (weight, scale) = _drive(monkeypatch, MODE_STREAMED)
-    assert layer.tessera_gemv is not None
-    assert layer.tessera_prepared is None
-    assert not hasattr(layer, "weight_fp8")
-    got_bytes, got_scale = fp8_gemv.holder_decode(layer.tessera_gemv)
-    assert torch.equal(got_bytes, weight)
-    assert torch.equal(got_scale, scale)
+def test_streamed_prepares_native_without_materialized_planes(monkeypatch):
+    """The served state is the packed native bundle, not either retired holder."""
+    _g, _w, layer, _m, (_weight, scale) = _drive(monkeypatch, MODE_STREAMED)
+    assert layer.tessera_native is not None
+    for name in ("tessera_gemv", "tessera_prepared", "weight_fp8", "wire_bytes"):
+        assert not hasattr(layer, name)
+    assert torch.equal(layer.scale_b.reshape(-1), scale.to(layer.scale_b.device))
 
 
 @requires_cuda
-def test_resident_does_not_prepare_the_gemv(monkeypatch):
-    """The resident lane already holds the tile; the GEMV is the streamed route's."""
+def test_resident_also_holds_only_the_packed_native_bundle(monkeypatch):
     _g, _w, layer, _m, _ = _drive(monkeypatch, MODE_RESIDENT)
-    assert layer.tessera_gemv is None
-    assert layer.tessera_prepared is None
-    assert layer.weight_fp8.dtype == torch.float8_e4m3fn
+    assert layer.tessera_native is not None
+    for name in ("tessera_gemv", "tessera_prepared", "weight_fp8", "wire_bytes"):
+        assert not hasattr(layer, name)
 
 
 @requires_cuda
 @pytest.mark.parametrize("m", [1, 2, 3, 4, 5, 8])
-def test_decode_regime_serves_the_gemv(monkeypatch, m):
-    """M <= 8 runs the wire GEMV on the quantised activations, at the route's own bar."""
+def test_decode_regime_serves_the_native_window_gemm(monkeypatch, m):
+    """Decode keeps the same activation/numerical bar on the current launch."""
     from tessera.serving.telemetry import read_route
     got, want, layer, _m, _ = _drive(monkeypatch, MODE_STREAMED, m=m, seed=11)
     rec = read_route(layer)
-    assert rec["symbol"] == fp8_gemv.GEMV_SYMBOL
-    assert rec["decoder"] == telemetry.DECODER_WINDOW_GEMV
+    assert rec is not None
+    assert (rec["symbol"], rec["decoder"]) == layer.tessera_native.launch_pair
+    assert (rec["symbol"], rec["decoder"]) in route.DENSE_LAUNCHES
     assert rec["contract"] == route.ACTIVATION_CONTRACT == "fp8_per_token_dynamic"
     assert rec["state"] == "served"
     err = (got.float() - want.float()).abs().max().item()
@@ -198,17 +202,14 @@ def test_decode_regime_serves_the_gemv(monkeypatch, m):
 
 @requires_cuda
 @pytest.mark.parametrize("m", [9, 32, 64])
-def test_prefill_keeps_the_materialised_path(monkeypatch, m):
-    """M > 8 decodes the tile and runs _scaled_mm: the GEMV refuses these shapes.
-
-    The tile comes from the lane's kernel decode (the dispatch never
-    materialises through the torch decoder), so the record names the lane's
-    decoder with the route's own GEMM symbol."""
+def test_prefill_keeps_the_native_window_path(monkeypatch, m):
+    """Prefill runs the same packed launch, with no materialized fallback."""
     from tessera.serving.telemetry import read_route
     got, want, layer, _m, _ = _drive(monkeypatch, MODE_STREAMED, m=m, seed=12)
     rec = read_route(layer)
-    assert rec["symbol"] == route.GEMM_SYMBOL == "torch._scaled_mm"
-    assert rec["decoder"] == telemetry.DECODER_WINDOW_GEMV
+    assert rec is not None
+    assert (rec["symbol"], rec["decoder"]) == layer.tessera_native.launch_pair
+    assert (rec["symbol"], rec["decoder"]) in route.DENSE_LAUNCHES
     assert rec["state"] == "served"
     err = (got.float() - want.float()).abs().max().item()
     assert err / max(want.float().abs().max().item(), 1e-9) < 8e-3
@@ -233,8 +234,9 @@ def test_gemv_and_materialised_agree_within_fp32_summation_order(monkeypatch, m)
     ``m=1`` is the served shape (#110's decode regime is every-position M=1)
     and was the shape no test compared.
     """
-    _g, _w, layer, _m, (weight, scale) = _drive(monkeypatch, MODE_STREAMED, m=m, seed=13)
-    holder = layer.tessera_gemv
+    _g, _w, layer, _m, (weight, scale) = _drive(
+        monkeypatch, MODE_STREAMED, m=m, seed=13, with_gemv_reference=True)
+    holder = layer.reference_gemv
     g = torch.Generator(device="cuda").manual_seed(13)
     x = torch.randn(m, layer.tessera_columns, device="cuda", generator=g).bfloat16()
     a_q, a_scale = _reference_fp8_quant(x.contiguous())
@@ -260,13 +262,15 @@ def test_the_lane_multiplies_the_codes_and_scales_the_output_not_the_operand(mon
     NOT -- the fp32 scale carries twenty-four significant bits and bf16 keeps
     eight -- so folding costs one bf16 rounding on every activation element:
     1.6e-03 relative rms, bounded by 2^-8, and about 10 000x the 1.7e-07 fp32
-    reduction error this lane's receipts claim as its only error.  This is the same rule ``bf16_route`` holds for the
-    weight side (``test_value_family_scale_is_applied_on_the_output_not_the
-    _tile``), here for the activation side, priced against an fp64 reference
+    reduction error this reference operator's receipts claim as its only error.
+    The retained value-family GEMV tests hold the corresponding epilogue rule
+    for weights; the current dense BF16 serve instead deliberately folds them.
+    Here the activation side is priced against an fp64 reference
     of the product both arms claim to compute.
     """
-    _g, _w, layer, _m, (weight, scale) = _drive(monkeypatch, MODE_STREAMED, m=m, seed=17)
-    holder = layer.tessera_gemv
+    _g, _w, layer, _m, (weight, scale) = _drive(
+        monkeypatch, MODE_STREAMED, m=m, seed=17, with_gemv_reference=True)
+    holder = layer.reference_gemv
     tensors, meta, _rows, _cols = holder.op_args()
     g = torch.Generator(device="cuda").manual_seed(17)
     x = torch.randn(m, layer.tessera_columns, device="cuda", generator=g).bfloat16()
@@ -294,8 +298,8 @@ def test_the_lane_multiplies_the_codes_and_scales_the_output_not_the_operand(mon
 
 
 @requires_cuda
-def test_without_the_extension_streamed_falls_back_to_the_torch_path(monkeypatch):
-    """No toolchain, no GEMV: the streamed route serves exactly as before, by name."""
+def test_optional_gemv_extension_is_not_needed_by_dense_dispatch(monkeypatch):
+    """A missing reference GEMV extension cannot select an obsolete serve path."""
     from tessera import kernel_window_gemv
     from tessera.serving.telemetry import read_route
 
@@ -304,25 +308,23 @@ def test_without_the_extension_streamed_falls_back_to_the_torch_path(monkeypatch
 
     monkeypatch.setattr(kernel_window_gemv, "_ext", _no_toolchain)
     got, want, layer, _m, _ = _drive(monkeypatch, MODE_STREAMED, m=2, seed=14)
-    assert layer.tessera_gemv is None
-    assert layer.tessera_prepared is not None
+    assert layer.tessera_native is not None
+    assert not hasattr(layer, "tessera_gemv")
     rec = read_route(layer)
-    assert rec["symbol"] == "torch._scaled_mm" and rec["decoder"] == telemetry.DECODER_TORCH_WINDOW
+    assert rec is not None
+    assert (rec["symbol"], rec["decoder"]) == layer.tessera_native.launch_pair
+    assert (rec["symbol"], rec["decoder"]) in route.DENSE_LAUNCHES
     err = (got.float() - want.float()).abs().max().item()
     assert err / max(want.float().abs().max().item(), 1e-9) < 8e-3
 
 
 @requires_cuda
-def test_the_two_streamed_lanes_declare_two_compile_identities(monkeypatch):
-    """Issue #91: the lane is a graph, so the compile-cache key must see it.
+def test_optional_gemv_extension_does_not_change_dense_compile_identity(monkeypatch):
+    """Issue #91's invariant survives: record the op the current graph runs.
 
-    Both arms below are ``TESSERA_SERVE_MODE=streamed`` over the same wire and
-    the same source files; one prepares the GEMV holder and traces
-    ``tessera::fp8_streamed_apply``, the other cannot and traces the window
-    decode plus ``torch._scaled_mm``.  ``serve_mode`` alone is equal across
-    them, which is what let vLLM's AOT cache hand the second serve the first's
-    compiled forward.  What is asserted here is the route's half: that
-    ``process_weights_after_loading`` reports the op it will dispatch through.
+    With or without the optional reference GEMV extension, preparation now
+    chooses the SAME native window graph. The compile identity must be stable
+    and must name that op, not either retired GEMV/materialized branch.
     """
     import json
 
@@ -353,12 +355,15 @@ def test_the_two_streamed_lanes_declare_two_compile_identities(monkeypatch):
         _again_layer, again = _identity(mp)
     ci.reset_for_tests()
 
-    assert gemv_layer.tessera_gemv is not None
-    assert fallback_layer.tessera_gemv is None
-    assert fp8_gemv.STREAMED_APPLY_OP in gemv
-    assert fp8_gemv.STREAMED_APPLY_OP not in fallback
-    assert gemv != fallback, "two graphs, one compile identity"
-    assert gemv == again, "one lane state, two identities: the cache would never hit"
+    assert gemv_layer.tessera_native is not None
+    assert fallback_layer.tessera_native is not None
+    # The identity names the op the module's graph runs: one of the two dense
+    # launches the route publishes (contract v43 added the fused window
+    # kernel's dense identity beside the Triton GEMM), decided at weight load.
+    assert gemv_layer.tessera_symbol in {symbol for symbol, _ in route.DENSE_LAUNCHES}
+    assert gemv_layer.tessera_symbol in gemv
+    assert fp8_gemv.STREAMED_APPLY_OP not in gemv
+    assert gemv == fallback == again, "one packed graph must keep one compile identity"
 
 
 def _synthetic_parsed(rows, cols, rates, seed=0):
@@ -426,8 +431,7 @@ def test_rate1_columns_fall_back_inside_the_decode_regime():
 
 @requires_cuda
 def test_the_dispatch_survives_a_compiled_forward_with_a_dynamic_token_dim(monkeypatch):
-    """One graph serves M = 1..8 (GEMV) and M = 64 (materialised) without a
-    recompile: no int() on the token dim in the trace."""
+    """One packed native graph serves M = 1..8 and M = 64 without recompile."""
     from tessera.serving.telemetry import read_route
     torch._dynamo.reset()
     # _drive is a plain helper (no decorator); call it directly.
@@ -445,9 +449,10 @@ def test_the_dispatch_survives_a_compiled_forward_with_a_dynamic_token_dim(monke
             y = compiled(x_for(M, 500 + M))
         assert tuple(y.shape) == (M, layer.tessera_rows) and y.dtype == torch.bfloat16
     rec = read_route(layer)
-    assert rec["shape"].startswith("M*:")
-    assert rec["symbol"] == fp8_gemv.COMPILED_SYMBOL
-    assert rec["decoder"] == fp8_gemv.COMPILED_DECODER
+    assert rec is not None
+    assert str(rec["shape"]).startswith("M*:")
+    assert (rec["symbol"], rec["decoder"]) == layer.tessera_native.launch_pair
+    assert (rec["symbol"], rec["decoder"]) in route.DENSE_LAUNCHES
 
 
 # --- the contract publishes what the serve loads --------------------------------
@@ -474,6 +479,7 @@ def _capture_window_gemv_load():
     import os
 
     import torch.utils.cpp_extension as cpp
+
     from tessera import kernel_window_gemv as kg
 
     seen = {}
@@ -526,15 +532,21 @@ def test_the_census_expectations_come_from_the_route():
     ``1b767a207`` left ``fp8_route.apply`` making one launch -- the packed native window
     GEMM, at every M and in both residencies -- and contract v31 dropped the
     retired rows from the table, so the expectation a census compares a served
-    record against is now that one pair.  Asserted as EQUALITY, because the
-    defect this whole file is about was an expectation wider than the dispatch.
+    record against became that one pair.  Contract v43 added the fused window
+    kernel's dense identity as a second launch the route decides per module
+    at weight load, so the expectation is now exactly the route's own
+    ``DENSE_LAUNCHES`` -- two pairs, of which any one module stamps one.
+    Asserted as EQUALITY, because the defect this whole file is about was an
+    expectation wider than the dispatch.
 
     A note on where this function lives, which the equality makes visible: it
     still belongs to ``fp8_gemv``, and ``fp8_route.apply`` does not import it.  The census tool
     reads it all the same, so it is right about the serve and housed in the
     wrong module; moving it is follow-up, not part of the withdrawal.
     """
-    expected = {(WINDOW_GEMM_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_GEMM)}
+    expected = set(route.DENSE_LAUNCHES)
+    assert (WINDOW_GEMM_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_GEMM) in expected
+    assert len(expected) == 2
     go = fp8_gemv.census_expected(compiled=False)
     assert go["decode"] == expected
     assert go["batch"] == expected

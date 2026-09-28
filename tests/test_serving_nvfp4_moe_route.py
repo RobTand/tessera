@@ -54,7 +54,11 @@ from tessera.serving.scheme import (                               # noqa: E402
 
 HIDDEN, INTER, EXPERTS, Q256 = 128, 256, 3, 896
 SHARDS = ("w1", "w3", "w2")     # gate, up, down: the runtime's shard ids
-KERNEL_PAIR = ("vllm.fused_moe.modular_kernel", "torch_materialize_stock")
+#: The one launch a routed NVFP4 stack makes, attested since contract v39
+#: (tessera#604).  The materialising ``(vllm.fused_moe.modular_kernel,
+#: torch_materialize_stock)`` row left the table with the v39 withdrawal.
+KERNEL_PAIR = ("tessera.kernel_a4.a4_span2_grouped_gemm", "native_span2_grouped")
+WITHDRAWN_PAIR = ("vllm.fused_moe.modular_kernel", "torch_materialize_stock")
 
 
 def _native_prep_available() -> bool:
@@ -650,6 +654,28 @@ def test_construction_refusals(stack, nvfp4_runtime):
         _build(fp8_scheme, _layer())
 
 
+def test_the_builder_names_its_routed_layer_for_the_route_trace(stack, nvfp4_runtime):
+    """The NVFP4 builder binds the module name, as ``moe_route``'s builder does.
+
+    vLLM's fused MoE stores no ``prefix``, so without the bind every routed
+    NVFP4 dispatch reached ``emit_route`` unnamed.  On GLM-5.3 PACT BAL
+    (2026-09-28, TP2, both the no-spec and the MTP serves) all 29 NVFP4 stacks
+    traced ``module_names: []`` with every dispatch ``dispatches_without_prefix``,
+    while the BF16 and FP8 stacks were named -- and the route.trace gate reads
+    a count as no name.  A name vLLM did set is still left alone.
+    """
+    _wires, scheme, _reference = stack
+    layer = _layer()
+    nvfp4_moe_route.build_tessera_nvfp4_moe_method(
+        scheme, "language_model.model.layers.4.mlp.experts", "resident", layer)
+    assert layer.prefix == "language_model.model.layers.4.mlp.experts"
+    theirs = _layer()
+    theirs.prefix = "model.layers.45.mlp.experts"
+    nvfp4_moe_route.build_tessera_nvfp4_moe_method(
+        scheme, "language_model.model.layers.4.mlp.experts", "resident", theirs)
+    assert theirs.prefix == "model.layers.45.mlp.experts"
+
+
 def test_geometry_refusals_arrive_at_create_weights(stack, nvfp4_runtime):
     _wires, scheme, _reference = stack
     for args, kwargs, message in (
@@ -774,15 +800,16 @@ def test_census_expectation_is_the_shared_launch_table():
     expected = nvfp4_moe_route.census_expected()
     assert set(expected) == {"batch", "decode"}
     for regime, pairs in expected.items():
-        # The route reports the native lane's own pairs on top of the attested
-        # dispatch (``experimental_launch_pairs``); the attested set is what
-        # ``launch_pairs`` returns and no qualification is promoted here.
+        # The route reports the attested dispatch plus any experimental pairs
+        # (``experimental_launch_pairs``).  Since v39 the grouped A4 pair is
+        # attested and the experimental view is empty, so the expectation IS
+        # the attested launch, and the withdrawn materialising pair is not in it.
         native = experimental_launch_pairs(
             TESSERA_NVFP4, structure=STRUCTURE_ROUTED_MOE, regime=regime,
             mode="resident")
-        assert native, "the native lane must publish its own pairs"
-        assert pairs == {KERNEL_PAIR} | native
-        # the attested view itself is unchanged
+        assert not native
+        assert pairs == {KERNEL_PAIR}
+        assert WITHDRAWN_PAIR not in pairs
         assert {KERNEL_PAIR} == launch_pairs(TESSERA_NVFP4, structure=STRUCTURE_ROUTED_MOE,
                                              regime=regime, mode="resident")
         assert pairs.isdisjoint(launch_pairs(TESSERA_NVFP4, regime=regime))
@@ -790,7 +817,7 @@ def test_census_expectation_is_the_shared_launch_table():
                                 regime=regime, mode="streamed")
     assert nvfp4_moe_route.census_expected(compiled=True) == expected
     assert nvfp4_moe_route.census_symbol_base("vllm.fused_moe.modular_kernel:FLASHINFER_CUTLASS") \
-        == KERNEL_PAIR[0]
+        == WITHDRAWN_PAIR[0]
     # A platform the contract publishes as unbacked for E2M1_K2 expects nothing.
     unbacked = nvfp4_moe_route.census_expected(platform="gfx1151")
     assert set(unbacked) == set(expected) and not any(unbacked.values())

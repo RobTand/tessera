@@ -97,6 +97,7 @@ from typing import NamedTuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 from tessera._dev.suite_deadline import positive_seconds as _positive_seconds  # noqa: E402
+from tessera._dev.suite_source import VERIFIER_ENV  # noqa: E402
 from tessera._dev.surface_publication import (  # noqa: E402
     POPULATION,
     digest_bytes,
@@ -117,6 +118,16 @@ DEFAULT_RECEIPT_ROOT = SHARED_ROOT / "tessera-suite-receipts"
 PROCESS_THREAD_LIMITS = dict.fromkeys(
     ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS", "MAX_JOBS"), "1"
 )
+#: The source verifier each arm declares (``tessera._dev.suite_source``).  A
+#: pbrun checkout carries the closure stamp pbrun generated; PrismaBuild's own
+#: published ``pbsnapshot.py verify`` says which file that is and which sealed
+#: action wrote it, and the population's ``excluded_metadata`` records its
+#: answer -- the producer stamp the resume path below binds on.  The system
+#: interpreter runs it, as it runs every published PrismaBuild tool: the arm's
+#: venv is the code under test's, not PrismaBuild's.
+SOURCE_VERIFIER = ("/usr/bin/python3",
+                   str(SHARED_ROOT / "prismabuild-fleet" / "repo" / "tools" / "pbsnapshot.py"),
+                   "verify")
 # Cleanup backstop, matching the deployed PB worker's TERM grace. The inner
 # command also enforces its deadline within the PB action's admitted timeout.
 TIMEOUT_KILL_AFTER_S = 5.0
@@ -318,6 +329,7 @@ def _submit(name: str, arm: dict, args, receipt_dir: Path) -> dict:
         "--wait-s", str(args.wait_s),
         *[part for key, value in PROCESS_THREAD_LIMITS.items()
           for part in ("--env", f"{key}={value}")],
+        "--env", f"{VERIFIER_ENV}={shlex.join(SOURCE_VERIFIER)}",
         "--", *command,
     ]
     record = {
@@ -334,6 +346,7 @@ def _submit(name: str, arm: dict, args, receipt_dir: Path) -> dict:
         "cpus_requested": args.cpus,
         "cpus_used": cpus,
         "process_thread_limits": dict(PROCESS_THREAD_LIMITS),
+        "source_verifier": shlex.join(SOURCE_VERIFIER),
         "timeout_s": args.timeout_s,
         "timeout_kill_after_s": TIMEOUT_KILL_AFTER_S,
         "timeout_scope": "per attempt; excludes queue time, retries and detached descendants",

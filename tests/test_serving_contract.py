@@ -22,7 +22,7 @@ import re
 
 import pytest
 
-from withdrawn_cells import withdrawn_cells
+from withdrawn_cells import withdrawn_cells, withdrawn_v39_cells
 
 from tessera.serving.contract import (
     CENSUS_PHASE_REGIMES,
@@ -69,40 +69,12 @@ def _resolved(laws: dict[str, object]) -> dict[str, object]:
 _DENSE_RUNTIME = {"image": _DENSE_IMAGE_FROM_RECEIPT, "execution_modes": ["eager", "compiled"],
                   "vllm": "0.28.0", "torch": "2.13.0+cu130"}
 
-#: The dense cells the served Tessera receipts still cover: Qwen3-0.6B on the
-#: E2M1x2 cap wire (q256 = 896), every dense Linear, eager and compiled
-#: (2026-09-02 receipts).  Widening ANY value here without a new receipt is the
-#: failure this pins.
-#:
-#: The E4M3 and BF16 dense cells stood here until contract v31 and are listed in
-#: ``_WITHDRAWN_CELL_IDS`` below with the reason.  The E2M1 pair survives because
-#: its launch never was the window-GEMV lane's: ``nvfp4_route`` decodes span-2 at
-#: load and runs ``torch._scaled_mm`` on the materialised tile, which is what it
-#: still does.
-_CELL_LAWS: dict[str, dict[str, object]] = {
-    "tessera_e2m1_k2_dense_sm121_decode": {
-        "platform": "sm_121", "family": "TESSERA_E2M1_K2", "structure": "dense",
-        "regime": "decode", "rungs_q256": [896],
-        "activation_contract": "e2m1_group16_ue4m3_static",
-        "executes": [{"symbol": "torch._scaled_mm", "decoder": "native_span2"}],
-        "route_status": "backed_with_serve_flag", "qualification": "device_qualified",
-        "requires_plugin": "tessera",
-        "requires_serve_flags": ["TESSERA_SERVE_MODE=resident|streamed"],
-        "predicates": [],
-        "runtime": _DENSE_RUNTIME,
-    },
-    "tessera_e2m1_k2_dense_sm121_batch": {
-        "platform": "sm_121", "family": "TESSERA_E2M1_K2", "structure": "dense",
-        "regime": "batch", "rungs_q256": [896],
-        "activation_contract": "e2m1_group16_ue4m3_static",
-        "executes": [{"symbol": "torch._scaled_mm", "decoder": "native_span2"}],
-        "route_status": "backed_with_serve_flag", "qualification": "device_qualified",
-        "requires_plugin": "tessera",
-        "requires_serve_flags": ["TESSERA_SERVE_MODE=resident|streamed"],
-        "predicates": [],
-        "runtime": _DENSE_RUNTIME,
-    },
-}
+#: The pinned field-for-field laws of every shipped cell, filled below by
+#: receipt.  The E4M3 and BF16 dense cells that stood here until contract v31
+#: are listed in ``_WITHDRAWN_CELL_IDS`` with the reason, and the E2M1 dense
+#: pair on the serve-image pin -- ``torch._scaled_mm``/``native_span2``, a launch
+#: ``nvfp4_route.apply`` no longer makes -- in ``_WITHDRAWN_V39_CELL_IDS``.
+_CELL_LAWS: dict[str, dict[str, object]] = {}
 
 #: The rungs each family ATTESTS -- rungs a container receipt covers.  Each
 #: family's reader takes a far wider range (below); attestation is the narrower
@@ -114,10 +86,13 @@ _CELL_LAWS: dict[str, dict[str, object]] = {
 #: deliberately not the same thing as an absent family.
 #: Contract v38 (tessera#604) adds the rungs the GLM-image census carried:
 #: E4M3 832/896/1088 and BF16 832/1024/1088
-#: (``docs/measurements/tessera-glm-x-census-2026-09-26.md``).
-_FAMILY_RUNGS = {"TESSERA_E2M1_K2": [128, 256, 384, 512, 640, 768, 896],
-                 "TESSERA_E4M3_K1": [832, 896, 1024, 1088],
-                 "TESSERA_BF16_K1": [832, 1024, 1088, 1792]}
+#: (``docs/measurements/tessera-glm-x-census-2026-09-26.md``).  Contract v39
+#: withdraws E2M1 128..768 with the routed cells that named the materialising
+#: launch, and adds the rungs the eight u1 stub censuses carried
+#: (``docs/measurements/tessera-glm-u1-census-2026-09-26.md``).
+_FAMILY_RUNGS = {"TESSERA_E2M1_K2": [896],
+                 "TESSERA_E4M3_K1": [832, 864, 896, 928, 944, 960, 1024, 1088],
+                 "TESSERA_BF16_K1": [832, 864, 880, 896, 928, 960, 1024, 1088, 1792]}
 
 #: MINTED at contract v38 (tessera#604): eight cells on the GLM serving image,
 #: from one TP1 eager route census of a GLM-5.3-Flash stub whose nine Tessera
@@ -135,45 +110,52 @@ _GLM_X_RUNTIME = {
              "f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5",
     "execution_modes": ["eager"],
     "vllm": "0.28.1rc1.dev397+gfd4a15126.d20260904", "torch": "2.13.0+cu130"}
+GLM_U1_RECEIPT = "docs/measurements/tessera-glm-u1-census-2026-09-26.md"
+#: Contract v39 (tessera#604, second half) widens the six cells to the rungs the
+#: eight u1 stub censuses carried and mints the four E2M1 cells on the two
+#: native A4 launches (``GLM_U1_RECEIPT``; ``tests/test_glm_u1_census_cells.py``
+#: replays every receipt against the table).
+#: Contract v42 (tessera#640): the four window routed cells name a SECOND
+#: launch beside the compact adapter's -- the fused warp-specialised routed
+#: window lane, which the dispatch takes by default for every rate-4 window-14
+#: stack.  ``_validate_cell_executes`` derives it only at the q256=1024 rung
+#: (the extension's own ``lane.requires``), and a served census of the rate-4
+#: u1 stub B recorded it in both regimes
+#: (``docs/measurements/2026-09-28-routed-fused-640.md``).
+_COMPACT_MOE = "tessera.native_window_moe.NativeWindowMoE.__call__"
+_FUSED_MOE = "tessera.routed_fused.FusedRoutedWindowMoE.__call__"
 _GLM_X_CELLS = (
-    ("TESSERA_E4M3_K1", "dense", [832, 1024, 1088], "fp8_per_token_dynamic",
-     "tessera::window_gemm_dense", "native_window_gemm"),
-    ("TESSERA_BF16_K1", "dense", [832, 1024, 1088], "bf16_unquantized",
-     "tessera::window_gemm_dense", "native_window_gemm_folded"),
-    ("TESSERA_E4M3_K1", "routed_moe", [896], "fp8_per_token_dynamic",
-     "tessera.native_window_moe.NativeWindowMoE.__call__", "native_window_moe_compact"),
+    # Contract v43: the dense cells name the fused window kernel's dense
+    # identity beside the Triton GEMM, on a second census of stub B whose
+    # q256 1024 shared-expert modules took the lane
+    # (``tests/test_glm_u1_census_cells.py``).
+    ("TESSERA_E4M3_K1", "dense", [832, 864, 896, 928, 960, 1024, 1088],
+     "fp8_per_token_dynamic", (("tessera::window_gemm_dense", "native_window_gemm"),
+                               ("tessera::fused_window_dense", "native_fused_window_dense"))),
+    ("TESSERA_BF16_K1", "dense", [832, 864, 880, 896, 928, 960, 1024, 1088],
+     "bf16_unquantized", (("tessera::window_gemm_dense", "native_window_gemm_folded"),
+                          ("tessera::fused_window_dense",
+                           "native_fused_window_dense_folded"))),
+    ("TESSERA_E4M3_K1", "routed_moe", [832, 864, 896, 928, 944, 960, 1024, 1088],
+     "fp8_per_token_dynamic",
+     ((_COMPACT_MOE, "native_window_moe_compact"), (_FUSED_MOE, "native_routed_fused_window"))),
     ("TESSERA_BF16_K1", "routed_moe", [1024], "bf16_unquantized",
-     "tessera.native_window_moe.NativeWindowMoE.__call__", "native_window_moe_compact_folded"),
+     ((_COMPACT_MOE, "native_window_moe_compact_folded"),
+      (_FUSED_MOE, "native_routed_fused_window_folded"))),
+    ("TESSERA_E2M1_K2", "dense", [896], "e2m1_group16_ue4m3_static",
+     (("tessera.kernel_a4.a4_span2_gemm", "native_span2_gemm"),)),
+    ("TESSERA_E2M1_K2", "routed_moe", [896], "e2m1_group16_ue4m3_static",
+     (("tessera.kernel_a4.a4_span2_grouped_gemm", "native_span2_grouped"),)),
 )
-for _family, _structure, _rungs, _contract, _symbol, _decoder in _GLM_X_CELLS:
+for _family, _structure, _rungs, _contract, _launches in _GLM_X_CELLS:
     for _regime in ("decode", "batch"):
         _CELL_LAWS[f"{_family.lower()}_{_structure}_sm121_{_regime}_resident"] = {
             "platform": "sm_121", "family": _family, "structure": _structure,
             "regime": _regime, "rungs_q256": _rungs, "activation_contract": _contract,
-            "executes": [{"symbol": _symbol, "decoder": _decoder}],
+            "executes": [{"symbol": _s, "decoder": _d} for _s, _d in _launches],
             "route_status": "backed_with_serve_flag", "qualification": "device_qualified",
             "requires_plugin": "tessera", "requires_serve_flags": ["TESSERA_SERVE_MODE=resident"],
             "predicates": [], "runtime": _GLM_X_RUNTIME}
-
-#: The two-rank GLM-5.3-Flash 4-layer stub serve (#506).  Its receipt names the
-#: image, the vLLM build its rank logs print, and the torch build
-#: ``experiments/results/nvfp4_moe_route_load_probe.json`` records for the same
-#: image digest.  Eager only: the GLM NoPE attention backend refuses graph mode
-#: (tessera#508), so no compiled arm exists to attest.
-TP2_STUB_RECEIPT = "docs/measurements/tessera-glm53-a4-stub-tp2-served-2026-09-14.md"
-for _regime in ("decode", "batch"):
-    _CELL_LAWS[f"tessera_e2m1_k2_routed_moe_sm121_{_regime}_resident"] = {
-        "platform": "sm_121", "family": "TESSERA_E2M1_K2", "structure": "routed_moe",
-        "regime": _regime, "rungs_q256": [128, 256, 384, 512, 640, 768, 896],
-        "activation_contract": "e2m1_group16_ue4m3_static",
-        "executes": [{"symbol": "vllm.fused_moe.modular_kernel", "decoder": "torch_materialize_stock"}],
-        "route_status": "backed_with_serve_flag", "qualification": "device_qualified",
-        "requires_plugin": "tessera", "requires_serve_flags": ["TESSERA_SERVE_MODE=resident"],
-        "predicates": [], "runtime": {
-            "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:"
-                     "a5424378322071f4c33e63d1372a2bb028e46b03f0da0e5edb0cdd7418e2cebb",
-            "execution_modes": ["eager"],
-            "vllm": "0.28.1rc1.dev397+gfd4a15126.d20260904", "torch": "2.13.0+cu130"}}
 
 #: RE-EARNED at contract v34 (tessera#545): the dense native window GEMM, the
 #: one launch ``fp8_route.apply`` and ``bf16_route.apply`` have made since
@@ -205,8 +187,13 @@ for _family, _contract, _rung in (("TESSERA_E4M3_K1", "fp8_per_token_dynamic", 1
             "platform": "sm_121", "family": _family, "structure": "dense",
             "regime": _regime, "rungs_q256": [_rung],
             "activation_contract": _contract,
+            # Contract v43: the fused window kernel's dense identity, earned on
+            # a second census of the same artifact on this image, in both
+            # residencies (tests/test_dense_fused_census_cells.py).
             "executes": [{"symbol": "tessera::window_gemm_dense",
-                          "decoder": "native_window_gemm"}],
+                          "decoder": "native_window_gemm"},
+                         {"symbol": "tessera::fused_window_dense",
+                          "decoder": "native_fused_window_dense"}],
             "route_status": "backed_with_serve_flag", "qualification": "device_qualified",
             "requires_plugin": "tessera",
             "requires_serve_flags": ["TESSERA_SERVE_MODE=resident|streamed"],
@@ -235,23 +222,35 @@ _WITHDRAWN_CELL_IDS = frozenset({
     "tessera_bf16_k1_dense_gfx1201_batch",
 })
 
-#: RE-EARNED ids, each with the receipt it came back on and the one launch it
+#: RE-EARNED ids, each with the receipt it came back on and the launches it
 #: may name.  At contract v34 (tessera#545) the ``sm_121`` BF16 dense pair came
 #: back on ``WINDOW_GEMM_RECEIPT`` and was WITHDRAWN AGAIN at v37
 #: (``_WITHDRAWN_V37_CELL_IDS``).  At contract v38 (tessera#604) four ids come
 #: back on ``GLM_X_RECEIPT``: the resident E4M3 dense pair v31 withdrew, and the
 #: routed E4M3 pair v38 itself withdraws -- the same scope, on another image
-#: and rung.  A re-earned cell must execute its launch here, never a claim
-#: ``_WITHDRAWN_CLAIMS`` records for its id.
+#: and rung.  At contract v42 (tessera#640) the routed pair names a second
+#: launch, the fused routed window lane's, on ``ROUTED_FUSED_RECEIPT``; at
+#: v43 the dense pair names a second launch too, the fused window kernel's
+#: dense identity, on ``DENSE_FUSED_RECEIPT``.  A re-earned cell must execute
+#: its launches here, never a claim ``_WITHDRAWN_CLAIMS`` records for its id.
+ROUTED_FUSED_RECEIPT = "docs/measurements/2026-09-28-routed-fused-640.md"
+DENSE_FUSED_RECEIPT = "docs/measurements/2026-09-28-dense-fused-window.md"
 _REEARNED = {
     **{f"tessera_e4m3_k1_dense_sm121_{_regime}_resident":
-       (GLM_X_RECEIPT, {("tessera::window_gemm_dense", "native_window_gemm")})
+       (GLM_X_RECEIPT, {("tessera::window_gemm_dense", "native_window_gemm"),
+                        ("tessera::fused_window_dense", "native_fused_window_dense")})
        for _regime in ("decode", "batch")},
     **{f"tessera_e4m3_k1_routed_moe_sm121_{_regime}_resident":
-       (GLM_X_RECEIPT, {("tessera.native_window_moe.NativeWindowMoE.__call__",
-                         "native_window_moe_compact")})
+       (GLM_X_RECEIPT, {(_COMPACT_MOE, "native_window_moe_compact"),
+                        (_FUSED_MOE, "native_routed_fused_window")})
        for _regime in ("decode", "batch")},
 }
+#: At contract v39 (tessera#604) the routed E2M1 pair v39 withdraws comes back
+#: on ``GLM_U1_RECEIPT`` on the native grouped A4 launch.
+_REEARNED.update({
+    f"tessera_e2m1_k2_routed_moe_sm121_{_regime}_resident":
+    (GLM_U1_RECEIPT, {("tessera.kernel_a4.a4_span2_grouped_gemm", "native_span2_grouped")})
+    for _regime in ("decode", "batch")})
 _REEARNED_CELL_IDS = frozenset(_REEARNED)
 
 #: WITHDRAWN at contract v37 (tessera#614).  These two attested
@@ -281,6 +280,22 @@ _WITHDRAWN_V38_CELL_IDS = frozenset({
     "tessera_e4m3_k1_routed_moe_sm121_batch_resident",
 })
 
+#: WITHDRAWN at contract v39 (tessera#604, second half).  The routed pair named
+#: ``(vllm.fused_moe.modular_kernel, torch_materialize_stock)`` for
+#: ``TESSERA_E2M1_K2`` at q256 128..896 on image ``a5424378``; this build's
+#: routed NVFP4 owner runs the grouped native A4 GEMM instead, so the pair
+#: comes back on ``GLM_U1_RECEIPT`` (``_REEARNED``) at the one rung the stub
+#: carried.  The dense pair on the serve-image pin named
+#: ``(torch._scaled_mm, native_span2)``; ``nvfp4_route.apply`` runs
+#: ``a4_span2_gemm`` on every call, and no census of that launch exists on the
+#: pin image, so those two ids stay withdrawn.
+_WITHDRAWN_V39_CELL_IDS = frozenset({
+    "tessera_e2m1_k2_routed_moe_sm121_decode_resident",
+    "tessera_e2m1_k2_routed_moe_sm121_batch_resident",
+    "tessera_e2m1_k2_dense_sm121_decode",
+    "tessera_e2m1_k2_dense_sm121_batch",
+})
+
 #: What each withdrawal took away, by id: the launch pairs a returning cell
 #: under that id must never name again.
 #: The v31 claims are read from the fixture that quotes the withdrawn cells,
@@ -295,6 +310,10 @@ for _cid in _WITHDRAWN_V37_CELL_IDS:
 for _cid in _WITHDRAWN_V38_CELL_IDS:
     _WITHDRAWN_CLAIMS.setdefault(_cid, set()).add(
         ("vllm.fused_moe.modular_kernel", "torch_materialize_stock"))
+for _cid in _WITHDRAWN_V39_CELL_IDS:
+    _WITHDRAWN_CLAIMS.setdefault(_cid, set()).add(
+        ("vllm.fused_moe.modular_kernel", "torch_materialize_stock")
+        if "routed_moe" in _cid else ("torch._scaled_mm", "native_span2"))
 
 
 @pytest.fixture(scope="module")
@@ -528,18 +547,16 @@ def test_the_cells_are_pinned_field_for_field(contract):
 
 
 def test_the_routed_e2m1_cells_name_the_runtime_their_receipt_records(contract):
-    """The image and vLLM build on the two routed E2M1_K2 cells are the ones
-    the two-rank stub receipt records, read from the receipt rather than
-    trusted from the LAWS table alone (#506)."""
-    receipt = (ROOT / TP2_STUB_RECEIPT).read_text(encoding="utf-8")
-    images = sorted(set(re.findall(
-        r"localhost/prismaquant/spark-vllm-nccl230@sha256:[0-9a-f]{64}", receipt)))
-    assert len(images) == 1, images
+    """The image, vLLM and torch builds on the two routed E2M1_K2 cells are the
+    ones the u1 stub D census recorded, read from the committed receipt rather
+    than trusted from the LAWS table alone (contract v39, tessera#604)."""
+    receipt = json.loads((ROOT / "experiments/results/glm53_u1_stub_d_tp1_eager_census.json")
+                         .read_text(encoding="utf-8"))
     for regime in ("decode", "batch"):
         cell = _cells(contract)[f"tessera_e2m1_k2_routed_moe_sm121_{regime}_resident"]
-        assert cell["runtime"]["image"] == images[0], cell["id"]
-        assert cell["runtime"]["vllm"] in receipt, cell["id"]
-        assert cell["runtime"]["torch"] in receipt, cell["id"]
+        assert cell["runtime"]["image"] == receipt["runtime"]["image"], cell["id"]
+        assert cell["runtime"]["vllm"] == receipt["versions"]["vllm"], cell["id"]
+        assert cell["runtime"]["torch"] == receipt["versions"]["torch"], cell["id"]
 
 
 def test_every_cell_is_backed_with_a_serve_flag_and_plugin_gated(contract):
@@ -563,12 +580,12 @@ def test_every_cell_is_backed_with_a_serve_flag_and_plugin_gated(contract):
 
 
 def test_the_table_adds_only_the_measured_moe_scope_without_expert_parallelism(contract):
-    """Two receipts, three (family, rung, runtime) pairs of regimes, and no more.
+    """Three (family, rungs) pairs of regimes on one image, and no more.
 
-    The two-rank GLM stub serve (v28, #506) adds the E2M1x2 wire; the TP1 GLM
-    census (v38, tessera#604) adds FP8 at q896 and BF16 at q1024 on the GLM
-    serving image.  The LFM FP8 pair at q1024 was withdrawn at v38.  Each pair
-    is resident and eager, and each names its own receipt's image.
+    The TP1 GLM census (v38, tessera#604) added FP8 and BF16 on the GLM serving
+    image; the u1 stub censuses (v39) widened FP8 and added the E2M1x2 wire on
+    the grouped A4 launch.  The LFM FP8 pair at q1024 was withdrawn at v38 and
+    the materialising E2M1 pair at v39.  Each pair is resident and eager.
     """
     block = contract["lane_eligibility"]
     assert block["structures"] == ["dense", "routed_moe"]
@@ -582,8 +599,9 @@ def test_the_table_adds_only_the_measured_moe_scope_without_expert_parallelism(c
     assert len(moe) == 6
     assert sorted((family, rungs) for family, rungs, _ in by_family) == [
         ("TESSERA_BF16_K1", (1024,)),
-        ("TESSERA_E2M1_K2", (128, 256, 384, 512, 640, 768, 896)),
-        ("TESSERA_E4M3_K1", (896,))]
+        ("TESSERA_E2M1_K2", (896,)),
+        ("TESSERA_E4M3_K1", (832, 864, 896, 928, 944, 960, 1024, 1088))]
+    assert {image for _, _, image in by_family} == {_GLM_X_RUNTIME["image"]}
     assert all(regimes == {"decode", "batch"} for regimes in by_family.values())
     assert contract["expert_parallel"]["units"] == []
 
@@ -630,13 +648,15 @@ def test_the_launch_table_is_spelled_in_the_vocabulary_the_serve_stamps():
 def test_the_launch_tables_lane_is_the_published_extension():
     """A launch may only name a lane this build publishes an extension for.
 
-    No launch names one since contract v31 (tessera#538): the only launch that
-    ever did was the dense window-GEMV lane's, and the dispatch that made it
-    was retired by ``1b767a207``.  The loop below is therefore vacuous on this
-    tree and would silently stay vacuous if the rule broke, so it is stated
-    both ways -- the rule, and the fact that today there is nothing to apply it
-    to.  A lane launch returning without an extension entry fails here; a lane
-    launch returning at all has to change the count.
+    No launch named one from contract v31 (tessera#538) to v41: the only launch
+    that ever did was the dense window-GEMV lane's, and the dispatch that made
+    it was retired by ``1b767a207``.  Contract v42 (tessera#640) brings two
+    back on purpose: the fused routed window lane's pairs name the extension
+    each needs, so ``_validate_cell_executes`` derives them only at a rung the
+    extension's own ``lane.requires`` admits.  The rule is stated both ways --
+    the loop, and the exact set it applies to today.  A lane launch returning
+    without an extension entry fails here; a third lane launch has to change
+    the set deliberately.
     """
     from tessera.serving import ext
     from tessera.serving.scheme import ROUTE_LAUNCHES
@@ -656,9 +676,24 @@ def test_the_launch_tables_lane_is_the_published_extension():
                 assert route in next(
                     e["routes"] for e in ext.NATIVE_EXTENSIONS
                     if e["module_name_prefix"] == launch["lane"]), (route, launch["lane"])
-    assert lane_launches == 0, (
-        "a launch names an extension lane again; the rule above now has "
-        "something to say and this count has to be raised deliberately")
+    from tessera.serving.scheme import FUSED_WINDOW_DENSE_SYMBOL, ROUTED_FUSED_WINDOW_SYMBOL
+    lane_rows = {(launch["symbol"], launch["decoder"], launch["lane"])
+                 for launches in ROUTE_LAUNCHES.values() for launch in launches
+                 if launch["lane"] is not None}
+    # Contract v43: the same two libraries also carry the fused window
+    # kernel's DENSE identity, one decoder per arithmetic, so each lane names
+    # two rows -- a routed one and a dense one -- and the set is four.
+    assert lane_rows == {
+        (ROUTED_FUSED_WINDOW_SYMBOL, "native_routed_fused_window", "tessera_routed_fused_e4m3"),
+        (ROUTED_FUSED_WINDOW_SYMBOL, "native_routed_fused_window_folded",
+         "tessera_routed_fused_value"),
+        (FUSED_WINDOW_DENSE_SYMBOL, "native_fused_window_dense", "tessera_routed_fused_e4m3"),
+        (FUSED_WINDOW_DENSE_SYMBOL, "native_fused_window_dense_folded",
+         "tessera_routed_fused_value")}
+    assert lane_launches == 4, (
+        "a launch names an extension lane beyond the two fused routed rows and the two "
+        "fused dense rows; the rule above has something new to say and this set has to "
+        "grow deliberately")
     assert published, "ext still publishes lane-bearing extensions; only the LAUNCH went"
 
 
@@ -678,33 +713,42 @@ def test_the_dense_launch_table_is_the_launch_apply_makes(monkeypatch):
     launch, and nothing refused them.
 
     The tie is now to the LIVE route module: each of ``fp8_route`` and
-    ``bf16_route`` owns a ``DENSE_LAUNCH`` pair which its ``apply`` unpacks at
-    its one ``emit_route`` call, so a route cannot stamp a launch the constant
-    does not name, and this asserts the table's dense entry IS that set --
-    equality, so a launch the dispatch cannot make fails as loudly as a missing
-    one.
+    ``bf16_route`` owns ``DENSE_LAUNCHES`` -- the Triton pair ``DENSE_LAUNCH``
+    and, since contract v43, the fused window kernel's dense identity
+    ``DENSE_FUSED_LAUNCH`` -- and its ``process_weights_after_loading``
+    refuses a prepared module whose ``launch_pair`` is outside it before
+    ``apply`` stamps that pair at its one ``emit_route`` call, so a route
+    cannot stamp a launch the constant does not name, and this asserts the
+    table's dense entry IS that set -- equality, so a launch the dispatch
+    cannot make fails as loudly as a missing one.
 
     ON ``origin/master`` THIS FAILS: the table carried the retired lane's three
     dense launches beside the native GEMM while ``apply`` made only the GEMM.
     """
     pytest.importorskip("torch")
     from tessera.serving import bf16_route, fp8_route, scheme, telemetry
-    from tessera.serving.scheme import (STRUCTURE_DENSE, TESSERA_BF16, TESSERA_FP8,
-                                        WINDOW_GEMM_SYMBOL, launch_pairs)
+    from tessera.serving.scheme import (FUSED_WINDOW_DENSE_SYMBOL, STRUCTURE_DENSE,
+                                        TESSERA_BF16, TESSERA_FP8, WINDOW_GEMM_SYMBOL,
+                                        launch_pairs)
 
-    # One symbol, one decoder per ARITHMETIC: the FP8 family keeps the
-    # epilogue, the BF16 family serves the folded form (tessera#614).
-    for module, route, decoder in (
-            (fp8_route, TESSERA_FP8, telemetry.DECODER_NATIVE_WINDOW_GEMM),
-            (bf16_route, TESSERA_BF16, telemetry.DECODER_NATIVE_WINDOW_GEMM_FOLDED)):
+    # Two symbols, one decoder each per ARITHMETIC: the FP8 family keeps the
+    # epilogue, the BF16 family serves the folded form (tessera#614), on the
+    # Triton window GEMM and on the fused window kernel's dense identity.
+    for module, route, decoder, fused_decoder in (
+            (fp8_route, TESSERA_FP8, telemetry.DECODER_NATIVE_WINDOW_GEMM,
+             telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE),
+            (bf16_route, TESSERA_BF16, telemetry.DECODER_NATIVE_WINDOW_GEMM_FOLDED,
+             telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED)):
         assert module.DENSE_LAUNCH == (WINDOW_GEMM_SYMBOL, decoder)
+        assert module.DENSE_FUSED_LAUNCH == (FUSED_WINDOW_DENSE_SYMBOL, fused_decoder)
+        assert module.DENSE_LAUNCHES == (module.DENSE_LAUNCH, module.DENSE_FUSED_LAUNCH)
         assert launch_pairs(route, structure=STRUCTURE_DENSE,
-                            include_experimental=True) == {module.DENSE_LAUNCH}, route
+                            include_experimental=True) == set(module.DENSE_LAUNCHES), route
         for regime in ("decode", "batch"):
             for mode in ("resident", "streamed"):
                 assert launch_pairs(route, structure=STRUCTURE_DENSE, regime=regime,
-                                    mode=mode, include_experimental=True) == {
-                    module.DENSE_LAUNCH}, (route, regime, mode)
+                                    mode=mode, include_experimental=True) == set(
+                    module.DENSE_LAUNCHES), (route, regime, mode)
 
     # ...and it BITES.  Put back a launch no ``apply`` makes -- the shape the
     # table was in before this commit -- and the check fails.  The DRIVER is
@@ -716,7 +760,7 @@ def test_the_dense_launch_table_is_the_launch_apply_makes(monkeypatch):
          "lane": None, "structures": (STRUCTURE_DENSE,), "when_lane_absent": True},)
     monkeypatch.setattr(scheme, "ROUTE_LAUNCHES", revived)
     assert launch_pairs(TESSERA_FP8, structure=STRUCTURE_DENSE,
-                        include_experimental=True) != {fp8_route.DENSE_LAUNCH}
+                        include_experimental=True) != set(fp8_route.DENSE_LAUNCHES)
 
 
 def test_a_cell_naming_a_launch_the_build_cannot_make_is_refused(contract):
@@ -747,15 +791,22 @@ def test_no_published_dense_cell_names_a_launch_the_build_cannot_make(contract):
     ``master`` too -- where it fails, listing the eight stale cells.
     """
     pytest.importorskip("torch")
-    from tessera.serving.scheme import WINDOW_GEMM_SYMBOL
-    from tessera.serving.telemetry import (DECODER_NATIVE_WINDOW_GEMM,
+    from tessera.serving.scheme import FUSED_WINDOW_DENSE_SYMBOL, WINDOW_GEMM_SYMBOL
+    from tessera.serving.telemetry import (DECODER_NATIVE_FUSED_WINDOW_DENSE,
+                                           DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED,
+                                           DECODER_NATIVE_WINDOW_GEMM,
                                            DECODER_NATIVE_WINDOW_GEMM_FOLDED)
 
-    # Each family's literal pair, per arithmetic (tessera#614): a BF16 cell
+    # Each family's literal pairs, per arithmetic (tessera#614): a BF16 cell
     # naming the epilogue decoder is as stale as one naming the GEMV lane.
+    # Since contract v43 a dense route makes one of two launches per module,
+    # the Triton window GEMM or the fused window kernel's dense identity.
     made_by_family = {
-        "TESSERA_E4M3_K1": {(WINDOW_GEMM_SYMBOL, DECODER_NATIVE_WINDOW_GEMM)},
-        "TESSERA_BF16_K1": {(WINDOW_GEMM_SYMBOL, DECODER_NATIVE_WINDOW_GEMM_FOLDED)},
+        "TESSERA_E4M3_K1": {(WINDOW_GEMM_SYMBOL, DECODER_NATIVE_WINDOW_GEMM),
+                            (FUSED_WINDOW_DENSE_SYMBOL, DECODER_NATIVE_FUSED_WINDOW_DENSE)},
+        "TESSERA_BF16_K1": {(WINDOW_GEMM_SYMBOL, DECODER_NATIVE_WINDOW_GEMM_FOLDED),
+                            (FUSED_WINDOW_DENSE_SYMBOL,
+                             DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED)},
     }
     stale = {}
     for cell in contract["lane_eligibility"]["cells"]:
@@ -797,7 +848,8 @@ def test_no_withdrawn_cell_has_come_back_with_its_withdrawn_claim(contract):
     withdrawn claim (the v31 GEMV lane's, the v37 epilogue decoder's).
     """
     present = {cell["id"] for cell in contract["lane_eligibility"]["cells"]}
-    withdrawn = _WITHDRAWN_CELL_IDS | _WITHDRAWN_V37_CELL_IDS | _WITHDRAWN_V38_CELL_IDS
+    withdrawn = (_WITHDRAWN_CELL_IDS | _WITHDRAWN_V37_CELL_IDS | _WITHDRAWN_V38_CELL_IDS
+                 | _WITHDRAWN_V39_CELL_IDS)
     assert set(_WITHDRAWN_CLAIMS) == withdrawn
     assert not (present & (withdrawn - _REEARNED_CELL_IDS))
     assert not (set(_CELL_LAWS) & (withdrawn - _REEARNED_CELL_IDS))
@@ -808,14 +860,21 @@ def test_no_withdrawn_cell_has_come_back_with_its_withdrawn_claim(contract):
     assert not (present & _WITHDRAWN_V37_CELL_IDS)
     # The v31 fixture quotes the claims it withdrew; the table above must
     # hold every one of them for the ids the fixture carries.
-    for cell in withdrawn_cells():
+    for cell in withdrawn_cells() + withdrawn_v39_cells():
         quoted = {(e["symbol"], e["decoder"]) for e in cell["executes"]}
         assert quoted <= _WITHDRAWN_CLAIMS[cell["id"]], cell["id"]
+    # The v39 dense pin pair has no receipt of the launch the route makes now.
+    assert not (present & {"tessera_e2m1_k2_dense_sm121_decode",
+                           "tessera_e2m1_k2_dense_sm121_batch"})
     for cell in contract["lane_eligibility"]["cells"]:
         if cell["id"] not in _REEARNED_CELL_IDS:
             continue
         receipt, launch = _REEARNED[cell["id"]]
         assert (ROOT / receipt).is_file(), cell["id"]
+        if cell["structure"] == "routed_moe":
+            assert (ROOT / ROUTED_FUSED_RECEIPT).is_file(), cell["id"]
+        if cell["structure"] == "dense" and cell["family"] == "TESSERA_E4M3_K1":
+            assert (ROOT / DENSE_FUSED_RECEIPT).is_file(), cell["id"]
         pairs = {(e["symbol"], e["decoder"]) for e in cell["executes"]}
         assert pairs == launch, cell["id"]
         assert not (pairs & _WITHDRAWN_CLAIMS[cell["id"]]), cell["id"]
@@ -837,15 +896,15 @@ def test_every_cell_executes_a_launch_its_route_can_make(contract):
         assert cell_executes(cell) <= admissible, cell["id"]
 
 
-def test_the_native_route_pairs_are_registered_experimental_and_censusable():
+def test_the_native_route_pairs_are_attested_and_censusable():
     """The native lanes, by the constants route owners import.
 
     Each pair is in ``ROUTE_LAUNCHES`` for the structure it serves, spelled in
-    ``telemetry.DECODERS``' vocabulary, absent from the contract validator's
-    default view, and reachable through the documented census opt-in
-    (``experimental_launch_pairs`` / ``include_experimental=True``).  Nothing
-    here promotes a cell: the only pairs in ``EXPERIMENTAL_LAUNCHES`` are ones
-    a table entry actually makes, so a candidate pair cannot dangle.
+    ``telemetry.DECODERS``' vocabulary.  Until contract v39 the two A4 pairs
+    were the only ``EXPERIMENTAL_LAUNCHES``: absent from the validator's default
+    view and reachable only through the census opt-in.  The u1 stub D census
+    served both, so v39 moves them into the attested dispatch and the
+    experimental set is empty; the opt-in stays, as the union it always was.
     """
     pytest.importorskip("torch")
     from tessera.serving import telemetry
@@ -862,7 +921,26 @@ def test_the_native_route_pairs_are_registered_experimental_and_censusable():
         (A4_GROUPED_GEMM_SYMBOL, telemetry.DECODER_NATIVE_SPAN2_GROUPED):
             (TESSERA_NVFP4, STRUCTURE_ROUTED_MOE),
     }
-    assert set(expected) == set(EXPERIMENTAL_LAUNCHES)
+    # Contract v42 (tessera#640): the fused warp-specialised routed lane is
+    # the dispatch's default for rate-4 window-14 expert stacks.  Its two
+    # pairs stood in the experimental set while the lane was built; a served
+    # census of the rate-4 u1 stub B recorded both, the four window routed
+    # cells name them, and the set is empty again.
+    from tessera.serving.scheme import ROUTED_FUSED_WINDOW_SYMBOL
+    fused_fp8 = (ROUTED_FUSED_WINDOW_SYMBOL, telemetry.DECODER_NATIVE_ROUTED_FUSED_WINDOW)
+    fused_bf16 = (ROUTED_FUSED_WINDOW_SYMBOL, telemetry.DECODER_NATIVE_ROUTED_FUSED_WINDOW_FOLDED)
+    assert EXPERIMENTAL_LAUNCHES == frozenset()
+    assert experimental_launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE) == set()
+    assert experimental_launch_pairs(TESSERA_BF16, structure=STRUCTURE_ROUTED_MOE) == set()
+    assert fused_fp8 in launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE)
+    assert fused_bf16 in launch_pairs(TESSERA_BF16, structure=STRUCTURE_ROUTED_MOE)
+    assert fused_fp8 not in launch_pairs(TESSERA_BF16, structure=STRUCTURE_ROUTED_MOE)
+    assert fused_bf16 not in launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE)
+    # Each NVFP4 structure makes exactly its A4 launch; the retired
+    # ``(torch._scaled_mm, native_span2)`` and ``torch_materialize_stock``
+    # rows left the table with the v39 withdrawal.
+    for pair, (route, structure) in expected.items():
+        assert launch_pairs(route, structure=structure, include_experimental=True) == {pair}
     # LEFT at contract v38 (tessera#604): the compact window MoE adapter in
     # both arithmetics and the folded dense GEMM.  One GLM-image census served
     # every one of them and the eight v38 cells name them, so each is in the
@@ -880,10 +958,18 @@ def test_the_native_route_pairs_are_registered_experimental_and_censusable():
         assert pair not in EXPERIMENTAL_LAUNCHES, pair
         assert pair in launch_pairs(route, structure=structure), pair
         assert pair not in experimental_launch_pairs(route, structure=structure), pair
-    # ...and the one launch FP8 experts can make is the compact adapter's: the
+    # ...and the launches FP8 experts can make are the compact adapter's and
+    # the fused lane's, in the attested view and the census's alike: the
     # materialising stock launch left the table with the v38 withdrawal.
     assert launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE,
                         include_experimental=True) == {
+        (WINDOW_MOE_COMPACT_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_MOE_COMPACT), fused_fp8}
+    assert launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE) == {
+        (WINDOW_MOE_COMPACT_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_MOE_COMPACT), fused_fp8}
+    # Narrowed to a box with NO extension prepared, the fused row drops and
+    # the compact row stays (it is not ``when_lane_absent``: it runs beside
+    # the lane too, for the stacks the lane's geometry check refuses).
+    assert launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE, lanes=()) == {
         (WINDOW_MOE_COMPACT_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_MOE_COMPACT)}
     # LEFT at contract v34 (tessera#545), and this is the other half of that
     # move: the dense window GEMM is attested now, so it is NOT experimental
@@ -899,13 +985,29 @@ def test_the_native_route_pairs_are_registered_experimental_and_censusable():
     assert promoted in launch_pairs(TESSERA_FP8, structure=STRUCTURE_DENSE)
     assert promoted not in launch_pairs(TESSERA_BF16, structure=STRUCTURE_DENSE,
                                         include_experimental=True)
+    # Contract v43 (tessera#692): the fused window kernel's DENSE identity is
+    # a second lane-bearing launch on both dense routes, each in its family's
+    # arithmetic, and the Triton pair stays beside it (the modules the lane
+    # refuses, and TESSERA_DENSE_FUSED=0).  Narrowed to a box with no
+    # extension prepared, the fused row drops and the Triton row stays.
+    from tessera.serving.scheme import FUSED_WINDOW_DENSE_SYMBOL
+    dense_fused_fp8 = (FUSED_WINDOW_DENSE_SYMBOL, telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE)
+    dense_fused_bf16 = (FUSED_WINDOW_DENSE_SYMBOL,
+                        telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED)
     assert launch_pairs(TESSERA_BF16, structure=STRUCTURE_DENSE) == {
+        (WINDOW_GEMM_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_GEMM_FOLDED), dense_fused_bf16}
+    assert launch_pairs(TESSERA_FP8, structure=STRUCTURE_DENSE) == {promoted, dense_fused_fp8}
+    assert dense_fused_fp8 not in launch_pairs(TESSERA_BF16, structure=STRUCTURE_DENSE,
+                                               include_experimental=True)
+    assert dense_fused_bf16 not in launch_pairs(TESSERA_FP8, structure=STRUCTURE_DENSE,
+                                                include_experimental=True)
+    assert launch_pairs(TESSERA_BF16, structure=STRUCTURE_DENSE, lanes=()) == {
         (WINDOW_GEMM_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_GEMM_FOLDED)}
+    assert launch_pairs(TESSERA_FP8, structure=STRUCTURE_DENSE, lanes=()) == {promoted}
     for pair, (route, structure) in expected.items():
         assert pair[1] in telemetry.DECODERS, pair
-        assert pair in experimental_launch_pairs(route, structure=structure), pair
-        assert pair not in launch_pairs(route, structure=structure), (
-            f"{pair} leaked into the attested dispatch")
+        assert pair not in experimental_launch_pairs(route, structure=structure), pair
+        assert pair in launch_pairs(route, structure=structure), pair
         entries = [launch for launch in ROUTE_LAUNCHES[route]
                    if (launch["symbol"], launch["decoder"]) == pair
                    and structure in launch["structures"]]
@@ -921,9 +1023,11 @@ def test_the_native_route_pairs_are_registered_experimental_and_censusable():
                              (TESSERA_BF16, STRUCTURE_ROUTED_MOE)):
         assert experimental_launch_pairs(route, structure=structure) <= launch_pairs(
             route, structure=structure, include_experimental=True)
-    # A routed BF16 stack's one launch, the folded pair, is attested since v38.
+    # A routed BF16 stack's launches: the folded compact pair, attested since
+    # v38, and the folded fused pair, attested since v42 (tessera#640).
     assert launch_pairs(TESSERA_BF16, structure=STRUCTURE_ROUTED_MOE) == {
-        (WINDOW_MOE_COMPACT_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED)}
+        (WINDOW_MOE_COMPACT_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED),
+        fused_bf16}
 
 
 def test_launch_table_structures_follow_the_dispatch_builders():
@@ -966,9 +1070,15 @@ def test_moe_launches_are_structure_specific_and_resident_only(regime):
     assert not any(pair in non_experimental
                    for pair in dense - non_experimental), "experimental leaked"
     moe = launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE,
-                       regime=regime, mode="resident", lanes=(),
-                       include_experimental=True)
+                       regime=regime, mode="resident", include_experimental=True)
     assert moe == moe_route.census_expected(compiled=False)[regime]
+    # Narrowed to a box with NO extension prepared (contract v42, tessera#640):
+    # the fused routed row is lane-bearing and drops, the compact row stays.
+    from tessera.serving.scheme import ROUTED_FUSED_WINDOW_SYMBOL
+    bare = launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE,
+                        regime=regime, mode="resident", lanes=(), include_experimental=True)
+    assert bare == {pair for pair in moe if pair[0] != ROUTED_FUSED_WINDOW_SYMBOL}
+    assert bare < moe
     assert moe and moe.isdisjoint(dense)
     bf16_moe = launch_pairs(TESSERA_BF16, structure=STRUCTURE_ROUTED_MOE,
                             regime=regime, mode="resident", include_experimental=True)
@@ -1006,14 +1116,31 @@ def test_cell_launch_derivation_uses_the_cells_structure(contract, regime):
 
     entry = next(row for row in contract["formats"]
                  if row["family"] == "TESSERA_E4M3_K1")
+    compact = {"symbol": "tessera.native_window_moe.NativeWindowMoE.__call__",
+               "decoder": "native_window_moe_compact"}
+    fused = {"symbol": "tessera.routed_fused.FusedRoutedWindowMoE.__call__",
+             "decoder": "native_routed_fused_window"}
     synthetic = {
         "structure": "routed_moe", "regime": regime, "rungs_q256": [1024],
         "requires_serve_flags": ["TESSERA_SERVE_MODE=resident"],
-        "executes": [{"symbol": "tessera.native_window_moe.NativeWindowMoE.__call__",
-                      "decoder": "native_window_moe_compact"}]}
+        "executes": [compact, fused]}
     # A synthetic execution claim checks the derivation without publishing
-    # a receipt-bearing cell in the packaged contract.
+    # a receipt-bearing cell in the packaged contract.  At q256 1024 every
+    # column is at rate 4, so the fused lane's own predicate admits the rung
+    # and the build makes BOTH launches (contract v42, tessera#640); a claim
+    # of the compact launch alone is refused there.
     _validate_cell_executes(synthetic, "TESSERA_FP8", entry, contract, "synthetic")
+    synthetic["executes"] = [compact]
+    with pytest.raises(ValueError, match="executes"):
+        _validate_cell_executes(synthetic, "TESSERA_FP8", entry, contract, "synthetic")
+    # At q256 896 the rate set is {3, 4}; the lane reads rate-4 columns only,
+    # so the rung does not reach it and the compact launch is the whole set.
+    mixed = dict(synthetic, rungs_q256=[896], executes=[compact])
+    _validate_cell_executes(mixed, "TESSERA_FP8", entry, contract, "synthetic")
+    mixed["executes"] = [compact, fused]
+    with pytest.raises(ValueError, match="executes"):
+        _validate_cell_executes(mixed, "TESSERA_FP8", entry, contract, "synthetic")
+    synthetic["executes"] = [compact, fused]
     # The dense launch at the same family and rung is refused for an expert
     # stack, and so is the materialising launch v38 removed (tessera#604).
     for refused in ({"symbol": "torch._scaled_mm", "decoder": "torch_window"},
@@ -1290,7 +1417,10 @@ def _empty_serve_flags(c):
 
 
 def _wrong_activation_contract(c):
-    c["lane_eligibility"]["cells"][0]["activation_contract"] = "fp8_per_token_dynamic"
+    cell = c["lane_eligibility"]["cells"][0]
+    cell["activation_contract"] = ("bf16_unquantized"
+                                   if cell["activation_contract"] != "bf16_unquantized"
+                                   else "fp8_per_token_dynamic")
 
 
 def _drop_requires_plugin(c):

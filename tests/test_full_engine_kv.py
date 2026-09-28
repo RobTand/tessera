@@ -6,7 +6,8 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from experiments.full_engine_kv import inspect_worker_kv, kv_storage_observation, check_kv_capacity
+from experiments.full_engine_kv import (inspect_worker_kv, kv_storage_observation, check_kv_capacity,
+                                        kv_observation_record, admission_evidence)
 
 
 class SyntheticCudaView:
@@ -132,3 +133,22 @@ def test_inspection_does_not_mutate_worker_kv_state(worker, expectations):
     original = copy.deepcopy(worker.model_runner.kv_cache_config)
     inspect_worker_kv(worker, expectations)
     assert worker.model_runner.kv_cache_config == original
+
+
+def test_tp2_read_only_kv_record_binds_actual_rank_device_and_host(worker):
+    observed = inspect_worker_kv(worker)
+    evidence = admission_evidence(mode="kv", process_id=4222,
+                                  recorder_attached=False, snapshot_count=0)
+    identity = {name: "a" * 64 for name in (
+        "assignment_sha256", "canonical_units_sha256", "configuration_sha256",
+        "model_sha256", "runtime_manifest_sha256", "workload_sha256")}
+    host = {"ip": "192.168.1.108", "interface": "eth0",
+            "source": "VLLM_HOST_IP equal to the worker's own IPv4 interface address"}
+    record = kv_observation_record(observed, evidence=evidence, rank=1, world_size=2,
+                                   run_identity=identity, scope="synthetic",
+                                   device_id=0, device_uuid="GPU-rank-1", host=host)
+    assert record["schema"] == "tessera.full_engine_kv_observation.v2"
+    assert (record["rank"], record["device_uuid"], record["host"]) == (1, "GPU-rank-1", host)
+    with pytest.raises(ValueError, match="actual rank device and host"):
+        kv_observation_record(observed, evidence=evidence, rank=1, world_size=2,
+                              run_identity=identity, scope="synthetic")

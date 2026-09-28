@@ -96,6 +96,18 @@ are not exactly that table's values.  So a per-(family, regime) expectation can
 join the two sides, and a rename or a third regime fails before the first model
 load rather than at a per-module ``KeyError`` after two.
 
+UNDER THE ONE-STEP MTP DRAFT (``--draft-routes``) NO FORWARD IS ONE ROW.  Each
+generation step verifies k+1 = 2 tokens on the target and the draft's one
+forward per step runs over the same two, so the decode phase can never show the
+contract's decode regime.  ``census_phase_plan`` derives this run's table from
+the speculative config instead of editing the contract's: prefill expects M =
+the prompt, the generation phase expects M = k+1 (the batch regime, so batch
+cells), and every record is checked against that exact M.  A target at M1 means
+the draft was not engaged and is refused; an M1 draft call is inconsistent with
+k = 1 and is refused.  The receipt stamps ``decode_regime_served: false``,
+``num_speculative_tokens`` and ``generation_step_m`` so its scope travels with
+it: the one-row attestation belongs to a census taken without a draft.
+
 Run it inside the serving image with the plugin installed, through
 ``experiments/tessera_plugin_run.sh`` (the same container the KL dumps ran in);
 ``TESSERA_SERVE_MODE`` selects the residency exactly as it does for ``vllm
@@ -285,6 +297,26 @@ def draft_declared_in_module_space(model, targets):
     return out
 
 
+def on_every_rank_model(fn, *fargs):
+    """Wrap ``fn(model, *fargs)`` as a ``collective_rpc`` callable for every rank.
+
+    ``LLM.apply_model(fn)`` sends ``fn`` as an RPC ARGUMENT, and vLLM's
+    multiprocess and ray executors write RPC arguments with the stdlib pickler.
+    That pickler refuses a lambda outright ("Can't pickle local object") and
+    writes a function of this script as a reference to ``__main__``, which a
+    worker process whose ``__main__`` is vLLM's or ray's cannot resolve.  One
+    rank never noticed: the in-process executor calls ``fn`` without pickling.
+    The first TP2 census on image X died on the name-map lambda
+    (2026-09-27 01:08Z).  A callable passed as the RPC METHOD is written with
+    cloudpickle, which carries a ``__main__`` function by value, so every rank
+    gets the same code the head runs.  The result is one entry per rank, as
+    ``apply_model`` returned.
+    """
+    def call(worker):
+        return fn(worker.get_model(), *fargs)
+    return call
+
+
 def draft_worker_inventory(worker, targets):
     """Return small draft observations from one worker, never its model object.
 
@@ -465,10 +497,144 @@ def parse_mtp_speculative_config(raw, *, world):
     return value
 
 
+def census_phase_plan(speculative_config=None, *, prompt_tokens=None):
+    """This run's phase -> regime table and the M each phase must have run.
+
+    WITHOUT SPECULATIVE DECODING this is ``contract.CENSUS_PHASE_REGIMES``
+    unchanged and no M is expected beyond its regime: the prefill phase is a
+    many-row forward and the decode phase the one-row forward, which is every
+    census written before the draft arm existed.
+
+    UNDER THE ONE-STEP MTP DRAFT THERE IS NO ONE-ROW FORWARD.  With
+    ``num_speculative_tokens = k = 1`` every generation step verifies the
+    sampled token plus the one draft token, so the target runs M = k+1 = 2, and
+    the proposer's single forward per step runs over the same k+1 scheduled
+    tokens.  Asking that generation phase for the contract's decode regime is
+    unsatisfiable by construction: the GLM-5.3 BAL TP2 census
+    ``u4-BAL-20260928T0540Z-2c-r5`` refused 264 correct body records (M2 on
+    the batch launch pair) and found no draft decode record at all, because
+    the observer saw five draft calls and every one was M>1.  The phase label
+    is what the census asked for and the record's shape is what the machine
+    ran; here the plan asks for what the machine CAN run, and asks for it
+    exactly -- the prompt length for prefill and k+1 for a generation step --
+    so a target at M1 (the draft was not engaged) is still a refusal.
+
+    The contract's table is not edited: its phase names identify the two
+    phases and its regime vocabulary is the one ``regime_of_m`` maps into.
+    ``decode_regime_served`` says, as a value, that such a census attests no
+    one-row forward; that belongs to the census taken without a draft.
+    """
+    from tessera.serving.contract import CENSUS_PHASE_REGIMES
+    from tessera.serving.scheme import regime_of_m
+
+    canonical = dict(CENSUS_PHASE_REGIMES)
+    phase_of = {regime: phase for phase, regime in canonical.items()}
+    prefill_phase, generation_phase = phase_of["batch"], phase_of["decode"]
+    plan = {"phase_regimes": canonical, "expected_m": None,
+            "prefill_phase": prefill_phase, "generation_phase": generation_phase,
+            "num_speculative_tokens": None, "generation_step_m": None,
+            "decode_regime_served": True}
+    if speculative_config is None:
+        return plan
+    k = speculative_config.get("num_speculative_tokens")
+    if type(k) is not int or k != 1:
+        raise ValueError("the census phase plan knows only num_speculative_tokens == 1")
+    step_m = k + 1
+    if type(prompt_tokens) is not int or prompt_tokens <= step_m:
+        raise ValueError(
+            f"a {prompt_tokens!r}-token prompt cannot be told apart from a k+1={step_m} "
+            "generation step; the prefill phase needs a longer prompt")
+    expected = {prefill_phase: prompt_tokens, generation_phase: step_m}
+    regimes = {phase: regime_of_m(m) for phase, m in expected.items()}
+    plan.update(phase_regimes={phase: regimes[phase] for phase in canonical},
+                expected_m={phase: expected[phase] for phase in canonical},
+                num_speculative_tokens=k, generation_step_m=step_m,
+                decode_regime_served="decode" in regimes.values())
+    return plan
+
+
+def expected_m_problem(shape, phase, plan, *, draft=False):
+    """Why an eager record did not run the M ``plan`` expects of ``phase``."""
+    from tessera.serving.scheme import parse_eager_shape as _parse
+    expected = (plan.get("expected_m") or {}).get(phase)
+    if expected is None:
+        return None
+    try:
+        m, _, _ = _parse(shape)
+    except ValueError as exc:
+        return str(exc)
+    if m == expected:
+        return None
+    k = plan["num_speculative_tokens"]
+    if phase != plan["generation_phase"]:
+        return (f"shape M{m} is not the M{expected} of one full prefill of the "
+                f"{expected}-token prompt")
+    if m == 1 and not draft:
+        return (f"shape M1 is a one-row forward, but with num_speculative_tokens={k} every "
+                f"generation step verifies k+1={expected} tokens: the MTP draft was not engaged")
+    return (f"shape M{m} is not the k+1=M{expected} every generation step runs with "
+            f"num_speculative_tokens={k}")
+
+
+def draft_observations_by_phase(arms, *, plan):
+    """Which observed draft call stands for which census phase, and what refuses.
+
+    Under the one-step draft every draft forward is multi-row: the first runs
+    over the prompt after the target's prefill, and every later one over a
+    generation step's k+1 tokens.  So both phases come out of the observer's
+    ``batch`` bucket -- prefill from its ``first`` call, the generation phase
+    from its ``latest`` -- and the two must be distinct calls at the M the plan
+    expects, or one record would be quoted as two phases.  A ``decode`` bucket
+    (an M1 draft call) is inconsistent with ``num_speculative_tokens = 1``.
+    """
+    prefill, generation = plan["prefill_phase"], plan["generation_phase"]
+    k, expected = plan["num_speculative_tokens"], plan["expected_m"]
+    problems = []
+    for arm, rows in arms.items():
+        problems.extend(draft_forward_observer_problems(rows, arm=arm))
+        for index, row in enumerate(rows):
+            tag = f"draft {arm} response {index}"
+            one_row = row["by_regime"].get("decode")
+            if one_row:
+                problems.append(
+                    f"{tag}: {one_row['calls']} one-row (M1) draft forward(s), which is "
+                    f"inconsistent with num_speculative_tokens={k}: every draft forward of a "
+                    f"k={k} step runs over the target's k+1={k + 1} scheduled tokens")
+    observed = arms["decode_arm"]
+    for index, row in enumerate(observed):
+        tag = f"draft decode_arm response {index}"
+        batch = row["by_regime"].get("batch")
+        if not batch:
+            problems.append(f"{tag}: no multi-row draft forward was observed")
+            continue
+        if batch["calls"] < 2:
+            problems.append(
+                f"{tag}: {batch['calls']} multi-row draft forward; the prefill and generation "
+                "phases would quote the same call")
+        if batch.get("first_m") != expected[prefill]:
+            problems.append(f"{tag}: first draft forward ran M{batch.get('first_m')}, not the "
+                            f"M{expected[prefill]} prompt")
+        if batch.get("latest_m") != expected[generation]:
+            problems.append(f"{tag}: latest draft forward ran M{batch.get('latest_m')}, not the "
+                            f"k+1=M{expected[generation]} generation step")
+    by_phase = {generation: draft_observations_from_forward(observed, "batch", snapshot="latest"),
+                prefill: draft_observations_from_forward(observed, "batch", snapshot="first")}
+    sources = {generation: "decode_arm/latest_batch", prefill: "decode_arm/first_batch"}
+    draft_expected = dict(expected)
+    if "batch_arm" in arms:
+        # N prompts in one step: its first call is no single-prompt prefill, so
+        # it is held to the regime its phase declares, not to one prompt's M.
+        by_phase[prefill] = draft_observations_from_forward(
+            arms["batch_arm"], "batch", snapshot="first")
+        sources[prefill] = "batch_arm/first_batch"
+        draft_expected[prefill] = None
+    return by_phase, sources, draft_expected, problems
+
+
 def validate_draft_route_records(observations_by_phase, *, source_to_module,
                                  draft_declared, target_identities, phase_regimes,
                                  mode, policy_prefixes, contract_for, expected,
-                                 symbol_base, shape_problem):
+                                 symbol_base, shape_problem, phase_plan=None):
     """Validate compact draft RPC observations without an engine or device.
 
     The output keeps original source ownership and actual draft module names
@@ -542,7 +708,10 @@ def validate_draft_route_records(observations_by_phase, *, source_to_module,
                     problems.append(f"{tag}: {name} activation contract disagrees")
                 if record.get("policy") != f"{family}:{mode}":
                     problems.append(f"{tag}: {name} residency/family policy disagrees")
-                problem = shape_problem(record.get("shape"), phase_regimes[phase])
+                problem = ((expected_m_problem(record.get("shape"), phase, phase_plan,
+                                               draft=True)
+                            if phase_plan is not None else None)
+                           or shape_problem(record.get("shape"), phase_regimes[phase]))
                 if problem is not None:
                     problems.append(f"{tag}: {name}: {problem}")
                 wanted = expected(family, phase_regimes[phase], record.get("kind"))
@@ -637,8 +806,29 @@ def parse_eager_shape(value):
     return _parse(value)
 
 
+def driven_phase_pair(phase_regimes):
+    """``(many-row phase, generation phase)`` of one run's phase table.
+
+    The contract's table maps one phase to each regime, and that is how the
+    pair is read.  A speculative census maps both to ``batch``
+    (``census_phase_plan``), so there the pair is named by the contract's own
+    phase names -- never by dict order, and never by a literal here.
+    """
+    decode_phase = next((p for p, regime in phase_regimes.items() if regime == "decode"), None)
+    if decode_phase is not None:
+        batch_phase = next(p for p, regime in phase_regimes.items() if regime == "batch")
+        return batch_phase, decode_phase
+    from tessera.serving.contract import CENSUS_PHASE_REGIMES
+    phase_of = {regime: phase for phase, regime in CENSUS_PHASE_REGIMES.items()}
+    pair = phase_of["batch"], phase_of["decode"]
+    if set(phase_regimes) != set(pair):
+        raise ValueError(f"phase table {dict(phase_regimes)!r} names no decode phase and is "
+                         f"not keyed by the contract's phases {list(pair)}")
+    return pair
+
+
 def phase_shape_problems(records_by_phase, *, phase_regimes, compiled=False,
-                         require_each_owner=False):
+                         require_each_owner=False, phase_plan=None):
     """Every eager record's own shape against the regime its phase declares.
 
     Callers requiring owner coverage first join records into owner space; that
@@ -649,10 +839,13 @@ def phase_shape_problems(records_by_phase, *, phase_regimes, compiled=False,
     while another moved, and passes an eight-row forward filed under the decode
     phase (#207).  The M -> regime rule is ``scheme.eager_regime_problem``, the
     same one ``census.cell_launch_agreement`` applies to a covered record.
+
+    ``phase_plan`` (``census_phase_plan``) adds the exact M each phase must
+    have run where the run knows it -- under the one-step MTP draft, the
+    prompt length and k+1 -- and one mismatch is one problem naming both.
     """
     from tessera.serving.scheme import eager_regime_problem
-    batch_phase = next(p for p, regime in phase_regimes.items() if regime == "batch")
-    decode_phase = next(p for p, regime in phase_regimes.items() if regime == "decode")
+    batch_phase, decode_phase = driven_phase_pair(phase_regimes)
     batch, decode = records_by_phase[batch_phase], records_by_phase[decode_phase]
     if not batch or not decode:
         return ["both driven phases need shape evidence"] if require_each_owner else []
@@ -674,7 +867,9 @@ def phase_shape_problems(records_by_phase, *, phase_regimes, compiled=False,
                      f"missing={missing}, unchanged/missing shape={bad}"] if missing or bad else [])
     for phase, records in sorted(records_by_phase.items()):
         for owner, record in sorted(records.items()):
-            why = eager_regime_problem(record.get("shape"), phase_regimes.get(phase))
+            why = ((expected_m_problem(record.get("shape"), phase, phase_plan)
+                    if phase_plan is not None else None)
+                   or eager_regime_problem(record.get("shape"), phase_regimes.get(phase)))
             if why is not None:
                 problems.append(f"{phase} {owner}: {why}")
     return problems
@@ -919,6 +1114,244 @@ def expected_pairs(family, regime, kind, *, compiled, platform):
         "its route above rather than widening the comparison.")
 
 
+def validate_census_observations(*, phases_by_rank, identities, refusals_by_rank, declared,
+                                 declared_rungs, phase_plan, mode, platform, runtime_image,
+                                 execution_mode, compiled, cells, contract_for, expected,
+                                 symbol_for, symbol_base, families_by_route, policy_prefixes,
+                                 allow_fallback_decoder=False, expect_modules=None,
+                                 required_lanes=(), lane_decoders=None, manifest_lanes=(),
+                                 require_decoder=(), draft=None):
+    """Every check a census makes on what its forwards recorded, without an engine or device.
+
+    ``main`` gathers the observations -- per-rank route records per phase,
+    worker identities, lane refusals and, for the MTP draft, the forward
+    observer's per-rank rows -- and this turns them into the receipt's blocks
+    and its problems.  It is module level so a served receipt can be REPLAYED:
+    the problems a stored receipt carries must be the problems its own records
+    produce, and a fix to a check can be shown on the records that exposed it.
+    ``phase_plan`` is ``census_phase_plan``'s table for the run.
+    """
+    from tessera.serving.census import join_rank_histograms, lane_engagement, phase_histogram
+    from tessera.serving.scheme import eager_regime_problem
+
+    phase_regimes = phase_plan["phase_regimes"]
+    problems = []
+    if draft is not None:
+        draft_by_phase, draft_phase_sources, draft_expected_m, observer_problems = (
+            draft_observations_by_phase(draft["arms"], plan=phase_plan))
+        problems.extend(observer_problems)
+    world_size = len(identities)
+    phases = {phase: per_rank[0] for phase, per_rank in phases_by_rank.items()}
+    # THE PER-MODULE CHECKS RUN ON EVERY RANK.  Each rank serves its own shard
+    # of every module and writes its own route record, so a check run on the
+    # head alone would pass a world in which rank 1 fell back on every unit.
+    # At one rank the loop below runs once and every problem string it can
+    # write is the string it wrote before -- the rank tag appears only above
+    # one rank, because a receipt that is the same observation must be the
+    # same bytes.
+    histogram_by_rank = []
+    record_owner_by_rank = []
+    tessera_by_rank = []
+    for rank in range(world_size):
+        tag = "" if world_size == 1 else f"rank {rank} "
+        rank_histogram = {}
+        rank_owner = {}
+        rank_tessera = {}
+        for phase, per_rank in phases_by_rank.items():
+            recs = per_rank[rank]
+            tess = {n: r for n, r in recs.items() if str(r.get("policy", "")).startswith(policy_prefixes)}
+            other = {n: r for n, r in recs.items() if n not in tess}
+            rank_tessera[phase] = tess
+            rank_histogram[phase] = phase_histogram(
+                tess, regime=phase_regimes[phase], other_route_modules=len(other))
+            if not tess:
+                problems.append(f"{tag}{phase}: no module reports a Tessera route")
+            owner, join_problems = join_records_to_declared(tess, declared)
+            rank_owner[phase] = owner
+            problems.extend(f"{tag}{phase}: {m}" for m in join_problems)
+            for name, r in tess.items():
+                family = declared.get(owner.get(name, name))
+                if family is None:
+                    problems.append(
+                        f"{tag}{phase}: {name} took a Tessera route but the checkpoint declares none for it")
+                    continue
+                if r["state"] != "served":
+                    problems.append(f"{tag}{phase}: {name} state={r['state']!r} reason={r.get('reason')!r}")
+                if r["contract"] != contract_for[family]:
+                    problems.append(f"{tag}{phase}: {name} contract={r['contract']!r} != {contract_for[family]!r}")
+                if r["policy"] != f"{family}:{mode}":
+                    problems.append(f"{tag}{phase}: {name} policy={r['policy']!r} != declared {family}:{mode}")
+                # The (symbol, decoder) pair, not each half alone: the streamed FP8
+                # route reports the GEMV pair wherever the lane prepared and the
+                # kernel-decoded tile under the stock GEMM above the lane's max M
+                # (``fp8_gemv.census_expected`` owns the sets), and a half-wise
+                # comparison would read either half as a refusal on every module
+                # that legitimately took the other launch.
+                want = expected(family, phase_regimes[phase], r.get("kind"))
+                # The expert route's symbol carries the backend the RUNTIME picked
+                # (``...modular_kernel:TRITON``), which no expectation of ours may
+                # pin; the entry point is what this compares and the histogram
+                # above keeps every exact string, backend and all.
+                got_symbol = (symbol_base(r["symbol"])
+                              if r.get("kind") == "moe" else r["symbol"])
+                if ((got_symbol, r.get("decoder")) not in want
+                        and not (allow_fallback_decoder and r["symbol"] == symbol_for[family])):
+                    problems.append(
+                        f"{tag}{phase}: {name} (symbol, decoder)={(r['symbol'], r.get('decoder'))!r} "
+                        f"not in {sorted(want)!r}; without --allow-fallback-decoder a serve must "
+                        "report a pair its route owns")
+            missing = sorted(set(declared) - set(owner.values()))
+            if missing:
+                problems.append(
+                    f"{tag}{phase}: {len(missing)} declared Tessera modules report no route, e.g. {missing[:3]}")
+            # PER RANK, NOT OVER THE WORLD.  ``--expect-modules`` names what the
+            # CHECKPOINT declares, and every rank builds a module for every
+            # declared target -- it holds a shard of it.  Comparing the joined
+            # count would refuse a correct two-rank serve for serving twice.
+            if expect_modules is not None and len(tess) != expect_modules:
+                problems.append(
+                    f"{tag}{phase}: {len(tess)} Tessera modules, the checkpoint declares {expect_modules}")
+        histogram_by_rank.append(rank_histogram)
+        record_owner_by_rank.append(rank_owner)
+        tessera_by_rank.append(rank_tessera)
+    # THE JOINED HISTOGRAM IS THE SUM OVER RANKS, and it is what the
+    # attestation reads.  At one rank it is that rank's histogram unchanged.
+    histogram = join_rank_histograms(histogram_by_rank)
+    record_owner = record_owner_by_rank[0]
+    # THE TESSERA RECORDS ARE WHAT THIS RECEIPT ATTESTS, so they are what the
+    # shape and agreement checks below read: a record from another quant
+    # method's route is observed and counted, never used as evidence for a
+    # Tessera regime.
+    # ONE NAMESPACE OVER THE WHOLE WORLD.  Every rank names its modules the
+    # same, so merging the ranks' records under their own names would count one
+    # module once however many ranks served it -- the engagement and agreement
+    # blocks would then read identically at every world size.  Above one rank
+    # the name carries the rank that observed it; at one rank it is the module
+    # name it always was, and the blocks below are the bytes they always were.
+    def _qualified(rank, name):
+        return name if world_size == 1 else f"rank{rank}/{name}"
+
+    tessera_by_phase = {
+        phase: {_qualified(rank, n): r
+                for rank, by_phase in enumerate(tessera_by_rank)
+                for n, r in by_phase[phase].items()}
+        for phase in phases_by_rank}
+    record_owner_world = {
+        phase: {_qualified(rank, n): owner
+                for rank, by_phase in enumerate(record_owner_by_rank)
+                for n, owner in by_phase[phase].items()}
+        for phase in phases_by_rank}
+    problems.extend(phase_shape_problems(
+        tessera_by_phase, phase_regimes=phase_regimes, compiled=compiled,
+        phase_plan=phase_plan))
+
+    # LANE ENGAGEMENT.  The per-module check above is a check on AGREEMENT, and
+    # the decode regime legitimately admits both the GEMV pair and the
+    # materialised one -- so a serve in which the lane prepared for NOTHING
+    # passes it module by module.  This asks the question that cannot: did the
+    # lane this arm requested take any units at all (issue #104)?  Emitted
+    # unconditionally so a receipt written without --require-lane still carries
+    # the decoder counts a gate would need.
+    refusals_world = {_qualified(rank, name): reason
+                      for rank, by_module in enumerate(refusals_by_rank)
+                      for name, reason in by_module.items()}
+    engagement, engagement_problems = lane_engagement(
+        tessera_by_phase, required_lanes=required_lanes, lane_decoders=lane_decoders or None,
+        refusals_by_phase={phase: refusals_world for phase in phases})
+    engagement["declared_by_artifact"] = manifest_lanes
+    problems.extend(engagement_problems)
+
+    # THE DECODER, NAMED RATHER THAN LEFT TO A READER.  ``lane_engagement``
+    # answers a lane question and reports ``all_required_engaged: null`` when
+    # the census was told of none, so a receipt can be green while every module
+    # took a route's fallback.  ``--require-decoder`` turns "the native decoder
+    # ran" into the thing the exit status is computed from.
+    decoder_coverage, decoder_problems = required_decoder_coverage(
+        tessera_by_phase, list(require_decoder))
+    problems.extend(decoder_problems)
+
+    # WHAT THE CONTRACT SAYS THIS SERVE EXECUTES, against what it executed.
+    # ``lane_eligibility`` cells publish ``executes`` since schema v4 (#111), a
+    # value DERIVED from the dispatch table -- which proves the document agrees
+    # with the code.  Only a serve proves the code agrees with the machine, so
+    # the join is made here, per module, in both phases, under the actual
+    # image and execution mode. Compiled dense records retain an explicit
+    # unsupported result; a routed single-launch observation can be checked.
+    agreement, agreement_problems = all_structure_agreement(
+        tessera_by_phase, cells=cells,
+        phase_regimes=phase_regimes,
+        platform=platform,
+        declared_rungs=declared_rungs, record_owners=record_owner_world,
+        families_by_route=families_by_route,
+        runtime_image=runtime_image, execution_mode=execution_mode)
+    problems.extend(agreement_problems)
+    draft_receipt = None
+    if draft is not None:
+        batch_phase = phase_plan["prefill_phase"]
+        source_to_module = draft["source_to_module"]
+        draft_declared, draft_rungs = draft["declared"], draft["rungs"]
+        draft_families = {source_to_module[name]: family
+                          for name, family in draft_declared.items()}
+        draft_module_rungs = {source_to_module[name]: draft_rungs[name]
+                              for name in draft_declared}
+        (draft_phase_records, draft_phase_owners, draft_rank_records,
+         draft_rank_identity, draft_problems, draft_rank_refusals) = (
+            validate_draft_route_records(
+                draft_by_phase, source_to_module=source_to_module,
+                draft_declared=draft_declared, target_identities=identities,
+                phase_regimes=phase_regimes, mode=mode,
+                policy_prefixes=policy_prefixes, contract_for=contract_for,
+                expected=expected, symbol_base=symbol_base,
+                shape_problem=eager_regime_problem,
+                phase_plan=dict(phase_plan, expected_m=draft_expected_m)))
+        problems.extend(draft_problems)
+        draft_agreement, draft_agreement_problems = all_structure_agreement(
+            draft_phase_records, cells=cells,
+            phase_regimes=phase_regimes, platform=platform,
+            declared_rungs=draft_module_rungs, record_owners=draft_phase_owners,
+            families_by_route=families_by_route,
+            runtime_image=runtime_image, execution_mode=execution_mode)
+        problems.extend(f"draft: {message}" for message in draft_agreement_problems)
+        required_draft_decoder = required_draft_native_decoders(
+            draft_families, native_decoder=draft["native_decoder"],
+            supported_families=draft["supported_families"])
+        draft_decoder_coverage, draft_decoder_problems = required_decoder_coverage(
+            draft_phase_records, required_draft_decoder)
+        problems.extend(f"draft: {message}" for message in draft_decoder_problems)
+        draft_receipt = {
+            "schema": "tessera.serving.draft_route_census.v1",
+            "speculative_config": draft["speculative_config"],
+            "source_declarations": dict(draft_declared),
+            "source_to_module": source_to_module,
+            "rungs_by_source": draft_rungs,
+            "requested_batch_prompts": draft["batch_prompts"],
+            "measured_phases": list(draft_by_phase),
+            "phase_sources": draft_phase_sources,
+            # The M each draft phase was held to; null where only its regime is
+            # (the N-prompt batch arm's first call is no single-prompt prefill).
+            "phase_expected_m": draft_expected_m,
+            "batch_measured": (batch_phase in draft_by_phase
+                               and all(row["records"] for row in draft_by_phase[batch_phase])),
+            "forward_observer": {
+                "mechanism": "eager nn.Module forward pre/post hooks",
+                "snapshot": "first and latest multi-row actual draft calls",
+                "arms": draft["arms"],
+            },
+            "records": draft_rank_records[0],
+            "ranks": [{"identity": draft_rank_identity.get(rank),
+                       "records": draft_rank_records[rank],
+                       "lane_refusals": draft_rank_refusals[rank]}
+                      for rank in range(world_size)],
+            "decoder_coverage": draft_decoder_coverage,
+            "cell_launch_agreement": draft_agreement,
+        }
+    return {"problems": problems, "histogram": histogram,
+            "histogram_by_rank": histogram_by_rank, "record_owner": record_owner,
+            "records": phases, "lane_engagement": engagement,
+            "decoder_coverage": decoder_coverage, "cell_launch_agreement": agreement,
+            "draft": draft_receipt}
+
+
 def parse_args(argv=None, env=None):
     """Resolve the explicit runtime context before importing a serving runtime."""
     from tessera.serving.topology import add_topology_arguments, validate_topology_arguments
@@ -1031,6 +1464,13 @@ def parse_args(argv=None, env=None):
                 args.speculative_config, world=args.tensor_parallel_size)
         except ValueError as exc:
             ap.error(str(exc))
+        # Before the first model load, like the rest: a prompt no longer than a
+        # k+1 generation step makes the two phases the same shape, and the
+        # census then cannot tell which record is which (census_phase_plan).
+        step_m = args.speculative_config["num_speculative_tokens"] + 1
+        if args.prompt_tokens <= step_m:
+            ap.error(f"--prompt-tokens must exceed the k+1={step_m} tokens of one MTP "
+                     "generation step, or prefill and generation are the same shape")
         if args.compiled:
             ap.error("GLM MTP draft census requires eager execution")
         if args.draft_batch_prompts < 0:
@@ -1094,8 +1534,7 @@ def main() -> int:
     import tessera
     import tessera.serving as serving
     from tessera.serving import bf16_route, fp8_route, moe_route, nvfp4_route
-    from tessera.serving.census import (
-        join_rank_histograms, lane_engagement, phase_histogram, rank_census_record)
+    from tessera.serving.census import rank_census_record
     from tessera.serving.contract import (
         CENSUS_PHASE_REGIMES, PAYLOAD_FAMILY_BY_ROUTE, load_serving_contract)
     from tessera.serving.lane import TESSERA_MODE_ENV
@@ -1275,8 +1714,8 @@ def main() -> int:
     # checkpoint declares no wire for -- a refusal that says the opposite of
     # what is true.  The table is the RUNTIME's (the model class's own mapper),
     # replayed here rather than restated.
-    name_map = llm.apply_model(
-        lambda model: declared_in_module_space(model, list(declared)))[0]
+    name_map = llm.collective_rpc(
+        on_every_rank_model(declared_in_module_space, list(declared)))[0]
     if name_map is not None:
         dropped = sorted(t for t, m in name_map.items() if m is None)
         if dropped:
@@ -1300,6 +1739,14 @@ def main() -> int:
     ids = tok.encode(text, add_special_tokens=False)[: args.prompt_tokens]
     prompt = {"prompt_token_ids": ids}
     prefixes = tuple(f"{family}:" for family in TESSERA_FAMILIES)
+    # WHICH M EACH PHASE MUST HAVE RUN.  The contract's table without a draft;
+    # under the one-step MTP draft there is no one-row forward to ask for, so
+    # the generation phase expects k+1 and prefill the prompt (``census_phase_plan``).
+    try:
+        phase_plan = census_phase_plan(
+            args.speculative_config if args.draft_routes else None, prompt_tokens=len(ids))
+    except ValueError as exc:
+        raise SystemExit(f"census phase plan: {exc}") from exc
 
     # EVERY RANK, NOT THE HEAD.  ``apply_model`` returns one result per worker
     # and this tool took ``[0]``, so a census could only ever describe rank 0 --
@@ -1309,7 +1756,7 @@ def main() -> int:
     phases_by_rank = {}
     # One forward over M = len(ids) rows, sample one token, stop.
     outs = llm.generate([prompt], SamplingParams(max_tokens=1, temperature=0.0))
-    phases_by_rank[batch_phase] = llm.apply_model(census)
+    phases_by_rank[batch_phase] = llm.collective_rpc(on_every_rank_model(census))
     # The stock proposer calls its nn.Module for each draft forward. Read each
     # call at its boundary: a later M1 may overwrite a real prompt-length M>1
     # draft record before LLM.generate returns. The hooks are census-only and
@@ -1324,39 +1771,21 @@ def main() -> int:
         if args.draft_routes:
             draft_observer_arms["decode_arm"] = llm.collective_rpc(
                 disarm_draft_forward_observer)
-    phases_by_rank[decode_phase] = llm.apply_model(census)
+    phases_by_rank[decode_phase] = llm.collective_rpc(on_every_rank_model(census))
     generated = outs[0].outputs[0].text
-    draft_by_phase = {}
-    draft_phase_sources = {}
-    if args.draft_routes:
-        observed = draft_observer_arms["decode_arm"]
-        problems.extend(draft_forward_observer_problems(observed, arm="decode_arm"))
-        draft_by_phase[decode_phase] = draft_observations_from_forward(
-            observed, "decode", snapshot="latest")
-        draft_phase_sources[decode_phase] = "decode_arm/latest_decode"
-        if any("batch" in row["by_regime"] for row in observed):
-            draft_by_phase[batch_phase] = draft_observations_from_forward(
-                observed, "batch", snapshot="first")
-            draft_phase_sources[batch_phase] = "decode_arm/first_batch"
-        if args.draft_batch_prompts:
-            llm.collective_rpc(arm_draft_forward_observer,
-                               args=(list(draft_declared), prefixes))
-            try:
-                llm.generate([prompt] * args.draft_batch_prompts,
-                             SamplingParams(max_tokens=2, temperature=0.0))
-            finally:
-                draft_observer_arms["batch_arm"] = llm.collective_rpc(
-                    disarm_draft_forward_observer)
-            batch_observed = draft_observer_arms["batch_arm"]
-            problems.extend(draft_forward_observer_problems(
-                batch_observed, arm="batch_arm"))
-            draft_by_phase[batch_phase] = draft_observations_from_forward(
-                batch_observed, "batch", snapshot="first")
-            draft_phase_sources[batch_phase] = "batch_arm/first_batch"
+    if args.draft_routes and args.draft_batch_prompts:
+        llm.collective_rpc(arm_draft_forward_observer,
+                           args=(list(draft_declared), prefixes))
+        try:
+            llm.generate([prompt] * args.draft_batch_prompts,
+                         SamplingParams(max_tokens=2, temperature=0.0))
+        finally:
+            draft_observer_arms["batch_arm"] = llm.collective_rpc(
+                disarm_draft_forward_observer)
     # Load facts, so once and after the forwards: which modules' lane refused
     # to prepare, and why.  Same for every phase by construction.
-    refusals_by_rank = llm.apply_model(lane_refusals)
-    identities = llm.apply_model(rank_identity)
+    refusals_by_rank = llm.collective_rpc(on_every_rank_model(lane_refusals))
+    identities = llm.collective_rpc(on_every_rank_model(rank_identity))
     world_size = len(identities)
     ranks_seen = sorted(int(identity["rank"]) for identity in identities)
     if ranks_seen != list(range(world_size)):
@@ -1384,204 +1813,31 @@ def main() -> int:
     refusals = refusals_by_rank[0]
 
     mode = os.environ.get(TESSERA_MODE_ENV, "")
-    # THE PER-MODULE CHECKS RUN ON EVERY RANK.  Each rank serves its own shard
-    # of every module and writes its own route record, so a check run on the
-    # head alone would pass a world in which rank 1 fell back on every unit.
-    # At one rank the loop below runs once and every problem string it can
-    # write is the string it wrote before -- the rank tag appears only above
-    # one rank, because a receipt that is the same observation must be the
-    # same bytes.
-    histogram_by_rank = []
-    record_owner_by_rank = []
-    tessera_by_rank = []
-    for rank in range(world_size):
-        tag = "" if world_size == 1 else f"rank {rank} "
-        rank_histogram = {}
-        rank_owner = {}
-        rank_tessera = {}
-        for phase, per_rank in phases_by_rank.items():
-            recs = per_rank[rank]
-            tess = {n: r for n, r in recs.items() if str(r.get("policy", "")).startswith(prefixes)}
-            other = {n: r for n, r in recs.items() if n not in tess}
-            rank_tessera[phase] = tess
-            rank_histogram[phase] = phase_histogram(
-                tess, regime=CENSUS_PHASE_REGIMES[phase], other_route_modules=len(other))
-            if not tess:
-                problems.append(f"{tag}{phase}: no module reports a Tessera route")
-            owner, join_problems = join_records_to_declared(tess, declared)
-            rank_owner[phase] = owner
-            problems.extend(f"{tag}{phase}: {m}" for m in join_problems)
-            for name, r in tess.items():
-                family = declared.get(owner.get(name, name))
-                if family is None:
-                    problems.append(
-                        f"{tag}{phase}: {name} took a Tessera route but the checkpoint declares none for it")
-                    continue
-                if r["state"] != "served":
-                    problems.append(f"{tag}{phase}: {name} state={r['state']!r} reason={r.get('reason')!r}")
-                if r["contract"] != contract_for[family]:
-                    problems.append(f"{tag}{phase}: {name} contract={r['contract']!r} != {contract_for[family]!r}")
-                if r["policy"] != f"{family}:{mode}":
-                    problems.append(f"{tag}{phase}: {name} policy={r['policy']!r} != declared {family}:{mode}")
-                # The (symbol, decoder) pair, not each half alone: the streamed FP8
-                # route reports the GEMV pair wherever the lane prepared and the
-                # kernel-decoded tile under the stock GEMM above the lane's max M
-                # (``fp8_gemv.census_expected`` owns the sets), and a half-wise
-                # comparison would read either half as a refusal on every module
-                # that legitimately took the other launch.
-                want = _expected(family, CENSUS_PHASE_REGIMES[phase], r.get("kind"))
-                # The expert route's symbol carries the backend the RUNTIME picked
-                # (``...modular_kernel:TRITON``), which no expectation of ours may
-                # pin; the entry point is what this compares and the histogram
-                # above keeps every exact string, backend and all.
-                got_symbol = (moe_route.census_symbol_base(r["symbol"])
-                              if r.get("kind") == "moe" else r["symbol"])
-                if ((got_symbol, r.get("decoder")) not in want
-                        and not (args.allow_fallback_decoder and r["symbol"] == symbol_for[family])):
-                    problems.append(
-                        f"{tag}{phase}: {name} (symbol, decoder)={(r['symbol'], r.get('decoder'))!r} "
-                        f"not in {sorted(want)!r}; without --allow-fallback-decoder a serve must "
-                        "report a pair its route owns")
-            missing = sorted(set(declared) - set(owner.values()))
-            if missing:
-                problems.append(
-                    f"{tag}{phase}: {len(missing)} declared Tessera modules report no route, e.g. {missing[:3]}")
-            # PER RANK, NOT OVER THE WORLD.  ``--expect-modules`` names what the
-            # CHECKPOINT declares, and every rank builds a module for every
-            # declared target -- it holds a shard of it.  Comparing the joined
-            # count would refuse a correct two-rank serve for serving twice.
-            if args.expect_modules is not None and len(tess) != args.expect_modules:
-                problems.append(
-                    f"{tag}{phase}: {len(tess)} Tessera modules, the checkpoint declares {args.expect_modules}")
-        histogram_by_rank.append(rank_histogram)
-        record_owner_by_rank.append(rank_owner)
-        tessera_by_rank.append(rank_tessera)
-    # THE JOINED HISTOGRAM IS THE SUM OVER RANKS, and it is what the
-    # attestation reads.  At one rank it is that rank's histogram unchanged.
-    histogram = join_rank_histograms(histogram_by_rank)
-    record_owner = record_owner_by_rank[0]
-    # THE TESSERA RECORDS ARE WHAT THIS RECEIPT ATTESTS, so they are what the
-    # shape and agreement checks below read: a record from another quant
-    # method's route is observed and counted, never used as evidence for a
-    # Tessera regime.
-    # ONE NAMESPACE OVER THE WHOLE WORLD.  Every rank names its modules the
-    # same, so merging the ranks' records under their own names would count one
-    # module once however many ranks served it -- the engagement and agreement
-    # blocks would then read identically at every world size.  Above one rank
-    # the name carries the rank that observed it; at one rank it is the module
-    # name it always was, and the blocks below are the bytes they always were.
-    def _qualified(rank, name):
-        return name if world_size == 1 else f"rank{rank}/{name}"
-
-    tessera_by_phase = {
-        phase: {_qualified(rank, n): r
-                for rank, by_phase in enumerate(tessera_by_rank)
-                for n, r in by_phase[phase].items()}
-        for phase in phases_by_rank}
-    record_owner_world = {
-        phase: {_qualified(rank, n): owner
-                for rank, by_phase in enumerate(record_owner_by_rank)
-                for n, owner in by_phase[phase].items()}
-        for phase in phases_by_rank}
-    problems.extend(phase_shape_problems(
-        tessera_by_phase, phase_regimes=CENSUS_PHASE_REGIMES, compiled=args.compiled))
-
-    # LANE ENGAGEMENT.  The per-module check above is a check on AGREEMENT, and
-    # the decode regime legitimately admits both the GEMV pair and the
-    # materialised one -- so a serve in which the lane prepared for NOTHING
-    # passes it module by module.  This asks the question that cannot: did the
-    # lane this arm requested take any units at all (issue #104)?  Emitted
-    # unconditionally so a receipt written without --require-lane still carries
-    # the decoder counts a gate would need.
-    refusals_world = {_qualified(rank, name): reason
-                      for rank, by_module in enumerate(refusals_by_rank)
-                      for name, reason in by_module.items()}
-    engagement, engagement_problems = lane_engagement(
-        tessera_by_phase, required_lanes=required_lanes, lane_decoders=lane_decoders or None,
-        refusals_by_phase={phase: refusals_world for phase in phases})
-    engagement["declared_by_artifact"] = manifest_lanes
-    problems.extend(engagement_problems)
-
-    # THE DECODER, NAMED RATHER THAN LEFT TO A READER.  ``lane_engagement``
-    # answers a lane question and reports ``all_required_engaged: null`` when
-    # the census was told of none, so a receipt can be green while every module
-    # took a route's fallback.  ``--require-decoder`` turns "the native decoder
-    # ran" into the thing the exit status is computed from.
-    decoder_coverage, decoder_problems = required_decoder_coverage(
-        tessera_by_phase, list(args.require_decoder or ()))
-    problems.extend(decoder_problems)
-
-    # WHAT THE CONTRACT SAYS THIS SERVE EXECUTES, against what it executed.
-    # ``lane_eligibility`` cells publish ``executes`` since schema v4 (#111), a
-    # value DERIVED from the dispatch table -- which proves the document agrees
-    # with the code.  Only a serve proves the code agrees with the machine, so
-    # the join is made here, per module, in both phases, under the actual
-    # image and execution mode. Compiled dense records retain an explicit
-    # unsupported result; a routed single-launch observation can be checked.
-    agreement, agreement_problems = all_structure_agreement(
-        tessera_by_phase, cells=load_serving_contract()["lane_eligibility"]["cells"],
-        phase_regimes=CENSUS_PHASE_REGIMES,
-        platform=served_platform,
-        declared_rungs=declared_rungs, record_owners=record_owner_world,
-        families_by_route=PAYLOAD_FAMILY_BY_ROUTE,
-        runtime_image=args.runtime_image, execution_mode=args.execution_mode)
-    problems.extend(agreement_problems)
-    draft_receipt = None
-    if args.draft_routes:
-        from tessera.serving.scheme import eager_regime_problem
-
-        source_to_module = draft_names[0]
-        draft_families = {source_to_module[name]: family
-                          for name, family in draft_declared.items()}
-        draft_module_rungs = {source_to_module[name]: draft_rungs[name]
-                              for name in draft_declared}
-        (draft_phase_records, draft_phase_owners, draft_rank_records,
-         draft_rank_identity, draft_problems, draft_rank_refusals) = (
-            validate_draft_route_records(
-                draft_by_phase, source_to_module=source_to_module,
-                draft_declared=draft_declared, target_identities=identities,
-                phase_regimes=CENSUS_PHASE_REGIMES, mode=mode,
-                policy_prefixes=prefixes, contract_for=contract_for,
-                expected=_expected, symbol_base=moe_route.census_symbol_base,
-                shape_problem=eager_regime_problem))
-        problems.extend(draft_problems)
-        draft_agreement, draft_agreement_problems = all_structure_agreement(
-            draft_phase_records, cells=load_serving_contract()["lane_eligibility"]["cells"],
-            phase_regimes=CENSUS_PHASE_REGIMES, platform=served_platform,
-            declared_rungs=draft_module_rungs, record_owners=draft_phase_owners,
-            families_by_route=PAYLOAD_FAMILY_BY_ROUTE,
-            runtime_image=args.runtime_image, execution_mode=args.execution_mode)
-        problems.extend(f"draft: {message}" for message in draft_agreement_problems)
-        required_draft_decoder = required_draft_native_decoders(
-            draft_families, native_decoder=moe_route.native_decoder,
-            supported_families={TESSERA_FP8, TESSERA_BF16})
-        draft_decoder_coverage, draft_decoder_problems = required_decoder_coverage(
-            draft_phase_records, required_draft_decoder)
-        problems.extend(f"draft: {message}" for message in draft_decoder_problems)
-        draft_receipt = {
-            "schema": "tessera.serving.draft_route_census.v1",
-            "speculative_config": args.speculative_config,
-            "source_declarations": dict(draft_declared),
-            "source_to_module": source_to_module,
-            "rungs_by_source": draft_rungs,
-            "requested_batch_prompts": args.draft_batch_prompts,
-            "measured_phases": list(draft_by_phase),
-            "phase_sources": draft_phase_sources,
-            "batch_measured": (batch_phase in draft_by_phase
-                               and all(row["records"] for row in draft_by_phase[batch_phase])),
-            "forward_observer": {
-                "mechanism": "eager nn.Module forward pre/post hooks",
-                "snapshot": "first batch and latest decode actual draft calls",
-                "arms": draft_observer_arms,
-            },
-            "records": draft_rank_records[0],
-            "ranks": [{"identity": draft_rank_identity.get(rank),
-                       "records": draft_rank_records[rank],
-                       "lane_refusals": draft_rank_refusals[rank]}
-                      for rank in range(world_size)],
-            "decoder_coverage": draft_decoder_coverage,
-            "cell_launch_agreement": draft_agreement,
-        }
+    checked = validate_census_observations(
+        phases_by_rank=phases_by_rank, identities=identities,
+        refusals_by_rank=refusals_by_rank, declared=declared, declared_rungs=declared_rungs,
+        phase_plan=phase_plan, mode=mode, platform=served_platform,
+        runtime_image=args.runtime_image, execution_mode=args.execution_mode,
+        compiled=args.compiled, cells=load_serving_contract()["lane_eligibility"]["cells"],
+        contract_for=contract_for, expected=_expected, symbol_for=symbol_for,
+        symbol_base=moe_route.census_symbol_base,
+        families_by_route=PAYLOAD_FAMILY_BY_ROUTE, policy_prefixes=prefixes,
+        allow_fallback_decoder=args.allow_fallback_decoder,
+        expect_modules=args.expect_modules, required_lanes=required_lanes,
+        lane_decoders=lane_decoders, manifest_lanes=manifest_lanes,
+        require_decoder=list(args.require_decoder or ()),
+        draft=({"arms": draft_observer_arms, "declared": draft_declared,
+                "rungs": draft_rungs, "source_to_module": draft_names[0],
+                "speculative_config": args.speculative_config,
+                "batch_prompts": args.draft_batch_prompts,
+                "native_decoder": moe_route.native_decoder,
+                "supported_families": {TESSERA_FP8, TESSERA_BF16}}
+               if args.draft_routes else None))
+    problems.extend(checked["problems"])
+    histogram, histogram_by_rank = checked["histogram"], checked["histogram_by_rank"]
+    record_owner, engagement = checked["record_owner"], checked["lane_engagement"]
+    decoder_coverage, agreement = checked["decoder_coverage"], checked["cell_launch_agreement"]
+    draft_receipt = checked["draft"]
     # The controller holds the checked artifact immutable; verify that seal
     # again after both forwards, before publishing any served receipt.
     checkpoint_sidecar_hashes(args.model, expected=sidecars)
@@ -1655,6 +1911,18 @@ def main() -> int:
     }
     if draft_receipt is not None:
         receipt["draft"] = draft_receipt
+    if args.draft_routes:
+        # THE SCOPE TRAVELS WITH THE RECEIPT.  Under the one-step MTP draft no
+        # forward is one row, so this census attests the generation step at
+        # k+1 on the batch cells and says, as a value, that it served no decode
+        # regime: the one-row attestation belongs to a census without a draft.
+        receipt.update({
+            "decode_regime_served": phase_plan["decode_regime_served"],
+            "num_speculative_tokens": phase_plan["num_speculative_tokens"],
+            "generation_step_m": phase_plan["generation_step_m"],
+            "phase_regimes": phase_plan["phase_regimes"],
+            "phase_expected_m": phase_plan["expected_m"],
+        })
     # THE WORLD, WRITTEN ONLY WHERE THERE IS ONE.  At a single rank the joined
     # record IS the receipt: a ``ranks`` list would restate it once and a
     # ``topology`` block would state the engine's own default, and both would

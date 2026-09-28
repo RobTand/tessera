@@ -26,6 +26,28 @@ jobs:
         with:
           python-version: "3.12"
       - run: pip install pytest
+      # The standalone-boundary allowlist only shrinks (decoupling step 0):
+      # tests/test_standalone_boundary.py holds it equal to the code, and
+      # this step refuses a pull request that adds a line to it.  A file
+      # absent at the base is a new gate and is admitted.
+      - name: boundary allowlists only shrink
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+        run: |
+          status=0
+          for f in tests/standalone_boundary_allowlist.txt; do
+            if ! git cat-file -e "$BASE:$f" 2>/dev/null; then
+              echo "$f is new in this pull request: admitted as a new gate"
+              continue
+            fi
+            added="$(git diff --numstat "$BASE" HEAD -- "$f" | awk '{s += $1} END {print s + 0}')"
+            if [ "$added" -gt 0 ]; then
+              echo "::error file=$f::$added line(s) added to a shrink-only allowlist"
+              status=1
+            fi
+          done
+          exit "$status"
       # Bytes-only tests: everything here collects and runs with no torch, no
       # GPU and no model data.  The byte layer (``tessera.layout`` without its
       # slicing half, plus container, manifest, grammar, planes and friends)

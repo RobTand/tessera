@@ -15,7 +15,9 @@ already records per rung -- saying which bytes the receipt was cut on.  The
 validator checks it is exactly that: one entry per attested rung, and a
 body/span/plane the route decodes.  The tripwire below checks it is the
 CURRENT one: the stamp must equal what the serving exporter writes at that
-rung today (``served_recipe``, for every structure a cell attests there),
+rung today (``tessera.export.served_recipe``, for every structure a cell
+attests there -- the one statement the exporter encodes, the cached-unit
+receipt stamps and the intake adopts, tessera#662),
 so the day a bytes-moving encode change lands, this fails and forces a
 re-cut or a re-stamp instead of letting the attestation silently describe
 bytes no fresh export writes.
@@ -54,23 +56,6 @@ def contract():
     return load_serving_contract()
 
 
-def _serving_exporter():
-    """The serving exporter, loaded by path the way ``test_serving_export_gate`` loads it.
-
-    ``experiments`` is not a package, and ``served_recipe`` -- the wire a
-    served unit actually carries -- lives there, beside the ``main`` that
-    writes it.
-    """
-    import importlib.util
-    from pathlib import Path
-
-    path = Path(__file__).resolve().parents[1] / "experiments" / "export_tessera_serving.py"
-    spec = importlib.util.spec_from_file_location("export_tessera_serving", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
 def test_every_attested_rung_stamps_the_wire_it_was_cut_on(contract):
     """One ``wire.recipes`` entry per attested rung, and it is today's SERVED wire.
 
@@ -99,11 +84,11 @@ def test_every_attested_rung_stamps_the_wire_it_was_cut_on(contract):
     (``served_recipe``'s docstring, D2b tessera#560).  Comparing the stamps
     against the table read a correct v32 attestation as stale at 128..768.
 
-    Imports the exporter lazily: it needs torch, and the contract half of the
-    suite must stay readable where torch is not installed.
+    Imports ``tessera.export`` lazily: it needs torch, and the contract half
+    of the suite must stay readable where torch is not installed.
     """
     pytest.importorskip("torch")
-    exporter = _serving_exporter()
+    from tessera.export import served_recipe
 
     cells = contract["lane_eligibility"]["cells"]
     seen = 0
@@ -128,7 +113,7 @@ def test_every_attested_rung_stamps_the_wire_it_was_cut_on(contract):
                 "format row names a structure, so nothing says which wire a served unit "
                 "carries there")
             for structure in structures:
-                served = exporter.served_recipe(grid, item["q256"], structure=structure)
+                served = served_recipe(grid, item["q256"], structure=structure)
                 assert item == {"q256": item["q256"], **served.to_config()}, (
                     f"{entry['family']} q256={item['q256']} ({structure}): the stamped wire is "
                     "not what the serving exporter writes at that rung today")
@@ -146,9 +131,10 @@ def test_the_bf16_attestation_is_cut_on_the_pinned_wire(contract):
     that starts moving fresh-export bytes trips here first.
     """
     row = next(e for e in contract["formats"] if e["family"] == "TESSERA_BF16_K1")
-    # Contract v38 (tessera#604) added 832/1024/1088 from the GLM-image census,
-    # cut on the same pinned wire; 1792 is still the v5 receipt's rung.
-    assert row["attested_rungs_q256"] == [832, 1024, 1088, 1792]
+    # Contract v38 (tessera#604) added 832/1024/1088 from the GLM-image census
+    # and v39 864/880/896/928/960 from the u1 stub censuses, all cut on the
+    # same pinned wire; 1792 is still the v5 receipt's rung.
+    assert row["attested_rungs_q256"] == [832, 864, 880, 896, 928, 960, 1024, 1088, 1792]
     (stamped,) = [w for w in row["attested_wire"] if w["q256"] == 1792]
     assert all(w["sigma"] is None for w in row["attested_wire"])
     assert stamped["sigma"] is None, (

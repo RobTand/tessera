@@ -1,0 +1,928 @@
+{
+ "cell_launch_agreement": {
+  "agrees": true,
+  "platform": "sm_121",
+  "runtime": {
+   "execution_mode": "eager",
+   "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5"
+  },
+  "schema": "tessera.cell-launch-agreement.by-structure/1",
+  "structures": {
+   "dense": {
+    "agrees": true,
+    "phases": {
+     "decode": {
+      "cells": {
+       "tessera_bf16_k1_dense_sm121_decode_resident": 6,
+       "tessera_e4m3_k1_dense_sm121_decode_resident": 5
+      },
+      "covered_by_cell": 11,
+      "modules": 16,
+      "regime": "decode",
+      "unattested": 5,
+      "unsupported_records": 0
+     },
+     "prefill": {
+      "cells": {
+       "tessera_bf16_k1_dense_sm121_batch_resident": 6,
+       "tessera_e4m3_k1_dense_sm121_batch_resident": 5
+      },
+      "covered_by_cell": 11,
+      "modules": 16,
+      "regime": "batch",
+      "unattested": 5,
+      "unsupported_records": 0
+     }
+    },
+    "platform": "sm_121",
+    "runtime": {
+     "execution_mode": "eager",
+     "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5"
+    },
+    "schema": "tessera.cell-launch-agreement/3",
+    "structure": "dense"
+   },
+   "routed_moe": {
+    "agrees": null,
+    "phases": {
+     "decode": {
+      "cells": {},
+      "covered_by_cell": 0,
+      "modules": 5,
+      "regime": "decode",
+      "unattested": 5,
+      "unsupported_records": 0
+     },
+     "prefill": {
+      "cells": {},
+      "covered_by_cell": 0,
+      "modules": 5,
+      "regime": "batch",
+      "unattested": 5,
+      "unsupported_records": 0
+     }
+    },
+    "platform": "sm_121",
+    "runtime": {
+     "execution_mode": "eager",
+     "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5"
+    },
+    "schema": "tessera.cell-launch-agreement/3",
+    "structure": "routed_moe"
+   }
+  }
+ },
+ "checkpoint": "/mnt/shared/tessera-runs/moe/u1-stubs-20260926/stub-S1",
+ "checkpoint_sidecars": {
+  "config.json": "fa7bf0d05863f803c7cd358a24d79ff51e2474ea3f964050c5087506a3ff0ac6",
+  "tessera_serving_manifest.json": "cdf85f74770b233ee982030bae59973ef1b535a27a221191a09e92b2bce4372b"
+ },
+ "compiled": false,
+ "declared_families": {
+  "TESSERA_BF16": 9,
+  "TESSERA_FP8": 12
+ },
+ "declared_name_mapping": {
+  "model.language_model.layers.0.mlp.down_proj": "language_model.model.layers.0.mlp.down_proj",
+  "model.language_model.layers.0.mlp.gate_up_proj": "language_model.model.layers.0.mlp.gate_up_proj",
+  "model.language_model.layers.1.mlp.down_proj": "language_model.model.layers.1.mlp.down_proj",
+  "model.language_model.layers.1.mlp.gate_up_proj": "language_model.model.layers.1.mlp.gate_up_proj",
+  "model.language_model.layers.2.mlp.down_proj": "language_model.model.layers.2.mlp.down_proj",
+  "model.language_model.layers.2.mlp.gate_up_proj": "language_model.model.layers.2.mlp.gate_up_proj",
+  "model.language_model.layers.3.mlp.experts": "language_model.model.layers.3.mlp.experts",
+  "model.language_model.layers.3.mlp.shared_experts.down_proj": "language_model.model.layers.3.mlp.shared_experts.down_proj",
+  "model.language_model.layers.3.mlp.shared_experts.gate_up_proj": "language_model.model.layers.3.mlp.shared_experts.gate_up_proj",
+  "model.language_model.layers.4.mlp.experts": "language_model.model.layers.4.mlp.experts",
+  "model.language_model.layers.4.mlp.shared_experts.down_proj": "language_model.model.layers.4.mlp.shared_experts.down_proj",
+  "model.language_model.layers.4.mlp.shared_experts.gate_up_proj": "language_model.model.layers.4.mlp.shared_experts.gate_up_proj",
+  "model.language_model.layers.5.mlp.experts": "language_model.model.layers.5.mlp.experts",
+  "model.language_model.layers.5.mlp.shared_experts.down_proj": "language_model.model.layers.5.mlp.shared_experts.down_proj",
+  "model.language_model.layers.5.mlp.shared_experts.gate_up_proj": "language_model.model.layers.5.mlp.shared_experts.gate_up_proj",
+  "model.language_model.layers.6.mlp.experts": "language_model.model.layers.6.mlp.experts",
+  "model.language_model.layers.6.mlp.shared_experts.down_proj": "language_model.model.layers.6.mlp.shared_experts.down_proj",
+  "model.language_model.layers.6.mlp.shared_experts.gate_up_proj": "language_model.model.layers.6.mlp.shared_experts.gate_up_proj",
+  "model.language_model.layers.7.mlp.experts": "language_model.model.layers.7.mlp.experts",
+  "model.language_model.layers.7.mlp.shared_experts.down_proj": "language_model.model.layers.7.mlp.shared_experts.down_proj",
+  "model.language_model.layers.7.mlp.shared_experts.gate_up_proj": "language_model.model.layers.7.mlp.shared_experts.gate_up_proj"
+ },
+ "declared_names_mapped_to_module_space": true,
+ "decoder_coverage": {
+  "phases": {
+   "decode": {
+    "decoders": {
+     "native_window_gemm": 7,
+     "native_window_gemm_folded": 9,
+     "native_window_moe_compact": 5
+    },
+    "modules": 21
+   },
+   "prefill": {
+    "decoders": {
+     "native_window_gemm": 7,
+     "native_window_gemm_folded": 9,
+     "native_window_moe_compact": 5
+    },
+    "modules": 21
+   }
+  },
+  "required": []
+ },
+ "device": {
+  "capability": [
+   12,
+   1
+  ],
+  "name": "NVIDIA GB10",
+  "platform_token": "sm_121"
+ },
+ "elapsed_s": 141.0,
+ "engine_backends": {
+  "attention_backend": "CUSTOM",
+  "kernel_config": {
+   "enable_flashinfer_autotune": false
+  },
+  "kv_cache_dtype": "fp8_ds_mla",
+  "moe_backend": "triton",
+  "trust_remote_code": true
+ },
+ "env": {
+  "TESSERA_RESEARCH_GLM53_NOPE": "1",
+  "TESSERA_SERVE_MODE": "resident",
+  "VLLM_DISABLED_KERNELS": null
+ },
+ "generated_text": "ersaurus lookAndFeel_relatednessesub=sub",
+ "histogram": {
+  "decode": {
+   "other_route_modules": 0,
+   "regime": "decode",
+   "routes": [
+    {
+     "contract": "bf16_unquantized",
+     "decoder": "native_window_gemm_folded",
+     "kind": "dense",
+     "modules": 9,
+     "policy": "TESSERA_BF16:resident",
+     "state": "served",
+     "symbol": "tessera::window_gemm_dense"
+    },
+    {
+     "contract": "fp8_per_token_dynamic",
+     "decoder": "native_window_moe_compact",
+     "kind": "moe",
+     "modules": 5,
+     "policy": "TESSERA_FP8:resident",
+     "state": "served",
+     "symbol": "tessera.native_window_moe.NativeWindowMoE.__call__"
+    },
+    {
+     "contract": "fp8_per_token_dynamic",
+     "decoder": "native_window_gemm",
+     "kind": "dense",
+     "modules": 7,
+     "policy": "TESSERA_FP8:resident",
+     "state": "served",
+     "symbol": "tessera::window_gemm_dense"
+    }
+   ],
+   "shapes": [
+    "M1:N24576:K4096",
+    "M1:N4096:K12288",
+    "M1:N4096:K2048",
+    "M1:N4096:K4096"
+   ],
+   "tessera_modules": 21,
+   "tessera_modules_by_family": {
+    "TESSERA_BF16": 9,
+    "TESSERA_FP8": 12
+   }
+  },
+  "prefill": {
+   "other_route_modules": 0,
+   "regime": "batch",
+   "routes": [
+    {
+     "contract": "bf16_unquantized",
+     "decoder": "native_window_gemm_folded",
+     "kind": "dense",
+     "modules": 9,
+     "policy": "TESSERA_BF16:resident",
+     "state": "served",
+     "symbol": "tessera::window_gemm_dense"
+    },
+    {
+     "contract": "fp8_per_token_dynamic",
+     "decoder": "native_window_moe_compact",
+     "kind": "moe",
+     "modules": 5,
+     "policy": "TESSERA_FP8:resident",
+     "state": "served",
+     "symbol": "tessera.native_window_moe.NativeWindowMoE.__call__"
+    },
+    {
+     "contract": "fp8_per_token_dynamic",
+     "decoder": "native_window_gemm",
+     "kind": "dense",
+     "modules": 7,
+     "policy": "TESSERA_FP8:resident",
+     "state": "served",
+     "symbol": "tessera::window_gemm_dense"
+    }
+   ],
+   "shapes": [
+    "M64:N24576:K4096",
+    "M64:N4096:K12288",
+    "M64:N4096:K2048",
+    "M64:N4096:K4096"
+   ],
+   "tessera_modules": 21,
+   "tessera_modules_by_family": {
+    "TESSERA_BF16": 9,
+    "TESSERA_FP8": 12
+   }
+  }
+ },
+ "lane_engagement": {
+  "all_required_engaged": null,
+  "declared_by_artifact": [],
+  "engaged_modules_max": {},
+  "phases": {
+   "decode": {
+    "decoders": {
+     "native_window_gemm": 7,
+     "native_window_gemm_folded": 9,
+     "native_window_moe_compact": 5
+    },
+    "engaged_modules": {},
+    "lane_refusals": {},
+    "tessera_modules": 21,
+    "unengaged_required_lanes": []
+   },
+   "prefill": {
+    "decoders": {
+     "native_window_gemm": 7,
+     "native_window_gemm_folded": 9,
+     "native_window_moe_compact": 5
+    },
+    "engaged_modules": {},
+    "lane_refusals": {},
+    "tessera_modules": 21,
+    "unengaged_required_lanes": []
+   }
+  },
+  "required_decoders": {},
+  "required_lanes": [],
+  "schema": "tessera.lane-engagement/1"
+ },
+ "lane_refusals": {},
+ "memory_budget": {
+  "gpu_memory_utilization": 0.45,
+  "kv_cache_memory_bytes": 4294967296
+ },
+ "problems": [],
+ "prompt_tokens": 64,
+ "quant_method": "tessera",
+ "record_owner": {
+  "decode": {
+   "language_model.model.layers.0.mlp.down_proj": "language_model.model.layers.0.mlp.down_proj",
+   "language_model.model.layers.0.mlp.gate_up_proj": "language_model.model.layers.0.mlp.gate_up_proj",
+   "language_model.model.layers.1.mlp.down_proj": "language_model.model.layers.1.mlp.down_proj",
+   "language_model.model.layers.1.mlp.gate_up_proj": "language_model.model.layers.1.mlp.gate_up_proj",
+   "language_model.model.layers.2.mlp.down_proj": "language_model.model.layers.2.mlp.down_proj",
+   "language_model.model.layers.2.mlp.gate_up_proj": "language_model.model.layers.2.mlp.gate_up_proj",
+   "language_model.model.layers.3.mlp.experts.routed_experts": "language_model.model.layers.3.mlp.experts",
+   "language_model.model.layers.3.mlp.shared_experts.down_proj": "language_model.model.layers.3.mlp.shared_experts.down_proj",
+   "language_model.model.layers.3.mlp.shared_experts.gate_up_proj": "language_model.model.layers.3.mlp.shared_experts.gate_up_proj",
+   "language_model.model.layers.4.mlp.experts.routed_experts": "language_model.model.layers.4.mlp.experts",
+   "language_model.model.layers.4.mlp.shared_experts.down_proj": "language_model.model.layers.4.mlp.shared_experts.down_proj",
+   "language_model.model.layers.4.mlp.shared_experts.gate_up_proj": "language_model.model.layers.4.mlp.shared_experts.gate_up_proj",
+   "language_model.model.layers.5.mlp.experts.routed_experts": "language_model.model.layers.5.mlp.experts",
+   "language_model.model.layers.5.mlp.shared_experts.down_proj": "language_model.model.layers.5.mlp.shared_experts.down_proj",
+   "language_model.model.layers.5.mlp.shared_experts.gate_up_proj": "language_model.model.layers.5.mlp.shared_experts.gate_up_proj",
+   "language_model.model.layers.6.mlp.experts.routed_experts": "language_model.model.layers.6.mlp.experts",
+   "language_model.model.layers.6.mlp.shared_experts.down_proj": "language_model.model.layers.6.mlp.shared_experts.down_proj",
+   "language_model.model.layers.6.mlp.shared_experts.gate_up_proj": "language_model.model.layers.6.mlp.shared_experts.gate_up_proj",
+   "language_model.model.layers.7.mlp.experts.routed_experts": "language_model.model.layers.7.mlp.experts",
+   "language_model.model.layers.7.mlp.shared_experts.down_proj": "language_model.model.layers.7.mlp.shared_experts.down_proj",
+   "language_model.model.layers.7.mlp.shared_experts.gate_up_proj": "language_model.model.layers.7.mlp.shared_experts.gate_up_proj"
+  },
+  "prefill": {
+   "language_model.model.layers.0.mlp.down_proj": "language_model.model.layers.0.mlp.down_proj",
+   "language_model.model.layers.0.mlp.gate_up_proj": "language_model.model.layers.0.mlp.gate_up_proj",
+   "language_model.model.layers.1.mlp.down_proj": "language_model.model.layers.1.mlp.down_proj",
+   "language_model.model.layers.1.mlp.gate_up_proj": "language_model.model.layers.1.mlp.gate_up_proj",
+   "language_model.model.layers.2.mlp.down_proj": "language_model.model.layers.2.mlp.down_proj",
+   "language_model.model.layers.2.mlp.gate_up_proj": "language_model.model.layers.2.mlp.gate_up_proj",
+   "language_model.model.layers.3.mlp.experts.routed_experts": "language_model.model.layers.3.mlp.experts",
+   "language_model.model.layers.3.mlp.shared_experts.down_proj": "language_model.model.layers.3.mlp.shared_experts.down_proj",
+   "language_model.model.layers.3.mlp.shared_experts.gate_up_proj": "language_model.model.layers.3.mlp.shared_experts.gate_up_proj",
+   "language_model.model.layers.4.mlp.experts.routed_experts": "language_model.model.layers.4.mlp.experts",
+   "language_model.model.layers.4.mlp.shared_experts.down_proj": "language_model.model.layers.4.mlp.shared_experts.down_proj",
+   "language_model.model.layers.4.mlp.shared_experts.gate_up_proj": "language_model.model.layers.4.mlp.shared_experts.gate_up_proj",
+   "language_model.model.layers.5.mlp.experts.routed_experts": "language_model.model.layers.5.mlp.experts",
+   "language_model.model.layers.5.mlp.shared_experts.down_proj": "language_model.model.layers.5.mlp.shared_experts.down_proj",
+   "language_model.model.layers.5.mlp.shared_experts.gate_up_proj": "language_model.model.layers.5.mlp.shared_experts.gate_up_proj",
+   "language_model.model.layers.6.mlp.experts.routed_experts": "language_model.model.layers.6.mlp.experts",
+   "language_model.model.layers.6.mlp.shared_experts.down_proj": "language_model.model.layers.6.mlp.shared_experts.down_proj",
+   "language_model.model.layers.6.mlp.shared_experts.gate_up_proj": "language_model.model.layers.6.mlp.shared_experts.gate_up_proj",
+   "language_model.model.layers.7.mlp.experts.routed_experts": "language_model.model.layers.7.mlp.experts",
+   "language_model.model.layers.7.mlp.shared_experts.down_proj": "language_model.model.layers.7.mlp.shared_experts.down_proj",
+   "language_model.model.layers.7.mlp.shared_experts.gate_up_proj": "language_model.model.layers.7.mlp.shared_experts.gate_up_proj"
+  }
+ },
+ "records": {
+  "decode": {
+   "language_model.model.layers.0.mlp.down_proj": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "native_window_gemm",
+    "kernel_schedule": "tessera::window_gemm_dense",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M1:N4096:K12288",
+    "state": "served",
+    "symbol": "tessera::window_gemm_dense",
+    "tile_m": 0
+   },
+   "language_model.model.layers.0.mlp.gate_up_proj": {
+    "contract": "bf16_unquantized",
+    "decoder": "native_window_gemm_folded",
+    "kernel_schedule": "tessera::window_gemm_dense",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_BF16:resident",
+    "reason": null,
+    "shape": "M1:N24576:K4096",
+    "state": "served",
+    "symbol": "tessera::window_gemm_dense",
+    "tile_m": 0
+   },
+   "language_model.model.layers.1.mlp.down_proj": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "native_window_gemm",
+    "kernel_schedule": "tessera::window_gemm_dense",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M1:N4096:K12288",
+    "state": "served",
+    "symbol": "tessera::window_gemm_dense",
+    "tile_m": 0
+   },
+   "language_model.model.layers.1.mlp.gate_up_proj": {
+    "contract": "bf16_unquantized",
+    "decoder": "native_window_gemm_folded",
+    "kernel_schedule": "tessera::window_gemm_dense",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_BF16:resident",
+    "reason": null,
+    "shape": "M1:N24576:K4096",
+    "state": "served",
+    "symbol": "tessera::window_gemm_dense",
+    "tile_m": 0
+   },
+   "language_model.model.layers.2.mlp.down_proj": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "native_window_gemm",
+    "kernel_schedule": "tessera::window_gemm_dense",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M1:N4096:K12288",
+    "state": "served",
+    "symbol": "tessera::window_gemm_dense",
+    "tile_m": 0
+   },
+   "language_model.model.layers.2.mlp.gate_up_proj": {
+    "contract": "bf16_unquantized",
+    "decoder": "native_window_gemm_folded",
+    "kernel_schedule": "tessera::window_gemm_dense",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_BF16:resident",
+    "reason": null,
+    "shape": "M1:N24576:K4096",
+    "state": "served",
+    "symbol": "tessera::window_gemm_dense",
+    "tile_m": 0
+   },
+   "language_model.model.layers.3.mlp.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "native_window_moe_compact",
+    "kernel_schedule": "tessera.native_window_moe.NativeWindowMoE.__call__",
+    "kind": "moe",
+    "platform": "sm_121",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M1:N4096:K4096",
+    "state": "served",
+    "symbol": "tessera.native_window_moe.NativeWindowMoE.__call__",
+    "tile_m": 0
+   },
+   "language_model.model.layers.3.mlp.shared_experts.down_proj": {
+    "contract": "bf16_unquantized",
+    "decoder": "native_window_gemm_folded",
+    "kernel_schedule": "tessera::window_gemm_dense",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_BF16:resident",
+    "reason": null,
+    "shape": "M1:N4096:K2048",
+    "state": "served",
+    "symbol": "tessera::window_gemm_dense",
+    "tile_m": 0
+   },
+   "language_model.model.layers.3.mlp.shared_experts.gate_up_proj": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "native_window_gemm",
+    "kernel_schedule": "tessera::window_gemm_dense",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M1:N4096:K4096",
+    "state": "served",
+    "symbol": "tessera::window_gemm_dense",
+    "tile_m": 0
+   },
+   "language_model.model.layers.4.mlp.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "native_window_moe_compact",
+    "kernel_schedule": "tessera.native_window_moe.NativeWindowMoE.__call__",
+    "kind": "moe",
+    "platform": "sm_121",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M1:N4096:K4096",
+    "state": "served",
+    "symbol": "tessera.native_window_moe.NativeWindowMoE.__call__",
+    "tile_m": 0
+   },
+   "language_model.model.layers.4.mlp.shared_experts.down_proj": {
+    "contract": "bf16_unquantized",
+    "decoder": "native_window_gemm_folded",
+    "kernel_schedule": "tessera::window_gemm_dense",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_BF16:resident",
+    "reason": null,
+    "shape": "M1:N4096:K2048",
+    "state": "served",
+    "symbol": "tessera::window_gemm_dense",
+    "tile_m": 0
+   },
+   "language_model.model.layers.4.mlp.shared_experts.gate_up_proj": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "native_window_gemm",
+    "kernel_schedule": "tessera::window_gemm_dense",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M1:N4096:K4096",
+    "state": "served",
+    "symbol": "tessera::window_gemm_dense",
+    "tile_m": 0
+   },
+   "language_model.model.layers.5.mlp.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "native_window_moe_compact",
+    "kernel_schedule": "tessera.native_window_moe.NativeWindowMoE.__call__",
+    "kind": "moe",
+    "platform": "sm_121",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M1:N4096:K4096",
+    "state": "served",
+    "symbol": "tessera.native_window_moe.NativeWindowMoE.__call__",
+    "tile_m": 0
+   },
+   "language_model.model.layers.5.mlp.shared_experts.down_proj": {
+    "contract": "bf16_unquantized",
+    "decoder": "native_window_gemm_folded",
+    "kernel_schedule": "tessera::window_gemm_dense",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_BF16:resident",
+    "reason": null,
+    "shape": "M1:N4096:K2048",
+    "state": "served",
+    "symbol": "tessera::window_gemm_dense",
+    "tile_m": 0
+   },
+   "language_model.model.layers.5.mlp.shared_experts.gate_up_proj": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "native_window_gemm",
+    "kernel_schedule": "tessera::window_gemm_dense",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M1:N4096:K4096",
+    "state": "served",
+    "symbol": "tessera::window_gemm_dense",
+    "tile_m": 0
+   },
+   "language_model.model.layers.6.mlp.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "native_window_moe_compact",
+    "kernel_schedule": "tessera.native_window_moe.NativeWindowMoE.__call__",
+    "kind": "moe",
+    "platform": "sm_121",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M1:N4096:K4096",
+    "state": "served",
+    "symbol": "tessera.native_window_moe.NativeWindowMoE.__call__",
+    "tile_m": 0
+   },
+   "language_model.model.layers.6.mlp.shared_experts.down_proj": {
+    "contract": "bf16_unquantized",
+    "decoder": "native_window_gemm_folded",
+    "kernel_schedule": "tessera::window_gemm_dense",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_BF16:resident",
+    "reason": null,
+    "shape": "M1:N4096:K2048",
+    "state": "served",
+    "symbol": "tessera::window_gemm_dense",
+    "tile_m": 0
+   },
+   "language_model.model.layers.6.mlp.shared_experts.gate_up_proj": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "native_window_gemm",
+    "kernel_schedule": "tessera::window_gemm_dense",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M1:N4096:K4096",
+    "state": "served",
+    "symbol": "tessera::window_gemm_dense",
+    "tile_m": 0
+   },
+   "language_model.model.layers.7.mlp.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "native_window_moe_compact",
+    "kernel_schedule": "tessera.native_window_moe.NativeWindowMoE.__call__",
+    "kind": "moe",
+    "platform": "sm_121",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M1:N4096:K4096",
+    "state": "served",
+    "symbol": "tessera.native_window_moe.NativeWindowMoE.__call__",
+    "tile_m": 0
+   },
+   "language_model.model.layers.7.mlp.shared_experts.down_proj": {
+    "contract": "bf16_unquantized",
+    "decoder": "native_window_gemm_folded",
+    "kernel_schedule": "tessera::window_gemm_dense",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_BF16:resident",
+    "reason": null,
+    "shape": "M1:N4096:K2048",
+    "state": "served",
+    "symbol": "tessera::window_gemm_dense",
+    "tile_m": 0
+   },
+   "language_model.model.layers.7.mlp.shared_experts.gate_up_proj": {
+    "contract": "bf16_unquantized",
+    "decoder": "native_window_gemm_folded",
+    "kernel_schedule": "tessera::window_gemm_dense",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_BF16:resident",
+    "reason": null,
+    "shape": "M1:N4096:K4096",
+    "state": "served",
+    "symbol": "tessera::window_gemm_dense",
+    "tile_m": 0
+   }
+  },
+  "prefill": {
+   "language_model.model.layers.0.mlp.down_proj": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "native_window_gemm",
+    "kernel_schedule": "tessera::window_gemm_dense",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M64:N4096:K12288",
+    "state": "served",
+    "symbol": "tessera::window_gemm_dense",
+    "tile_m": 0
+   },
+   "language_model.model.layers.0.mlp.gate_up_proj": {
+    "contract": "bf16_unquantized",
+    "decoder": "native_window_gemm_folded",
+    "kernel_schedule": "tessera::window_gemm_dense",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_BF16:resident",
+    "reason": null,
+    "shape": "M64:N24576:K4096",
+    "state": "served",
+    "symbol": "tessera::window_gemm_dense",
+    "tile_m": 0
+   },
+   "language_model.model.layers.1.mlp.down_proj": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "native_window_gemm",
+    "kernel_schedule": "tessera::window_gemm_dense",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M64:N4096:K12288",
+    "state": "served",
+    "symbol": "tessera::window_gemm_dense",
+    "tile_m": 0
+   },
+   "language_model.model.layers.1.mlp.gate_up_proj": {
+    "contract": "bf16_unquantized",
+    "decoder": "native_window_gemm_folded",
+    "kernel_schedule": "tessera::window_gemm_dense",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_BF16:resident",
+    "reason": null,
+    "shape": "M64:N24576:K4096",
+    "state": "served",
+    "symbol": "tessera::window_gemm_dense",
+    "tile_m": 0
+   },
+   "language_model.model.layers.2.mlp.down_proj": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "native_window_gemm",
+    "kernel_schedule": "tessera::window_gemm_dense",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M64:N4096:K12288",
+    "state": "served",
+    "symbol": "tessera::window_gemm_dense",
+    "tile_m": 0
+   },
+   "language_model.model.layers.2.mlp.gate_up_proj": {
+    "contract": "bf16_unquantized",
+    "decoder": "native_window_gemm_folded",
+    "kernel_schedule": "tessera::window_gemm_dense",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_BF16:resident",
+    "reason": null,
+    "shape": "M64:N24576:K4096",
+    "state": "served",
+    "symbol": "tessera::window_gemm_dense",
+    "tile_m": 0
+   },
+   "language_model.model.layers.3.mlp.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "native_window_moe_compact",
+    "kernel_schedule": "tessera.native_window_moe.NativeWindowMoE.__call__",
+    "kind": "moe",
+    "platform": "sm_121",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M64:N4096:K4096",
+    "state": "served",
+    "symbol": "tessera.native_window_moe.NativeWindowMoE.__call__",
+    "tile_m": 0
+   },
+   "language_model.model.layers.3.mlp.shared_experts.down_proj": {
+    "contract": "bf16_unquantized",
+    "decoder": "native_window_gemm_folded",
+    "kernel_schedule": "tessera::window_gemm_dense",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_BF16:resident",
+    "reason": null,
+    "shape": "M64:N4096:K2048",
+    "state": "served",
+    "symbol": "tessera::window_gemm_dense",
+    "tile_m": 0
+   },
+   "language_model.model.layers.3.mlp.shared_experts.gate_up_proj": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "native_window_gemm",
+    "kernel_schedule": "tessera::window_gemm_dense",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M64:N4096:K4096",
+    "state": "served",
+    "symbol": "tessera::window_gemm_dense",
+    "tile_m": 0
+   },
+   "language_model.model.layers.4.mlp.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "native_window_moe_compact",
+    "kernel_schedule": "tessera.native_window_moe.NativeWindowMoE.__call__",
+    "kind": "moe",
+    "platform": "sm_121",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M64:N4096:K4096",
+    "state": "served",
+    "symbol": "tessera.native_window_moe.NativeWindowMoE.__call__",
+    "tile_m": 0
+   },
+   "language_model.model.layers.4.mlp.shared_experts.down_proj": {
+    "contract": "bf16_unquantized",
+    "decoder": "native_window_gemm_folded",
+    "kernel_schedule": "tessera::window_gemm_dense",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_BF16:resident",
+    "reason": null,
+    "shape": "M64:N4096:K2048",
+    "state": "served",
+    "symbol": "tessera::window_gemm_dense",
+    "tile_m": 0
+   },
+   "language_model.model.layers.4.mlp.shared_experts.gate_up_proj": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "native_window_gemm",
+    "kernel_schedule": "tessera::window_gemm_dense",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M64:N4096:K4096",
+    "state": "served",
+    "symbol": "tessera::window_gemm_dense",
+    "tile_m": 0
+   },
+   "language_model.model.layers.5.mlp.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "native_window_moe_compact",
+    "kernel_schedule": "tessera.native_window_moe.NativeWindowMoE.__call__",
+    "kind": "moe",
+    "platform": "sm_121",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M64:N4096:K4096",
+    "state": "served",
+    "symbol": "tessera.native_window_moe.NativeWindowMoE.__call__",
+    "tile_m": 0
+   },
+   "language_model.model.layers.5.mlp.shared_experts.down_proj": {
+    "contract": "bf16_unquantized",
+    "decoder": "native_window_gemm_folded",
+    "kernel_schedule": "tessera::window_gemm_dense",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_BF16:resident",
+    "reason": null,
+    "shape": "M64:N4096:K2048",
+    "state": "served",
+    "symbol": "tessera::window_gemm_dense",
+    "tile_m": 0
+   },
+   "language_model.model.layers.5.mlp.shared_experts.gate_up_proj": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "native_window_gemm",
+    "kernel_schedule": "tessera::window_gemm_dense",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M64:N4096:K4096",
+    "state": "served",
+    "symbol": "tessera::window_gemm_dense",
+    "tile_m": 0
+   },
+   "language_model.model.layers.6.mlp.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "native_window_moe_compact",
+    "kernel_schedule": "tessera.native_window_moe.NativeWindowMoE.__call__",
+    "kind": "moe",
+    "platform": "sm_121",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M64:N4096:K4096",
+    "state": "served",
+    "symbol": "tessera.native_window_moe.NativeWindowMoE.__call__",
+    "tile_m": 0
+   },
+   "language_model.model.layers.6.mlp.shared_experts.down_proj": {
+    "contract": "bf16_unquantized",
+    "decoder": "native_window_gemm_folded",
+    "kernel_schedule": "tessera::window_gemm_dense",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_BF16:resident",
+    "reason": null,
+    "shape": "M64:N4096:K2048",
+    "state": "served",
+    "symbol": "tessera::window_gemm_dense",
+    "tile_m": 0
+   },
+   "language_model.model.layers.6.mlp.shared_experts.gate_up_proj": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "native_window_gemm",
+    "kernel_schedule": "tessera::window_gemm_dense",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M64:N4096:K4096",
+    "state": "served",
+    "symbol": "tessera::window_gemm_dense",
+    "tile_m": 0
+   },
+   "language_model.model.layers.7.mlp.experts.routed_experts": {
+    "contract": "fp8_per_token_dynamic",
+    "decoder": "native_window_moe_compact",
+    "kernel_schedule": "tessera.native_window_moe.NativeWindowMoE.__call__",
+    "kind": "moe",
+    "platform": "sm_121",
+    "policy": "TESSERA_FP8:resident",
+    "reason": null,
+    "shape": "M64:N4096:K4096",
+    "state": "served",
+    "symbol": "tessera.native_window_moe.NativeWindowMoE.__call__",
+    "tile_m": 0
+   },
+   "language_model.model.layers.7.mlp.shared_experts.down_proj": {
+    "contract": "bf16_unquantized",
+    "decoder": "native_window_gemm_folded",
+    "kernel_schedule": "tessera::window_gemm_dense",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_BF16:resident",
+    "reason": null,
+    "shape": "M64:N4096:K2048",
+    "state": "served",
+    "symbol": "tessera::window_gemm_dense",
+    "tile_m": 0
+   },
+   "language_model.model.layers.7.mlp.shared_experts.gate_up_proj": {
+    "contract": "bf16_unquantized",
+    "decoder": "native_window_gemm_folded",
+    "kernel_schedule": "tessera::window_gemm_dense",
+    "kind": "dense",
+    "platform": "sm_121",
+    "policy": "TESSERA_BF16:resident",
+    "reason": null,
+    "shape": "M64:N4096:K4096",
+    "state": "served",
+    "symbol": "tessera::window_gemm_dense",
+    "tile_m": 0
+   }
+  }
+ },
+ "runtime": {
+  "execution_mode": "eager",
+  "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5"
+ },
+ "runtime_image_declaration": {
+  "env": [
+   "TESSERA_CENSUS_RUNTIME_IMAGE",
+   "TESSERA_CENSUS_RUNTIME_IMAGE_DECLARATION"
+  ],
+  "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5",
+  "record": {
+   "fix": null,
+   "gated": true,
+   "local_id": "sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5",
+   "pinned": "vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14",
+   "present": true,
+   "reason": "explicit_digest",
+   "refused": false,
+   "repo_digests": [
+    "192.168.1.107/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5",
+    "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5"
+   ],
+   "requested": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5",
+   "requested_tag": null,
+   "required": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5",
+   "resolved_digest": "sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5",
+   "resolved_reference": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5",
+   "schema": "tessera.runtime_image/1"
+  },
+  "schema": "tessera.runtime-image-declaration/1",
+  "source": "launcher_repo_digests"
+ },
+ "scheduler": {},
+ "schema": "tessera.serving.route_census/2",
+ "tessera_config_groups": 21,
+ "verdict": "served",
+ "versions": {
+  "python": "3.12.3",
+  "tessera": "0.1.0",
+  "tessera_commit": "50e67a9d011107d29fdc0b0e3c2ed6b95d0f7520",
+  "tessera_serving": "0.1.0",
+  "torch": "2.13.0+cu130",
+  "vllm": "0.28.1rc1.dev397+gfd4a15126.d20260904"
+ }
+}

@@ -21,6 +21,16 @@ SCHEMA = "tessera.serving-part.v1"
 BODY_LAYER = re.compile(r"^model\.(?:[^.]+\.)*layers\.(\d+)\.")
 
 
+def write_serving_manifest(path: Path, manifest: dict) -> None:
+    """Write compact UTF-8 JSON, preserving the manifest's insertion order.
+
+    This is a serialization choice for new artifacts, not a canonical identity:
+    file bindings still hash the bytes on disk. Never reserialize an already
+    bound artifact just to change its whitespace.
+    """
+    path.write_bytes(json.dumps(manifest, separators=(",", ":")).encode("utf-8"))
+
+
 def parse_partition(value: str) -> tuple[int, int]:
     try:
         index, count = map(int, value.split("/"))
@@ -681,7 +691,7 @@ def merge_serving_parts(paths, out: Path, source: Path, *, move=False,
                 shutil.copy2(aux, out / aux.name)
     (out / "model.safetensors.index.json").write_text(json.dumps({
         "metadata": {"total_size": size}, "weight_map": weight_map}, indent=2))
-    (out / "tessera_serving_manifest.json").write_text(json.dumps(manifest, indent=2))
+    write_serving_manifest(out / "tessera_serving_manifest.json", manifest)
     (out / "config.json").write_text(json.dumps(config, indent=2))
     return manifest
 

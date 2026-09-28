@@ -1,10 +1,10 @@
 {
-  "bytes": 2370,
-  "cells": 2,
+  "bytes": 0,
+  "cells": 0,
   "lifted_by": "json.JSONDecoder().raw_decode two times from the byte after the 'cells' array's opening bracket; the span is the bytes those two elements occupy, separators and whitespace included, with no trailing comma",
-  "sha256": "f4734cbe820157101c3745d817d640af30d7da93b580c78afdbfe8af3fb5a7ac",
-  "source": "src/tessera/serving/runtime_contract.json at contract_version 22 (origin/master 3ec01f26); re-spanned at contract_version 24 (#460) and again at 31 (tessera#538), without re-measuring any surviving cell; re-spanned at 32 (tessera#506 leg 2) when the E2M1_K2 dense cells' rungs_q256 widened to the full trellis domain, again without re-measuring \u2014 the two E4M3 routed cells in the span are untouched; re-spanned a second time at 32 (tessera#560 D2) when the dense widen was reverted to [896] for lack of a dense receipt, and the dense batch cell's KL entry stamped q256 896, the rung its 2026-09-02 receipt measured; re-spanned at 38 (tessera#604) to the first two elements when the two E4M3 routed cells were withdrawn -- the two surviving E2M1_K2 dense cells' span hashes identically on origin/master at contract_version 37 (2370 bytes, f4734cbe...), so no surviving cell was edited",
-  "what": "The v22 sm_121 cells that SURVIVE at contract_version 38, recorded as a digest. Contract v22 published ten; v31 withdrew six of them (tessera#538) and v38 withdrew two more (tessera#604); the two below are what is left, still the first two elements of lane_eligibility.cells.",
+  "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "source": "src/tessera/serving/runtime_contract.json at contract_version 22 (origin/master 3ec01f26); re-spanned at contract_version 24 (#460) and again at 31 (tessera#538), without re-measuring any surviving cell; re-spanned at 32 (tessera#506 leg 2) when the E2M1_K2 dense cells' rungs_q256 widened to the full trellis domain, again without re-measuring — the two E4M3 routed cells in the span are untouched; re-spanned a second time at 32 (tessera#560 D2) when the dense widen was reverted to [896] for lack of a dense receipt, and the dense batch cell's KL entry stamped q256 896, the rung its 2026-09-02 receipt measured; re-spanned at 38 (tessera#604) to the first two elements when the two E4M3 routed cells were withdrawn -- the two surviving E2M1_K2 dense cells' span hashes identically on origin/master at contract_version 37 (2370 bytes, f4734cbe...), so no surviving cell was edited; re-spanned at 39 (tessera#604, second half) to NO elements when the two surviving E2M1_K2 dense cells were withdrawn -- no v22 sm_121 cell survives, so the span is empty and its digest is the empty string's",
+  "what": "The v22 sm_121 cells that SURVIVE at contract_version 39, recorded as a digest. Contract v22 published ten; v31 withdrew six (tessera#538), v38 two more (tessera#604) and v39 the last two (tessera#604, second half). None is left: the span is empty, and the withdrawal lists below are what this fixture still carries.",
   "why_not_the_bytes": "A copy of the array would repeat the runtime image pin, and tests/test_runtime_image_pin.py refuses a second copy of that digest in any file that acts. A hash pins the same bytes without holding the pin.",
   "withdrawn_at_v31": [
     "tessera_e4m3_k1_dense_sm121_decode_resident",
@@ -36,5 +36,27 @@
     "tessera_e4m3_k1_routed_moe_sm121_decode_resident",
     "tessera_e4m3_k1_routed_moe_sm121_batch_resident"
   ],
-  "reearned_at_v38_why": "Contract v38 mints resident-scoped cells on the GLM serving image from a TP1 eager route census (docs/measurements/tessera-glm-x-census-2026-09-26.md). Two of the ids are E4M3 dense ones v31 withdrew, now executing tessera::window_gemm_dense/native_window_gemm on q256 832/1024/1088; two are the routed ids this version withdraws, now executing tessera.native_window_moe.NativeWindowMoE.__call__/native_window_moe_compact at q256 896 on another image. An id is a SCOPE, so re-attesting a scope reuses its id; the withdrawn CLAIMS do not come back."
+  "reearned_at_v38_why": "Contract v38 mints resident-scoped cells on the GLM serving image from a TP1 eager route census (docs/measurements/tessera-glm-x-census-2026-09-26.md). Two of the ids are E4M3 dense ones v31 withdrew, now executing tessera::window_gemm_dense/native_window_gemm on q256 832/1024/1088; two are the routed ids this version withdraws, now executing tessera.native_window_moe.NativeWindowMoE.__call__/native_window_moe_compact at q256 896 on another image. An id is a SCOPE, so re-attesting a scope reuses its id; the withdrawn CLAIMS do not come back.",
+  "withdrawn_at_v39": [
+    "tessera_e2m1_k2_dense_sm121_decode",
+    "tessera_e2m1_k2_dense_sm121_batch",
+    "tessera_e2m1_k2_routed_moe_sm121_decode_resident",
+    "tessera_e2m1_k2_routed_moe_sm121_batch_resident"
+  ],
+  "withdrawn_at_v39_why": "Contract v39 (tessera#604, second half) withdraws the two E2M1_K2 dense cells on the serve-image pin, which named (torch._scaled_mm, native_span2) -- nvfp4_route always prepares native A4 units and runs tessera.kernel_a4.a4_span2_gemm, so the build cannot make that pair -- and the two routed E2M1_K2 cells on spark-vllm-nccl230@sha256:a5424378..., which named (vllm.fused_moe.modular_kernel, torch_materialize_stock), a launch nvfp4_moe_route cannot make either. Both launches leave scheme.ROUTE_LAUNCHES in the same change. The dense pair were this span's last two elements; the routed pair were never in it.",
+  "reearned_at_v39": [
+    "tessera_e2m1_k2_routed_moe_sm121_decode_resident",
+    "tessera_e2m1_k2_routed_moe_sm121_batch_resident"
+  ],
+  "reearned_at_v39_why": "Contract v39 mints resident-scoped E2M1_K2 cells on the GLM serving image from a TP1 eager route census of an all-E2M1 eight-layer GLM-5.3-Flash stub (docs/measurements/tessera-glm-u1-census-2026-09-26.md). The two routed ids are the ones this version withdraws, now executing tessera.kernel_a4.a4_span2_grouped_gemm/native_span2_grouped at q256 896 on another image. The dense scope comes back under the resident-scoped ids tessera_e2m1_k2_dense_sm121_{decode,batch}_resident, executing tessera.kernel_a4.a4_span2_gemm/native_span2_gemm; the pin-image ids stay absent. An id is a SCOPE; the withdrawn CLAIMS do not come back.",
+  "remeasured_at_v42": [
+    "tessera_e4m3_k1_routed_moe_sm121_decode_resident",
+    "tessera_e4m3_k1_routed_moe_sm121_batch_resident"
+  ],
+  "remeasured_at_v42_why": "Contract v42 (tessera#640) adds a second launch to the two routed E4M3 ids v38 re-earned -- tessera.routed_fused.FusedRoutedWindowMoE.__call__/native_routed_fused_window, the fused warp-specialised routed window lane the dispatch takes by default for every rate-4 window-14 expert stack -- on a served TP1 eager route census of the rate-4 u1 stub B on the GLM serving image (docs/measurements/2026-09-28-routed-fused-640.md). The compact launch stays: it serves every stack the lane refuses and TESSERA_ROUTED_FUSED=0. Neither id was in this span, so the digest does not move; a re-measurement is named here rather than absorbed.",
+  "remeasured_at_v43": [
+    "tessera_e4m3_k1_dense_sm121_decode_resident",
+    "tessera_e4m3_k1_dense_sm121_batch_resident"
+  ],
+  "remeasured_at_v43_why": "Contract v43 (tessera#692) adds a second launch to the two E4M3 dense ids v38 re-earned -- tessera::fused_window_dense/native_fused_window_dense, the fused window kernel's DENSE identity (E = 1, identity routing, a split over K for decode), which the dispatch takes for every q256 1024 dense module of the window families -- on a served TP1 eager route census of the rate-4 u1 stub B on the GLM serving image (docs/measurements/2026-09-28-dense-fused-window.md); the same census earned the folded pair for the two BF16 resident dense ids, which were minted at v38 and never in this fixture. The Triton pair stays: it serves every module the lane refuses and TESSERA_DENSE_FUSED=0. Neither id was in this span, so the digest does not move; a re-measurement is named here rather than absorbed."
 }

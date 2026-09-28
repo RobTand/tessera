@@ -542,11 +542,26 @@ def identity_factory(served: dict, activation):
     return CachedUnitIdentity(derive, activation, mode="committed"), producer
 
 
+def activation_source(block: dict, authority_path):
+    """The export's ``activation_aware`` capture, at the export's own settings.
+
+    A reference document binds the producer's calibration cache, so it refuses
+    by name unless ``--producer-authority`` supplies the producer's canonical
+    capture (tessera#599).
+    """
+    from tessera import producer_authority
+    from tessera.export import ActivationSource
+
+    settings = {key: value for key, value in block.items() if key not in ("hessian", "note")}
+    return ActivationSource.from_capture(
+        block["hessian"]["path"],
+        canonical_capture=producer_authority.canonical_capture(authority_path), **settings)
+
+
 def rate_mode(args) -> int:
     """Re-derive every member's sealed identity and bind it to its wire."""
     from safetensors import safe_open
     from tessera.cached_unit import make_unit_record
-    from tessera.export import ActivationSource
 
     served = load_served_manifest(args.export)
     stack = args.stack
@@ -563,8 +578,7 @@ def rate_mode(args) -> int:
     provenance = preflight_producer_provenance(served, manifest, members)
 
     block = served["activation_aware"]
-    settings = {key: value for key, value in block.items() if key not in ("hessian", "note")}
-    activation = ActivationSource.from_capture(block["hessian"]["path"], **settings)
+    activation = activation_source(block, args.producer_authority)
     identity_of, producer = identity_factory(served, activation)
     from tessera.control import grid_for_name
 
@@ -652,7 +666,9 @@ def rate_mode(args) -> int:
     return 0
 
 
-def main(argv=None) -> int:
+def build_parser():
+    from tessera import producer_authority
+
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--mode", choices=("source", "rate"), required=True)
     parser.add_argument("--layer", type=int, default=3)
@@ -672,6 +688,12 @@ def main(argv=None) -> int:
                                      "routed-owner-inputs-layer3-20260917/"
                                      "layer3-routed-owner-source.safetensors"))
     parser.add_argument("--out", type=Path, required=True)
+    producer_authority.add_argument(parser)
+    return parser
+
+
+def main(argv=None) -> int:
+    parser = build_parser()
     args = parser.parse_args(argv)
     args.stack = f"model.language_model.layers.{args.layer}.mlp.experts"
     if args.mode == "rate" and (args.rate is None or args.format is None):

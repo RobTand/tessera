@@ -427,21 +427,20 @@ def test_a_routed_stack_is_gated_against_the_routed_moe_cells_not_the_dense_rang
 
 
 def test_a_routed_e2m1x2_stack_at_q896_passes_the_gate_without_an_override():
-    """#506 leg 2: the routed E2M1_K2 stack is attested over the full domain.
+    """The routed E2M1_K2 stack is attested at q256 896, on the native route.
 
-    Leg 2 widens the two routed_moe cells from the single rung 896 to the
-    whole trellis-shaped domain [128, 896] step 128, each rung carried by a
-    real load-probe receipt.  Until contract v28 no cell named
-    an NVFP4 expert stack exported only under ``--allow-unserveable`` with the
-    refusal stamped in its manifest.  The two cells the two-rank stub serve
-    backs are what this gate reads, on the packaged table, with no override.
+    #506 leg 2 widened the two routed_moe cells to the whole trellis-shaped
+    domain [128, 896] step 128 on load-probe receipts of the materialising
+    launch.  Contract v39 (tessera#604) withdrew those cells -- this build's
+    expert stack runs the grouped A4 GEMM -- and re-earned the ids at the one
+    rung the u1 stub census served on that launch.  The two re-earned cells
+    are what this gate reads, on the packaged table, with no override.
     """
     from tessera.serving.scheme import STRUCTURE_ROUTED_MOE, attested_cells
 
     routed = attested_cells("TESSERA_E2M1_K2", STRUCTURE_ROUTED_MOE)
     assert {cell["regime"] for cell in routed} == {"decode", "batch"}, routed
-    DOMAIN = [128, 256, 384, 512, 640, 768, 896]
-    assert all(cell["rungs_q256"] == DOMAIN for cell in routed), routed
+    assert all(cell["rungs_q256"] == [896] for cell in routed), routed
 
     recipe = wire_recipe(GRIDS["E2M1x2"], 896)
     assert refuse_unserveable_wire(
@@ -462,7 +461,10 @@ def test_a_dense_sub_cap_nvfp4_plan_is_refused_without_an_override():
     ``wire_recipe`` resolves -- which the NVFP4 route has no decoder for, so
     the export gate refuses it without ``--allow-unserveable`` exactly as
     before v32.  Only a ``routed_moe`` stack is promoted to the span-2 TCQ
-    body the seven-rung load receipt covers, and it passes at the same rung.
+    body.  Since contract v39 (tessera#604) no routed cell attests 768 either
+    -- the seven-rung load receipt was withdrawn with the materialising
+    launch -- so the stack at 768 is refused too, by the cells it falls
+    outside rather than for want of a decoder.
     """
     from tessera.manifest import BodyKind
     from tessera.serving.scheme import STRUCTURE_ROUTED_MOE
@@ -478,8 +480,11 @@ def test_a_dense_sub_cap_nvfp4_plan_is_refused_without_an_override():
     assert EXPORT.check_recipe(grid, 768, where="dense.probe",
                                allow_unserveable=True, overrides=stamped) is not None
     assert [(r["grid"], r["q256"]) for r in stamped] == [("E2M1x2", 768)]
-    assert EXPORT.check_recipe(grid, 768, where="stack.probe",
-                               structure=STRUCTURE_ROUTED_MOE) is not None
+    with pytest.raises(SystemExit) as caught:
+        EXPORT.check_recipe(grid, 768, where="stack.probe", structure=STRUCTURE_ROUTED_MOE)
+    message = str(caught.value)
+    assert "tessera_e2m1_k2_routed_moe_sm121_decode_resident" in message, message
+    assert "no in-forward decoder" not in message, message
 
 
 def test_a_structure_no_cell_attests_is_refused_by_name(monkeypatch):
@@ -633,7 +638,7 @@ def test_only_the_device_backed_cells_rungs_admit_a_routed_stack():
     """A mixed table serves the rung a device ran and refuses the one it did not.
 
     The packaged table cannot show this: both E4M3 routed-MoE cells attest the
-    same rung and both are device receipts.  This copy gives the batch cell a
+    same rungs and both are device receipts.  This copy gives the batch cell a
     second rung and the weaker fact, so one stack rung is served and the other
     is only compilable.  The admitted set is the device-backed cell's alone: the
     refusal names that cell and offers the only honest way to the other rung
@@ -643,7 +648,7 @@ def test_only_the_device_backed_cells_rungs_admit_a_routed_stack():
     import copy
 
     from tessera.serving.contract import load_serving_contract, validate_serving_contract
-    from tessera.serving.scheme import STRUCTURE_ROUTED_MOE, attested_cells
+    from tessera.serving.scheme import STRUCTURE_ROUTED_MOE, TESSERA_FP8, attested_cells, launch_pairs
 
     served_rung, compiled_rung = 896, 1536
     doc = copy.deepcopy(load_serving_contract())
@@ -667,6 +672,14 @@ def test_only_the_device_backed_cells_rungs_admit_a_routed_stack():
             cell["rungs_q256"] = [compiled_rung]
             cell["qualification"] = "compile_only"
             cell["route_status"] = "unbacked"
+            # The fused routed window lane (contract v42) reaches rate-4 rungs
+            # only, so at the moved rung the cell's launches are the lane-free
+            # ones; the validator derives that set per rung and refuses a cell
+            # that names a launch its rung cannot make.
+            cell["executes"] = [
+                {"symbol": symbol, "decoder": decoder} for symbol, decoder in sorted(
+                    launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE, regime="batch",
+                                 mode="resident", lanes=()))]
             moved = True
     assert moved, "test premise: the packaged table publishes a batch routed cell"
     validate_serving_contract(doc)
@@ -689,7 +702,7 @@ def test_only_the_device_backed_cells_rungs_admit_a_routed_stack():
             structure=STRUCTURE_ROUTED_MOE, contract=doc)
     message = str(caught.value)
     assert "tessera_e4m3_k1_routed_moe_sm121_decode_resident" in message, message
-    assert "[896]" in message, message
+    assert str(selected[0]["rungs_q256"]) in message, message
     assert "tessera_e4m3_k1_routed_moe_sm121_batch_resident" not in message, message
     assert "serve the rung and publish the cell" in message, message
 

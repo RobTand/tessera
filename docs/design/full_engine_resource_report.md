@@ -8,6 +8,107 @@ until a consumer recomputes this report and agrees with it.** This document
 freezes the schema; it does not claim a measurement. No GPU, served, latency,
 quality or capacity measurement was run for this document.
 
+## TP2 per-rank extension (v3, tessera#399, 2026-09-26)
+
+`tessera.full_engine_resource_report.v3` is an explicit TP2/eager/resident,
+one-rank envelope. v2 remains the TP1 schema and retains its field meanings.
+The shared resource launch plan binds the served-object digests and world size.
+For artifact observations it carries `canonical_source`, the exact object whose
+canonical hash is `identity.model_sha256`. The source names and hashes every
+loaded weight file plus config, serving manifest and index. The same full-hash
+pass opens each regular file without following symlinks and requires its
+`size`, `mtime_ns`, `ctime_ns`, `st_dev` and `st_ino` to agree before and
+after hashing. `artifact_checkpoint.file_attestation` carries that per-file
+stat seal for cheap change detection before a consumer reuses the full digest;
+the source-BF16 census path has no artifact checkpoint. Device IDs are
+mount-local and may differ on another host even when the shared NFS file's
+inode, size and timestamps agree. A changed portable stat or file content
+requires fresh full-hash attestation.
+
+Each stock worker supplies its **actual** rank, local device index and physical
+GPU UUID before CUDA initialization. `VLLM_HOST_IP` is checked against that
+worker's own IPv4 interfaces and recorded as its host-network identity. The
+existing step-4 launcher has explicit `--tp2-role head|peer` modes on the
+shared `/mnt/shared` output tree. The head creates the fresh root, and the
+peer uses its `rank-1` child; each installs the same pinned source in its own
+container and writes its own installed-runtime evidence before the head seals
+the shared plan. The peer then starts the pinned stock headless MP executor
+at node rank 1 using that plan, while the head starts the stock LLM at node
+rank 0. Both ranks bind host networking for vLLM's native transport, use the
+same plan, and write rank-specific worker captures and host-vitals logs. The
+peer launch summary remains separate from the head's. This is an observer
+workflow; it does not modify stock vLLM source or distribute tensor shards.
+The head's installed-runtime evidence is **not** reused for rank 1: the plan
+content-binds each host's separate record and report v3 carries both refs.
+The rank host-vitals rows bind the claimed host IP and GPU UUID to that
+rank's raw observation. Absence of the peer's log or identity is a timing
+refusal.
+
+The present producer contract refuses a configuration with speculative
+decoding because the target routed owner trace does not enclose the stock
+Eagle/MTP draft forward. The pending draft-owner extension must keep the owner
+format agnostic, including the observed first-call prompt regime; no draft
+cost or resource is assigned zero here.
+
+The resource RPC requires distinct ranks 0 and 1, devices and host IPs. The report
+CLI takes `--rank` and emits a report for that actual rank, while requiring the
+complete two-worker run. `observations.rank_world` carries both workers,
+the shared run digests, content-bound raw run/plan, and each worker's capture
+path and SHA-256 from its recorder receipt. The chosen rank's capture bytes
+are checked again when assembling its report. A peer path/hash in this roster
+is evidence to verify, not a substitute for reading the peer capture.
+
+The read-only KV pass likewise obtains both actual workers. Its per-rank
+`tessera.full_engine_kv_observation.v2` binds rank/world, device UUID and
+host IP to the original resolved capacity and backing records; the intrusive
+resource pass emits the same version as its separate capacity witness. The
+report joins one same-rank read-only record and requires capacity, UUID and
+host agreement. The v1 TP1 KV record is unchanged.
+
+Timing observation v2 carries both ranks of the same three-or-more-sample
+world. Each arm cites its raw capture, profile and derived partition by path
+and SHA-256; the observation also cites the raw run, plan, required versioned
+observer-impact policy, and each rank's host-vitals log. Capture v2 preserves
+one canonical `units` row per owner and adds ordered disjoint `segments`:
+`apply` for every owner and `final_reduce` for each routed owner. The actual
+stock `tensor_model_parallel_all_reduce` call in
+`_maybe_reduce_final_output` is counted inside that second segment. The
+shared/transform work between them stays in directly measured fixed gaps.
+There are `len(segments)+1` adjacent gaps, and each routed unit's elapsed is
+the sum of its two segments. A missing, duplicated, misordered, unjoined or
+untraced final reduction refuses. The recorder carries the collective input
+shape/dtype and runtime flags so the native receipt can be compared at that
+callsite; the combined routed+shared serving tensor is not asserted equal to
+the routed-only native harness tensor. CUDA events and raw profile are replayed.
+The current post-stop CUPTI `cuptiActivityGetNumDroppedRecords` query is
+**diagnostic only**: that API resets its queue on read, the pinned Kineto
+build can consume it in verbose buffer callbacks, and the current query omits
+global and NCCL queues. A zero at finish therefore leaves profiler collection
+health unavailable and timing observation v2 refuses, even when operation
+counts match. An owned cumulative loss witness over all required queues and
+an explicit versioned observer-impact policy must support eventual timing
+qualification; absence of either is a refusal, not zero.
+Per phase, the proposed scalar timing coordinate sums direct gaps **within**
+each sample, takes the median across samples **per rank**, then selects the
+slower rank median; all raw rank vectors remain in the record. This is an
+operator-sum proposal coordinate, not a whole-engine latency statistic.
+
+V3 additionally claims `derived.off_step_torch_live_peak_bytes`, a same-instant
+sweep of all non-observer Torch allocations while no declared step runs. It
+includes resident bytes alongside off-step transients and is recomputable from
+`observations.torch_allocations`, `step_intervals`, `step_coverage` and
+`owner_views`. It is **only** a witness for the captured assignment. A changed
+candidate residency may change that whole peak; `placement_obligation` is
+therefore null in v3 until a consumer derives a candidate-specific off-step
+bound from qualified ownership/invariance evidence. The integrated producer
+also makes that refusal explicit as `derived.certifies_placement: false`
+(tessera#650 / PrismaQuant#1463); it is never an admission bit a caller may flip. Native external allocation
+overlap is not established by this Torch-only witness. The existing v1
+partition's `non_step_transient_peak_bytes` remains separately reported, never
+silently promoted to a whole off-step bound. Real TP2 GPU captures, native
+alternatives, observer impact and consumer recomputation are still required
+before any fixed timing or device resource admission.
+
 The consumer half is PrismaQuant `docs/design/runtime_fixed_resource_admission.md`
 (merged 2026-09-08, issue #420). That document specifies what the consumer must
 independently check. This one specifies what the producer must emit so the
@@ -720,6 +821,15 @@ off-step filter.
 
 One rank's capture is three passes on the same box and the same configured run;
 each pass is its own process, and nothing about their pointers is ever compared.
+The step-4 launcher binds stable, box-local cache roots for Triton, Torch
+extensions, TorchInductor and CUDA under `--jit-dir`. The plugin installer drops
+the model process to UID/GID 1000. Before either TP rank starts a model, the
+driver runs `step4_cache_preflight` under that identity: it resolves the actual
+TorchInductor and Torch-extension paths and writes and reads through those,
+Triton's cache manager, CUDA's named cache root and the temporary roots. A
+failure refuses the pass; the `worker-cache-preflight.json` receipt identifies
+the paths and worker UID. Reusing a scoped cache across passes is allowed, but
+its ownership and write/read gate runs on every pass.
 
 1. **The intrusive resource pass** runs the ledger and the startup sample:
    `python -m experiments.capture_full_engine_resources --config ... --model ...

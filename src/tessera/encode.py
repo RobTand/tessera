@@ -2813,10 +2813,12 @@ def _encode_unit_steps(
 
     The per-unit encode, verbatim, except that where it would call the
     Viterbi it yields a ``_TrellisCall`` and receives the answer for its own
-    columns.  ``encode_units`` drives one of these per unit in lock step and
-    runs the yielded calls joined along the column axis; the generator's
-    return value is the ``EncodedUnit``.  Not an entry point: ``encode_unit``
-    and ``encode_units`` are.
+    columns.  A window span yields a tuple instead: one call per rate present
+    in the span, rates ascending, answered by a tuple in the same order.
+    ``encode_units`` drives one of these per unit in lock step and runs the
+    yielded calls joined along the column axis; the generator's return value
+    is the ``EncodedUnit``.  Not an entry point: ``encode_unit`` and
+    ``encode_units`` are.
     """
     if weights.ndim != 2:
         raise GrammarError(f"expected a 2-D weight, got shape {tuple(weights.shape)}")
@@ -3048,7 +3050,7 @@ def _encode_unit_steps(
     completion_bits = torch.zeros(steps, cols, dtype=torch.long, device=device)
     codes = torch.zeros(steps, cols, dtype=torch.long, device=device)
     vectors = grid_vector_table(grid, device)
-    window_codes = window_vectors = None
+    window_codes = window_vectors = window_index = None
     if body is BodyKind.WINDOW:
         # Under a CHANNEL plane the table models the Gaussian the rows were
         # scaled to; under a block plane ``None`` models the amax-bounded
@@ -3062,7 +3064,11 @@ def _encode_unit_steps(
         window_codes = window_table(
             grid, window_bits, sigma=table_sigma, seed=window_seed, half=table_half, device=device,
         )
-        window_vectors = vectors[window_codes.long()]           # [2^L, arity]
+        # The table as indices, once: ``trellis_pass`` reads a state's code
+        # through it at every span of every pass, and converting the stored
+        # uint8/int32 table there made a fresh copy per span, rate and unit.
+        window_index = window_codes.long()
+        window_vectors = vectors[window_index]                  # [2^L, arity]
         # Under a block plane the CHANNEL branch above never ran, so this is
         # where the table's delivered spread is first known.  Recorded on
         # every window body and not only the one that needs the reach for a
@@ -3137,19 +3143,36 @@ def _encode_unit_steps(
         if body is BodyKind.WINDOW:
             # One table for every rate: a state indexes the same entry
             # whatever width the column's new bits have.
+            #
+            # Every rate's call of this span is yielded AT ONCE, as a tuple,
+            # and its answers come back as a tuple in the same order.  The
+            # rates partition the span's columns, each call reads only its own
+            # columns of ``targets``/``weights``, and each answer is written
+            # only into its own columns of the three planes -- so no call
+            # depends on another's answer, and the driver may run them
+            # concurrently (``_run_group``: one CUDA stream per rate).  The
+            # gathers now all precede the Viterbi calls and the scatters all
+            # follow them; every tensor holds the values the one-rate-at-a-time
+            # loop gave it.
+            present_cols = []
             for present in sorted(set(rates)):
                 which = columns_of(lo, hi, present)
-                if which.numel() == 0:
-                    continue
-                sub = targets[:, which].contiguous()
-                sub_w = None if weights is None else weights[:, which].contiguous()
-                state = yield _TrellisCall(
-                    body=body, rate=present, targets=sub, weights=sub_w,
+                if which.numel():
+                    present_cols.append((present, which))
+            if not present_cols:
+                return
+            states = yield tuple(
+                _TrellisCall(
+                    body=body, rate=present, targets=targets[:, which].contiguous(),
+                    weights=None if weights is None else weights[:, which].contiguous(),
                     window_vectors=window_vectors, window_bits=window_bits,
                 )
+                for present, which in present_cols
+            )
+            for (present, which), state in zip(present_cols, states):
                 anchors[:, which] = state
                 body_bits[:, which] = (state & ((1 << present) - 1)).to(body_dtype)
-                codes[:, which] = window_codes.long()[state]
+                codes[:, which] = window_index[state]
             return
         for present in sorted(set(rates)):
             picked = forests[present]
@@ -3620,6 +3643,8 @@ def _encode_unit_steps(
 class _TrellisCall:
     """One unit's Viterbi call, as ``_encode_unit_steps`` yields it.
 
+    A window span yields a tuple of these, one per rate present in the span;
+    every other yield is a single call.
     ``targets``/``weights`` are this unit's ``[rows, n]`` column slice.  A
     WINDOW call names its table; a TCQ call its forest, code, completion level
     and span.  ``same_call_as`` is the check that two units' calls can be
@@ -3687,6 +3712,82 @@ def _run_joined(calls: "list[_TrellisCall]"):
     return [(a[:, i * n:(i + 1) * n], b[:, i * n:(i + 1) * n]) for i in range(len(calls))]
 
 
+#: ``0`` runs a window span's rate calls one after another on the caller's
+#: stream; anything else (the default) runs each on its own CUDA stream.  A
+#: measurement control, never a correctness one: the calls are independent and
+#: each returns the same states on any stream.
+_RATE_STREAMS_ENV = "TESSERA_WINDOW_RATE_STREAMS"
+
+_RATE_STREAMS_LOCAL = threading.local()
+
+
+def _rate_streams(device: torch.device, count: int) -> "list[torch.cuda.Stream]":
+    """``count`` side streams on ``device``, kept per thread and reused.
+
+    Per thread for the reason ``window_viterbi``'s plan cache is: a stream is
+    where this thread's rate calls are ordered, and two threads encoding their
+    own units must not order their work behind each other's.
+    """
+    cache = getattr(_RATE_STREAMS_LOCAL, "streams", None)
+    if cache is None:
+        cache = _RATE_STREAMS_LOCAL.streams = {}
+    held = cache.setdefault(device, [])
+    while len(held) < count:
+        held.append(torch.cuda.Stream(device=device))
+    return held[:count]
+
+
+def _run_group(groups: "list[list[_TrellisCall]]") -> list:
+    """Run each rate's joined call and return each one's per-call answers.
+
+    ``groups[k]`` is rate ``k``'s call from every unit.  On CUDA each rate
+    runs on its own side stream, forked from and joined back to the caller's
+    stream, so the window Viterbi's latency-bound step chains of two rates
+    overlap instead of queueing one behind the other.  The calls are the ones
+    ``_run_joined`` makes one at a time -- same tensors, same plans, same
+    kernels -- and share nothing: each reads its own columns and each rate
+    has its own plan (the plan key carries the rate), so the answers are the
+    serial loop's answers.
+
+    Allocator ordering across the fork: the inputs were allocated on the
+    caller's stream and are read on a side stream, and the answers are the
+    reverse, so each is recorded on the stream that reads it; a block is then
+    not reused until that stream's reader has run.
+    """
+    lead = groups[0][0]
+    if (len(groups) < 2 or not lead.targets.is_cuda
+            or os.environ.get(_RATE_STREAMS_ENV, "") == "0"):
+        return [_run_joined(calls) for calls in groups]
+    device = lead.targets.device
+    main = torch.cuda.current_stream(device)
+    streams = _rate_streams(device, len(groups))
+    ready = main.record_event()
+    out = []
+    for stream, calls in zip(streams, groups):
+        stream.wait_event(ready)
+        for call in calls:
+            call.targets.record_stream(stream)
+            if call.weights is not None:
+                call.weights.record_stream(stream)
+            if call.window_vectors is not None:
+                call.window_vectors.record_stream(stream)
+        with torch.cuda.stream(stream):
+            out.append(_run_joined(calls))
+    for stream, answers in zip(streams, out):
+        main.wait_stream(stream)
+        for answer in answers:
+            answer.record_stream(main)
+    return out
+
+
+def _same_request(a, b) -> bool:
+    """``same_call_as`` over one yield: a single call, or a span's rate tuple."""
+    if isinstance(a, tuple) or isinstance(b, tuple):
+        return (isinstance(a, tuple) and isinstance(b, tuple) and len(a) == len(b)
+                and all(x.same_call_as(y) for x, y in zip(a, b)))
+    return a.same_call_as(b)
+
+
 def _drive_in_step(steps: list) -> "list[EncodedUnit]":
     """Advance every unit's generator together, joining each round's calls.
 
@@ -3719,12 +3820,19 @@ def _drive_in_step(steps: list) -> "list[EncodedUnit]":
             )
         lead = pending[0]
         for i in live[1:]:
-            if not pending[i].same_call_as(lead):
+            if not _same_request(pending[i], lead):
                 raise GrammarError(
                     f"batch fell out of step: unit {i} asked for a different "
                     "trellis call than unit 0 at the same point of the schedule"
                 )
-        answers = _run_joined([pending[i] for i in live])
+        if isinstance(lead, tuple):
+            # A window span's rate calls, yielded together: join each rate
+            # across the units, run the rates as a group, hand each unit its
+            # tuple of answers back in its own order.
+            per_rate = _run_group([[pending[i][k] for i in live] for k in range(len(lead))])
+            answers = [tuple(rate[j] for rate in per_rate) for j in range(len(live))]
+        else:
+            answers = _run_joined([pending[i] for i in live])
         for i, answer in zip(live, answers):
             advance(i, answer)
     return results

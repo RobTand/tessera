@@ -968,10 +968,19 @@ v5 or v6 reader ignores a new top-level key and no value it already read has
 moved. (It was authored against v5 and landed after §12 took v6; the renumber
 is bookkeeping -- the block, not the integer, is the claim, and PrismaQuant's
 `contract_answer()` over the v6 and v7 payloads is byte-identical.)
-One entry today (two before 2026-09-16): the window GEMV. The span-2 NVFP4
-decoder's entry was removed with the A4 whole-weight expansion — nothing under
-`tessera.serving` loads that library any more, and a table entry for it would
-publish a `.so` no serve can map.
+Three entries today: the window GEMV, and since 2026-09-28 (tessera#640,
+contract v42) the two libraries of the fused routed window MoE lane,
+`tessera_routed_fused_e4m3` (route `TESSERA_FP8`, lane decoder
+`native_routed_fused_window`) and `tessera_routed_fused_value` (route
+`TESSERA_BF16`, lane decoder `native_routed_fused_window_folded`) -- one source,
+`csrc/routed_fused_window.cu`, built once per window family by
+`tessera.routed_fused`, loaded from `tessera.serving.moe_route` through
+`native_window_moe.PackedWindowMoeBundles.adapter`, and substituting the
+compact adapter's decoder in both residencies when the build cannot compile
+it. Between 2026-09-16 and 2026-09-28 the table held the window GEMV alone.
+The span-2 NVFP4 decoder's entry was removed with the A4 whole-weight
+expansion — nothing under `tessera.serving` loads that library any more, and a
+table entry for it would publish a `.so` no serve can map.
 
 **It is a glob, not a basename, and the rule is a value.** An entry whose
 module name carries a build-identity hash has no exact basename to publish, so
@@ -1348,3 +1357,14 @@ against the BF16 reference is the same at both worlds
 (`docs/measurements/tessera-glm53-a4-stub-tp2-excess-resolved-2026-09-17.md`).
 The stub's attention backend refuses graph mode, so no compiled forward is
 attested.
+
+**Contract v39 (tessera#604, second half).** v39 withdrew the two v28/v32
+cells. They named `(vllm.fused_moe.modular_kernel, torch_materialize_stock)`,
+and this build's NVFP4 expert stack cannot make that launch: it always builds
+the native grouped A4 stacks. The same ids come back on the GLM serving image
+at q256 896 only, executing `(tessera.kernel_a4.a4_span2_grouped_gemm,
+native_span2_grouped)`, TP 1, eager and resident
+(`docs/measurements/tessera-glm-u1-census-2026-09-26.md`). The world-size and
+KL receipts above measured the materialising launch and do not carry over.
+Routed E2M1 at q256 128..768 is unattested until a census of the grouped
+route earns it.

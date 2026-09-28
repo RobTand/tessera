@@ -10,6 +10,7 @@ from experiments.full_engine_kv import inspect_worker_kv
 from experiments.full_engine_timing_boundaries import resolve_apply_boundaries
 from experiments.full_engine_timings import FullEngineTimingRecorder
 from experiments.full_engine_worker import full_engine_runtime_observation
+from experiments.full_engine_worker_identity import actual_host_ip
 
 
 class TimingCaptureWorker(Worker):
@@ -19,6 +20,8 @@ class TimingCaptureWorker(Worker):
         self._timing_boundaries = None
         self._timing_kv = None
         self._timing_exclusivity = None
+        self._timing_identity = None
+        self._timing_host = None
         super().__init__(*args, **kwargs)
 
     def load_model(self, *args, **kwargs):
@@ -39,10 +42,25 @@ class TimingCaptureWorker(Worker):
             raise RuntimeError("timing worker is already armed")
         if type(sample) is not int or not 0 <= sample < self._timing_plan["timing_samples"]:
             raise ValueError("timing sample is outside the explicit plan")
-        directory = Path(self._timing_plan["output_directory"]) / f"worker-{os.getpid()}" / f"sample-{sample}-{arm}"
-        self._timing_exclusivity = {"at_arm": device_processes(self.device)}
-        self._timing_recorder = FullEngineTimingRecorder(self._timing_boundaries, arm=arm, output=directory)
-        return {"pid": os.getpid(), "arm": arm, "sample": sample, "native_units": len(self._timing_boundaries),
+        world = self.vllm_config.parallel_config.tensor_parallel_size
+        if world not in (1, 2) or self._timing_plan.get("world_size", 1) != world or not 0 <= self.rank < world:
+            raise ValueError("timing observer supports only TP1 or the complete TP2 rank world")
+        device_index = self.device.index
+        census = device_processes(self.device)
+        self._timing_host = actual_host_ip() if world == 2 else None
+        self._timing_identity = dict(self._timing_plan["identity"], rank=self.rank,
+                                     world_size=world, device_id=device_index,
+                                     device_uuid=census.get("device_uuid"))
+        if world == 2:
+            self._timing_identity["host"] = self._timing_host
+        directory = Path(self._timing_plan["output_directory"]) / f"rank-{self.rank}-worker-{os.getpid()}" / f"sample-{sample}-{arm}"
+        self._timing_exclusivity = {"at_arm": census}
+        self._timing_recorder = FullEngineTimingRecorder(self._timing_boundaries, arm=arm, output=directory,
+                                                         device_id=device_index, tp2_composite=world == 2)
+        return {"pid": os.getpid(), "rank": self.rank, "world_size": world,
+                "device_id": device_index, "device_uuid": census.get("device_uuid"),
+                "host": self._timing_host,
+                "arm": arm, "sample": sample, "native_units": len(self._timing_boundaries),
                 "device_processes_at_arm": self._timing_exclusivity["at_arm"]}
 
     def execute_model(self, scheduler_output):
@@ -64,13 +82,15 @@ class TimingCaptureWorker(Worker):
         if self._timing_recorder is None:
             raise RuntimeError("timing worker was not armed")
         def runtime():
-            result = full_engine_runtime_observation(self._timing_plan)
+            local_plan = dict(self._timing_plan, identity=self._timing_identity)
+            result = full_engine_runtime_observation(local_plan, worker=self)
             result["source"]["full_engine_timing_worker_sha256"] = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
             result["kv_configuration"] = self._timing_kv
             # One runtime observation per worker directory, beside the arms,
             # in the file the step-4 route qualification binds the mapped
             # decode library to; every arm's capture.json embeds its own copy.
-            path = Path(self._timing_plan["output_directory"]) / f"worker-{os.getpid()}" / "runtime-observation.json"
+            path = (Path(self._timing_plan["output_directory"])
+                    / f"rank-{self.rank}-worker-{os.getpid()}" / "runtime-observation.json")
             if not path.exists():
                 path.parent.mkdir(parents=True, exist_ok=True)
                 with path.open("x") as stream:
@@ -82,10 +102,13 @@ class TimingCaptureWorker(Worker):
                                   "are the driver's namespace, so the count and its constancy are the "
                                   "witness, not pid equality with own_pid; a foreign process alive only "
                                   "between the two samples is not seen here"))
-        result = self._timing_recorder.finish(identity=self._timing_plan["identity"], runtime=runtime,
+        result = self._timing_recorder.finish(identity=self._timing_identity, runtime=runtime,
                                               exclusivity=exclusivity)
         self._timing_recorder = None
-        return result
+        return {**result, "rank": self.rank, "world_size": self._timing_identity["world_size"],
+                "device_id": self._timing_identity["device_id"],
+                "device_uuid": self._timing_identity["device_uuid"],
+                "host": self._timing_host, "pid": os.getpid()}
 
 
 def device_processes(device):
@@ -106,7 +129,11 @@ def device_processes(device):
             processes = [{"pid": int(row.pid),
                           "used_gpu_memory_bytes": (None if row.usedGpuMemory is None else int(row.usedGpuMemory))}
                          for row in rows]
-            return {"available": True, "device_index": index, "processes": processes,
+            uuid = pynvml.nvmlDeviceGetUUID(handle)
+            if isinstance(uuid, bytes):
+                uuid = uuid.decode()
+            return {"available": True, "device_index": index, "device_uuid": uuid,
+                    "processes": processes,
                     "count": len(processes)}
         finally:
             pynvml.nvmlShutdown()

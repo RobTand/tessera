@@ -149,9 +149,56 @@ def test_the_packaged_contract_validates_at_v33(contract):
     cells that named it are withdrawn.  A v10 reader resolves every cell with
     the code it already has; what moved is which combinations resolve, and the
     E4M3/BF16 format rows' attested rungs.
+
+    v39 (tessera#604, second half) is NOT additive for a lane reader and moves
+    no schema: four E2M1 cells are withdrawn (the pin-image dense pair on
+    ``(torch._scaled_mm, native_span2)`` and the a5424378 routed pair on the
+    materialising launch) with both launch rows, four resident, eager E2M1
+    cells are minted on the GLM serving image on the two native A4 pairs,
+    which leave ``EXPERIMENTAL_LAUNCHES``, six v38 cells widen their rungs,
+    and the image gains an ``activation_quantizers`` entry.  The E4M3/BF16
+    format rows' attested rungs widen; the E2M1 row's shrink to 896.
+
+    v40 (tessera#599 step 2) is additive and moves no schema: a
+    ``producer_interface`` block publishes the export drivers'
+    ``--producer-authority`` option as data, and no cell, rung, route or
+    format row moves.
+
+    v41 is additive too: a cell's ``runtime`` accepts the optional
+    ``tessera_commit`` / ``serving_source_sha256`` pair and the route-trace
+    header carries the same digest.  No cell stamps it yet.
+
+    v42 (tessera#640) is ADDITIVE for a lane reader and moves no schema:
+    ``native_extensions`` gains the fused routed window lane's two libraries,
+    the two lane-bearing launch rows enter ``scheme.ROUTE_LAUNCHES`` (the
+    first since v31), and the four window routed cells
+    ``tessera_{e4m3,bf16}_k1_routed_moe_sm121_{decode,batch}_resident`` name
+    the fused pair beside the compact pair they already named, on a served
+    census of the rate-4 u1 stub B.  The compact pair stays attested (it
+    serves every stack the lane refuses and ``TESSERA_ROUTED_FUSED=0``), so a
+    v10 reader that admitted those cells before admits them still and reads
+    one more launch.  No rung, route, flag or format row moves.
+
+    v43 (the dense follow-up to tessera#640) is additive the same way: two
+    more lane-bearing rows -- the fused window kernel's DENSE identity,
+    ``tessera::fused_window_dense`` under one decoder per arithmetic -- enter
+    the two window families' dense launches, and the six dense cells whose
+    rungs reach the lane's predicate (the two pinned-image E4M3 cells and the
+    four GLM-image E4M3/BF16 cells) name the fused pair beside the Triton pair,
+    each on a served census of its own image.  No image, rung, flag or format
+    row moves; the pin is unchanged.
     """
-    assert int(contract["contract_version"]) == 38
+    assert int(contract["contract_version"]) == 43
+    fused = "tessera.routed_fused.FusedRoutedWindowMoE.__call__"
+    for cell in contract["lane_eligibility"]["cells"]:
+        window_routed = (cell["structure"] == "routed_moe"
+                         and cell["family"] in ("TESSERA_E4M3_K1", "TESSERA_BF16_K1"))
+        assert "TESSERA_ROUTED_FUSED=0" not in cell["requires_serve_flags"], cell["id"]
+        assert any(e["symbol"] == fused for e in cell["executes"]) == window_routed, cell["id"]
+    assert not any(set(cell["runtime"]) & {"tessera_commit", "serving_source_sha256"}
+                   for cell in contract["lane_eligibility"]["cells"])
     assert "activation_quantizers" in contract
+    assert "producer_interface" in contract
     assert all("structures" in entry for entry in contract["formats"])
     assert contract["lane_eligibility"]["schema"] == LANE_ELIGIBILITY_SCHEMA
     assert LANE_ELIGIBILITY_SCHEMA.endswith(".v10")
@@ -311,25 +358,55 @@ def test_the_surviving_v22_sm121_cells_are_byte_identical(contract):
     # span, and re-earned four ids on the GLM-image census: the resident E4M3
     # dense pair v31 withdrew, and the routed pair v38 itself withdrew, each on
     # the launch the census recorded.
+    #
+    # Contract v39 (tessera#604, second half) withdrew the span's last two
+    # cells (the pin-image E2M1 dense pair) and the a5424378 routed E2M1 pair,
+    # and re-earned the routed ids on the GLM image's native grouped launch.
     present = {cell["id"] for cell in contract["lane_eligibility"]["cells"]}
-    withdrawn = set(recorded["withdrawn_at_v31"]) | set(recorded["withdrawn_at_v38"])
+    withdrawn = (set(recorded["withdrawn_at_v31"]) | set(recorded["withdrawn_at_v38"])
+                 | set(recorded["withdrawn_at_v39"]))
     reearned = set(recorded["reearned_at_v34"])
     withdrawn_again = set(recorded["withdrawn_at_v37"])
     reearned_v38 = set(recorded["reearned_at_v38"])
+    reearned_v39 = set(recorded["reearned_at_v39"])
     assert len(recorded["withdrawn_at_v31"]) == 6 and len(recorded["withdrawn_at_v38"]) == 2
+    assert len(recorded["withdrawn_at_v39"]) == 4
     assert reearned < withdrawn and len(reearned) == 2
     assert withdrawn_again == reearned
     assert reearned_v38 < withdrawn and len(reearned_v38) == 4
-    standing = (reearned - withdrawn_again) | reearned_v38
+    assert reearned_v39 < withdrawn and len(reearned_v39) == 2
+    standing = (reearned - withdrawn_again) | reearned_v38 | reearned_v39
     assert not (present & (withdrawn - standing)), sorted(present & (withdrawn - standing))
     assert standing <= present
-    launch = {"dense": ("tessera::window_gemm_dense", "native_window_gemm"),
-              "routed_moe": ("tessera.native_window_moe.NativeWindowMoE.__call__",
-                             "native_window_moe_compact")}
+    # Contract v42 (tessera#640): the standing routed E4M3 pair names the
+    # fused routed window lane's launch beside the compact one, on a served
+    # census of the rate-4 u1 stub B
+    # (docs/measurements/2026-09-28-routed-fused-640.md).  Neither is a
+    # withdrawn claim; the span is empty, so the digest does not move.
+    #
+    # Contract v43 (tessera#692): the standing dense E4M3 pair names the fused
+    # window kernel's DENSE identity beside the Triton window GEMM, on a served
+    # census of the same stub's q256 1024 shared-expert modules
+    # (docs/measurements/2026-09-28-dense-fused-window.md); the fixture's
+    # ``remeasured_at_v43`` list names the two ids.  Again no withdrawn claim.
+    assert set(recorded["remeasured_at_v43"]) == {
+        "tessera_e4m3_k1_dense_sm121_decode_resident",
+        "tessera_e4m3_k1_dense_sm121_batch_resident"}
+    assert set(recorded["remeasured_at_v43"]) <= standing
+    launch = {("TESSERA_E4M3_K1", "dense"): [
+                  ("tessera::window_gemm_dense", "native_window_gemm"),
+                  ("tessera::fused_window_dense", "native_fused_window_dense")],
+              ("TESSERA_E4M3_K1", "routed_moe"): [
+                  ("tessera.native_window_moe.NativeWindowMoE.__call__",
+                   "native_window_moe_compact"),
+                  ("tessera.routed_fused.FusedRoutedWindowMoE.__call__",
+                   "native_routed_fused_window")],
+              ("TESSERA_E2M1_K2", "routed_moe"): [
+                  ("tessera.kernel_a4.a4_span2_grouped_gemm", "native_span2_grouped")]}
     for cell in contract["lane_eligibility"]["cells"]:
         if cell["id"] in standing:
-            assert [(e["symbol"], e["decoder"]) for e in cell["executes"]] == [
-                launch[cell["structure"]]], cell["id"]
+            assert [(e["symbol"], e["decoder"]) for e in cell["executes"]] == \
+                launch[(cell["family"], cell["structure"])], cell["id"]
     assert {cell["id"] for cell in span} <= present
 
 
@@ -443,8 +520,9 @@ def test_the_serve_image_rule_is_the_weaker_one_the_data_supports(contract):
 
     The design asked that every cell's ``runtime.image`` equal its platform's
     ``serve_image``. The shipped document falsifies that: ``sm_121`` carries
-    two attested images, and since v28 (#506) three: the routed E2M1_K2 cells
-    name the NCCL 2.30 image their two-rank receipt ran. Taken literally the
+    two attested images, from v28 (#506) to v38 three, and since v39
+    (tessera#604) two again: the dense pin and the GLM serving image, which is
+    not the platform's ``serve_image``. Taken literally the
     stronger rule refuses the contract in this repository, so the rule is
     "attested by one of the platform's own cells" instead. This test is the
     measurement.
@@ -452,5 +530,5 @@ def test_the_serve_image_rule_is_the_weaker_one_the_data_supports(contract):
     block = contract["lane_eligibility"]
     images = {cell["runtime"]["image"] for cell in block["cells"]
               if cell["platform"] == "sm_121"}
-    assert len(images) == 3, images
+    assert len(images) == 2, images
     assert block["platforms"]["sm_121"]["serve_image"] in images

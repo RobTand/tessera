@@ -1,16 +1,34 @@
 """Read-only source identity for test populations, separate from Git history.
 
-PB snapshots contain one action-specific generated closure stamp. Its name is
-not ownership proof: exclude it only after verifying the exact sealed action.
-Unknown provenance or a modified materialized tree never establishes equality.
+A checkout an executor materialized can carry files the executor generated,
+for example a closure stamp beside the source.  Such a file is not source, and
+two runs of one source can carry different ones, so the identity leaves it out.
+It leaves a file out only when a declared **source verifier** vouches for it,
+never because of its name.
+
+The verifier is a command, declared in :data:`VERIFIER_ENV` as a shell-quoted
+argv.  Tessera runs it with the checkout root and its HEAD commit appended.  It
+must exit 0 and print one JSON object on stdout whose ``generated`` member lists
+the generated files, each with at least ``path`` (relative to the checkout
+root), ``bytes`` and ``sha256``; other fields are recorded as given.  An empty
+list means the executor generated nothing.  Tessera still checks every listed
+file itself: a regular file inside the checkout, with those bytes and that
+digest, equal to its blob at the commit.
+
+Fail closed: a declared verifier that cannot run, exits non-zero, prints
+anything else, or lists a file that fails those checks makes the identity
+``unknown``.  With no verifier declared, nothing is left out and every tracked
+file is source.  Unknown provenance or a modified materialized tree never
+establishes equality.
 """
 from __future__ import annotations
 
 import hashlib
 import json
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import re
+import shlex
 import stat
 import subprocess
 
@@ -19,7 +37,13 @@ import subprocess
 #: ``tools/merge_suite.py``, so the module moving under ``_dev`` does
 #: not move the wire; the version suffix is what a change would use.
 SCHEMA = "tessera.suite_source.v1"
-REQUEST_ROOT = Path("/mnt/shared/prismabuild-fleet/cas/requests")
+#: The environment variable that declares the source verifier command.
+VERIFIER_ENV = "TESSERA_SOURCE_VERIFIER"
+#: How long the verifier may take before the identity is ``unknown``.
+VERIFIER_TIMEOUT_S = 120
+
+#: ``measured_source``'s default: read the verifier from :data:`VERIFIER_ENV`.
+FROM_ENVIRONMENT = object()
 
 
 def _canonical(value):
@@ -41,83 +65,62 @@ def _git(root, *args):
                                    stderr=subprocess.DEVNULL, timeout=10)
 
 
-def _snapshot_schema(root, commit):
-    """Recognize PB snapshots without treating an unknown version as source."""
-    subject = _git(root, "log", "-1", "--format=%s", commit).strip()
-    prefix = b"PrismaBuild pbrun checkout snapshot "
-    if not subject.startswith(prefix):
+def declared_verifier(env=None):
+    """The verifier argv :data:`VERIFIER_ENV` declares, or ``None`` if unset.
+
+    A variable that is set but names no command raises: a declaration that
+    cannot be read is not the absence of one.
+    """
+
+    value = (os.environ if env is None else env).get(VERIFIER_ENV)
+    if value is None:
         return None
-    version = subject[len(prefix):]
-    _require(version in (b"v1", b"v2"), "unsupported PB snapshot version")
-    return "prismaquant.prismabuild.pbrun_checkout_snapshot." + version.decode()
+    argv = shlex.split(value)
+    _require(argv, f"{VERIFIER_ENV} is set but names no command")
+    return argv
 
 
-def _verified_stamp(root, commit, request_root, owner, snapshot_schema):
-    """The directory prefix locates requests; only the full checks verify one."""
-    match = re.fullmatch(r"([0-9a-f]{12})\.[^/]+", root.parent.name)
-    _require(root.name == "checkout" and match, "PB action locator is unavailable")
-    prefix = match.group(1)
-    candidates = list(Path(request_root, prefix[:2]).glob(prefix + "*.json"))
-    _require(len(candidates) == 1, "PB action lookup is missing or ambiguous")
-    raw = candidates[0].read_bytes()
-    action = json.loads(raw)
-    _require(isinstance(action, dict), "PB action is not an object")
-    key = action["action_key"]
-    body = {name: value for name, value in action.items() if name != "action_key"}
-    _require(re.fullmatch(r"[0-9a-f]{64}", key) and key == candidates[0].stem
-             and key == _digest(body), "PB action key does not verify")
-    _require(action["schema"] == "prismaquant.prismabuild.action.v2"
-             and action["task"]["definition_id"] == "fleet/pbrun"
-             and action["task"]["definition_version"] == "v1", "unsupported PB action")
-    params = action["params"]
-    snapshot = params["checkout_snapshot"]
-    _require(snapshot["schema"] == snapshot_schema
-             and snapshot["commit"] == commit, "PB action names another snapshot")
-    _require(snapshot["input"] in action["inputs"], "PB snapshot input is not sealed")
-    _require(params["cwd"] == snapshot["subdirectory"], "PB logical cwd differs")
-    variables = action["environment"]["variables"]
-    _require(isinstance(variables, dict), "PB environment variables are not an object")
-    _require(owner and owner == variables.get("PRISMABUILD_CONTAINER_OWNER"),
-             "PB action owner differs or is unavailable")
-    closure = action["code_closure"]
-    _require(isinstance(closure, dict), "PB closure is not an object")
-    closure_body = {name: value for name, value in closure.items() if name != "closure_sha256"}
-    _require(closure["schema"] == "prismaquant.prismabuild.code_closure.v1"
-             and closure["closure_sha256"] == _digest(closure_body)
-             and len(closure["files"]) == 1, "PB closure does not verify")
-    entry = closure["files"][0]
-    filename = entry["path"]
-    _require(re.fullmatch(r"\.pbrun-closure\.[0-9a-f]{16}\.json", filename),
-             "PB closure is not the generated stamp")
-    subdirectory = Path(snapshot["subdirectory"])
-    _require(not subdirectory.is_absolute() and ".." not in subdirectory.parts,
-             "PB snapshot subdirectory escapes the source")
-    relative = subdirectory / filename
-    stamp_path = root / relative
-    _require(stat.S_ISREG(stamp_path.lstat().st_mode), "PB stamp is not a regular file")
-    stamp_raw = stamp_path.read_bytes()
-    _require(len(stamp_raw) == entry["bytes"]
-             and hashlib.sha256(stamp_raw).hexdigest() == entry["sha256"],
-             "PB stamp differs from its sealed closure")
-    _require(_git(root, "show", f"{commit}:{relative.as_posix()}") == stamp_raw,
-             "PB stamp differs from its snapshot blob")
-    stamp = json.loads(stamp_raw)
-    _require(isinstance(stamp, dict) and set(stamp) == {"cwd", "head", "dirty_sha256"}
-             and stamp["cwd"] == params["cwd"]
-             and re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", stamp["head"])
-             and re.fullmatch(r"[0-9a-f]{64}", stamp["dirty_sha256"]),
-             "PB stamp payload is not generated closure metadata")
-    identity = {name: stamp[name] for name in ("head", "dirty_sha256")}
-    # The published pbrun v1 name binds command, demand, environment, source
-    # submission identity and placement. No matching-name glob is excluded.
-    fingerprint = hashlib.sha256(json.dumps(
-        [params["command"], params["cwd"], params["demand"], variables,
-         identity, params["placement"]], sort_keys=True).encode()).hexdigest()[:16]
-    _require(filename == f".pbrun-closure.{fingerprint}.json"
-             and action["task"]["result_path"] == f"pbrun_result.{fingerprint}.txt",
-             "PB stamp name does not match its action fingerprint")
-    return {**entry, "path": relative.as_posix(), "action_key": key,
-            "request_sha256": hashlib.sha256(raw).hexdigest()}
+def _generated_files(root, commit, verifier):
+    """The files ``verifier`` says the executor generated, each checked here."""
+
+    try:
+        done = subprocess.run([*verifier, str(root), commit], capture_output=True,
+                              timeout=VERIFIER_TIMEOUT_S, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.SubprocessError) as error:
+        raise ValueError(f"source verifier did not run: {error}") from error
+    if done.returncode != 0:
+        tail = done.stderr.decode("utf-8", "replace").strip()[-400:]
+        raise ValueError(f"source verifier refused (exit {done.returncode}): {tail}")
+    try:
+        report = json.loads(done.stdout)
+    except ValueError as error:
+        raise ValueError(f"source verifier printed no JSON object: {error}") from error
+    _require(isinstance(report, dict) and isinstance(report.get("generated"), list),
+             "source verifier report has no generated list")
+    generated, seen = [], set()
+    for entry in report["generated"]:
+        _require(isinstance(entry, dict), "source verifier entry is not an object")
+        path = entry.get("path")
+        _require(isinstance(path, str) and path, "source verifier entry names no path")
+        relative = PurePosixPath(path)
+        _require(not relative.is_absolute() and ".." not in relative.parts
+                 and relative.as_posix() == path and path not in seen,
+                 "source verifier path escapes the checkout or repeats")
+        seen.add(path)
+        size, sha = entry.get("bytes"), entry.get("sha256")
+        _require(type(size) is int and isinstance(sha, str)
+                 and re.fullmatch(r"[0-9a-f]{64}", sha),
+                 "source verifier entry has no bytes and sha256")
+        on_disk = Path(root, path)
+        _require(stat.S_ISREG(on_disk.lstat().st_mode),
+                 "generated file is not a regular file")
+        raw = on_disk.read_bytes()
+        _require(len(raw) == size and hashlib.sha256(raw).hexdigest() == sha,
+                 "generated file differs from what the verifier vouched for")
+        _require(_git(root, "show", f"{commit}:{path}") == raw,
+                 "generated file differs from its blob at the commit")
+        generated.append(entry)
+    return generated
 
 
 def _source_files(root, commit, excluded):
@@ -149,7 +152,7 @@ def _source_files(root, commit, excluded):
                     git_digest.update(chunk)
                     digest.update(chunk)
         _require(git_digest.hexdigest().encode() == oid, "source bytes differ from snapshot")
-        if raw_path != excluded:
+        if raw_path not in excluded:
             files.append([raw_path.hex(), mode.decode(), digest.hexdigest()])
     return files
 
@@ -255,13 +258,17 @@ def agreed_source(record, workers):
                                    for name in disputed))}
 
 
-def measured_source(checkout, *, request_root=REQUEST_ROOT, owner=None,
-                    entry=None):
+def measured_source(checkout, *, verifier=FROM_ENVIRONMENT, entry=None):
     """Verified effective source hash, or an explicit unknown with the raw ID.
 
-    This performs no repository writes and no full CAS/queue scan. Dirty input
-    changes already included in a PB snapshot affect its actual file hashes;
-    changes made after materialization refuse equality instead of hiding them.
+    This performs no repository writes. Dirty input changes already included in
+    a materialized snapshot affect its actual file hashes; changes made after
+    materialization refuse equality instead of hiding them.
+
+    ``verifier`` is the source verifier argv (see the module docstring), or
+    ``None`` for none; by default it is read from :data:`VERIFIER_ENV`.  The
+    files it vouches for are left out of the hash and recorded, as it reported
+    them, in ``excluded_metadata``.
 
     ``entry`` is the identity captured before the code under test was
     imported.  Given one, the answer is about the *span* between the two
@@ -271,24 +278,20 @@ def measured_source(checkout, *, request_root=REQUEST_ROOT, owner=None,
     record = {"schema": SCHEMA, "snapshot_commit": None, "sha256": None,
               "verification": "unknown", "excluded_metadata": []}
     try:
+        if verifier is FROM_ENVIRONMENT:
+            verifier = declared_verifier()
         root = Path(os.fsdecode(_git(checkout, "rev-parse", "--show-toplevel").rstrip(b"\n")))
         commit = _git(root, "rev-parse", "HEAD").decode().strip()
         record["snapshot_commit"] = commit
         status_args = ("status", "--porcelain=v1", "--untracked-files=all", "-z")
         _require(not _git(root, *status_args), "source checkout is dirty")
-        snapshot_schema = _snapshot_schema(root, commit)
-        is_snapshot = snapshot_schema is not None
-        excluded = None
-        if is_snapshot:
-            stamp = _verified_stamp(root, commit, request_root,
-                                    os.environ.get("PRISMABUILD_CONTAINER_OWNER") if owner is None else owner,
-                                    snapshot_schema)
-            excluded = os.fsencode(stamp["path"])
-        files = _source_files(root, commit, excluded)
+        generated = [] if verifier is None else _generated_files(root, commit, verifier)
+        files = _source_files(root, commit,
+                              {os.fsencode(item["path"]) for item in generated})
         _require(_git(root, "rev-parse", "HEAD").decode().strip() == commit
                  and not _git(root, *status_args), "source changed while it was measured")
         record.update(verification="verified", sha256=_digest({"schema": SCHEMA, "files": files}),
-                      files_verified=len(files), excluded_metadata=[stamp] if is_snapshot else [])
+                      files_verified=len(files), excluded_metadata=generated)
     except (OSError, ValueError, KeyError, TypeError, subprocess.SubprocessError) as error:
         record["reason"] = str(error)
     return record if entry is None else _bound_to_entry(record, entry)

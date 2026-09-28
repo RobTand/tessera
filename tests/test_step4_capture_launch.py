@@ -20,6 +20,7 @@ holds the step-4 launcher to the same rule.
 import importlib.util
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -61,6 +62,106 @@ def test_no_affinity_pins_nothing():
     assert "--cpuset-cpus" not in command
 
 
+def test_tp2_peer_uses_host_network_and_its_own_installer_mount():
+    command = _command(tp2=True, extra_mounts=[(Path("/shared/rank-1"), "/peer-out", "rw")])
+    assert command[command.index("--network") + 1] == "host"
+    assert "/shared/rank-1:/peer-out:rw" in command
+    assert "--cpuset-cpus" not in command
+
+
+def test_scoped_worker_cache_roots_are_owned_before_launch(tmp_path, monkeypatch):
+    import os
+    launcher = _launcher()
+    monkeypatch.setattr(launcher, "WORKER_UID", os.getuid())
+    launcher.prepare_worker_jit_cache(tmp_path)
+    assert {path.name for path in tmp_path.iterdir()} >= {
+        "home", "xdg", "tmp", "triton", "torch-extensions", "inductor", "cuda-cache"}
+    monkeypatch.setattr(launcher, "WORKER_UID", os.getuid() + 1)
+    with pytest.raises(RuntimeError, match="not writable by pinned worker UID"):
+        launcher.prepare_worker_jit_cache(tmp_path)
+
+
+def test_timeout_stops_the_exact_owned_container_and_records_absence(tmp_path, monkeypatch):
+    launcher = _launcher()
+    cidfile = tmp_path / "container.cid"
+    cidfile.write_text("a" * 64)
+    stopped = []
+    monkeypatch.setattr(launcher, "stop_owned_container", lambda path, name: (
+        stopped.append((path, name)) or {"container_id": "a" * 64, "absent": True}))
+
+    class FinishedTimeout:
+        def wait(self, timeout=None):
+            return 124
+
+        def poll(self):
+            return 124
+
+    monkeypatch.setattr(launcher.subprocess, "Popen", lambda *args, **kwargs: FinishedTimeout())
+    phase = launcher.run_phase("tp2-head", ["docker", "run", "--name", "owned-head",
+                                             "--cidfile", str(cidfile)], tmp_path / "phase.log", 1)
+    assert phase["returncode"] == 124
+    assert phase["owned_container_cleanup"]["absent"] is True
+    assert stopped == [(cidfile, "owned-head")]
+
+
+def test_missing_cid_recovers_only_a_matching_owned_container_after_stop_timeout(tmp_path, monkeypatch):
+    launcher = _launcher()
+    container_id = "a" * 64
+    state = {"removed": False, "operations": []}
+
+    def docker(command, **_kwargs):
+        operation = command[1]
+        state["operations"].append(operation)
+        if operation == "inspect":
+            if state["removed"]:
+                return SimpleNamespace(returncode=1, stdout="", stderr="error: no such object: " + container_id)
+            return SimpleNamespace(returncode=0, stdout=json.dumps([{
+                "Id": container_id,
+                "Config": {"Labels": {"org.prismaquant.pact-observer": "owned-head"}}}]), stderr="")
+        if operation == "stop":
+            raise launcher.subprocess.TimeoutExpired(command, 30)
+        state["removed"] = True
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(launcher.subprocess, "run", docker)
+    result = launcher.stop_owned_container(tmp_path / "unwritten.cid", "owned-head")
+    assert result["absent"] is True
+    assert result["identity_source"] == "owned_name_and_label"
+    assert [entry["operation"] for entry in result["actions"]] == ["stop", "rm"]
+    assert state["operations"] == ["inspect", "stop", "inspect", "rm", "inspect"]
+
+
+def test_missing_cid_never_stops_another_label(tmp_path, monkeypatch):
+    launcher = _launcher()
+    commands = []
+
+    def docker(command, **_kwargs):
+        commands.append(command)
+        return SimpleNamespace(returncode=0, stdout=json.dumps([{
+            "Id": "a" * 64, "Config": {"Labels": {"org.prismaquant.pact-observer": "other"}}}]),
+            stderr="")
+
+    monkeypatch.setattr(launcher.subprocess, "run", docker)
+    with pytest.raises(RuntimeError, match="owner label"):
+        launcher.stop_owned_container(tmp_path / "unwritten.cid", "owned-head")
+    assert len(commands) == 1 and commands[0][1] == "inspect"
+
+
+def test_head_failure_before_plan_notifies_only_its_session_peer(tmp_path):
+    launcher = _launcher()
+    from experiments.step4_tp2_peer import wait_for_plan
+    session = "fixture-session"
+    launcher.write_head_finished(tmp_path, session, returncode=3)
+    record = json.loads((tmp_path / "head-finished.json").read_text())
+    assert record["session_id"] == session and record["plan_sha256"] is None
+    with pytest.raises(RuntimeError, match="before a sealed shared plan"):
+        wait_for_plan(tmp_path / "capture" / "observer-plan.json", 1,
+                      finished=tmp_path / "head-finished.json", session_id=session)
+    with pytest.raises(TimeoutError):
+        wait_for_plan(tmp_path / "capture" / "observer-plan.json", 0,
+                      finished=tmp_path / "head-finished.json", session_id="foreign-session")
+
+
 def test_empty_affinity_is_refused_not_ignored():
     """An empty mask is a read that failed; pinning a container to nothing would hang."""
     with pytest.raises(ValueError):
@@ -89,6 +190,22 @@ def test_unset_allocator_policy_is_absent_from_the_container():
     environment = module.bound_container_environment(config)
     assert "PYTORCH_CUDA_ALLOC_CONF" not in environment
     assert environment == {"TESSERA_SERVE_MODE": "resident"}
+
+
+def test_tp2_source_commit_and_packaged_bytes_are_both_bound(tmp_path):
+    launcher = _launcher()
+    (tmp_path / "src" / "tessera").mkdir(parents=True)
+    (tmp_path / "src" / "tessera" / "__init__.py").write_text("# fixture\n")
+    (tmp_path / "pyproject.toml").write_text("[build-system]\n")
+    source_sha, _count = launcher.source_tree_identity(tmp_path)
+    config = {"runtime_identity": {"plugin_source_commit": "a" * 40,
+                                   "plugin_source_sha256": source_sha}}
+    assert launcher.require_tp2_source(config, tmp_path, "a" * 40) == source_sha
+    with pytest.raises(ValueError, match="different source commits"):
+        launcher.require_tp2_source(config, tmp_path, "b" * 40)
+    (tmp_path / "src" / "tessera" / "__init__.py").write_text("# changed\n")
+    with pytest.raises(ValueError, match="source bytes differ"):
+        launcher.require_tp2_source(config, tmp_path, "a" * 40)
 
 
 def test_a_real_allocator_policy_reaches_the_container():
@@ -160,3 +277,24 @@ def test_the_driver_smokes_compile_as_python():
     compile(driver.OBSERVER_SMOKE, "OBSERVER_SMOKE", "exec")
     assert "tessera_nvfp4" not in driver.NATIVE_SMOKE
     assert "require_tessera_ext" not in driver.NATIVE_SMOKE
+
+
+def test_tp2_peer_requires_the_sealed_rank_one_installer_and_stock_mp_world(tmp_path):
+    from experiments.step4_tp2_peer import digest, peer_engine_args
+    evidence = tmp_path / "per-job-runtime.json"
+    evidence.write_text('{"rank": 1}')
+    plan = {"rank_runtime_evidence": {"1": {"sha256": digest(evidence)}},
+            "selected_configuration": {
+                "engine_args": {"nnodes": 2, "node_rank": 0, "tensor_parallel_size": 2,
+                                "distributed_executor_backend": "mp", "master_addr": "10.0.0.1"},
+                "environment": {"VLLM_HOST_IP": "10.0.0.1"}},
+            "observer_engine_args": {"worker_cls": "experiments.full_engine_worker.ResourceCaptureWorker"},
+            "model": "/shared/stub"}
+    actual = peer_engine_args(plan, evidence, host_ip="10.0.0.2")
+    assert actual["node_rank"] == 1 and actual["nnodes"] == 2
+    assert actual["worker_cls"] == plan["observer_engine_args"]["worker_cls"]
+    with pytest.raises(ValueError, match="equals the head"):
+        peer_engine_args(plan, evidence, host_ip="10.0.0.1")
+    evidence.write_text('{"rank": 0}')
+    with pytest.raises(ValueError, match="installer evidence differs"):
+        peer_engine_args(plan, evidence, host_ip="10.0.0.2")

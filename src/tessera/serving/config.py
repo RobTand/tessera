@@ -427,8 +427,19 @@ class TesseraConfig(QuantizationConfig):
         the actual MTP draft architecture and speculative layer range. The
         lookup key is in vLLM's mapped declaration namespace; the caller keeps
         ``prefix`` itself for the builder, loader, and route telemetry.
+
+        One draft Linear reaches here under either of two spellings. A runtime
+        whose ``Glm5NextMultiTokenPredictorLayer`` hands its decoder layer
+        ``f"{prefix}.mtp_block"`` names it ``model.layers.N.mtp_block.<rest>``.
+        The pinned image hands the decoder layer its bare ``prefix``, so the
+        same Linear arrives as ``model.layers.N.<rest>`` while ``named_modules``
+        still inserts ``mtp_block``. Both resolve against the draft's view,
+        under the same guards, and only one spelling may be declared.
         """
-        if ".mtp_block." not in prefix:
+        blocked = ".mtp_block." in prefix
+        if not blocked and (prefix in self.target_scheme or prefix in self.ignore
+                            or len(self._mapped_views) < 2):
+            # The body view owns it, or there is no second view to consult.
             return prefix, self.target_scheme, self.ignore
         from vllm.config import get_current_vllm_config_or_none
         from .weights_mapper import glm5next_mtp_module_prefix
@@ -444,12 +455,12 @@ class TesseraConfig(QuantizationConfig):
         if (architectures != ["Glm5NextMTPModel"]
                 or getattr(text, "model_type", None) != "glm5_next_text"):
             return prefix, self.target_scheme, self.ignore
-        candidate = prefix.replace(".mtp_block.", ".", 1)
+        candidate = prefix.replace(".mtp_block.", ".", 1) if blocked else prefix
         mapped = glm5next_mtp_module_prefix(
             candidate, architecture=architectures[0],
             first_layer=getattr(text, "num_hidden_layers", None),
             count=getattr(text, "num_nextn_predict_layers", None))
-        if mapped != prefix:
+        if mapped is None or (blocked and mapped != prefix):
             return prefix, self.target_scheme, self.ignore
         views = [(declared, ignored) for declared, ignored in self._mapped_views
                  if candidate in declared or candidate in ignored]
@@ -458,11 +469,11 @@ class TesseraConfig(QuantizationConfig):
         if len(views) != 1:
             raise ValueError(
                 f"tessera MTP target {prefix!r} has {len(views)} mapped namespace owners")
-        if any(prefix in declared or prefix in ignored
+        if any(mapped in declared or mapped in ignored
                for declared, ignored in self._mapped_views):
             raise ValueError(
-                f"tessera MTP target {prefix!r} collides with mapped declaration "
-                f"{candidate!r}; one module cannot have two owners")
+                f"tessera MTP target {prefix!r}: the declaration {mapped!r} collides with "
+                f"mapped declaration {candidate!r}; one module cannot have two owners")
         return candidate, *views[0]
 
     def get_quant_method(self, layer: torch.nn.Module,
