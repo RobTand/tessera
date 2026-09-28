@@ -158,9 +158,15 @@ def test_the_packaged_contract_validates_at_v33(contract):
     which leave ``EXPERIMENTAL_LAUNCHES``, six v38 cells widen their rungs,
     and the image gains an ``activation_quantizers`` entry.  The E4M3/BF16
     format rows' attested rungs widen; the E2M1 row's shrink to 896.
+
+    v40 (tessera#599 step 2) is additive and moves no schema: a
+    ``producer_interface`` block publishes the export drivers'
+    ``--producer-authority`` option as data, and no cell, rung, route or
+    format row moves.
     """
-    assert int(contract["contract_version"]) == 39
+    assert int(contract["contract_version"]) == 40
     assert "activation_quantizers" in contract
+    assert "producer_interface" in contract
     assert all("structures" in entry for entry in contract["formats"])
     assert contract["lane_eligibility"]["schema"] == LANE_ELIGIBILITY_SCHEMA
     assert LANE_ELIGIBILITY_SCHEMA.endswith(".v10")

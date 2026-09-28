@@ -15,6 +15,7 @@ from tessera.hessian_capture import capture_sha256_from_units
 from tessera.manifest import ScalePlaneKind
 
 from test_hessian_reference_capture import POLICY, SCHEMA, write_json
+from reuse_authority_fixture import CANONICAL_CAPTURE
 
 
 COLLECTION_SCHEMA = "tessera.hessian_capture.collection.v1"
@@ -31,16 +32,16 @@ def _reference(root, hessians, provenance):
     for name, H in hessians.items():
         path = root / "inputs" / f"{name}.pt"
         torch.save({"inputs": torch.ones(2, 4), "hessian": H, "name": name,
-                    "source": "tessera_campaign_prefix_f32_v1", "count": 8,
+                    "source": CANONICAL_CAPTURE[1], "count": 8,
                     "max_abs": 1.0}, path)
         entries[name] = {"path": f"inputs/{name}.pt",
                          "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
     canonical = root / "capture_manifest.json"
     canonical_sha = write_json(canonical, {
-        "schema": "prismaquant.tessera_calibration_cache.v2", "status": "complete",
-        "identity": {"schema": "prismaquant.tessera_calibration_cache.v2",
+        "schema": CANONICAL_CAPTURE[0], "status": "complete",
+        "identity": {"schema": CANONICAL_CAPTURE[0],
                      "census_sha256": census_sha, "units": shapes,
-                     "storage_source": "tessera_campaign_prefix_f32_v1", "max_act_rows": 2,
+                     "storage_source": CANONICAL_CAPTURE[1], "max_act_rows": 2,
                      "calibration": {k: v for k, v in provenance.items() if k != "hessian_role"}},
         "entries": entries})
     digest = ActivationSource(hessians, provenance).capture_sha256()
@@ -84,8 +85,8 @@ def test_collection_preserves_per_unit_cached_identity_and_lazy_uncached_read(co
         loads.append(args[0])
         return original(*args, **kwargs)
     monkeypatch.setattr(torch, "load", observed)
-    combined = ActivationSource.from_capture(document, ldlq_sigma=None)
-    singles = [ActivationSource.from_capture(path, ldlq_sigma=None) for path in paths]
+    combined = ActivationSource.from_capture(document, canonical_capture=CANONICAL_CAPTURE, ldlq_sigma=None)
+    singles = [ActivationSource.from_capture(path, canonical_capture=CANONICAL_CAPTURE, ldlq_sigma=None) for path in paths]
     assert set(combined.hessians) == set(hessians)
     assert combined.capture_sha256() == json.loads(document.read_text())["capture_sha256"]
     assert loads == [], "collection intake and sealing must not load H payloads"
@@ -139,12 +140,12 @@ def test_collection_refuses_invalid_member_or_roster(collection, problem):
     if problem in {"overlap", "mismatch", "omission", "collection_mutation"}:
         write_json(document, payload)
     with pytest.raises((GrammarError, OSError, ValueError)):
-        ActivationSource.from_capture(document)
+        ActivationSource.from_capture(document, canonical_capture=CANONICAL_CAPTURE)
 
 
 def test_collection_mutation_after_open_refuses_and_closes_every_child(collection):
     document, paths, _hessians, _provenance = collection
-    source = ActivationSource.from_capture(document)
+    source = ActivationSource.from_capture(document, canonical_capture=CANONICAL_CAPTURE)
     paths[1].write_text(paths[1].read_text() + " ")
     with pytest.raises(GrammarError, match="changed or was replaced"):
         source.capture_sha256()
@@ -167,14 +168,14 @@ def test_failed_second_child_closes_both_opened_reference_owners(collection, mon
         closed.add(path)
     monkeypatch.setattr(ReferenceHessians, "close", observed)
     with pytest.raises(GrammarError, match="child checksum differs"):
-        ActivationSource.from_capture(document)
+        ActivationSource.from_capture(document, canonical_capture=CANONICAL_CAPTURE)
     assert closed == {str(path) for path in paths}
 
 
 def test_priced_inputs_binds_the_collection_and_every_child(collection, tmp_path):
     from test_priced_inputs_snapshot import exporter
     document, paths, _hessians, _provenance = collection
-    source = ActivationSource.from_capture(document)
+    source = ActivationSource.from_capture(document, canonical_capture=CANONICAL_CAPTURE)
     block = {"schema": "tessera.priced_export_inputs.v2",
              "hessian_capture_sha256": source.capture_sha256(),
              "hessian_reference_binding": source.reference_binding(),

@@ -159,6 +159,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from export_stock_compressed import (  # noqa: E402
     FP8_INPUTS, FP8_WEIGHTS, NVFP4_INPUTS, NVFP4_WEIGHTS, regex_target,
     stock_quantization_config)
+from tessera import producer_authority as producer_authority_option  # noqa: E402
 from tessera.cached_unit import CachedUnitIdentity, HESSIAN_IDENTITY_MODES  # noqa: E402
 from tessera.alphabet import (  # noqa: E402
     BF16_GRID, E2M1_GRID, E4M3_GRID, tuple_grid)
@@ -1497,6 +1498,17 @@ def stock_targets(modules):
     return [regex_target(m) for m in sorted(set(found) | fused_names)]
 
 
+def load_producer_authority(path):
+    """Load a producer's authority file for cached-unit and Hessian-reference intake.
+
+    ``tessera.producer_authority.load`` does the work, so this exporter and
+    every other driver that takes ``--producer-authority`` read the file with
+    one set of refusals (tessera#599).
+    """
+    from tessera.producer_authority import load
+    return load(path)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("src", type=Path)
@@ -1531,6 +1543,7 @@ def main():
                     help="strict requires each encoder adoption's covering source proof; "
                          "permissive records unproven adoptions in cached intake warnings, "
                          "without relaxing identity, digest or wire checks")
+    producer_authority_option.add_argument(ap)
     ap.add_argument("--cached-producer-package", type=Path,
                     help="original producer's immutable src/tessera package for cached intake")
     ap.add_argument("--cached-producer-source-sha256",
@@ -1635,6 +1648,9 @@ def main():
         ap.error("historical cached producer package and source SHA256 must be paired")
     if args.cached_producer_package is not None and not (args.cached_units or args.cached_expert_units):
         ap.error("historical cached producer requires cached unit intake")
+    producer_authority = canonical_capture = None
+    if args.producer_authority is not None:
+        producer_authority, canonical_capture = load_producer_authority(args.producer_authority)
     research_execution = None
     if args.research_selected_moe_json is not None:
         from tessera.moe_execution import ResearchSelectedMoeInput
@@ -1681,7 +1697,8 @@ def main():
             settings["refit_objective"] = args.refit_metric
         if args.refit_metric_trailing is not None:   # else: the uniform schedule
             settings["refit_objective_trailing"] = args.refit_metric_trailing
-        activation = ActivationSource.from_capture(args.hessian, **settings)
+        activation = ActivationSource.from_capture(args.hessian, canonical_capture=canonical_capture,
+                                                   **settings)
 
     default_grid = grid_for(args.grid)
     # THE PLAN IS READ ONCE, HERE, and this snapshot is the only plan the rest
@@ -2229,7 +2246,8 @@ def main():
                         if source_digest_cache is not None else source_identity(args.src)))
         cached_units = CachedUnitBundle(read_manifest(cache_path),
                                         cache_path.parent, cache_unit_names, source,
-                                        encoder_source_proof_mode=args.cached_encoder_source_proof_mode)
+                                        encoder_source_proof_mode=args.cached_encoder_source_proof_mode,
+                                        authority=producer_authority)
         if cached_units.producer_packages and args.cached_producer_package is not None:
             raise SystemExit("rooted cached units bind their exact producers; omit global cached-producer flags")
         if args.cached_producer_package is not None:

@@ -17,6 +17,7 @@ from tessera.export import ActivationSource, encode_linear
 from tessera.fused import parse_fused
 from tessera.historical_producer import load_historical_producer
 from tessera.moe_execution import ResearchSelectedMoeConfig
+from reuse_authority_fixture import CANONICAL_CAPTURE, PATH as AUTHORITY_PATH
 
 ROOT = Path(__file__).resolve().parents[1]
 STACK = "model.layers.2.feed_forward.experts"
@@ -564,13 +565,13 @@ def _canonical_handoff(root, hessians, provenance):
     for index, (name, hessian) in enumerate(hessians.items()):
         path = root / "inputs" / f"unit-{index}.pt"
         torch.save(dict(inputs=torch.ones(2, 32), hessian=hessian, name=name,
-                        source="tessera_campaign_prefix_f32_v1", count=32, max_abs=1.0), path)
+                        source=CANONICAL_CAPTURE[1], count=32, max_abs=1.0), path)
         entries[name] = dict(path="inputs/" + path.name, sha256=hashlib.sha256(path.read_bytes()).hexdigest())
     canonical = root / "capture_manifest.json"
     manifest_sha = write_json(canonical, dict(
-        schema="prismaquant.tessera_calibration_cache.v2", status="complete",
-        identity=dict(schema="prismaquant.tessera_calibration_cache.v2", census_sha256=census_sha,
-                      units=shapes, storage_source="tessera_campaign_prefix_f32_v1", max_act_rows=2,
+        schema=CANONICAL_CAPTURE[0], status="complete",
+        identity=dict(schema=CANONICAL_CAPTURE[0], census_sha256=census_sha,
+                      units=shapes, storage_source=CANONICAL_CAPTURE[1], max_act_rows=2,
                       calibration={k: v for k, v in provenance.items() if k != "hessian_role"}),
         entries=entries))
     seal = ActivationSource(hessians, provenance).capture_sha256()
@@ -635,7 +636,7 @@ def _calibrated_packed_export(tmp_path, calibrated_wires, monkeypatch, layout, *
                     for unit in units})
     hessians = {name: triple[1] for name, triple in logical.items()}
     handoff = _canonical_handoff(tmp_path / "capture", hessians, provenance)
-    activation = ActivationSource.from_capture(handoff)
+    activation = ActivationSource.from_capture(handoff, canonical_capture=CANONICAL_CAPTURE)
     identities = [exporter.cached_input_identity(producer, weight, name, None, E4M3_GRID, 1024,
                                                  activation=activation)
                   for name, weight in dense.items()]
@@ -661,7 +662,8 @@ def _calibrated_packed_export(tmp_path, calibrated_wires, monkeypatch, layout, *
     out = tmp_path / "out"
     argv = ["export", str(src), str(out), "--plan-json", str(plan_path),
             "--cached-units", str(manifest_path), "--hessian", str(handoff),
-            "--device", "cpu", "--allow-unrouted", "--allow-unserveable", *producer_flags]
+            "--device", "cpu", "--allow-unrouted", "--allow-unserveable",
+            "--producer-authority", str(AUTHORITY_PATH), *producer_flags]
     monkeypatch.setattr("sys.argv", argv)
     return dict(exporter=exporter, argv=argv, src=src, out=out, manifest=manifest,
                 manifest_path=manifest_path, hessians=hessians, handoff=handoff,
@@ -791,7 +793,7 @@ def test_calibrated_cached_cli_accepts_exact_reference_collection_and_priced_bin
         "units": names,
         "capture_sha256": original["capture_sha256"],
     }, sort_keys=True))
-    source = ActivationSource.from_capture(collection)
+    source = ActivationSource.from_capture(collection, canonical_capture=CANONICAL_CAPTURE)
     priced = tmp_path / "priced-inputs.json"
     priced.write_text(json.dumps({"priced_inputs": {
         "schema": "tessera.priced_export_inputs.v2",
@@ -954,8 +956,8 @@ def test_committed_identity_equals_full_derivation_for_every_unit(tmp_path, cali
     handoff = _canonical_handoff(tmp_path / "capture", hessians, provenance)
     derive = lambda weight, unit_name, unit, grid, q256, *, activation: exporter.cached_input_identity(
         None, weight, unit_name, unit, grid, q256, activation=activation)
-    digested = CachedUnitIdentity(derive, ActivationSource.from_capture(handoff), mode="digested")
-    committed = CachedUnitIdentity(derive, ActivationSource.from_capture(handoff), mode="committed")
+    digested = CachedUnitIdentity(derive, ActivationSource.from_capture(handoff, canonical_capture=CANONICAL_CAPTURE), mode="digested")
+    committed = CachedUnitIdentity(derive, ActivationSource.from_capture(handoff, canonical_capture=CANONICAL_CAPTURE), mode="committed")
     assert (digested.established, committed.established) == ("digested", "committed")
     for i, (weight, _hessian, _blob) in enumerate(triples):
         assert committed(weight, f"unit{i}.weight", None, E4M3_GRID, 1024) == \
@@ -974,7 +976,7 @@ def test_committed_identity_equals_full_derivation_for_every_unit(tmp_path, cali
     assert none.established is None
     assert none(triples[0][0], "unit0.weight", None, E4M3_GRID, 1024)["calibration"] is None
     # The witness must agree or nothing is served from commitments.
-    disagreeing = CachedUnitIdentity(derive, ActivationSource.from_capture(handoff), mode="committed")
+    disagreeing = CachedUnitIdentity(derive, ActivationSource.from_capture(handoff, canonical_capture=CANONICAL_CAPTURE), mode="committed")
     disagreeing._derive = lambda weight, unit_name, unit, grid, q256, *, activation: dict(
         derive(weight, unit_name, unit, grid, q256, activation=activation),
         **({"extra": True} if activation is not None else {}))

@@ -166,6 +166,8 @@ __all__ = [
     "load_serving_contract",
     "route_wire_spelling",
     "validate_serving_contract",
+    "PRODUCER_INTERFACE_SCHEMA",
+    "validate_producer_interface",
 ]
 
 CONTRACT_FILENAME = "runtime_contract.json"
@@ -1218,7 +1220,8 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
                   required={"schema", "contract_version", "quant_method", "versions",
                             "native_extensions", "formats", "lane_eligibility",
                             "tensor_parallel", "expert_parallel", "fused_module",
-                            "construction", "activation_quantizers"},
+                            "construction", "activation_quantizers",
+                            "producer_interface"},
                   # History, not a gate input: a consumer reads the version, and
                   # the changelog says what the version changed for a person.
                   optional={"changelog"})
@@ -1248,6 +1251,8 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
     _validate_native_extensions(contract["native_extensions"],
                                 "runtime_contract.native_extensions")
     _validate_construction(contract["construction"], "runtime_contract.construction")
+    validate_producer_interface(contract["producer_interface"],
+                                "runtime_contract.producer_interface")
 
     families = {}
     for i, entry in enumerate(contract["formats"]):
@@ -2806,6 +2811,55 @@ def construction_entry_from_receipt(receipt: Mapping[str, Any]) -> dict[str, Any
     if output_sizes:
         entry["output_sizes"] = output_sizes
     return entry
+
+
+#: The ``producer_interface`` block's schema (contract v40, tessera#599).
+PRODUCER_INTERFACE_SCHEMA = "tessera.producer-interface.v1"
+#: The option every listed driver declares, and the attribute the file it
+#: names must define. :mod:`tessera.producer_authority` reads these two from
+#: here, so the published block and the drivers' parsers are one spelling.
+REUSE_AUTHORITY_OPTION = "--producer-authority"
+REUSE_AUTHORITY_ATTRIBUTE = "PRODUCER_AUTHORITY"
+REUSE_AUTHORITY_PROTOCOL = "tessera.cached_unit.ReuseAuthority"
+REUSE_AUTHORITY_CANONICAL_ATTRIBUTE = "canonical_hessian_capture"
+
+
+def validate_producer_interface(block: Any, where: str) -> None:
+    """Refuse a ``producer_interface`` block that misstates the drivers' option.
+
+    The block tells a producer, as data, which export drivers accept
+    ``--producer-authority`` and what the file it names must define, so a
+    producer decides whether to pass the option from the pinned runtime's own
+    table.  Every value but ``drivers`` is a constant this module owns and
+    :mod:`tessera.producer_authority` reads, and is checked here; the
+    ``drivers`` list names repository files the installed package does not
+    carry, so its equality with the tree is held by
+    ``tests/test_producer_authority_drivers.py``.
+    """
+    _require_keys(block, where, required={"schema", "reuse_authority"})
+    if block["schema"] != PRODUCER_INTERFACE_SCHEMA:
+        raise ValueError(f"{where}.schema must be {PRODUCER_INTERFACE_SCHEMA!r}")
+    reuse = block["reuse_authority"]
+    row = f"{where}.reuse_authority"
+    _require_keys(reuse, row, required={"option", "attribute", "protocol",
+                                        "canonical_capture_attribute", "drivers"})
+    expected = {"option": REUSE_AUTHORITY_OPTION,
+                "attribute": REUSE_AUTHORITY_ATTRIBUTE,
+                "protocol": REUSE_AUTHORITY_PROTOCOL,
+                "canonical_capture_attribute": REUSE_AUTHORITY_CANONICAL_ATTRIBUTE}
+    for key, value in expected.items():
+        if reuse[key] != value:
+            raise ValueError(
+                f"{row}.{key} must be {value!r}, what tessera.producer_authority reads; "
+                f"got {reuse[key]!r}")
+    drivers = reuse["drivers"]
+    if (not isinstance(drivers, list) or not drivers
+            or not all(isinstance(d, str) and d.endswith(".py") and not d.startswith("/")
+                       and ".." not in d.split("/") for d in drivers)
+            or drivers != sorted(set(drivers))):
+        raise ValueError(
+            f"{row}.drivers must be a non-empty, sorted, duplicate-free list of "
+            f"repository-relative .py paths; got {drivers!r}")
 
 
 def _validate_construction(block: Any, where: str) -> None:

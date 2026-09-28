@@ -14,7 +14,7 @@ result records the derived path as a precondition to check there.
 """
 import argparse, hashlib, json, re, subprocess
 from pathlib import Path
-from run_glm_cached_cpu_export import INPUTS, read_bound
+from run_glm_cached_cpu_export import INPUTS, complete_inputs, read_bound
 
 #: The agent band (PrismaBuild #362): below campaign work, never ahead of it.
 AGENT_PRIORITY = -10
@@ -44,7 +44,7 @@ def pinned_python(commit: str) -> Path:
 def render(bindings, bindings_sha256, checkout) -> dict:
     bound = {'path': bindings, 'sha256': bindings_sha256}
     doc = json.loads(read_bound(bound))
-    if doc.get('schema') != 'prismaquant.glm_cached_cpu_export_bindings.v1' or set(doc.get('inputs', {})) != set(INPUTS):
+    if doc.get('schema') != 'prismaquant.glm_cached_cpu_export_bindings.v1' or not complete_inputs(doc.get('inputs', {})):
         raise ValueError('actual allocation/PACT/export bindings are incomplete')
     for value in doc['inputs'].values():
         read_bound(value)

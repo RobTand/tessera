@@ -1,5 +1,39 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-09-27 for the producer reuse authority (tessera#599, step 2).
+Tessera no longer reads a client's records by itself. A rooted cached-unit
+bundle (`tessera.cached_units.v2`) binds documents its producer wrote: the
+catalog extension, the candidate overlay, each encoder-source adoption, the
+reseal proof and the served-activation policy. `CachedUnitBundle(authority=...)`
+now takes the producer's `tessera.cached_unit.ReuseAuthority`, which judges
+those documents through four calls (`check_document`, `adoption_proof`,
+`proof_authorizes` and `served_activations`). Tessera keeps everything it
+owns: roots, producer packages, the exact path and SHA-256 bindings, adoption
+coverage, the proof roster, the `tessera.cached_unit_warning.v1` record and the
+served-activation comparison. A rooted bundle with no authority refuses with
+`MISSING_REUSE_AUTHORITY`, and composition forwards the authority to every
+child. Likewise, a Hessian reference binds its producer's canonical
+calibration cache, so `ReferenceHessians`, `ReferenceHessianCollection` and
+`ActivationSource.from_capture` take `canonical_capture=(schema, source)` and
+refuse without it. `--producer-authority PATH` loads a producer's authority
+file (a module defining `PRODUCER_AUTHORITY`) and hands both to the driver's
+intake. Every driver that opens a producer capture declares it through
+`tessera.producer_authority`, which holds its one help text and one set of
+refusals: the exporter, `export_glm53_tessera.py`,
+`glm_routed_owner_inputs.py`, `bf16_reach_roster.py` and
+`tools/glm_cpu_cached_pack_probe.py`. The GLM CPU launcher passes an optional
+`producer_authority` binding through. Contract v40 publishes the option as
+data: `producer_interface.reuse_authority` names the option, the attribute,
+the protocol and the drivers, and `tests/test_producer_authority_drivers.py`
+derives the driver list from the tree. A producer passes the option only when
+its pinned checkout's contract carries the block; an older driver does not
+know the option. PrismaQuant's authority lives in its own
+tree (`prismaquant/tessera_reuse_authority.py`) with its schema tests, so a new
+client record version no longer needs a Tessera change. Legacy `.pt` captures
+and v1 bundles need no authority. Bytes, wires, contract cells, serving
+defaults and routes do not change (v40 is additive), and accept/refuse decisions are unchanged
+for a caller that supplies PrismaQuant's authority.
+
 Re-stamped 2026-09-27 for concurrent window rate calls (tessera#668). At a
 mixed-rate window rung, a window span yields all of its rate calls as a tuple,
 and the batched LDLQ driver runs them on per-thread CUDA side streams
@@ -6223,25 +6257,22 @@ bundle contents. Composition forwards it to every child and retains each
 warning; export serializes both the mode and warnings in its cached intake
 receipt. Identity equality (unit, source, calibration, encoder fixture and
 projection), named-document SHA-256, blob bytes/digests and shapes still refuse
-in both modes. Unrelated unused proof authority still refuses. PrismaQuant
-authenticates the catalog extension and proof semantics
-before publication. The extension is `prismaquant.joint_catalog_extension.v1`,
-which binds one completed Stage A receipt, `.v2`, which binds the
-Stage A run header so an extension exists from the first sealed band, or `.v3`,
-which is v2 plus the campaign scope derived when that header sealed none
-(tessera#670). Tessera rechecks the bound documents, accepts exactly those three
-extension schemas (`cached_unit.CATALOG_EXTENSION_SCHEMAS`; tessera#599 step 2
-removes these client names) and reads no other extension field,
-then uses each exact historical package's input-identity factory, followed by
-the unchanged strict cached-wire verifier. Duplicate leaf names are permitted only
+in both modes. Unrelated unused proof authority still refuses. The
+producer authenticates the catalog extension and proof semantics before
+publication, and it supplies the reader for them: the caller's
+`ReuseAuthority` (above; tessera#599) judges each bound document, adoption,
+proof and served policy, and Tessera names no client schema. Tessera rechecks
+each document's exact path and SHA-256 binding, then uses each exact
+historical package's input-identity factory, followed by the unchanged strict
+cached-wire verifier. Duplicate leaf names are permitted only
 in distinct roots. Symlink roots/files and partial or surplus ownership refuse.
 
 A separately bound served-activation policy records selected A4 executed-group
-scales. Policy v1 retains its exact single `TESSERA_E2M1_K2_R896` scope. Policy
-v2 carries a nonempty sorted unique `formats` list: every adopted `E2M1x2` unit
-whose q256 format is listed must have exactly its bound executed-group scale,
-and no other served entry is accepted. The rung list is policy data, not a
-reader gamut roster. These runtime input values do not rewrite the historical wire's
+scales. The authority reads the policy's scope and returns the served
+activations it requires of the adopted units (for PrismaQuant's policies, each
+adopted `E2M1x2` unit at a listed rung, with its executed-group scale); the
+bundle's `served_activations` must equal that exactly, and no other served
+entry is accepted. The rung list is policy data, not a reader gamut roster. These runtime input values do not rewrite the historical wire's
 calibration identity. Export checks the actual fp32 scale file against those
 values. Neither the bundle nor these checks establish serving qualification.
 The v1 single-root/global-producer route is unchanged.

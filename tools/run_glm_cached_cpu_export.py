@@ -5,6 +5,16 @@ from pathlib import Path
 
 INPUTS = ('assignment', 'pact_result', 'plan', 'selected_manifest', 'selected_manifest_receipt',
           'hessian', 'input_scales', 'priced_inputs', 'research_selected_moe')
+#: The producer's authority file (``export_tessera_serving.py --producer-authority``):
+#: the rooted selection and the Hessian reference bind the producer's records,
+#: which the exporter judges only through it.  Optional so an existing bindings
+#: document keeps its argv; without it the export refuses those inputs by name.
+OPTIONAL_INPUTS = ('producer_authority',)
+
+
+def complete_inputs(inputs):
+    names = set(inputs) if isinstance(inputs, dict) else None
+    return names is not None and set(INPUTS) <= names <= set(INPUTS) | set(OPTIONAL_INPUTS)
 
 
 def read_bound(bound):
@@ -81,7 +91,7 @@ def main(argv=None):
         raise RuntimeError('full export requires an admitted PB semantic-progress action')
     doc=json.loads(read_bound({'path':args.bindings,'sha256':args.bindings_sha256}))
     if doc.get('schema')!='prismaquant.glm_cached_cpu_export_bindings.v1':raise ValueError('unknown export bindings')
-    if set(doc['inputs'])!=set(INPUTS):raise ValueError('actual allocation/PACT/export bindings are incomplete')
+    if not complete_inputs(doc['inputs']):raise ValueError('actual allocation/PACT/export bindings are incomplete')
     inputs=doc['inputs'];raw={name:read_bound(value) for name,value in inputs.items()}
     selected=json.loads(raw['selected_manifest']);receipt=json.loads(raw['selected_manifest_receipt'])
     if (receipt.get('schema')!='prismaquant.tessera_selected_cache_handoff.v1'
@@ -112,6 +122,7 @@ def main(argv=None):
         '--source-digest-cache',str(cache),'--cached-hessian-identity','committed',
         '--cached-intake-threads',str(doc['intake_threads']),
         '--cached-intake-window-bytes',str(doc['intake_window_bytes'])]
+    if 'producer_authority' in inputs:sys.argv+=['--producer-authority',inputs['producer_authority']['path']]
     with progress.install(exporter):exporter.main()
     for binding in inputs.values():read_bound(binding)  # refuse input drift before final receipt
     progress.finish()

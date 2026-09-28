@@ -5,16 +5,23 @@ import json
 import pytest
 
 from tessera.cached_unit import CachedUnitBundle
+import reuse_authority_fixture as fixture
+from reuse_authority_fixture import AUTHORITY
+
+SCHEMAS = {'catalog_extension': fixture.CATALOG_EXTENSION_SCHEMA,
+           'candidate_overlay': fixture.CANDIDATE_OVERLAY_SCHEMA,
+           'adoption': fixture.ADOPTION_SCHEMA, 'proof': fixture.PROOF_SCHEMA}
 
 
-def rooted(tmp_path, extension_schema='prismaquant.joint_catalog_extension.v1'):
+def rooted(tmp_path, extension_schema=fixture.CATALOG_EXTENSION_SCHEMA, *, schemas=SCHEMAS):
+    """A rooted bundle whose producer documents carry ``schemas`` (the fixture producer's)."""
     roots = {key: tmp_path / key for key in ('old', 'added')}
     for path in roots.values():
         path.mkdir()
         (path / 'unit.tessera').write_bytes(b'unchanged wire')
     bound = {}
     for name, schema in [('catalog_extension', extension_schema),
-                         ('candidate_overlay', 'prismaquant.t4_adopted_catalog.v1')]:
+                         ('candidate_overlay', schemas['candidate_overlay'])]:
         path = tmp_path / (name + '.json')
         path.write_text(json.dumps({'schema': schema}))
         bound[name] = {'path': str(path), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
@@ -32,7 +39,7 @@ def rooted(tmp_path, extension_schema='prismaquant.joint_catalog_extension.v1'):
                 'reuse_authority': {**bound, 'checkpoint_encoder_source_sha256': 'a'*64,
                                     'encoder_source_proofs': []},
                 'encoder_adoptions': {}, 'served_activation_policy': None, 'served_activations': {}}
-    proof = {'schema': 'prismaquant.reseal_proof_bundle.v1', 'ok': True,
+    proof = {'schema': schemas['proof'], 'ok': True,
              'encoder_fixture_id_equal': True,
              'pins': {'old': {'encoder_source_sha256': 'a'*64},
                       'new': {'encoder_source_sha256': 'b'*64}},
@@ -43,7 +50,7 @@ def rooted(tmp_path, extension_schema='prismaquant.joint_catalog_extension.v1'):
     manifest['reuse_authority']['encoder_source_proofs'] = [proof_bound]
     candidate = units['expert']['identity']
     manifest['encoder_adoptions']['expert'] = {
-        'schema': 'prismaquant.joint_catalog_source_adoption.v1',
+        'schema': schemas['adoption'],
         'reference_pair': ['expert', 'old-format'],
         'reference_encoding_identity': {**candidate, 'encoder_source_sha256': 'a'*64},
         'candidate_encoding_identity': candidate, 'encoder_source_proof': proof_bound}
@@ -53,7 +60,7 @@ def rooted(tmp_path, extension_schema='prismaquant.joint_catalog_extension.v1'):
 def test_roots_allow_same_leaf_without_copying_or_relabeling(tmp_path):
     manifest, roots = rooted(tmp_path)
     stats = {k: (p / 'unit.tessera').stat() for k, p in roots.items()}
-    bundle = CachedUnitBundle(manifest, tmp_path, {'dense', 'expert'}, manifest['source'])
+    bundle = CachedUnitBundle(manifest, tmp_path, {'dense', 'expert'}, manifest['source'], authority=AUTHORITY)
     for name in manifest['units']:
         blob, record = bundle.read(name)
         assert blob == b'unchanged wire' and record == manifest['units'][name]
@@ -63,33 +70,26 @@ def test_roots_allow_same_leaf_without_copying_or_relabeling(tmp_path):
 
 
 
-# The roster IS the decision here: these are the catalog-extension documents
-# PrismaQuant writes and still verifies (``joint_catalog_extension.SCHEMA_V1``,
-# ``SCHEMA`` and ``SCHEMA_V3``).  v2 (PQ #993) binds the Stage A run header
-# instead of one completed receipt; v3 (PQ #1126) is v2 plus a derived campaign
-# scope, and it is what the GLM-5.3 A4 extension is (tessera#670).  Both proof
-# modes read it: the A4 export runs permissive (PrismaQuant dev mode), and an
-# authorized adoption leaves no warning in either.
+# The authority decides which producer documents a rooted bundle may bind; the
+# bundle binds their bytes and hands each parsed document to it.  The schema
+# roster is the producer's (PrismaQuant's lives in its adopter and schema tests).
 @pytest.mark.parametrize('mode', ['strict', 'permissive'])
-@pytest.mark.parametrize('schema', ['prismaquant.joint_catalog_extension.v1',
-                                    'prismaquant.joint_catalog_extension.v2',
-                                    'prismaquant.joint_catalog_extension.v3'])
-def test_rooted_authority_reads_each_prismaquant_extension_schema(tmp_path, schema, mode):
-    manifest, _ = rooted(tmp_path, extension_schema=schema)
+def test_rooted_authority_reads_the_documents_its_producer_vouches_for(tmp_path, mode):
+    manifest, _ = rooted(tmp_path)
     bundle = CachedUnitBundle(manifest, tmp_path, {'dense', 'expert'}, manifest['source'],
-                              encoder_source_proof_mode=mode)
+                              encoder_source_proof_mode=mode, authority=AUTHORITY)
     assert bundle.encoder_source_proof_mode == mode and bundle.warnings == []
     for name in manifest['units']:
         assert bundle.read(name)[1] == manifest['units'][name]
 
 
-@pytest.mark.parametrize('schema', ['prismaquant.joint_catalog_extension.v4',
-                                    'prismaquant.t4_adopted_catalog.v1', None,
-                                    ['prismaquant.joint_catalog_extension.v2']])
-def test_rooted_authority_refuses_any_other_extension_schema(tmp_path, schema):
+@pytest.mark.parametrize('schema', ['fixture.catalog_extension.v2',
+                                    fixture.CANDIDATE_OVERLAY_SCHEMA, None,
+                                    [fixture.CATALOG_EXTENSION_SCHEMA]])
+def test_rooted_authority_refusal_of_a_document_refuses_the_bundle(tmp_path, schema):
     manifest, _ = rooted(tmp_path, extension_schema=schema)
     with pytest.raises(ValueError, match='authority schema differs'):
-        CachedUnitBundle(manifest, tmp_path, {'dense', 'expert'}, manifest['source'])
+        CachedUnitBundle(manifest, tmp_path, {'dense', 'expert'}, manifest['source'], authority=AUTHORITY)
 
 @pytest.mark.parametrize('change', ['missing_root', 'extra_unit', 'aliased_roots', 'unbound_producer', 'missing_authority'])
 def test_rooted_coverage_and_authority_are_closed(tmp_path, change):
@@ -105,12 +105,12 @@ def test_rooted_coverage_and_authority_are_closed(tmp_path, change):
     else:
         del manifest['reuse_authority']
     with pytest.raises(ValueError):
-        CachedUnitBundle(manifest, tmp_path, {'dense', 'expert'}, manifest['source'])
+        CachedUnitBundle(manifest, tmp_path, {'dense', 'expert'}, manifest['source'], authority=AUTHORITY)
 
 
 def test_root_and_wire_symlink_changes_refuse(tmp_path):
     manifest, roots = rooted(tmp_path)
-    bundle = CachedUnitBundle(manifest, tmp_path, {'dense', 'expert'}, manifest['source'])
+    bundle = CachedUnitBundle(manifest, tmp_path, {'dense', 'expert'}, manifest['source'], authority=AUTHORITY)
     wire = roots['added'] / 'unit.tessera'
     wire.unlink()
     wire.symlink_to(roots['old'] / 'unit.tessera')
@@ -169,20 +169,20 @@ def test_actual_mixed_producers_export_complete_dense_and_expert_roster(tmp_path
         owners[key] = owner
         if owner == 'added':
             reference = exporter.cached_input_identity(producers['old'], weight, name, unit, E4M3_GRID, 1024)
-            adoptions[key] = {'schema': 'prismaquant.joint_catalog_source_adoption.v1',
+            adoptions[key] = {'schema': fixture.ADOPTION_SCHEMA,
                 'reference_pair': [key, 'old-format'], 'reference_encoding_identity': reference,
                 'candidate_encoding_identity': identity}
     def bound(name, value):
         path = tmp_path / (name + '.json'); path.write_text(json.dumps(value))
         return {'path': str(path), 'sha256': hashlib.sha256(path.read_bytes()).hexdigest()}
     old, new = (identities[key]['encoder_source_sha256'] for key in ('old', 'added'))
-    fixture = identities['old']['encoder_fixture_id']
-    proof = bound('proof', {'schema': 'prismaquant.reseal_proof_bundle.v1', 'ok': True,
+    fixture_id = identities['old']['encoder_fixture_id']
+    proof = bound('proof', {'schema': fixture.PROOF_SCHEMA, 'ok': True,
         'encoder_fixture_id_equal': True, 'pins': {'old': {'encoder_source_sha256': old},
-        'new': {'encoder_source_sha256': new}}, 'fixture_id': {'ids': {'old': fixture, 'new': fixture}}})
+        'new': {'encoder_source_sha256': new}}, 'fixture_id': {'ids': {'old': fixture_id, 'new': fixture_id}}})
     for adoption in adoptions.values(): adoption['encoder_source_proof'] = proof
-    authority = {'catalog_extension': bound('extension', {'schema': 'prismaquant.joint_catalog_extension.v1'}),
-        'candidate_overlay': bound('overlay', {'schema': 'prismaquant.t4_adopted_catalog.v1'}),
+    authority = {'catalog_extension': bound('extension', {'schema': fixture.CATALOG_EXTENSION_SCHEMA}),
+        'candidate_overlay': bound('overlay', {'schema': fixture.CANDIDATE_OVERLAY_SCHEMA}),
         'checkpoint_encoder_source_sha256': old, 'encoder_source_proofs': [proof]}
     manifest = {'schema': 'tessera.cached_units.v2', 'source': source_identity(source), 'units': records,
         'wire_roots': {key: str(path) for key, path in roots.items()}, 'unit_roots': owners,
@@ -220,7 +220,8 @@ def test_actual_mixed_producers_export_complete_dense_and_expert_roster(tmp_path
     digest_cache = tmp_path / 'source-digests'; digest_cache.mkdir()
     monkeypatch.setattr('sys.argv', ['export', str(source), str(out), '--plan-json', str(plan_path),
         '--cached-units', str(manifest_path), '--device', 'cpu', '--allow-unrouted', '--allow-unserveable',
-        '--source-digest-cache', str(digest_cache), '--cached-encoder-source-proof-mode', proof_mode])
+        '--source-digest-cache', str(digest_cache), '--cached-encoder-source-proof-mode', proof_mode,
+        '--producer-authority', str(fixture.PATH)])
     exporter.main()
     with safe_open(str(out / 'model.safetensors'), framework='pt') as handle:
         actual = [member.blob for name in handle.keys() if name.endswith(('.wire', '.wire_bytes'))
@@ -250,4 +251,4 @@ def test_added_a4_cannot_omit_served_activation_policy(tmp_path):
     identity = manifest['units']['expert']['identity']
     identity['recipe'] = {'grid': 'E2M1x2', 'q256': 896}
     with pytest.raises(ValueError, match='bound policy'):
-        CachedUnitBundle(manifest, tmp_path, {'dense', 'expert'}, manifest['source'])
+        CachedUnitBundle(manifest, tmp_path, {'dense', 'expert'}, manifest['source'], authority=AUTHORITY)

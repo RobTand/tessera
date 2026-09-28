@@ -11,6 +11,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / 'src'))
 from tessera.cached_unit import tensor_identity
 from tessera.export import ActivationSource
 from tessera.errors import GrammarError
+from reuse_authority_fixture import CANONICAL_CAPTURE
 
 SCHEMA = 'tessera.hessian_capture.references.v1'
 POLICY = dict(schema='tessera.hessian_reference_load.v1',
@@ -23,8 +24,9 @@ def write_json(path, value):
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-@pytest.fixture
-def reference(tmp_path):
+def build_reference(tmp_path, canonical_capture=CANONICAL_CAPTURE):
+    """A reference document over a canonical capture named ``canonical_capture``."""
+    schema, source = canonical_capture
     H = {'a': torch.eye(4)*3, 'b': torch.eye(4)*7}
     provenance = dict(text_sha256='a'*64, fit_ids_sha256='b'*64,
                       fit_tokens=8, model='fixture', seqlen=8, source='fixture',
@@ -38,13 +40,13 @@ def reference(tmp_path):
     for name, value in H.items():
         p=root/'inputs'/f'{name}.pt'
         torch.save(dict(inputs=torch.ones(2,4), hessian=value, name=name,
-            source='tessera_campaign_prefix_f32_v1',count=8,max_abs=1.0),p)
+            source=source,count=8,max_abs=1.0),p)
         entries[name]=dict(path=f'inputs/{name}.pt',sha256=hashlib.sha256(p.read_bytes()).hexdigest())
     canonical=root/'capture_manifest.json'
-    manifest=dict(schema='prismaquant.tessera_calibration_cache.v2',status='complete',
-        identity=dict(schema='prismaquant.tessera_calibration_cache.v2',
+    manifest=dict(schema=schema,status='complete',
+        identity=dict(schema=schema,
             census_sha256=census_sha,units={n:[4,4] for n in H},
-            storage_source='tessera_campaign_prefix_f32_v1',max_act_rows=2,
+            storage_source=source,max_act_rows=2,
             calibration={k:v for k,v in provenance.items() if k!='hessian_role'}),
         entries=entries)
     manifest_sha=write_json(canonical,manifest)
@@ -58,6 +60,11 @@ def reference(tmp_path):
     return handoff,payload,H,canonical,manifest
 
 
+@pytest.fixture
+def reference(tmp_path):
+    return build_reference(tmp_path)
+
+
 def test_public_reader_binds_commitments_without_loading_h_then_verifies_access(reference, monkeypatch):
     handoff,payload,H,_,_=reference
     original=torch.load;loads=[]
@@ -66,7 +73,7 @@ def test_public_reader_binds_commitments_without_loading_h_then_verifies_access(
         loads.append((str(path),dict(kwargs)))
         return original(path,*args,**kwargs)
     monkeypatch.setattr(torch,'load',observed)
-    source=ActivationSource.from_capture(handoff)
+    source=ActivationSource.from_capture(handoff, canonical_capture=CANONICAL_CAPTURE)
     assert source.capture_sha256()==payload['capture_sha256']
     assert source.config_block()['hessian']['capture_sha256']==payload['capture_sha256']
     assert set(source.hessians)==set(H) and 'a' in source.hessians
@@ -82,7 +89,7 @@ def test_public_reader_binds_commitments_without_loading_h_then_verifies_access(
 @pytest.mark.parametrize('target', ['handoff', 'canonical', 'census'])
 def test_metadata_replacement_invalidates_held_owner(reference, target):
     handoff,payload,_,canonical,_=reference
-    source=ActivationSource.from_capture(handoff)
+    source=ActivationSource.from_capture(handoff, canonical_capture=CANONICAL_CAPTURE)
     path={'handoff':handoff,'canonical':canonical,'census':Path(payload['census']['path'])}[target]
     replacement=path.with_suffix('.new');replacement.write_bytes(path.read_bytes());replacement.replace(path)
     with pytest.raises(GrammarError, match='changed or was replaced'):
@@ -93,7 +100,7 @@ def test_metadata_replacement_invalidates_held_owner(reference, target):
 @pytest.mark.parametrize('mode', ['bytes', 'missing', 'oversize'])
 def test_each_consumption_reauthenticates_source(reference, mode):
     handoff,payload,H,canonical,_=reference
-    source=ActivationSource.from_capture(handoff)
+    source=ActivationSource.from_capture(handoff, canonical_capture=CANONICAL_CAPTURE)
     torch.testing.assert_close(source.hessians['a'],H['a'])
     path=canonical.parent/'inputs/a.pt'
     if mode=='missing': path.unlink()
@@ -122,7 +129,7 @@ def test_forged_commitments_or_bounds_refuse_without_tensor_load(reference,monke
     handoff,payload,*_=reference
     edit(payload);write_json(handoff,payload)
     monkeypatch.setattr(torch,'load',lambda *a,**k:pytest.fail('payload read before metadata accepted'))
-    with pytest.raises(GrammarError): ActivationSource.from_capture(handoff)
+    with pytest.raises(GrammarError): ActivationSource.from_capture(handoff, canonical_capture=CANONICAL_CAPTURE)
 
 
 def test_commitment_cannot_forge_actual_h_with_resealed_row(reference):
@@ -132,7 +139,7 @@ def test_commitment_cannot_forge_actual_h_with_resealed_row(reference):
     digest=capture_sha256_from_units(payload['provenance'],{n:v['sha256'] for n,v in payload['hessians'].items()})
     payload['capture_sha256']=digest;payload['rows'][0]['capture_sha256']=digest
     write_json(handoff,payload)
-    source=ActivationSource.from_capture(handoff)
+    source=ActivationSource.from_capture(handoff, canonical_capture=CANONICAL_CAPTURE)
     assert source.hessians.receipt()['verified_units']==[]
     with pytest.raises(GrammarError,match='differs from its commitment'):source.hessians['a']
     assert source.hessians.receipt()['verified_units']==[]
@@ -142,7 +149,7 @@ def test_commitment_cannot_forge_actual_h_with_resealed_row(reference):
 def test_returned_h_is_detached_and_owner_does_not_retain_it(reference):
     import gc, weakref
     handoff,_,H,*_=reference
-    source=ActivationSource.from_capture(handoff)
+    source=ActivationSource.from_capture(handoff, canonical_capture=CANONICAL_CAPTURE)
     returned=source.hessians['a']; weak=weakref.ref(returned)
     returned.mul_(8);del returned;gc.collect()
     assert weak() is None
@@ -156,7 +163,7 @@ def test_for_unit_and_cached_wire_identity_consume_verified_h(reference):
     from tessera.cached_unit import encoding_input_identity
     from types import SimpleNamespace
     handoff,_,_,canonical,_=reference
-    source=ActivationSource.from_capture(handoff,ldlq_sigma=None)
+    source=ActivationSource.from_capture(handoff, canonical_capture=CANONICAL_CAPTURE,ldlq_sigma=None)
     from tessera.manifest import ScalePlaneKind
     source.for_unit('a.weight',4,'cpu',scale_plane=ScalePlaneKind.CHANNEL)
     assert source.hessians.receipt()['loaded_entries']==1
@@ -169,7 +176,7 @@ def test_for_unit_and_cached_wire_identity_consume_verified_h(reference):
 def test_priced_v2_requires_exact_reference_binding_even_with_same_old_seal(reference,tmp_path):
     from test_priced_inputs_snapshot import exporter
     handoff,payload,H,*_=reference
-    source=ActivationSource.from_capture(handoff)
+    source=ActivationSource.from_capture(handoff, canonical_capture=CANONICAL_CAPTURE)
     block=dict(schema='tessera.priced_export_inputs.v2',hessian_capture_sha256=source.capture_sha256(),
         input_global_scales={},hessian_reference_binding=source.reference_binding())
     build=tmp_path/'build.json'
@@ -193,7 +200,7 @@ def test_legacy_pt_reader_still_loads_eagerly(reference,tmp_path,monkeypatch):
     calls=[];original=torch.load
     def observed(*a,**kw):calls.append(a[0]);return original(*a,**kw)
     monkeypatch.setattr(torch,'load',observed)
-    source=ActivationSource.from_capture(path)
+    source=ActivationSource.from_capture(path, canonical_capture=CANONICAL_CAPTURE)
     assert len(calls)==1 and isinstance(source.hessians,dict)
     assert source.capture_sha256()==payload['capture_sha256']
 
@@ -202,7 +209,7 @@ def test_unsorted_reference_json_preserves_existing_capture_seal(reference):
     handoff,payload,H,*_=reference
     payload['hessians']={name:payload['hessians'][name] for name in ('b','a')}
     handoff.write_text(json.dumps(payload,sort_keys=False))
-    source=ActivationSource.from_capture(handoff)
+    source=ActivationSource.from_capture(handoff, canonical_capture=CANONICAL_CAPTURE)
     assert source.capture_sha256()==ActivationSource(H,payload['provenance']).capture_sha256()
     assert source.hessians.receipt()['loaded_entries']==0
     source.hessians.close()
@@ -210,7 +217,7 @@ def test_unsorted_reference_json_preserves_existing_capture_seal(reference):
 
 def test_source_change_during_mapping_load_refuses_before_return(reference,monkeypatch):
     handoff,_,_,canonical,_=reference
-    source=ActivationSource.from_capture(handoff);original=torch.load
+    source=ActivationSource.from_capture(handoff, canonical_capture=CANONICAL_CAPTURE);original=torch.load
     def mutate_after_mapping(*args,**kwargs):
         result=original(*args,**kwargs)
         path=canonical.parent/'inputs/a.pt'

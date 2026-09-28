@@ -903,7 +903,7 @@ class ActivationSource:
         return kwargs
 
     @classmethod
-    def from_capture(cls, path, *, resident_hessians=None,
+    def from_capture(cls, path, *, resident_hessians=None, canonical_capture=None,
                      **settings) -> "ActivationSource":
         """Load a legacy H payload or bounded canonical references at ``settings``.
 
@@ -920,19 +920,22 @@ class ActivationSource:
         ``resident_hessians`` binds a reference document's commitments to
         tensors the caller already holds, so a producer that just wrote those
         commitments neither re-digests the population to seal nor reads every
-        unit back to consume it (tessera#440).  The owner is closed here if
-        anything after opening it raises: a caller cannot register an owner it
-        was never handed, so this call is the only place that can.
+        unit back to consume it (tessera#440).  ``canonical_capture`` is the
+        producer's ``(schema, source)`` pair for the calibration cache that a
+        reference binds (``hessian_capture.ReferenceHessians``); a reference
+        refuses without it.  The owner is closed here if anything after opening
+        it raises: a caller cannot register an owner it was never handed, so
+        this call is the only place that can.
         """
         import torch as _torch
 
         owner = None
         if str(path).endswith('.collection.references.json'):
             from .hessian_capture import ReferenceHessianCollection
-            owner = ReferenceHessianCollection(path)
+            owner = ReferenceHessianCollection(path, canonical_capture=canonical_capture)
         elif str(path).endswith('.references.json'):
             from .hessian_capture import ReferenceHessians
-            owner = ReferenceHessians(path)
+            owner = ReferenceHessians(path, canonical_capture=canonical_capture)
         elif resident_hessians is not None:
             raise GrammarError(
                 f"{path} is not a reference capture, so resident_hessians has "
