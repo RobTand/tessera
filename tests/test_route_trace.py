@@ -410,6 +410,10 @@ def test_the_header_states_its_own_rank_world_and_platform(tracing, monkeypatch)
     # "" for a process that never latched one (here: no CUDA, no token).  An
     # empty token is honest; inventing a platform would not be.
     assert isinstance(snapshot["platform"], str)
+    # The serving closure's digest, added under identity_version 1: the same
+    # function a cell's runtime.serving_source_sha256 is computed with.
+    from tessera.serving.source_identity import serving_source_sha256
+    assert snapshot["serving_source_sha256"] == serving_source_sha256()
 
     import torch.distributed as dist
     monkeypatch.setattr(dist, "is_available", lambda: True)

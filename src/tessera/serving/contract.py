@@ -126,11 +126,13 @@ __all__ = [
     "EVIDENCE_SMOKE_STATUSES",
     "EXECUTION_MODES",
     "PLUGIN_ENTRY_POINT",
+    "RUNTIME_CODE_KEYS",
     "RUNTIME_SCOPE_KEYS",
     "RUNTIME_VERSION_KEYS",
     "VERSIONS_KEYS",
     "validate_activation_quantizers",
     "cell_evidence",
+    "cell_runtime_code",
     "cell_runtime_versions",
     "derive_evidence_grade",
     "derive_smoke_attribution",
@@ -239,6 +241,19 @@ CELL_PREDICATE_OPS = ("equals", "in", "multiple_of", "at_least", "at_most")
 #: :func:`cell_runtime_versions` requires the whole closed object.
 RUNTIME_SCOPE_KEYS = frozenset({"image", "execution_modes"})
 RUNTIME_VERSION_KEYS = frozenset({"vllm", "torch"})
+
+#: The CODE half of a cell's ``runtime`` (contract v41, optional): which
+#: Tessera tree the cell's evidence was taken on.  ``tessera_commit`` is the
+#: 40-hex commit, for a person to find the tree.  ``serving_source_sha256`` is
+#: :func:`tessera.serving.source_identity.serving_source_sha256` of that tree
+#: (every source file in the package), for a program to compare against the code a serve actually runs, because an
+#: editable install records no commit.  A cell stamps both or neither, and only
+#: when its evidence is taken: a digest is never re-stamped onto old evidence,
+#: so a stale digest is an honest scope, not a defect.  No cell carries them in
+#: v41; the first census that records them stamps them.
+RUNTIME_CODE_KEYS = frozenset({"tessera_commit", "serving_source_sha256"})
+_COMMIT = re.compile(r"[0-9a-f]{40}")
+_SHA256 = re.compile(r"[0-9a-f]{64}")
 
 #: ``versions`` (schema v6, #131) says one thing per field and nothing about
 #: a measured runtime: ``tessera`` is the distribution version,
@@ -524,7 +539,8 @@ def cell_runtime_scope(cell: Mapping[str, Any],
     """The explicit runtime scope a cell attests; no global image fallback."""
     runtime = cell.get("runtime")
     at = f"{where}.runtime"
-    _require_keys(runtime, at, required=set(RUNTIME_SCOPE_KEYS), optional=RUNTIME_VERSION_KEYS)
+    _require_keys(runtime, at, required=set(RUNTIME_SCOPE_KEYS),
+                  optional=RUNTIME_VERSION_KEYS | RUNTIME_CODE_KEYS)
     image = require_runtime_image(runtime["image"], f"{at}.image")
     modes = runtime["execution_modes"]
     if (not isinstance(modes, list) or not modes
@@ -547,7 +563,8 @@ def cell_runtime_versions(cell: Mapping[str, Any],
     """
     runtime = cell.get("runtime")
     at = f"{where}.runtime"
-    _require_keys(runtime, at, required=set(RUNTIME_SCOPE_KEYS | RUNTIME_VERSION_KEYS))
+    _require_keys(runtime, at, required=set(RUNTIME_SCOPE_KEYS | RUNTIME_VERSION_KEYS),
+                  optional=RUNTIME_CODE_KEYS)
     out = []
     for field in ("vllm", "torch"):
         value = runtime[field]
@@ -557,6 +574,31 @@ def cell_runtime_versions(cell: Mapping[str, Any],
                 f"records, verbatim. Got {value!r}.")
         out.append(value)
     return out[0], out[1]
+
+
+def cell_runtime_code(cell: Mapping[str, Any],
+                      where: str = "lane_eligibility cell") -> tuple[str, str] | None:
+    """The ``(tessera_commit, serving_source_sha256)`` a cell names, or ``None``.
+
+    Both or neither: a commit with no digest gives a reader nothing to compare,
+    and a digest with no commit gives a person no tree to find.
+    """
+    runtime = cell.get("runtime")
+    at = f"{where}.runtime"
+    present = sorted(RUNTIME_CODE_KEYS & set(runtime or ()))
+    if not present:
+        return None
+    if len(present) != len(RUNTIME_CODE_KEYS):
+        raise ValueError(
+            f"{at} names {present} without {sorted(RUNTIME_CODE_KEYS - set(present))}; "
+            "a cell names the Tessera code it was measured on with both fields or neither")
+    commit, digest = runtime["tessera_commit"], runtime["serving_source_sha256"]
+    if not isinstance(commit, str) or not _COMMIT.fullmatch(commit):
+        raise ValueError(f"{at}.tessera_commit must be a 40-hex lowercase commit, got {commit!r}")
+    if not isinstance(digest, str) or not _SHA256.fullmatch(digest):
+        raise ValueError(
+            f"{at}.serving_source_sha256 must be 64 lowercase hex digits, got {digest!r}")
+    return commit, digest
 
 
 def cell_runtime_id_suffix(cell: Mapping[str, Any]) -> str:
@@ -1420,6 +1462,7 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
         # cells naming one image and two vLLM builds would be two runtimes
         # under one digest, which a digest cannot be.
         toolchain = cell_runtime_versions(cell, where)
+        cell_runtime_code(cell, where)
         known = toolchains_by_image.setdefault(runtime_image, (toolchain, cell["id"]))
         if known[0] != toolchain:
             raise ValueError(
