@@ -57,6 +57,22 @@ RECEIPTS = {
     # window lane as the default dispatch, the receipt the four window routed
     # cells name the fused pair on (docs/measurements/2026-09-28-routed-fused-640.md).
     "b_fused": "9779a2c20efe9791d5a3166b1ba3ab69c4fa4f8835ade43d8b79c0c299cb3302",
+    # Contract v43 (the dense follow-up to tessera#640): stub B served again
+    # with the fused window kernel's DENSE identity as the dispatch for its
+    # q256 1024 dense modules, the receipt the four GLM-image dense cells name
+    # the fused pair on (docs/measurements/2026-09-28-dense-fused-window.md).
+    "b_fused_dense": "b3f9d176018d23d23faf963fa7823462493f80de51fbff49babd527958b3295e",
+}
+#: The dense modules of stub B that take the fused identity (q256 1024, rows a
+#: multiple of 128), with the launch each recorded; every other dense module
+#: is q256 832/880/960/1088 and keeps the Triton window GEMM.
+FUSED_RECEIPT_DENSE = {
+    "language_model.model.layers.5.mlp.shared_experts.down_proj": (
+        "tessera::fused_window_dense", "native_fused_window_dense"),
+    "language_model.model.layers.5.mlp.shared_experts.gate_up_proj": (
+        "tessera::fused_window_dense", "native_fused_window_dense_folded"),
+    "language_model.model.layers.7.mlp.shared_experts.gate_up_proj": (
+        "tessera::fused_window_dense", "native_fused_window_dense"),
 }
 #: The routed stacks of stub B by module, with the launch each recorded under
 #: the fused lane: the q256 1024 stacks (rate 4 in every column) take the
@@ -237,6 +253,51 @@ def test_the_rate_4_window_stacks_ran_the_fused_lane_and_the_cells_name_it():
             assert (fused, decoder) in pairs, cell["id"]
             assert len(pairs) == 2, cell["id"]
             assert cell["requires_serve_flags"] == ["TESSERA_SERVE_MODE=resident"], cell["id"]
+
+
+def test_the_q1024_dense_modules_ran_the_fused_identity_and_the_cells_name_it():
+    """Contract v43: the fused-dense receipt, module for module.
+
+    The three q256 1024 dense modules whose rows are a multiple of 128 (the
+    layer-5 shared down and gate/up, the layer-7 shared gate/up) recorded the
+    fused window kernel's dense identity in both phases, under the family's
+    decoder; every other dense module kept the Triton window GEMM's pair; the
+    routed stacks recorded what the v42 receipt did.  The four GLM-image dense
+    cells name both launches, and the replay above joins every record.
+    """
+    receipt = _load(_paths("b_fused_dense")[0])
+    tool = _tool()
+    rungs = _declared_rungs(tool, receipt, _paths("b_fused_dense")[1])
+    fused_symbol = "tessera::fused_window_dense"
+    for phase, records in receipt["records"].items():
+        assert len(records) == 21, phase
+        dense = {name: (rec["symbol"], rec["decoder"])
+                 for name, rec in records.items() if rec["kind"] == "dense"}
+        assert len(dense) == 16, phase
+        fused = {name: pair for name, pair in dense.items() if pair[0] == fused_symbol}
+        assert fused == FUSED_RECEIPT_DENSE, phase
+        for name, pair in dense.items():
+            owner = receipt["record_owner"][phase][name]
+            if name in FUSED_RECEIPT_DENSE:
+                assert rungs[owner] == 1024, (phase, name)
+            else:
+                assert pair[0] == "tessera::window_gemm_dense", (phase, name, pair)
+                assert pair[1] in ("native_window_gemm", "native_window_gemm_folded"), (phase, name)
+                assert rungs[owner] != 1024, (phase, name, rungs[owner])
+        routed = {name: (rec["symbol"], rec["decoder"])
+                  for name, rec in records.items() if rec["kind"] == "moe"}
+        assert routed == FUSED_RECEIPT_ROUTED, phase
+    same_stub = _load(_paths("b")[0])
+    assert receipt["checkpoint_sidecars"] == same_stub["checkpoint_sidecars"]
+    cells = {c["id"]: c for c in load_serving_contract()["lane_eligibility"]["cells"]}
+    for family, decoder in (("e4m3", "native_fused_window_dense"),
+                            ("bf16", "native_fused_window_dense_folded")):
+        for regime in ("decode", "batch"):
+            cell = cells[f"tessera_{family}_k1_dense_sm121_{regime}_resident"]
+            pairs = [(e["symbol"], e["decoder"]) for e in cell["executes"]]
+            assert (fused_symbol, decoder) in pairs, cell["id"]
+            assert pairs[0][0] == "tessera::window_gemm_dense" and len(pairs) == 2, cell["id"]
+            assert 1024 in cell["rungs_q256"], cell["id"]
 
 
 def test_the_glm_cells_cover_exactly_the_rungs_the_receipts_carried():
