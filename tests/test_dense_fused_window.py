@@ -44,7 +44,7 @@ from tessera.errors import GrammarError                   # noqa: E402
 from tessera.grammar import bresenham_rate_schedule       # noqa: E402
 
 import fused_bound as fb                                  # noqa: E402
-from test_window_gemm_grouped import Expert, _quant, _tol  # noqa: E402
+from test_window_gemm_grouped import Expert, _quant  # noqa: E402
 
 cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="the lane is a CUDA kernel")
 
@@ -96,13 +96,25 @@ def _inputs(family, m, cols, seed):
     return x, x.contiguous(), None
 
 
-def _reference(expert, family, xq, a):
-    """The definition: exact fp32 products of the decoded weights, the row
+def _a64(family, xq, a):
+    """The scaled fp64 A operand: ``xq * a_scale`` for E4M3, the bf16 x for value."""
+    return xq.double() * a.double()[:, None] if family == "e4m3" else xq.double()
+
+
+def _bound(expert, family, xq, a, s):
+    """``(r, bound)``: the definition in fp64 -- the decoded weights, the row
     scale (folded before the dot for the value family, on the accumulator for
-    E4M3) and the per-token activation scale, rounded once to bf16."""
-    if family == "e4m3":
-        return (expert.reference(xq.float(), "e4m3") * a.reshape(-1, 1)).bfloat16()
-    return expert.reference(xq, "value", folded=True).bfloat16()
+    E4M3) and the per-token activation scale -- and the per-element bound on
+    ``|kernel - r|`` for a K split of ``s`` (``fused_bound.dense_bound``; the
+    model is stated there and in ``test_dense_forward_on_the_glm_role_shapes``)."""
+    return fb.dense_bound(family, _a64(family, xq, a), fb.fp64_weight(expert, family),
+                          expert.cols, s)
+
+
+def _split(role, m):
+    """The K split the kernel runs at ``m`` rows (the bandwidth model)."""
+    sms = rf._sm_count(torch.cuda.current_device())
+    return rf.dense_k_split(m, role.rows, role.cols, sms, tile_words=role.tile_words)
 
 
 def _fused(role, xq, a, out=None, counter=None):
@@ -119,24 +131,20 @@ def _triton(bundle, xq, a):
     return bundle(xq, a) if a is not None else bundle(xq)
 
 
-def _close(out, ref, what):
-    err = float((out.float() - ref.float()).abs().max())
-    assert err < _tol(ref), f"{what}: max abs err {err} vs tol {_tol(ref)}"
-    return err
-
-
-def _within_row_ulps(a, b, what, ulps=2):
-    """Two bf16 renderings of one fp32 sum taken in two orders differ by at
-    most a straddle of one bf16 rounding; with cancellation an element near
-    zero carries the row's absolute error, so the unit is the bf16 ulp at the
-    row's max magnitude (``2^(e-7)`` for a row max in ``[2^e, 2^(e+1))``)."""
-    ra, rb = a.double(), b.double()
-    rowmax = torch.maximum(ra.abs().amax(dim=-1, keepdim=True),
-                           rb.abs().amax(dim=-1, keepdim=True)).clamp(min=2.0 ** -126)
-    unit = torch.exp2(torch.floor(torch.log2(rowmax)) - 7)
-    worst = float(((ra - rb).abs() / unit).max())
-    assert worst <= ulps, f"{what}: {worst} row-max bf16 ulps apart (limit {ulps})"
-    return worst
+def _within(fused, oracle, what, *, triton=None):
+    """``fused`` within the derived bound of the fp64 reference per element
+    and, given the ``triton`` lane's output over the same wire (one pass,
+    ``S = 1``: its bound is at most the fused one), within twice the bound of
+    it -- both lanes sit inside the bound.  Prints the worst ratios."""
+    r, bound = oracle
+    ratio = fb.check_within(fused, r, bound, f"{what}: fused vs the fp64 reference")
+    line = f"DENSE-BOUND {what} fused/bound={ratio:.4f}"
+    if triton is not None:
+        t_ratio = fb.check_within(triton, r, bound, f"{what}: Triton vs the fp64 reference")
+        pair = fb.check_within(fused, triton.double(), bound, f"{what}: fused vs Triton", scale=2.0)
+        line += f" triton/bound={t_ratio:.4f} pair/(2*bound)={pair:.4f}"
+    print(line)
+    return ratio
 
 
 # --- the kernel against the definition and the Triton lane ------------------------
@@ -149,13 +157,13 @@ def test_dense_forward_matches_the_definition_and_the_triton_lane(family, m):
     role = rf.prepare_dense_role(bundle)
     assert (role.rows, role.cols, role.fp8) == (ROWS, COLS, family == "e4m3")
     _x, xq, a = _inputs(family, m, COLS, 900 + m)
-    ref = _reference(expert, family, xq, a)
     fused = _fused(role, xq, a)
     assert fused.shape == (m, ROWS) and fused.dtype == torch.bfloat16
-    _close(fused, ref, f"{family} M={m}: fused vs the definition")
     # The Triton lane computes the same function of the same wire in another
-    # accumulation order: parity is tolerance-bound, not bitwise.
-    _within_row_ulps(fused, _triton(bundle, xq, a), f"{family} M={m}: fused vs Triton")
+    # accumulation order: parity is bound-limited, not bitwise.
+    s = _split(role, m)
+    _within(fused, _bound(expert, family, xq, a, s), f"{family} M={m} S={s}",
+            triton=_triton(bundle, xq, a))
 
 
 @cuda
@@ -176,8 +184,9 @@ def test_the_k_split_model_picks_both_regimes_and_both_are_exact(family):
     role = rf.prepare_dense_role(bundle)
     for m in (1, one_pass_m):
         _x, xq, a = _inputs(family, m, COLS, 77 + m)
-        _close(_fused(role, xq, a), _reference(expert, family, xq, a),
-               f"{family} M={m} (S={rf.dense_k_split(m, ROWS, COLS, sms)})")
+        s = _split(role, m)
+        _within(_fused(role, xq, a), _bound(expert, family, xq, a, s),
+                f"{family} M={m} (S={s})")
 
 
 @cuda
@@ -192,10 +201,9 @@ def test_dense_forward_reads_a_row_cuts_start_state(family):
     assert int(role.has_init.item()) == 1
     for m in (1, 65):
         _x, xq, a = _inputs(family, m, COLS, 300 + m)
-        _close(_fused(role, xq, a), _reference(expert, family, xq, a),
-               f"{family} M={m} with a start state")
-        _within_row_ulps(_fused(role, xq, a), _triton(bundle, xq, a),
-                         f"{family} M={m} with a start state: fused vs Triton")
+        s = _split(role, m)
+        _within(_fused(role, xq, a), _bound(expert, family, xq, a, s),
+                f"{family} M={m} S={s} with a start state", triton=_triton(bundle, xq, a))
 
 
 @cuda
@@ -373,8 +381,9 @@ def _scheme(family, rows, cols, roles, wire_bytes, q256=1024):
 def _encode_module(family, roles, cols, q256=1024, seed=0):
     """Encode ``roles`` = [(name, rows)] on the family's grid at ``q256``;
     return the container blob, its scheme and the module's exact reference
-    weight (fp32 [rows, cols]: ``stock_dequant`` of the materialised E4M3
-    tiles, or the folded BF16 tile)."""
+    weight in fp64 ``[rows, cols]``: the materialised E4M3 bytes times their
+    fp32 row scale (the product ``stock_dequant`` takes in fp32, exact here),
+    or the folded BF16 tile."""
     fused, export, stock, decode, alphabet = _tessera()
     torch.manual_seed(seed)
     blobs, refs = [], []
@@ -386,10 +395,11 @@ def _encode_module(family, roles, cols, q256=1024, seed=0):
             w.contiguous(), grid=grid, q256=q256, name=name, verify=False)
         if family == "e4m3":
             tiles = stock.materialize_stock(unit, forests, export.DEFAULT_CODE)
-            refs.append(stock.stock_dequant(tiles).to("cuda").float())
+            refs.append(tiles["weight"].to("cuda").double()
+                        * tiles["weight_scale"].to("cuda").double().reshape(-1, 1))
         else:
             refs.append(decode.materialize_bf16_folded(unit, forests, export.DEFAULT_CODE)
-                        .to("cuda").float())
+                        .to("cuda").double())
         blobs.append((name, rows, exported.blob))
     blob = fused.pack_fused(blobs)
     scheme = _scheme(family, sum(r for _, r in roles), cols, roles, len(blob), q256)
@@ -421,10 +431,15 @@ def _served(module, family, xq, x, a):
     return module.apply(xq, a) if family == "e4m3" else module.apply(x)
 
 
-def _module_reference(family, ref_w, xq, x, a):
-    if family == "e4m3":
-        return ((xq.float() * a.reshape(-1, 1)) @ ref_w.t()).bfloat16()
-    return (x.float() @ ref_w.t()).bfloat16()
+def _module_bound(family, ref_w, xq, x, a):
+    """``(r, bound)`` for a served module over the fp64 weight ``ref_w``: each
+    role's rows run as one dense launch whose K split is at most
+    ``cols // BK`` (``dense_k_split``'s range), so ``S = cols // BK`` bounds
+    every role on the fused lane, and the Triton lane's one pass (``S = 1``)
+    with it."""
+    cols = int(ref_w.shape[1])
+    a64 = _a64(family, xq, a) if family == "e4m3" else x.double()
+    return fb.dense_bound(family, a64, ref_w, cols, cols // rf.BK)
 
 
 @cuda
@@ -463,8 +478,8 @@ def test_the_served_module_takes_the_fused_lane_and_serves_two_roles(family, mon
         x, xq, a = _inputs(family, m, 256, 500 + m)
         got = _served(module, family, xq, x, a)
         assert got.shape == (m, 384) and got.dtype == torch.bfloat16
-        _close(got, _module_reference(family, ref_w, xq, x, a),
-               f"{family} module M={m}: fused vs the materialised reference")
+        _within(got, _module_bound(family, ref_w, xq, x, a),
+                f"{family} module M={m} vs the materialised reference")
     monkeypatch.setenv(rf.ENV_TOGGLE_DENSE, "0")
     twin = _module(blob, scheme)
     assert twin.lane == LANE_TRITON
@@ -474,8 +489,9 @@ def test_the_served_module_takes_the_fused_lane_and_serves_two_roles(family, mon
     assert twin.lane_reason == f"role 'gate_proj': disabled by {rf.ENV_TOGGLE_DENSE}=0"
     for m in (1, 129):
         x, xq, a = _inputs(family, m, 256, 600 + m)
-        _within_row_ulps(_served(module, family, xq, x, a), _served(twin, family, xq, x, a),
-                         f"{family} module M={m}: fused vs Triton over the same bytes")
+        _within(_served(module, family, xq, x, a), _module_bound(family, ref_w, xq, x, a),
+                f"{family} module M={m} over the same bytes",
+                triton=_served(twin, family, xq, x, a))
     # The fused lane's own storage beyond the shared bundles: one composed
     # 16-bit table and one int32 flag per role.
     assert module.packed_bytes() - twin.packed_bytes() == len(roles) * (rf.TABLE_ENTRIES * 2 + 4)
@@ -496,8 +512,8 @@ def test_a_module_the_predicate_refuses_keeps_the_triton_lane_and_says_why(famil
     assert module.lane_reason == "role 'weight': 192 rows; the dense identity needs a multiple of 128"
     assert module.launch_pair[0] == WINDOW_GEMM_SYMBOL
     x, xq, a = _inputs(family, 7, 256, 61)
-    _close(_served(module, family, xq, x, a), _module_reference(family, ref_w, xq, x, a),
-           f"{family} 192-row module on the Triton lane")
+    _within(_served(module, family, xq, x, a), _module_bound(family, ref_w, xq, x, a),
+            f"{family} 192-row module on the Triton lane")
 
 
 # --- the predicate ---------------------------------------------------------------
