@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-28T16:46:46Z",
+ "generated": "2026-09-28T21:00:41Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -2604,7 +2604,7 @@
     "title": "[P0] PACT price input: a shape-time table keyed (structure, shape, family, rate, M) with the kernel lane, admitted without per-unit identity"
    },
    "1584": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P0] PACT allocation mode: shape-time table into solve_runtime_frontier and the prefill_frontier sweep, replayed into a full layer_config"
    },
    "1585": {
@@ -2684,7 +2684,7 @@
     "title": "Delegate tessera_export_lane's byte-identical digest sites to the digests owners (#1599)"
    },
    "1601": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "PACT allocator mode: exact lower convex hull as the candidate set (#1584)"
    },
    "1602": {
@@ -2700,15 +2700,15 @@
     "title": "[P1] PrismaQuant writes the Tessera plan; the arm exports through python -m tessera.export_serving (#1587)"
    },
    "1605": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[dedup] Delegate tools strict-JSON loaders to schemas.strict_json_loads"
    },
    "1606": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Delegate tools strict-JSON loaders to schemas.strict_json_loads"
    },
    "1607": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] PQ logical dedup: unify joint_aura transition twins"
    },
    "1608": {
@@ -2724,12 +2724,88 @@
     "title": "MIN_TRELLIS_STEPS = 8 refuses block schedules the wire itself accepts"
    },
    "1610": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Whole-artifact card charges the GLM MTP layer at source BF16; the MTP selection runs after the card"
+   },
+   "1611": {
+    "state": "CLOSED",
+    "title": "[P1] Price the GLM MTP layer at its selected bytes in the whole-artifact card (#1610)"
+   },
+   "1612": {
+    "state": "CLOSED",
+    "title": "Unify joint_aura transition twins into a shared base module (#1607)"
+   },
+   "1613": {
+    "state": "OPEN",
+    "title": "[w03] Resumed rows admit load-all against stream-sized demand: planner hardcodes checkpoint_exists=False"
+   },
+   "1614": {
+    "state": "CLOSED",
+    "title": "[P2] Record the kpool-tail backport image's qualification (tessera#508) in its serving-runtime patch set"
+   },
+   "1615": {
+    "state": "CLOSED",
+    "title": "Record the kpool-tail backport image as a serving-runtime patch set, qualified on the stub (#1614)"
+   },
+   "1616": {
+    "state": "CLOSED",
+    "title": "[P1] Pin Tessera a5f3b232cb (contract v44); adopt the fused dense launches"
+   },
+   "1617": {
+    "state": "OPEN",
+    "title": "[P2] The DFlash2 drafter needs a serving-runtime patch set: the pinned GLM-5.3 image cannot load it"
+   },
+   "1618": {
+    "state": "OPEN",
+    "title": "[P1] Lane roster mirror: learn Tessera v45's structure-scoped column_rates_routed_moe (fail-closed until then)"
+   },
+   "1619": {
+    "state": "CLOSED",
+    "title": "[P1] Pin Tessera a5f3b232cb (contract v44); adopt the fused dense launches"
    },
    "162": {
     "state": "CLOSED",
     "title": "Lane gate slots are derived from the lane spec but the slot vocabulary is still two enumerated tuples, so a fourth lane cannot declare a new one"
+   },
+   "1620": {
+    "state": "OPEN",
+    "title": "[P1] route.trace gate refusal text prints its own count sentinel as a module (\"served None\"); HF->vLLM mapping already on main (#1490), campaign pin 2fdbda3a stale"
+   },
+   "1621": {
+    "state": "OPEN",
+    "title": "[P1] Lane roster mirror: learn Tessera v45 column_rates_routed_moe (fail-closed until then)"
+   },
+   "1622": {
+    "state": "OPEN",
+    "title": "[P1] U4 served KL scores against both teachers (EXL3-comparable gate)"
+   },
+   "1623": {
+    "state": "OPEN",
+    "title": "[P2] PACT hull vertex byte accounting re-synthesizes every Tessera spec per member (~540 s of a 1,130 s GLM-5.3 hull run)"
+   },
+   "1624": {
+    "state": "OPEN",
+    "title": "route.trace gate: a long refusal counts the rest and looks up no module"
+   },
+   "1625": {
+    "state": "OPEN",
+    "title": "Score U4 windows against two teachers in one pass"
+   },
+   "1626": {
+    "state": "OPEN",
+    "title": "[P1] route.trace verdict must be per artifact (union of claimed serve phases), not per phase: MTP layer is priced but never served in non-speculative phases"
+   },
+   "1627": {
+    "state": "OPEN",
+    "title": "[P1] build_tessera_selected_cache binds the assignment by raw file bytes, not the allocator's selection digest"
+   },
+   "1628": {
+    "state": "OPEN",
+    "title": "Memoize per-(format, shape) bytes in assignment_artifact_bytes (5x faster PACT hull write)"
+   },
+   "1629": {
+    "state": "OPEN",
+    "title": "Bind selected-cache assignment by the allocator's selection digest"
    },
    "163": {
     "state": "CLOSED",
@@ -8262,7 +8338,7 @@
     "title": "Routed NVFP4 (E2M1x2 W4A4) experts: contract v27, TP row shard, native select-plane admission"
    },
    "508": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P0] Qualify whole-engine CUDA graphs for the GLM53 NoPE backend (serving is eager-only today)"
    },
    "509": {
@@ -8830,7 +8906,7 @@
     "title": "[P2] Serving manifest is written indented; 13 MB of whitespace puts a size-matched GLM artifact over its byte ceiling"
    },
    "636": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Write Tessera manifest sidecars as compact JSON"
    },
    "637": {
@@ -8878,7 +8954,7 @@
     "title": "P1: admit explicit cached adoption warnings and multi-rung A4 policy"
    },
    "647": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "P2: impacted pytest selection includes the standalone A4 harness without pytest items"
    },
    "648": {
@@ -8918,7 +8994,7 @@
     "title": "[P2] Compact newly written serving manifests"
    },
    "656": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "P2: record standalone A4 gate outside impacted pytest targets"
    },
    "657": {
@@ -9054,7 +9130,7 @@
     "title": "docs: _dev's suite source identity reads a declared verifier (#599)"
    },
    "687": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P0] Supported serving exporter and a Tessera-owned plan schema; no PrismaQuant parsing on the export path"
    },
    "688": {
@@ -9074,7 +9150,7 @@
     "title": "[P1] Fused routed lanes beyond q256 1024: E2M1 and the mixed-rate window stacks (the 5-8x cliff the allocator now prices)"
    },
    "691": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P0] Supported serving export entry point and tessera.serving_plan.v1 (#687)"
    },
    "692": {
@@ -9089,6 +9165,26 @@
     "state": "OPEN",
     "title": "[P1] Fused window kernel reads the two-run rate table: E4M3 routed R768-R1152 and dense/shared R832-R2048 take the fused lanes (#690 item 2)"
    },
+   "695": {
+    "state": "OPEN",
+    "title": "[P1] GLM53 NoPE: CUDA graphs with a drafter are unmeasured, so the GLM-5.3 release configuration stays eager"
+   },
+   "696": {
+    "state": "OPEN",
+    "title": "[P1] The stock V2 runner reads past the kpool-tail block table in eager too; serve GLM on the vLLM #57317 backport"
+   },
+   "697": {
+    "state": "OPEN",
+    "title": "[P2] Stock vLLM: a one-token prompt reads its KDA state slot as the previous request left it"
+   },
+   "698": {
+    "state": "OPEN",
+    "title": "[P2] The GLM53 NoPE eager-equivalence verdict has no machine-readable carrier; the route trace under-counts graph decode"
+   },
+   "699": {
+    "state": "CLOSED",
+    "title": "Admit CUDA graphs for the GLM53 NoPE backend by receipt (#508)"
+   },
    "7": {
     "state": "CLOSED",
     "title": "Tensor parallelism: NVFP4 row shards refused, and the contract still says max_world_size 1"
@@ -9096,6 +9192,14 @@
    "70": {
     "state": "CLOSED",
     "title": "Schema section 3 prices the ALPHABET element at 8-or-16 bits, so a BF16 table built per the table is refused by the normative 8"
+   },
+   "700": {
+    "state": "CLOSED",
+    "title": "GLM53 NoPE: admit a drafter's graph path only by receipt; refuse dflash by name (#695)"
+   },
+   "701": {
+    "state": "OPEN",
+    "title": "[P1] The fused window kernel reads the wire's run table at every rate (contract v45)"
    },
    "71": {
     "state": "CLOSED",
