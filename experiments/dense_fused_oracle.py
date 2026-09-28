@@ -76,8 +76,10 @@ import routed_pair_oracle as rpo  # noqa: E402  (bound arithmetic, profiler and 
 
 STUB = "/mnt/shared/tessera-runs/moe/u1-stubs-20260926/stub-B"
 #: The q256 1024 dense modules of stub B (rate 4 in every column, rows a
-#: multiple of 128): the ones the fused identity serves.  Everything else in
-#: the stub is q256 832/880/960/1088 and keeps the Triton lane.
+#: multiple of 128): the ones the v43 fused identity served, and the default.
+#: Since v45 (tessera#694) the fused identity also serves the stub's other
+#: dense modules, q256 832/880/960/1088 (two runs, rates 3/4 and 4/5); pass
+#: them with --modules.
 MODULES = (
     "model.language_model.layers.5.mlp.shared_experts.down_proj",      # TESSERA_FP8, row-parallel
     "model.language_model.layers.5.mlp.shared_experts.gate_up_proj",   # TESSERA_BF16, column-parallel
