@@ -82,6 +82,10 @@ inactive unless its variable is set:
     the event completes (at the next call or within a second), so the runner's
     host-device overlap is kept. The copies add a gather and a few small
     kernels per step; the arithmetic of every forward is unchanged.
+    ``T695_DRAFT_LOG_TRIGGER=<path>`` records drafts only while that file
+    exists (checked at most once a second), so one serve can time its
+    latency cells unrecorded and record its equality probes. Requests are
+    recorded either way.
 """
 import os
 
@@ -103,10 +107,24 @@ if _T695_GC or _T695_DRAFT_LOG:
     class _T695DraftLog:
         """Deferred device-to-host copies of the drafter's proposals (see the docstring)."""
 
-        def __init__(self, prefix):
+        def __init__(self, prefix, trigger=None):
             self.prefix = prefix
+            self.trigger = trigger
+            self.on = trigger is None
+            self.checked = 0.0
             self.owner = None
             self.failed = False
+
+        def active(self):
+            """Record this step? Always without a trigger; else while the trigger file exists."""
+            if self.trigger is None:
+                return True
+            import time
+            now = time.monotonic()
+            if now - self.checked >= 1.0:
+                self.checked = now
+                self.on = os.path.exists(self.trigger)
+            return self.on
 
         def _ensure(self):
             """Per process: the state, the drain thread and the file belong to the process
@@ -198,7 +216,8 @@ if _T695_GC or _T695_DRAFT_LOG:
                         self.failed = True
                         print(f"[t695] draft log flush failed: {exc!r}", file=sys.stderr, flush=True)
 
-    _t695_draft_log = _T695DraftLog(_T695_DRAFT_LOG) if _T695_DRAFT_LOG else None
+    _t695_draft_log = (_T695DraftLog(_T695_DRAFT_LOG, os.environ.get("T695_DRAFT_LOG_TRIGGER") or None)
+                       if _T695_DRAFT_LOG else None)
 
     def _t695_patch_speculator(module):
         cls = getattr(module, "MTPSpeculator", None)
@@ -227,7 +246,8 @@ if _T695_GC or _T695_DRAFT_LOG:
                 drafts = original_propose(self, input_batch, *args, **kwargs)
                 import torch
                 if (kwargs.get("dummy_run") or kwargs.get("is_profile")
-                        or torch.cuda.is_current_stream_capturing() or _t695_draft_log.failed):
+                        or torch.cuda.is_current_stream_capturing() or _t695_draft_log.failed
+                        or not _t695_draft_log.active()):
                     return drafts
                 try:
                     bound = signature.bind(self, input_batch, *args, **kwargs)
