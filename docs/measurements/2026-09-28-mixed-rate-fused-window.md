@@ -409,15 +409,33 @@ fused dense identity at its rung (832, 880, 960, 1024, 1088).
 
 ## CPU suite (PrismaBuild, x86 -> dl380g10)
 
-PENDING: the full suite at this head (shards `bb668c62...`, `31b896de...`)
-against master `f4ec39f21d` as the control (`638c8539...`, `d98764db...`),
-compared by the set of failing tests. Targeted rows so far: cpu5 (contract
-and reachability files, both shards rc 0), cpu6 (3 failed / 125 passed --
-three stale test-side expectations naming rate 6 where the fixed kernel
-reaches it; fixed in `e9e8fbe492`), cpu7 (`test_lane_reachability.py`,
-`test_contract_platform_axis.py`, `test_serving_contract.py`: 90 passed /
-1 skipped and 92 passed, rows `71717f76...`, `8eefa99e...`), cpu8
-(`test_contract_platform_axis.py`: 21 passed, row `8dfb9688...`).
+The full suite at `46969f127e` (the kernel of this head) against master
+`f4ec39f21d` as the control, two shards each, compared by the set of failing
+tests:
+
+| Tree | Collected | Passed | Skipped | Failed | Shards |
+|---|---:|---:|---:|---:|---|
+| `46969f127e` | 6,888 | 5,490 | 1,404 | 0 | `bb668c62...`, `31b896de...` |
+| master `f4ec39f21d` | 6,744 | 5,481 | 1,269 | 0 | `638c8539...`, `d98764db...` |
+
+No test fails on either tree. The 144 added tests are mostly the new
+per-rate GPU cases, which skip on a box without CUDA. On both trees pbtest
+reports one shard not green for the same reason: `tests/test_native_a4_serving.py`
+was assigned and produced no collection record or outcome. That is identical
+on master, so it is not this branch's.
+
+Targeted rows: cpu5 (contract and reachability files, both shards rc 0),
+cpu6 (3 failed / 125 passed -- three stale test-side expectations naming
+rate 6 where the fixed kernel reaches it; fixed in `e9e8fbe492`), cpu7
+(`test_lane_reachability.py`, `test_contract_platform_axis.py`,
+`test_serving_contract.py`: 90 passed / 1 skipped and 92 passed, rows
+`71717f76...`, `8eefa99e...`), cpu8 (`test_contract_platform_axis.py`:
+21 passed, row `8dfb9688...`), cpu9 at `30eaac6f21` (the contract,
+reachability and doc-claim files: 210 passed, 1 skipped for want of a CUDA
+device, row `3f515bf8...`), and cpu10 at `ac97b0a3b1`, the merge with master
+after #700 (the fused-window, contract, reachability, doc-claim, export-gate
+and census files: 358 passed, 164 skipped for want of CUDA or vLLM, rows
+`340eb5d3...`, `faa8964d...`).
 
 ## Receipts
 
@@ -440,7 +458,7 @@ reaches it; fixed in `e9e8fbe492`), cpu7 (`test_lane_reachability.py`,
 | R1088 profile, first cut | `15f3d9ec...` | `5477b3f90c` (first-cut kernel) | PENDING |
 | NCU R832, R1088, first cut | `11e3c006...`, `0d5505fc...` | `5477b3f90c` | PENDING |
 | PACT bench | `920b9189...` / `35bb094d...` | this head / master | PENDING |
-| CPU suite | `bb668c62...`, `31b896de...` / `638c8539...`, `d98764db...` | this head / master | PENDING |
+| CPU suite | `bb668c62...`, `31b896de...` / `638c8539...`, `d98764db...` | `46969f127e` / master | executed, 0 failed on both |
 
 Measurement outputs live under
 `/mnt/shared/tessera-measurements/kernel-mixed-rate-pact-bench/`: the first
