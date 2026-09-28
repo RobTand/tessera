@@ -12,6 +12,10 @@ and against the Triton window GEMM the module keeps as its other lane:
   the first M the bandwidth model runs in one pass, so both the split-K regime
   (S > 1) and the one-pass regime (S = 1) are measured;
 * a TP row cut's start state (``has_init``);
+* the real GLM dense role shapes (down 4096x6144, gate/up 12288x4096 and
+  their TP2 halves 4096x3072 and 6144x4096) at M = 1, 3, 64, 512 and 2048,
+  held per element to a derived bound against the fp64 reference of the same
+  quantised inputs and against the Triton lane;
 * two-run bitwise equality (no atomics) and CUDA-graph replay against eager;
 * the served module: ``prepare_dense_native_module`` decides the fused lane,
   stamps ``tessera::fused_window_dense`` under the family's decoder, serves a
@@ -226,6 +230,138 @@ def test_dense_forward_captures_and_replays_against_eager(family):
     graph.replay()
     torch.cuda.synchronize()
     assert torch.equal(out, _fused(role, xq2, a2))
+
+
+# --- the GLM dense role shapes -----------------------------------------------------
+
+#: The dense Linears of GLM-5.3 as the kernel sees each one (rows x cols, cols
+#: = K): the whole down and gate/up projections, and their TP2 halves -- the
+#: down projection is row-parallel, so a rank holds a column cut (K / 2); the
+#: gate/up projection is column-parallel, so a rank holds a row cut, which
+#: starts its decode inside the wire (``has_init``).  6144 is the K > 4096 case.
+GLM_ROLE_SHAPES = [
+    pytest.param("dense_down", 4096, 6144, False, id="dense_down-4096x6144"),
+    pytest.param("dense_gate_up", 12288, 4096, False, id="dense_gate_up-12288x4096"),
+    pytest.param("dense_down_tp2_column_cut", 4096, 3072, False, id="dense_down_tp2-4096x3072"),
+    pytest.param("dense_gate_up_tp2_row_cut", 6144, 4096, True, id="dense_gate_up_tp2-6144x4096"),
+]
+GLM_M_CASES = [1, 3, 64, 512, 2048]
+U_ACC = 2.0 ** -23          # one fp32 ulp per accumulation step (a truncating adder)
+U32 = 2.0 ** -24            # fp32 unit roundoff (round-to-nearest multiply)
+U64 = 2.0 ** -53            # fp64 unit roundoff (the reference's own dot)
+
+
+def _gamma(n, u):
+    return n * u / (1.0 - n * u)
+
+
+def _bf16_ulp(v):
+    """The bf16 ulp at magnitude ``v`` (fp64, >= 0): ``2^(e - 7)`` for ``v`` in
+    ``[2^e, 2^(e+1))``, floored at the smallest normal's ulp."""
+    return torch.exp2(torch.floor(torch.log2(v.clamp(min=2.0 ** -126))) - 7)
+
+
+def _fp64_weight(expert, family):
+    """The role's decoded weight in fp64 ``[rows, cols]``, row scale applied:
+    the E4M3 bytes times the fp32 row scale (both exact in fp64), or the value
+    table folded once to bf16 with the row scale, as the folded contract does."""
+    states = expert.states.cuda()
+    if family == "e4m3":
+        byte = expert.unit.native[expert.unit.codes_of_state[states].long()]
+        return byte.view(torch.float8_e4m3fn).double() * expert.scale.double()[:, None]
+    values = expert.values.float().cuda()[states]
+    return (values * expert.scale[:, None]).bfloat16().double()
+
+
+def _glm_bound(family, a64, w64, k, s):
+    """``(r, bound)``: the fp64 reference and the per-element bound on
+    ``|fused - r|`` stated in the test's docstring."""
+    r = a64 @ w64.t()
+    sigma = a64.abs() @ w64.abs().t()
+    e_acc = (_gamma(k + s + 2, U_ACC) + _gamma(k, U64)) * sigma
+    e_pre = e_acc
+    if family == "e4m3":
+        e_pre = e_acc + _gamma(2, U32) * (r.abs() + e_acc)
+    return r, e_pre + 0.5 * _bf16_ulp(r.abs() + e_pre)
+
+
+@cuda
+@pytest.mark.parametrize("family", FAMILIES)
+@pytest.mark.parametrize("role_name,rows,cols,row_cut", GLM_ROLE_SHAPES)
+def test_dense_forward_on_the_glm_role_shapes(role_name, rows, cols, row_cut, family):
+    """The fused lane at the real GLM dense shapes, rate 4 in every column
+    (the ``[[4, 0, cols, 0]]`` run table), against the fp64 reference of the
+    same quantised inputs and against the Triton lane, per output element.
+
+    THE BOUND (derived from the dtypes; nothing fitted).  The kernel sums K
+    exact fp32 products (bf16 x bf16 and e4m3 x e4m3 both are) -- as S fp32
+    partials summed in a fixed order when it splits K, S =
+    ``routed_fused.dense_k_split(m, rows, cols, sms)`` -- charging one fp32
+    ulp per accumulation step so a truncating tensor-core adder is covered;
+    the E4M3 family then applies two round-to-nearest fp32 multiplies
+    ``(acc * a_scale) * w_scale``; the result is rounded once to bf16
+    (round-to-nearest).  With ``Sigma = sum_k |a_k w_k|`` over the scaled
+    operands in fp64 and ``gamma(n, u) = n u / (1 - n u)``:
+
+        E_acc = gamma(K + S + 2, 2^-23) * Sigma + gamma(K, 2^-53) * Sigma
+        E_pre = E_acc                                      (value, folded)
+        E_pre = E_acc + gamma(2, 2^-24) * (|r| + E_acc)    (e4m3, epilogue)
+        |fused - r| <= E_pre + ulp_bf16(|r| + E_pre) / 2
+
+    ``gamma(2, 2^-24)`` is the stated ``2^-23 |y|`` for the two epilogue
+    multiplies; the ``2^-53`` term is the fp64 reference's own dot; the half
+    ulp is taken at ``|r| + E_pre``, the largest magnitude the pre-rounding
+    fp32 value can have, so a straddled binade cannot undershoot it.
+
+    THE TRITON COMPARISON.  The Triton lane sums the same K exact products in
+    one pass (no split, S = 1) with the same epilogue, so its own bound is at
+    most the fused one, and ``|fused - triton| <= 2 E_pre + ulp_bf16(|r| +
+    E_pre)`` -- one bf16 ulp plus ``2 gamma Sigma`` (plus the two epilogue
+    terms on E4M3) -- asserted per element and reported in bf16 ulps of y.
+    """
+    init = _init(cols, 4200 + rows // 128) if row_cut else None
+    expert, bundle = _role(family, rows=rows, cols=cols, seed=720 + rows // 128 + cols // 32,
+                           init=init)
+    assert bool(bundle.has_init) == row_cut
+    assert rf.fused_dense_window_supported(bundle) is None
+    role = rf.prepare_dense_role(bundle)
+    assert (role.rows, role.cols, int(role.has_init.item())) == (rows, cols, int(row_cut))
+    sms = rf._sm_count(torch.cuda.current_device())
+    w64 = _fp64_weight(expert, family)
+    failures = []
+    for m in GLM_M_CASES:
+        s = rf.dense_k_split(m, rows, cols, sms)
+        _x, xq, a = _inputs(family, m, cols, 1300 + m)
+        a64 = xq.double() * a.double()[:, None] if family == "e4m3" else xq.double()
+        r, bound = _glm_bound(family, a64, w64, cols, s)
+        fused = _fused(role, xq, a)
+        triton = _triton(bundle, xq, a)
+        assert fused.shape == triton.shape == (m, rows)
+        d_fused = (fused.double() - r).abs()
+        d_triton = (triton.double() - r).abs()
+        d_ft = (fused.double() - triton.double()).abs()
+        bound_ft = 2.0 * bound
+        ulp_y = _bf16_ulp(r.abs())
+        row_unit = _bf16_ulp(r.abs().amax(dim=-1, keepdim=True))
+        facts = {
+            "fused_over_bound": float((d_fused / bound).max()),
+            "triton_over_bound": float((d_triton / bound).max()),
+            "fused_vs_triton_over_bound": float((d_ft / bound_ft).max()),
+            "fused_vs_triton_ulps_of_y": float((d_ft / ulp_y).max()),
+            "fused_vs_triton_ulps_of_row_max": float((d_ft / row_unit).max()),
+            "violations": (int((d_fused > bound).sum()), int((d_triton > bound).sum()),
+                           int((d_ft > bound_ft).sum())),
+        }
+        print(f"GLM-ROLE-SHAPE {role_name} {rows}x{cols} K={cols} {family} M={m} S={s} "
+              f"fused/bound={facts['fused_over_bound']:.4f} "
+              f"triton/bound={facts['triton_over_bound']:.4f} "
+              f"fused-vs-triton/bound={facts['fused_vs_triton_over_bound']:.4f} "
+              f"fused-vs-triton max {facts['fused_vs_triton_ulps_of_y']:.2f} bf16 ulps of y "
+              f"({facts['fused_vs_triton_ulps_of_row_max']:.2f} of the row max) "
+              f"violations(fused,triton,pair)={facts['violations']}")
+        if any(facts["violations"]):
+            failures.append((m, s, facts))
+    assert not failures, f"{role_name} {rows}x{cols} {family}: bound exceeded at {failures}"
 
 
 # --- the served module -----------------------------------------------------------
