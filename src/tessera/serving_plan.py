@@ -35,7 +35,6 @@ writing a plan, without importing an entry point -- and ``family_for``, the
 grid-to-family statement that rule and the exporter share.
 """
 
-from tessera.export import served_recipe
 from tessera.serving.scheme import (
     STRUCTURE_DENSE, TESSERA_BF16, TESSERA_FP8, TESSERA_NVFP4)
 
@@ -160,5 +159,9 @@ def module_scheme_key(grid, q256: int, structure: str = STRUCTURE_DENSE) -> tupl
     sub-cap rung keeps WINDOW and is refused -- is refused by ``check_recipe``
     before this anyway; the key does not rely on that.)
     """
+    # Lazy: ``tessera.export`` imports torch, and this module stays on the
+    # torch-free side of that boundary (CI ``pure``) -- the key needs the
+    # served recipe only here, never at import time.
+    from tessera.export import served_recipe
     recipe = served_recipe(grid, q256, structure)
     return (family_for(grid), grid.name, recipe.body.name, recipe.scale_plane.name)
