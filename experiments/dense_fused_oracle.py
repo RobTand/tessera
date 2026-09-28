@@ -305,11 +305,18 @@ def oracle_case(store, module, m, seed, sigma, mode, tp_rank, tp_size, sms):
         }
     case["fused_vs_triton_bf16_ulps"] = rpo.bf16_ulp_stats(outputs["fused"], outputs["triton"])
     case["fused_vs_triton_max_abs"] = float((outputs["fused"].float() - outputs["triton"].float()).abs().max())
+    # The fused lane shares the wire with the Triton lane and holds, per role,
+    # only its launch arguments (FusedDenseWindowRole.named_tables): the int16
+    # decode table, the int32 has-init flag, the int32 [1, 8] run pair and the
+    # int32 [K / BK, BDESC_INTS] block descriptors (tessera#694 added the last
+    # two), K being the layer's local columns.
+    per_role = (rf.TABLE_ENTRIES * 2 + 4 + 8 * 4
+                + (int(fused_info["local_columns"]) // rf.BK) * rf.BDESC_INTS * 4)
     case["residency"] = {
         "fused_bytes": fused_info["resident_bytes"], "triton_bytes": triton_info["resident_bytes"],
         "delta_bytes": fused_info["resident_bytes"] - triton_info["resident_bytes"],
         "fused_tables": fused_info["resident_fused_tables"],
-        "expected_delta_bytes": fused_info["resident_fused_tables"] * (rf.TABLE_ENTRIES * 2 + 4)}
+        "expected_delta_bytes": fused_info["resident_fused_tables"] * per_role}
     case["pass"] = bool(
         case["lane_ok"]
         and all(leg["vs_reference"]["pass"] and leg["deterministic"] and leg["pair_is_the_layers"]
