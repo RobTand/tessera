@@ -35,6 +35,21 @@
 // inside the same stream (a graph-captured memset), so a captured forward
 // replays.
 //
+// THE DENSE CASE.  A dense Linear is the E = 1, top_k = 1, unweighted case of
+// the down projection: ``routed_fused_kernel<FP8, 2, DENSE=true, SPLIT>`` reads
+// the same words/table/scale planes for one "expert", takes row ``m`` of ``x``
+// as route ``m`` (no routing tables are read), and writes ``y[m, n]`` straight
+// into a column slice of the module's output (``out_stride`` is the slice's row
+// stride), so a merged Linear's roles are one launch each and no concatenation
+// follows.  When the item count ``ceil(M / 64) * N / 128`` would leave SMs idle
+// (decode: M <= 64 on a 4096-row role is 32 items for 48 SMs) the K range is
+// split ``S`` ways (``k_split``); each split accumulates its chunk range into
+// an fp32 workspace ``[S, M, N]`` and ``dense_reduce_kernel`` sums the ``S``
+// partials in fixed order and applies the epilogue -- deterministic, and the
+// same fp32 operation order as the unsplit epilogue once the sum is formed.
+// The dense identity is ``tessera::fused_window_dense`` (``serving.native_
+// window``), decoders ``native_fused_window_dense`` / ``..._folded``.
+//
 // The Python owner is ``tessera.routed_fused``; the contract publishes this
 // file as two ``native_extensions`` entries (one per family, see ``ext``).
 
@@ -191,10 +206,15 @@ struct Params {
     void* out;                     // bf16
     long out_stride;
     int inter;                     // I (mode 1: the up half's column offset)
+    int rows_x;                    // DENSE: M, the rows of x (and of out)
+    int k_split;                   // DENSE: S, the K-range splits per (n-block, superblock)
+    float* partial;                // DENSE && SPLIT: fp32 [S, M, N] raw accumulators
 };
 
-template <bool FP8, int MODE>
+template <bool FP8, int MODE, bool DENSE, bool SPLIT>
 __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p) {
+    static_assert(!DENSE || MODE == 2, "the dense case is the single-projection (down) mode");
+    static_assert(!SPLIT || DENSE, "a K split is a dense scheduling device");
     extern __shared__ __align__(128) uint8_t smem[];
     uint16_t* tab = reinterpret_cast<uint16_t*>(smem + OFF_TABLES);
     uint8_t* Bs = smem + OFF_B;
@@ -207,7 +227,9 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
     const int tid = threadIdx.x;
     const int lane = tid & 31;
     const int nk = p.K / BK;
-    const int total_items = p.item_off[p.E] * p.n_blocks;
+    const int dense_nsb = (p.rows_x + BM - 1) / BM;      // DENSE: superblocks of x
+    const int total_items = DENSE ? dense_nsb * p.k_split * p.n_blocks
+                                  : p.item_off[p.E] * p.n_blocks;
     unsigned gc = 0;          // global chunk counter: the stage is gc & 1
     unsigned item_idx = 0;    // the descriptor slot is item_idx & 1
 
@@ -215,6 +237,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
         // ------------------------------------------------------------ producers
         const int col = tid >> 3;   // k column within the chunk this thread decodes
         const int j = tid & 7;      // word (8 rows) within the half
+        int last_e = -1;            // the expert whose table(s) shared memory holds
         for (;;) {
             bar_sync(BAR_PROD, PRODUCER_THREADS);   // every producer is done with the last item's smem
             if (tid == 0) claim[0] = atomicAdd(p.counter, 1);
@@ -229,28 +252,50 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
             }
             // item -> (expert, n-block, superblock); items of one expert are
             // contiguous and ordered (n-block, superblock) so that neighbouring
-            // items read the same words.
-            const int sbg = item / p.n_blocks;
-            int lo = 0, hi = p.E;
-            while (hi - lo > 1) {
-                const int mid = (lo + hi) >> 1;
-                if (p.item_off[mid] <= sbg) lo = mid; else hi = mid;
+            // items read the same words.  DENSE: one expert, the superblocks
+            // of x in order, and a K-split index innermost so the S splits of
+            // one (n-block, superblock) run on neighbouring SMs.
+            int e, nb, sb, pos0, mb, kc0, nkc, ks;
+            if constexpr (DENSE) {
+                const int per_nb = dense_nsb * p.k_split;
+                nb = item / per_nb;
+                const int rem = item - nb * per_nb;
+                sb = rem / p.k_split;
+                ks = rem - sb * p.k_split;
+                e = 0;
+                pos0 = sb * BM;
+                mb = min(BM, p.rows_x - pos0);
+                kc0 = (int)(((long)ks * nk) / p.k_split);
+                nkc = (int)(((long)(ks + 1) * nk) / p.k_split) - kc0;
+            } else {
+                const int sbg = item / p.n_blocks;
+                int lo = 0, hi = p.E;
+                while (hi - lo > 1) {
+                    const int mid = (lo + hi) >> 1;
+                    if (p.item_off[mid] <= sbg) lo = mid; else hi = mid;
+                }
+                e = lo;
+                const int nsb = p.item_off[e + 1] - p.item_off[e];
+                const int local = item - p.item_off[e] * p.n_blocks;
+                nb = local / nsb;
+                sb = local - nb * nsb;
+                const int start = p.offsets[e];
+                const int end = p.offsets[e + 1];
+                pos0 = start + sb * BM;
+                mb = min(BM, end - pos0);
+                kc0 = 0;
+                nkc = nk;
+                ks = 0;
             }
-            const int e = lo;
-            const int nsb = p.item_off[e + 1] - p.item_off[e];
-            const int local = item - p.item_off[e] * p.n_blocks;
-            const int nb = local / nsb;
-            const int sb = local - nb * nsb;
-            const int start = p.offsets[e];
-            const int end = p.offsets[e + 1];
-            const int pos0 = start + sb * BM;
-            const int mb = min(BM, end - pos0);
             if (tid == 0) {
                 desc[slot * 8 + 0] = e;
                 desc[slot * 8 + 1] = nb;
                 desc[slot * 8 + 2] = sb;
                 desc[slot * 8 + 3] = pos0;
                 desc[slot * 8 + 4] = mb;
+                desc[slot * 8 + 5] = kc0;
+                desc[slot * 8 + 6] = nkc;
+                desc[slot * 8 + 7] = ks;
             }
             const int n0 = (MODE == 2) ? nb * BN : nb * HALF;
             // Row scales for the item's 128 B columns, in B-column order.
@@ -267,8 +312,12 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 }
                 wsc[slot * BN + c] = v;
             }
-            // The expert's table(s): 32 KB each, asynchronously.
-            {
+            // The expert's table(s): 32 KB each, asynchronously -- unless shared
+            // memory already holds this expert's, which it does for every item
+            // after the first of one expert (always, in the dense case).  Safe
+            // because every producer passed the barrier above after its last
+            // lookup of the previous item, and consumers never read the table.
+            if (e != last_e) {
                 const uint16_t* t0 = p.table0 + (long)e * TABLE_ENTRIES;
                 for (int i = tid; i < TABLE_ENTRIES / 8; i += PRODUCER_THREADS)
                     cp_async16(tab + i * 8, t0 + i * 8);
@@ -277,6 +326,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                     for (int i = tid; i < TABLE_ENTRIES / 8; i += PRODUCER_THREADS)
                         cp_async16(tab + TABLE_ENTRIES + i * 8, t1 + i * 8);
                 }
+                last_e = e;
             }
             // Word geometry per half: half h decodes rows n_h0 .. n_h0 + 63 of
             // its projection (down: the two halves of one 128-row block; gate/up:
@@ -304,8 +354,12 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 const int r = FP8 ? (tid >> 1) : (tid >> 2);
                 if ((!FP8 || tid < 128) && r < mb) {
                     const int pos = pos0 + r;
-                    const int flat = p.flat_sorted[pos];
-                    arow = (p.a_row_mode == 1) ? pos : (p.a_row_mode == 0 ? flat / p.top_k : flat);
+                    if constexpr (DENSE) {
+                        arow = pos;                       // row m of x is route m
+                    } else {
+                        const int flat = p.flat_sorted[pos];
+                        arow = (p.a_row_mode == 1) ? pos : (p.a_row_mode == 0 ? flat / p.top_k : flat);
+                    }
                 }
             }
             auto issue_words = [&](int kc) {
@@ -366,19 +420,20 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 }
             };
 
-            issue_words(0);
-            cp_async_commit();                     // group 0: the tables and chunk 0's words
-            if (nk > 1) issue_words(1);
+            issue_words(kc0);
+            cp_async_commit();                     // group 0: the tables and the first chunk's words
+            if (nkc > 1) issue_words(kc0 + 1);
             cp_async_commit();                     // group 1
             int32_t prev_cur[2] = {0, 0}, prev_nxt[2] = {0, 0};
             uint4 a_cur = make_uint4(0, 0, 0, 0), a_nxt = make_uint4(0, 0, 0, 0);
-            load_prev(0, prev_cur);
-            load_a(0, a_cur);
-            for (int kc = 0; kc < nk; ++kc, ++gc) {
-                if (kc + 1 < nk) { load_prev(kc + 1, prev_nxt); load_a(kc + 1, a_nxt); }
+            load_prev(kc0, prev_cur);
+            load_a(kc0, a_cur);
+            for (int ic = 0; ic < nkc; ++ic, ++gc) {
+                const int kc = kc0 + ic;
+                if (ic + 1 < nkc) { load_prev(kc + 1, prev_nxt); load_a(kc + 1, a_nxt); }
                 cp_async_wait<1>();                // chunk kc's words (and the tables) have landed
                 bar_sync(BAR_PROD, PRODUCER_THREADS);   // ... for every producer; chunk kc-1's stage is free
-                if (kc + 2 < nk) issue_words(kc + 2);
+                if (ic + 2 < nkc) issue_words(kc + 2);
                 cp_async_commit();
                 const int stage = gc & 1;
                 if (gc >= 2) bar_sync(BAR_EMPTY0 + stage, THREADS);
@@ -429,6 +484,8 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
             const int nb = desc[slot * 8 + 1];
             const int pos0 = desc[slot * 8 + 3];
             const int mb = desc[slot * 8 + 4];
+            const int nkc = desc[slot * 8 + 6];
+            const int ks = desc[slot * 8 + 7];
             float acc[2][4][4];
             #pragma unroll
             for (int mi = 0; mi < 2; ++mi)
@@ -436,9 +493,9 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 for (int nt = 0; nt < 4; ++nt)
                     #pragma unroll
                     for (int i = 0; i < 4; ++i) acc[mi][nt][i] = 0.f;
-            for (int kc = 0; kc < nk; ++kc, ++gc) {
+            for (int ic = 0; ic < nkc; ++ic, ++gc) {
                 stage = gc & 1;
-                if (kc > 0) bar_sync(BAR_FULL0 + stage, THREADS);
+                if (ic > 0) bar_sync(BAR_FULL0 + stage, THREADS);
                 const uint8_t* A = As + stage * A_STAGE_BYTES;
                 const uint8_t* B = Bs + stage * B_STAGE_BYTES;
                 #pragma unroll
@@ -478,14 +535,26 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                     const int r = 32 * mw + 16 * mi + 8 * hr + (lane >> 2);
                     if (r >= mb) continue;
                     const int pos = pos0 + r;
-                    const int flat = p.flat_sorted[pos];
+                    const int flat = DENSE ? pos : p.flat_sorted[pos];
                     float a_s = 1.f, rw = 1.f;
-                    if constexpr (FP8) {
-                        const long arow = (p.a_row_mode == 1) ? pos : (p.a_row_mode == 0 ? flat / p.top_k : flat);
+                    if constexpr (FP8 && !SPLIT) {
+                        const long arow = DENSE ? (long)pos
+                            : ((p.a_row_mode == 1) ? pos : (p.a_row_mode == 0 ? flat / p.top_k : flat));
                         a_s = p.a_scale[arow];
                     }
-                    if (MODE == 2 && p.mul_weight) rw = p.rw_sorted[pos];
-                    if constexpr (MODE == 0) {
+                    if (MODE == 2 && !DENSE && p.mul_weight) rw = p.rw_sorted[pos];
+                    if constexpr (SPLIT) {
+                        // The raw fp32 accumulator of this K range; the reduce
+                        // kernel forms the sum in split order and applies the
+                        // epilogue once.
+                        float* part = p.partial + ((long)ks * p.rows_x + pos) * p.N + n0;
+                        #pragma unroll
+                        for (int nt = 0; nt < 4; ++nt) {
+                            const int cb = 32 * nw + 8 * nt + 2 * (lane & 3);
+                            *reinterpret_cast<float2*>(part + cb) =
+                                make_float2(acc[mi][nt][2 * hr], acc[mi][nt][2 * hr + 1]);
+                        }
+                    } else if constexpr (MODE == 0) {
                         // gate n-tiles 0,1 pair with up n-tiles 2,3 in the same registers
                         #pragma unroll
                         for (int nt = 0; nt < 2; ++nt) {
@@ -535,7 +604,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                             for (int i = 0; i < 2; ++i) {
                                 float y = acc[mi][nt][2 * hr + i];
                                 if constexpr (FP8) y = __fmul_rn(__fmul_rn(y, a_s), wsc[slot * BN + cb + i]);
-                                if (p.mul_weight) y = __fmul_rn(y, rw);
+                                if (!DENSE && p.mul_weight) y = __fmul_rn(y, rw);
                                 two |= (uint32_t)bf16_bits_rn(y) << (16 * i);
                             }
                             const long col = n0 + cb;
@@ -577,16 +646,46 @@ __global__ void token_sum_kernel(const uint16_t* __restrict__ routed, uint16_t* 
     *reinterpret_cast<uint4*>(out + t * width + c) = o;
 }
 
-template <bool FP8, int MODE>
+template <bool FP8, int MODE, bool DENSE = false, bool SPLIT = false>
 void launch(const Params& p, int grid, cudaStream_t stream) {
     static bool attributed = false;
     if (!attributed) {
-        C10_CUDA_CHECK(cudaFuncSetAttribute(routed_fused_kernel<FP8, MODE>,
+        C10_CUDA_CHECK(cudaFuncSetAttribute(routed_fused_kernel<FP8, MODE, DENSE, SPLIT>,
                                             cudaFuncAttributeMaxDynamicSharedMemorySize, SMEM_BYTES));
         attributed = true;
     }
-    routed_fused_kernel<FP8, MODE><<<grid, THREADS, SMEM_BYTES, stream>>>(p);
+    routed_fused_kernel<FP8, MODE, DENSE, SPLIT><<<grid, THREADS, SMEM_BYTES, stream>>>(p);
     C10_CUDA_KERNEL_LAUNCH_CHECK();
+}
+
+// DENSE && SPLIT: out[m, n] = epilogue( sum_{s < S} partial[s, m, n] ), the sum
+// in fixed split order in fp32, then the same operation order as the unsplit
+// epilogue: ``(acc * a_scale[m]) * w_scale[n]`` for the E4M3 family, the bare
+// accumulator for the folded value family, one bf16 rounding.
+template <bool FP8>
+__global__ void dense_reduce_kernel(const float* __restrict__ partial, const float* __restrict__ a_scale,
+                                    const float* __restrict__ wscale, uint16_t* __restrict__ out,
+                                    long out_stride, int S, long M, long N) {
+    const long quad = (long)blockIdx.x * blockDim.x + threadIdx.x;   // four consecutive columns
+    const long quads_per_row = N / 4;
+    if (quad >= M * quads_per_row) return;
+    const long m = quad / quads_per_row;
+    const long n = (quad - m * quads_per_row) * 4;
+    float4 acc = make_float4(0.f, 0.f, 0.f, 0.f);
+    for (int s = 0; s < S; ++s) {
+        const float4 v = *reinterpret_cast<const float4*>(partial + ((long)s * M + m) * N + n);
+        acc.x += v.x; acc.y += v.y; acc.z += v.z; acc.w += v.w;
+    }
+    float y[4] = {acc.x, acc.y, acc.z, acc.w};
+    if constexpr (FP8) {
+        const float a_s = a_scale[m];
+        #pragma unroll
+        for (int i = 0; i < 4; ++i) y[i] = __fmul_rn(__fmul_rn(y[i], a_s), wscale[n + i]);
+    }
+    uint2 o;
+    o.x = bf16_bits_rn(y[0]) | ((uint32_t)bf16_bits_rn(y[1]) << 16);
+    o.y = bf16_bits_rn(y[2]) | ((uint32_t)bf16_bits_rn(y[3]) << 16);
+    *reinterpret_cast<uint2*>(out + m * out_stride + n) = o;
 }
 
 const int32_t* i32_ptr(const torch::Tensor& t) { return t.data_ptr<int32_t>(); }
@@ -703,6 +802,9 @@ void routed_fused_forward(
     p.out = out.data_ptr();
     p.out_stride = out_stride;
     p.inter = (int)N;
+    p.rows_x = (int)x.size(0);
+    p.k_split = 1;
+    p.partial = nullptr;
 
     const c10::cuda::CUDAGuard guard(x.device());
     auto stream = at::cuda::getCurrentCUDAStream();
@@ -712,6 +814,106 @@ void routed_fused_forward(
     if (mode == 0) launch<FAMILY_FP8, 0>(p, g, stream);
     else if (mode == 1) launch<FAMILY_FP8, 1>(p, g, stream);
     else launch<FAMILY_FP8, 2>(p, g, stream);
+}
+
+// The dense launch: one role of a dense Linear (E = 1, route m = row m, no
+// weight), ``out`` a ``[M, N]`` view whose rows may be strided (a column slice
+// of the module's merged output).  ``k_split`` > 1 accumulates each split's K
+// range into ``partial`` ([S, M, N] fp32) and reduces it in fixed order.  The
+// caller zeroes ``counter`` in-stream before the call.
+void dense_forward(
+    bool fp8, torch::Tensor x, torch::Tensor a_scale,
+    torch::Tensor words, torch::Tensor table, torch::Tensor init, torch::Tensor has_init,
+    torch::Tensor wscale, int64_t tile_words, torch::Tensor counter,
+    int64_t k_split, torch::Tensor partial, torch::Tensor out, int64_t grid) {
+    TORCH_CHECK(x.is_cuda() && x.dim() == 2 && x.is_contiguous(), "x must be a contiguous 2-D CUDA tensor");
+    const int64_t M = x.size(0);
+    const int64_t K = x.size(1);
+    TORCH_CHECK(K % BK == 0 && K >= 4 * BK, "K must be a multiple of ", BK, " and at least ", 4 * BK);
+    if (fp8) {
+        TORCH_CHECK(x.scalar_type() == torch::kFloat8_e4m3fn, "the E4M3 family takes an e4m3 x");
+        TORCH_CHECK(a_scale.is_cuda() && a_scale.scalar_type() == torch::kFloat32
+                    && a_scale.is_contiguous() && a_scale.numel() == M, "a_scale must be fp32 [M]");
+    } else {
+        TORCH_CHECK(x.scalar_type() == torch::kBFloat16, "the value family takes a bf16 x");
+    }
+    TORCH_CHECK(wscale.dim() == 2 && wscale.size(0) == 1 && wscale.scalar_type() == torch::kFloat32
+                && wscale.is_contiguous(), "wscale must be fp32 [1, N]");
+    const int64_t N = wscale.size(1);
+    TORCH_CHECK(N % BN == 0 && N > 0, "the role's rows must be a multiple of ", BN);
+    TORCH_CHECK(words.is_cuda() && words.dim() == 2 && words.size(0) == 1
+                && words.scalar_type() == torch::kInt32 && words.is_contiguous(), "words must be int32 [1, W]");
+    TORCH_CHECK(table.dim() == 2 && table.size(0) == 1 && table.size(1) == TABLE_ENTRIES
+                && table.scalar_type() == torch::kInt16 && table.is_contiguous(), "table must be int16 [1, 16384]");
+    TORCH_CHECK(init.dim() == 2 && init.size(0) == 1 && init.size(1) == K
+                && init.scalar_type() == torch::kInt32 && init.is_contiguous(), "init must be int32 [1, K]");
+    TORCH_CHECK(has_init.numel() == 1 && has_init.scalar_type() == torch::kInt32, "has_init must be int32 [1]");
+    TORCH_CHECK(tile_words == K * CHUNK_WORDS, "tile_words must be cols * ", CHUNK_WORDS, " (rate 4)");
+    TORCH_CHECK(counter.scalar_type() == torch::kInt32 && counter.numel() >= 1, "counter must be int32");
+    TORCH_CHECK(out.is_cuda() && out.dim() == 2 && out.scalar_type() == torch::kBFloat16
+                && out.size(0) == M && out.size(1) == N && out.stride(1) == 1 && out.stride(0) >= N
+                && (out.stride(0) % 2) == 0,
+                "out must be a bf16 [M, N] view with unit column stride and an even row stride");
+    const int nk = (int)(K / BK);
+    TORCH_CHECK(k_split >= 1 && k_split <= nk, "k_split must be in [1, K / ", BK, "]");
+    if (k_split > 1) {
+        TORCH_CHECK(partial.is_cuda() && partial.scalar_type() == torch::kFloat32 && partial.is_contiguous()
+                    && partial.numel() == k_split * M * N, "partial must be contiguous fp32 [S, M, N]");
+    }
+    TORCH_CHECK(grid >= 1, "grid must be positive");
+    TORCH_CHECK(fp8 == FAMILY_FP8, "this library serves the ", FAMILY_FP8 ? "E4M3" : "value",
+                " family only; the other family's library is a separate native extension");
+
+    Params p{};
+    p.x = x.data_ptr();
+    p.a_scale = fp8 ? f32_ptr(a_scale) : nullptr;
+    p.words0 = i32_ptr(words);
+    p.words1 = nullptr;
+    p.table0 = u16_ptr(table);
+    p.table1 = nullptr;
+    p.init0 = i32_ptr(init);
+    p.init1 = nullptr;
+    p.has_init0 = i32_ptr(has_init);
+    p.has_init1 = nullptr;
+    p.wscale0 = f32_ptr(wscale);
+    p.wscale1 = nullptr;
+    p.words_stride = words.size(1);
+    p.tile_words = (int)tile_words;
+    p.K = (int)K;
+    p.N = (int)N;
+    p.E = 1;
+    p.offsets = nullptr;
+    p.flat_sorted = nullptr;
+    p.rw_sorted = nullptr;
+    p.item_off = nullptr;
+    p.counter = counter.data_ptr<int32_t>();
+    p.n_blocks = (int)(N / BN);
+    p.top_k = 1;
+    p.a_row_mode = 2;
+    p.mul_weight = 0;
+    p.limit = std::numeric_limits<float>::infinity();
+    p.out = out.data_ptr();
+    p.out_stride = out.stride(0);
+    p.inter = (int)N;
+    p.rows_x = (int)M;
+    p.k_split = (int)k_split;
+    p.partial = k_split > 1 ? partial.data_ptr<float>() : nullptr;
+
+    const c10::cuda::CUDAGuard guard(x.device());
+    auto stream = at::cuda::getCurrentCUDAStream();
+    const int g = (int)grid;
+    if (k_split > 1) {
+        launch<FAMILY_FP8, 2, true, true>(p, g, stream);
+        const long quads = M * (N / 4);
+        const int threads = 256;
+        const long blocks = (quads + threads - 1) / threads;
+        dense_reduce_kernel<FAMILY_FP8><<<(unsigned)blocks, threads, 0, stream>>>(
+            p.partial, p.a_scale, p.wscale0, reinterpret_cast<uint16_t*>(p.out), p.out_stride,
+            (int)k_split, M, N);
+        C10_CUDA_KERNEL_LAUNCH_CHECK();
+    } else {
+        launch<FAMILY_FP8, 2, true, false>(p, g, stream);
+    }
 }
 
 void token_sum(torch::Tensor routed, torch::Tensor out, int64_t top_k) {
@@ -737,6 +939,7 @@ void token_sum(torch::Tensor routed, torch::Tensor out, int64_t top_k) {
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.def("routed_fused_forward", &routed_fused_forward);
+    m.def("dense_forward", &dense_forward);
     m.def("token_sum", &token_sum);
     m.attr("BM") = BM;
     m.attr("BN") = BN;

@@ -1,8 +1,11 @@
 """The current packed FP8 route and the retained window-GEMV reference operator.
 
-The serve prepares ``tessera_native`` and dispatches one native window GEMM
-at every M and in both residencies. It no longer creates a GEMV holder or a
-materialized weight fallback. Precision tests for the retained GEMV operator
+The serve prepares ``tessera_native`` and dispatches ONE launch per module at
+every M and in both residencies -- the Triton window GEMM, or since contract
+v43 the fused window kernel's dense identity where the module's wire admits
+it (``route.DENSE_LAUNCHES``; the default shape here, q256 1024 with rows a
+multiple of 128, takes the fused lane).  It no longer creates a GEMV holder
+or a materialized weight fallback. Precision tests for the retained GEMV operator
 prepare that holder explicitly from the wire, independently of the serve.
 They retain the original byte-identity, fp32-order and activation-scale bars.
 
@@ -189,7 +192,8 @@ def test_decode_regime_serves_the_native_window_gemm(monkeypatch, m):
     got, want, layer, _m, _ = _drive(monkeypatch, MODE_STREAMED, m=m, seed=11)
     rec = read_route(layer)
     assert rec is not None
-    assert (rec["symbol"], rec["decoder"]) == route.DENSE_LAUNCH
+    assert (rec["symbol"], rec["decoder"]) == layer.tessera_native.launch_pair
+    assert (rec["symbol"], rec["decoder"]) in route.DENSE_LAUNCHES
     assert rec["contract"] == route.ACTIVATION_CONTRACT == "fp8_per_token_dynamic"
     assert rec["state"] == "served"
     err = (got.float() - want.float()).abs().max().item()
@@ -204,7 +208,8 @@ def test_prefill_keeps_the_native_window_path(monkeypatch, m):
     got, want, layer, _m, _ = _drive(monkeypatch, MODE_STREAMED, m=m, seed=12)
     rec = read_route(layer)
     assert rec is not None
-    assert (rec["symbol"], rec["decoder"]) == route.DENSE_LAUNCH
+    assert (rec["symbol"], rec["decoder"]) == layer.tessera_native.launch_pair
+    assert (rec["symbol"], rec["decoder"]) in route.DENSE_LAUNCHES
     assert rec["state"] == "served"
     err = (got.float() - want.float()).abs().max().item()
     assert err / max(want.float().abs().max().item(), 1e-9) < 8e-3
@@ -307,7 +312,8 @@ def test_optional_gemv_extension_is_not_needed_by_dense_dispatch(monkeypatch):
     assert not hasattr(layer, "tessera_gemv")
     rec = read_route(layer)
     assert rec is not None
-    assert (rec["symbol"], rec["decoder"]) == route.DENSE_LAUNCH
+    assert (rec["symbol"], rec["decoder"]) == layer.tessera_native.launch_pair
+    assert (rec["symbol"], rec["decoder"]) in route.DENSE_LAUNCHES
     err = (got.float() - want.float()).abs().max().item()
     assert err / max(want.float().abs().max().item(), 1e-9) < 8e-3
 
@@ -441,7 +447,8 @@ def test_the_dispatch_survives_a_compiled_forward_with_a_dynamic_token_dim(monke
     rec = read_route(layer)
     assert rec is not None
     assert str(rec["shape"]).startswith("M*:")
-    assert (rec["symbol"], rec["decoder"]) == route.DENSE_LAUNCH
+    assert (rec["symbol"], rec["decoder"]) == layer.tessera_native.launch_pair
+    assert (rec["symbol"], rec["decoder"]) in route.DENSE_LAUNCHES
 
 
 # --- the contract publishes what the serve loads --------------------------------

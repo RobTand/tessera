@@ -28,7 +28,7 @@ with tarfile.open(fileobj=stream, mode="w:gz") as archive:
         if not path.is_file() or path.suffix not in keep:
             continue
         rel = path.relative_to(root)
-        if rel.parts[0] in {"home", "tmp", "triton", "plugin-sp"}:
+        if rel.parts[0] in {"home", "tmp", "triton", "plugin-sp", "cuda-home"}:
             continue
         if rel.parts[0] == "torch-ext" and path.suffix != ".log":
             continue

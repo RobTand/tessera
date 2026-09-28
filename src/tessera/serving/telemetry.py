@@ -84,6 +84,8 @@ __all__ = [
     "DECODER_WINDOW_GEMV",
     "DECODER_NATIVE_WINDOW_GEMM",
     "DECODER_NATIVE_WINDOW_GEMM_FOLDED",
+    "DECODER_NATIVE_FUSED_WINDOW_DENSE",
+    "DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED",
     "DECODER_NATIVE_SPAN2_GEMM",
     "DECODER_NATIVE_SPAN2_GROUPED",
     "DECODER_NATIVE_WINDOW_MOE_COMPACT",
@@ -182,6 +184,13 @@ DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED = "native_window_moe_compact_folded"
 #: -- makes the two different numerical functions of the same wire.
 DECODER_NATIVE_ROUTED_FUSED_WINDOW = "native_routed_fused_window"
 DECODER_NATIVE_ROUTED_FUSED_WINDOW_FOLDED = "native_routed_fused_window_folded"
+#: The same kernel's dense identity (contract v43): one role of a dense Linear
+#: as the E = 1 case, K split at decode shapes with a fixed-order reduce.  Its
+#: own strings because it is a different launch than the Triton dense GEMM
+#: (a different accumulation order over the same function of the wire) and a
+#: census must be able to say which one served a module.
+DECODER_NATIVE_FUSED_WINDOW_DENSE = "native_fused_window_dense"
+DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED = "native_fused_window_dense_folded"
 DECODERS = frozenset((DECODER_NATIVE_SPAN2, DECODER_TORCH_STOCK, DECODER_TORCH_WINDOW,
                       DECODER_WINDOW_GEMV, DECODER_NATIVE_WINDOW_GEMM,
                       DECODER_NATIVE_WINDOW_GEMM_FOLDED,
@@ -189,7 +198,8 @@ DECODERS = frozenset((DECODER_NATIVE_SPAN2, DECODER_TORCH_STOCK, DECODER_TORCH_W
                       DECODER_NATIVE_WINDOW_MOE_COMPACT,
                       DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED,
                       DECODER_NATIVE_ROUTED_FUSED_WINDOW,
-                      DECODER_NATIVE_ROUTED_FUSED_WINDOW_FOLDED))
+                      DECODER_NATIVE_ROUTED_FUSED_WINDOW_FOLDED,
+                      DECODER_NATIVE_FUSED_WINDOW_DENSE, DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED,))
 
 ATTR_PREFIX = "_tessera_route_"
 

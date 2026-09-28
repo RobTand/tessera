@@ -16,6 +16,8 @@ import pytest
 
 from experiments.step4_route_qualification import (
     A4_DENSE_GEMM_SYMBOL, BF16_ACTIVATION_CONTRACT, DENSE_LAUNCHES, FP8_ACTIVATION_CONTRACT,
+    FUSED_WINDOW_DENSE_SYMBOL, NATIVE_FUSED_WINDOW_DENSE_DECODER,
+    NATIVE_FUSED_WINDOW_DENSE_FOLDED_DECODER,
     NATIVE_SPAN2_GEMM_DECODER, NATIVE_WINDOW_GEMM_DECODER, NATIVE_WINDOW_GEMM_FOLDED_DECODER,
     NVFP4_ACTIVATION_CONTRACT,
     QUALIFICATION_SCHEMA, QualificationRefused, WINDOW_GEMM_SYMBOL, WINDOW_GEMV_LIBRARY_GLOB,
@@ -38,7 +40,11 @@ def observation(libraries):
 
 def entry(family, *, symbol=None, decoder=None, launches=1, modules=1, shape="M512:N6144:K1024",
           names=None, unnamed=0, mode="resident"):
-    contract, (native_symbol, native_decoder) = DENSE_LAUNCHES[family]
+    # The FIRST admissible pair is the Triton window GEMM every dense family
+    # stamps; the window families' second (contract v43) is the fused dense
+    # identity, exercised where a test names it.
+    contract, pairs = DENSE_LAUNCHES[family]
+    native_symbol, native_decoder = pairs[0]
     record = {"policy": f"{family}:{mode}", "shape": shape,
               "symbol": native_symbol if symbol is None else symbol,
               "decoder": native_decoder if decoder is None else decoder,
@@ -78,15 +84,20 @@ def good_trace(identity=False):
 
 # -- the launch table is the routes' -------------------------------------------
 
-def test_the_dense_launch_table_names_the_routes_one_launch_each():
-    assert DENSE_LAUNCHES["TESSERA_FP8"] == (FP8_ACTIVATION_CONTRACT,
-                                             (WINDOW_GEMM_SYMBOL, NATIVE_WINDOW_GEMM_DECODER))
-    assert DENSE_LAUNCHES["TESSERA_BF16"] == (BF16_ACTIVATION_CONTRACT,
-                                              (WINDOW_GEMM_SYMBOL,
-                                               NATIVE_WINDOW_GEMM_FOLDED_DECODER))
-    assert DENSE_LAUNCHES["TESSERA_NVFP4"] == (NVFP4_ACTIVATION_CONTRACT,
-                                               (A4_DENSE_GEMM_SYMBOL, NATIVE_SPAN2_GEMM_DECODER))
+def test_the_dense_launch_table_names_the_routes_admissible_launches():
+    # Contract v43: the two window families stamp one of two dense launches per
+    # module -- the Triton window GEMM or the fused window kernel's dense
+    # identity -- and the A4 family one.
+    assert DENSE_LAUNCHES["TESSERA_FP8"] == (FP8_ACTIVATION_CONTRACT, (
+        (WINDOW_GEMM_SYMBOL, NATIVE_WINDOW_GEMM_DECODER),
+        (FUSED_WINDOW_DENSE_SYMBOL, NATIVE_FUSED_WINDOW_DENSE_DECODER)))
+    assert DENSE_LAUNCHES["TESSERA_BF16"] == (BF16_ACTIVATION_CONTRACT, (
+        (WINDOW_GEMM_SYMBOL, NATIVE_WINDOW_GEMM_FOLDED_DECODER),
+        (FUSED_WINDOW_DENSE_SYMBOL, NATIVE_FUSED_WINDOW_DENSE_FOLDED_DECODER)))
+    assert DENSE_LAUNCHES["TESSERA_NVFP4"] == (NVFP4_ACTIVATION_CONTRACT, (
+        (A4_DENSE_GEMM_SYMBOL, NATIVE_SPAN2_GEMM_DECODER),))
     assert WINDOW_GEMM_SYMBOL == "tessera::window_gemm_dense"
+    assert FUSED_WINDOW_DENSE_SYMBOL == "tessera::fused_window_dense"
     assert A4_DENSE_GEMM_SYMBOL == "tessera.kernel_a4.a4_span2_gemm"
 
 

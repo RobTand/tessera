@@ -35,7 +35,8 @@ def mixed():
 
 def test_mixed_dispatch_qualifies_each_kind_without_double_counting():
     from tessera.serving import scheme
-    from experiments.step4_route_qualification import FUSED_WINDOW_MOE_SYMBOL, KIND_LAUNCHES
+    from experiments.step4_route_qualification import (FUSED_WINDOW_DENSE_SYMBOL,
+                                                       FUSED_WINDOW_MOE_SYMBOL, KIND_LAUNCHES)
 
     # Offline qualification data is tied to the producer's dispatch owner,
     # including its no-extension-lane invariant; it does not qualify a cell.
@@ -46,13 +47,16 @@ def test_mixed_dispatch_qualifies_each_kind_without_double_counting():
                                         include_experimental=True)
             assert {(r["symbol"], r["decoder"]) for r in rows} == set(pairs)
             assert scheme.ROUTES[family]["activation_contract"] == contract
-            # The fused routed window lane (contract v42, tessera#640) is the
-            # one launch that names its extension lane; every other row keeps
-            # the no-extension-lane invariant, and no row is a fallback.
+            # The fused window kernel's two identities (routed at contract
+            # v42, tessera#640; dense at v43) are the launches that name their
+            # extension lane; every other row keeps the no-extension-lane
+            # invariant, and no row is a fallback.
             for r in rows:
                 assert not r["when_lane_absent"]
                 if r["symbol"] == FUSED_WINDOW_MOE_SYMBOL:
                     assert r["lane"] is not None and kind == "moe"
+                elif r["symbol"] == FUSED_WINDOW_DENSE_SYMBOL:
+                    assert r["lane"] is not None and kind == "dense"
                 else:
                     assert r["lane"] is None
     expected, routes = mixed()
@@ -201,12 +205,19 @@ def test_preflight_uses_controller_roster_not_frozen_observer_source(tmp_path, m
     assert code == 0, record.get("refusal")
     assert record["refusal"] is None
     assert all(set(group) == {"dense", "moe"} for group in record["module_kind_launches"].values())
-    # The fused routed window lane's two extensions are recorded, not proven:
-    # every routed kind also publishes the compact adapter's lane-free launch.
+    # The fused window lane's two extensions are recorded, not proven: every
+    # routed kind also publishes the compact adapter's lane-free launch, and
+    # since contract v43 every dense kind publishes the Triton window GEMM's
+    # lane-free launch beside the fused dense identity's lane row.
     assert record["lane_launches"] == ["tessera_routed_fused_e4m3", "tessera_routed_fused_value"]
     for family, kinds in record["module_kind_launches"].items():
         assert any(row["lane"] is None for row in kinds["moe"]), family
-        assert all(row["lane"] is None for row in kinds["dense"]), family
+        assert any(row["lane"] is None for row in kinds["dense"]), family
+    for family in ("TESSERA_FP8", "TESSERA_BF16"):
+        assert any(row["lane"] is not None
+                   for row in record["module_kind_launches"][family]["dense"]), family
+    assert all(row["lane"] is None
+               for row in record["module_kind_launches"]["TESSERA_NVFP4"]["dense"])
 
 
 def test_preflight_refuses_a_kind_whose_every_launch_needs_a_lane(tmp_path, monkeypatch):

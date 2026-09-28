@@ -188,6 +188,19 @@ WINDOW_GEMV_LANE = {
 #: and each library is its own entry because ``lane.decoder`` is one string
 #: and the two families stamp two decoders.  The names are the literals the
 #: loader's two ``load(name=...)`` sites spell; the scanner test reads both.
+#:
+#: Since contract v43 each library also carries the kernel's DENSE identity
+#: (``routed_fused.dense_forward``, the E = 1 identity-routed instantiation
+#: with its split-K reduce), which ``native_window.prepare_dense_native_module``
+#: takes for a dense module whose wire the SAME predicate below admits and
+#: whose rows are a multiple of the kernel's N tile; it stamps
+#: ``tessera::fused_window_dense`` under ``native_fused_window_dense`` /
+#: ``native_fused_window_dense_folded``.  ``lane.decoder`` stays the routed
+#: decoder -- the field is one string by schema -- and the dense decoders are
+#: published on the dense routes' launch rows (``scheme.ROUTE_LAUNCHES``),
+#: which is where a cell's ``executes`` is derived from.  ``loaded_by`` stays
+#: ``moe_route``: that is the loader whose absence makes the library absent;
+#: the dense routes reach it through ``native_window`` after the same build.
 ROUTED_FUSED_E4M3_MODULE_NAME = "tessera_routed_fused_e4m3"
 ROUTED_FUSED_VALUE_MODULE_NAME = "tessera_routed_fused_value"
 ROUTED_FUSED_SOURCE = "csrc/routed_fused_window.cu"

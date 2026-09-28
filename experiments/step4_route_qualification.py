@@ -68,9 +68,12 @@ from pathlib import Path
 
 __all__ = [
     "WINDOW_GEMM_SYMBOL",
+    "FUSED_WINDOW_DENSE_SYMBOL",
     "A4_DENSE_GEMM_SYMBOL",
     "NATIVE_WINDOW_GEMM_DECODER",
     "NATIVE_WINDOW_GEMM_FOLDED_DECODER",
+    "NATIVE_FUSED_WINDOW_DENSE_DECODER",
+    "NATIVE_FUSED_WINDOW_DENSE_FOLDED_DECODER",
     "NATIVE_SPAN2_GEMM_DECODER",
     "FP8_ACTIVATION_CONTRACT",
     "BF16_ACTIVATION_CONTRACT",
@@ -88,29 +91,43 @@ __all__ = [
     "refusal_record",
 ]
 
-#: ``scheme.WINDOW_GEMM_SYMBOL`` / ``scheme.A4_DENSE_GEMM_SYMBOL``.
+#: ``scheme.WINDOW_GEMM_SYMBOL`` / ``scheme.FUSED_WINDOW_DENSE_SYMBOL`` /
+#: ``scheme.A4_DENSE_GEMM_SYMBOL``.
 WINDOW_GEMM_SYMBOL = "tessera::window_gemm_dense"
+FUSED_WINDOW_DENSE_SYMBOL = "tessera::fused_window_dense"
 A4_DENSE_GEMM_SYMBOL = "tessera.kernel_a4.a4_span2_gemm"
 #: ``telemetry.DECODER_NATIVE_WINDOW_GEMM`` / ``DECODER_NATIVE_WINDOW_GEMM_FOLDED``
+#: / ``DECODER_NATIVE_FUSED_WINDOW_DENSE`` / ``DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED``
 #: / ``DECODER_NATIVE_SPAN2_GEMM``.
 NATIVE_WINDOW_GEMM_DECODER = "native_window_gemm"
 NATIVE_WINDOW_GEMM_FOLDED_DECODER = "native_window_gemm_folded"
+NATIVE_FUSED_WINDOW_DENSE_DECODER = "native_fused_window_dense"
+NATIVE_FUSED_WINDOW_DENSE_FOLDED_DECODER = "native_fused_window_dense_folded"
 NATIVE_SPAN2_GEMM_DECODER = "native_span2_gemm"
 #: ``scheme.{FP8,BF16,NVFP4}_ACTIVATION_CONTRACT``.
 FP8_ACTIVATION_CONTRACT = "fp8_per_token_dynamic"
 BF16_ACTIVATION_CONTRACT = "bf16_unquantized"
 NVFP4_ACTIVATION_CONTRACT = "e2m1_group16_ue4m3_static"
 
-#: family -> (activation contract, the one (symbol, decoder) its dense route
-#: stamps).  ``fp8_route.DENSE_LAUNCH``, ``bf16_route.DENSE_LAUNCH`` and
-#: ``nvfp4_route.process_weights_after_loading`` (``tessera_symbol`` /
+#: family -> (activation contract, EVERY (symbol, decoder) pair its dense
+#: route may stamp).  ``fp8_route.DENSE_LAUNCHES``, ``bf16_route.DENSE_LAUNCHES``
+#: and ``nvfp4_route.process_weights_after_loading`` (``tessera_symbol`` /
 #: ``tessera_decoder``) are the owners; ``scheme.ROUTE_LAUNCHES`` publishes
-#: the same pairs and the contract test ties them.
+#: the same pairs and the contract test ties them.  Since contract v43 the two
+#: window families carry two: the Triton window GEMM and the fused window
+#: kernel's dense identity, which ``native_window.prepare_dense_native_module``
+#: picks per module on the module's own wire
+#: (``routed_fused.fused_dense_window_supported``).  A pair outside the tuple
+#: is a foreign launch and refuses the capture.
 DENSE_LAUNCHES = {
-    "TESSERA_FP8": (FP8_ACTIVATION_CONTRACT, (WINDOW_GEMM_SYMBOL, NATIVE_WINDOW_GEMM_DECODER)),
-    "TESSERA_BF16": (BF16_ACTIVATION_CONTRACT,
-                     (WINDOW_GEMM_SYMBOL, NATIVE_WINDOW_GEMM_FOLDED_DECODER)),
-    "TESSERA_NVFP4": (NVFP4_ACTIVATION_CONTRACT, (A4_DENSE_GEMM_SYMBOL, NATIVE_SPAN2_GEMM_DECODER)),
+    "TESSERA_FP8": (FP8_ACTIVATION_CONTRACT, (
+        (WINDOW_GEMM_SYMBOL, NATIVE_WINDOW_GEMM_DECODER),
+        (FUSED_WINDOW_DENSE_SYMBOL, NATIVE_FUSED_WINDOW_DENSE_DECODER))),
+    "TESSERA_BF16": (BF16_ACTIVATION_CONTRACT, (
+        (WINDOW_GEMM_SYMBOL, NATIVE_WINDOW_GEMM_FOLDED_DECODER),
+        (FUSED_WINDOW_DENSE_SYMBOL, NATIVE_FUSED_WINDOW_DENSE_FOLDED_DECODER))),
+    "TESSERA_NVFP4": (NVFP4_ACTIVATION_CONTRACT, (
+        (A4_DENSE_GEMM_SYMBOL, NATIVE_SPAN2_GEMM_DECODER),)),
 }
 
 #: family -> (activation contract, EVERY (symbol, decoder) pair its routed
@@ -133,10 +150,9 @@ MOE_LAUNCHES = {
     "TESSERA_NVFP4": (NVFP4_ACTIVATION_CONTRACT, (
         ("tessera.kernel_a4.a4_span2_grouped_gemm", "native_span2_grouped"),)),
 }
-#: kind -> family -> (contract, admissible pairs).  The dense table keeps its
-#: one-pair shape for its callers; here every kind reads the same way.
+#: kind -> family -> (contract, admissible pairs); both kinds read the same way.
 KIND_LAUNCHES = {
-    "dense": {family: (contract, (pair,)) for family, (contract, pair) in DENSE_LAUNCHES.items()},
+    "dense": DENSE_LAUNCHES,
     "moe": MOE_LAUNCHES,
 }
 

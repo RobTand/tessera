@@ -178,8 +178,17 @@ def test_the_packaged_contract_validates_at_v33(contract):
     serves every stack the lane refuses and ``TESSERA_ROUTED_FUSED=0``), so a
     v10 reader that admitted those cells before admits them still and reads
     one more launch.  No rung, route, flag or format row moves.
+
+    v43 (the dense follow-up to tessera#640) is additive the same way: two
+    more lane-bearing rows -- the fused window kernel's DENSE identity,
+    ``tessera::fused_window_dense`` under one decoder per arithmetic -- enter
+    the two window families' dense launches, and the six dense cells whose
+    rungs reach the lane's predicate (the two pinned-image E4M3 cells and the
+    four GLM-image E4M3/BF16 cells) name the fused pair beside the Triton pair,
+    each on a served census of its own image.  No image, rung, flag or format
+    row moves; the pin is unchanged.
     """
-    assert int(contract["contract_version"]) == 42
+    assert int(contract["contract_version"]) == 43
     fused = "tessera.routed_fused.FusedRoutedWindowMoE.__call__"
     for cell in contract["lane_eligibility"]["cells"]:
         window_routed = (cell["structure"] == "routed_moe"
