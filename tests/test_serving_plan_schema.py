@@ -300,12 +300,13 @@ def test_the_exporter_resolves_an_installed_layout(tmp_path):
     work = tmp_path / "work"
     work.mkdir()
     program = (
-        "import sys, json\n"
+        "import sys, json, pathlib\n"
         "import tessera\n"
         f"assert tessera.__file__.startswith({str(fake)!r}), tessera.__file__\n"
         "from tessera.export_serving import exporter_code_root, git_hash\n"
         "from tessera.serving_parts import export_identity\n"
-        f"root = exporter_code_root(); assert root == {str(fake)!r}, root\n"
+        f"expected = pathlib.Path({str(fake)!r}).resolve()\n"
+        "root = exporter_code_root(); assert root == expected, root\n"
         f"commit = git_hash(); assert commit == {FAKE_COMMIT!r}, commit\n"
         "import pathlib, torch\n"
         "from safetensors.torch import save_file\n"

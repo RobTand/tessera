@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-28T13:14:12Z",
+ "generated": "2026-09-28T16:46:46Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -2687,9 +2687,45 @@
     "state": "OPEN",
     "title": "PACT allocator mode: exact lower convex hull as the candidate set (#1584)"
    },
+   "1602": {
+    "state": "OPEN",
+    "title": "[P2] Catalog extension re-derives every window: reuse spill capture by probe-identity walls + superset-tolerant journal restore"
+   },
+   "1603": {
+    "state": "OPEN",
+    "title": "[P1] Sub-task: PQ-side plan writer module, arm rewiring, and lane-spec split (#1587)"
+   },
+   "1604": {
+    "state": "OPEN",
+    "title": "[P1] PrismaQuant writes the Tessera plan; the arm exports through python -m tessera.export_serving (#1587)"
+   },
+   "1605": {
+    "state": "OPEN",
+    "title": "[dedup] Delegate tools strict-JSON loaders to schemas.strict_json_loads"
+   },
+   "1606": {
+    "state": "OPEN",
+    "title": "Delegate tools strict-JSON loaders to schemas.strict_json_loads"
+   },
+   "1607": {
+    "state": "OPEN",
+    "title": "[P2] PQ logical dedup: unify joint_aura transition twins"
+   },
+   "1608": {
+    "state": "OPEN",
+    "title": "[P2] Transition-twin near-miss unification needs a design call"
+   },
+   "1609": {
+    "state": "OPEN",
+    "title": "[P2] Tessera byte accountant omits per-Linear container side bytes (framing + header + manifest): GLM export 28.8 MB over its price"
+   },
    "161": {
     "state": "CLOSED",
     "title": "MIN_TRELLIS_STEPS = 8 refuses block schedules the wire itself accepts"
+   },
+   "1610": {
+    "state": "OPEN",
+    "title": "[P1] Whole-artifact card charges the GLM MTP layer at source BF16; the MTP selection runs after the card"
    },
    "162": {
     "state": "CLOSED",
@@ -9042,12 +9078,16 @@
     "title": "[P0] Supported serving export entry point and tessera.serving_plan.v1 (#687)"
    },
    "692": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Serve the q256-1024 dense and shared window Linears through the fused window kernel's dense identity (contract v43)"
    },
    "693": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Serve the q256-1024 dense and shared window Linears through the fused kernel's dense identity (contract v43)"
+   },
+   "694": {
+    "state": "OPEN",
+    "title": "[P1] Fused window kernel reads the two-run rate table: E4M3 routed R768-R1152 and dense/shared R832-R2048 take the fused lanes (#690 item 2)"
    },
    "7": {
     "state": "CLOSED",
