@@ -461,10 +461,7 @@ def test_grid_for_name_speaks_the_exporter_s_vocabulary():
     Two spellings of one vocabulary is the drift this asserts away; the
     exporter raises ``SystemExit`` by design and is left alone.
     """
-    spec = importlib.util.spec_from_file_location(
-        "export_tessera_serving", ROOT / "experiments" / "export_tessera_serving.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    module = importlib.import_module("tessera.export_serving")
     for name in ("E2M1", "E2M1x2", "E4M3", "BF16"):
         mine, theirs = grid_for_name(name), module.grid_for(name)
         assert (mine.name, mine.arity, mine.values) == (theirs.name, theirs.arity, theirs.values)

@@ -171,11 +171,7 @@ def test_a_routed_record_does_not_verify_against_a_dense_expectation():
 
 
 def _exporter():
-    spec = importlib.util.spec_from_file_location(
-        "served_recipe_test_exporter", ROOT / "experiments/export_tessera_serving.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return importlib.import_module("tessera.export_serving")
 
 
 def test_the_exporter_expects_the_served_wire_for_a_projected_unit():

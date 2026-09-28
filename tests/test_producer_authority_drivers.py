@@ -7,7 +7,10 @@ cannot do its job on a producer's capture.  So every driver on the export path
 declares ``--producer-authority`` through ``tessera.producer_authority`` -- one
 help text, one set of refusals -- and the packaged runtime contract publishes
 the list (``producer_interface.reuse_authority.drivers``) for a producer to
-read before it passes the option.
+read before it passes the option.  The one exception is the legacy shim
+``experiments/export_tessera_serving.py``, which takes the option through its
+re-export of the supported module rather than declaring it: ``SHIM_DRIVERS``
+admits it explicitly, with the re-export checked.
 
 These tests hold three things:
 
@@ -57,12 +60,31 @@ def declares_the_option(source: str) -> bool:
                for node in ast.walk(tree))
 
 
+#: Legacy path shims admitted WITHOUT declaring the option themselves: each
+#: maps to the declared driver it re-exports, and the admission is checked
+#: below (the shim file must import its target), so the contract lists a
+#: path that takes the option without the scanner pretending the shim
+#: declares it (#691 item 1).
+SHIM_DRIVERS = {
+    "experiments/export_tessera_serving.py": "src/tessera/export_serving.py",
+}
+
+
 def declared_drivers() -> list[str]:
     found = []
-    for top in ("experiments", "tools"):
+    # ``src/tessera`` holds the one supported entry point that takes the
+    # option (#687); scanning it keeps the published list equal to the tree
+    # without hand-maintaining a path.
+    for top in ("experiments", "tools", "src/tessera"):
         for path in sorted((ROOT / top).rglob("*.py")):
             if declares_the_option(path.read_text(encoding="utf-8")):
                 found.append(path.relative_to(ROOT).as_posix())
+    for shim, target in sorted(SHIM_DRIVERS.items()):
+        text = (ROOT / shim).read_text(encoding="utf-8")
+        module = target.removeprefix("src/").replace("/", ".")[:-len(".py")]
+        assert module in text, (
+            f"{shim} no longer re-exports {target}; drop it from SHIM_DRIVERS")
+        found.append(shim)
     return sorted(found)
 
 
@@ -146,8 +168,10 @@ DRIVERS = {
 
 def test_every_listed_driver_but_the_exporter_is_exercised_here():
     # The exporter's reference and rooted-bundle intake is exercised in
-    # test_rooted_cached_bundle.py and test_reuse_authority_boundary.py.
-    assert set(DRIVERS) | {"experiments/export_tessera_serving.py"} == set(declared_drivers())
+    # test_rooted_cached_bundle.py and test_reuse_authority_boundary.py;
+    # the shim's entry point is exercised in test_serving_plan_schema.py.
+    assert (set(DRIVERS) | {"src/tessera/export_serving.py"}
+            | set(SHIM_DRIVERS)) == set(declared_drivers())
 
 
 @pytest.mark.parametrize("driver", sorted(DRIVERS))
@@ -169,7 +193,7 @@ def test_a_driver_accepts_a_producer_capture_with_the_option(tmp_path, driver):
         activation.hessians.close()
 
 
-@pytest.mark.parametrize("driver", sorted(DRIVERS) + ["experiments/export_tessera_serving.py"])
+@pytest.mark.parametrize("driver", sorted(DRIVERS) + ["src/tessera/export_serving.py"])
 def test_every_driver_declares_one_option_with_one_help(driver):
     module = _module(driver)
     parser = (module.build_parser() if hasattr(module, "build_parser") else None)
@@ -197,7 +221,7 @@ def test_the_option_refuses_in_one_set_of_words(tmp_path):
 
 
 def test_the_exporter_delegates_to_the_shared_loader(tmp_path):
-    exporter = _module("experiments/export_tessera_serving.py")
+    exporter = _module("src/tessera/export_serving.py")
     authority, canonical = exporter.load_producer_authority(_client_authority(tmp_path))
     assert canonical == CLIENT_CANONICAL_CAPTURE
     with pytest.raises(SystemExit, match="^--producer-authority must name an absolute regular file: "):

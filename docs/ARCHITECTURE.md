@@ -31,6 +31,39 @@ mixed-rate stacks (E4M3 at q256 896, 928, 1088) and dense modules (q256 832,
 880, 960, 1088) as well as its q256 1024 ones (`remeasured_at_v45`). E2M1 stays on `a4_span2`. See §3.3 "Mixed
 rates" and `docs/measurements/2026-09-28-mixed-rate-fused-window.md`.
 
+Re-stamped 2026-09-28 for CUDA graphs in the research GLM53 NoPE backend
+(tessera#508). `glm53_nope._config_reason` no longer requires
+`--enforce-eager`. Under compilation mode NONE it admits CUDA-graph modes
+FULL_DECODE_ONLY, PIECEWISE and FULL_AND_PIECEWISE, and under VLLM_COMPILE it
+admits FULL_DECODE_ONLY, on one measured V2 model runner: the pinned image's
+`v1/worker/gpu/model_runner.py` with vllm-project/vllm#57317 backported (sha256
+`1c30b8c0...`, image
+`localhost/prismaquant/spark-vllm-nccl230@sha256:c2e75e03cfc52c15489b40fe58e65acb7347f6fa3ddf2e81afda86760698147b`,
+whose vLLM differs from the stock image `f8dbe1a0...` in that file alone). The
+stock runner is refused by name: its generic slot mapping reads the kpool
+tail's block-table row by absolute position, and past the table in a long
+prefill. In a stock eager serve with PyTorch's caching allocator off,
+compute-sanitizer counts 128 invalid reads at `block_table.py:344` on one
+3649-token prompt and the engine dies; on the backport it counts none. Also
+refused by name: STOCK_TORCH_COMPILE, graphs under DYNAMO_TRACE_ONCE,
+piecewise graphs under VLLM_COMPILE, the V1 runner, and any graph mode with a
+speculative config. Admission and the eager-equivalence claim are now separate
+verdicts: `glm53_nope.eager_equivalence_gap` says whether an admitted
+configuration runs eager's arithmetic, and every serving process prints the
+verdict once on stderr. A capture list that pads some batch sizes withholds
+the claim (vLLM's mHC TileLang op picks its split-K by token count; a batch of
+5 replayed in the 8-token graph moved top-20 logprobs by up to 0.98081 nats on
+an identical prefix), and so does a compilation mode whose default op settings
+replace eager's (custom_ops `none`, IR ops `native`; vLLM's GLM5-next model
+has no `@support_torch_compile`, so VLLM_COMPILE and DYNAMO_TRACE_ONCE compile
+nothing). Capturing every size from 1 to the largest restores the claim for
+about 0.02 s of capture and no graph-pool bytes per added size on the
+four-layer stub. Not attested: the full model at TP2, a drafter, the quality
+of a serve without the claim (it needs its own served KL), and any contract
+cell under compiled execution. The contract version and its cells are
+unchanged. See §5.1.1 and
+`docs/measurements/2026-09-28-glm53-nope-graphs-508.md`.
+
 Re-stamped 2026-09-28 for the fused window kernel's DENSE identity (contract
 v43, the dense follow-up to tessera#640). The q256 1024 dense and shared-expert
 window Linears -- E4M3 and BF16 -- are served by a SECOND launch identity by
@@ -159,6 +192,43 @@ and v1 bundles need no authority. Bytes, wires, contract cells, serving
 defaults and routes do not change (v40 is additive), and accept/refuse decisions are unchanged
 for a caller that supplies PrismaQuant's authority.
 
+Re-stamped 2026-09-28 for the #691 review fixes on the #687 schema. The
+contract's `producer_interface.reuse_authority.drivers` (v43) lists the
+supported exporter `src/tessera/export_serving.py` ALONGSIDE the legacy shim
+`experiments/export_tessera_serving.py`, admitted explicitly by
+`tests/test_producer_authority_drivers.py` via its re-export, so a producer
+that has not moved its driver keeps passing `--producer-authority` to a path
+that takes it. One validator owns the plan entry shape:
+`serving_parts.validate_explicit_plan` and `export_serving.project_expert_plan`
+route through `tessera.serving_plan.validate_serving_plan` (the probe's
+accepted-here/refused-there sidecar disagreement is gone). Plans may declare
+`"schema": "tessera.serving_plan.v1"` under a reserved top-level key,
+recorded as `plan_schema` in the manifest beside the published plan; the
+`prismaquant_*` annotation names are retired for a neutral
+`producer_annotations` object, copied through and never read. The exporter
+derives its code root instead of counting parents (installed-wheel
+`export_identity` digests the package) and stamps the install's
+`direct_url.json` commit when git cannot, refusing instead of `unknown` when
+neither answers. `experiments/moe_plan_baseline.py` drives the real module,
+not the shim's namespace. No cell, rung, route, format row or served byte
+changes.
+
+Re-stamped 2026-09-28 for the supported exporter and the published serving
+plan (tessera#687). `experiments/export_tessera_serving.py` moved into the
+package as `tessera.export_serving` (entry point `python -m
+tessera.export_serving`; the old path is a shim), the stock-twin config
+symbols its stock arm used moved with it to `tessera.stock`, and
+`tessera.serving_plan` publishes the `--plan-json` schema
+`tessera.serving_plan.v1` (per tensor `"PASSTHROUGH"`/`"BF16"` or
+`{"grid","q256"}`; per `<moe>.experts` stack `{"grid","q256","source_layout"}`;
+the two `prismaquant_charged_bits*` producer annotations are copied through
+and never read). `family_for` and `module_scheme_key` moved to the same
+module so a producer runs the fused-group check without importing
+`experiments/`. `producer_interface.reuse_authority.drivers` names the
+exporter at its new package path (contract v43) and the equality test scans
+`experiments/`, `tools/` and `src/tessera/`. No cell, rung, route, format row
+or served byte changes.
+
 Re-stamped 2026-09-27 for concurrent window rate calls (tessera#668). At a
 mixed-rate window rung, a window span yields all of its rate calls as a tuple,
 and the batched LDLQ driver runs them on per-thread CUDA side streams
@@ -185,6 +255,12 @@ attests. The exporter's cached intake passes `routed_moe` for a projected
 unit. It refuses a historical producer that takes no structure only at a rung
 where the structure changes the wire. No contract cell, serving default or
 route changes.
+
+Re-stamped 2026-09-27 for explicit manual-gate exclusion from impacted pytest
+targets (tessera#647). `tools/impacted_tests.py` keeps the standalone A4 harness
+in its dependency graph but records it under `excluded_tests` with its reason,
+not in the pytest target list. Its manual CUDA gate is not executed or certified
+by that selection; pytest consumers and full-run escalation remain unchanged.
 
 Re-stamped 2026-09-27 for compact serving-manifest serialization (tessera#635).
 New main, stock-twin, merged-part and fresh residency-refresh manifests use
@@ -1493,7 +1569,8 @@ layout, packaged cells, release pins and serving gates are unchanged.
 
 This doc covers the path from a PrismaQuant rung assignment to a served
 Tessera checkpoint: `experiments/plan_from_layer_config.py` (assignment to
-plan), `experiments/export_tessera_serving.py` (plan to checkpoint),
+plan, off the supported path since tessera#687 -- the producer writes the plan),
+`tessera.export_serving` (`python -m tessera.export_serving`; plan to checkpoint),
 `tools/tessera_route_census.py` (checkpoint to route), and `tessera.control`
 plus `experiments/uniform_control.py` (the gate that judges the result).
 The wire itself is `docs/schema/prismaquant.tessera.v1.md`; the menu the
@@ -1714,6 +1791,14 @@ that the graph read everything relevant, so where it did not, the answer is
 `full`. It reuses this verified exclusion: a closure-shaped
 tracked file is not ignored by name, and unverifiable metadata forces a full
 selection. Verified PB metadata still permits narrowed selection.
+The explicitly standalone `tests/test_native_a4_serving.py` is a manual CUDA
+`run_gate`/`__main__` harness with no pytest items. After all candidate-selection
+paths, the selector removes it from pytest targets and records its path and
+reason in `excluded_tests` (also displayed in the text receipt). It remains in
+the graph so its pytest consumers are still selected. No general absence-of-test
+heuristic drops modules: pytest can collect imported, inherited or generated
+cases. No exclusion weakens uncertainty escalation or PrismaBuild's requirement
+that every assigned pytest file have a collection/outcome record (tessera#647).
 Both normal and parentless diffs use Git's NUL-delimited path protocol, so
 display quoting cannot conceal metadata under tab/newline-containing paths.
 A path named in `OPAQUE` -- `docs/schema/`, `pyproject.toml` -- forces the full
@@ -1856,7 +1941,7 @@ constructed `feed_forward.w13`, for both quantized targets and explicit BF16
 passthroughs. Routed `feed_forward.experts.N.w1/w3` remain projection leaves
 owned by the MoE stack; no dense alias applies to them. This naming comes from
 the pinned LFM construction receipt, not a fallback in the serving plugin.
-`export_tessera_serving.fused_module` is the one statement of that roster --
+`tessera.export_serving.fused_module` is the one statement of that roster --
 q/k/v, every non-routed gate/up including `mlp.shared_experts`, and `w13` --
 and the converter's `fused_key` delegates to it rather than restating two of
 its rows (tessera#211), so the plan-time fused check and the export-time one
@@ -1953,7 +2038,7 @@ their original bytes and modes.
 
 ### 2.1 Whole-layer export parts have one checked assembly
 
-`export_tessera_serving.py --partition INDEX/COUNT` gives a complete decoder
+`tessera.export_serving --partition INDEX/COUNT` gives a complete decoder
 layer to `layer % COUNT`; non-body tensors belong to index zero. Every worker
 validates the same full plan before selecting its work, so a fused module and
 an expert stack cannot be divided between workers. Each worker reads and writes
@@ -2167,7 +2252,7 @@ this adds no cost there.
 
 ### 2.3 Priced inputs remain bound across the process handoff
 
-`export_tessera_serving.py --priced-inputs BUILD --priced-inputs-sha256 SHA`
+`tessera.export_serving --priced-inputs BUILD --priced-inputs-sha256 SHA`
 accepts the preflight's build anchor and the SHA-256 returned directly with
 its publication. Both flags are required together. `PricedInputsSnapshot`
 reads the bytes once, checks their digest against the argument, and reads the
@@ -3105,7 +3190,7 @@ research `wire_recipe` spelling unchanged (tessera#662).
 Both use the same unit-record construction and wire verifier. Expert export
 requires the projected identity; dense export uses the common encoding identity.
 Both require exact field equality against freshly supplied source and capture.
-`export_tessera_serving.py --cached-expert-units MANIFEST` requires exact
+`tessera.export_serving --cached-expert-units MANIFEST` requires exact
 coverage of the planned experts and the full source checkpoint seal. It
 checks those receipts against the actual source slices and capture, validates
 wire geometry/rates/profile/reach/encoder identity and complete plane extents,
@@ -3819,7 +3904,7 @@ than what degree they were built for — `schema_minor`, and `tp_agnostic`
 (`SLICEABLE_SCHEMA_MINOR`), which is the one home of that rule and lives with
 the cutter, not in the exporter's comment. Both keys go into
 `tessera_config.json` (`export._write_config`) and into the loader-visible
-`quantization_config` (`export_tessera_serving.py`,
+`quantization_config` (`tessera.export_serving`,
 `serving_parts.merge_serving_parts`), because those are two different configs
 and only the second is what vLLM hands the plugin.
 
@@ -4313,7 +4398,7 @@ loader agree by construction, and a requirement the contract grows is
 *refused* by any gate that has not learned it -- on the plan side too,
 which used to skip unknown fields. The block is read on both sides:
 
-- **Plan time.** `experiments/export_tessera_serving.py --require-lane LANE`
+- **Plan time.** `tessera.export_serving --require-lane LANE`
   calls `scheme.refuse_unreachable_lane` at argument time, beside
   `check_recipe`, for the default rung and every plan override. It needs no
   shape -- reachability is a function of the rung alone (`grammar.rate_set`)
@@ -4594,7 +4679,7 @@ a block that names no stack it serves is refused at config parse.
 
 **The exporter writes it.** A `--plan-json` entry keyed `<moe>.experts` -- the
 STACK, not one of its leaves, because vLLM builds one method for the stack --
-gives every expert of it one rung; `export_tessera_serving.py` then writes one
+gives every expert of it one rung; `tessera.export_serving` then writes one
 container per expert per projection under `<moe>.experts.{e}.{proj}.wire`,
 derives each group's `wire_stride` as the maximum over that group's blobs, and
 declares the `routed_moe` scheme through
@@ -6262,16 +6347,51 @@ package on a box that has none; `tests/test_packaging.py` holds it to that.
 
 `TESSERA_RESEARCH_GLM53_NOPE=1` asks the same entry point to register
 `TesseraGLM53NoPEBackend` as vLLM's public `AttentionBackendEnum.CUSTOM`.
-Selection additionally requires `--enforce-eager --attention-backend CUSTOM
---kv-cache-dtype fp8_ds_mla --kernel-config '{"enable_flashinfer_autotune":false}'`.
-Normal selection is eager-only and refuses non-NONE compilation or CUDA graph
-modes. The four-layer whole-engine graph arm differed by 0.67253 logprob nats
-from eager despite global compile mode NONE in both arms; isolated attention
-graph equality does not qualify the model graph path.
+Selection additionally requires `--attention-backend CUSTOM --kv-cache-dtype
+fp8_ds_mla --kernel-config '{"enable_flashinfer_autotune":false}'`.
 This experimental attention extension is separate from checkpoint quantization
 selection and changes no stock backend registration. Another plugin's CUSTOM
 registration is refused. Without the environment setting, normal plugin loading
 is unchanged.
+
+**Execution modes are admitted by receipt** (`glm53_nope._execution_reason`,
+tessera#508). Eager, and compilation modes NONE, VLLM_COMPILE and
+DYNAMO_TRACE_ONCE without CUDA graphs, run on any runner. CUDA graphs run on
+vLLM's V2 model runner, without a speculative config, and only on the runner
+source they were measured on: `v1/worker/gpu/model_runner.py` with vllm-project/vllm#57317
+backported (`_GRAPH_RUNNER_SHA256`, image
+`localhost/prismaquant/spark-vllm-nccl230@sha256:c2e75e03...`). Under mode
+NONE that admits FULL_DECODE_ONLY, PIECEWISE and FULL_AND_PIECEWISE; under
+VLLM_COMPILE, FULL_DECODE_ONLY. The gate judges the graph mode vLLM will run
+(`_graph_mode`): this backend's metadata builder supports uniform batches
+only, so a FULL request becomes FULL_DECODE_ONLY, or FULL_AND_PIECEWISE when
+attention is a splitting op. Every other combination is refused with its
+reason: the stock runner (its generic slot mapping reads the kpool tail's
+block-table row by absolute position, and past the table in a long prefill),
+STOCK_TORCH_COMPILE (it fails to start), graphs under DYNAMO_TRACE_ONCE
+(measured without graphs only), piecewise graphs under VLLM_COMPILE (they need
+vLLM's breakable graph, which forces mode NONE), the V1 runner, and a
+speculative config (no drafter graph path is measured).
+
+**Admission does not claim equality with eager.**
+`glm53_nope.eager_equivalence_gap` answers that separately, and every serving
+process prints the answer once on stderr. Eager itself is not repeat-exact on
+this model (FlashInfer's fused MoE finalize reduces with atomics), so "equal"
+means that every completion of the equality suite is one an eager serve also
+produced. The claim is withheld, with the measured figure, for two reasons.
+The first is a capture list that pads batch sizes: the V2 runner replays a
+batch of n tokens in the smallest captured graph of at least n, and vLLM's mHC
+TileLang op picks its split-K by token count (`mhc_fused_post_pre_tilelang`),
+so a padded replay runs another valid reduction order. Capturing every size
+from 1 to the largest removes it, at about 0.02 s of capture and no graph-pool
+bytes per added size on the four-layer stub. The second is a compilation mode
+whose default op settings differ from eager's: VLLM_COMPILE compiles nothing
+for this model (it has no `@support_torch_compile`) but switches `custom_ops`
+to `none` and the RMSNorm IR ops to `native`. A configuration without the
+claim runs correctly, but its quality needs its own served KL-vs-BF16 instead
+of inheriting eager's. The claim is a log line, not a contract field, and no
+contract cell attests compiled execution.
+`docs/measurements/2026-09-28-glm53-nope-graphs-508.md` has the receipts.
 
 The extension requires SM121 and GLM5-next text geometry: latent rank512,
 NoPE256, RoPE0, index_topk2048 and index_kpool4. Context parallelism is refused.

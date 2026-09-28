@@ -788,9 +788,10 @@ still legal to *encode*.
 **It is a serving-boundary refusal, not an encoder one.** This is principle 9's
 one carve-out — a measured platform fact, the pinned runtime has no native
 route for these bytes — so it sits where a checkpoint declaring
-`quant_method: "tessera"` is written (`experiments/export_tessera_serving.py`
-`check_recipe`, on the default `(grid, q256)` and every `--plan-json` override,
-before the first encode). `wire_recipe` and `encode_linear` keep their full
+`quant_method: "tessera"` is written (`tessera.export_serving`'s
+`check_recipe` -- `experiments/export_tessera_serving.py` before tessera#687
+moved the exporter into the package -- on the default `(grid, q256)` and
+every `--plan-json` override, before the first encode). `wire_recipe` and `encode_linear` keep their full
 range: the rate-frontier work encodes sub-cap `E2M1x2` constantly and is
 untouched.
 
@@ -841,7 +842,8 @@ Section 11 fixed a producer that wrote more than the consumer reads. This is
 the mirror image: a producer that wrote **less**, on a rule the consumer never
 had.
 
-`export_tessera_serving.py` grouped a vLLM-fused module by `(grid, q256)`
+The exporter (`experiments/export_tessera_serving.py` at the time, now
+`tessera.export_serving`) grouped a vLLM-fused module by `(grid, q256)`
 equality — `len(recipes) == 1` — and passed any group whose members disagreed
 through at source precision. Its own header stated the weaker and correct rule,
 that the roles must share one *family*. One of the two was wrong, and the code
@@ -883,7 +885,9 @@ rather than adding a consumer-side capability.
   than two fields that could disagree; the normalised scheme always carries a
   monomorphic `role_q256`. An old plugin reading a new checkpoint refuses on
   `q256 must be an integer` — fail closed, not fail quiet.
-* `export_tessera_serving.module_scheme_key(grid, q256)` is the grouping key:
+* `tessera.serving_plan.module_scheme_key(grid, q256)` (re-exported through
+  `tessera.export_serving`; `export_tessera_serving.module_scheme_key` before
+  tessera#687 moved the rule into the package) is the grouping key:
   `(family, grid, body, scale plane)`. Body and plane are **derived** from the
   rung by `wire_recipe`, not assumed constant, because `E2M1x2` writes the
   window body below the coset cap and the TCQ body at it — two decoders, so the
@@ -1173,8 +1177,9 @@ loader would have dropped silently.
 
 ## 15. The exporter's write half, and what it changed (2026-09-04, #5)
 
-`experiments/export_tessera_serving.py` writes routed-MoE stacks from the
-**unpacked** (per-expert 2-D) source layout. Until this, §14's list item 1 was
+The exporter (`experiments/export_tessera_serving.py` at the time, now
+`tessera.export_serving` with the old path kept as a shim) writes routed-MoE
+stacks from the **unpacked** (per-expert 2-D) source layout. Until this, §14's list item 1 was
 the only thing standing between the route and an artifact, and it stood: no
 Tessera checkpoint could contain a `routed_moe` stack, so nothing could be
 served through the route, the sidecar or the parameter layout. Receipt:

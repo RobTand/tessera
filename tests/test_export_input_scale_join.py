@@ -33,10 +33,7 @@ from safetensors.torch import save_file  # noqa: E402
 from tessera.errors import GrammarError  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
-_spec = importlib.util.spec_from_file_location(
-    "export_tessera_serving", ROOT / "experiments" / "export_tessera_serving.py")
-exporter = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(exporter)
+exporter = importlib.import_module("tessera.export_serving")
 
 BODY = "model.layers."
 Q = BODY + "0.self_attn.q_proj.weight"

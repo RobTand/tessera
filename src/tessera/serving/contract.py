@@ -2894,8 +2894,10 @@ def validate_producer_interface(block: Any, where: str) -> None:
     producer decides whether to pass the option from the pinned runtime's own
     table.  Every value but ``drivers`` is a constant this module owns and
     :mod:`tessera.producer_authority` reads, and is checked here; the
-    ``drivers`` list names repository files the installed package does not
-    carry, so its equality with the tree is held by
+    ``drivers`` list names the repository entry points that declare the
+    option -- driver scripts outside the package (``experiments/``,
+    ``tools/``) and package modules alike (``src/tessera/export_serving.py``
+    since tessera#687) -- so its equality with the tree is held by
     ``tests/test_producer_authority_drivers.py``.
     """
     _require_keys(block, where, required={"schema", "reuse_authority"})

@@ -479,3 +479,65 @@ def vllm_fp4_predicate(quant_method: str, declared: str) -> dict:
             "fuse_act_quant pass-config entry, on a compiled serve"),
         "attested": VLLM_FP4_PREDICATE_ATTESTATION,
     }
+
+
+#: vLLM's NVFP4 config group, verbatim from a production PrismaQuant export
+#: (fc45-0p6b-nvfp4): tensor_group 16 with an E4M3 block scale, static
+#: per-tensor input global with local (dynamic) per-16 input scales.
+NVFP4_WEIGHTS = {
+    "num_bits": 4, "type": "float", "strategy": "tensor_group", "group_size": 16,
+    "symmetric": True, "dynamic": False,
+    "scale_dtype": "torch.float8_e4m3fn", "zp_dtype": "torch.float8_e4m3fn",
+    "observer": "memoryless_minmax",
+}
+NVFP4_INPUTS = {
+    "num_bits": 4, "type": "float", "strategy": "tensor_group", "group_size": 16,
+    "symmetric": True, "dynamic": "local", "observer": "static_minmax",
+    "scale_dtype": "torch.float8_e4m3fn", "zp_dtype": "torch.float8_e4m3fn",
+}
+#: PrismaQuant's ``FP8_E4M3_SCHEME``: per-channel static weights, per-token
+#: dynamic activations -- vLLM's W8A8 FP8 route.
+FP8_WEIGHTS = {
+    "num_bits": 8, "type": "float", "strategy": "channel",
+    "symmetric": True, "dynamic": False, "observer": "memoryless_minmax",
+}
+FP8_INPUTS = {
+    "num_bits": 8, "type": "float", "strategy": "token", "symmetric": True, "dynamic": True,
+}
+
+
+def regex_target(module: str) -> str:
+    """The vLLM target list spelling that matches one module exactly."""
+    return f"re:^{module.replace('.', '[.]')}$"
+
+
+def stock_quantization_config(config_groups, ignore):
+    """The ``quantization_config`` block for these groups, and what it resolves to.
+
+    The top-level ``format`` is DERIVED from the groups (``declared_format``)
+    rather than fixed.  It used to be the constant ``"mixed-precision"``, and
+    the stock NVFP4 twin this exporter writes for the comparator arm is not
+    mixed: one group, every target.  That constant is the whole of vLLM's
+    FP4-model predicate, so our comparator answered False where a uniform-NVFP4
+    checkpoint from anyone else answers True, and the two arms of a speed
+    comparison were not the same compiled graph (#92).
+
+    The resolved predicate travels back beside the block so the manifest records
+    it.  A genuinely mixed artifact still declares ``mixed-precision`` -- that
+    is the honest label -- and this record is what turns the fusion it gives up
+    into a priced property of mixing instead of a silent one.
+
+    Returns ``(None, None)`` when nothing was quantized: such a checkpoint
+    declares no ``quantization_config`` at all, rather than one telling a
+    runtime to look for compressed tensors it does not hold.
+    """
+    if not config_groups:
+        return None, None
+    fmt = declared_format(config_groups)
+    return {
+        "quant_method": "compressed-tensors",
+        "format": fmt,
+        "config_groups": config_groups,
+        "ignore": list(ignore),
+        "quantization_status": "compressed",
+    }, vllm_fp4_predicate("compressed-tensors", fmt)

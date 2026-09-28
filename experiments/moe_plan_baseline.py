@@ -53,7 +53,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import hashlib
-import importlib.util
+import importlib
 import io
 import json
 import os
@@ -69,10 +69,14 @@ from safetensors.torch import save_file
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-_spec = importlib.util.spec_from_file_location(
-    "export_tessera_serving", ROOT / "experiments" / "export_tessera_serving.py")
-export = importlib.util.module_from_spec(_spec)
-_spec.loader.exec_module(export)
+# The REAL module, not the shim (#691 item 2): loading
+# ``experiments/export_tessera_serving.py`` by path builds a separate
+# namespace whose star-imported names are copies, so patching
+# ``export.encode_linear_planes`` patched the copy while the running
+# ``main`` read the original -- and the row lied.  ``tessera.export_serving``
+# is what ``python -m tessera.export_serving`` runs; patching it patches the
+# run.
+export = importlib.import_module("tessera.export_serving")
 
 #: Real checkpoints on this box, classified read-only.  Two layouts, because
 #: one of each is what the classification has to get right: Qwen3.8-Flash-Next

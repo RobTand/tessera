@@ -48,11 +48,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def _exporter():
     """The serving exporter, loaded the way ``test_uniform_control`` loads it."""
-    spec = importlib.util.spec_from_file_location(
-        "export_tessera_serving", ROOT / "experiments" / "export_tessera_serving.py")
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
+    return importlib.import_module("tessera.export_serving")
 
 
 EXPORT = _exporter()
