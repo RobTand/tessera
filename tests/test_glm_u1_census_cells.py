@@ -9,13 +9,16 @@ beside the stub's ``config.json``.  Every wire in them was cut from an existing
 encode campaign's receipts; none was encoded for the census.  This module
 replays the census tool's own join over each receipt's records against the
 PACKAGED table, the way ``test_glm_x_census_cells`` does for the v38 receipt.
+Contract v42 (tessera#640) adds a ninth receipt here: stub B served again with
+the fused routed window lane as the default dispatch, on which the four window
+routed cells name the fused pair beside the compact one.
 
 What it pins:
 
 1. every served module of every receipt, in both phases, joins a cell (the
    fail-before: drop the v39 E2M1 cells and the all-E2M1 stub is unattested);
-2. each GLM-image cell covers EXACTLY the rungs the nine receipts (these
-   eight and v38's) carried for its family and structure -- a cell widened
+2. each GLM-image cell covers EXACTLY the rungs the ten receipts (these
+   nine and v38's) carried for its family and structure -- a cell widened
    past its receipts, or a receipt rung dropped from a cell, fails here;
 3. each receipt is the one the contract cites: same checkpoint config, same
    image and toolchain, the serve's backends recorded, and the E2M1 modules on
@@ -50,6 +53,41 @@ RECEIPTS = {
     "s3": "5b574f675ba68846a8c39e08ef66a57597ee5ed3074edfa9105f802b7e802dfe",
     "s4": "c80b789af160bd5708e28f93c071d8154c3ee1b1f0e3cadb8d24e0b96723a77c",
     "s5": "bba21efae20ff37a52720ce2df08affbf1deab1b3e3308db84c7a210ba930344",
+    # Contract v42 (tessera#640): stub B served again with the fused routed
+    # window lane as the default dispatch, the receipt the four window routed
+    # cells name the fused pair on (docs/measurements/2026-09-28-routed-fused-640.md).
+    "b_fused": "9779a2c20efe9791d5a3166b1ba3ab69c4fa4f8835ade43d8b79c0c299cb3302",
+    # Contract v43 (the dense follow-up to tessera#640): stub B served again
+    # with the fused window kernel's DENSE identity as the dispatch for its
+    # q256 1024 dense modules, the receipt the four GLM-image dense cells name
+    # the fused pair on (docs/measurements/2026-09-28-dense-fused-window.md).
+    "b_fused_dense": "b3f9d176018d23d23faf963fa7823462493f80de51fbff49babd527958b3295e",
+}
+#: The dense modules of stub B that take the fused identity (q256 1024, rows a
+#: multiple of 128), with the launch each recorded; every other dense module
+#: is q256 832/880/960/1088 and keeps the Triton window GEMM.
+FUSED_RECEIPT_DENSE = {
+    "language_model.model.layers.5.mlp.shared_experts.down_proj": (
+        "tessera::fused_window_dense", "native_fused_window_dense"),
+    "language_model.model.layers.5.mlp.shared_experts.gate_up_proj": (
+        "tessera::fused_window_dense", "native_fused_window_dense_folded"),
+    "language_model.model.layers.7.mlp.shared_experts.gate_up_proj": (
+        "tessera::fused_window_dense", "native_fused_window_dense"),
+}
+#: The routed stacks of stub B by module, with the launch each recorded under
+#: the fused lane: the q256 1024 stacks (rate 4 in every column) take the
+#: lane, the mixed-rate stacks keep the compact adapter.
+FUSED_RECEIPT_ROUTED = {
+    "language_model.model.layers.3.mlp.experts.routed_experts": (
+        "tessera.native_window_moe.NativeWindowMoE.__call__", "native_window_moe_compact"),
+    "language_model.model.layers.4.mlp.experts.routed_experts": (
+        "tessera.native_window_moe.NativeWindowMoE.__call__", "native_window_moe_compact"),
+    "language_model.model.layers.5.mlp.experts.routed_experts": (
+        "tessera.routed_fused.FusedRoutedWindowMoE.__call__", "native_routed_fused_window"),
+    "language_model.model.layers.6.mlp.experts.routed_experts": (
+        "tessera.native_window_moe.NativeWindowMoE.__call__", "native_window_moe_compact"),
+    "language_model.model.layers.7.mlp.experts.routed_experts": (
+        "tessera.routed_fused.FusedRoutedWindowMoE.__call__", "native_routed_fused_window_folded"),
 }
 #: The v38 receipt the six widened cells were first minted on; its rungs are
 #: part of what each cell must cover.
@@ -187,7 +225,82 @@ def test_the_e2m1_modules_ran_the_native_a4_launches():
             A4_LAUNCH[cell["structure"]]], cell_id
 
 
-def test_the_glm_cells_cover_exactly_the_rungs_the_nine_receipts_carried():
+def test_the_rate_4_window_stacks_ran_the_fused_lane_and_the_cells_name_it():
+    """Contract v42 (tessera#640): the fused receipt, module for module.
+
+    The two q256 1024 routed stacks (E4M3 layer 5, BF16 layer 7) recorded the
+    fused routed window lane's pair in both phases and the three mixed-rate
+    E4M3 stacks the compact adapter's; the dense modules are unchanged.  The
+    four window routed cells name both launches, and the replay above joins
+    every record to a cell.
+    """
+    receipt = _load(_paths("b_fused")[0])
+    assert receipt["versions"]["tessera"] == "0.1.0"
+    for phase, records in receipt["records"].items():
+        assert len(records) == 21, phase
+        routed = {name: (rec["symbol"], rec["decoder"])
+                  for name, rec in records.items() if rec["kind"] == "moe"}
+        assert routed == FUSED_RECEIPT_ROUTED, phase
+    same_stub = _load(_paths("b")[0])
+    assert receipt["checkpoint_sidecars"] == same_stub["checkpoint_sidecars"]
+    cells = {c["id"]: c for c in load_serving_contract()["lane_eligibility"]["cells"]}
+    fused = "tessera.routed_fused.FusedRoutedWindowMoE.__call__"
+    for family, decoder in (("e4m3", "native_routed_fused_window"),
+                            ("bf16", "native_routed_fused_window_folded")):
+        for regime in ("decode", "batch"):
+            cell = cells[f"tessera_{family}_k1_routed_moe_sm121_{regime}_resident"]
+            pairs = [(e["symbol"], e["decoder"]) for e in cell["executes"]]
+            assert (fused, decoder) in pairs, cell["id"]
+            assert len(pairs) == 2, cell["id"]
+            assert cell["requires_serve_flags"] == ["TESSERA_SERVE_MODE=resident"], cell["id"]
+
+
+def test_the_q1024_dense_modules_ran_the_fused_identity_and_the_cells_name_it():
+    """Contract v43: the fused-dense receipt, module for module.
+
+    The three q256 1024 dense modules whose rows are a multiple of 128 (the
+    layer-5 shared down and gate/up, the layer-7 shared gate/up) recorded the
+    fused window kernel's dense identity in both phases, under the family's
+    decoder; every other dense module kept the Triton window GEMM's pair; the
+    routed stacks recorded what the v42 receipt did.  The four GLM-image dense
+    cells name both launches, and the replay above joins every record.
+    """
+    receipt = _load(_paths("b_fused_dense")[0])
+    tool = _tool()
+    rungs = _declared_rungs(tool, receipt, _paths("b_fused_dense")[1])
+    fused_symbol = "tessera::fused_window_dense"
+    for phase, records in receipt["records"].items():
+        assert len(records) == 21, phase
+        dense = {name: (rec["symbol"], rec["decoder"])
+                 for name, rec in records.items() if rec["kind"] == "dense"}
+        assert len(dense) == 16, phase
+        fused = {name: pair for name, pair in dense.items() if pair[0] == fused_symbol}
+        assert fused == FUSED_RECEIPT_DENSE, phase
+        for name, pair in dense.items():
+            owner = receipt["record_owner"][phase][name]
+            if name in FUSED_RECEIPT_DENSE:
+                assert rungs[owner] == 1024, (phase, name)
+            else:
+                assert pair[0] == "tessera::window_gemm_dense", (phase, name, pair)
+                assert pair[1] in ("native_window_gemm", "native_window_gemm_folded"), (phase, name)
+                assert rungs[owner] != 1024, (phase, name, rungs[owner])
+        routed = {name: (rec["symbol"], rec["decoder"])
+                  for name, rec in records.items() if rec["kind"] == "moe"}
+        assert routed == FUSED_RECEIPT_ROUTED, phase
+    same_stub = _load(_paths("b")[0])
+    assert receipt["checkpoint_sidecars"] == same_stub["checkpoint_sidecars"]
+    cells = {c["id"]: c for c in load_serving_contract()["lane_eligibility"]["cells"]}
+    for family, decoder in (("e4m3", "native_fused_window_dense"),
+                            ("bf16", "native_fused_window_dense_folded")):
+        for regime in ("decode", "batch"):
+            cell = cells[f"tessera_{family}_k1_dense_sm121_{regime}_resident"]
+            pairs = [(e["symbol"], e["decoder"]) for e in cell["executes"]]
+            assert (fused_symbol, decoder) in pairs, cell["id"]
+            assert pairs[0][0] == "tessera::window_gemm_dense" and len(pairs) == 2, cell["id"]
+            assert 1024 in cell["rungs_q256"], cell["id"]
+
+
+def test_the_glm_cells_cover_exactly_the_rungs_the_receipts_carried():
     tool = _tool()
     carried: dict = {}
     sources = [_paths(stub) for stub in sorted(RECEIPTS)]

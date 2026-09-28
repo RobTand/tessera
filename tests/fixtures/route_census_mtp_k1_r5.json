@@ -1,0 +1,803 @@
+{
+ "config": {
+  "architectures": [
+   "Glm5NextForConditionalGeneration"
+  ],
+  "model_type": "glm5_next",
+  "quantization_config": {
+   "config_groups": {
+    "tessera_model_language_model_layers_0_mlp_down_proj": {
+     "format": "TESSERA",
+     "scheme": {
+      "body": "TCQ",
+      "columns": 12288,
+      "family": "TESSERA_NVFP4",
+      "grid": "E2M1x2",
+      "plane": "LUT",
+      "q256": 896,
+      "roles": [
+       [
+        "down_proj",
+        4096
+       ]
+      ],
+      "rows": 4096,
+      "structure": "dense",
+      "wire_bytes": 25167425
+     },
+     "targets": [
+      "model.language_model.layers.0.mlp.down_proj"
+     ]
+    },
+    "tessera_model_language_model_layers_10_mlp_experts": {
+     "format": "TESSERA",
+     "scheme": {
+      "body": "WINDOW",
+      "experts": 288,
+      "family": "TESSERA_BF16",
+      "grid": "BF16",
+      "groups": {
+       "w13": {
+        "columns": 4096,
+        "q256": 1024,
+        "roles": [
+         [
+          "gate_proj",
+          2048
+         ],
+         [
+          "up_proj",
+          2048
+         ]
+        ],
+        "rows": 4096,
+        "wire_stride": 4231984
+       },
+       "w2": {
+        "columns": 2048,
+        "q256": 1024,
+        "roles": [
+         [
+          "down_proj",
+          4096
+         ]
+        ],
+        "rows": 4096,
+        "wire_stride": 4236016
+       }
+      },
+      "plane": "CHANNEL",
+      "source_layout": "unpacked_per_expert",
+      "structure": "routed_moe"
+     },
+     "targets": [
+      "model.language_model.layers.10.mlp.experts"
+     ]
+    },
+    "tessera_model_language_model_layers_10_mlp_shared_experts_gate_up_proj": {
+     "format": "TESSERA",
+     "scheme": {
+      "body": "WINDOW",
+      "columns": 4096,
+      "family": "TESSERA_FP8",
+      "grid": "E4M3",
+      "plane": "CHANNEL",
+      "q256": 1024,
+      "roles": [
+       [
+        "gate_proj",
+        2048
+       ],
+       [
+        "up_proj",
+        2048
+       ]
+      ],
+      "rows": 4096,
+      "structure": "dense",
+      "wire_bytes": 8431180
+     },
+     "targets": [
+      "model.language_model.layers.10.mlp.shared_experts.gate_up_proj"
+     ]
+    },
+    "tessera_model_language_model_layers_11_mlp_experts": {
+     "format": "TESSERA",
+     "scheme": {
+      "body": "WINDOW",
+      "experts": 288,
+      "family": "TESSERA_FP8",
+      "grid": "E4M3",
+      "groups": {
+       "w13": {
+        "columns": 4096,
+        "q256": 1024,
+        "roles": [
+         [
+          "gate_proj",
+          2048
+         ],
+         [
+          "up_proj",
+          2048
+         ]
+        ],
+        "rows": 4096,
+        "wire_stride": 4215596
+       },
+       "w2": {
+        "columns": 2048,
+        "q256": 1024,
+        "roles": [
+         [
+          "down_proj",
+          4096
+         ]
+        ],
+        "rows": 4096,
+        "wire_stride": 4219628
+       }
+      },
+      "plane": "CHANNEL",
+      "source_layout": "unpacked_per_expert",
+      "structure": "routed_moe"
+     },
+     "targets": [
+      "model.language_model.layers.11.mlp.experts"
+     ]
+    },
+    "tessera_model_language_model_layers_12_mlp_experts": {
+     "format": "TESSERA",
+     "scheme": {
+      "body": "TCQ",
+      "experts": 288,
+      "family": "TESSERA_NVFP4",
+      "grid": "E2M1x2",
+      "groups": {
+       "w13": {
+        "columns": 4096,
+        "q256": 896,
+        "roles": [
+         [
+          "gate_proj",
+          2048
+         ],
+         [
+          "up_proj",
+          2048
+         ]
+        ],
+        "rows": 4096,
+        "wire_stride": 4195630
+       },
+       "w2": {
+        "columns": 2048,
+        "q256": 896,
+        "roles": [
+         [
+          "down_proj",
+          4096
+         ]
+        ],
+        "rows": 4096,
+        "wire_stride": 4195583
+       }
+      },
+      "plane": "LUT",
+      "source_layout": "unpacked_per_expert",
+      "structure": "routed_moe"
+     },
+     "targets": [
+      "model.language_model.layers.12.mlp.experts"
+     ]
+    },
+    "tessera_model_language_model_layers_1_mlp_gate_up_proj": {
+     "format": "TESSERA",
+     "scheme": {
+      "body": "WINDOW",
+      "columns": 4096,
+      "family": "TESSERA_BF16",
+      "grid": "BF16",
+      "plane": "CHANNEL",
+      "q256": 1024,
+      "roles": [
+       [
+        "gate_proj",
+        12288
+       ],
+       [
+        "up_proj",
+        12288
+       ]
+      ],
+      "rows": 24576,
+      "structure": "dense",
+      "wire_bytes": 50447957
+     },
+     "targets": [
+      "model.language_model.layers.1.mlp.gate_up_proj"
+     ]
+    },
+    "tessera_model_language_model_layers_45_mlp_experts": {
+     "format": "TESSERA",
+     "scheme": {
+      "body": "WINDOW",
+      "experts": 288,
+      "family": "TESSERA_BF16",
+      "grid": "BF16",
+      "groups": {
+       "w13": {
+        "columns": 4096,
+        "q256": 1024,
+        "roles": [
+         [
+          "gate_proj",
+          2048
+         ],
+         [
+          "up_proj",
+          2048
+         ]
+        ],
+        "rows": 4096,
+        "wire_stride": 4231984
+       },
+       "w2": {
+        "columns": 2048,
+        "q256": 1024,
+        "roles": [
+         [
+          "down_proj",
+          4096
+         ]
+        ],
+        "rows": 4096,
+        "wire_stride": 4236016
+       }
+      },
+      "plane": "CHANNEL",
+      "source_layout": "unpacked_per_expert",
+      "structure": "routed_moe"
+     },
+     "targets": [
+      "model.language_model.layers.45.mlp.experts"
+     ]
+    }
+   }
+  },
+  "text_config": {
+   "num_hidden_layers": 45,
+   "num_nextn_predict_layers": 1
+  }
+ },
+ "declared_name_mapping": {
+  "model.language_model.layers.0.mlp.down_proj": "language_model.model.layers.0.mlp.down_proj",
+  "model.language_model.layers.1.mlp.gate_up_proj": "language_model.model.layers.1.mlp.gate_up_proj",
+  "model.language_model.layers.10.mlp.experts": "language_model.model.layers.10.mlp.experts",
+  "model.language_model.layers.10.mlp.shared_experts.gate_up_proj": "language_model.model.layers.10.mlp.shared_experts.gate_up_proj",
+  "model.language_model.layers.11.mlp.experts": "language_model.model.layers.11.mlp.experts",
+  "model.language_model.layers.12.mlp.experts": "language_model.model.layers.12.mlp.experts"
+ },
+ "draft": {
+  "arms": {
+   "decode_arm": [
+    {
+     "by_regime": {
+      "batch": {
+       "calls": 5,
+       "first": {
+        "model.layers.45.mtp_block.mlp.experts.routed_experts": {
+         "contract": "bf16_unquantized",
+         "decoder": "native_window_moe_compact_folded",
+         "kernel_schedule": "tessera.native_window_moe.NativeWindowMoE.__call__",
+         "kind": "moe",
+         "platform": "sm_121",
+         "policy": "TESSERA_BF16:resident",
+         "reason": null,
+         "shape": "M64:N2048:K4096",
+         "state": "served",
+         "symbol": "tessera.native_window_moe.NativeWindowMoE.__call__",
+         "tile_m": 0
+        }
+       },
+       "first_m": 64,
+       "latest": {
+        "model.layers.45.mtp_block.mlp.experts.routed_experts": {
+         "contract": "bf16_unquantized",
+         "decoder": "native_window_moe_compact_folded",
+         "kernel_schedule": "tessera.native_window_moe.NativeWindowMoE.__call__",
+         "kind": "moe",
+         "platform": "sm_121",
+         "policy": "TESSERA_BF16:resident",
+         "reason": null,
+         "shape": "M2:N2048:K4096",
+         "state": "served",
+         "symbol": "tessera.native_window_moe.NativeWindowMoE.__call__",
+         "tile_m": 0
+        }
+       },
+       "latest_m": 2
+      }
+     },
+     "calls": 5,
+     "identity": {
+      "device": "NVIDIA GB10",
+      "local_rank": 0,
+      "node": "sparklina",
+      "platform_token": "sm_121",
+      "rank": 0,
+      "runtime_image": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5",
+      "world_size": 2
+     },
+     "lane_refusals": {},
+     "mixed_shape_calls": 0,
+     "name_mapping": {
+      "model.language_model.layers.45.mlp.experts": "model.layers.45.mtp_block.mlp.experts"
+     },
+     "unclassified_calls": 0
+    },
+    {
+     "by_regime": {
+      "batch": {
+       "calls": 5,
+       "first": {
+        "model.layers.45.mtp_block.mlp.experts.routed_experts": {
+         "contract": "bf16_unquantized",
+         "decoder": "native_window_moe_compact_folded",
+         "kernel_schedule": "tessera.native_window_moe.NativeWindowMoE.__call__",
+         "kind": "moe",
+         "platform": "sm_121",
+         "policy": "TESSERA_BF16:resident",
+         "reason": null,
+         "shape": "M64:N2048:K4096",
+         "state": "served",
+         "symbol": "tessera.native_window_moe.NativeWindowMoE.__call__",
+         "tile_m": 0
+        }
+       },
+       "first_m": 64,
+       "latest": {
+        "model.layers.45.mtp_block.mlp.experts.routed_experts": {
+         "contract": "bf16_unquantized",
+         "decoder": "native_window_moe_compact_folded",
+         "kernel_schedule": "tessera.native_window_moe.NativeWindowMoE.__call__",
+         "kind": "moe",
+         "platform": "sm_121",
+         "policy": "TESSERA_BF16:resident",
+         "reason": null,
+         "shape": "M2:N2048:K4096",
+         "state": "served",
+         "symbol": "tessera.native_window_moe.NativeWindowMoE.__call__",
+         "tile_m": 0
+        }
+       },
+       "latest_m": 2
+      }
+     },
+     "calls": 5,
+     "identity": {
+      "device": "NVIDIA GB10",
+      "local_rank": 0,
+      "node": "sparky",
+      "platform_token": "sm_121",
+      "rank": 1,
+      "runtime_image": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5",
+      "world_size": 2
+     },
+     "lane_refusals": {},
+     "mixed_shape_calls": 0,
+     "name_mapping": {
+      "model.language_model.layers.45.mlp.experts": "model.layers.45.mtp_block.mlp.experts"
+     },
+     "unclassified_calls": 0
+    }
+   ]
+  },
+  "requested_batch_prompts": 0,
+  "source_to_module": {
+   "model.language_model.layers.45.mlp.experts": "model.layers.45.mtp_block.mlp.experts"
+  },
+  "speculative_config": {
+   "attention_backend": "CUSTOM",
+   "draft_tensor_parallel_size": 2,
+   "method": "mtp",
+   "moe_backend": "triton",
+   "num_speculative_tokens": 1
+  }
+ },
+ "note": "Trimmed from the served MTP draft route census of run u4-BAL-20260928T0540Z-2c-r5 (GLM-5.3 PACT BAL, TP2 GB10, eager, MTP num_speculative_tokens=1). Generated by tests/fixtures/generate_route_census_mtp_r5.py; copied bytes, not a new measurement.",
+ "original_problems_for_kept_modules": [
+  "decode rank0/language_model.model.layers.0.mlp.down_proj: shape M2 is a batch-regime forward and does not exercise the declared regime decode",
+  "decode rank0/language_model.model.layers.1.mlp.gate_up_proj: shape M2 is a batch-regime forward and does not exercise the declared regime decode",
+  "decode rank0/language_model.model.layers.10.mlp.experts.routed_experts: shape M2 is a batch-regime forward and does not exercise the declared regime decode",
+  "decode rank0/language_model.model.layers.10.mlp.shared_experts.gate_up_proj: shape M2 is a batch-regime forward and does not exercise the declared regime decode",
+  "decode rank0/language_model.model.layers.11.mlp.experts.routed_experts: shape M2 is a batch-regime forward and does not exercise the declared regime decode",
+  "decode rank0/language_model.model.layers.12.mlp.experts.routed_experts: shape M2 is a batch-regime forward and does not exercise the declared regime decode",
+  "decode rank1/language_model.model.layers.0.mlp.down_proj: shape M2 is a batch-regime forward and does not exercise the declared regime decode",
+  "decode rank1/language_model.model.layers.1.mlp.gate_up_proj: shape M2 is a batch-regime forward and does not exercise the declared regime decode",
+  "decode rank1/language_model.model.layers.10.mlp.experts.routed_experts: shape M2 is a batch-regime forward and does not exercise the declared regime decode",
+  "decode rank1/language_model.model.layers.10.mlp.shared_experts.gate_up_proj: shape M2 is a batch-regime forward and does not exercise the declared regime decode",
+  "decode rank1/language_model.model.layers.11.mlp.experts.routed_experts: shape M2 is a batch-regime forward and does not exercise the declared regime decode",
+  "decode rank1/language_model.model.layers.12.mlp.experts.routed_experts: shape M2 is a batch-regime forward and does not exercise the declared regime decode",
+  "decode: rank0/language_model.model.layers.0.mlp.down_proj is keyed to cell 'tessera_e2m1_k2_dense_sm121_decode_resident', which covers regime 'decode', but shape M2 is a batch-regime forward and does not exercise the declared regime decode. The phase label is what the census asked for; the record's shape is what the machine ran, and only the second attests a regime.",
+  "decode: rank0/language_model.model.layers.1.mlp.gate_up_proj is keyed to cell 'tessera_bf16_k1_dense_sm121_decode_resident', which covers regime 'decode', but shape M2 is a batch-regime forward and does not exercise the declared regime decode. The phase label is what the census asked for; the record's shape is what the machine ran, and only the second attests a regime.",
+  "decode: rank0/language_model.model.layers.10.mlp.shared_experts.gate_up_proj is keyed to cell 'tessera_e4m3_k1_dense_sm121_decode_resident', which covers regime 'decode', but shape M2 is a batch-regime forward and does not exercise the declared regime decode. The phase label is what the census asked for; the record's shape is what the machine ran, and only the second attests a regime.",
+  "decode: rank1/language_model.model.layers.0.mlp.down_proj is keyed to cell 'tessera_e2m1_k2_dense_sm121_decode_resident', which covers regime 'decode', but shape M2 is a batch-regime forward and does not exercise the declared regime decode. The phase label is what the census asked for; the record's shape is what the machine ran, and only the second attests a regime.",
+  "decode: rank1/language_model.model.layers.1.mlp.gate_up_proj is keyed to cell 'tessera_bf16_k1_dense_sm121_decode_resident', which covers regime 'decode', but shape M2 is a batch-regime forward and does not exercise the declared regime decode. The phase label is what the census asked for; the record's shape is what the machine ran, and only the second attests a regime.",
+  "decode: rank1/language_model.model.layers.10.mlp.shared_experts.gate_up_proj is keyed to cell 'tessera_e4m3_k1_dense_sm121_decode_resident', which covers regime 'decode', but shape M2 is a batch-regime forward and does not exercise the declared regime decode. The phase label is what the census asked for; the record's shape is what the machine ran, and only the second attests a regime.",
+  "decode: rank0/language_model.model.layers.10.mlp.experts.routed_experts is keyed to cell 'tessera_bf16_k1_routed_moe_sm121_decode_resident', which covers regime 'decode', but shape M2 is a batch-regime forward and does not exercise the declared regime decode. The phase label is what the census asked for; the record's shape is what the machine ran, and only the second attests a regime.",
+  "decode: rank0/language_model.model.layers.11.mlp.experts.routed_experts is keyed to cell 'tessera_e4m3_k1_routed_moe_sm121_decode_resident', which covers regime 'decode', but shape M2 is a batch-regime forward and does not exercise the declared regime decode. The phase label is what the census asked for; the record's shape is what the machine ran, and only the second attests a regime.",
+  "decode: rank0/language_model.model.layers.12.mlp.experts.routed_experts is keyed to cell 'tessera_e2m1_k2_routed_moe_sm121_decode_resident', which covers regime 'decode', but shape M2 is a batch-regime forward and does not exercise the declared regime decode. The phase label is what the census asked for; the record's shape is what the machine ran, and only the second attests a regime.",
+  "decode: rank1/language_model.model.layers.10.mlp.experts.routed_experts is keyed to cell 'tessera_bf16_k1_routed_moe_sm121_decode_resident', which covers regime 'decode', but shape M2 is a batch-regime forward and does not exercise the declared regime decode. The phase label is what the census asked for; the record's shape is what the machine ran, and only the second attests a regime.",
+  "decode: rank1/language_model.model.layers.11.mlp.experts.routed_experts is keyed to cell 'tessera_e4m3_k1_routed_moe_sm121_decode_resident', which covers regime 'decode', but shape M2 is a batch-regime forward and does not exercise the declared regime decode. The phase label is what the census asked for; the record's shape is what the machine ran, and only the second attests a regime.",
+  "decode: rank1/language_model.model.layers.12.mlp.experts.routed_experts is keyed to cell 'tessera_e2m1_k2_routed_moe_sm121_decode_resident', which covers regime 'decode', but shape M2 is a batch-regime forward and does not exercise the declared regime decode. The phase label is what the census asked for; the record's shape is what the machine ran, and only the second attests a regime.",
+  "draft rank 0 decode: no MTP module reports a fresh Tessera route",
+  "draft rank 0 decode: 1 MTP declarations report no fresh route",
+  "draft rank 1 decode: no MTP module reports a fresh Tessera route",
+  "draft rank 1 decode: 1 MTP declarations report no fresh route",
+  "draft: decode: no module reports required decoder 'native_window_moe_compact_folded'; saw {}"
+ ],
+ "platform": "sm_121",
+ "prompt_tokens": 64,
+ "ranks": [
+  {
+   "identity": {
+    "device": "NVIDIA GB10",
+    "local_rank": 0,
+    "node": "sparklina",
+    "platform_token": "sm_121",
+    "rank": 0,
+    "runtime_image": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5",
+    "world_size": 2
+   },
+   "lane_refusals": {},
+   "records": {
+    "decode": {
+     "language_model.model.layers.0.mlp.down_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M2:N4096:K6144",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.1.mlp.gate_up_proj": {
+      "contract": "bf16_unquantized",
+      "decoder": "native_window_gemm_folded",
+      "kernel_schedule": "tessera::window_gemm_dense",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_BF16:resident",
+      "reason": null,
+      "shape": "M2:N12288:K4096",
+      "state": "served",
+      "symbol": "tessera::window_gemm_dense",
+      "tile_m": 0
+     },
+     "language_model.model.layers.10.mlp.experts.routed_experts": {
+      "contract": "bf16_unquantized",
+      "decoder": "native_window_moe_compact_folded",
+      "kernel_schedule": "tessera.native_window_moe.NativeWindowMoE.__call__",
+      "kind": "moe",
+      "platform": "sm_121",
+      "policy": "TESSERA_BF16:resident",
+      "reason": null,
+      "shape": "M2:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.native_window_moe.NativeWindowMoE.__call__",
+      "tile_m": 0
+     },
+     "language_model.model.layers.10.mlp.shared_experts.gate_up_proj": {
+      "contract": "fp8_per_token_dynamic",
+      "decoder": "native_window_gemm",
+      "kernel_schedule": "tessera::window_gemm_dense",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_FP8:resident",
+      "reason": null,
+      "shape": "M2:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera::window_gemm_dense",
+      "tile_m": 0
+     },
+     "language_model.model.layers.11.mlp.experts.routed_experts": {
+      "contract": "fp8_per_token_dynamic",
+      "decoder": "native_window_moe_compact",
+      "kernel_schedule": "tessera.native_window_moe.NativeWindowMoE.__call__",
+      "kind": "moe",
+      "platform": "sm_121",
+      "policy": "TESSERA_FP8:resident",
+      "reason": null,
+      "shape": "M2:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.native_window_moe.NativeWindowMoE.__call__",
+      "tile_m": 0
+     },
+     "language_model.model.layers.12.mlp.experts.routed_experts": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_grouped",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "kind": "moe",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M2:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "tile_m": 0
+     }
+    },
+    "prefill": {
+     "language_model.model.layers.0.mlp.down_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M64:N4096:K6144",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.1.mlp.gate_up_proj": {
+      "contract": "bf16_unquantized",
+      "decoder": "native_window_gemm_folded",
+      "kernel_schedule": "tessera::window_gemm_dense",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_BF16:resident",
+      "reason": null,
+      "shape": "M64:N12288:K4096",
+      "state": "served",
+      "symbol": "tessera::window_gemm_dense",
+      "tile_m": 0
+     },
+     "language_model.model.layers.10.mlp.experts.routed_experts": {
+      "contract": "bf16_unquantized",
+      "decoder": "native_window_moe_compact_folded",
+      "kernel_schedule": "tessera.native_window_moe.NativeWindowMoE.__call__",
+      "kind": "moe",
+      "platform": "sm_121",
+      "policy": "TESSERA_BF16:resident",
+      "reason": null,
+      "shape": "M64:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.native_window_moe.NativeWindowMoE.__call__",
+      "tile_m": 0
+     },
+     "language_model.model.layers.10.mlp.shared_experts.gate_up_proj": {
+      "contract": "fp8_per_token_dynamic",
+      "decoder": "native_window_gemm",
+      "kernel_schedule": "tessera::window_gemm_dense",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_FP8:resident",
+      "reason": null,
+      "shape": "M64:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera::window_gemm_dense",
+      "tile_m": 0
+     },
+     "language_model.model.layers.11.mlp.experts.routed_experts": {
+      "contract": "fp8_per_token_dynamic",
+      "decoder": "native_window_moe_compact",
+      "kernel_schedule": "tessera.native_window_moe.NativeWindowMoE.__call__",
+      "kind": "moe",
+      "platform": "sm_121",
+      "policy": "TESSERA_FP8:resident",
+      "reason": null,
+      "shape": "M64:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.native_window_moe.NativeWindowMoE.__call__",
+      "tile_m": 0
+     },
+     "language_model.model.layers.12.mlp.experts.routed_experts": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_grouped",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "kind": "moe",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M64:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "tile_m": 0
+     }
+    }
+   }
+  },
+  {
+   "identity": {
+    "device": "NVIDIA GB10",
+    "local_rank": 0,
+    "node": "sparky",
+    "platform_token": "sm_121",
+    "rank": 1,
+    "runtime_image": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5",
+    "world_size": 2
+   },
+   "lane_refusals": {},
+   "records": {
+    "decode": {
+     "language_model.model.layers.0.mlp.down_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M2:N4096:K6144",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.1.mlp.gate_up_proj": {
+      "contract": "bf16_unquantized",
+      "decoder": "native_window_gemm_folded",
+      "kernel_schedule": "tessera::window_gemm_dense",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_BF16:resident",
+      "reason": null,
+      "shape": "M2:N12288:K4096",
+      "state": "served",
+      "symbol": "tessera::window_gemm_dense",
+      "tile_m": 0
+     },
+     "language_model.model.layers.10.mlp.experts.routed_experts": {
+      "contract": "bf16_unquantized",
+      "decoder": "native_window_moe_compact_folded",
+      "kernel_schedule": "tessera.native_window_moe.NativeWindowMoE.__call__",
+      "kind": "moe",
+      "platform": "sm_121",
+      "policy": "TESSERA_BF16:resident",
+      "reason": null,
+      "shape": "M2:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.native_window_moe.NativeWindowMoE.__call__",
+      "tile_m": 0
+     },
+     "language_model.model.layers.10.mlp.shared_experts.gate_up_proj": {
+      "contract": "fp8_per_token_dynamic",
+      "decoder": "native_window_gemm",
+      "kernel_schedule": "tessera::window_gemm_dense",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_FP8:resident",
+      "reason": null,
+      "shape": "M2:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera::window_gemm_dense",
+      "tile_m": 0
+     },
+     "language_model.model.layers.11.mlp.experts.routed_experts": {
+      "contract": "fp8_per_token_dynamic",
+      "decoder": "native_window_moe_compact",
+      "kernel_schedule": "tessera.native_window_moe.NativeWindowMoE.__call__",
+      "kind": "moe",
+      "platform": "sm_121",
+      "policy": "TESSERA_FP8:resident",
+      "reason": null,
+      "shape": "M2:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.native_window_moe.NativeWindowMoE.__call__",
+      "tile_m": 0
+     },
+     "language_model.model.layers.12.mlp.experts.routed_experts": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_grouped",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "kind": "moe",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M2:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "tile_m": 0
+     }
+    },
+    "prefill": {
+     "language_model.model.layers.0.mlp.down_proj": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_gemm",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_gemm",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M64:N4096:K6144",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_gemm",
+      "tile_m": 0
+     },
+     "language_model.model.layers.1.mlp.gate_up_proj": {
+      "contract": "bf16_unquantized",
+      "decoder": "native_window_gemm_folded",
+      "kernel_schedule": "tessera::window_gemm_dense",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_BF16:resident",
+      "reason": null,
+      "shape": "M64:N12288:K4096",
+      "state": "served",
+      "symbol": "tessera::window_gemm_dense",
+      "tile_m": 0
+     },
+     "language_model.model.layers.10.mlp.experts.routed_experts": {
+      "contract": "bf16_unquantized",
+      "decoder": "native_window_moe_compact_folded",
+      "kernel_schedule": "tessera.native_window_moe.NativeWindowMoE.__call__",
+      "kind": "moe",
+      "platform": "sm_121",
+      "policy": "TESSERA_BF16:resident",
+      "reason": null,
+      "shape": "M64:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.native_window_moe.NativeWindowMoE.__call__",
+      "tile_m": 0
+     },
+     "language_model.model.layers.10.mlp.shared_experts.gate_up_proj": {
+      "contract": "fp8_per_token_dynamic",
+      "decoder": "native_window_gemm",
+      "kernel_schedule": "tessera::window_gemm_dense",
+      "kind": "dense",
+      "platform": "sm_121",
+      "policy": "TESSERA_FP8:resident",
+      "reason": null,
+      "shape": "M64:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera::window_gemm_dense",
+      "tile_m": 0
+     },
+     "language_model.model.layers.11.mlp.experts.routed_experts": {
+      "contract": "fp8_per_token_dynamic",
+      "decoder": "native_window_moe_compact",
+      "kernel_schedule": "tessera.native_window_moe.NativeWindowMoE.__call__",
+      "kind": "moe",
+      "platform": "sm_121",
+      "policy": "TESSERA_FP8:resident",
+      "reason": null,
+      "shape": "M64:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.native_window_moe.NativeWindowMoE.__call__",
+      "tile_m": 0
+     },
+     "language_model.model.layers.12.mlp.experts.routed_experts": {
+      "contract": "e2m1_group16_ue4m3_static",
+      "decoder": "native_span2_grouped",
+      "kernel_schedule": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "kind": "moe",
+      "platform": "sm_121",
+      "policy": "TESSERA_NVFP4:resident",
+      "reason": null,
+      "shape": "M64:N2048:K4096",
+      "state": "served",
+      "symbol": "tessera.kernel_a4.a4_span2_grouped_gemm",
+      "tile_m": 0
+     }
+    }
+   }
+  }
+ ],
+ "runtime": {
+  "execution_mode": "eager",
+  "image": "localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5"
+ },
+ "serve_mode": "resident",
+ "source": {
+  "problem_count": 533,
+  "receipt_sha256": "8f91350b00391402a5dfe46bc41477f01a87e5a9c1aa32cffcf6f9afae8960f9",
+  "run": "u4-BAL-20260928T0540Z-2c-r5",
+  "verdict": "REFUSED"
+ }
+}

@@ -407,6 +407,83 @@ def test_glm_body_then_draft_mapper_preserves_ignored_shared_linear(monkeypatch)
     assert "language_model.model.layers.45.mlp.shared_experts.down_proj" in config.ignore
 
 
+def test_glm_mtp_bare_draft_prefix_resolves_ignored_shared_linear(monkeypatch):
+    """The pinned image hands the draft decoder layer its bare ``prefix``.
+
+    ``named_modules`` still inserts ``mtp_block``, but the Linear's own prefix
+    is ``model.layers.45.<rest>``. With the body mapper applied first, that
+    name lives only in the draft's view, and the served BAL export refused at
+    engine start on exactly this Linear.
+    """
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    _glm_mtp_context(monkeypatch)
+    source = "model.language_model.layers.45.mlp.shared_experts.gate_up_proj"
+    actual = "model.layers.45.mlp.shared_experts.gate_up_proj"
+    config = _resolved(_config(ignore=(source,)))
+    config.apply_vllm_mapper(_glm_body_mapper())
+    config.apply_vllm_mapper(_glm_mtp_mapper())
+    assert type(config.get_quant_method(_layer(), actual)).__name__ == "UnquantizedLinearMethod"
+    assert "language_model.model.layers.45.mlp.shared_experts.gate_up_proj" in config.ignore
+
+
+def test_glm_mtp_bare_draft_prefix_resolves_declared_expert(monkeypatch):
+    from tessera.serving import moe_route
+    from vllm.model_executor.layers.fused_moe import RoutedExperts
+
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    _glm_mtp_context(monkeypatch)
+    source = "model.language_model.layers.45.mlp.experts"
+    actual = "model.layers.45.mlp.experts"
+    config = _resolved(_config(_moe_scheme(), targets=(source,)))
+    config.apply_vllm_mapper(_glm_body_mapper())
+    config.apply_vllm_mapper(_glm_mtp_mapper())
+    calls = []
+    monkeypatch.setattr(moe_route, "build_tessera_moe_method",
+                        lambda *args, **kwargs: calls.append((args, kwargs)) or object())
+    assert config.get_quant_method(object.__new__(RoutedExperts), actual) is not None
+    assert calls[0][0][1] == actual
+
+
+@pytest.mark.parametrize("context", ["none", "missing_draft_config", "wrong_architecture",
+                                      "wrong_text_type", "wrong_method", "wrong_index"])
+def test_glm_mtp_bare_draft_prefix_refuses_outside_its_draft_scope(monkeypatch, context):
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    source = "model.language_model.layers.45.mlp.shared_experts.gate_up_proj"
+    actual = "model.layers.45.mlp.shared_experts.gate_up_proj"
+    config = _resolved(_config(ignore=(source,)))
+    config.apply_vllm_mapper(_glm_body_mapper())
+    config.apply_vllm_mapper(_glm_mtp_mapper())
+    if context == "missing_draft_config":
+        from vllm import config as vllm_config
+        monkeypatch.setattr(vllm_config, "get_current_vllm_config_or_none",
+                            lambda: types.SimpleNamespace(speculative_config=types.SimpleNamespace(
+                                method="mtp", draft_model_config=None)))
+    elif context == "wrong_architecture":
+        _glm_mtp_context(monkeypatch, architecture="AnotherMTPModel")
+    elif context == "wrong_text_type":
+        _glm_mtp_context(monkeypatch, text_type="another_text")
+    elif context == "wrong_method":
+        _glm_mtp_context(monkeypatch, method="draft_model")
+    elif context == "wrong_index":
+        _glm_mtp_context(monkeypatch, start=46)
+    with pytest.raises(ValueError, match="declares no wire"):
+        config.get_quant_method(_layer(), actual)
+
+
+def test_glm_mtp_bare_and_block_spellings_of_one_module_refuse(monkeypatch):
+    from vllm.model_executor.layers.fused_moe import RoutedExperts
+
+    monkeypatch.setenv(TESSERA_MODE_ENV, "resident")
+    _glm_mtp_context(monkeypatch)
+    source = "model.language_model.layers.45.mlp.experts"
+    config = _resolved(_config(_moe_scheme(),
+                               targets=(source, "model.layers.45.mtp_block.mlp.experts")))
+    config.apply_vllm_mapper(_glm_body_mapper())
+    config.apply_vllm_mapper(_glm_mtp_mapper())
+    with pytest.raises(ValueError, match="collid"):
+        config.get_quant_method(object.__new__(RoutedExperts), "model.layers.45.mlp.experts")
+
+
 @pytest.mark.parametrize("context", ["none", "missing_draft_config", "wrong_architecture",
                                       "wrong_text_type", "wrong_method", "wrong_index"])
 def test_glm_mtp_name_adapter_refuses_outside_its_actual_draft_scope(monkeypatch, context):

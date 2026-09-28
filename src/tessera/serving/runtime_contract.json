@@ -1,6 +1,6 @@
 {
   "schema": "tessera.runtime-contract.v1",
- "contract_version": 39,
+ "contract_version": 43,
  "quant_method": {
   "canonical": "tessera",
   "accepted": [
@@ -56,6 +56,88 @@
      "streamed": {
       "status": "substituted",
       "decoder": "torch_window"
+     }
+    }
+   },
+   {
+    "module_name_prefix": "tessera_routed_fused_e4m3",
+    "filename_glob": "tessera_routed_fused_e4m3*.so",
+    "match": "basename_fnmatch",
+    "source": "csrc/routed_fused_window.cu",
+    "loaded_by": "tessera.serving.moe_route",
+    "routes": [
+     "TESSERA_FP8"
+    ],
+    "lane": {
+     "decoder": "native_routed_fused_window",
+     "requires": {
+      "column_rates": [
+       4
+      ],
+      "window_bits": [
+       14
+      ],
+      "body": "window",
+      "plane": "channel",
+      "release_overrides": false,
+      "diagonals": false,
+      "rotation": [
+       "none"
+      ],
+      "grid_arities": [
+       1
+      ]
+     }
+    },
+    "when_unavailable": {
+     "resident": {
+      "status": "substituted",
+      "decoder": "native_window_moe_compact"
+     },
+     "streamed": {
+      "status": "substituted",
+      "decoder": "native_window_moe_compact"
+     }
+    }
+   },
+   {
+    "module_name_prefix": "tessera_routed_fused_value",
+    "filename_glob": "tessera_routed_fused_value*.so",
+    "match": "basename_fnmatch",
+    "source": "csrc/routed_fused_window.cu",
+    "loaded_by": "tessera.serving.moe_route",
+    "routes": [
+     "TESSERA_BF16"
+    ],
+    "lane": {
+     "decoder": "native_routed_fused_window_folded",
+     "requires": {
+      "column_rates": [
+       4
+      ],
+      "window_bits": [
+       14
+      ],
+      "body": "window",
+      "plane": "channel",
+      "release_overrides": false,
+      "diagonals": false,
+      "rotation": [
+       "none"
+      ],
+      "grid_arities": [
+       1
+      ]
+     }
+    },
+    "when_unavailable": {
+     "resident": {
+      "status": "substituted",
+      "decoder": "native_window_moe_compact_folded"
+     },
+     "streamed": {
+      "status": "substituted",
+      "decoder": "native_window_moe_compact_folded"
      }
     }
    }
@@ -430,6 +512,10 @@
      {
       "symbol": "tessera::window_gemm_dense",
       "decoder": "native_window_gemm"
+     },
+     {
+      "symbol": "tessera::fused_window_dense",
+      "decoder": "native_fused_window_dense"
      }
     ],
     "route_status": "backed_with_serve_flag",
@@ -470,6 +556,10 @@
      {
       "symbol": "tessera::window_gemm_dense",
       "decoder": "native_window_gemm"
+     },
+     {
+      "symbol": "tessera::fused_window_dense",
+      "decoder": "native_fused_window_dense"
      }
     ],
     "route_status": "backed_with_serve_flag",
@@ -520,6 +610,10 @@
      {
       "symbol": "tessera::window_gemm_dense",
       "decoder": "native_window_gemm"
+     },
+     {
+      "symbol": "tessera::fused_window_dense",
+      "decoder": "native_fused_window_dense"
      }
     ],
     "route_status": "backed_with_serve_flag",
@@ -570,6 +664,10 @@
      {
       "symbol": "tessera::window_gemm_dense",
       "decoder": "native_window_gemm"
+     },
+     {
+      "symbol": "tessera::fused_window_dense",
+      "decoder": "native_fused_window_dense"
      }
     ],
     "route_status": "backed_with_serve_flag",
@@ -621,6 +719,10 @@
      {
       "symbol": "tessera::window_gemm_dense",
       "decoder": "native_window_gemm_folded"
+     },
+     {
+      "symbol": "tessera::fused_window_dense",
+      "decoder": "native_fused_window_dense_folded"
      }
     ],
     "route_status": "backed_with_serve_flag",
@@ -672,6 +774,10 @@
      {
       "symbol": "tessera::window_gemm_dense",
       "decoder": "native_window_gemm_folded"
+     },
+     {
+      "symbol": "tessera::fused_window_dense",
+      "decoder": "native_fused_window_dense_folded"
      }
     ],
     "route_status": "backed_with_serve_flag",
@@ -723,6 +829,10 @@
      {
       "symbol": "tessera.native_window_moe.NativeWindowMoE.__call__",
       "decoder": "native_window_moe_compact"
+     },
+     {
+      "symbol": "tessera.routed_fused.FusedRoutedWindowMoE.__call__",
+      "decoder": "native_routed_fused_window"
      }
     ],
     "route_status": "backed_with_serve_flag",
@@ -774,6 +884,10 @@
      {
       "symbol": "tessera.native_window_moe.NativeWindowMoE.__call__",
       "decoder": "native_window_moe_compact"
+     },
+     {
+      "symbol": "tessera.routed_fused.FusedRoutedWindowMoE.__call__",
+      "decoder": "native_routed_fused_window"
      }
     ],
     "route_status": "backed_with_serve_flag",
@@ -818,6 +932,10 @@
      {
       "symbol": "tessera.native_window_moe.NativeWindowMoE.__call__",
       "decoder": "native_window_moe_compact_folded"
+     },
+     {
+      "symbol": "tessera.routed_fused.FusedRoutedWindowMoE.__call__",
+      "decoder": "native_routed_fused_window_folded"
      }
     ],
     "route_status": "backed_with_serve_flag",
@@ -862,6 +980,10 @@
      {
       "symbol": "tessera.native_window_moe.NativeWindowMoE.__call__",
       "decoder": "native_window_moe_compact_folded"
+     },
+     {
+      "symbol": "tessera.routed_fused.FusedRoutedWindowMoE.__call__",
+      "decoder": "native_routed_fused_window_folded"
      }
     ],
     "route_status": "backed_with_serve_flag",
@@ -3576,7 +3698,27 @@
    ]
   }
  },
+ "producer_interface": {
+  "schema": "tessera.producer-interface.v1",
+  "reuse_authority": {
+   "option": "--producer-authority",
+   "attribute": "PRODUCER_AUTHORITY",
+   "protocol": "tessera.cached_unit.ReuseAuthority",
+   "canonical_capture_attribute": "canonical_hessian_capture",
+   "drivers": [
+    "experiments/bf16_reach_roster.py",
+    "experiments/export_glm53_tessera.py",
+    "experiments/export_tessera_serving.py",
+    "experiments/glm_routed_owner_inputs.py",
+    "tools/glm_cpu_cached_pack_probe.py"
+   ]
+  }
+ },
  "changelog": [
+  {"contract_version": 43, "date": "2026-09-28", "change": "The fused window kernel's DENSE identity enters as a second launch for the two window families' dense routes and earns its cells (the dense follow-up to tessera#640). THE LANE: the same persistent warp-specialised CUDA kernel csrc/routed_fused_window.cu builds (tessera.routed_fused, one library per window family, the SAME two native_extensions entries tessera_routed_fused_e4m3 / tessera_routed_fused_value -- no new entry, no new lane predicate) is instantiated with E = 1 and identity routing (a dense Linear is the one-expert, top-1, unweighted case of the routed lane), reads a dense module's packed wire directly (words, the composed 16384-entry decode table, the init state, the per-row scale), and for small M splits K across CTAs into an fp32 partial workspace that a fixed-order reduce kernel sums before the epilogue, so the bf16 output is rounded once; two runs are bitwise equal and the forward is CUDA-graph capturable. It is exposed as ONE custom op, tessera::fused_window_dense, with two decoders by arithmetic: native_fused_window_dense (TESSERA_FP8, the epilogue (acc*a_scale)*w_scale) and native_fused_window_dense_folded (TESSERA_BF16, bf16(table*row_scale) before the dot, the folded arithmetic tessera#614 fixed). THE DECISION IS PER MODULE: native_window.prepare_dense_native_module decides the lane once at load, over every role of the module, by routed_fused.fused_dense_window_supported -- window family, window_bits 14, every column at rate 4 (q256 1024), channel plane, no decoration, rows a multiple of 128, columns a multiple of 32 and at least 128, the E4M3 quantizer native -- and records the reason for the Triton lane when any role refuses; both fp8_route.apply and bf16_route.apply stamp the prepared module's own launch_pair, so a module records exactly the pair it ran. TESSERA_DENSE_FUSED=0 keeps the Triton window GEMM as the dispatch. TWO MORE LANE-BEARING ROWS ENTER scheme.ROUTE_LAUNCHES: (tessera::fused_window_dense, native_fused_window_dense) with lane tessera_routed_fused_e4m3 on TESSERA_FP8's dense launches and (tessera::fused_window_dense, native_fused_window_dense_folded) with lane tessera_routed_fused_value on TESSERA_BF16's, both when_lane_absent False (the Triton pair still runs beside the lane, for the modules it refuses and for the opt-out); _validate_cell_executes therefore derives the fused pair for every dense cell whose rungs reach the lane's predicate (q256 1024), which is the two pinned-image E4M3 cells and the four GLM-image dense cells. THE CELLS: (1) the v34 census of qwen3-0.6b-uniform-R1024 (112 dense modules, all q256 1024, TP 1, eager) was run AGAIN on the platform's pinned serve image vllm/vllm-openai@sha256:61fc8a896b0a4fbbbdc063bc4b0dbc25ce98e02b5050c24aeb7830ac02039b14 with this lane as the dispatch, once per residency the cells attest (TESSERA_SERVE_MODE=resident and =streamed), --require-decoder native_fused_window_dense --expect-modules 112: every module recorded the E4M3 fused pair in both regimes, problems: [] (experiments/results/qwen3_0_6b_uniform_r1024_fused_resident_eager_census.json and experiments/results/qwen3_0_6b_uniform_r1024_fused_streamed_eager_census.json beside qwen3_0_6b_uniform_r1024_config.json, replayed by tests/test_dense_fused_census_cells.py), so tessera_e4m3_k1_dense_sm121_{decode,batch} name the fused pair beside the Triton pair, their image, rungs and requires_serve_flags unchanged -- the pinned serve image stays what it was and remains attested by its own cells; (2) a TP1 eager resident route census of the rate-4 u1 stub B on the GLM serving image (experiments/results/glm53_u1_stub_b_fused_dense_tp1_eager_census.json beside its config.json, replayed by tests/test_glm_u1_census_cells.py) recorded the E4M3 fused pair on the q256 1024 shared-expert down and gate/up modules and the folded fused pair on the q256 1024 BF16 shared gate/up module in both regimes, the Triton pair on every other dense module (q256 832/880/960/1088) and the v42 routed launches on the expert stacks, problems: [] -- so tessera_{e4m3,bf16}_k1_dense_sm121_{decode,batch}_resident name the fused pair beside the Triton pair, rungs unchanged. scheme.EXPERIMENTAL_LAUNCHES is empty again. ADDITIVE for a lane reader: no cell, rung, route, flag, format row, attested_wire stamp, TP/EP bound, activation-quantizer attestation, native_extensions entry or served byte moves and no id leaves; six cells read one more launch; lane_eligibility.schema stays v10; versions.default_serve_image and platforms.sm_121.serve_image are unchanged. NOT additive for a reader that derives executes from scheme.route_launches itself (the v34 caveat), nor for one that read a dense cell's executes as a single pair. Evidence at this version: docs/measurements/2026-09-28-dense-fused-window.md records the oracle (fused vs Triton vs an exact reference on stub B's q256 1024 wires, both residencies), the torch.profiler and power profile, the NCU rows, the two census sets and the PACT bench receipts."},
+  {"contract_version": 42, "date": "2026-09-28", "change": "The fused routed window MoE lane enters as a NEW launch identity and earns its cells (tessera#640). native_extensions gains two entries for one source, csrc/routed_fused_window.cu, built by tessera.routed_fused once per window family: tessera_routed_fused_e4m3 (route TESSERA_FP8, lane decoder native_routed_fused_window, the epilogue arithmetic) and tessera_routed_fused_value (route TESSERA_BF16, lane decoder native_routed_fused_window_folded, the folded arithmetic), each loaded_by tessera.serving.moe_route through native_window_moe.PackedWindowMoeBundles.adapter. THE LANE: one persistent warp-specialised CUDA kernel serves gate/up with the SwiGLU epilogue fused and, in a second launch of the same kernel, the down projection into route-sorted bf16 rows that a fixed-order per-token sum reduces; work items are (expert, n-block, 64-route superblock) triples claimed through a device counter the caller zeroes in-stream (CUDA-graph capturable, no host synchronisation); every weight is decoded once per tile and reused across up to 64 routes; the down reduction is DETERMINISTIC (two runs are bitwise equal), where the compact adapter's fp32 atomic_add is scheduling-order dependent. It is the dispatch's default for every expert stack whose wire it reads -- lane.requires publishes the predicate: every column at rate 4, window_bits 14, window body, channel plane, no decoration (q256=1024 stacks; the mixed-rate q256=896 rung keeps the compact adapter) -- unless TESSERA_ROUTED_FUSED=0; when_unavailable names the compact adapter's decoder as the visible substitute in both residencies, and adapter() makes that substitution at construction when the library cannot be built. TWO LANE-BEARING ROWS ENTER scheme.ROUTE_LAUNCHES, the first since v31: (tessera.routed_fused.FusedRoutedWindowMoE.__call__, native_routed_fused_window) with lane tessera_routed_fused_e4m3 on TESSERA_FP8's routed_moe launches and (..., native_routed_fused_window_folded) with lane tessera_routed_fused_value on TESSERA_BF16's, so _validate_cell_executes derives the fused pair only at a rung the extension's own lane.requires admits (contract._lanes_a_rung_reaches: q256 1024, not 896) and the compact rows keep when_lane_absent False because the compact adapter still runs beside the lane, for the stacks it refuses and for the opt-out. THE CELLS: a TP1 eager resident route census of the rate-4 u1 stub B on this image (routed E4M3 at q256 896/928/1024/1088, routed BF16 at q256 1024, 21 modules; experiments/results/glm53_u1_stub_b_fused_tp1_eager_census.json beside its config.json, replayed by tests/test_glm_u1_census_cells.py) recorded the E4M3 fused pair on the q256=1024 stack and the folded fused pair on the BF16 stack in both regimes, the compact pair on the three mixed-rate stacks, problems: [] -- so the four cells tessera_{e4m3,bf16}_k1_routed_moe_sm121_{decode,batch}_resident name the fused pair beside the compact pair they already named, their requires_serve_flags unchanged (TESSERA_SERVE_MODE=resident), and scheme.EXPERIMENTAL_LAUNCHES is empty again. ADDITIVE for a lane reader: no cell, rung, route, flag, format row, attested_wire stamp, TP/EP bound, activation-quantizer attestation or served byte moves and no id leaves; the four cells read one more launch; lane_eligibility.schema stays v10; a lane-claims reader that keys a fingerprint on extension residency sees two more libraries with one-string lane decoders, the shape it already reads. NOT additive for a reader that derives executes from scheme.route_launches itself (the v34 caveat). Evidence at this version: docs/measurements/2026-09-28-routed-fused-640.md records the oracle, the torch.profiler and power profile, the NCU rows, the census and the PACT bench receipts."},
+  {"contract_version": 41, "date": "2026-09-27", "change": "A cell can name the Tessera code its evidence was taken on. Its runtime block accepts two OPTIONAL fields, stamped together or not at all: tessera_commit (the 40-hex commit, for a person to find the tree) and serving_source_sha256 (tessera.serving.source_identity.serving_source_sha256 of that tree, for a program to compare, because an editable install records no commit). The digest covers every source file in the package (each .py file and each native source under tessera/), hashed as paths relative to the directory holding the tessera package, under algorithm tessera.package_source.v1; the whole package rather than a computed serving closure, because a closure can be short and the package cannot. The route trace header carries the same digest of the tree the serve started on, under identity_version 1. No cell carries the fields in this version: none of the fourteen records the tree its evidence was taken on, and a digest is never stamped onto old evidence. Nothing a v40 reader reads changed."},
+  {"contract_version": 40, "date": "2026-09-27", "change": "The export drivers' producer interface is published as data (tessera#599 step 2). A rooted cached-unit bundle (tessera.cached_units.v2) and a Hessian reference document bind records a PRODUCER writes, and since this change Tessera names none of them: the rooted reader takes a tessera.cached_unit.ReuseAuthority from its caller and a reference takes the producer's canonical (schema, source) capture from its caller, and each refuses by name without one. A driver process learns both from one file, the producer's authority module, through one option. THE NEW BLOCK, producer_interface (schema tessera.producer-interface.v1): reuse_authority.option is the spelling every listed driver accepts (--producer-authority); attribute is the module attribute the file must define (PRODUCER_AUTHORITY), protocol the class it must satisfy, canonical_capture_attribute the optional attribute that carries the canonical capture; drivers lists, as repository-relative paths, every driver that declares the option through tessera.producer_authority, which holds its one help text and its one set of refusals. The list is DERIVED: tests/test_producer_authority_drivers.py scans experiments/ and tools/ for drivers that declare the option and refuses a contract whose list differs, so a producer that reads this block to decide whether to pass the option (PrismaQuant's dispatcher does) reads what the tree does rather than a sentence about it. ADDITIVE for every existing reader: no format, cell, rung, route, launch, grade, KL entry, qualification, format row, attested_wire stamp, TP/EP bound, activation-quantizer attestation or served byte moves; lane_eligibility.schema stays v10 and the activation-quantizer schema stays v2. A producer reading an older contract finds no block and must not pass the option: a driver at that commit does not know it."},
   {"contract_version": 39, "date": "2026-09-26", "change": "Four E2M1 cells are WITHDRAWN and four MINTED on the GLM serving image, six cells' rungs widen there, and both A4 launch pairs leave scheme.EXPERIMENTAL_LAUNCHES (tessera#604, second half). THE WITHDRAWALS, each naming a launch this build cannot make: tessera_e2m1_k2_routed_moe_sm121_{decode,batch}_resident on localhost/prismaquant/spark-vllm-nccl230@sha256:a5424378322071f4c33e63d1372a2bb028e46b03f0da0e5edb0cdd7418e2cebb (q256 128..896, (vllm.fused_moe.modular_kernel, torch_materialize_stock)) -- nvfp4_moe_route's process_weights_after_loading always builds the native grouped stacks and the module owns no stock kernel -- and tessera_e2m1_k2_dense_sm121_{decode,batch} on the serve-image pin (q256 896, (torch._scaled_mm, native_span2), eager and compiled, resident|streamed, the batch cell carrying the 2026-09-02 top-1024 KL lower bound) -- nvfp4_route always prepares native A4 units and apply runs tessera.kernel_a4.a4_span2_gemm on every forward. Both launch rows leave scheme.ROUTE_LAUNCHES; the four cells are kept in tests/fixtures/lane_eligibility_cells_withdrawn_v39.json, verbatim except that the dense pair names the serve-image pin by its <versions.default_serve_image> placeholder. WHAT IS LOST: E2M1_K2 dense attestation on the serve-image pin, streamed-residency E2M1_K2 dense attestation anywhere, compiled-mode E2M1_K2 attestation anywhere, and routed E2M1_K2 rungs 128..768 (no receipt of the native grouped route exists there; the format row's attested_rungs_q256 / attested_wire / candidate_rungs_q256 stay [896]). THE MINTS, all device_qualified / backed_with_serve_flag / TESSERA_SERVE_MODE=resident, execution_modes [\"eager\"], on localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5 (vLLM 0.28.1rc1.dev397+gfd4a15126.d20260904, torch 2.13.0+cu130): tessera_e2m1_k2_dense_sm121_{decode,batch}_resident at q256 896 executing (tessera.kernel_a4.a4_span2_gemm, native_span2_gemm) and tessera_e2m1_k2_routed_moe_sm121_{decode,batch}_resident at q256 896 executing (tessera.kernel_a4.a4_span2_grouped_gemm, native_span2_grouped). THE WIDENINGS, on the same image and launches as v38: tessera_e4m3_k1_dense_sm121_*_resident to 832/864/896/928/960/1024/1088, tessera_bf16_k1_dense_sm121_*_resident to 832/864/880/896/928/960/1024/1088 and tessera_e4m3_k1_routed_moe_sm121_*_resident to 832/864/896/928/944/960/1024/1088; the BF16 routed pair stays at 1024. The E4M3 and BF16 format rows' attested_rungs_q256 / attested_wire / candidate_rungs_q256 widen to the union (window/channel/span 1/window_bits 14; BF16 channel_sigma 1.0), each stamp equal to the unit recipes the served wires carry. activation_quantizers.platforms.sm_121 gains an entry generated on the GLM serving image (11 vectors, byte-identical to the a5424378 table). THE RECEIPTS: eight TP1 eager resident route censuses of eight-layer GLM-5.3-Flash stubs (3 dense-MLP + 5 MoE layers, 288 routed experts; source GLM-5.3-Flash-BF16 truncated, tensors byte-identical), each 21 Tessera modules, verdict served, problems [], tools/tessera_route_census.py at tessera 50e67a9d0, committed with each stub's config.json under experiments/results/ (experiments/results/glm53_u1_stub_d_tp1_eager_census.json is the E2M1 receipt; stubs a, b and s1..s5 are its siblings); every wire was cut from the union campaign's existing receipts (no new encode). tests/test_glm_u1_census_cells.py replays all eight against this table. Shared-expert blocks are dense Linears and join the dense cells; each of dense BF16 864/880/896/928 and E4M3 864/896/928 rests on one module (layer 7's shared-expert down_proj), and each routed E4M3 rung other than 832 on one stack. The serve flags the receipts record (TESSERA_RESEARCH_GLM53_NOPE=1, --attention-backend CUSTOM, --kv-cache-dtype fp8_ds_mla, --moe-backend triton, --kernel-config {\"enable_flashinfer_autotune\": false}, --trust-remote-code, eager) are the v38 serve's. docs/measurements/tessera-glm-u1-census-2026-09-26.md has the per-stub table. TENSOR PARALLEL: TESSERA_E2M1_K2 keeps max_world_size 2. Its v29 world-size receipt ran the materialising route withdrawn here, so the native span-2 route and its rank-cut admission (rows a multiple of arity*8*span = 32) were censused at TP 2: stub D across sparky and sparklina, ray, eager, resident, on the GLM image, tools/tessera_route_census.py at tessera 62f9e1ce5, verdict served, problems [], 21 modules per rank on the two native A4 launches, dense modules cut on both axes and each routed stack's intermediate halved to 1024, its down projection's row extent (experiments/results/glm53_u1_stub_d_tp2_eager_census.json, sha256 1a286a81d36b891f8839669551d96bbbddfbbc29b7a8bea07f31c99bf18e2824, replayed by tests/test_glm_u1_tp2_census.py). It is a route receipt; the KL-bearing world_size_receipts entry stays v29's."},
   {"contract_version": 38, "date": "2026-09-26", "change": "Eight routed and dense cells are MINTED on the GLM serving image, and three launch pairs leave scheme.EXPERIMENTAL_LAUNCHES (tessera#604, first half). THE CELLS: tessera_e4m3_k1_dense_sm121_{decode,batch}_resident and tessera_bf16_k1_dense_sm121_{decode,batch}_resident at q256 832/1024/1088, tessera_e4m3_k1_routed_moe_sm121_{decode,batch}_resident at q256 896 and tessera_bf16_k1_routed_moe_sm121_{decode,batch}_resident at q256 1024, all device_qualified / backed_with_serve_flag / TESSERA_SERVE_MODE=resident, execution_modes [\"eager\"], on localhost/prismaquant/spark-vllm-nccl230@sha256:f8dbe1a02e33ccb7416ab40b72a83e8c725dcb6fed3e90bae4a658cce5e1b7f5 (vLLM 0.28.1rc1.dev397+gfd4a15126.d20260904, torch 2.13.0+cu130). They name (tessera::window_gemm_dense, native_window_gemm), (tessera::window_gemm_dense, native_window_gemm_folded), (tessera.native_window_moe.NativeWindowMoE.__call__, native_window_moe_compact) and (tessera.native_window_moe.NativeWindowMoE.__call__, native_window_moe_compact_folded) respectively. THE RECEIPT: one route census of a GLM-5.3-Flash stub (1 dense + 3 MoE layers, hidden 4096, 288 routed experts; 9 Tessera modules, 6,949,273,600 wire bytes) on a GB10 (sm_121, capability [12, 1]), TP 1, eager, resident, tools/tessera_route_census.py at tessera 1a5eb99e7 (tessera#620), committed byte for byte as experiments/results/glm53_x_stub_tp1_eager_census.json (sha256 d10738cd5692588a4afd4b8f3aeeb33924b99a8e144f84bb125624c660a34edc) beside the stub's config.json (sha256 d93f8156...): verdict served, problems [], all 9 modules state served in BOTH the decode (M1) and the batch phase, each on its family's own activation contract, decoder_coverage {native_window_gemm: 3, native_window_gemm_folded: 4, native_window_moe_compact: 1, native_window_moe_compact_folded: 1} in both phases. tests/test_glm_x_census_cells.py replays the receipt's records against this table and requires every module in both phases to join a cell. THE SERVE, stated because the cells name only the residency flag: TESSERA_RESEARCH_GLM53_NOPE=1, --attention-backend CUSTOM, --kv-cache-dtype fp8_ds_mla, --moe-backend triton, --kernel-config {\"enable_flashinfer_autotune\": false}, --trust-remote-code, --enforce-eager. These select ATTENTION and the stock MoE backend for non-Tessera stacks; no Tessera route reads any of them (the compact expert lane never consults vLLM's MoE backend oracle), so they are recorded in the receipt's engine_backends and env blocks and in docs/measurements/tessera-glm-x-census-2026-09-26.md rather than in requires_serve_flags, the E2M1 routed cells' precedent. THE #104 GUARD: the arm passed no --require-decoder, so required_decoder_coverage is empty; the void-census refusal is read off decoder_coverage instead, which is non-zero for every one of the four decoders in both phases, and off the replay test, which fails if any module falls out of a cell. THE SCHEME CHANGE. (WINDOW_GEMM_SYMBOL, native_window_gemm_folded), (WINDOW_MOE_COMPACT_SYMBOL, native_window_moe_compact) and (WINDOW_MOE_COMPACT_SYMBOL, native_window_moe_compact_folded) leave EXPERIMENTAL_LAUNCHES in the commit that mints their cells, for the v34 reason. The materialising (vllm.fused_moe.modular_kernel, torch_materialize_stock) entry is REMOVED from TESSERA_FP8's routed launches: it ran only on a build that publishes no compact reader, moe_route.compact_window_lane answers True for FP8 whenever scheme.parse_compact_tessera_expert_blob exists, and it exists in this build. Left in, it would have put a launch no serve can make into every FP8 routed cell's derived executes. The A4 pairs stay experimental (#575). WITHDRAWN: tessera_e4m3_k1_routed_moe_sm121_{decode,batch}_resident on eugr/spark-vllm@sha256:0afec8d4... at q256 1024. They named torch_materialize_stock, which this build cannot launch for FP8 experts, so their attestation was false rather than absent (tessera#604). REMOVAL, not a retag, for v31's reason: the new ids reuse their scope names on a different image and rung, and none of the old evidence moves across. THIS IS AN EVIDENCE DOWNGRADE and is stated as one: the withdrawn batch cell carried a kl_lower_bound (docs/measurements/tessera-lfm-campaign-2026-09-04.md) and both carried the recorded greedy smoke (docs/measurements/moe-smoke-recorded-2026-09-05.md), all measured on the materialised FP8 arithmetic this build no longer serves. Those measurements are not retracted and stay in the tree; no packaged cell now carries a smoke record, and every sm_121 routed FP8 claim is route_only. FORMAT ROWS: TESSERA_E4M3_K1 attested_rungs_q256 [1024] -> [832, 896, 1024, 1088] and TESSERA_BF16_K1 [1792] -> [832, 1024, 1088, 1792], candidate_rungs_q256 equal, each new rung stamped in attested_wire with served_recipe's wire (window, span 1, channel plane, window_bits 14, seed 0, sigma null; channel_sigma null for E4M3 and 1.0 for BF16, identical for dense and routed_moe). CONSUMER-VISIBLE and NOT additive: a routed TESSERA_E4M3_K1 stack at q256 1024 is no longer attested anywhere, and routed E4M3 is attested at 896 only, on the GLM image only; the E4M3 dense cells on the vanilla pin (q256 1024, resident|streamed) are unchanged and the new dense cells cover the GLM image at resident only. WHAT THIS DOES NOT ATTEST: compiled execution (tessera#508 blocks it on this image); quality (grade route_only on all eight, no KL arm, smoke not_recorded); any timing or throughput; TP > 1 (the TP bounds are unmoved; a TP2 census is the next receipt); streamed residency; any rung the stub did not carry. TESSERA_E2M1_K2's routed cells, which also name torch_materialize_stock (tessera#604, second half), are untouched. sm_121's serve_image and versions.default_serve_image stay the vanilla pin. The activation-quantizer schema stays v2 and lane_eligibility.schema stays v10."},
   {"contract_version": 37, "date": "2026-09-25", "change": "The two dense cells tessera_bf16_k1_dense_sm121_{decode,batch} are WITHDRAWN (tessera#614). The dense TESSERA_BF16 route's weight arithmetic moved from the EPILOGUE form (tl.dot on the raw bf16 table values, the fp32 accumulator multiplied by the row scale) to the FOLDED form (one bf16 rounding of value * row_scale per weight, in registers, before tl.dot, and no scale in the epilogue): window_gemm gains arithmetic=\"folded\", the dense custom op tessera::window_gemm_dense takes it as an argument, and bf16_route.apply now stamps (tessera::window_gemm_dense, native_window_gemm_folded). That is the tile decode.materialize_bf16_folded renders and the arithmetic the routed BF16 stack has served since contract v36 (tessera#609), so the route's dense and routed modules now compute one function of the wire. THE DECISION (tessera#606): the served arithmetic equals the priced one, dense as well as routed; a consumer that prices a BF16 rung prices the decoded tile rounded once to bf16, and the epilogue route served a different function of the same bytes. The measured cost of the fold is unchanged and recorded in bf16_route's docstring (served at R = 7 the folded twin's KL was 1.0011x the epilogue route's on all and 0.9961x on confident, below what the corpus resolves); no quality win is claimed for either arithmetic. WHY A WITHDRAWAL. The v34 census (tessera#545, docs/measurements/tessera-window-gemm-census-2026-09-21.md) measured the epilogue kernel under (tessera::window_gemm_dense, native_window_gemm); from this commit the BF16 route cannot make that arithmetic, so the two cells would publish a launch the dispatch no longer makes for this family. REMOVAL, not a retag, for v31's reason: naming native_window_gemm_folded in them would claim a measurement that never ran. The folded pair enters scheme.EXPERIMENTAL_LAUNCHES in the same commit, because contract._validate_cell_executes derives a cell's executes from the non-experimental dispatch and would refuse the old cells against the new one. CONSUMER-VISIBLE and NOT additive: dense TESSERA_BF16_K1 at q256=1792 is no longer device_qualified on sm_121, and a reader asking what the runtime executes there, or on what evidence, now reads absence, which resolves unattested. WHAT DOES NOT MOVE. The E4M3 dense cells tessera_e4m3_k1_dense_sm121_{decode,batch} and the (tessera::window_gemm_dense, native_window_gemm) pair they name: the FP8 family's arithmetic did not change. The BF16 format row's attested_rungs_q256 [1792] and its attested_wire stamp: the wire recipe did not change, and a rung with no cell is the state v31 to v33 already published. reader_rate_range_q256, structures [dense, routed_moe], every routed cell, every TP/EP bound, sm_121's serve_image (the E2M1 and E4M3 cells still name it) and every served byte. Dense EXPORT is not blocked by this, and the changelog says so rather than letting a reader assume it: scheme.refuse_unserveable_wire bounds a dense module by the format row's reader_rate_range_q256, and only a non-dense structure reads attested cells. PRICED EVIDENCE: dense BF16 operator measurements taken on the epilogue kernel describe a function this route no longer serves and need re-pricing on the folded one. A served census of the folded dense GEMM is what earns the scope its cells back. The activation-quantizer schema stays v2 and lane_eligibility.schema stays v10."},

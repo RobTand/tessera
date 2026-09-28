@@ -126,11 +126,13 @@ __all__ = [
     "EVIDENCE_SMOKE_STATUSES",
     "EXECUTION_MODES",
     "PLUGIN_ENTRY_POINT",
+    "RUNTIME_CODE_KEYS",
     "RUNTIME_SCOPE_KEYS",
     "RUNTIME_VERSION_KEYS",
     "VERSIONS_KEYS",
     "validate_activation_quantizers",
     "cell_evidence",
+    "cell_runtime_code",
     "cell_runtime_versions",
     "derive_evidence_grade",
     "derive_smoke_attribution",
@@ -166,6 +168,8 @@ __all__ = [
     "load_serving_contract",
     "route_wire_spelling",
     "validate_serving_contract",
+    "PRODUCER_INTERFACE_SCHEMA",
+    "validate_producer_interface",
 ]
 
 CONTRACT_FILENAME = "runtime_contract.json"
@@ -237,6 +241,19 @@ CELL_PREDICATE_OPS = ("equals", "in", "multiple_of", "at_least", "at_most")
 #: :func:`cell_runtime_versions` requires the whole closed object.
 RUNTIME_SCOPE_KEYS = frozenset({"image", "execution_modes"})
 RUNTIME_VERSION_KEYS = frozenset({"vllm", "torch"})
+
+#: The CODE half of a cell's ``runtime`` (contract v41, optional): which
+#: Tessera tree the cell's evidence was taken on.  ``tessera_commit`` is the
+#: 40-hex commit, for a person to find the tree.  ``serving_source_sha256`` is
+#: :func:`tessera.serving.source_identity.serving_source_sha256` of that tree
+#: (every source file in the package), for a program to compare against the code a serve actually runs, because an
+#: editable install records no commit.  A cell stamps both or neither, and only
+#: when its evidence is taken: a digest is never re-stamped onto old evidence,
+#: so a stale digest is an honest scope, not a defect.  No cell carries them in
+#: v41; the first census that records them stamps them.
+RUNTIME_CODE_KEYS = frozenset({"tessera_commit", "serving_source_sha256"})
+_COMMIT = re.compile(r"[0-9a-f]{40}")
+_SHA256 = re.compile(r"[0-9a-f]{64}")
 
 #: ``versions`` (schema v6, #131) says one thing per field and nothing about
 #: a measured runtime: ``tessera`` is the distribution version,
@@ -522,7 +539,8 @@ def cell_runtime_scope(cell: Mapping[str, Any],
     """The explicit runtime scope a cell attests; no global image fallback."""
     runtime = cell.get("runtime")
     at = f"{where}.runtime"
-    _require_keys(runtime, at, required=set(RUNTIME_SCOPE_KEYS), optional=RUNTIME_VERSION_KEYS)
+    _require_keys(runtime, at, required=set(RUNTIME_SCOPE_KEYS),
+                  optional=RUNTIME_VERSION_KEYS | RUNTIME_CODE_KEYS)
     image = require_runtime_image(runtime["image"], f"{at}.image")
     modes = runtime["execution_modes"]
     if (not isinstance(modes, list) or not modes
@@ -545,7 +563,8 @@ def cell_runtime_versions(cell: Mapping[str, Any],
     """
     runtime = cell.get("runtime")
     at = f"{where}.runtime"
-    _require_keys(runtime, at, required=set(RUNTIME_SCOPE_KEYS | RUNTIME_VERSION_KEYS))
+    _require_keys(runtime, at, required=set(RUNTIME_SCOPE_KEYS | RUNTIME_VERSION_KEYS),
+                  optional=RUNTIME_CODE_KEYS)
     out = []
     for field in ("vllm", "torch"):
         value = runtime[field]
@@ -555,6 +574,31 @@ def cell_runtime_versions(cell: Mapping[str, Any],
                 f"records, verbatim. Got {value!r}.")
         out.append(value)
     return out[0], out[1]
+
+
+def cell_runtime_code(cell: Mapping[str, Any],
+                      where: str = "lane_eligibility cell") -> tuple[str, str] | None:
+    """The ``(tessera_commit, serving_source_sha256)`` a cell names, or ``None``.
+
+    Both or neither: a commit with no digest gives a reader nothing to compare,
+    and a digest with no commit gives a person no tree to find.
+    """
+    runtime = cell.get("runtime")
+    at = f"{where}.runtime"
+    present = sorted(RUNTIME_CODE_KEYS & set(runtime or ()))
+    if not present:
+        return None
+    if len(present) != len(RUNTIME_CODE_KEYS):
+        raise ValueError(
+            f"{at} names {present} without {sorted(RUNTIME_CODE_KEYS - set(present))}; "
+            "a cell names the Tessera code it was measured on with both fields or neither")
+    commit, digest = runtime["tessera_commit"], runtime["serving_source_sha256"]
+    if not isinstance(commit, str) or not _COMMIT.fullmatch(commit):
+        raise ValueError(f"{at}.tessera_commit must be a 40-hex lowercase commit, got {commit!r}")
+    if not isinstance(digest, str) or not _SHA256.fullmatch(digest):
+        raise ValueError(
+            f"{at}.serving_source_sha256 must be 64 lowercase hex digits, got {digest!r}")
+    return commit, digest
 
 
 def cell_runtime_id_suffix(cell: Mapping[str, Any]) -> str:
@@ -1218,7 +1262,8 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
                   required={"schema", "contract_version", "quant_method", "versions",
                             "native_extensions", "formats", "lane_eligibility",
                             "tensor_parallel", "expert_parallel", "fused_module",
-                            "construction", "activation_quantizers"},
+                            "construction", "activation_quantizers",
+                            "producer_interface"},
                   # History, not a gate input: a consumer reads the version, and
                   # the changelog says what the version changed for a person.
                   optional={"changelog"})
@@ -1248,6 +1293,8 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
     _validate_native_extensions(contract["native_extensions"],
                                 "runtime_contract.native_extensions")
     _validate_construction(contract["construction"], "runtime_contract.construction")
+    validate_producer_interface(contract["producer_interface"],
+                                "runtime_contract.producer_interface")
 
     families = {}
     for i, entry in enumerate(contract["formats"]):
@@ -1415,6 +1462,7 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
         # cells naming one image and two vLLM builds would be two runtimes
         # under one digest, which a digest cannot be.
         toolchain = cell_runtime_versions(cell, where)
+        cell_runtime_code(cell, where)
         known = toolchains_by_image.setdefault(runtime_image, (toolchain, cell["id"]))
         if known[0] != toolchain:
             raise ValueError(
@@ -2806,6 +2854,55 @@ def construction_entry_from_receipt(receipt: Mapping[str, Any]) -> dict[str, Any
     if output_sizes:
         entry["output_sizes"] = output_sizes
     return entry
+
+
+#: The ``producer_interface`` block's schema (contract v40, tessera#599).
+PRODUCER_INTERFACE_SCHEMA = "tessera.producer-interface.v1"
+#: The option every listed driver declares, and the attribute the file it
+#: names must define. :mod:`tessera.producer_authority` reads these two from
+#: here, so the published block and the drivers' parsers are one spelling.
+REUSE_AUTHORITY_OPTION = "--producer-authority"
+REUSE_AUTHORITY_ATTRIBUTE = "PRODUCER_AUTHORITY"
+REUSE_AUTHORITY_PROTOCOL = "tessera.cached_unit.ReuseAuthority"
+REUSE_AUTHORITY_CANONICAL_ATTRIBUTE = "canonical_hessian_capture"
+
+
+def validate_producer_interface(block: Any, where: str) -> None:
+    """Refuse a ``producer_interface`` block that misstates the drivers' option.
+
+    The block tells a producer, as data, which export drivers accept
+    ``--producer-authority`` and what the file it names must define, so a
+    producer decides whether to pass the option from the pinned runtime's own
+    table.  Every value but ``drivers`` is a constant this module owns and
+    :mod:`tessera.producer_authority` reads, and is checked here; the
+    ``drivers`` list names repository files the installed package does not
+    carry, so its equality with the tree is held by
+    ``tests/test_producer_authority_drivers.py``.
+    """
+    _require_keys(block, where, required={"schema", "reuse_authority"})
+    if block["schema"] != PRODUCER_INTERFACE_SCHEMA:
+        raise ValueError(f"{where}.schema must be {PRODUCER_INTERFACE_SCHEMA!r}")
+    reuse = block["reuse_authority"]
+    row = f"{where}.reuse_authority"
+    _require_keys(reuse, row, required={"option", "attribute", "protocol",
+                                        "canonical_capture_attribute", "drivers"})
+    expected = {"option": REUSE_AUTHORITY_OPTION,
+                "attribute": REUSE_AUTHORITY_ATTRIBUTE,
+                "protocol": REUSE_AUTHORITY_PROTOCOL,
+                "canonical_capture_attribute": REUSE_AUTHORITY_CANONICAL_ATTRIBUTE}
+    for key, value in expected.items():
+        if reuse[key] != value:
+            raise ValueError(
+                f"{row}.{key} must be {value!r}, what tessera.producer_authority reads; "
+                f"got {reuse[key]!r}")
+    drivers = reuse["drivers"]
+    if (not isinstance(drivers, list) or not drivers
+            or not all(isinstance(d, str) and d.endswith(".py") and not d.startswith("/")
+                       and ".." not in d.split("/") for d in drivers)
+            or drivers != sorted(set(drivers))):
+        raise ValueError(
+            f"{row}.drivers must be a non-empty, sorted, duplicate-free list of "
+            f"repository-relative .py paths; got {drivers!r}")
 
 
 def _validate_construction(block: Any, where: str) -> None:

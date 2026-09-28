@@ -61,9 +61,9 @@ Other kinds of coupling do not have ordinary import edges:
 * *The wire and the packaging* are un-analysable by either route and are named
   in ``OPAQUE``.
 
-PrismaBuild snapshots add one generated source-closure member. Only the exact
-member independently verified by ``tessera._dev.suite_source`` against the sealed
-action is removed before classification. A matching basename is not ownership
+PrismaBuild snapshots add one generated source-closure member. Only a member
+the declared source verifier vouched for, and ``tessera._dev.suite_source``
+then checked against the commit, is removed before classification. A matching basename is not ownership
 proof; unverified closure-shaped changes force a full selection. A snapshot
 commit is intentionally parentless. When
 both endpoints of ``BASE...HEAD`` exist but have no merge base, the selector

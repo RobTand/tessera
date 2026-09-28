@@ -14,13 +14,15 @@ import hashlib
 import inspect
 import json
 from pathlib import Path
+from typing import Protocol, runtime_checkable
 
 from .container import parse
 from .encoder_identity import encoder_fixture_id, resumable
 from .export import (ActivationSource, DEFAULT_CODE, DEFAULT_GROUP, DEFAULT_HALF,
-                     HESSIAN_IDENTITY, wire_recipe)
+                     HESSIAN_IDENTITY, WireRecipe, served_recipe)
 from .grammar import bresenham_rate_schedule
 from .manifest import BodyKind, ContainerClass, RotationState
+from .structure import STRUCTURE_DENSE, STRUCTURES
 from .unit_artifact import _reach_attrs, build_unit_artifact, encoder_profile_id
 
 CACHE_SCHEMA = "tessera.cached_units.v1"
@@ -28,15 +30,61 @@ ROOTED_CACHE_SCHEMA = "tessera.cached_units.v2"
 COMPOSED_CACHE_SCHEMA = "tessera.cached_units.v3"
 INPUT_SCHEMA = "tessera.cached_unit_inputs.v1"
 ENCODING_INPUT_SCHEMA = "tessera.encoding_inputs.v1"
-#: The catalog-extension documents a rooted bundle's reuse authority may bind:
-#: the ones PrismaQuant writes and still verifies.  v1 bound one completed
-#: Stage A receipt; v2 (PQ #993) binds the Stage A run header, so an extension
-#: can exist from the first sealed band.  PrismaQuant authenticates either
-#: before it publishes the bundle; this reader rechecks the binding and the
-#: schema, and reads no other field of the document.
-CATALOG_EXTENSION_SCHEMAS = frozenset({"prismaquant.joint_catalog_extension.v1",
-                                       "prismaquant.joint_catalog_extension.v2"})
-CANDIDATE_OVERLAY_SCHEMAS = frozenset({"prismaquant.t4_adopted_catalog.v1"})
+#: The two authority documents a rooted bundle binds by path and SHA256.  Their
+#: schemas are the producer's, so the caller's ``ReuseAuthority`` judges them.
+REUSE_AUTHORITY_DOCUMENTS = ("catalog_extension", "candidate_overlay")
+#: The refusal a rooted bundle gives when no producer authority was supplied.
+MISSING_REUSE_AUTHORITY = ("rooted cached units need a producer reuse authority "
+                           "(CachedUnitBundle(authority=...)); none was supplied")
+
+
+@runtime_checkable
+class ReuseAuthority(Protocol):
+    """A producer's judgement of the records a rooted bundle's reuse rests on.
+
+    A rooted bundle (``tessera.cached_units.v2``) reuses unit bytes that one
+    producer wrote under another producer's encoder.  Tessera owns the bundle:
+    its roots, producer packages, exact path and SHA256 bindings, adoption
+    coverage, the proof roster, the warning record and the served-activation
+    comparison.  The producer owns the documents those bindings point at.  An
+    authority is the producer's reader for them, supplied by the caller;
+    Tessera names no producer schema.
+
+    Every method raises ``ValueError`` (or lets a malformed document raise
+    while it is read) to refuse.  A bundle that needs an authority and has none
+    refuses with ``MISSING_REUSE_AUTHORITY``; it is never accepted unjudged.
+    """
+
+    def check_document(self, role: str, document) -> None:
+        """Refuse a bound authority document the producer does not vouch for.
+
+        ``role`` is one of ``REUSE_AUTHORITY_DOCUMENTS``; ``document`` is the
+        parsed JSON whose bytes matched the bundle's binding.
+        """
+
+    def adoption_proof(self, unit: str, adoption, identity: dict, original: str):
+        """Check one adoption record and return the proof binding it names.
+
+        ``identity`` is the unit's receipt identity and ``original`` is the
+        bundle's ``checkpoint_encoder_source_sha256``.  The returned value is
+        matched against the bundle's ``encoder_source_proofs`` roster; ``None``
+        means the adoption names no proof.
+        """
+
+    def proof_authorizes(self, proof, adoption, original: str) -> bool:
+        """Whether ``proof`` authorizes ``adoption``.
+
+        ``proof`` is the bound proof document the adoption named, or ``None``
+        when the roster holds no such binding.  A ``False`` answer refuses in
+        strict mode and becomes a recorded warning in permissive mode.
+        """
+
+    def served_activations(self, policy, adoptions: dict, units: dict) -> dict:
+        """The served activations a bound policy requires of these adoptions.
+
+        Returns ``{unit: {"group": key, "input_global_scale": value}}``, which
+        the bundle's ``served_activations`` must equal exactly.
+        """
 
 
 def _json_copy(value):
@@ -115,13 +163,24 @@ def encoder_source_sha256() -> str:
 
 
 def encoding_input_identity(weight, unit_name: str, grid, q256: int, *,
-                            activation: ActivationSource | None = None) -> dict:
+                            activation: ActivationSource | None = None,
+                            structure: str = STRUCTURE_DENSE) -> dict:
     """Source/H/settings identity shared by dense and projected campaign units.
 
     This function imposes no source-layout or runtime topology. A caller using
     the projected cache/export boundary adds the producer projection through
     ``unit_input_identity``. No invented expert fields are needed for a dense
     campaign's resume check.
+
+    ``structure`` is what the unit is served AS, and it picks the recipe the
+    receipt stamps: ``export.served_recipe(grid, q256, structure)``, the one
+    statement the serving exporter encodes and the intake adopts (tessera#662).
+    The block carries no structure key of its own. With the default, and at
+    every rung where the served wire is the research one (every E4M3 and BF16
+    rung, and E2M1x2 at its cap), the block is ``wire_recipe``'s, byte for
+    byte, so no receipt stamped before the argument existed moves. Only a
+    routed E2M1x2 stack below the cap stamps a different block: the span-2
+    TCQ wire its decoder reads.
     """
     if not isinstance(unit_name, str) or not unit_name:
         raise ValueError("encoding input identity requires a unit name")
@@ -146,13 +205,14 @@ def encoding_input_identity(weight, unit_name: str, grid, q256: int, *,
     return _json_copy({"schema": ENCODING_INPUT_SCHEMA, "unit": name,
                        "source": tensor_identity(weight), "calibration": calibration,
                        "recipe": {"grid": grid.name, "q256": q256,
-                                  **wire_recipe(grid, q256).to_config()},
+                                  **served_recipe(grid, q256, structure).to_config()},
                        "encoder_source_sha256": encoder_source_sha256(),
                        "encoder_fixture_id": encoder_fixture_id().hex()})
 
 
 def unit_input_identity(weight, projection: dict, grid, q256: int, *,
-                        activation: ActivationSource | None = None) -> dict:
+                        activation: ActivationSource | None = None,
+                        structure: str = STRUCTURE_DENSE) -> dict:
     """Add an explicit producer projection to the common encoding inputs.
 
     ``projection.tensor`` is the logical producer tensor name WITH ``.weight``;
@@ -171,7 +231,7 @@ def unit_input_identity(weight, projection: dict, grid, q256: int, *,
     if list(weight.shape) != [projection["rows"], projection["cols"]]:
         raise ValueError("cached unit source shape disagrees with producer projection")
     identity = encoding_input_identity(weight, projection["tensor"], grid, q256,
-                                        activation=activation)
+                                        activation=activation, structure=structure)
     return _json_copy({**identity, "schema": INPUT_SCHEMA,
                        "projection": {key: projection[key] for key in sorted(required)}})
 
@@ -324,9 +384,20 @@ def _check_wire(blob: bytes, identity: dict):
     recipe_spec = identity["recipe"]
     grid = grid_for_name(recipe_spec["grid"])
     q256 = recipe_spec["q256"]
-    recipe = wire_recipe(grid, q256)
-    if recipe_spec != {"grid": grid.name, "q256": q256, **recipe.to_config()}:
+    # The recipe block must be a served wire this package states for the
+    # unit's (grid, q256) and a structure its schema admits (tessera#662): a
+    # dense receipt (no projection) is served dense, so only the dense
+    # spelling; a projected expert unit may be served as either. The wire is
+    # then held to the recipe the block names. A structure-specific intake
+    # still compares the whole block against its own expected identity
+    # (``verify_cached_unit``), so this is the bound a producer's record is
+    # checked against, not a license at export.
+    admissible = STRUCTURES if projected else (STRUCTURE_DENSE,)
+    stated = [{"grid": grid.name, "q256": q256, **served_recipe(grid, q256, s).to_config()}
+              for s in admissible]
+    if recipe_spec not in stated:
         raise ValueError("cached unit recipe differs from the producer recipe")
+    recipe = WireRecipe.from_config(recipe_spec)
     geometry = manifest.geometry
     if manifest.shard is not None or len(manifest.terminals) != 1:
         raise ValueError("cached unit must be one complete, unsharded terminal")
@@ -398,10 +469,13 @@ class CachedUnitBundle:
     """Closed unit roster; all filenames/source bindings checked before reads."""
 
     def __init__(self, manifest: dict, directory: Path, expected_units: set[str], source: dict,
-                 *, encoder_source_proof_mode: str = "strict"):
+                 *, encoder_source_proof_mode: str = "strict", authority: ReuseAuthority | None = None):
         if encoder_source_proof_mode not in ("strict", "permissive"):
             raise ValueError("cached unit encoder_source_proof_mode must be strict or permissive")
+        if authority is not None and not isinstance(authority, ReuseAuthority):
+            raise TypeError("cached unit authority must implement tessera.cached_unit.ReuseAuthority")
         self.encoder_source_proof_mode = encoder_source_proof_mode
+        self._authority = authority
         self.warnings = []
         rooted = manifest.get("schema") == ROOTED_CACHE_SCHEMA
         composed = manifest.get("schema") == COMPOSED_CACHE_SCHEMA
@@ -499,7 +573,8 @@ class CachedUnitBundle:
             if set(child_units) & set(units):
                 raise ValueError("cached unit child unit rosters overlap")
             child = CachedUnitBundle(document, path.parent, set(child_units), manifest["source"],
-                                     encoder_source_proof_mode=self.encoder_source_proof_mode)
+                                     encoder_source_proof_mode=self.encoder_source_proof_mode,
+                                     authority=self._authority)
             self.warnings.extend(_json_copy(child.warnings))
             package = descriptor["producer_package"]
             if document["schema"] == CACHE_SCHEMA:
@@ -577,12 +652,11 @@ class CachedUnitBundle:
                 "catalog_extension", "candidate_overlay", "encoder_source_proofs",
                 "checkpoint_encoder_source_sha256"}:
             raise ValueError("rooted cached units need explicit catalog extension authority")
-        for name, schemas in (("catalog_extension", CATALOG_EXTENSION_SCHEMAS),
-                              ("candidate_overlay", CANDIDATE_OVERLAY_SCHEMAS)):
-            document = _bound_document(authority[name])
-            schema = document.get("schema") if isinstance(document, dict) else None
-            if not isinstance(schema, str) or schema not in schemas:
-                raise ValueError("rooted cached unit authority schema differs")
+        judge = self._authority
+        if judge is None:
+            raise ValueError(MISSING_REUSE_AUTHORITY)
+        for name in REUSE_AUTHORITY_DOCUMENTS:
+            judge.check_document(name, _bound_document(authority[name]))
         proofs = authority["encoder_source_proofs"]
         if not isinstance(proofs, list):
             raise ValueError("rooted cached unit encoder proofs must be explicit bindings")
@@ -597,26 +671,10 @@ class CachedUnitBundle:
             raise ValueError("rooted cached unit adoption coverage differs")
         used_proofs = set()
         for name, adoption in adoptions.items():
-            if (not isinstance(adoption, dict) or adoption.get("schema") !=
-                    "prismaquant.joint_catalog_source_adoption.v1"):
-                raise ValueError("cached unit source adoption schema differs")
-            candidate, reference = adoption["candidate_encoding_identity"], adoption["reference_encoding_identity"]
-            if (candidate != units[name]["identity"] or reference.get("unit") != name
-                    or adoption.get("reference_pair", [None])[0] != name
-                    or reference.get("encoder_source_sha256") != original):
-                raise ValueError("cached unit source adoption identities differ")
-            for field in ("unit", "source", "calibration", "encoder_fixture_id"):
-                if field not in reference or reference[field] != candidate.get(field):
-                    raise ValueError("cached unit source adoption changed " + field)
-            if reference.get("projection") != candidate.get("projection"):
-                raise ValueError("cached unit source adoption changed projection")
-            key = json.dumps(adoption["encoder_source_proof"], sort_keys=True)
+            binding = judge.adoption_proof(name, adoption, units[name]["identity"], original)
+            key = json.dumps(binding, sort_keys=True)
             proof = proof_documents.get(key)
-            if (not proof or proof.get("schema") != "prismaquant.reseal_proof_bundle.v1"
-                    or proof.get("ok") is not True or proof.get("encoder_fixture_id_equal") is not True
-                    or proof.get("pins", {}).get("old", {}).get("encoder_source_sha256") != original
-                    or proof.get("pins", {}).get("new", {}).get("encoder_source_sha256") != candidate["encoder_source_sha256"]
-                    or set((proof.get("fixture_id", {}).get("ids") or {}).values()) != {candidate["encoder_fixture_id"]}):
+            if not judge.proof_authorizes(proof, adoption, original):
                 reason = "cached unit encoder source proof does not authorize this adoption"
                 if self.encoder_source_proof_mode == "strict":
                     raise ValueError(reason)
@@ -624,10 +682,10 @@ class CachedUnitBundle:
                     "schema": "tessera.cached_unit_warning.v1",
                     "code": "encoder_source_proof_not_authorized", "unit": name,
                     "reason": reason,
-                    "proof_status": ("absent" if adoption["encoder_source_proof"] is None
+                    "proof_status": ("absent" if binding is None
                                      else "unlisted" if key not in proof_documents
                                      else "not_authorizing"),
-                    "encoder_source_proof": _json_copy(adoption["encoder_source_proof"])})
+                    "encoder_source_proof": _json_copy(binding)})
             if key in proof_documents:
                 used_proofs.add(key)
         if used_proofs != set(proof_documents):
@@ -636,24 +694,16 @@ class CachedUnitBundle:
         if not isinstance(served, dict) or not set(served) <= set(units):
             raise ValueError("rooted cached unit served activation coverage differs")
         if policy_bound is None:
+            # Every E2M1x2 rung executes the static A-side contract, so an
+            # adopted A4 unit at ANY rung needs the bound policy, not only the
+            # cap rung the first adoptions used (tessera#662: routed sub-cap
+            # units are adoptable now).
             added_a4 = any(units[name]["identity"].get("recipe", {}).get("grid") == "E2M1x2"
-                           and units[name]["identity"]["recipe"].get("q256") == 896 for name in adoptions)
+                           for name in adoptions)
             if served or added_a4:
                 raise ValueError("served activation values lack their bound policy")
         else:
-            policy = _bound_document(policy_bound)
-            rates = _served_activation_rates(policy)
-            groups = policy["executed_grouping"]["groups"]
-            index = {name: (key, group) for key, group in groups.items() for name in group["members"]}
-            expected = {}
-            for name in adoptions:
-                recipe = units[name]["identity"].get("recipe", {})
-                if (recipe.get("grid") == "E2M1x2"
-                        and recipe.get("q256") in rates):
-                    if name not in index:
-                        raise ValueError("selected A4 unit absent from served activation policy")
-                    key, group = index[name]
-                    expected[name] = {"group": key, "input_global_scale": group["input_global_scale"]}
+            expected = judge.served_activations(_bound_document(policy_bound), adoptions, units)
             if served != expected:
                 raise ValueError("selected served activations differ from bound executed groups")
         self.served_activation_policy, self.served_activations = policy_bound, _json_copy(served)
@@ -669,23 +719,6 @@ class CachedUnitBundle:
             expected = struct.unpack("f", struct.pack("f", value["input_global_scale"]))[0]
             if scales.get(key) != expected:
                 raise ValueError(f"{name}: exported activation scale differs from the bound served policy")
-
-
-def _served_activation_rates(policy):
-    """Read the bound policy's scope; v1 retains its original single rung."""
-    if isinstance(policy, dict):
-        if (policy.get("schema") == "prismaquant.joint_served_activation_policy.v1"
-                and policy.get("format") == "TESSERA_E2M1_K2_R896"):
-            return (896,)
-        if policy.get("schema") == "prismaquant.joint_served_activation_policy.v2":
-            import re
-            formats = policy.get("formats")
-            if (isinstance(formats, list) and formats
-                    and all(isinstance(fmt, str) and re.fullmatch(r"TESSERA_E2M1_K2_R[1-9][0-9]*", fmt)
-                            for fmt in formats)
-                    and formats == sorted(set(formats))):
-                return tuple(int(fmt.removeprefix("TESSERA_E2M1_K2_R")) for fmt in formats)
-    raise ValueError("rooted cached unit served activation policy schema differs")
 
 
 def _bound_document(bound):

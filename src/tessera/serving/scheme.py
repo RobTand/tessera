@@ -95,6 +95,8 @@ __all__ = [
     "A4_DENSE_GEMM_SYMBOL",
     "A4_GROUPED_GEMM_SYMBOL",
     "WINDOW_MOE_COMPACT_SYMBOL",
+    "ROUTED_FUSED_WINDOW_SYMBOL",
+    "FUSED_WINDOW_DENSE_SYMBOL",
     "EXPERIMENTAL_LAUNCHES",
     "experimental_launch_pairs",
     "parse_compact_blob_for_scheme",
@@ -153,9 +155,9 @@ TESSERA_SCHEME_KEY = "family"
 #: ``RoutedExperts`` stack.  ``STRUCTURES`` is what this build DISPATCHES, and
 #: a structure outside it is refused by name rather than served through a
 #: method that would read the wrong tensor rank.
-STRUCTURE_DENSE = "dense"
-STRUCTURE_ROUTED_MOE = "routed_moe"
-STRUCTURES = (STRUCTURE_DENSE, STRUCTURE_ROUTED_MOE)
+#: The names live in the core ``tessera.structure`` module, which ``export`` and
+#: ``cached_unit`` read without importing this plugin layer.
+from ..structure import STRUCTURE_DENSE, STRUCTURE_ROUTED_MOE, STRUCTURES  # noqa: E402,F401
 
 #: THE TWO EXPERT GROUPS, AND WHY THERE ARE EXACTLY TWO.  vLLM's
 #: ``RoutedExperts`` holds an expert's gate and up in ONE ``w13`` matrix
@@ -441,6 +443,22 @@ A4_GROUPED_GEMM_SYMBOL = "tessera.kernel_a4.a4_span2_grouped_gemm"
 #: epilogue arithmetic and the BF16 family the folded one; the two stamp
 #: different decoders, so one symbol never stands for two arithmetics.
 WINDOW_MOE_COMPACT_SYMBOL = "tessera.native_window_moe.NativeWindowMoE.__call__"
+#: The fused warp-specialised routed window MoE (``tessera.routed_fused``,
+#: tessera#640): gate/up + SwiGLU in one persistent kernel, the down
+#: projection in a second launch of the same kernel with a fixed-order
+#: per-token reduction.  A NEW identity, not the compact adapter under a new
+#: name: it decodes each weight once per tile and reuses it across routes,
+#: schedules by route count on the device, and its down reduction is
+#: deterministic where the compact adapter's is an fp32 atomic.  Same two
+#: arithmetics, same two decoder spellings as the compact lane, its own.
+ROUTED_FUSED_WINDOW_SYMBOL = "tessera.routed_fused.FusedRoutedWindowMoE.__call__"
+#: The same kernel's DENSE identity (contract v43): the functional custom op
+#: ``serving.native_window`` registers, which launches ``routed_fused_kernel``'s
+#: E = 1 case once per role of a dense Linear into the role's column slice of
+#: one output, splitting K at decode shapes behind a fixed-order reduce.  A
+#: different launch than ``WINDOW_GEMM_SYMBOL`` over the same function of the
+#: wire (its MMA accumulation order differs), so its own symbol and decoders.
+FUSED_WINDOW_DENSE_SYMBOL = "tessera::fused_window_dense"
 #: The entry point the expert route calls. Its recorded backend suffix is
 #: selected by vLLM at runtime and remains in the census receipt.
 MOE_GEMM_SYMBOL = "vllm.fused_moe.modular_kernel"
@@ -469,6 +487,17 @@ _DECODER_NATIVE_SPAN2_GROUPED = "native_span2_grouped"
 #: function of the wire and a cell must be able to name which one it attests.
 _DECODER_NATIVE_WINDOW_MOE_COMPACT = "native_window_moe_compact"
 _DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED = "native_window_moe_compact_folded"
+#: The fused routed window MoE lane (tessera#640), epilogue arithmetic (the
+#: E4M3 family) and folded arithmetic (the BF16 family).  Its own strings for
+#: the reason the compact pair has two: a census must be able to say which
+#: kernel and which arithmetic served a stack, and the fused lane's
+#: deterministic reduction is a different numerical function of the same
+#: wire than the compact adapter's atomic one.
+_DECODER_NATIVE_ROUTED_FUSED_WINDOW = "native_routed_fused_window"
+_DECODER_NATIVE_ROUTED_FUSED_WINDOW_FOLDED = "native_routed_fused_window_folded"
+#: The fused kernel's dense identity (contract v43), epilogue and folded.
+_DECODER_NATIVE_FUSED_WINDOW_DENSE = "native_fused_window_dense"
+_DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED = "native_fused_window_dense_folded"
 
 _ALL_REGIMES = ("batch", "decode")
 _ALL_MODES = ("resident", "streamed")
@@ -480,22 +509,38 @@ _ALL_MODES = ("resident", "streamed")
 #: of the extension's name for the load path that still builds it.
 
 
-def _dense_native_window_launch(decoder: str) -> tuple[dict, ...]:
+def _dense_native_window_launch(decoder: str, fused_decoder: str, lane: str) -> tuple[dict, ...]:
     """The compact loader's native window GEMM, the dense half of both routes.
 
     ``serving.native_window`` prepares each dense role from the verified wire
-    (``tessera.compact_prep.prepare_window_compact``) and runs the packed
+    (``tessera.compact_prep.prepare_window_compact``) and runs a packed
     bitstream GEMM through one functional custom op; it serves every M in both
-    residencies and needs no extension lane, so it carries no ``lane`` and is
-    not a ``when_lane_absent`` fallback.  An E4M3 unit is the fp8 family, on
-    the epilogue arithmetic (``native_window_gemm``); a BF16 unit is the value
-    family, on the folded arithmetic (``native_window_gemm_folded``,
-    tessera#614).  One symbol, two decoders: the decoder is what names the
-    arithmetic, so a cell attesting one cannot be read as attesting the other.
+    residencies.  An E4M3 unit is the fp8 family, on the epilogue arithmetic;
+    a BF16 unit is the value family, on the folded arithmetic (tessera#614).
+    The decoder is what names the arithmetic, so a cell attesting one cannot
+    be read as attesting the other.
+
+    TWO LAUNCHES since contract v43.  The Triton GEMM (``WINDOW_GEMM_SYMBOL``)
+    needs no extension lane, carries no ``lane`` and is not a
+    ``when_lane_absent`` fallback: it still runs beside the fused identity,
+    for every module ``routed_fused.fused_dense_window_supported`` refuses
+    (mixed rates, rows not a multiple of 128, a permuted column order), for a
+    box whose toolchain cannot build the library, and for
+    ``TESSERA_DENSE_FUSED=0``.  The fused window kernel's dense identity
+    (``FUSED_WINDOW_DENSE_SYMBOL``) is the dispatch for every module the
+    predicate admits -- the q256 1024 GLM dense MLPs and shared experts -- and
+    names its extension ``lane``, so a cell derives it only at a rung the
+    extension's own ``lane.requires`` admits (``contract._lanes_a_rung_reaches``).
+    ``native_window.prepare_dense_native_module`` decides the lane once per
+    module and ``apply`` stamps that module's pair.
     """
     return (
         {"symbol": WINDOW_GEMM_SYMBOL, "decoder": decoder,
          "regimes": _ALL_REGIMES, "modes": _ALL_MODES, "lane": None,
+         "structures": (STRUCTURE_DENSE,),
+         "when_lane_absent": False},
+        {"symbol": FUSED_WINDOW_DENSE_SYMBOL, "decoder": fused_decoder,
+         "regimes": _ALL_REGIMES, "modes": _ALL_MODES, "lane": lane,
          "structures": (STRUCTURE_DENSE,),
          "when_lane_absent": False},
     )
@@ -534,14 +579,18 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
          "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": None,
          "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": False},
     ),
-    # The dense half is ONE launch: ``fp8_route.apply`` runs the packed native
-    # window GEMM for every M and both residencies and raises rather than fall
-    # back, so the route's own ``DENSE_LAUNCH`` is this set and
+    # The dense half is TWO launches since contract v43: ``fp8_route.apply``
+    # runs the prepared module's packed native window GEMM -- the Triton op,
+    # or the fused window kernel's dense identity where the module's roles
+    # admit it -- for every M and both residencies and raises rather than fall
+    # back, so the route's own ``DENSE_LAUNCHES`` is this set and
     # ``tests/test_serving_contract.py`` asserts the equality.  The window-GEMV
     # lane's three launches stood here until #538 and were retired from the
     # dispatch by ``1b767a207``; a table that outlived its dispatch is what let
     # the published ``lane_eligibility`` cells go on naming them.
-    TESSERA_FP8: _dense_native_window_launch(_DECODER_NATIVE_WINDOW_GEMM) + (
+    TESSERA_FP8: _dense_native_window_launch(
+        _DECODER_NATIVE_WINDOW_GEMM, _DECODER_NATIVE_FUSED_WINDOW_DENSE,
+        "tessera_routed_fused_e4m3") + (
         # The compact window MoE adapter: routed experts served from the
         # loader's packed units, no decoded tile, on the epilogue arithmetic.
         # It is the expert half's ONLY launch.  The materialising
@@ -555,6 +604,24 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
         {"symbol": WINDOW_MOE_COMPACT_SYMBOL, "decoder": _DECODER_NATIVE_WINDOW_MOE_COMPACT,
          "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": None,
          "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": False},
+        # The fused warp-specialised lane (tessera#640) on the same epilogue
+        # arithmetic.  ``PackedWindowMoeBundles.adapter`` takes it for every
+        # stack ``routed_fused.fused_routed_window_supported`` admits (every
+        # column at rate 4, window 14, identity order -- the q256=1024 GLM
+        # stacks) unless ``TESSERA_ROUTED_FUSED=0``; the compact pair above
+        # stays the dispatch for the rest (the mixed-rate q256=896 rung, a
+        # box whose toolchain cannot build the library, the opt-out).  The
+        # FIRST lane-bearing row since #538: ``lane`` names the extension
+        # ``native_extensions`` publishes for it, so a cell derives this pair
+        # only at a rung the extension's own ``lane.requires`` admits
+        # (``contract._lanes_a_rung_reaches``), and the compact row keeps
+        # ``when_lane_absent`` False because it still runs beside the lane --
+        # for the stacks the lane's runtime geometry check refuses and for
+        # ``when_unavailable``.  A served route census of a rate-4 GLM stub
+        # (contract v42) is what let the four window routed cells name it.
+        {"symbol": ROUTED_FUSED_WINDOW_SYMBOL, "decoder": _DECODER_NATIVE_ROUTED_FUSED_WINDOW,
+         "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": "tessera_routed_fused_e4m3",
+         "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": False},
     ),
     # The dense half: same shape as the FP8 dense half above, and for the same
     # reason, on the FOLDED weight arithmetic (tessera#614) and therefore its
@@ -563,10 +630,17 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
     # stack.  It has no stock-kernel launch at all: there is no materialising
     # BF16 expert path to fall back to.  Both halves of the route serve one
     # arithmetic: the row scale folded into each weight, rounded once.
-    TESSERA_BF16: _dense_native_window_launch(_DECODER_NATIVE_WINDOW_GEMM_FOLDED) + (
+    TESSERA_BF16: _dense_native_window_launch(
+        _DECODER_NATIVE_WINDOW_GEMM_FOLDED, _DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED,
+        "tessera_routed_fused_value") + (
         {"symbol": WINDOW_MOE_COMPACT_SYMBOL,
          "decoder": _DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED,
          "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": None,
+         "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": False},
+        # The fused lane's folded form (tessera#640); see the FP8 row.
+        {"symbol": ROUTED_FUSED_WINDOW_SYMBOL,
+         "decoder": _DECODER_NATIVE_ROUTED_FUSED_WINDOW_FOLDED,
+         "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": "tessera_routed_fused_value",
          "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": False},
     ),
 }
@@ -631,8 +705,48 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
 #: (docs/measurements/tessera-glm-u1-census-2026-09-26.md).  The four
 #: ``tessera_e2m1_k2_{dense,routed_moe}_sm121_{decode,batch}_resident`` cells
 #: on that image name them, in the same change, for the v34 reason.  Nothing
-#: is experimental after v39; the set stays so the next unattested launch has
-#: a place to stand.
+#: was experimental after v39; the set stayed so the next unattested launch
+#: would have a place to stand.
+#:
+#: TWO PAIRS PASSED THROUGH at contract v42 (tessera#640): ``(ROUTED_FUSED_
+#: WINDOW_SYMBOL, _DECODER_NATIVE_ROUTED_FUSED_WINDOW)`` and ``(ROUTED_FUSED_
+#: WINDOW_SYMBOL, _DECODER_NATIVE_ROUTED_FUSED_WINDOW_FOLDED)``.  The fused
+#: warp-specialised routed kernel is a new launch identity the dispatch makes
+#: by default for every rate-4 window-14 expert stack, so the routes'
+#: ``census_expected`` had to admit it before any cell could name it, and the
+#: two pairs stood here while the lane was built.  A served route census of
+#: the rate-4 u1 stub B on the GLM serving image recorded both -- the E4M3
+#: pair on its q256=1024 stack and the folded pair on its BF16 stack, both
+#: regimes, ``problems: []`` (docs/measurements/2026-09-28-routed-fused-640.md)
+#: -- and the four ``tessera_{e4m3,bf16}_k1_routed_moe_sm121_{decode,batch}_
+#: resident`` cells name them in the same change, for the v34 reason.  The
+#: compact pairs stay attested beside them: they serve every stack the lane
+#: refuses and the ``TESSERA_ROUTED_FUSED=0`` opt-out.  The set is empty
+#: again, kept so the next unattested launch has a place to stand.
+#:
+#: TWO MORE PAIRS PASSED THROUGH at contract v43 (the dense follow-up to
+#: tessera#640): ``(FUSED_WINDOW_DENSE_SYMBOL, _DECODER_NATIVE_FUSED_WINDOW_
+#: DENSE)`` and ``(FUSED_WINDOW_DENSE_SYMBOL, _DECODER_NATIVE_FUSED_WINDOW_
+#: DENSE_FOLDED)``.  The fused window kernel's dense identity is the dispatch's
+#: default for every rate-4 window-14 dense module whose rows are a multiple
+#: of 128, so the routes' ``census_expected`` had to admit it before a cell
+#: could name it.  A served route census of the rate-4 u1 stub B on the GLM
+#: serving image recorded both -- the E4M3 pair on its q256=1024 shared-expert
+#: modules and the folded pair on its q256=1024 BF16 shared gate/up module,
+#: both regimes, ``problems: []``
+#: (docs/measurements/2026-09-28-dense-fused-window.md) -- and the four
+#: ``tessera_{e4m3,bf16}_k1_dense_sm121_{decode,batch}_resident`` cells name
+#: them in the same change, for the v34 reason; the Triton pair stays attested
+#: beside them (it serves every dense module the lane refuses and the
+#: ``TESSERA_DENSE_FUSED=0`` opt-out).  The two ``tessera_e4m3_k1_dense_sm121_
+#: {decode,batch}`` cells on the platform's pinned serve image, whose only
+#: rung (1024) reaches the lane, name it on their OWN receipts: the v34 census
+#: of ``qwen3-0.6b-uniform-R1024`` (112 modules, every one q256 1024) was run
+#: again on that image with the lane as the dispatch, once per residency the
+#: cells attest, and every module recorded the E4M3 pair in both regimes
+#: (``tests/test_dense_fused_census_cells.py``).  Withdrawing them instead
+#: would have moved ``versions.default_serve_image`` onto a build no registry
+#: serves, for a lane that was never measured to be missing there.
 EXPERIMENTAL_LAUNCHES: frozenset = frozenset()
 
 
@@ -840,7 +954,7 @@ def _refuse_an_unreadable_rung(route: str, grid: str, q256: int, target: str) ->
     (tessera#560 D2); the research ``wire_recipe`` default below the cap is
     still the WINDOW body, which the routed path promotes to TCQ at export
     for ``STRUCTURE_ROUTED_MOE`` only -- see
-    ``experiments.export_tessera_serving.served_recipe`` -- while a dense
+    ``tessera.export.served_recipe`` -- while a dense
     module keeps WINDOW and is refused there).
     """
     from .contract import reader_accepts, reader_rate_grid
@@ -986,7 +1100,7 @@ def refuse_unserveable_wire(grid: str, q256: int, body: str, plane: str,
     (Contract v32 publishes the trellis domain [128, 896] step 128 on the
     E2M1_K2 reader row, and served ROUTED stacks below the cap carry the
     span-2 TCQ spelling -- see
-    ``experiments.export_tessera_serving.served_recipe`` -- while a dense
+    ``tessera.export.served_recipe`` -- while a dense
     module keeps the WINDOW body and stays refused here exactly as before;
     the shape of the failure this gate exists for is unchanged.)
 

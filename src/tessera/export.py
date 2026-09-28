@@ -56,6 +56,7 @@ from .grammar import Q256_UNIT, bresenham_rate_schedule
 # lazily here); the exporter reads it rather than restating it.
 from .layout import tp_agnostic_at_minor
 from .manifest import BodyKind, RotationState, ScalePlaneKind
+from .structure import STRUCTURE_DENSE, STRUCTURE_ROUTED_MOE, STRUCTURES
 from .trellis import ConvCode
 from .encoder_identity import encoder_fixture_id, stamped_fixture_id
 from .unit_artifact import build_unit_artifact, read_unit_artifact
@@ -68,6 +69,7 @@ __all__ = [
     "ExportedUnit",
     "WireRecipe",
     "wire_recipe",
+    "served_recipe",
     "DEFAULT_LDLQ_SIGMA",
     "DEFAULT_LDLQ_BLOCK",
     "DEFAULT_REFIT_OBJECTIVE",
@@ -901,7 +903,7 @@ class ActivationSource:
         return kwargs
 
     @classmethod
-    def from_capture(cls, path, *, resident_hessians=None,
+    def from_capture(cls, path, *, resident_hessians=None, canonical_capture=None,
                      **settings) -> "ActivationSource":
         """Load a legacy H payload or bounded canonical references at ``settings``.
 
@@ -918,19 +920,22 @@ class ActivationSource:
         ``resident_hessians`` binds a reference document's commitments to
         tensors the caller already holds, so a producer that just wrote those
         commitments neither re-digests the population to seal nor reads every
-        unit back to consume it (tessera#440).  The owner is closed here if
-        anything after opening it raises: a caller cannot register an owner it
-        was never handed, so this call is the only place that can.
+        unit back to consume it (tessera#440).  ``canonical_capture`` is the
+        producer's ``(schema, source)`` pair for the calibration cache that a
+        reference binds (``hessian_capture.ReferenceHessians``); a reference
+        refuses without it.  The owner is closed here if anything after opening
+        it raises: a caller cannot register an owner it was never handed, so
+        this call is the only place that can.
         """
         import torch as _torch
 
         owner = None
         if str(path).endswith('.collection.references.json'):
             from .hessian_capture import ReferenceHessianCollection
-            owner = ReferenceHessianCollection(path)
+            owner = ReferenceHessianCollection(path, canonical_capture=canonical_capture)
         elif str(path).endswith('.references.json'):
             from .hessian_capture import ReferenceHessians
-            owner = ReferenceHessians(path)
+            owner = ReferenceHessians(path, canonical_capture=canonical_capture)
         elif resident_hessians is not None:
             raise GrammarError(
                 f"{path} is not a reference capture, so resident_hessians has "
@@ -1502,7 +1507,7 @@ def wire_recipe(grid: PayloadGrid, q256: "int | None" = None) -> WireRecipe:
       L=12.  1.06-1.10x EXL3 at 2.5-3.5 bpp where the coset trellis is
       1.36-1.43x.  This is the RESEARCH default the table records: a served
       ROUTED stack below the cap carries the span-2 TCQ spelling instead
-      (``experiments.export_tessera_serving.served_recipe`` promotes it to TCQ
+      (``served_recipe`` promotes it to TCQ
       for ``STRUCTURE_ROUTED_MOE`` only, because the routed path decodes TCQ
       only), measurably worse and stated there.  A DENSE module keeps this
       WINDOW spelling at every rung, and below the cap the route refuses it
@@ -1533,6 +1538,63 @@ def wire_recipe(grid: PayloadGrid, q256: "int | None" = None) -> WireRecipe:
             and q256 < tcq_cap_q256(grid):
         return E2M1X2_SUBCAP_RECIPE
     return TCQ_RECIPE
+
+
+
+def served_recipe(grid: PayloadGrid, q256: int,
+                  structure: str = STRUCTURE_DENSE) -> WireRecipe:
+    """The wire a SERVED unit of ``structure`` carries on ``grid`` at ``q256``.
+
+    The one statement per ``(grid, q256, structure)`` that the serving
+    exporter encodes, the cached-unit receipt stamps (``cached_unit``) and the
+    export intake adopts, and that the contract's ``formats[].attested_wire``
+    must equal at every attested rung (``tests/test_serving_attested_wire.py``).
+
+    The route decides the body.  On the NVFP4 route (every grid but E4M3 and
+    BF16) a ``routed_moe`` stack carries span-2 TCQ at EVERY readable rung, not
+    just the cap: the contract stamps ``tcq``/``span 2`` across the whole
+    reader range (contract v32, tessera#506 leg 2) and ``prepare_span2_compact``
+    takes a TCQ unit only, so a sub-cap rung served through the WINDOW recipe
+    ``wire_recipe`` resolves below the cap for research and stock work would
+    be unreadable by the one decoder the routed path has.  The recipe table
+    keeps its WINDOW default -- research encodes and the stock twin are
+    untouched -- and the span-2 TCQ wire is the served spelling above it,
+    exactly as ``_resolve_recipe`` resolves a caller that names TCQ over a
+    window recipe.
+
+    A DENSE module keeps the ``wire_recipe`` spelling at every rung (D2b,
+    tessera#560): the seven-rung load receipt covers the MoE kernel only,
+    never the dense ``native_span2`` path, so promoting dense sub-cap to TCQ
+    would serve an unmeasured decoder.  Below the cap that is the WINDOW body,
+    which the route refuses at export.  With the default ``structure`` this is
+    ``wire_recipe`` at every rung, byte for byte, which is what keeps every
+    receipt stamped before this function existed valid.
+
+    On the FP8 and BF16 routes the recipe IS the served wire, so this is the
+    plain ``wire_recipe`` there.
+
+    The TCQ promotion below the cap is necessary AND measured-worse:
+    necessary because the routed path decodes TCQ only (the round-5 red run
+    proved it); measured-worse because the table's WINDOW default was chosen
+    on the frontier (``docs/tessera-one-format.md`` section 4: E2M1x2 TCQ
+    span-2 at 1.401x/1.357x/1.431x EXL3 at 2.5/3.0/3.5 bpp against window
+    L=12 at 1.056x/1.061x/1.098x).  Every sub-cap ROUTED rung therefore serves
+    the costlier of the two wires, on purpose and in the open.
+    """
+    if structure not in STRUCTURES:
+        raise GrammarError(
+            f"structure {structure!r} is not one of {STRUCTURES}; there is no served "
+            "wire for a unit served as it")
+    recipe = wire_recipe(grid, q256)
+    if (structure == STRUCTURE_ROUTED_MOE and grid.name not in ("E4M3", "BF16")
+            and recipe.body is not BodyKind.TCQ):
+        # The only non-TCQ recipe on the NVFP4 route is E2M1X2_SUBCAP_RECIPE
+        # (LUT plane, default seed, no sigmas, and a window width a TCQ body
+        # must not carry), so the promotion IS TCQ_RECIPE: no rebuild.
+        # ``test_the_served_promotion_is_the_resolved_tcq_wire`` holds it
+        # equal to what ``_resolve_recipe`` builds from the fields.
+        return TCQ_RECIPE
+    return recipe
 
 
 @dataclass(frozen=True)

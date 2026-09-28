@@ -9,6 +9,8 @@ import pytest
 from tessera.cached_unit import CachedUnitBundle, verify_cached_unit
 from test_cached_producer import _record, encoded  # noqa: F401 (shared fixture)
 from test_rooted_cached_bundle import rooted
+import reuse_authority_fixture as fixture
+from reuse_authority_fixture import AUTHORITY
 
 
 def bound(tmp_path, name, document):
@@ -24,7 +26,7 @@ def unproven(manifest):
 
 def load(manifest, tmp_path, mode='permissive'):
     return CachedUnitBundle(manifest, tmp_path, {'dense', 'expert'}, manifest['source'],
-                            encoder_source_proof_mode=mode)
+                            encoder_source_proof_mode=mode, authority=AUTHORITY)
 
 
 @pytest.mark.parametrize('proof_state', ['absent', 'unlisted', 'wrong_pins', 'failed'])
@@ -54,7 +56,8 @@ def test_unproven_adoption_requires_explicit_mode_and_retains_warning(tmp_path, 
         'encoder_source_proof': adoption['encoder_source_proof']}]
     for kwargs in ({}, {'encoder_source_proof_mode': 'strict'}):
         with pytest.raises(ValueError, match='proof does not authorize'):
-            CachedUnitBundle(manifest, tmp_path, {'dense', 'expert'}, manifest['source'], **kwargs)
+            CachedUnitBundle(manifest, tmp_path, {'dense', 'expert'}, manifest['source'], **kwargs,
+                             authority=AUTHORITY)
 
 
 def test_composition_propagates_mode_and_warning_without_mutating_children(tmp_path):
@@ -138,9 +141,9 @@ def test_permissive_adoption_never_relaxes_wire_verification(tmp_path, encoded, 
         verify_cached_unit(blob, observed, identity)
 
 
-def policy_fixture(tmp_path, version):
+def policy_fixture(tmp_path):
     manifest, _ = rooted(tmp_path)
-    # Include a future/data-only rung to catch a hard-coded gamut roster.
+    # Include a rung outside the policy to catch a hard-coded gamut roster.
     rates = [640, 768, 896, 1152]
     template = copy.deepcopy(manifest['units']['expert'])
     adoption = copy.deepcopy(manifest['encoder_adoptions']['expert'])
@@ -160,22 +163,26 @@ def policy_fixture(tmp_path, version):
         entry['candidate_encoding_identity'] = record['identity']
         manifest['encoder_adoptions'][name] = entry
     names = set(manifest['encoder_adoptions'])
-    formats = [f'TESSERA_E2M1_K2_R{rate}' for rate in (640, 768, 1152)]
-    policy = {'schema': f'prismaquant.joint_served_activation_policy.v{version}',
-              **({'format': 'TESSERA_E2M1_K2_R896'} if version == 1 else {'formats': sorted(formats)}),
+    chosen = [640, 768, 1152]
+    policy = {'schema': fixture.SERVED_POLICY_SCHEMA, 'rates': chosen,
               'executed_grouping': {'groups': {'group': {'members': sorted(names), 'input_global_scale': 0.5}}}}
-    chosen = {896} if version == 1 else {640, 768, 1152}
     manifest['served_activation_policy'] = bound(tmp_path, 'policy', policy)
     manifest['served_activations'] = {f'expert{rate}': {'group': 'group', 'input_global_scale': 0.5}
                                       for rate in chosen}
     return manifest, policy
 
 
-@pytest.mark.parametrize('version', [1, 2])
-def test_served_policy_scope_is_data_and_v1_keeps_exact_single_rung(tmp_path, version):
-    manifest, _ = policy_fixture(tmp_path, version)
-    bundle = CachedUnitBundle(manifest, tmp_path, set(manifest['units']), manifest['source'],
-                              encoder_source_proof_mode='strict')
+def open_policy(manifest, tmp_path, **kwargs):
+    return CachedUnitBundle(manifest, tmp_path, set(manifest['units']), manifest['source'],
+                            authority=AUTHORITY, **kwargs)
+
+
+# The policy's scope is the producer's to read (PrismaQuant's v1/v2 policy and
+# its format grammar are in its adopter's tests); the bundle holds the
+# selected served activations equal to what the authority derives.
+def test_served_policy_scope_comes_from_the_authority(tmp_path):
+    manifest, _ = policy_fixture(tmp_path)
+    bundle = open_policy(manifest, tmp_path, encoder_source_proof_mode='strict')
     assert bundle.warnings == []
     assert bundle.served_activations == manifest['served_activations']
     scales = {name + '.input_global_scale': 0.5 for name in bundle.served_activations}
@@ -185,10 +192,10 @@ def test_served_policy_scope_is_data_and_v1_keeps_exact_single_rung(tmp_path, ve
 
 
 @pytest.mark.parametrize('damage', ['missing', 'extra', 'scale', 'group', 'member', 'digest'])
-def test_v2_policy_coverage_and_values_remain_exact(tmp_path, damage):
-    manifest, policy = policy_fixture(tmp_path, 2)
+def test_policy_coverage_and_values_remain_exact(tmp_path, damage):
+    manifest, policy = policy_fixture(tmp_path)
     kwargs = {'encoder_source_proof_mode': 'permissive'}
-    CachedUnitBundle(manifest, tmp_path, set(manifest['units']), manifest['source'], **kwargs)
+    open_policy(manifest, tmp_path, **kwargs)
     if damage == 'missing':
         del manifest['served_activations']['expert640']
     elif damage == 'extra':
@@ -201,18 +208,14 @@ def test_v2_policy_coverage_and_values_remain_exact(tmp_path, damage):
     else:
         manifest['served_activation_policy']['sha256'] = '0' * 64
     with pytest.raises(ValueError, match='served activations differ|absent from served activation policy|SHA256 differs'):
-        CachedUnitBundle(manifest, tmp_path, set(manifest['units']), manifest['source'], **kwargs)
+        open_policy(manifest, tmp_path, **kwargs)
 
 
-@pytest.mark.parametrize('formats', [None, [], ['TESSERA_E2M1_K2_R768'] * 2,
-                                     ['TESSERA_E2M1_K2_R896', 'TESSERA_E2M1_K2_R640'],
-                                     [None], ['TESSERA_E4M3_K1_R1024'], ['TESSERA_E2M1_K2_R0768']])
-def test_v2_policy_refuses_malformed_format_scope(tmp_path, formats):
-    manifest, policy = policy_fixture(tmp_path, 2)
-    # Establish the new API before exercising a refusal (fails before #644).
-    CachedUnitBundle(manifest, tmp_path, set(manifest['units']), manifest['source'],
-                     encoder_source_proof_mode='strict')
-    policy['formats'] = formats
+@pytest.mark.parametrize('rates', [None, [], [768, 768], [896, 640]])
+def test_authority_refusal_of_the_policy_refuses_the_bundle(tmp_path, rates):
+    manifest, policy = policy_fixture(tmp_path)
+    open_policy(manifest, tmp_path, encoder_source_proof_mode='strict')
+    policy['rates'] = rates
     manifest['served_activation_policy'] = bound(tmp_path, 'policy', policy)
     with pytest.raises(ValueError, match='policy .*differs'):
-        CachedUnitBundle(manifest, tmp_path, set(manifest['units']), manifest['source'])
+        open_policy(manifest, tmp_path)

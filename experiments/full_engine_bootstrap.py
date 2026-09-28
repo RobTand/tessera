@@ -4,6 +4,12 @@ The launcher supplies an immutable JSON plan through the environment. Python's
 sitecustomize hook calls ``start`` before vLLM or Torch imports. Every spawned
 Python process starts independently; only the selected worker may claim a
 recorder. Unclaimed processes retain a separate CUPTI trace at exit.
+
+vLLM initializes CUDA in ``WorkerProc.init_worker`` before the configured
+worker class is constructed, so ``claim`` normally runs with CUDA already
+initialized. The identity binding is still complete-history: it is accepted
+only when the recorder started before CUDA initialization and the collector
+that recorded that initialization is verified live at claim time.
 """
 import atexit
 import json
@@ -65,8 +71,22 @@ def claim(*, actual_identity=None):
                 raise ValueError(f"worker identity changed the plan's {name}")
         if actual_identity.get("world_size") != _plan.get("world_size", declared.get("world_size")):
             raise ValueError("actual worker world disagrees with the configured plan world")
-        if _recorder.snapshot_count or _recorder._torch.cuda.is_initialized():
-            raise RuntimeError("worker identity must be bound before CUDA initialization or a snapshot")
+        if _recorder.snapshot_count:
+            raise RuntimeError("worker identity must be bound before a snapshot")
+        if _recorder._torch.cuda.is_initialized():
+            # vLLM's WorkerProc.init_worker initializes CUDA (distributed
+            # device selection) before it constructs the worker class, so the
+            # claim at the constructor normally runs with CUDA initialized.
+            # That ordering is sound exactly when the bootstrap's recorded
+            # history covers the initialization: the recorder started before
+            # CUDA (required above) and the CUPTI collector that recorded it
+            # started successfully and is still live. Anything else is CUDA
+            # activity the recorded history cannot cover.
+            collector = _recorder._collector
+            if collector._finished or collector.start_code != 0:
+                raise RuntimeError(
+                    "worker identity must be bound before CUDA initialization "
+                    "the bootstrap history does not cover")
         actual_identity = _identity(actual_identity)
         _plan = dict(_plan, identity=actual_identity)
         _recorder.identity = actual_identity

@@ -7,6 +7,7 @@ import sys
 import pytest
 
 from test_hessian_reference_capture import reference
+from reuse_authority_fixture import CANONICAL_CAPTURE
 
 #: The tree under test.  The child below is a fresh interpreter: it does not
 #: see the ``sys.path`` entry ``conftest.py`` gives this process, so without
@@ -31,7 +32,7 @@ if not tessera.__file__.startswith(sys.argv[3]):
     raise AssertionError(f"imported {tessera.__file__}, not the tree under test {sys.argv[3]}")
 print("ENTERING_REFERENCE_INTAKE", flush=True)
 try:
-    with ReferenceHessians(sys.argv[1]) as owner:
+    with ReferenceHessians(sys.argv[1], canonical_capture=(sys.argv[4], sys.argv[5])) as owner:
         if sys.argv[2] == "hessian":
             owner["a"]
 except GrammarError as error:
@@ -44,7 +45,7 @@ else:
     try:
         env = {**os.environ, 'PYTHONPATH': os.pathsep.join(
             [str(SRC), *filter(None, [os.environ.get('PYTHONPATH')])])}
-        result = subprocess.run([sys.executable, '-c', program, str(handoff), intake, str(SRC)],
+        result = subprocess.run([sys.executable, '-c', program, str(handoff), intake, str(SRC), *CANONICAL_CAPTURE],
             capture_output=True, text=True, timeout=5, env=env)
     except subprocess.TimeoutExpired as error:
         # run() kills and reaps this owned child before raising; no FIFO writer

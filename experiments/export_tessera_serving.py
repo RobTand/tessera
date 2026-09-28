@@ -159,6 +159,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from export_stock_compressed import (  # noqa: E402
     FP8_INPUTS, FP8_WEIGHTS, NVFP4_INPUTS, NVFP4_WEIGHTS, regex_target,
     stock_quantization_config)
+from tessera import producer_authority as producer_authority_option  # noqa: E402
 from tessera.cached_unit import CachedUnitIdentity, HESSIAN_IDENTITY_MODES  # noqa: E402
 from tessera.alphabet import (  # noqa: E402
     BF16_GRID, E2M1_GRID, E4M3_GRID, tuple_grid)
@@ -166,9 +167,8 @@ from tessera.bf16_route import BF16_FAMILY  # noqa: E402
 from tessera.container import SCHEMA_MINOR  # noqa: E402
 from tessera.layout import tp_agnostic_at_minor  # noqa: E402
 from tessera.export import (  # noqa: E402
-    DEFAULT_CODE, DEFAULT_LDLQ_BLOCK, DEFAULT_LDLQ_SIGMA, TCQ_RECIPE,
-    ActivationSource, encode_linear_planes, wire_recipe)
-from tessera.manifest import BodyKind  # noqa: E402
+    DEFAULT_CODE, DEFAULT_LDLQ_BLOCK, DEFAULT_LDLQ_SIGMA,
+    ActivationSource, encode_linear_planes, served_recipe)
 from tessera.fused import pack_fused, shared_input_global_scale, shared_lut_global  # noqa: E402
 from tessera.serving.contract import (  # noqa: E402
     PAYLOAD_FAMILY_BY_ROUTE, classify_construction, construction_entry,
@@ -455,52 +455,11 @@ def family_for(grid) -> str:
     return FP8 if grid.name == "E4M3" else NVFP4
 
 
-def served_recipe(grid, q256, structure=STRUCTURE_DENSE):
-    """The wire a SERVED unit carries on ``grid`` at ``q256``.
-
-    The route decides the body, and on ``TESSERA_NVFP4`` a ``routed_moe``
-    stack carries span-2 TCQ at EVERY readable rung, not just the cap: the
-    contract's ``attested_wire`` stamps ``tcq``/``span 2`` across the whole
-    reader range (contract v32, tessera#506 leg 2) and
-    ``prepare_span2_compact`` takes a TCQ unit only, so a sub-cap rung served
-    through the WINDOW recipe (what ``wire_recipe`` resolves below the cap
-    for research/stock work) would be unreadable by the one decoder the
-    routed path has.  The recipe table keeps its WINDOW default -- research
-    encodes and the stock twin are untouched -- and the span-2 TCQ wire is
-    the served spelling above it exactly as ``_resolve_recipe`` resolves a
-    caller that names TCQ over a window recipe.
-
-    A DENSE module keeps the ``wire_recipe`` spelling at every rung (D2b,
-    tessera#560): the seven-rung load receipt covers the MoE kernel only,
-    never the dense ``native_span2`` path, so promoting dense sub-cap to TCQ
-    would serve an unmeasured decoder.  Below the cap that is the WINDOW
-    body, which the route refuses at export.
-
-    On the FP8 and BF16 routes the recipe IS the served wire, so this is the
-    plain ``wire_recipe`` there.
-
-    The TCQ promotion below the cap is necessary AND measured-worse, and both
-    halves are stated here rather than left to the reader: necessary because
-    the routed path decodes TCQ only (a sub-cap rung served through the
-    WINDOW recipe would be unreadable by the one decoder the routed path
-    has -- the round-5 red run proved it); measured-worse because the recipe
-    table's WINDOW default was chosen on the frontier
-    (``docs/tessera-one-format.md`` §4: E2M1x2 TCQ span-2 at 1.401x/1.357x/1.431x
-    EXL3 at 2.5/3.0/3.5 bpp against window L=12 at 1.056x/1.061x/1.098x).
-    Every newly published sub-cap ROUTED rung therefore serves the costlier
-    of the two wires, on purpose and in the open.
-    """
-    recipe = wire_recipe(grid, q256)
-    if (structure == STRUCTURE_ROUTED_MOE and family_for(grid) == NVFP4
-            and recipe.body is not BodyKind.TCQ):
-        # Verified field by field: the only non-TCQ NVFP4 recipe is
-        # E2M1X2_SUBCAP_RECIPE (LUT plane, default seed, no sigmas, and a
-        # WINDOW table width a TCQ body must not carry), so the promotion
-        # below IS TCQ_RECIPE -- no rebuild, and a grid whose sub-cap recipe
-        # ever differs in plane or sigmas needs the rebuild restored.
-        return TCQ_RECIPE
-    return recipe
-    return recipe
+# ``served_recipe`` is the package's (``tessera.export.served_recipe``,
+# tessera#662): the exporter, the cached-unit receipt and the export intake read
+# one statement of the served wire per (grid, q256, structure). It is imported
+# above and re-exported here for the callers and tests that name it on this
+# module.
 
 
 def module_scheme_key(grid, q256: int, structure: str = STRUCTURE_DENSE) -> tuple:
@@ -1326,7 +1285,21 @@ def pack_cached_expert_unit(blob: bytes, record: dict, expected_identity: dict):
 
 
 def cached_input_identity(producer, weight, unit_name, unit, grid, q256, *, activation=None):
-    """Derive original inputs under the exact producer that wrote the receipt."""
+    """Derive original inputs under the exact producer that wrote the receipt.
+
+    The structure is the one this exporter serves the unit AS: a projected
+    ``unit`` is one projection of a routed expert stack, and ``unit is None``
+    is a dense Linear.  It picks the served wire the expected identity stamps
+    (``served_recipe``, tessera#662).  A historical producer whose identity
+    functions predate the ``structure`` argument is asked without it, which is
+    exact wherever the served wire is the research one; at a rung where it is
+    not (a routed E2M1x2 stack below the cap) no such producer ever wrote the
+    served wire, so its receipt is refused by name rather than compared
+    against a block it could not have stamped.
+    """
+    import inspect
+
+    structure = STRUCTURE_DENSE if unit is None else STRUCTURE_ROUTED_MOE
     if producer is None:
         from tessera import cached_unit
         original_grid = grid
@@ -1336,9 +1309,18 @@ def cached_input_identity(producer, weight, unit_name, unit, grid, q256, *, acti
         original_grid = producer.grid_for_name(grid.name)
         dense_identity = producer.dense_identity
         projected_identity = producer.input_identity
+    derive = dense_identity if unit is None else projected_identity
+    kwargs = {"activation": activation}
+    if "structure" in inspect.signature(derive).parameters:
+        kwargs["structure"] = structure
+    elif served_recipe(grid, q256, structure) != served_recipe(grid, q256):
+        raise ValueError(
+            f"{unit_name}: the historical producer that wrote this receipt stamps no "
+            f"structure, and a {structure} unit on {grid.name} at q256={q256} is served "
+            "on a wire other than the research one; it cannot have written that wire")
     if unit is None:
-        return dense_identity(weight, unit_name, original_grid, q256, activation=activation)
-    return projected_identity(weight, unit, original_grid, q256, activation=activation)
+        return derive(weight, unit_name, original_grid, q256, **kwargs)
+    return derive(weight, unit, original_grid, q256, **kwargs)
 
 
 def _warm_encoder_fixture_id(build) -> None:
@@ -1516,6 +1498,17 @@ def stock_targets(modules):
     return [regex_target(m) for m in sorted(set(found) | fused_names)]
 
 
+def load_producer_authority(path):
+    """Load a producer's authority file for cached-unit and Hessian-reference intake.
+
+    ``tessera.producer_authority.load`` does the work, so this exporter and
+    every other driver that takes ``--producer-authority`` read the file with
+    one set of refusals (tessera#599).
+    """
+    from tessera.producer_authority import load
+    return load(path)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("src", type=Path)
@@ -1550,6 +1543,7 @@ def main():
                     help="strict requires each encoder adoption's covering source proof; "
                          "permissive records unproven adoptions in cached intake warnings, "
                          "without relaxing identity, digest or wire checks")
+    producer_authority_option.add_argument(ap)
     ap.add_argument("--cached-producer-package", type=Path,
                     help="original producer's immutable src/tessera package for cached intake")
     ap.add_argument("--cached-producer-source-sha256",
@@ -1654,6 +1648,9 @@ def main():
         ap.error("historical cached producer package and source SHA256 must be paired")
     if args.cached_producer_package is not None and not (args.cached_units or args.cached_expert_units):
         ap.error("historical cached producer requires cached unit intake")
+    producer_authority = canonical_capture = None
+    if args.producer_authority is not None:
+        producer_authority, canonical_capture = load_producer_authority(args.producer_authority)
     research_execution = None
     if args.research_selected_moe_json is not None:
         from tessera.moe_execution import ResearchSelectedMoeInput
@@ -1700,7 +1697,8 @@ def main():
             settings["refit_objective"] = args.refit_metric
         if args.refit_metric_trailing is not None:   # else: the uniform schedule
             settings["refit_objective_trailing"] = args.refit_metric_trailing
-        activation = ActivationSource.from_capture(args.hessian, **settings)
+        activation = ActivationSource.from_capture(args.hessian, canonical_capture=canonical_capture,
+                                                   **settings)
 
     default_grid = grid_for(args.grid)
     # THE PLAN IS READ ONCE, HERE, and this snapshot is the only plan the rest
@@ -2248,7 +2246,8 @@ def main():
                         if source_digest_cache is not None else source_identity(args.src)))
         cached_units = CachedUnitBundle(read_manifest(cache_path),
                                         cache_path.parent, cache_unit_names, source,
-                                        encoder_source_proof_mode=args.cached_encoder_source_proof_mode)
+                                        encoder_source_proof_mode=args.cached_encoder_source_proof_mode,
+                                        authority=producer_authority)
         if cached_units.producer_packages and args.cached_producer_package is not None:
             raise SystemExit("rooted cached units bind their exact producers; omit global cached-producer flags")
         if args.cached_producer_package is not None:

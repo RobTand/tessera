@@ -43,17 +43,19 @@ from .compile_identity import note_traced_dispatch
 from .lane import MODES
 from .native_window import prepare_dense_native_module
 from .residency import layer_resident_tensors
-from .scheme import (ROUTES, TESSERA_FP8, WINDOW_GEMM_SYMBOL,
+from .scheme import (FUSED_WINDOW_DENSE_SYMBOL, ROUTES, TESSERA_FP8, WINDOW_GEMM_SYMBOL,
                      parse_compact_blob_for_scheme, validate_tessera_scheme)
 from .sharding import plan_shard_for_layer, require_axis_supported
-from .telemetry import (DECODER_NATIVE_WINDOW_GEMM, DECODER_TORCH_WINDOW,
-                        emit_route, route_shape)
+from .telemetry import (DECODER_NATIVE_FUSED_WINDOW_DENSE, DECODER_NATIVE_WINDOW_GEMM,
+                        DECODER_TORCH_WINDOW, emit_route, route_shape)
 from .window import (PreparedModuleAxis, PreparedWindow, _fingerprint, prepare_window,
                      require_expert_ids)
 
 __all__ = [
     "ACTIVATION_CONTRACT",
     "DENSE_LAUNCH",
+    "DENSE_FUSED_LAUNCH",
+    "DENSE_LAUNCHES",
     "PreparedTesseraFp8Module",
     "PreparedTesseraFp8Batch",
     "prepare_tessera_fp8_module",
@@ -67,11 +69,13 @@ ACTIVATION_CONTRACT = ROUTES[TESSERA_FP8]["activation_contract"]
 RESIDENT_ATTRIBUTES = ("tessera_native",)
 GEMM_SYMBOL = ROUTES[TESSERA_FP8]["gemm_symbol"]
 
-#: THE dense launch this route makes, owned where the dispatch is.  ``apply``
-#: below unpacks this pair at its one ``emit_route`` call, so the route cannot
-#: stamp a launch this constant does not name, and
-#: ``tests/test_serving_contract.py`` asserts ``scheme.ROUTE_LAUNCHES``' dense
-#: entry for ``TESSERA_FP8`` is exactly this set.
+#: THE dense launches this route makes, owned where the dispatch is.  ``apply``
+#: below stamps the prepared module's own ``launch_pair`` at its one
+#: ``emit_route`` call and ``process_weights_after_loading`` refuses a module
+#: whose pair is not in this tuple, so the route cannot stamp a launch these
+#: constants do not name, and ``tests/test_serving_contract.py`` asserts
+#: ``scheme.ROUTE_LAUNCHES``' dense entry for ``TESSERA_FP8`` is exactly this
+#: set.
 #:
 #: That tie is the one #538 was missing.  Until it existed the launch table was
 #: checked against ``fp8_gemv.census_expected`` -- a second table, in a module
@@ -79,7 +83,15 @@ GEMM_SYMBOL = ROUTES[TESSERA_FP8]["gemm_symbol"]
 #: decode-to-global branches and left one launch here, the table kept
 #: publishing the window-GEMV lane's three and the ``lane_eligibility`` cells
 #: derived from it kept naming arithmetic the build cannot launch.
+#:
+#: ``DENSE_LAUNCH`` is the Triton window GEMM every dense module can run;
+#: ``DENSE_FUSED_LAUNCH`` (contract v43) is the fused window kernel's dense
+#: identity, which ``native_window.prepare_dense_native_module`` takes for
+#: every module whose roles ``routed_fused.fused_dense_window_supported``
+#: admits unless ``TESSERA_DENSE_FUSED=0``.
 DENSE_LAUNCH = (WINDOW_GEMM_SYMBOL, DECODER_NATIVE_WINDOW_GEMM)
+DENSE_FUSED_LAUNCH = (FUSED_WINDOW_DENSE_SYMBOL, DECODER_NATIVE_FUSED_WINDOW_DENSE)
+DENSE_LAUNCHES = (DENSE_LAUNCH, DENSE_FUSED_LAUNCH)
 
 
 class _Fp8Role:
@@ -387,8 +399,18 @@ def build_tessera_fp8_method(scheme, prefix: str, mode: str):
                 blob.contiguous().numpy().tobytes(), scheme, prefix, device=device)
             prepared = prepare_dense_native_module(
                 roles, layer.tessera_shard_plan, family=TESSERA_FP8, device=device)
+            if prepared.launch_pair not in DENSE_LAUNCHES:
+                # ``apply`` stamps the module's pair; a module on a launch this
+                # route does not publish would serve one function and record
+                # another.
+                raise RuntimeError(
+                    f"{prefix}: the prepared Tessera FP8 module runs {prepared.launch_pair!r}, "
+                    f"the route publishes {DENSE_LAUNCHES!r}")
             layer.tessera_native = prepared
             layer.tessera_decoder = prepared.decoder
+            layer.tessera_symbol = prepared.symbol
+            layer.tessera_lane = prepared.lane
+            layer.tessera_lane_reason = prepared.lane_reason
             layer.tessera_roles = prepared.role_names
             # The per-row scale, derived from the wire, never loaded beside it;
             # the same fp32 expression the reference decoder applies.
@@ -400,7 +422,7 @@ def build_tessera_fp8_method(scheme, prefix: str, mode: str):
             # The dispatch is ONE graph for every M and both residencies, and
             # the op it contains is a property of this module: declare it here
             # so vLLM's compile-cache key covers it (issue #91's rule).
-            note_traced_dispatch(prefix, WINDOW_GEMM_SYMBOL)
+            note_traced_dispatch(prefix, prepared.symbol)
 
         # -- residency declaration (#580) -------------------------------
         def resident_tensors(self, layer):
@@ -437,7 +459,7 @@ def build_tessera_fp8_method(scheme, prefix: str, mode: str):
                     "(tessera_native missing); refusing to fall back to a "
                     "materialised weight path this build no longer wires")
             y = native.apply(a_q, a_scale)
-            (symbol, decoder), tile_m = DENSE_LAUNCH, 0
+            (symbol, decoder), tile_m = native.launch_pair, 0
             try:
                 emit_route(
                     layer, kind="dense", policy=f"{TESSERA_FP8}:{layer.tessera_mode}",

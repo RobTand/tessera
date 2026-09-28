@@ -1,5 +1,160 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-09-28 for the fused window kernel's DENSE identity (contract
+v43, the dense follow-up to tessera#640). The q256 1024 dense and shared-expert
+window Linears -- E4M3 and BF16 -- are served by a SECOND launch identity by
+default: the same persistent CUDA kernel in its `DENSE` instantiation (E = 1,
+identity routing, no epilogue activation; `tessera.routed_fused.dense_forward`),
+which splits K into fp32 partials that a fixed-order reduce sums when fewer
+work items than SMs exist (`dense_k_split`, a bandwidth model in the SM count
+and the byte counts, S = 1 in prefill) and rounds once to bf16
+(`tessera::fused_window_dense`, decoders `native_fused_window_dense` /
+`native_fused_window_dense_folded`). The integration is per Linear, not per
+MLP: vLLM applies the activation between the two Linears it owns, so each
+module's roles run as one op into column slices of one output and the census
+module count is unchanged. `native_window.prepare_dense_native_module` decides
+the lane once per module (`routed_fused.fused_dense_window_supported`: rate 4
+in every column, rows a multiple of 128, columns a multiple of 32 and at
+least 128, the family's arithmetic, the attested native quantiser) and keeps
+the Triton window GEMM otherwise or under `TESSERA_DENSE_FUSED=0`; the module
+answers its own `launch_pair`, which `fp8_route` and `bf16_route` stamp
+(`DENSE_LAUNCHES`, two pairs). The pair rides the existing
+`tessera_routed_fused_{e4m3,value}` lanes in `scheme.ROUTE_LAUNCHES`, so
+`_validate_cell_executes` derives it for every window dense cell whose rungs
+the lane reaches (q256 1024): the four GLM-image dense cells, re-earned by a
+TP1 eager census of stub B on the GLM image
+(`experiments/results/glm53_u1_stub_b_fused_dense_tp1_eager_census.json`), and
+the two pinned-image E4M3 dense cells, re-earned on the pinned `vllm-openai`
+image in BOTH residencies rather than withdrawn
+(`qwen3_0_6b_uniform_r1024_fused_{resident,streamed}_eager_census.json`,
+112/112 modules on the fused pair, `tests/test_dense_fused_census_cells.py`):
+withdrawing them would have moved `versions.default_serve_image` onto a build
+no registry serves. Served-path oracle: 51 cases (TP1, both TP2 ranks, both
+residencies, both lanes), 0 violations of the dtype-derived bound,
+deterministic, streamed bitwise equal to resident. PACT bench on sparklina:
+the q1024 E4M3 dense/shared groups 2.6-3.7x faster at M <= 8 and 2.5-3.5x at
+M = 512/2048, BF16 R1024 1.7x and 2.2-2.5x; every other group within noise.
+See §3.3 and `docs/measurements/2026-09-28-dense-fused-window.md`.
+
+Re-stamped 2026-09-28 for the fused routed window MoE lane (tessera#640,
+contract v42). The routed E4M3 and BF16 expert stacks are served by a NEW
+launch identity by default: one persistent warp-specialised CUDA kernel
+(`serving/csrc/routed_fused_window.cu`, `tessera.routed_fused`) that fuses
+gate, up and the SwiGLU epilogue, runs the down projection into route-sorted
+rows that a fixed-order per-token sum reduces (deterministic), claims
+(expert, column-block, route-superblock) work items through a device counter
+zeroed inside the captured region, and decodes each weight once per tile.
+`native_window_moe.PackedWindowMoeBundles.adapter` takes it for every stack
+the published predicate admits (rate 4 everywhere, window 14, no decoration)
+and keeps the compact Triton adapter otherwise or under
+`TESSERA_ROUTED_FUSED=0`; each adapter answers its own `launch_pair`, which
+`moe_route` stamps. `native_extensions` gains two entries for the one source
+(`tessera_routed_fused_e4m3`, `tessera_routed_fused_value`) and two
+LANE-BEARING rows enter `scheme.ROUTE_LAUNCHES`, the first since v31, so a
+cell derives the fused pair only at a rung the extension's own
+`lane.requires` admits (q256 1024). A TP1 eager route census of the rate-4 u1
+stub B on the GLM serving image recorded the fused pair on its q256 1024
+stacks and the compact pair on its mixed-rate stacks, and the four window
+routed cells (`tessera_{e4m3,bf16}_k1_routed_moe_sm121_{decode,batch}_resident`)
+name the fused pair beside the compact pair on that receipt; flags, rungs
+and every other cell are unchanged, and `scheme.EXPERIMENTAL_LAUNCHES` is
+empty again. See §3.3 and `docs/measurements/2026-09-28-routed-fused-640.md`.
+
+Re-stamped 2026-09-28 for the source-verifier seam (tessera#599, step 3).
+`tessera._dev.suite_source` no longer parses PrismaBuild's snapshot, action or
+closure records. A test population leaves an executor-generated file out of
+its source hash only when a verifier, declared in `TESSERA_SOURCE_VERIFIER`,
+vouches for it. Tessera still checks each vouched-for file against the commit.
+`tools/merge_suite.py` declares PrismaBuild's `pbsnapshot.py verify`. The
+seam fails closed, as described in "Each population retains the actual Git
+snapshot commit" below. `src/tessera` now names a client only through the
+`prismaquant.tessera.v1` wire-ID literals.
+
+Re-stamped 2026-09-28 for the serving code identity (contract v41). A cell's
+`runtime` block accepts an optional pair that names the Tessera code its
+evidence was taken on: `tessera_commit` (40-hex, for a person) and
+`serving_source_sha256` (for a program). The digest is
+`tessera.serving.source_identity.serving_source_sha256()`, algorithm
+`tessera.package_source.v1`: the paths and bytes of every source file in the
+package (each `.py` file and each native source under `tessera/`), with paths
+taken relative to the directory that holds `tessera/`. It is the whole package
+rather than a computed serving closure: the closure measured 82 of 93 modules,
+computing it means following string-named route builders through
+`import_module`, and a digest that can be short is the defect the field rules
+out. It reads files as bytes and never parses them, so
+`tools/impacted_tests.py` sees a plain read, not a loader. An editable serve
+records no commit, so the digest is what a consumer compares; the route-trace
+header carries the same digest of the tree the serve started on
+(`serving_source_sha256`, added under `identity_version` 1 because no known
+field changed). The validator requires both fields or neither
+(`contract.cell_runtime_code`, `RUNTIME_CODE_KEYS`). No cell carries them in
+v41: none of the fourteen records the tree its evidence was taken on, and a
+digest is only stamped when evidence is taken, never onto old evidence.
+`tests/test_serving_source_identity.py` holds the digest to every source file
+and checks that it moves on a serving, a lazily imported and a native source
+edit.
+
+Re-stamped 2026-09-27 for the producer reuse authority (tessera#599, step 2).
+Tessera no longer reads a client's records by itself. A rooted cached-unit
+bundle (`tessera.cached_units.v2`) binds documents its producer wrote: the
+catalog extension, the candidate overlay, each encoder-source adoption, the
+reseal proof and the served-activation policy. `CachedUnitBundle(authority=...)`
+now takes the producer's `tessera.cached_unit.ReuseAuthority`, which judges
+those documents through four calls (`check_document`, `adoption_proof`,
+`proof_authorizes` and `served_activations`). Tessera keeps everything it
+owns: roots, producer packages, the exact path and SHA-256 bindings, adoption
+coverage, the proof roster, the `tessera.cached_unit_warning.v1` record and the
+served-activation comparison. A rooted bundle with no authority refuses with
+`MISSING_REUSE_AUTHORITY`, and composition forwards the authority to every
+child. Likewise, a Hessian reference binds its producer's canonical
+calibration cache, so `ReferenceHessians`, `ReferenceHessianCollection` and
+`ActivationSource.from_capture` take `canonical_capture=(schema, source)` and
+refuse without it. `--producer-authority PATH` loads a producer's authority
+file (a module defining `PRODUCER_AUTHORITY`) and hands both to the driver's
+intake. Every driver that opens a producer capture declares it through
+`tessera.producer_authority`, which holds its one help text and one set of
+refusals: the exporter, `export_glm53_tessera.py`,
+`glm_routed_owner_inputs.py`, `bf16_reach_roster.py` and
+`tools/glm_cpu_cached_pack_probe.py`. The GLM CPU launcher passes an optional
+`producer_authority` binding through. Contract v40 publishes the option as
+data: `producer_interface.reuse_authority` names the option, the attribute,
+the protocol and the drivers, and `tests/test_producer_authority_drivers.py`
+derives the driver list from the tree. A producer passes the option only when
+its pinned checkout's contract carries the block; an older driver does not
+know the option. PrismaQuant's authority lives in its own
+tree (`prismaquant/tessera_reuse_authority.py`) with its schema tests, so a new
+client record version no longer needs a Tessera change. Legacy `.pt` captures
+and v1 bundles need no authority. Bytes, wires, contract cells, serving
+defaults and routes do not change (v40 is additive), and accept/refuse decisions are unchanged
+for a caller that supplies PrismaQuant's authority.
+
+Re-stamped 2026-09-27 for concurrent window rate calls (tessera#668). At a
+mixed-rate window rung, a window span yields all of its rate calls as a tuple,
+and the batched LDLQ driver runs them on per-thread CUDA side streams
+(`TESSERA_WINDOW_RATE_STREAMS=0` runs them serially). Bytes, contract cells,
+serving defaults and routes do not change. §3.1b carries the measured deltas.
+
+Re-stamped 2026-09-27 for the v3 catalog extension in rooted cached units
+(tessera#670): `CATALOG_EXTENSION_SCHEMAS` adds
+`prismaquant.joint_catalog_extension.v3`.
+
+Re-stamped 2026-09-27 for the served recipe in the package (tessera#662).
+`tessera.export.served_recipe(grid, q256, structure)` moved out of
+`experiments/export_tessera_serving.py` into the package, and
+`tessera.structure` now owns the structure names that `tessera.serving.scheme`
+re-exports. The cached-unit identities take the structure:
+`encoding_input_identity` and `unit_input_identity` stamp
+`served_recipe(grid, q256, structure)`, and `_check_wire` admits the spelling
+of each structure its schema serves. A dense receipt admits `dense` only; a
+projected receipt admits every structure. Without a structure, the stamp is
+the research `wire_recipe` spelling, byte for byte, so no existing receipt and
+no K1 or E2M1x2 q896 wire moves. The only new stamp is a routed E2M1x2 stack
+below the cap, which now records and adopts the span-2 TCQ wire the contract
+attests. The exporter's cached intake passes `routed_moe` for a projected
+unit. It refuses a historical producer that takes no structure only at a rung
+where the structure changes the wire. No contract cell, serving default or
+route changes.
+
 Re-stamped 2026-09-27 for explicit manual-gate exclusion from impacted pytest
 targets (tessera#647). `tools/impacted_tests.py` keeps the standalone A4 harness
 in its dependency graph but records it under `excluded_tests` with its reason,
@@ -165,6 +320,13 @@ architecture, an out-of-range layer or two declarations for one module remain
 refusals. This establishes name resolution, not a served MTP route, output
 quality or runtime measurement; the selected BF16 R1024 MTP draft remains
 unmeasured even though a non-MTP routed cell covers that rung.
+
+Amended 2026-09-28: the pinned GLM image hands the draft decoder layer its bare
+prefix, so its Linears reach `get_quant_method` as `model.layers.<N>.*` while
+`named_modules` still inserts `mtp_block`. The adapter resolves both spellings
+against the draft's mapped view, under the same guards, and refuses when both
+spellings of one module are declared. The served PACT balanced export refused
+at engine start on `model.layers.45.mlp.shared_experts.gate_up_proj` before this.
 Stock MTP reuses the target quantization config object while its own model
 class applies a second source-name mapper. Tessera retains immutable original
 declarations and separate mapped views, so the draft mapper reads checkpoint
@@ -183,14 +345,31 @@ each actual draft `nn.Module` forward through census-only pre/post hooks, so
 a warmup or earlier call cannot pose as the observed dispatch. The hook keeps
 the first and latest scalar route records per observed regime and a call count;
 it retains no tensors and is removed after the arm, including on generation
-failure. The single-request arm may prove both draft batch and decode if it
-actually reports M>1 and M1; an optional bounded arm with one or more prompts
-can probe batch separately. Requested prompt count is not an observed M, and
-target prefill is not draft prefill. The draft block in the additive receipt
-preserves original source
-targets beside actual `.mtp_block` module names and checks every rank. No
-speculative serve has yet run, so this is observation capability rather than
-a new cell or a model-fit claim.
+failure. Requested prompt count is not an observed M, and target prefill is not
+draft prefill. The draft block in the additive receipt preserves original source
+targets beside actual `.mtp_block` module names and checks every rank.
+
+Amended 2026-09-28 (tessera#681): with `num_speculative_tokens = 1` no forward
+is one row. Each generation step verifies k+1 = 2 tokens on the target, and the
+draft's one forward per step runs over the same two, so a decode phase keyed to
+the contract's one-row `decode` regime cannot be satisfied. The served GLM-5.3
+BAL TP2 census `u4-BAL-20260928T0540Z-2c-r5` was refused on 533 problems while
+every route was correct. `census_phase_plan` now derives this run's phase table
+from the speculative config and leaves `contract.CENSUS_PHASE_REGIMES`
+unchanged. Prefill expects M = the prompt, and the generation phase expects
+M = k+1, which is the batch regime and so the batch cells. Every body and draft
+record is checked against that exact M. A target at M1 means the draft was not
+engaged, and an M1 draft call is inconsistent with k = 1; both are refused.
+The draft's prefill phase is the observer's first multi-row call and its
+generation phase is the latest, and the two must be distinct calls at those Ms.
+The receipt stamps `decode_regime_served: false`, `num_speculative_tokens`,
+`generation_step_m`, `phase_regimes` and `phase_expected_m`. The one-row
+attestation therefore belongs to a census taken without a draft, whose
+behaviour is unchanged. `validate_census_observations` holds every check the
+census makes on its recorded observations, so a stored receipt can be replayed
+without an engine; `tests/test_route_census_mtp_step.py` replays the r5
+records from a trimmed fixture. This is observation capability, not a new cell
+or a model-fit claim.
 Draft decoder coverage requires the family-owned native launch in each
 observed phase, including the folded BF16 MoE decoder. A fallback record
 cannot qualify the draft just because its route publishes that pair.
@@ -1340,17 +1519,38 @@ numeric 124/137: retain the inner logs and command deadline/grace per arm.
 
 Each population retains the actual Git snapshot commit and separately records
 `tessera.suite_source.v1`: SHA-256 over every tracked source path, executable
-mode, and actual file/symlink bytes, checked against the snapshot blobs. Only
-the exact generated closure member verified against that action's sealed CAS
-request is omitted. The action-prefix directory is a bounded lookup hint,
-not proof: the full action key, snapshot commit, container owner, closure
-hash/size, logical path and generated filename fingerprint must all agree.
-Snapshot subjects v1 and v2 must match the sealed snapshot schema. Unknown
-snapshot versions yield `unknown`, rather than being hashed as ordinary Git
-source. Both supported versions retain the same strict closure verification.
-Other closure-looking tracked files remain source. Original-head and dirty
-stamps are never substituted for the actual source hash. Post-materialization
-dirty state, ambiguous/missing requests or failed verification yield `unknown`.
+mode, and actual file/symlink bytes, checked against the snapshot blobs.
+
+**The source-verifier seam (tessera#599 step 3).** A checkout an executor
+materialized can carry a file the executor generated, such as a closure stamp.
+Such a file is left out of the hash only when a declared *source verifier*
+vouches for it, and never because of its name. Tessera defines the seam and
+names no executor:
+
+- `TESSERA_SOURCE_VERIFIER` declares the verifier as a shell-quoted argv.
+  `suite_source.measured_source` runs it with the checkout root and its HEAD
+  commit appended.
+- The verifier exits 0 and prints one JSON object whose `generated` list names
+  each generated file, with at least `path`, `bytes` and `sha256`. The entries
+  are recorded as given in `excluded_metadata`. An empty list means that
+  nothing was generated.
+- Tessera checks each listed file itself before leaving it out: a normalized
+  relative path, a regular file with those bytes and that digest, and equal to
+  its blob at the commit.
+- The seam fails closed. A declared verifier that cannot run, exits non-zero,
+  prints anything else, or lists a file that fails those checks yields
+  `unknown`. With no verifier declared, nothing is left out, so arms that
+  carry different generated files never agree on a source.
+
+`tools/merge_suite.py`, which submits both arms through PrismaBuild, declares
+PrismaBuild's published `pbsnapshot.py verify` (RobTand/prismabuild#1280). That
+tool verifies pbrun's closure stamp against the exact sealed action request,
+and its entries carry the `action_key` and `request_sha256` that the resume
+path below binds on. Until a PrismaBuild generation with that tool is
+published, the declared verifier cannot run, so every population is `unknown`
+and names no producer. That is a refusal, never an unverified acceptance.
+Other stamp-looking tracked files remain source. Post-materialization dirty
+state and a failed verification yield `unknown`.
 That hash is of a **span**, not of an instant: `tests/conftest.py` captures the
 identity above its first import of the code under test and the publication is
 bound to it, so a checkout fast-forwarded cleanly mid-run publishes `unknown`
@@ -1408,8 +1608,8 @@ shapes this tool seals -- `pytest`, `<python> -m pytest`, or either under
 program string passed to `-c` is not read. A candidate is then bound or
 refused, by reason, on three legs: the request's `checkout_snapshot.commit`
 and the population's `commit` are both present and equal; the population's
-verified source stamp (`source_identity.excluded_metadata[].action_key`, written
-by `tessera._dev.suite_source` only for a verified snapshot checkout) names
+verified source stamp (`source_identity.excluded_metadata[].action_key`, which
+`tessera._dev.suite_source` records only from a source verifier's answer) names
 that action and its `request_sha256` is the digest of the request bytes read;
 and the record's top-level status is `executed` or `failed` -- the two the
 worker writes together with the attempt's own `detail` (a
@@ -2077,7 +2277,12 @@ This does not qualify the Torch/CUPTI ownership or timing join.
 source-BF16 or hash-bound original-wire reference observation pass using the stock runtime's supported `worker_cls`
 configuration. Its early Python process bootstrap starts CUPTI before Torch
 and records allocator history before CUDA initialization; each spawned process
-owns its collector, and fork-inherited or late worker captures refuse. The
+owns its collector, and fork-inherited or late worker captures refuse. vLLM
+initializes CUDA before constructing the worker class, so the worker identity
+binds at the constructor against the recorded pre-CUDA history: the claim
+verifies the collector that recorded that initialization is still live, while
+a snapshot before the binding or CUDA activity the recorded history cannot
+cover still refuses. The
 worker subclass calls the stock device, model-load, KV-allocation, execution
 and sampling methods, adding synchronized checkpoints and bounded forward
 hooks for explicitly selected canonical units. `--all-units` resolves every
@@ -2496,6 +2701,21 @@ both the scope and that refusal as `engine_scope`.  The stock-engine capture
 `experiments/full_engine_worker.py`) owns those observations; the two are
 separate producers and neither's numbers may be composed with the other's.
 
+**One serving document feeds both legs (tessera#657).**  Re-stamped
+2026-09-27: `resolve_serving_config` resolves two exact closed
+`tessera.first_model_serving_config.v1` shapes.  The legacy operator shape
+keeps its own field set and `kernel_config == {"moe_backend": "auto"}`
+unchanged; the shared full-engine shape the TP2 observer freezes adds the
+engine-selection fields (`attention_backend` CUSTOM, `kv_cache_dtype`
+fp8_ds_mla, `language_model_only`, `trust_remote_code`) and, for a two-rank
+world, the named topology fields (`nnodes` 2, `node_rank` 0,
+`distributed_executor_backend` mp, `master_addr`, `master_port`) -- each
+validated and bound to the declared cut, never generically ignored.  The
+declared `moe_backend` is executed through the resolved `KernelConfig`, and a
+backend the factory cannot construct refuses by name; the harness never
+falls back to `auto`.  Scope, world equality, family coverage and exit codes
+are unchanged for both shapes.
+
 **One stack needs the explicit selected owner, and two must not have it.** The
 production FP8 expert builder is TP1-only, so an FP8 owner above one rank takes
 the versioned `research_selected_moe` block, which is a request field here and
@@ -2718,10 +2938,11 @@ would return, and the blob each unit gets out is **byte-identical** to the
 blob `encode_linear` writes for it alone. `encode_unit` is this driver at
 `B=1`: the per-unit body is a generator that yields each trellis call and
 receives its own columns back, so there is one implementation and not a fast
-path beside a reference. `encoder_fixture_id` does not move.
-`tests/test_batched_encode_identity.py` pins blob equality unit by unit at
-BF16_K1@1792, E4M3_K1@1024, E2M1_K2@896 and the mixed-rate E4M3@1042 with
-LDLQ on at the default refit schedule.
+path beside a reference. A window span yields its rate calls together, as a
+tuple, and receives a tuple of answers (tessera#668). `encoder_fixture_id` does
+not move. `tests/test_batched_encode_identity.py` pins blob equality unit by
+unit at BF16_K1@1792, E4M3_K1@1024, E2M1_K2@896, the mixed-rate E4M3@1042 and
+the mixed-rate BF16_K1@1088 with LDLQ on at the default refit schedule.
 
 The batched entry points are `export.encode_linears_planes` /
 `export.encode_linears`: one recipe, one rate schedule and one set of forests
@@ -2785,6 +3006,26 @@ and the host runs ahead until the pass's refit reads its floats.
 discards its cost makes no host sync, one that reads it makes one, and an
 LDLQ encode makes the same number of syncs at eight blocks as at two.
 
+**A window span's rates run concurrently (2026-09-27, tessera#668).** At a
+mixed-rate window rung -- BF16_K1 at q256 1088 or 1152, where every 32-column
+LDLQ block holds R4 and R5 columns -- `trellis_pass` used to yield one call per
+rate and wait for its answer before it built the next, so each block's R4 and R5
+Viterbi ran back to back on one stream. That chain is the bound: on the PACT G2
+expert shapes the GPU is busy 99 % of a pass, each block step runs about 4 970
+kernels with a median of 11 us, the host waits in a full launch queue, and the
+GPU draws 57 % of the 140 W envelope. A window span now yields every rate call
+at once. `_drive_in_step` joins each rate across the batch and `_run_group` runs
+the rates on per-thread side streams forked from the caller's stream and joined
+back to it, with `record_stream` ordering the allocator's reuse. The same
+tensors reach the same plans and kernels, so the bytes do not move.
+`TESSERA_WINDOW_RATE_STREAMS=0` is the serial control. On GB10 a 16-unit batch
+encodes 18.5-22.4 % faster at 1.18-1.23x the units per joule, and the
+serial control is within 1 % of `master`; the GPU draws 59 % of the envelope and
+the mean SM clock falls from about 2 400 to 2 260 MHz
+(`docs/measurements/tessera668-window-rate-streams-2026-09-27.md`).
+`tests/test_window_rate_group.py` pins the tuple yield and the streams' bytes
+against the serial control's.
+
 **The fused window body is an NVPTX path, and a ROCm build takes the
 reference (2026-09-13, #472).** `window_viterbi._build`'s `_mul` is
 `tl.inline_asm_elementwise("mul.f32 …")`, written that way so the NVPTX
@@ -2841,6 +3082,9 @@ per-unit Hessian plus capture identity and full activation settings, resolved
 recipe, encoder behavior/source identities, and the whole blob digest.
 Its `encoding_input_identity` is shared by dense and projected campaign
 callers; `unit_input_identity` adds the producer's explicit expert projection.
+Both take the unit's serving `structure` and stamp
+`export.served_recipe(grid, q256, structure)`; without one they stamp the
+research `wire_recipe` spelling unchanged (tessera#662).
 Both use the same unit-record construction and wire verifier. Expert export
 requires the projected identity; dense export uses the common encoding identity.
 Both require exact field equality against freshly supplied source and capture.
@@ -3066,6 +3310,131 @@ censused, so nothing beyond TP 1 is promoted: the shared-expert combination stay
 (`SharedExpertsOrder.NO_OVERLAP`), no internal MK kernel is claimed, and the
 family's activation contract (quantizer, scale grouping, accumulation order)
 is the one the family already publishes.
+
+**Since 2026-09-28 the routed window stack has a SECOND adapter behind the
+same attribute, and it is the default (tessera#640, contract v42).**
+`PackedWindowMoeBundles.adapter` asks `routed_fused.fused_routed_window_
+supported` whether the loaded stack is one the fused lane serves -- every
+column at rate 4, `window_bits` 14, window body, channel plane, no decoration,
+the E4M3 quantizer native, `intermediate % 64 == 0`, `hidden % 128 == 0`,
+the predicate `native_extensions[].lane.requires` publishes -- and builds
+`tessera.routed_fused.FusedRoutedWindowMoE` when it is, the compact
+`NativeWindowMoE` otherwise, logging the refusal reason at INFO.
+`TESSERA_ROUTED_FUSED=0` keeps the compact adapter for every stack. The fused
+lane is ONE persistent, warp-specialised CUDA kernel
+(`serving/csrc/routed_fused_window.cu`, JIT-built once per window family as
+`tessera_routed_fused_{e4m3,value}`): 256 producer threads decode the window
+words into bf16 (value family, row scale folded and rounded once) or f16
+(E4M3 family, the exact `e4m3 -> f16` table, scale in the epilogue) B tiles
+in shared memory, eight consumer warps run `mma.sync m16n8k16`, and work
+items -- (expert, 128-column block, 64-route superblock) triples -- are
+claimed through a device counter the caller zeroes in-stream, so the grid is
+the SM count, no host synchronisation happens, and a CUDA graph captures the
+forward (the counter reset is inside the captured region). Gate and up read
+each routed activation once and the SwiGLU epilogue (bf16 gate/up, fp32
+clamp and `silu * up`, one bf16 rounding -- the stock placement) writes the
+`[routes, I]` activation directly; the same kernel then runs the down
+projection into route-sorted bf16 rows, weighted by the routing weight, which
+`token_sum_kernel` reduces per token in a FIXED order. The reduction is
+therefore deterministic -- two runs are bitwise equal, which the compact
+adapter's `tl.atomic_add` and the A4 lane's `index_add_` do not guarantee --
+and `tests/test_routed_fused_window.py` holds two runs and a twice-replayed
+graph bitwise equal to eager. Every weight is decoded once per tile and
+reused across up to 64 routes; the compact Triton kernel re-decodes per
+`block_m`. The lane stamps its OWN identity, never the compact one:
+`(tessera.routed_fused.FusedRoutedWindowMoE.__call__,
+native_routed_fused_window)` for FP8 and `(..., native_routed_fused_window_
+folded)` for BF16, read off the adapter's `launch_pair` by `moe_route` (so is
+the compact pair, since the same change), and the forward runs under its own
+`torch.profiler` range (`tessera_routed_fused_window`), never the compact
+adapter's. Both pairs sit in `scheme.ROUTE_LAUNCHES` as the first
+LANE-BEARING rows since v31: each names the extension it needs, so
+`_validate_cell_executes` derives the fused pair only at a rung the
+extension's own `lane.requires` admits (`contract._lanes_a_rung_reaches`:
+q256 1024, not the mixed-rate 896), and the compact rows keep
+`when_lane_absent` False because the compact adapter still runs beside the
+lane -- for the stacks the predicate refuses and for the opt-out. A TP1 eager
+resident route census of the rate-4 u1 stub B on the GLM serving image
+(`experiments/results/glm53_u1_stub_b_fused_tp1_eager_census.json`, replayed
+by `tests/test_glm_u1_census_cells.py`) recorded the fused pair on the q256
+1024 E4M3 and BF16 stacks and the compact pair on the three mixed-rate E4M3
+stacks, both regimes, `problems: []`; on that receipt the four window routed
+cells name the fused pair beside the compact pair, with `requires_serve_flags`
+unchanged, and `scheme.EXPERIMENTAL_LAUNCHES` is empty again. A build that
+cannot compile the extension is the published `when_unavailable` case:
+`adapter()` builds it at construction, and a build failure is logged and
+answered with the compact adapter, so the substitute the table names is the
+one the code makes. The oracle, profile, NCU, census and bench receipts are
+recorded in `docs/measurements/2026-09-28-routed-fused-640.md`. The lane does
+not cover `TESSERA_E2M1_K2`, whose routed stacks stay on the A4 span-2 grouped
+path; that gap is measured in the same document.
+
+**The dense identity (contract v43).** A dense Linear is the E = 1, top-1,
+unweighted case of the routed lane, and since v43 the same kernel serves the
+q256 1024 dense and shared-expert window modules of both families through a
+`DENSE` template instantiation (`routed_fused_kernel<FP8, MODE, DENSE, SPLIT>`
+in `serving/csrc/routed_fused_window.cu`; host entry
+`tessera.routed_fused.dense_forward`). Two things differ from the routed
+case. First, decode has too few work items -- an item is 64 rows of `x` by 128
+rows of the module, so a 4096 x 2048 down projection at M = 1 is 32 items on
+48 SMs -- so the dense entry splits K: S work items per (row block, M block)
+each write an fp32 partial of their K range and `dense_reduce_kernel` sums the
+S partials in a fixed order before the one epilogue (`(acc * a_scale) *
+w_scale` for E4M3, the bare accumulator for the folded value family) and the
+one bf16 rounding; `dense_k_split(m, rows, cols, sms)` is the integer minimiser
+of `wire * sms / min(S * items, sms) + 2 S M N 4` over `1 .. min(K/32,
+ceil(sms/items))` and returns 1 as soon as every SM has an item, so prefill is
+the unsplit kernel. Two runs are bitwise equal in both regimes and a captured
+forward replays (the work counter is zeroed inside the region; the partial is
+a graph-pool allocation). Second, the integration is per Linear: vLLM applies
+the activation between `gate_up_proj` and `down_proj` in code Tessera does not
+own, so an MLP-level fusion would have saved one bf16 round trip (about 1% at
+M = 2048) for a model-forward patch and a changed census module count; instead
+`native_window.PreparedDenseNativeModule` runs each role as one op into its
+column slice of one `[M, rows]` output (`tessera::fused_window_dense`, a custom
+op like `window_gemm_dense`). The lane is decided once per module at weight
+load by `_decide_lane` over `routed_fused.fused_dense_window_supported` (rate 4
+in every column of every role, rows a multiple of 128, columns a multiple of 32
+and at least 128, window 14, the identity column order, the family's
+arithmetic -- `epilogue` for E4M3, `folded` for value -- and a bundle prepared
+with the attested native quantiser); a refusal names its reason
+(`lane_reason`, logged), `TESSERA_DENSE_FUSED=0` keeps the Triton lane for
+every module, and a build failure of the library after admission is the
+published `when_unavailable` substitution. The module answers its own
+`launch_pair` (`(tessera::fused_window_dense, native_fused_window_dense)` or
+`_folded`), which `fp8_route.apply` / `bf16_route.apply` stamp, and both
+routes publish it beside the Triton pair as `DENSE_LAUNCHES`; the compile
+identity (#91) names whichever op the module runs. The pair sits on the
+existing `tessera_routed_fused_e4m3` / `tessera_routed_fused_value` lanes in
+`scheme.ROUTE_LAUNCHES` (a lane's decoder string stays the routed one; the
+dense decoders live on the rows), so `_validate_cell_executes` derives it for
+every window dense cell whose rungs the lane reaches and refuses a cell that
+omits it. That reached six cells. The four GLM-image dense cells were
+re-earned by a TP1 eager census of stub B on image X
+(`experiments/results/glm53_u1_stub_b_fused_dense_tp1_eager_census.json`,
+replayed by `tests/test_glm_u1_census_cells.py`): its three q256 1024 dense
+modules (layer 5 shared down E4M3, layer 5 shared gate/up BF16, layer 7 shared
+gate/up E4M3) recorded the fused pair and its thirteen mixed-rate dense modules
+the Triton pair, both regimes, `problems: []`. The two pinned-image E4M3 dense
+cells (`tessera_e4m3_k1_dense_sm121_{decode,batch}`, attested on
+`qwen3-0.6b-uniform-R1024`) had no receipt on which the pair had run; rather
+than withdraw them -- which would have moved `versions.default_serve_image`
+and `platforms.sm_121.serve_image` onto a `localhost/` build no registry
+serves -- the artifact was served again on the pinned `vllm-openai` image in
+both residencies with the fused lane as the dispatch
+(`qwen3_0_6b_uniform_r1024_fused_{resident,streamed}_eager_census.json`, 112 of
+112 modules on `native_fused_window_dense` in both phases, cell agreement
+true, replayed by `tests/test_dense_fused_census_cells.py` together with the
+fail-before on v42's `executes`). The pinned image lacks the CUDA headers the
+JIT build includes through ATen; `experiments/cuda_home_shadow.sh` fills that
+gap from the CUDA wheel's headers for the census container and is a no-op
+where `/usr/local/cuda/include` is complete. The served-path oracle
+(`experiments/dense_fused_oracle.py`, `tests/test_dense_fused_window.py`),
+profiles, NCU, census and bench receipts are recorded in
+`docs/measurements/2026-09-28-dense-fused-window.md`. The lane covers rate 4
+only, on both structures; the mixed-rate rungs the allocator prices (832-1088
+today) stay on the Triton GEMM and the compact adapter, which is the next
+kernel change (tessera#690).
 
 ### 3.4 Declared weight transforms are refused at the materialisation boundary
 
@@ -4139,9 +4508,11 @@ on the two-rank stub serve's image; contract v32 (tessera#506 leg 2, the
 2026-09-18 re-stamp at the top) widens both to the full trellis domain
 [128, 896] step 128, so an NVFP4 stack at an in-domain rung exports without
 `--allow-unserveable` and only an off-domain rung needs the override. Compressed BF16-family expert wires take the compact
-folded lane above, with or without the research-selected block; no BF16
-`routed_moe` cell exists yet, so a BF16 expert rung still needs the override
-until a census earns one (tessera#606). Plain source BF16 passthrough uses
+folded lane above, with or without the research-selected block. Contract v38
+publishes BF16 `routed_moe` decode and batch cells at q256 1024 on the GLM
+serving image, eager and resident (tessera#604); their evidence is route-only,
+with no recorded smoke or KL. Other BF16 expert rungs still need the override.
+Plain source BF16 passthrough uses
 `quantization_config.ignore`. Both production routes refuse, by name:
 expert parallelism and EPLB (the stride invariant needs every expert's blob
 and the parameter is `[E, ...]` by global id), a residency other than
@@ -4832,7 +5203,8 @@ The following are rules rather than measured values:
 - **The regime is *this* contract's, and two vocabularies say "decode".** Here
   `decode` is the one-row forward and `batch` is every M > 1
   (`contract.CENSUS_PHASE_REGIMES`, which is also what stamps a census
-  record); the kernel's `decode` is `M <= GEMV_MAX_M` and spans eight token
+  record, except under the one-step MTP draft, whose generation phase is
+  stamped `batch` because it runs M = 2); the kernel's `decode` is `M <= GEMV_MAX_M` and spans eight token
   counts. Reading the second into a cell is how the batch cell first published
   the prefill launch alone -- true of the 64-row shape the census drives, false
   of the 2-to-8-row forwards the same regime covers, where the lane serves its
@@ -5882,8 +6254,8 @@ the publish job runs it on the bytes it is about to upload.
 
 **What the wheel deliberately does not ship.** `src/tessera/_dev/` is the
 repository's own tooling -- the merge-suite deadline helper
-(`_dev/suite_deadline.py`), the PrismaBuild source-identity reader
-(`_dev/suite_source.py`), and the import-graph analyser behind
+(`_dev/suite_deadline.py`), the suite source identity, which consults a
+declared source verifier (`_dev/suite_source.py`), and the import-graph analyser behind
 `tools/impacted_tests.py` (`_dev/source_dependencies.py`). It lives under
 `src/` because `tools/` imports it by module name, and until #151 it
 therefore installed into every consumer's `site-packages`. One line of
@@ -6166,23 +6538,22 @@ bundle contents. Composition forwards it to every child and retains each
 warning; export serializes both the mode and warnings in its cached intake
 receipt. Identity equality (unit, source, calibration, encoder fixture and
 projection), named-document SHA-256, blob bytes/digests and shapes still refuse
-in both modes. Unrelated unused proof authority still refuses. PrismaQuant
-authenticates the catalog extension and proof semantics
-before publication. The extension is `prismaquant.joint_catalog_extension.v1`,
-which binds one completed Stage A receipt, or `.v2`, which binds the
-Stage A run header so an extension exists from the first sealed band. Tessera
-rechecks the bound documents, accepts exactly those two extension schemas
-(`cached_unit.CATALOG_EXTENSION_SCHEMAS`) and reads no other extension field,
-then uses each exact historical package's input-identity factory, followed by
-the unchanged strict cached-wire verifier. Duplicate leaf names are permitted only
+in both modes. Unrelated unused proof authority still refuses. The
+producer authenticates the catalog extension and proof semantics before
+publication, and it supplies the reader for them: the caller's
+`ReuseAuthority` (above; tessera#599) judges each bound document, adoption,
+proof and served policy, and Tessera names no client schema. Tessera rechecks
+each document's exact path and SHA-256 binding, then uses each exact
+historical package's input-identity factory, followed by the unchanged strict
+cached-wire verifier. Duplicate leaf names are permitted only
 in distinct roots. Symlink roots/files and partial or surplus ownership refuse.
 
 A separately bound served-activation policy records selected A4 executed-group
-scales. Policy v1 retains its exact single `TESSERA_E2M1_K2_R896` scope. Policy
-v2 carries a nonempty sorted unique `formats` list: every adopted `E2M1x2` unit
-whose q256 format is listed must have exactly its bound executed-group scale,
-and no other served entry is accepted. The rung list is policy data, not a
-reader gamut roster. These runtime input values do not rewrite the historical wire's
+scales. The authority reads the policy's scope and returns the served
+activations it requires of the adopted units (for PrismaQuant's policies, each
+adopted `E2M1x2` unit at a listed rung, with its executed-group scale); the
+bundle's `served_activations` must equal that exactly, and no other served
+entry is accepted. The rung list is policy data, not a reader gamut roster. These runtime input values do not rewrite the historical wire's
 calibration identity. Export checks the actual fp32 scale file against those
 values. Neither the bundle nor these checks establish serving qualification.
 The v1 single-root/global-producer route is unchanged.

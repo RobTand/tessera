@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-27T08:45:23Z",
+ "generated": "2026-09-28T13:14:12Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -712,7 +712,7 @@
     "title": "Memory guards count reclaimable page cache as committed, and charge the capture reservation host-side"
    },
    "1158": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] DEFAULT_HOST_FLOOR_BYTES (8 GiB) is below the MemAvailable at which the Sparks hung"
    },
    "1159": {
@@ -1200,7 +1200,7 @@
     "title": "License: credit PrismaQuant in published models (#1266)"
    },
    "1268": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] publish_artifact: require the weights license and gate new repos"
    },
    "1269": {
@@ -1228,7 +1228,7 @@
     "title": "[P3] tessera_joint_aura and tessera_anchored_surface still compare per-row Hessian digests with provenance.hessian"
    },
    "1274": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Bump the Tessera pin once the GLM rungs are attested on spark-vllm-nccl230"
    },
    "1275": {
@@ -1856,7 +1856,7 @@
     "title": "[P1] Make numerics-pairs golden inputs portable across CI PyTorch versions"
    },
    "1415": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] TP2 PACT rank-budget path lacks an admissible fixed-resource contract"
    },
    "1416": {
@@ -2048,7 +2048,7 @@
     "title": "[P2] Declare served-gold requests dependency and align PB test environments with CI"
    },
    "1459": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Escape frontier CLI percent help under Python 3.14 argparse validation"
    },
    "146": {
@@ -2104,7 +2104,7 @@
     "title": "[P1] Fixture fleet lives for its context; a dead fleet fails the read fast (#1466)"
    },
    "1471": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Stabilize frontier help and launcher AST across Python versions"
    },
    "1472": {
@@ -2148,15 +2148,15 @@
     "title": "Batch same-shape dense Tessera campaign anchors (#1479)"
    },
    "1481": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Stage A campaign rows never bind the served quantizer: every A4 (E2M1) rung fails and the row exits 0 with an empty table"
    },
    "1482": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Campaign drivers bind the served quantizer through the Stage B owner; a failed rung fails the row"
    },
    "1483": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Campaign rows bind the served quantizer and fail closed on a failed rung (#1482)"
    },
    "1484": {
@@ -2168,11 +2168,11 @@
     "title": "TR3 scorer: read each teacher window once in arm_capture"
    },
    "1486": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Enforce new-upload weights license and auto-approve gate"
    },
    "1487": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Wire Tessera uniform control and fail-closed release receipt ingestion"
    },
    "1488": {
@@ -2180,7 +2180,7 @@
     "title": "[P2] Selected-cache CLI drops the bound plan\u2019s historical encoder allowance"
    },
    "1489": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Wire uniform-control and verified release receipt ingestion"
    },
    "149": {
@@ -2188,12 +2188,44 @@
     "title": "The Tessera campaign expands one menu per Linear, 37,861 times for 25 distinct answers"
    },
    "1490": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] route.trace gate cannot consume GLM5Next traces: verbatim checkpoint-vs-vLLM names, and one module set per M"
    },
    "1491": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Stage A planner charges a shared-expert row 84 GB; measured peak is 11-15 GiB"
+   },
+   "1492": {
+    "state": "OPEN",
+    "title": "[P2] Head walk I/O concurrency is tied to the CPU reservation: a 1-CPU selected-cache build walks NFS serially at seek latency"
+   },
+   "1493": {
+    "state": "CLOSED",
+    "title": "docs: glm-mtp-bf16-fixed-2026-09-26 evidence paths missing ws-mtp-20260925 prefix"
+   },
+   "1494": {
+    "state": "CLOSED",
+    "title": "docs: clarify historical MTP evidence path prefix in glm-mtp-bf16-fixed-2026-09-26"
+   },
+   "1495": {
+    "state": "CLOSED",
+    "title": "Joint-catalog overlay wire fence false-refuses content-identical wires: PQ test atime-restore bumps ctime_ns on adopted catalog trees"
+   },
+   "1496": {
+    "state": "CLOSED",
+    "title": "[P2] Charge a selected row's source hash where it runs (#1491)"
+   },
+   "1497": {
+    "state": "CLOSED",
+    "title": "[P1] Stage A selected rows re-hash 21 GB of source per row on the GPU reservation (41% of a dense row)"
+   },
+   "1498": {
+    "state": "CLOSED",
+    "title": "[P1] Overlay fence re-hashes a wire whose stat drifted but whose bytes did not"
+   },
+   "1499": {
+    "state": "OPEN",
+    "title": "[P2] A pbtest shard on dl380g10 writes metadata into campaign wire trees (ctime-only sweeps)"
    },
    "15": {
     "state": "CLOSED",
@@ -2203,41 +2235,441 @@
     "state": "CLOSED",
     "title": "The lane-wiring test trusts a hand-kept roster, so a bogus tessera declaration passes once the set is updated in lockstep"
    },
+   "1500": {
+    "state": "CLOSED",
+    "title": "[P1] assemble_t4_overlay refuses a carried wire whose only change is ctime"
+   },
+   "1501": {
+    "state": "CLOSED",
+    "title": "[P1] assemble_t4_overlay uses the catalog's content-rehash fence"
+   },
+   "1502": {
+    "state": "CLOSED",
+    "title": "[P1] Tessera encode path prices the research E2M1 sub-cap recipe, not the served wire"
+   },
+   "1503": {
+    "state": "OPEN",
+    "title": "[P2] build_t4_logical_request.py is r13-only"
+   },
+   "1504": {
+    "state": "OPEN",
+    "title": "[P2] Byte accountants price the research wire for routed E2M1x2 sub-cap units"
+   },
+   "1505": {
+    "state": "CLOSED",
+    "title": "[P1] Encode the served Tessera wire per (family, rung, structure); pin Tessera f94929def (#1502)"
+   },
+   "1506": {
+    "state": "CLOSED",
+    "title": "[P1] main CI red: assemble_t4_overlay_original_pair fixtures carry no wire record"
+   },
+   "1507": {
+    "state": "CLOSED",
+    "title": "[P1] Fix main CI: assemble fixtures carry the wire record"
+   },
+   "1508": {
+    "state": "CLOSED",
+    "title": "[P1] Ratchet primitive digest sites into the shrink-only duplication gate (#1301)"
+   },
+   "1509": {
+    "state": "CLOSED",
+    "title": "[P1] Ratchet primitive digest sites into the shrink-only gate (#1508)"
+   },
    "151": {
     "state": "CLOSED",
     "title": "The owners test pins the name set, so a swapped resource-owner mapping passes untouched"
+   },
+   "1510": {
+    "state": "CLOSED",
+    "title": "Selected-cache roster gate refuses BF16 keeps for units outside the measured census (VLM vision tower)"
+   },
+   "1511": {
+    "state": "CLOSED",
+    "title": "[P1] One census-roster rule: the export lane passes BF16 sidecars too"
+   },
+   "1512": {
+    "state": "CLOSED",
+    "title": "[P1] Consolidate tessera_calibration_cache primitive digest sites onto the digests owner (#1301)"
+   },
+   "1513": {
+    "state": "CLOSED",
+    "title": "A4 selected-cache blocked: wire_dir triad is unsatisfiable for the union-backed allocation chain"
+   },
+   "1514": {
+    "state": "OPEN",
+    "title": "[P2] vLLM CacheConfig._apply_block_size_default is not replace()-safe (MTP draft kv dtype)"
+   },
+   "1515": {
+    "state": "CLOSED",
+    "title": "Selected-cache wires bind by content identity, not path (#1513)"
+   },
+   "1516": {
+    "state": "CLOSED",
+    "title": "[P1] Tessera body export emits no PB progress units, so its phase grace acts as a wall-clock kill (A8 killed at 36200/36288 units)"
+   },
+   "1517": {
+    "state": "CLOSED",
+    "title": "[P1] Report exporter shard commits to the PB watchdog"
+   },
+   "1518": {
+    "state": "CLOSED",
+    "title": "[P1] Banked head-walk replay is silent by design (#822): a --head-resume drive commits nothing until it ends"
+   },
+   "1519": {
+    "state": "CLOSED",
+    "title": "[P1] Overlay fence re-hash is serial and silent: A4 r7 died no_progress after 685 s hashing drifted wires in one thread"
    },
    "152": {
     "state": "CLOSED",
     "title": "The shipped-lanes test covers a hand-written pair list, so a broken shipped lane slips past once its row is dropped"
    },
+   "1520": {
+    "state": "CLOSED",
+    "title": "Stage A rows adopt the campaign's source proof instead of hashing shards (#1497)"
+   },
+   "1521": {
+    "state": "CLOSED",
+    "title": "[P1] A4 silent phases: replay commits on a derived cadence, overlay fence hashes on a bounded pool"
+   },
+   "1522": {
+    "state": "CLOSED",
+    "title": "[P1] Selected-cache export re-hashes drifted overlay wires on one thread"
+   },
+   "1523": {
+    "state": "CLOSED",
+    "title": "Selected-cache fence re-hashes drifted overlay wires on the bounded pool (#1522)"
+   },
+   "1524": {
+    "state": "CLOSED",
+    "title": "[P1] Pin Tessera a3e83875 so rooted cached units read catalog extension v3"
+   },
+   "1525": {
+    "state": "CLOSED",
+    "title": "[P1] Pin Tessera a3e83875d so rooted cached units read catalog extension v3"
+   },
+   "1526": {
+    "state": "OPEN",
+    "title": "[P3] GLM campaign image has no pytest: a GPU tests arm inside it cannot run"
+   },
+   "1527": {
+    "state": "CLOSED",
+    "title": "[P1] Pin Tessera 20bf5346 for the concurrent window rate calls (G2 encode -20%)"
+   },
+   "1528": {
+    "state": "CLOSED",
+    "title": "Pin Tessera 20bf5346 for the concurrent window rate calls (#1527)"
+   },
+   "1529": {
+    "state": "CLOSED",
+    "title": "[P2] G2 source-projection check bypasses the residency resolver"
+   },
    "153": {
     "state": "CLOSED",
     "title": "The families test pins today's four names, so a dropped fifth family passes silently"
+   },
+   "1530": {
+    "state": "CLOSED",
+    "title": "[P2] Read the source-projection tensor through the residency resolver (#1529)"
+   },
+   "1531": {
+    "state": "CLOSED",
+    "title": "[P2] test_io_site_freeze fails on main: joint_catalog_extension._bounded_hash_pool bypasses io_engine"
+   },
+   "1532": {
+    "state": "OPEN",
+    "title": "[P2] #1520 binds the --source-identity-cache flags into tessera_campaign checkpoint identity"
+   },
+   "1533": {
+    "state": "CLOSED",
+    "title": "[P2] io_engine reserves a consumer core even while the consumer only waits"
+   },
+   "1534": {
+    "state": "CLOSED",
+    "title": "[P2] Decoupling step 0: shrink-only boundary gate"
+   },
+   "1535": {
+    "state": "CLOSED",
+    "title": "Decoupling step 0: shrink-only boundary gate"
+   },
+   "1536": {
+    "state": "CLOSED",
+    "title": "[P1] GLM routed capture records the runner's unindexed 'cuda' device and the first GPU boundary refuses (PACT M3 Leg C)"
+   },
+   "1537": {
+    "state": "CLOSED",
+    "title": "[P1] Own PQ's cached-unit record checks behind Tessera's reuse-authority plugin (tessera#599 step 2)"
+   },
+   "1538": {
+    "state": "CLOSED",
+    "title": "[P1] Record and report the observed boundary device (#1536)"
+   },
+   "1539": {
+    "state": "CLOSED",
+    "title": "Native resource-transfer qualification must live in PQ (allocator-side reuse decision)"
    },
    "154": {
     "state": "CLOSED",
     "title": "Two byte-identity sweeps enumerate three families, so a BF16 misprice passes both"
    },
+   "1540": {
+    "state": "CLOSED",
+    "title": "P1: Allocator-side native resource-transfer qualification (Closes #1539)"
+   },
+   "1541": {
+    "state": "CLOSED",
+    "title": "[P2] Move PQ's five PrismaBuild-internal callers onto prismabuild.client (decoupling step 2)"
+   },
+   "1542": {
+    "state": "CLOSED",
+    "title": "Own PQ's cached-unit record checks behind Tessera's reuse authority (#1537)"
+   },
+   "1543": {
+    "state": "CLOSED",
+    "title": "Fence re-hash on the IO engine; one file stat identity (turns main CI green)"
+   },
+   "1544": {
+    "state": "CLOSED",
+    "title": "Resource-transfer driver: fixture synthesis and eps authority are follow-ups"
+   },
+   "1545": {
+    "state": "CLOSED",
+    "title": "[P2] Move PQ's five PrismaBuild-internal callers onto prismabuild.client (decoupling step 2)"
+   },
+   "1546": {
+    "state": "CLOSED",
+    "title": "[P3] Home the Tessera fleet drivers that leave PrismaBuild (PB #1076)"
+   },
+   "1547": {
+    "state": "CLOSED",
+    "title": "Home the Tessera fleet drivers that leave PrismaBuild (#1546)"
+   },
+   "1548": {
+    "state": "CLOSED",
+    "title": "[P2] Tessera record readers tolerate additive fields (decoupling step 3a)"
+   },
+   "1549": {
+    "state": "OPEN",
+    "title": "[P2] Split the Tessera contract refresh from the code pin, principle-14-safe (decoupling step 3b)"
+   },
    "155": {
     "state": "CLOSED",
     "title": "The bounds test pins three families' intervals, so a new family's wrong DP interval passes"
+   },
+   "1550": {
+    "state": "CLOSED",
+    "title": "[P2] Lane hooks in PQ core: core stops importing lane modules (decoupling step 6)"
+   },
+   "1551": {
+    "state": "CLOSED",
+    "title": "[P2] Lane hooks, part 1: format families and render capabilities through the lane spec"
+   },
+   "1552": {
+    "state": "CLOSED",
+    "title": "[P2] Lane hooks, part 2a: the allocator's DP receives lane hooks instead of importing the lane"
+   },
+   "1553": {
+    "state": "CLOSED",
+    "title": "[P2] Lane hooks, part 3: shipcard slots, verifiers and fillers registered by the lane"
+   },
+   "1554": {
+    "state": "CLOSED",
+    "title": "io_engine: hold the consumer's core back only while the consumer works"
+   },
+   "1555": {
+    "state": "CLOSED",
+    "title": "[P3] Move generic helpers out of the Tessera lane modules (decoupling step 7)"
+   },
+   "1556": {
+    "state": "CLOSED",
+    "title": "Tessera record readers accept additive fields (#1548)"
+   },
+   "1557": {
+    "state": "CLOSED",
+    "title": "[P3] Move generic helpers out of the Tessera lane modules (decoupling step 7)"
+   },
+   "1558": {
+    "state": "CLOSED",
+    "title": "[P2] Lane hooks, part 2b: the allocator CLI reaches the lane through plugin hooks"
+   },
+   "1559": {
+    "state": "CLOSED",
+    "title": "[P2] Lane hooks, part 1: format families and render capabilities through the lane spec"
    },
    "156": {
     "state": "CLOSED",
     "title": "ship_gate's endpoint binding and threshold contract are written into the receipt and replayed by nothing, so a wrong-server receipt passes verify"
    },
+   "1560": {
+    "state": "CLOSED",
+    "title": "[P2] Lane hooks, part 2a: the allocator's DP receives lane hooks instead of importing the lane"
+   },
+   "1561": {
+    "state": "CLOSED",
+    "title": "[P2] Read Tessera's serving code identity: v3 pin, cell matcher, trace gate (#1549 follow-up)"
+   },
+   "1562": {
+    "state": "CLOSED",
+    "title": "[P2] Lane hooks, part 2b: the allocator CLI reaches the lane through plugin hooks"
+   },
+   "1563": {
+    "state": "CLOSED",
+    "title": "[P2] Lane hooks, part 3: shipcard slots, verifiers and fillers registered by the lane"
+   },
+   "1564": {
+    "state": "CLOSED",
+    "title": "A campaign row that prices no rung of a non-empty menu writes no table (#1481)"
+   },
+   "1565": {
+    "state": "CLOSED",
+    "title": "[P3] Native panel readers accept additive fields in Tessera-published records (#1548 follow-up)"
+   },
+   "1566": {
+    "state": "CLOSED",
+    "title": "Native panel readers accept additive Tessera fields (#1565)"
+   },
+   "1567": {
+    "state": "CLOSED",
+    "title": "[P1] route.trace compares module names in the serve's namespace (#1490)"
+   },
+   "1568": {
+    "state": "CLOSED",
+    "title": "[P1] Consolidate tessera_calibration_cache digest sites onto the digests owner (#1512)"
+   },
+   "1569": {
+    "state": "CLOSED",
+    "title": "[P3] Retire the three one-time PQ tools that import PrismaBuild internals"
+   },
    "157": {
     "state": "CLOSED",
     "title": "native_export arm metrics are stamped into the smoke receipt and replayed by nothing, so a fabricated arm record passes"
+   },
+   "1570": {
+    "state": "CLOSED",
+    "title": "Retire three one-time tools that import PrismaBuild internals (#1569)"
+   },
+   "1571": {
+    "state": "CLOSED",
+    "title": "[P3] Retirement and forward resume read PB batch records through the public reader"
+   },
+   "1572": {
+    "state": "CLOSED",
+    "title": "[P2] PB boundary scanner does not see private access through a subscripted SDK dict"
+   },
+   "1573": {
+    "state": "CLOSED",
+    "title": "[P2] Consolidate the atomic-write trio onto one owner"
+   },
+   "1574": {
+    "state": "CLOSED",
+    "title": "Read Tessera's serving code identity: v3 pin, cell matcher, trace gate (#1561)"
+   },
+   "1575": {
+    "state": "CLOSED",
+    "title": "Retirement and forward resume read PB records through the public reader (#1571)"
+   },
+   "1576": {
+    "state": "CLOSED",
+    "title": "test: scope the GLM derivative-reach tests to the pinned modeling source"
+   },
+   "1577": {
+    "state": "CLOSED",
+    "title": "[P2] GLM derivative-reach tests fail on dl380g10's transformers 5.17 venv"
+   },
+   "1578": {
+    "state": "CLOSED",
+    "title": "[P2] Fold the JsonProfile encoder construction and the streamed-sha256 loop into one spelling"
+   },
+   "1579": {
+    "state": "CLOSED",
+    "title": "Fold the JsonProfile encoder and the streamed-sha256 loop into one spelling"
    },
    "158": {
     "state": "CLOSED",
     "title": "The build forensic block stamps ten keys into the shipcard and verify reads one, so the card carries provenance theater in its byte reservation"
    },
+   "1580": {
+    "state": "CLOSED",
+    "title": "Consolidate the atomic-write recipe onto cost_stage_checkpoint (#1573)"
+   },
+   "1581": {
+    "state": "CLOSED",
+    "title": "[P2] test_shard_commit_progress watch test races its writer thread on a loaded runner"
+   },
+   "1582": {
+    "state": "CLOSED",
+    "title": "test: the shard-progress watch test waits for its writer, not a fixed sleep"
+   },
+   "1583": {
+    "state": "CLOSED",
+    "title": "[P0] PACT price input: a shape-time table keyed (structure, shape, family, rate, M) with the kernel lane, admitted without per-unit identity"
+   },
+   "1584": {
+    "state": "OPEN",
+    "title": "[P0] PACT allocation mode: shape-time table into solve_runtime_frontier and the prefill_frontier sweep, replayed into a full layer_config"
+   },
+   "1585": {
+    "state": "OPEN",
+    "title": "[P1] PACT selection record: a materiality test from the table's own interval, three derived picks, and a roster on the card"
+   },
+   "1586": {
+    "state": "OPEN",
+    "title": "[P0] No Tessera GLM card can be published: native_export.graph is required while serving is eager-only, and research_only is read by nothing"
+   },
+   "1587": {
+    "state": "OPEN",
+    "title": "[P1] PrismaQuant writes the Tessera plan; the export arm calls a supported exporter and drops plan_from_layer_config --prismaquant"
+   },
+   "1588": {
+    "state": "OPEN",
+    "title": "[P1] Price the 14 unpriced Tessera gamut rungs for GLM-5.3-Flash (Stage B rows)"
+   },
+   "1589": {
+    "state": "OPEN",
+    "title": "[P1] PACT release validation on the roster at contract v42: gold slots at TP2, uniform controls, served-frontier acceptance"
+   },
    "159": {
     "state": "CLOSED",
     "title": "Fisher row-weight clip 64 caps the measured objective below n_rows, in two copies"
+   },
+   "1590": {
+    "state": "CLOSED",
+    "title": "PB boundary scanner follows subscripted SDK dicts (#1572)"
+   },
+   "1591": {
+    "state": "CLOSED",
+    "title": "Safetensors reader/header dedup slice of #1303"
+   },
+   "1592": {
+    "state": "CLOSED",
+    "title": "P1: Consolidate safetensors header reading onto source_read_plan (Closes #1591)"
+   },
+   "1593": {
+    "state": "CLOSED",
+    "title": "[P2] Delegate tessera_joint_aura's primitive digest sites to the named digests profiles"
+   },
+   "1594": {
+    "state": "CLOSED",
+    "title": "Shape-time price table for PACT (#1583)"
+   },
+   "1595": {
+    "state": "CLOSED",
+    "title": "Delegate tessera_joint_aura's primitive digest sites to the named digests profiles (#1593)"
+   },
+   "1596": {
+    "state": "CLOSED",
+    "title": "[P1] Pin Tessera 38e96012 (contract v42); lane launches decided per rung (#1274)"
+   },
+   "1597": {
+    "state": "CLOSED",
+    "title": "[P0] publish refuses research_only cards (part of #1586)"
+   },
+   "1598": {
+    "state": "CLOSED",
+    "title": "publish: refuse research_only cards outside the recorded override"
+   },
+   "1599": {
+    "state": "CLOSED",
+    "title": "[P2] Delegate tessera_export_lane's primitive digest sites to the named digests profiles"
    },
    "16": {
     "state": "CLOSED",
@@ -2246,6 +2678,14 @@
    "160": {
     "state": "CLOSED",
     "title": "The confident-lane cut _CONFIDENT_PROB = 0.5 is an intuition number whose authority lives outside the repo"
+   },
+   "1600": {
+    "state": "CLOSED",
+    "title": "Delegate tessera_export_lane's byte-identical digest sites to the digests owners (#1599)"
+   },
+   "1601": {
+    "state": "OPEN",
+    "title": "PACT allocator mode: exact lower convex hull as the candidate set (#1584)"
    },
    "161": {
     "state": "CLOSED",
@@ -4064,7 +4504,7 @@
     "title": "Add the exact MXFP4 -> MXFP8 widening transcode"
    },
    "570": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] An fp4 table's native runs bind to full-engine bytes a single-artifact engine run cannot have (debt D39, leg b)"
    },
    "571": {
@@ -7298,7 +7738,7 @@
     "title": "Add original-wire whole routed-MoE measurement receipts"
    },
    "399": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Derive full-engine resource ownership and noncandidate timing partitions"
    },
    "4": {
@@ -7787,7 +8227,7 @@
    },
    "508": {
     "state": "OPEN",
-    "title": "[P1] Qualify whole-engine CUDA graphs for the GLM53 NoPE backend (serving is eager-only today)"
+    "title": "[P0] Qualify whole-engine CUDA graphs for the GLM53 NoPE backend (serving is eager-only today)"
    },
    "509": {
     "state": "CLOSED",
@@ -8187,7 +8627,7 @@
    },
    "599": {
     "state": "OPEN",
-    "title": "[P3] Tessera stands alone: no knowledge of PrismaQuant or PrismaBuild outside a plugin interface"
+    "title": "[P2] Tessera stands alone: no knowledge of PrismaQuant or PrismaBuild outside a plugin interface"
    },
    "6": {
     "state": "CLOSED",
@@ -8218,7 +8658,7 @@
     "title": "[P1] Routed cells name launches master cannot make; re-earn routed E4M3 and E2M1 on the GLM serving image"
    },
    "605": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Attest dense E4M3/BF16 rungs q256 832-1088 and dense A4 on the GLM serving image"
    },
    "606": {
@@ -8350,7 +8790,7 @@
     "title": "Record bounded full GLM TP2 text serve"
    },
    "635": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Serving manifest is written indented; 13 MB of whitespace puts a size-matched GLM artifact over its byte ceiling"
    },
    "636": {
@@ -8374,7 +8814,7 @@
     "title": "Window-body EXL3 win is scoped to six Gaussian-input GLM experts and stated without scope, so it reads as general"
    },
    "640": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Native routed MoE kernels are 1.2-5.9x slower and do 3-6x less work per joule than vLLM's stock fused MoE on GB10"
    },
    "641": {
@@ -8434,28 +8874,180 @@
     "title": "[P2] Decide producer-owned byte-equivalence evidence for sealed encoder upgrades"
    },
    "654": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Stream M1 dense native rates through persistent rank processes"
    },
    "655": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Compact newly written serving manifests"
+   },
+   "656": {
+    "state": "OPEN",
+    "title": "P2: record standalone A4 gate outside impacted pytest targets"
+   },
+   "657": {
+    "state": "CLOSED",
+    "title": "[P1] M3 native and TP2 full-engine configuration schemas cannot bind one document"
+   },
+   "658": {
+    "state": "CLOSED",
+    "title": "P1: Qualified native resource-transfer contract (Refs #654)"
+   },
+   "659": {
+    "state": "CLOSED",
+    "title": "P1: Pass-R/pass-T persistent runners (Refs #654)"
    },
    "66": {
     "state": "CLOSED",
     "title": "`_lloyd_levels` caps Lloyd at 40 iterations while levels are still moving, leaving sub-cap forests 21.6% above their descended SSE at E4M3 R=4"
    },
+   "660": {
+    "state": "CLOSED",
+    "title": "[P1] TP2 resource capture: neither rank's spawned workers load the resource bootstrap"
+   },
+   "661": {
+    "state": "CLOSED",
+    "title": "[P1] Carry the resource bootstrap environment to both TP2 ranks' workers"
+   },
+   "662": {
+    "state": "CLOSED",
+    "title": "[P1] Cached-unit receipts can't describe the served routed E2M1x2 sub-cap wire"
+   },
+   "663": {
+    "state": "CLOSED",
+    "title": "[P1] Served recipe lives in the package; cached-unit receipts stamp it per structure (#662)"
+   },
+   "664": {
+    "state": "CLOSED",
+    "title": "[P1] Full-engine claim() falsely refuses after vLLM's pre-ctor CUDA initialization (PACT M3)"
+   },
+   "665": {
+    "state": "CLOSED",
+    "title": "[P1] Bind worker identity against the bootstrap's recorded pre-CUDA history"
+   },
+   "666": {
+    "state": "CLOSED",
+    "title": "P2: Native transfer engine binding (Refs #654)"
+   },
+   "667": {
+    "state": "CLOSED",
+    "title": "[P1] Resolve the shared full-engine serving document for the native leg (#657)"
+   },
+   "668": {
+    "state": "CLOSED",
+    "title": "[P1] LDLQ window encode runs each span's rate calls back to back on one stream (G2 pricing hot loop)"
+   },
+   "669": {
+    "state": "CLOSED",
+    "title": "[P1] Run a window span's rate calls as one group, on per-rate streams (#668)"
+   },
    "67": {
     "state": "CLOSED",
     "title": "The forest fit descends Lloyd on every 4th sample, and the full 16k source fits 1-4% better anchors at E4M3 R=2-4"
+   },
+   "670": {
+    "state": "CLOSED",
+    "title": "[P1] Rooted cached-unit reader refuses the v3 catalog extension (A4 export blocked)"
+   },
+   "671": {
+    "state": "CLOSED",
+    "title": "Rooted cached units read the v3 catalog extension (#670)"
+   },
+   "672": {
+    "state": "OPEN",
+    "title": "[P2] test_merge_suite.py scans the live fleet queue: 93 s quiet, 1500 s under load, and one shard killed at its 3600 s ceiling"
+   },
+   "673": {
+    "state": "CLOSED",
+    "title": "[P2] Decoupling step 0: shrink-only boundary gate"
+   },
+   "674": {
+    "state": "CLOSED",
+    "title": "Decoupling step 0: shrink-only boundary gate"
+   },
+   "675": {
+    "state": "CLOSED",
+    "title": "Move the cached-unit reuse authority behind a producer plugin (#599 step 2)"
+   },
+   "676": {
+    "state": "CLOSED",
+    "title": "P2: Publish the persistent native resource measurement lane (Refs #654)"
+   },
+   "677": {
+    "state": "OPEN",
+    "title": "[P2] Producer should attest the runtime identity it can observe"
+   },
+   "678": {
+    "state": "CLOSED",
+    "title": "A cell can name the serving code it was measured on (contract v41)"
+   },
+   "679": {
+    "state": "CLOSED",
+    "title": "Resolve GLM MTP draft Linears built under the bare layer prefix"
    },
    "68": {
     "state": "CLOSED",
     "title": "`_fit_lut` caps swap refinement at 2 passes, and a longer descent lowers the plane cost ~1% on 2 of 3 synthetic halves"
    },
+   "680": {
+    "state": "CLOSED",
+    "title": "[P1] Name NVFP4 routed-MoE layers in the route trace"
+   },
+   "681": {
+    "state": "CLOSED",
+    "title": "[P1] Route census refuses every MTP k=1 draft census: decode phase demands M1 that k=1 never runs"
+   },
+   "682": {
+    "state": "CLOSED",
+    "title": "[P1] Census the one-step MTP generation step at k+1, not a decode it never runs"
+   },
+   "683": {
+    "state": "CLOSED",
+    "title": "[P3] Test startup parses PrismaBuild records; move them behind a source-verifier seam (#599 step 3)"
+   },
+   "684": {
+    "state": "CLOSED",
+    "title": "Suite source identity reads a declared verifier, not PrismaBuild's records (#683, #599 step 3)"
+   },
+   "685": {
+    "state": "CLOSED",
+    "title": "Fused routed window MoE lane: a new launch identity for rate-4 expert stacks"
+   },
+   "686": {
+    "state": "CLOSED",
+    "title": "docs: _dev's suite source identity reads a declared verifier (#599)"
+   },
+   "687": {
+    "state": "OPEN",
+    "title": "[P0] Supported serving exporter and a Tessera-owned plan schema; no PrismaQuant parsing on the export path"
+   },
+   "688": {
+    "state": "OPEN",
+    "title": "[P1] Per-shape kernel-time bench as an application tool with a Tessera-owned receipt that records the dispatched lane"
+   },
+   "689": {
+    "state": "OPEN",
+    "title": "[P1] Census cells for routed E4M3_K1 q256 880/912 and for every gamut rung PrismaQuant prices"
+   },
    "69": {
     "state": "CLOSED",
     "title": "README and schema section 7 still sell the 1a/1b scope (no encoder, no serving, Gridbook owns the decode) after the tree grew all four"
+   },
+   "690": {
+    "state": "OPEN",
+    "title": "[P1] Fused routed lanes beyond q256 1024: E2M1 and the mixed-rate window stacks (the 5-8x cliff the allocator now prices)"
+   },
+   "691": {
+    "state": "OPEN",
+    "title": "[P0] Supported serving export entry point and tessera.serving_plan.v1 (#687)"
+   },
+   "692": {
+    "state": "OPEN",
+    "title": "[P1] Serve the q256-1024 dense and shared window Linears through the fused window kernel's dense identity (contract v43)"
+   },
+   "693": {
+    "state": "OPEN",
+    "title": "Serve the q256-1024 dense and shared window Linears through the fused kernel's dense identity (contract v43)"
    },
    "7": {
     "state": "CLOSED",

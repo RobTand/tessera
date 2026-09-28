@@ -106,8 +106,8 @@ def _tolerance(reference):
 @cuda
 def test_the_launch_table_publishes_the_native_pair():
     from tessera.serving import telemetry
-    from tessera.serving.scheme import (TESSERA_BF16, TESSERA_FP8,
-                                        WINDOW_GEMM_SYMBOL, launch_pairs)
+    from tessera.serving.scheme import (FUSED_WINDOW_DENSE_SYMBOL, TESSERA_BF16,
+                                        TESSERA_FP8, WINDOW_GEMM_SYMBOL, launch_pairs)
 
     pair = (WINDOW_GEMM_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_GEMM)
     for route in (TESSERA_FP8,):
@@ -135,12 +135,17 @@ def test_the_launch_table_publishes_the_native_pair():
     # agree again.  The epilogue pair is in neither.  Residency is the cells'
     # scope, not the table's: the view is the same in both modes.
     folded = (WINDOW_GEMM_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_GEMM_FOLDED)
+    # Contract v43: the fused window kernel's dense identity serves the folded
+    # arithmetic beside the Triton GEMM, per module, under its own decoder.
+    fused_folded = (FUSED_WINDOW_DENSE_SYMBOL,
+                    telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED)
     for regime in ("decode", "batch"):
         for mode in ("resident", "streamed"):
             assert launch_pairs(TESSERA_BF16, regime=regime, mode=mode,
-                                include_experimental=True) == {folded}, (regime, mode)
-            assert launch_pairs(TESSERA_BF16, regime=regime, mode=mode) == {folded}, (
+                                include_experimental=True) == {folded, fused_folded}, (
                 regime, mode)
+            assert launch_pairs(TESSERA_BF16, regime=regime, mode=mode) == {
+                folded, fused_folded}, (regime, mode)
     assert WINDOW_GEMM_SYMBOL == "tessera::window_gemm_dense"
     assert telemetry.DECODER_NATIVE_WINDOW_GEMM in telemetry.DECODERS
     assert telemetry.DECODER_NATIVE_WINDOW_GEMM_FOLDED in telemetry.DECODERS
