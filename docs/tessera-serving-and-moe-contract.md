@@ -968,10 +968,19 @@ v5 or v6 reader ignores a new top-level key and no value it already read has
 moved. (It was authored against v5 and landed after §12 took v6; the renumber
 is bookkeeping -- the block, not the integer, is the claim, and PrismaQuant's
 `contract_answer()` over the v6 and v7 payloads is byte-identical.)
-One entry today (two before 2026-09-16): the window GEMV. The span-2 NVFP4
-decoder's entry was removed with the A4 whole-weight expansion — nothing under
-`tessera.serving` loads that library any more, and a table entry for it would
-publish a `.so` no serve can map.
+Three entries today: the window GEMV, and since 2026-09-28 (tessera#640,
+contract v42) the two libraries of the fused routed window MoE lane,
+`tessera_routed_fused_e4m3` (route `TESSERA_FP8`, lane decoder
+`native_routed_fused_window`) and `tessera_routed_fused_value` (route
+`TESSERA_BF16`, lane decoder `native_routed_fused_window_folded`) -- one source,
+`csrc/routed_fused_window.cu`, built once per window family by
+`tessera.routed_fused`, loaded from `tessera.serving.moe_route` through
+`native_window_moe.PackedWindowMoeBundles.adapter`, and substituting the
+compact adapter's decoder in both residencies when the build cannot compile
+it. Between 2026-09-16 and 2026-09-28 the table held the window GEMV alone.
+The span-2 NVFP4 decoder's entry was removed with the A4 whole-weight
+expansion — nothing under `tessera.serving` loads that library any more, and a
+table entry for it would publish a `.so` no serve can map.
 
 **It is a glob, not a basename, and the rule is a value.** An entry whose
 module name carries a build-identity hash has no exact basename to publish, so

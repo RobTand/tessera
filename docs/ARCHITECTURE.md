@@ -1,5 +1,29 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-09-28 for the fused routed window MoE lane (tessera#640,
+contract v42). The routed E4M3 and BF16 expert stacks are served by a NEW
+launch identity by default: one persistent warp-specialised CUDA kernel
+(`serving/csrc/routed_fused_window.cu`, `tessera.routed_fused`) that fuses
+gate, up and the SwiGLU epilogue, runs the down projection into route-sorted
+rows that a fixed-order per-token sum reduces (deterministic), claims
+(expert, column-block, route-superblock) work items through a device counter
+zeroed inside the captured region, and decodes each weight once per tile.
+`native_window_moe.PackedWindowMoeBundles.adapter` takes it for every stack
+the published predicate admits (rate 4 everywhere, window 14, no decoration)
+and keeps the compact Triton adapter otherwise or under
+`TESSERA_ROUTED_FUSED=0`; each adapter answers its own `launch_pair`, which
+`moe_route` stamps. `native_extensions` gains two entries for the one source
+(`tessera_routed_fused_e4m3`, `tessera_routed_fused_value`) and two
+LANE-BEARING rows enter `scheme.ROUTE_LAUNCHES`, the first since v31, so a
+cell derives the fused pair only at a rung the extension's own
+`lane.requires` admits (q256 1024). A TP1 eager route census of the rate-4 u1
+stub B on the GLM serving image recorded the fused pair on its q256 1024
+stacks and the compact pair on its mixed-rate stacks, and the four window
+routed cells (`tessera_{e4m3,bf16}_k1_routed_moe_sm121_{decode,batch}_resident`)
+name the fused pair beside the compact pair on that receipt; flags, rungs
+and every other cell are unchanged, and `scheme.EXPERIMENTAL_LAUNCHES` is
+empty again. See §3.3 and `docs/measurements/2026-09-28-routed-fused-640.md`.
+
 Re-stamped 2026-09-28 for the source-verifier seam (tessera#599, step 3).
 `tessera._dev.suite_source` no longer parses PrismaBuild's snapshot, action or
 closure records. A test population leaves an executor-generated file out of
@@ -3237,6 +3261,64 @@ censused, so nothing beyond TP 1 is promoted: the shared-expert combination stay
 family's activation contract (quantizer, scale grouping, accumulation order)
 is the one the family already publishes.
 
+**Since 2026-09-28 the routed window stack has a SECOND adapter behind the
+same attribute, and it is the default (tessera#640, contract v42).**
+`PackedWindowMoeBundles.adapter` asks `routed_fused.fused_routed_window_
+supported` whether the loaded stack is one the fused lane serves -- every
+column at rate 4, `window_bits` 14, window body, channel plane, no decoration,
+the E4M3 quantizer native, `intermediate % 64 == 0`, `hidden % 128 == 0`,
+the predicate `native_extensions[].lane.requires` publishes -- and builds
+`tessera.routed_fused.FusedRoutedWindowMoE` when it is, the compact
+`NativeWindowMoE` otherwise, logging the refusal reason at INFO.
+`TESSERA_ROUTED_FUSED=0` keeps the compact adapter for every stack. The fused
+lane is ONE persistent, warp-specialised CUDA kernel
+(`serving/csrc/routed_fused_window.cu`, JIT-built once per window family as
+`tessera_routed_fused_{e4m3,value}`): 256 producer threads decode the window
+words into bf16 (value family, row scale folded and rounded once) or f16
+(E4M3 family, the exact `e4m3 -> f16` table, scale in the epilogue) B tiles
+in shared memory, eight consumer warps run `mma.sync m16n8k16`, and work
+items -- (expert, 128-column block, 64-route superblock) triples -- are
+claimed through a device counter the caller zeroes in-stream, so the grid is
+the SM count, no host synchronisation happens, and a CUDA graph captures the
+forward (the counter reset is inside the captured region). Gate and up read
+each routed activation once and the SwiGLU epilogue (bf16 gate/up, fp32
+clamp and `silu * up`, one bf16 rounding -- the stock placement) writes the
+`[routes, I]` activation directly; the same kernel then runs the down
+projection into route-sorted bf16 rows, weighted by the routing weight, which
+`token_sum_kernel` reduces per token in a FIXED order. The reduction is
+therefore deterministic -- two runs are bitwise equal, which the compact
+adapter's `tl.atomic_add` and the A4 lane's `index_add_` do not guarantee --
+and `tests/test_routed_fused_window.py` holds two runs and a twice-replayed
+graph bitwise equal to eager. Every weight is decoded once per tile and
+reused across up to 64 routes; the compact Triton kernel re-decodes per
+`block_m`. The lane stamps its OWN identity, never the compact one:
+`(tessera.routed_fused.FusedRoutedWindowMoE.__call__,
+native_routed_fused_window)` for FP8 and `(..., native_routed_fused_window_
+folded)` for BF16, read off the adapter's `launch_pair` by `moe_route` (so is
+the compact pair, since the same change), and the forward runs under its own
+`torch.profiler` range (`tessera_routed_fused_window`), never the compact
+adapter's. Both pairs sit in `scheme.ROUTE_LAUNCHES` as the first
+LANE-BEARING rows since v31: each names the extension it needs, so
+`_validate_cell_executes` derives the fused pair only at a rung the
+extension's own `lane.requires` admits (`contract._lanes_a_rung_reaches`:
+q256 1024, not the mixed-rate 896), and the compact rows keep
+`when_lane_absent` False because the compact adapter still runs beside the
+lane -- for the stacks the predicate refuses and for the opt-out. A TP1 eager
+resident route census of the rate-4 u1 stub B on the GLM serving image
+(`experiments/results/glm53_u1_stub_b_fused_tp1_eager_census.json`, replayed
+by `tests/test_glm_u1_census_cells.py`) recorded the fused pair on the q256
+1024 E4M3 and BF16 stacks and the compact pair on the three mixed-rate E4M3
+stacks, both regimes, `problems: []`; on that receipt the four window routed
+cells name the fused pair beside the compact pair, with `requires_serve_flags`
+unchanged, and `scheme.EXPERIMENTAL_LAUNCHES` is empty again. A build that
+cannot compile the extension is the published `when_unavailable` case:
+`adapter()` builds it at construction, and a build failure is logged and
+answered with the compact adapter, so the substitute the table names is the
+one the code makes. The oracle, profile, NCU, census and bench receipts are
+recorded in `docs/measurements/2026-09-28-routed-fused-640.md`. The lane does
+not cover `TESSERA_E2M1_K2`, whose routed stacks stay on the A4 span-2 grouped
+path; that gap is measured in the same document.
+
 ### 3.4 Declared weight transforms are refused at the materialisation boundary
 
 Segment-2a diagonals and the branch rotation are transforms the encoder
@@ -4309,9 +4391,11 @@ on the two-rank stub serve's image; contract v32 (tessera#506 leg 2, the
 2026-09-18 re-stamp at the top) widens both to the full trellis domain
 [128, 896] step 128, so an NVFP4 stack at an in-domain rung exports without
 `--allow-unserveable` and only an off-domain rung needs the override. Compressed BF16-family expert wires take the compact
-folded lane above, with or without the research-selected block; no BF16
-`routed_moe` cell exists yet, so a BF16 expert rung still needs the override
-until a census earns one (tessera#606). Plain source BF16 passthrough uses
+folded lane above, with or without the research-selected block. Contract v38
+publishes BF16 `routed_moe` decode and batch cells at q256 1024 on the GLM
+serving image, eager and resident (tessera#604); their evidence is route-only,
+with no recorded smoke or KL. Other BF16 expert rungs still need the override.
+Plain source BF16 passthrough uses
 `quantization_config.ignore`. Both production routes refuse, by name:
 expert parallelism and EPLB (the stride invariant needs every expert's blob
 and the parameter is `[E, ...]` by global id), a residency other than

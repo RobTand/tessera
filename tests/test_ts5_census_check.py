@@ -18,13 +18,16 @@ from tessera.serving.scheme import (
     validate_tessera_moe_scheme)
 
 ACTIVATION_CONTRACT = ROUTES[TESSERA_FP8]["activation_contract"]
-# The one launch an FP8 expert stack makes on this build: the compact window
-# MoE adapter (contract v38, tessera#604).  The materialising
+# The lane-free launch an FP8 expert stack makes on this build: the compact
+# window MoE adapter (contract v38, tessera#604).  The materialising
 # ``(MOE_GEMM_SYMBOL, torch_materialize_stock)`` pair left the table then,
 # because ``moe_route.compact_window_lane`` answers True for FP8 whenever the
 # compact reader is defined; a record naming it is one no serve here stamps.
+# Since contract v42 (tessera#640) the fused routed window lane is a second
+# pair, made only where its extension built; ``lanes=()`` leaves it out, and
+# these fixtures record the compact launch.
 (_MOE_LAUNCH,) = launch_pairs(
-    TESSERA_FP8, structure="routed_moe", regime="decode", mode="resident")
+    TESSERA_FP8, structure="routed_moe", regime="decode", mode="resident", lanes=())
 GEMM_SYMBOL, DECODER_TORCH_STOCK = _MOE_LAUNCH
 assert GEMM_SYMBOL != MOE_GEMM_SYMBOL
 

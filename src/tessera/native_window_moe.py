@@ -41,6 +41,7 @@ layer's; this adapter returns the routed-expert result ``[T, rows]`` bf16.
 from __future__ import annotations
 
 import dataclasses
+import logging
 import math
 from typing import Sequence
 
@@ -55,6 +56,7 @@ __all__ = ["NativeWindowMoE", "prepare_native_window_moe", "PackedWindowUnits",
 
 #: The activations this adapter reproduces exactly.  Everything else refuses.
 SUPPORTED_ACTIVATIONS = ("silu",)
+_log = logging.getLogger(__name__)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -107,6 +109,23 @@ class NativeWindowMoE:
     up: "PreparedGroupedWindowGemm | None"
     down: PreparedGroupedWindowGemm
     activation: str = "silu"
+
+    @property
+    def launch_pair(self) -> "tuple[str, str]":
+        """``(symbol, decoder)`` this adapter's forward is recorded under.
+
+        The compact lane's symbol with the family's arithmetic-naming decoder
+        (``scheme.ROUTE_LAUNCHES``); the route reads it off the adapter so a
+        different adapter behind the same attribute (``tessera.routed_fused``)
+        is recorded as itself, never under this name.
+        """
+        from .serving.scheme import WINDOW_MOE_COMPACT_SYMBOL
+        from .serving.telemetry import (DECODER_NATIVE_WINDOW_MOE_COMPACT,
+                                        DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED)
+
+        decoder = (DECODER_NATIVE_WINDOW_MOE_COMPACT_FOLDED if self.down.family == "value"
+                   else DECODER_NATIVE_WINDOW_MOE_COMPACT)
+        return WINDOW_MOE_COMPACT_SYMBOL, decoder
 
     def __call__(self, x: torch.Tensor,
                  expert_ids: torch.Tensor,
@@ -227,9 +246,9 @@ def _silu_and_mul(gate: torch.Tensor, up: torch.Tensor, *,
     directions out as ``clamp(gate, max=limit)`` / ``clamp(up, -limit, limit)``.
     The quantised-activation Triton kernel
     ``.../layers/quantization/utils/fp8_utils.py`` saturates identically before
-    narrowing.  What differs here is only the *narrowing*: the stock op clamps
-    and narrows the bf16 gemm output, this adapter clamps the fp32 accumulator
-    and keeps the lane's documented single rounding of the product."""
+    narrowing.  This adapter widens the bf16 gemm output to fp32 for the
+    clamp and activation, then rounds the product once to bf16; it does not
+    clamp an unrounded GEMM accumulator."""
     if gate.shape != up.shape:
         raise GrammarError(f"gate {tuple(gate.shape)} and up {tuple(up.shape)} must match")
     limit = checked_swiglu_limit(clamp_limit)
@@ -401,20 +420,72 @@ class PackedWindowMoeBundles:
                       bundle.perm_all):
                 if isinstance(t, torch.Tensor):
                     total += t.numel() * t.element_size()
+        fused = self.__dict__.get("_fused_adapter")
+        if fused is not None:
+            total += fused.resident_bytes()
         return total
 
     def named_tensors(self):
-        """The exact retained grouped kernel tensors, for ownership observers."""
+        """The exact retained grouped kernel tensors, for ownership observers.
+
+        Includes the composed lookup tables the fused lane holds beside the
+        bundles' planes once :meth:`adapter` has built it (the words are
+        views of ``words_all`` and are not counted twice).
+        """
         for role in ("gate", "up", "down"):
             bundle = getattr(self, role)
             for field in dataclasses.fields(bundle):
                 value = getattr(bundle, field.name)
                 if isinstance(value, torch.Tensor):
                     yield f"{role}.{field.name}", value
+        fused = self.__dict__.get("_fused_adapter")
+        if fused is not None:
+            yield from fused.named_tables()
 
-    def adapter(self) -> NativeWindowMoE:
-        return native_window_moe_from_bundles(
-            self.down, gate=self.gate, up=self.up, activation="silu")
+    def adapter(self):
+        """The routed-expert compute over these bundles, built once.
+
+        The fused warp-specialised lane (``tessera.routed_fused``, #640) where
+        :func:`~tessera.routed_fused.fused_routed_window_supported` admits the
+        stack and ``TESSERA_ROUTED_FUSED`` is not ``0``; the compact Triton
+        adapter otherwise.  Each answers ``launch_pair`` with its own
+        ``(symbol, decoder)`` so the route records what actually ran.  The
+        refusal reason is logged at INFO so a serve's log says why a stack
+        kept the compact adapter.
+        """
+        cached = self.__dict__.get("_adapter")
+        if cached is not None:
+            return cached
+        from .routed_fused import FusedRoutedWindowMoE, fused_routed_window_supported
+
+        reason = fused_routed_window_supported(self.gate, self.up, self.down)
+        built = None
+        if reason is None:
+            try:
+                built = FusedRoutedWindowMoE.from_bundles(
+                    self.gate, self.up, self.down, activation="silu")
+            except GrammarError:
+                raise
+            except Exception as exc:  # noqa: BLE001 -- the native build is what may fail here
+                # The predicate admitted the stack, so what failed is the
+                # extension build or load (toolchain, architecture, ninja).
+                # ``native_extensions[].when_unavailable`` publishes the
+                # compact adapter as the substitute in both residencies; this
+                # is that substitution, and the reason goes where a serve's
+                # log shows it.
+                reason = f"native build unavailable ({type(exc).__name__}: {exc})"
+                _log.warning("fused routed window lane unavailable for a %s stack of %d "
+                             "experts; the compact adapter serves it: %s",
+                             self.family, self.experts, reason)
+            else:
+                object.__setattr__(self, "_fused_adapter", built)
+        if built is None:
+            _log.info("compact window MoE adapter kept for a %s stack of %d experts: %s",
+                      self.family, self.experts, reason)
+            built = native_window_moe_from_bundles(
+                self.down, gate=self.gate, up=self.up, activation="silu")
+        object.__setattr__(self, "_adapter", built)
+        return built
 
 
 def native_window_moe_from_bundles(

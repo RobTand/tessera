@@ -111,6 +111,7 @@ def test_every_route_stamps_its_executed_symbol_as_the_schedule():
     from tessera.serving.scheme import (
         A4_DENSE_GEMM_SYMBOL,
         A4_GROUPED_GEMM_SYMBOL,
+        ROUTED_FUSED_WINDOW_SYMBOL,
         WINDOW_GEMM_SYMBOL,
         WINDOW_MOE_COMPACT_SYMBOL,
     )
@@ -118,5 +119,6 @@ def test_every_route_stamps_its_executed_symbol_as_the_schedule():
     assert bf16_route.DENSE_LAUNCH[0] == WINDOW_GEMM_SYMBOL
     assert fp8_route.DENSE_LAUNCH[0] == WINDOW_GEMM_SYMBOL
     for symbol in (WINDOW_GEMM_SYMBOL, A4_DENSE_GEMM_SYMBOL,
-                   A4_GROUPED_GEMM_SYMBOL, WINDOW_MOE_COMPACT_SYMBOL):
+                   A4_GROUPED_GEMM_SYMBOL, WINDOW_MOE_COMPACT_SYMBOL,
+                   ROUTED_FUSED_WINDOW_SYMBOL):
         assert isinstance(symbol, str) and symbol.strip()
