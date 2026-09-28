@@ -409,6 +409,18 @@ def test_the_surviving_v22_sm121_cells_are_byte_identical(contract):
         "tessera_e4m3_k1_dense_sm121_decode_resident",
         "tessera_e4m3_k1_dense_sm121_batch_resident"}
     assert set(recorded["remeasured_at_v43"]) <= standing
+    # Contract v45 (tessera#694): the kernel behind both fused launches changed
+    # (word stages sized per launch, the odd-rate copy path, the previous-word
+    # load) and the predicate widened to rates 1..8 / routed 1..6, so the four
+    # E4M3 ids v42 and v43 re-measured are re-measured again: the same stub-B
+    # census now records the fused pair on its mixed-rate stacks and modules
+    # too, and the two pinned-image dense censuses record it on 112/112 again
+    # (docs/measurements/2026-09-28-mixed-rate-fused-window.md).  The
+    # executes lists do not change; no withdrawn claim; the digest does not
+    # move.
+    assert set(recorded["remeasured_at_v45"]) == \
+        set(recorded["remeasured_at_v42"]) | set(recorded["remeasured_at_v43"])
+    assert set(recorded["remeasured_at_v45"]) <= standing
     launch = {("TESSERA_E4M3_K1", "dense"): [
                   ("tessera::window_gemm_dense", "native_window_gemm"),
                   ("tessera::fused_window_dense", "native_fused_window_dense")],

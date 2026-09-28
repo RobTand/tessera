@@ -1,5 +1,36 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-09-28 for the fused window kernel's mixed rates (contract
+v45, tessera#694, item 2 of #690). The one persistent kernel behind the fused
+routed (v42) and dense (v43) identities now runs every rate its run table
+already encoded: `Params::slot_words` sizes the word stages per launch from
+the pair's larger rate (`routed_fused.slot_words_for_pair`, `2r + 2 * (r odd)`
+words per column and 64-row half, rounded up to 4), a `Layout<MODE>` template
+places the fixed shared-memory region ahead of the word ring, and the launch
+requests `smem_bytes(mode, slot)` dynamically. The device decides which rates
+a structure reaches: sm_121's 101,376 B per block holds the two-table gate/up
+launch at slot 8 (rates 1-4) and 12 (rates 5-6) but not 16 (rates 7-8), and
+the one-table down/dense launch at every slot, so `ROUTED_LANE_RATES` is
+`(1, 2, 3, 4, 5, 6)` and the dense identity reaches 1..8. Both fused
+`native_extensions` entries publish `lane.requires.column_rates = [1..8]` and
+a NEW structure-scoped field, `column_rates_routed_moe = [1..6]`, which
+`scheme.decide_lane_requirements` decides only over a `routed_moe` structure
+fact and refuses by name without one (`_lanes_a_rung_reaches` and the export
+plan gate pass the cell's structure; the validator holds the field to an
+ascending subset of `column_rates`; a v44 reader refuses the field, the
+fail-closed direction). An odd rate's 64-row half is 8-byte aligned at odd
+half indices, so the producer copies every half in 16-byte `cp.async` pieces
+from the aligned pair before it and the decoder reads it at the slot's third
+word, loading a word past a lane's eight fields only where a field reaches
+into it; one correctness fix rode along (the previous window word is loaded
+for every 8-row group whose window starts inside the half's first word, not
+the first group alone). No cell's `executes`, rungs or flags move: the four
+E4M3 window cells are re-measured on the changed kernel by the same stub-B
+and pinned-image censuses, which now record the fused pair on the stub's
+mixed-rate stacks (E4M3 at q256 896, 928, 1088) and dense modules (q256 832,
+880, 960, 1088) as well as its q256 1024 ones (`remeasured_at_v45`). E2M1 stays on `a4_span2`. See §3.3 "Mixed
+rates" and `docs/measurements/2026-09-28-mixed-rate-fused-window.md`.
+
 Re-stamped 2026-09-28 for the fused window kernel's DENSE identity (contract
 v43, the dense follow-up to tessera#640). The q256 1024 dense and shared-expert
 window Linears -- E4M3 and BF16 -- are served by a SECOND launch identity by
