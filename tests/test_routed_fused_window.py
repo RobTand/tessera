@@ -39,11 +39,17 @@ cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="the lane is a C
 
 #: The rungs the mixed-rate routed tests read (tessera#694): the GLM E4M3
 #: rungs q256 832 (rates 3/4), 928, 1088 (4/5), 1152, the one-rate 768 and
-#: 1280 (rate 5, the largest the two-table gate/up launch fits in the sm_121
-#: shared-memory block), and the low extremes 256 (rate 1) and 384 (1/2); 256
-#: and 576 columns realise each exactly.  Rates 6..8 on gate/up are refused
-#: by name (``test_support_predicate_refuses_the_gate_up_slot_the_device_cannot_hold``).
+#: 1280, 1408 (5/6) and 1536 (rate 6, the largest the two-table gate/up launch
+#: fits in the sm_121 shared-memory block since the 16-byte odd-rate copies),
+#: and the low extremes 256 (rate 1) and 384 (1/2); 256 and 576 columns
+#: realise each exactly.  Rates 7 and 8 on gate/up are refused by name
+#: (``test_support_predicate_refuses_the_gate_up_slot_the_device_cannot_hold``).
 Q256_CASES = [256, 384, 768, 832, 928, 1088, 1152, 1280, 1408, 1536]
+#: The rungs the CUDA-graph capture test replays: the #640 rate-4 rung, the
+#: odd one-rate 768 (rate 3: every odd half takes the aligned-pair copy), the
+#: GLM two-run tables 832 (3/4) and 1088 (4/5), 1152 (4/5, half and half) and
+#: the rate-6 1536 (slot 12 on the two-table launch).
+CAPTURE_Q256 = [1024, 768, 832, 1088, 1152, 1536]
 
 L = 14
 # gate/up: [INTER, HIDDEN] at rate 4 (two 512-row tiles: INTER > 512);
@@ -348,12 +354,18 @@ def test_fused_two_runs_are_bitwise_equal(family):
 
 @cuda
 @pytest.mark.parametrize("family", ["value", "e4m3"])
-def test_fused_forward_captures_and_replays_twice_against_eager(family):
+@pytest.mark.parametrize("q256", CAPTURE_Q256)
+def test_fused_forward_captures_and_replays_twice_against_eager(family, q256):
     """The device work counter is zeroed INSIDE the captured region, so a
     replay starts a fresh work list; two replays must equal the eager forward
-    on the same (static) inputs -- bitwise, the lane being deterministic."""
-    stacks = _stacks(family)
+    on the same (static) inputs -- bitwise, the lane being deterministic.  At
+    every rung of ``CAPTURE_Q256``: the run pairs, block descriptors and the
+    per-launch slot are launch arguments and device tensors the graph holds,
+    so a mixed-rate stack replays exactly like the rate-4 one."""
+    stacks = _stacks(family, q256=q256)
     fused = _fused(_bundles(family, stacks))
+    rates = set(stacks[0][0].rates) | set(stacks[2][0].rates)
+    assert rates <= set(rf.ROUTED_LANE_RATES), (q256, sorted(rates))
     t = 40
     x = torch.randn(t, HIDDEN, device="cuda").bfloat16()
     ids, rw = _routes(t, TOP_K, 31)
