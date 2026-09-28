@@ -1144,6 +1144,24 @@ def test_cell_launch_derivation_uses_the_cells_structure(contract, regime):
     mixed["executes"] = [compact]
     with pytest.raises(ValueError, match="executes"):
         _validate_cell_executes(mixed, "TESSERA_FP8", entry, contract, "synthetic")
+    # At q256 1536 (rate 6) the lane READS the wire but its routed-expert
+    # launch does not reach the rate on the target
+    # (lane.requires.column_rates_routed_moe is 1..5: the two-table gate/up
+    # launch does not fit sm_121's shared memory above it), so an expert stack
+    # derives the compact launch alone -- the structure is what the decision
+    # reads -- while a dense module at the same rung derives the fused dense
+    # identity beside the Triton GEMM, the one-table launch reading every rate.
+    high = dict(synthetic, rungs_q256=[1536], executes=[compact])
+    _validate_cell_executes(high, "TESSERA_FP8", entry, contract, "synthetic")
+    high["executes"] = [compact, fused]
+    with pytest.raises(ValueError, match="executes"):
+        _validate_cell_executes(high, "TESSERA_FP8", entry, contract, "synthetic")
+    dense_high = {
+        "structure": "dense", "regime": regime, "rungs_q256": [1536],
+        "requires_serve_flags": ["TESSERA_SERVE_MODE=resident"],
+        "executes": [{"symbol": "tessera::window_gemm_dense", "decoder": "native_window_gemm"},
+                     {"symbol": "tessera::fused_window_dense", "decoder": "native_fused_window_dense"}]}
+    _validate_cell_executes(dense_high, "TESSERA_FP8", entry, contract, "synthetic")
     synthetic["executes"] = [compact, fused]
     # The dense launch at the same family and rung is refused for an expert
     # stack, and so is the materialising launch v38 removed (tessera#604).

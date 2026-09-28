@@ -673,14 +673,18 @@ def test_only_the_device_backed_cells_rungs_admit_a_routed_stack():
             cell["qualification"] = "compile_only"
             cell["route_status"] = "unbacked"
             # The fused routed window lane reads every rate 1..8 since contract
-            # v45 (tessera#694; at v42-v44 it reached rate-4 rungs only), so at
-            # the moved rung -- rate 6 -- the cell's launches include the lane's
-            # pair; the validator derives that set per rung and refuses a cell
-            # that names a launch its rung cannot make, or omits one it makes.
+            # v45 (tessera#694; at v42-v44 it reached rate-4 rungs only), but
+            # its routed-expert launch reaches rates 1..5 on the target
+            # (lane.requires.column_rates_routed_moe: the two-table gate/up
+            # launch does not fit sm_121's shared memory above them), so at the
+            # moved rung -- rate 6 -- an expert stack's launches are the
+            # lane-free ones; the validator derives that set per rung and
+            # structure and refuses a cell that names a launch its rung cannot
+            # make, or omits one it makes.
             cell["executes"] = [
                 {"symbol": symbol, "decoder": decoder} for symbol, decoder in sorted(
                     launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE, regime="batch",
-                                 mode="resident", lanes=("tessera_routed_fused_e4m3",)))]
+                                 mode="resident", lanes=()))]
             moved = True
     assert moved, "test premise: the packaged table publishes a batch routed cell"
     validate_serving_contract(doc)

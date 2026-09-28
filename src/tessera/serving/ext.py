@@ -111,7 +111,7 @@ LANE_FIELDS = ("decoder", "requires")
 #: a property of a LATER slice, ``layout.slice_unit`` -- is caught.
 LANE_REQUIREMENT_FIELDS = ("column_rates", "window_bits", "body", "plane",
                            "release_overrides", "diagonals", "rotation",
-                           "start_state", "grid_arities")
+                           "start_state", "grid_arities", "column_rates_routed_moe")
 
 #: The window GEMV's lane, and the reason this block exists.
 #:
@@ -221,6 +221,13 @@ ROUTED_FUSED_SOURCE = "csrc/routed_fused_window.cu"
 #: ``tests/test_routed_fused_window.py`` ties the two.
 ROUTED_FUSED_LANE_REQUIRES = {
     "column_rates": [1, 2, 3, 4, 5, 6, 7, 8],
+    # The rates the ROUTED-EXPERT (gate/up) launch reaches on the target:
+    # its two 32 KB tables plus the word stages for rates 6..8 exceed sm_121's
+    # 101,376 B per-block opt-in shared memory, so those stacks keep the
+    # compact adapter; the one-table down/dense launch reads every rate.
+    # Derived in routed_fused.ROUTED_LANE_RATES from the kernel's own layout
+    # and pinned equal here by tests/test_routed_fused_window.py.
+    "column_rates_routed_moe": [1, 2, 3, 4, 5],
     "window_bits": [14],
     "body": "window",
     "plane": "channel",

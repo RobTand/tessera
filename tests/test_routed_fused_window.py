@@ -482,6 +482,14 @@ def test_support_predicate_refuses_the_gate_up_slot_the_device_cannot_hold():
     lib = rf._ext("value")
     have = int(lib.max_dynamic_smem_bytes(torch.cuda.current_device()))
     assert int(lib.smem_bytes(0, 16)) == rf.smem_bytes(0, 16) and int(lib.smem_bytes(2, 16)) == rf.smem_bytes(2, 16)
+    # predicate == loader on the target: the rates whose one-rate gate/up slot
+    # this device holds are exactly the published column_rates_routed_moe
+    admitted = tuple(r for r in rf.RATES
+                     if rf.smem_bytes(0, rf._round_up_4(rf.slot_words_for_rate(r))) <= have)
+    if have == rf.SM121_MAX_DYNAMIC_SMEM:
+        assert admitted == rf.ROUTED_LANE_RATES
+    else:  # another device: the published set is sm_121's, and this test says which device it ran on
+        assert admitted, have
     for q256, slot in ((1536, 16), (1280, 12)):
         b = _bundles("value", _stacks("value", q256=q256, cut=False))
         reason = rf.fused_routed_window_supported(b.gate, b.up, b.down)
@@ -563,6 +571,15 @@ def test_the_published_lane_predicate_is_the_kernels_shape():
     from tessera.serving import ext
 
     assert ext.ROUTED_FUSED_LANE_REQUIRES["column_rates"] == list(rf.RATES) == list(range(1, 9))
+    # the routed-expert launch's set is DERIVED from the kernel's shared-memory
+    # layout at the target's opt-in limit, and published equal to it
+    assert ext.ROUTED_FUSED_LANE_REQUIRES["column_rates_routed_moe"] == list(rf.ROUTED_LANE_RATES) \
+        == [1, 2, 3, 4, 5]
+    assert rf.ROUTED_LANE_RATES == tuple(
+        r for r in rf.RATES
+        if rf.smem_bytes(0, rf.slot_words_for_pair(torch.tensor([r, 0, 64, 0, 0, 64, 0, 0], dtype=torch.int32)))
+        <= rf.SM121_MAX_DYNAMIC_SMEM)
+    assert all(rf.smem_bytes(2, rf.slot_words_for_rate(r)) <= rf.SM121_MAX_DYNAMIC_SMEM for r in rf.RATES)
     assert ext.ROUTED_FUSED_LANE_REQUIRES["window_bits"] == [rf.WINDOW_BITS]
     assert "start_state" not in ext.ROUTED_FUSED_LANE_REQUIRES   # reads a cut and a whole alike
     assert ext.ROUTED_FUSED_E4M3_MODULE_NAME == rf.MODULE_NAME_E4M3

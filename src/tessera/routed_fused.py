@@ -129,6 +129,15 @@ MIN_COLS = 4 * BK
 #: fits slots up to 12 words (rates <= 5) and the down/dense launch every rate.
 WORD_STAGES = 3
 SMEM_FIXED = {0: 91_216, 1: 91_216, 2: 58_448}
+#: The per-block dynamic shared memory sm_121 (GB10, the contract's target
+#: platform) lets a kernel opt in to -- ``cudaDevAttrMaxSharedMemoryPerBlock
+#: Optin`` there; the library reads the live value per device, this is the
+#: figure the PUBLISHED predicate is derived from.
+SM121_MAX_DYNAMIC_SMEM = 101_376
+
+
+def _round_up_4(words: int) -> int:
+    return -(-int(words) // 4) * 4
 
 
 def chunk_words(rate: int) -> int:
@@ -149,12 +158,25 @@ def slot_words_for_pair(pair: torch.Tensor) -> int:
     multiple of 4 (16-byte copies stay aligned), at least 4."""
     r_lo, _c0, _n_lo, _w0, r_hi, _c1, n_hi, _w1 = (int(v) for v in pair.reshape(8).tolist())
     need = max(slot_words_for_rate(r_lo), slot_words_for_rate(r_hi) if n_hi > 0 else 0, 4)
-    return -(-need // 4) * 4
+    return _round_up_4(need)
 
 
 def smem_bytes(mode: int, slot_words: int) -> int:
     """Dynamic shared memory the launch of ``mode`` needs at ``slot_words``-word slots."""
     return SMEM_FIXED[int(mode)] + WORD_STAGES * 2 * BK * int(slot_words) * 4
+
+
+#: The rates a ROUTED-EXPERT stack (the two-table gate/up launch, MODE 0/1)
+#: reaches on the target platform: those whose one-rate slot fits sm_121's
+#: opt-in shared memory.  A two-rate pair's slot is the larger rate's, so the
+#: set is closed under bracketing.  Published as the fused lanes'
+#: ``column_rates_routed_moe`` (``serving.ext.ROUTED_FUSED_LANE_REQUIRES``,
+#: contract v45, tessera#694); the down/dense one-table launch reads every
+#: rate in ``RATES``.  Derived, not typed: the day the layout changes, this
+#: changes with it and the contract's pin fails until the JSON follows.
+ROUTED_LANE_RATES = tuple(
+    r for r in RATES
+    if smem_bytes(0, _round_up_4(slot_words_for_rate(r))) <= SM121_MAX_DYNAMIC_SMEM)
 
 
 def smem_reason(mode: int, slot_words: int, device: torch.device, family: str) -> "str | None":
