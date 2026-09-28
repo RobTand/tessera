@@ -654,6 +654,28 @@ def test_construction_refusals(stack, nvfp4_runtime):
         _build(fp8_scheme, _layer())
 
 
+def test_the_builder_names_its_routed_layer_for_the_route_trace(stack, nvfp4_runtime):
+    """The NVFP4 builder binds the module name, as ``moe_route``'s builder does.
+
+    vLLM's fused MoE stores no ``prefix``, so without the bind every routed
+    NVFP4 dispatch reached ``emit_route`` unnamed.  On GLM-5.3 PACT BAL
+    (2026-09-28, TP2, both the no-spec and the MTP serves) all 29 NVFP4 stacks
+    traced ``module_names: []`` with every dispatch ``dispatches_without_prefix``,
+    while the BF16 and FP8 stacks were named -- and the route.trace gate reads
+    a count as no name.  A name vLLM did set is still left alone.
+    """
+    _wires, scheme, _reference = stack
+    layer = _layer()
+    nvfp4_moe_route.build_tessera_nvfp4_moe_method(
+        scheme, "language_model.model.layers.4.mlp.experts", "resident", layer)
+    assert layer.prefix == "language_model.model.layers.4.mlp.experts"
+    theirs = _layer()
+    theirs.prefix = "model.layers.45.mlp.experts"
+    nvfp4_moe_route.build_tessera_nvfp4_moe_method(
+        scheme, "language_model.model.layers.4.mlp.experts", "resident", theirs)
+    assert theirs.prefix == "model.layers.45.mlp.experts"
+
+
 def test_geometry_refusals_arrive_at_create_weights(stack, nvfp4_runtime):
     _wires, scheme, _reference = stack
     for args, kwargs, message in (

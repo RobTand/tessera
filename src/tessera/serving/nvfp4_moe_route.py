@@ -84,7 +84,7 @@ from ..errors import GrammarError
 from ..moe_layout import W13_PROJECTIONS, validate_moe_wire_lengths
 from .lane import MODE_RESIDENT, MODES
 from .residency import layer_resident_tensors
-from .moe_route import SHARD_TO_GROUP, _packed_group_shard_plan
+from .moe_route import SHARD_TO_GROUP, _bind_module_prefix, _packed_group_shard_plan
 from .scheme import (A4_GROUPED_GEMM_SYMBOL, GROUP_SIZE, MOE_GEMM_SYMBOL, MOE_GROUPS, ROUTES,
                      STRUCTURE_ROUTED_MOE, TESSERA_NVFP4, expert_role_declarations,
                      launch_pairs, moe_census_symbol_base as census_symbol_base,
@@ -318,6 +318,9 @@ def build_tessera_nvfp4_moe_method(scheme: Mapping, prefix: str, mode: str, laye
         raise ValueError(
             f"tessera target {prefix!r}: this builder serves {TESSERA_NVFP4} expert stacks "
             f"and the sidecar declares {family}; scheme.MOE_BUILDERS names each family's own")
+    # The route trace names a module by ``layer.prefix`` and vLLM's fused MoE
+    # stores none; ``moe_route._bind_module_prefix`` says why and what it keeps.
+    _bind_module_prefix(layer, prefix)
     from .scheme import refuse_a_family_with_no_expert_route
     refuse_a_family_with_no_expert_route(family, prefix)
     # THE PLATFORM GATE FOR THE EXPERT ROUTE (#457), asked at this builder's
