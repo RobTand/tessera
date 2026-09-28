@@ -94,6 +94,8 @@ import re
 import sys
 from typing import Any, Iterable
 
+from ..serving_parts import sha256_file
+
 __all__ = [
     "SCHEMA",
     "BuildIdentityError",
@@ -268,7 +270,7 @@ def _read_dispatch(line: str) -> dict | None:
 def _sha256(path: Path) -> str | None:
     if not path.is_file():
         return None
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    return sha256_file(path)
 
 
 def _autotune_digest(slot: Path) -> tuple[int, str | None]:
