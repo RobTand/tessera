@@ -573,6 +573,31 @@ def prepare_span2_compact(wire: CompactWire, *, rows=None, cols=None,
 # ---------------------------------------------------------------------------
 
 
+def _repack_destination(size: int, device, scratch: "dict | None") -> torch.Tensor:
+    """The zeroed uint8 ``[size]`` buffer one unit's repacked words land in.
+
+    Without ``scratch`` it is a fresh tensor the unit keeps (the dense route
+    retains its ``Repacked``).  With the loader's **caller-owned** scratch it
+    is a view of one reusable buffer per scratch dict: the routed intake
+    copies ``rep.words`` into the expert's axis slot inside the same load
+    callback (``WindowUnitAxis.put``), so the buffer is free again before the
+    next unit.  A fresh ~2 MB request per projection is what the runtime's
+    ``max_split_size_mb=20`` load context can turn into a dead 20 MiB slab --
+    one per unit, 16.5 GB over one GLM q832 stack on T8R (tessera#724) --
+    the same amplification ``docs/measurements/
+    tessera-a4-loader-staging-20260916.md`` measured for the A4 loader.
+    """
+    if scratch is None:
+        return torch.zeros(size, dtype=torch.uint8, device=device)
+    buf = scratch.get("window_repack")
+    if buf is None or buf.numel() < size:
+        buf = torch.empty(size, dtype=torch.uint8, device=device)
+        scratch["window_repack"] = buf
+    flat = buf[:size]
+    flat.zero_()
+    return flat
+
+
 def _repack_window_compact(metadata: ParsedMetadata, rows: "tuple[int, int]",
                            cols: "tuple[int, int]", device,
                            scratch: "dict | None" = None):
@@ -583,6 +608,10 @@ def _repack_window_compact(metadata: ParsedMetadata, rows: "tuple[int, int]",
     permutation, runs, tile geometry and byte-for-byte words -- produced by
     ``kernel_wire.window_repack_stream_cuda`` from the packed wire bits, with
     the rank's row range read in place and codes past ``rows_local`` zeroed.
+
+    With ``scratch`` the returned ``words`` view the scratch's reusable
+    buffer and are valid until the next call with the same scratch
+    (:func:`_repack_destination`); the caller copies them out first.
     """
     from . import kernel_wire as kw
     from .kernel_window_gemv import Repacked, TILE_ROWS
@@ -628,20 +657,21 @@ def _repack_window_compact(metadata: ParsedMetadata, rows: "tuple[int, int]",
     for present in sorted(set(rates_local)):
         groups[present] = [c for c in order if rates_local[c] == present]
     tile_bytes = sum(len(which) * 64 * present for present, which in groups.items())
-    flat = torch.zeros(n_tiles * tile_bytes, dtype=torch.uint8, device=device)
+    flat = _repack_destination(n_tiles * tile_bytes, device, scratch)
     body = _plane_u8(metadata.chunks[PlaneKind.BODY], device, scratch, "body")
     runs, word0, group_col0, group_byte0 = [], 0, 0, 0
     for present in sorted(groups):
         which = groups[present]
         n = len(which)
         chunk_bytes = 64 * present
-        part = kw.window_repack_stream_cuda(
+        # Each rate group writes its own disjoint slice of every tile, in
+        # place; the slices' union is the whole buffer (tessera#724).
+        kw.window_repack_stream_cuda(
             body, col_starts=col_starts, perm=perm, row0=r0,
             rows_local=rows_local, rate=present, group_col0=group_col0,
             group_byte0=group_byte0, n_cols=n, n_tiles=n_tiles,
             chunk_bytes=chunk_bytes, tile_bytes=tile_bytes, device=device,
-            tile_rows=TILE_ROWS, scratch=scratch)
-        flat = flat + part
+            tile_rows=TILE_ROWS, scratch=scratch, out=flat)
         runs.append((present, group_col0, n, word0))
         word0 += n * 16 * present
         group_col0 += n
@@ -677,6 +707,12 @@ def prepare_window_compact(wire: CompactWire, *, rows=None, cols=None,
     ``native[codes_of_state]`` and ``codes_of_state``/``native`` ride the
     bundle) or ``"value"`` (the BF16 route: the table holds bf16 values).  It
     defaults to the grid's own family; a grid that is neither is refused.
+
+    ``scratch`` is the loader's caller-owned transfer dict.  With it,
+    ``rep.words`` is a view of a reusable buffer that the next call with the
+    same scratch overwrites: the caller copies the unit out first, as the
+    routed intake's ``WindowUnitAxis.put`` does in the same load callback.  A
+    unit that must outlive the call (the dense route's) is built without it.
     """
     from . import kernel_window_gemv as kg
     from .alphabet import require_hardware_byte_grid
