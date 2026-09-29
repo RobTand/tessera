@@ -102,6 +102,7 @@ def main() -> int:
     args = ap.parse_args()
 
     from tessera.serving.scheme import lane_rate_report, lane_wire_report
+    from tessera.serving_parts import read_serving_manifest
 
     # /2: a lane's verdict now carries the published ``requirements`` it was
     # decided against and the ``refusals`` by name, because /1 could only ever
@@ -115,8 +116,7 @@ def main() -> int:
         declared = []
         manifest = os.path.join(path, "tessera_serving_manifest.json")
         if os.path.isfile(manifest):
-            with open(manifest) as fh:
-                declared = list(json.load(fh).get("requires_lanes") or ())
+            declared = list(read_serving_manifest(manifest).get("requires_lanes") or ())
         if args.manifest_lanes:
             lanes = declared
         elif not lanes:
