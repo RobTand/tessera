@@ -199,7 +199,7 @@ from tessera.decode import replay_table_bytes  # noqa: E402
 from tessera.serving_parts import (  # noqa: E402
     BODY_LAYER, SCHEMA as PART_SCHEMA, dense_resident_bytes_resident_mode, export_identity,
     mtp_draft_embed_head_duplicate_bytes, parse_partition, make_artifact_readable,
-    partition_owner, per_rank_fit_items, routed_fused_unit_bytes,
+    partition_owner, per_rank_fit_items, require_json, routed_fused_unit_bytes,
     routed_window_part_resident_bytes, routed_window_unit_resident_bytes, sha256_file,
     summarize_modules, validate_explicit_plan, write_serving_manifest)
 from tessera.serving_plan import (  # noqa: E402
@@ -2342,17 +2342,29 @@ def main():
                                   "cached_intake_window_bytes",
                                   # Where shard digests may be reused from changes no
                                   # stamped digest; the receipt records how each was taken.
-                                  "source_digest_cache"}}
+                                  "source_digest_cache",
+                                  # A location, which differs per checkout; its
+                                  # content digest is recorded below instead.
+                                  "producer_authority"}}
         if research_execution is not None:
             options["research_selected_moe"] = research_execution.record()
         if priced_inputs is not None:
             options["priced_inputs_sha256"] = priced_inputs.sha256
         options["plan"] = plan_snapshot.published() if plan_snapshot is not None else None
-        for key in ("hessian", "input_scales"):
+        # The authority file's digest also binds the canonical capture it
+        # defines: the file is self-contained and ``producer_authority.load``
+        # executes those bytes, keyed by this same digest.
+        for key in ("hessian", "input_scales", "producer_authority"):
             path = getattr(args, key)
             options[key + "_sha256"] = sha256_file(path) if path else None
         if cache_path is not None:
             options[cache_scope + "_sha256"] = sha256_file(cache_path)
+        # The manifest write at the end of the run serializes these; check
+        # them now, before the source shards hash or one unit encodes.
+        try:
+            require_json(options, "export_partition.identity.options")
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
         owns = lambda name: partition_owner(name, count) == index
         selected = sorted(name for names in shards.values() for name in names if owns(name))
         if not selected:
@@ -2380,6 +2392,10 @@ def main():
         identity["encoder_fixture_id"] = encoder_fixture_id().hex()
         partition_record = {"schema": PART_SCHEMA, "index": index, "count": count,
                             "identity": identity, "source_tensors": selected}
+        try:
+            require_json(partition_record, "export_partition")
+        except ValueError as exc:
+            raise SystemExit(str(exc)) from exc
         shards = {shard: [name for name in names if owns(name)] for shard, names in shards.items()}
         shards = {shard: names for shard, names in shards.items() if names}
         # Planning and the construction gate above see the same complete plan

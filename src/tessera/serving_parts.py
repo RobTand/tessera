@@ -31,6 +31,40 @@ def write_serving_manifest(path: Path, manifest: dict) -> None:
     path.write_bytes(json.dumps(manifest, separators=(",", ":")).encode("utf-8"))
 
 
+def require_json(value, what: str) -> None:
+    """Refuse ``value`` unless :func:`write_serving_manifest` can serialize it.
+
+    A driver calls this on a record it will write at the end of a long run,
+    so a non-JSON value (an argparse ``Path``, say) refuses in seconds and by
+    its key, not after the encode. Raises ``ValueError`` naming ``what`` and
+    the dotted key of the first offending value.
+    """
+    try:
+        json.dumps(value, separators=(",", ":"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{what} is not JSON: {_first_non_json(value, what) or exc}") from exc
+
+
+def _first_non_json(value, where):
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if not isinstance(key, (str, int, float, bool)) and key is not None:
+                return f"{where} has a {type(key).__name__} key"
+            found = _first_non_json(item, f"{where}.{key}")
+            if found:
+                return found
+        return None
+    if isinstance(value, (list, tuple)):
+        for index, item in enumerate(value):
+            found = _first_non_json(item, f"{where}[{index}]")
+            if found:
+                return found
+        return None
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return None
+    return f"{where} is {type(value).__name__}"
+
+
 def unique_json_pairs(pairs):
     """Object-pairs hook refusing duplicate keys (tessera#703).
 

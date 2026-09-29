@@ -228,6 +228,55 @@ def test_exporter_writes_only_owned_tensors_and_withholds_loadable_config(tmp_pa
     parts.merge_serving_parts(paths, tmp_path / "merged", source)
 
 
+def test_a_partition_identity_records_the_producer_authority_content_not_its_path(tmp_path, monkeypatch):
+    """The part identity binds the authority file's bytes, never its location.
+
+    A partitioned export with ``--producer-authority`` put the argparse
+    ``Path`` into the identity and died writing the manifest after the whole
+    encode. Parts that read byte-identical authority files at different paths
+    (one PrismaBuild checkout each) must stamp equal identities and merge.
+    """
+    import importlib.util
+    torch = pytest.importorskip("torch")
+    safetensors = pytest.importorskip("safetensors.torch")
+    exporter = importlib.import_module("tessera.export_serving")
+    source = tmp_path / "source"
+    source.mkdir()
+    tensors = {f"model.layers.{layer}.mlp.down_proj.weight": torch.ones(32, 16)
+               for layer in range(2)}
+    tensors["lm_head.weight"] = torch.ones(32, 16)
+    safetensors.save_file(tensors, str(source / "model.safetensors"))
+    (source / "config.json").write_text(json.dumps({"architectures": ["Example"]}))
+    authority = (Path(__file__).parent / "reuse_authority_fixture.py").read_bytes()
+    paths, options = [], []
+    for rank, checkout in ((0, "checkout-a"), (1, "checkout-b")):
+        where = tmp_path / checkout / "authority.py"
+        where.parent.mkdir()
+        where.write_bytes(authority)
+        out = tmp_path / f"export{rank}"
+        monkeypatch.setattr("sys.argv", ["export", str(source), str(out), "--grid", "E4M3",
+            "--q256", "1024", "--layers", "0", "--device", "cpu", "--partition", f"{rank}/2",
+            "--partition-runtime-image", "test/image@sha256:" + "b" * 64,
+            "--producer-authority", str(where)])
+        exporter.main()
+        manifest = json.loads((out / "tessera_serving_manifest.json").read_text())
+        stamped = manifest["export_partition"]["identity"]["options"]
+        assert "producer_authority" not in stamped
+        assert stamped["producer_authority_sha256"] == hashlib.sha256(authority).hexdigest()
+        options.append(stamped)
+        paths.append(out)
+    assert options[0] == options[1]
+    parts.merge_serving_parts(paths, tmp_path / "merged", source)
+
+
+def test_a_non_json_identity_value_refuses_by_its_key():
+    """The exporter checks its identity before the encode, not at the manifest write."""
+    identity = {"options": {"grid": "E4M3", "producer_authority": Path("/checkout/authority.py")}}
+    with pytest.raises(ValueError, match=r"identity\.options\.producer_authority is \w*Path"):
+        parts.require_json(identity, "identity")
+    parts.require_json({"options": {"grid": "E4M3", "layers": [0, 1], "plan": None}}, "identity")
+
+
 def test_partitioned_expert_wires_equal_one_process_export(tmp_path, monkeypatch):
     """Actual CPU encode, then compare every emitted tensor and declared scheme."""
     import importlib.util
