@@ -342,7 +342,13 @@ class WindowUnitAxis:
         slot["runs"][expert] = rep.runs
         slot["scale"][expert] = unit.scale
         slot["perm"][expert] = rep.perm
-        init = unit.initial_state
+        # Both kernels read the start state at the REPACKED column (the fused
+        # lane's ``init[p]``, the grouped GEMM's ``init_all[e, kglob]``), as
+        # ``prepare_window_gemm``'s ``init_perm`` holds it; the unit keeps it in
+        # original order.  On a mixed-rate stack the repack permutes columns,
+        # so storing the original order hands every TP row cut's first rows
+        # another column's state (tessera#729).
+        init = unit.permuted_start_state()
         if init is None:
             slot["init"][expert] = 0
             slot["has_init"][expert] = 0

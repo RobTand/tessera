@@ -100,6 +100,44 @@ def _bundles(family, stacks):
     return PackedWindowMoeBundles(gate=gate, up=up, down=down, family=family)
 
 
+def _axis_bundles(family, stacks):
+    """The same stacks through the serving loader's path: every expert's unit
+    placed on a ``WindowUnitAxis`` (the start state on the unit itself, in
+    original column order, as ``compact_prep.prepare_window_compact`` hands
+    it over), ``finish`` and ``prepare_grouped_window_gemm_from_soa`` -- what
+    ``moe_route._RankLocalPackedIntake`` builds on a TP rank > 0."""
+    import dataclasses
+
+    from tessera.native_window_moe import WindowUnitAxis
+
+    arithmetic = "folded" if family == "value" else "epilogue"
+    experts = len(stacks[0])
+    parts = {"gate": ("w13", "gate_proj"), "up": ("w13", "up_proj"), "down": ("w2", "down_proj")}
+    axes = {"w13": WindowUnitAxis(experts, ("gate_proj", "up_proj"), family=family),
+            "w2": WindowUnitAxis(experts, ("down_proj",), family=family)}
+    for name, stack in zip(("gate", "up", "down"), stacks):
+        group, part = parts[name]
+        for e, ex in enumerate(stack):
+            state = None if ex.init is None else ex.init.to(device="cuda", dtype=torch.int32)
+            axes[group].put(part, e, dataclasses.replace(ex.unit, initial_state=state))
+    soa = {g: axes[g].finish() for g in axes}
+
+    def bundle(name):
+        group, part = parts[name]
+        slot = soa[group][part]
+        return wgg.prepare_grouped_window_gemm_from_soa(
+            words_all=slot["words"], table_all=slot["table"], codes_all=slot["codes"],
+            native_all=slot["native"], scale_all=slot["scale"], runs_all=slot["runs"],
+            init_all=slot["init"], has_init=slot["has_init"], word_off=slot["word_off"],
+            tile_words=slot["tile_words"], total_words=slot["total_words"],
+            run_off=slot["run_off"], perm_all=slot["perm"], rows=slot["rows"],
+            cols=slot["cols"], experts=experts, window_bits=slot["window_bits"],
+            family=family, block_m=32, block_n=64, block_k=64, arithmetic=arithmetic)
+
+    return PackedWindowMoeBundles(gate=bundle("gate"), up=bundle("up"), down=bundle("down"),
+                                  family=family)
+
+
 def _fused(bundles):
     return rf.FusedRoutedWindowMoE.from_bundles(bundles.gate, bundles.up, bundles.down)
 
@@ -620,18 +658,45 @@ def test_the_published_lane_predicate_is_the_kernels_shape():
 @cuda
 @pytest.mark.parametrize("family", ["value", "e4m3"])
 @pytest.mark.parametrize("q256", Q256_CASES)
-def test_fused_stages_decode_every_rate_exactly(family, q256):
+def test_the_loader_axis_stores_the_start_state_the_kernels_read(family, q256):
+    """The serving loader's ``WindowUnitAxis`` stack and the per-unit
+    ``prepare_grouped_window_gemm`` stack are one kernel input: both kernels
+    (the fused lane's ``init[p]`` and the grouped GEMM's ``init_all[e, kglob]``)
+    read the start state at the REPACKED column, so the axis must hold
+    ``permuted_start_state()``, not the unit's original-order state.  On a
+    mixed-rate rung the repack permutes columns, and an original-order state
+    corrupts every row of a TP row cut whose window still holds pre-cut bits:
+    rows t with (t + 1) * rate < L, i.e. ceil(L / rate) - 1 of them
+    (tessera#729)."""
+    stacks = _stacks(family, q256=q256)
+    ref, axis = _bundles(family, stacks), _axis_bundles(family, stacks)
+    for name in ("gate", "up", "down"):
+        a, b = getattr(ref, name), getattr(axis, name)
+        assert torch.equal(a.perm_all, b.perm_all), f"q256={q256} {name}: perm differs"
+        assert torch.equal(a.has_init, b.has_init), f"q256={q256} {name}: has_init differs"
+        bad = a.init_all != b.init_all
+        assert not bool(bad.any()), (
+            f"{family} q256={q256} {name}: the axis start state differs from the prepared "
+            f"stack's in {int(bad.sum())} of {bad.numel()} (expert, repacked column) entries")
+
+
+@cuda
+@pytest.mark.parametrize("family", ["value", "e4m3"])
+@pytest.mark.parametrize("q256", Q256_CASES)
+@pytest.mark.parametrize("build", ["prepare", "axis"])
+def test_fused_stages_decode_every_rate_exactly(family, q256, build):
     """One-hot rows through the real kernel, both launches: each output
     element is one decoded weight through the family's epilogue, so
     ``gate_up`` (both halves, two run tables and two block descriptors per
     item) and ``down_routes`` (top_k = 1: the one-route sum is the route) must
     equal the torch restatement of that arithmetic BITWISE for every (expert,
     column, row) -- a wrong column map, run offset or field position at any
-    rate, in either run, with or without a start state, shows here."""
+    rate, in either run, with or without a start state, shows here.  ``axis``
+    builds the stack the way the serving loader does (``_axis_bundles``)."""
     stacks = _stacks(family, q256=q256)
     gate, up, down = stacks
     assert set(gate[0].rates) <= set(rf.RATES) and len(set(gate[0].rates)) in (1, 2)
-    fused = _fused(_bundles(family, stacks))
+    fused = _fused((_bundles if build == "prepare" else _axis_bundles)(family, stacks))
     assert fused.tile_words_gate_up == 16 * sum(gate[0].rates)
     assert fused.tile_words_down == 16 * sum(down[0].rates)
     # gate/up: HIDDEN one-hot tokens, every one routed to every expert
