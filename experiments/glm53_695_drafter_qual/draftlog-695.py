@@ -29,13 +29,22 @@ pool's own spread (the stub's eager serve is not bitwise repeatable).
                  identity rate is read against. A context a batch case sends
                  n times in each arm contributes n*n pairs, so the rates are
                  also given with every shared context weighted once.
-  paired         the same comparison on the same contexts: with an eager arm R
-                 as the reference and another eager arm O, over the contexts
-                 ARM, R and O all reached, ARM's per-context identity with R
-                 minus O's, per position (contexts weighted once), with a 95%
-                 bootstrap interval over contexts. An interval that holds zero
-                 means ARM agrees with eager as often as eager agrees with
-                 itself.
+  common         every rate again on the contexts that ARM and every eager arm
+                 reached, each context weighted once. The arms' context sets
+                 differ when their probes differ (the acceptance prompts' contexts
+                 agree more often than the equality suite's), so only these
+                 rates compare one pair with another:
+                   spread         per position, the lowest and highest identity
+                                  over the eager pairs;
+                   vs_eager       ARM's identity with each eager arm, and whether
+                                  it lies below, inside or above that spread;
+                   per_reference  with each eager arm R as the reference, ARM's
+                                  identity with R minus the other eager arms'
+                                  mean identity with R, per position and for the
+                                  whole vector, with a 95% bootstrap interval
+                                  over contexts. An interval that holds zero
+                                  means ARM agrees with R as often as eager
+                                  agrees with R.
 
 Exit 0 when at least one step aligned and every aligned step is a member, 1 on a
 non-member, 2 when nothing aligned.
@@ -180,33 +189,73 @@ def identity(steps_a, steps_b):
                 vector_identity_context_weighted=ctx_whole / c if c else None)
 
 
-def paired(steps_j, steps_r, steps_o, draws=2000, seed=0):
-    """ARM's identity with reference R minus eager arm O's, on the contexts all three reached."""
+def per_reference(by_j, by_r, by_others, common, draws=2000, seed=0):
+    """ARM's identity with reference R minus the other eager arms' mean identity with R."""
     import random
-    by_j, by_r, by_o = by_context(steps_j), by_context(steps_r), by_context(steps_o)
-    common = sorted(by_j.keys() & by_r.keys() & by_o.keys())
-    if not common:
-        return dict(contexts=0)
     rows = []
     for state in common:
         _, pj, wj = agreement(by_j[state], by_r[state])
-        _, po, wo = agreement(by_o[state], by_r[state])
+        others = [agreement(by_o[state], by_r[state]) for by_o in by_others]
+        po = [sum(o[1][i] for o in others) / len(others) for i in range(len(pj))]
+        wo = sum(o[2] for o in others) / len(others)
         rows.append((pj + [wj], po + [wo]))
+    if not rows:
+        return dict(contexts=0)
     width = min(len(r[0]) for r in rows)
-    mean = lambda idx, which: sum(rows[t][which][i] for t in idx) / len(idx)
-    all_idx = range(len(rows))
     rng = random.Random(seed)
-    out = dict(contexts=len(common), arm=[], other=[], diff=[], diff_ci95=[])
     boot = [[rng.randrange(len(rows)) for _ in rows] for _ in range(draws)]
+    out = dict(contexts=len(rows), arm=[], others=[], diff=[], diff_ci95=[],
+               columns=[f"position {i}" for i in range(width - 1)] + ["whole vector"])
     for i in range(width):
-        a = sum(rows[t][0][i] for t in all_idx) / len(rows)
-        b = sum(rows[t][1][i] for t in all_idx) / len(rows)
+        a = sum(r[0][i] for r in rows) / len(rows)
+        b = sum(r[1][i] for r in rows) / len(rows)
         diffs = sorted(sum(rows[t][0][i] - rows[t][1][i] for t in idx) / len(idx) for idx in boot)
         out["arm"].append(a)
-        out["other"].append(b)
+        out["others"].append(b)
         out["diff"].append(a - b)
         out["diff_ci95"].append([diffs[int(0.025 * draws)], diffs[int(0.975 * draws) - 1]])
-    out["columns"] = [f"position {i}" for i in range(width - 1)] + ["whole vector"]
+    return out
+
+
+def common_rates(judged_steps, eager_steps):
+    """Every identity rate on the contexts all arms reached, each context weighted once."""
+    by_j = by_context(judged_steps)
+    by_e = {e: by_context(steps) for e, steps in eager_steps.items()}
+    common = set(by_j)
+    for by in by_e.values():
+        common &= set(by)
+    common = sorted(common)
+
+    def rate(a, b):
+        if not common:
+            return None
+        per = [agreement(a[c], b[c]) for c in common]
+        width = min(len(p[1]) for p in per)
+        return dict(per_position=[sum(p[1][i] for p in per) / len(per) for i in range(width)],
+                    vector=sum(p[2] for p in per) / len(per))
+
+    names = list(by_e)
+    eager_pairs = {f"{a}~{b}": rate(by_e[a], by_e[b]) for i, a in enumerate(names) for b in names[i + 1:]}
+    out = dict(contexts=len(common), eager_pairs=eager_pairs)
+    if eager_pairs and common:
+        width = min(len(r["per_position"]) for r in eager_pairs.values())
+        lo = [min(r["per_position"][i] for r in eager_pairs.values()) for i in range(width)]
+        hi = [max(r["per_position"][i] for r in eager_pairs.values()) for i in range(width)]
+        vlo = min(r["vector"] for r in eager_pairs.values())
+        vhi = max(r["vector"] for r in eager_pairs.values())
+        out["spread"] = dict(per_position=[[a, b] for a, b in zip(lo, hi)], vector=[vlo, vhi])
+        vs = {}
+        for e in names:
+            r = rate(by_j, by_e[e])
+            where = ["below" if x < lo[i] else "above" if x > hi[i] else "inside"
+                     for i, x in enumerate(r["per_position"][:width])]
+            vwhere = "below" if r["vector"] < vlo else "above" if r["vector"] > vhi else "inside"
+            vs[e] = dict(r, position_vs_spread=where, vector_vs_spread=vwhere)
+        out["vs_eager"] = vs
+    if len(names) >= 2 and common:
+        out["per_reference"] = {
+            r: per_reference(by_j, by_e[r], [by_e[o] for o in names if o != r], common)
+            for r in names}
     return out
 
 
@@ -231,9 +280,7 @@ def main():
     record["identity_eager_pairs"] = {
         f"{a}~{b}": identity(steps_of(eager[a]), steps_of(eager[b]))
         for i, a in enumerate(eager_arms) for b in eager_arms[i + 1:]}
-    record["paired"] = {
-        f"ref {r}, other {o}": paired(steps_of(judged), steps_of(eager[r]), steps_of(eager[o]))
-        for r in eager_arms for o in eager_arms if o != r}
+    record["common"] = common_rates(steps_of(judged), {e: steps_of(eager[e]) for e in eager_arms})
     if len(eager_arms) >= 2:
         record["eager_leave_one_out"] = {
             e: [judge(s["steps"], pool_of(v for o, v in eager.items() if o != e)) for s in eager[e]]
@@ -255,14 +302,25 @@ def main():
                   f"vector {None if j['vector_identity'] is None else round(j['vector_identity'], 4)}; "
                   f"contexts weighted once {[round(x, 4) for x in j['per_position_identity_context_weighted']]} "
                   f"vector {None if j['vector_identity_context_weighted'] is None else round(j['vector_identity_context_weighted'], 4)}")
-    for name, j in record["paired"].items():
+    com = record["common"]
+    fmt = lambda xs: "[" + ", ".join(f"{x:.4f}" for x in xs) + "]"
+    print(f"  common contexts (reached by every arm): {com['contexts']}")
+    for pair, r in com.get("eager_pairs", {}).items():
+        if r:
+            print(f"    eager {pair}: per-position {fmt(r['per_position'])} vector {r['vector']:.4f}")
+    if "spread" in com:
+        sp = com["spread"]
+        print(f"    eager spread: per-position {[fmt(x) for x in sp['per_position']]} vector {fmt(sp['vector'])}")
+        for e, r in com["vs_eager"].items():
+            print(f"    {arm} vs {e}: per-position {fmt(r['per_position'])} {r['position_vs_spread']} "
+                  f"vector {r['vector']:.4f} {r['vector_vs_spread']}")
+    for r, j in com.get("per_reference", {}).items():
         if not j.get("contexts"):
-            print(f"  paired {name}: no common context")
             continue
         cells = "; ".join(f"{col} {a:.4f} vs {b:.4f} diff {d:+.4f} [{lo:+.4f}, {hi:+.4f}]"
-                          for col, a, b, d, (lo, hi) in zip(j["columns"], j["arm"], j["other"],
+                          for col, a, b, d, (lo, hi) in zip(j["columns"], j["arm"], j["others"],
                                                              j["diff"], j["diff_ci95"]))
-        print(f"  paired {name} over {j['contexts']} contexts: {cells}")
+        print(f"    reference {r}, {arm} minus the other eager arms: {cells}")
     print(f"pool contexts {len(pool)}, with several vectors {multi}; wrote {out}")
     if any(j["nonmember"] for j in record["judged"]):
         sys.exit(1)
