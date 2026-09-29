@@ -463,6 +463,63 @@ def test_window_compact_layout_is_general_over_rates(q256):
         assert torch.equal(unit.rep.words.cpu(), old.words.cpu()), "old packer"
 
 
+@cuda
+@pytest.mark.parametrize("cut", [None, (1, 2)], ids=["whole", "tp2-rank1-rows"])
+def test_window_compact_scratch_repack_reuses_one_buffer(cut):
+    """tessera#724: with the loader's caller-owned scratch, a repeated
+    ``prepare_window_compact`` on a mixed-rate unit makes no large-pool
+    request.  That means no per-unit destination, no per-rate-group part and
+    no per-group sum, and the words match the no-scratch path byte for byte.
+
+    Under the runtime's ``max_split_size_mb=20`` load context, each of those
+    fresh ~2 MB requests could leave a dead 20 MiB slab.  On the GLM T8R serve
+    one did, per projection callback, for a whole q832 stack: 16.5 GB per
+    rank.  The unit is GLM's gate projection, 2048 x 4096, so the words are
+    above the caching allocator's 1 MiB small-pool bound whole and on a TP2
+    rank, as they are on the serve.  Requests at or below that bound come
+    from 2 MiB small-pool segments and cannot open a 20 MiB slab.
+    """
+    from tessera.alphabet import BF16_GRID
+    from tessera.compact_prep import parse_compact_wire, prepare_window_compact
+
+    small_pool_bound = 1 << 20  # c10 CUDACachingAllocator kSmallSize
+    rows, cols = 2048, 4096
+    blob = _encoded_window(rows, cols, BF16_GRID, seed=724, q256=896)
+    wire = parse_compact_wire(blob, device="cuda", name="w")
+    assert len(set(wire.metadata.rates)) > 1, "a mixed-rate unit: two rate groups"
+    kwargs = {}
+    if cut is not None:
+        rank, tp = cut
+        kwargs = _cut_kwargs(_row_plan(rows, cols, rank, tp))
+    want = prepare_window_compact(wire, device="cuda", family="value", **kwargs)
+    scratch = {}
+    first = prepare_window_compact(wire, device="cuda", family="value",
+                                   scratch=scratch, **kwargs)
+    assert torch.equal(first.rep.words, want.rep.words), "first scratch call"
+    first_ptr = first.rep.words.data_ptr()
+    size = first.rep.words.numel() * first.rep.words.element_size()
+    assert size > small_pool_bound, f"the words ({size} B) must be a large-pool request"
+    torch.cuda.synchronize()
+    torch.cuda.memory._record_memory_history(max_entries=100_000)
+    try:
+        second = prepare_window_compact(wire, device="cuda", family="value",
+                                        scratch=scratch, **kwargs)
+        torch.cuda.synchronize()
+        snapshot = torch.cuda.memory._snapshot()
+    finally:
+        torch.cuda.memory._record_memory_history(enabled=None)
+    fresh = [event["size"] for trace in snapshot["device_traces"] for event in trace
+             if event["action"] == "alloc" and event["size"] > small_pool_bound]
+    assert fresh == [], (
+        f"the repeated call made {len(fresh)} large-pool request(s) (words "
+        f"{size} B): {fresh}")
+    assert torch.equal(second.rep.words, want.rep.words), "second scratch call"
+    assert second.rep.words.data_ptr() == first_ptr, "one reused destination"
+    assert torch.equal(second.rep.runs, want.rep.runs)
+    assert torch.equal(second.rep.perm, want.rep.perm)
+    assert torch.equal(second.initial_state, want.initial_state)
+
+
 def _bf16_r7_wire(tensor: str) -> bytes:
     shard = box_artifacts.skip_now(
         "shared_runs", "bf16/qwen0.6b-bf16-r7-plugin/model.safetensors")
