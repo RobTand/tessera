@@ -527,10 +527,13 @@ def test_the_word_stage_slot_and_shared_memory_are_the_kernels_layout():
     assert rf.slot_words_for_pair(pair(1, 8, 32)) == 16
     # a pair whose high run is empty is the low rate's slot alone
     assert rf.slot_words_for_pair(pair(3, 8, 0)) == 8
-    assert rf.smem_bytes(0, 8) == rf.smem_bytes(1, 8) == 91_216 + 3 * 2 * rf.BK * 8 * 4 == 97_360
-    assert rf.smem_bytes(0, 12) == 100_432
-    assert rf.smem_bytes(0, 16) == 103_504          # over sm_121's 101,376: gate/up refuses rates 7 and 8
-    assert rf.smem_bytes(2, 16) == 70_736           # the one-table down/dense launch fits every rate
+    assert rf.smem_bytes(0, 8) == rf.smem_bytes(1, 8) == 91_984 + 3 * 2 * rf.BK * 8 * 4 == 98_128
+    assert rf.smem_bytes(0, 12) == 101_200          # rates 5 and 6: 176 B under sm_121's 101,376
+    assert rf.smem_bytes(0, 16) == 104_272          # over sm_121's 101,376: gate/up refuses rates 7 and 8
+    assert rf.smem_bytes(2, 16) == 71_120           # the one-table down/dense launch fits every rate
+    # the fixed parts differ by the column-map ring: 3 chunks x 2 halves x 32
+    # columns x 4 B for gate/up, 3 x 1 x 32 x 4 for down/dense
+    assert rf.SMEM_FIXED[0] - rf.SMEM_FIXED[2] == 32_768 + 3 * 32 * 4
     assert rf.SLOT_WORDS_MAX == rf.slot_words_for_rate(rf.RATE_MAX) == 16
 
 

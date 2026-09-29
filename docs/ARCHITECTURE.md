@@ -3623,10 +3623,11 @@ alone. Since v45 the word stages are sized per launch: `Params::slot_words`
 carries `slot_words_for_rate(r) = 2r + 2 * (r odd)` words per (column, 64-row
 half) rounded up to 4 for the larger rate of the pair (`routed_fused.
 slot_words_for_pair`), a `Layout<MODE>` template places the tables, B and A
-stages, scales, descriptors and the claim counter ahead of the word ring, and
+stages, scales, descriptors, the claim counter and the column-map ring ahead
+of the word ring, and
 `smem_bytes(mode, slot) = SMEM_FIXED[mode] + WORD_STAGES * 2 * BK * slot * 4`
-is the dynamic shared memory the launch requests (91,216 B fixed for the
-two-table gate/up modes, 58,448 B for down; `SLOT_WORDS_MAX` 16). The two
+is the dynamic shared memory the launch requests (91,984 B fixed for the
+two-table gate/up modes, 58,832 B for down; `SLOT_WORDS_MAX` 16). The two
 extra words at an odd rate are the copy path: a column's words start 16-byte
 aligned and a 64-row half at rate r is 8r bytes, so an odd rate's half is
 8-byte aligned at odd half indices, and the producer copies every half in
@@ -3641,15 +3642,23 @@ the slot size, the copy pattern, the window shifts and, for one run, the
 column map are constants (built for rate 4 alone, the E4M3 gate/up launch
 compiles to 3,376 sm_121 SASS instructions against the v44 kernel's 3,368,
 with no spills in any instantiation); a
-two-run chunk branches warp-uniformly on the run per half and reads its
-column map once, with the previous word. Two rates of a
+two-run chunk branches warp-uniformly on the run per half, and its column map
+is read from the block descriptor once per (chunk, half, column): the thread
+that issues a column's words maps it and stores the map, packed into one int32
+(in-block position, run, first word), in a ring of `WORD_STAGES` chunks in
+shared memory (768 B for gate/up, 384 B for down), and every producer's
+previous-word load and decode read it from there past the next producer
+barrier. The first cut mapped the column again from global memory in every
+producer thread (eight per column per half), and those dependent loads and
+the rank arithmetic were the largest share of the two-run launches' extra
+instructions (`docs/measurements/2026-09-29-two-run-column-map.md`). Two rates of a
 pair must be adjacent -- `grammar.rate_set` emits no other pair -- so
 `run_pair` refuses a wider one by name and the kernel traps on it. The
 device decides the rates: sm_121 grants 101,376 B per block
 (`cudaDevAttrMaxSharedMemoryPerBlockOptin`), so the gate/up launch holds slot
-8 (97,360 B; rates 1-4) and slot 12 (100,432 B; rates 5 and 6) and not slot
-16 (103,504 B; rates 7 and 8), while the one-table down launch holds every
-slot (70,736 B at 16). `ROUTED_LANE_RATES` is derived from exactly that
+8 (98,128 B; rates 1-4) and slot 12 (101,200 B; rates 5 and 6) and not slot
+16 (104,272 B; rates 7 and 8), while the one-table down launch holds every
+slot (71,120 B at 16). `ROUTED_LANE_RATES` is derived from exactly that
 inequality -- `(1, 2, 3, 4, 5, 6)` -- and the dense identity, which runs each
 role in its own launch and so has no two-table gate/up mode, reaches 1..8. A
 routed stack whose larger rate is 7 or 8 keeps the compact adapter, and the
