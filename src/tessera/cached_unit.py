@@ -22,6 +22,7 @@ from .export import (ActivationSource, DEFAULT_CODE, DEFAULT_GROUP, DEFAULT_HALF
                      HESSIAN_IDENTITY, WireRecipe, served_recipe)
 from .grammar import bresenham_rate_schedule
 from .manifest import BodyKind, ContainerClass, RotationState
+from .serving_parts import unique_json_pairs
 from .structure import STRUCTURE_DENSE, STRUCTURES
 from .unit_artifact import _reach_attrs, build_unit_artifact, encoder_profile_id
 
@@ -465,6 +466,16 @@ def verify_cached_unit(blob: bytes, record: dict, expected_identity: dict) -> Ac
     return AcceptedUnit(blob, artifact.manifest, artifact.terminal.exact_bytes)
 
 
+def _manifest_sha256(manifest: dict) -> str:
+    """The cached-unit manifest seal, one spelling (tessera#708).
+
+    Both bundle constructors (composed and rooted) bind these same bytes;
+    the value is pinned by golden tests and must not move.
+    """
+    return hashlib.sha256(json.dumps(
+        manifest, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+
+
 class CachedUnitBundle:
     """Closed unit roster; all filenames/source bindings checked before reads."""
 
@@ -510,8 +521,7 @@ class CachedUnitBundle:
         self.served_activation_policy, self.served_activations = None, {}
         if composed:
             self._bind_composed(manifest, expected_units)
-            self.manifest_sha256 = hashlib.sha256(json.dumps(
-                manifest, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+            self.manifest_sha256 = _manifest_sha256(manifest)
             return
         units = manifest["units"]
         if not isinstance(units, dict) or set(units) != set(expected_units):
@@ -530,8 +540,7 @@ class CachedUnitBundle:
             if record["identity"]["unit"] != key:
                 raise ValueError(f"cached unit coverage key {key} disagrees with receipt")
         self.units = _json_copy(units)
-        self.manifest_sha256 = hashlib.sha256(json.dumps(
-            manifest, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+        self.manifest_sha256 = _manifest_sha256(manifest)
 
     def read(self, key: str) -> tuple[bytes, dict]:
         if self.children:
@@ -730,7 +739,7 @@ def _bound_document(bound):
     raw = path.read_bytes()
     if hashlib.sha256(raw).hexdigest() != bound["sha256"]:
         raise ValueError("cached unit authority SHA256 differs")
-    return json.loads(raw, object_pairs_hook=_unique_json_pairs)
+    return json.loads(raw, object_pairs_hook=unique_json_pairs)
 
 
 class ProducerCachedUnitIdentities:
@@ -762,14 +771,5 @@ class ProducerCachedUnitIdentities:
                               for seal, identity in sorted(self.identities.items())}}
 
 
-def _unique_json_pairs(pairs):
-    result = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError(f"duplicate cached unit JSON key: {key}")
-        result[key] = value
-    return result
-
-
 def read_manifest(path: Path) -> dict:
-    return json.loads(Path(path).read_text(), object_pairs_hook=_unique_json_pairs)
+    return json.loads(Path(path).read_text(), object_pairs_hook=unique_json_pairs)

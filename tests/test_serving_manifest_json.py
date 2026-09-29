@@ -75,6 +75,24 @@ def test_lane_display_reads_pretty_and_compact_json(tmp_path):
         assert json.loads(result.stdout) == manifest
 
 
+def test_read_serving_manifest_refuses_duplicate_keys(tmp_path):
+    # RED for #703: a duplicate-keyed manifest is admitted by every reader today.
+    path = tmp_path / "tessera_serving_manifest.json"
+    path.write_text('{"modules": {}, "modules": {}}')
+    with pytest.raises(ValueError, match="duplicate"):
+        serving_parts.read_serving_manifest(path)
+
+
+def test_read_serving_manifest_round_trips_fixed_manifest(tmp_path):
+    # Golden pin for #703: read results of a fixed manifest are identical
+    # before and after the strict-reader refactor (no digest value changes).
+    manifest = {"modules": {"m": {"roles": []}},
+                "requires_lanes": ["tessera_window_gemv"]}
+    path = tmp_path / "tessera_serving_manifest.json"
+    path.write_text(json.dumps(manifest))
+    assert serving_parts.read_serving_manifest(path) == manifest
+
+
 def test_refresh_writes_compact_manifest_without_changing_source(tmp_path):
     pytest.importorskip("torch")
     pytest.importorskip("safetensors")

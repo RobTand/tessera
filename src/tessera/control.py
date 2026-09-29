@@ -89,6 +89,7 @@ from .errors import (
 )
 from .export import rung_ceiling, wire_recipe
 from .manifest import BodyKind, ScalePlaneKind, scale_plane_terminal_flags
+from .serving_parts import read_serving_manifest
 
 __all__ = [
     "BF16",
@@ -991,7 +992,7 @@ def bits_from_manifest(checkpoint: "str | Path") -> "tuple[Fraction, dict]":
     path = Path(checkpoint)
     if path.is_dir():
         path = path / "tessera_serving_manifest.json"
-    manifest = json.loads(path.read_text())
+    manifest = read_serving_manifest(path)
     per_tensor = {}
     for module in manifest["modules"].values():
         for role in module["roles"]:

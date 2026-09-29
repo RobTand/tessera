@@ -31,6 +31,31 @@ def write_serving_manifest(path: Path, manifest: dict) -> None:
     path.write_bytes(json.dumps(manifest, separators=(",", ":")).encode("utf-8"))
 
 
+def unique_json_pairs(pairs):
+    """Object-pairs hook refusing duplicate keys (tessera#703).
+
+    Single home for the strict-load discipline: ``cached_unit.read_manifest``
+    uses this rather than keeping its own copy, so the byte layer stays
+    torch-free and every strict reader refuses the same way.
+    """
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON object key: {key}")
+        result[key] = value
+    return result
+
+
+def read_serving_manifest(path: "str | Path") -> dict:
+    """Load ``tessera_serving_manifest.json``, refusing duplicate keys.
+
+    The strict counterpart to :func:`write_serving_manifest`: every reader
+    of a serving manifest goes through here so a duplicate-keyed sidecar is
+    refused at read instead of being admitted silently.
+    """
+    return json.loads(Path(path).read_text(), object_pairs_hook=unique_json_pairs)
+
+
 def parse_partition(value: str) -> tuple[int, int]:
     try:
         index, count = map(int, value.split("/"))
@@ -421,8 +446,11 @@ def validate_explicit_plan(plan, modules: dict, config_groups: dict, *, source_t
     # item 3): this gate used to repeat a weaker check ("grid" and "q256"
     # present), so a sidecar field the schema accepts was refused downstream
     # of the argument-time gate that had accepted it.  Imported lazily: this
-    # module sits under the validator in some import orders.
-    from tessera.serving_plan import SCHEMA_KEY, validate_serving_plan
+    # module sits under the validator in some import orders. Relative, so a
+    # sealed historical copy of this file stays importable: an absolute
+    # ``tessera.*`` import reads as an escape into the current producer
+    # (historical_producer._SealedLoader) and refuses the whole package.
+    from .serving_plan import SCHEMA_KEY, validate_serving_plan
     try:
         validate_serving_plan(plan)
     except ValueError as exc:
@@ -543,7 +571,7 @@ def merge_serving_parts(paths, out: Path, source: Path, *, move=False,
         raise ValueError(f"merge output already exists: {out}")
     loaded = []
     for path in map(Path, paths):
-        manifest = json.loads((path / "tessera_serving_manifest.json").read_text())
+        manifest = read_serving_manifest(path / "tessera_serving_manifest.json")
         part = manifest.get("export_partition", {})
         if part.get("schema") != SCHEMA:
             raise ValueError(f"{path}: unsupported serving partition schema")

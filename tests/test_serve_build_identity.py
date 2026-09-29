@@ -1229,3 +1229,46 @@ def test_a_half_parsed_dispatch_line_is_not_a_known_dispatch() -> None:
     assert read is not None
     assert read["custom_ops"] == ["all"]
     assert read["ir_op_priority"]["rms_norm"] == ["vllm_c"]
+
+
+def test_build_identity_hashing_goes_through_the_chunked_owner(tmp_path, monkeypatch):
+    """#710: _sha256 hashed whole files inline; it delegates to
+    serving_parts.sha256_file now, keeping None for missing files. The
+    golden pins the fixture digest on both spellings (same value today)."""
+    from tessera import serving_parts
+    from tessera.serving import build_identity
+    golden = ("9909ab877b071d38b5c807cd552daacfb2af04fdc0a82c710d31696b338637e9")
+    fixture = tmp_path / "slot.bin"
+    fixture.write_bytes(b"tessera-a3-golden-fixture-contents")
+    assert serving_parts.sha256_file(fixture) == golden
+    assert build_identity._sha256(fixture) == golden
+    assert build_identity._sha256(tmp_path / "absent.bin") is None
+
+    def _boom(path):
+        raise AssertionError("owner not consulted")
+
+    monkeypatch.setattr(build_identity, "sha256_file", _boom)
+    with pytest.raises(AssertionError, match="owner not consulted"):
+        build_identity._sha256(fixture)
+
+
+def test_autotune_digest_goes_through_the_fingerprint_owner(tmp_path, monkeypatch):
+    """#712: _autotune_digest hashed its blob inline with the same bytes
+    _fingerprint binds. The patched owner is observed by the call site
+    (pre-fold it hashes inline, so no boom); the golden pins the digest
+    of a fixed slot identical before/after."""
+    from tessera.serving import build_identity
+    golden = ("759bcbac458323d5501c786256df68eb1c77b8586128eff3438d2d2b8889b12a")
+    slot = tmp_path / "slot"
+    slot.mkdir()
+    (slot / "k.best_config").write_text(json.dumps({"x": 1}))
+    assert build_identity._fingerprint([["k.best_config", {"x": 1}]]) == golden
+    assert build_identity._autotune_digest(slot) == (1, golden)
+    assert build_identity._autotune_digest(tmp_path / "absent") == (0, None)
+
+    def _boom(identity):
+        raise AssertionError("owner not consulted")
+
+    monkeypatch.setattr(build_identity, "_fingerprint", _boom)
+    with pytest.raises(AssertionError, match="owner not consulted"):
+        build_identity._autotune_digest(slot)

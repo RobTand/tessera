@@ -50,7 +50,10 @@ padding: target verification and the drafter's first step, at whole requests
 of 1 + k tokens; the drafter's later steps, at one token per request; and
 mixed batches. With a drafter, the reference is an eager serve of the same
 speculative configuration. Eager drafters other than dflash keep their
-admission on any runner. See §5.1.1.
+admission on any runner. See §5.1.1. The step-1 measurements on the
+four-layer stub add no receipt
+(`docs/measurements/2026-09-28-glm53-drafter-graphs-695.md`); admission is
+measured on the release artifact.
 
 Re-stamped 2026-09-28 for CUDA graphs in the research GLM53 NoPE backend
 (tessera#508). `glm53_nope._config_reason` no longer requires
@@ -6401,6 +6404,8 @@ CUDA-graph mode; the table is empty, so drafters serve eager. Speculative
 method `dflash` is refused in every mode, eager included: the pinned vLLM
 cannot load it for GLM5-next (no `SupportsEagle3` on either GLM5-next class,
 and no KV cache grouping for sliding-window drafter layers).
+`docs/measurements/2026-09-28-glm53-drafter-graphs-695.md` has the step-1
+drafter measurements on the four-layer stub, which add no receipt.
 
 **Admission does not claim equality with eager.**
 `glm53_nope.eager_equivalence_gap` answers that separately, and every serving

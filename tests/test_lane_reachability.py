@@ -481,6 +481,22 @@ def test_the_cli_refuses_a_directory_with_no_tessera_wire(tmp_path, monkeypatch,
     assert "READABLE" not in capsys.readouterr().out
 
 
+def test_the_cli_reads_declared_lanes_off_the_manifest(tmp_path, monkeypatch):
+    """#703 P1: main() read the manifest through an import only units_of()
+    could see, so every checkpoint carrying a manifest died with NameError
+    before any lane was checked. A manifest plus --manifest-lanes must reach
+    the wire check (here: the empty directory's refusal), not the NameError."""
+    tool = _preflight()
+    path = tmp_path / "ckpt"
+    path.mkdir()
+    (path / "tessera_serving_manifest.json").write_text(json.dumps(
+        {"requires_lanes": ["tessera_window_gemv"]}))
+    monkeypatch.setattr("sys.argv",
+                        ["tessera_lane_preflight.py", str(path), "--manifest-lanes"])
+    with pytest.raises(SystemExit, match="no .safetensors shard here"):
+        tool.main()
+
+
 # --------------------------------------------------------------------------
 # the decision core: ONE home for every requirement class (#264)
 # --------------------------------------------------------------------------
