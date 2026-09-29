@@ -1,6 +1,6 @@
 # Tessera plan-to-serve architecture
 
-Re-stamped 2026-09-28 for the fused window kernel's mixed rates (contract
+Re-stamped 2026-09-29 for the fused window kernel's mixed rates (contract
 v45, tessera#694, item 2 of #690). The one persistent kernel behind the fused
 routed (v42) and dense (v43) identities now runs every rate its run table
 already encoded: `Params::slot_words` sizes the word stages per launch from
@@ -24,14 +24,20 @@ from the aligned pair before it and the decoder reads it at the slot's third
 word, loading a word past a lane's eight fields only where a field reaches
 into it; one correctness fix rode along (the previous window word is loaded
 for every 8-row group whose window starts inside the half's first word, not
-the first group alone). A one-run unit's descriptor is the identity, so its column map
-is computed rather than read. No cell's `executes`, rungs or flags move. The
-served census of the four E4M3 window cells on this kernel has not run, so
-the fixture names no v45 re-measurement. On the first cut the bench timed
-the q256 1024 fused lanes slower than the v43 kernel (value family, routed
-+60% at M = 2048); whether the computed one-run map closes that gap is a
-queued measurement, not a result. E2M1 stays on `a4_span2`. See §3.3
-"Mixed rates" and `docs/measurements/2026-09-28-mixed-rate-fused-window.md`.
+the first group alone). The producers enter the chunk loop once per item
+through a switch on the stack's run pair, and each pair is a compile-time
+instantiation; built for rate 4 alone, the E4M3 gate/up launch compiles to
+3,376 sm_121 SASS instructions against the v44 kernel's 3,368. Measured on
+layer 3 of GLM-5.3-Flash (288 experts, M 1 to 2048), the E4M3 R1024 routed
+stack runs 2.9% to 6.3% faster than master, and the R832 stack runs 2.0x to
+3.8x faster than the compact adapter it replaces but at 1.50x to 1.67x of
+R1024's time, short of #694's 1.5x. The export prices each
+fused unit's table, run pair and block descriptors
+(`serving_parts.routed_fused_unit_bytes`). No cell's `executes`, rungs or
+flags move. The served census of the four E4M3 window cells on this kernel
+has not run, so the fixture names no v45 re-measurement. E2M1 stays on
+`a4_span2`. See §3.3 "Mixed rates" and
+`docs/measurements/2026-09-28-mixed-rate-fused-window.md`.
 
 Re-stamped 2026-09-28 for drafters in the research GLM53 NoPE backend
 (tessera#695). Speculative method `dflash` is refused by name in every
@@ -2613,7 +2619,8 @@ capture re-derived over those figures closes; per-module pricing of the
 shared tables is exact for one NVFP4 unit per trellis). A routed FP8/BF16
 stack is priced as the compact window lane holds it (tessera#624): the
 repacked planes, per-expert tables, permutations and bookkeeping of
-`WindowUnitAxis`, the per-part `run_off`, and the fused lane's composed
+`WindowUnitAxis`, the per-part `run_off` (int64 `[E + 1]`: `finish`'s
+`torch.cumsum` promotes its int32 counts), and the fused lane's composed
 tables (#685) with, since contract v45, each projection's run pair and block
 descriptors (`serving_parts.routed_fused_unit_bytes`) where the stack's wire
 shape admits the lane (`routed_fused.fused_routed_unit_shape_refusal`: one
@@ -3594,10 +3601,18 @@ aligned and a 64-row half at rate r is 8r bytes, so an odd rate's half is
 misaligned, with one 8-byte tail when it is not) instead of the 8-byte copies
 the first cut of this version made; the decode reads the half from the slot's
 third word there, and loads a word past a lane's eight fields only where a
-field reaches into it, so no launch reads past a half. A one-run unit
-(`n_hi = 0`) has the identity block descriptor, so `col_map` computes its
-map instead of reading the descriptor. The device decides the
-rates: sm_121 grants 101,376 B per block
+field reaches into it, so no launch reads past a half. The producers enter
+the chunk loop once per item through a switch on the stack's run pair
+(`r_lo`, one run or two), and each pair is a compile-time instantiation:
+the slot size, the copy pattern, the window shifts and, for one run, the
+column map are constants (built for rate 4 alone, the E4M3 gate/up launch
+compiles to 3,376 sm_121 SASS instructions against the v44 kernel's 3,368,
+with no spills in any instantiation); a
+two-run chunk branches warp-uniformly on the run per half and reads its
+column map once, with the previous word. Two rates of a
+pair must be adjacent -- `grammar.rate_set` emits no other pair -- so
+`run_pair` refuses a wider one by name and the kernel traps on it. The
+device decides the rates: sm_121 grants 101,376 B per block
 (`cudaDevAttrMaxSharedMemoryPerBlockOptin`), so the gate/up launch holds slot
 8 (97,360 B; rates 1-4) and slot 12 (100,432 B; rates 5 and 6) and not slot
 16 (103,504 B; rates 7 and 8), while the one-table down launch holds every
@@ -3621,10 +3636,17 @@ and the validator holds the field to an ascending subset of `column_rates`.
 The field is not additive for a v44 reader or for PrismaQuant's mirror of the
 roster (`lane_eligibility.LANE_REQUIREMENT_FIELDS`, `tessera_render.
 planned_wire_facts`, which must also carry the structure fact), which is why
-the version moved. The served-path receipts (census, timing, NCU) are
-queued, not recorded; `docs/measurements/2026-09-28-mixed-rate-fused-window.md`
-tracks them. E2M1 fused stays parked; the E2M1_K2 routed stacks stay
-on the A4 span-2 grouped path.
+the version moved. The export follows the lane: `routed_fused.
+fused_routed_unit_shape_refusal` builds the packer's run table from a unit's
+manifest rates and asks `run_pair` and the part's own launch, and every unit
+it admits is priced with its table, run pair and block descriptors
+(`serving_parts.routed_fused_unit_bytes`, 112,224 B per GLM-5.3-Flash
+expert per rank at TP2, 32.3 MB per MoE layer). The timing, oracle and GPU
+test receipts are in `docs/measurements/2026-09-28-mixed-rate-fused-window.md`:
+routed R1024 runs 2.9% to 6.3% faster than master, and mixed rates run 2.0x
+to 3.8x faster than the compact adapter but at 1.50x to 1.67x of R1024
+(R832). The served census has not run. E2M1 fused stays parked; the
+E2M1_K2 routed stacks stay on the A4 span-2 grouped path.
 
 ### 3.4 Declared weight transforms are refused at the materialisation boundary
 
