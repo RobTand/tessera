@@ -285,6 +285,11 @@ def forward(args, torch, declared, prepared, layers) -> dict:
     per-layer copy (growth that stays) separates from a per-call transient
     (peak that returns).
     """
+    # The E4M3 family's activation quantiser is vLLM's own op
+    # (``torch.ops._C.dynamic_per_token_scaled_fp8_quant``); a serve has it
+    # registered, a bare process registers it by importing vLLM's op module.
+    import vllm._custom_ops  # noqa: F401
+
     device = torch.device("cuda", torch.cuda.current_device())
     hidden = int(declared[layers[0]]["hidden_size"])
     experts = int(declared[layers[0]]["experts"])
