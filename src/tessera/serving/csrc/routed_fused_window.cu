@@ -829,6 +829,25 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 uint4 a_cur = make_uint4(0, 0, 0, 0), a_nxt = make_uint4(0, 0, 0, 0);
                 load_prev(kc0, prev_cur, cm_cur);
                 load_a(kc0, a_cur);
+                // Settle the first chunk's loads here, before the chunk loop.
+                // They land in the registers the loop carries (``prev_cur``,
+                // ``a_cur``), so without a use here ptxas guards those
+                // registers with the loads' scoreboard on EVERY iteration, and
+                // the next chunk's loads (``load_prev``/``load_a`` at the top
+                // of the loop) share that scoreboard: the chunk's store and
+                // decode then waited for the NEXT chunk's global loads, one
+                // global latency per chunk.  XOR with a zero the compiler
+                // cannot fold (``K`` is positive) consumes them here, and the
+                // loop's only wait on those loads is at its end, where the next
+                // chunk's values move into place, behind the chunk's own work.
+                // Verified on the image's ptxas (CUDA 13.0.88); re-check the chunk
+                // loop's scoreboard waits on a toolchain change.
+                {
+                    const int32_t zero = p.K >> 31;
+                    prev_cur[0] ^= zero; prev_cur[1] ^= zero;
+                    a_cur.x ^= (uint32_t)zero; a_cur.y ^= (uint32_t)zero;
+                    a_cur.z ^= (uint32_t)zero; a_cur.w ^= (uint32_t)zero;
+                }
                 for (int ic = 0; ic < nkc; ++ic, ++gc) {
                     const int kc = kc0 + ic;
                     if constexpr (!RING) {

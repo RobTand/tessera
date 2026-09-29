@@ -1,6 +1,8 @@
 # Two-run column map in shared memory (fused routed window kernel)
 
-**Status:** measured; not proposed for merge as is. Revision 2 is faster on
+**Status:** measured; merged with the per-pair kernel that removes the
+one-run regression below (`2026-09-29-per-pair-kernel.md`). As first
+measured it was not proposed for merge as is. Revision 2 is faster on
 the two-run stacks (R1088 -5%, R832 -7% per call, bitwise equal) and 2 to 3%
 faster summed over the GLM-5.3-Flash T8R layer mix, but it slows the one-run
 R1024 stack: +1.3 to +3.9% at M = 4 to 512 in both passes (M = 1 and 2048

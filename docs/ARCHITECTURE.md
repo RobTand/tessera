@@ -1,14 +1,18 @@
 # Tessera plan-to-serve architecture
 
-Re-stamped 2026-09-29 for the fused window kernel's per-pair instantiation
-and the two-run column map. Each run pair is now its own
-`routed_fused_kernel<FP8, MODE, DENSE, SPLIT, RL, TWO>`, which the host picks
-from the launch's `tile_words` (`pair_of`), instead of one kernel per mode
-switching on the pair per item; the gate/up launch of a two-run stack reads
-its column map from a 768 B shared-memory ring (`Layout<MODE>::OFF_MAP`)
-instead of mapping each column again in every producer thread. No contract
-field, rung, route or `executes` entry moves, and every output is bitwise
-equal to master's (`docs/measurements/2026-09-29-two-run-column-map.md`).
+Re-stamped 2026-09-29 for the fused window kernel's per-pair instantiation,
+the two-run column map and the first chunk's load settle. Each run pair is
+now its own `routed_fused_kernel<FP8, MODE, DENSE, SPLIT, RL, TWO>`, which the
+host picks from the launch's `tile_words` (`pair_of`), instead of one kernel
+per mode switching on the pair per item; the gate/up launch of a two-run
+stack reads its column map from a 768 B shared-memory ring
+(`Layout<MODE>::OFF_MAP`) instead of mapping each column again in every
+producer thread; and the producers consume the first chunk's global loads
+before the chunk loop, so the loop waits for the next chunk's loads where
+they move into place rather than before the decode. No contract field, rung,
+route or `executes` entry moves, and every output is bitwise equal to
+master's (`docs/measurements/2026-09-29-two-run-column-map.md`,
+`docs/measurements/2026-09-29-per-pair-kernel.md`).
 
 Re-stamped 2026-09-29 for the E2M1 K1 production boundary (tessera#477).
 Arity-one E2M1 remains research-only: the existing serving export gate refuses
@@ -3658,9 +3662,20 @@ run table is not the pair it was built for. The slot size, the copy pattern,
 the window shifts and, for one run, the column map are constants, and each
 pair gets its own register allocation: 94 to 112 registers per
 instantiation, no spills, and the E4M3 rate-4 gate/up kernel compiles to
-3,336 sm_121 SASS instructions, its table lookups folding the table base into
-the load's immediate. Until this change one kernel per mode held every pair's
-loop behind a per-item switch, at 118 to 128 registers against the 128-register
+3,352 sm_121 SASS instructions at 98 registers, its table lookups folding the
+table base into the load's immediate. The chunk loop carries the previous
+window word and the activation chunk in registers and loads chunk kc + 1's
+at the top of iteration kc; the first chunk's loads are consumed before the
+loop (an XOR with a zero ptxas cannot fold), because loads that write the
+loop-carried registers directly make ptxas guard those registers with the
+loads' scoreboard on every iteration, which the next chunk's loads share:
+the decode's first instruction then waited for the next chunk's global
+loads, as master's kernel did. The wait placement is ptxas's (checked on the
+image's CUDA 13.0.88; a toolchain change must re-check it). On the T8R expert
+stacks this runs the rate-4 R1024 stack 3 to 10% faster than master at M 1 to
+2048 and keeps the two-run stacks 5 to 9% faster
+(`docs/measurements/2026-09-29-per-pair-kernel.md`). Until this change one
+kernel per mode held every pair's loop behind a per-item switch, at 118 to 128 registers against the 128-register
 cap, and a change to one pair's loop moved the others' code: the two-run
 column map below cost the unchanged rate-4 gate/up loop 11% more executed
 instructions (`docs/measurements/2026-09-29-two-run-column-map.md`). The
