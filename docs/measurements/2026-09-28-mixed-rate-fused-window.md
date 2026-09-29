@@ -577,11 +577,21 @@ down at 1,024 columns for each of 288 experts:
 | The body's 42 MoE layers, per rank | 1,357,461,504 |
 | With the MTP layer's MoE on the lane, per rank | 1,389,782,016 |
 
-At v44 an R1024 stack already ran fused and was priced with its tables
-(#720), so its v45 increase is the run pairs and descriptors alone: 4,008,960
-B per layer per rank. A mixed-rate stack ran compact at v44 and gains the
-whole 32.3 MB. `TESSERA_ROUTED_FUSED=0` serves the compact adapter, which
-builds none of these tensors.
+What the serve holds, v44 to v45: an R1024 stack already ran fused at v44
+and held its three tables, so it gains the run pairs and descriptors alone,
+4,008,960 B per layer per rank. A mixed-rate stack ran compact at v44 and
+gains the whole 32,320,512 B. `TESSERA_ROUTED_FUSED=0` serves the compact
+adapter, which builds none of these tensors.
+
+What the manifest prices depends on the exporter it is compared with.
+Tessera master has priced an R1024 stack's tables since #720, and this
+change adds the run pairs, the descriptors and the mixed-rate stacks.
+PrismaQuant's current pin (`a5f3b232cb`) predates #720: its exporter
+charges a routed stack its decoded tile, about twice what the compact lane
+holds per rank (tessera#624: 3.63 GB against 1.87 GB for a BF16 R1024 layer
+at TP2), and no fused tensor. Against that pin, a v45 manifest prices every
+routed stack about half as high, and every fused stack's figure includes
+the full 32,320,512 B per layer per rank.
 
 ## Tried and rejected
 
