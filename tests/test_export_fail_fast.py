@@ -79,6 +79,9 @@ def test_tessera_git_export_stamps_the_same_value(tmp_path, monkeypatch):
     src = tmp_path / "src"
     _tiny_source(src)
     out = tmp_path / "out"
+    # Blind git as well: where git resolves, the git path shadows the env
+    # path by design, so the env path is only deterministic with git blind.
+    _blind_commit(monkeypatch)
     monkeypatch.setenv("TESSERA_GIT", FAKE_COMMIT)
     _run_main(monkeypatch, src, out)
     manifest = json.loads((out / "tessera_serving_manifest.json").read_text())

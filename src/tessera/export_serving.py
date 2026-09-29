@@ -1721,6 +1721,14 @@ def main():
     elif args.partition_runtime_image:
         ap.error("--partition-runtime-image requires --partition")
 
+    # Fail fast on an unstampable commit (tessera#714): the manifest and the
+    # stock twin both stamp this value at the end, long after the shard
+    # writes. Resolving once, here -- before any byte is written -- turns a
+    # streamed whole-model export into an up-front refusal with the same
+    # message. The git, TESSERA_GIT and install paths resolve identically
+    # at start and at end; nothing below re-resolves.
+    tessera_commit = git_hash()
+
     # The activation-aware settings fire when, and only when, a Hessian is
     # here: the encoder cannot invent one, and a weights-only export must stay
     # the byte-for-byte artifact it was.  Given one, the defaults are the
@@ -2898,7 +2906,7 @@ def main():
     params = totals["quantized_params"]
     families = sorted({m["family"] for m in module_records.values()})
     manifest = {
-        "source": str(args.src), "git": git_hash(), "written": time.strftime("%Y-%m-%dT%H:%M:%S"),
+        "source": str(args.src), "git": tessera_commit, "written": time.strftime("%Y-%m-%dT%H:%M:%S"),
         **({"research_selected_moe": research_execution.record()}
            if research_execution is not None else {}),
         **({cache_scope: {"manifest_sha256": cached_units.manifest_sha256,
@@ -3074,7 +3082,7 @@ def main():
                 json.dumps({"metadata": {"total_size": size}, "weight_map": twin_weight_map}, indent=2))
         twin_resident = sum(r["resident_bytes"] for r in twin_records.values())
         write_serving_manifest(twin / "tessera_stock_twin_manifest.json", {
-            "source": str(args.src), "git": git_hash(), "written": time.strftime("%Y-%m-%dT%H:%M:%S"),
+            "source": str(args.src), "git": tessera_commit, "written": time.strftime("%Y-%m-%dT%H:%M:%S"),
             "wire_checkpoint": str(args.out), "arm": manifest["arm"] + " (stock twin of the same wires)",
             "vllm_fp4_predicate": twin_fp4_predicate,
             # THE TWIN IS THE ARTIFACT THAT GETS SERVED, so it carries what
