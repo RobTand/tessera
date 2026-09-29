@@ -417,9 +417,10 @@ def run_pair(runs: torch.Tensor, cols: int) -> "tuple[torch.Tensor | None, str |
     (``grammar.rate_set``) -- as the int32 ``[8]`` pair
     ``(r_lo, 0, n_lo, 0, r_hi, n_lo, n_hi, w_hi)`` with ``r_hi = r_lo + 1``
     and ``w_hi = 16 * n_lo * r_lo`` (a one-run table has ``n_hi = 0``).  Each
-    (r_lo, one or two runs) pair is a compile-time instantiation of the
-    kernel's chunk loop, so a pair of rates further apart -- which no grammar
-    schedule emits -- is refused here by name rather than decoded.  Returns
+    (r_lo, one or two runs) pair is its own kernel instantiation, which the
+    host picks from the launch's ``tile_words`` (``pair_of`` in the kernel
+    source), so a pair of rates further apart -- which no grammar schedule
+    emits -- is refused here by name rather than decoded.  Returns
     ``(pair, None)`` or ``(None, reason)``.
     """
     runs = runs.reshape(-1, 4)

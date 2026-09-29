@@ -458,7 +458,7 @@ def test_support_predicate_refuses_by_name():
     mixed_up = grouped([Expert(INTER, HIDDEN, mixed_rates, 720 + i) for i in range(EXPERTS)])
     assert rf.fused_routed_window_supported(mixed, mixed_up, ok.down) is None
     # ... when the two rates are ADJACENT, the pair bracketing a root that every
-    # grammar schedule emits: the chunk loop is instantiated per (low rate, one
+    # grammar schedule emits: the kernel is instantiated per (low rate, one
     # or two runs), so a wider pair is refused by name, not decoded
     wide_rates = tuple(2 if c % 2 else 4 for c in range(HIDDEN))
     wide = grouped([Expert(INTER, HIDDEN, wide_rates, 760 + i) for i in range(EXPERTS)])
