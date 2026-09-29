@@ -274,10 +274,17 @@ def _write_fake_installation(target: Path) -> Path:
     target.mkdir()
     shutil.copytree(ROOT / "src" / "tessera", target / "tessera",
                       ignore=shutil.ignore_patterns("__pycache__"))
-    dist_info = target / "tessera-fake-0.1.dist-info"
+    # The dist-info must name the real distribution: ``_resolve_version``
+    # (src/tessera/__init__.py) reads the version of ``DISTRIBUTION`` when no
+    # pyproject sits beside the package, and refuses when it finds none.  A
+    # made-up name ("tessera-fake") left nothing to read, so the driver died
+    # in ``import tessera`` (#721).
+    from tessera import DISTRIBUTION
+
+    dist_info = target / f"{DISTRIBUTION.replace('-', '_')}-0.1.dist-info"
     dist_info.mkdir()
     (dist_info / "METADATA").write_text(
-        "Metadata-Version: 2.1\nName: tessera-fake\nVersion: 0.1\n")
+        f"Metadata-Version: 2.1\nName: {DISTRIBUTION}\nVersion: 0.1\n")
     (dist_info / "top_level.txt").write_text("tessera\n")
     (dist_info / "direct_url.json").write_text(json.dumps({
         "url": "https://example.invalid/tessera.git",
@@ -320,6 +327,13 @@ def test_the_exporter_resolves_an_installed_layout(tmp_path):
     env = dict(os.environ)
     env["PYTHONPATH"] = str(fake)
     env.pop("TESSERA_GIT", None)
+    # ``git_hash`` asks git first, from the module's directory.  pytest's
+    # basetemp can sit inside a checkout (PrismaBuild runs it under the
+    # checkout), so without a ceiling git walks up out of the fake install
+    # and answers with the enclosing checkout's commit instead of reaching
+    # the install's ``direct_url.json`` (#721).  The ceiling makes the
+    # synthetic install look like what it models: a tree with no git above it.
+    env["GIT_CEILING_DIRECTORIES"] = str(tmp_path.parent)
     proc = subprocess.run(
         [sys.executable, "-c", program],
         cwd=work, env=env, capture_output=True, text=True, timeout=600)

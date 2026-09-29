@@ -38,20 +38,26 @@ exporter = importlib.import_module("tessera.export_serving")
 BODY = "model.language_model.layers."
 
 
-def _write(tmp_path: Path, tensors) -> Path:
+# #721: Glm5Next serves q/k/v as separate Linears (#706), so no qkv_proj fused
+# group forms there.  The fused-group refusal tests name a fused-qkv architecture.
+FUSED_QKV_ARCHITECTURE = "LlamaForCausalLM"
+
+
+def _write(tmp_path: Path, tensors, architecture="Glm5NextForConditionalGeneration") -> Path:
     src = tmp_path / "src"
     src.mkdir()
     save_file({k: v.contiguous() for k, v in tensors.items()},
               str(src / "model.safetensors"), metadata={"format": "pt"})
     (src / "config.json").write_text(json.dumps({
-        "architectures": ["Glm5NextForConditionalGeneration"],
+        "architectures": [architecture],
         "text_config": {"hidden_size": 32, "moe_intermediate_size": 32},
     }))
     return src
 
 
-def _run(tmp_path, monkeypatch, tensors, plan, *extra):
-    _write(tmp_path, tensors)
+def _run(tmp_path, monkeypatch, tensors, plan, *extra,
+         architecture="Glm5NextForConditionalGeneration"):
+    _write(tmp_path, tensors, architecture)
     out = tmp_path / "out"
     plan_path = tmp_path / "plan.json"
     plan_path.write_text(json.dumps(plan))
@@ -146,7 +152,8 @@ def test_a_fused_group_with_an_explicit_member_and_passthrough_siblings_is_refus
     plan = {q: {"grid": "E4M3", "q256": 1024}, k: "PASSTHROUGH", v: "PASSTHROUGH"}
     with pytest.raises(SystemExit) as caught:
         _run(tmp_path, monkeypatch,
-             {name: _tensor(64, 32, i) for i, name in enumerate((q, k, v))}, plan)
+             {name: _tensor(64, 32, i) for i, name in enumerate((q, k, v))}, plan,
+             architecture=FUSED_QKV_ARCHITECTURE)
     message = str(caught.value)
     assert BODY + "0.self_attn.qkv_proj" in message and q in message
     assert not (tmp_path / "out" / "config.json").exists()
@@ -161,7 +168,8 @@ def test_a_fused_group_whose_explicit_members_disagree_on_scheme_is_refused(tmp_
             v: {"grid": "E4M3", "q256": 1024}}
     with pytest.raises(SystemExit) as caught:
         _run(tmp_path, monkeypatch,
-             {name: _tensor(64, 32, i) for i, name in enumerate((q, k, v))}, plan)
+             {name: _tensor(64, 32, i) for i, name in enumerate((q, k, v))}, plan,
+             architecture=FUSED_QKV_ARCHITECTURE)
     message = str(caught.value)
     assert BODY + "0.self_attn.qkv_proj" in message
     assert not (tmp_path / "out" / "config.json").exists()
