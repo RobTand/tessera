@@ -212,15 +212,24 @@ def fused_routed_unit_shape_refusal(family: str, part: str, *, rows: int, cols: 
                                     rates, window_bits: int) -> "str | None":
     """The wire-shape half of :func:`fused_routed_window_supported`, on one
     unit's manifest facts alone -- what an exporter can decide before any
-    bundle exists (tessera#624 prices the lane's composed tables only where
-    the stack's shape admits the lane).  ``part`` is ``gate``/``up``/``down``.
+    bundle exists (tessera#624 prices the lane's tables only where the
+    stack's shape admits the lane).  ``part`` is ``gate``/``up``/``down``.
 
-    Only what the manifest says is checked here: family, window bits, the
-    column count the tiles need, every column at rate ``RATE`` (the one-run
-    identity-permutation table the repacker emits for a uniform rate), and
-    the row multiples the kernel's tiles need.  Device, arithmetic, the
-    activation quantizer and the env toggle are runtime facts the runtime
-    predicate keeps.  Returns the refusal, or ``None`` when the shape serves.
+    Only what the manifest says is checked here, with the runtime
+    predicate's own helpers: family, window bits, the column count the tiles
+    need, the run table the packer lays out for these rates (one run per
+    distinct rate, sorted by rate) as :func:`run_pair` reads it -- one rate or
+    two ADJACENT rates, each in 1..8 (contract v45, tessera#694) -- the
+    word-stage slot that pair needs against the target platform's opt-in
+    shared memory (``SM121_MAX_DYNAMIC_SMEM``) in the part's own launch (the
+    two-table gate/up launch reaches ``ROUTED_LANE_RATES``, the one-table
+    down launch every rate), and the row multiples the kernel's tiles need.
+    Device, arithmetic, the activation quantizer, the column order and the
+    env toggle are runtime facts the runtime predicate keeps.  A stack is
+    refused whole when any of its parts is, as at runtime, so a GLM stack
+    (one rung for all three parts) is admitted exactly where
+    ``column_rates_routed_moe`` admits its rates.  Returns the refusal, or
+    ``None`` when the shape serves.
     """
     if family not in ("value", "e4m3"):
         return f"family {family!r} is not a window family"
@@ -230,8 +239,22 @@ def fused_routed_unit_shape_refusal(family: str, part: str, *, rows: int, cols: 
     if cols % BK != 0 or cols < MIN_COLS:
         return f"{part} has {cols} columns; the lane needs a multiple of {BK} and at least {MIN_COLS}"
     rates = tuple(int(r) for r in rates)
-    if len(rates) != cols or any(r != RATE for r in rates):
-        return f"{part} run table is not [[{RATE}, 0, {cols}, 0]] (mixed rates or a rate other than {RATE})"
+    if len(rates) != cols:
+        return f"{part} carries {len(rates)} column rates for {cols} columns"
+    table, col0, word0 = [], 0, 0
+    for rate in sorted(set(rates)):
+        count = rates.count(rate)
+        table.append((rate, col0, count, word0))
+        col0, word0 = col0 + count, word0 + chunk_words(rate) * count
+    pair, why = run_pair(torch.tensor(table, dtype=torch.int32), cols)
+    if pair is None:
+        return f"{part} run table: {why}"
+    mode = 2 if part == "down" else 0
+    slot = slot_words_for_pair(pair)
+    if smem_bytes(mode, slot) > SM121_MAX_DYNAMIC_SMEM:
+        what = "down" if mode == 2 else "gate/up"
+        return (f"the {what} launch at {slot}-word slots needs {smem_bytes(mode, slot)} bytes of "
+                f"shared memory per block; sm_121 allows {SM121_MAX_DYNAMIC_SMEM}")
     rows = int(rows)
     if part == "down":
         if rows % BN != 0:
@@ -576,6 +599,28 @@ def fused_routed_window_supported(gate, up, down) -> "str | None":
     return None
 
 
+def projection_tables(bundle) -> "tuple[torch.Tensor, torch.Tensor, int, int]":
+    """The launch tables the lane builds for one projection's bundle.
+
+    ``(runs, bdesc, tile_words, slot_words)``: the stack's run pair broadcast
+    to int32 ``[E, 8]``, the block descriptors (int32 ``[E, cols / 32,
+    BDESC_INTS]``, :func:`block_desc`), the wire's words per 512-row tile and
+    the word-stage slot the pair needs.  :meth:`FusedRoutedWindowMoE.
+    from_bundles` builds the lane from these, and ``runs`` and ``bdesc`` are
+    two of the tensors its ``resident_bytes`` counts, so the exporter's price
+    (``serving_parts.routed_fused_unit_bytes``) is tested against this
+    function rather than a restatement.  The caller has admitted the stack
+    (:func:`fused_routed_window_supported`).
+    """
+    e = int(bundle.experts)
+    pair, why = run_pair(bundle.runs_all.reshape(e, -1, 4)[0], bundle.cols)
+    if pair is None:
+        raise GrammarError(f"the fused routed window lane refuses this projection: {why}")
+    return (pair.reshape(1, 8).expand(e, 8).contiguous(),
+            block_desc(bundle.perm_all, int(pair[2]), int(bundle.cols)),
+            pair_tile_words(pair), slot_words_for_pair(pair))
+
+
 @dataclasses.dataclass(frozen=True)
 class _Routing:
     offsets: torch.Tensor      # [E + 1] int32
@@ -651,18 +696,9 @@ class FusedRoutedWindowMoE:
         # the ``when_unavailable`` answer the contract publishes -- and not on
         # the first forward of a serve.
         _ext(down.family)
-        e = int(down.experts)
-
-        def tables(b):
-            pair, why = run_pair(b.runs_all.reshape(e, -1, 4)[0], b.cols)
-            assert pair is not None, why          # the predicate above admitted it
-            return (pair.reshape(1, 8).expand(e, 8).contiguous(),
-                    block_desc(b.perm_all, int(pair[2]), int(b.cols)),
-                    pair_tile_words(pair), slot_words_for_pair(pair))
-
-        runs_gate, bdesc_gate, tw_gate, sw_gate = tables(gate)
-        runs_up, bdesc_up, _tw_up, sw_up = tables(up)
-        runs_down, bdesc_down, tw_down, sw_down = tables(down)
+        runs_gate, bdesc_gate, tw_gate, sw_gate = projection_tables(gate)
+        runs_up, bdesc_up, _tw_up, sw_up = projection_tables(up)
+        runs_down, bdesc_down, tw_down, sw_down = projection_tables(down)
         return cls(gate=gate, up=up, down=down, family=down.family, arithmetic=down.arithmetic,
                    table_gate=compose_table16(gate), table_up=compose_table16(up),
                    table_down=compose_table16(down),

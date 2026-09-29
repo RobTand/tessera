@@ -385,7 +385,7 @@ def routed_window_unit_resident_bytes(family: str, rows: int, cols: int, rates,
     ``finish``'s ``word_off``).  This prices exactly those tensors from the
     unit's own verified manifest (rates, window bits, geometry); the
     per-part ``run_off`` is :func:`routed_window_part_resident_bytes` and
-    the fused lane's composed tables :func:`routed_fused_table_bytes`.
+    the fused lane's tables :func:`routed_fused_unit_bytes`.
 
     Whole unit at TP1: a tensor-parallel cut prices the rank-local rows
     (w13) or columns and their rate slice (w2) through the same function.
@@ -419,6 +419,31 @@ def routed_fused_table_bytes(window_bits: int) -> int:
     ``FusedRoutedWindowMoE.resident_bytes`` publishes it (both families; the
     value family's table is a view the self-report still counts)."""
     return 2 * (1 << int(window_bits))
+
+
+#: The fused routed lane's per-projection launch tables since contract v45
+#: (tessera#694), restated from ``tessera.routed_fused`` so this module stays
+#: torch-free (``tests/test_export_routed_resident_pricing.py`` pins them
+#: equal): the run pair is int32 ``[8]`` per expert, and each ``BK``-column
+#: block carries an int32 ``[BDESC_INTS]`` descriptor.
+ROUTED_FUSED_RUN_PAIR_INTS = 8
+ROUTED_FUSED_BLOCK_COLS = 32
+ROUTED_FUSED_BDESC_INTS = 12
+
+
+def routed_fused_unit_bytes(window_bits: int, cols: int) -> int:
+    """What the fused routed lane holds per expert projection beside the
+    bundle's planes, as ``FusedRoutedWindowMoE.resident_bytes`` publishes it:
+    the composed table (:func:`routed_fused_table_bytes`, tessera#685) and,
+    since contract v45 (tessera#694), the projection's run pair and its
+    block descriptors (``routed_fused.projection_tables``).  ``cols`` is the
+    unit's rank-local column count, which sets the descriptor count."""
+    cols = int(cols)
+    if cols <= 0 or cols % ROUTED_FUSED_BLOCK_COLS:
+        raise ValueError(f"the fused routed lane reads whole {ROUTED_FUSED_BLOCK_COLS}-column "
+                         f"blocks; {cols} columns are not")
+    return (routed_fused_table_bytes(window_bits) + 4 * ROUTED_FUSED_RUN_PAIR_INTS
+            + 4 * ROUTED_FUSED_BDESC_INTS * (cols // ROUTED_FUSED_BLOCK_COLS))
 
 
 def vocab_parallel_rows(rows: int, tp_size: int, *, padding: int = 64) -> int:

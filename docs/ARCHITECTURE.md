@@ -2614,8 +2614,11 @@ shared tables is exact for one NVFP4 unit per trellis). A routed FP8/BF16
 stack is priced as the compact window lane holds it (tessera#624): the
 repacked planes, per-expert tables, permutations and bookkeeping of
 `WindowUnitAxis`, the per-part `run_off`, and the fused lane's composed
-tables where the stack's wire shape admits it (#685) -- never a decoded tile,
-which that lane does not allocate. The figure is the whole stack at TP1; the
+tables (#685) with, since contract v45, each projection's run pair and block
+descriptors (`serving_parts.routed_fused_unit_bytes`) where the stack's wire
+shape admits the lane (`routed_fused.fused_routed_unit_shape_refusal`: one
+rate or two adjacent rates, the gate/up launch within `ROUTED_LANE_RATES` on
+sm_121) -- never a decoded tile, which that lane does not allocate. The figure is the whole stack at TP1; the
 manifest's `totals.per_rank` block (`--fit-tp-size`) prices each rank's cut
 beside the MTP draft's own embed/head duplicate as its own line item
 (tessera#645). `cache_capacity` may

@@ -6,11 +6,13 @@ The runtime serves every TESSERA_FP8/TESSERA_BF16 routed stack through
 ``serving.moe_route``'s compact window lane, which never allocates the decoded
 1-byte tile the exporter used to price (``rows * cols + rows * 4`` per unit):
 what a rank holds is ``native_window_moe.WindowUnitAxis``'s stacked planes,
-tables and bookkeeping, plus the fused lane's composed tables (#685) where
-the stack's shape admits it.  The anchor here is the runtime's own
-allocation, built on CPU from the exported wires' verified metadata by the
-same axis the loader fills, and priced by the same ``resident_bytes`` the
-load bench reports.
+tables and bookkeeping, plus the fused lane's composed tables (#685) and,
+since contract v45 (tessera#694), its run pairs and block descriptors, where
+the stack's shape admits it -- at every one- or two-rate shape the v45 lane
+reads, not rate 4 alone.  The anchor here is the runtime's own allocation,
+built on CPU from the exported wires' verified metadata by the same axis the
+loader fills, and priced by the same ``resident_bytes`` the load bench
+reports.
 """
 from __future__ import annotations
 
@@ -26,7 +28,7 @@ safetensors_torch = pytest.importorskip("safetensors.torch")
 from tessera import kernel_window_gemv as kg  # noqa: E402
 from tessera.compact_prep import parse_compact_expert  # noqa: E402
 from tessera import routed_fused, serving_parts  # noqa: E402
-from tessera.routed_fused import RATE, WINDOW_BITS  # noqa: E402
+from tessera.routed_fused import WINDOW_BITS  # noqa: E402
 from tessera.serving.scheme import MOE_GROUPS, MOE_GROUP_PROJECTIONS  # noqa: E402
 from window_pack_reference import pack_bitstream  # noqa: E402
 
@@ -50,11 +52,14 @@ fused_routed_unit_shape_refusal = _priced(routed_fused, "fused_routed_unit_shape
 mtp_draft_embed_head_duplicate_bytes = _priced(serving_parts, "mtp_draft_embed_head_duplicate_bytes")
 per_rank_fit_items = _priced(serving_parts, "per_rank_fit_items")
 routed_fused_table_bytes = _priced(serving_parts, "routed_fused_table_bytes")
+routed_fused_unit_bytes = _priced(serving_parts, "routed_fused_unit_bytes")
 routed_window_part_resident_bytes = _priced(serving_parts, "routed_window_part_resident_bytes")
 routed_window_unit_resident_bytes = _priced(serving_parts, "routed_window_unit_resident_bytes")
 vocab_parallel_rows = _priced(serving_parts, "vocab_parallel_rows")
 
 STACK = moe_write.STACK
+#: q256 1024: every column at rate 4, the exported stack's rung.
+RATE_4 = 4
 # The smallest shape the fused lane admits whole: every part at least 128
 # columns and a multiple of 32, gate/up rows a multiple of 64, down rows a
 # multiple of 128 -- so the stack carries composed tables at TP1, and the
@@ -111,13 +116,15 @@ def _reference_bytes(family: str, units_by_part: dict, experts: int) -> int:
     return total
 
 
-def _runtime_bytes(family: str, units_by_part: dict, experts: int) -> tuple[int, int]:
-    """``(bundles.resident_bytes(), fused table bytes)`` off the runtime's own
+def _runtime_bytes(family: str, units_by_part: dict, experts: int, *,
+                   fused_lane: bool = True) -> "tuple[int, int | None]":
+    """``(bundles.resident_bytes(), fused lane bytes)`` off the runtime's own
     axis and bundles -- the figure the load bench reports -- where the grouped
-    kernel modules import (they need triton)."""
+    kernel modules import (they need triton).  ``fused_lane=False`` skips the
+    fused lane's tables, for run tables that lane does not read."""
     pytest.importorskip("triton")
     from tessera.native_window_moe import PackedWindowMoeBundles, WindowUnitAxis
-    from tessera.routed_fused import compose_table16
+    from tessera.routed_fused import compose_table16, projection_tables
     from tessera.window_gemm_grouped import prepare_grouped_window_gemm_from_soa
 
     axes = {"w13": WindowUnitAxis(experts, ("gate_proj", "up_proj"), family=family),
@@ -139,8 +146,16 @@ def _runtime_bytes(family: str, units_by_part: dict, experts: int) -> tuple[int,
 
     bundles = PackedWindowMoeBundles(gate=bundle("w13", "gate_proj"), up=bundle("w13", "up_proj"),
                                      down=bundle("w2", "down_proj"), family=family)
-    # What ``FusedRoutedWindowMoE.resident_bytes`` adds: the three composed tables.
-    fused = sum(compose_table16(b).numel() * 2 for b in (bundles.gate, bundles.up, bundles.down))
+    if not fused_lane:
+        return bundles.resident_bytes(), None
+    # What ``FusedRoutedWindowMoE.resident_bytes`` adds, built by the helpers
+    # ``from_bundles`` builds it with: per projection the composed table and,
+    # since contract v45, the run pair and the block descriptors.
+    fused = 0
+    for b in (bundles.gate, bundles.up, bundles.down):
+        runs, bdesc, _tile_words, _slot_words = projection_tables(b)
+        fused += (compose_table16(b).numel() * 2 + runs.numel() * runs.element_size()
+                  + bdesc.numel() * bdesc.element_size())
     return bundles.resident_bytes(), fused
 
 
@@ -159,7 +174,10 @@ def test_unit_pricing_is_the_axis_allocation(family, rows, rates, anchor):
     lane = FAMILY_OF[family]
     units = _stack_units(lane, experts, lambda _g: rows, lambda _g: rates)
     if anchor == "runtime":
-        actual, _fused = _runtime_bytes(lane, units, experts)
+        # None of these shapes is one the fused lane reads (four rates;
+        # three columns; two rates that are not adjacent), so only the
+        # compact planes are compared here.
+        actual, _fused = _runtime_bytes(lane, units, experts, fused_lane=False)
     else:
         actual = _reference_bytes(lane, units, experts)
     per_unit = routed_window_unit_resident_bytes(
@@ -179,15 +197,76 @@ def test_unit_pricing_refuses_what_the_lane_cannot_read():
 
 
 def test_fused_shape_predicate_reads_the_manifest_alone():
-    ok = dict(rows=128, cols=128, rates=(RATE,) * 128, window_bits=WINDOW_BITS)
+    ok = dict(rows=128, cols=128, rates=(RATE_4,) * 128, window_bits=WINDOW_BITS)
     assert fused_routed_unit_shape_refusal("e4m3", "gate", **ok) is None
     assert fused_routed_unit_shape_refusal("value", "down", **ok) is None
-    assert "columns" in fused_routed_unit_shape_refusal("e4m3", "down", **{**ok, "cols": 64, "rates": (RATE,) * 64})
-    assert "run table" in fused_routed_unit_shape_refusal("e4m3", "up", **{**ok, "rates": (3,) * 128})
+    assert "columns" in fused_routed_unit_shape_refusal("e4m3", "down", **{**ok, "cols": 64, "rates": (RATE_4,) * 64})
     assert "window_bits" in fused_routed_unit_shape_refusal("e4m3", "up", **{**ok, "window_bits": 13})
     assert "hidden size" in fused_routed_unit_shape_refusal("value", "down", **{**ok, "rows": 192})
     assert "intermediate size" in fused_routed_unit_shape_refusal("value", "gate", **{**ok, "rows": 96})
+    assert "column rates" in fused_routed_unit_shape_refusal("e4m3", "gate", **{**ok, "rates": (4,) * 96})
+    # Contract v45 (tessera#694): one rate or two ADJACENT rates, in any
+    # column order (the packer sorts them into runs).
+    assert fused_routed_unit_shape_refusal("e4m3", "up", **{**ok, "rates": (3,) * 128}) is None
+    assert fused_routed_unit_shape_refusal("e4m3", "gate", **{**ok, "rates": (3, 4) * 64}) is None
+    assert fused_routed_unit_shape_refusal("value", "down", **{**ok, "rates": (5,) * 32 + (4,) * 96}) is None
+    assert "not adjacent" in fused_routed_unit_shape_refusal("e4m3", "up", **{**ok, "rates": (2, 4) * 64})
+    assert "3 runs" in fused_routed_unit_shape_refusal("e4m3", "up", **{**ok, "rates": (3, 4, 5, 4) * 32})
+    assert "run table" in fused_routed_unit_shape_refusal("e4m3", "up", **{**ok, "rates": (9,) * 128})
+    # The shared-memory inequality per launch, derived as the runtime derives
+    # it: the two-table gate/up launch reaches the published routed set, the
+    # one-table down launch every rate the kernel decodes.
+    for rate in range(1, 9):
+        uniform = {**ok, "rates": (rate,) * 128}
+        for part in ("gate", "up"):
+            refusal = fused_routed_unit_shape_refusal("e4m3", part, **uniform)
+            assert (refusal is None) == (rate in routed_fused.ROUTED_LANE_RATES), (part, rate, refusal)
+            if refusal is not None:
+                assert "shared memory" in refusal
+        assert fused_routed_unit_shape_refusal("e4m3", "down", **uniform) is None, rate
+    assert routed_fused.ROUTED_LANE_RATES == (1, 2, 3, 4, 5, 6)
     assert routed_fused_table_bytes(WINDOW_BITS) == 2 * (1 << WINDOW_BITS)
+
+
+def test_fused_unit_pricing_is_the_lane_tables():
+    """Per unit: the composed table, the int32 [8] run pair and one int32
+    [12] descriptor per 32 columns -- the constants restated in the torch-free
+    ``serving_parts`` are the lane's own."""
+    assert serving_parts.ROUTED_FUSED_BLOCK_COLS == routed_fused.BK
+    assert serving_parts.ROUTED_FUSED_BDESC_INTS == routed_fused.BDESC_INTS
+    runs, _ok = routed_fused.run_pair(torch.tensor([[4, 0, 128, 0]], dtype=torch.int32), 128)
+    assert runs.numel() == serving_parts.ROUTED_FUSED_RUN_PAIR_INTS
+    assert routed_fused_unit_bytes(WINDOW_BITS, 128) == 2 * (1 << WINDOW_BITS) + 4 * 8 + 4 * 12 * 4
+    assert routed_fused_unit_bytes(WINDOW_BITS, 4096) == 2 * (1 << WINDOW_BITS) + 32 + 48 * 128
+    with pytest.raises(ValueError, match="column"):
+        routed_fused_unit_bytes(WINDOW_BITS, 100)
+
+
+def _stack_layouts(rates_w13, rates_w2) -> list:
+    """The write loop's per-unit layout records for an ``EXPERTS``-deep stack."""
+    layouts = []
+    for group in MOE_GROUPS:
+        for part in MOE_GROUP_PROJECTIONS[group]:
+            rates = tuple(rates_w13 if group == "w13" else rates_w2)
+            for _expert in range(EXPERTS):
+                layouts.append({"group": group, "projection": part, "rows": INTER if group == "w13" else HIDDEN,
+                                "cols": len(rates), "rates": rates, "window_bits": WINDOW_BITS})
+    return layouts
+
+
+def test_a_mixed_rate_stack_is_priced_with_the_fused_lane_tables():
+    """Contract v45: a stack of two adjacent rates (q256 896 as the packer
+    mixes rates 3 and 4) takes the fused lane, so its per-stack figure holds
+    every unit's composed table, run pair and descriptors; a stack whose
+    gate/up launch the target cannot fit (rate 7) keeps the compact lane
+    alone.  At v44 both were priced as compact-only."""
+    part_bytes = 3 * routed_window_part_resident_bytes(EXPERTS)
+    mixed = (3, 4) * 64
+    _units, stack = export.routed_stack_resident_bytes("TESSERA_FP8", EXPERTS, _stack_layouts(mixed, mixed))
+    assert stack == part_bytes + 3 * EXPERTS * routed_fused_unit_bytes(WINDOW_BITS, 128)
+    _units, stack = export.routed_stack_resident_bytes(
+        "TESSERA_BF16", EXPERTS, _stack_layouts((7,) * 128, (7,) * 128))
+    assert stack == part_bytes
 
 
 def _accepts_fit_flag() -> bool:
@@ -239,7 +318,8 @@ def _layouts(wires: dict) -> dict:
 @pytest.mark.parametrize("anchor", ["reference", "runtime"])
 def test_routed_stack_bytes_are_the_compact_lane_allocation_plus_compose_tables(exported, anchor):
     """The manifest's TP1 figure equals what the loader's axes hold for these
-    wires, plus the fused lane's three composed tables per expert."""
+    wires, plus the fused lane's three composed tables per expert and, since
+    contract v45, each projection's run pair and block descriptors."""
     manifest, wires, _tensors = exported
     record = manifest["modules"][STACK]
     assert record["family"] == "TESSERA_FP8"
@@ -249,7 +329,10 @@ def test_routed_stack_bytes_are_the_compact_lane_allocation_plus_compose_tables(
         planes, tables = _runtime_bytes("e4m3", units, EXPERTS)
     else:
         planes = _reference_bytes("e4m3", units, EXPERTS)
-        tables = len(layouts) * 2 * (1 << WINDOW_BITS)
+        # Per unit: the 2^L-entry 16-bit table, the int32 [8] run pair and
+        # one 48-byte descriptor per 32 columns.
+        tables = sum(2 * (1 << bits) + 4 * 8 + 48 * (cols // 32)
+                     for _rows, cols, _rates, bits in layouts.values())
     assert record["resident_bytes_resident_mode"] == planes + tables
     # The whole stack admits the fused lane at TP1 (128 columns, rate 4, L=14).
     for (group, part, _e), (rows, cols, rates, bits) in layouts.items():
@@ -291,7 +374,7 @@ def test_mtp_duplicate_is_its_own_line_item_and_the_total_is_the_sum(exported, a
                     "e4m3", rows, rates[rank * local:(rank + 1) * local], bits)
         assert fused_routed_unit_shape_refusal(
             "e4m3", "down", rows=HIDDEN, cols=INTER // FIT_TP,
-            rates=(RATE,) * (INTER // FIT_TP), window_bits=WINDOW_BITS) is not None
+            rates=(RATE_4,) * (INTER // FIT_TP), window_bits=WINDOW_BITS) is not None
         if anchor == "runtime":
             routed, _tables = _runtime_bytes("e4m3", units, EXPERTS)
         else:
