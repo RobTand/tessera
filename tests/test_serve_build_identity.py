@@ -1250,3 +1250,25 @@ def test_build_identity_hashing_goes_through_the_chunked_owner(tmp_path, monkeyp
     monkeypatch.setattr(build_identity, "sha256_file", _boom)
     with pytest.raises(AssertionError, match="owner not consulted"):
         build_identity._sha256(fixture)
+
+
+def test_autotune_digest_goes_through_the_fingerprint_owner(tmp_path, monkeypatch):
+    """#712: _autotune_digest hashed its blob inline with the same bytes
+    _fingerprint binds. The patched owner is observed by the call site
+    (pre-fold it hashes inline, so no boom); the golden pins the digest
+    of a fixed slot identical before/after."""
+    from tessera.serving import build_identity
+    golden = ("759bcbac458323d5501c786256df68eb1c77b8586128eff3438d2d2b8889b12a")
+    slot = tmp_path / "slot"
+    slot.mkdir()
+    (slot / "k.best_config").write_text(json.dumps({"x": 1}))
+    assert build_identity._fingerprint([["k.best_config", {"x": 1}]]) == golden
+    assert build_identity._autotune_digest(slot) == (1, golden)
+    assert build_identity._autotune_digest(tmp_path / "absent") == (0, None)
+
+    def _boom(identity):
+        raise AssertionError("owner not consulted")
+
+    monkeypatch.setattr(build_identity, "_fingerprint", _boom)
+    with pytest.raises(AssertionError, match="owner not consulted"):
+        build_identity._autotune_digest(slot)
