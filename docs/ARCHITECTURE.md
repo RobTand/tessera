@@ -1,5 +1,14 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-09-30 for the fused window kernel's two-run descriptor ring.
+A two-run chunk's block descriptors now reach shared memory by `cp.async`
+with the word stages' copies, four chunks ahead, into a ring the word copies
+and the previous-word loads map from; it replaces the 768 B column-map ring
+and the down and dense launches' global descriptor reads. Every two-run chunk
+loop waits on its global loads only at its end. No contract field, rung,
+route or `executes` entry moves, and every output is bitwise equal to
+master's (`docs/measurements/2026-09-30-descriptor-ring.md`).
+
 Re-stamped 2026-09-29 for the fused window kernel's per-pair instantiation,
 the two-run column map and the first chunk's load settle. Each run pair is
 now its own `routed_fused_kernel<FP8, MODE, DENSE, SPLIT, RL, TWO>`, which the
@@ -3639,12 +3648,13 @@ alone. Since v45 the word stages are sized per launch: `Params::slot_words`
 carries `slot_words_for_rate(r) = 2r + 2 * (r odd)` words per (column, 64-row
 half) rounded up to 4 for the larger rate of the pair (`routed_fused.
 slot_words_for_pair`), a `Layout<MODE>` template places the tables, B and A
-stages, scales, descriptors, the claim counter and (gate/up) the column-map
+stages, scales, descriptors, the claim counter and the two-run block-descriptor
 ring ahead of the word ring, and
 `smem_bytes(mode, slot) = SMEM_FIXED[mode] + WORD_STAGES * 2 * BK * slot * 4`
-is the dynamic shared memory the launch requests (91,984 B fixed for the
-two-table gate/up modes, 58,448 B for down; `SLOT_WORDS_MAX` 16). The two
-extra words at an odd rate are the copy path: a column's words start 16-byte
+is the dynamic shared memory the launch requests (91,600 B fixed for the
+two-table gate/up modes, 58,640 B for down and dense; `SLOT_WORDS_MAX` 16).
+The two extra words at an odd rate are the copy path: a column's words
+start 16-byte
 aligned and a 64-row half at rate r is 8r bytes, so an odd rate's half is
 8-byte aligned at odd half indices, and the producer copies every half in
 16-byte `cp.async` pieces (from the aligned word pair before it when it is
@@ -3675,30 +3685,42 @@ image's CUDA 13.0.88; a toolchain change must re-check it). On the T8R expert
 stacks this runs the rate-4 R1024 stack 3 to 10% faster than master at M 1 to
 2048 and keeps the two-run stacks 5 to 9% faster
 (`docs/measurements/2026-09-29-per-pair-kernel.md`). Until this change one
-kernel per mode held every pair's loop behind a per-item switch, at 118 to 128 registers against the 128-register
-cap, and a change to one pair's loop moved the others' code: the two-run
+kernel per mode held every pair's loop behind a per-item switch, at 118 to
+128 registers against the 128-register cap, and a change to one pair's loop
+moved the others' code: the two-run
 column map below cost the unchanged rate-4 gate/up loop 11% more executed
 instructions (`docs/measurements/2026-09-29-two-run-column-map.md`). The
 library now holds 67 instantiations per family instead of five, and nvcc
 compiles each family's source in about 35 s instead of 28 s on sparky. A two-run chunk
-branches warp-uniformly on the run per half. In the gate/up
-launch its column map is read from the block descriptor once per (chunk, half,
-column): the thread that issues a column's words maps it and stores the map,
-packed into one int32 (in-block position, run, rank), in a 768 B ring of
-`WORD_STAGES` chunks in shared memory, and every producer's previous-word load
-and decode read it from there past the next producer barrier. Before, every
-producer thread mapped the column again from global memory (eight per column
-per half), a dependent load chain that doubled the launch's long-scoreboard
-stall. The down launch maps one half, which both halves read; the ring made it
-slower there, so it keeps the global map
-(`docs/measurements/2026-09-29-two-run-column-map.md`). Two rates of a
+branches warp-uniformly on the run per half, and maps each column from its
+32-column block descriptor (`BDESC_INTS` 12 int32 per projection per chunk).
+The descriptors travel with the word stages' copies: the producer threads
+that issue no words (six for gate/up, three for down and dense) copy chunk
+kc + 4's descriptors in 16-byte `cp.async` pieces with chunk kc + 2's words,
+into a ring of `DRING_STAGES` 4 chunks (384 B for gate/up, 192 B for down and
+dense), and the first two chunks' descriptors are stored before the loop, so
+the word copies and the previous-word loads map their columns from shared
+memory. Every two-run chunk loop then waits on its global loads only at its
+end, after all of its table lookups (sm_121, CUDA 13.0.88), and on the T8R
+expert stacks the two-run stacks run 31 to 38% faster than with the global
+reads, R1088 at 1.13 to 1.18 times R1024's time per call. The one-run loops
+keep their load order (the previous word, then the activation chunk): issuing
+the activation chunk first cost the one-run R1024 stack 2 to 7% at M = 1 and 2
+with no change in instruction count. Before, the
+gate/up launch read each descriptor from global memory once per (chunk,
+half, column) and kept a packed map in a 768 B ring, and the down and dense
+launches read it from global memory in both places: a dependent global load
+on the producer's chunk loop whose wait sat ahead of the next copy or the
+decode (`docs/measurements/2026-09-29-two-run-column-map.md`,
+`docs/measurements/2026-09-30-descriptor-ring.md`). The host checks that each
+descriptor tensor is 16-byte aligned. Two rates of a
 pair must be adjacent -- `grammar.rate_set` emits no other pair -- so
 `run_pair` refuses a wider one by name and no instantiation reads one. The
 device decides the rates: sm_121 grants 101,376 B per block
 (`cudaDevAttrMaxSharedMemoryPerBlockOptin`), so the gate/up launch holds slot
-8 (98,128 B; rates 1-4) and slot 12 (101,200 B; rates 5 and 6) and not slot
-16 (104,272 B; rates 7 and 8), while the one-table down launch holds every
-slot (70,736 B at 16). `ROUTED_LANE_RATES` is derived from exactly that
+8 (97,744 B; rates 1-4) and slot 12 (100,816 B; rates 5 and 6) and not slot
+16 (103,888 B; rates 7 and 8), while the one-table down launch holds every
+slot (70,928 B at 16). `ROUTED_LANE_RATES` is derived from exactly that
 inequality -- `(1, 2, 3, 4, 5, 6)` -- and the dense identity, which runs each
 role in its own launch and so has no two-table gate/up mode, reaches 1..8. A
 routed stack whose larger rate is 7 or 8 keeps the compact adapter, and the

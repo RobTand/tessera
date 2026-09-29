@@ -123,14 +123,15 @@ MIN_COLS = 4 * BK
 #: The kernel's shared-memory layout, restated for the support predicates (the
 #: library's attributes are checked against these at load): the word stages
 #: come last and are sized per launch by the stack's rates, so the fixed part
-#: is ``SMEM_FIXED[mode]`` (two 32 KB tables and the two-run column-map ring --
-#: WORD_STAGES chunks of one int32 per half and column -- for gate/up, one table
-#: for down/dense) and a launch needs ``SMEM_FIXED[mode] + WORD_STAGES * 2 * BK
+#: is ``SMEM_FIXED[mode]`` (two 32 KB tables for gate/up, one for down/dense,
+#: and the two-run block-descriptor ring -- DRING_STAGES chunks of BDESC_INTS
+#: int32 per projection) and a launch needs ``SMEM_FIXED[mode] + WORD_STAGES * 2 * BK
 #: * slot_words * 4`` bytes.  A block on sm_121 may opt in to 101,376 B, so the
 #: gate/up launch fits slots up to 12 words (rates <= 6) and the down/dense
 #: launch every rate.
 WORD_STAGES = 3
-SMEM_FIXED = {0: 91_984, 1: 91_984, 2: 58_448}
+DRING_STAGES = 4
+SMEM_FIXED = {0: 91_600, 1: 91_600, 2: 58_640}
 #: The per-block dynamic shared memory sm_121 (GB10, the contract's target
 #: platform) lets a kernel opt in to -- ``cudaDevAttrMaxSharedMemoryPerBlock
 #: Optin`` there; the library reads the live value per device, this is the

@@ -1,7 +1,9 @@
 # Two-run column map in shared memory (fused routed window kernel)
 
 **Status:** measured; merged with the per-pair kernel that removes the
-one-run regression below (`2026-09-29-per-pair-kernel.md`). As first
+one-run regression below (`2026-09-29-per-pair-kernel.md`). The 768 B
+column-map ring is superseded by the two-run descriptor ring
+(`2026-09-30-descriptor-ring.md`). As first
 measured it was not proposed for merge as is. Revision 2 is faster on
 the two-run stacks (R1088 -5%, R832 -7% per call, bitwise equal) and 2 to 3%
 faster summed over the GLM-5.3-Flash T8R layer mix, but it slows the one-run
