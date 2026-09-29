@@ -213,6 +213,9 @@ def _fused_window_dense(
     out = torch.empty((m, total), dtype=torch.bfloat16, device=x.device)
     if m == 0:
         return out
+    # One in-stream fill zeroes every role's slot, so the launches add none
+    # (``zeroed=True``): at small M this op's host time, not its kernels, sets
+    # the eager forward's time.
     counter = torch.zeros(len(role_rows), dtype=torch.int32, device=x.device)
     offset = 0
     for i, rows in enumerate(role_rows):
@@ -220,7 +223,7 @@ def _fused_window_dense(
             family=family, rows=int(rows), cols=int(cols), words=words[i], table16=tables[i],
             init=inits[i], has_init=has_inits[i], wscale=wscales[i],
             runs=runs[i], bdesc=bdescs[i], tile_words=int(tile_words[i]), slot_words=int(slot_words[i]))
-        rf.dense_forward(role, x, a_scale, out.narrow(1, offset, int(rows)), counter[i:i + 1])
+        rf.dense_forward(role, x, a_scale, out.narrow(1, offset, int(rows)), counter[i:i + 1], zeroed=True)
         offset += int(rows)
     return out
 

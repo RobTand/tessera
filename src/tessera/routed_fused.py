@@ -1015,13 +1015,15 @@ def dense_k_split(m: int, rows: int, cols: int, sms: int, *, tile_words: "int | 
 
 
 def dense_forward(role: FusedDenseWindowRole, x: torch.Tensor, a_scale: "torch.Tensor | None",
-                  out: torch.Tensor, counter: torch.Tensor) -> None:
+                  out: torch.Tensor, counter: torch.Tensor, *, zeroed: bool = False) -> None:
     """One role's launch into ``out`` (a ``[M, rows]`` view, unit column stride).
 
     ``x`` is the family's A operand as the route quantised it (e4m3 + fp32
     ``a_scale`` for E4M3, bf16 for value), contiguous ``[M, cols]``; ``counter``
-    is one int32 slot this call zeroes in-stream.  No host synchronisation, so
-    a captured forward replays.
+    is one int32 slot this call zeroes in-stream -- unless ``zeroed`` says the
+    caller already zeroed it in-stream before this call (the module op zeroes
+    all its roles' slots with one fill).  No host synchronisation, so a
+    captured forward replays.
     """
     lib = _ext(role.family)
     m = int(x.shape[0])
@@ -1035,13 +1037,14 @@ def dense_forward(role: FusedDenseWindowRole, x: torch.Tensor, a_scale: "torch.T
         # 4-aligned columns; a row stride that is only even would misalign
         # them, so such a view takes the unsplit path.
         s = 1
-    if s > 1:
-        partial = torch.empty((s, m, role.rows), dtype=torch.float32, device=x.device)
-    else:
-        partial = x.new_empty(0, dtype=torch.float32)
-    slot = counter[:1]
-    slot.zero_()
-    empty = x.new_empty(0, dtype=torch.float32)
+    # One zero-size fp32 placeholder stands for whichever of the split
+    # workspace and ``a_scale`` the launch does not read (an unsplit launch
+    # reads no workspace, the value family no ``a_scale``).
+    empty = x.new_empty(0, dtype=torch.float32) if (s == 1 or a_scale is None) else None
+    partial = torch.empty((s, m, role.rows), dtype=torch.float32, device=x.device) if s > 1 else empty
+    slot = counter if counter.numel() == 1 else counter[:1]
+    if not zeroed:
+        slot.zero_()
     lib.dense_forward(
         bool(role.fp8), x, a_scale if a_scale is not None else empty,
         role.words, role.table16, role.init, role.has_init, role.wscale,
