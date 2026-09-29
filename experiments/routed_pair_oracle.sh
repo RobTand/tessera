@@ -34,7 +34,9 @@ if [[ "${ORACLE_NCU:-0}" == 1 ]]; then
   COMMAND=("$NCU_ROOT/ncu" --profile-from-start off --target-processes all
     --kernel-name 'regex:_grouped_window_gemm_kernel|_a4_span2_grouped_kernel|routed_fused_kernel|token_sum_kernel'
     --section LaunchStats --section Occupancy --section SpeedOfLight
-    --section MemoryWorkloadAnalysis --csv --log-file "$OUT/ncu.csv"
+    --section MemoryWorkloadAnalysis --section MemoryWorkloadAnalysis_Tables
+    --section WarpStateStats --section SchedulerStats --section InstructionStats
+    --csv --log-file "$OUT/ncu.csv"
     --export "$OUT/grouped" --force-overwrite
     python3 /work/experiments/routed_pair_ncu.py)
 fi

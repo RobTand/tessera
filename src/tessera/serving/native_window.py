@@ -46,8 +46,9 @@ reads to see that a forward changed none of it.
 
 TWO LAUNCH IDENTITIES, ONE PER MODULE.  Since contract v43 a module whose every
 role the fused window kernel reads (``tessera.routed_fused.
-fused_dense_window_supported``: rate 4 in every column, window 14, identity
-order, rows a multiple of 128) is served by that kernel's dense case instead:
+fused_dense_window_supported``: the wire's one- or two-rate run table at
+rates 1..8 in the packer's column order since v45 -- rate 4 alone at v43/v44
+-- window 14, rows a multiple of 128) is served by that kernel's dense case instead:
 the functional custom op ``tessera::fused_window_dense`` launches
 ``routed_fused_kernel<FP8, 2, DENSE>`` once per role into the role's column
 slice of one ``[M, rows]`` output (no concatenation), splitting K at decode
@@ -182,7 +183,9 @@ def _fused_window_dense(
     a_scale: Optional[torch.Tensor],
     words: List[torch.Tensor], tables: List[torch.Tensor], inits: List[torch.Tensor],
     has_inits: List[torch.Tensor], wscales: List[torch.Tensor],
-    role_rows: List[int], cols: int, family_e4m3: bool, folded: bool,
+    runs: List[torch.Tensor], bdescs: List[torch.Tensor],
+    role_rows: List[int], tile_words: List[int], slot_words: List[int],
+    cols: int, family_e4m3: bool, folded: bool,
 ) -> torch.Tensor:
     """A whole module through the fused window kernel's dense case: one node.
 
@@ -192,9 +195,13 @@ def _fused_window_dense(
     into its column slice of the one ``[M, sum(rows)]`` output; the work
     counter the kernel claims items through is allocated here per call and
     zeroed in-stream, so the op stays functional (nothing outside it is
-    mutated) and a captured forward replays.  ``folded`` is carried for the
-    same reason the Triton op carries it: the family fixes it, and a rebuilt
-    role cannot run a different arithmetic than the prepared one.
+    mutated) and a captured forward replays.  ``runs``, ``bdescs``,
+    ``tile_words`` and ``slot_words`` are each role's run pair, block
+    descriptor, tile stride and word-stage slot (tessera#694): the kernel
+    reads the wire's rates from them, so they travel with the role like every
+    other frozen input.  ``folded`` is carried for the same reason the Triton
+    op carries it: the family fixes it, and a rebuilt role cannot run a
+    different arithmetic than the prepared one.
     """
     from .. import routed_fused as rf
 
@@ -206,20 +213,24 @@ def _fused_window_dense(
     out = torch.empty((m, total), dtype=torch.bfloat16, device=x.device)
     if m == 0:
         return out
+    # One in-stream fill zeroes every role's slot, so the launches add none
+    # (``zeroed=True``): at small M this op's host time, not its kernels, sets
+    # the eager forward's time.
     counter = torch.zeros(len(role_rows), dtype=torch.int32, device=x.device)
     offset = 0
     for i, rows in enumerate(role_rows):
         role = rf.FusedDenseWindowRole(
             family=family, rows=int(rows), cols=int(cols), words=words[i], table16=tables[i],
-            init=inits[i], has_init=has_inits[i], wscale=wscales[i])
-        rf.dense_forward(role, x, a_scale, out.narrow(1, offset, int(rows)), counter[i:i + 1])
+            init=inits[i], has_init=has_inits[i], wscale=wscales[i],
+            runs=runs[i], bdesc=bdescs[i], tile_words=int(tile_words[i]), slot_words=int(slot_words[i]))
+        rf.dense_forward(role, x, a_scale, out.narrow(1, offset, int(rows)), counter[i:i + 1], zeroed=True)
         offset += int(rows)
     return out
 
 
 @_fused_window_dense.register_fake
-def _fused_window_dense_fake(x, a_scale, words, tables, inits, has_inits, wscales,
-                             role_rows, cols, family_e4m3, folded):
+def _fused_window_dense_fake(x, a_scale, words, tables, inits, has_inits, wscales, runs, bdescs,
+                             role_rows, tile_words, slot_words, cols, family_e4m3, folded):
     return torch.empty((x.shape[0], int(sum(role_rows))), dtype=torch.bfloat16, device=x.device)
 
 
@@ -333,7 +344,9 @@ class PreparedDenseNativeModule:
             return _fused_window_dense(
                 x, a_scale, [f.words for f in fused], [f.table16 for f in fused],
                 [f.init for f in fused], [f.has_init for f in fused], [f.wscale for f in fused],
-                [int(f.rows) for f in fused], int(self.__columns), self.__family == "e4m3",
+                [f.runs for f in fused], [f.bdesc for f in fused],
+                [int(f.rows) for f in fused], [int(f.tile_words) for f in fused],
+                [int(f.slot_words) for f in fused], int(self.__columns), self.__family == "e4m3",
                 self.__arithmetic == "folded")
         parts = []
         for role in self.__roles:
@@ -360,9 +373,10 @@ class PreparedDenseNativeModule:
             for name in ("words", "table", "codes", "native", "scale", "runs",
                          "init_perm", "perm"):
                 yield f"roles.{index}.{name}", getattr(role.bundle, name)
-        # The fused lane's own storage beyond the bundles: the composed 16-bit
-        # table (32 KB) and the has_init flag per role; its words, start state
-        # and row scale are views of the bundle tensors already yielded.
+        # The fused lane's own storage beyond the bundles, per role: the composed
+        # 16-bit table (32 KB), the has_init flag, the run pair and the 32-column
+        # block descriptors (FusedDenseWindowRole.named_tables); its words, start
+        # state and row scale are views of the bundle tensors already yielded.
         for index, fused in enumerate(self.__fused):
             for name, tensor in fused.named_tables():
                 yield f"roles.{index}.{name}", tensor

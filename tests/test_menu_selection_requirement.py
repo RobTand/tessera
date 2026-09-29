@@ -152,6 +152,10 @@ def test_the_converter_warns_that_a_mixed_plan_must_not_ship_unvalidated(
     model.mkdir()
     tensors = {name: torch.zeros(4, 4) for name in _shapes()}
     save_file(tensors, model / "model.safetensors")
+    # Since tessera#706 the converter reads the model's config.json for the HF
+    # architecture; one that names none is the default ``build`` takes when
+    # the tests above call it directly.
+    (model / "config.json").write_text("{}")
     layer_config = tmp_path / "lc.json"
     layer_config.write_text(json.dumps(_mixed_config()))
     out = tmp_path / "plan.json"

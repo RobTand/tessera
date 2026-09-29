@@ -26,7 +26,11 @@ def main():
     parser.add_argument("--sigma", type=float, default=0.5)
     parser.add_argument("--seed", type=int, default=604)
     parser.add_argument("--warmup", type=int, default=10)
+    parser.add_argument("--rung", default=None, help="wire rung for every selected family (tessera#694)")
     args = parser.parse_args()
+    if args.rung:
+        for key in args.families.split(","):
+            oracle.FAMILIES[key] = dict(oracle.FAMILIES[key], rung=str(args.rung))
     from vllm.v1.worker.workspace import init_workspace_manager
 
     init_workspace_manager(torch.device("cuda", torch.cuda.current_device()))

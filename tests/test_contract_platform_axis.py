@@ -195,8 +195,24 @@ def test_the_packaged_contract_validates_at_v33(contract):
     ``experiments/`` shim row (tessera#691 item 1).  The option a driver must
     declare is unchanged; no cell, rung, route, launch, grade, format row
     or flag moves.
+
+    v45 (tessera#694) widens the two fused lanes' published predicate:
+    ``lane.requires.column_rates`` moves from ``[4]`` to ``[1..8]`` on both
+    entries -- the kernel reads the wire's run table at every rate -- and a
+    structure-scoped ``column_rates_routed_moe`` ``[1..6]`` enters beside it:
+    the routed-expert (gate/up, two-table) launch does not fit sm_121's
+    101,376 B per-block shared memory above rate 6, so an expert stack there
+    keeps the compact adapter while the one-table down/dense launch reads
+    every rate.  Every rung of the two window families up to rate 6 reaches
+    the fused pair the way q256 1024 did.  The cells' ``executes`` are
+    unchanged -- each routed/dense window cell already named the fused pair
+    beside the compact/Triton pair on a rung set that includes 1024 (all of
+    them at rates <= 6), and the derivation now reaches it at their other
+    rungs too.  NOT additive for a validator: ``column_rates_routed_moe`` is
+    a new ``lane.requires`` field a v44 reader (and PrismaQuant's mirror of
+    the roster) refuses, the fail-closed direction.  (v44 is tessera#691's.)
     """
-    assert int(contract["contract_version"]) == 44
+    assert int(contract["contract_version"]) == 45
     fused = "tessera.routed_fused.FusedRoutedWindowMoE.__call__"
     for cell in contract["lane_eligibility"]["cells"]:
         window_routed = (cell["structure"] == "routed_moe"
@@ -401,6 +417,19 @@ def test_the_surviving_v22_sm121_cells_are_byte_identical(contract):
         "tessera_e4m3_k1_dense_sm121_decode_resident",
         "tessera_e4m3_k1_dense_sm121_batch_resident"}
     assert set(recorded["remeasured_at_v43"]) <= standing
+    # Contract v45 (tessera#694) changes the kernel behind both fused launches
+    # and widens their predicate to rates 1..8 / routed 1..6, but no executes
+    # list, rung or id moves, so no cell is withdrawn or re-earned.  A served
+    # census of stub B on the GLM image recorded the fused pair on every
+    # routed stack and every dense module, at every rung the stub carries
+    # (docs/measurements/2026-09-28-mixed-rate-fused-window.md, "Route census");
+    # the fixture's ``remeasured_at_v45`` list names the four E4M3 window ids.
+    assert set(recorded["remeasured_at_v45"]) == {
+        "tessera_e4m3_k1_dense_sm121_decode_resident",
+        "tessera_e4m3_k1_dense_sm121_batch_resident",
+        "tessera_e4m3_k1_routed_moe_sm121_decode_resident",
+        "tessera_e4m3_k1_routed_moe_sm121_batch_resident"}
+    assert set(recorded["remeasured_at_v45"]) <= standing
     launch = {("TESSERA_E4M3_K1", "dense"): [
                   ("tessera::window_gemm_dense", "native_window_gemm"),
                   ("tessera::fused_window_dense", "native_fused_window_dense")],

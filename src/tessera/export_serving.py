@@ -91,9 +91,10 @@ make the bytes a function of the machine they were built for, and a unit cut
 for 4 ranks could not be re-cut for 8.  Pricing is the one place the rank
 enters: a routed FP8/BF16 stack's ``resident_bytes_resident_mode`` is what
 the compact window lane holds for the WHOLE stack (its repacked planes,
-tables, permutations and bookkeeping plus the fused lane's composed tables
-where the shape admits them; never a decoded tile, which that lane does not
-allocate -- tessera#624), and ``totals.per_rank`` (``--fit-tp-size``) prices
+tables, permutations and bookkeeping plus the fused lane's composed tables,
+run pairs and block descriptors where the shape admits them; never a decoded
+tile, which that lane does not allocate -- tessera#624), and
+``totals.per_rank`` (``--fit-tp-size``) prices
 each rank's cut of every routed stack beside the MTP draft's embed/head
 duplicate as its own line item (tessera#645).
 
@@ -198,7 +199,7 @@ from tessera.decode import replay_table_bytes  # noqa: E402
 from tessera.serving_parts import (  # noqa: E402
     BODY_LAYER, SCHEMA as PART_SCHEMA, dense_resident_bytes_resident_mode, export_identity,
     mtp_draft_embed_head_duplicate_bytes, parse_partition, make_artifact_readable,
-    partition_owner, per_rank_fit_items, routed_fused_table_bytes,
+    partition_owner, per_rank_fit_items, routed_fused_unit_bytes,
     routed_window_part_resident_bytes, routed_window_unit_resident_bytes, sha256_file,
     summarize_modules, validate_explicit_plan, write_serving_manifest)
 from tessera.serving_plan import (  # noqa: E402
@@ -1220,7 +1221,10 @@ def routed_stack_resident_bytes(family: str, experts: int, layouts, *,
     (:func:`~tessera.serving_parts.routed_window_part_resident_bytes`) and,
     when every unit's wire shape admits the fused lane
     (:func:`~tessera.routed_fused.fused_routed_unit_shape_refusal`), its
-    composed table per unit (#685).  An NVFP4 stack is the stock tile per
+    composed table (#685), run pair and block descriptors (contract v45,
+    tessera#694) per unit (:func:`~tessera.serving_parts.
+    routed_fused_unit_bytes`) -- since v45 at every one- or two-rate shape
+    the lane reads, not rate 4 alone.  An NVFP4 stack is the stock tile per
     unit and nothing per stack.  ``layouts`` are the units' verified wire
     layouts as the write loop recorded them; a TP cut prices each rank's
     rows/columns/rates through :func:`routed_unit_rank_cut`.
@@ -1228,7 +1232,7 @@ def routed_stack_resident_bytes(family: str, experts: int, layouts, *,
     from tessera.kernel_window_gemv import TILE_ROWS
     from tessera.routed_fused import fused_routed_unit_shape_refusal
 
-    units_total, parts, refused, window_bits = 0, set(), False, None
+    units_total, parts, refused, fused_total = 0, set(), False, 0
     for layout in layouts:
         cut = routed_unit_rank_cut(layout, tp_size, tp_rank)
         if family == NVFP4:
@@ -1244,11 +1248,13 @@ def routed_stack_resident_bytes(family: str, experts: int, layouts, *,
                 "value" if family == BF16 else "e4m3", part, rows=cut["rows"],
                 cols=cut["cols"], rates=cut["rates"], window_bits=window_bits) is not None:
             refused = True
+        elif not refused:
+            fused_total += routed_fused_unit_bytes(window_bits, cut["cols"])
     if family == NVFP4 or not layouts:
         return units_total, 0
     stack_total = len(parts) * routed_window_part_resident_bytes(experts)
     if not refused:
-        stack_total += len(layouts) * routed_fused_table_bytes(window_bits)
+        stack_total += fused_total
     return units_total, stack_total
 
 
@@ -2647,8 +2653,8 @@ def main():
                             # this unit's verified manifest by the same
                             # arithmetic as ``WindowUnitAxis._alloc``.  The
                             # per-part ``run_off`` and the fused lane's
-                            # composed tables (#685) are per stack, added
-                            # once the stack's shape is known below.
+                            # tables (#685, v45) are per stack, added once
+                            # the stack's shape is known below.
                             from tessera.kernel_window_gemv import TILE_ROWS
                             layout = {
                                 "group": unit["group"], "projection": unit["projection"],
@@ -2968,7 +2974,8 @@ def main():
         if spec["family"] != NVFP4:
             # The stack-level terms of the compact lane (tessera#624): one
             # ``run_off`` per part at ``finish`` and, where the whole stack's
-            # wire shape admits the fused lane, its composed tables (#685).
+            # wire shape admits the fused lane, its composed tables (#685),
+            # run pairs and block descriptors (contract v45).
             stack_record["resident_bytes_resident_mode"] += routed_stack_resident_bytes(
                 spec["family"], spec["experts"], routed_layouts[stack])[1]
         stack_record["roles"].sort(key=lambda r: (r["expert"], r["group"], r["role"]))

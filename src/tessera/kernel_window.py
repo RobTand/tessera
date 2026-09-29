@@ -848,7 +848,11 @@ def _(x, plane_words, offsets, rates, initial, value_table, row_scale, rows, col
 
 
 def _fp8_per_token(x: torch.Tensor):
-    """Per-token dynamic E4M3 quantisation: the A side the FP8 route serves."""
+    """Per-token dynamic E4M3 quantisation for ``window_linear`` (the
+    research GEMV op, off the serving path).  The served FP8 route quantises
+    with vLLM's own op (``serving.native_ops.native_fp8_quant``), whose
+    arithmetic differs from this one at the scale floor and in the division
+    rounding (``tests/test_native_fp8_quant.py``)."""
     amax = x.abs().amax(dim=1, keepdim=True).to(torch.float32).clamp_min(1e-12)
     scale = amax / 448.0
     return (x.to(torch.float32) / scale).clamp(-448.0, 448.0).to(torch.float8_e4m3fn), scale

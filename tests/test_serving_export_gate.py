@@ -646,7 +646,7 @@ def test_only_the_device_backed_cells_rungs_admit_a_routed_stack():
     from tessera.serving.contract import load_serving_contract, validate_serving_contract
     from tessera.serving.scheme import STRUCTURE_ROUTED_MOE, TESSERA_FP8, attested_cells, launch_pairs
 
-    served_rung, compiled_rung = 896, 1536
+    served_rung, compiled_rung = 896, 1792
     doc = copy.deepcopy(load_serving_contract())
     for row in doc["formats"]:
         if row["family"] == "TESSERA_E4M3_K1":
@@ -668,10 +668,15 @@ def test_only_the_device_backed_cells_rungs_admit_a_routed_stack():
             cell["rungs_q256"] = [compiled_rung]
             cell["qualification"] = "compile_only"
             cell["route_status"] = "unbacked"
-            # The fused routed window lane (contract v42) reaches rate-4 rungs
-            # only, so at the moved rung the cell's launches are the lane-free
-            # ones; the validator derives that set per rung and refuses a cell
-            # that names a launch its rung cannot make.
+            # The fused routed window lane reads every rate 1..8 since contract
+            # v45 (tessera#694; at v42-v44 it reached rate-4 rungs only), but
+            # its routed-expert launch reaches rates 1..6 on the target
+            # (lane.requires.column_rates_routed_moe: the two-table gate/up
+            # launch does not fit sm_121's shared memory above them), so at the
+            # moved rung -- rate 7 -- an expert stack's launches are the
+            # lane-free ones; the validator derives that set per rung and
+            # structure and refuses a cell that names a launch its rung cannot
+            # make, or omits one it makes.
             cell["executes"] = [
                 {"symbol": symbol, "decoder": decoder} for symbol, decoder in sorted(
                     launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE, regime="batch",
