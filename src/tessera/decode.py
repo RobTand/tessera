@@ -329,13 +329,13 @@ def _run_fused(run, args, chain: str):
 def _replay_tables(
     forest: AnchorForest, code: ConvCode, device: str
 ) -> "tuple[torch.Tensor, torch.Tensor, torch.Tensor]":
-    """Subset table + the code's transition tables, built once per trellis.
+    """Trellis tables memoized by ``(forest, code, device)``, not by unit.
 
-    These depend on nothing but ``(forest, code, device)``, and rebuilding them
-    per call cost 264 small copies -- a third of the replay's GPU time and most
-    of its launch gap -- on tables of 128 entries.  Caching is not a
-    micro-optimisation here; it is the difference between paying O(model) and
-    O(distinct trellises), of which there are three.
+    Calls hitting the same retained cache entry share its physical tensors.
+    Eviction can rebuild an entry, so key equality alone does not prove one
+    allocation across arbitrary lifetimes or ranks. Resource pricing remains
+    conservative per unit until a downstream consumer supports a distinct
+    shared-candidate term; this cache does not establish that pricing contract.
     """
     from .encode import _subset_table
 

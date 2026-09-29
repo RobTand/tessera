@@ -23,6 +23,14 @@ route or `executes` entry moves, and every output is bitwise equal to
 master's (`docs/measurements/2026-09-29-two-run-column-map.md`,
 `docs/measurements/2026-09-29-per-pair-kernel.md`).
 
+Re-stamped 2026-09-29 for the shared-candidate pricing boundary (Refs #567).
+Retain conservative per-unit pricing until a downstream consumer supports the
+shared term. A unitless candidate is uncharged and makes the derived partition
+unavailable; it is not a zero-byte resource. Replay-cache hits can share tensors,
+but cache keys alone do not prove one allocation across lifetimes or ranks.
+No schema, composition, wire, runtime gate, or numerical behavior changes.
+See [the boundary](design/shared-candidate-pricing-boundary.md).
+
 Re-stamped 2026-09-29 for the E2M1 K1 production boundary (tessera#477).
 Arity-one E2M1 remains research-only: the existing serving export gate refuses
 its absent reader range before encoding, and an explicit research override
