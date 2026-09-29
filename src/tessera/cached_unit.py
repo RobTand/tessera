@@ -466,6 +466,16 @@ def verify_cached_unit(blob: bytes, record: dict, expected_identity: dict) -> Ac
     return AcceptedUnit(blob, artifact.manifest, artifact.terminal.exact_bytes)
 
 
+def _manifest_sha256(manifest: dict) -> str:
+    """The cached-unit manifest seal, one spelling (tessera#708).
+
+    Both bundle constructors (composed and rooted) bind these same bytes;
+    the value is pinned by golden tests and must not move.
+    """
+    return hashlib.sha256(json.dumps(
+        manifest, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+
+
 class CachedUnitBundle:
     """Closed unit roster; all filenames/source bindings checked before reads."""
 
@@ -511,8 +521,7 @@ class CachedUnitBundle:
         self.served_activation_policy, self.served_activations = None, {}
         if composed:
             self._bind_composed(manifest, expected_units)
-            self.manifest_sha256 = hashlib.sha256(json.dumps(
-                manifest, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+            self.manifest_sha256 = _manifest_sha256(manifest)
             return
         units = manifest["units"]
         if not isinstance(units, dict) or set(units) != set(expected_units):
@@ -531,8 +540,7 @@ class CachedUnitBundle:
             if record["identity"]["unit"] != key:
                 raise ValueError(f"cached unit coverage key {key} disagrees with receipt")
         self.units = _json_copy(units)
-        self.manifest_sha256 = hashlib.sha256(json.dumps(
-            manifest, sort_keys=True, separators=(",", ":"), allow_nan=False).encode()).hexdigest()
+        self.manifest_sha256 = _manifest_sha256(manifest)
 
     def read(self, key: str) -> tuple[bytes, dict]:
         if self.children:

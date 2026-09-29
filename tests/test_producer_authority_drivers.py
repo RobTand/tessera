@@ -238,3 +238,22 @@ def test_the_block_is_validated_against_the_shared_constants():
         broken["reuse_authority"][key] = bad
         with pytest.raises(ValueError, match=f"reuse_authority.{key}"):
             validate_producer_interface(broken, "producer_interface")
+
+
+def test_authority_file_hashing_goes_through_the_chunked_owner(tmp_path, monkeypatch):
+    """#710: load() hashed the whole driver inline; it delegates to
+    serving_parts.sha256_file now, so large drivers share the chunked loop.
+    The patched owner is observed by the call site (pre-fold the attribute
+    does not exist); the golden pins the fixture digest."""
+    from tessera import serving_parts
+    driver = tmp_path / "authority.py"
+    driver.write_bytes(b"tessera-a3-golden-fixture-contents")
+    assert serving_parts.sha256_file(driver) == (
+        "9909ab877b071d38b5c807cd552daacfb2af04fdc0a82c710d31696b338637e9")
+
+    def _boom(path):
+        raise AssertionError("owner not consulted")
+
+    monkeypatch.setattr(producer_authority, "sha256_file", _boom)
+    with pytest.raises(AssertionError, match="owner not consulted"):
+        producer_authority.load(driver)

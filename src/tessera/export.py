@@ -1017,7 +1017,7 @@ class ActivationSource:
         from .cached_unit import tensor_identity
 
         identity = self._sealed_identity()
-        from .hessian_capture import REFERENCE_OWNER_TYPES
+        from .hessian_capture import REFERENCE_OWNER_TYPES, v1_seal_header
         if isinstance(self.hessians, REFERENCE_OWNER_TYPES):
             self.hessians.require_provenance(self.provenance)
         prefetch = _resolve_seal_prefetch()
@@ -1040,9 +1040,7 @@ class ActivationSource:
                     memo[name] = _UnitDigest(_tensor_signature(H),
                                              host_fingerprint(value), sha256)
         digest = hashlib.sha256()
-        digest.update(json.dumps({"schema": "tessera.hessian_capture.v1",
-                                  "identity": identity},
-                                 sort_keys=True, default=str).encode())
+        digest.update(v1_seal_header(identity))
         for name in sorted(units):
             unit_sha256 = units[name]
             digest.update(b"\0" + name.encode() + b"\0")
