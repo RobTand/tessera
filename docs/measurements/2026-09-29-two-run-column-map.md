@@ -3,8 +3,10 @@
 **Status:** measured; not proposed for merge as is. Revision 2 is faster on
 the two-run stacks (R1088 -5%, R832 -7% per call, bitwise equal) and 2 to 3%
 faster summed over the GLM-5.3-Flash T8R layer mix, but it slows the one-run
-R1024 stack by 1 to 4% at M = 4 to 2048, a kernel-wide code-generation cost in
-source it does not touch. The fix that removes that cost is named under
+R1024 stack: +1.3 to +3.9% at M = 4 to 512 in both passes (M = 1 and 2048
+disagree between passes), and +5.4% (M = 1) and +1.7% (M = 512) on the gate/up
+launch under Nsight Compute's locked clock. That is a kernel-wide
+code-generation cost in source it does not touch. The fix that removes that cost is named under
 [Next](#next); it has not been built.
 
 ## Summary
@@ -83,7 +85,8 @@ instruction between R1024 and R1088.
 - `pack_col` stores the in-block position (bits 0-4), the run (bit 5) and the
   column's rank within its run (bits 6-31). `unpack_col` rebuilds the
   permuted index and the first word with `col_map`'s own multiply-adds. The
-  gate/up host entry refuses `K >= 2^26`.
+  routed host entry (`routed_fused_forward`, every mode) refuses
+  `K >= 2^26`.
 - `issue_words` stores the map of the column it copies. In a two-run gate/up
   unit, `load_prev` reads the map from the ring, and the chunk loop calls it
   past the producer barrier that follows the store. The prologue adds one
