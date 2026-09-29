@@ -327,6 +327,13 @@ def test_the_exporter_resolves_an_installed_layout(tmp_path):
     env = dict(os.environ)
     env["PYTHONPATH"] = str(fake)
     env.pop("TESSERA_GIT", None)
+    # ``git_hash`` asks git first, from the module's directory.  pytest's
+    # basetemp can sit inside a checkout (PrismaBuild runs it under the
+    # checkout), so without a ceiling git walks up out of the fake install
+    # and answers with the enclosing checkout's commit instead of reaching
+    # the install's ``direct_url.json`` (#721).  The ceiling makes the
+    # synthetic install look like what it models: a tree with no git above it.
+    env["GIT_CEILING_DIRECTORIES"] = str(tmp_path.parent)
     proc = subprocess.run(
         [sys.executable, "-c", program],
         cwd=work, env=env, capture_output=True, text=True, timeout=600)
