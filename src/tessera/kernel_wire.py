@@ -340,15 +340,26 @@ def window_repack_stream_cuda(plane: torch.Tensor, *, col_starts: torch.Tensor,
                               n_cols: int, n_tiles: int, chunk_bytes: int,
                               tile_bytes: int, device: torch.device,
                               tile_rows: int = 512,
-                              scratch: "dict | None" = None) -> torch.Tensor:
+                              scratch: "dict | None" = None,
+                              out: "torch.Tensor | None" = None) -> torch.Tensor:
     """One rate group's repacked bytes, in the reference's flat order.
 
     Returns uint8 ``[n_tiles * tile_bytes]``: the group's ``n_cols`` columns,
     each ``n_tiles * chunk_bytes`` bytes of stream, per tile -- the operand of
     the int32 view ``Repacked.words`` is.
+
+    The kernel writes exactly this group's bytes: in every tile, the
+    ``n_cols * chunk_bytes`` bytes from ``group_byte0``.  Without ``out`` the
+    rest of the buffer is zero, as before.  With ``out`` -- the whole unit's
+    destination, shared by all its rate groups -- the other groups' bytes
+    are left as they are, so each group writes its own slice in place and no
+    per-group buffer or sum is allocated (tessera#724: under the loader's
+    ``max_split_size_mb=20`` context each such fresh ~2 MB request could
+    strand a 20 MiB allocator slab).
     """
     words = _plane_words(plane, scratch)
-    out = torch.zeros(n_tiles * tile_bytes, dtype=torch.uint8, device=device)
+    out = _destination(out, None, "window", n_tiles * tile_bytes, torch.uint8, device,
+                       zero=False)
     bytes_per_col = n_tiles * chunk_bytes
     total = n_cols * bytes_per_col
     if total:
