@@ -809,3 +809,16 @@ def test_window_compact_refuses_a_non_channel_plane_by_name():
     wire = parse_compact_wire(blob, device="cuda", name="w")
     with pytest.raises(GrammarError, match="CHANNEL"):
         prepare_window_compact(wire, device="cuda")
+
+
+def test_mis_sized_destination_is_a_grammar_error():
+    """A destination of the wrong size is refused as a GrammarError.
+
+    ``kernel_wire._destination`` raised a name its module never imported, so
+    the refusal surfaced as a NameError instead.
+    """
+    from tessera import kernel_wire as kw
+
+    with pytest.raises(GrammarError, match="window: destination is 3"):
+        kw._destination(torch.empty(3, dtype=torch.uint8), None, "window", 4,
+                        torch.uint8, "cpu", zero=False)

@@ -9,6 +9,7 @@ import torch
 import triton
 import triton.language as tl
 
+from .errors import GrammarError
 from .kernel_bits import _plane_words, _span_of
 
 #: Public name for the prepared word view a caller can compute once per plane
