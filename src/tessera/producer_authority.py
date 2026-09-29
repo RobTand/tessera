@@ -22,12 +22,12 @@ checkout is where its reader lives.
 """
 from __future__ import annotations
 
-import hashlib
 import importlib.util
 import sys
 from pathlib import Path
 
 from tessera.serving.contract import REUSE_AUTHORITY_ATTRIBUTE, REUSE_AUTHORITY_OPTION
+from tessera.serving_parts import sha256_file
 
 #: The option's spelling, as the packaged contract publishes it.  Owned by
 #: :mod:`tessera.serving.contract`, which must not import this module: this
@@ -64,7 +64,7 @@ def load(path):
     path = Path(path)
     if not path.is_absolute() or path.is_symlink() or not path.is_file():
         raise SystemExit(f"{OPTION} must name an absolute regular file: {path}")
-    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    digest = sha256_file(path)
     name = "tessera_producer_authority_" + digest
     module = sys.modules.get(name)
     if module is None:
