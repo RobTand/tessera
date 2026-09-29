@@ -274,10 +274,17 @@ def _write_fake_installation(target: Path) -> Path:
     target.mkdir()
     shutil.copytree(ROOT / "src" / "tessera", target / "tessera",
                       ignore=shutil.ignore_patterns("__pycache__"))
-    dist_info = target / "tessera-fake-0.1.dist-info"
+    # The dist-info must name the real distribution: ``_resolve_version``
+    # (src/tessera/__init__.py) reads the version of ``DISTRIBUTION`` when no
+    # pyproject sits beside the package, and refuses when it finds none.  A
+    # made-up name ("tessera-fake") left nothing to read, so the driver died
+    # in ``import tessera`` (#721).
+    from tessera import DISTRIBUTION
+
+    dist_info = target / f"{DISTRIBUTION.replace('-', '_')}-0.1.dist-info"
     dist_info.mkdir()
     (dist_info / "METADATA").write_text(
-        "Metadata-Version: 2.1\nName: tessera-fake\nVersion: 0.1\n")
+        f"Metadata-Version: 2.1\nName: {DISTRIBUTION}\nVersion: 0.1\n")
     (dist_info / "top_level.txt").write_text("tessera\n")
     (dist_info / "direct_url.json").write_text(json.dumps({
         "url": "https://example.invalid/tessera.git",
