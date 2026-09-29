@@ -85,7 +85,8 @@ def _slot_bytes(family: str, units: list, experts: int) -> int:
     """What ``WindowUnitAxis._alloc`` + ``finish`` hold for one part, spelled
     from the units' own repacked planes (the reference packer's ``Repacked``:
     padded tile words, one run per distinct rate, the permutation), stacked
-    ``experts`` deep, plus the four int32 per-expert scalars and ``run_off``.
+    ``experts`` deep, plus the four int32 per-expert scalars and ``run_off``,
+    int64 ``[E + 1]`` (``finish``'s ``torch.cumsum`` promotes its int32 counts).
 
     The triton-free anchor: the grouped kernel modules import triton at
     module level, so on a CPU host the axis itself cannot be imported;
@@ -103,7 +104,7 @@ def _slot_bytes(family: str, units: list, experts: int) -> int:
     for other in units[1:]:
         assert (other.rep.words.numel(), other.rep.runs.shape, other.rows, other.cols) == (
             rep.words.numel(), rep.runs.shape, unit.rows, unit.cols), "one layout per part"
-    return experts * per_expert + 4 * (experts + 1)
+    return experts * per_expert + 8 * (experts + 1)
 
 
 def _reference_bytes(family: str, units_by_part: dict, experts: int) -> int:
@@ -406,9 +407,10 @@ def test_glm_per_rank_pricing_matches_the_measured_load_bench():
     #685 added the composed tables): layer 10 TESSERA_BF16 q256=1024 and layer
     43 TESSERA_FP8 q256=896, 288 experts, hidden 4096, intermediate 2048.
     The bench's ``resident_final`` is ``PackedWindowMoeBundles.resident_bytes``;
-    the pricing lands within 3,468 bytes of it (3 x 4 x 289: one more int32
-    ``[E + 1]``-sized row per part in that bench build), against a 3.9x
-    overstatement by the decoded-tile figure the manifest used to carry."""
+    the pricing equals it byte for byte, against a 3.9x overstatement by the
+    decoded-tile figure the manifest used to carry.  Pricing ``run_off`` as
+    int32 fell 3,468 bytes short (3 parts x 4 x 289): the axis holds it as
+    int64."""
     experts, hidden, inter, tp = 288, 4096, 2048, 2
 
     def per_rank(family, rates_of):
@@ -419,9 +421,9 @@ def test_glm_per_rank_pricing_matches_the_measured_load_bench():
         return experts * (gate_up + down) + 3 * routed_window_part_resident_bytes(experts)
 
     bf16 = per_rank("TESSERA_BF16", lambda cols: (4,) * cols)
-    assert abs(bf16 - 1_868_597_016) <= 3_468
+    assert bf16 == 1_868_597_016
     # q256=896 is 3.5 bits per parameter as two rates over the columns.
     fp8 = per_rank("TESSERA_FP8", lambda cols: (3, 4) * (cols // 2))
-    assert abs(fp8 - 1_628_183_832) <= 3_468
+    assert fp8 == 1_628_183_832
     manifest_before = 7_257_194_496
     assert manifest_before // tp > 1.9 * bf16

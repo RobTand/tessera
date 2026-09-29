@@ -407,10 +407,12 @@ def routed_window_unit_resident_bytes(family: str, rows: int, cols: int, rates,
 
 
 def routed_window_part_resident_bytes(experts: int) -> int:
-    """The per-part ``run_off`` int32 ``[E + 1]`` the axis adds at ``finish``."""
+    """The per-part ``run_off`` the axis adds at ``finish``: ``[E + 1]``
+    int64, since ``torch.cumsum`` promotes the int32 run counts it sums
+    (``WindowUnitAxis.finish`` and ``prepare_grouped_window_gemm`` alike)."""
     if int(experts) <= 0:
         raise ValueError("a routed stack needs at least one expert")
-    return 4 * (int(experts) + 1)
+    return 8 * (int(experts) + 1)
 
 
 def routed_fused_table_bytes(window_bits: int) -> int:
