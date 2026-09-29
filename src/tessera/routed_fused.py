@@ -126,7 +126,7 @@ MIN_COLS = 4 * BK
 #: is ``SMEM_FIXED[mode]`` (two 32 KB tables for gate/up, one for down/dense)
 #: and a launch needs ``SMEM_FIXED[mode] + WORD_STAGES * 2 * BK * slot_words * 4``
 #: bytes.  A block on sm_121 may opt in to 101,376 B, so the gate/up launch
-#: fits slots up to 12 words (rates <= 5) and the down/dense launch every rate.
+#: fits slots up to 12 words (rates <= 6) and the down/dense launch every rate.
 WORD_STAGES = 3
 SMEM_FIXED = {0: 91_216, 1: 91_216, 2: 58_448}
 #: The per-block dynamic shared memory sm_121 (GB10, the contract's target
