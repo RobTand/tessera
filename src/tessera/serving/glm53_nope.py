@@ -358,10 +358,15 @@ _REPORTED: set = set()
 def _report_equivalence(config) -> None:
     """Say once per process whether this serve runs eager's arithmetic, and if not, why."""
     gap = eager_equivalence_gap(config)
+    graph = _graph_mode(config.compilation_config).name
+    from .telemetry import record_backend_execution_identity
+
+    record_backend_execution_identity(
+        backend="glm53_nope", compilation_mode=config.compilation_config.mode.name,
+        cuda_graph_mode=graph, eager_equivalence_gap=gap)
     if gap in _REPORTED:
         return
     _REPORTED.add(gap)
-    graph = _graph_mode(config.compilation_config).name
     if gap is None:
         drafter = _speculative_key(config)
         against = ("" if drafter is None else

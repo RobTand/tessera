@@ -1,5 +1,17 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-09-29 for the NoPE verdict carrier (tessera#698). When route
+tracing is enabled, the existing backend startup report also records its
+compilation mode, resolved CUDA-graph mode, and eager-equivalence verdict in
+`backend_execution_identity`. A later disagreement is exposed in
+`backend_execution_identity_conflict`, without replacing the first identity;
+no report means JSON null, not equivalent. The additive `dispatch_coverage`
+header states that Python dispatches are counted, torch.compile tracing is
+not counted, and CUDA-graph replays are not counted. Python execution during
+startup or graph capture can still contribute counts. An empty histogram is
+therefore not proof that no kernel ran. No backend arithmetic, admission,
+quality claim, runtime-contract cell, or trace schema/version changes.
+
 Re-stamped 2026-09-29 for compiled dense census expectations (tessera#638).
 FP8 and BF16 census helpers derive both eager and compiled expectations from
 `scheme.ROUTE_LAUNCHES`, without the retired materialised GEMM/GEMV combined
