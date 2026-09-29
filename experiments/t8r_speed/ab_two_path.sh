@@ -11,7 +11,10 @@
 #   2c new  routed bench, repeat
 #   3 base  NCU, routed, M 1 and 512 (SourceCounters)
 #   4 new   NCU, same cells
-#   5 base  every other group (dense, shared, bf16) for the attribution table
+#   5 base  the bf16 groups (attention, indexer, router, lm_head) for the
+#           attribution table (the Tessera dense and shared groups are in the
+#           first action's receipt)
+#   6 base  R1024 and R1088 routed at M 4096 and 8192 (the chunk-size lever)
 set -uo pipefail
 OUT=${1:?out_root}; BASE_SRC=${2:?base_src}
 mkdir -p "$OUT"
@@ -32,8 +35,9 @@ step 2b-base-routed env BENCH_SRC="$BASE_SRC" bash $H . "$OUT/base-routed-2" --g
 step 2c-new-routed  bash $H . "$OUT/new-routed-2" --groups "$ROUTED" --ms $MS
 step 3-base-ncu    env BENCH_SRC="$BASE_SRC" BENCH_NCU=1 BENCH_NCU_KERNELS=routed_fused_kernel bash $H . "$OUT/base-ncu" --groups "$ROUTED" --ms 1,512
 step 4-new-ncu     env BENCH_NCU=1 BENCH_NCU_KERNELS=routed_fused_kernel bash $H . "$OUT/new-ncu" --groups "$ROUTED" --ms 1,512
-REST=dense_gate_up,dense_down,shared_gate_up,shared_down,kda_qkv,kda_q,kda_o,kda_fa_ga,kda_fb,kda_b,mla_qa_kva,mla_qb,mla_kvb,mla_o,idx_wqb,idx_wk,idx_weights,router,lm_head
-step 5-base-rest   env BENCH_SRC="$BASE_SRC" bash $H . "$OUT/base-rest" --groups "$REST" --ms $MS
+# The bench matches a group by its full id or its first dotted field.
+step 5-base-bf16   env BENCH_SRC="$BASE_SRC" bash $H . "$OUT/base-bf16" --groups bf16 --ms $MS
+step 6-base-bigm   env BENCH_SRC="$BASE_SRC" bash $H . "$OUT/base-bigm" --groups experts.R1024.L10,experts.R1088.L11 --ms 4096,8192
 python3 - "$OUT" <<'PY'
 import json, pathlib, sys
 root = pathlib.Path(sys.argv[1])
