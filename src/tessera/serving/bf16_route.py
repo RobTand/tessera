@@ -765,24 +765,14 @@ def holder_decode(holder: PreparedBf16Gemv):
 def census_expected(*, compiled: bool, platform=None):
     """The ``(symbol, decoder)`` pairs a BF16 module may report, by regime.
 
-    Owned here -- the dispatch lives here -- and read by the route census, so
-    a new path updates the expectation where the path was added rather than in
-    a second spelling in the tool.  The GEMV lane's prefill decodes through
-    the lane's kernel decode (never materialised on the serve, but a tile all
-    the same), so a materialised launch on a GEMV-prepared module stamps the
-    lane's decoder, not the torch window's.  Decode admits every pair the
-    dispatch can take (out-of-range units and extension-less boxes serve
-    materialised inside the decode regime); a compiled record covers both
-    regimes in one graph and stamps the combined pair (plus the torch pair
-    where no GEMV lane was prepared).
+    The route registry owns these pairs. Dense dispatch uses its prepared
+    native bundle in both regimes, including compiled forwards; compilation
+    does not add the retired materialised GEMM/GEMV combination. ``compiled``
+    remains an accepted argument for census callers, not an extra launch.
     """
     decode = launch_pairs(TESSERA_BF16, regime="decode", include_experimental=True)
     batch = launch_pairs(TESSERA_BF16, regime="batch", include_experimental=True)
-    if compiled:
-        combined = {(COMPILED_SYMBOL, COMPILED_DECODER)}
-        pairs = {"decode": combined | batch, "batch": combined | batch}
-    else:
-        pairs = {"decode": decode, "batch": batch}
+    pairs = {"decode": decode, "batch": batch}
     from .census import platform_expectation
 
     return platform_expectation("TESSERA_BF16_K1", platform, pairs)

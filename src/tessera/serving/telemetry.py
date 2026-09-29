@@ -20,6 +20,14 @@ per-module "latest record" cannot answer, and the one a served KL needs
 answered before it can claim to have measured a decode-path kernel
 (tessera#102, ``_RouteTrace``).  It is off by default and eager-only.
 
+Since tessera#698 the header also carries the backend's startup verdict in
+``backend_execution_identity``. It is null until reported, and a later
+inconsistent report is exposed without replacing the first. This is the
+backend's existing eager-equivalence verdict, not a served quality
+measurement. ``dispatch_coverage`` explicitly excludes torch.compile tracing
+and CUDA-graph replays; Python execution during startup or graph capture can
+still contribute counts. An empty histogram is not proof of no execution.
+
 Since tessera#509 each histogram entry also names the modules it counted
 (``module_names``, sorted, real prefixes only), reports how many distinct
 modules had no usable prefix (``unnamed_modules``, plus
@@ -97,6 +105,7 @@ __all__ = [
     "stop_route_trace",
     "route_trace",
     "route_trace_snapshot",
+    "record_backend_execution_identity",
     "NVFP4_ACTIVATION_CONTRACT",
     "FP8_ACTIVATION_CONTRACT",
     "BF16_ACTIVATION_CONTRACT",
@@ -526,6 +535,9 @@ class _RouteTrace:
         #: A LATER observation that disagrees with the cached one.  Recorded and
         #: reported, never adopted: the counts belong to the first identity.
         self._rank_conflict = None
+        #: Startup-only backend verdict; absence means unknown, not equivalent.
+        self._backend_execution_identity = None
+        self._backend_execution_identity_conflict = None
         # Write NOW: the point of failure for a mis-set path must be the
         # serve's startup, loudly, and not a silent no-op discovered when the
         # receipt is being written.  ``emit_route`` swallows exceptions by
@@ -624,6 +636,17 @@ class _RouteTrace:
             self._rank_identity = observed
         return self._rank_identity or observed
 
+    def record_backend_execution_identity(self, identity: dict) -> None:
+        """Latch the first backend verdict; retain a later disagreement."""
+        with self._lock:
+            if self._backend_execution_identity is None:
+                self._backend_execution_identity = dict(identity)
+                self._dirty = True
+            elif (identity != self._backend_execution_identity
+                  and identity != self._backend_execution_identity_conflict):
+                self._backend_execution_identity_conflict = dict(identity)
+                self._dirty = True
+
     def snapshot(self) -> dict:
         with self._lock:
             entries = []
@@ -643,6 +666,10 @@ class _RouteTrace:
                     "unnamed_modules": len(unnamed),
                     "dispatches_without_prefix": unprefixed,
                 })
+            backend_identity = (None if self._backend_execution_identity is None
+                                else dict(self._backend_execution_identity))
+            backend_conflict = (None if self._backend_execution_identity_conflict is None
+                                else dict(self._backend_execution_identity_conflict))
         rank, world_size, rank_source = self._identity()
         return {
             "schema": ROUTE_TRACE_SCHEMA,
@@ -662,6 +689,13 @@ class _RouteTrace:
             # changed meaning.  ``None`` means the tree could not be read, which
             # a consumer treats as "does not say", never as a match.
             "serving_source_sha256": self.serving_source_sha256,
+            "backend_execution_identity": backend_identity,
+            "backend_execution_identity_conflict": backend_conflict,
+            "dispatch_coverage": {
+                "python_dispatches_counted": True,
+                "torch_compile_tracing_counted": False,
+                "cuda_graph_replays_counted": False,
+            },
             "pid": os.getpid(),
             "started_utc": self.started_utc,
             "flushed_utc": datetime.now(timezone.utc).isoformat(),
@@ -694,7 +728,17 @@ class _RouteTrace:
         # whichever process wrote last, and the failure mode is a file full of
         # zeros that looks exactly like a lane that never ran.
         if not self._counts and self.path.exists():
-            return
+            if self._backend_execution_identity is None:
+                return
+            # A model process can report its verdict before any dispatch, or
+            # serve only graph replays. Persist that header, but never erase
+            # another process's histogram (or an unreadable existing file).
+            try:
+                existing = json.loads(self.path.read_text())
+            except (OSError, ValueError):
+                return
+            if not isinstance(existing, dict) or existing.get("entries") != []:
+                return
         payload = self.snapshot()
         self.flushes += 1
         tmp = Path(f"{self.path}.tmp")
@@ -734,6 +778,24 @@ def route_trace():
 def route_trace_snapshot():
     """The installed trace's counts, or ``None`` when tracing is off."""
     return None if _TRACE is None else _TRACE.snapshot()
+
+
+def record_backend_execution_identity(*, backend: str, compilation_mode: str,
+                                      cuda_graph_mode: str,
+                                      eager_equivalence_gap: str | None) -> None:
+    """Record the backend's existing verdict, not a quality measurement.
+
+    Called at backend startup, never from the dispatch hot path. With tracing
+    disabled there is no carrier and no file is created.
+    """
+    if _TRACE is not None:
+        _TRACE.record_backend_execution_identity({
+            "backend": backend,
+            "compilation_mode": compilation_mode,
+            "cuda_graph_mode": cuda_graph_mode,
+            "eager_equivalence": eager_equivalence_gap is None,
+            "eager_equivalence_gap": eager_equivalence_gap,
+        })
 
 
 def _route_trace_from_env():
