@@ -30,29 +30,29 @@ every section to its rows. PENDING marks a row that is queued and has not run.
   each other by at most 1.6% at any M. The value (BF16) family runs 12% to
   17% faster (39.70 ms against 45.14 ms at M = 2048). Work per joule moves
   with it: 0.334 forwards per joule at M = 2048 against 0.323 and 0.317.
-- **Dense, rate 4: the E4M3 kernel is faster; the value-family kernel sits
-  inside master's own spread.** Against two master rows, the E4M3 dense
-  kernel runs 5% to 8% faster at M = 512 and 4.7% (down) and 6.5% (gate/up)
-  faster at M = 2048. The value-family (BF16) gate/up kernel matches master at
-  M <= 512; at M = 2048 the two fix rows (1,223.0 and 1,182.5 us) fall
-  between master's two rows (1,126.0 and 1,247.1 us). After the host-side
-  trim, the eager dense op reads 0.92x to 1.05x of master at M <= 64, where
-  the two master rows differ by up to 4.1%. The PACT bench reads one BF16
-  group 3% slower at M = 512 and 2048. An NCU pair at a locked clock
-  (`7092786b`/`ac8e414b`) is PENDING. The GLM-5.3-Flash release is all
-  E4M3.
-- **Mixed rates: fused beats compact 2.0x to 3.8x, and misses the 1.5x
-  criterion.** At R832 the fused stack runs 2.0x (M = 1) to 3.8x (M = 2048)
-  faster than the compact adapter it replaces. It runs at 1.50x to 1.67x of
-  R1024's fused time, so #694's criterion (R832 to R1088 within 1.5x of
-  R1024) is unmet; the PACT bench reads R896 at 1.65x to 1.80x. The gate/up
-  launch carries the excess. R960 and R1088 are PENDING.
+- **Dense, rate 4: no kernel is slower than master, and the E4M3 kernel is
+  faster.** At NCU's base-clock lock (`7092786b` master, `ac8e414b` head),
+  the E4M3 dense kernels run 0.90x to 0.95x of master's time at M = 512 and
+  2048, and the value-family (BF16) gate/up kernel runs 0.97x to 1.01x at
+  every M; the unchanged Triton legs of the same rows read 0.97x to 1.01x.
+  Without the lock, two master rows put that BF16 kernel 10.8% apart at
+  M = 2048, and both fix rows fell between them. After the host-side trim,
+  the eager dense op reads 0.92x to 1.05x of master at M <= 64, where the two
+  master rows differ by up to 4.1%. The PACT bench reads one BF16 group, the
+  shared-expert down projection that the NCU pair does not cover, 3% slower
+  at M = 512 and 2048. The GLM-5.3-Flash release is all E4M3.
+- **Mixed rates: fused beats compact 2.0x to 3.9x, and misses the 1.5x
+  criterion.** At R832, R960 and R1088 the fused stack runs 2.0x (M = 1) to
+  3.9x (M = 2048) faster than the compact adapter it replaces. It runs at
+  1.50x to 1.71x of R1024's fused time, so #694's criterion (R832 to R1088
+  within 1.5x of R1024) is unmet; the PACT bench reads R896 at 1.65x to
+  1.80x. The gate/up launch carries the excess.
 - **Correctness holds.** The routed oracle passes at R832, R960, R1024 (both
   families) and R1088 on real layer-3 experts, with a bitwise repeat and a
   bitwise staged composition at every M. The dense oracle passes on all 16 of
   stub B's dense modules (51 and 221 cases). The GPU tests fail only where
-  master fails (at `2355112c`); after the merge of master the head fails the
-  same five tests, and the row on that master is PENDING. CUDA-graph capture
+  master fails, before the merge of master (`2355112c`) and after it
+  (`458ea483`, against master `3d314e0f`). CUDA-graph capture
   replays bitwise equal to eager at every rate the tests reach, in both
   families, routed and dense. The CPU suite passes at the head, and fixes two
   of master's failures (see [CPU suite](#cpu-suite)).
@@ -304,10 +304,34 @@ GB10 manages its clock thermally (83 C to 84 C peaks, SM clock 2,301 MHz to
 The PACT bench reads the value family's shared-expert down projection
 (`shared_down.T16`, BF16 R1024, fused on both trees, a module the dense
 profile does not cover) at 1.026x at M = 512 and 1.031x at M = 2048, where
-two master runs differ by at most 0.8%, and 0.980x at M = 8192. An NCU pair
-at NCU's base-clock lock (`7092786b` master, `ac8e414b` head, the Triton
-legs as the in-row control) removes the clock from the comparison:
-PENDING.
+two master runs differ by at most 0.8%, and 0.980x at M = 8192.
+
+**At a locked clock.** An NCU pair at NCU's default base-clock lock takes the
+clock out of the comparison: `7092786b` runs master `d20915b6` (whose kernel
+is `731cb7e6`'s) with the head's harness section list, and `ac8e414b` runs
+the head `2355112c`; both on sparklina, exclusive, one profiled forward per
+case after 10 warm-up forwards, M in {1, 64, 512, 2048}. The Triton window
+GEMM legs of the same modules are the in-row control. Head over master
+kernel time (`gpu__time_duration`), with the head's time in microseconds:
+
+| Module, launch | M = 1 | M = 64 | M = 512 | M = 2048 |
+|---|---:|---:|---:|---:|
+| layer 5 shared down (E4M3) | 0.956 (54.1) | 0.914 (60.4) | 0.945 (280.8) | 0.929 (942.1) |
+| layer 5 shared gate/up (BF16), gate | 0.987 (53.2) | 1.002 (59.2) | 1.006 (384.4) | 0.982 (1,282.3) |
+| layer 5 shared gate/up (BF16), up | 0.972 (52.7) | 0.999 (58.6) | 0.988 (382.6) | 0.988 (1,286.7) |
+| layer 7 shared gate/up (E4M3), gate | 0.969 (42.0) | 0.994 (50.5) | 0.913 (282.8) | 0.897 (951.6) |
+| layer 7 shared gate/up (E4M3), up | 0.950 (41.1) | 1.008 (49.8) | 0.900 (280.7) | 0.897 (947.8) |
+| Triton legs (unchanged code), all | 0.965 to 1.007 | 0.982 to 1.002 | 0.990 to 1.005 | 0.995 to 1.003 |
+
+The value-family kernel sits inside the control's band at every M, and at
+M = 2048 runs 1.2% to 1.8% faster, which puts the unlocked 5.0% and 8.6%
+readings above on the clock rather than the kernel. The E4M3 kernels run
+5.5% to 10.3% faster at M = 512 and 2048, beyond the band. At M <= 64 the
+fused kernel splits K and a reduce kernel follows (5 us to 11 us, 0.93x to
+1.06x). The head's kernels hold 118 or 119 registers against master's 94 to
+96 at the same occupancy (one 512-thread block per SM), and execute 6% to
+10% more instructions at M = 2048 (the per-item dispatch and the block
+descriptors) in the same or less time.
 
 ### After: the PACT bench
 
@@ -341,26 +365,38 @@ therefore an upper bound on the served cost wherever the op is host-bound.
 
 ## Mixed rates: fused against compact
 
-### Routed, R832
+### Routed, R832, R960 and R1088
 
-The same profile at `--rung R832` (`c227d46c`, the fix tree), all 288
-experts of layer 3 (rates 3/4, 192/64 columns per 256). Three legs per M:
-fused (this lane), compact (the adapter the mixed-rate stacks ran on before
-v45), and vLLM's FP8 MoE on the materialised E4M3 bytes (W8A8, 8 bits per
-weight: 2.5x the R832 wire).
+The same profile at `--rung R832`, `R960` and `R1088` (`c227d46c`,
+`c6114551`, `c125590f`; the fix tree), all 288 experts of layer 3. R832 and
+R960 are rates 3/4 (192/64 and 64/192 columns per 256), and R1088 is rates
+4/5 (192/64). Three legs per M: fused (this lane), compact (the adapter the
+mixed-rate stacks ran on before v45), and vLLM's FP8 MoE on the materialised
+E4M3 bytes (W8A8, 8 bits per weight: 2.5x the R832 wire).
 
-| M | Fused (ms) | Compact (ms) | vLLM FP8 MoE (ms) | Compact / fused | Fused W, fwd/J | Compact W, fwd/J | Fused / R1024 fused |
-|---:|---:|---:|---:|---:|---|---|---:|
-| 1 | 1.422 | 2.903 | 0.925 | 2.04 | 63.1, 11.08 | 71.2, 4.84 | 1.669 |
-| 8 | 9.181 | 25.89 | 7.115 | 2.82 | 70.1, 1.554 | 64.1, 0.603 | 1.672 |
-| 64 | 37.61 | 109.84 | 27.37 | 2.92 | 71.5, 0.372 | 63.8, 0.143 | 1.620 |
-| 512 | 46.87 | 148.73 | 34.38 | 3.17 | 71.9, 0.297 | 61.6, 0.109 | 1.501 |
-| 2048 | 57.96 | 219.05 | 37.20 | 3.78 | 73.6, 0.234 | 58.5, 0.078 | 1.568 |
+| Rung | M | Fused (ms) | Compact (ms) | vLLM FP8 MoE (ms) | Compact / fused | Fused W, fwd/J | Compact W, fwd/J |
+|---|---:|---:|---:|---:|---:|---|---|
+| R832 | 1 | 1.422 | 2.903 | 0.925 | 2.04 | 63.1, 11.08 | 71.2, 4.84 |
+| | 8 | 9.181 | 25.89 | 7.115 | 2.82 | 70.1, 1.554 | 64.1, 0.603 |
+| | 64 | 37.61 | 109.84 | 27.37 | 2.92 | 71.5, 0.372 | 63.8, 0.143 |
+| | 512 | 46.87 | 148.73 | 34.38 | 3.17 | 71.9, 0.297 | 61.6, 0.109 |
+| | 2048 | 57.96 | 219.05 | 37.20 | 3.78 | 73.6, 0.234 | 58.5, 0.078 |
+| R960 | 1 | 1.438 | 2.930 | 0.924 | 2.04 | 62.3, 11.11 | 71.4, 4.78 |
+| | 8 | 9.227 | 26.59 | 7.160 | 2.88 | 69.2, 1.567 | 63.5, 0.592 |
+| | 64 | 37.81 | 111.47 | 27.38 | 2.95 | 70.4, 0.376 | 63.8, 0.141 |
+| | 512 | 47.45 | 151.19 | 34.12 | 3.19 | 70.6, 0.298 | 61.4, 0.108 |
+| | 2048 | 58.49 | 224.26 | 37.06 | 3.83 | 72.7, 0.235 | 58.3, 0.077 |
+| R1088 | 1 | 1.457 | 2.917 | 0.929 | 2.00 | 60.1, 11.36 | 70.2, 4.87 |
+| | 8 | 9.324 | 26.97 | 7.164 | 2.89 | 67.5, 1.582 | 62.4, 0.594 |
+| | 64 | 38.35 | 114.06 | 27.25 | 2.97 | 69.5, 0.375 | 62.9, 0.139 |
+| | 512 | 47.75 | 155.87 | 34.27 | 3.26 | 70.1, 0.299 | 60.3, 0.106 |
+| | 2048 | 59.03 | 233.00 | 37.41 | 3.95 | 72.1, 0.235 | 57.1, 0.075 |
 
-The fused lane does 2.3x (M = 1) to 3.0x (M = 2048) the compact adapter's
-forwards per joule. vLLM's FP8 MoE on 8-bit weights is faster than the fused
-R832 stack at every M, by 1.29x (M = 8) to 1.56x (M = 2048). Against the first
-cut's R832 row (`9fb4de06`, non-exclusive), the fix runs 0.86x to 0.91x of
+The fused lane does 2.3x the compact adapter's forwards per joule at M = 1
+and 3.0x to 3.1x at M = 2048, and draws 72 W to 74 W at M = 2048 (52% of
+the envelope). vLLM's FP8 MoE on 8-bit weights is faster than the fused
+stack at every M and rung, by 1.29x (M = 8) to 1.58x (M = 2048). Against
+the first cut's R832 row (`9fb4de06`, non-exclusive), the fix runs 0.86x to 0.91x of
 its time (1.652 to 1.422 ms at M = 1, 63.66 to 57.96 ms at M = 2048); that
 delta holds both the 16-byte odd-rate copies and the per-pair loop, since the
 rows that would have isolated the copies were withdrawn unrun.
@@ -373,14 +409,17 @@ expert set.
 |---|---:|---:|---:|---:|---:|---|
 | R832 (3/4) | 1.669 | 1.672 | 1.620 | 1.501 | 1.568 | `c227d46c` / `69efe34c` |
 | R896 (3/4), bench | 1.649 | 1.798 | - | 1.730 | 1.709 | `e81b09f5` (M = 8192: 1.702) |
-| R960 (3/4) | PENDING | | | | | `c6114551` |
-| R1088 (4/5) | PENDING | | | | | `c125590f` |
+| R960 (3/4) | 1.687 | 1.681 | 1.628 | 1.520 | 1.582 | `c6114551` / `69efe34c` |
+| R1088 (4/5) | 1.710 | 1.698 | 1.652 | 1.529 | 1.597 | `c125590f` / `69efe34c` |
 
-At M = 2048 the R832 gate/up launch runs 1.77x of R1024's (41,579 against
-23,450 us) and the down launch 1.26x (15,099 against 12,000 us); at M = 1,
-1.92x and 1.30x. The gate/up launch decodes the gate and up halves of a
-chunk in one lane, and in a two-run stack the two halves' columns can sit in
-different runs, so a lane takes one of four rate combinations. NCU on the
+At M = 2048 the gate/up launch runs 1.77x to 1.78x of R1024's at all three
+rungs (41,579, 41,708 and 41,716 us against 23,450 us) and the down launch
+1.26x to 1.34x (15,099, 15,728 and 16,051 us against 12,000 us); at M = 1,
+1.92x to 1.94x and 1.30x to 1.40x. The gate/up time moves by 0.3% across two
+rate pairs and three column splits, so its excess follows the two-run path
+rather than the rates. The gate/up launch decodes the gate and up halves of
+a chunk in one lane, and in a two-run stack the two halves' columns can sit
+in different runs, so a lane takes one of four rate combinations. NCU on the
 two-run instantiations: PENDING (`ae1608e4` R832, `b9093b8f` R1088).
 
 R1152 is the same instantiation as R1088 (rates 4/5, one more high-rate
@@ -449,7 +488,7 @@ kernel) at R832, R1024 and R1088 (`4c4fbb73`, `760bfe84`, `818fc173`).
 lanes, the row-ulp difference between them, determinism, the streamed
 residency against the resident one, and a residency identity.
 
-| Modules | Tree | Row | Cases | Violations (fused, Triton) | Worst max|d|/bound | Fused vs Triton |
+| Modules | Tree | Row | Cases | Violations (fused, Triton) | Worst error / bound | Fused vs Triton |
 |---|---|---|---:|---|---:|---|
 | The three q256 1024 modules | fix `f7e2d593` | `bea7e136` | 51 | 0, 0 | 0.855 | <= 1 bf16 ulp |
 | The three q256 1024 modules | head `2355112c` | `045362b6` | 51 | 0, 0 | 0.855 | <= 1 bf16 ulp |
@@ -497,10 +536,11 @@ master on the same files:
 | head `2355112c` | `a1ecd8aa` | 19 files (the union of every set) | 655 | 16 | 5 |
 | master `d20915b6` | `5c4b11aa` | the 7 files no earlier row ran | 154 | 15 | 4 |
 | head `458ea483`, after the merge of master `3d314e0f` | `81811f8b` | the 19 files and `test_export_routed_resident_pricing.py` | 677 | 16 | 5 |
-| master `3d314e0f` | `3538bd40` | the 4 files that hold the 5 failures | PENDING | | |
+| master `3d314e0f` | `3538bd40` | the 4 files that hold the 5 failures | 79 | 0 | 5 |
 
-The head fails exactly where master fails, and `81811f8b` fails the same five
-tests as `a1ecd8aa`. Four failures are master's on the
+The head fails exactly where master fails: `81811f8b` fails the same five
+tests as `a1ecd8aa`, and master `3d314e0f` fails the same five
+(`3538bd40`). Four failures are master's on the
 seven added files:
 `test_native_window_moe_method.py::test_router_weight_on_input_matches_actual_stock_placement`,
 `test_serving_moe_tp2.py::test_native_loader_shape_produces_rank_local_packed_tiles[0]`
@@ -658,8 +698,8 @@ the full 32,320,512 B per layer per rank.
   rows gate the #701 merge that the v45 pin and the GLM release wait on.
 - Both Sparks drained for TP2 serve windows (vLLM, exempt from PrismaBuild)
   from 05:08Z to 06:07Z, 06:14Z to 07:32Z, 07:33Z to about 08:32Z, and from
-  about 08:46Z. Rows claimed in a window's gap ran to completion inside the
-  next window.
+  about 08:46Z to about 10:09Z. Rows claimed in a window's gap ran to
+  completion inside the next window.
 - A row's `checkout_snapshot.parent` is the source commit; the logged head is
   the snapshot commit. Every tree named here was checked through that field.
 - Rows withdrawn unclaimed, superseded by the per-pair loop or by a later
@@ -676,7 +716,13 @@ passed 5,535 tests, skipped 1,434 and failed one:
 `test_issue_refs.py::test_every_issue_reference_in_the_docs_resolves`, since
 this document cited issues filed after `docs/issues-snapshot.json` was last
 generated. `4fa4c38f8b` regenerates the snapshot, and at `e34cf221b7` the doc
-tests pass (`9a53901f`, 30 tests). Later commits change docs only.
+tests pass (`9a53901f`, 30 tests).
+
+At `0646a059f1`, which adds the census receipt and its tests, the full suite
+(six shards on dl380g10: `02016385`, `1ff9df40`, `2e6eab90`, `7ad37567`,
+`b4cbf6b4`, `3a937fa3`) passed 5,539 tests and skipped 1,434, with no
+failures. Later commits change the documentation and the v45 changelog text
+only.
 
 At `718c3012e0` and at master `731cb7e651`, both shards passed. At the merge `e4b5fb2583`, three tests
 failed (`test_export_explicit_plan.py`, two cases, and
@@ -719,9 +765,9 @@ Output directories are under
 | Fix vs master, dense profile | `6437ce6f` / `1c3b0f79` | `f7e2d593` / `731cb7e6` | `measure-20260929T051821Z/dense-profile-{fix,master}/` | executed |
 | Trimmed dense profile | `e9d96e4f` | `2355112c` | `measure-20260929T073031Z/dense-profile-fix2/` | executed |
 | Second master dense profile | `7c127a16` | `731cb7e6` | `measure-20260929T073031Z/dense-profile-master2/` | executed |
-| Dense NCU, master / head | `7092786b` / `ac8e414b` | `d20915b6` / `2355112c` | `measure-20260929T073031Z/dense-ncu-{master,fix2}/` | PENDING |
+| Dense NCU, master / head | `7092786b` / `ac8e414b` | `d20915b6` / `2355112c` | `measure-20260929T073031Z/dense-ncu-{master,fix2}/` | executed: head / master 0.90x to 1.01x, Triton legs 0.97x to 1.01x |
 | R832 profile | `c227d46c` | `f7e2d593` | `measure-20260929T051821Z/routed-R832-profile-fix/` | executed |
-| R960, R1088 profiles | `c6114551`, `c125590f` | `f7e2d593` | `measure-20260929T051821Z/routed-R{960,1088}-profile-fix/` | PENDING |
+| R960, R1088 profiles | `c6114551`, `c125590f` | `f7e2d593` | `measure-20260929T051821Z/routed-R{960,1088}-profile-fix/` | executed |
 | Dense mixed-rate profile | `b2f8f5d7` | `f7e2d593` | `measure-20260929T051821Z/dense-mixed-profile-fix/` | PENDING |
 | NCU R1024 | `151a1456` | `f7e2d593` | `measure-20260929T051821Z/routed-R1024-ncu-fix/` | PENDING |
 | NCU R832, R1088 | `ae1608e4`, `b9093b8f` | `2355112c` | `measure-20260929T073031Z/routed-R{832,1088}-ncu-fix/` | PENDING |
@@ -731,10 +777,11 @@ Output directories are under
 | GPU tests | `ce8c3778` / `cba8d4ad` | `f7e2d593` / `731cb7e6` | the attempt logs | executed: 1 failed on each, the same test |
 | GPU tests | `2c28bdf5` / `50943614` | `f7e2d593` / `731cb7e6` | the attempt logs | executed: 1 failed on each, the same test |
 | GPU tests | `a1ecd8aa` / `5c4b11aa` | `2355112c` / `d20915b6` | the attempt logs | executed: the head fails where master fails |
-| GPU tests after the merge of master `3d314e0f` / master's 4 files | `81811f8b` / `3538bd40` | `458ea483` / `3d314e0f` | the attempt logs | executed: the same 5 fail as at `2355112c` / PENDING |
+| GPU tests after the merge of master `3d314e0f` / master's 4 files | `81811f8b` / `3538bd40` | `458ea483` / `3d314e0f` | the attempt logs | executed: the same 5 fail on both, and as at `2355112c` |
 | Earlier kernels' oracles | `0ad71616`, `4404963a`, `4c4fbb73`, `760bfe84`, `818fc173`, `6dc60623`, `158b5f00` | `746cccfb`, `46969f12`, `546e706c`, `db68eaec` | `measure-20260928T*/` | executed, pass |
 | CPU suite after the second merge / master's two files | six shards (`b8cf19b3` ...) / `165bde4d` | `a98743f8` / `3d314e0f` | the pbtest reports | executed: the same 9 fail on both |
 | CPU suite, full / the doc tests | six shards (`d10466c2` ...) / `9a53901f` | `458ea483` / `e34cf221` | the pbtest reports | executed: 1 failed (issue references), then green |
+| CPU suite, full | six shards (`02016385` ...) | `0646a059` | the pbtest reports | executed: green |
 
 The ptxas and SASS reports are in
 `/home/rob/tmp/claude-campaign-20260926/tmp/ptxas-694/` and

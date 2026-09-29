@@ -29,9 +29,9 @@ through a switch on the stack's run pair, and each pair is a compile-time
 instantiation; built for rate 4 alone, the E4M3 gate/up launch compiles to
 3,376 sm_121 SASS instructions against the v44 kernel's 3,368. Measured on
 layer 3 of GLM-5.3-Flash (288 experts, M 1 to 2048), the E4M3 R1024 routed
-stack runs 2.9% to 6.3% faster than master, and the R832 stack runs 2.0x to
-3.8x faster than the compact adapter it replaces but at 1.50x to 1.67x of
-R1024's time, short of #694's 1.5x. The export prices each
+stack runs 2.9% to 6.3% faster than master, and the R832, R960 and R1088
+stacks run 2.0x to 3.9x faster than the compact adapter they replace but at
+1.50x to 1.71x of R1024's time, short of #694's 1.5x. The export prices each
 fused unit's table, run pair and block descriptors
 (`serving_parts.routed_fused_unit_bytes`). No cell's `executes`, rungs or
 flags move. A TP1 eager census of stub B on the GLM image served all 21 of
@@ -3647,9 +3647,9 @@ it admits is priced with its table, run pair and block descriptors
 (`serving_parts.routed_fused_unit_bytes`, 112,224 B per GLM-5.3-Flash
 expert per rank at TP2, 32.3 MB per MoE layer). The timing, oracle and GPU
 test receipts are in `docs/measurements/2026-09-28-mixed-rate-fused-window.md`:
-routed R1024 runs 2.9% to 6.3% faster than master, and mixed rates run 2.0x
-to 3.8x faster than the compact adapter but at 1.50x to 1.67x of R1024
-(R832). A TP1 eager census of stub B on the GLM image recorded every routed
+routed R1024 runs 2.9% to 6.3% faster than master, and mixed rates (R832,
+R960 and R1088) run 2.0x to 3.9x faster than the compact adapter but at 1.50x
+to 1.71x of R1024. A TP1 eager census of stub B on the GLM image recorded every routed
 stack and every dense module on the fused kernel
 (`experiments/results/glm53_u1_stub_b_fused_mixed_tp1_eager_census.json`,
 replayed by `tests/test_glm_u1_census_cells.py`). E2M1 fused stays parked; the
