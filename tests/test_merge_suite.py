@@ -589,6 +589,11 @@ def test_a_resumed_receipt_reports_failures_but_never_declares_green(tmp_path):
     """
 
     merge_suite = _module()
+    # tessera#672: read the pool from a fixture, never the live fleet queue.
+    # Empty: no live record can name tmp_path, so each verdict below is the
+    # surfaces' alone. Fresh module per _module(), so nothing leaks.
+    merge_suite.POOL_QUEUE, merge_suite.POOL_CAS_REQUESTS = _fake_pool(
+        tmp_path / "pool", tmp_path / "surface.gpu.json", [])
     # Every field a published population carries, because the verdict reads
     # them: a fixture with three keys in it is not a smaller version of a real
     # population, it is a different object (see ``_population``).
@@ -719,6 +724,9 @@ def test_a_resumed_row_is_dated_by_the_run_and_never_looks_watched(tmp_path):
     """
 
     merge_suite = _module()
+    # tessera#672: fixture pool, never the live fleet queue (see above).
+    merge_suite.POOL_QUEUE, merge_suite.POOL_CAS_REQUESTS = _fake_pool(
+        tmp_path / "pool", tmp_path / "s" / "surface.gpu.json", [])
     surfaces = tmp_path / "s"
     surfaces.mkdir()
     surface = surfaces / "surface.gpu.json"
@@ -1063,6 +1071,9 @@ def test_a_worker_share_is_never_read_as_this_arms_population(tmp_path):
     """
 
     merge_suite = _module()
+    # tessera#672: fixture pool, never the live fleet queue (see above).
+    merge_suite.POOL_QUEUE, merge_suite.POOL_CAS_REQUESTS = _fake_pool(
+        tmp_path / "pool", tmp_path / "surface.x86.json", [])
     (tmp_path / "surface.x86.json").write_text(json.dumps({
         "schema": "tessera.test_surface.v2",
         "role": "worker-share", "worker_id": "gw6", "xdist_workers": 8,
@@ -1102,6 +1113,9 @@ def test_a_population_that_states_its_role_is_read_and_a_silent_one_is_flagged(t
     """
 
     merge_suite = _module()
+    # tessera#672: fixture pool, never the live fleet queue (see above).
+    merge_suite.POOL_QUEUE, merge_suite.POOL_CAS_REQUESTS = _fake_pool(
+        tmp_path / "pool", tmp_path / "surface.gpu.json", [])
     (tmp_path / "surface.gpu.json").write_text(json.dumps({
         "schema": "tessera.test_surface.v1",
         "cuda": True, "strict_cuda": True,
@@ -1147,6 +1161,9 @@ def test_the_gpu_arms_green_has_two_legs_not_one(tmp_path):
     """
 
     merge_suite = _module()
+    # tessera#672: fixture pool, never the live fleet queue (see above).
+    merge_suite.POOL_QUEUE, merge_suite.POOL_CAS_REQUESTS = _fake_pool(
+        tmp_path / "pool", tmp_path / "surface.gpu.json", [])
     device_less = {"cuda": False, "strict_cuda": False,
                    "device": "torch 2.11.0+cpu reports no CUDA device"}
 
