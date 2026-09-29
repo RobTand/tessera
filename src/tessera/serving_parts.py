@@ -368,6 +368,114 @@ def dense_resident_bytes_resident_mode(family: str, rows: int, cols: int,
     return total
 
 
+def routed_window_unit_resident_bytes(family: str, rows: int, cols: int, rates,
+                                      *, window_bits: int, tile_rows: int) -> int:
+    """One expert projection's slot in the compact routed lane (tessera#624).
+
+    The runtime's compact window lane (``serving.moe_route`` with
+    ``compact_window_lane`` true, every TESSERA_FP8/TESSERA_BF16 stack) never
+    allocates a decoded tile: ``native_window_moe.WindowUnitAxis._alloc``
+    holds, per part and per expert, the repacked BODY words (rows padded to
+    the 512-row tile, ``sum(rates)`` bits per padded row), one ``[rate, col0,
+    n, word0]`` int32 run per distinct rate, the fp32 row scales, the int32
+    column permutation and initial-state register (``cols`` each), the
+    family's state table (bf16 ``2^L`` values for the value family; uint8
+    ``2^L`` codes plus the 256-byte native grid for e4m3), and four int32
+    per-expert scalars (``tile_words``, ``total_words``, ``has_init`` and
+    ``finish``'s ``word_off``).  This prices exactly those tensors from the
+    unit's own verified manifest (rates, window bits, geometry); the
+    per-part ``run_off`` is :func:`routed_window_part_resident_bytes` and
+    the fused lane's composed tables :func:`routed_fused_table_bytes`.
+
+    Whole unit at TP1: a tensor-parallel cut prices the rank-local rows
+    (w13) or columns and their rate slice (w2) through the same function.
+    """
+    if family not in ("TESSERA_BF16", "TESSERA_FP8"):
+        raise ValueError(f"no compact routed accounting for family {family!r}")
+    rows, cols, bits, tile = int(rows), int(cols), int(window_bits), int(tile_rows)
+    rates = tuple(int(rate) for rate in rates)
+    if rows <= 0 or cols <= 0 or len(rates) != cols or tile <= 0 or tile % 8:
+        raise ValueError("invalid compact routed unit geometry")
+    if bits <= 0 or any(rate < 1 or rate > 8 for rate in rates):
+        raise ValueError("invalid compact routed window layout")
+    padded = -(-rows // tile) * tile
+    words = padded * sum(rates) // 8
+    tables = (1 << bits) * 2 if family == "TESSERA_BF16" else (1 << bits) + 256
+    runs = len(set(rates)) * 16
+    per_expert_scalars = 4 * 4  # tile_words, total_words, has_init, word_off (int32)
+    return words + tables + rows * 4 + runs + cols * 8 + per_expert_scalars
+
+
+def routed_window_part_resident_bytes(experts: int) -> int:
+    """The per-part ``run_off`` int32 ``[E + 1]`` the axis adds at ``finish``."""
+    if int(experts) <= 0:
+        raise ValueError("a routed stack needs at least one expert")
+    return 4 * (int(experts) + 1)
+
+
+def routed_fused_table_bytes(window_bits: int) -> int:
+    """One composed 16-bit lookup table the fused routed lane (tessera#685)
+    holds per expert projection beside the bundle's planes, as the runtime's
+    ``FusedRoutedWindowMoE.resident_bytes`` publishes it (both families; the
+    value family's table is a view the self-report still counts)."""
+    return 2 * (1 << int(window_bits))
+
+
+def vocab_parallel_rows(rows: int, tp_size: int, *, padding: int = 64) -> int:
+    """Rows one rank holds of a vocab-parallel table: the runtime pads the
+    vocabulary to a multiple of ``padding`` before cutting it ``tp_size`` ways."""
+    rows, tp_size, padding = int(rows), int(tp_size), int(padding)
+    if rows <= 0 or tp_size <= 0 or padding <= 0:
+        raise ValueError("invalid vocab-parallel geometry")
+    padded = -(-rows // padding) * padding
+    return -(-padded // tp_size)
+
+
+def mtp_draft_embed_head_duplicate_bytes(vocab_tensors, tp_size: int) -> int:
+    """The MTP draft's own ``embed_tokens`` + ``lm_head`` allocations (tessera#645).
+
+    The draft model allocates a vocab-parallel embedding and head of its own
+    before the loader points them at the target's, so each rank holds one
+    more rank-local copy of both at load peak.  ``vocab_tensors`` is
+    ``[(rows, cols, element_bytes), ...]`` for the target's passthrough
+    embedding and head tensors; the duplicate is their rank-local cut.
+    """
+    total = 0
+    for rows, cols, element_bytes in vocab_tensors:
+        total += vocab_parallel_rows(rows, tp_size) * int(cols) * int(element_bytes)
+    return total
+
+
+def per_rank_fit_items(*, tp_size: int, routed_bytes_by_rank, mtp_duplicate_bytes: int,
+                       mtp_layers: int) -> dict:
+    """The per-rank fit block: named line items and their sum, one row per rank.
+
+    Every item is one named line whose sum is ``total_bytes``; a reader adding
+    a budget adds an item rather than folding it into another.  Only the
+    compact routed stacks and the MTP draft duplicate are priced here; dense
+    modules and passthrough tensors are not, and the note says so.
+    """
+    tp_size = int(tp_size)
+    ranks = []
+    for rank, routed in enumerate(routed_bytes_by_rank):
+        items = {"routed_moe_resident_mode_bytes": int(routed),
+                 "mtp_draft_embed_head_duplicate_bytes": int(mtp_duplicate_bytes)}
+        ranks.append({"rank": rank, "items": items, "total_bytes": sum(items.values())})
+    if len(ranks) != tp_size:
+        raise ValueError(f"{len(ranks)} routed rank figures for tp_size {tp_size}")
+    return {
+        "tp_size": tp_size,
+        "ranks": ranks,
+        "mtp_draft_layers": int(mtp_layers),
+        "note": ("routed_moe_resident_mode_bytes is each rank's cut of every routed stack "
+                 "(packed planes, tables, per-expert bookkeeping and the fused lane's "
+                 "composed tables where its shape admits the stack); "
+                 "mtp_draft_embed_head_duplicate_bytes is the MTP draft's own rank-local "
+                 "embed_tokens + lm_head (0 when the config declares no draft layers). "
+                 "Dense modules and passthrough tensors are not priced per rank here."),
+    }
+
+
 def summarize_modules(modules: dict, passthrough_bytes: int, checkpoint_bytes: int) -> dict:
     roles = [role for module in modules.values() for role in module["roles"]]
     params = sum(r["rows"] * r["cols"] for r in roles)

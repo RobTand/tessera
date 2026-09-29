@@ -88,7 +88,14 @@ loads the whole unit on every rank and cuts it at load
 (``tessera.serving.sharding``), so the same checkpoint serves any TP degree and
 re-sharding is a serve flag rather than a re-export.  Encoding per rank would
 make the bytes a function of the machine they were built for, and a unit cut
-for 4 ranks could not be re-cut for 8.
+for 4 ranks could not be re-cut for 8.  Pricing is the one place the rank
+enters: a routed FP8/BF16 stack's ``resident_bytes_resident_mode`` is what
+the compact window lane holds for the WHOLE stack (its repacked planes,
+tables, permutations and bookkeeping plus the fused lane's composed tables
+where the shape admits them; never a decoded tile, which that lane does not
+allocate -- tessera#624), and ``totals.per_rank`` (``--fit-tp-size``) prices
+each rank's cut of every routed stack beside the MTP draft's embed/head
+duplicate as its own line item (tessera#645).
 
 ROUTED-MoE EXPERTS ARE EXPORTED FROM AN EXPLICIT SOURCE LAYOUT, and the
 plannable unit is the STACK.  A ``--plan-json`` entry keyed ``<moe>.experts``
@@ -190,8 +197,10 @@ from tessera.unit_artifact import parse_unit_artifact  # noqa: E402
 from tessera.decode import replay_table_bytes  # noqa: E402
 from tessera.serving_parts import (  # noqa: E402
     BODY_LAYER, SCHEMA as PART_SCHEMA, dense_resident_bytes_resident_mode, export_identity,
-    parse_partition, make_artifact_readable, partition_owner, sha256_file, summarize_modules,
-    validate_explicit_plan, write_serving_manifest)
+    mtp_draft_embed_head_duplicate_bytes, parse_partition, make_artifact_readable,
+    partition_owner, per_rank_fit_items, routed_fused_table_bytes,
+    routed_window_part_resident_bytes, routed_window_unit_resident_bytes, sha256_file,
+    summarize_modules, validate_explicit_plan, write_serving_manifest)
 from tessera.serving_plan import (  # noqa: E402
     SERVING_PLAN_SCHEMA, family_for, module_scheme_key, validate_serving_plan)
 
@@ -1173,6 +1182,76 @@ def _stack_config_geometry(config: dict, stack: str) -> tuple[int, int, int]:
     return experts, hidden, inter
 
 
+def routed_unit_rank_cut(layout: dict, tp_size: int, tp_rank: int) -> dict:
+    """One routed unit's rank-local layout, cut as the runtime cuts it.
+
+    ``serving.moe_route._packed_group_shard_plan`` cuts ``w13`` (gate/up) by
+    output rows -- ``intermediate_size // tp`` each -- and ``w2`` (down) by
+    input columns, so a down unit keeps its rows and this rank's slice of the
+    columns AND of the per-column rates.  TP1 is the whole unit.
+    """
+    tp_size, tp_rank = int(tp_size), int(tp_rank)
+    if tp_size < 1 or not 0 <= tp_rank < tp_size:
+        raise SystemExit(f"tensor-parallel rank {tp_rank} of {tp_size} is not a rank")
+    rows, cols = int(layout["rows"]), int(layout["cols"])
+    rates = layout.get("rates")
+    if layout["group"] == "w13":
+        if rows % tp_size:
+            raise SystemExit(
+                f"{layout['projection']} rows {rows} do not divide across {tp_size} ranks")
+        return {**layout, "rows": rows // tp_size}
+    if cols % tp_size:
+        raise SystemExit(
+            f"{layout['projection']} columns {cols} do not divide across {tp_size} ranks")
+    local = cols // tp_size
+    cut = {**layout, "cols": local}
+    if rates is not None:
+        cut["rates"] = tuple(rates[tp_rank * local:(tp_rank + 1) * local])
+    return cut
+
+
+def routed_stack_resident_bytes(family: str, experts: int, layouts, *,
+                                tp_size: int = 1, tp_rank: int = 0) -> tuple[int, int]:
+    """``(unit_bytes, stack_bytes)`` one rank retains of a routed stack.
+
+    ``unit_bytes`` is the sum over expert projections of what the lane holds
+    per unit; ``stack_bytes`` the terms the lane holds once per stack: for
+    the compact window lane one ``run_off`` per part
+    (:func:`~tessera.serving_parts.routed_window_part_resident_bytes`) and,
+    when every unit's wire shape admits the fused lane
+    (:func:`~tessera.routed_fused.fused_routed_unit_shape_refusal`), its
+    composed table per unit (#685).  An NVFP4 stack is the stock tile per
+    unit and nothing per stack.  ``layouts`` are the units' verified wire
+    layouts as the write loop recorded them; a TP cut prices each rank's
+    rows/columns/rates through :func:`routed_unit_rank_cut`.
+    """
+    from tessera.kernel_window_gemv import TILE_ROWS
+    from tessera.routed_fused import fused_routed_unit_shape_refusal
+
+    units_total, parts, refused, window_bits = 0, set(), False, None
+    for layout in layouts:
+        cut = routed_unit_rank_cut(layout, tp_size, tp_rank)
+        if family == NVFP4:
+            units_total += cut["rows"] * cut["cols"] // 2 + cut["rows"] * cut["cols"] // 16 + 8
+            continue
+        units_total += routed_window_unit_resident_bytes(
+            family, cut["rows"], cut["cols"], cut["rates"],
+            window_bits=cut["window_bits"], tile_rows=TILE_ROWS)
+        part = "down" if cut["group"] == "w2" else str(cut["projection"]).removesuffix("_proj")
+        parts.add(part)
+        window_bits = int(cut["window_bits"])
+        if fused_routed_unit_shape_refusal(
+                "value" if family == BF16 else "e4m3", part, rows=cut["rows"],
+                cols=cut["cols"], rates=cut["rates"], window_bits=window_bits) is not None:
+            refused = True
+    if family == NVFP4 or not layouts:
+        return units_total, 0
+    stack_total = len(parts) * routed_window_part_resident_bytes(experts)
+    if not refused:
+        stack_total += len(layouts) * routed_fused_table_bytes(window_bits)
+    return units_total, stack_total
+
+
 def plan_packed_expert_stack(stack: str, sources: dict, grid, q256: int, *,
                              source_layout: str, config: dict,
                              research_selected: bool = False):
@@ -1675,6 +1754,11 @@ def main():
                          "vLLM's BF16 method, the weight it wants is not in the checkpoint, and "
                          "the refusal is stamped verbatim into the manifest's serving_gate "
                          "block.")
+    ap.add_argument("--fit-tp-size", type=int, default=1, metavar="TP",
+                    help="tensor-parallel size the manifest's totals.per_rank fit block prices "
+                         "each routed stack's rank-local cut and the MTP draft's embed/head "
+                         "duplicate for (tessera#624, #645). The artifact itself stays "
+                         "TP-agnostic; this only changes the per-rank accounting.")
 
     ap.add_argument("--require-lane", action="append", default=None, metavar="LANE",
                     help="refuse the PLAN unless every wire it writes can be read by LANE -- a "
@@ -2386,6 +2470,7 @@ def main():
     # not have and said nothing about the one it does (#139).
     ignore: list[str] = []
     passthrough_bytes = 0
+    vocab_tensors: dict[str, tuple[int, int, int]] = {}
     weights_cache: dict[str, torch.Tensor] = {}
     done = 0
     total = sum(len(partitions[m]) for m in modules)      # roles, not tensors; this worker's share
@@ -2419,6 +2504,11 @@ def main():
                            "roles": [], "container_bytes": 0, "wire_bytes": 0,
                            "resident_bytes_resident_mode": 0,
                            "group_blob_bytes": {g: [] for g in MOE_GROUPS},
+                           # Each unit's verified wire layout (rates, window
+                           # bits), kept for the per-rank fit block and popped
+                           # before the record is written: it is not manifest
+                           # content, and the rates alone would dwarf it.
+                           "unit_layouts": [],
                            "rows": sum(g["rows"] for g in record["groups"].values()),
                            "cols": record["hidden_size"]}
                    for stack, record in stack_plan.items()}
@@ -2447,7 +2537,8 @@ def main():
             exported = ExportedUnit(unit["tensor"], accepted.blob, unit["rows"], unit["cols"],
                                     unit_q256, accepted.wire_bytes)
             payload = torch.frombuffer(bytearray(blob), dtype=torch.uint8).clone()
-            return exported, blob, cache_record, payload, float(accepted.manifest.scale_plane.global_scale)
+            return (exported, blob, cache_record, payload,
+                    float(accepted.manifest.scale_plane.global_scale), accepted.manifest)
 
         def intake_estimate(unit):
             record = cached_units.units[ActivationSource.unit_name(unit["tensor"])]
@@ -2485,7 +2576,8 @@ def main():
                                                       STRUCTURE_ROUTED_MOE)
                         source_weight = None
                         if intake is not None:
-                            exported, blob, cache_record, payload, own_global = intake.take(shard, name, unit)
+                            (exported, blob, cache_record, payload, own_global,
+                             unit_manifest) = intake.take(shard, name, unit)
                         elif cached_units is None:
                             source_weight = packed_expert_weight(tensor, unit)
                             weight = source_weight.to(args.device, torch.float32).contiguous()
@@ -2498,7 +2590,11 @@ def main():
                                 weight, grid=unit_grid, q256=unit_q256,
                                 body=unit_recipe.body, name=unit["tensor"], verify=not args.no_verify, **extra)
                             extra.clear()
-                            parse_unit_artifact(exported.blob, device=args.device)
+                            # The manifest the runtime's compact lane reads
+                            # (rates, window bits) comes off the bytes just
+                            # written, not off the encoder: the resident
+                            # pricing below is of the wire, as the lane is.
+                            unit_manifest = parse_unit_artifact(exported.blob, device=args.device).manifest
                             blob = pack_fused([(unit["projection"], exported.rows, exported.blob)])
                             own_global = float(unit_artifact_.scale_global)
                             payload = torch.frombuffer(bytearray(blob), dtype=torch.uint8).clone()
@@ -2538,9 +2634,45 @@ def main():
                             stack_record["resident_bytes_resident_mode"] += (
                                 exported.rows * exported.columns // 2
                                 + exported.rows * exported.columns // 16 + 8)
+                            stack_record["unit_layouts"].append({
+                                "group": unit["group"], "projection": unit["projection"],
+                                "rows": exported.rows, "cols": exported.columns})
                         else:
-                            stack_record["resident_bytes_resident_mode"] += (
-                                exported.rows * exported.columns + exported.rows * 4)
+                            # THE COMPACT WINDOW LANE'S OWN TENSORS (tessera#624).
+                            # ``serving.moe_route`` serves every FP8/BF16
+                            # routed stack through ``compact_window_lane``,
+                            # which never allocates a decoded tile: what a
+                            # rank retains is the repacked planes, the
+                            # per-expert tables and bookkeeping, priced from
+                            # this unit's verified manifest by the same
+                            # arithmetic as ``WindowUnitAxis._alloc``.  The
+                            # per-part ``run_off`` and the fused lane's
+                            # composed tables (#685) are per stack, added
+                            # once the stack's shape is known below.
+                            from tessera.kernel_window_gemv import TILE_ROWS
+                            layout = {
+                                "group": unit["group"], "projection": unit["projection"],
+                                "rows": int(unit_manifest.geometry.rows),
+                                "cols": int(unit_manifest.geometry.columns),
+                                "rates": tuple(int(r) for r in unit_manifest.rates),
+                                "window_bits": int(unit_manifest.window_bits)}
+                            if (layout["rows"], layout["cols"]) != (exported.rows, exported.columns):
+                                raise SystemExit(
+                                    f"{unit['tensor']}: the wire's manifest says "
+                                    f"{layout['rows']}x{layout['cols']} for a unit exported as "
+                                    f"{exported.rows}x{exported.columns}")
+                            try:
+                                stack_record["resident_bytes_resident_mode"] += (
+                                    routed_window_unit_resident_bytes(
+                                        stack_spec["family"], layout["rows"], layout["cols"],
+                                        layout["rates"], window_bits=layout["window_bits"],
+                                        tile_rows=TILE_ROWS))
+                            except ValueError as exc:
+                                raise SystemExit(
+                                    f"{unit['tensor']}: cannot price the compact routed lane "
+                                    f"from its wire ({exc}); a routed stack the compact lane "
+                                    "cannot read has no resident-mode figure") from exc
+                            stack_record["unit_layouts"].append(layout)
                         stack_record["roles"].append({
                             **expert_scale,
                             "tensor": unit["tensor"],
@@ -2565,6 +2697,14 @@ def main():
                     shard_payload[name] = tensor
                     twin_payload[name] = tensor
                     passthrough_bytes += tensor.numel() * tensor.element_size()
+                    # The vocab-parallel tables an MTP draft duplicates per
+                    # rank (tessera#645): the target's embedding and head,
+                    # matched by suffix because the embedding's prefix is the
+                    # architecture's (``model.`` or ``model.language_model.``).
+                    if (name.endswith("embed_tokens.weight") or name == "lm_head.weight"
+                            or name.endswith(".lm_head.weight")) and tensor.dim() == 2:
+                        vocab_tensors[name] = (int(tensor.shape[0]), int(tensor.shape[1]),
+                                               tensor.element_size())
                     # EVERY tensor written at source precision is named here,
                     # body or not.  ``ignore`` used to be assembled from three
                     # BODY_LAYER-gated sources, so a Linear outside the decoder
@@ -2792,6 +2932,7 @@ def main():
     # not contradict -- and ``moe_layout.unpack_moe_wires`` refuses a stride
     # that is not what the loaded lengths imply, which is the same check from
     # the other side.
+    routed_layouts: dict[str, list] = {}
     for stack, spec in stack_plan.items():
         stack_record = moe_records[stack]
         recipe = served_recipe(spec["grid"], spec["q256"], STRUCTURE_ROUTED_MOE)
@@ -2823,6 +2964,13 @@ def main():
         stack_record["structure"] = STRUCTURE_ROUTED_MOE
         stack_record["wire_stride"] = {g: groups[g]["wire_stride"] for g in MOE_GROUPS}
         stack_record.pop("group_blob_bytes")
+        routed_layouts[stack] = stack_record.pop("unit_layouts")
+        if spec["family"] != NVFP4:
+            # The stack-level terms of the compact lane (tessera#624): one
+            # ``run_off`` per part at ``finish`` and, where the whole stack's
+            # wire shape admits the fused lane, its composed tables (#685).
+            stack_record["resident_bytes_resident_mode"] += routed_stack_resident_bytes(
+                spec["family"], spec["experts"], routed_layouts[stack])[1]
         stack_record["roles"].sort(key=lambda r: (r["expert"], r["group"], r["role"]))
         module_records[stack] = stack_record
         for role in stack_record["roles"]:
@@ -2913,6 +3061,26 @@ def main():
 
     totals = summarize_modules(module_records, passthrough_bytes,
                                sum((args.out / s).stat().st_size for s in shards))
+    # THE PER-RANK FIT BLOCK (tessera#624, #645): what one rank retains of
+    # the routed stacks at ``--fit-tp-size`` -- each unit's rank-local cut,
+    # so the per-expert tables and bookkeeping a cut does not shrink are
+    # counted per rank, not divided -- beside the MTP draft's own embed/head
+    # copy as its own named line.  ``resident_bytes_resident_mode`` above
+    # stays the whole-stack TP1 figure the manifest has always carried.
+    fit_tp = int(args.fit_tp_size)
+    if fit_tp < 1:
+        raise SystemExit(f"--fit-tp-size {fit_tp} is not a tensor-parallel size")
+    routed_by_rank = [
+        sum(sum(routed_stack_resident_bytes(
+            stack_plan[stack]["family"], stack_plan[stack]["experts"], layouts,
+            tp_size=fit_tp, tp_rank=rank)) for stack, layouts in routed_layouts.items())
+        for rank in range(fit_tp)]
+    mtp_layers = int(src_config.get("text_config", src_config).get("num_nextn_predict_layers") or 0)
+    totals["per_rank"] = per_rank_fit_items(
+        tp_size=fit_tp, routed_bytes_by_rank=routed_by_rank,
+        mtp_duplicate_bytes=(mtp_draft_embed_head_duplicate_bytes(vocab_tensors.values(), fit_tp)
+                             if mtp_layers > 0 else 0),
+        mtp_layers=mtp_layers)
     params = totals["quantized_params"]
     families = sorted({m["family"] for m in module_records.values()})
     manifest = {

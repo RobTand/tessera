@@ -2577,7 +2577,15 @@ disagreeing unit lists its rows by census owner or site rather than being
 absorbed (tessera#557: the manifest prices the tile, the per-row scales, the
 NVFP4 A-side scalar and the load-pinned trellis tables, and the mixed3
 capture re-derived over those figures closes; per-module pricing of the
-shared tables is exact for one NVFP4 unit per trellis). `cache_capacity` may
+shared tables is exact for one NVFP4 unit per trellis). A routed FP8/BF16
+stack is priced as the compact window lane holds it (tessera#624): the
+repacked planes, per-expert tables, permutations and bookkeeping of
+`WindowUnitAxis`, the per-part `run_off`, and the fused lane's composed
+tables where the stack's wire shape admits it (#685) -- never a decoded tile,
+which that lane does not allocate. The figure is the whole stack at TP1; the
+manifest's `totals.per_rank` block (`--fit-tp-size`) prices each rank's cut
+beside the MTP draft's own embed/head duplicate as its own line item
+(tessera#645). `cache_capacity` may
 only close on a **read-only** pass's record: the intrusive resource pass marks
 its own record timing- and admission-ineligible, and that record serves as the
 capacity witness the two passes are compared with instead.
