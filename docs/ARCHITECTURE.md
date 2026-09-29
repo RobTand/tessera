@@ -1,5 +1,13 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-09-29 for the E2M1 K1 production boundary (tessera#477).
+Arity-one E2M1 remains research-only: the existing serving export gate refuses
+its absent reader range before encoding, and an explicit research override
+records the refusal rather than admitting the artifact. The production menu
+requires attestation; generic research encoding is not serving qualification.
+No reader range, family mapping, recipe, wire bytes, default, or runtime gate
+changes. See [the decision](design/e2m1-k1-production-boundary.md).
+
 Re-stamped 2026-09-29 for the NoPE verdict carrier (tessera#698). When route
 tracing is enabled, the existing backend startup report also records its
 compilation mode, resolved CUDA-graph mode, and eager-equivalence verdict in
