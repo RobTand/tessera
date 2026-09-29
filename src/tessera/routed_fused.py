@@ -120,6 +120,39 @@ def fused_routed_window_enabled() -> bool:
     return os.environ.get(ENV_TOGGLE, "1") != "0"
 
 
+def fused_routed_unit_shape_refusal(family: str, part: str, *, rows: int, cols: int,
+                                    rates, window_bits: int) -> "str | None":
+    """The wire-shape half of :func:`fused_routed_window_supported`, on one
+    unit's manifest facts alone -- what an exporter can decide before any
+    bundle exists (tessera#624 prices the lane's composed tables only where
+    the stack's shape admits the lane).  ``part`` is ``gate``/``up``/``down``.
+
+    Only what the manifest says is checked here: family, window bits, the
+    column count the tiles need, every column at rate ``RATE`` (the one-run
+    identity-permutation table the repacker emits for a uniform rate), and
+    the row multiples the kernel's tiles need.  Device, arithmetic, the
+    activation quantizer and the env toggle are runtime facts the runtime
+    predicate keeps.  Returns the refusal, or ``None`` when the shape serves.
+    """
+    if family not in ("value", "e4m3"):
+        return f"family {family!r} is not a window family"
+    if int(window_bits) != WINDOW_BITS:
+        return f"{part} window_bits {window_bits} != {WINDOW_BITS}"
+    cols = int(cols)
+    if cols % BK != 0 or cols < MIN_COLS:
+        return f"{part} has {cols} columns; the lane needs a multiple of {BK} and at least {MIN_COLS}"
+    rates = tuple(int(r) for r in rates)
+    if len(rates) != cols or any(r != RATE for r in rates):
+        return f"{part} run table is not [[{RATE}, 0, {cols}, 0]] (mixed rates or a rate other than {RATE})"
+    rows = int(rows)
+    if part == "down":
+        if rows % BN != 0:
+            return f"the hidden size {rows} is not a multiple of {BN}"
+    elif rows % HALF != 0:
+        return f"the intermediate size {rows} is not a multiple of {HALF}"
+    return None
+
+
 def fused_dense_window_enabled() -> bool:
     return os.environ.get(ENV_TOGGLE_DENSE, "1") != "0"
 
