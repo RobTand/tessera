@@ -734,7 +734,8 @@ def test_a_row_stride_that_is_only_even_takes_the_unsplit_path(family):
 
 def test_the_run_pair_and_block_descriptor_are_the_packers_layout():
     """Pure host arithmetic: the run pair restates a one- or two-run table and
-    refuses three runs, a wrong offset or a run that does not tile K; the
+    refuses three runs, two rates that are not adjacent, a wrong offset or a
+    run that does not tile K; the
     block descriptor lists each block's low-rate columns then its high-rate
     columns in ascending position with the running low-rate count -- checked
     against a direct restatement over the packer's permutation."""
@@ -752,6 +753,8 @@ def test_the_run_pair_and_block_descriptor_are_the_packers_layout():
     for bad, word in ((torch.tensor([[2, 0, 64, 0], [3, 64, 32, 2048], [4, 96, 32, 3584]]), "3 runs"),
                       (torch.tensor([[3, 0, n_lo, 0], [4, n_lo, cols - n_lo, 0]]), "do not tile"),
                       (torch.tensor([[4, 0, n_lo, 0], [3, n_lo, cols - n_lo, 64 * n_lo]]), "not above"),
+                      # a pair no grammar schedule emits: the lane reads adjacent rates only
+                      (torch.tensor([[2, 0, 64, 0], [4, 64, 64, 16 * 2 * 64]]), "not adjacent"),
                       (torch.tensor([[9, 0, cols, 0]]), "rate in 1..8"),
                       (torch.tensor([[4, 0, cols - 32, 0]]), "covers")):
         got, why = rf.run_pair(bad.to(torch.int32), cols)

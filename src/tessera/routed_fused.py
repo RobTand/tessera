@@ -298,7 +298,9 @@ def _ext(family: str):
                        ("RATE_MIN", RATE_MIN), ("RATE_MAX", RATE_MAX), ("SLOT_WORDS_MAX", SLOT_WORDS_MAX),
                        ("BDESC_INTS", BDESC_INTS), ("WINDOW_BITS", WINDOW_BITS), ("FAMILY_FP8", fp8),
                        ("WORD_STAGES", WORD_STAGES), ("SMEM_FIXED_GATE_UP", SMEM_FIXED[0]),
-                       ("SMEM_FIXED_DOWN", SMEM_FIXED[2])):
+                       ("SMEM_FIXED_DOWN", SMEM_FIXED[2]),
+                       # the gate/up rates the library instantiates ARE the ones the host admits
+                       ("GATE_UP_RATE_MAX", max(ROUTED_LANE_RATES))):
         if getattr(lib, name) != want:
             raise GrammarError(
                 f"{module} was built with {name}={getattr(lib, name)!r}; this module expects {want!r}")
@@ -353,9 +355,13 @@ def run_pair(runs: torch.Tensor, cols: int) -> "tuple[torch.Tensor | None, str |
     ``runs`` is the wire's ``[R, 4]`` table of ``(rate, col0, ncols, word0)``
     rows, the packer's stable sort of the columns by (rate, column) into one
     contiguous run per rate.  The kernel reads one or two runs -- the grammar
-    mixes only the two rates bracketing a stack's root -- as the int32
-    ``[8]`` pair ``(r_lo, 0, n_lo, 0, r_hi, n_lo, n_hi, w_hi)`` with
-    ``w_hi = 16 * n_lo * r_lo`` (a one-run table has ``n_hi = 0``).  Returns
+    mixes only the two rates bracketing a stack's root, which are ADJACENT
+    (``grammar.rate_set``) -- as the int32 ``[8]`` pair
+    ``(r_lo, 0, n_lo, 0, r_hi, n_lo, n_hi, w_hi)`` with ``r_hi = r_lo + 1``
+    and ``w_hi = 16 * n_lo * r_lo`` (a one-run table has ``n_hi = 0``).  Each
+    (r_lo, one or two runs) pair is a compile-time instantiation of the
+    kernel's chunk loop, so a pair of rates further apart -- which no grammar
+    schedule emits -- is refused here by name rather than decoded.  Returns
     ``(pair, None)`` or ``(None, reason)``.
     """
     runs = runs.reshape(-1, 4)
@@ -374,6 +380,9 @@ def run_pair(runs: torch.Tensor, cols: int) -> "tuple[torch.Tensor | None, str |
         r_hi, c_hi, n_hi, w_hi = rows[1]
         if r_hi not in RATES or r_hi <= r_lo:
             return None, f"second run rate {r_hi} is not above the first's {r_lo} within {RATE_MIN}..{RATE_MAX}"
+        if r_hi != r_lo + 1:
+            return None, (f"second run rate {r_hi} is not adjacent to the first's {r_lo}: the lane reads the "
+                          "two adjacent rates bracketing a root (grammar.rate_set)")
         if c_hi != n_lo or n_hi <= 0 or n_lo + n_hi != cols or w_hi != 16 * n_lo * r_lo:
             return None, f"runs {rows} do not tile {cols} columns as (rate, 0, n_lo, 0), (rate, n_lo, n_hi, 16 * n_lo * rate)"
         pair = (r_lo, 0, n_lo, 0, r_hi, n_lo, n_hi, w_hi)

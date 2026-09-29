@@ -413,12 +413,20 @@ def test_support_predicate_refuses_by_name():
     assert reason is not None and "runs" in reason
     # two rates (a permuted column order) ARE read since contract v45 (#694) --
     # but gate and up must share the tile stride the one launch reads
-    mixed_rates = tuple(2 if c % 2 else 4 for c in range(HIDDEN))
+    mixed_rates = tuple(3 if c % 2 else 4 for c in range(HIDDEN))
     mixed = grouped([Expert(INTER, HIDDEN, mixed_rates, 710 + i) for i in range(EXPERTS)])
     reason = rf.fused_routed_window_supported(mixed, ok.up, ok.down)
     assert reason is not None and "tile_words" in reason
     mixed_up = grouped([Expert(INTER, HIDDEN, mixed_rates, 720 + i) for i in range(EXPERTS)])
     assert rf.fused_routed_window_supported(mixed, mixed_up, ok.down) is None
+    # ... when the two rates are ADJACENT, the pair bracketing a root that every
+    # grammar schedule emits: the chunk loop is instantiated per (low rate, one
+    # or two runs), so a wider pair is refused by name, not decoded
+    wide_rates = tuple(2 if c % 2 else 4 for c in range(HIDDEN))
+    wide = grouped([Expert(INTER, HIDDEN, wide_rates, 760 + i) for i in range(EXPERTS)])
+    wide_up = grouped([Expert(INTER, HIDDEN, wide_rates, 770 + i) for i in range(EXPERTS)])
+    reason = rf.fused_routed_window_supported(wide, wide_up, ok.down)
+    assert reason is not None and "not adjacent" in reason, reason
     # one rate other than 4 everywhere is one run the kernel reads
     rate2 = grouped([Expert(INTER, HIDDEN, (2,) * HIDDEN, 730 + i) for i in range(EXPERTS)])
     rate2_up = grouped([Expert(INTER, HIDDEN, (2,) * HIDDEN, 740 + i) for i in range(EXPERTS)])

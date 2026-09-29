@@ -7,9 +7,10 @@
 // window GEMM (``tessera.window_gemm_grouped``): the 14-bit window state of
 // row ``n`` in column ``k`` is the last 14 bits of that column's MSB-first bit
 // stream (``rate`` bits per row, any rate 1..8, per column -- the run table's
-// one or two rates) ending after row ``n``, looked up in the expert's
-// table.  The BF16 (value) family is FOLDED -- ``bf16(table[state] *
-// row_scale[n])`` before the dot, no epilogue scale -- and the E4M3 family
+// one rate or two ADJACENT rates, the pair bracketing the stack's root) ending
+// after row ``n``, looked up in the expert's table.  The BF16 (value) family
+// is FOLDED -- ``bf16(table[state] * row_scale[n])`` before the dot, no
+// epilogue scale -- and the E4M3 family
 // runs the epilogue arithmetic ``(acc * a_scale[row]) * row_scale[n]``, both
 // in the exact fp32 operation order of the legacy kernel.  The E4M3 table
 // entry ``native[codes[state]]`` is composed on the host into an f16 table
@@ -86,8 +87,11 @@ constexpr int BK = 32;                              // k columns per chunk
 // ``16 * rate`` int32 words, a 64-row half of it ``2 * rate`` words.  Rates 4
 // and 8 put a lane's eight rows on word boundaries; every other rate re-aligns
 // the lane's window once per chunk (``decode_rows``).  The run table's rates
-// are the grammar's -- at most the two bracketing the root
-// (``grammar.rate_set``) -- and any of 1..8 is read.
+// are the grammar's -- one rate, or the two ADJACENT rates bracketing the root
+// (``grammar.rate_set``); a non-adjacent pair is refused by name
+// (``routed_fused.run_pair``) and traps here -- and every rate 1..8 is read.
+// Each (low rate, one or two runs) pair is its own compile-time instantiation
+// of the producers' chunk loop, entered once per item (``launch_decodes``).
 constexpr int RATE_MIN = 1;
 constexpr int RATE_MAX = 8;
 constexpr int BDESC_INTS = 12;                      // per-32-column descriptor (see ``col_map``)
@@ -137,6 +141,42 @@ __host__ __device__ constexpr int smem_bytes(int mode, int slot_words) {
 __host__ __device__ constexpr int slot_words_for_rate(int rate) {
     return 2 * rate + ((rate & 1) ? 2 : 0);
 }
+// A launch's slot: the larger of its pair's slots (``r_lo`` and, with a second
+// run, ``r_lo + 1``), rounded up to a multiple of 4, at least 4 -- the host's
+// ``routed_fused.slot_words_for_pair``.
+__host__ __device__ constexpr int pair_slot_words(int r_lo, bool two) {
+    const int lo = slot_words_for_rate(r_lo);
+    const int hi = two ? slot_words_for_rate(r_lo + 1) : 0;
+    const int need = (lo > hi ? lo : hi) > 4 ? (lo > hi ? lo : hi) : 4;
+    return (need + 3) / 4 * 4;
+}
+// The per-block dynamic shared memory sm_121 (GB10, the contract's target)
+// lets a kernel opt in to.  It bounds which pairs are INSTANTIATED only; every
+// launch is checked against the live device's own limit (``check_slot``), and
+// ``routed_fused.SM121_MAX_DYNAMIC_SMEM`` is the same figure.
+constexpr int SM121_SMEM_OPTIN = 101376;
+// Whether the launch of ``mode`` decodes the pair (``r_lo``; ``two``: a second
+// run at ``r_lo + 1``): rates in 1..8, and the pair's slot fits the target's
+// block.  The two-table gate/up launch reaches rates 1..6 (one run) and pairs
+// up to (5, 6); the one-table down/dense launch every rate and pair.  A pair
+// outside the set traps -- the host refuses it before any launch.
+__host__ __device__ constexpr bool launch_decodes(int mode, int r_lo, bool two) {
+    return r_lo >= RATE_MIN && r_lo + (two ? 1 : 0) <= RATE_MAX
+        && smem_bytes(mode, pair_slot_words(r_lo, two)) <= SM121_SMEM_OPTIN;
+}
+// The largest one-run rate the gate/up launch decodes: published as the
+// library's GATE_UP_RATE_MAX, checked at load against
+// ``max(routed_fused.ROUTED_LANE_RATES)``, so the rates the host admits on the
+// routed-expert launch and the pairs this library instantiates cannot drift.
+__host__ __device__ constexpr int gate_up_rate_max() {
+    int r = RATE_MIN - 1;
+    for (int x = RATE_MIN; x <= RATE_MAX; ++x)
+        if (launch_decodes(0, x, false)) r = x;
+    return r;
+}
+// Compile-time tags the per-item dispatch hands the chunk loop.
+template <int R> struct RateTag { static constexpr int value = R; };
+template <bool T> struct TwoTag { static constexpr bool value = T; };
 
 constexpr int BAR_FULL0 = 1;
 constexpr int BAR_EMPTY0 = 3;
@@ -226,7 +266,8 @@ __device__ __forceinline__ int aswz(int chunk, int row) {
 // columns share a rate except in the one warp straddling the two.
 struct RunPair { int r_lo, n_lo, r_hi, n_hi, w_hi; };
 struct ColMap {
-    int rate;   // the column's rate
+    int rate;   // the column's rate: RL, or RL + 1 in a two-run unit's high run
+    bool lo;    // the column is in the low-rate run (always, in a one-run unit)
     int cib;    // its original position within the block: the B-tile column
     int p;      // its permuted index (the run table's column order): init[p]
     int cw0;    // the first word of its chunk within a 512-row tile
@@ -238,32 +279,64 @@ __device__ __forceinline__ RunPair load_runs(const int32_t* runs, int e) {
     r.r_lo = a.x; r.n_lo = a.z; r.r_hi = b.x; r.n_hi = b.z; r.w_hi = b.w;
     return r;
 }
-__device__ __forceinline__ ColMap col_map(const int32_t* bdesc, const RunPair& rp, int kc, int m) {
+// Column ``m`` of chunk ``kc`` for the pair (RL; TWO: a second run at RL + 1)
+// with ``n_lo`` low-rate columns whose words end at ``w_hi``.
+template <int RL, bool TWO>
+__device__ __forceinline__ ColMap col_map(const int32_t* bdesc, int n_lo, int w_hi, int kc, int m) {
     ColMap c;
-    // A one-run unit (n_hi = 0; every q256 whose root is an integer rate, the
-    // v42/v43 rate-4 stacks among them) has the identity descriptor --
-    // block_desc lists all 32 columns as low-rate in in-block order, with
-    // counts (kc * BK, BK) -- so its map is computed, not read: the two
-    // descriptor loads per call are pure overhead there, and the producer
-    // makes five calls per chunk.  rp is the item's, so the branch is uniform
-    // across the block.
-    if (rp.n_hi == 0) {
-        c.rate = rp.r_lo;
+    if constexpr (!TWO) {
+        // A one-run unit (every q256 whose root is an integer rate, the
+        // v42/v43 rate-4 stacks among them) has the identity descriptor --
+        // block_desc lists all 32 columns as low-rate in in-block order, with
+        // counts (kc * BK, BK) -- so its map is computed, not read, and with
+        // the rate a compile-time constant it folds into the addressing.
+        c.rate = RL;
+        c.lo = true;
         c.cib = m;
         c.p = kc * BK + m;
-        c.cw0 = c.p * 16 * rp.r_lo;
-        return c;
+        c.cw0 = c.p * 16 * RL;
+    } else {
+        const int32_t* blk = bdesc + (long)kc * BDESC_INTS;
+        const int cib = (blk[m >> 2] >> (8 * (m & 3))) & 0xFF;
+        const int2 counts = *reinterpret_cast<const int2*>(blk + 8);   // (n_lo_before, cnt_lo)
+        c.lo = m < counts.y;
+        const int rank = c.lo ? counts.x + m : (kc * BK - counts.x) + (m - counts.y);
+        c.rate = c.lo ? RL : RL + 1;
+        c.cib = cib;
+        c.p = c.lo ? rank : n_lo + rank;
+        c.cw0 = c.lo ? rank * 16 * RL : w_hi + rank * 16 * (RL + 1);
     }
-    const int32_t* blk = bdesc + (long)kc * BDESC_INTS;
-    const int cib = (blk[m >> 2] >> (8 * (m & 3))) & 0xFF;
-    const int2 counts = *reinterpret_cast<const int2*>(blk + 8);   // (n_lo_before, cnt_lo)
-    const bool lo = m < counts.y;
-    const int rank = lo ? counts.x + m : (kc * BK - counts.x) + (m - counts.y);
-    c.rate = lo ? rp.r_lo : rp.r_hi;
-    c.cib = cib;
-    c.p = lo ? rank : rp.n_lo + rank;
-    c.cw0 = lo ? rank * 16 * rp.r_lo : rp.w_hi + rank * 16 * rp.r_hi;
     return c;
+}
+// The words of one column's 64-row half at rate R into its word-stage slot, as
+// 16-byte copies split between the two threads ``q`` of the column.  An odd
+// rate's half starts on an 8-byte boundary when its index ``t64`` is odd (a
+// column's words start 16-byte aligned; 8 * R * t64 is 8 mod 16 there): the
+// copies then start at the aligned word pair before the half, which lands in
+// the slot's first two words, and the decode reads the half from word 2
+// (``odd_off``).  At even t64 the odd rate's last two words are an 8-byte tail.
+template <int R>
+__device__ __forceinline__ void copy_half(int32_t* dst, const int32_t* src, int t64, int q) {
+    if constexpr ((R & 1) == 0) {
+        constexpr int N16 = R / 2;                  // 2R words, 16-byte aligned
+        #pragma unroll
+        for (int k = 0; k < N16; k += 2)
+            if (k + q < N16) cp_async16(dst + 4 * (k + q), src + 4 * (k + q));
+    } else {
+        if (t64 & 1) {
+            constexpr int N16 = (R + 1) / 2;        // 2R + 2 words from the pair before the half
+            const int32_t* s = src - 2;
+            #pragma unroll
+            for (int k = 0; k < N16; k += 2)
+                if (k + q < N16) cp_async16(dst + 4 * (k + q), s + 4 * (k + q));
+        } else {
+            constexpr int N16 = (R - 1) / 2;        // 2R = 4 * N16 + 2 words: an 8-byte tail
+            #pragma unroll
+            for (int k = 0; k < N16; k += 2)
+                if (k + q < N16) cp_async16(dst + 4 * (k + q), src + 4 * (k + q));
+            if (q == (N16 & 1)) cp_async8(dst + 4 * N16, src + 4 * N16);
+        }
+    }
 }
 
 // Eight rows of one column of one half, from the half's word slot: the
@@ -327,20 +400,15 @@ __device__ __forceinline__ void decode_rows(const int32_t* Wc, uint32_t prev, in
         packed[r >> 1] = t0 | (t1 << 16);
     }
 }
-template <bool FP8>
-__device__ __forceinline__ void decode_rows_at(int rate, const int32_t* Wc, uint32_t prev, int j,
-                                               const uint16_t* T, const float* ws,
-                                               uint32_t (&packed)[4]) {
-    switch (rate) {
-        case 1: decode_rows<FP8, 1>(Wc, prev, j, T, ws, packed); break;
-        case 2: decode_rows<FP8, 2>(Wc, prev, j, T, ws, packed); break;
-        case 3: decode_rows<FP8, 3>(Wc, prev, j, T, ws, packed); break;
-        case 4: decode_rows<FP8, 4>(Wc, prev, j, T, ws, packed); break;
-        case 5: decode_rows<FP8, 5>(Wc, prev, j, T, ws, packed); break;
-        case 6: decode_rows<FP8, 6>(Wc, prev, j, T, ws, packed); break;
-        case 7: decode_rows<FP8, 7>(Wc, prev, j, T, ws, packed); break;
-        default: decode_rows<FP8, 8>(Wc, prev, j, T, ws, packed); break;
-    }
+// Both halves of a chunk (rates RA and RB, each compile-time) as ONE
+// straight-line block, so the scheduler can issue the second half's word and
+// table loads while the first half's are in flight.
+template <bool FP8, int RA, int RB>
+__device__ __forceinline__ void decode_two(const int32_t* const (&Wc)[2], const int32_t (&prev)[2], int j,
+                                           const uint16_t* T0, const uint16_t* T1,
+                                           const float* const (&ws)[2], uint32_t (&packed)[2][4]) {
+    decode_rows<FP8, RA>(Wc[0], (uint32_t)prev[0], j, T0, ws[0], packed[0]);
+    decode_rows<FP8, RB>(Wc[1], (uint32_t)prev[1], j, T1, ws[1], packed[1]);
 }
 
 struct Params {
@@ -397,7 +465,6 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
     float* wsc = reinterpret_cast<float*>(smem + L::OFF_WSCALE);
     int32_t* desc = reinterpret_cast<int32_t*>(smem + L::OFF_DESC);
     int32_t* claim = reinterpret_cast<int32_t*>(smem + L::OFF_CLAIM);
-    const int w_stage = w_stage_ints(p.slot_words);
 
     const int tid = threadIdx.x;
     const int lane = tid & 31;
@@ -530,9 +597,17 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 rp_h[h] = load_runs(second ? p.runs1 : p.runs0, e);
                 bdesc_h[h] = (second ? p.bdesc1 : p.bdesc0) + (long)e * nk * BDESC_INTS;
             }
-            // The run pair must tile K and the wire's tile_words exactly: the
-            // Python owner checks it per stack; a mismatch here would address
-            // outside the expert's words, so it traps rather than reads.
+            // The run pair must tile K and the wire's tile_words exactly, its
+            // two rates must be adjacent (``grammar.rate_set``: a stack mixes
+            // only the two bracketing its root; ``run_pair`` refuses any other
+            // pair by name), and gate and up must carry ONE pair, since the
+            // item's chunk loop is instantiated for one.  The Python owner
+            // checks the first two per stack; the third needs no check of its
+            // own: equal ``cols`` and equal ``tile_words``
+            // (``fused_routed_window_supported``) fix 16 * (K * r_lo + n_hi),
+            // with 0 <= n_hi < K, and so the whole adjacent pair.  A mismatch
+            // here would address outside the expert's words, so it traps
+            // rather than reads.
             if (tid == 0) {
                 #pragma unroll
                 for (int h = 0; h < 2; ++h) {
@@ -541,12 +616,17 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                         || 16 * (rp.n_lo * rp.r_lo + rp.n_hi * rp.r_hi) != p.tile_words
                         || rp.r_lo < RATE_MIN || rp.r_lo > RATE_MAX
                         || slot_words_for_rate(rp.r_lo) > p.slot_words
-                        || (rp.n_hi > 0 && (rp.r_hi <= rp.r_lo || rp.r_hi > RATE_MAX
+                        || (rp.n_hi > 0 && (rp.r_hi != rp.r_lo + 1 || rp.r_hi > RATE_MAX
                                             || rp.w_hi != 16 * rp.n_lo * rp.r_lo
                                             || slot_words_for_rate(rp.r_hi) > p.slot_words)))
                         __trap();
                 }
+                if (rp_h[1].r_lo != rp_h[0].r_lo || rp_h[1].n_lo != rp_h[0].n_lo || rp_h[1].n_hi != rp_h[0].n_hi)
+                    __trap();
             }
+            // The item's pair (both halves', checked above).
+            const int n_lo = rp_h[0].n_lo;
+            const int w_hi = rp_h[0].w_hi;
             // The A row this thread stages (-1: a zero row past the superblock).
             long arow = -1;
             {
@@ -568,55 +648,6 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
             const int32_t* tbase_i = ih ? tbase_h[1] : tbase_h[0];
             const int t64_i = ih ? t64_h[1] : t64_h[0];
             const int32_t* bdesc_i = ih ? bdesc_h[1] : bdesc_h[0];
-            RunPair rp_i;
-            rp_i.r_lo = ih ? rp_h[1].r_lo : rp_h[0].r_lo;
-            rp_i.n_lo = ih ? rp_h[1].n_lo : rp_h[0].n_lo;
-            rp_i.r_hi = ih ? rp_h[1].r_hi : rp_h[0].r_hi;
-            rp_i.n_hi = ih ? rp_h[1].n_hi : rp_h[0].n_hi;
-            rp_i.w_hi = ih ? rp_h[1].w_hi : rp_h[0].w_hi;
-            // The words of chunk kc for half ih, lane group mm: 2 * rate words per
-            // column in 16-byte copies.  An odd rate's half starts on an 8-byte
-            // boundary when t64 is odd (a column's words start 16-byte aligned;
-            // 8 * rate * t64 is 8 mod 16 there): the copies then start at the
-            // aligned word pair before the half, which lands in the slot's first
-            // two words, and the decode reads the half from word 2 (``odd_off``).
-            // At even t64 the half's last two words are an 8-byte tail.
-            auto issue_words = [&](int kc) {
-                if (tid < 128) {
-                    const int mm = (tid >> 1) & 31;
-                    const int q = tid & 1;
-                    const ColMap c = col_map(bdesc_i, rp_i, kc, mm);
-                    const int32_t* src = tbase_i + c.cw0 + 2 * c.rate * t64_i;
-                    int32_t* dst = Ws + (kc % WORD_STAGES) * w_stage + (ih * BK + mm) * p.slot_words;
-                    const int off = ((c.rate & 1) & (t64_i & 1)) << 1;      // 0 or 2 words
-                    const int words = 2 * c.rate + off;
-                    const int n16 = words >> 2;
-                    const int32_t* s16 = src - off;
-                    for (int k = q; k < n16; k += 2) cp_async16(dst + 4 * k, s16 + 4 * k);
-                    if ((words & 3) && q == (n16 & 1)) cp_async8(dst + 4 * n16, s16 + 4 * n16);
-                }
-            };
-            // The 32 stream bits before the half's first word, for every row
-            // group whose window starts inside that word (8 * j * rate < 32:
-            // j = 0 at any rate, j <= 3 at rate 1, j = 1 at rates 2 and 3) --
-            // a field's 14-bit window reaches up to 13 bits before it, and at
-            // rate 1 the second group's does reach past the word (tessera#694:
-            // loading it for j = 0 alone left rows 8..12 of every half after
-            // the first reading a zero history at rate 1).
-            auto load_prev = [&](int kc, int32_t (&pv)[2]) {
-                #pragma unroll
-                for (int h = 0; h < 2; ++h) {
-                    const ColMap c = col_map(bdesc_h[h], rp_h[h], kc, m);
-                    if (8 * j * c.rate >= 32) continue;
-                    const int wr0 = 2 * c.rate * t64_h[h];
-                    const int32_t* wcol = tbase_h[h] + c.cw0;
-                    int32_t v;
-                    if (wr0 > 0) v = wcol[wr0 - 1];
-                    else if (g_h[h] > 0) v = wcol[16 * c.rate - 1 - p.tile_words];
-                    else v = hasinit_h[h] ? init_h[h][c.p] : 0;
-                    pv[h] = v;
-                }
-            };
             auto load_a = [&](int kc, uint4& a) {
                 if (arow >= 0) {
                     if constexpr (FP8) {
@@ -653,45 +684,146 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 }
             };
 
-            issue_words(kc0);
-            cp_async_commit();                     // group 0: the tables and the first chunk's words
-            if (nkc > 1) issue_words(kc0 + 1);
-            cp_async_commit();                     // group 1
-            int32_t prev_cur[2] = {0, 0}, prev_nxt[2] = {0, 0};
-            uint4 a_cur = make_uint4(0, 0, 0, 0), a_nxt = make_uint4(0, 0, 0, 0);
-            load_prev(kc0, prev_cur);
-            load_a(kc0, a_cur);
-            for (int ic = 0; ic < nkc; ++ic, ++gc) {
-                const int kc = kc0 + ic;
-                if (ic + 1 < nkc) { load_prev(kc + 1, prev_nxt); load_a(kc + 1, a_nxt); }
-                cp_async_wait<1>();                // chunk kc's words (and the tables) have landed
-                bar_sync(BAR_PROD, PRODUCER_THREADS);   // ... for every producer; chunk kc-1's stage is free
-                if (ic + 2 < nkc) issue_words(kc + 2);
-                cp_async_commit();
-                const int stage = gc & 1;
-                if (gc >= 2) bar_sync(BAR_EMPTY0 + stage, THREADS);
-                store_a(stage, a_cur);
-                const int32_t* W = Ws + (kc % WORD_STAGES) * w_stage;
-                uint8_t* B = Bs + stage * B_STAGE_BYTES;
-                ColMap c0;
-                #pragma unroll
-                for (int h = 0; h < 2; ++h) {
-                    // MODE 2 reads one projection: both halves map alike.
-                    const ColMap c = (MODE == 2 && h == 1) ? c0 : col_map(bdesc_h[h], rp_h[h], kc, m);
-                    if (h == 0) c0 = c;
-                    const int odd_off = ((c.rate & 1) & (t64_h[h] & 1)) << 1;   // see issue_words
-                    const int32_t* Wc = W + (h * BK + m) * p.slot_words + odd_off;
-                    const uint16_t* T = tab + ((MODE == 2) ? 0 : h * TABLE_ENTRIES);
-                    const int chunk = (MODE == 2) ? (8 * h + j) : (4 * (j >> 1) + 2 * h + (j & 1));
-                    const float* ws = wsc + slot * BN + chunk * 8;
-                    uint32_t packed[4];
-                    decode_rows_at<FP8>(c.rate, Wc, (uint32_t)prev_cur[h], j, T, ws, packed);
-                    *reinterpret_cast<uint4*>(B + c.cib * (BN * 2) + (bswz(chunk, c.cib) << 4)) =
-                        make_uint4(packed[0], packed[1], packed[2], packed[3]);
+            // The item's chunk loop, instantiated per run pair: ``RL`` the low
+            // (or only) rate, ``TWO`` whether a second run at ``RL + 1``
+            // exists.  The slot size, the copy pattern, the window shifts and --
+            // for one run -- the column map are compile-time, so a uniform
+            // stack decodes with the constant shifts and addressing of the v42
+            // rate-4 kernel, and both halves' decodes are one straight-line
+            // block (``decode_two``).  tessera#694: the first version switched
+            // on the column's rate per half per chunk, and its rate-4 launches
+            // ran 1.31x (down) to 1.49x (gate/up) slower than the v44 kernel's.
+            auto run = [&](auto rl_tag, auto two_tag) {
+                constexpr int RL = decltype(rl_tag)::value;
+                constexpr bool TWO = decltype(two_tag)::value;
+                constexpr int RH = RL + 1;                  // read only when TWO
+                constexpr int SW = pair_slot_words(RL, TWO);
+                constexpr int W_STAGE = w_stage_ints(SW);
+                // The words of chunk kc for half ih, lane group mm (``copy_half``).
+                // SW never exceeds the launch's slot (the trap check above), so
+                // the stages fit the shared memory the host sized.
+                auto issue_words = [&](int kc) {
+                    if (tid < 128) {
+                        const int mm = (tid >> 1) & 31;
+                        const int q = tid & 1;
+                        const ColMap c = col_map<RL, TWO>(bdesc_i, n_lo, w_hi, kc, mm);
+                        const int32_t* src = tbase_i + c.cw0 + 2 * c.rate * t64_i;
+                        int32_t* dst = Ws + (kc % WORD_STAGES) * W_STAGE + (ih * BK + mm) * SW;
+                        if constexpr (TWO) {
+                            if (c.lo) copy_half<RL>(dst, src, t64_i, q);
+                            else copy_half<RH>(dst, src, t64_i, q);
+                        } else {
+                            copy_half<RL>(dst, src, t64_i, q);
+                        }
+                    }
+                };
+                // The 32 stream bits before the half's first word, for every row
+                // group whose window starts inside that word (8 * j * rate < 32:
+                // j = 0 at any rate, j <= 3 at rate 1, j = 1 at rates 2 and 3) --
+                // a field's 14-bit window reaches up to 13 bits before it, and at
+                // rate 1 the second group's does reach past the word (tessera#694:
+                // loading it for j = 0 alone left rows 8..12 of every half after
+                // the first reading a zero history at rate 1).  The chunk's column
+                // map comes back too: the chunk's decode, one iteration later,
+                // reads it instead of mapping the column again.
+                auto load_prev = [&](int kc, int32_t (&pv)[2], ColMap (&cm)[2]) {
+                    #pragma unroll
+                    for (int h = 0; h < 2; ++h) {
+                        // MODE 2 reads one projection: both halves map alike.
+                        cm[h] = (MODE == 2 && h == 1) ? cm[0] : col_map<RL, TWO>(bdesc_h[h], n_lo, w_hi, kc, m);
+                        const ColMap& c = cm[h];
+                        if (8 * j * c.rate >= 32) continue;
+                        const int wr0 = 2 * c.rate * t64_h[h];
+                        const int32_t* wcol = tbase_h[h] + c.cw0;
+                        int32_t v;
+                        if (wr0 > 0) v = wcol[wr0 - 1];
+                        else if (g_h[h] > 0) v = wcol[16 * c.rate - 1 - p.tile_words];
+                        else v = hasinit_h[h] ? init_h[h][c.p] : 0;
+                        pv[h] = v;
+                    }
+                };
+
+                issue_words(kc0);
+                cp_async_commit();                     // group 0: the tables and the first chunk's words
+                if (nkc > 1) issue_words(kc0 + 1);
+                cp_async_commit();                     // group 1
+                int32_t prev_cur[2] = {0, 0}, prev_nxt[2] = {0, 0};
+                ColMap cm_cur[2], cm_nxt[2];
+                uint4 a_cur = make_uint4(0, 0, 0, 0), a_nxt = make_uint4(0, 0, 0, 0);
+                load_prev(kc0, prev_cur, cm_cur);
+                load_a(kc0, a_cur);
+                for (int ic = 0; ic < nkc; ++ic, ++gc) {
+                    const int kc = kc0 + ic;
+                    if (ic + 1 < nkc) { load_prev(kc + 1, prev_nxt, cm_nxt); load_a(kc + 1, a_nxt); }
+                    cp_async_wait<1>();                // chunk kc's words (and the tables) have landed
+                    bar_sync(BAR_PROD, PRODUCER_THREADS);   // ... for every producer; chunk kc-1's stage is free
+                    if (ic + 2 < nkc) issue_words(kc + 2);
+                    cp_async_commit();
+                    const int stage = gc & 1;
+                    if (gc >= 2) bar_sync(BAR_EMPTY0 + stage, THREADS);
+                    store_a(stage, a_cur);
+                    const int32_t* W = Ws + (kc % WORD_STAGES) * W_STAGE;
+                    uint8_t* B = Bs + stage * B_STAGE_BYTES;
+                    const int32_t* Wc[2];
+                    const float* ws[2];
+                    int chunk[2];
+                    #pragma unroll
+                    for (int h = 0; h < 2; ++h) {
+                        const int odd_off = ((cm_cur[h].rate & 1) & (t64_h[h] & 1)) << 1;   // see copy_half
+                        Wc[h] = W + (h * BK + m) * SW + odd_off;
+                        chunk[h] = (MODE == 2) ? (8 * h + j) : (4 * (j >> 1) + 2 * h + (j & 1));
+                        ws[h] = wsc + slot * BN + chunk[h] * 8;
+                    }
+                    const uint16_t* T0 = tab;
+                    const uint16_t* T1 = tab + ((MODE == 2) ? 0 : TABLE_ENTRIES);
+                    uint32_t packed[2][4];
+                    if constexpr (!TWO) {
+                        decode_two<FP8, RL, RL>(Wc, prev_cur, j, T0, T1, ws, packed);
+                    } else if constexpr (MODE == 2) {
+                        // one column in both halves: one rate
+                        if (cm_cur[0].lo) decode_two<FP8, RL, RL>(Wc, prev_cur, j, T0, T1, ws, packed);
+                        else decode_two<FP8, RH, RH>(Wc, prev_cur, j, T0, T1, ws, packed);
+                    } else {
+                        // gate and up share the pair, not the column order
+                        const bool lo0 = cm_cur[0].lo, lo1 = cm_cur[1].lo;
+                        if (lo0 && lo1) decode_two<FP8, RL, RL>(Wc, prev_cur, j, T0, T1, ws, packed);
+                        else if (!lo0 && !lo1) decode_two<FP8, RH, RH>(Wc, prev_cur, j, T0, T1, ws, packed);
+                        else if (lo0) decode_two<FP8, RL, RH>(Wc, prev_cur, j, T0, T1, ws, packed);
+                        else decode_two<FP8, RH, RL>(Wc, prev_cur, j, T0, T1, ws, packed);
+                    }
+                    #pragma unroll
+                    for (int h = 0; h < 2; ++h) {
+                        const int cib = cm_cur[h].cib;
+                        *reinterpret_cast<uint4*>(B + cib * (BN * 2) + (bswz(chunk[h], cib) << 4)) =
+                            make_uint4(packed[h][0], packed[h][1], packed[h][2], packed[h][3]);
+                    }
+                    bar_arrive(BAR_FULL0 + stage, THREADS);
+                    prev_cur[0] = prev_nxt[0]; prev_cur[1] = prev_nxt[1];
+                    cm_cur[0] = cm_nxt[0]; cm_cur[1] = cm_nxt[1];
+                    a_cur = a_nxt;
                 }
-                bar_arrive(BAR_FULL0 + stage, THREADS);
-                prev_cur[0] = prev_nxt[0]; prev_cur[1] = prev_nxt[1];
-                a_cur = a_nxt;
+            };
+            // ONE dispatch per item on the pair (every item of a launch carries
+            // the same one: one run table per stack, gate and up alike).  A pair
+            // this launch does not decode (``launch_decodes``) traps; the host
+            // refuses it first (``fused_routed_window_supported``: the device's
+            // shared memory; ``run_pair``: adjacency).
+            switch (rp_h[0].n_hi > 0 ? RATE_MAX + rp_h[0].r_lo : rp_h[0].r_lo) {
+#define TESSERA_ROUTED_FUSED_PAIR(R, T)                                        \
+                case (T ? RATE_MAX : 0) + R:                                   \
+                    if constexpr (launch_decodes(MODE, R, T)) run(RateTag<R>{}, TwoTag<T>{}); \
+                    else __trap();                                             \
+                    break;
+                TESSERA_ROUTED_FUSED_PAIR(1, false) TESSERA_ROUTED_FUSED_PAIR(2, false)
+                TESSERA_ROUTED_FUSED_PAIR(3, false) TESSERA_ROUTED_FUSED_PAIR(4, false)
+                TESSERA_ROUTED_FUSED_PAIR(5, false) TESSERA_ROUTED_FUSED_PAIR(6, false)
+                TESSERA_ROUTED_FUSED_PAIR(7, false) TESSERA_ROUTED_FUSED_PAIR(8, false)
+                TESSERA_ROUTED_FUSED_PAIR(1, true) TESSERA_ROUTED_FUSED_PAIR(2, true)
+                TESSERA_ROUTED_FUSED_PAIR(3, true) TESSERA_ROUTED_FUSED_PAIR(4, true)
+                TESSERA_ROUTED_FUSED_PAIR(5, true) TESSERA_ROUTED_FUSED_PAIR(6, true)
+                TESSERA_ROUTED_FUSED_PAIR(7, true)
+#undef TESSERA_ROUTED_FUSED_PAIR
+                default: __trap();
             }
             ++item_idx;
         }
@@ -1239,6 +1371,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.attr("RATE_MAX") = RATE_MAX;
     m.attr("SLOT_WORDS_MAX") = SLOT_WORDS_MAX;
     m.attr("WORD_STAGES") = WORD_STAGES;
+    m.attr("GATE_UP_RATE_MAX") = gate_up_rate_max();
     m.attr("SMEM_FIXED_GATE_UP") = Layout<0>::OFF_W;
     m.attr("SMEM_FIXED_DOWN") = Layout<2>::OFF_W;
     m.attr("BDESC_INTS") = BDESC_INTS;
