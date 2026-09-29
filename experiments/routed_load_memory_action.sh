@@ -25,6 +25,11 @@ echo "host=$(hostname) cpus=$CPUS head=$HEAD image=$IMG out=$OUT"
 printf '%s\n' "$@" > "$OUT/specs.txt"
 mkdir -p "$OUT/home" "$OUT/triton"
 status=0
+# PROBE_ALLOC_CONF=image keeps the image's own PYTORCH_CUDA_ALLOC_CONF (the
+# serve's forward runs under it: gpu_worker scopes max_split to the load only).
+alloc=(-e PYTORCH_CUDA_ALLOC_CONF="${PROBE_ALLOC_CONF-max_split_size_mb:20}")
+[ "${PROBE_ALLOC_CONF-}" = image ] && alloc=()
+echo "alloc_conf=${PROBE_ALLOC_CONF-max_split_size_mb:20}"
 for spec in "$@"; do
   IFS='|' read -r label data layers rank extra <<<"$spec"
   echo "== $label layers=$layers rank=$rank $(date -u +%FT%TZ)"
@@ -34,8 +39,7 @@ for spec in "$@"; do
     -e HOME="$OUT/home" -e TMPDIR="$OUT/home" -e TRITON_CACHE_DIR="$OUT/triton" \
     -e TORCH_EXTENSIONS_DIR="$OUT/torch-ext" -e PYTHONDONTWRITEBYTECODE=1 \
     -e PYTHONPATH=/work/src -e OMP_NUM_THREADS=2 -e PYTHONUNBUFFERED=1 \
-    -e PYTORCH_CUDA_ALLOC_CONF="${PROBE_ALLOC_CONF-max_split_size_mb:20}" \
-    "${imgenv[@]}" --entrypoint python3 -w /work "$IMG" \
+    "${alloc[@]}" "${imgenv[@]}" --entrypoint python3 -w /work "$IMG" \
     experiments/routed_load_memory_probe.py --data "$data" --layers "$layers" \
     --rank "$rank" --out "$OUT/$label.json" $extra \
     > "$OUT/$label.log" 2>&1

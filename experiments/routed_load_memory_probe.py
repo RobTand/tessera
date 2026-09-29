@@ -78,10 +78,13 @@ def _frames(entry, limit=6):
     return tuple(out)
 
 
-def _history_summary(snapshot) -> dict:
-    """``segment_alloc`` events grouped by allocating stack and size."""
+def _history_summary(snapshot, *, allocs: bool = False) -> dict:
+    """``segment_alloc`` events grouped by allocating stack and size; with
+    ``allocs``, also every block ``alloc`` of 1 MiB or more, by stack."""
     by_stack = collections.Counter()
     bytes_by_stack = collections.Counter()
+    alloc_n = collections.Counter()
+    alloc_bytes = collections.Counter()
     actions = collections.Counter()
     for trace in snapshot.get("device_traces", []):
         for entry in trace:
@@ -91,10 +94,36 @@ def _history_summary(snapshot) -> dict:
                 key = (_frames(entry), int(entry.get("size", 0)))
                 by_stack[key] += 1
                 bytes_by_stack[key] += int(entry.get("size", 0))
+            elif allocs and action == "alloc" and int(entry.get("size", 0)) >= (1 << 20):
+                key = (_frames(entry), int(entry.get("size", 0)))
+                alloc_n[key] += 1
+                alloc_bytes[key] += int(entry.get("size", 0))
     rows = [{"stack": list(stack), "segment_bytes": size, "count": n,
              "total_bytes": bytes_by_stack[(stack, size)]}
             for (stack, size), n in by_stack.most_common(20)]
-    return {"actions": dict(actions), "segment_allocs": rows}
+    out = {"actions": dict(actions), "segment_allocs": rows}
+    if allocs:
+        out["large_allocs"] = [{"stack": list(stack), "bytes": size, "count": n,
+                                "total_bytes": alloc_bytes[(stack, size)]}
+                               for (stack, size), n in sorted(
+                                   alloc_n.items(), key=lambda kv: -alloc_bytes[kv[0]])[:25]]
+    return out
+
+
+def _host() -> dict:
+    """This process's resident set and the box's ``MemAvailable``, in bytes:
+    on a unified-memory box the serve's watchdog reads the second."""
+    out = {}
+    try:
+        for line in Path("/proc/self/status").read_text().splitlines():
+            if line.startswith(("VmRSS:", "VmHWM:")):
+                out[line.split(":")[0].lower()] = int(line.split()[1]) * 1024
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemAvailable:"):
+                out["memavailable"] = int(line.split()[1]) * 1024
+    except OSError:
+        pass
+    return out
 
 
 def _digest(torch, prepared) -> dict:
@@ -226,6 +255,103 @@ def replay(args) -> int:
     return 0
 
 
+def _routes(torch, device, tokens, experts, top_k, mode, seed):
+    """``(topk_ids int32, topk_weights fp32)`` as the pinned runner hands them
+    to ``apply``: ``spread`` draws each token's top-k from all experts (text
+    routes this way); ``concentrated`` sends every token to the same top-k
+    (a dummy/warmup prefill of identical tokens routes this way)."""
+    g = torch.Generator(device="cpu").manual_seed(seed)
+    if mode == "spread":
+        ids = torch.rand(tokens, experts, generator=g).topk(top_k, dim=1).indices
+    elif mode == "concentrated":
+        ids = torch.randperm(experts, generator=g)[:top_k].expand(tokens, top_k)
+    else:
+        raise SystemExit(f"--route {mode!r}")
+    logits = torch.randn(tokens, top_k, generator=g)
+    weights = torch.softmax(logits, dim=1)
+    return (ids.to(torch.int32).contiguous().to(device),
+            weights.to(torch.float32).contiguous().to(device))
+
+
+def forward(args, torch, declared, prepared, layers) -> dict:
+    """The served routed forward, layer after layer, at the scorer's shape.
+
+    Calls each layer's adapter exactly as ``moe_route._apply_native`` does
+    (``adapter(x, topk_ids, topk_weights, swiglu_limit=..., apply_router_
+    weight_on_input=False)``) under ``inference_mode``, drops the output as
+    the next layer's residual add would, and records after every call the
+    allocator, the per-call peak, this process's RSS and the box's
+    ``MemAvailable``.  ``--passes`` repeats the layer sweep so a retained
+    per-layer copy (growth that stays) separates from a per-call transient
+    (peak that returns).
+    """
+    device = torch.device("cuda", torch.cuda.current_device())
+    hidden = int(declared[layers[0]]["hidden_size"])
+    experts = int(declared[layers[0]]["experts"])
+    g = torch.Generator(device="cpu").manual_seed(1234)
+    x = (torch.randn(args.tokens, hidden, generator=g) * 0.5).to(torch.bfloat16).to(device)
+    ids, weights = _routes(torch, device, args.tokens, experts, args.top_k, args.route, 99)
+    counts = torch.bincount(ids.reshape(-1).to(torch.int64).cpu(), minlength=experts)
+    out = {"tokens": args.tokens, "top_k": args.top_k, "route": args.route,
+           "experts_hit": int((counts > 0).sum()), "max_expert_rows": int(counts.max()),
+           "lanes": {str(l): list(prepared[l].adapter().launch_pair) for l in layers},
+           "adapter_types": {str(l): type(prepared[l].adapter()).__name__ for l in layers},
+           "before": {**_stats(torch), **_host()}, "calls": []}
+    history = args.history_forward
+    with torch.inference_mode():
+        for p in range(args.passes):
+            for layer in layers:
+                adapter = prepared[layer].adapter()
+                torch.cuda.synchronize()
+                torch.cuda.reset_peak_memory_stats()
+                if history and p == 0 and layer == layers[0]:
+                    torch.cuda.memory._record_memory_history(max_entries=200000)
+                t = time.perf_counter()
+                y = adapter(x, ids, weights, swiglu_limit=None,
+                            apply_router_weight_on_input=False)
+                torch.cuda.synchronize()
+                secs = time.perf_counter() - t
+                if history and p == 0 and layer == layers[0]:
+                    snap = torch.cuda.memory._snapshot()
+                    torch.cuda.memory._record_memory_history(enabled=None)
+                    out["history"] = {"layer": layer, **_history_summary(snap, allocs=True)}
+                row = {"pass": p, "layer": layer, "seconds": secs,
+                       "out_shape": list(y.shape), "out_dtype": str(y.dtype)}
+                if args.digest_forward:
+                    row["out_sha256"] = hashlib.sha256(
+                        y.contiguous().view(torch.uint8).reshape(-1).cpu().numpy().tobytes()).hexdigest()
+                del y
+                row.update(_stats(torch))
+                row.update(_host())
+                out["calls"].append(row)
+                print(json.dumps({"pass": p, "layer": layer, "s": round(secs, 4),
+                                  "allocated": row["allocated"], "reserved": row["reserved"],
+                                  "peak_allocated": row["peak_allocated"],
+                                  "peak_reserved": row["peak_reserved"],
+                                  "vmrss": row.get("vmrss"),
+                                  "memavailable": row.get("memavailable")}), flush=True)
+        if args.profile_forward:
+            from torch.profiler import ProfilerActivity, profile
+
+            for layer in layers:          # warm, then profile one full sweep
+                prepared[layer].adapter()(x, ids, weights, swiglu_limit=None,
+                                          apply_router_weight_on_input=False)
+            torch.cuda.synchronize()
+            with profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+                         profile_memory=True) as prof:
+                for _ in range(args.profile_forward):
+                    for layer in layers:
+                        prepared[layer].adapter()(x, ids, weights, swiglu_limit=None,
+                                                  apply_router_weight_on_input=False)
+                torch.cuda.synchronize()
+            out["profile_table"] = prof.key_averages().table(
+                sort_by="cuda_time_total", row_limit=25, max_name_column_width=70)
+            out["profile_sweeps"] = args.profile_forward
+            print(out["profile_table"], flush=True)
+    out["after"] = {**_stats(torch), **_host()}
+    return out
+
+
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--data", required=True)
@@ -238,8 +364,23 @@ def main(argv=None) -> int:
     ap.add_argument("--history", type=int, default=0, help="trace the first N callbacks")
     ap.add_argument("--digest", action="store_true")
     ap.add_argument("--no-adapter", action="store_true")
+    ap.add_argument("--forward", action="store_true",
+                    help="after the adapters, run the served routed forward over --layers")
+    ap.add_argument("--tokens", type=int, default=2048)
+    ap.add_argument("--top-k", type=int, default=8)
+    ap.add_argument("--route", default="spread", choices=("spread", "concentrated"))
+    ap.add_argument("--passes", type=int, default=2)
+    ap.add_argument("--history-forward", action="store_true",
+                    help="trace the allocator over the first layer's first forward")
+    ap.add_argument("--digest-forward", action="store_true", help="hash every forward output")
+    ap.add_argument("--profile-forward", type=int, default=0,
+                    help="torch.profiler over N further sweeps of the layers")
+    ap.add_argument("--routed-fused", choices=("0", "1"),
+                    help="set TESSERA_ROUTED_FUSED before tessera is imported")
     ap.add_argument("--out", required=True)
     args = ap.parse_args(argv)
+    if args.routed_fused is not None:
+        os.environ["TESSERA_ROUTED_FUSED"] = args.routed_fused
     if args.replay_shards:
         return replay(args)
     if not args.layers:
@@ -265,7 +406,8 @@ def main(argv=None) -> int:
               "experts": args.experts, "read_seconds": read_s,
               "q256": {layer: {g: int(declared[layer]["groups"][g]["q256"])
                                for g in ("w13", "w2")} for layer in layers},
-              "baseline": _stats(torch), "samples": []}
+              "routed_fused_env": os.environ.get("TESSERA_ROUTED_FUSED"),
+              "baseline": {**_stats(torch), **_host()}, "samples": []}
     if args.history:
         torch.cuda.memory._record_memory_history(max_entries=500000)
     intakes, lengths = {}, {}
@@ -317,6 +459,8 @@ def main(argv=None) -> int:
         record["lanes"] = lanes
         record["after_adapter"] = {
             "resident": int(sum(p.resident_bytes() for p in prepared.values())), **_stats(torch)}
+        if args.forward:
+            record["forward"] = forward(args, torch, declared, prepared, layers)
     if args.digest:
         record["digest"] = {layer: _digest(torch, p) for layer, p in prepared.items()}
     Path(args.out).write_text(json.dumps(record, indent=1, sort_keys=True, default=str))
