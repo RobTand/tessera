@@ -7,9 +7,10 @@ chunk loop per run pair"). Every later commit leaves
 `serving/csrc/routed_fused_window.cu` byte-identical (sha256 prefix
 `65e05fdd9a8b3f87`): two merges of master (`d20915b602`, and `3d314e0f9c`,
 which brings #720, #722 and #723), the fused dense op's host-side counter
-trim `0eebf7d9ae` (no `.cu` change), harness leg names (`2355112c28`), and
+trim `0eebf7d9ae` (no `.cu` change), harness leg names (`2355112c28`),
 the export pricing of the lane's tables at every rate (`a98743f82f`; see
-[Resident bytes](#resident-bytes)).
+[Resident bytes](#resident-bytes)), and fixes to two of master's failing
+tests (`68f9f4fc4e`, `9dfc149360`; see [CPU suite](#cpu-suite)).
 
 Boxes: sparklina (GB10, sm_121, 48 SMs, 140 W envelope) for every timing and
 NCU row, each run exclusive; sparky or sparklina for the oracle and GPU-test
@@ -49,9 +50,12 @@ every section to its rows. PENDING marks a row that is queued and has not run.
   families) and R1088 on real layer-3 experts, with a bitwise repeat and a
   bitwise staged composition at every M. The dense oracle passes on all 16 of
   stub B's dense modules (51 and 221 cases). The GPU tests fail only where
-  master fails. CUDA-graph capture replays bitwise equal to eager at every
-  rate the tests reach, in both families, routed and dense.
-- **Route census: PENDING** (`cbf0f259`, stub B on image X; see
+  master fails (at `2355112c`; the row after the merge of master is
+  PENDING). CUDA-graph capture replays bitwise equal to eager at every rate
+  the tests reach, in both families, routed and dense. The CPU suite passes
+  at the head, and fixes two of master's failures (see
+  [CPU suite](#cpu-suite)).
+- **Route census: PENDING** (`4865fe69`, stub B on image X; see
   [Route census](#route-census)).
 - **Not measured.** R768 and R1152 have no layer-3 wire; they rest on the
   synthetic GPU tests. Routed rates 7 and 8 are out of this change; see
@@ -506,12 +510,14 @@ changes none of those tests or their modules. The 152 extra passes of
 of `test_native_fp8_quant.py`, which this branch adds (`eda852c74f`): vLLM's
 per-token E4M3 quantiser matches the restated kernel arithmetic bitwise, and
 the test's own reference differs from it in two documented ways, each xfail
-carrying its counts.
+carrying its counts. The 19 files at `458ea4830c`, after the merge of master
+`3d314e0f9c` and the export change: PENDING (`81811f8b`).
 
 ## Route census
 
-PENDING: `cbf0f259`, a TP1 eager resident route census of the u1 stub B on
-image X at the head, with the v38 serve settings of the v42 and v43 receipts
+PENDING: `4865fe69`, a TP1 eager resident route census of the u1 stub B on
+image X at `458ea4830c` (the head's code; later commits change docs only),
+with the v38 serve settings of the v42 and v43 receipts
 (`--attention-backend CUSTOM --kv-cache-dtype fp8_ds_mla --moe-backend triton
 --kernel-config '{"enable_flashinfer_autotune": false}' --trust-remote-code
 --gpu-memory-utilization 0.45 --kv-cache-memory-bytes 4294967296
@@ -519,7 +525,9 @@ image X at the head, with the v38 serve settings of the v42 and v43 receipts
 tessera_routed_fused_e4m3 --require-lane tessera_routed_fused_value`. The
 first submission (`5701bbfe`) omitted the serve settings; vLLM chose its
 sparse-MLA FlashInfer backend and stopped at engine start (`pe_dim must be 64
-for fp8_ds_mla`), before any Tessera module ran. Until a census records the
+for fp8_ds_mla`), before any Tessera module ran. The second (`cbf0f259`, at
+`2355112c`, before the merge of master and the export change) was withdrawn
+unclaimed and resubmitted as `4865fe69`. Until a census records the
 fused pair, `tests/fixtures/lane_eligibility_cells_v22.json` names no v45
 re-measurement. What the predicate predicts for stub B: every routed stack
 (E4M3 at q256 896, 928, 1024 and 1088; BF16 at 1024) records the fused pair
@@ -633,13 +641,20 @@ the full 32,320,512 B per layer per rank.
 - Rows withdrawn unclaimed, superseded by the per-pair loop or by a later
   row at the same tree: `5e701e17`, `7d038d36`, `eb47821f`, `4031d970`,
   `1d57365f`, `15f3d9ec`, `79cc1e85`, `29cc6a4a`, `dd7cc9df`, `11e3c006`,
-  `0d5505fc` and `07259b29`. `2ff1e936` (first cut) was claimed at
+  `0d5505fc`, `07259b29` and `cbf0f259`. `2ff1e936` (first cut) was claimed at
   2026-09-28 20:35:55Z and withdrawn without a result.
 
 ## CPU suite
 
-The full suite at the final head: PENDING. At `718c3012e0` and at master
-`731cb7e651`, both shards passed. At the merge `e4b5fb2583`, three tests
+At `458ea4830c`, the head's code, the full suite (six shards on dl380g10:
+`d10466c2`, `a3b99d47`, `9ff3cea0`, `1aa6a966`, `acd478fb`, `d8b13006`)
+passed 5,535 tests, skipped 1,434 and failed one:
+`test_issue_refs.py::test_every_issue_reference_in_the_docs_resolves`, since
+this document cited issues filed after `docs/issues-snapshot.json` was last
+generated. `4fa4c38f8b` regenerates the snapshot, and at `e34cf221b7` the doc
+tests pass (`9a53901f`, 30 tests). Later commits change docs only.
+
+At `718c3012e0` and at master `731cb7e651`, both shards passed. At the merge `e4b5fb2583`, three tests
 failed (`test_export_explicit_plan.py`, two cases, and
 `test_menu_selection_requirement.py`, one). A targeted pair on dl380g10 ran
 those files at master `d20915b602` (`a7311434`) and at the merge
@@ -686,15 +701,16 @@ Output directories are under
 | Dense mixed-rate profile | `b2f8f5d7` | `f7e2d593` | `measure-20260929T051821Z/dense-mixed-profile-fix/` | PENDING |
 | NCU R1024 | `151a1456` | `f7e2d593` | `measure-20260929T051821Z/routed-R1024-ncu-fix/` | PENDING |
 | NCU R832, R1088 | `ae1608e4`, `b9093b8f` | `2355112c` | `measure-20260929T073031Z/routed-R{832,1088}-ncu-fix/` | PENDING |
-| Route census, stub B | `5701bbfe`, `cbf0f259` | `2355112c` | the row's stdout receipt | failed at engine start; PENDING |
+| Route census, stub B | `5701bbfe` / `4865fe69` | `2355112c` / `458ea483` | the row's stdout receipt | failed at engine start / PENDING |
 | Routed oracles | `6a60006c`, `983b2a01`, `b4b853ef`, `baf0f051` | `f7e2d593` | `measure-20260929T051821Z/routed-R{832,960,1024,1088}-oracle-fix/` | executed, pass |
 | Dense oracles | `bea7e136`, `85ee0ef0` / `045362b6` | `f7e2d593` / `2355112c` | `measure-20260929T051821Z/dense-{,mixed-}oracle-fix/`, `measure-20260929T073031Z/dense-oracle-fix2/` | executed, pass |
 | GPU tests | `ce8c3778` / `cba8d4ad` | `f7e2d593` / `731cb7e6` | the attempt logs | executed: 1 failed on each, the same test |
 | GPU tests | `2c28bdf5` / `50943614` | `f7e2d593` / `731cb7e6` | the attempt logs | executed: 1 failed on each, the same test |
 | GPU tests | `a1ecd8aa` / `5c4b11aa` | `2355112c` / `d20915b6` | the attempt logs | executed: the head fails where master fails |
+| GPU tests, the 19 files after the merge of master `3d314e0f` | `81811f8b` | `458ea483` | the attempt log | PENDING |
 | Earlier kernels' oracles | `0ad71616`, `4404963a`, `4c4fbb73`, `760bfe84`, `818fc173`, `6dc60623`, `158b5f00` | `746cccfb`, `46969f12`, `546e706c`, `db68eaec` | `measure-20260928T*/` | executed, pass |
 | CPU suite after the second merge / master's two files | six shards (`b8cf19b3` ...) / `165bde4d` | `a98743f8` / `3d314e0f` | the pbtest reports | executed: the same 9 fail on both |
-| CPU suite | final head | | pbtest shards | PENDING |
+| CPU suite, full / the doc tests | six shards (`d10466c2` ...) / `9a53901f` | `458ea483` / `e34cf221` | the pbtest reports | executed: 1 failed (issue references), then green |
 
 The ptxas and SASS reports are in
 `/home/rob/tmp/claude-campaign-20260926/tmp/ptxas-694/` and
