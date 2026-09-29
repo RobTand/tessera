@@ -30,13 +30,29 @@ import torch
 
 from .errors import GrammarError
 
-__all__ = ["FUSED_MAGIC", "FusedMember", "pack_fused", "parse_fused",
+__all__ = ["FUSED_MAGIC", "FusedMember", "HEADER_BYTES", "MEMBER_ROW_BYTES",
+           "frame_bytes", "pack_fused", "parse_fused",
            "shared_input_global_scale", "shared_lut_global"]
 
 FUSED_MAGIC = b"TSRFUSE1"
 _VERSION = 1
 _HEADER = struct.Struct("<8sBB")          # magic, version, member count
 _MEMBER = struct.Struct("<HIQ")           # name length, rows, blob length
+
+#: Fixed bytes of the container header.
+HEADER_BYTES = _HEADER.size
+#: Fixed bytes of one member row, before its name bytes.
+MEMBER_ROW_BYTES = _MEMBER.size
+
+
+def frame_bytes(member_names: "list[str]") -> int:
+    """Framing bytes of a container over these roles, blobs excluded.
+
+    ``len(pack_fused(members)) == frame_bytes(names) + sum(blob lengths)``.
+    """
+    return HEADER_BYTES + sum(
+        MEMBER_ROW_BYTES + len(name.encode("utf-8")) for name in member_names
+    )
 
 
 @dataclass(frozen=True)
