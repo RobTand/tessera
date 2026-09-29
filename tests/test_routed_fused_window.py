@@ -38,18 +38,20 @@ from test_window_gemm_grouped import Expert, _quant  # noqa: E402
 cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="the lane is a CUDA kernel")
 
 #: The rungs the mixed-rate routed tests read (tessera#694): the GLM E4M3
-#: rungs q256 832 (rates 3/4), 928, 1088 (4/5), 1152, the one-rate 768 and
-#: 1280, 1408 (5/6) and 1536 (rate 6, the largest the two-table gate/up launch
-#: fits in the sm_121 shared-memory block since the 16-byte odd-rate copies),
-#: and the low extremes 256 (rate 1) and 384 (1/2); 256 and 576 columns
-#: realise each exactly.  Rates 7 and 8 on gate/up are refused by name
-#: (``test_support_predicate_refuses_the_gate_up_slot_the_device_cannot_hold``).
-Q256_CASES = [256, 384, 768, 832, 928, 1088, 1152, 1280, 1408, 1536]
-#: The rungs the CUDA-graph capture test replays: the #640 rate-4 rung, the
-#: odd one-rate 768 (rate 3: every odd half takes the aligned-pair copy), the
-#: GLM two-run tables 832 (3/4) and 1088 (4/5), 1152 (4/5, half and half) and
-#: the rate-6 1536 (slot 12 on the two-table launch).
-CAPTURE_Q256 = [1024, 768, 832, 1088, 1152, 1536]
+#: rungs q256 832 (rates 3/4), 928, 960 (3/4), 1088 (4/5), 1152, the one-rate
+#: 768 and 1280, 1408 (5/6) and 1536 (rate 6, the largest the two-table
+#: gate/up launch fits in the sm_121 shared-memory block since the 16-byte
+#: odd-rate copies), and the low extremes 256 (rate 1) and 384 (1/2); 256 and
+#: 576 columns realise each exactly.  Rates 7 and 8 on gate/up are refused by
+#: name (``test_support_predicate_refuses_the_gate_up_slot_the_device_cannot_hold``).
+Q256_CASES = [256, 384, 768, 832, 928, 960, 1088, 1152, 1280, 1408, 1536]
+#: The rungs the CUDA-graph capture test replays: the #640 rate-4 rung, every
+#: other one-rate rung the routed lane reaches -- 256 (rate 1), 512 (rate 2),
+#: 768 (rate 3: every odd half takes the aligned-pair copy), 1280 (rate 5,
+#: odd at slot 12) and 1536 (rate 6, slot 12 on the two-table launch) -- and
+#: the GLM two-run tables 832 and 960 (3/4), 1088 (4/5) and 1152 (4/5, half
+#: and half), so every rate in ``ROUTED_LANE_RATES`` replays in a graph.
+CAPTURE_Q256 = [1024, 256, 512, 768, 1280, 1536, 832, 960, 1088, 1152]
 
 L = 14
 # gate/up: [INTER, HIDDEN] at rate 4 (two 512-row tiles: INTER > 512);

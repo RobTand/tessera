@@ -220,14 +220,27 @@ def test_dense_two_runs_are_bitwise_equal(family):
             assert torch.equal(_fused(role, xq, a), first), (family, m)
 
 
+#: The rungs the dense CUDA-graph capture test replays (tessera#694): every
+#: one-rate rung the dense lane reads, 1..8 (q256 256..2048), and the GLM
+#: two-run tables 832 (3/4) and 1088 (4/5); 256 columns realise each exactly.
+DENSE_CAPTURE_Q256 = [1024, 256, 512, 768, 1280, 1536, 1792, 2048, 832, 1088]
+
+
 @cuda
 @pytest.mark.parametrize("family", FAMILIES)
-def test_dense_forward_captures_and_replays_against_eager(family):
+@pytest.mark.parametrize("q256", DENSE_CAPTURE_Q256)
+def test_dense_forward_captures_and_replays_against_eager(family, q256):
     """The work counter is zeroed INSIDE the captured region and the partial
     workspace is a graph-pool allocation, so a replay starts a fresh work
     list; two replays equal the eager forward bitwise, and new inputs copied
-    into the static buffers replay to the new answer."""
-    _expert, bundle = _role(family)
+    into the static buffers replay to the new answer.  At every rung of
+    ``DENSE_CAPTURE_Q256``: the run pair, block descriptors, tile stride and
+    slot are launch arguments and device tensors the graph holds, so a
+    mixed-rate role replays exactly like the rate-4 one."""
+    rates = _sched(COLS, q256)
+    assert set(rates) <= set(rf.RATES) and len(set(rates)) in (1, 2), (q256, sorted(set(rates)))
+    _expert, bundle = _role(family, rates=rates, seed=7500 + q256)
+    assert rf.fused_dense_window_supported(bundle) is None, (family, q256)
     role = rf.prepare_dense_role(bundle)
     m = 40                                   # split-K regime on any device
     _x, xq, a = _inputs(family, m, COLS, 31)
