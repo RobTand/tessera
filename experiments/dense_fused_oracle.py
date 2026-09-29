@@ -92,6 +92,16 @@ ISSUE = "RobTand/tessera#640 (dense follow-up, contract v43)"
 log = rpo.log
 
 
+def short_name(module: str) -> str:
+    """The module's label in leg names and file names: its layer index and the
+    path below ``mlp`` (``5.shared_experts.gate_up_proj``, ``0.down_proj``).
+    The last two dotted components alone name two layers' shared experts the
+    same, and one profile's table and trace files then overwrote another's."""
+    parts = module.split(".")
+    i = parts.index("layers") + 1 if "layers" in parts else max(len(parts) - 3, 0)
+    return ".".join([parts[i]] + [p for p in parts[i + 1:] if p != "mlp"])
+
+
 class Store:
     """safetensors reader over one export (index + lazily opened shards)."""
 
@@ -351,7 +361,7 @@ def run_oracle(args):
         report["modules"][module] = entry
         for tp_rank, tp_size in tp_legs:
             for m in ms:
-                name = f"{module.split('.')[-3]}.{module.split('.')[-1]}[tp{tp_size}r{tp_rank}] M={m}"
+                name = f"{short_name(module)}[tp{tp_size}r{tp_rank}] M={m}"
                 try:
                     case, y_res = oracle_case(store, module, m, args.seed + m, args.sigma,
                                               "resident", tp_rank, tp_size, sms)
@@ -436,7 +446,7 @@ def run_profile(args):
                 torch.cuda.synchronize()
                 entry.setdefault("fused_vs_triton", {})[str(m)] = rpo.bf16_ulp_stats(a, b)
                 for leg, (layer, method) in layers.items():
-                    name = f"{module.split('.')[-3]}.{module.split('.')[-1]}_{leg}_M{m}"
+                    name = f"{short_name(module)}_{leg}_M{m}"
                     log("profiling", name)
                     try:
                         iters_wall = 200 if m <= 8 else 30
@@ -472,7 +482,7 @@ def run_profile(args):
     sampler.stop_flag = True
     report["pass"] = bool(report["modules"])
     for module, entry in report["modules"].items():
-        short = f"{module.split('.')[-3]}.{module.split('.')[-1]}"
+        short = short_name(module)
         expected = {f"{short}_{leg}_M{m}" for leg in ("fused", "triton") for m in ms}
         complete = (not entry.get("error") and set(entry["legs"]) == expected
                     and all(not leg.get("error") for leg in entry["legs"].values()))
