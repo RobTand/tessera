@@ -671,16 +671,22 @@ def module_of(tensor_name: str) -> str:
     return tensor_name[: -len(".weight")]
 
 
-def fused_module(tensor_name: str):
-    """Compatibility entry point for the shared dense-owner rule."""
-    return _fused_module(tensor_name)
+def fused_module(tensor_name: str, architecture: str | None = None):
+    """Compatibility entry point for the shared dense-owner rule.
+
+    ``architecture`` is the checkpoint's HF ``architectures[0]``; see
+    ``dense_ownership.SEPARATE_QKV_ARCHITECTURES`` (tessera#706).
+    """
+    return _fused_module(tensor_name, architecture)
 
 
-def ignored_modules(tensor_name: str, shape) -> tuple[str, ...]:
+def ignored_modules(tensor_name: str, shape, architecture: str | None = None) -> tuple[str, ...]:
     """The vLLM module names ``ignore`` must carry for a tensor written at source precision.
 
     Empty when the tensor is not a Linear weight the plugin can be asked
-    about.  This is a RULE over the tensors the export actually writes, not a
+    about.  ``architecture`` is the checkpoint's HF ``architectures[0]``,
+    threaded to ``fused_module`` so an architecture whose q/k/v stay
+    separate Linears names those, not a ``qkv_proj`` vLLM never builds.  This is a RULE over the tensors the export actually writes, not a
     roster beside them: a roster is a second place to remember, and it goes
     stale in silence -- which is how the vision tower came to be passed
     through and never named.  The plugin refuses a ``LinearBase`` that is
@@ -730,7 +736,7 @@ def ignored_modules(tensor_name: str, shape) -> tuple[str, ...]:
     routed = ROUTED_EXPERT_2D.match(probe)
     if routed:
         return (routed.group("moe") + ".experts",)
-    fused = fused_module(probe)
+    fused = fused_module(probe, architecture)
     if fused:
         return (fused[0],)
     names = [module_of(probe)]
@@ -1772,6 +1778,10 @@ def main():
                  allow_unserveable=args.allow_unserveable, overrides=gate_overrides)
     check_lanes(required_lanes, default_grid, args.q256)
     src_config = json.loads((args.src / "config.json").read_text())
+    # The HF architecture name keys the dense-owner rule's per-architecture
+    # data (``SEPARATE_QKV_ARCHITECTURES``, tessera#706); derived once here
+    # and threaded to every ``fused_module``/``ignored_modules`` call below.
+    architecture = (list(src_config.get("architectures") or ()) or [None])[0]
     shards, shapes, expert_shapes, routed_shapes = quantizable(args.src)
     if not shapes and not expert_shapes and not routed_shapes:
         raise SystemExit(
@@ -1946,7 +1956,7 @@ def main():
             "without a twin, or leave them out of the plan.")
 
     packed_passthrough = {name: shape for name, shape in expert_shapes.items()
-                          if next(m for m in ignored_modules(name, shape)) not in stack_plan}
+                          if next(m for m in ignored_modules(name, shape, architecture)) not in stack_plan}
     if packed_passthrough:
         print(f"  {len(packed_passthrough)} unplanned packed expert tensors stay at source "
               f"precision and are named in ignore; e.g. {sorted(packed_passthrough)[0]}",
@@ -1998,7 +2008,7 @@ def main():
     # per role (#37); see ``module_scheme_key``.
     modules: dict[str, list[str]] = {}
     for name in list(plan):
-        fused = fused_module(name)
+        fused = fused_module(name, architecture)
         if fused is None:
             modules[module_of(name)] = [name]
             continue
@@ -2562,7 +2572,7 @@ def main():
                     # through and never named, and the plugin refuses exactly
                     # that (#86).  Deriving the name from the tensor just
                     # written is what keeps the two facts one fact.
-                    ignore.extend(ignored_modules(name, tensor.shape))
+                    ignore.extend(ignored_modules(name, tensor.shape, architecture))
         for module, members in list(pending_modules.items()):
             if not all(m in weights_cache for m in members):
                 continue
@@ -2825,7 +2835,7 @@ def main():
     # somehow did not name would be a load-time refusal, so it is a refusal
     # here instead.
     unnamed = sorted(n for n in passthrough
-                     if not set(ignored_modules(n, shapes[n])) <= set(ignore))
+                     if not set(ignored_modules(n, shapes[n], architecture)) <= set(ignore))
     if unnamed:
         raise SystemExit(
             f"{len(unnamed)} tensor(s) were planned as passthrough but never named in ignore, "
@@ -2854,7 +2864,7 @@ def main():
                 "config.json.") from exc
     moe_passthrough_modules = {m for source in (expert_shapes, routed_shapes)
                                for name, shape in source.items()
-                               for m in ignored_modules(name, shape)
+                               for m in ignored_modules(name, shape, architecture)
                                if m not in stack_plan}
     config = src_config
     config["quantization_config"] = {
