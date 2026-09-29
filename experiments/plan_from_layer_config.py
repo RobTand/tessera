@@ -333,8 +333,13 @@ def layer_of(qname: str) -> int:
     return body_layer(qname + ".weight")
 
 
-def fused_key(qname: str):
+def fused_key(qname: str, architecture: str | None = None):
     """``(fused module qname, ordered member qnames)`` or ``None``.
+
+    ``architecture`` is the model's HF ``architectures[0]``, passed through
+    to the exporter's rule so an architecture whose q/k/v stay separate
+    Linears (``dense_ownership.SEPARATE_QKV_ARCHITECTURES``, tessera#706)
+    is not checked against a ``qkv_proj`` group vLLM never builds.
 
     Delegated to ``export_tessera_serving.fused_module`` -- the exporter owns
     the roster of source leaves vLLM merges into one module (q/k/v, every
@@ -343,7 +348,7 @@ def fused_key(qname: str):
     converter came to check the fused invariant on two of those groups and
     skip the rest (tessera#211).  One rule, one home.
     """
-    fused = fused_module(qname + ".weight")
+    fused = fused_module(qname + ".weight", architecture)
     if fused is None:
         return None
     module, members = fused
@@ -400,7 +405,11 @@ def uniform_control_block(plan: dict, shapes: dict, *, rule: str = "nearest"):
 
 def build(config: dict, shapes: dict, *, cover: str, allow_disagreement: bool,
           prismaquant: "Path | None", control_rule: str = "nearest",
-          with_control: bool = True):
+          with_control: bool = True, architecture: str | None = None):
+    """``architecture`` is the model's HF ``architectures[0]`` (``None``
+    keeps the exporter's name-only fused rule); ``main`` reads it from the
+    model's ``config.json``.
+    """
     meta = config.get("__prismaquant__")
     assignment = {k: v for k, v in config.items() if not k.startswith("__")}
     if not assignment:
@@ -469,7 +478,7 @@ def build(config: dict, shapes: dict, *, cover: str, allow_disagreement: bool,
     # The fused invariant, checked before the encode rather than after it.
     groups, disagreements = {}, []
     for qname in chosen:
-        key = fused_key(qname)
+        key = fused_key(qname, architecture)
         if key is None:
             continue
         module, members = key
@@ -675,11 +684,17 @@ def main(argv=None):
     for name in allocation:
         if not name.startswith("__") and name + ".weight" not in shapes:
             raise PlanError(f"{name}: allocation unit is absent from the producer's logical body projection")
+    # The same derivation the exporter makes from the source config.json
+    # (``export_serving.main``): the fused rule's per-architecture data is
+    # keyed on HF ``architectures[0]`` (tessera#706).
+    model_config = json.loads((args.model / "config.json").read_text())
+    architecture = (list(model_config.get("architectures") or ()) or [None])[0]
     plan, provenance = build(allocation, shapes, cover=args.cover,
                              allow_disagreement=args.allow_fused_disagreement,
                              prismaquant=args.prismaquant,
                              control_rule=args.control_rule,
-                             with_control=not args.no_uniform_control)
+                             with_control=not args.no_uniform_control,
+                             architecture=architecture)
     logical_plan = plan
     plan = stack_plan(logical_plan, stack_members, layouts)
     # Only quantized expert stacks need model-config geometry. Dense planning

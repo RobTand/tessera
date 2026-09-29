@@ -22,7 +22,7 @@ import re
 
 import pytest
 
-from withdrawn_cells import withdrawn_cells, withdrawn_v39_cells
+from withdrawn_cells import withdrawn_cells, withdrawn_v38_cells, withdrawn_v39_cells
 
 from tessera.serving.contract import (
     CENSUS_PHASE_REGIMES,
@@ -878,6 +878,40 @@ def test_no_withdrawn_cell_has_come_back_with_its_withdrawn_claim(contract):
         pairs = {(e["symbol"], e["decoder"]) for e in cell["executes"]}
         assert pairs == launch, cell["id"]
         assert not (pairs & _WITHDRAWN_CLAIMS[cell["id"]]), cell["id"]
+
+
+def test_a_reminted_cell_id_names_its_image_and_rung(contract):
+    """A re-minted id is the same scope with a different claim (tessera#622).
+
+    A cell id IS its scope: ``validate_serving_contract`` derives it from
+    (family, structure, platform, regime) and refuses any other spelling.  So
+    when contract v38 attested the routed E4M3 scope again, on the GLM census,
+    it reused the two ids the withdrawn LFM cells held
+    (``_WITHDRAWN_V38_CELL_IDS``).  The id cannot tell the two attestations
+    apart -- it names the scope, not the receipt -- so the cell must: the
+    shipped cell carries the image and rungs the GLM receipt measured, and
+    neither is the withdrawn cell's.  If a shipped cell ever came to agree with
+    the withdrawn one on image or rungs, the withdrawn claim would be back
+    under a live id and nothing but this test would notice.
+
+    Every withdrawn v38 id must be checked, so the test cannot pass by the
+    fixture and the table drifting apart.
+    """
+    shipped = _cells(contract)
+    receipt = (ROOT / GLM_X_RECEIPT).read_text(encoding="utf-8")
+    checked = set()
+    for withdrawn in withdrawn_v38_cells():
+        if withdrawn["id"] not in shipped:
+            continue
+        cell = shipped[withdrawn["id"]]
+        checked.add(cell["id"])
+        assert cell["runtime"]["image"] != withdrawn["runtime"]["image"], cell["id"]
+        assert sorted(cell["rungs_q256"]) != sorted(withdrawn["rungs_q256"]), cell["id"]
+        # The image the live cell names is the one the GLM receipt records.
+        _, digest = cell["runtime"]["image"].split("@", 1)
+        assert digest.startswith("sha256:"), cell["id"]
+        assert digest in receipt, (cell["id"], digest)
+    assert checked == _WITHDRAWN_V38_CELL_IDS, checked
 
 
 def test_every_cell_executes_a_launch_its_route_can_make(contract):
