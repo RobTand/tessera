@@ -38,7 +38,9 @@ fi
 KERNEL_SHA=$(sha256sum "$KSRC/tessera/serving/csrc/routed_fused_window.cu" | cut -d' ' -f1)
 echo "arm src=$KSRC kernel_sha=$KERNEL_SHA"
 EXTRA_MOUNTS=()
-COMMAND=(python3 /work/experiments/t8r_speed/bench_t8r.py)
+# BENCH_PY: the bench script under experiments/t8r_speed (default bench_t8r.py).
+BENCH_PY=${BENCH_PY:-bench_t8r.py}
+COMMAND=(python3 /work/experiments/t8r_speed/$BENCH_PY)
 if [[ "${BENCH_NCU:-0}" == 1 ]]; then
   NCU_ROOT=/opt/nvidia/nsight-compute/2025.3.1
   [[ -x "$NCU_ROOT/ncu" ]] || { echo "missing profiler: $NCU_ROOT/ncu" >&2; exit 2; }
@@ -51,7 +53,7 @@ if [[ "${BENCH_NCU:-0}" == 1 ]]; then
     --section SourceCounters --import-source yes
     --csv --log-file "$OUT/ncu.csv"
     --export "$OUT/t8r" --force-overwrite
-    python3 /work/experiments/t8r_speed/bench_t8r.py --ncu)
+    python3 /work/experiments/t8r_speed/$BENCH_PY --ncu)
 fi
 rc=0
 docker run --rm --gpus all --ipc=host --network=host --cpuset-cpus "$CPUS" \
