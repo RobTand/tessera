@@ -34,8 +34,12 @@ stack runs 2.9% to 6.3% faster than master, and the R832 stack runs 2.0x to
 R1024's time, short of #694's 1.5x. The export prices each
 fused unit's table, run pair and block descriptors
 (`serving_parts.routed_fused_unit_bytes`). No cell's `executes`, rungs or
-flags move. The served census of the four E4M3 window cells on this kernel
-has not run, so the fixture names no v45 re-measurement. E2M1 stays on
+flags move. A TP1 eager census of stub B on the GLM image served all 21 of
+its modules on the fused kernel in both phases: the five routed stacks (E4M3
+at q256 896, 928, 1024 and 1088; BF16 at 1024) on the fused routed pair, and
+the sixteen dense modules on the fused dense identity at every rung from 832
+to 1088 (`experiments/results/glm53_u1_stub_b_fused_mixed_tp1_eager_census.json`).
+The fixture names the four E4M3 window ids as re-measured at v45. E2M1 stays on
 `a4_span2`. See §3.3 "Mixed rates" and
 `docs/measurements/2026-09-28-mixed-rate-fused-window.md`.
 
@@ -3645,7 +3649,10 @@ expert per rank at TP2, 32.3 MB per MoE layer). The timing, oracle and GPU
 test receipts are in `docs/measurements/2026-09-28-mixed-rate-fused-window.md`:
 routed R1024 runs 2.9% to 6.3% faster than master, and mixed rates run 2.0x
 to 3.8x faster than the compact adapter but at 1.50x to 1.67x of R1024
-(R832). The served census has not run. E2M1 fused stays parked; the
+(R832). A TP1 eager census of stub B on the GLM image recorded every routed
+stack and every dense module on the fused kernel
+(`experiments/results/glm53_u1_stub_b_fused_mixed_tp1_eager_census.json`,
+replayed by `tests/test_glm_u1_census_cells.py`). E2M1 fused stays parked; the
 E2M1_K2 routed stacks stay on the A4 span-2 grouped path.
 
 ### 3.4 Declared weight transforms are refused at the materialisation boundary

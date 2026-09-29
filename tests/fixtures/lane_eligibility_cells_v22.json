@@ -58,5 +58,12 @@
     "tessera_e4m3_k1_dense_sm121_decode_resident",
     "tessera_e4m3_k1_dense_sm121_batch_resident"
   ],
-  "remeasured_at_v43_why": "Contract v43 (tessera#692) adds a second launch to the two E4M3 dense ids v38 re-earned -- tessera::fused_window_dense/native_fused_window_dense, the fused window kernel's DENSE identity (E = 1, identity routing, a split over K for decode), which the dispatch takes for every q256 1024 dense module of the window families -- on a served TP1 eager route census of the rate-4 u1 stub B on the GLM serving image (docs/measurements/2026-09-28-dense-fused-window.md); the same census earned the folded pair for the two BF16 resident dense ids, which were minted at v38 and never in this fixture. The Triton pair stays: it serves every module the lane refuses and TESSERA_DENSE_FUSED=0. Neither id was in this span, so the digest does not move; a re-measurement is named here rather than absorbed."
+  "remeasured_at_v43_why": "Contract v43 (tessera#692) adds a second launch to the two E4M3 dense ids v38 re-earned -- tessera::fused_window_dense/native_fused_window_dense, the fused window kernel's DENSE identity (E = 1, identity routing, a split over K for decode), which the dispatch takes for every q256 1024 dense module of the window families -- on a served TP1 eager route census of the rate-4 u1 stub B on the GLM serving image (docs/measurements/2026-09-28-dense-fused-window.md); the same census earned the folded pair for the two BF16 resident dense ids, which were minted at v38 and never in this fixture. The Triton pair stays: it serves every module the lane refuses and TESSERA_DENSE_FUSED=0. Neither id was in this span, so the digest does not move; a re-measurement is named here rather than absorbed.",
+  "remeasured_at_v45": [
+    "tessera_e4m3_k1_dense_sm121_decode_resident",
+    "tessera_e4m3_k1_dense_sm121_batch_resident",
+    "tessera_e4m3_k1_routed_moe_sm121_decode_resident",
+    "tessera_e4m3_k1_routed_moe_sm121_batch_resident"
+  ],
+  "remeasured_at_v45_why": "Contract v45 (tessera#694) changes the kernel behind the fused launch each of the four E4M3 window ids names -- the persistent fused window kernel now reads the wire's run table at every rate, one run or two adjacent runs per unit -- and widens both lanes' predicate to column rates 1..8 (1..6 on a routed stack), moving no executes list, rung or id. A served TP1 eager route census of the u1 stub B on the GLM serving image recorded the fused pair on every routed stack (E4M3 at q256 896, 928, 1024 and 1088) and every dense module (q256 832 to 1088) in both phases (docs/measurements/2026-09-28-mixed-rate-fused-window.md). None of the four ids is in this span, so the digest does not move; a re-measurement is named here rather than absorbed."
 }

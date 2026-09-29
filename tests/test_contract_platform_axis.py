@@ -419,11 +419,17 @@ def test_the_surviving_v22_sm121_cells_are_byte_identical(contract):
     assert set(recorded["remeasured_at_v43"]) <= standing
     # Contract v45 (tessera#694) changes the kernel behind both fused launches
     # and widens their predicate to rates 1..8 / routed 1..6, but no executes
-    # list, rung or id moves, so no cell is withdrawn or re-earned.  The served
-    # census of the four E4M3 window ids on the changed kernel has not run yet;
-    # the fixture names no v45 re-measurement until it has
-    # (docs/measurements/2026-09-28-mixed-rate-fused-window.md, "Route census").
-    assert "remeasured_at_v45" not in recorded
+    # list, rung or id moves, so no cell is withdrawn or re-earned.  A served
+    # census of stub B on the GLM image recorded the fused pair on every
+    # routed stack and every dense module, at every rung the stub carries
+    # (docs/measurements/2026-09-28-mixed-rate-fused-window.md, "Route census");
+    # the fixture's ``remeasured_at_v45`` list names the four E4M3 window ids.
+    assert set(recorded["remeasured_at_v45"]) == {
+        "tessera_e4m3_k1_dense_sm121_decode_resident",
+        "tessera_e4m3_k1_dense_sm121_batch_resident",
+        "tessera_e4m3_k1_routed_moe_sm121_decode_resident",
+        "tessera_e4m3_k1_routed_moe_sm121_batch_resident"}
+    assert set(recorded["remeasured_at_v45"]) <= standing
     launch = {("TESSERA_E4M3_K1", "dense"): [
                   ("tessera::window_gemm_dense", "native_window_gemm"),
                   ("tessera::fused_window_dense", "native_fused_window_dense")],
