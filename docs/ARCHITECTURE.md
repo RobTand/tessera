@@ -1,5 +1,14 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-09-29 for compiled dense census expectations (tessera#638).
+FP8 and BF16 census helpers derive both eager and compiled expectations from
+`scheme.ROUTE_LAUNCHES`, without the retired materialised GEMM/GEMV combined
+pair. The prepared native bundle's pair is still what dense dispatch emits
+for every M and residency. This changes census validation only: no kernel,
+serving arithmetic, lane admission, or runtime-contract cell changes. CPU
+regressions execute the actual dispatch body with prepared-bundle doubles;
+they are not device or compiled-kernel measurements.
+
 Re-stamped 2026-09-29 for the fused window kernel's mixed rates (contract
 v45, tessera#694, item 2 of #690). The one persistent kernel behind the fused
 routed (v42) and dense (v43) identities now runs every rate its run table
