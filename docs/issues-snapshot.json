@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-28T16:46:46Z",
+ "generated": "2026-09-29T00:20:07Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -496,7 +496,7 @@
     "title": "Wait on PrismaBuild's landing record instead of a fixed 300 s (#1107)"
    },
    "1109": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Two tests fail on PQ main: a fake plan path, and a stale prismabuild in the test venv"
    },
    "111": {
@@ -640,7 +640,7 @@
     "title": "landing_verdict waits on horizon-deferred legs and refuses out-of-order spans (#1113)"
    },
    "1141": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Stage B checkpoint-load holds the whole cotangent plane on the host and exceeds the 28 GiB container cap"
    },
    "1142": {
@@ -1232,7 +1232,7 @@
     "title": "[P1] Bump the Tessera pin once the GLM rungs are attested on spark-vllm-nccl230"
    },
    "1275": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Wire the GLM research export route behind the explicit per-run override, with the route histogram on the shipcard"
    },
    "1276": {
@@ -1308,7 +1308,7 @@
     "title": "[P1] Stage B replay loads each ~6 GB window before computing it: GPU idles 6\u20138 s per window at 0.9 GB/s off a RAM-served stage"
    },
    "1292": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Exposed-wait telemetry in every row: consumer wait on loads while the GPU idles, with a derived bound"
    },
    "1293": {
@@ -1780,7 +1780,7 @@
     "title": "[P2] Fused per-token FP8 QDQ for the joint-statistics hook"
    },
    "1399": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] The capture guard's MemAvailable reading does not count free pages on the per-CPU lists"
    },
    "14": {
@@ -1928,7 +1928,7 @@
     "title": "[P2] Match transition package digests to source-proof path order"
    },
    "1431": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] GB10 reclaim probe: render stream and spill replay also lower MemAvailable"
    },
    "1432": {
@@ -2060,11 +2060,11 @@
     "title": "[P2] Declare direct-I/O and two-CPU prerequisites in spill and render tests"
    },
    "1461": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Make sealed R11 launcher AST comparison explicit across Python versions"
    },
    "1462": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P3] Bound the deferral wait test independently of prefetch fixture setup"
    },
    "1463": {
@@ -2132,7 +2132,7 @@
     "title": "[P2] TR3 scorer: qualify and score in one engine load (#1476)"
    },
    "1478": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] test_mixed_outcomes_cannot_extend_the_declared_deferral_bound fails its 1.8 s bound on dl380g10, origin/main included"
    },
    "1479": {
@@ -2176,7 +2176,7 @@
     "title": "[P2] Wire Tessera uniform control and fail-closed release receipt ingestion"
    },
    "1488": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Selected-cache CLI drops the bound plan\u2019s historical encoder allowance"
    },
    "1489": {
@@ -2604,11 +2604,11 @@
     "title": "[P0] PACT price input: a shape-time table keyed (structure, shape, family, rate, M) with the kernel lane, admitted without per-unit identity"
    },
    "1584": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P0] PACT allocation mode: shape-time table into solve_runtime_frontier and the prefill_frontier sweep, replayed into a full layer_config"
    },
    "1585": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] PACT selection record: a materiality test from the table's own interval, three derived picks, and a roster on the card"
    },
    "1586": {
@@ -2616,7 +2616,7 @@
     "title": "[P0] No Tessera GLM card can be published: native_export.graph is required while serving is eager-only, and research_only is read by nothing"
    },
    "1587": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] PrismaQuant writes the Tessera plan; the export arm calls a supported exporter and drops plan_from_layer_config --prismaquant"
    },
    "1588": {
@@ -2684,7 +2684,7 @@
     "title": "Delegate tessera_export_lane's byte-identical digest sites to the digests owners (#1599)"
    },
    "1601": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "PACT allocator mode: exact lower convex hull as the candidate set (#1584)"
    },
    "1602": {
@@ -2692,23 +2692,23 @@
     "title": "[P2] Catalog extension re-derives every window: reuse spill capture by probe-identity walls + superset-tolerant journal restore"
    },
    "1603": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Sub-task: PQ-side plan writer module, arm rewiring, and lane-spec split (#1587)"
    },
    "1604": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] PrismaQuant writes the Tessera plan; the arm exports through python -m tessera.export_serving (#1587)"
    },
    "1605": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[dedup] Delegate tools strict-JSON loaders to schemas.strict_json_loads"
    },
    "1606": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "Delegate tools strict-JSON loaders to schemas.strict_json_loads"
    },
    "1607": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] PQ logical dedup: unify joint_aura transition twins"
    },
    "1608": {
@@ -2724,28 +2724,240 @@
     "title": "MIN_TRELLIS_STEPS = 8 refuses block schedules the wire itself accepts"
    },
    "1610": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Whole-artifact card charges the GLM MTP layer at source BF16; the MTP selection runs after the card"
+   },
+   "1611": {
+    "state": "CLOSED",
+    "title": "[P1] Price the GLM MTP layer at its selected bytes in the whole-artifact card (#1610)"
+   },
+   "1612": {
+    "state": "CLOSED",
+    "title": "Unify joint_aura transition twins into a shared base module (#1607)"
+   },
+   "1613": {
+    "state": "CLOSED",
+    "title": "[w03] Resumed rows admit load-all against stream-sized demand: planner hardcodes checkpoint_exists=False"
+   },
+   "1614": {
+    "state": "CLOSED",
+    "title": "[P2] Record the kpool-tail backport image's qualification (tessera#508) in its serving-runtime patch set"
+   },
+   "1615": {
+    "state": "CLOSED",
+    "title": "Record the kpool-tail backport image as a serving-runtime patch set, qualified on the stub (#1614)"
+   },
+   "1616": {
+    "state": "CLOSED",
+    "title": "[P1] Pin Tessera a5f3b232cb (contract v44); adopt the fused dense launches"
+   },
+   "1617": {
+    "state": "OPEN",
+    "title": "[P2] The DFlash2 drafter needs a serving-runtime patch set: the pinned GLM-5.3 image cannot load it"
+   },
+   "1618": {
+    "state": "CLOSED",
+    "title": "[P1] Lane roster mirror: learn Tessera v45's structure-scoped column_rates_routed_moe (fail-closed until then)"
+   },
+   "1619": {
+    "state": "CLOSED",
+    "title": "[P1] Pin Tessera a5f3b232cb (contract v44); adopt the fused dense launches"
    },
    "162": {
     "state": "CLOSED",
     "title": "Lane gate slots are derived from the lane spec but the slot vocabulary is still two enumerated tuples, so a fourth lane cannot declare a new one"
    },
+   "1620": {
+    "state": "CLOSED",
+    "title": "[P1] route.trace gate refusal text prints its own count sentinel as a module (\"served None\"); HF->vLLM mapping already on main (#1490), campaign pin 2fdbda3a stale"
+   },
+   "1621": {
+    "state": "CLOSED",
+    "title": "[P1] Lane roster mirror: learn Tessera v45 column_rates_routed_moe (fail-closed until then)"
+   },
+   "1622": {
+    "state": "CLOSED",
+    "title": "[P1] U4 served KL scores against both teachers (EXL3-comparable gate)"
+   },
+   "1623": {
+    "state": "CLOSED",
+    "title": "[P2] PACT hull vertex byte accounting re-synthesizes every Tessera spec per member (~540 s of a 1,130 s GLM-5.3 hull run)"
+   },
+   "1624": {
+    "state": "CLOSED",
+    "title": "route.trace gate: a long refusal counts the rest and looks up no module"
+   },
+   "1625": {
+    "state": "CLOSED",
+    "title": "Score U4 windows against two teachers in one pass"
+   },
+   "1626": {
+    "state": "CLOSED",
+    "title": "[P1] route.trace verdict must be per artifact (union of claimed serve phases), not per phase: MTP layer is priced but never served in non-speculative phases"
+   },
+   "1627": {
+    "state": "CLOSED",
+    "title": "[P1] build_tessera_selected_cache binds the assignment by raw file bytes, not the allocator's selection digest"
+   },
+   "1628": {
+    "state": "CLOSED",
+    "title": "Memoize per-(format, shape) bytes in assignment_artifact_bytes (5x faster PACT hull write)"
+   },
+   "1629": {
+    "state": "CLOSED",
+    "title": "Bind selected-cache assignment by the allocator's selection digest"
+   },
    "163": {
     "state": "CLOSED",
     "title": "The default lane's executed-activation list is a citation with line numbers, so a refactor silently keeps a stale A-side price"
+   },
+   "1630": {
+    "state": "CLOSED",
+    "title": "route.trace judges an artifact against the union of its serve phases (#1626)"
+   },
+   "1631": {
+    "state": "OPEN",
+    "title": "[P2] kpool indexer: eager's short-decode fast path and FULL-graph capture build different sparse-index layouts"
+   },
+   "1632": {
+    "state": "CLOSED",
+    "title": "[P1] Allocator budget stamp binds the pre-MTP assignment; every consumer refuses the MTP-bearing layer_config"
+   },
+   "1633": {
+    "state": "CLOSED",
+    "title": "The budget stamp binds the assignment the layer config emits (#1632)"
+   },
+   "1634": {
+    "state": "CLOSED",
+    "title": "[P1] TR3 scorer measures only eager engines; tessera#702 needs a compiled KL entry"
+   },
+   "1635": {
+    "state": "CLOSED",
+    "title": "[P2] Collapse seal-phase row closures onto one shared helper"
+   },
+   "1636": {
+    "state": "CLOSED",
+    "title": "[P2] Collapse seal-phase row closures onto one shared helper"
+   },
+   "1637": {
+    "state": "CLOSED",
+    "title": "TR3 scorer: a compiled execution mode with a declared compilation config (#1634)"
+   },
+   "1638": {
+    "state": "CLOSED",
+    "title": "Selected-cache CLI carries the bound plan's encoder allowance (#1488)"
+   },
+   "1639": {
+    "state": "CLOSED",
+    "title": "[P2] Delegate canonical-JSON bytes/sha twins to the digests owner"
    },
    "164": {
     "state": "CLOSED",
     "title": "CLAUDE.md promises TARGET_PROFILE and CB shell defaults the driver removed, so a reader mis-resolves lane and menu"
    },
+   "1640": {
+    "state": "CLOSED",
+    "title": "[P2] Delegate canonical-JSON bytes/sha twins to the digests owner"
+   },
+   "1641": {
+    "state": "CLOSED",
+    "title": "[P1] Selected-cache CLI cannot split off units a bound child cache supplies (GLM release R2)"
+   },
+   "1642": {
+    "state": "CLOSED",
+    "title": "Selected-cache CLI splits off the units a bound child cache supplies (#1641)"
+   },
+   "1643": {
+    "state": "CLOSED",
+    "title": "[P2] Unify uncovered-spans twins on source_read_plan"
+   },
+   "1644": {
+    "state": "CLOSED",
+    "title": "[P2] Unify uncovered-spans twins on source_read_plan"
+   },
+   "1645": {
+    "state": "CLOSED",
+    "title": "[P1] Resume a checkpoint on the stream head, under its window plan (#1613)"
+   },
+   "1646": {
+    "state": "CLOSED",
+    "title": "[P2] Delegate remaining canonical twins to matching DIRECT profiles"
+   },
+   "1647": {
+    "state": "CLOSED",
+    "title": "[P2] Delegate remaining canonical twins to matching DIRECT profiles"
+   },
+   "1648": {
+    "state": "CLOSED",
+    "title": "Tessera export: explicit research-route override with route histogram on the card (#1275)"
+   },
+   "1649": {
+    "state": "CLOSED",
+    "title": "[P2] Share transition _actual_execution through the base module"
+   },
    "165": {
     "state": "CLOSED",
     "title": "Tessera's priced A-side is never compared to the contract cells' activation_contract, so producer and runtime can disagree at no gate"
    },
+   "1650": {
+    "state": "CLOSED",
+    "title": "[P2] Share transition _actual_execution through the base module"
+   },
+   "1651": {
+    "state": "CLOSED",
+    "title": "Declare that render stream and spill replay frees lower MemAvailable too (#1431)"
+   },
+   "1652": {
+    "state": "CLOSED",
+    "title": "Stage B: refuse a cotangent plane the host cannot hold (#1141)"
+   },
+   "1653": {
+    "state": "CLOSED",
+    "title": "[P1] Stage A forward capture fans out across PrismaBuild by partition range (#738)"
+   },
+   "1654": {
+    "state": "OPEN",
+    "title": "[P1] Row startup idles the GPU 2.5-3 min per PACT gamut row: activations load-all (96-100 s) and the next row's inputs are not staged"
+   },
+   "1655": {
+    "state": "CLOSED",
+    "title": "Exposed-wait telemetry in every Stage B row, with a derived bound (#1292)"
+   },
+   "1656": {
+    "state": "CLOSED",
+    "title": "[P2] test_host_memory_wrappers_return_the_old_bytes fails on main: fixture does not pin the #1431 per-CPU reading"
+   },
+   "1657": {
+    "state": "CLOSED",
+    "title": "test: pin the per-CPU reading in the host-memory wrapper fixture"
+   },
+   "1658": {
+    "state": "CLOSED",
+    "title": "PACT selection record: materiality from the table's interval, three picks, roster on the card"
+   },
+   "1659": {
+    "state": "OPEN",
+    "title": "[P1] PACT frontier tables carry no bootstrap time intervals, so select_pact refuses every production pick as unresolved"
+   },
    "166": {
     "state": "CLOSED",
     "title": "CLAUDE.md sells archived coordinate-descent polish as the live shipping guarantee, so a plan budgets a stage that never runs"
+   },
+   "1660": {
+    "state": "OPEN",
+    "title": "[P2] Strict-JSON clique: keeps with reasons plus aura-twins import nit"
+   },
+   "1661": {
+    "state": "OPEN",
+    "title": "[P2] Slice 1: pin strict-JSON keeps, drop unused twin imports"
+   },
+   "1662": {
+    "state": "CLOSED",
+    "title": "Tests fail, not skip, when a stale prismabuild shadows the published one (#1109)"
+   },
+   "1663": {
+    "state": "OPEN",
+    "title": "[P2] Exposed-wait telemetry covers Stage B rows only: instrument Stage A and tessera_campaign rows"
    },
    "167": {
     "state": "CLOSED",
@@ -5284,7 +5496,7 @@
     "title": "Source prefetch is pinned to 1 worker / 2 cache slots in the sealed plan while 97.4 GB of budget and 7 slots are free: 31% of the run's main thread waits on settle_prefetched_layers"
    },
    "738": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P1] Joint AURA boundary capture cannot fan out: one action pins one box for its whole life while the second GB10 idles, though the capture is 512 independent calibration partitions"
    },
    "739": {
@@ -8262,7 +8474,7 @@
     "title": "Routed NVFP4 (E2M1x2 W4A4) experts: contract v27, TP row shard, native select-plane admission"
    },
    "508": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P0] Qualify whole-engine CUDA graphs for the GLM53 NoPE backend (serving is eager-only today)"
    },
    "509": {
@@ -8830,7 +9042,7 @@
     "title": "[P2] Serving manifest is written indented; 13 MB of whitespace puts a size-matched GLM artifact over its byte ceiling"
    },
    "636": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Write Tessera manifest sidecars as compact JSON"
    },
    "637": {
@@ -8878,7 +9090,7 @@
     "title": "P1: admit explicit cached adoption warnings and multi-rung A4 policy"
    },
    "647": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "P2: impacted pytest selection includes the standalone A4 harness without pytest items"
    },
    "648": {
@@ -8918,7 +9130,7 @@
     "title": "[P2] Compact newly written serving manifests"
    },
    "656": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "P2: record standalone A4 gate outside impacted pytest targets"
    },
    "657": {
@@ -9054,7 +9266,7 @@
     "title": "docs: _dev's suite source identity reads a declared verifier (#599)"
    },
    "687": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P0] Supported serving exporter and a Tessera-owned plan schema; no PrismaQuant parsing on the export path"
    },
    "688": {
@@ -9074,7 +9286,7 @@
     "title": "[P1] Fused routed lanes beyond q256 1024: E2M1 and the mixed-rate window stacks (the 5-8x cliff the allocator now prices)"
    },
    "691": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P0] Supported serving export entry point and tessera.serving_plan.v1 (#687)"
    },
    "692": {
@@ -9089,6 +9301,26 @@
     "state": "OPEN",
     "title": "[P1] Fused window kernel reads the two-run rate table: E4M3 routed R768-R1152 and dense/shared R832-R2048 take the fused lanes (#690 item 2)"
    },
+   "695": {
+    "state": "OPEN",
+    "title": "[P1] GLM53 NoPE: CUDA graphs with a drafter are unmeasured, so the GLM-5.3 release configuration stays eager"
+   },
+   "696": {
+    "state": "OPEN",
+    "title": "[P1] The stock V2 runner reads past the kpool-tail block table in eager too; serve GLM on the vLLM #57317 backport"
+   },
+   "697": {
+    "state": "OPEN",
+    "title": "[P2] Stock vLLM: a one-token prompt reads its KDA state slot as the previous request left it"
+   },
+   "698": {
+    "state": "OPEN",
+    "title": "[P2] The GLM53 NoPE eager-equivalence verdict has no machine-readable carrier; the route trace under-counts graph decode"
+   },
+   "699": {
+    "state": "CLOSED",
+    "title": "Admit CUDA graphs for the GLM53 NoPE backend by receipt (#508)"
+   },
    "7": {
     "state": "CLOSED",
     "title": "Tensor parallelism: NVFP4 row shards refused, and the contract still says max_world_size 1"
@@ -9097,9 +9329,57 @@
     "state": "CLOSED",
     "title": "Schema section 3 prices the ALPHABET element at 8-or-16 bits, so a BF16 table built per the table is refused by the normative 8"
    },
+   "700": {
+    "state": "CLOSED",
+    "title": "GLM53 NoPE: admit a drafter's graph path only by receipt; refuse dflash by name (#695)"
+   },
+   "701": {
+    "state": "OPEN",
+    "title": "[P1] The fused window kernel reads the wire's run table at every rate (contract v45)"
+   },
+   "702": {
+    "state": "OPEN",
+    "title": "[P1] Every runtime-contract cell attests eager only; a graph-mode GLM-5.3 release allocation has no eligible cell"
+   },
+   "703": {
+    "state": "OPEN",
+    "title": "[P2] Strict read_serving_manifest that refuses duplicate keys; convert all four readers"
+   },
+   "704": {
+    "state": "OPEN",
+    "title": "[P2] Route census --compiled has no compilation-config passthrough; the GLM gate refuses VLLM_COMPILE"
+   },
+   "705": {
+    "state": "OPEN",
+    "title": "[P2] Strict read_serving_manifest; convert all four readers"
+   },
+   "706": {
+    "state": "OPEN",
+    "title": "[P2] FUSED fuses Glm5 q/k/v into a qkv_proj the v44 census does not offer"
+   },
+   "707": {
+    "state": "OPEN",
+    "title": "#695 step 1: drafter CUDA graphs on the stub, measured; no receipt added"
+   },
+   "708": {
+    "state": "OPEN",
+    "title": "[P2] Narrow canonical-JSON fold: one owner per identical-bytes spelling"
+   },
+   "709": {
+    "state": "OPEN",
+    "title": "[P2] Narrow canonical-JSON fold: one owner per identical-bytes spelling"
+   },
    "71": {
     "state": "CLOSED",
     "title": "route_for_grid docstring still says the BF16 grid has no route, so readers mistrust the export gate it feeds"
+   },
+   "710": {
+    "state": "OPEN",
+    "title": "[P3] Fold file-sha256 one-shots onto serving_parts.sha256_file"
+   },
+   "711": {
+    "state": "OPEN",
+    "title": "[P3] Fold file-sha256 one-shots onto serving_parts.sha256_file"
    },
    "72": {
     "state": "CLOSED",
