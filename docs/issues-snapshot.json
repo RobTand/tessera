@@ -1,6 +1,6 @@
 {
  "default_repo": "RobTand/tessera",
- "generated": "2026-09-29T04:20:51Z",
+ "generated": "2026-09-29T09:58:09Z",
  "repos": {
   "RobTand/prismaquant": {
    "1": {
@@ -1112,7 +1112,7 @@
     "title": "[P3] Band prepare: serial NFS stats and a CPU-sized head walk hold a Spark slot"
    },
    "1248": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Acquire-time 'unpublished' lease refusal kills the row instead of waiting for the recopy"
    },
    "1249": {
@@ -1224,7 +1224,7 @@
     "title": "[P1] Accept content-equal Hessian reference seals in the #204 gate"
    },
    "1273": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P3] tessera_joint_aura and tessera_anchored_surface still compare per-row Hessian digests with provenance.hessian"
    },
    "1274": {
@@ -1720,7 +1720,7 @@
     "title": "[P2] Consolidate the tensor digest recipe (uint8 view + SHA-256) onto one owner (#1301 part 3)"
    },
    "1385": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P3] One SHA-256 hex predicate for the ~10 digest validators (#1301 part 4)"
    },
    "1386": {
@@ -2348,7 +2348,7 @@
     "title": "[P1] Pin Tessera a3e83875d so rooted cached units read catalog extension v3"
    },
    "1526": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P3] GLM campaign image has no pytest: a GPU tests arm inside it cannot run"
    },
    "1527": {
@@ -2716,7 +2716,7 @@
     "title": "[P2] Transition-twin near-miss unification needs a design call"
    },
    "1609": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Tessera byte accountant omits per-Linear container side bytes (framing + header + manifest): GLM export 28.8 MB over its price"
    },
    "161": {
@@ -3024,16 +3024,96 @@
     "title": "Row startup: refuse proofless streaming plans; check the projection on the stream readers (#1654)"
    },
    "1679": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2/P3] Bundle: sha256hex predicate + joined-Hessian readers"
    },
    "168": {
     "state": "CLOSED",
     "title": "E2M1 carries two SM floors in one tree (100 and 120), and two live gates read different ones"
    },
+   "1680": {
+    "state": "CLOSED",
+    "title": "[P2] Delegate tools hash one-liners to digests owners"
+   },
+   "1681": {
+    "state": "CLOSED",
+    "title": "[P2] Delegate tools hash one-liners to digests owners"
+   },
+   "1682": {
+    "state": "CLOSED",
+    "title": "[P2] Strict bulk read rides out a retired cover (#1248)"
+   },
+   "1683": {
+    "state": "CLOSED",
+    "title": "[P2] Delegate aura_cost bytes hashes to bytes_sha256hex"
+   },
+   "1684": {
+    "state": "OPEN",
+    "title": "[P2] Joint AURA prices on shared/dense units invert rate order; exact menu reductions then drop rungs on 95 of 132 GLM units"
+   },
+   "1685": {
+    "state": "CLOSED",
+    "title": "[P2] Delegate aura_cost bytes hashes to bytes_sha256hex"
+   },
+   "1686": {
+    "state": "OPEN",
+    "title": "[P2] dispatch plan derives a seeded row's demand without its seed flags; submit refuses it"
+   },
+   "1687": {
+    "state": "OPEN",
+    "title": "Plan a seeded row's demand from the argv it runs (#1686)"
+   },
+   "1688": {
+    "state": "CLOSED",
+    "title": "[P2] Delegate joint_aura probe-identity digest to DIRECT_ASCII_STRICT"
+   },
+   "1689": {
+    "state": "CLOSED",
+    "title": "[P2] Delegate probe-identity digest to DIRECT_ASCII_STRICT"
+   },
    "169": {
     "state": "CLOSED",
     "title": "promote_fused silently collapses the per-member rung licence #140 just built"
+   },
+   "1690": {
+    "state": "CLOSED",
+    "title": "Tessera byte accountant prices the per-Linear container side bytes (#1609)"
+   },
+   "1691": {
+    "state": "CLOSED",
+    "title": "[P2] Declare requests as a direct dependency"
+   },
+   "1692": {
+    "state": "CLOSED",
+    "title": "[P2] --mtp-formats: declare the MTP layer's menu (all-Tessera-8 v2 cannot)"
+   },
+   "1693": {
+    "state": "CLOSED",
+    "title": "[P3] Declare requests as a direct dependency (split from #1458)"
+   },
+   "1694": {
+    "state": "CLOSED",
+    "title": "Declare the GLM MTP layer's menu with --mtp-formats (#1692)"
+   },
+   "1695": {
+    "state": "CLOSED",
+    "title": "[P2] Export-lane sorted-json sites: verified keeps"
+   },
+   "1696": {
+    "state": "CLOSED",
+    "title": "[P2] Export-lane sorted-json sites: verified keeps"
+   },
+   "1697": {
+    "state": "CLOSED",
+    "title": "[P2] Re-pin allocator output for Tessera side-byte pricing (#1609/#1690)"
+   },
+   "1698": {
+    "state": "CLOSED",
+    "title": "test: re-pin Tessera allocator output for side-byte pricing"
+   },
+   "1699": {
+    "state": "OPEN",
+    "title": "[P2] Delegate adjoint-slice manifest envelope to digests owners"
    },
    "17": {
     "state": "CLOSED",
@@ -3042,6 +3122,10 @@
    "170": {
     "state": "CLOSED",
     "title": "The cache render-identity sidecar does not cover the MTP or packed-expert appends that write into the same directory"
+   },
+   "1700": {
+    "state": "CLOSED",
+    "title": "[P3] Docs: the GLM campaign image has no pytest; in-image GPU checks fail closed (#1526)"
    },
    "171": {
     "state": "CLOSED",
@@ -8418,7 +8502,7 @@
     "title": "Refuse the name-based owner rule on a quantized checkpoint, and correct what the shared label costs"
    },
    "481": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] HIP `_mul` for the fused window Viterbi: gfx1201 runs the reference path at 9.6x the wall time"
    },
    "482": {
@@ -9046,15 +9130,15 @@
     "title": "Contract v38: attest the GLM-image window routes; withdraw the unreachable FP8 materialise cells"
    },
    "622": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Cell ids must be immutable: v38 reused the routed E4M3_K1 ids for a different claim"
    },
    "623": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] block_ldl solves one diagonal block per launch; the GPU idles between unit encodes"
    },
    "624": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] resident_mode_bytes prices routed window stacks as a decoded 8-bit tile the compact lane never allocates"
    },
    "625": {
@@ -9182,7 +9266,7 @@
     "title": "[P1] Measure and optimize G2 best-form Viterbi against GB10 limits"
    },
    "653": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Decide producer-owned byte-equivalence evidence for sealed encoder upgrades"
    },
    "654": {
@@ -9266,7 +9350,7 @@
     "title": "Rooted cached units read the v3 catalog extension (#670)"
    },
    "672": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] test_merge_suite.py scans the live fleet queue: 93 s quiet, 1500 s under load, and one shard killed at its 3600 s ceiling"
    },
    "673": {
@@ -9418,7 +9502,7 @@
     "title": "[P2] Strict read_serving_manifest; convert all four readers"
    },
    "706": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] FUSED fuses Glm5 q/k/v into a qkv_proj the v44 census does not offer"
    },
    "707": {
@@ -9454,20 +9538,52 @@
     "title": "[P3] Fold autotune blob digest onto _fingerprint"
    },
    "714": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] export_serving resolves the Tessera commit after writing the whole artifact"
    },
    "715": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Resolve the Tessera commit once, before any byte is written"
    },
    "716": {
-    "state": "OPEN",
+    "state": "CLOSED",
     "title": "[P2] Point five resume tests at a fixture pool, never the live queue"
+   },
+   "717": {
+    "state": "CLOSED",
+    "title": "Do not fuse q/k/v for architectures that keep them separate (#706)"
+   },
+   "718": {
+    "state": "CLOSED",
+    "title": "Pin that a re-minted cell id names its image and rung (#622)"
+   },
+   "719": {
+    "state": "CLOSED",
+    "title": "[P3] Publish the TSRFUSE1 frame sizes and the exporter's terminal slot id"
    },
    "72": {
     "state": "CLOSED",
     "title": "prepare_tessera_*_module hardcodes the grid/body/plane ROUTES publishes, so a new grid passes export and dies at load"
+   },
+   "720": {
+    "state": "CLOSED",
+    "title": "P2: Price routed FP8/BF16 stacks as the compact lane allocates them; MTP embed/head duplicate as its own per-rank line (Closes #624, Refs #645)"
+   },
+   "721": {
+    "state": "CLOSED",
+    "title": "[P2] Three tests fail on master: explicit-plan fused-group refusals \u00d72, installed-layout resolve"
+   },
+   "722": {
+    "state": "CLOSED",
+    "title": "Repair three stale test fixtures failing on master (#721)"
+   },
+   "723": {
+    "state": "CLOSED",
+    "title": "[P3] Publish fused frame size and terminal slot id (#719)"
+   },
+   "724": {
+    "state": "OPEN",
+    "title": "[P1] Window routed intake strands a 20 MiB allocator slab per projection (T8R load +16.5 GB on L43)"
    },
    "73": {
     "state": "CLOSED",
