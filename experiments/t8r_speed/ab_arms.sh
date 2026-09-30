@@ -13,8 +13,13 @@
 # pass, the bitwise verdict over every arm and pass, and each arm's time over
 # the reference arm's in the same pass.
 # AB_STEPS (default "routed ncu dense") picks the steps; AB_MS (default
-# 1,2,4,8,512,2048) the routed benches' M.  A diagnostic ceiling arm (a load
-# replaced by a register value; wrong output by design) needs only "routed".
+# 1,2,4,8,512,2048) the routed and dense benches' M; AB_NCU_MS (default 1,512)
+# the NCU step's.  AB_ROUTING=<dir> adds the recorded-routing cells
+# (bench_t8r.py --routing; keyed "<M>@<file>") to the routed benches.  An arm
+# whose snapshot holds an ``env`` file (VAR=value lines) runs every step with
+# those variables, so two arms can be one source under two settings.  A
+# diagnostic ceiling arm (a load replaced by a register value; wrong output by
+# design) needs only "routed".
 set -uo pipefail
 OUT=${1:?out_root}; shift
 ARMS=("$@")
@@ -26,6 +31,14 @@ sha256sum "$OUT"/src-*/src/tessera/serving/csrc/routed_fused_window.cu
 ROUTED=experts.R1024.L10,experts.R1088.L11,experts.R832.L42
 DENSE=shared_gate_up,shared_down,dense_gate_up,dense_down
 MS=${AB_MS:-1,2,4,8,512,2048}
+NCU_MS=${AB_NCU_MS:-1,512}
+ROUTING=()
+[[ -z "${AB_ROUTING:-}" ]] || ROUTING=(--routing "$AB_ROUTING")
+armenv() {   # the arm's env file as VAR=value words (none: nothing)
+  local f="$OUT/src-$1/env"
+  [[ -f "$f" ]] && grep -E '^[A-Z_][A-Z0-9_]*=' "$f" | tr '\n' ' '
+  return 0
+}
 STEPS=" ${AB_STEPS:-routed ncu dense} "
 step() {
   local name=$1; shift
@@ -36,19 +49,21 @@ step() {
   tail -3 "$OUT/$name.log"
 }
 H=experiments/t8r_speed/bench_t8r.sh
-bench() {   # step-name arm family suffix groups [extra env...]
+bench() {   # step-name arm family suffix groups [bench args...]
   local name=$1 arm=$2 fam=$3 sfx=$4 groups=$5; shift 5
-  step "$name-$arm-$fam$sfx" env BENCH_SRC="$OUT/src-$arm/src" "$@" bash $H . "$OUT/$arm-$fam$sfx" --groups "$groups" --ms $MS
+  # shellcheck disable=SC2046
+  step "$name-$arm-$fam$sfx" env $(armenv "$arm") BENCH_SRC="$OUT/src-$arm/src" bash $H . "$OUT/$arm-$fam$sfx" --groups "$groups" --ms $MS "$@"
 }
 N=${#ARMS[@]}
 if [[ $STEPS == *" routed "* ]]; then
-  for ((i = 0; i < N; i++)); do bench "r$i" "${ARMS[i]}" routed "" "$ROUTED"; done
-  for ((i = N - 1; i >= 0; i--)); do bench "r${i}b" "${ARMS[i]}" routed b "$ROUTED"; done
+  for ((i = 0; i < N; i++)); do bench "r$i" "${ARMS[i]}" routed "" "$ROUTED" "${ROUTING[@]}"; done
+  for ((i = N - 1; i >= 0; i--)); do bench "r${i}b" "${ARMS[i]}" routed b "$ROUTED" "${ROUTING[@]}"; done
 fi
 if [[ $STEPS == *" ncu "* ]]; then
   for ((i = 0; i < N; i++)); do
-    step "n$i-${ARMS[i]}-ncu" env BENCH_SRC="$OUT/src-${ARMS[i]}/src" BENCH_NCU=1 BENCH_NCU_KERNELS=routed_fused_kernel \
-      bash $H . "$OUT/${ARMS[i]}-ncu" --groups "$ROUTED" --ms 1,512
+    # shellcheck disable=SC2046
+    step "n$i-${ARMS[i]}-ncu" env $(armenv "${ARMS[i]}") BENCH_SRC="$OUT/src-${ARMS[i]}/src" BENCH_NCU=1 \
+      BENCH_NCU_KERNELS=routed_fused_kernel bash $H . "$OUT/${ARMS[i]}-ncu" --groups "$ROUTED" --ms $NCU_MS
   done
 fi
 if [[ $STEPS == *" dense "* ]]; then
@@ -64,7 +79,7 @@ def cells(name):
     if not p.exists():
         return {}, None
     d = json.load(open(p))
-    return {(r["group"], int(m)): c for r in d["results"] for m, c in r.get("cells", {}).items()}, d["meta"].get("kernel_sha")
+    return {(r["group"], m): c for r in d["results"] for m, c in r.get("cells", {}).items()}, d["meta"].get("kernel_sha")
 data, shas = {}, {}
 for fam in ("routed", "dense"):
     for a in arms:
@@ -72,7 +87,8 @@ for fam in ("routed", "dense"):
             data[(fam, a, p)], shas[f"{a}-{fam}{p}"] = cells(f"{a}-{fam}{p}")
 rows = []
 for fam in ("routed", "dense"):
-    keys = sorted(set().union(*(set(data[(fam, a, p)]) for a in arms for p in ("", "b"))))
+    keys = sorted(set().union(*(set(data[(fam, a, p)]) for a in arms for p in ("", "b"))),
+                  key=lambda k: (k[0], int(k[1].split("@")[0]), k[1]))
     for k in keys:
         r = {"family": fam, "group": k[0], "M": k[1]}
         sha = {}
