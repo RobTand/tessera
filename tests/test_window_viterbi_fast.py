@@ -420,13 +420,16 @@ def _compiled_step(L, rate, arity=1):
     torch.manual_seed(0)
     targets = torch.randn(64, 64, device="cuda")
     vectors = torch.randn(1 << L, arity, device="cuda")
-    step, tb, init, copy = window_viterbi._kernels()[:4]
-    spy = _Spy(step)
-    window_viterbi._CACHE["k"] = (spy, tb, init, copy)
+    # The cache holds every kernel the plan launches (the step family and the
+    # best-form trio); only the step is spied on, and the whole tuple goes
+    # back, or a later test in this process unpacks a truncated cache.
+    kernels = window_viterbi._kernels()
+    spy = _Spy(kernels[0])
+    window_viterbi._CACHE["k"] = (spy, *kernels[1:])
     try:
         viterbi_window(targets, vectors, L, rate, impl="fused")
     finally:
-        window_viterbi._CACHE["k"] = (step, tb, init, copy)
+        window_viterbi._CACHE["k"] = kernels
     return spy.compiled[-1]
 
 
