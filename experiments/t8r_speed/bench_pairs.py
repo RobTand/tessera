@@ -21,7 +21,12 @@ memory traffic do not depend on the values, except the table gathers' bank
 conflicts, which random 14-bit windows make uniform.  Outputs are hashed so two
 kernel arms can be compared bitwise on the same inputs.
 
-Usage: bench_pairs.py --out DIR [--cases r4,r4+q] [--modes 0,2] [--ms 1,8,512,2048] [--ncu]
+The library is the E4M3 family's in this process (``TESSERA_FUSED_E4M3_MMA``)
+unless ``--library`` names one; ``--bm 128`` runs the wide superblock where the
+library has it (tessera#741).
+
+Usage: bench_pairs.py --out DIR [--cases r4,r4+q] [--modes 0,2] [--ms 1,8,512,2048]
+                      [--library e4m3|e4m3mma] [--bm 64|128] [--ncu]
 """
 from __future__ import annotations
 
@@ -60,7 +65,7 @@ def n_hi_of(spec, cols):
     return int(cols * spec)
 
 
-def build_projection(rf, e, rows, cols, r_lo, n_hi, gen, dev):
+def build_projection(rf, e, rows, cols, r_lo, n_hi, gen, dev, mma8=False):
     """Random words/tables/init/scales for one projection, and its run tables."""
     n_lo = cols - n_hi
     two = n_hi > 0
@@ -69,7 +74,12 @@ def build_projection(rf, e, rows, cols, r_lo, n_hi, gen, dev):
     tile_words = rf.pair_tile_words(pair)
     words = torch.randint(-2**31, 2**31 - 1, (e, (rows // 512) * tile_words), generator=gen,
                           dtype=torch.int64).to(torch.int32)
-    table = torch.randint(-2**15, 2**15 - 1, (e, 1 << 14), generator=gen, dtype=torch.int32).to(torch.int16)
+    if mma8:
+        # E4M3 bytes; the two NaN codes move to the largest finite magnitude
+        table = torch.randint(0, 256, (e, 1 << 14), generator=gen, dtype=torch.int32)
+        table = torch.where((table & 0x7F) == 0x7F, table - 1, table).to(torch.uint8)
+    else:
+        table = torch.randint(-2**15, 2**15 - 1, (e, 1 << 14), generator=gen, dtype=torch.int32).to(torch.int16)
     init = torch.randint(-2**31, 2**31 - 1, (e, cols), generator=gen, dtype=torch.int64).to(torch.int32)
     has_init = torch.ones(e, dtype=torch.int32)
     scale = torch.rand(e, rows, generator=gen) * 1e-2 + 1e-3
@@ -111,10 +121,14 @@ def main():
     ap.add_argument("--iters", type=int, default=30)
     ap.add_argument("--power-s", type=float, default=2.0)
     ap.add_argument("--ncu", action="store_true")
+    ap.add_argument("--library", default=None, help="a routed_fused.LIBRARIES key of the E4M3 family")
+    ap.add_argument("--bm", type=int, default=64, help="routes per superblock: 64, or 128 where the launch has it")
     args = ap.parse_args()
     os.makedirs(args.out, exist_ok=True)
     from tessera import routed_fused as rf
-    lib = rf._ext("e4m3")
+    library = args.library or rf.library_for("e4m3")
+    mma8 = rf.library_mma8(library)
+    lib = rf._ext(library)
     dev = torch.device("cuda")
     sms = torch.cuda.get_device_properties(dev).multi_processor_count
     power = PowerSampler()
@@ -123,7 +137,8 @@ def main():
     meta = {"device": torch.cuda.get_device_name(), "sms": sms, "experts": EXPERTS, "hidden": HIDDEN,
             "inter": INTER, "top_k": TOP_K, "ms": ms, "modes": modes, "kernel_sha": os.environ.get("KERNEL_SHA"),
             "tessera_head": os.environ.get("TESSERA_HEAD"), "image": os.environ.get("ORACLE_IMAGE"),
-            "host": os.environ.get("HOST_NAME"), "power_source": power.source, "start_unix": time.time()}
+            "host": os.environ.get("HOST_NAME"), "power_source": power.source, "start_unix": time.time(),
+            "library": library, "bm": args.bm}
     results = []
     for case in args.cases.split(","):
         r_lo, spec = CASES[case]
@@ -131,15 +146,16 @@ def main():
             rows, cols = (INTER, HIDDEN) if mode == 0 else (HIDDEN, INTER)
             gen = torch.Generator().manual_seed(zlib.crc32(f"{case}:{mode}".encode()))
             n_hi = n_hi_of(spec, cols)
-            projs = [build_projection(rf, EXPERTS, rows, cols, r_lo, n_hi, gen, dev)
+            bm = args.bm if rf.has_width(library, mode, args.bm) else rf.BM
+            projs = [build_projection(rf, EXPERTS, rows, cols, r_lo, n_hi, gen, dev, mma8)
                      for _ in range(2 if mode == 0 else 1)]
             p0, p1 = projs[0], projs[-1]
             rec = {"case": case, "mode": mode, "r_lo": r_lo, "n_hi": n_hi, "cols": cols, "rows": rows,
                    "tile_words": p0["tile_words"], "slot_words": p0["slot_words"],
-                   "rate_mean": p0["tile_words"] / 16 / cols, "cells": {}}
+                   "rate_mean": p0["tile_words"] / 16 / cols, "bm": bm, "cells": {}}
             for m in ms:
                 ids, w = balanced_routing(m, dev)
-                offsets, flat_sorted, rw_sorted, item_off = routing_tables(ids, w, EXPERTS, 64)
+                offsets, flat_sorted, rw_sorted, item_off = routing_tables(ids, w, EXPERTS, bm)
                 routes = m * TOP_K
                 g = torch.Generator(device=dev).manual_seed(zlib.crc32(f"x:{case}:{mode}:{m}".encode()))
                 xrows = m if mode == 0 else routes
@@ -156,7 +172,7 @@ def main():
                         p0["init"], p1["init"], p0["has_init"], p1["has_init"], p0["scale"], p1["scale"],
                         p0["runs"], p1["runs"], p0["bdesc"], p1["bdesc"], p0["tile_words"], slot_words,
                         offsets, flat_sorted, rw_sorted, item_off, counter, TOP_K,
-                        0 if mode == 0 else 1, mode == 2, float("inf"), out, sms)
+                        0 if mode == 0 else 1, mode == 2, float("inf"), out, sms, bm)
                 if args.ncu:
                     for _ in range(3):
                         call()
