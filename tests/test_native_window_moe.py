@@ -4,8 +4,9 @@ and graph capture -- against the same independent per-expert oracle the
 grouped operator uses.
 
 The oracle loops experts on the host (allowed in tests) and mirrors vLLM's
-placement, not an algebraic equivalent: weights on gemm1 iff
-``apply_router_weight_on_input``, otherwise on gemm2 with a plain sum; the
+placement, not an algebraic equivalent: at topk=1, weights multiply the
+bf16 input BEFORE activation quantization iff ``apply_router_weight_on_input``;
+otherwise they multiply gemm2 before the plain sum. The
 activation is fp32-silu cast once to bf16; the folded contract is
 ``bf16(value * row_scale)`` before each dot.
 """
@@ -18,10 +19,9 @@ import torch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from tessera import native_window_moe as nwm    # noqa: E402
-from tessera.errors import GrammarError         # noqa: E402
-
-from test_window_gemm_grouped import Expert, _quant, _tol   # noqa: E402
+from tessera import native_window_moe as nwm  # noqa: E402
+from tessera.errors import GrammarError  # noqa: E402
+from test_window_gemm_grouped import Expert, _quant, _tol  # noqa: E402
 
 cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="the lane is a CUDA kernel")
 
@@ -33,11 +33,8 @@ def _per_expert(stack, xq, family, folded, a1, t):
     return picked                                            # [E, T, rows]
 
 
-def _routes(picked, ids, sel, rw, weight_input):
-    routes = picked[ids.long(), sel]
-    if weight_input:
-        routes = routes * rw[..., None]                      # gemm1 MUL_ROUTED_WEIGHT
-    return routes.bfloat16()
+def _routes(picked, ids, sel):
+    return picked[ids.long(), sel].bfloat16()
 
 
 def _down(dn_stack, act, ids, rw, rows_h, family, folded, weight_input):
@@ -52,6 +49,7 @@ def _down(dn_stack, act, ids, rw, rows_h, family, folded, weight_input):
     picked = _per_expert(dn_stack, flat_q, family, folded, None, t)
     routes = picked[ids.long().reshape(-1), route_rows].reshape(t, k, rows_h)
     if family == "e4m3":
+        assert a2 is not None
         routes = routes * a2.reshape(t, k, 1)
     if not weight_input:
         routes = (routes * rw[..., None]).bfloat16()         # gemm2 bf16 cast
@@ -61,57 +59,64 @@ def _down(dn_stack, act, ids, rw, rows_h, family, folded, weight_input):
 
 
 @cuda
-def test_native_window_moe_matches_the_oracle_fused_and_split():
+@pytest.mark.parametrize("weight_input", [False, True])
+@pytest.mark.parametrize("family,arithmetic", [
+    ("value", "epilogue"), ("value", "folded"), ("e4m3", "epilogue"),
+])
+def test_native_window_moe_matches_the_oracle_fused_and_split(weight_input, family, arithmetic):
     rows_h, cols_h, inter, experts = 768, 192, 96, 3
-    t, k = 16, 2
+    t, k = 16, (1 if weight_input else 2)
     seeds = [131, 132, 133]
-    ids = torch.randint(0, experts, (t, k), device="cuda", dtype=torch.int32)
-    rw = torch.rand(t, k, device="cuda")
+    generator = torch.Generator(device="cuda").manual_seed(610)
+    ids = torch.randint(0, experts, (t, k), device="cuda", dtype=torch.int32,
+                        generator=generator)
+    rw = torch.rand(t, k, device="cuda", generator=generator)
     sel = torch.arange(t, device="cuda")[:, None].expand_as(ids)
-    x = torch.randn(t, cols_h, device="cuda").bfloat16()
+    x = torch.randn(t, cols_h, device="cuda", generator=generator).bfloat16()
+    folded = arithmetic == "folded"
+    gu_stack = [Expert(2 * inter, cols_h, (4,) * cols_h, s, family=family)
+                for s in seeds]
+    gate_stack = [Expert(inter, cols_h, (4,) * cols_h, s + 200, family=family)
+                  for s in seeds]
+    up_stack = [Expert(inter, cols_h, (4,) * cols_h, s + 300, family=family)
+                for s in seeds]
+    dn_stack = [Expert(rows_h, inter, (2 if i % 2 else 4,) * inter, s + 10,
+                       family=family) for i, s in enumerate(seeds)]
+    fused = nwm.prepare_native_window_moe(
+        [e.unit for e in gu_stack], [e.unit for e in dn_stack],
+        arithmetic=arithmetic, activation="silu")
+    split = nwm.prepare_native_window_moe(
+        [e.unit for e in gate_stack], [e.unit for e in dn_stack],
+        up=[e.unit for e in up_stack], arithmetic=arithmetic, activation="silu")
+    # Modular prepare narrows routing weights to x.dtype and multiplies
+    # x before quantization, not the first GEMM's accumulator.
+    source = x * rw.reshape(t, 1).to(x.dtype) if weight_input else x
+    if family == "e4m3":
+        x_in, a1 = _quant(source)
+        xq1 = x_in.float()
+    else:
+        xq1, a1 = source, None
+    fu = _routes(_per_expert(gu_stack, xq1, family, folded, a1, t), ids, sel)
+    gate, up = fu[..., :inter].float(), fu[..., inter:].float()
+    act_f = (torch.nn.functional.silu(gate) * up).bfloat16()
+    ref_f = _down(dn_stack, act_f, ids, rw, rows_h, family, folded, weight_input)
+    sg = _routes(_per_expert(gate_stack, xq1, family, folded, a1, t), ids, sel)
+    su = _routes(_per_expert(up_stack, xq1, family, folded, a1, t), ids, sel)
+    act_s = (torch.nn.functional.silu(sg.float()) * su.float()).bfloat16()
+    ref_s = _down(dn_stack, act_s, ids, rw, rows_h, family, folded, weight_input)
 
-    for family, arithmetic in (("value", "epilogue"), ("value", "folded"),
-                               ("e4m3", "epilogue")):
-        folded = arithmetic == "folded"
-        gu_stack = [Expert(2 * inter, cols_h, (4,) * cols_h, s, family=family)
-                    for s in seeds]
-        gate_stack = [Expert(inter, cols_h, (4,) * cols_h, s + 200, family=family)
-                      for s in seeds]
-        up_stack = [Expert(inter, cols_h, (4,) * cols_h, s + 300, family=family)
-                    for s in seeds]
-        dn_stack = [Expert(rows_h, inter, (2 if i % 2 else 4,) * inter, s + 10,
-                           family=family) for i, s in enumerate(seeds)]
-        fused = nwm.prepare_native_window_moe(
-            [e.unit for e in gu_stack], [e.unit for e in dn_stack],
-            arithmetic=arithmetic, activation="silu")
-        split = nwm.prepare_native_window_moe(
-            [e.unit for e in gate_stack], [e.unit for e in dn_stack],
-            up=[e.unit for e in up_stack], arithmetic=arithmetic, activation="silu")
-        if family == "e4m3":
-            x_in, a1 = _quant(x)
-            xq1 = x_in.float()
-        else:
-            xq1, a1 = x, None
-        for weight_input in (False, True):
-            fu = _routes(_per_expert(gu_stack, xq1, family, folded, a1, t),
-                         ids, sel, rw, weight_input)
-            gate, up = fu[..., :inter].float(), fu[..., inter:].float()
-            act_f = (torch.nn.functional.silu(gate) * up).bfloat16()
-            ref_f = _down(dn_stack, act_f, ids, rw, rows_h, family, folded, weight_input)
-            sg = _routes(_per_expert(gate_stack, xq1, family, folded, a1, t),
-                         ids, sel, rw, weight_input)
-            su = _routes(_per_expert(up_stack, xq1, family, folded, a1, t),
-                         ids, sel, rw, weight_input)
-            act_s = (torch.nn.functional.silu(sg.float()) * su.float()).bfloat16()
-            ref_s = _down(dn_stack, act_s, ids, rw, rows_h, family, folded, weight_input)
-
-            out_f = fused(x, ids, rw, apply_router_weight_on_input=weight_input)
-            out_s = split(x, ids, rw, apply_router_weight_on_input=weight_input)
-            assert out_f.shape == (t, rows_h) and out_f.dtype == torch.bfloat16
-            assert float((out_f.float() - ref_f.float()).abs().max()) < _tol(ref_f), (
-                f"fused {family}/{arithmetic} weight_input={weight_input}")
-            assert float((out_s.float() - ref_s.float()).abs().max()) < _tol(ref_s), (
-                f"split {family}/{arithmetic} weight_input={weight_input}")
+    out_f = fused(x, ids, rw, apply_router_weight_on_input=weight_input)
+    out_s = split(x, ids, rw, apply_router_weight_on_input=weight_input)
+    assert out_f.shape == (t, rows_h) and out_f.dtype == torch.bfloat16
+    assert float((out_f.float() - ref_f.float()).abs().max()) < _tol(ref_f), (
+        f"fused {family}/{arithmetic} weight_input={weight_input}")
+    assert float((out_s.float() - ref_s.float()).abs().max()) < _tol(ref_s), (
+        f"split {family}/{arithmetic} weight_input={weight_input}")
+    if weight_input:
+        for prepared in (fused, split):
+            with pytest.raises(GrammarError, match="only implemented for topk=1"):
+                prepared(x, ids.expand(t, 2).contiguous(), rw.expand(t, 2).contiguous(),
+                         apply_router_weight_on_input=True)
 
 
 @cuda
