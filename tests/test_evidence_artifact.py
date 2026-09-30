@@ -5,6 +5,8 @@ from pathlib import Path
 
 import pytest
 
+from glm_nightly_cells import nightly_ids
+
 from tessera.serving.contract import (
     cell_evidence, load_serving_contract, validate_serving_contract,
 )
@@ -80,11 +82,13 @@ def test_the_v34_dense_cells_carry_no_encoder_scope_and_say_so():
     # v37 (tessera#614) withdrew the BF16 pair; the E4M3 pair stands.  v38
     # (tessera#604) adds resident-scoped E4M3 and BF16 dense cells on the GLM
     # serving image, from a census of a stub no re-encode measurement covers,
-    # so they carry no encoder scope either.
+    # so they carry no encoder scope either.  v48 (tessera#702) adds the same
+    # four scopes on the vLLM nightly, from a census of the same stub.
     assert {cell["id"] for cell in dense} == {
         "tessera_e4m3_k1_dense_sm121_decode", "tessera_e4m3_k1_dense_sm121_batch",
         *(f"tessera_{family}_dense_sm121_{regime}_resident"
-          for family in ("e4m3_k1", "bf16_k1") for regime in ("decode", "batch"))}
+          for family in ("e4m3_k1", "bf16_k1") for regime in ("decode", "batch")),
+        *nightly_ids("dense")}
     for cell in dense:
         assert cell["evidence"]["artifact"] is None, cell["id"]
         assert cell_evidence(cell)["artifact"] is None, cell["id"]

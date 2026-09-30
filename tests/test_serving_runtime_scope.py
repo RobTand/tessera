@@ -44,6 +44,14 @@ def _scoped_contract():
     assert IMAGE not in list(mapped.values())[1:] and OTHER_IMAGE not in mapped.values()
     for cell in contract["lane_eligibility"]["cells"]:
         cell["runtime"] = {**copy.deepcopy(RUNTIME), "image": mapped[cell["runtime"]["image"]]}
+        # Since contract v48 some cells carry the runtime suffix the validator
+        # derives from the scope (tessera#702: the nightly GLM cells share a
+        # scope with the f8dbe1a0 cells that hold the bare ids).  A rewritten
+        # scope derives a new suffix, so re-derive it rather than keep one
+        # that names the packaged runtime.
+        base, suffixed, _ = cell["id"].partition("_runtime_")
+        if suffixed:
+            cell["id"] = base + runtime_contract.cell_runtime_id_suffix(cell)
     contract["versions"]["default_serve_image"] = IMAGE
     # Lane schema v10 (#456): a platform's ``serve_image`` must be an image one
     # of its OWN cells attests.  This helper rewrites every cell's runtime, so
@@ -81,9 +89,12 @@ def test_one_image_carries_one_toolchain():
         by_image.setdefault(cell["runtime"]["image"], set()).add(
             runtime_contract.cell_runtime_versions(cell))
     assert all(len(versions) == 1 for versions in by_image.values()), by_image
-    assert len(by_image) == 2, (
-        "the dense pin and the GLM serving image (the NCCL 2.30.7 rebuild of "
-        "the EUGR image, spark-vllm-nccl230@sha256:f8dbe1a0...), nothing else. "
+    assert len(by_image) == 3, (
+        "the dense pin, the GLM serving image (the NCCL 2.30.7 rebuild of "
+        "the EUGR image, spark-vllm-nccl230@sha256:f8dbe1a0...) and, since "
+        "contract v48 (tessera#702), the same rebuild of the vLLM nightly the "
+        "GLM-5.3 release serves on (spark-vllm-nccl230@sha256:5be13705...), "
+        "nothing else. "
         "The gfx1201 ROCm image left at contract v31 (tessera#538), the EUGR "
         "MoE image at v38 and the two-rank stub's spark-vllm-nccl230@sha256:"
         "a5424378... image at v39 (tessera#604), each with the cells that named "

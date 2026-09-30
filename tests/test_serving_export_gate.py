@@ -32,6 +32,8 @@ from pathlib import Path
 import pytest
 import torch
 
+from glm_nightly_cells import NIGHTLY_IMAGE
+
 from tessera.alphabet import PayloadGrid
 from tessera.control import GRID_NAMES, grid_for_name
 from tessera.errors import GrammarError
@@ -661,6 +663,13 @@ def test_only_the_device_backed_cells_rungs_admit_a_routed_stack():
             # the exporter's own output.
             row["attested_wire"] = [dict(stamp) for stamp in row["attested_wire"]] + [
                 {**row["attested_wire"][0], "q256": compiled_rung}]
+    # The premise is ONE image's decode/batch pair.  Contract v48 publishes the
+    # same scope on a second image (the vLLM nightly, tessera#702); that pair is
+    # left out of the copy so the refusal below is about the moved rung alone.
+    doc["lane_eligibility"]["cells"] = [
+        cell for cell in doc["lane_eligibility"]["cells"]
+        if not ((cell["family"], cell["structure"]) == ("TESSERA_E4M3_K1", STRUCTURE_ROUTED_MOE)
+                and cell["runtime"]["image"] == NIGHTLY_IMAGE)]
     moved = False
     for cell in doc["lane_eligibility"]["cells"]:
         if (cell["family"], cell["structure"]) != ("TESSERA_E4M3_K1", STRUCTURE_ROUTED_MOE):
