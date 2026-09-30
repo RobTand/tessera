@@ -7,8 +7,8 @@ Shapes are GLM-5.3-Flash per rank at TP2.  Routed: 288 experts, top 8,
 hidden 4096, intermediate 1024 (gate/up rows and down columns are the rank's
 half of 2048).  Dense: the per-rank shapes of the #750 dense list.  The
 default leaves out the whole TP2 ``lm_head`` (77,440 rows): its window encode
-does not fit a 40 GB budget, so it is timed at an eighth and a quarter of its
-rows (``lm_head_r8``, ``lm_head_r4``).  Every encode's seconds and CUDA
+does not fit a 40 GB budget, so it is timed at about an eighth and a quarter
+of its rows (``lm_head_r8``, ``lm_head_r4``).  Every encode's seconds and CUDA
 allocator peak are recorded (``encodes``).
 
 Legs, each over the same activations and routing:
@@ -17,9 +17,13 @@ Legs, each over the same activations and routing:
   routing tables, ``scaled_fp4_quant`` at the static global, the gate/up
   launch with the SwiGLU epilogue, the second quantisation, the down launch
   and the fixed-order token sum -- on window-body wires over the LUT16 plane
-  (L = 14) at each ``--rungs`` q256.  Dense: ``dense_forward`` at every K
-  split from 1 to the cap (``dense_split_max``); the cell keeps every split's
-  time and names the fastest.
+  (L = 14) at each ``--rungs`` q256.  Dense: ``dense_forward`` at K splits
+  1, 2, 4, 8 and the cap (``dense_split_max``), each its own cell; the summary
+  names the fastest.  A split's fp32 partials take S * M * rows * 4 bytes, and
+  graph capture holds a second copy in the graph's pool, so a variant whose
+  partials exceed ``SPLIT_PARTIALS_MAX`` is skipped and listed in the group's
+  ``splits_skipped`` (PB 4433a5b9: ``lm_head_r4`` at M = 8192, split 32, took
+  the row over its 40 GB budget).
 * ``a4`` (before, the served T-4 route): the native TCQ span-2 pipeline of
   ``nvfp4_moe_route``'s ``apply`` -- ``a4_grouped_apply`` for gate, up and
   down, vLLM's ``apply_moe_activation`` with the clamp, the ``index_add_``
@@ -80,12 +84,16 @@ DENSE = {
     "idx_wqb": (4096, 1536), "idx_wk": (128, 4096), "idx_wproj": (32, 4096),
     "lm_head": (77440, 4096),
     "vis_qkv": (1536, 1024), "vis_proj": (1024, 512), "vis_gate_up": (4096, 1024), "vis_down": (1024, 2048),
-    # lm_head's rows cut to a multiple of 32: an eighth (9696) and a quarter
-    # (19360).  The whole unit's window encode does not fit a 40 GB budget
-    # (PB 613dcd70, memory_budget_exceeded), so it is not a default shape.
-    "lm_head_r8": (9696, 4096), "lm_head_r4": (19360, 4096),
+    # lm_head cut to about an eighth (9600 rows) and a quarter (19328).  Each
+    # ends 128 rows into a 256-row block, as the whole 77440 does, and is a
+    # multiple of 64 so the a4 leg's 64-row blocks take it.  The whole unit's
+    # window encode does not fit a 40 GB budget (PB 613dcd70,
+    # memory_budget_exceeded), so it is not a default shape.
+    "lm_head_r8": (9600, 4096), "lm_head_r4": (19328, 4096),
 }
 DEFAULT_SHAPES = [s for s in DENSE if s != "lm_head"]
+#: A dense split variant whose fp32 partials exceed this many bytes is skipped.
+SPLIT_PARTIALS_MAX = 4 << 30
 #: Per encode: seconds and the CUDA allocator's peak, keyed "body rows x cols q".
 ENCODES = {}
 
@@ -507,7 +515,16 @@ class Bench:
         if kind == "dense" and head.get("leg") == "e2m1":
             cap = head["split_cap"]
             splits = sorted({1, 2, 4, 8, cap} & set(range(1, cap + 1)))
-            return [(m, s) for m in self.ms for s in splits]
+            keep, skipped = [], []
+            for m in self.ms:
+                for s in splits:
+                    over = s > 1 and s * m * head["rows"] * 4 > SPLIT_PARTIALS_MAX
+                    (skipped if over else keep).append((m, s))
+            if skipped:
+                head["splits_skipped"] = {
+                    "variants": [f"{m}:s{s}" for m, s in skipped],
+                    "why": f"fp32 partials over SPLIT_PARTIALS_MAX ({SPLIT_PARTIALS_MAX} B)"}
+            return keep
         return [(m, None) for m in self.ms]
 
     def run(self, save):
@@ -528,7 +545,7 @@ class Bench:
                     if pas == "F":
                         emit({"group": gkey, "refused": head.get("refused")})
                     continue
-                vs = self.variants(kind, head)
+                vs = self.variants(kind, rec)
                 for m, split in (vs if pas == "F" else list(reversed(vs))):
                     ckey = f"{m}" + (f":s{split}" if split is not None else "")
                     cell = rec["cells"].setdefault(ckey, {"M": m})
