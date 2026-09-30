@@ -45,7 +45,9 @@ def encode(w: torch.Tensor, q256: int, name: str) -> torch.Tensor:
     _exported, unit, forests = encode_linear_planes(w, grid=E4M3_GRID, q256=q256, name=name,
                                                     verify=True)
     tile, row_scale = materialize_fp8(unit, forests, None)
-    return tile.float() * row_scale.float().reshape(-1, 1)
+    # materialize_fp8 returns the E4M3FN BYTES (uint8): view them as FP8
+    # before widening, or the byte codes 0..255 are read as values.
+    return tile.view(torch.float8_e4m3fn).float() * row_scale.float().reshape(-1, 1)
 
 
 def pairs_of(rungs):
@@ -137,6 +139,9 @@ def main() -> int:
                            "y_mse": (float((x @ w_hat.T - ref).pow(2).mean())
                                      if ref is not None else None),
                            "encode_s": time.time() - t}
+                    if row["w_rel"] > 0.5:
+                        raise SystemExit(f"{name} q{q}: w_rel {row['w_rel']:.3f} -- the decode "
+                                         "does not reconstruct the weight; refusing to analyse it")
                     rows.append(row)
                     print(f"L{layer} e{expert} {proj:<9} q{q:<5} w_rel {row['w_rel']:.5f} "
                           f"y_mse {row['y_mse'] if row['y_mse'] is None else round(row['y_mse'], 8)} "
