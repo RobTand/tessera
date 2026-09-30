@@ -18,6 +18,7 @@ while IFS= read -r line; do
 done <<< "$RUNTIME_IMAGE_CONTAINER_ENV"
 [[ -z "${TESSERA_ROUTED_FUSED:-}" ]] || IMAGE_ENV+=(-e "TESSERA_ROUTED_FUSED=$TESSERA_ROUTED_FUSED")
 [[ -z "${TESSERA_FUSED_E4M3_MMA:-}" ]] || IMAGE_ENV+=(-e "TESSERA_FUSED_E4M3_MMA=$TESSERA_FUSED_E4M3_MMA")
+[[ -z "${TESSERA_ROUTED_FUSED_WIDE:-}" ]] || IMAGE_ENV+=(-e "TESSERA_ROUTED_FUSED_WIDE=$TESSERA_ROUTED_FUSED_WIDE")
 ART=/mnt/shared/tessera-measurements/pact-e4m3-accuracy-20260928/release-t8/exported
 [[ -f "$ART/config.json" ]] || { echo "missing artifact: $ART" >&2; exit 2; }
 mkdir -p "$OUT/home" "$OUT/tmp" "$OUT/triton"

@@ -6,6 +6,7 @@
 # (this tree).  Steps per arm:
 #   t-<arm>   timing: M 1,512,2048 balanced + recorded routing (T8R L512/L8192 ids)
 #   n-<arm>   NCU (full sections + source counters) at M 512, balanced routing
+#             (KERN_NCU_MS other Ms; KERN_NCU_ROUTING DIR adds its recorded cases)
 # Timing arms run forward then reverse (t-<arm>, then tb-<arm>) for drift symmetry.
 # Build every arm's libraries first, in a separate non-measurement row on any GB10
 # (build_ext.sh <out_root>/src-<arm> <out_root>/ext-<arm>); this action only loads
@@ -55,7 +56,8 @@ if [[ $STEPS == *" ncu "* ]]; then
   for ((i = 0; i < N; i++)); do
     # shellcheck disable=SC2046
     step "n-${ARMS[i]}" env $(armenv "${ARMS[i]}") BENCH_SRC="$OUT/src-${ARMS[i]}/src" BENCH_NCU=1 \
-      BENCH_NCU_KERNELS=routed_fused_kernel bash $H . "$OUT/${ARMS[i]}-ncu" --groups "$GROUPS_" --ms ${KERN_NCU_MS:-512}
+      BENCH_NCU_KERNELS=routed_fused_kernel bash $H . "$OUT/${ARMS[i]}-ncu" --groups "$GROUPS_" --ms ${KERN_NCU_MS:-512} \
+      ${KERN_NCU_ROUTING:+--routing "$KERN_NCU_ROUTING"}
   done
 fi
 echo "ALL_DONE $(date -u +%FT%TZ)"
