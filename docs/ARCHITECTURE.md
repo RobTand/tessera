@@ -1,5 +1,20 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-09-30 for the LM head as a Tessera route (tessera#750 WP3).
+`TesseraConfig.get_quant_method` now hands a `ParallelLMHead` its family's
+dense method when the checkpoint declares the head (`serving.head_route`). A
+checkpoint that declares no head gets `None` as before, and vLLM serves the
+head BF16. vLLM calls the dense method on the head as it does on a Linear:
+`create_weights` receives the layer's TP coordinates, one output partition of
+`num_embeddings_per_partition` rows and `num_embeddings_padded` as the output
+size, so the shard plan cuts each rank's vocabulary rows. Before any weight
+exists, the route refuses a family no test has served as a head (only
+`TESSERA_FP8` today), a structure other than dense, a padded or extended
+vocabulary, and a tie. It also binds the head's prefix so the route trace can
+name it. `serving.mtp_draft_lifetime` accepts a prepared Tessera head as the
+target head the fd4a15126 draft shares. The exporter does not write a head
+yet, and no contract field changes, so no shipped artifact changes.
+
 Re-stamped 2026-09-30 for the T-16 dense census (contract v52, Refs #750). Two
 census stubs of u1 stub B's source carry their 16 dense modules as
 `TESSERA_BF16_K1` at one rung of every run table: `t16d1` covers [1] to [8] and
