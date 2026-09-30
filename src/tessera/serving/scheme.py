@@ -769,30 +769,28 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
 #: would have moved ``versions.default_serve_image`` onto a build no registry
 #: serves, for a lane that was never measured to be missing there.
 #:
-#: TWO PAIRS STAND HERE NOW: the E4M3 family's fused identities on its own
-#: tensor-core instruction, ``(ROUTED_FUSED_WINDOW_SYMBOL, _DECODER_NATIVE_
-#: ROUTED_FUSED_WINDOW_E4M3MMA)`` and ``(FUSED_WINDOW_DENSE_SYMBOL,
-#: _DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA)`` (library
-#: ``tessera_routed_fused_mma_e4m3``, ``mma.sync.m16n8k32.e4m3.e4m3.f32``).
-#: They are the E4M3 family's default dispatch (``TESSERA_FUSED_E4M3_MMA``
-#: unset or ``e4m3``); they leave this set when a served census earns them
-#: cells.
-#:
-#: WHY THEY STAY PAST THE DEFAULT FLIP (checked 2026-09-30): leaving this set
-#: is per PAIR, and ``contract._validate_cell_executes`` has no image axis, so
-#: it would demand the pair in EVERY E4M3 cell whose rungs reach the library's
-#: lane.  ``tessera_routed_fused_mma_e4m3`` publishes ``column_rates`` and
-#: ``column_rates_routed_moe`` [1..8], so that is all six E4M3 cells: the two
-#: dense cells on the pinned serve image (rung 1024) and the four resident
-#: cells on the GLM serving image ``spark-vllm-nccl230@sha256:f8dbe1a0``
-#: (rungs 832..1088).  The only served receipt of the pair so far is the GLM
-#: A8SE TP2 serve (rung 1024 only) on ``spark-vllm-nccl230@sha256:5be13705``,
-#: a different digest, so it covers none of the six.  The censuses each cell
-#: needs are in docs/measurements/2026-09-30-e4m3-cells-census-matrix.md.
-EXPERIMENTAL_LAUNCHES: frozenset = frozenset({
-    (ROUTED_FUSED_WINDOW_SYMBOL, _DECODER_NATIVE_ROUTED_FUSED_WINDOW_E4M3MMA),
-    (FUSED_WINDOW_DENSE_SYMBOL, _DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA),
-})
+#: TWO PAIRS PASSED THROUGH at contract v47: the E4M3 family's fused
+#: identities on its own tensor-core instruction, ``(ROUTED_FUSED_WINDOW_
+#: SYMBOL, _DECODER_NATIVE_ROUTED_FUSED_WINDOW_E4M3MMA)`` and ``(FUSED_WINDOW_
+#: DENSE_SYMBOL, _DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA)`` (library
+#: ``tessera_routed_fused_mma_e4m3``, ``mma.sync.m16n8k32.e4m3.e4m3.f32``),
+#: which entered here at v46 and became the E4M3 family's default dispatch
+#: (``TESSERA_FUSED_E4M3_MMA`` unset or ``e4m3``).  Leaving this set is per
+#: pair and ``contract._validate_cell_executes`` has no image axis, so the
+#: library's lane (``column_rates`` and ``column_rates_routed_moe`` 1..8)
+#: puts both pairs in all six E4M3 cells at once, and each cell's image had
+#: to be censused on the instruction: the v43 census of
+#: ``qwen3-0.6b-uniform-R1024`` again on the platform's pinned serve image,
+#: once per residency, every module on the E4M3-instruction dense pair in
+#: both regimes, for the two ``tessera_e4m3_k1_dense_sm121_{decode,batch}``
+#: cells (``tests/test_dense_fused_census_cells.py``); and the v45 census of
+#: the u1 stub B again on the GLM serving image, every E4M3 module on its
+#: family's E4M3-instruction pair in both regimes, for the four
+#: ``tessera_e4m3_k1_{dense,routed_moe}_sm121_{decode,batch}_resident`` cells
+#: (``tests/test_glm_u1_census_cells.py``).  The 16-bit library's pairs stay
+#: attested beside them: ``TESSERA_FUSED_E4M3_MMA=f16`` still selects it.  The
+#: set is empty again, kept so the next unattested launch has a place to stand.
+EXPERIMENTAL_LAUNCHES: frozenset = frozenset()
 
 
 def route_launches(route: str, *, structure: str = STRUCTURE_DENSE,
