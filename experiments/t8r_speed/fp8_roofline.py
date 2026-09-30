@@ -10,7 +10,8 @@ measures, on the device it runs on:
   on it can reach; plus bf16 m16n8k16 for reference;
 * ``gemm``: cuBLAS rates at routed-like shapes, ``torch._scaled_mm`` (e4m3 x
   e4m3 -> bf16) and ``torch.mm`` (bf16), dense;
-* ``bandwidth``: device read and copy bandwidth, the memory side of the roofline;
+* ``bandwidth``: device read bandwidth (a 16-byte-load kernel) and copy
+  bandwidth, the memory side of the roofline;
 * ``probes``: how each instruction accumulates -- whether a small addend
   survives next to a large product inside one instruction (``inner``), and
   whether the fp32 accumulator input is added exactly (``chain``) and rounded
@@ -125,6 +126,33 @@ __global__ void tile_kernel(const uint8_t* __restrict__ A, const uint8_t* __rest
     D[(long)row1 * N + ncol0] = d[2]; D[(long)row1 * N + ncol0 + 1] = d[3];
 }
 
+// Device read bandwidth: grid-stride 16-byte loads XOR-reduced per thread (one
+// store per thread, so the kernel is bound by the loads alone).
+__global__ void read_kernel(const uint4* __restrict__ src, long n, uint32_t* __restrict__ out) {
+    uint32_t acc = 0;
+    for (long i = (long)blockIdx.x * blockDim.x + threadIdx.x; i < n; i += (long)gridDim.x * blockDim.x) {
+        const uint4 v = __ldg(src + i);
+        acc ^= v.x ^ v.y ^ v.z ^ v.w;
+    }
+    out[(long)blockIdx.x * blockDim.x + threadIdx.x] = acc;
+}
+
+double read_bw(torch::Tensor src, torch::Tensor out, int64_t blocks, int64_t threads) {
+    const long n = src.numel() / 4;
+    auto s = reinterpret_cast<const uint4*>(src.data_ptr<int32_t>());
+    auto o = reinterpret_cast<uint32_t*>(out.data_ptr<int32_t>());
+    cudaEvent_t e0, e1; cudaEventCreate(&e0); cudaEventCreate(&e1);
+    read_kernel<<<blocks, threads>>>(s, n, o); cudaDeviceSynchronize();
+    float best = 1e30f;
+    for (int r = 0; r < 5; ++r) {
+        cudaEventRecord(e0); read_kernel<<<blocks, threads>>>(s, n, o); cudaEventRecord(e1); cudaEventSynchronize(e1);
+        float ms = 0; cudaEventElapsedTime(&ms, e0, e1); if (ms < best) best = ms;
+    }
+    cudaEventDestroy(e0); cudaEventDestroy(e1);
+    TORCH_CHECK(cudaGetLastError() == cudaSuccess, "read kernel failed");
+    return best;
+}
+
 double peak(int64_t kind, int64_t chains, int64_t blocks, int64_t threads, int64_t iters, torch::Tensor seed, torch::Tensor out) {
     auto s = reinterpret_cast<const uint32_t*>(seed.data_ptr<int32_t>());
     float* o = out.data_ptr<float>();
@@ -155,6 +183,7 @@ void tile(int64_t kind, torch::Tensor A, torch::Tensor B, torch::Tensor C, torch
 CPP_SRC = """
 double peak(int64_t kind, int64_t chains, int64_t blocks, int64_t threads, int64_t iters, torch::Tensor seed, torch::Tensor out);
 void tile(int64_t kind, torch::Tensor A, torch::Tensor B, torch::Tensor C, torch::Tensor D);
+double read_bw(torch::Tensor src, torch::Tensor out, int64_t blocks, int64_t threads);
 """
 KINDS = {0: ("f16.m16n8k16", 16 * 8 * 16), 1: ("bf16.m16n8k16", 16 * 8 * 16), 2: ("e4m3.m16n8k32", 16 * 8 * 32)}
 
@@ -164,7 +193,7 @@ def build():
     cap = torch.cuda.get_device_capability()
     arch = f"{cap[0]}{cap[1]}"
     return load_inline(name=f"fp8_roofline_sm{arch}", cpp_sources=CPP_SRC, cuda_sources=CUDA_SRC,
-                       functions=["peak", "tile"], verbose=False,
+                       functions=["peak", "tile", "read_bw"], verbose=False,
                        extra_cuda_cflags=["-O3", f"-gencode=arch=compute_{arch},code=sm_{arch}"])
 
 
@@ -225,16 +254,25 @@ def _events(call, warmup=3, iters=10):
     return out[len(out) // 2]
 
 
-def bandwidth():
+def bandwidth(lib):
+    """Read: a grid-stride 16-byte-load kernel (best of five), at several
+    grid sizes.  Copy: ``torch.Tensor.copy_`` (read plus write).  4 GiB each."""
     n = 4 << 30
     x = torch.empty(n // 4, dtype=torch.int32, device="cuda")
     x.random_(0, 1 << 20)
+    sms = torch.cuda.get_device_properties(0).multi_processor_count
+    reads = {}
+    for per_sm, threads in ((4, 256), (8, 256), (16, 256), (4, 1024)):
+        blocks = sms * per_sm
+        out = torch.empty(blocks * threads, dtype=torch.int32, device="cuda")
+        ms = lib.read_bw(x, out, blocks, threads)
+        reads[f"{blocks}x{threads}"] = n / (ms * 1e-3) / 1e9
     y = torch.empty_like(x)
-    t_read = _events(lambda: torch.sum(x, dtype=torch.int64))
     t_copy = _events(lambda: y.copy_(x))
     del x, y
     torch.cuda.empty_cache()
-    res = {"bytes": n, "read_GBps": n / (t_read * 1e-3) / 1e9, "copy_GBps_rw": 2 * n / (t_copy * 1e-3) / 1e9}
+    res = {"bytes": n, "read_GBps": max(reads.values()), "read_by_grid_GBps": reads,
+           "copy_GBps_rw": 2 * n / (t_copy * 1e-3) / 1e9}
     print(json.dumps({"bandwidth": res}), flush=True)
     return res
 
@@ -352,7 +390,7 @@ def main():
     lib = build()
     result = {"meta": meta}
     for name, fn in (("probes", lambda: probes(lib)), ("errors", lambda: errors(lib)),
-                     ("peak", lambda: peaks(lib)), ("gemm", gemms), ("bandwidth", bandwidth)):
+                     ("peak", lambda: peaks(lib)), ("gemm", gemms), ("bandwidth", lambda: bandwidth(lib))):
         try:
             result[name] = fn()
         except Exception as exc:  # noqa: BLE001
