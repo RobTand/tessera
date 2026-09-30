@@ -777,6 +777,18 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
 #: They are the E4M3 family's default dispatch (``TESSERA_FUSED_E4M3_MMA``
 #: unset or ``e4m3``); they leave this set when a served census earns them
 #: cells.
+#:
+#: WHY THEY STAY PAST THE DEFAULT FLIP (checked 2026-09-30): leaving this set
+#: is per PAIR, and ``contract._validate_cell_executes`` has no image axis, so
+#: it would demand the pair in EVERY E4M3 cell whose rungs reach the library's
+#: lane.  ``tessera_routed_fused_mma_e4m3`` publishes ``column_rates`` and
+#: ``column_rates_routed_moe`` [1..8], so that is all six E4M3 cells: the two
+#: dense cells on the pinned serve image (rung 1024) and the four resident
+#: cells on the GLM serving image ``spark-vllm-nccl230@sha256:f8dbe1a0``
+#: (rungs 832..1088).  The only served receipt of the pair so far is the GLM
+#: A8SE TP2 serve (rung 1024 only) on ``spark-vllm-nccl230@sha256:5be13705``,
+#: a different digest, so it covers none of the six.  The censuses each cell
+#: needs are in docs/measurements/2026-09-30-e4m3-cells-census-matrix.md.
 EXPERIMENTAL_LAUNCHES: frozenset = frozenset({
     (ROUTED_FUSED_WINDOW_SYMBOL, _DECODER_NATIVE_ROUTED_FUSED_WINDOW_E4M3MMA),
     (FUSED_WINDOW_DENSE_SYMBOL, _DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA),
