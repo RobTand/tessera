@@ -18,6 +18,7 @@ through PrismaBuild inside the pinned serving image
 (``experiments/routed_fused_tests.sh``).
 """
 
+import functools
 import sys
 from pathlib import Path
 
@@ -772,34 +773,193 @@ def _decode_exact(family, q256, build):
     fused = _fused((_bundles if build == "prepare" else _axis_bundles)(family, stacks))
     assert fused.tile_words_gate_up == 16 * sum(gate[0].rates)
     assert fused.tile_words_down == 16 * sum(down[0].rates)
+    _one_hot_exact(fused, stacks, family, f"q256={q256}", EXPERTS)
+
+
+def _one_hot_exact(fused, stacks, family, tag, experts):
+    """Both launches on one-hot inputs against ``fb.one_hot_expected`` of
+    each role's ground truth (``gate``/``up`` ``[INTER, HIDDEN]``, ``down``
+    ``[HIDDEN, INTER]``), bitwise.  A role is anything with the fields
+    ``fused_bound.decoded_weight`` reads."""
+    gate, up, down = stacks
     # gate/up: HIDDEN one-hot tokens, every one routed to every expert
     _x, xq, a, hot = fb.one_hot_inputs(family, HIDDEN, _quant)
-    ids = torch.arange(EXPERTS, device="cuda", dtype=torch.int32).expand(HIDDEN, EXPERTS).contiguous()
-    rw = torch.ones(HIDDEN, EXPERTS, device="cuda")
+    ids = torch.arange(experts, device="cuda", dtype=torch.int32).expand(HIDDEN, experts).contiguous()
+    rw = torch.ones(HIDDEN, experts, device="cuda")
     gu = fused.gate_up(xq, ids, rw, a_scale=a, preserve=True)
-    assert gu.shape == (HIDDEN, EXPERTS, 2 * INTER)
-    for e in range(EXPERTS):
+    assert gu.shape == (HIDDEN, experts, 2 * INTER)
+    for e in range(experts):
         for name, stack, half in (("gate", gate, gu[:, e, :INTER]), ("up", up, gu[:, e, INTER:])):
             want = fb.one_hot_expected(stack[e], family, hot, a)
             bad = half != want
             assert not bool(bad.any()), (
-                f"{family} q256={q256} {name} expert {e}: {int(bad.sum())} of {bad.numel()} "
+                f"{family} {tag} {name} expert {e}: {int(bad.sum())} of {bad.numel()} "
                 f"one-hot products differ; first at {bad.nonzero()[0].tolist()} (column, row)")
     # down: INTER one-hot routes per expert, top_k = 1, unit weight
     _x, xq, a, hot = fb.one_hot_inputs(family, INTER, _quant)
-    xq_all = xq.repeat(EXPERTS, 1).contiguous()
-    a_all = a.repeat(EXPERTS).contiguous() if a is not None else None
-    ids = torch.arange(EXPERTS, device="cuda", dtype=torch.int32).repeat_interleave(INTER).reshape(-1, 1)
-    rw = torch.ones(EXPERTS * INTER, 1, device="cuda")
+    xq_all = xq.repeat(experts, 1).contiguous()
+    a_all = a.repeat(experts).contiguous() if a is not None else None
+    ids = torch.arange(experts, device="cuda", dtype=torch.int32).repeat_interleave(INTER).reshape(-1, 1)
+    rw = torch.ones(experts * INTER, 1, device="cuda")
     out = fused.down_routes(xq_all, ids, rw, a_scale=a_all, route_input=True, round_routes=True)
-    assert out.shape == (EXPERTS * INTER, HIDDEN)
-    for e in range(EXPERTS):
+    assert out.shape == (experts * INTER, HIDDEN)
+    for e in range(experts):
         want = fb.one_hot_expected(down[e], family, hot, a)
         got = out[e * INTER:(e + 1) * INTER]
         bad = got != want
         assert not bool(bad.any()), (
-            f"{family} q256={q256} down expert {e}: {int(bad.sum())} of {bad.numel()} one-hot "
+            f"{family} {tag} down expert {e}: {int(bad.sum())} of {bad.numel()} one-hot "
             f"products differ; first at {bad.nonzero()[0].tolist()} (column, row)")
+
+
+# --- TP2 rank 1 from real encoded bytes, cut by the serving loader (tessera#729) --
+
+#: Experts per rank-1 stack: two distinct encodes per role, so an expert
+#: index error cannot hide behind identical units.
+TP2_EXPERTS = 2
+
+
+@functools.lru_cache(maxsize=None)
+def _tp2_rank1_role(grid_family, rows, cols, q256, seed, axis):
+    """One role's TP2 rank-1 shard as the routed intake builds it, and its
+    ground truth from the WHOLE unit.
+
+    The weight is encoded at ``q256`` on the family's grid (real wire bytes,
+    the encoder's own rate placement), the shard plan is
+    ``serving.sharding.plan_shard``'s, and the unit is
+    ``compact_prep.prepare_window_compact``'s cut -- the loader path whose
+    start state tessera#729 corrupted.  ``axis="row"`` is the column-parallel
+    gate/up cut: rank 1 starts mid-stream (and mid-tile at row 576), so its
+    first ``ceil(L / rate) - 1`` rows decode through the cut's
+    ``initial_state``.  ``axis="column"`` is the row-parallel down cut.
+
+    The truth is independent of the cut: the definition's states
+    (``reference_states``) over the whole unit's body from the reference
+    reader, restricted to rank 1's rows or columns, with the whole unit's
+    table (or E4M3 code map) and row scale.  ``grid_family`` is ``value`` or
+    ``e4m3``; the two E4M3 instructions share one encode.
+    """
+    from types import SimpleNamespace
+
+    from tessera.alphabet import BF16_GRID, E4M3_GRID
+    from tessera.compact_prep import parse_compact_wire, prepare_window_compact
+    from tessera.export import encode_linear_planes
+    from tessera.kernel_window_gemv import reference_states
+    from tessera.serving.sharding import AXIS_ROWS, plan_shard
+    from tessera.unit_artifact import parse_unit_artifact
+
+    torch.manual_seed(seed)
+    weight = (torch.randn(rows, cols, device="cuda") * 0.02).contiguous()
+    grid = BF16_GRID if grid_family == "value" else E4M3_GRID
+    exported, _unit, _forests = encode_linear_planes(
+        weight, grid=grid, q256=q256, name="tp2-rank1", verify=False)
+    blob = exported.blob
+    if axis == "row":
+        plan = plan_shard("m", roles=[("w", rows)], columns=cols, out_partitions=[rows // 2],
+                          in_size=cols, tp_rank=1, tp_size=2, input_size=cols, output_size=rows)
+    else:
+        plan = plan_shard("m", roles=[("w", rows)], columns=cols, out_partitions=[rows],
+                          in_size=cols // 2, tp_rank=1, tp_size=2, input_size=cols,
+                          output_size=rows)
+    lo, hi = int(plan.roles[0].lo), int(plan.roles[0].hi)
+    by_rows = plan.axis == AXIS_ROWS
+    assert by_rows == (axis == "row") and (lo, hi) != (0, rows if by_rows else cols)
+    wire = parse_compact_wire(blob, device="cuda", name="w")
+    cut = prepare_window_compact(wire, device="cuda", family=grid_family,
+                                 **({"rows": (lo, hi)} if by_rows else {"cols": (lo, hi)}))
+    whole = prepare_window_compact(wire, device="cuda", family=grid_family)
+    parsed = parse_unit_artifact(blob, device="cuda")
+    assert int(parsed.unit.window_bits) == L == rf.WINDOW_BITS
+    rates = tuple(int(r) for r in parsed.unit.rates)
+    states = reference_states(parsed.unit.body_bits.detach().cpu(), rates, L)
+    if by_rows:
+        # the cut really inherits history, at the parent's row
+        assert int(cut.row_offset) == lo and bool(cut.initial_state.any()), (q256, axis)
+        truth = SimpleNamespace(states=states[lo:hi], values=whole.table,
+                                scale=whole.scale[lo:hi], unit=whole)
+    else:
+        assert not bool(cut.initial_state.any()), (q256, axis)
+        truth = SimpleNamespace(states=states[:, lo:hi], values=whole.table,
+                                scale=whole.scale, unit=whole)
+        rates = rates[lo:hi]
+    return cut, truth, rates
+
+
+def _tp2_rank1_stacks(grid_family, q256):
+    """``(units, truths)``: gate, up (rank 1's rows of ``[2 * INTER,
+    HIDDEN]``) and down (rank 1's columns of ``[HIDDEN, 2 * INTER]``) per
+    expert, each from its own encode."""
+    roles = [[_tp2_rank1_role(grid_family, *shape, q256, 7000 + 10 * e + i, axis)
+              for e in range(TP2_EXPERTS)]
+             for i, (shape, axis) in enumerate((((2 * INTER, HIDDEN), "row"),
+                                                ((2 * INTER, HIDDEN), "row"),
+                                                ((HIDDEN, 2 * INTER), "column")))]
+    units = tuple([r[0] for r in stack] for stack in roles)
+    truths = tuple([r[1] for r in stack] for stack in roles)
+    rates = tuple(r[2] for r in (roles[0][0], roles[2][0]))
+    return units, truths, rates
+
+
+def _tp2_rank1_bundles(family, units, build):
+    """The rank-1 units through ``prepare_grouped_window_gemm`` (each unit's
+    own ``initial_state``) or through the serving loader's
+    ``WindowUnitAxis`` (``moe_route._RankLocalPackedIntake``'s path)."""
+    from tessera.native_window_moe import WindowUnitAxis
+
+    arithmetic = "folded" if family == "value" else "epilogue"
+    if build == "prepare":
+        gate, up, down = (wgg.prepare_grouped_window_gemm(stack, block_m=32, block_n=64,
+                                                          block_k=64, arithmetic=arithmetic)
+                          for stack in units)
+        return PackedWindowMoeBundles(gate=gate, up=up, down=down, family=family)
+    parts = {"gate": ("w13", "gate_proj"), "up": ("w13", "up_proj"), "down": ("w2", "down_proj")}
+    axes = {"w13": WindowUnitAxis(TP2_EXPERTS, ("gate_proj", "up_proj"), family=family),
+            "w2": WindowUnitAxis(TP2_EXPERTS, ("down_proj",), family=family)}
+    for name, stack in zip(("gate", "up", "down"), units):
+        group, part = parts[name]
+        for e, unit in enumerate(stack):
+            axes[group].put(part, e, unit)
+    soa = {g: axes[g].finish() for g in axes}
+
+    def bundle(name):
+        group, part = parts[name]
+        slot = soa[group][part]
+        return wgg.prepare_grouped_window_gemm_from_soa(
+            words_all=slot["words"], table_all=slot["table"], codes_all=slot["codes"],
+            native_all=slot["native"], scale_all=slot["scale"], runs_all=slot["runs"],
+            init_all=slot["init"], has_init=slot["has_init"], word_off=slot["word_off"],
+            tile_words=slot["tile_words"], total_words=slot["total_words"],
+            run_off=slot["run_off"], perm_all=slot["perm"], rows=slot["rows"],
+            cols=slot["cols"], experts=TP2_EXPERTS, window_bits=slot["window_bits"],
+            family=family, block_m=32, block_n=64, block_k=64, arithmetic=arithmetic)
+
+    return PackedWindowMoeBundles(gate=bundle("gate"), up=bundle("up"), down=bundle("down"),
+                                  family=family)
+
+
+@cuda
+@pytest.mark.parametrize("family", LIBRARY_IDS, indirect=True)
+@pytest.mark.parametrize("q256", Q256_CASES)
+@pytest.mark.parametrize("build", ["prepare", "axis"])
+def test_tp2_rank1_cut_through_the_fused_lane_is_the_whole_units_rows(family, q256, build):
+    """TP2 rank 1, explicitly, at every rung the routed lane reaches: real
+    encoded wires cut by the serving loader, stacked both ways, through both
+    fused launches, must reproduce the WHOLE unit's rank-1 rows (gate/up) and
+    columns (down) bitwise on one-hot inputs.  This closes the tessera#729
+    class end to end -- the synthetic-state tests above hold the kernel to
+    whatever start state it is handed; this one holds the handed state to the
+    parent stream, so a cut state computed or stored in the wrong column order
+    (or at the wrong row) fails in the first ``ceil(L / rate) - 1`` rows of
+    every mixed-rate rung."""
+    units, truths, (gate_rates, down_rates) = _tp2_rank1_stacks(family, q256)
+    mixed = len(set(gate_rates)) > 1
+    assert set(gate_rates) | set(down_rates) <= set(rf.RATES)
+    if mixed:
+        # the repack permutes columns: the #729 condition is live
+        perm = units[0][0].rep.perm.cpu()
+        assert not torch.equal(perm, torch.arange(perm.numel(), dtype=perm.dtype)), q256
+    fused = _fused(_tp2_rank1_bundles(family, units, build))
+    _one_hot_exact(fused, truths, family, f"q256={q256} tp2-rank1 {build}", TP2_EXPERTS)
 
 
 @cuda
