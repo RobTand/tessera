@@ -1126,9 +1126,11 @@ def test_the_e4m3_instructions_layout_and_rates():
     # one byte less per table entry and per operand element: 16 KB per table,
     # and the two operand stages' B (BK x BN) and A (BM x BK) tiles
     stages = 2 * (rf.BK * rf.BN + rf.BM * rf.BK)
-    assert rf.SMEM_FIXED[0] - rf.SMEM_FIXED_MMA8[0] == 2 * 16_384 + stages
-    assert rf.SMEM_FIXED[2] - rf.SMEM_FIXED_MMA8[2] == 16_384 + stages
-    assert rf.smem_bytes(0, 16, mma8=True) == 58_832 <= rf.SM121_MAX_DYNAMIC_SMEM
+    # ... and it alone stages each half's stream history word (768 B)
+    assert rf.PREV_REGION_BYTES_MMA8 == 3 * 2 * rf.BK * 4 == 768
+    assert rf.SMEM_FIXED[0] - rf.SMEM_FIXED_MMA8[0] == 2 * 16_384 + stages - rf.PREV_REGION_BYTES_MMA8
+    assert rf.SMEM_FIXED[2] - rf.SMEM_FIXED_MMA8[2] == 16_384 + stages - rf.PREV_REGION_BYTES_MMA8
+    assert rf.smem_bytes(0, 16, mma8=True) == 59_600 <= rf.SM121_MAX_DYNAMIC_SMEM
     assert rf.routed_lane_rates("e4m3mma") == rf.RATES
     assert rf.routed_lane_rates("e4m3") == rf.routed_lane_rates("value") == rf.ROUTED_LANE_RATES
     assert ext.ROUTED_FUSED_MMA_E4M3_LANE_REQUIRES["column_rates_routed_moe"] \

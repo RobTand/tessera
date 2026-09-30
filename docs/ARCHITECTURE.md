@@ -1,5 +1,21 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-09-30 for the staged stream history on the E4M3 instruction
+(Refs #750). In `routed_fused_window.cu`, each half's decode needs the 32
+stream bits before its first word. On the E4M3 instruction's library
+(`PREV_STAGED`), that word now rides the word stages' own copies into a
+768 B per-stage shared-memory slot. It no longer rides a global load into a
+register one chunk ahead, where the loop's last move waited one global
+latency per chunk. `SMEM_FIXED_MMA8` becomes 47,312 B for gate/up and
+30,736 B for down and dense, and the rate-8 gate/up launch takes 59,600 B.
+The value and E4M3-on-`f16` libraries keep the register path; their SASS
+holds master's instructions up to operand and instruction order. No
+contract, rung, route or `executes` entry changes, and every timed output
+is bitwise master's. On the A8S release artifact's R1024 routed stack, the
+routed launches take 10.4% less time per call at M = 512 on recorded L512
+routing, and 8.5% less at M = 2048 on recorded L8192 chunks. Receipt: [the
+staged stream history](measurements/2026-09-30-staged-stream-history.md).
+
 Re-stamped 2026-09-30 for the value library's dense launch at rates 9 to 14
 (contract v51, Refs #750 item 4). `routed_fused_window.cu`'s `RATE_MAX` is 14
 on the value library and 8 on the E4M3 ones, and it now bounds the dense
@@ -3893,7 +3909,12 @@ launches read it from global memory in both places: a dependent global load
 on the producer's chunk loop whose wait sat ahead of the next copy or the
 decode (`docs/measurements/2026-09-29-two-run-column-map.md`,
 `docs/measurements/2026-09-30-descriptor-ring.md`). The host checks that each
-descriptor tensor is 16-byte aligned. Two rates of a
+descriptor tensor is 16-byte aligned. The E4M3 instruction's
+library no longer carries the previous window word in a register either: the
+word rides the word stages' copies into a per-stage shared-memory slot
+(`PREV_STAGED`, 768 B), because the loop's last move waited one global
+latency per chunk on its load
+(`docs/measurements/2026-09-30-staged-stream-history.md`). Two rates of a
 pair must be adjacent -- `grammar.rate_set` emits no other pair -- so
 `run_pair` refuses a wider one by name and no instantiation reads one. The
 device decides the rates: sm_121 grants 101,376 B per block
