@@ -228,24 +228,56 @@ def test_the_packaged_contract_validates_at_v33(contract):
     assert LANE_ELIGIBILITY_SCHEMA.endswith(".v10")
 
 
-def test_v46_publishes_the_e4m3_instruction_library_and_attests_none_of_it(contract):
+def test_v46_publishes_the_e4m3_instruction_library(contract):
     """v46 adds the E4M3 family's own tensor-core instruction as a third
     library of the fused window source (``tessera_routed_fused_mma_e4m3``):
-    one more ``native_extensions`` entry, two lane-bearing launch rows, both
-    in ``scheme.EXPERIMENTAL_LAUNCHES``, so no cell names either decoder and
-    no cell's ``executes`` moves."""
-    from tessera.serving.scheme import EXPERIMENTAL_LAUNCHES
-
+    one more ``native_extensions`` entry and two lane-bearing launch rows.
+    v46 kept both rows in ``scheme.EXPERIMENTAL_LAUNCHES``; v47 attests them
+    (below)."""
     assert int(contract["contract_version"]) >= 46
     by_name = {e["module_name_prefix"]: e for e in contract["native_extensions"]}
     mma = by_name["tessera_routed_fused_mma_e4m3"]
     assert mma["lane"]["decoder"] == "native_routed_fused_window_e4m3mma"
     assert mma["lane"]["requires"]["column_rates_routed_moe"] == list(range(1, 9))
     assert mma["source"] == by_name["tessera_routed_fused_e4m3"]["source"]
-    decoders = {"native_routed_fused_window_e4m3mma", "native_fused_window_dense_e4m3mma"}
-    assert {d for _s, d in EXPERIMENTAL_LAUNCHES} == decoders
+
+
+def test_v47_attests_the_e4m3_instruction_pairs_on_every_e4m3_cell(contract):
+    """v47: the two E4M3-instruction pairs leave ``scheme.EXPERIMENTAL_LAUNCHES``.
+
+    The library's lane reaches every rung of every E4M3 cell, so the pairs
+    enter all six E4M3 cells at once -- the dense pair on the four dense
+    cells, the routed pair on the two routed cells -- each on a served census
+    of its own image.  No other cell names either decoder: the BF16 and E2M1
+    families do not dispatch the library.  The 16-bit library's pairs stay
+    beside them (``TESSERA_FUSED_E4M3_MMA=f16``)."""
+    from tessera.serving.scheme import EXPERIMENTAL_LAUNCHES
+
+    assert int(contract["contract_version"]) >= 47
+    assert EXPERIMENTAL_LAUNCHES == frozenset()
+    dense_mma = "native_fused_window_dense_e4m3mma"
+    routed_mma = "native_routed_fused_window_e4m3mma"
+    named = {}
     for cell in contract["lane_eligibility"]["cells"]:
-        assert not decoders & {e["decoder"] for e in cell["executes"]}, cell["id"]
+        decoders = {e["decoder"] for e in cell["executes"]}
+        if cell["family"] != "TESSERA_E4M3_K1":
+            assert not decoders & {dense_mma, routed_mma}, cell["id"]
+            continue
+        if cell["structure"] == "dense":
+            assert {"native_fused_window_dense", dense_mma} <= decoders, cell["id"]
+            assert routed_mma not in decoders, cell["id"]
+        else:
+            assert {"native_routed_fused_window", routed_mma} <= decoders, cell["id"]
+            assert dense_mma not in decoders, cell["id"]
+        named[cell["id"]] = cell["runtime"]["image"].rsplit("@", 1)[-1][:15]
+    assert named == {
+        "tessera_e4m3_k1_dense_sm121_decode": "sha256:61fc8a89",
+        "tessera_e4m3_k1_dense_sm121_batch": "sha256:61fc8a89",
+        "tessera_e4m3_k1_dense_sm121_decode_resident": "sha256:f8dbe1a0",
+        "tessera_e4m3_k1_dense_sm121_batch_resident": "sha256:f8dbe1a0",
+        "tessera_e4m3_k1_routed_moe_sm121_decode_resident": "sha256:f8dbe1a0",
+        "tessera_e4m3_k1_routed_moe_sm121_batch_resident": "sha256:f8dbe1a0",
+    }
 
 
 def test_every_platform_entry_carries_the_v10_shape(contract):
@@ -450,14 +482,23 @@ def test_the_surviving_v22_sm121_cells_are_byte_identical(contract):
         "tessera_e4m3_k1_routed_moe_sm121_decode_resident",
         "tessera_e4m3_k1_routed_moe_sm121_batch_resident"}
     assert set(recorded["remeasured_at_v45"]) <= standing
+    # Contract v47: the four E4M3 window ids name the E4M3 family's own
+    # tensor-core instruction beside the 16-bit library's pair, on a served
+    # census of stub B with that library as the dispatch
+    # (docs/measurements/2026-09-30-e4m3-cells-census-matrix.md); the
+    # fixture's ``remeasured_at_v47`` list names them.  No withdrawn claim.
+    assert set(recorded["remeasured_at_v47"]) == set(recorded["remeasured_at_v45"])
     launch = {("TESSERA_E4M3_K1", "dense"): [
                   ("tessera::window_gemm_dense", "native_window_gemm"),
-                  ("tessera::fused_window_dense", "native_fused_window_dense")],
+                  ("tessera::fused_window_dense", "native_fused_window_dense"),
+                  ("tessera::fused_window_dense", "native_fused_window_dense_e4m3mma")],
               ("TESSERA_E4M3_K1", "routed_moe"): [
                   ("tessera.native_window_moe.NativeWindowMoE.__call__",
                    "native_window_moe_compact"),
                   ("tessera.routed_fused.FusedRoutedWindowMoE.__call__",
-                   "native_routed_fused_window")],
+                   "native_routed_fused_window"),
+                  ("tessera.routed_fused.FusedRoutedWindowMoE.__call__",
+                   "native_routed_fused_window_e4m3mma")],
               ("TESSERA_E2M1_K2", "routed_moe"): [
                   ("tessera.kernel_a4.a4_span2_grouped_gemm", "native_span2_grouped")]}
     for cell in contract["lane_eligibility"]["cells"]:

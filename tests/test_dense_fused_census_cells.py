@@ -26,6 +26,12 @@ What it pins:
    pair (the fail-before: v42's executes) every joined record DISAGREES --
    the join is by scope, the verdict is by launch;
 3. the two cells' rungs are exactly what the receipts carried (1024).
+
+Contract v47 adds two more receipts of the same artifact on the same image,
+served with the E4M3 instruction's library as the dispatch (its default since
+``c4fc615002``), once per residency; every module recorded
+``native_fused_window_dense_e4m3mma`` in both phases, and the two cells name
+that pair beside the other two.
 """
 from __future__ import annotations
 
@@ -49,13 +55,20 @@ RESULTS = ROOT / "experiments" / "results"
 TOOL = ROOT / "tools" / "tessera_route_census.py"
 CONFIG = RESULTS / "qwen3_0_6b_uniform_r1024_config.json"
 RECEIPTS = {
-    "resident": ("qwen3_0_6b_uniform_r1024_fused_resident_eager_census.json",
-                 "9b7c0eb5b57ba5cb323c16e55196368682a9e734c07901bb7daf2072abda4684"),
-    "streamed": ("qwen3_0_6b_uniform_r1024_fused_streamed_eager_census.json",
-                 "4405c4c1e7fa77c235e6db344e3c70ac219ad44eb6a5378d8cad9cc17c40abfb"),
+    ("f16", "resident"): ("qwen3_0_6b_uniform_r1024_fused_resident_eager_census.json",
+                          "9b7c0eb5b57ba5cb323c16e55196368682a9e734c07901bb7daf2072abda4684"),
+    ("f16", "streamed"): ("qwen3_0_6b_uniform_r1024_fused_streamed_eager_census.json",
+                          "4405c4c1e7fa77c235e6db344e3c70ac219ad44eb6a5378d8cad9cc17c40abfb"),
+    # Contract v47: the E4M3 instruction's library as the dispatch.
+    ("e4m3mma", "resident"): ("qwen3_0_6b_uniform_r1024_e4m3mma_resident_eager_census.json",
+                              "db2add283ccba38442d220f5e864cc128479ba390182a5ad7db1911908c5d4e4"),
+    ("e4m3mma", "streamed"): ("qwen3_0_6b_uniform_r1024_e4m3mma_streamed_eager_census.json",
+                              "c6bf18b6198e970a0009875486a82bf70d683a6a76fe5d4152a98843e83551d1"),
 }
 CELLS = ("tessera_e4m3_k1_dense_sm121_decode", "tessera_e4m3_k1_dense_sm121_batch")
 FUSED_PAIR = (FUSED_WINDOW_DENSE_SYMBOL, "native_fused_window_dense")
+MMA_PAIR = (FUSED_WINDOW_DENSE_SYMBOL, "native_fused_window_dense_e4m3mma")
+PAIR_BY_LIBRARY = {"f16": FUSED_PAIR, "e4m3mma": MMA_PAIR}
 TRITON_PAIR = (WINDOW_GEMM_SYMBOL, "native_window_gemm")
 MODULES = 112
 
@@ -67,8 +80,8 @@ def _tool():
     return module
 
 
-def _load(mode):
-    name, _sha = RECEIPTS[mode]
+def _load(key):
+    name, _sha = RECEIPTS[key]
     return json.loads((RESULTS / name).read_text(encoding="utf-8"))
 
 
@@ -91,28 +104,29 @@ def _agreement(tool, contract, receipt):
         execution_mode=receipt["runtime"]["execution_mode"])
 
 
-@pytest.mark.parametrize("mode", sorted(RECEIPTS))
-def test_each_committed_receipt_is_the_one_the_changelog_cites(mode):
-    name, sha = RECEIPTS[mode]
+@pytest.mark.parametrize("key", sorted(RECEIPTS))
+def test_each_committed_receipt_is_the_one_the_changelog_cites(key):
+    library, mode = key
+    pair = PAIR_BY_LIBRARY[library]
+    name, sha = RECEIPTS[key]
     assert hashlib.sha256((RESULTS / name).read_bytes()).hexdigest() == sha
-    receipt = _load(mode)
+    receipt = _load(key)
     assert receipt["verdict"] == "served" and receipt["problems"] == []
     assert receipt["runtime"] == {"execution_mode": "eager", "image": pinned_reference()}
     assert receipt["device"]["platform_token"] == "sm_121"
     assert receipt["checkpoint_sidecars"]["config.json"] == \
         hashlib.sha256(CONFIG.read_bytes()).hexdigest()
     assert receipt["env"]["TESSERA_SERVE_MODE"] == mode
-    assert receipt["decoder_coverage"]["required"] == ["native_fused_window_dense"]
+    assert receipt["decoder_coverage"]["required"] == [pair[1]]
     for phase in ("decode", "prefill"):
         records = receipt["records"][phase]
         assert len(records) == MODULES, phase
         pairs = {(rec["symbol"], rec["decoder"]) for rec in records.values()}
-        assert pairs == {FUSED_PAIR}, (phase, pairs)
+        assert pairs == {pair}, (phase, pairs)
         assert {rec["policy"] for rec in records.values()} == {f"TESSERA_FP8:{mode}"}
         assert {rec["contract"] for rec in records.values()} == {"fp8_per_token_dynamic"}
         assert {rec["kind"] for rec in records.values()} == {"dense"}
-        assert receipt["decoder_coverage"]["phases"][phase]["decoders"] == {
-            "native_fused_window_dense": MODULES}
+        assert receipt["decoder_coverage"]["phases"][phase]["decoders"] == {pair[1]: MODULES}
     cells = {c["id"]: c for c in load_serving_contract()["lane_eligibility"]["cells"]}
     for cell_id in CELLS:
         runtime = cells[cell_id]["runtime"]
@@ -123,10 +137,10 @@ def test_each_committed_receipt_is_the_one_the_changelog_cites(mode):
         assert cells[cell_id]["requires_serve_flags"] == ["TESSERA_SERVE_MODE=resident|streamed"]
 
 
-@pytest.mark.parametrize("mode", sorted(RECEIPTS))
-def test_every_served_module_joins_a_pinned_image_cell_in_both_phases(mode):
+@pytest.mark.parametrize("key", sorted(RECEIPTS))
+def test_every_served_module_joins_a_pinned_image_cell_in_both_phases(key):
     tool = _tool()
-    block, problems = _agreement(tool, load_serving_contract(), _load(mode))
+    block, problems = _agreement(tool, load_serving_contract(), _load(key))
     assert problems == []
     assert block["agrees"] is True, json.dumps(block, indent=1)[:2000]
     dense = block["structures"]["dense"]
@@ -140,8 +154,8 @@ def test_every_served_module_joins_a_pinned_image_cell_in_both_phases(mode):
 
 
 def test_the_join_fails_on_the_table_before_v43():
-    """The fail-before, as a mutation of the packaged table: strip the fused
-    pair from the two cells' ``executes`` (v42's rows).  The join is by scope
+    """The fail-before, as a mutation of the packaged table: strip both fused
+    pairs from the two cells' ``executes`` (v42's rows).  The join is by scope
     (family, residency, regime, rung, runtime), so every record still lands on
     its cell -- and every one of them then DISAGREES with it: 112 problems per
     phase naming the fused pair the cell does not publish, and the dense block
@@ -151,26 +165,46 @@ def test_the_join_fails_on_the_table_before_v43():
     for cell in contract["lane_eligibility"]["cells"]:
         if cell["id"] in CELLS:
             cell["executes"] = [e for e in cell["executes"]
-                                if (e["symbol"], e["decoder"]) != FUSED_PAIR]
+                                if (e["symbol"], e["decoder"]) not in (FUSED_PAIR, MMA_PAIR)]
             assert [(e["symbol"], e["decoder"]) for e in cell["executes"]] == [TRITON_PAIR]
-    for mode in RECEIPTS:
-        block, problems = _agreement(tool, contract, _load(mode))
+    for key in RECEIPTS:
+        block, problems = _agreement(tool, contract, _load(key))
         dense = block["structures"]["dense"]
-        assert dense["agrees"] is False and block["agrees"] is False, mode
+        assert dense["agrees"] is False and block["agrees"] is False, key
         for row in dense["phases"].values():
-            assert row["covered_by_cell"] == MODULES, (mode, row)
-        assert len(problems) == 2 * MODULES, (mode, len(problems))
+            assert row["covered_by_cell"] == MODULES, (key, row)
+        assert len(problems) == 2 * MODULES, (key, len(problems))
         for problem in problems:
-            assert repr(FUSED_PAIR) in problem, problem
+            assert repr(PAIR_BY_LIBRARY[key[0]]) in problem, problem
             assert any(f"cell {cell_id!r}" in problem for cell_id in CELLS), problem
             assert "does not publish" in problem, problem
 
 
-def test_the_two_cells_name_both_launches_and_exactly_the_receipts_rungs():
+def test_the_join_fails_on_the_table_before_v47():
+    """v47's own fail-before: strip only the E4M3-instruction pair (v46's
+    rows).  The f16-library receipts still agree; every record of the two
+    E4M3-instruction receipts lands on its cell and disagrees with it."""
+    tool = _tool()
+    contract = load_serving_contract()
+    for cell in contract["lane_eligibility"]["cells"]:
+        if cell["id"] in CELLS:
+            cell["executes"] = [e for e in cell["executes"]
+                                if (e["symbol"], e["decoder"]) != MMA_PAIR]
+    for key in RECEIPTS:
+        block, problems = _agreement(tool, contract, _load(key))
+        if key[0] == "f16":
+            assert problems == [] and block["agrees"] is True, key
+            continue
+        assert block["agrees"] is False, key
+        assert len(problems) == 2 * MODULES, (key, len(problems))
+        assert all(repr(MMA_PAIR) in problem for problem in problems), key
+
+
+def test_the_two_cells_name_every_launch_and_exactly_the_receipts_rungs():
     tool = _tool()
     carried = set()
-    for mode in RECEIPTS:
-        receipt = _load(mode)
+    for key in RECEIPTS:
+        receipt = _load(key)
         rungs = _declared_rungs(tool, receipt)
         for phase, records in receipt["records"].items():
             for name in records:
@@ -181,6 +215,6 @@ def test_the_two_cells_name_both_launches_and_exactly_the_receipts_rungs():
         cell = cells[cell_id]
         assert set(cell["rungs_q256"]) == carried, cell_id
         pairs = [(e["symbol"], e["decoder"]) for e in cell["executes"]]
-        assert pairs == [TRITON_PAIR, FUSED_PAIR], cell_id
+        assert pairs == [TRITON_PAIR, FUSED_PAIR, MMA_PAIR], cell_id
         assert cell["family"] == "TESSERA_E4M3_K1" and cell["structure"] == "dense", cell_id
         assert cell["activation_contract"] == "fp8_per_token_dynamic", cell_id

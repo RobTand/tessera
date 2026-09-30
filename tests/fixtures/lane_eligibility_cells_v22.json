@@ -65,5 +65,12 @@
     "tessera_e4m3_k1_routed_moe_sm121_decode_resident",
     "tessera_e4m3_k1_routed_moe_sm121_batch_resident"
   ],
-  "remeasured_at_v45_why": "Contract v45 (tessera#694) changes the kernel behind the fused launch each of the four E4M3 window ids names -- the persistent fused window kernel now reads the wire's run table at every rate, one run or two adjacent runs per unit -- and widens both lanes' predicate to column rates 1..8 (1..6 on a routed stack), moving no executes list, rung or id. A served TP1 eager route census of the u1 stub B on the GLM serving image recorded the fused pair on every routed stack (E4M3 at q256 896, 928, 1024 and 1088) and every dense module (q256 832 to 1088) in both phases (docs/measurements/2026-09-28-mixed-rate-fused-window.md). None of the four ids is in this span, so the digest does not move; a re-measurement is named here rather than absorbed."
+  "remeasured_at_v45_why": "Contract v45 (tessera#694) changes the kernel behind the fused launch each of the four E4M3 window ids names -- the persistent fused window kernel now reads the wire's run table at every rate, one run or two adjacent runs per unit -- and widens both lanes' predicate to column rates 1..8 (1..6 on a routed stack), moving no executes list, rung or id. A served TP1 eager route census of the u1 stub B on the GLM serving image recorded the fused pair on every routed stack (E4M3 at q256 896, 928, 1024 and 1088) and every dense module (q256 832 to 1088) in both phases (docs/measurements/2026-09-28-mixed-rate-fused-window.md). None of the four ids is in this span, so the digest does not move; a re-measurement is named here rather than absorbed.",
+  "remeasured_at_v47": [
+    "tessera_e4m3_k1_dense_sm121_decode_resident",
+    "tessera_e4m3_k1_dense_sm121_batch_resident",
+    "tessera_e4m3_k1_routed_moe_sm121_decode_resident",
+    "tessera_e4m3_k1_routed_moe_sm121_batch_resident"
+  ],
+  "remeasured_at_v47_why": "Contract v47 adds a third launch to the four E4M3 window ids v38 re-earned -- the E4M3 family's own tensor-core instruction (library tessera_routed_fused_mma_e4m3), native_fused_window_dense_e4m3mma on the two dense ids and native_routed_fused_window_e4m3mma on the two routed ids -- when the two pairs leave scheme.EXPERIMENTAL_LAUNCHES. A served TP1 eager resident route census of the u1 stub B on the GLM serving image, with that library as the dispatch, recorded the E4M3-instruction pair on every E4M3 module in both phases (docs/measurements/2026-09-30-e4m3-cells-census-matrix.md). None of the four ids is in this span, so the digest does not move; a re-measurement is named here rather than absorbed."
 }
