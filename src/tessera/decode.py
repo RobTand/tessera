@@ -17,16 +17,21 @@ direction would be dishonest, so the two are separate quantities here too.
 from __future__ import annotations
 
 import functools
+import hashlib
+import json
 import os
+import threading
 import warnings
+import weakref
 
 import torch
 
-from .alphabet import AnchorForest, PayloadGrid, require_hardware_byte_grid
+from .alphabet import AnchorForest, PayloadGrid, grid_digest, require_hardware_byte_grid
 from .encode import EncodedUnit, e2m1_value_table, grid_value_table, require_memory
 from .errors import GrammarError
 from .grammar import require_column_groups, superblock_count
 from .manifest import BodyKind, RotationState, ScalePlaneKind
+from .shared_candidate import COMPONENT_NAMES, validate_pricing
 from .trellis import SUBSET_COUNT, ConvCode, TCQ, _ODS_GENERATORS  # noqa: F401
 from .trellis import ConvCode as _ConvCode
 
@@ -44,6 +49,8 @@ __all__ = [
     "unit_half_scales",
     "fusion_fallbacks",
     "replay_table_bytes",
+    "replay_table_spec",
+    "replay_resident_observation",
 ]
 
 
@@ -325,6 +332,68 @@ def _run_fused(run, args, chain: str):
         return None
 
 
+# Weak observation index: never retains tensors or changes cache lifetime.
+# More than one live generation under one identity is deliberately ambiguous.
+_replay_resident_entries: dict[tuple[str, str], list[tuple[weakref.ReferenceType[torch.Tensor], ...]]] = {}
+_replay_resident_lock = threading.RLock()
+
+
+def _replay_group_id(forest: AnchorForest, code: ConvCode) -> str:
+    payload = {"grid_digest": grid_digest(forest.grid), "rate": forest.rate,
+               "blocks": forest.blocks, "memory": code.memory, "generators": code.generators}
+    return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def _table_components(tables: tuple[torch.Tensor, ...]) -> list[dict]:
+    return [{"name": name, "shape": list(table.shape), "dtype": str(table.dtype).removeprefix("torch."),
+             "layout": "contiguous" if table.is_contiguous() else "noncontiguous",
+             "bytes": table.numel() * table.element_size()}
+            for name, table in zip(COMPONENT_NAMES, tables, strict=True)]
+
+
+def replay_table_spec(forest: AnchorForest, code: ConvCode) -> dict:
+    """Artifact identity plus exact components, measured with the CPU builder."""
+    return {"group_id": _replay_group_id(forest, code),
+            "components": _table_components(_replay_tables(forest, code, "cpu"))}
+
+
+def replay_resident_observation(pricing: dict, *, device: str | torch.device, rank: int) -> dict:
+    """Observe existing live generations only; never fill or refresh the cache.
+
+    The worker joins these physical extents to allocation history at ready.
+    This index is not ownership proof by itself and an evicted-but-still-live
+    generation makes a group ambiguous rather than being deduplicated by key.
+    """
+    validate_pricing(pricing)
+    target = torch.device(device)
+    groups = []
+    for group in pricing["groups"]:
+        with _replay_resident_lock:
+            entries = list(_replay_resident_entries.get((group["group_id"], str(target)), []))
+        live = []
+        for entry in entries:
+            tensors = tuple(ref() for ref in entry)
+            if all(t is not None for t in tensors):
+                live.append(tuple(t for t in tensors if t is not None))
+        if len(live) != 1:
+            raise ValueError("shared-candidate: missing or ambiguous live replay-table generation")
+        tables = live[0]
+        if _table_components(tables) != group["components"]:
+            raise ValueError("shared-candidate: live components differ from artifact")
+        storages = []
+        for component, table in zip(group["components"], tables, strict=True):
+            storage = table.untyped_storage()
+            if table.storage_offset() != 0 or storage.nbytes() != component["bytes"]:
+                raise ValueError("shared-candidate: aliased/non-exact table storage")
+            storages.append(dict(component, address=storage.data_ptr()))
+        groups.append({"group_id": group["group_id"], "members": list(group["members"]), "components": storages})
+    if type(rank) is not int or rank < 0:
+        raise ValueError("shared-candidate: rank must be a non-negative integer")
+    return {"pricing": pricing, "process_id": os.getpid(), "rank": rank,
+            "device_type": target.type, "device_id": target.index if target.index is not None else 0,
+            "groups": groups}
+
+
 @functools.lru_cache(maxsize=32)
 def _replay_tables(
     forest: AnchorForest, code: ConvCode, device: str
@@ -333,9 +402,10 @@ def _replay_tables(
 
     Calls hitting the same retained cache entry share its physical tensors.
     Eviction can rebuild an entry, so key equality alone does not prove one
-    allocation across arbitrary lifetimes or ranks. Resource pricing remains
-    conservative per unit until a downstream consumer supports a distinct
-    shared-candidate term; this cache does not establish that pricing contract.
+    allocation across arbitrary lifetimes or ranks. The weak observation index
+    exposes live storages without retaining them; only a qualified startup join
+    admits the explicit shared-candidate pricing contract. Legacy prices remain
+    conservative per unit.
     """
     from .encode import _subset_table
 
@@ -347,7 +417,17 @@ def _replay_tables(
             nxt, sub = code.step(value, bit)
             table_next[bit, value] = nxt
             table_sub[bit, value] = sub
-    return subsets, table_next, table_sub
+    tables = (subsets, table_next, table_sub)
+    group_key = (_replay_group_id(forest, code), str(subsets.device))
+    with _replay_resident_lock:
+        for key in list(_replay_resident_entries):
+            retained = [entry for entry in _replay_resident_entries[key] if all(ref() is not None for ref in entry)]
+            if retained:
+                _replay_resident_entries[key] = retained
+            else:
+                del _replay_resident_entries[key]
+        _replay_resident_entries.setdefault(group_key, []).append(tuple(weakref.ref(t) for t in tables))
+    return tables
 
 
 def replay_table_bytes(forest: AnchorForest, code: ConvCode) -> int:
@@ -356,8 +436,8 @@ def replay_table_bytes(forest: AnchorForest, code: ConvCode) -> int:
     The serving NVFP4 load path builds its select plane through
     ``lane_planes`` builders that all bottom out in :func:`_replay_tables`
     (itself via ``encode._subset_table``): one ``[4, points]`` int64 subset
-    table and two ``[2, states]`` int64 transition tables, allocated once per
-    trellis per process by the ``lru_cache`` above and never freed.  The
+    table and two ``[2, states]`` int64 transition tables, retained by the
+    bounded process-local ``lru_cache`` above until eviction.  The
     full-engine ledger therefore charges them to the unit whose load prepared
     them (tessera#557: 2048 + 1024 + 1024 B on the capture's one NVFP4 unit),
     and the export manifest prices them beside the module's own planes so the
@@ -370,7 +450,9 @@ def replay_table_bytes(forest: AnchorForest, code: ConvCode) -> int:
     when the module's trellises are prepared once in the serve -- one NVFP4
     unit per trellis, which holds on every attested capture -- and a serve
     that shares one trellis across modules refuses the check by exact
-    inequality (fail closed) until a shared term exists to price it once.
+    inequality (fail closed). An artifact can opt into the additive shared
+    pricing block, which requires a qualified live-allocation witness; legacy
+    receipts are never reinterpreted.
     """
     subsets, table_next, table_sub = _replay_tables(forest, code, "cpu")
     return sum(table.numel() * table.element_size()

@@ -18,10 +18,16 @@ consumer independently checks.
 from __future__ import annotations
 
 from experiments.full_engine_ownership import (
-    DENSE_STARTUP_CHECK_SCHEMA, OWNERSHIP_OBSERVATION_SCHEMA, views_by_allocation,
+    DENSE_STARTUP_CHECK_SCHEMA,
+    OWNERSHIP_OBSERVATION_SCHEMA,
+    SHARED_DENSE_STARTUP_CHECK_SCHEMA,
+    views_by_allocation,
 )
+from tessera.shared_candidate import qualify_allocations
 
 PARTITION_SCHEMA = "tessera.full_engine_resource_partition.v1"
+SHARED_PARTITION_SCHEMA = "tessera.full_engine_resource_partition.v2"
+SHARED_TERM_DOMAINS = {"shared_candidate_resident": ("worker_startup", "history_join", "external_closure")}
 
 #: The raw ledger versions this partition reads. v2 is the tessera#548 boundary
 #: ledger: the same allocation row shape, plus a non-null ownership observation
@@ -66,7 +72,7 @@ NON_STEP_PEAK_DOMAINS = ("history_join", "external_closure")
 # during no declared engine step is charged by no term, so no term reads its
 # owner, and it is classified by its lifetime alone (see
 # :func:`classify_allocations`).
-OWNER_CLASSES = ("fixed", "candidate", "kv")
+OWNER_CLASSES = ("fixed", "candidate", "kv", "shared_candidate")
 
 # The (owner, lifetime) cells the seven composition terms actually charge. The
 # classifier can produce nine; these are seven. A KV backing with a transient
@@ -75,7 +81,7 @@ OWNER_CLASSES = ("fixed", "candidate", "kv")
 CHARGED_CELLS = (("fixed", "resident"), ("candidate", "resident"),
                  ("fixed", "activation"), ("candidate", "activation"),
                  ("fixed", "scratch"), ("candidate", "scratch"),
-                 ("kv", "resident"))
+                 ("kv", "resident"), ("shared_candidate", "resident"))
 
 # Lifetime classes, derived from the replay's own ``lifetime_scope``, whether
 # the allocation was ever freed inside the captured interval, and -- for a row
@@ -213,7 +219,7 @@ def startup_reservation_samples(ledger):
     and before the workload -- so both are offered to the one witness rule
     rather than a second rule being written for the dense case.
     """
-    records = [record for record in (ledger.get("worker_startup_records") or [])]
+    records = list(ledger.get("worker_startup_records") or [])
     check = _dense_check(ledger)
     if isinstance(check, dict) and check.get("memory_reserved_bytes") is not None:
         records.append({"rank": check.get("rank"),
@@ -269,7 +275,7 @@ def cache_capacity_closed(ledger):
         spans.append((row["device_type"], row["device_id"], row["address"],
                       row["address"] + row["bytes"]))
     ordered = sorted(spans)
-    for first, second in zip(ordered, ordered[1:]):
+    for first, second in zip(ordered, ordered[1:], strict=False):
         if (first[0], first[1]) == (second[0], second[1]) and first[3] > second[2]:
             return False
     if storage_set["unique_physical_storage_bytes"] != sum(row["bytes"] for row in storages):
@@ -312,12 +318,12 @@ def _owner_class(row, view=None):
     """
     if view is not None:
         category = view["class"]
-        return category if category in OWNER_CLASSES else None
+        return category if category in OWNER_CLASSES and category != "shared_candidate" else None
     categories = row["observed_categories"]
     if len(categories) != 1:
         return None
     category = categories[0]
-    return category if category in OWNER_CLASSES else None
+    return category if category in OWNER_CLASSES and category != "shared_candidate" else None
 
 
 def _declared_steps(ledger):
@@ -423,7 +429,7 @@ def observed_whole_off_step_torch_peak(ledger):
     cuts.add(terminal)
     ordered = sorted(cuts)
     live = peak = 0
-    for index, following in zip(ordered, ordered[1:]):
+    for index, following in zip(ordered, ordered[1:], strict=False):
         live += sum(events.get(index, []))
         # This value is live throughout [index, following). Step boundaries
         # are cuts even when no allocation changed there.
@@ -546,12 +552,17 @@ def classify_allocations(ledger):
     """
     steps = _declared_steps(ledger)
     views = views_by_allocation(ledger)
+    shared = _shared_allocations(ledger)
     classified, unclassified, non_step = [], [], []
     for row in _checked_allocation_rows(ledger):
         view = views.get(row["allocation_id"])
         if view is not None and view["class"] == "observer":
             continue  # named by observer_allocations, charged to nothing
         lifetime, owner = _lifetime_class(row, steps), _owner_class(row, view)
+        if row["allocation_id"] in shared:
+            classified.append(dict(_classified_row(row, "shared_candidate", "resident", view),
+                                   unit=None, shared_group=shared[row["allocation_id"]]))
+            continue
         if lifetime == "non_step":
             non_step.append(_classified_row(row, owner, lifetime, view))
             continue
@@ -698,9 +709,61 @@ def _dense_check(ledger):
     if not isinstance(observation, dict) or observation.get("schema") != OWNERSHIP_OBSERVATION_SCHEMA:
         return None
     check = observation.get("dense_startup_check")
-    if not isinstance(check, dict) or check.get("schema") != DENSE_STARTUP_CHECK_SCHEMA:
+    if not isinstance(check, dict) or check.get("schema") not in (
+            DENSE_STARTUP_CHECK_SCHEMA, SHARED_DENSE_STARTUP_CHECK_SCHEMA):
         return None
     return check
+
+
+def _shared_allocations(ledger):
+    """Recompute the shared proof from this ledger, never trust a closure flag."""
+    check = _dense_check(ledger)
+    if check is None or check["schema"] != SHARED_DENSE_STARTUP_CHECK_SCHEMA:
+        return {}
+    identity = ledger.get("identity") or {}
+    for key in ("rank", "device_id"):
+        if identity.get(key) != check.get(key):
+            raise ValueError(f"shared-candidate: startup {key} differs from ledger")
+    if ledger.get("process_id", identity.get("process_id")) != check.get("process_id"):
+        raise ValueError("shared-candidate: startup process_id differs from ledger")
+    dense = {**check, "schema": "tessera.full_engine_dense_startup_observation.v2"}
+    rows = ledger["torch_allocations"]
+    by_id = views_by_allocation(ledger, strict=True)
+    checkpoints = ledger.get("checkpoints") or []
+    ready_markers = [marker for marker in checkpoints if marker.get("label") == "ready_for_workload"]
+    if len(ready_markers) != 1:
+        raise ValueError("shared-candidate: ledger requires exactly one ready_for_workload checkpoint")
+    ready_index = ready_markers[0].get("trace_index")
+    if (type(ready_index) is not int or ready_index < 1
+            or type(check.get("ready_index")) is not int or check["ready_index"] != ready_index):
+        raise ValueError("shared-candidate: ready_for_workload index missing, invalid or differs from startup")
+    shared = qualify_allocations(rows, [by_id[r["allocation_id"]] for r in rows], dense,
+                                  ready_index=ready_index)
+    if (shared != check.get("shared_candidate_allocations")
+            or sum(r["bytes"] for r in rows if r["allocation_id"] in shared)
+            != check.get("shared_candidate_resident_bytes")):
+        raise ValueError("shared-candidate: startup allocation/byte witness differs from ledger")
+    private = dict.fromkeys(check["units"], 0)
+    unqualified, extra = [], set()
+    for row in rows:
+        view = by_id[row["allocation_id"]]
+        if row["allocation_id"] in shared or row["free_completed_index"] is not None or view["class"] != "candidate":
+            continue
+        unit = view["unit"]
+        if unit is None:
+            unqualified.append(row["allocation_id"])
+        elif unit not in private:
+            extra.add(unit)
+        else:
+            private[unit] += row["bytes"]
+    live = sum(row["bytes"] for row in rows if row["allocate_index"] < ready_index
+               and (row["free_completed_index"] is None or row["free_completed_index"] >= ready_index))
+    if (sorted(unqualified) != check.get("unqualified_candidate_allocations")
+            or sorted(extra) != check.get("candidate_units_outside_manifest")
+            or live != check.get("ledger_live_bytes_at_ready_for_workload")
+            or any(size != check["units"][unit]["ledger_candidate_resident_bytes"] for unit, size in private.items())):
+        raise ValueError("shared-candidate: startup private/lifetime witness differs from ledger")
+    return shared
 
 
 def dense_startup_closed(ledger):
@@ -715,7 +778,9 @@ def dense_startup_closed(ledger):
     if check is None:
         return False
     units = check["units"]
+    shared = _shared_allocations(ledger)
     return (bool(units)
+            and (not shared or not check.get("unqualified_candidate_allocations"))
             and all(cell["ledger_candidate_resident_bytes"] == cell["manifest_resident_bytes_resident_mode"]
                     for cell in units.values())
             and not check["candidate_units_outside_manifest"]
@@ -768,9 +833,7 @@ def _check_agrees(check):
     values = check["values"]
     if any(value is None for value in values.values()):
         return False
-    if check["agree"] is not True:
-        return False
-    return True
+    return check["agree"] is True
 
 
 def provenance_admission_refused(ledger):
@@ -876,7 +939,8 @@ def _domain(closed, evidence, reason, refused=False):
 
 
 def _term_available(term, domains):
-    return all(domains[name]["state"] == "closed" for name in TERM_DOMAINS[term])
+    dependencies = {**TERM_DOMAINS, **SHARED_TERM_DOMAINS}
+    return all(domains[name]["state"] == "closed" for name in dependencies[term])
 
 
 def _compose_terms(classified, units, terminal):
@@ -893,7 +957,7 @@ def _compose_terms(classified, units, terminal):
                 if row["owner_class"] == owner and row["lifetime_class"] == lifetime
                 and (unit is None or row["unit"] == unit)]
 
-    return {
+    terms = {
         # Resident bytes add; they are live at the terminal boundary by definition.
         "fixed_resident": sum(row["bytes"] for row in select("fixed", "resident")),
         "candidate_resident":
@@ -911,6 +975,12 @@ def _compose_terms(classified, units, terminal):
              for unit in units},
         "fixed_kv": sum(row["bytes"] for row in select("kv", "resident")),
     }
+    shared_rows = select("shared_candidate", "resident")
+    if shared_rows:
+        terms["shared_candidate_resident"] = {
+            group: sum(row["bytes"] for row in shared_rows if row["shared_group"] == group)
+            for group in sorted({row["shared_group"] for row in shared_rows})}
+    return terms
 
 
 def derive_partition(ledger):
@@ -1008,7 +1078,7 @@ def derive_partition(ledger):
             unavailable.append(name)
 
     return {
-        "schema": PARTITION_SCHEMA,
+        "schema": SHARED_PARTITION_SCHEMA if "shared_candidate_resident" in raw_terms else PARTITION_SCHEMA,
         "identity": ledger.get("identity"),
         "capture_sha256": ledger.get("capture_sha256"),
         "domains": domains,
@@ -1153,6 +1223,7 @@ def _compose(terms):
     """The scalar composition over term values that are all present."""
     return (terms["fixed_resident"]
             + sum(terms["candidate_resident"].values())
+            + sum(terms.get("shared_candidate_resident", {}).values())
             + terms["fixed_activation"]
             + max(terms["candidate_activation"].values(), default=0)
             + terms["fixed_scratch"]
@@ -1163,9 +1234,10 @@ def _compose(terms):
 def compose_scalar_budget(partition):
     """The consumer's conservative scalar composition, or ``None``.
 
-    ``fixed_resident + sum(candidate_resident) + fixed_activation +
-    max(candidate_activation) + fixed_scratch + max(candidate_scratch) +
-    fixed_KV``.
+    ``fixed_resident + sum(candidate_resident) + sum(shared_candidate_resident)
+    + fixed_activation + max(candidate_activation) + fixed_scratch
+    + max(candidate_scratch) + fixed_KV``. The shared term exists only in v2;
+    legacy v1 receipts retain their original seven-term composition.
 
     Returns ``None`` when any term is unavailable. The composition can exceed
     the measured instantaneous peak because independent maxima need not
@@ -1189,6 +1261,7 @@ def compose_scalar_budget(partition):
 #: PYTORCH_CUDA_ALLOC_CONF).
 REPORT_SCHEMA = "tessera.full_engine_resource_report.v2"
 TP2_REPORT_SCHEMA = "tessera.full_engine_resource_report.v3"
+SHARED_REPORT_SCHEMA = "tessera.full_engine_resource_report.v4"
 
 # The seven envelope members, in the frozen order.
 REPORT_MEMBERS = ("identity", "reference", "workload", "execution",
@@ -1332,11 +1405,11 @@ def assemble_full_engine_resource_report(ledger, *, reference, workload,
     # carries either one without a rank-scoped run identity is refused here
     # rather than handed over with nothing to check the rank against.
     run_identity = ledger.get("identity") or {}
-    if ledger.get("worker_startup_records") or ledger.get("kv_observations"):
-        if run_identity.get("rank") is None or run_identity.get("world_size") is None:
-            raise ValueError(
-                "per-rank observations require a rank-scoped run identity (rank and "
-                "world_size), or a consumer cannot bind the record to the run that measured it")
+    if ((ledger.get("worker_startup_records") or ledger.get("kv_observations"))
+            and (run_identity.get("rank") is None or run_identity.get("world_size") is None)):
+        raise ValueError(
+            "per-rank observations require a rank-scoped run identity (rank and "
+            "world_size), or a consumer cannot bind the record to the run that measured it")
     # Checkpoint rows carry members the consumer's schema does not name (the
     # checkpoint's own census counts and the pageable-host observations). They
     # are carried beside the checkpoints as a named artifact rather than inside
@@ -1372,7 +1445,8 @@ def assemble_full_engine_resource_report(ledger, *, reference, workload,
                       "a serve only under the bound PYTORCH_CUDA_ALLOC_CONF"),
         }
     report = {
-        "schema": TP2_REPORT_SCHEMA if world == 2 else REPORT_SCHEMA,
+        "schema": (SHARED_REPORT_SCHEMA if partition["schema"] == SHARED_PARTITION_SCHEMA
+                   else TP2_REPORT_SCHEMA if world == 2 else REPORT_SCHEMA),
         "identity": {
             "run": ledger.get("identity"),
             "capture_sha256": ledger.get("capture_sha256"),
@@ -1451,6 +1525,8 @@ def assemble_full_engine_resource_report(ledger, *, reference, workload,
             "timing_terms": derive_timing_terms(ledger, partition),
         },
     }
+    if partition["schema"] == SHARED_PARTITION_SCHEMA:
+        report["observations"]["process_id"] = ledger.get("process_id", run_identity.get("process_id"))
     if world == 2:
         report["observations"]["rank_world"] = ledger["rank_world"]
         report["derived"].update({
