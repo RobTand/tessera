@@ -1,8 +1,9 @@
 # T-4 body comparison: span-2 TCQ against the window body over LUT16
 
 **Date:** 2026-09-30 · **Issue:** #750 · **Harness:** `experiments/t4_code/`
-(`t4_code_compare.py`, `summarize.py`, `decode_cost.cu`, `aside_cost.py`) at
-`b6f93198d2` · **Image:** `localhost/prismaquant/spark-vllm-nccl230:nightly-20260929`
+on branch `claude/t4-routed-e2m1`. The accuracy runs are at `b6f93198d2`
+(`t4_code_compare.py`, `decode_cost.cu`); the tables (`summarize.py`) and the
+A-side timing (`aside_cost.py`) are on the branch head · **Image:** `localhost/prismaquant/spark-vllm-nccl230:nightly-20260929`
 (`sha256:5be13705…`) · **Runner:** PrismaBuild, GB10 (sparky), one GPU per
 action, not a timing run · **Actions:** `64f0e529` (routed experts, 621 s),
 `2a355306` (dense MLP and shared expert, 569 s), `b4e94f7c` (MLA attention,
@@ -143,6 +144,11 @@ by `aside_cost.py`, PB `cfa28ea1`, measurement mode on sparklina. A dynamic
 global also changes the attested contract string (`…_static`), so it is a
 contract decision, not a kernel option.
 
+**Recommendation.** On accuracy alone, a per-token dynamic global does not
+justify changing `e2m1_group16_ue4m3_static`: it buys at most 0.4% of executed
+error. The cost measurement can only add to the case against it. The contract
+decision belongs to the #750 lead.
+
 ## Decode cost per weight
 
 `decode_cost.cu` decodes each body in register form straight into the FP4
@@ -155,9 +161,20 @@ work. Static SASS count (nvcc 13.0.88, `-arch=sm_121a`, the decode loop):
 | span-2 TCQ | 9.8 | rates 2 to 7 |
 | span-2 TCQ | 8.0 | rate 1 (no point plane) |
 
-- **The count does not depend on rate** within either body. One kernel
-  templated on rate covers every rate of either body, and no rate is
-  intrinsically dearer to decode. Rate differences come from bytes.
+- **The count does not depend on rate** within either body, for one-run
+  (single-rate) tables. One kernel templated on rate covers every one-run
+  rate of either body, and no one-run rate is intrinsically dearer to decode.
+  Rate differences there come from bytes.
+- **Two-run tables are not measured.** Every matched-byte window arm in the
+  accuracy table except q1024 is a two-run table (`rate_set(q256 / 128)` =
+  `[r, r+1]`), so the accuracy and the decode-cost evidence cover different
+  rungs. On the E4M3 lane, two-run launches pay for the descriptor ring and a
+  per-warp rate branch (#694 measured 1.31× to 1.49× when the rate was a
+  runtime switch). The two-run cost in T-4's register form is the first thing
+  the fused kernel's geometry sweep under the #750 protocol must answer. If
+  that sweep excludes two-run tables, the comparison the allocator faces is
+  window one-run rungs (q256 = 128·r, 0.25 + r/2 bpw) against TCQ at the
+  nearest bytes, not the matched pairs above.
 - **The window decodes in 30% fewer instructions** than TCQ at rates 2 to 7.
 - Measured cycles per weight and power are timed by the same PB action
   `cfa28ea1`; this section is updated when it lands.
@@ -172,7 +189,10 @@ work. Static SASS count (nvcc 13.0.88, `-arch=sm_121a`, the decode loop):
      parity at q1024 (+0.25 bpw on that unit) or accept the 3%.
    - The allowable set is the window grammar's: run tables `[1]`, `[1,2]` …
      `[7,8]`, `[8]` over q256 128 to 1024, evaluated as
-     `rate_set(q256 * 2 / 256)`.
+     `rate_set(q256 * 2 / 256)`. At step 1 there is no gap between adjacent
+     supported rungs, so nothing to cost in GB, unless the geometry sweep
+     excludes two-run tables. Then the gap is one integer rate, q256 128
+     (0.5 bpw, about 19 GB on GLM-5.3's 304.5 B routed parameters).
 2. **Window body below the cap, TCQ at q896.**
    - Keeps the 3.0% at the one rung.
    - Needs a second fused decoder family (span-2 TCQ, 9.8 instructions per
