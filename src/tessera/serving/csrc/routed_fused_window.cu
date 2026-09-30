@@ -180,7 +180,7 @@ __host__ __device__ constexpr int pair_slot_words(int r_lo, bool two) {
 // launch is checked against the live device's own limit (``check_slot``), and
 // ``routed_fused.SM121_MAX_DYNAMIC_SMEM`` is the same figure.
 constexpr int SM121_SMEM_OPTIN = 101376;
-// The prev-word ring (tessera#737).  Every column's 64-row half needs the 32
+// The prev-word ring (tessera#739).  Every column's 64-row half needs the 32
 // stream bits before its first word (``load_prev``); master read that word
 // from global memory into a register one chunk ahead, and the chunk loop's
 // last register move waited for it: the one-run gate/up launch's single

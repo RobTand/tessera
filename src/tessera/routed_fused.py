@@ -174,7 +174,7 @@ def smem_bytes(mode: int, slot_words: int) -> int:
 
 
 #: The prev-word ring (``prev_ring`` in ``routed_fused_window.cu``,
-#: tessera#737): each column's previous stream word for WORD_STAGES chunks,
+#: tessera#739): each column's previous stream word for WORD_STAGES chunks,
 #: added after the word stages only where the launch still fits the target's
 #: block, so it never changes which launches fit (``ROUTED_LANE_RATES``).
 PRING_BYTES = WORD_STAGES * 2 * BK * 4
