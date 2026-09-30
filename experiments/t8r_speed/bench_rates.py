@@ -35,7 +35,7 @@ Words, tables, start states and scales are random: the decode's arithmetic and
 memory traffic do not depend on the values, except the table gathers' bank
 conflicts, which random 14-bit windows make uniform.
 
-Usage: bench_rates.py --out DIR --part routed|dense [--cases r4,r8,r4+q]
+Usage: bench_rates.py --out DIR --part routed|dense [--cases r4,r8,r4+q,q944]
        [--ms 1,8,512,2048] [--modes 0,2] [--shapes name:rows:cols,...]
        [--vllm-fp8] [--dense-ref] [--bm auto|64|128]
 """
@@ -65,6 +65,20 @@ SWIGLU_LIMIT = 10.0
 CASES = {f"r{r}": (r, None) for r in range(1, 9)}
 CASES.update({f"r{r}+q": (r, 0.25) for r in range(1, 8)})
 
+
+def parse_case(case):
+    """``rN`` / ``rN+q`` (the named cases), or ``qK``: the rung K = q256 itself --
+    one run at K / 256 when 256 divides K, else the adjacent pair (K // 256,
+    K // 256 + 1) with the fraction (K % 256) / 256 of the columns at the high rate."""
+    if case in CASES:
+        return CASES[case]
+    if case.startswith("q") and case[1:].isdigit():
+        k = int(case[1:])
+        if not 256 <= k <= 2048:
+            raise ValueError(f"rung {k} is outside the E4M3 reader range 256..2048")
+        return (k // 256, None) if k % 256 == 0 else (k // 256, (k % 256) / 256)
+    raise ValueError(f"unknown case {case!r}")
+
 # Per-rank shapes at TP2, rows x cols (out_features x in_features), from the
 # GLM-5.3-Flash config (hidden 4096; dense MLP 12288; shared expert 2048; KDA
 # 64 heads x 128; MLA 64 heads, q_lora 1536, kv_lora 512, qk 256, v 256;
@@ -83,7 +97,7 @@ DENSE_SHAPES = {
 
 
 def q256_of(r_lo, frac):
-    return 256 * r_lo + (0 if frac is None else int(256 * frac))
+    return 256 * r_lo + (0 if frac is None else round(256 * frac))
 
 
 def build_projection(rf, e, rows, cols, r_lo, n_hi, seed, dev, mma8):
@@ -95,7 +109,8 @@ def build_projection(rf, e, rows, cols, r_lo, n_hi, seed, dev, mma8):
     pair = torch.tensor((r_lo, 0, n_lo, 0, r_lo + 1 if two else 0, n_lo, n_hi, 16 * n_lo * r_lo),
                         dtype=torch.int32)
     tile_words = rf.pair_tile_words(pair)
-    words_stride = (rows // 512) * tile_words
+    # the wire pads rows to whole 512-row tiles (``compact_prep``: rows_p // TILE_ROWS)
+    words_stride = -(-rows // 512) * tile_words
     words = torch.randint(-2**31, 2**31 - 1, (e, words_stride), generator=g, device=dev, dtype=torch.int32)
     if mma8:
         table = torch.randint(0, 256, (e, 1 << 14), generator=g, device=dev, dtype=torch.int32)
@@ -220,10 +235,10 @@ def run_routed(args, rf, lib, library, mma8, dev, sms, power, clock, results):
     ms = [int(v) for v in args.ms.split(",")]
     modes = [int(v) for v in args.modes.split(",")]
     for case in args.cases.split(","):
-        r_lo, frac = CASES[case]
+        r_lo, frac = parse_case(case)
         for mode in modes:
             rows, cols = (INTER, HIDDEN) if mode == 0 else (HIDDEN, INTER)
-            n_hi = 0 if frac is None else int(cols * frac)
+            n_hi = 0 if frac is None else round(cols * frac)
             seed = zlib.crc32(f"{case}:{mode}".encode())
             projs = [build_projection(rf, EXPERTS, rows, cols, r_lo, n_hi, seed + i, dev, mma8)
                      for i in range(2 if mode == 0 else 1)]
@@ -385,8 +400,8 @@ def run_dense(args, rf, lib, library, mma8, dev, sms, power, clock, results):
     for name, rows, cols in shapes:
         refs = {}
         for case in args.cases.split(","):
-            r_lo, frac = CASES[case]
-            n_hi = 0 if frac is None else int(cols * frac)
+            r_lo, frac = parse_case(case)
+            n_hi = 0 if frac is None else round(cols * frac)
             rec = {"part": "dense", "shape": name, "rows": rows, "cols": cols, "case": case,
                    "q256": q256_of(r_lo, frac), "library": library, "cells": {}}
             # the dense identity's own shape predicate (rows % 128, cols % 32 and >= 128)
