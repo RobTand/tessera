@@ -1,6 +1,7 @@
 # The E4M3 tensor-core instruction in the fused window kernel
 
-**Status:** numerics measured on real wires; speed A/B pending. The library
+**Status:** numerics measured on real wires; kernel speed measured (5–7.5%
+faster at M = 2048 and 8192, equal power); not yet served. The library
 is experimental (contract v46): its two launch pairs stand in
 `scheme.EXPERIMENTAL_LAUNCHES`, no census cell names them, and the default
 instruction stays f16 until a served census earns them cells.
@@ -111,13 +112,67 @@ over the same bytes.
   quantizer as a hook. It never runs a Tessera kernel, so it scores both
   libraries identically and cannot gate this change. A served route census
   is the first measurement that runs the new library end to end.
-- **Speed.** Pending the A/B below.
+- **Served speed.** The A/B below times one routed module per call on one
+  GPU. The route census of the 8-layer GLM stub (PrismaBuild `7e514909`)
+  served the new library on every required lane in both phases, and was
+  refused only because no cell names its pairs yet; no full-model serve
+  has timed it.
 
 ## Speed
 
-Pending: PrismaBuild action `41c77d65` (master against this branch with the
-E4M3 instruction as the default, recorded prefill routing, Nsight Compute
-and power).
+PrismaBuild action `41c77d65` on sparklina timed the routed MoE module
+alone, with `experiments/t8r_speed/bench_t8r.py`, in three arms run one
+after another:
+
+- **A:** master `1381c3b716`.
+- **B:** this branch at `de3d0f3108`, with `routed_fused.E4M3_MMA_DEFAULT`
+  flipped to `"e4m3"` (the only edit).
+- **B′:** B again, as a drift control.
+
+Each arm ran the same three rungs of the release T-8 artifact, 30 timed
+iterations per cell. At M = 512, 2048 and 8192 the cells replay the routing
+recorded from real prefills (`prefill-routing-20260930`; 55, 37 and 10
+replays), and M = 1 and 8 use balanced routing. B and B′ produce
+bitwise-identical output on all 312 cells.
+
+Median wall time per call, A → B, with the geometric mean of the B/A ratio
+over the replays:
+
+| M | R832 (layer 42) | R1024 (layer 10) | R1088 (layer 11) |
+|---|---|---|---|
+| 1 | 0.61 → 0.59 ms (0.964) | 0.52 → 0.51 ms (0.983) | 0.64 → 0.61 ms (0.956) |
+| 8 | 3.46 → 3.33 ms (0.963) | 3.05 → 2.94 ms (0.964) | 3.70 → 3.56 ms (0.963) |
+| 512 | 15.25 → 14.58 ms (0.957) | 16.27 → 15.68 ms (0.965) | 16.05 → 15.42 ms (0.961) |
+| 2048 | 21.91 → 20.62 ms (0.947) | 20.90 → 19.89 ms (0.951) | 22.58 → 21.47 ms (0.953) |
+| 8192 | 64.76 → 61.06 ms (0.941) | 52.24 → 48.26 ms (0.925) | 65.41 → 61.34 ms (0.936) |
+
+How far to trust each row, from the B′/B spread (geometric mean per rung
+and M):
+
+- **M = 2048 and 8192:** B′/B is within 0.4% of 1 on every rung, against a
+  5–7.5% A→B gain. This is the claim: at prefill sizes the E4M3
+  instruction's library is 5–7.5% faster per call.
+- **M = 512:** B′/B is 0.997 on R832 and 1.003 on R1088, so their 3.9%
+  gains hold. On R1024, the first rung each arm ran, B′/B is 0.957: the
+  drift equals the effect, and that rung's M = 512 gain is not established.
+- **M = 1 and 8:** one cell each. B′/B is within 0.6% except R1024 at
+  M = 1 (0.967) and R1088 at M = 1 (1.010). The 2–4% decode gain is
+  suggestive, not established.
+
+Power was the same in both arms. The in-process sampler read 76–82 W on
+every timed cell of either arm. Netdata on sparklina agrees at box level:
+2-minute averages of 76–81 W while cells ran (60–63 W only at group
+loads), 75 W over 04:28–05:14Z. That is 55–58% of the GB10's ~140 W
+envelope, so the kernel is not power-bound, and work per joule improves by
+the same ratio as time.
+
+Scope: these are kernel timings of one routed MoE module on one GPU, not a
+served number. Routed MoE was 35.5% of the M = 2048 prefill chunk at TP2
+(`2026-09-30-prefill-attribution.md`), so a 5–7.5% kernel gain is worth
+about 2–3% of prefill wall time before any other change. Receipts:
+`/mnt/shared/tessera-measurements/t8r-speed-20260929/mma8-ab-20260930T035428Z`
+(`master-routed`, `mma8-routed`, `mma8-routedb`, each with
+`bench_t8r.json`).
 
 ## Receipts
 
