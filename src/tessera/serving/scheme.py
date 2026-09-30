@@ -770,13 +770,13 @@ def route_launches(route: str, *, structure: str = STRUCTURE_DENSE,
     non-empty set drops the ``when_lane_absent`` launch, exactly as the routes'
     own ``elif ... tessera_gemv is None`` branch does.
 
-    There is deliberately no RATE axis.  A rate decides whether the lane can
-    read a rung at all -- ``refuse_unreachable_lane``, and the caller passes
-    the answer in ``lanes`` -- and above that it decides only which M the GEMV
-    covers *within* a regime, never which launches the regime contains: the
-    one-row forward is always the GEMV and the batch regime always holds both,
-    rate-1 columns or not.  A rate filter here read as the second and cost the
-    batch cell its GEMV launch.
+    There is deliberately no RATE axis. A rate decides whether a prepared
+    lane can read a rung -- ``refuse_unreachable_lane``, represented here by
+    ``lanes``. Dispatch alternatives come from ``ROUTE_LAUNCHES``, not from a
+    universal GEMV/GEMM split: native dense preparation may serve either
+    regime, and a regime describes problem shape rather than one kernel.
+    Keep any within-regime M/rate decision in the owning lane. Adding a rate
+    filter here would incorrectly erase alternatives from a regime's census.
     """
     if route not in ROUTE_LAUNCHES:
         raise ValueError(
