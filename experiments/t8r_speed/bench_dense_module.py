@@ -187,7 +187,8 @@ def main():
     ap.add_argument("--iters", type=int, default=20)
     ap.add_argument("--power-ms", default="1,512,8192")
     ap.add_argument("--power-s", type=float, default=0.5)
-    ap.add_argument("--ncu", action="store_true", help="accepted for the wrapper; not used")
+    ap.add_argument("--ncu", action="store_true",
+                    help="one apply per (module, lane, M) between cudaProfilerStart/Stop; no timing")
     ap.add_argument("--model", default=None, help="source checkpoint: encode its real bytes")
     ap.add_argument("--layer", type=int, default=1, help="the KDA layer read from --model")
     ap.add_argument("--numerics-ms", default="1,64,2048")
@@ -290,7 +291,7 @@ def main():
         return head, make, ["scaled_mm"]
 
     built = {}
-    for pas in ("F", "R"):
+    for pas in (("F",) if args.ncu else ("F", "R")):
         order = groups if pas == "F" else list(reversed(groups))
         for key, spec in order:
             if key not in built:
@@ -303,6 +304,19 @@ def main():
                 cell = cells[key]["cells"].setdefault(ckey, {})
                 try:
                     cmeta, calls, holder = make(m, lane)
+                    if args.ncu:
+                        # ncu --profile-from-start off: exactly one profiled apply per cell.
+                        for _ in range(3):
+                            calls["apply"]()
+                        torch.cuda.synchronize()
+                        torch.cuda.cudart().cudaProfilerStart()
+                        calls["apply"]()
+                        torch.cuda.synchronize()
+                        torch.cuda.cudart().cudaProfilerStop()
+                        cell["ncu"] = True
+                        print(json.dumps({"g": key, "cell": ckey, "ncu": True}), flush=True)
+                        del calls, holder
+                        continue
                     for cname, call in calls.items():
                         samples = graph_time(call, args.warmup, args.iters)
                         rec = cell.setdefault(cname, {})
