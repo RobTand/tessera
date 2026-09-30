@@ -58,6 +58,7 @@ def test_the_e4m3_rule_admits_every_rung_of_its_attested_run_tables(contract):
     row = _row(contract)
     rule = row["allowable_rungs"]
     assert rule["rule"] == "window_rate_set" and rule["rule"] in ALLOWABLE_RULES
+    assert rule["code_arity"] == 1
     assert rule["range_q256"] == row["reader_rate_range_q256"] and rule["step_q256"] == 1
     tables = [tuple(t) for t in rule["run_tables"]]
     # every one-run rate 1..8 and every adjacent pair: the oracle's variants
@@ -158,6 +159,7 @@ def test_an_unknown_rule_admits_nothing_and_is_refused(contract):
     ("excluded_q256", [99999], "excluded_q256"),
     ("evidence", ["/abs/path.md"], "repository path"),
     ("evidence", [], "evidence"),
+    ("code_arity", 2, "code_arity"),
 ])
 def test_a_malformed_rule_is_refused_by_name(contract, field, value, match):
     bad = copy.deepcopy(contract)

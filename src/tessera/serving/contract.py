@@ -1777,7 +1777,7 @@ def reader_accepts(q256: int, low: int, high: int, step: int) -> bool:
 
 #: The ``allowable_rungs.rule`` values this package defines.
 ALLOWABLE_RULES = ("window_rate_set",)
-_ALLOWABLE_KEYS = {"rule", "range_q256", "step_q256", "run_tables",
+_ALLOWABLE_KEYS = {"rule", "code_arity", "range_q256", "step_q256", "run_tables",
                    "excluded_run_tables", "excluded_q256", "wire", "evidence"}
 _WIRE_STAMP_KEYS = {"body", "span", "plane", "window_bits", "seed", "sigma", "channel_sigma"}
 
@@ -1913,7 +1913,13 @@ def _validate_allowable_rungs(entry: Mapping[str, Any], route: str, where: str) 
         raise ValueError(
             f"{at}: range {rng} step {rstep} is not inside the reader's grid [{low}, {high}] "
             f"step {step}. An allowable rung is one the decoder reads.")
-    _ar, cap = _family_arity_cap(entry, where)
+    ar, cap = _family_arity_cap(entry, where)
+    if rule["code_arity"] != ar or isinstance(rule["code_arity"], bool):
+        raise ValueError(
+            f"{at}.code_arity is {rule['code_arity']!r}; grid {entry['grid']!r} codes {ar} "
+            "weight(s) per code.  A reader resolves a rung to its run table as "
+            "rate_set(q256 * code_arity / 256) without knowing the grid, so the field must "
+            "be the grid's own arity.")
     tables = _run_table_list(rule["run_tables"], f"{at}.run_tables", cap)
     excluded = _run_table_list(rule["excluded_run_tables"], f"{at}.excluded_run_tables", cap)
     both = sorted(set(tables) & set(excluded))
