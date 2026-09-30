@@ -19,8 +19,9 @@ for bit):
 * ``random``: dense activations through ``scaled_fp4_quant``; the error
   against the float64 sum must stay within one bf16 rounding plus the fp32
   accumulation bound ``K * 2^-23 * sum |a w| * ratio``;
-* the same at the TP2 rank-1 row cut (a carried start state), at partial
-  superblocks, at two-run tables, and at the dense launch with and without a
+* the same at a rank's cut (a carried start state; TP2's rank 1 on the
+  uniform rung, rows 512..I on the mixed one, whose columns cut only on
+  256-column superblocks), at partial superblocks, at two-run tables, and at the dense launch with and without a
   K split; and a CUDA-graph replay of each launch must equal its eager call
   bit for bit.
 
@@ -450,7 +451,10 @@ def main():
                 gb = [encode(I, H, q, seed + e, dev) for e in range(E)]
                 ub = [encode(I, H, q, seed + 100 + e, dev) for e in range(E)]
                 db = [encode(H, I, q, seed + 200 + e, dev) for e in range(E)]
-                cut_gu = (I // 2, I) if cut_name == "rank1" else None
+                # A mixed-rate unit cuts its columns only on 256-column
+                # superblocks, so q448's rank starts at 512, not TP2's I / 2.
+                cut_gu = (((512, I) if q % 256 else (I // 2, I)) if cut_name == "rank1" else None)
+                case["cut_rows"] = list(cut_gu) if cut_gu else None
                 gate, up = stack(gb, cut_gu, dev), stack(ub, cut_gu, dev)
                 # rank 1 of the down cuts the same intermediate range from its
                 # columns, so the served chain reads gate/up's rank-local rows
