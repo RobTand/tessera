@@ -131,12 +131,24 @@ How the rows were built:
 At L512 the same replay puts 62.6 ms of the 99.7 ms remainder on routing
 skew.
 
-The stock vLLM work in the table (KDA, mHC, MLA, glue and the all-reduce)
-comes to about 460 ms per chunk, and none of it is Tessera's. The EXL3
-reference serve runs the same architecture at the same settings (eager,
-TP2, 2,048-token steps), so it must do equivalent work. Its image
-(`eecb36e1`) was not inspected here. The routed kernel is where the two
-serves differ by construction.
+The stock vLLM work in the table (KDA, mHC, glue and the all-reduce) and
+the MLA attention come to about 460 ms per chunk. The EXL3 reference serve
+runs the same architecture at the same settings (eager, TP2, 2,048-token
+steps), but not the same software, so this note does not show that it does
+equivalent work outside the routed experts:
+
+- **Image.** EXL3 ran `ghcr.io/miaai-lab/glm-5.3-flash-2x-dgx-sparks@sha256:eecb36e1`
+  (vLLM `0.1.dev20051+g487ecf187`). T8R ran
+  `spark-vllm-nccl230@sha256:f8dbe1a0` (vLLM `0.28.1rc1.dev397`) with the
+  Tessera plugin. Source: the EXL3 run's `image-identity.txt` and the T8R
+  run's `cmd/latency-rank1.sh`.
+- **MLA backend.** EXL3 logs `FLASHINFER_MLA_SPARSE_SM120`. T8R runs
+  `--attention-backend CUSTOM` with `TESSERA_RESEARCH_GLM53_NOPE=1`, the
+  Tessera NoPE path. The 67.1 ms MLA row above is T8R's path only.
+
+The routed kernel is the one component the replay prices directly. Whether
+the non-routed layers cost the same on the EXL3 serve is unmeasured; a
+truncated EXL3 serve profiled like the T8R one above would settle it.
 
 ## A decode-to-scratch routed path
 
