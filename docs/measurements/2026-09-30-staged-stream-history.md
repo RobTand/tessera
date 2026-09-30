@@ -181,11 +181,18 @@ producers remain latency-bound.
   two-run launches too, which this job did not time. It is left for its own
   change with its own two-run measurement.
 
+### Tests
+
+`tests/test_routed_fused_window.py` and `tests/test_dense_fused_window.py` on
+this change's source, on a GB10 (sparky), PrismaBuild row `799e1d30`: 666
+passed, 0 failed, 0 errors, 0 skipped, return code 0.
+
 ### Not yet measured
 
 The two-run stacks (R1088, R832) and the E4M3 dense and shared-expert
 launches also change (Static check). Their A/B, master against this change
-on the T8R release artifact, is PrismaBuild row `a09cdd13`.
+on the T8R release artifact, is PrismaBuild row `8a5a23e0`. Its results are
+added to this page when they land.
 
 ## Receipts
 
@@ -193,7 +200,7 @@ on the T8R release artifact, is PrismaBuild row `a09cdd13`.
 |---|---|---|
 | NCU, master kernel, M = 512 | `e56fba02` | `t8r-speed-20260929/l512-20260930/k2/` |
 | Timing, five arms, forward and reverse | `6b0b970b` | `t8r-speed-20260929/l512-20260930/k3/` |
-| GPU tests (routed and dense fused window) | `799e1d30` | `t8r-speed-20260929/l512-20260930/tests-port-087d4a38bb-20260930T190706Z/` |
-| A/B on the T8R release artifact (two-run and dense) | `a09cdd13` | `t8r-speed-20260929/l512-20260930/ab-staged-20260930T191324Z/` |
+| GPU tests (routed and dense fused window), 666 passed | `799e1d30` | `t8r-speed-20260929/l512-20260930/tests-port-087d4a38bb-20260930T190706Z/` |
+| A/B on the T8R release artifact (two-run and dense) | `8a5a23e0` | `t8r-speed-20260929/l512-20260930/ab-staged-20260930T191324Z/` |
 
 Outputs are under `/mnt/shared/tessera-measurements/`.
