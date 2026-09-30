@@ -31,9 +31,11 @@ A newer eugr nightly exists:
 `eugr/spark-vllm@sha256:e813795a18ea115211fd46b4fbbbb0be5e76d49d26c8f4b8c0763ac5b9f9f07c`
 (vLLM `0.30.1rc1.dev420+gd71f66260.d20260930`, FlashInfer 0.7.1, the same
 torch). Its runner, `cudagraph_utils.py`, both GLM indexer files and
-`model_states/default.py` are byte-identical to the pinned image's, so the
-graph finding below applies to it unchanged. Its load smoke is in
-[Newer nightly](#newer-nightly).
+`model_states/default.py` are byte-identical to the pinned image's, so cause 2
+below holds there by the same source. Its sparse MLA backend file differs
+(`flashinfer_mla_sparse_sm120.py`, sha256
+`d6344e4410db65814638f5c830ef3f9d12d64cdb4bf40e6af37326910f1dd0c9`), and no
+graph arm ran on it. Its load smoke is in [Newer nightly](#newer-nightly).
 
 ## The eager cells
 
@@ -171,6 +173,7 @@ File digests (vLLM package paths, read from the pinned image):
 | `models/glm5next/common/sparse_indexer.py` | `a3ab1edda8490b8e21c1c240e07e8c8fcd0bb34246a9ed1f64acfe067d15067c` |
 | `models/glm5next/nvidia/sparse_indexer.py` | `549f94234e44000c0b9995745328fd262b7ff69e62c6089ad049f65a7573914d` |
 | `v1/worker/gpu/model_states/default.py` | `f1d34d5c8c03be6e5afec8c2a24480ec259ca7c87392462f4e52d6c4eb775733` |
+| `v1/attention/backends/mla/flashinfer_mla_sparse_sm120.py` | `102ca08793d567f95598eefeb34c3f6ec50b3b9d704f162d1402b97b12b5777b` |
 
 **Not yet run: the discriminating pair.** The mechanism predicts that a
 capture at `max_model_len 2048` (so `max_seq_len <= index_topk`) takes the
@@ -225,10 +228,10 @@ change the eager baseline every cell and KL receipt was measured on.
 ## Newer nightly
 
 Not yet run. A load smoke of
-`eugr/spark-vllm@sha256:e813795a...` is queued. Its sources that decide the
-graph finding are byte-identical to the pinned image's (see
-[The image](#the-image)), so moving the U4 stack to it would not change the
-result on this page.
+`eugr/spark-vllm@sha256:e813795a...` is queued. The sources behind cause 2
+are byte-identical to the pinned image's (see [The image](#the-image)), so
+moving the U4 stack to it would not remove that cause; nothing on this page
+was measured on it.
 
 ## Measured and not measured
 
