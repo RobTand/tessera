@@ -111,7 +111,7 @@ def test_actual_installed_git_package_keeps_legacy_bytes():
         pytest.skip('the installed-source control requires a noneditable Git package')
     commit = url['vcs_info']['commit_id']
     assert len(commit) == 40 and all(c in '0123456789abcdef' for c in commit)
-    root = Path(dist.locate_file('tessera')).resolve()
+    root = Path(str(dist.locate_file('tessera'))).resolve()
     assert root.is_relative_to(Path(sys.prefix).resolve())
     files = {p.relative_to(root).as_posix(): p.read_bytes() for p in sorted(root.rglob('*'))
              if p.is_file() and p.suffix in {'.py', '.cu', '.cuh', '.cpp', '.h'}}
