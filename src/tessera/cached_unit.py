@@ -21,7 +21,7 @@ from .encoder_identity import encoder_fixture_id, resumable
 from .export import (ActivationSource, DEFAULT_CODE, DEFAULT_GROUP, DEFAULT_HALF,
                      HESSIAN_IDENTITY, WireRecipe, served_recipe)
 from .grammar import bresenham_rate_schedule
-from .manifest import BodyKind, ContainerClass, RotationState
+from .manifest import BodyKind, ContainerClass, RotationState, body_rate_cap
 from .serving_parts import unique_json_pairs
 from .structure import STRUCTURE_DENSE, STRUCTURES
 from .unit_artifact import _reach_attrs, build_unit_artifact, encoder_profile_id
@@ -439,7 +439,7 @@ def _check_wire(blob: bytes, identity: dict):
         raise ValueError("cached unit wire rung differs from the requested rung")
     if manifest.branch.rotation != RotationState.NONE or manifest.branch.container != ContainerClass.GRIDBOOK:
         raise ValueError("cached unit wire rotation/container differs from the encoder defaults")
-    cap = grid.payload_bits if recipe.body is BodyKind.WINDOW else grid.rate_cap
+    cap = body_rate_cap(recipe.body, grid)
     rates = bresenham_rate_schedule(Fraction(q256 * grid.arity, 256), columns, cap=cap)
     code = None if recipe.body is BodyKind.WINDOW else DEFAULT_CODE
     profile = encoder_profile_id(code, rates, grid, recipe.span, recipe.scale_plane,

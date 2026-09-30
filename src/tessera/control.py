@@ -88,7 +88,7 @@ from .errors import (
     TesseraError,
 )
 from .export import rung_ceiling, wire_recipe
-from .manifest import BodyKind, ScalePlaneKind, scale_plane_terminal_flags
+from .manifest import BodyKind, ScalePlaneKind, body_rate_cap, scale_plane_terminal_flags
 from .serving_parts import read_serving_manifest
 
 __all__ = [
@@ -400,10 +400,7 @@ def unit_wire_bits(grid: "str | PayloadGrid", q256: int, rows: int, columns: int
     recipe = wire_recipe(payload, q256)
     plane = ScalePlaneKind(recipe.scale_plane)
     body = BodyKind(recipe.body)
-    # The window body may spend the grid's whole payload width at a position;
-    # the coset trellis spends one bit of it on the code.  The same dispatch
-    # ``export.plan_for`` makes when it builds the schedule the encoder runs.
-    cap = payload.payload_bits if body is BodyKind.WINDOW else payload.rate_cap
+    cap = body_rate_cap(body, payload)
     with_base, with_refine, with_rows = scale_plane_terminal_flags(plane)
     rate = terminal_rate(
         q256 * payload.arity,

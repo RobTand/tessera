@@ -1183,9 +1183,10 @@ def refuse_unserveable_wire(grid: str, q256: int, body: str, plane: str,
     Until this parameter existed a routed stack was held to the dense
     reader's range -- ``[256, 2048]`` on E4M3 -- while the routed cells
     attest exactly one rung, and no producer gate read them.  The bound for
-    a non-dense structure is the union of its cells' rungs, so a rung the
-    dense cells attest and no routed cell does is refused, and the refusal
-    names the cells it read.  ``contract`` is for a caller holding a table
+    a non-dense structure is the union of the rungs its cells cover -- their
+    census rungs and the allowable rungs of their run tables (lane schema v11,
+    tessera#750) -- so a rung the dense cells attest and no routed cell covers
+    is refused, and the refusal names the cells it read.  ``contract`` is for a caller holding a table
     other than the packaged one (tests); the packaged file is the default.
     """
     from .contract import reader_accepts, reader_rate_grid
@@ -1229,7 +1230,9 @@ def refuse_unserveable_wire(grid: str, q256: int, body: str, plane: str,
         refuse_a_family_with_no_expert_route(route, target)
         # THE FORMAT ROW IS THE DENSE READER'S RANGE.  A non-dense structure
         # is attested only where a cell of that structure exists, so its
-        # bound is the union of those cells' rungs -- which the contract
+        # bound is the union of the rungs those cells cover (their census
+        # rungs and, since lane schema v11, the allowable rungs of their run
+        # tables; ``contract.cell_covers_rung``) -- which the contract
         # validator already keeps inside the row's range, so this is the
         # tighter of the two and the only one that names the right kernel.
         # A cell that attests a toolchain is not one of these: see
@@ -1255,17 +1258,26 @@ def refuse_unserveable_wire(grid: str, q256: int, body: str, plane: str,
                 f"container receipt covers the structure on a runtime image; absence is "
                 f"'unattested', which an export that declares the structure cannot ship on. "
                 + still_legal)
-        rungs = sorted({int(r) for cell in cells for r in cell["rungs_q256"]})
-        if q256 not in rungs:
-            per_cell = "; ".join(f"{cell['id']} attests {sorted(cell['rungs_q256'])}"
-                                 for cell in cells)
+        # Since lane schema v11 a cell covers its census rungs AND every rung
+        # its family's allowable_rungs rule admits in one of its run tables
+        # (tessera#750): ``contract.cell_covers_rung``, the one predicate.
+        from .contract import cell_covers_rung, format_entry
+
+        entry = format_entry(family, contract)
+        if not any(cell_covers_rung(cell, q256, entry) for cell in cells):
+            rungs = sorted({int(r) for cell in cells for r in cell["rungs_q256"]})
+            per_cell = "; ".join(
+                f"{cell['id']} attests {sorted(cell['rungs_q256'])}"
+                + (f" and run tables {cell['run_tables']}" if cell.get("run_tables") else "")
+                for cell in cells)
             raise ValueError(
                 f"tessera export {target!r}: q256={q256} on grid {grid!r} is outside the rungs "
                 f"the {structure} cells of runtime_contract.json attest for {family} "
                 f"({rungs}: {per_cell}). The format row's reader range is the dense route's; "
                 f"a {structure} stack is served by a different consuming kernel and is "
-                f"attested only at the rungs its own cells name. Re-plan the stack on one of "
-                f"{rungs}, or serve the rung and publish the cell. " + still_legal)
+                f"attested only at the rungs its own cells cover: their census rungs, and the "
+                f"allowable rungs of their run tables. Re-plan the stack on a covered rung, "
+                f"or serve the rung and publish the cell. " + still_legal)
     expected_plane = ROUTES[route]["plane"]
     if plane != expected_plane:
         raise ValueError(

@@ -46,6 +46,7 @@ from .layout import TerminalSpec, build_plane_region, build_planes, build_termin
 from .manifest import (
     ArrangementMode,
     BodyKind,
+    body_rate_cap,
     BranchIdentity,
     ShardOrigin,
     ContainerClass,
@@ -581,10 +582,7 @@ def build_unit_artifact(
         widths = (0,) * cols
     else:
         widths = completion_widths_for(rates, grid.rate_cap, unit.completion_limit)
-    # The window body's shaping is shared history, not a code bit, so its
-    # rate ceiling is the grid's whole width; the TCQ trellis spends one bit
-    # of the payload on its code and caps one lower (``export._plan_for``).
-    cap = grid.payload_bits if body is BodyKind.WINDOW else grid.rate_cap
+    cap = body_rate_cap(body, grid)
     geometry = Geometry(
         rows=rows,
         columns=cols,

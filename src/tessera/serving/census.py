@@ -173,7 +173,8 @@ CELL_AGREEMENT_SCHEMA = "tessera.cell-launch-agreement/3"
 
 def cell_launch_agreement(records_by_phase, *, cells, phase_regimes, platform,
                           rungs_by_module, families_by_route, structure="dense",
-                          symbol_alias=None, runtime_image=None, execution_mode=None):
+                          symbol_alias=None, runtime_image=None, execution_mode=None,
+                          formats=None):
     """Every served record's launch against the CELL that covers it (#111).
 
     The lane-engagement block above asks whether a lane took any modules.  This
@@ -196,11 +197,22 @@ def cell_launch_agreement(records_by_phase, *, cells, phase_regimes, platform,
     state a closed-world table has for a rung no receipt covered, and inventing a
     verdict from it is the failure the whole table is shaped to avoid.
 
+    A record is joined to the cell of its (family, residency, regime) that
+    COVERS its rung (``contract.cell_covers_rung``): a census rung, or, since
+    lane schema v11, an allowable rung of one of the cell's run tables under
+    the family's rule in ``formats`` (the ``formats[]`` rows of the contract
+    ``cells`` came from; the packaged contract's by default).
+
     Returns ``(block, problems)``.  ``agrees`` is three-valued for the same
     reason ``all_required_engaged`` is: ``None`` when no record was covered by
     any cell, so a gate can tell "nothing to check" from "everything checked".
     """
-    from .contract import cell_runtime_scope, refuse_unevaluated_predicates
+    from .contract import (cached_serving_contract, cell_covers_rung, cell_runtime_scope,
+                           refuse_unevaluated_predicates)
+
+    if formats is None:
+        formats = cached_serving_contract()["formats"]
+    entries = {entry.get("family"): entry for entry in formats}
     from .scheme import eager_regime_problem
 
     runtime = {"image": runtime_image, "execution_mode": execution_mode}
@@ -224,9 +236,12 @@ def cell_launch_agreement(records_by_phase, *, cells, phase_regimes, platform,
             continue
         modes = _cell_modes(cell)
         for mode in modes:
-            for rung in cell.get("rungs_q256", ()):
-                key = (cell["family"], mode, cell["regime"], int(rung))
-                by_regime[key] = cell
+            # Several cells may share a (family, residency, regime): a cell
+            # that declares both residencies (the streamed dense E4M3 cells)
+            # overlaps the resident cell of the same regime.  The LAST cell in
+            # table order that covers the rung is the one joined, which is the
+            # precedence the per-rung dict this replaced had.
+            by_regime.setdefault((cell["family"], mode, cell["regime"]), []).append(cell)
 
     phases = {}
     problems = []
@@ -259,7 +274,8 @@ def cell_launch_agreement(records_by_phase, *, cells, phase_regimes, platform,
             family = families_by_route.get(route)
             rung = rungs_by_module.get(name)
             cell = (None if rung is None or family is None
-                    else by_regime.get((family, mode, regime, int(rung))))
+                    else next((c for c in reversed(by_regime.get((family, mode, regime), ()))
+                               if cell_covers_rung(c, int(rung), entries.get(family))), None))
             if cell is None:
                 unattested += 1
                 continue

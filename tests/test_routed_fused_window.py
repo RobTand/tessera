@@ -98,18 +98,25 @@ def _sched(cols, q256):
     return bresenham_rate_schedule(Fraction(q256, 256), cols, cap=8)
 
 
-def _stacks(family, *, hidden=HIDDEN, inter=INTER, experts=EXPERTS, seed=300, cut=True, q256=1024):
+def _stacks(family, *, hidden=HIDDEN, inter=INTER, experts=EXPERTS, seed=300, cut=True, q256=1024,
+            place=None):
     """gate, up, down Expert lists at the ``q256`` rung's schedule (rate 4
     everywhere by default); experts 1 and 3 carry a start state (the TP
-    row-cut case) when ``cut``."""
+    row-cut case) when ``cut``.  ``place(schedule, seed)``, when given,
+    rearranges each expert's schedule (its own seed per expert and
+    projection): the rate counts, so the run table, stay the stack's."""
     r_h, r_i = _sched(hidden, q256), _sched(inter, q256)
-    gate = [Expert(inter, hidden, r_h, seed + i, family=family,
+
+    def rates(schedule, s):
+        return schedule if place is None else place(schedule, s)
+
+    gate = [Expert(inter, hidden, rates(r_h, seed + i), seed + i, family=family,
                    init=_init(hidden, seed + 40 + i) if (cut and i % 2) else None)
             for i in range(experts)]
-    up = [Expert(inter, hidden, r_h, seed + 10 + i, family=family,
+    up = [Expert(inter, hidden, rates(r_h, seed + 10 + i), seed + 10 + i, family=family,
                  init=_init(hidden, seed + 50 + i) if (cut and i % 2) else None)
           for i in range(experts)]
-    down = [Expert(hidden, inter, r_i, seed + 20 + i, family=family,
+    down = [Expert(hidden, inter, rates(r_i, seed + 20 + i), seed + 20 + i, family=family,
                    init=_init(inter, seed + 60 + i) if (cut and i == 3) else None)
             for i in range(experts)]
     return gate, up, down
@@ -766,8 +773,8 @@ def test_fused_stages_decode_every_rate_exactly(family, q256, build):
     _decode_exact(family, q256, build)
 
 
-def _decode_exact(family, q256, build):
-    stacks = _stacks(family, q256=q256)
+def _decode_exact(family, q256, build, *, place=None):
+    stacks = _stacks(family, q256=q256, place=place)
     gate, up, down = stacks
     assert set(gate[0].rates) <= set(rf.RATES) and len(set(gate[0].rates)) in (1, 2)
     fused = _fused((_bundles if build == "prepare" else _axis_bundles)(family, stacks))
@@ -986,8 +993,8 @@ def test_fused_stages_at_every_rate_are_within_the_derived_bounds(family, q256):
     _rate_bound(family, q256)
 
 
-def _rate_bound(family, q256):
-    stacks = _stacks(family, q256=q256)
+def _rate_bound(family, q256, *, place=None):
+    stacks = _stacks(family, q256=q256, place=place)
     gate, up, down = stacks
     bundles = _bundles(family, stacks)
     fused, legacy = _fused(bundles), _legacy(bundles)
@@ -1322,3 +1329,95 @@ def test_the_routed_width_reaches_the_launches_that_have_it(family, monkeypatch)
         seen.clear()
         fused(x, ids, rw)
         assert seen == want, (fused.library, setting)
+
+
+# --- random fractional mixes inside every run table (tessera#750) ----------------
+
+#: A rung's kernel is its run table: one column rate, or two adjacent ones
+#: (``grammar.rate_set``).  The mix fraction -- how many columns take the upper
+#: rate, and which -- is runtime data (the run pair's ``n_lo``/``w_hi`` and the
+#: block descriptors), so one kernel serves every rung between two whole rates.
+#: These tests attest that claim per (library, pair): at random rungs inside the
+#: pair, placed at random per expert and projection, every one-hot product
+#: decodes bitwise (the gate/up and down launches, both build paths), the fused
+#: forward is its staged composition within the derived bounds, and the forward
+#: replays in a CUDA graph.  The contract's ``allowable_rungs`` rule names the
+#: pairs this covers.
+MIX_DRAWS = 4
+
+from fractions import Fraction                            # noqa: E402
+
+from tessera.grammar import rate_set                      # noqa: E402
+
+
+def _mix_pairs(library):
+    """The adjacent pairs whose both rates the library's gate/up launch reaches."""
+    rates = rf.routed_lane_rates(library)
+    return [r for r in rates if r + 1 in rates]
+
+
+MIX_CASES = [(lib, r) for lib in LIBRARY_IDS for r in _mix_pairs(lib)]
+
+
+def _mix_rungs(r, step, seed, draws=MIX_DRAWS):
+    """``draws`` rungs strictly inside ``(256 r, 256 (r + 1))`` on ``step``: the
+    two extremes (one ``step`` of upper-rate columns, and one ``step`` short
+    of all of them) and random interior ones from a fixed seed."""
+    import random
+
+    lo, hi = 256 * r + step, 256 * (r + 1) - step
+    rng = random.Random(seed)
+    inner = rng.sample(range(lo + step, hi, step), draws - 2)
+    return [lo, hi] + sorted(inner)
+
+
+def _shuffle(schedule, seed):
+    """A random arrangement of ``schedule``'s rates: same counts, new places."""
+    g = torch.Generator().manual_seed(seed)
+    return tuple(schedule[i] for i in torch.randperm(len(schedule), generator=g).tolist())
+
+
+def _replays(fused, t=40, seed=31):
+    x = torch.randn(t, HIDDEN, device="cuda").bfloat16()
+    ids, rw = _routes(t, TOP_K, seed)
+    eager = fused(x, ids, rw)
+    side = torch.cuda.Stream()
+    side.wait_stream(torch.cuda.current_stream())
+    with torch.cuda.stream(side):
+        fused(x, ids, rw)
+    torch.cuda.current_stream().wait_stream(side)
+    graph = torch.cuda.CUDAGraph()
+    with torch.cuda.graph(graph):
+        captured = fused(x, ids, rw)
+    for _ in range(2):
+        captured.zero_()
+        graph.replay()
+        torch.cuda.synchronize()
+        assert torch.equal(captured, eager)
+
+
+@cuda
+@pytest.mark.parametrize("family,r", MIX_CASES, indirect=["family"])
+def test_random_mixes_inside_every_pair_decode_exactly(family, r):
+    """Every rung of the pair ``(r, r + 1)`` runs the pair's one kernel.  The
+    rungs are on a step of 4 (256 and 576 columns realise them exactly), and
+    each projection places its upper-rate columns at random -- one placement
+    per projection, which is what a grouped stack holds (``window_gemm_grouped``
+    refuses experts whose packed layouts differ), and a different one for gate
+    and up, whose column orders the gate/up launch maps separately -- so the
+    block descriptors hold every in-block split from all-low to all-high."""
+    for i, q256 in enumerate(_mix_rungs(r, 4, 7500 + 16 * r)):
+        assert rate_set(Fraction(q256, 256), cap=8) == (r, r + 1), q256
+
+        def place(schedule, s, i=i, q256=q256):
+            projection = (s - 300) // 10            # _stacks: gate 300+e, up 310+e, down 320+e
+            return _shuffle(schedule, 7919 * q256 + 97 * projection + i)
+
+        stacks = _stacks(family, q256=q256, place=place)
+        assert {len(set(e.rates)) for e in stacks[0] + stacks[2]} == {2}, q256
+        assert len({e.rates for e in stacks[0]}) == 1, "one placement per projection"
+        assert stacks[0][0].rates != stacks[1][0].rates, "gate and up should differ"
+        for build in ("prepare", "axis"):
+            _decode_exact(family, q256, build, place=place)
+        _rate_bound(family, q256, place=place)
+        _replays(_fused(_bundles(family, stacks)), seed=7600 + q256)

@@ -169,13 +169,19 @@ __all__ = [
     "load_serving_contract",
     "route_wire_spelling",
     "validate_serving_contract",
+    "ALLOWABLE_RULES",
+    "cell_covers_rung",
+    "derived_cell_run_tables",
+    "format_entry",
+    "rung_allowable",
+    "rung_rates",
     "PRODUCER_INTERFACE_SCHEMA",
     "validate_producer_interface",
 ]
 
 CONTRACT_FILENAME = "runtime_contract.json"
 CONTRACT_SCHEMA = "tessera.runtime-contract.v1"
-LANE_ELIGIBILITY_SCHEMA = "tessera.lane-eligibility.v10"
+LANE_ELIGIBILITY_SCHEMA = "tessera.lane-eligibility.v11"
 #: Execution is a separate axis from token-count regime and residency. These
 #: are the two modes selected by a serving invocation's enforce_eager flag.
 EXECUTION_MODES = ("eager", "compiled")
@@ -1322,7 +1328,7 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
                                 "reader_rate_bound", "attested_rungs_q256",
                                 "attested_wire",
                                 "native_terminal_q256", "residency_modes"},
-                      optional={"candidate_rungs_q256", "structures"})
+                      optional={"candidate_rungs_q256", "structures", "allowable_rungs"})
         # The A side, where a gate can read it.  It belongs on the ROW and not
         # only on the cells because it is a claim about EXECUTION -- what this
         # family's route feeds the GEMM -- and a family can be decodable before
@@ -1405,6 +1411,8 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
                     f"([{low}, {high}] step {step}). An attested rung is a rung that WAS served; "
                     "it cannot lie outside what the decoder takes.")
         _validate_attested_wire(entry, route, where)
+        if "allowable_rungs" in entry:
+            _validate_allowable_rungs(entry, route, where)
         families[entry["family"]] = entry
 
     block = contract["lane_eligibility"]
@@ -1467,7 +1475,10 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
                       required={"id", "platform", "family", "structure", "regime",
                                 "rungs_q256", "activation_contract", "executes",
                                 "route_status", "qualification", "requires_plugin",
-                                "requires_serve_flags", "predicates", "runtime", "evidence"})
+                                "requires_serve_flags", "predicates", "runtime", "evidence"},
+                      # v11 (tessera#750): the run tables the cell's census rungs
+                      # cover under the family's ``allowable_rungs`` rule.
+                      optional={"run_tables"})
         if not isinstance(cell["id"], str) or not cell["id"]:
             raise ValueError(f"{where}.id must be a non-empty string")
         if cell["id"] in cell_ids:
@@ -1543,6 +1554,21 @@ def validate_serving_contract(contract: Mapping[str, Any]) -> None:
         if unknown_rungs:
             raise ValueError(
                 f"{where}.rungs_q256 names {unknown_rungs}, which the family does not publish")
+        # WHICH RUN TABLES IT COVERS (v11, tessera#750).  Derived, never
+        # asserted: the run tables of the census rungs the family's rule
+        # admits.  A census at one rung of a table plus the kernel oracle's
+        # equivalence across the table is the whole claim, so a cell can
+        # neither widen past its census nor forget a table its census covers.
+        family_entry = families[cell["family"]]
+        want_tables = derived_cell_run_tables(cell, family_entry)
+        got_tables = cell.get("run_tables", [])
+        if got_tables != want_tables:
+            raise ValueError(
+                f"{where}.run_tables is {got_tables!r} but its census rungs "
+                f"{list(cell['rungs_q256'])} cover {want_tables!r} under {cell['family']}'s "
+                "allowable_rungs rule. A cell covers the run table of each census rung the rule "
+                "admits and no other: a table with no census rung was never served, and a "
+                "census rung's table left out hides rungs the serve covers.")
         # WHAT IT EXECUTES (schema v4).  Shape first, then the value.
         executes = cell["executes"]
         if (not isinstance(executes, list) or not executes
@@ -1715,6 +1741,221 @@ def _reader_rate(entry: Mapping[str, Any], where: str) -> tuple[int, int, int]:
 def reader_accepts(q256: int, low: int, high: int, step: int) -> bool:
     """Is ``q256`` on the published grid of rates the decoder reads?"""
     return low <= q256 <= high and (q256 - low) % step == 0
+
+
+# ---------------------------------------------------------------------------
+# allowable rungs: a RULE over run tables, not a list of rungs (lane schema v11)
+# ---------------------------------------------------------------------------
+#
+# A rung of a window-grammar family is a mix of at most two adjacent column
+# rates -- its RUN TABLE, ``grammar.rate_set`` of its per-code root -- and the
+# fused kernels are instantiated per run table: the mix fraction and the
+# placement of the upper-rate columns are runtime data (the run pair's
+# ``n_lo``/``w_hi`` and the block descriptors).  So a numerics oracle attests
+# a KERNEL VARIANT, and every rung whose run table is that variant is the same
+# kernel reading different data.  Until v11 the contract enumerated rungs one
+# at a time (``attested_rungs_q256``, a cell's ``rungs_q256``), which offered a
+# producer 8 of the 1,793 rungs the E4M3 reader takes.  ``allowable_rungs`` on
+# a ``formats[]`` row states the rule instead:
+#
+# * ``rule`` -- ``"window_rate_set"``, the one rule defined: a rung ``q`` is
+#   allowable when it lies in ``range_q256`` on ``step_q256``, is not in
+#   ``excluded_q256``, and its run table (:func:`rung_rates`) is in
+#   ``run_tables`` -- the variants the kernel oracle attests -- and not in
+#   ``excluded_run_tables``, the variants a measured geometry sweep excludes.
+# * ``wire`` -- the one ``wire.recipes`` entry (without ``q256``) every
+#   allowable rung is cut on; an attested rung the rule covers must be stamped
+#   with exactly this wire.
+# * ``evidence`` -- repository paths to the oracle and sweep receipts.
+#
+# A CELL covers the run tables of its census rungs (``run_tables``, DERIVED
+# here and refused when it disagrees): a served census at one rung of a run
+# table, with the oracle's equivalence across the table, covers every
+# allowable rung of it.  ``rungs_q256`` keeps listing the census rungs, and a
+# census rung is covered whether or not the rule admits it.
+# :func:`cell_covers_rung` is the one predicate every consumer asks.
+
+#: The ``allowable_rungs.rule`` values this package defines.
+ALLOWABLE_RULES = ("window_rate_set",)
+_ALLOWABLE_KEYS = {"rule", "code_arity", "range_q256", "step_q256", "run_tables",
+                   "excluded_run_tables", "excluded_q256", "wire", "evidence"}
+_WIRE_STAMP_KEYS = {"body", "span", "plane", "window_bits", "seed", "sigma", "channel_sigma"}
+
+
+def _family_arity_cap(entry: Mapping[str, Any], where: str = "formats row") -> tuple[int, int]:
+    """``(arity, cap)``: weights per code of the family's grid, and its highest
+    per-code column rate (``native_terminal_q256`` on the per-code axis)."""
+    from ..alphabet import SERIALISABLE_GRIDS
+
+    grid = next((g for g in SERIALISABLE_GRIDS.values() if g.name == str(entry["grid"])), None)
+    if grid is None:
+        raise ValueError(
+            f"{where}: formats grid {entry['grid']!r} names no serialisable grid this "
+            "package holds; a rung's rate set cannot be derived for it")
+    ar = int(grid.arity)
+    return ar, int(entry["native_terminal_q256"]) * ar // 256
+
+
+def rung_rates(entry: Mapping[str, Any], q256: int) -> tuple[int, ...]:
+    """The run table of rung ``q256`` of a ``formats[]`` row's family: the
+    column rates its schedule mixes (``grammar.rate_set`` of the per-code root;
+    a code covers ``arity`` weights, so the per-weight rung resolves onto the
+    per-code root as ``_validate_cell_executes`` does).  Raises
+    ``GrammarError`` for a rung the family cannot encode."""
+    from fractions import Fraction
+
+    from ..grammar import rate_set
+
+    ar, cap = _family_arity_cap(entry)
+    return tuple(int(r) for r in rate_set(Fraction(int(q256) * ar, 256), cap=cap))
+
+
+def rung_allowable(entry: Mapping[str, Any], q256: int) -> bool:
+    """Does the family's ``allowable_rungs`` rule admit ``q256``?  ``False``
+    for a row with no rule and for a rule this package does not define: an
+    unknown rule admits nothing (fail closed)."""
+    from ..errors import GrammarError
+
+    rule = entry.get("allowable_rungs")
+    if not isinstance(rule, Mapping) or rule.get("rule") not in ALLOWABLE_RULES:
+        return False
+    q = int(q256)
+    low, high = (int(v) for v in rule["range_q256"])
+    if not reader_accepts(q, low, high, int(rule["step_q256"])):
+        return False
+    if q in {int(v) for v in rule["excluded_q256"]}:
+        return False
+    try:
+        rates = rung_rates(entry, q)
+    except GrammarError:
+        return False
+    tables = {tuple(int(r) for r in t) for t in rule["run_tables"]}
+    excluded = {tuple(int(r) for r in t) for t in rule["excluded_run_tables"]}
+    return rates in tables and rates not in excluded
+
+
+def derived_cell_run_tables(cell: Mapping[str, Any],
+                            entry: Mapping[str, Any]) -> list[list[int]]:
+    """The run tables a cell covers: those of its census rungs the family's
+    rule admits, ascending.  Empty for a family with no rule."""
+    if not isinstance(entry.get("allowable_rungs"), Mapping):
+        return []
+    tables = {rung_rates(entry, int(r)) for r in cell["rungs_q256"]
+              if rung_allowable(entry, int(r))}
+    return [list(t) for t in sorted(tables)]
+
+
+def cell_covers_rung(cell: Mapping[str, Any], q256: int,
+                     entry: "Mapping[str, Any] | None") -> bool:
+    """Does ``cell`` cover rung ``q256``?  A census rung (``rungs_q256``)
+    always; any other rung when the family's rule (``entry``, the cell
+    family's ``formats[]`` row) admits it and its run table is one of the
+    cell's ``run_tables``.  The one predicate the export gate, the census
+    join and ``attested_by`` read, so a rung one of them covers the others
+    cover too."""
+    q = int(q256)
+    if q in {int(r) for r in cell.get("rungs_q256") or ()}:
+        return True
+    tables = {tuple(int(r) for r in t) for t in cell.get("run_tables") or ()}
+    if not tables or entry is None or not rung_allowable(entry, q):
+        return False
+    return rung_rates(entry, q) in tables
+
+
+def format_entry(family: str, contract: "Mapping[str, Any] | None" = None
+                 ) -> "Mapping[str, Any] | None":
+    """The ``formats[]`` row of ``family`` in ``contract`` (the packaged one
+    by default), or ``None``."""
+    payload = cached_serving_contract() if contract is None else contract
+    return next((e for e in payload["formats"] if e.get("family") == family), None)
+
+
+def _run_table_list(value: Any, where: str, cap: int) -> list[tuple[int, ...]]:
+    """A JSON list of run tables: each ``[r]`` or ``[r, r + 1]`` with rates in
+    ``1..cap``, strictly ascending and distinct."""
+    if not isinstance(value, list):
+        raise ValueError(f"{where} must be a JSON array of run tables")
+    out = []
+    for i, table in enumerate(value):
+        ok = (isinstance(table, list) and len(table) in (1, 2)
+              and all(isinstance(r, int) and not isinstance(r, bool) for r in table)
+              and 1 <= table[0] <= cap and (len(table) == 1 or table[1] == table[0] + 1)
+              and table[-1] <= cap)
+        if not ok:
+            raise ValueError(
+                f"{where}[{i}] is {table!r}; a run table is one column rate [r] or two adjacent "
+                f"ones [r, r + 1] with rates in 1..{cap} (grammar.rate_set: a schedule mixes "
+                "only the two rates bracketing its root)")
+        out.append(tuple(table))
+    if out != sorted(set(out)):
+        raise ValueError(f"{where} must be strictly ascending and distinct, got {value!r}")
+    return out
+
+
+def _validate_allowable_rungs(entry: Mapping[str, Any], route: str, where: str) -> None:
+    """The rule is well formed, inside the reader, and consistent with the
+    per-rung stamps it generalises."""
+    rule = entry["allowable_rungs"]
+    at = f"{where}.allowable_rungs"
+    _require_keys(rule, at, required=set(_ALLOWABLE_KEYS))
+    if rule["rule"] not in ALLOWABLE_RULES:
+        raise ValueError(
+            f"{at}.rule is {rule['rule']!r}; this package defines {list(ALLOWABLE_RULES)}. "
+            "A consumer evaluates the rule, so a rule nobody defined admits nothing.")
+    low, high, step = _reader_rate(entry, where)
+    rng, rstep = rule["range_q256"], rule["step_q256"]
+    if (not isinstance(rng, list) or len(rng) != 2
+            or not all(isinstance(v, int) and not isinstance(v, bool) for v in rng)
+            or not isinstance(rstep, int) or isinstance(rstep, bool) or rstep < 1):
+        raise ValueError(f"{at}: range_q256 is [low, high] and step_q256 a positive integer")
+    if not (reader_accepts(rng[0], low, high, step) and reader_accepts(rng[1], low, high, step)
+            and rng[0] <= rng[1] and rstep % step == 0):
+        raise ValueError(
+            f"{at}: range {rng} step {rstep} is not inside the reader's grid [{low}, {high}] "
+            f"step {step}. An allowable rung is one the decoder reads.")
+    ar, cap = _family_arity_cap(entry, where)
+    if rule["code_arity"] != ar or isinstance(rule["code_arity"], bool):
+        raise ValueError(
+            f"{at}.code_arity is {rule['code_arity']!r}; grid {entry['grid']!r} codes {ar} "
+            "weight(s) per code.  A reader resolves a rung to its run table as "
+            "rate_set(q256 * code_arity / 256) without knowing the grid, so the field must "
+            "be the grid's own arity.")
+    tables = _run_table_list(rule["run_tables"], f"{at}.run_tables", cap)
+    excluded = _run_table_list(rule["excluded_run_tables"], f"{at}.excluded_run_tables", cap)
+    both = sorted(set(tables) & set(excluded))
+    if both:
+        raise ValueError(
+            f"{at}: run table(s) {both} are both attested and excluded; a variant is allowed "
+            "or excluded by its measured geometry, not both")
+    ex_q = rule["excluded_q256"]
+    if (not isinstance(ex_q, list) or ex_q != sorted(set(ex_q))
+            or not all(isinstance(q, int) and reader_accepts(q, rng[0], rng[1], rstep)
+                       for q in ex_q)):
+        raise ValueError(
+            f"{at}.excluded_q256 must be distinct ascending rungs of the rule's grid, got {ex_q!r}")
+    reached = set()
+    for q in range(rng[0], rng[1] + 1, rstep):
+        reached.add(rung_rates(entry, q))
+    unreached = sorted(set(tables) - reached)
+    if unreached:
+        raise ValueError(
+            f"{at}.run_tables names {unreached}, which no rung of [{rng[0]}, {rng[1]}] step "
+            f"{rstep} resolves to; a variant no rung reaches is attested for nothing")
+    wire = rule["wire"]
+    _require_keys(wire, f"{at}.wire", required=set(_WIRE_STAMP_KEYS))
+    _validate_wire_stamp(wire, route, f"{at}.wire")
+    for item in entry["attested_wire"]:
+        if rung_allowable(entry, item["q256"]) and {k: item[k] for k in _WIRE_STAMP_KEYS} != dict(wire):
+            raise ValueError(
+                f"{at}.wire is {dict(wire)!r} but attested rung {item['q256']} is stamped "
+                f"{ {k: item[k] for k in _WIRE_STAMP_KEYS}!r}. The rule says every allowable rung is "
+                "cut on one wire; a census rung it covers cut on another means one of the two "
+                "stamps describes bytes no fresh export writes.")
+    evidence = rule["evidence"]
+    if not isinstance(evidence, list) or not evidence:
+        raise ValueError(f"{at}.evidence must name the oracle and sweep receipts")
+    for i, path in enumerate(evidence):
+        _require_repository_path(path, f"{at}.evidence[{i}]", "path")
 
 
 #: ``(route, grid) -> (family, low, high, step)`` for the PACKAGED contract.
@@ -2506,24 +2747,27 @@ def derive_cell_executes(cell: Mapping[str, Any], route: str, entry: Mapping[str
     (a hand restatement with ``lanes=()`` went stale the day the E4M3
     instruction's lane reached every rate, contract v47).
     """
-    from ..grammar import rate_set
     from .scheme import launch_pairs
 
     wires = {int(w["q256"]): w for w in entry["attested_wire"]}
-    from fractions import Fraction
-
-    from ..alphabet import SERIALISABLE_GRIDS
-    arity = next((g for g in SERIALISABLE_GRIDS.values() if g.name == str(entry["grid"])), None)
-    if arity is None:
-        raise ValueError(
-            f"{where}: formats grid {entry['grid']!r} names no serialisable grid this "
-            "package holds; a cell's rate set cannot be derived for it")
-    ar = int(arity.arity)
-    cap = int(entry["native_terminal_q256"]) * ar // 256
+    # The family's own published terminal rate, so a rung above what this
+    # family can encode raises here rather than resolving to a rate set.
+    # The cell rungs are per WEIGHT and the bresenham schedule is per CODE: a
+    # code covers ``arity`` weights (export.encode_linear_planes writes
+    # ``q256 * grid.arity``; scheme._per_weight_q256 reads it back), so both
+    # the cap and the rung resolve onto the per-code root (``rung_rates``).
+    # Resolving the per-weight rung directly broke at the shaped domain's
+    # floor: an arity-2 rung below q256 256 is a full unit at rate 1 per code,
+    # not the sub-1-per-column rate rate_set would have to refuse.  The run
+    # tables a v11 cell covers beyond its census rungs are each some census
+    # rung's (``derived_cell_run_tables``), and a lane's reach is a function
+    # of the rates and the wire facts only, so deriving over the census rungs
+    # derives over every rung the cell covers.
+    _family_arity_cap(entry, where)
     modes = cell_residency_modes(cell, where)
     want: set = set()
     for rung in cell["rungs_q256"]:
-        rates = rate_set(Fraction(int(rung) * ar, 256), cap=cap)
+        rates = rung_rates(entry, int(rung))
         lanes = _lanes_a_rung_reaches(route, contract, wires[int(rung)], rates,
                                       str(entry["grid"]), str(cell["structure"]))
         for mode in modes:
@@ -2547,15 +2791,8 @@ def _validate_cell_executes(cell: Mapping[str, Any], route: str, entry: Mapping[
     structure, regime, the residency its serve flag names, and the lanes each of its
     rungs can reach.
     """
-    # The family's own published terminal rate, so a rung above what this
-    # family can encode raises in the derivation rather than resolving to a
-    # rate set.  The cell rungs are per WEIGHT and the bresenham schedule is
-    # per CODE: a code covers ``arity`` weights (export.encode_linear_planes
-    # writes ``q256 * grid.arity``; scheme._per_weight_q256 reads it back), so
-    # both the cap and the rung resolve onto the per-code root.  Resolving the
-    # per-weight rung directly broke at the shaped domain's floor: an arity-2
-    # rung below q256 256 is a full unit at rate 1 per code, not the
-    # sub-1-per-column rate rate_set would have to refuse.
+    # The per-code root, the family cap and the covered run tables are
+    # derive_cell_executes's; this compares.
     want = derive_cell_executes(cell, route, entry, contract, where)
     modes = cell_residency_modes(cell, where)
     got = cell_executes(cell)
@@ -2718,8 +2955,6 @@ def _validate_attested_wire(entry: Mapping[str, Any], route: str, where: str) ->
     tripwire in ``tests/test_serving_attested_wire.py``, which compares every
     stamp against what the exporter writes at that rung today.
     """
-    from .scheme import ROUTES
-
     stamped = entry["attested_wire"]
     if not isinstance(stamped, list):
         raise ValueError(
@@ -2741,44 +2976,53 @@ def _validate_attested_wire(entry: Mapping[str, Any], route: str, where: str) ->
             f"{where}.attested_wire must carry one entry per attested rung "
             f"{sorted(rungs)}, got {[item['q256'] for item in stamped]}; a rung with no stamp "
             "has bytes no receipt describes, and a stamp is meaningless anywhere else")
-    expected = ROUTES[route]
     for i, item in enumerate(stamped):
-        at = f"{where}.attested_wire[{i}]"
-        body = _ATTESTED_WIRE_BODY.get(item["body"])
-        if body is None:
+        _validate_wire_stamp(item, route, f"{where}.attested_wire[{i}]")
+
+
+def _validate_wire_stamp(item: Mapping[str, Any], route: str, at: str) -> None:
+    """One ``wire.recipes`` entry's SUBSTANCE: a body/span/plane ``route``
+    decodes (``scheme.ROUTES``) and typed integers and spreads.  Shared by the
+    per-rung ``attested_wire`` stamps and the ``allowable_rungs.wire`` rule
+    stamp, so the two cannot be held to different vocabularies."""
+    from .scheme import ROUTES
+
+    expected = ROUTES[route]
+    body = _ATTESTED_WIRE_BODY.get(item["body"])
+    if body is None:
+        raise ValueError(
+            f"{at}.body {item['body']!r} is not a wire body the exporter spells "
+            "(tessera.export._BODY_NAMES); a stamp outside the checkpoint's own "
+            "vocabulary is nothing a preflight can compare")
+    if body != expected["body"] or item["span"] != expected["span"]:
+        raise ValueError(
+            f"{at} stamps {item['body']!r} span {item['span']!r}, but {route} decodes the "
+            f"span-{expected['span']} {expected['body']} body (tessera.serving.scheme.ROUTES). "
+            "A stamp the route does not decode cannot be what a served receipt was cut on.")
+    plane = _ATTESTED_WIRE_PLANE.get(item["plane"])
+    if plane is None:
+        raise ValueError(
+            f"{at}.plane {item['plane']!r} is not a scale plane the exporter spells "
+            "(tessera.export._PLANE_NAMES); a stamp outside the checkpoint's own "
+            "vocabulary is nothing a preflight can compare")
+    if plane != expected["plane"]:
+        raise ValueError(
+            f"{at} stamps the {item['plane']!r} plane, but {route} decodes the "
+            f"{expected['plane']} plane to its {expected['tile']} tile "
+            "(tessera.serving.scheme.ROUTES). "
+            "A stamp the route does not decode cannot be what a served receipt was cut on.")
+    for field in ("window_bits", "seed"):
+        if not isinstance(item[field], int):
             raise ValueError(
-                f"{at}.body {item['body']!r} is not a wire body the exporter spells "
-                "(tessera.export._BODY_NAMES); a stamp outside the checkpoint's own "
-                "vocabulary is nothing a preflight can compare")
-        if body != expected["body"] or item["span"] != expected["span"]:
+                f"{at}.{field} is {item[field]!r}; a wire.recipes entry carries integers "
+                "here, and a stamp that does not spell one is nothing a preflight can compare")
+    for field in ("sigma", "channel_sigma"):
+        value = item[field]
+        if value is not None and not isinstance(value, (int, float)):
             raise ValueError(
-                f"{at} stamps {item['body']!r} span {item['span']!r}, but {route} decodes the "
-                f"span-{expected['span']} {expected['body']} body (tessera.serving.scheme.ROUTES). "
-                "A stamp the route does not decode cannot be what a served receipt was cut on.")
-        plane = _ATTESTED_WIRE_PLANE.get(item["plane"])
-        if plane is None:
-            raise ValueError(
-                f"{at}.plane {item['plane']!r} is not a scale plane the exporter spells "
-                "(tessera.export._PLANE_NAMES); a stamp outside the checkpoint's own "
-                "vocabulary is nothing a preflight can compare")
-        if plane != expected["plane"]:
-            raise ValueError(
-                f"{at} stamps the {item['plane']!r} plane, but {route} decodes the "
-                f"{expected['plane']} plane to its {expected['tile']} tile "
-                "(tessera.serving.scheme.ROUTES). "
-                "A stamp the route does not decode cannot be what a served receipt was cut on.")
-        for field in ("window_bits", "seed"):
-            if not isinstance(item[field], int):
-                raise ValueError(
-                    f"{at}.{field} is {item[field]!r}; a wire.recipes entry carries integers "
-                    "here, and a stamp that does not spell one is nothing a preflight can compare")
-        for field in ("sigma", "channel_sigma"):
-            value = item[field]
-            if value is not None and not isinstance(value, (int, float)):
-                raise ValueError(
-                    f"{at}.{field} is {value!r}; a modelled source spread in grid units is a "
-                    "number, or null for the pinned wire (sigma unset). A stamp that spells "
-                    "neither is nothing a preflight can compare")
+                f"{at}.{field} is {value!r}; a modelled source spread in grid units is a "
+                "number, or null for the pinned wire (sigma unset). A stamp that spells "
+                "neither is nothing a preflight can compare")
 
 
 # ---------------------------------------------------------------------------
