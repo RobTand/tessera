@@ -439,3 +439,60 @@ were confirmed baseline by parent; no globally type-clean claim or suppression.
 After testing only this receipt append changes; parent owns final exact-head327+
 broad gate, integration review and merge. Historical RED/GREEN/source bindings
 are preserved, not relabeled as whole-package equivalence or new full acceptance.
+
+
+## Nightly interface (tessera#749)
+
+Added 2026-09-30. The patch above supported only fd4a15126. On the U4 nightly
+stack (`localhost/prismaquant/spark-vllm-nccl230@sha256:5be13705…`, vLLM
+0.30.1rc1.dev336+gaf5b4857e), every GLM MTP serve failed in
+`get_quant_method`, because `vllm.models.glm5next.nvidia.mtp` does not exist
+there and all eight pinned modules changed.
+
+**Interface.** Digests were read with `sha256sum` inside image `5be13705`:
+`common/mtp.py` b0a8f474, `deepseek_mtp.py` aae80e30, `llm_base_proposer.py`
+5793b956, V2 `mtp/speculator.py` 926d6c9f, `eagle/utils.py` a6d48303,
+`vocab_parallel_embedding.py` 01576027, `base_loader.py` 5291c330, loader
+`utils.py` e6e3477d. The upstream differences that matter:
+
+- `SharedHead(defer_lm_head=True)`: no draft head is built, so only the draft
+  `embed_tokens` is intercepted.
+- `Glm5NextMTP` declares no `hf_to_vllm_mapper`. Its `load_weights` strips
+  `model.language_model.` in code, so vLLM never hands the quant config a
+  draft view. f8dbe1a0's image carried that rule as a mapper.
+- `load_eagle_model` / `_maybe_share_lm_head` still replace the draft
+  `embed_tokens` with the target module, so the placeholder contract holds.
+
+**Serve receipts** (TP1 stub `graph-attest-20260930/stub-B-mtp1`: stub-B plus
+the A8S layer-45 MTP as layer 8, eager, `--speculative-config`
+`{"method":"mtp","num_speculative_tokens":1,...}`, native attention, NoPE
+plugin off, breakable graphs off). All files are under
+`/mnt/shared/tessera-measurements/graph-attest-20260930/749/`, with
+`SHA256SUMS`.
+
+| arm | tree | result |
+|---|---|---|
+| `mtpE-749pre` | master dde2d2e838 | `ImportError: cannot import name 'mtp' from 'vllm.models.glm5next.nvidia'` at `mtp_draft_lifetime.py:230` |
+| `mtpE-749fix` (a) | port only | target loads, then the draft refuses `model.layers.8.mlp.shared_experts.gate_up_proj` as undeclared: no draft view |
+| `mtpE-749fix-b` | port + draft rename | `saving installed for interface nightly-20260929 (intercepts: embed_tokens)`; ready; 4 greedy completions × 48 tokens; 186 drafts, 2 accepted |
+| `mtpE-749nosave` | (b) with `install_for_current_config` returning at entry (`nosave-arm.diff`) | ready; same load figures as (b) |
+
+Acceptance cannot judge a stub drafter (0 of 4032 on f8dbe1a0 in the #695
+receipts). Load success is the resolution receipt: an undeclared draft Linear
+or expert stack refuses at construction, as arm (a) did.
+
+**Memory, measured at this scope only.** (b) and the no-save arm log the same
+`Model loading took 25.26 GiB` and `Cleared 9.44 GiB of cached CUDA allocator
+memory`. On this stub the 1.18 GiB draft-embedding transient (154880 × 4096
+bf16) sits under a larger later transient, so vLLM's figures cannot see it.
+The TP2 full-model load peak with and without the interception is not
+measured, and the conservative fit allowance stays.
+
+**Tests.** PB x86 on dl380g10, CPU only:
+
+- `tests/test_mtp_draft_lifetime.py` is parametrized over both interfaces,
+  with decline, import-crash and table tests.
+- `tests/test_serving_dispatch.py` covers the adopted rename, the
+  unrecognized-refusal case, scope and ordering.
+
+Both are cited in the PR.

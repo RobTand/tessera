@@ -1,5 +1,24 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-09-30 for the GLM MTP draft interface on the vLLM nightly
+(tessera#749). `serving.mtp_draft_lifetime` now reads a table of inspected
+interfaces, each identified by the sha256 of every module it touches:
+fd4a15126 (`glm5next.nvidia.mtp`, unchanged) and nightly-20260929
+(`glm5next.common.mtp`, digests read from image `5be13705`). The nightly builds
+`SharedHead(defer_lm_head=True)`, so only the draft `embed_tokens` is
+intercepted there. A serve whose sources match no interface declines: the draft
+loads the stock way, and one WARNING names each interface's reason. A recognized
+interface that misbehaves still refuses. The nightly's `Glm5NextMTP` declares
+no `hf_to_vllm_mapper` and strips `model.language_model.` inside `load_weights`,
+so `TesseraConfig._module_lookup` adopts that rule as the draft's module view
+(`weights_mapper.PrefixRename`), only on the recognized interface and only
+after the body view exists. Served on a TP1 MTP stub (image `5be13705`): the
+install line logs, the draft resolves and generates, and vLLM's load figures
+are identical with and without the interception (25.26 GiB loaded, 9.44 GiB
+cached cleared), so the saving is not observable at that scope. TP2
+full-model peak is unmeasured, and the conservative fit allowance stands. See
+[the receipt](measurements/mtp-draft-vocabulary-lifetime-2026-09-30.md#nightly-interface-tessera749).
+
 Re-stamped 2026-09-30 for additive source profiles (Refs
 RobTand/prismaquant#1762). `serving_source_profiles()` and
 `cached_unit.encoder_source_profiles()` expose labelled legacy values beside
