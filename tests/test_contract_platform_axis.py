@@ -213,6 +213,15 @@ def test_the_packaged_contract_validates_at_v33(contract):
     rungs too.  NOT additive for a validator: ``column_rates_routed_moe`` is
     a new ``lane.requires`` field a v44 reader (and PrismaQuant's mirror of
     the roster) refuses, the fail-closed direction.  (v44 is tessera#691's.)
+
+    v50 (tessera#750) MOVES the lane schema to v11, because what a cell
+    covers changes meaning: a cell used to cover exactly its ``rungs_q256``;
+    it now also covers every rung its family's ``allowable_rungs`` rule admits
+    in one of its ``run_tables`` (the run tables of its census rungs,
+    derived).  A v10 reader that kept reading ``rungs_q256`` alone would
+    refuse rungs this build serves and exports, and a v10 reader that ignored
+    unknown cell fields would do the same silently, so the schema string
+    moves and a v10 reader fails closed on the name.
     """
     assert int(contract["contract_version"]) >= 45
     fused = "tessera.routed_fused.FusedRoutedWindowMoE.__call__"
@@ -227,7 +236,7 @@ def test_the_packaged_contract_validates_at_v33(contract):
     assert "producer_interface" in contract
     assert all("structures" in entry for entry in contract["formats"])
     assert contract["lane_eligibility"]["schema"] == LANE_ELIGIBILITY_SCHEMA
-    assert LANE_ELIGIBILITY_SCHEMA.endswith(".v10")
+    assert LANE_ELIGIBILITY_SCHEMA.endswith(".v11")
 
 
 def test_v46_publishes_the_e4m3_instruction_library(contract):

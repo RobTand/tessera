@@ -1,5 +1,25 @@
 # Tessera plan-to-serve architecture
 
+Re-stamped 2026-09-30 for allowable rungs as a rule (contract v50,
+`lane_eligibility.schema` v11, tessera#750). A window-grammar rung mixes at
+most two adjacent column rates, its run table (`grammar.rate_set`), and the
+fused kernels are instantiated per run table. The mix fraction and the
+placement of the upper-rate columns are runtime data. The kernel oracle
+therefore attests a variant, and `formats[].allowable_rungs` states which rungs
+that admits: `window_rate_set` over `range_q256`/`step_q256`, the attested
+`run_tables`, measured `excluded_run_tables` and `excluded_q256`, the one
+`wire` every allowable rung is cut on, and `evidence`. Only `TESSERA_E4M3_K1`
+publishes a rule; its run tables are every rate 1..8 and every adjacent pair.
+A cell's new `run_tables` field is derived: the run tables of its census rungs
+that the rule admits. A cell covers a rung that is a census rung, or one the
+rule admits in one of its run tables (`contract.cell_covers_rung`). The routed
+export gate (`scheme.refuse_unserveable_wire`), the census join
+(`census.cell_launch_agreement`) and the manifest's `attested_by` read that
+one predicate. The routed and dense resident E4M3 cells now cover every rung
+of 769..1279. `attested_rungs_q256`, `attested_wire` and `rungs_q256` still
+list the census rungs. Receipt: [the run-table oracle and geometry
+sweep](measurements/2026-09-30-t8-run-tables.md).
+
 Re-stamped 2026-09-30 for the 16-bit routed gate/up launch at rates 7 and 8
 (contract v49, Refs #750). `routed_fused_window.cu` instantiates each launch
 at `word_stages(mode, slot_words)`: three word stages where the slot fits
@@ -11,6 +31,7 @@ three stages and its SASS (value 69/69, E4M3-instruction 137/137, E4M3-f16
 98/99 up to one commuted `LOP3`). No cell's rungs reach rate 7 or 8, so no
 cell's derived `executes` changes; a routed census at those rates is still
 needed to attest them.
+
 Re-stamped 2026-09-30 for the GLM cells on the vLLM nightly (tessera#702,
 contract v48). One TP1 eager route census of u1 stub B on image `5be13705`
 (eugr nightly 155ce16b plus the nccl230 layer, vLLM `0.30.1rc1.dev336`), with
@@ -4441,7 +4462,9 @@ takes `structure` and, for `routed_moe`, first refuses a route
 `MOE_BUILDERS` has no builder for (`refuse_a_family_with_no_expert_route`,
 the one home for that rule at plan, gate and load) and then reads the
 union of `rungs_q256` over the DEVICE-BACKED `lane_eligibility` cells of that
-structure (`scheme.attested_cells`) rather than the row's range. A cell is
+structure (`scheme.attested_cells`) rather than the row's range -- since lane
+schema v11 the rungs those cells COVER, their census rungs and the allowable
+rungs of their run tables (`contract.cell_covers_rung`). A cell is
 selected on the facts it states about itself -- `qualification` and
 `route_status` (`contract.cell_is_device_backed`) -- because the validator
 permits a cell to attest a toolchain and no serve (`compile_only` beside
