@@ -146,8 +146,36 @@ def expected_pair(fam, method):
     """
     nat = getattr(method, "_native", None)
     if type(nat).__name__ == FUSED_ADAPTER:
+        # The E4M3 family's library is a construction fact of the adapter
+        # (``routed_fused.library_for`` at ``from_bundles``), not its telemetry.
+        if getattr(nat, "library", None) == "e4m3mma":
+            return (fam["fused_pair"][0], "native_routed_fused_window_e4m3mma")
         return tuple(fam["fused_pair"])
     return tuple(fam["pair"])
+
+
+def f16_twin(method):
+    """The fused lane on the f16 instruction (``tessera_routed_fused_e4m3``)
+    over the SAME prepared bundles as an E4M3-instruction ``method._native``,
+    or None for any other adapter: the two differ in the tensor-core
+    instruction only, so their outputs differ by fp32 summation order."""
+    nat = getattr(method, "_native", None)
+    if type(nat).__name__ != FUSED_ADAPTER or getattr(nat, "library", None) != "e4m3mma":
+        return None
+    from tessera import routed_fused as rf
+
+    old = os.environ.get(rf.ENV_E4M3_MMA)
+    os.environ[rf.ENV_E4M3_MMA] = "f16"
+    try:
+        twin = rf.FusedRoutedWindowMoE.from_bundles(nat.gate, nat.up, nat.down,
+                                                    activation=nat.activation)
+    finally:
+        if old is None:
+            os.environ.pop(rf.ENV_E4M3_MMA, None)
+        else:
+            os.environ[rf.ENV_E4M3_MMA] = old
+    assert twin.library == "e4m3", twin.library
+    return twin
 
 
 def compact_twin(method, activation="silu"):
@@ -712,6 +740,44 @@ def a4_dispatch(ids, weights, n_experts):
     offsets = torch.zeros(n_experts + 1, dtype=torch.int32, device=device)
     offsets[1:] = torch.cumsum(counts, 0).to(torch.int32)
     return order, offsets, flat_tokens[order].to(torch.int32), flat_weights[order]
+
+
+def instruction_pair_case(nat, twin, x, ids, w, clamp, keep):
+    """The E4M3-instruction lane against its f16 twin on the same inputs:
+    both stages teacher-forced on ONE intermediate (the twin's), K = hidden
+    for gate/up and K = intermediate for down, then the forward.  Each side
+    is separately held to the exact reference by ``oracle_case`` (the native)
+    and here (the twin's forward against the same end-to-end bound); the
+    difference between them is reported in bf16 ulps and as a fraction of the
+    end-to-end bound -- the size of the accumulation-order difference on
+    real wires."""
+    out = {}
+    gu_m = nat.gate_up(x, ids, w, preserve=True)
+    gu_f = twin.gate_up(x, ids, w, preserve=True)
+    out["gate_up_K_hidden"] = {"ulps": bf16_ulp_stats(gu_m, gu_f.double()),
+                               "bitwise_equal_fraction": float((gu_m == gu_f).double().mean())}
+    P = ids.numel()
+    from tessera import native_window_moe as nwm
+    act = nwm._silu_and_mul(gu_f[..., :INTER].reshape(P, INTER), gu_f[..., INTER:].reshape(P, INTER),
+                            clamp_limit=clamp)
+    dn_m = nat.down_routes(act, ids, w, route_input=True, round_routes=True)
+    dn_f = twin.down_routes(act, ids, w, route_input=True, round_routes=True)
+    out["down_K_intermediate"] = {"ulps": bf16_ulp_stats(dn_m, dn_f.double()),
+                                  "bitwise_equal_fraction": float((dn_m == dn_f).double().mean())}
+    o_m = nat(x, ids, w, swiglu_limit=clamp, apply_router_weight_on_input=False)
+    o_f = twin(x, ids, w, swiglu_limit=clamp, apply_router_weight_on_input=False)
+    torch.cuda.synchronize()
+    diff = (o_m.double() - o_f.double()).abs()
+    twin_err = (o_f.double() - keep["out_r"].double()).abs()
+    out["forward"] = {"max_abs_diff": float(diff.max()),
+                      "max_diff_over_e2e_bound": float((diff / keep["Eout"]).max()),
+                      "within_twice_e2e_bound": bool((diff <= 2 * keep["Eout"]).all()),
+                      "bitwise_equal_fraction": float((o_m == o_f).double().mean()),
+                      "ulps": bf16_ulp_stats(o_m, o_f.double()),
+                      "twin_within_e2e_bound": bool((twin_err <= keep["Eout"]).all()),
+                      "twin_max_diff_over_e2e_bound": float((twin_err / keep["Eout"]).max())}
+    out["pass"] = out["forward"]["twin_within_e2e_bound"] and out["forward"]["within_twice_e2e_bound"]
+    return out
 
 
 def oracle_case(fkey, fam, layer, method, ref, x, ids, w, clamp, n_experts, recorder):
@@ -1351,11 +1417,18 @@ def run_oracle(args):
                                            "traceback": traceback.format_exc()[-4000:]}
                     log(fkey, "before leg failed", exc)
             entry["cases"] = []
+            twin = f16_twin(method)
+            if twin is not None:
+                entry["f16_twin"] = {"library": twin.library, "launch_pair": list(twin.launch_pair),
+                                     "shares_bundles_with_native": True}
             for m in [int(v) for v in args.m.split(",")]:
                 x, ids, w = make_inputs(m, E, args.seed + m, args.sigma)
                 log(fkey, "oracle M", m)
                 case, keep = oracle_case(fkey, fam, layer, method, ref, x, ids, w, args.clamp,
                                          E, recorder)
+                if twin is not None:
+                    case["e4m3_instruction_vs_f16_twin"] = instruction_pair_case(
+                        method._native, twin, x, ids, w, args.clamp, keep)
                 if before is not None:
                     try:
                         ob = before(x, w, ids)

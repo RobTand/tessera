@@ -88,9 +88,12 @@ def test_the_dense_launch_table_names_the_routes_admissible_launches():
     # Contract v43: the two window families stamp one of two dense launches per
     # module -- the Triton window GEMM or the fused window kernel's dense
     # identity -- and the A4 family one.
+    # Contract v46 adds a third FP8 pair: the E4M3 instruction library's dense
+    # identity, experimental until a served census earns it cells.
     assert DENSE_LAUNCHES["TESSERA_FP8"] == (FP8_ACTIVATION_CONTRACT, (
         (WINDOW_GEMM_SYMBOL, NATIVE_WINDOW_GEMM_DECODER),
-        (FUSED_WINDOW_DENSE_SYMBOL, NATIVE_FUSED_WINDOW_DENSE_DECODER)))
+        (FUSED_WINDOW_DENSE_SYMBOL, NATIVE_FUSED_WINDOW_DENSE_DECODER),
+        (FUSED_WINDOW_DENSE_SYMBOL, "native_fused_window_dense_e4m3mma")))
     assert DENSE_LAUNCHES["TESSERA_BF16"] == (BF16_ACTIVATION_CONTRACT, (
         (WINDOW_GEMM_SYMBOL, NATIVE_WINDOW_GEMM_FOLDED_DECODER),
         (FUSED_WINDOW_DENSE_SYMBOL, NATIVE_FUSED_WINDOW_DENSE_FOLDED_DECODER)))
@@ -306,7 +309,10 @@ def test_every_family_holding_qualifies_and_says_what_it_does_not_claim():
     assert fp8["expected"] == {
         "launches": [{"symbol": WINDOW_GEMM_SYMBOL, "decoder": NATIVE_WINDOW_GEMM_DECODER},
                      {"symbol": "tessera::fused_window_dense",
-                      "decoder": "native_fused_window_dense"}],
+                      "decoder": "native_fused_window_dense"},
+                     # contract v46: the E4M3 instruction library's dense identity
+                     {"symbol": "tessera::fused_window_dense",
+                      "decoder": "native_fused_window_dense_e4m3mma"}],
         "modules": 2, "names_checked": True}
     assert fp8["observed"]["symbol"] == WINDOW_GEMM_SYMBOL
     assert fp8["observed"]["decoder"] == NATIVE_WINDOW_GEMM_DECODER

@@ -21,6 +21,8 @@ done <<< "$RUNTIME_IMAGE_CONTAINER_ENV"
 # The dense identity's opt-out and the fused library's build chatter ride into
 # the container when set; the oracle itself builds both lanes per module.
 [[ -z "${TESSERA_DENSE_FUSED:-}" ]] || IMAGE_ENV+=(-e "TESSERA_DENSE_FUSED=$TESSERA_DENSE_FUSED")
+# The E4M3 family's tensor-core instruction (routed_fused.library_for) rides in when set.
+[[ -z "${TESSERA_FUSED_E4M3_MMA:-}" ]] || IMAGE_ENV+=(-e "TESSERA_FUSED_E4M3_MMA=$TESSERA_FUSED_E4M3_MMA")
 [[ -z "${TESSERA_ROUTED_FUSED_VERBOSE:-}" ]] || IMAGE_ENV+=(-e "TESSERA_ROUTED_FUSED_VERBOSE=$TESSERA_ROUTED_FUSED_VERBOSE")
 STUB=${DENSE_ORACLE_STUB:-/mnt/shared/tessera-runs/moe/u1-stubs-20260926/stub-B}
 [[ -d "$STUB" ]] || { echo "missing stub checkpoint: $STUB" >&2; exit 2; }

@@ -212,7 +212,7 @@ def test_the_packaged_contract_validates_at_v33(contract):
     a new ``lane.requires`` field a v44 reader (and PrismaQuant's mirror of
     the roster) refuses, the fail-closed direction.  (v44 is tessera#691's.)
     """
-    assert int(contract["contract_version"]) == 45
+    assert int(contract["contract_version"]) >= 45
     fused = "tessera.routed_fused.FusedRoutedWindowMoE.__call__"
     for cell in contract["lane_eligibility"]["cells"]:
         window_routed = (cell["structure"] == "routed_moe"
@@ -226,6 +226,26 @@ def test_the_packaged_contract_validates_at_v33(contract):
     assert all("structures" in entry for entry in contract["formats"])
     assert contract["lane_eligibility"]["schema"] == LANE_ELIGIBILITY_SCHEMA
     assert LANE_ELIGIBILITY_SCHEMA.endswith(".v10")
+
+
+def test_v46_publishes_the_e4m3_instruction_library_and_attests_none_of_it(contract):
+    """v46 adds the E4M3 family's own tensor-core instruction as a third
+    library of the fused window source (``tessera_routed_fused_mma_e4m3``):
+    one more ``native_extensions`` entry, two lane-bearing launch rows, both
+    in ``scheme.EXPERIMENTAL_LAUNCHES``, so no cell names either decoder and
+    no cell's ``executes`` moves."""
+    from tessera.serving.scheme import EXPERIMENTAL_LAUNCHES
+
+    assert int(contract["contract_version"]) >= 46
+    by_name = {e["module_name_prefix"]: e for e in contract["native_extensions"]}
+    mma = by_name["tessera_routed_fused_mma_e4m3"]
+    assert mma["lane"]["decoder"] == "native_routed_fused_window_e4m3mma"
+    assert mma["lane"]["requires"]["column_rates_routed_moe"] == list(range(1, 9))
+    assert mma["source"] == by_name["tessera_routed_fused_e4m3"]["source"]
+    decoders = {"native_routed_fused_window_e4m3mma", "native_fused_window_dense_e4m3mma"}
+    assert {d for _s, d in EXPERIMENTAL_LAUNCHES} == decoders
+    for cell in contract["lane_eligibility"]["cells"]:
+        assert not decoders & {e["decoder"] for e in cell["executes"]}, cell["id"]
 
 
 def test_every_platform_entry_carries_the_v10_shape(contract):

@@ -168,7 +168,24 @@ def dense_lane(fused: bool):
             os.environ[ENV_TOGGLE_DENSE] = saved
 
 
-def build_served(store, module, *, mode, tp_rank, tp_size, fused):
+@contextlib.contextmanager
+def e4m3_instruction(choice):
+    """``routed_fused.library_for`` reads ``TESSERA_FUSED_E4M3_MMA`` at weight load."""
+    from tessera.routed_fused import ENV_E4M3_MMA
+
+    saved = os.environ.get(ENV_E4M3_MMA)
+    if choice is not None:
+        os.environ[ENV_E4M3_MMA] = choice
+    try:
+        yield
+    finally:
+        if saved is None:
+            os.environ.pop(ENV_E4M3_MMA, None)
+        else:
+            os.environ[ENV_E4M3_MMA] = saved
+
+
+def build_served(store, module, *, mode, tp_rank, tp_size, fused, instruction=None):
     """The served path, exactly as a serve builds it, on one lane."""
     from tessera.serving.lane import build_tessera_method
 
@@ -189,7 +206,7 @@ def build_served(store, module, *, mode, tp_rank, tp_size, fused):
     layer.wire_bytes.data = store.wire(module).clone()
     layer.to("cuda")
     t0 = time.time()
-    with dense_lane(fused), torch.no_grad():
+    with dense_lane(fused), e4m3_instruction(instruction), torch.no_grad():
         method.process_weights_after_loading(layer)
     torch.cuda.synchronize()
     resident = list(method.resident_tensors(layer))
@@ -204,6 +221,10 @@ def build_served(store, module, *, mode, tp_rank, tp_size, fused):
                        for f in layer.tessera_native.layout_facts()],
             "resident_bytes": sum(t.numel() * t.element_size() for _, t in resident),
             "resident_fused_tables": sum(1 for n, _ in resident if n.endswith("fused_table16")),
+            # The E4M3 instruction library keeps the table as E4M3 bytes (uint8),
+            # the f16 and value libraries as 16-bit entries.
+            "fused_table_itemsize": sorted({t.element_size() for n, t in resident
+                                            if n.endswith("fused_table16")}),
             "prepare_s": time.time() - t0}
     return layer, method, info
 
@@ -296,8 +317,20 @@ def oracle_case(store, module, m, seed, sigma, mode, tp_rank, tp_size, sms):
     case["k_split"] = int(split)
     ref, r, bound = reference_and_bound(fused_info["family"], x, w64, ref_facts["epilogue_mults"],
                                         cols + int(split))
+    # The E4M3 instruction library (contract v46) against the f16 instruction
+    # over the same bytes: two accumulation orders of one exact product sum,
+    # so both are held to the same bound and compared bitwise.
+    legs = [("fused", fused_layer, fused_method), ("triton", triton_layer, triton_method)]
+    if fused_info["launch_pair"][1].endswith("_e4m3mma"):
+        twin_layer, twin_method, twin_info = build_served(
+            store, module, mode=mode, tp_rank=tp_rank, tp_size=tp_size, fused=True, instruction="f16")
+        case["fused_f16_build"] = twin_info
+        legs.append(("fused_f16", twin_layer, twin_method))
+    pair_of = {"fused": fused_info["launch_pair"], "triton": triton_info["launch_pair"]}
+    if "fused_f16_build" in case:
+        pair_of["fused_f16"] = case["fused_f16_build"]["launch_pair"]
     outputs = {}
-    for leg, layer, method in (("fused", fused_layer, fused_method), ("triton", triton_layer, triton_method)):
+    for leg, layer, method in legs:
         with torch.no_grad():
             y = method.apply(layer, x)
             y2 = method.apply(layer, x)
@@ -307,8 +340,7 @@ def oracle_case(store, module, m, seed, sigma, mode, tp_rank, tp_size, sms):
         diff = (y.double() - r).abs()
         case["legs"][leg] = {
             "route_record": rec,
-            "pair_is_the_layers": rec is not None and (rec["symbol"], rec["decoder"]) == tuple(
-                fused_info["launch_pair"] if leg == "fused" else triton_info["launch_pair"]),
+            "pair_is_the_layers": rec is not None and (rec["symbol"], rec["decoder"]) == tuple(pair_of[leg]),
             "policy": rec["policy"] if rec else None,
             "shape": rec["shape"] if rec else None,
             "vs_reference": rpo.summarize(diff, bound, r),
@@ -317,12 +349,21 @@ def oracle_case(store, module, m, seed, sigma, mode, tp_rank, tp_size, sms):
         }
     case["fused_vs_triton_bf16_ulps"] = rpo.bf16_ulp_stats(outputs["fused"], outputs["triton"])
     case["fused_vs_triton_max_abs"] = float((outputs["fused"].float() - outputs["triton"].float()).abs().max())
+    if "fused_f16" in outputs:
+        a, b = outputs["fused"], outputs["fused_f16"]
+        case["e4m3_instruction_vs_f16_twin"] = {
+            "twin_launch_pair": pair_of["fused_f16"],
+            "twin_is_f16_instruction": pair_of["fused_f16"][1] == "native_fused_window_dense",
+            "bf16_ulps": rpo.bf16_ulp_stats(a, b),
+            "bitwise_equal_fraction": float((a == b).double().mean()),
+            "max_abs": float((a.float() - b.float()).abs().max())}
     # The fused lane shares the wire with the Triton lane and holds, per role,
     # only its launch arguments (FusedDenseWindowRole.named_tables): the int16
     # decode table, the int32 has-init flag, the int32 [1, 8] run pair and the
     # int32 [K / BK, BDESC_INTS] block descriptors (tessera#694 added the last
     # two), K being the layer's local columns.
-    per_role = (rf.TABLE_ENTRIES * 2 + 4 + 8 * 4
+    itemsize = fused_info["fused_table_itemsize"]
+    per_role = (rf.TABLE_ENTRIES * (itemsize[0] if len(itemsize) == 1 else 2) + 4 + 8 * 4
                 + (int(fused_info["local_columns"]) // rf.BK) * rf.BDESC_INTS * 4)
     case["residency"] = {
         "fused_bytes": fused_info["resident_bytes"], "triton_bytes": triton_info["resident_bytes"],
@@ -334,8 +375,10 @@ def oracle_case(store, module, m, seed, sigma, mode, tp_rank, tp_size, sms):
         and all(leg["vs_reference"]["pass"] and leg["deterministic"] and leg["pair_is_the_layers"]
                 and leg["policy"] == f"{fused_info['family']}:{mode}"
                 for leg in case["legs"].values())
-        and case["residency"]["delta_bytes"] == case["residency"]["expected_delta_bytes"])
+        and case["residency"]["delta_bytes"] == case["residency"]["expected_delta_bytes"]
+        and case.get("e4m3_instruction_vs_f16_twin", {}).get("twin_is_f16_instruction", True))
     del fused_layer, triton_layer, w64
+    legs.clear()
     torch.cuda.empty_cache()
     return case, outputs["fused"]
 
@@ -404,6 +447,13 @@ def run_oracle(args):
                                              for c in report["cases"] if "legs" in c), default=None),
         "all_deterministic": all(leg["deterministic"] for c in report["cases"] if "legs" in c
                                  for leg in c["legs"].values()),
+        "e4m3_instruction_twin_cases": sum(1 for c in report["cases"] if "e4m3_instruction_vs_f16_twin" in c),
+        "max_e4m3_instruction_vs_f16_row_ulps": max(
+            (c["e4m3_instruction_vs_f16_twin"]["bf16_ulps"]["max_diff_in_bf16_ulps_of_row_max"]
+             for c in report["cases"] if "e4m3_instruction_vs_f16_twin" in c), default=None),
+        "min_e4m3_instruction_vs_f16_bitwise_fraction": min(
+            (c["e4m3_instruction_vs_f16_twin"]["bitwise_equal_fraction"]
+             for c in report["cases"] if "e4m3_instruction_vs_f16_twin" in c), default=None),
     }
     (out_dir / "oracle.json").write_text(json.dumps(report, indent=1, default=str))
     log("oracle", "PASS" if report["pass"] else "FAIL", json.dumps(report["summary"]))

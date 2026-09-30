@@ -73,7 +73,7 @@ def test_mixed_dispatch_qualifies_each_kind_without_double_counting():
 def _two_launch_moe(family="TESSERA_FP8"):
     """One family whose routed stacks split across its two admissible pairs."""
     from experiments.step4_route_qualification import MOE_LAUNCHES
-    (compact_symbol, compact_decoder), (fused_symbol, fused_decoder) = MOE_LAUNCHES[family][1]
+    (compact_symbol, compact_decoder), (fused_symbol, fused_decoder) = MOE_LAUNCHES[family][1][:2]
     dense = "model.layers.0.mlp.down_proj"
     compact, fused = "model.layers.3.mlp.experts", "model.layers.4.mlp.experts"
     expected = {family: {"count": 3, "names": sorted([dense, compact, fused]), "kinds": {
@@ -104,9 +104,12 @@ def test_a_family_dispatching_both_admissible_routed_launches_qualifies_once_per
     assert all(bucket["modules"] == 1 for bucket in moe["observed"]["by_launch"].values())
     # Two pairs observed: no single symbol/decoder is claimed for the kind.
     assert "symbol" not in moe["observed"] and "symbol" not in moe["expected"]
+    # Contract v46 adds the E4M3 instruction library's routed pair to what the
+    # FP8 routed kind admits (experimental; TESSERA_FUSED_E4M3_MMA=e4m3).
     assert [(e["symbol"], e["decoder"]) for e in moe["expected"]["launches"]] == [
         ("tessera.native_window_moe.NativeWindowMoE.__call__", "native_window_moe_compact"),
-        ("tessera.routed_fused.FusedRoutedWindowMoE.__call__", "native_routed_fused_window")]
+        ("tessera.routed_fused.FusedRoutedWindowMoE.__call__", "native_routed_fused_window"),
+        ("tessera.routed_fused.FusedRoutedWindowMoE.__call__", "native_routed_fused_window_e4m3mma")]
     # The dense kind observed one pair, named outright; since contract v43
     # (tessera#692) its expectation admits two -- the Triton window GEMM and
     # the fused kernel's dense identity -- so it lists launches like the routed
@@ -116,7 +119,8 @@ def test_a_family_dispatching_both_admissible_routed_launches_qualifies_once_per
     assert "symbol" not in dense["expected"]
     assert [(e["symbol"], e["decoder"]) for e in dense["expected"]["launches"]] == [
         ("tessera::window_gemm_dense", "native_window_gemm"),
-        ("tessera::fused_window_dense", "native_fused_window_dense")]
+        ("tessera::fused_window_dense", "native_fused_window_dense"),
+        ("tessera::fused_window_dense", "native_fused_window_dense_e4m3mma")]
 
 
 @pytest.mark.parametrize("corruption", ["fused_on_nvfp4", "fused_folded_on_fp8", "count_ignores_second_pair"])
@@ -216,7 +220,8 @@ def test_preflight_uses_controller_roster_not_frozen_observer_source(tmp_path, m
     # routed kind also publishes the compact adapter's lane-free launch, and
     # since contract v43 every dense kind publishes the Triton window GEMM's
     # lane-free launch beside the fused dense identity's lane row.
-    assert record["lane_launches"] == ["tessera_routed_fused_e4m3", "tessera_routed_fused_value"]
+    assert record["lane_launches"] == ["tessera_routed_fused_e4m3", "tessera_routed_fused_mma_e4m3",
+                                       "tessera_routed_fused_value"]
     for family, kinds in record["module_kind_launches"].items():
         assert any(row["lane"] is None for row in kinds["moe"]), family
         assert any(row["lane"] is None for row in kinds["dense"]), family

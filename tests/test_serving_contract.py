@@ -689,9 +689,16 @@ def test_the_launch_tables_lane_is_the_published_extension():
          "tessera_routed_fused_value"),
         (FUSED_WINDOW_DENSE_SYMBOL, "native_fused_window_dense", "tessera_routed_fused_e4m3"),
         (FUSED_WINDOW_DENSE_SYMBOL, "native_fused_window_dense_folded",
-         "tessera_routed_fused_value")}
-    assert lane_launches == 4, (
-        "a launch names an extension lane beyond the two fused routed rows and the two "
+         "tessera_routed_fused_value"),
+        # Contract v46: the E4M3 family's tensor-core instruction is a third
+        # library of the same source, with its own routed and dense rows.  Both
+        # stand in EXPERIMENTAL_LAUNCHES until a served census earns them cells.
+        (ROUTED_FUSED_WINDOW_SYMBOL, "native_routed_fused_window_e4m3mma",
+         "tessera_routed_fused_mma_e4m3"),
+        (FUSED_WINDOW_DENSE_SYMBOL, "native_fused_window_dense_e4m3mma",
+         "tessera_routed_fused_mma_e4m3")}
+    assert lane_launches == 6, (
+        "a launch names an extension lane beyond the three libraries' fused routed and "
         "fused dense rows; the rule above has something new to say and this set has to "
         "grow deliberately")
     assert published, "ext still publishes lane-bearing extensions; only the LAUNCH went"
@@ -741,7 +748,14 @@ def test_the_dense_launch_table_is_the_launch_apply_makes(monkeypatch):
              telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED)):
         assert module.DENSE_LAUNCH == (WINDOW_GEMM_SYMBOL, decoder)
         assert module.DENSE_FUSED_LAUNCH == (FUSED_WINDOW_DENSE_SYMBOL, fused_decoder)
-        assert module.DENSE_LAUNCHES == (module.DENSE_LAUNCH, module.DENSE_FUSED_LAUNCH)
+        # the E4M3 family's dense identity on its own instruction is a third
+        # launch the FP8 route makes (experimental: in the expectation, in no cell)
+        extra = ((module.DENSE_FUSED_MMA_E4M3_LAUNCH,) if module is fp8_route else ())
+        if module is fp8_route:
+            assert module.DENSE_FUSED_MMA_E4M3_LAUNCH == (
+                FUSED_WINDOW_DENSE_SYMBOL, telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA)
+            assert module.DENSE_FUSED_MMA_E4M3_LAUNCH in scheme.EXPERIMENTAL_LAUNCHES
+        assert module.DENSE_LAUNCHES == (module.DENSE_LAUNCH, module.DENSE_FUSED_LAUNCH, *extra)
         assert launch_pairs(route, structure=STRUCTURE_DENSE,
                             include_experimental=True) == set(module.DENSE_LAUNCHES), route
         for regime in ("decode", "batch"):
@@ -963,9 +977,19 @@ def test_the_native_route_pairs_are_attested_and_censusable():
     from tessera.serving.scheme import ROUTED_FUSED_WINDOW_SYMBOL
     fused_fp8 = (ROUTED_FUSED_WINDOW_SYMBOL, telemetry.DECODER_NATIVE_ROUTED_FUSED_WINDOW)
     fused_bf16 = (ROUTED_FUSED_WINDOW_SYMBOL, telemetry.DECODER_NATIVE_ROUTED_FUSED_WINDOW_FOLDED)
-    assert EXPERIMENTAL_LAUNCHES == frozenset()
-    assert experimental_launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE) == set()
+    # Contract v46 puts the E4M3 instruction library's two pairs back in the
+    # experimental set: FP8 only, one routed and one dense, until a served
+    # census earns them cells.
+    from tessera.serving.scheme import FUSED_WINDOW_DENSE_SYMBOL
+    mma_routed = (ROUTED_FUSED_WINDOW_SYMBOL,
+                  telemetry.DECODER_NATIVE_ROUTED_FUSED_WINDOW_E4M3MMA)
+    mma_dense = (FUSED_WINDOW_DENSE_SYMBOL,
+                 telemetry.DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA)
+    assert EXPERIMENTAL_LAUNCHES == frozenset({mma_routed, mma_dense})
+    assert experimental_launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE) == {mma_routed}
+    assert experimental_launch_pairs(TESSERA_FP8, structure=STRUCTURE_DENSE) == {mma_dense}
     assert experimental_launch_pairs(TESSERA_BF16, structure=STRUCTURE_ROUTED_MOE) == set()
+    assert experimental_launch_pairs(TESSERA_BF16, structure=STRUCTURE_DENSE) == set()
     assert fused_fp8 in launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE)
     assert fused_bf16 in launch_pairs(TESSERA_BF16, structure=STRUCTURE_ROUTED_MOE)
     assert fused_fp8 not in launch_pairs(TESSERA_BF16, structure=STRUCTURE_ROUTED_MOE)
@@ -997,7 +1021,8 @@ def test_the_native_route_pairs_are_attested_and_censusable():
     # materialising stock launch left the table with the v38 withdrawal.
     assert launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE,
                         include_experimental=True) == {
-        (WINDOW_MOE_COMPACT_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_MOE_COMPACT), fused_fp8}
+        (WINDOW_MOE_COMPACT_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_MOE_COMPACT), fused_fp8,
+        mma_routed}
     assert launch_pairs(TESSERA_FP8, structure=STRUCTURE_ROUTED_MOE) == {
         (WINDOW_MOE_COMPACT_SYMBOL, telemetry.DECODER_NATIVE_WINDOW_MOE_COMPACT), fused_fp8}
     # Narrowed to a box with NO extension prepared, the fused row drops and

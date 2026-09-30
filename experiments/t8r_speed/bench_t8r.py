@@ -438,6 +438,7 @@ def main():
             "tessera_head": os.environ.get("TESSERA_HEAD"), "tessera_state": os.environ.get("TESSERA_STATE"),
             "image": os.environ.get("ORACLE_IMAGE"), "pb_action": os.environ.get("PB_ACTION_KEY"),
             "host": os.environ.get("HOST_NAME"), "kernel_sha": os.environ.get("KERNEL_SHA"),
+            "e4m3_mma": os.environ.get("TESSERA_FUSED_E4M3_MMA"),
             "start_unix": time.time()}
     recorded = routing_files(args.routing, ms) if args.routing else {}
     if args.routing and not any(recorded.values()):

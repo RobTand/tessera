@@ -37,6 +37,22 @@ from test_window_gemm_grouped import Expert, _quant  # noqa: E402
 
 cuda = pytest.mark.skipif(not torch.cuda.is_available(), reason="the lane is a CUDA kernel")
 
+#: The three libraries every kernel test runs on: the value family, and the
+#: E4M3 family on each tensor-core instruction -- ``e4m3`` widens the bytes to
+#: f16 (``m16n8k16``), ``e4m3mma`` runs ``m16n8k32.e4m3`` on them.  The
+#: ``family`` fixture turns the id into the family plus the process's
+#: ``TESSERA_FUSED_E4M3_MMA`` choice.
+LIBRARY_IDS = ["value", "e4m3", "e4m3mma"]
+
+
+@pytest.fixture
+def family(request, monkeypatch):
+    """The window family of the ``LIBRARY_IDS`` id, with the E4M3 instruction
+    set for the adapters the test builds."""
+    lib = request.param
+    monkeypatch.setenv(rf.ENV_E4M3_MMA, "e4m3" if lib == "e4m3mma" else "f16")
+    return "e4m3" if lib == "e4m3mma" else lib
+
 #: The rungs the mixed-rate routed tests read (tessera#694): the GLM E4M3
 #: rungs q256 832 (rates 3/4), 928, 960 (3/4), 1088 (4/5), 1152, the one-rate
 #: 768 and 1280, 1408 (5/6) and 1536 (rate 6, the largest the two-table
@@ -284,7 +300,7 @@ def _staged_check(stacks, bundles, x, ids, rw, family, what, *, limit=None,
 # --- parity ------------------------------------------------------------------
 
 @cuda
-@pytest.mark.parametrize("family", ["value", "e4m3"])
+@pytest.mark.parametrize("family", LIBRARY_IDS, indirect=True)
 @pytest.mark.parametrize("t", [1, 7, 71])
 def test_fused_forward_matches_the_per_expert_oracle_and_the_compact_adapter(family, t):
     """M = 1 (decode), a short batch, and 71 x 3 = 213 routes so at least one
@@ -301,7 +317,7 @@ def test_fused_forward_matches_the_per_expert_oracle_and_the_compact_adapter(fam
 
 
 @cuda
-@pytest.mark.parametrize("family", ["value", "e4m3"])
+@pytest.mark.parametrize("family", LIBRARY_IDS, indirect=True)
 def test_fused_swiglu_clamp_is_the_stock_placement(family):
     stacks = _stacks(family, cut=False)
     bundles = _bundles(family, stacks)
@@ -316,7 +332,7 @@ def test_fused_swiglu_clamp_is_the_stock_placement(family):
 
 
 @cuda
-@pytest.mark.parametrize("family", ["value", "e4m3"])
+@pytest.mark.parametrize("family", LIBRARY_IDS, indirect=True)
 def test_fused_empty_and_repeated_experts(family):
     """Every route to one expert (the others empty) and a batch whose experts
     are all hit: the device work list is sized by route counts, never by E."""
@@ -334,7 +350,7 @@ def test_fused_empty_and_repeated_experts(family):
 
 
 @cuda
-@pytest.mark.parametrize("family", ["value", "e4m3"])
+@pytest.mark.parametrize("family", LIBRARY_IDS, indirect=True)
 def test_fused_staged_interfaces_match_the_compact_adapters(family):
     """``gate_up`` (route-preserving) and ``down_routes`` (reduced) are the
     stages the routed pair oracle teacher-forces; each lane's stage sits
@@ -361,7 +377,7 @@ def test_fused_staged_interfaces_match_the_compact_adapters(family):
 
 
 @cuda
-@pytest.mark.parametrize("family", ["value", "e4m3"])
+@pytest.mark.parametrize("family", LIBRARY_IDS, indirect=True)
 def test_fused_weight_on_input_is_the_modular_prepare_placement(family):
     stacks = _stacks(family, cut=False)
     bundles = _bundles(family, stacks)
@@ -379,7 +395,7 @@ def test_fused_weight_on_input_is_the_modular_prepare_placement(family):
 # --- determinism and graphs ------------------------------------------------------
 
 @cuda
-@pytest.mark.parametrize("family", ["value", "e4m3"])
+@pytest.mark.parametrize("family", LIBRARY_IDS, indirect=True)
 def test_fused_two_runs_are_bitwise_equal(family):
     """The down reduction is a fixed-order per-token sum over route-sorted
     bf16 rows: no atomics, so two runs of the same forward are one tensor."""
@@ -393,7 +409,7 @@ def test_fused_two_runs_are_bitwise_equal(family):
 
 
 @cuda
-@pytest.mark.parametrize("family", ["value", "e4m3"])
+@pytest.mark.parametrize("family", LIBRARY_IDS, indirect=True)
 @pytest.mark.parametrize("q256", CAPTURE_Q256)
 def test_fused_forward_captures_and_replays_twice_against_eager(family, q256):
     """The device work counter is zeroed INSIDE the captured region, so a
@@ -567,7 +583,7 @@ def test_support_predicate_refuses_the_gate_up_slot_the_device_cannot_hold():
 
 
 @cuda
-@pytest.mark.parametrize("family", ["value", "e4m3"])
+@pytest.mark.parametrize("family", LIBRARY_IDS, indirect=True)
 def test_bundles_adapter_dispatches_and_names_its_own_launch(family, monkeypatch):
     from tessera.serving.scheme import ROUTED_FUSED_WINDOW_SYMBOL, WINDOW_MOE_COMPACT_SYMBOL
     from tessera.serving.telemetry import DECODERS
@@ -580,8 +596,13 @@ def test_bundles_adapter_dispatches_and_names_its_own_launch(family, monkeypatch
     assert adapter is bundles.adapter(), "built once"
     symbol, decoder = adapter.launch_pair
     assert symbol == ROUTED_FUSED_WINDOW_SYMBOL and decoder in DECODERS
-    assert decoder == ("native_routed_fused_window_folded" if family == "value"
-                       else "native_routed_fused_window")
+    assert adapter.library == rf.library_for(family)
+    assert decoder == {"value": "native_routed_fused_window_folded",
+                       "e4m3": "native_routed_fused_window",
+                       "e4m3mma": "native_routed_fused_window_e4m3mma"}[adapter.library]
+    # the tables are the library's: 16-bit, or the E4M3 bytes on the E4M3 instruction
+    want_dtype = torch.uint8 if adapter.library == "e4m3mma" else torch.int16
+    assert adapter.table_gate.dtype == adapter.table_down.dtype == want_dtype
     names = dict(bundles.named_tensors())
     assert {"routed_fused.table_gate", "routed_fused.table_up", "routed_fused.table_down"} <= set(names)
     assert bundles.resident_bytes() >= adapter.resident_bytes()
@@ -602,7 +623,7 @@ def test_bundles_adapter_dispatches_and_names_its_own_launch(family, monkeypatch
 
 
 @cuda
-@pytest.mark.parametrize("family", ["value", "e4m3"])
+@pytest.mark.parametrize("family", LIBRARY_IDS, indirect=True)
 def test_a_build_failure_substitutes_the_compact_adapter(family, monkeypatch, caplog):
     """``native_extensions[].when_unavailable`` publishes the compact adapter as
     the substitute; ``adapter()`` makes that substitution at construction, not
@@ -684,7 +705,7 @@ def test_the_loader_axis_stores_the_start_state_the_kernels_read(family, q256):
 
 
 @cuda
-@pytest.mark.parametrize("family", ["value", "e4m3"])
+@pytest.mark.parametrize("family", LIBRARY_IDS, indirect=True)
 @pytest.mark.parametrize("q256", Q256_CASES)
 @pytest.mark.parametrize("build", ["prepare", "axis"])
 def test_fused_stages_decode_every_rate_exactly(family, q256, build):
@@ -695,7 +716,14 @@ def test_fused_stages_decode_every_rate_exactly(family, q256, build):
     equal the torch restatement of that arithmetic BITWISE for every (expert,
     column, row) -- a wrong column map, run offset or field position at any
     rate, in either run, with or without a start state, shows here.  ``axis``
-    builds the stack the way the serving loader does (``_axis_bundles``)."""
+    builds the stack the way the serving loader does (``_axis_bundles``).  On
+    the E4M3 instruction it is also the operand-layout oracle: a byte of the
+    B or A tile in the wrong k or n slot of a fragment moves a one-hot
+    product to another output element."""
+    _decode_exact(family, q256, build)
+
+
+def _decode_exact(family, q256, build):
     stacks = _stacks(family, q256=q256)
     gate, up, down = stacks
     assert set(gate[0].rates) <= set(rf.RATES) and len(set(gate[0].rates)) in (1, 2)
@@ -733,7 +761,7 @@ def test_fused_stages_decode_every_rate_exactly(family, q256, build):
 
 
 @cuda
-@pytest.mark.parametrize("family", ["value", "e4m3"])
+@pytest.mark.parametrize("family", LIBRARY_IDS, indirect=True)
 @pytest.mark.parametrize("q256", Q256_CASES)
 def test_fused_stages_at_every_rate_are_within_the_derived_bounds(family, q256):
     """Random tokens at the rung's schedule: ``gate_up`` is within
@@ -746,6 +774,10 @@ def test_fused_stages_at_every_rate_are_within_the_derived_bounds(family, q256):
     does), so the end-to-end forward is held by the stage bounds without a
     limit of its own.  Both lanes sit inside the bound, so the compact adapter
     is within twice it of the fused lane."""
+    _rate_bound(family, q256)
+
+
+def _rate_bound(family, q256):
     stacks = _stacks(family, q256=q256)
     gate, up, down = stacks
     bundles = _bundles(family, stacks)
@@ -791,3 +823,144 @@ def test_fused_stages_at_every_rate_are_within_the_derived_bounds(family, q256):
     diff = int((out != dn).sum())
     assert diff == 0, f"{what}: the forward differs from its staged composition in {diff} elements"
     print(f"ROUTED-RATE-BOUND {what} down/bound={ratio:.4f}")
+
+
+# --- the E4M3 instruction (``tessera_routed_fused_mma_e4m3``) ---------------------
+
+#: Rungs only the E4M3 instruction's gate/up launch reaches: its 16 KB byte
+#: tables leave room for the rate-8 slot (58,832 B against sm_121's 101,376 B),
+#: where the 16-bit tables do not (103,888 B).  q256 1792 is rate 7, 1920 the
+#: 7/8 pair, 2048 rate 8.
+MMA8_ONLY_Q256 = [1792, 1920, 2048]
+
+
+def test_library_for_reads_the_instruction_choice(monkeypatch):
+    monkeypatch.delenv(rf.ENV_E4M3_MMA, raising=False)
+    assert rf.library_for("e4m3") == "e4m3" and rf.library_for("value") == "value"
+    monkeypatch.setenv(rf.ENV_E4M3_MMA, "f16")
+    assert rf.library_for("e4m3") == "e4m3"
+    monkeypatch.setenv(rf.ENV_E4M3_MMA, "e4m3")
+    assert rf.library_for("e4m3") == "e4m3mma" and rf.library_for("value") == "value"
+    monkeypatch.setenv(rf.ENV_E4M3_MMA, "fp8")
+    with pytest.raises(GrammarError, match=rf.ENV_E4M3_MMA):
+        rf.library_for("e4m3")
+    assert rf.library_for("value") == "value"      # the value family has one library
+
+
+def test_the_e4m3_instructions_layout_and_rates():
+    """The E4M3 instruction's library halves the table and operand-tile bytes:
+    two 16 KB tables for gate/up where the 16-bit libraries hold 32 KB, and
+    8-bit A and B stages.  Its gate/up launch therefore fits every rate, and
+    the published ``column_rates_routed_moe`` of its extension entry is
+    derived from that layout like the 16-bit entries' is."""
+    from tessera.serving import ext
+
+    # one byte less per table entry and per operand element: 16 KB per table,
+    # and the two operand stages' B (BK x BN) and A (BM x BK) tiles
+    stages = 2 * (rf.BK * rf.BN + rf.BM * rf.BK)
+    assert rf.SMEM_FIXED[0] - rf.SMEM_FIXED_MMA8[0] == 2 * 16_384 + stages
+    assert rf.SMEM_FIXED[2] - rf.SMEM_FIXED_MMA8[2] == 16_384 + stages
+    assert rf.smem_bytes(0, 16, mma8=True) == 58_832 <= rf.SM121_MAX_DYNAMIC_SMEM
+    assert rf.routed_lane_rates("e4m3mma") == rf.RATES
+    assert rf.routed_lane_rates("e4m3") == rf.routed_lane_rates("value") == rf.ROUTED_LANE_RATES
+    assert ext.ROUTED_FUSED_MMA_E4M3_LANE_REQUIRES["column_rates_routed_moe"] \
+        == list(rf.routed_lane_rates("e4m3mma"))
+    assert {k: v for k, v in ext.ROUTED_FUSED_MMA_E4M3_LANE_REQUIRES.items()
+            if k != "column_rates_routed_moe"} == {k: v for k, v in ext.ROUTED_FUSED_LANE_REQUIRES.items()
+                                                   if k != "column_rates_routed_moe"}
+    assert ext.ROUTED_FUSED_MMA_E4M3_MODULE_NAME == rf.MODULE_NAME_E4M3MMA
+    source = (Path(__file__).resolve().parents[1] / "src" / "tessera" / "routed_fused.py").read_text()
+    assert 'name="tessera_routed_fused_mma_e4m3"' in source
+    # no other entry's glob matches this library's file, nor this one's theirs
+    import fnmatch
+    entries = {e["module_name_prefix"]: e["filename_glob"] for e in ext.NATIVE_EXTENSIONS}
+    for name in entries:
+        hits = [p for p, g in entries.items() if fnmatch.fnmatch(f"{name}.so", g)]
+        assert hits == [name], (name, hits)
+
+
+@cuda
+@pytest.mark.parametrize("q256", MMA8_ONLY_Q256)
+def test_the_e4m3_instruction_serves_gate_up_at_rates_7_and_8(q256, monkeypatch):
+    """Where the 16-bit library refuses the gate/up slot by name, the E4M3
+    instruction's admits it, decodes every one-hot product exactly (both
+    build paths), stays within the derived bounds, and replays in a graph."""
+    monkeypatch.setenv(rf.ENV_E4M3_MMA, "f16")
+    b = _bundles("e4m3", _stacks("e4m3", q256=q256, cut=False))
+    reason = rf.fused_routed_window_supported(b.gate, b.up, b.down)
+    assert reason is not None and "gate/up" in reason and "shared memory" in reason, reason
+    monkeypatch.setenv(rf.ENV_E4M3_MMA, "e4m3")
+    assert rf.fused_routed_window_supported(b.gate, b.up, b.down) is None
+    for build in ("prepare", "axis"):
+        _decode_exact("e4m3", q256, build)
+    _rate_bound("e4m3", q256)
+    fused = _fused(_bundles("e4m3", _stacks("e4m3", q256=q256)))
+    assert fused.library == "e4m3mma"
+    t = 40
+    x = torch.randn(t, HIDDEN, device="cuda").bfloat16()
+    ids, rw = _routes(t, TOP_K, 33)
+    eager = fused(x, ids, rw)
+    side = torch.cuda.Stream()
+    side.wait_stream(torch.cuda.current_stream())
+    with torch.cuda.stream(side):
+        fused(x, ids, rw)
+    torch.cuda.current_stream().wait_stream(side)
+    graph = torch.cuda.CUDAGraph()
+    with torch.cuda.graph(graph):
+        captured = fused(x, ids, rw)
+    for _ in range(2):
+        captured.zero_()
+        graph.replay()
+        torch.cuda.synchronize()
+        assert torch.equal(captured, eager)
+
+
+@cuda
+@pytest.mark.parametrize("q256", [1024, 832, 1088, 1536])
+def test_the_two_e4m3_instructions_differ_by_accumulation_order_only(q256, monkeypatch):
+    """The same stack on both E4M3 libraries, the same inputs: the products
+    are the same exact values (an E4M3 byte widens to f16 exactly, and a
+    product of two E4M3 values is exact in fp32), so the two answers differ
+    only by where the fp32 sums round -- 16 products per ``m16n8k16``, 32 per
+    ``m16n8k32``.  Each is within the derived bound of the fp64 definition
+    (``fused_bound.dense_bound``, S = 1, which covers any order of K fp32
+    additions), so they are within twice it of each other; the ratio is
+    printed as the measured size of the difference."""
+    stacks = _stacks("e4m3", q256=q256)
+    monkeypatch.setenv(rf.ENV_E4M3_MMA, "f16")
+    f16 = _fused(_bundles("e4m3", stacks))
+    monkeypatch.setenv(rf.ENV_E4M3_MMA, "e4m3")
+    mma8 = _fused(_bundles("e4m3", stacks))
+    assert (f16.library, mma8.library) == ("e4m3", "e4m3mma")
+    assert f16.launch_pair[1] != mma8.launch_pair[1]
+    t = 71
+    x = torch.randn(t, HIDDEN, device="cuda",
+                    generator=torch.Generator(device="cuda").manual_seed(9000 + q256)).bfloat16()
+    ids, rw = _routes(t, TOP_K, 9100 + q256)
+    gate, up, down = stacks
+    a64 = _a64("e4m3", x)
+    what = f"e4m3 q256={q256}"
+    ratios = {}
+    gu = {}
+    for name, lane in (("f16", f16), ("mma8", mma8)):
+        gu[name] = lane.gate_up(x, ids, rw, preserve=True)
+    for half, stack, sl in (("gate", gate, slice(0, INTER)), ("up", up, slice(INTER, 2 * INTER))):
+        refs, bounds = zip(*(fb.dense_bound("e4m3", a64, w, HIDDEN, 1) for w in _w64(stack, "e4m3")))
+        r, b = _per_route(torch.stack(refs), ids), _per_route(torch.stack(bounds), ids)
+        for name in gu:
+            ratios[f"{half} {name}"] = fb.check_within(gu[name][..., sl], r, b, f"{what}: {half} {name}")
+        ratios[f"{half} pair"] = fb.check_within(gu["mma8"][..., sl], gu["f16"][..., sl].double(), b,
+                                                 f"{what}: {half} mma8 vs f16", scale=2.0)
+        ratios[f"{half} equal"] = float((gu["mma8"][..., sl] == gu["f16"][..., sl]).double().mean())
+    # stage 2 on ONE intermediate (the f16 lane's), both libraries
+    act = _silu_and_mul(gu["f16"][..., :INTER].reshape(t * TOP_K, INTER),
+                        gu["f16"][..., INTER:].reshape(t * TOP_K, INTER), clamp_limit=None)
+    r_tok, b_tok = _down_bounds(stacks, "e4m3", act, ids, rw)
+    dn = {name: lane.down_routes(act, ids, rw, route_input=True, round_routes=True)
+          for name, lane in (("f16", f16), ("mma8", mma8))}
+    for name in dn:
+        ratios[f"down {name}"] = fb.check_within(dn[name], r_tok, b_tok, f"{what}: down {name}")
+    ratios["down pair"] = fb.check_within(dn["mma8"], dn["f16"].double(), b_tok,
+                                          f"{what}: down mma8 vs f16", scale=2.0)
+    ratios["down equal"] = float((dn["mma8"] == dn["f16"]).double().mean())
+    print(f"E4M3-MMA-PAIR {what} " + " ".join(f"{k.replace(' ', '_')}={v:.4f}" for k, v in ratios.items()))

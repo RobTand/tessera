@@ -63,6 +63,7 @@
 #include <cuda_bf16.h>
 #include <cuda_fp16.h>
 #include <cstdint>
+#include <type_traits>
 #include <cmath>
 #include <limits>
 
@@ -76,6 +77,19 @@ namespace {
 // each with its own lane decoder), so a library never holds a kernel it does
 // not serve and the family is part of the library's name.
 constexpr bool FAMILY_FP8 = TESSERA_ROUTED_FUSED_FP8 != 0;
+// The E4M3 family's tensor-core instruction.  0 (``tessera_routed_fused_e4m3``)
+// widens the E4M3 table entry and activation to f16 -- both exactly -- and
+// runs ``mma.sync.m16n8k16.f32.f16.f16.f32``.  1
+// (``tessera_routed_fused_mma_e4m3``) keeps both operands E4M3 and runs
+// ``mma.sync.m16n8k32.f32.e4m3.e4m3.f32``: the same exact products at twice
+// the instruction's K, one fp32 truncation per 32 products instead of per 16,
+// and byte-wide tables and tiles (see ``E4M3 MMA LAYOUT`` below).  Its own
+// library and decoders, because its accumulation order differs.
+#ifndef TESSERA_ROUTED_FUSED_MMA8
+#define TESSERA_ROUTED_FUSED_MMA8 0
+#endif
+constexpr bool FAMILY_MMA8 = TESSERA_ROUTED_FUSED_MMA8 != 0;
+static_assert(!FAMILY_MMA8 || FAMILY_FP8, "the E4M3 instruction serves the E4M3 family only");
 
 constexpr int THREADS = 512;
 constexpr int PRODUCER_THREADS = 256;
@@ -104,9 +118,13 @@ constexpr int TABLE_ENTRIES = 1 << WINDOW_BITS;
 constexpr int STAGES = 2;
 constexpr int WORD_STAGES = 3;
 
-constexpr int TABLE_BYTES = TABLE_ENTRIES * 2;                  // 32768, one table
-constexpr int B_STAGE_BYTES = BK * BN * 2;                      // 8192
-constexpr int A_STAGE_BYTES = BM * BK * 2;                      // 4096
+// One table entry and one A/B tile element: 16-bit, or one E4M3 byte on the
+// E4M3 instruction.
+constexpr int ELEM_BYTES = FAMILY_MMA8 ? 1 : 2;
+constexpr int TABLE_BYTES = TABLE_ENTRIES * ELEM_BYTES;         // 32768 (16384), one table
+constexpr int B_STAGE_BYTES = BK * BN * ELEM_BYTES;             // 8192 (4096)
+constexpr int A_STAGE_BYTES = BM * BK * ELEM_BYTES;             // 4096 (2048)
+using TabT = std::conditional_t<FAMILY_MMA8, uint8_t, uint16_t>;
 constexpr int WSCALE_FLOATS = 2 * BN;                           // two item slots
 constexpr int DESC_INTS = 2 * 8;
 // The shared-memory layout.  The word stages come LAST and are sized at
@@ -140,7 +158,8 @@ template <int MODE> struct Layout {
     static constexpr int OFF_DESC = OFF_WSCALE + WSCALE_FLOATS * 4;
     static constexpr int OFF_CLAIM = OFF_DESC + DESC_INTS * 4;
     static constexpr int OFF_DRING = OFF_CLAIM + 16;
-    static constexpr int OFF_W = OFF_DRING + DRING_STAGES * DRING_STAGE * 4;   // 91,600 (two tables) / 58,640 (one)
+    // 91,600 (two tables) / 58,640 (one); 46,544 / 29,968 on the E4M3 instruction
+    static constexpr int OFF_W = OFF_DRING + DRING_STAGES * DRING_STAGE * 4;
     static_assert(OFF_W % 16 == 0, "the word stages take 16-byte copies");
     static_assert(OFF_DRING % 16 == 0, "the descriptor ring takes 16-byte copies");
 };
@@ -279,6 +298,42 @@ __device__ __forceinline__ int bswz(int chunk, int k) {
 __device__ __forceinline__ int aswz(int chunk, int row) {
     return chunk ^ ((row >> 1) & 3);
 }
+// E4M3 MMA LAYOUT (FAMILY_MMA8).  ``m16n8k32.e4m3`` wants four consecutive k
+// of one row (A) or one column (B) per register, and the decoder produces
+// eight consecutive n of one k.  The B tile stays [k][n], one byte per weight
+// (128 B per k row), and is read with the 16-bit TRANSPOSING ldmatrix: a
+// thread then holds, for k rows (2q, 2q + 1) of each 8-row matrix, the byte
+// pairs of n (2g, 2g + 1).  Two byte permutes split each pair of registers
+// into an even-n and an odd-n fragment whose four k are {2q, 2q + 1, 2q + 8,
+// 2q + 9} (+16 for the second register), so one 16-column group feeds two
+// MMAs: the even one serves columns 16G + 2g, the odd one 16G + 2g + 1, and
+// thread (g, q) ends up owning the four consecutive columns 16G + 4q .. + 3.
+// The A tile is staged in the SAME k order -- logical k' = 4q + i is physical
+// k = 2q + (i & 1) + 8 (i >> 1) within each 16-column half -- by four byte
+// permutes per staging thread, so the MMA's K sum pairs every product exactly
+// once.  B's 16-byte units are XOR-swizzled by ``b8swz`` of the k row: eight
+// consecutive k rows land on eight distinct units (the transposing ldmatrix
+// reads conflict-free) and rows (2p, 2p + 1) differ in unit bits 0 and 2, so a
+// warp's 8-byte decode stores for four consecutive columns take the two
+// wavefronts 256 bytes need, in both the down and the gate/up chunk maps.
+// A rows are 32 B; their two 16-byte units swap every four rows.
+__device__ __forceinline__ int b8swz(int k) {
+    return ((k >> 1) & 3) ^ ((k & 1) * 5);
+}
+__device__ __forceinline__ int b8off(int chunk, int k) {     // chunk: eight n
+    return ((((chunk >> 1) ^ b8swz(k)) & 7) << 4) | ((chunk & 1) << 3);
+}
+__device__ __forceinline__ void mma16832_e4m3(float (&d)[4], const uint32_t (&a)[4],
+                                              const uint32_t (&b)[2]) {
+    asm volatile("mma.sync.aligned.m16n8k32.row.col.f32.e4m3.e4m3.f32 "
+                 "{%0,%1,%2,%3}, {%4,%5,%6,%7}, {%8,%9}, {%0,%1,%2,%3};"
+                 : "+f"(d[0]), "+f"(d[1]), "+f"(d[2]), "+f"(d[3])
+                 : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), "r"(b[0]), "r"(b[1]));
+}
+// Four table bytes (each in a register's low byte) as one word, first lowest.
+__device__ __forceinline__ uint32_t pack4(uint32_t a, uint32_t b, uint32_t c, uint32_t d) {
+    return __byte_perm(__byte_perm(a, b, 0x0040), __byte_perm(c, d, 0x0040), 0x5410);
+}
 
 // The run table, as the kernel reads it.  The wire's columns are sorted by
 // (rate, column) into one or two contiguous runs of the PERMUTED column order
@@ -381,7 +436,7 @@ __device__ __forceinline__ void copy_half(int32_t* dst, const int32_t* src, int 
 // last word of the column, the cut's start state, or zero).
 template <bool FP8, int R>
 __device__ __forceinline__ void decode_rows(const int32_t* Wc, uint32_t prev, int j,
-                                            const uint16_t* T, const float* ws,
+                                            const TabT* T, const float* ws,
                                             uint32_t (&packed)[4]) {
     constexpr bool ALIGNED = (8 * R) % 32 == 0;
     constexpr bool WIDE = 8 * R > 32;                 // rows reach past 32 bits: Z2 is read
@@ -408,6 +463,7 @@ __device__ __forceinline__ void decode_rows(const int32_t* Wc, uint32_t prev, in
             Z2 = __funnelshift_rc(w2, w1, 32 - u);
         }
     }
+    [[maybe_unused]] uint32_t v8[8];                  // FAMILY_MMA8: the eight table bytes
     #pragma unroll
     for (int r = 0; r < 8; r += 2) {
         uint32_t s[2];
@@ -426,7 +482,17 @@ __device__ __forceinline__ void decode_rows(const int32_t* Wc, uint32_t prev, in
             t0 = bf16_bits_rn(__fmul_rn(bf16_bits_to_f32(t0), ws[r]));
             t1 = bf16_bits_rn(__fmul_rn(bf16_bits_to_f32(t1), ws[r + 1]));
         }
-        packed[r >> 1] = t0 | (t1 << 16);
+        if constexpr (FAMILY_MMA8) {
+            v8[r] = t0;
+            v8[r + 1] = t1;
+        } else {
+            packed[r >> 1] = t0 | (t1 << 16);
+        }
+    }
+    if constexpr (FAMILY_MMA8) {
+        // eight consecutive n of one k, one byte each: the B tile's 8-byte store
+        packed[0] = pack4(v8[0], v8[1], v8[2], v8[3]);
+        packed[1] = pack4(v8[4], v8[5], v8[6], v8[7]);
     }
 }
 // Both halves of a chunk (rates RA and RB, each compile-time) as ONE
@@ -434,7 +500,7 @@ __device__ __forceinline__ void decode_rows(const int32_t* Wc, uint32_t prev, in
 // table loads while the first half's are in flight.
 template <bool FP8, int RA, int RB>
 __device__ __forceinline__ void decode_two(const int32_t* const (&Wc)[2], const int32_t (&prev)[2], int j,
-                                           const uint16_t* T0, const uint16_t* T1,
+                                           const TabT* T0, const TabT* T1,
                                            const float* const (&ws)[2], uint32_t (&packed)[2][4]) {
     decode_rows<FP8, RA>(Wc[0], (uint32_t)prev[0], j, T0, ws[0], packed[0]);
     decode_rows<FP8, RB>(Wc[1], (uint32_t)prev[1], j, T1, ws[1], packed[1]);
@@ -445,8 +511,8 @@ struct Params {
     const float* a_scale;          // [rows_x] fp32 (fp8) or nullptr
     const int32_t* words0;         // [E, words_stride] gate (mode 0/1) or down (mode 2)
     const int32_t* words1;         // [E, words_stride] up (mode 0/1) or nullptr
-    const uint16_t* table0;        // [E, 16384]
-    const uint16_t* table1;
+    const void* table0;            // [E, 16384] TabT (16-bit, or E4M3 bytes on FAMILY_MMA8)
+    const void* table1;
     const int32_t* init0;          // [E, K]
     const int32_t* init1;
     const int32_t* has_init0;      // [E]
@@ -490,7 +556,7 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
     static_assert(launch_decodes(MODE, RL, TWO), "only the pairs the launch decodes are instantiated");
     using L = Layout<MODE>;
     extern __shared__ __align__(128) uint8_t smem[];
-    uint16_t* tab = reinterpret_cast<uint16_t*>(smem + L::OFF_TABLES);
+    TabT* tab = reinterpret_cast<TabT*>(smem + L::OFF_TABLES);
     uint8_t* Bs = smem + L::OFF_B;
     uint8_t* As = smem + L::OFF_A;
     int32_t* Ws = reinterpret_cast<int32_t*>(smem + L::OFF_W);
@@ -593,13 +659,14 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
             // because every producer passed the barrier above after its last
             // lookup of the previous item, and consumers never read the table.
             if (e != last_e) {
-                const uint16_t* t0 = p.table0 + (long)e * TABLE_ENTRIES;
-                for (int i = tid; i < TABLE_ENTRIES / 8; i += PRODUCER_THREADS)
-                    cp_async16(tab + i * 8, t0 + i * 8);
+                constexpr int PER16 = 16 / ELEM_BYTES;   // table entries per 16-byte copy
+                const TabT* t0 = static_cast<const TabT*>(p.table0) + (long)e * TABLE_ENTRIES;
+                for (int i = tid; i < TABLE_ENTRIES / PER16; i += PRODUCER_THREADS)
+                    cp_async16(tab + i * PER16, t0 + i * PER16);
                 if (MODE != 2) {
-                    const uint16_t* t1 = p.table1 + (long)e * TABLE_ENTRIES;
-                    for (int i = tid; i < TABLE_ENTRIES / 8; i += PRODUCER_THREADS)
-                        cp_async16(tab + TABLE_ENTRIES + i * 8, t1 + i * 8);
+                    const TabT* t1 = static_cast<const TabT*>(p.table1) + (long)e * TABLE_ENTRIES;
+                    for (int i = tid; i < TABLE_ENTRIES / PER16; i += PRODUCER_THREADS)
+                        cp_async16(tab + TABLE_ENTRIES + i * PER16, t1 + i * PER16);
                 }
                 last_e = e;
             }
@@ -693,7 +760,20 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
             };
             auto store_a = [&](int stage, const uint4& a) {
                 uint8_t* A = As + stage * A_STAGE_BYTES;
-                if constexpr (FP8) {
+                if constexpr (FAMILY_MMA8) {
+                    // E4M3 bytes as they are, in the MMA's k order (see E4M3
+                    // MMA LAYOUT): word q of the 16-byte half holds physical k
+                    // (2q, 2q + 1, 2q + 8, 2q + 9).
+                    if (tid >= 128) return;
+                    const int row = tid >> 1;
+                    const int c16 = tid & 1;
+                    uint4 v = make_uint4(0, 0, 0, 0);
+                    if (arow >= 0) {
+                        v.x = __byte_perm(a.x, a.z, 0x5410); v.y = __byte_perm(a.x, a.z, 0x7632);
+                        v.z = __byte_perm(a.y, a.w, 0x5410); v.w = __byte_perm(a.y, a.w, 0x7632);
+                    }
+                    *reinterpret_cast<uint4*>(A + row * BK + ((c16 ^ ((row >> 2) & 1)) << 4)) = v;
+                } else if constexpr (FP8) {
                     if (tid >= 128) return;
                     const int row = tid >> 1;
                     const int c16 = tid & 1;
@@ -894,8 +974,8 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                         chunk[h] = (MODE == 2) ? (8 * h + j) : (4 * (j >> 1) + 2 * h + (j & 1));
                         ws[h] = wsc + slot * BN + chunk[h] * 8;
                     }
-                    const uint16_t* T0 = tab;
-                    const uint16_t* T1 = tab + ((MODE == 2) ? 0 : TABLE_ENTRIES);
+                    const TabT* T0 = tab;
+                    const TabT* T1 = tab + ((MODE == 2) ? 0 : TABLE_ENTRIES);
                     uint32_t packed[2][4];
                     if constexpr (!TWO) {
                         decode_two<FP8, RL, RL>(Wc, prev_cur, j, T0, T1, ws, packed);
@@ -914,8 +994,12 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                     #pragma unroll
                     for (int h = 0; h < 2; ++h) {
                         const int cib = cm_cur[h].cib;
-                        *reinterpret_cast<uint4*>(B + cib * (BN * 2) + (bswz(chunk[h], cib) << 4)) =
-                            make_uint4(packed[h][0], packed[h][1], packed[h][2], packed[h][3]);
+                        if constexpr (FAMILY_MMA8)
+                            *reinterpret_cast<uint2*>(B + cib * BN + b8off(chunk[h], cib)) =
+                                make_uint2(packed[h][0], packed[h][1]);
+                        else
+                            *reinterpret_cast<uint4*>(B + cib * (BN * 2) + (bswz(chunk[h], cib) << 4)) =
+                                make_uint4(packed[h][0], packed[h][1], packed[h][2], packed[h][3]);
                     }
                     bar_arrive(BAR_FULL0 + stage, THREADS);
                     prev_cur[0] = prev_nxt[0]; prev_cur[1] = prev_nxt[1];
@@ -956,6 +1040,29 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                 if (ic > 0) bar_sync(BAR_FULL0 + stage, THREADS);
                 const uint8_t* A = As + stage * A_STAGE_BYTES;
                 const uint8_t* B = Bs + stage * B_STAGE_BYTES;
+                if constexpr (FAMILY_MMA8) {
+                    // One k32 step (see E4M3 MMA LAYOUT).  acc[mi][2G + parity]:
+                    // column group G's even-n (0) and odd-n (1) MMA.
+                    uint32_t a[2][4];
+                    #pragma unroll
+                    for (int mi = 0; mi < 2; ++mi) {
+                        const int row = 32 * mw + 16 * mi + 8 * ((lane >> 3) & 1) + (lane & 7);
+                        ldmatrix_x4(a[mi], A + row * BK + (((lane >> 4) ^ ((row >> 2) & 1)) << 4));
+                    }
+                    #pragma unroll
+                    for (int G = 0; G < 2; ++G) {
+                        uint32_t X[4];
+                        // lane l addresses row l of matrix l >> 3: k = lane
+                        ldmatrix_x4_trans(X, B + lane * BN + ((((2 * nw + G) ^ b8swz(lane)) & 7) << 4));
+                        const uint32_t be[2] = {__byte_perm(X[0], X[1], 0x6420), __byte_perm(X[2], X[3], 0x6420)};
+                        const uint32_t bo[2] = {__byte_perm(X[0], X[1], 0x7531), __byte_perm(X[2], X[3], 0x7531)};
+                        #pragma unroll
+                        for (int mi = 0; mi < 2; ++mi) {
+                            mma16832_e4m3(acc[mi][2 * G], a[mi], be);
+                            mma16832_e4m3(acc[mi][2 * G + 1], a[mi], bo);
+                        }
+                    }
+                } else {
                 #pragma unroll
                 for (int s = 0; s < BK / 16; ++s) {
                     uint32_t a[2][4];
@@ -981,9 +1088,32 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                         #pragma unroll
                         for (int nt = 0; nt < 4; ++nt) mma16816<FP8>(acc[mi][nt], a[mi], b[nt]);
                 }
+                }
                 bar_arrive(BAR_EMPTY0 + stage, THREADS);
             }
             // ------------------------------------------------------ epilogue
+            // A thread's columns in one row come in NSEG segments of SEGW
+            // consecutive B columns: four pairs at 32 nw + 8 s + 2 q on the
+            // f16 instruction, two quads at 32 nw + 16 s + 4 q on the E4M3
+            // one (see E4M3 MMA LAYOUT).  ``accv(mi, s, c, hr)`` is element c
+            // of segment s in row half hr.  Gate/up: the first NSEG / 2
+            // segments are gate columns, the rest the up columns 16 on.
+            constexpr int NSEG = FAMILY_MMA8 ? 2 : 4;
+            constexpr int SEGW = FAMILY_MMA8 ? 4 : 2;
+            constexpr int SEGSTRIDE = FAMILY_MMA8 ? 16 : 8;
+            const int q4 = lane & 3;
+            auto accv = [&](int mi, int sg, int c, int hr) -> float {
+                if constexpr (FAMILY_MMA8) return acc[mi][2 * sg + (c & 1)][2 * hr + (c >> 1)];
+                else return acc[mi][sg][2 * hr + c];
+            };
+            // SEGW bf16 at a SEGW-aligned column, as SEGW / 2 four-byte
+            // stores: both instructions need only the even row stride and
+            // 4-byte base the host checks, so the two E4M3 libraries serve
+            // the same output views.
+            auto store_seg = [&](uint16_t* dst, const uint32_t (&w)[SEGW / 2]) {
+                #pragma unroll
+                for (int i = 0; i < SEGW / 2; ++i) reinterpret_cast<uint32_t*>(dst)[i] = w[i];
+            };
             const int n0 = (MODE == 2) ? nb * BN : nb * HALF;
             uint16_t* out = reinterpret_cast<uint16_t*>(p.out);
             #pragma unroll
@@ -1007,24 +1137,27 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                         // epilogue once.
                         float* part = p.partial + ((long)ks * p.rows_x + pos) * p.N + n0;
                         #pragma unroll
-                        for (int nt = 0; nt < 4; ++nt) {
-                            const int cb = 32 * nw + 8 * nt + 2 * (lane & 3);
-                            *reinterpret_cast<float2*>(part + cb) =
-                                make_float2(acc[mi][nt][2 * hr], acc[mi][nt][2 * hr + 1]);
+                        for (int sg = 0; sg < NSEG; ++sg) {
+                            const int cb = 32 * nw + SEGSTRIDE * sg + SEGW * q4;
+                            if constexpr (SEGW == 4)
+                                *reinterpret_cast<float4*>(part + cb) = make_float4(
+                                    accv(mi, sg, 0, hr), accv(mi, sg, 1, hr), accv(mi, sg, 2, hr), accv(mi, sg, 3, hr));
+                            else
+                                *reinterpret_cast<float2*>(part + cb) = make_float2(accv(mi, sg, 0, hr), accv(mi, sg, 1, hr));
                         }
                     } else if constexpr (MODE == 0) {
-                        // gate n-tiles 0,1 pair with up n-tiles 2,3 in the same registers
+                        // gate segment sg pairs with up segment sg + NSEG / 2 in the same registers
                         #pragma unroll
-                        for (int nt = 0; nt < 2; ++nt) {
-                            const int cb = 32 * nw + 8 * nt + 2 * (lane & 3);      // gate B column
-                            uint32_t two = 0;
+                        for (int sg = 0; sg < NSEG / 2; ++sg) {
+                            const int cb = 32 * nw + SEGSTRIDE * sg + SEGW * q4;       // gate B column
+                            uint32_t w[SEGW / 2] = {};
                             #pragma unroll
-                            for (int i = 0; i < 2; ++i) {
-                                float g = acc[mi][nt][2 * hr + i];
-                                float u = acc[mi][nt + 2][2 * hr + i];
+                            for (int c = 0; c < SEGW; ++c) {
+                                float g = accv(mi, sg, c, hr);
+                                float u = accv(mi, sg + NSEG / 2, c, hr);
                                 if constexpr (FP8) {
-                                    g = __fmul_rn(__fmul_rn(g, a_s), wsc[slot * BN + cb + i]);
-                                    u = __fmul_rn(__fmul_rn(u, a_s), wsc[slot * BN + cb + 16 + i]);
+                                    g = __fmul_rn(__fmul_rn(g, a_s), wsc[slot * BN + cb + c]);
+                                    u = __fmul_rn(__fmul_rn(u, a_s), wsc[slot * BN + cb + 16 + c]);
                                 }
                                 // the bf16 GEMM output, widened for the fp32 activation
                                 float gf = bf16_bits_to_f32(bf16_bits_rn(g));
@@ -1032,41 +1165,41 @@ __global__ void __launch_bounds__(THREADS, 1) routed_fused_kernel(const Params p
                                 gf = fminf(gf, p.limit);
                                 uf = fmaxf(fminf(uf, p.limit), -p.limit);
                                 const float act = __fmul_rn(gf / (1.0f + expf(-gf)), uf);
-                                two |= (uint32_t)bf16_bits_rn(act) << (16 * i);
+                                w[c >> 1] |= (uint32_t)bf16_bits_rn(act) << (16 * (c & 1));
                             }
-                            const long col = n0 + 16 * nw + 8 * nt + 2 * (lane & 3);
-                            *reinterpret_cast<uint32_t*>(out + (long)pos * p.out_stride + col) = two;
+                            const long col = n0 + 16 * nw + SEGSTRIDE * sg + SEGW * q4;
+                            store_seg(out + (long)pos * p.out_stride + col, w);
                         }
                     } else if constexpr (MODE == 1) {
                         #pragma unroll
-                        for (int nt = 0; nt < 4; ++nt) {
-                            const int cb = 32 * nw + 8 * nt + 2 * (lane & 3);
-                            const int h = nt >> 1;
-                            const int nl = 16 * nw + 8 * (nt & 1) + 2 * (lane & 3);
-                            uint32_t two = 0;
+                        for (int sg = 0; sg < NSEG; ++sg) {
+                            const int cb = 32 * nw + SEGSTRIDE * sg + SEGW * q4;
+                            const int h = sg / (NSEG / 2);
+                            const int nl = 16 * nw + SEGSTRIDE * (sg % (NSEG / 2)) + SEGW * q4;
+                            uint32_t w[SEGW / 2] = {};
                             #pragma unroll
-                            for (int i = 0; i < 2; ++i) {
-                                float y = acc[mi][nt][2 * hr + i];
-                                if constexpr (FP8) y = __fmul_rn(__fmul_rn(y, a_s), wsc[slot * BN + cb + i]);
-                                two |= (uint32_t)bf16_bits_rn(y) << (16 * i);
+                            for (int c = 0; c < SEGW; ++c) {
+                                float y = accv(mi, sg, c, hr);
+                                if constexpr (FP8) y = __fmul_rn(__fmul_rn(y, a_s), wsc[slot * BN + cb + c]);
+                                w[c >> 1] |= (uint32_t)bf16_bits_rn(y) << (16 * (c & 1));
                             }
                             const long col = (long)h * p.inter + n0 + nl;
-                            *reinterpret_cast<uint32_t*>(out + (long)flat * p.out_stride + col) = two;
+                            store_seg(out + (long)flat * p.out_stride + col, w);
                         }
                     } else {
                         #pragma unroll
-                        for (int nt = 0; nt < 4; ++nt) {
-                            const int cb = 32 * nw + 8 * nt + 2 * (lane & 3);
-                            uint32_t two = 0;
+                        for (int sg = 0; sg < NSEG; ++sg) {
+                            const int cb = 32 * nw + SEGSTRIDE * sg + SEGW * q4;
+                            uint32_t w[SEGW / 2] = {};
                             #pragma unroll
-                            for (int i = 0; i < 2; ++i) {
-                                float y = acc[mi][nt][2 * hr + i];
-                                if constexpr (FP8) y = __fmul_rn(__fmul_rn(y, a_s), wsc[slot * BN + cb + i]);
+                            for (int c = 0; c < SEGW; ++c) {
+                                float y = accv(mi, sg, c, hr);
+                                if constexpr (FP8) y = __fmul_rn(__fmul_rn(y, a_s), wsc[slot * BN + cb + c]);
                                 if (!DENSE && p.mul_weight) y = __fmul_rn(y, rw);
-                                two |= (uint32_t)bf16_bits_rn(y) << (16 * i);
+                                w[c >> 1] |= (uint32_t)bf16_bits_rn(y) << (16 * (c & 1));
                             }
                             const long col = n0 + cb;
-                            *reinterpret_cast<uint32_t*>(out + (long)flat * p.out_stride + col) = two;
+                            store_seg(out + (long)flat * p.out_stride + col, w);
                         }
                     }
                 }
@@ -1207,9 +1340,10 @@ __global__ void dense_reduce_kernel(const float* __restrict__ partial, const flo
 
 const int32_t* i32_ptr(const torch::Tensor& t) { return t.data_ptr<int32_t>(); }
 const float* f32_ptr(const torch::Tensor& t) { return t.data_ptr<float>(); }
-const uint16_t* u16_ptr(const torch::Tensor& t) {
-    return reinterpret_cast<const uint16_t*>(t.data_ptr<int16_t>());
-}
+// The decode tables: int16 [E, 16384] (the 16-bit entry), or uint8 [E, 16384]
+// (the E4M3 byte) on the E4M3 instruction.
+constexpr c10::ScalarType TABLE_DTYPE = FAMILY_MMA8 ? torch::kUInt8 : torch::kInt16;
+constexpr const char* TABLE_DTYPE_NAME = FAMILY_MMA8 ? "uint8" : "int16";
 // The run pair and the block descriptors of one projection: shapes and dtypes
 // only; their contents are checked per expert by the kernel (``__trap`` on a
 // pair that does not tile K into tile_words) and per stack by the Python owner.
@@ -1265,7 +1399,8 @@ void routed_fused_forward(
     TORCH_CHECK(words0.is_cuda() && words0.dim() == 2 && words0.size(0) == E
                 && words0.scalar_type() == torch::kInt32 && words0.is_contiguous(), "words0 must be int32 [E, W]");
     TORCH_CHECK(table0.dim() == 2 && table0.size(0) == E && table0.size(1) == TABLE_ENTRIES
-                && table0.scalar_type() == torch::kInt16 && table0.is_contiguous(), "table0 must be int16 [E, 16384]");
+                && table0.scalar_type() == TABLE_DTYPE && table0.is_contiguous(),
+                "table0 must be ", TABLE_DTYPE_NAME, " [E, 16384]");
     TORCH_CHECK(init0.dim() == 2 && init0.size(0) == E && init0.size(1) == K
                 && init0.scalar_type() == torch::kInt32 && init0.is_contiguous(), "init0 must be int32 [E, K]");
     TORCH_CHECK(has_init0.numel() == E && has_init0.scalar_type() == torch::kInt32, "has_init0 must be int32 [E]");
@@ -1273,7 +1408,7 @@ void routed_fused_forward(
     if (two) {
         TORCH_CHECK(words1.sizes() == words0.sizes() && words1.scalar_type() == torch::kInt32 && words1.is_contiguous(),
                     "words1 must match words0");
-        TORCH_CHECK(table1.sizes() == table0.sizes() && table1.scalar_type() == torch::kInt16 && table1.is_contiguous(),
+        TORCH_CHECK(table1.sizes() == table0.sizes() && table1.scalar_type() == TABLE_DTYPE && table1.is_contiguous(),
                     "table1 must match table0");
         TORCH_CHECK(init1.sizes() == init0.sizes() && init1.scalar_type() == torch::kInt32 && init1.is_contiguous(),
                     "init1 must match init0");
@@ -1312,8 +1447,8 @@ void routed_fused_forward(
     p.a_scale = fp8 ? f32_ptr(a_scale) : nullptr;
     p.words0 = i32_ptr(words0);
     p.words1 = two ? i32_ptr(words1) : nullptr;
-    p.table0 = u16_ptr(table0);
-    p.table1 = two ? u16_ptr(table1) : nullptr;
+    p.table0 = table0.data_ptr();
+    p.table1 = two ? table1.data_ptr() : nullptr;
     p.init0 = i32_ptr(init0);
     p.init1 = two ? i32_ptr(init1) : nullptr;
     p.has_init0 = i32_ptr(has_init0);
@@ -1389,7 +1524,8 @@ void dense_forward(
     TORCH_CHECK(words.is_cuda() && words.dim() == 2 && words.size(0) == 1
                 && words.scalar_type() == torch::kInt32 && words.is_contiguous(), "words must be int32 [1, W]");
     TORCH_CHECK(table.dim() == 2 && table.size(0) == 1 && table.size(1) == TABLE_ENTRIES
-                && table.scalar_type() == torch::kInt16 && table.is_contiguous(), "table must be int16 [1, 16384]");
+                && table.scalar_type() == TABLE_DTYPE && table.is_contiguous(),
+                "table must be ", TABLE_DTYPE_NAME, " [1, 16384]");
     TORCH_CHECK(init.dim() == 2 && init.size(0) == 1 && init.size(1) == K
                 && init.scalar_type() == torch::kInt32 && init.is_contiguous(), "init must be int32 [1, K]");
     TORCH_CHECK(has_init.numel() == 1 && has_init.scalar_type() == torch::kInt32, "has_init must be int32 [1]");
@@ -1419,7 +1555,7 @@ void dense_forward(
     p.a_scale = fp8 ? f32_ptr(a_scale) : nullptr;
     p.words0 = i32_ptr(words);
     p.words1 = nullptr;
-    p.table0 = u16_ptr(table);
+    p.table0 = table.data_ptr();
     p.table1 = nullptr;
     p.init0 = i32_ptr(init);
     p.init1 = nullptr;
@@ -1517,4 +1653,5 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
           "cudaDevAttrMaxSharedMemoryPerBlockOptin of the device");
     m.attr("THREADS") = THREADS;
     m.attr("FAMILY_FP8") = FAMILY_FP8;
+    m.attr("FAMILY_MMA8") = FAMILY_MMA8;
 }

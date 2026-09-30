@@ -43,6 +43,8 @@ from ..kernel_roster import SUPPORTED_RATES, WINDOW_BITS_SUPPORTED
 __all__ = [
     "NATIVE_EXTENSIONS",
     "ROUTED_FUSED_E4M3_MODULE_NAME",
+    "ROUTED_FUSED_MMA_E4M3_LANE_REQUIRES",
+    "ROUTED_FUSED_MMA_E4M3_MODULE_NAME",
     "ROUTED_FUSED_LANE_REQUIRES",
     "ROUTED_FUSED_SOURCE",
     "ROUTED_FUSED_VALUE_MODULE_NAME",
@@ -203,6 +205,12 @@ WINDOW_GEMV_LANE = {
 #: the dense routes reach it through ``native_window`` after the same build.
 ROUTED_FUSED_E4M3_MODULE_NAME = "tessera_routed_fused_e4m3"
 ROUTED_FUSED_VALUE_MODULE_NAME = "tessera_routed_fused_value"
+#: The third library of the same source: the E4M3 family on its own
+#: tensor-core instruction (``-DTESSERA_ROUTED_FUSED_MMA8=1``,
+#: ``mma.sync.m16n8k32.e4m3.e4m3.f32``; 8-bit tables and tiles), taken where
+#: ``TESSERA_FUSED_E4M3_MMA=e4m3``.  Named so that no other entry's glob
+#: matches its file (``tessera_routed_fused_e4m3*`` would).
+ROUTED_FUSED_MMA_E4M3_MODULE_NAME = "tessera_routed_fused_mma_e4m3"
 ROUTED_FUSED_SOURCE = "csrc/routed_fused_window.cu"
 
 #: What a routed stack's wire must be for the fused lane to read it.  Since
@@ -235,6 +243,13 @@ ROUTED_FUSED_LANE_REQUIRES = {
     "diagonals": False,
     "rotation": ["none"],
     "grid_arities": [1],
+}
+#: The same predicate on the E4M3 instruction's library: its 16 KB byte
+#: tables leave the gate/up launch room for the rate-8 slot, so the
+#: routed-expert launch reads every rate (``routed_fused.routed_lane_rates``).
+ROUTED_FUSED_MMA_E4M3_LANE_REQUIRES = {
+    **ROUTED_FUSED_LANE_REQUIRES,
+    "column_rates_routed_moe": [1, 2, 3, 4, 5, 6, 7, 8],
 }
 
 #: The native code this package can load INTO A SERVING PROCESS, as the
@@ -326,6 +341,22 @@ NATIVE_EXTENSIONS = [
         "routes": ["TESSERA_FP8"],
         "lane": {"decoder": "native_routed_fused_window",
                  "requires": ROUTED_FUSED_LANE_REQUIRES},
+        "when_unavailable": {
+            "resident": {"status": FALLBACK_SUBSTITUTED,
+                         "decoder": "native_window_moe_compact"},
+            "streamed": {"status": FALLBACK_SUBSTITUTED,
+                         "decoder": "native_window_moe_compact"},
+        },
+    },
+    {
+        "module_name_prefix": ROUTED_FUSED_MMA_E4M3_MODULE_NAME,
+        "filename_glob": ROUTED_FUSED_MMA_E4M3_MODULE_NAME + "*.so",
+        "match": MATCH_BASENAME_FNMATCH,
+        "source": ROUTED_FUSED_SOURCE,
+        "loaded_by": "tessera.serving.moe_route",
+        "routes": ["TESSERA_FP8"],
+        "lane": {"decoder": "native_routed_fused_window_e4m3mma",
+                 "requires": ROUTED_FUSED_MMA_E4M3_LANE_REQUIRES},
         "when_unavailable": {
             "resident": {"status": FALLBACK_SUBSTITUTED,
                          "decoder": "native_window_moe_compact"},

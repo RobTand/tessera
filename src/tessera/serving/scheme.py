@@ -498,6 +498,12 @@ _DECODER_NATIVE_ROUTED_FUSED_WINDOW_FOLDED = "native_routed_fused_window_folded"
 #: The fused kernel's dense identity (contract v43), epilogue and folded.
 _DECODER_NATIVE_FUSED_WINDOW_DENSE = "native_fused_window_dense"
 _DECODER_NATIVE_FUSED_WINDOW_DENSE_FOLDED = "native_fused_window_dense_folded"
+#: The E4M3 family's fused identities on its own instruction
+#: (``tessera_routed_fused_mma_e4m3``, ``mma.sync.m16n8k32.e4m3``): the same
+#: exact products as the two E4M3 pairs above in another fp32 accumulation
+#: order, so their own strings.
+_DECODER_NATIVE_ROUTED_FUSED_WINDOW_E4M3MMA = "native_routed_fused_window_e4m3mma"
+_DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA = "native_fused_window_dense_e4m3mma"
 
 _ALL_REGIMES = ("batch", "decode")
 _ALL_MODES = ("resident", "streamed")
@@ -591,6 +597,14 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
     TESSERA_FP8: _dense_native_window_launch(
         _DECODER_NATIVE_WINDOW_GEMM, _DECODER_NATIVE_FUSED_WINDOW_DENSE,
         "tessera_routed_fused_e4m3") + (
+        # The dense identity on the E4M3 instruction (``TESSERA_FUSED_E4M3_
+        # MMA=e4m3``): the same kernel, launch symbol and admission predicate
+        # as the row above, built as ``tessera_routed_fused_mma_e4m3``.
+        # EXPERIMENTAL until a served census earns it cells.
+        {"symbol": FUSED_WINDOW_DENSE_SYMBOL, "decoder": _DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA,
+         "regimes": _ALL_REGIMES, "modes": _ALL_MODES, "lane": "tessera_routed_fused_mma_e4m3",
+         "structures": (STRUCTURE_DENSE,), "when_lane_absent": False},
+    ) + (
         # The compact window MoE adapter: routed experts served from the
         # loader's packed units, no decoded tile, on the epilogue arithmetic.
         # It is the expert half's ONLY launch.  The materialising
@@ -623,6 +637,11 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
         # (contract v42) is what let the four window routed cells name it.
         {"symbol": ROUTED_FUSED_WINDOW_SYMBOL, "decoder": _DECODER_NATIVE_ROUTED_FUSED_WINDOW,
          "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": "tessera_routed_fused_e4m3",
+         "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": False},
+        # The fused lane on the E4M3 instruction (``TESSERA_FUSED_E4M3_MMA=
+        # e4m3``); see the dense row of the same library.  EXPERIMENTAL.
+        {"symbol": ROUTED_FUSED_WINDOW_SYMBOL, "decoder": _DECODER_NATIVE_ROUTED_FUSED_WINDOW_E4M3MMA,
+         "regimes": _ALL_REGIMES, "modes": ("resident",), "lane": "tessera_routed_fused_mma_e4m3",
          "structures": (STRUCTURE_ROUTED_MOE,), "when_lane_absent": False},
     ),
     # The dense half: same shape as the FP8 dense half above, and for the same
@@ -749,7 +768,18 @@ ROUTE_LAUNCHES: dict[str, tuple[dict, ...]] = {
 #: (``tests/test_dense_fused_census_cells.py``).  Withdrawing them instead
 #: would have moved ``versions.default_serve_image`` onto a build no registry
 #: serves, for a lane that was never measured to be missing there.
-EXPERIMENTAL_LAUNCHES: frozenset = frozenset()
+#:
+#: TWO PAIRS STAND HERE NOW: the E4M3 family's fused identities on its own
+#: tensor-core instruction, ``(ROUTED_FUSED_WINDOW_SYMBOL, _DECODER_NATIVE_
+#: ROUTED_FUSED_WINDOW_E4M3MMA)`` and ``(FUSED_WINDOW_DENSE_SYMBOL,
+#: _DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA)`` (library
+#: ``tessera_routed_fused_mma_e4m3``, ``mma.sync.m16n8k32.e4m3.e4m3.f32``).
+#: ``TESSERA_FUSED_E4M3_MMA=e4m3`` makes them the dispatch; they leave this
+#: set when a served census earns them cells.
+EXPERIMENTAL_LAUNCHES: frozenset = frozenset({
+    (ROUTED_FUSED_WINDOW_SYMBOL, _DECODER_NATIVE_ROUTED_FUSED_WINDOW_E4M3MMA),
+    (FUSED_WINDOW_DENSE_SYMBOL, _DECODER_NATIVE_FUSED_WINDOW_DENSE_E4M3MMA),
+})
 
 
 def route_launches(route: str, *, structure: str = STRUCTURE_DENSE,
