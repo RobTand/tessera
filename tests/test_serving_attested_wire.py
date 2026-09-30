@@ -120,6 +120,39 @@ def test_every_attested_rung_stamps_the_wire_it_was_cut_on(contract):
     assert seen, "no attested_wire entry was compared; the loop above never ran"
 
 
+def test_every_allowable_rung_is_served_on_the_rules_wire(contract):
+    """The rule generalises one wire to every rung it admits (lane schema v11,
+    ``formats[].allowable_rungs``); the validator holds that wire to the census
+    stamps it covers, and this holds it to the EXPORTER at every admitted rung
+    of the rule's range, for every structure the row declares or a cell names.
+    The day ``served_recipe`` writes a different wire at some admitted rung,
+    the rule is describing bytes no fresh export writes, and this fails."""
+    pytest.importorskip("torch")
+    from tessera.export import served_recipe
+    from tessera.serving.contract import rung_allowable
+
+    checked = 0
+    for entry in contract["formats"]:
+        rule = entry.get("allowable_rungs")
+        if not isinstance(rule, dict):
+            continue
+        grid = _grid_for(entry["grid"])
+        structures = sorted(set(entry["structures"]) | {
+            cell["structure"] for cell in contract["lane_eligibility"]["cells"]
+            if cell["family"] == entry["family"]})
+        low, high = rule["range_q256"]
+        for q in range(low, high + 1, rule["step_q256"]):
+            if not rung_allowable(entry, q):
+                continue
+            for structure in structures:
+                served = served_recipe(grid, q, structure=structure).to_config()
+                assert served == rule["wire"], (
+                    f"{entry['family']} q256={q} ({structure}): the exporter writes {served!r}, "
+                    f"the rule's wire is {rule['wire']!r}")
+                checked += 1
+    assert checked >= 1793, checked
+
+
 def test_the_bf16_attestation_is_cut_on_the_pinned_wire(contract):
     """The v5 receipt behind ``TESSERA_BF16_K1 @ 1792`` is the pinned wire.
 

@@ -232,3 +232,37 @@ def test_the_census_join_covers_a_record_at_a_rule_rung(contract):
 def test_format_entry_finds_the_row(contract):
     assert format_entry(E4M3, contract) is _row(contract)
     assert format_entry("TESSERA_NOPE", contract) is None
+
+
+def test_a_covered_rung_reaches_the_lanes_of_the_census_rung_that_shares_its_run_table(contract):
+    """The run table is a sound unit only if a cell's launches are a function
+    of it: a rung the rule lets a cell cover must reach exactly the lanes the
+    census rung of the same table reaches, so covering it widens no cell's
+    ``executes``.  Lane reach is decided on the rates and the wire
+    (``contract._lanes_a_rung_reaches``); the rule's wire is validated equal
+    to every census stamp it covers, and this holds the rest."""
+    from tessera.serving.contract import _FAMILY_TO_ROUTE, _lanes_a_rung_reaches
+
+    rows = {e["family"]: e for e in contract["formats"]}
+    checked = 0
+    for cell in contract["lane_eligibility"]["cells"]:
+        row = rows[cell["family"]]
+        rule = row.get("allowable_rungs")
+        if not cell.get("run_tables") or not isinstance(rule, dict):
+            continue
+        route = _FAMILY_TO_ROUTE[cell["family"]]
+        stamps = {int(w["q256"]): w for w in row["attested_wire"]}
+        census = {}
+        for rung in cell["rungs_q256"]:
+            census.setdefault(rung_rates(row, rung), _lanes_a_rung_reaches(
+                route, contract, stamps[int(rung)], rung_rates(row, rung), row["grid"],
+                cell["structure"]))
+        low, high = rule["range_q256"]
+        for q in range(low, high + 1, rule["step_q256"]):
+            if not cell_covers_rung(cell, q, row):
+                continue
+            rates = rung_rates(row, q)
+            assert _lanes_a_rung_reaches(route, contract, rule["wire"], rates, row["grid"],
+                                         cell["structure"]) == census[rates], (cell["id"], q)
+            checked += 1
+    assert checked >= 4 * 511, checked
